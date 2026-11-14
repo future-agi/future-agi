@@ -55,13 +55,18 @@ from model_hub.views.scores import (
     _auto_complete_queue_items,
     _auto_create_queue_items_for_default_queues,
 )
+from tfc.routers import primary_required
 from tfc.utils.api_contracts import validated_request
 from tfc.utils.api_serializers import ApiErrorResponseSerializer
 from tfc.utils.base_viewset import BaseModelViewSetMixin
 from tfc.utils.error_codes import get_error_message
 from tfc.utils.general_methods import GeneralMethods
 from tracer.models.custom_eval_config import CustomEvalConfig
-from tracer.models.observation_span import EvalLogger, ObservationSpan
+from tracer.models.observation_span import (
+    EvalEntryStatus,
+    EvalLogger,
+    ObservationSpan,
+)
 from tracer.models.project import Project
 from tracer.models.project_version import ProjectVersion
 from tracer.models.span_notes import SpanNotes
@@ -167,7 +172,20 @@ from tracer.services.clickhouse.v2.span_selectors import (
     flatten_span_attributes_into_entry,
     merge_content_rows,
 )
-from tracer.services.eval_tasks.entries import soft_delete_eval_results
+from tracer.services.eval_tasks.recalculate import (
+    HANDED_TO_TASK,
+    KEPT,
+    LEFT_RETIRED,
+    RESTORED,
+    RecalculationRefused,
+    abandon_recalculation,
+    begin_recalculation,
+    begin_untasked_recalculation,
+    close_untasked_recalculation,
+    keep_replacement,
+    refuse_unfinished,
+    refuse_while_untasked_runs,
+)
 from tracer.services.eval_tiles import count_column_metadata
 from tracer.services.filter_attestation import (
     applied_filter_attestation,
@@ -689,6 +707,117 @@ def allowed_root_spans_for_request(
     }
 
 
+class _RecalculateLeftNoResult(Exception):
+    """A recalculate's recompute saved no live result.
+
+    ``outcome`` says what happened to the previous result
+    (``tracer.services.eval_tasks.recalculate``): ``RESTORED`` (live again),
+    ``LEFT_RETIRED`` (the task was deleted or rerun meanwhile, the span,
+    trace or eval was deleted, or a newer entry holds its slot) or
+    ``HANDED_TO_TASK`` (the task's engine took the recompute over).
+    """
+
+    def __init__(self, outcome: str = RESTORED):
+        super().__init__()
+        self.outcome = outcome
+
+    @property
+    def message(self) -> str:
+        return _LEFT_NO_RESULT_MESSAGES[self.outcome]
+
+
+_LEFT_NO_RESULT_MESSAGES = {
+    RESTORED: (
+        "The evaluation could not be recalculated. The previous result is kept."
+    ),
+    LEFT_RETIRED: (
+        "The evaluation could not be recalculated. Its task, span or eval "
+        "changed while it ran, so the previous result was not kept."
+    ),
+    HANDED_TO_TASK: (
+        "The evaluation task is evaluating this result again. It will be "
+        "updated when the task's run finishes."
+    ),
+}
+
+
+def _recompute_task_result(previous, entry, feedback_id, *, accepted=None):
+    """Run a Recalculate on an eval-task result that ``begin_recalculation``
+    started (Recalculate on an Observe result).
+
+    The result is an entry of the task's engine: at most one live entry per
+    (task, row, config), written by ``run_entry``. Only a finished result is
+    recomputed; an unfinished one, or another Recalculate's replacement, was
+    refused before this. In one transaction the previous result was retired,
+    ``entry`` took its place for the same row and config, and the pair was
+    recorded (``EvalRecalculation``), so the row never has two live results
+    nor none, and a request that dies mid-eval is finished by the eval-task
+    sweep. ``entry`` is now run synchronously through ``run_entry``, the same
+    eval core the engine's workers use. Only a completed run keeps it.
+    Otherwise (the eval errored or was skipped, or the run raised) the new
+    entry is retired, the previous result is put back and
+    ``_RecalculateLeftNoResult`` is raised, also when the run, or
+    ``accepted`` (what the request records once the recalculation is under
+    way, called first), raised (the exception is logged and chained). If
+    something else retired the new
+    entry meanwhile (the task was deleted, Delete & rerun), that retirement
+    stands and the previous result stays retired too. If the task's engine
+    took the new entry over (its reaper or a pause requeued it), it is left
+    to the engine and the sweep.
+
+    See ``tracer.services.eval_tasks.recalculate``.
+    """
+    from tracer.services.eval_tasks.run_entry import run_entry
+
+    try:
+        if accepted is not None:
+            accepted()
+        status = run_entry(entry, feedback_id=feedback_id)
+    except Exception as exc:
+        logger.exception(
+            "recalculate_task_result_run_raised",
+            eval_logger_id=str(previous.pk),
+            eval_task_id=str(previous.eval_task_id),
+        )
+        outcome = abandon_recalculation(
+            entry, previous, left_as=EvalEntryStatus.RUNNING
+        )
+        # Say what became of the result, as for a run that did not complete.
+        raise _RecalculateLeftNoResult(outcome) from exc
+    if status != EvalEntryStatus.COMPLETED:
+        logger.info(
+            "recalculate_task_result_not_completed",
+            eval_logger_id=str(previous.pk),
+            eval_task_id=str(previous.eval_task_id),
+            status=str(status),
+        )
+        outcome = abandon_recalculation(
+            entry,
+            previous,
+            # The status this run's terminal write left; none when the entry
+            # was taken from it ("reclaimed"). A retired ("deleted") one is
+            # found retired whatever is passed.
+            left_as=status
+            if status in (EvalEntryStatus.ERRORED, EvalEntryStatus.SKIPPED)
+            else (EvalEntryStatus.RUNNING if status == "deleted" else None),
+        )
+        raise _RecalculateLeftNoResult(outcome)
+    keep_replacement(entry, previous)
+    return True
+
+
+def _record_action_type(feedback, action_type) -> None:
+    feedback.action_type = action_type
+    feedback.save(update_fields=["action_type"])
+
+
+def _accepted(feedback, action_type, properties) -> None:
+    """A Recalculate was accepted and its previous result retired: record
+    the feedback's action and report the run as started."""
+    _record_action_type(feedback, action_type)
+    track_mixpanel_event(MixpanelEvents.EVAL_RUN_STARTED.value, properties)
+
+
 class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
@@ -702,6 +831,10 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
             .get_queryset()
             .filter(project__organization=_get_request_organization(self.request))
         )
+
+        # Mutations must load the latest row, not overwrite it from a stale replica.
+        if getattr(self, "action", None) in {"update", "partial_update", "destroy"}:
+            query_Set = query_Set.using("default")
 
         if observation_span_id:
             return query_Set.filter(id=observation_span_id)
@@ -1504,7 +1637,7 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                         project=observation_span["project"],
                         project__organization=_get_request_organization(self.request),
                     )
-                observation_span["trace"] = Trace.objects.get(
+                observation_span["trace"] = Trace.objects.using("default").get(
                     _project_workspace_scope_q(self.request),
                     id=observation_span["trace"],
                     project=observation_span["project"],
@@ -1694,7 +1827,11 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
             )
             return self._gm.bad_request("Span data could not be loaded")
 
+    # Primary for the whole request: the result the user gives feedback on is
+    # shown from ClickHouse, which can be ahead of a lagging replica, so its
+    # span, trace and config may be seconds old.
     @action(detail=False, methods=["post"])
+    @primary_required
     def submit_feedback(self, request, *args, **kwargs):
         try:
             serializer = SubmitFeedbackSerializer(data=request.data)
@@ -1726,7 +1863,9 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                 raise Exception("Custom eval config not found")  # noqa: B904
 
             try:
-                EvalLogger.objects.get(
+                # Primary: the result the user gives feedback on is shown from
+                # ClickHouse and may be newer than a lagging replica.
+                EvalLogger.objects.using("default").get(
                     observation_span=observation_span,
                     custom_eval_config_id=custom_eval_config_id,
                     deleted=False,
@@ -1786,7 +1925,7 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
             span_id = request.data.get("span_id")
             if not span_id:
                 return self._gm.bad_request("span_id is required")
-            span = ObservationSpan.objects.get(
+            span = ObservationSpan.objects.using("default").get(
                 _project_workspace_scope_q(request),
                 id=span_id,
                 project__organization=_get_request_organization(request),
@@ -1805,7 +1944,109 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
             logger.exception(f"Error updating span tags: {e}")
             return self._gm.bad_request("Error updating tags")
 
+    def _recalculate(
+        self, request, observation_span, custom_eval_config, feedback, action_type
+    ):
+        """Retire the span's live result for the config and recompute it.
+        Raises ``RecalculationRefused`` before writing anything (the
+        feedback's action type included) when the result may not be replaced
+        now, and ``_RecalculateLeftNoResult``, after putting the retired
+        result back where it can, when the recompute leaves no live result.
+
+        Not one transaction: the eval activities close the request's
+        connection when called (close_old_connections), which would end it.
+        Each recalculation is recorded instead (``EvalRecalculation``), so the
+        request finishes it, or the eval-task sweep does if the request dies.
+        """
+        feedback_id = str(feedback.id)
+        try:
+            # Primary: the live result may be newer than a lagging
+            # replica (a fresh eval, or the previous recalculate's).
+            eval_logger = EvalLogger.objects.using("default").get(
+                observation_span=observation_span,
+                custom_eval_config=custom_eval_config,
+                deleted=False,
+            )
+        except EvalLogger.DoesNotExist:
+            # Retired by a Recalculate of a result with no task that is still
+            # evaluating: say so, rather than that the span has no eval.
+            refuse_while_untasked_runs(observation_span.id, custom_eval_config.id)
+            raise Exception("No eval associated with this span")  # noqa: B904
+        task_id = eval_logger.eval_task_id
+        task_result = bool(task_id) and not observation_span.project_version
+        if task_result:
+            # Only a finished result, and not another Recalculate's
+            # replacement: refused whatever the task's status.
+            refuse_unfinished(eval_logger)
+
+        properties = get_mixpanel_properties(
+            user=request.user,
+            span=observation_span,
+            eval=custom_eval_config.eval_template,
+            count=1,
+            type=MixpanelTypes.FEEDBACK.value,
+        )
+
+        if task_result:
+            # A result an eval task produced is an entry of that task's
+            # engine. The per-span activity refuses task work (it only
+            # re-wakes the task), so recompute the entry the way the engine
+            # does.
+            entry = begin_recalculation(eval_logger)
+            # Recorded inside the recalculation's guarded region: if it
+            # raises, the replacement is retired and the previous result put
+            # back, as for a failed run.
+            return _recompute_task_result(
+                eval_logger,
+                entry,
+                feedback_id,
+                accepted=lambda: _accepted(feedback, action_type, properties),
+            )
+
+        # Two-phase: the result keeps its Error Feed memberships until its
+        # replacement exists, so a recompute that fails puts it back whole.
+        # Conditional on it still being live: a second request is refused
+        # here instead of evaluating alongside this one.
+        journal = begin_untasked_recalculation(eval_logger)
+        try:
+            # Inside the guarded region: if it raises, the recalculation is
+            # closed (the previous result put back) before the error goes on.
+            _accepted(feedback, action_type, properties)
+            if observation_span.project_version:
+                # Experiment spans: results carry no eval task, and the
+                # activity takes (span, config, feedback_id).
+                status = evaluate_observation_span(
+                    str(observation_span.id),
+                    str(custom_eval_config.id),
+                    feedback_id=feedback_id,
+                )
+            else:
+                status = evaluate_observation_span_observe(
+                    str(observation_span.id),
+                    str(custom_eval_config.id),
+                    task_id,
+                    feedback_id,
+                )
+        except Exception as exc:
+            # Keeps a result the eval wrote before it raised, or puts the
+            # previous one back; never both.
+            outcome = close_untasked_recalculation(journal)
+            if outcome == KEPT:
+                raise
+            logger.exception(
+                "recalculate_untasked_result_raised",
+                eval_logger_id=str(eval_logger.pk),
+            )
+            raise _RecalculateLeftNoResult(outcome) from exc
+        outcome = close_untasked_recalculation(journal)
+        if outcome != KEPT:
+            raise _RecalculateLeftNoResult(outcome)
+        return status
+
+    # Primary for the whole request, as submit_feedback: the recalculate it
+    # runs in place reads the same fresh span and config.
     @action(detail=False, methods=["post"])
+    @primary_required
     def submit_feedback_action_type(self, request, *args, **kwargs):
         try:
             serializer = SubmitFeedbackActionTypeSerializer(data=request.data)
@@ -1821,10 +2062,12 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                 feedback = Feedback.objects.get(
                     id=feedback_id, user=request.user, source_id=observation_span_id
                 )
-                feedback.action_type = action_type
-                feedback.save(update_fields=["action_type"])
             except Feedback.DoesNotExist:
                 raise Exception("Feedback not found")  # noqa: B904
+            if action_type != "recalculate":
+                # A Recalculate records it once it is accepted: a refused
+                # duplicate must not overwrite what the winning request wrote.
+                _record_action_type(feedback, action_type)
 
             try:
                 observation_span = ObservationSpan.objects.get(
@@ -1848,43 +2091,23 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                 pass  ### This is coz we are using mapping_fields fxn in utils
 
             elif action_type == "recalculate":
+                # Retire the live result and compute its replacement as one
+                # unit: if the recompute leaves no live result (it raised, or
+                # returned without saving one), the retirement rolls back and
+                # the previous result stays live.
                 try:
-                    eval_logger = EvalLogger.objects.get(
-                        observation_span=observation_span,
-                        custom_eval_config=custom_eval_config,
-                        deleted=False,
+                    status = self._recalculate(
+                        request,
+                        observation_span,
+                        custom_eval_config,
+                        feedback,
+                        action_type,
                     )
-                    task_id = eval_logger.eval_task_id
-
-                    soft_delete_eval_results(
-                        EvalLogger.objects.filter(pk=eval_logger.pk)
-                    )
-                except EvalLogger.DoesNotExist:
-                    raise Exception("No eval associated with this span")  # noqa: B904
-
-                properties = get_mixpanel_properties(
-                    user=request.user,
-                    span=observation_span,
-                    eval=custom_eval_config.eval_template,
-                    count=1,
-                    type=MixpanelTypes.FEEDBACK.value,
-                )
-                track_mixpanel_event(MixpanelEvents.EVAL_RUN_STARTED.value, properties)
-
-                if observation_span.project_version:
-                    status = evaluate_observation_span(
-                        str(observation_span.id),
-                        str(custom_eval_config.id),
-                        task_id,
-                        feedback_id,
-                    )
-                else:
-                    status = evaluate_observation_span_observe(
-                        str(observation_span.id),
-                        str(custom_eval_config.id),
-                        task_id,
-                        feedback_id,
-                    )
+                except RecalculationRefused as refused:
+                    # Refused before anything changed: the feedback too.
+                    return self._gm.bad_request(refused.message)
+                except _RecalculateLeftNoResult as left:
+                    return self._gm.bad_request(left.message)
 
                 if status:
                     count = 1
@@ -4063,8 +4286,11 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
             # telemetry read, then pass that project anchor into the CH selector.
             # Use one generic absence response so foreign config UUIDs do not
             # become an existence oracle.
+            # Primary: the result is read from ClickHouse, which can be ahead
+            # of a lagging replica, so its config may be seconds old.
             config_scope = (
-                CustomEvalConfig.no_workspace_objects.filter(
+                CustomEvalConfig.no_workspace_objects.using("default")
+                .filter(
                     _project_workspace_scope_q(self.request),
                     id=custom_eval_config_id,
                     project__organization=_get_request_organization(self.request),
@@ -4175,13 +4401,13 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
 
             try:
                 if observation_span_id:
-                    observation_span = ObservationSpan.objects.get(
+                    observation_span = ObservationSpan.objects.using("default").get(
                         _project_workspace_scope_q(request),
                         id=observation_span_id,
                         project__organization=_get_request_organization(request),
                     )
                 elif trace_id:
-                    observation_span = ObservationSpan.objects.get(
+                    observation_span = ObservationSpan.objects.using("default").get(
                         _project_workspace_scope_q(request),
                         trace_id=trace_id,
                         project__organization=_get_request_organization(request),

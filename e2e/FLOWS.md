@@ -1465,6 +1465,54 @@
 - when the project is deleted after the log opened, View trace re-checks and gets unavailable with every id null; no trace or link opens
 - without the opt-in the log response has no source_navigation, and =false is identical
 
+### EVAL-E2E-015 — Recalculate on an eval task's result replaces it in place
+
+**Goal:** A user who disagrees with an eval task's verdict on a span leaves feedback and recalculates that result, and the span keeps exactly one result, computed again on the span's current input
+
+**Spec:** `flows/evals/recalculate-task-result.spec.ts:34`
+
+**Tags:** —
+
+**User steps:**
+
+1. seed a trace through the collector, and register its trace and LLM span through the public trace and span API
+2. author an LLM-as-a-judge eval (mock LLM through the gateway) and run an eval task over the project
+3. leave feedback on the task's result for the LLM span (the Observe feedback form's request)
+4. re-send the span with a new value for the eval's mapped attribute
+5. open the eval, its Feedback tab, the feedback, Edit Feedback
+6. pick Re-calculate and re-tune and submit the feedback
+7. read the span's eval result in Observe
+
+**Backend state verified:**
+
+- the eval task completes with one live completed entry for the span and eval in PG tracer_eval_logger, its verdict naming the span's first input
+- Recalculate answers 200 and the feedback row records action recalculate with the user's note
+- afterwards the span and eval have exactly one live entry: completed, of the same eval task, a new row whose verdict names the span's new input (the judge ran again)
+- the previous entry is retired (deleted = true), not left live beside the new one
+- the CDC mirror carries both to CH tracer_eval_logger: the new entry completed, the previous one deleted
+
+### EVAL-E2E-016 — shipped link evaluators accept approved links and refuse other destinations
+
+**Goal:** Run the shipped link evaluators on approved reachable links and ordinary prose while refusing unapproved, private and redirected destinations without contacting them
+
+**Spec:** `flows/evals/link-destinations.spec.ts:16`
+
+**Tags:** —
+
+**User steps:**
+
+1. resolve the two shipped system template IDs without rewriting their code
+2. open each system evaluator in the browser
+3. submit approved links, link-free prose and refused destinations in the Custom playground
+4. read exact verdicts and explanations
+5. inspect the exact request set on the owned canary
+
+**Backend state verified:**
+
+- both shipped templates retain their system identity and text input contract
+- browser-submitted playground responses match the exact verdict and explanation matrix
+- the owned canary records only approved HEAD requests and never receives refused destinations
+
 ### EVAL-E2E-020 — sample whole contacts, retain late spans, and explicitly rerun an edited quota
 
 **Goal:** Preview and run a contact quota without splitting contacts, including late spans, then edit the quota with clear new-run provenance
