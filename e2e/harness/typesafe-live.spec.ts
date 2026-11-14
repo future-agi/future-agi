@@ -260,9 +260,9 @@ async function run(page: Page, owner: ScopeActor, suffix: string) {
       if (res.status !== 200) return `status ${res.status}`;
       const configs = json(res);
       const providers = (configs.data?.[owner.organizationId]?.providers ?? {}) as Record<string, unknown>;
-      // Booleans only: the response holds the provider keys and is never
+      // Booleans only: the response holds masked provider keys and is never
       // logged. The placeholder the dialog saved also makes the provider
-      // present, so the real key must be what the gateway holds.
+      // present, so the (masked) real key must be what the gateway holds.
       return [PROVIDER, BAD_KEY_PROVIDER].every(p => p in providers)
         && gatewayHoldsKey(configs, owner.organizationId, PROVIDER, TYPESAFE_KEY) ? 'ready' : 'waiting';
     }, { ...CONFIG_VISIBLE, message: 'the org providers and the real TypeSafe key reach the gateway' }).toBe('ready');

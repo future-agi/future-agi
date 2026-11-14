@@ -58,13 +58,19 @@ export function rotateOutcome(status: number | undefined, body: unknown): { ok: 
   return { ok: status === 200 && synced === true, detail: `key rotate ${status ?? 'not run'}, gateway_synced ${String(synced)}` };
 }
 
-// True when the gateway's org config holds exactly this key for the provider.
-// Returns a boolean only: the configs response carries provider keys and is
-// never logged or attached.
+// The gateway admin API masks provider keys as agentcc-gateway's
+// redactAPIKey does (internal/server/admin_orgs.go): the first 8 and the last
+// 4 characters, or "****" for a key of 12 characters or fewer.
+export const redactedKey = (key: string) => (key.length <= 12 ? '****' : `${key.slice(0, 8)}****${key.slice(-4)}`);
+
+// True when the gateway's org config holds this key for the provider (by its
+// masked form), so the dashboard's placeholder ("ts-placeholder-<suffix>")
+// does not count. Returns a boolean only, and the configs response is never
+// logged or attached.
 export function gatewayHoldsKey(configs: unknown, orgId: string, provider: string, key: string): boolean {
   const providers = (configs as { data?: Record<string, { providers?: Record<string, { api_key?: unknown }> }> })
     ?.data?.[orgId]?.providers;
-  return !!key && providers?.[provider]?.api_key === key;
+  return !!key && providers?.[provider]?.api_key === redactedKey(key);
 }
 
 // The mock's exact bytes for one question "resolved" (e2e/stack/mock-llm/server.mjs:

@@ -70,11 +70,15 @@ test("a failed key rotate stops the run", () => {
 });
 
 test("the readiness check wants the real key on the gateway, not a placeholder", () => {
-  const configs = (key) => ({ data: { org: { providers: { typesafe: { api_key: key } } } } });
-  assert.equal(lib.gatewayHoldsKey(configs("ts-real"), "org", "typesafe", "ts-real"), true);
-  assert.equal(lib.gatewayHoldsKey(configs("ts-placeholder-x"), "org", "typesafe", "ts-real"), false);
-  assert.equal(lib.gatewayHoldsKey({ data: {} }, "org", "typesafe", "ts-real"), false);
-  assert.equal(lib.gatewayHoldsKey(configs(""), "org", "typesafe", ""), false);
+  // /-/orgs/configs masks keys like agentcc-gateway's redactAPIKey.
+  const configs = (masked) => ({ data: { org: { providers: { typesafe: { api_key: masked } } } } });
+  const real = "e2e-decision-typesafe-key";
+  assert.equal(lib.redactedKey(real), "e2e-deci****-key");
+  assert.equal(lib.redactedKey("short-key"), "****");
+  assert.equal(lib.gatewayHoldsKey(configs("e2e-deci****-key"), "org", "typesafe", real), true);
+  assert.equal(lib.gatewayHoldsKey(configs(lib.redactedKey("ts-placeholder-0-mwgabc")), "org", "typesafe", real), false);
+  assert.equal(lib.gatewayHoldsKey({ data: {} }, "org", "typesafe", real), false);
+  assert.equal(lib.gatewayHoldsKey(configs("****"), "org", "typesafe", ""), false);
 });
 
 test("Case 3 dry run: the body must be the mock's bytes, not just equal JSON", () => {
