@@ -3213,13 +3213,17 @@ def test_cleanup_stopped_with_sandbox_when_verified(user, workspace, storage, se
 def test_cleanup_still_running_while_the_attempt_lives_or_the_cancel_window_is_open(
     user, workspace, storage, settings
 ):
+    from simulate.models import HostedHarnessJob
+
     job, attempt, call = _cut_short_run(user, workspace, storage, settings, "sr")
     assert (
         harness_workers.worker_cleanup(call, job, {"state": "no_return"})["status"]
         == "still_running"
     )
+    # The cancel window: the job reads canceled and the attempt is marked, but its sandbox is not removed yet.
     attempt.terminal_stage = "canceled"
     attempt.save(update_fields=["terminal_stage"])
+    job.state = HostedHarnessJob.State.CANCELED
     assert (
         harness_workers.worker_cleanup(call, job, {"state": "cancel_requested"})[
             "status"
