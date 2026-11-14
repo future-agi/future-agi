@@ -51,10 +51,16 @@ def test_categorical_dispatch_reads_inputs_and_persists_model_result():
     own = _tenant("input-workflow")
     try:
         first = Column.objects.create(
-            name="Question", dataset=own.dataset, data_type="text", source="others"
+            name="Question",
+            dataset=own.dataset,
+            data_type=DataTypeChoices.TEXT.value,
+            source=SourceChoices.OTHERS.value,
         )
         second = Column.objects.create(
-            name="Context", dataset=own.dataset, data_type="text", source="others"
+            name="Context",
+            dataset=own.dataset,
+            data_type=DataTypeChoices.TEXT.value,
+            source=SourceChoices.OTHERS.value,
         )
         for column, value in (
             (first, "Synthetic question"),
