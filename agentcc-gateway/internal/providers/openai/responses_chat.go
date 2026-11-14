@@ -329,23 +329,27 @@ func toResponsesRequest(req *models.ChatCompletionRequest, stream bool) (_ *resp
 			out.Store = store
 		}
 	}
-	// A response has one output; more choices cannot be asked for. A caller's
-	// own chat request asked for them and is told so. A translated request
-	// (GenAI candidateCount) gets one, as before this route existed.
+	// A response has one output; more choices cannot be asked for. A caller
+	// who chose this model themselves asked for them and is told so. A
+	// translated request (GenAI candidateCount), or one the gateway moved onto
+	// this model, gets one, as before this route existed.
+	callerChose := callerChoseResponses(req)
 	if req.N != nil && *req.N > 1 {
-		if req.TranslatedFrom == "" {
+		if callerChose {
 			return nil, unsupportedOverResponses(fmt.Sprintf("n=%d (more than one choice)", *req.N))
 		}
 		slog.Info("responses route answers one choice; extra candidates dropped",
-			"requested", *req.N, "translated_from", req.TranslatedFrom, "model", req.Model)
+			"requested", *req.N, "translated_from", req.TranslatedFrom,
+			"caller_model", req.CallerModel, "model", req.Model)
 	}
 
 	if params := chatOnlyParams(req); len(params) > 0 {
-		if req.TranslatedFrom == "" {
+		if callerChose {
 			return nil, unsupportedOverResponses(strings.Join(params, ", "))
 		}
 		slog.Info("responses route drops chat-only parameters",
-			"parameters", params, "translated_from", req.TranslatedFrom, "model", req.Model)
+			"parameters", params, "translated_from", req.TranslatedFrom,
+			"caller_model", req.CallerModel, "model", req.Model)
 	}
 
 	out.PromptCacheKey = req.Extra["prompt_cache_key"]
@@ -376,6 +380,39 @@ func toResponsesRequest(req *models.ChatCompletionRequest, stream bool) (_ *resp
 		out.Text = &responsesText{Format: format, Verbosity: verbosity}
 	}
 	return out, nil
+}
+
+// callerChoseResponses reports whether the caller is the one who can change
+// what goes over the Responses route: their own chat request (not a
+// translated one) for a model they chose. A request the gateway moved onto
+// this model (routing, a target's model_override, a model fallback, failover,
+// the traffic mirror) is the caller's only if the model they asked for would
+// have taken this route too, as when a target only renames it.
+func callerChoseResponses(req *models.ChatCompletionRequest) bool {
+	if req.TranslatedFrom != "" {
+		return false
+	}
+	if req.CallerModel == "" || req.CallerModel == req.Model {
+		return true
+	}
+	asked := *req
+	asked.Model = req.CallerModel
+	return NeedsResponses(&asked)
+}
+
+// ResponsesDrops names what the Responses route drops from req instead of
+// refusing it (see callerChoseResponses): its chat-only parameters and extra
+// choices. Nil when req does not go over that route, or when it would be
+// refused. A translated route adds these to the drops it reports.
+func (p *Provider) ResponsesDrops(req *models.ChatCompletionRequest) []string {
+	if !p.ChatNeedsResponses(req) || callerChoseResponses(req) {
+		return nil
+	}
+	drops := chatOnlyParams(req)
+	if req.N != nil && *req.N > 1 {
+		drops = append(drops, "n")
+	}
+	return drops
 }
 
 // chatOnlyParams names the chat parameters set on req that the Responses API

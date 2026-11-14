@@ -1166,6 +1166,11 @@ func (h *Handlers) ChatCompletion(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// The model the caller chose. From here on the gateway may send the
+	// request under another one (routing, failover, fallback, mirror); a
+	// provider uses this to tell the caller's choices from the gateway's.
+	req.CallerModel = req.Model
+
 	// 3. Complexity-based routing (only if not provider-locked).
 	if !providerLocked && h.complexityAnalyzer.IsEnabled() && !strings.Contains(rc.Model, "/") {
 		if override := r.Header.Get("x-agentcc-complexity-override"); override != "" {

@@ -205,14 +205,17 @@ func (h *Handlers) GenAIHandler(w http.ResponseWriter, r *http.Request) {
 		w.Write(errBody)
 		return
 	}
+	canonicalReq.Model = upstreamModel
+	canonicalReq.Stream = action == "streamGenerateContent"
+	canonicalReq.TranslatedFrom = "google"
+	// What the provider's Responses route drops from this request (chat-only
+	// parameters, extra choices) is a translation drop too.
+	drops = append(drops, responsesRouteDrops(provider, canonicalReq)...)
 	if len(drops) > 0 {
 		joined := strings.Join(drops, ",")
 		rc.Metadata["translation_drops"] = joined
 		w.Header().Set("x-agentcc-translation-drops", joined)
 	}
-	canonicalReq.Model = upstreamModel
-	canonicalReq.Stream = action == "streamGenerateContent"
-	canonicalReq.TranslatedFrom = "google"
 
 	switch action {
 	case "generateContent":

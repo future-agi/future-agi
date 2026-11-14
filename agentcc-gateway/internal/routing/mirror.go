@@ -177,6 +177,10 @@ func (m *Mirror) ExecuteAsync(req *models.ChatCompletionRequest, sourceProvider,
 	// Copy the request to avoid mutation.
 	mirrorReq := *req
 	if rule.TargetModel != "" {
+		if mirrorReq.CallerModel == "" {
+			// The model this rule mirrors was the caller's; the target is ours.
+			mirrorReq.CallerModel = req.Model
+		}
 		mirrorReq.Model = rule.TargetModel
 	}
 	mirrorReq.Stream = false // Never stream mirrors.

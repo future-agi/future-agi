@@ -187,14 +187,17 @@ func (h *Handlers) AnthropicMessages(w http.ResponseWriter, r *http.Request) {
 		w.Write(errBody)
 		return
 	}
+	canonicalReq.TranslatedFrom = "anthropic"
+	canonicalReq.Model = upstreamModel
+	canonicalReq.Stream = isStream
+	// What the provider's Responses route drops from this request (chat-only
+	// parameters, extra choices) is a translation drop too.
+	drops = append(drops, responsesRouteDrops(provider, canonicalReq)...)
 	if len(drops) > 0 {
 		joined := strings.Join(drops, ",")
 		rc.Metadata["translation_drops"] = joined
 		w.Header().Set("x-agentcc-translation-drops", joined)
 	}
-	canonicalReq.TranslatedFrom = "anthropic"
-	canonicalReq.Model = upstreamModel
-	canonicalReq.Stream = isStream
 
 	if isStream {
 		h.handleAnthropicStreamViaCanonical(ctx, w, rc, provider, translator, canonicalReq)
@@ -1115,4 +1118,17 @@ func setUsageResponse(rc *models.RequestContext, promptTokens, completionTokens 
 			TotalTokens:      promptTokens + completionTokens,
 		},
 	}
+}
+
+// responsesRouteDrops names what provider's Responses route will drop from a
+// translated request instead of refusing it (see the OpenAI provider's
+// ResponsesDrops); nil for any other provider or route.
+func responsesRouteDrops(provider providers.Provider, req *models.ChatCompletionRequest) []string {
+	rp, ok := provider.(interface {
+		ResponsesDrops(*models.ChatCompletionRequest) []string
+	})
+	if !ok {
+		return nil
+	}
+	return rp.ResponsesDrops(req)
 }
