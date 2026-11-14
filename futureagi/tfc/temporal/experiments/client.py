@@ -299,9 +299,7 @@ async def cancel_all_experiment_workflows_async(experiment_id: str) -> dict:
 
     # 2. Find and cancel all rerun workflows via visibility query
     rerun_prefix = f"rerun-experiment-cells-{experiment_id}-"
-    query = (
-        f'WorkflowId STARTS_WITH "{rerun_prefix}" ' f"AND ExecutionStatus = 'Running'"
-    )
+    query = f"WorkflowId STARTS_WITH \"{rerun_prefix}\" AND ExecutionStatus = 'Running'"
     try:
         async for wf_info in client.list_workflows(query=query):
             try:

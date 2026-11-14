@@ -57,9 +57,7 @@ def _require_collector():
         resp = requests.get("http://localhost:4318/", timeout=2)
         # Collector typically returns 404 or 405 on root but the socket is open
     except requests.ConnectionError:
-        pytest.skip(
-            "fi-collector not running at localhost:4318 — skipping E2E tests"
-        )
+        pytest.skip("fi-collector not running at localhost:4318 — skipping E2E tests")
 
 
 @pytest.fixture(scope="session")
@@ -278,9 +276,7 @@ class TestE2ESpanVisibleViaDjangoListSpans:
         assert response.status_code == 200
         data = response.json()
         span_ids = [s.get("id") for s in data.get("result", {}).get("data", [])]
-        assert span_id in span_ids, (
-            f"Span {span_id} not visible via list_spans_observe"
-        )
+        assert span_id in span_ids, f"Span {span_id} not visible via list_spans_observe"
 
 
 class TestE2ETraceAggregateConsistent:

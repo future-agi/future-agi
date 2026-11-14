@@ -80,7 +80,9 @@ class ReplaySessionView(ViewSet):
             project__deleted=False,
         )
 
-    @uses_db(DATABASE_FOR_REPLAY_SESSION_LIST, feature_key="feature:replay_session_list")
+    @uses_db(
+        DATABASE_FOR_REPLAY_SESSION_LIST, feature_key="feature:replay_session_list"
+    )
     def list(self, request: Request) -> Response:
         """
         List replay sessions for a project with pagination.
