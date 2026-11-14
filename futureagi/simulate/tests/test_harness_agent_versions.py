@@ -710,6 +710,10 @@ class TestCreate:
         assert _preflight(a2).status == "passed"
         settle_validations()
         assert _defaults(first, second) == [a2.id, _a1(second).id]
+        from simulate.tests.test_harness_affected_scenarios import _proved_on
+
+        # Its cases are validated on its versions, so the run sends them.
+        _proved_on(second, second.environment_version)
 
         run, _ = create_selected_harness_run(
             second,
