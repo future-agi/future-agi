@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import PropTypes from 'prop-types';
-import { Alert, Box, Button, Drawer, IconButton, MenuItem, Stack, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, TextField, Tooltip, Typography } from '@mui/material';
-import { fDateTimeUTC, fObservationAge } from 'src/utils/format-time';
+import { Alert, Box, Button, Drawer, IconButton, Link, MenuItem, Stack, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, TextField, Typography } from '@mui/material';
+import When from '../components/When';
 import Iconify from 'src/components/iconify';
 import Section from 'src/components/section';
 import EmptyState from 'src/components/empty-state';
@@ -16,12 +16,12 @@ import { ReviewState } from '../review/ReleaseReviewBody';
 import IdentityChip from '../components/IdentityChip';
 import TechnicalDetails from '../components/TechnicalDetails';
 import CapabilityNotice from '../components/CapabilityNotice';
-import { consumerStateNames, consumerNextStep, needsDeliveryVerification } from './consumerPresentation';
+import { consumerStateNames, consumerNextStep, needsDeliveryVerification, consumerReportAt } from './consumerPresentation';
 
 const mobileLabel = (label) => ({ '&::before': { content: { xs: `"${label}"`, sm: 'none' }, display: 'block', typography: 's3', color: 'text.secondary', mb: 0.5 } });
 const stageNames = { desired: 'Desired', resolved: 'Resolved', installed: 'Installed', discovered: 'Discovered', loaded: 'Delivered' };
 function Stage({ stage, versionNumbers = {} }) {
-  if (!stage) return <StatusBadge status="draft" label="Not observed" />;
+  if (!stage) return <Typography variant="s3" color="text.secondary">Waiting for first report</Typography>;
   return versionNumbers[stage.versionId] !== undefined ? <Typography variant="s1">v{versionNumbers[stage.versionId]}</Typography> : <IdentityChip label="Release" kind="id" value={stage.versionId} />;
 }
 Stage.propTypes = { stage: PropTypes.object, versionNumbers: PropTypes.object };
@@ -35,8 +35,8 @@ function ConsumerRows({ data, windowDays, onWindowChange, onPageChange, versionN
   const clear = () => { setSearch(''); setStatus('all'); };
   const missing = data.results.filter(needsDeliveryVerification).length;
   return <Stack spacing={1.5} sx={{ minWidth: 0 }}>
-    <Typography variant="s3" color="text.secondary"><Tooltip title={data.asOf || "Time not reported"}><Box component="span" tabIndex={0}>As of {fDateTimeUTC(data.asOf)}</Box></Tooltip>. Only declared consumers are shown. Installation and fetching do not prove delivery.</Typography>
-    {missing > 0 && <Alert severity="warning">{missing} of {data.results.length} consumers still need delivery verification.</Alert>}
+    <Typography variant="s1" color="text.secondary">{missing > 0 ? `${missing} of ${data.results.length} connected ${data.results.length === 1 ? 'consumer' : 'consumers'} ${missing === 1 ? 'needs' : 'need'} a delivery report to confirm the version received.` : 'Connected consumers report the version they receive; delivery does not prove use.'} <Link href="https://docs.futureagi.com/docs/skills/rollout-recovery" target="_blank" rel="noopener noreferrer">How apps report</Link></Typography>
+    <Typography variant="s3" color="text.secondary">As of <When value={data.asOf} fallback="Time not reported" /></Typography>
     {data.results.length > 0 && registrationAction}
     <ListToolbar sx={{ flexWrap: 'wrap', gap: 1 }}>
       <FormSearchField label="Search consumers" placeholder="Search consumers" searchQuery={search} onChange={(event) => setSearch(event.target.value)} sx={{ minWidth: 0 }} />
@@ -52,13 +52,14 @@ function ConsumerRows({ data, windowDays, onWindowChange, onPageChange, versionN
     {!data.results.length ? <EmptyState variant="first-run" title="No declared consumers" description={emptyDescription} action={registrationAction} />
       : !rows.length ? <EmptyState variant="no-results" title="No consumers match these filters" onClearFilters={clear} />
         : <TableContainer sx={{ maxWidth: 1 }}><Table size="small" aria-label="Context delivery observations">
-          <TableHead sx={{ display: { xs: 'none', sm: 'table-header-group' } }}><TableRow sx={{ height: TABLE_HEADER_HEIGHT.default }}>{['Consumer', 'Target release', 'Last delivered', 'Verification', 'Last report', 'Inspect'].map((name) => <TableCell key={name}>{name}</TableCell>)}</TableRow></TableHead>
+          <TableHead sx={{ display: { xs: 'none', sm: 'table-header-group' } }}><TableRow sx={{ height: TABLE_HEADER_HEIGHT.default }}>{['Consumer', 'Kind', 'Target release', 'Last delivered', 'Verification', 'Last report', 'Inspect'].map((name) => <TableCell key={name}>{name}</TableCell>)}</TableRow></TableHead>
           <TableBody>{rows.map((row) => <TableRow key={row.binding.id} hover sx={{ height: { xs: 'auto', sm: ROW_HEIGHT.default }, display: { xs: 'grid', sm: 'table-row' }, gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr) auto', py: { xs: 1, sm: 0 }, '& > td': { borderBottom: { xs: 0, sm: undefined } } }}>
             <TableCell sx={{ gridColumn: '1 / 3' }}><Button color="inherit" sx={{ px: 0, minWidth: 0, justifyContent: 'flex-start', textAlign: 'left', overflowWrap: 'anywhere', whiteSpace: 'normal', maxWidth: 1 }} onClick={() => setSelectedId(row.binding.id)}>{row.binding.name}</Button><Typography component="div" variant="s3">{row.binding.selector.version ? `Pinned v${row.binding.selector.version}` : `Follow ${row.binding.selector.label}`}</Typography></TableCell>
-            <TableCell sx={{ ...mobileLabel('Target release'), gridRow: 2 }}><Stage stage={row.desired} versionNumbers={versionNumbers} /></TableCell>
-            <TableCell sx={{ ...mobileLabel('Last delivered'), gridRow: 2 }}><Stage stage={row.loaded} versionNumbers={versionNumbers} /></TableCell>
+            <TableCell sx={{ ...mobileLabel('Kind'), gridColumn: '1 / -1', gridRow: 4 }}><Typography variant="s1">{row.binding.kind === 'runtime' ? 'App' : row.binding.kind === 'repository' ? 'Repository' : 'Unknown'}</Typography></TableCell>
+            <TableCell sx={{ ...mobileLabel('Target release'), gridRow: 2 }}>{row.desired ? <Stage stage={row.desired} versionNumbers={versionNumbers} /> : <Typography variant="s3" color="text.secondary">—</Typography>}</TableCell>
+            <TableCell sx={{ ...mobileLabel('Last delivered'), gridRow: 2 }}>{row.loaded ? <Stage stage={row.loaded} versionNumbers={versionNumbers} /> : <Typography variant="s3" color="text.secondary">—</Typography>}</TableCell>
             <TableCell sx={{ gridColumn: '1 / 4', gridRow: 3 }}><Stack spacing={0.5} alignItems="flex-start">{row.states.map((state) => <StatusBadge key={state} status={state} label={consumerStateNames[state] ?? 'Unknown'} />)}</Stack></TableCell>
-            <TableCell sx={{ display: { xs: 'none', sm: 'table-cell' } }}><Typography variant="s3">{fObservationAge(row.observationAgeSeconds)}</Typography></TableCell>
+            <TableCell sx={{ display: { xs: 'none', sm: 'table-cell' } }}><Typography variant="s3"><When value={consumerReportAt(row, data.asOf)} fallback="Waiting for first report" /></Typography></TableCell>
             <TableCell sx={{ gridColumn: 3, gridRow: 1 }}><Button size="small" variant="outlined" aria-label={`Inspect ${row.binding.name}`} onClick={() => setSelectedId(row.binding.id)}>Inspect</Button></TableCell>
           </TableRow>)}</TableBody>
         </Table></TableContainer>}
@@ -73,7 +74,7 @@ function ConsumerRows({ data, windowDays, onWindowChange, onPageChange, versionN
           <Alert severity="info"><Typography variant="s3" component="div">Next step</Typography><Typography variant="s1" component="div">{consumerNextStep(selected.nextActionCode)}</Typography></Alert>
           <Stack component="ol" spacing={0} sx={{ listStyle: 'none', m: 0, p: 0, border: 1, borderColor: 'divider', borderRadius: 1, overflow: 'hidden' }}>
             {Object.entries(stageNames).map(([key, label]) => <Box component="li" key={key} sx={{ display: 'grid', gridTemplateColumns: '11ch minmax(0, 1fr)', gap: 1, p: 1.5, borderBottom: 1, borderColor: 'divider', '&:last-child': { borderBottom: 0 } }}>
-              <Typography variant="m3">{label}</Typography><Stack spacing={0.5} alignItems="flex-start"><Stage stage={selected[key]} versionNumbers={versionNumbers} />{selected[key] && <Typography variant="s3" color="text.secondary" title={selected[key].observedAt}>{fDateTimeUTC(selected[key].observedAt)}</Typography>}</Stack>
+              <Typography variant="m3">{label}</Typography><Stack spacing={0.5} alignItems="flex-start"><Stage stage={selected[key]} versionNumbers={versionNumbers} />{selected[key] && <Typography variant="s3" color="text.secondary"><When value={selected[key].observedAt} /></Typography>}</Stack>
             </Box>)}
           </Stack>
           <TechnicalDetails><Stack spacing={1}><IdentityChip label="Consumer ID" kind="id" value={selected.binding.id} /><Typography component="code" variant="s3">{selected.nextActionCode ?? 'Unknown'}</Typography>

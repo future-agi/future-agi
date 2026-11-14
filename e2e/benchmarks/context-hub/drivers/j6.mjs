@@ -300,7 +300,7 @@ export async function createDriver({ jobId, runId, registration }) {
             await expect(block).toContainText(added);
           }
         }, decision);
-        await operator.click(authorPage.getByRole('checkbox', { name: /I reviewed the complete v1 closure/ }), 'acknowledge-complete-review');
+        await operator.click(authorPage.getByRole('checkbox', { name: /I reviewed everything v1 contains/ }), 'acknowledge-complete-review');
         await shot(authorPage, '02-closure-review');
         await record('eligible-closure', closure);
         ledger.stage({ step: stage.id, phase: stage.phase, source: 'api', artifactHash: retiredHash, actionSequences: [], decision });
@@ -350,8 +350,10 @@ export async function createDriver({ jobId, runId, registration }) {
         // The view shows the release revision the review was made against; wait for it to match the moved release
         // (a change after the review restarts it), so no later poll can restart the new review.
         const movedRevision = (await read(`${context}release-state/`, signal)).release_revision;
+        await expect(authorPage.getByText(`Reviewed against release revision ${movedRevision}.`, { exact: false })).toBeAttached({ timeout: 60_000 });
+        await operator.click(authorPage.getByRole('button', { name: 'Request details', exact: true }), 'inspect-current-request-revision');
         await expect(authorPage.getByText(`Reviewed against release revision ${movedRevision}.`, { exact: false })).toBeVisible({ timeout: 60_000 });
-        const reack = authorPage.getByRole('checkbox', { name: /I reviewed the complete v1 closure/ });
+        const reack = authorPage.getByRole('checkbox', { name: /I reviewed everything v1 contains/ });
         await expect(reack).toBeEnabled({ timeout: 30_000 });
         await expect(reack).not.toBeChecked();
         await operator.click(reack, 'acknowledge-complete-review-again');

@@ -11,6 +11,8 @@ import StatusBadge from 'src/components/status-badge';
 import Section from 'src/components/section';
 import { ConfirmDialog } from 'src/components/custom-dialog';
 import { ROW_HEIGHT, TABLE_HEADER_HEIGHT } from 'src/theme/sizes';
+import CapabilityNotice from '../components/CapabilityNotice';
+import RolloutInstructions from './RolloutInstructions';
 import ContextCampaignTargetDrawer from './ContextCampaignTargetDrawer';
 
 const decisionLabels = { pending: 'Not decided', include: 'Included', exclude: 'Excluded' };
@@ -43,6 +45,18 @@ export default function ContextCampaignReview({ campaign, targets, onAuthorize, 
   const needsReview = (target) => campaign.status === 'draft' ? !reviewedTarget(target) : target.decision === 'pending';
   const visible = targets.filter((target) => target.name.toLowerCase().includes(search.trim().toLowerCase()) && (filter === 'all' || (filter === 'pending' && needsReview(target)) || (filter === 'blocked' && blocked(target)) || (filter === 'excluded' && decisionFor(target) === 'exclude')));
   const outstanding = targets.filter(needsReview);
+  const missingPlans = targets.filter((target) => !target.plan).length;
+  const blockedCount = targets.filter(blocked).length;
+  const planVersion = new Set(targets.map((target) => target.desiredVersion)).size === 1 ? targets[0]?.desiredVersion : undefined;
+  const conclusion = !complete ? 'Waiting for the complete repository inventory. Nothing can be authorized yet.'
+    : !campaign.enabled ? 'Repository rollouts are off. Existing records stay readable.'
+      : campaign.status === 'settled' ? 'Repository work has ended. Check each pull request and app delivery report before calling the rollout complete.'
+        : campaign.status === 'cancelled' ? 'Unstarted work is cancelled. Existing pull requests and receipts are kept.'
+          : campaign.status === 'paused' ? 'New repository work is paused. Review the reason before resuming unchanged plans.'
+            : campaign.status === 'authorized' ? 'The reviewed plans are authorized. Open each repository to follow pull request progress.'
+              : campaign.status === 'running' ? 'Repository work is running. Open each repository to check its pull request and delivery reports.'
+                : missingPlans === targets.length && targets.length > 0 ? `All ${targets.length} ${targets.length === 1 ? 'repository is' : 'repositories are'} blocked: no local plan yet. Run the plan command in each repository, then review it here.`
+                  : `${outstanding.length} ${outstanding.length === 1 ? 'repository needs' : 'repositories need'} review${blockedCount ? `; ${blockedCount} blocked` : ''}. Open each repository to review its changes.`;
   const nextTarget = outstanding.find((target) => target.bindingId !== selectedTarget);
   const selected = targets.find((target) => target.bindingId === selectedTarget);
   const run = async (operation) => {
@@ -56,9 +70,11 @@ export default function ContextCampaignReview({ campaign, targets, onAuthorize, 
   };
   return <Stack spacing={1.5} sx={{ minWidth: 0 }}>
     <ObjectHeader crumbs={[{ label: 'Repository rollouts', to: '/dashboard/skills/contexts/rollouts' }, { label: campaign.name }]} title={campaign.name} purpose={campaign.status === 'settled' ? 'Repository work finished · delivery tracked separately' : 'Review repository changes'} badge={<StatusBadge status={campaign.status} />} />
+    <Typography variant="s1" role="status">{conclusion}</Typography>
+    {campaign.enabled && campaign.status === 'draft' && missingPlans > 0 && <RolloutInstructions version={planVersion} />}
     <Typography variant="s1">{campaign.targetCount} targets · {outstanding.length} need review · <Link component="button" type="button" variant="s1" color="inherit" onClick={() => setFilter('blocked')}>{targets.filter(blocked).length} blocked</Link> · {targets.filter((target) => decisionFor(target) === 'exclude').length} excluded</Typography>
-    <Typography variant="s3">Revision {campaign.revision}</Typography><TechnicalDetails title="Rollout details">{campaign.manifestDigest ? <IdentityChip label="Inventory fingerprint" value={campaign.manifestDigest} /> : <Typography variant="s3">Waiting for local plans</Typography>}</TechnicalDetails>
-    {!campaign.enabled && <Alert severity="info">Campaign execution is disabled. No repository writes can be authorized or claimed.</Alert>}
+    <TechnicalDetails title="Rollout details"><Typography variant="s3">Revision {campaign.revision}</Typography>{campaign.manifestDigest ? <IdentityChip label="Inventory fingerprint" value={campaign.manifestDigest} /> : <Typography variant="s3">Waiting for local plans</Typography>}</TechnicalDetails>
+    {!campaign.enabled && <CapabilityNotice title="Repository rollouts are off" description="Rollouts are turned on in your deployment settings. Ask a workspace admin to check the setting; existing records remain readable." details="SKILLS_CONTEXT_CAMPAIGNS_ENABLED controls repository writes. No writes can be authorized or claimed while it is off." />}
     {!campaign.canAuthorize && <Alert severity="info">A current workspace administrator must authorize these repository writes.</Alert>}
     {!complete && <Alert severity="warning">The complete target inventory has not loaded. Authorization is unavailable.</Alert>}
     {stale && <Alert severity="warning" action={<Button color="inherit" size="small" onClick={reset}>Review changed state</Button>}>This review is stale. No preconditions were refreshed automatically.</Alert>}
@@ -85,24 +101,24 @@ export default function ContextCampaignReview({ campaign, targets, onAuthorize, 
         <TableCell sx={{ gridColumn: '1 / -1' }}><Typography variant="s3">{fileCount(target.plan)}</Typography>{target.plan?.localReviewRequired && <Typography component="div" variant="s3">Local instructions need review</Typography>}{target.plan?.blockers.map((blocker) => <Typography component="div" variant="s3" key={blocker}>{blocker}</Typography>)}</TableCell>
         <TableCell sx={{ display: { xs: 'none', md: 'table-cell' } }}><StatusBadge status={target.prState} /></TableCell>
         <TableCell><Stack spacing={0.5} alignItems="flex-start">{blocked(target) && <StatusBadge status="warning" label={blockedLabel(target)} />}{(!blocked(target) || decisionFor(target) !== 'pending') && <StatusBadge status="draft" label={decisionLabels[decisionFor(target)] || 'Not decided'} />}</Stack></TableCell>
-        <TableCell><Button variant="outlined" size="small" onClick={(event) => { event.stopPropagation(); onSelectTarget(target.bindingId); }} aria-label={`Review target ${target.name}`}>Review</Button></TableCell>
+        <TableCell><Button variant="outlined" size="small" onClick={(event) => { event.stopPropagation(); onSelectTarget(target.bindingId); }} aria-label={`Review target ${target.name}`}>Open</Button></TableCell>
       </TableRow>)}</TableBody>
     </Table></TableContainer>
-    <Alert severity="info">PR open → merged → installed → delivered are independent observations. Unobserved consumers remain unknown. A rollout does not advance deliberate pins.</Alert>
-    <TextField label="Reason for campaign change" size="small" fullWidth value={reason} onChange={(event) => setReason(event.target.value)} inputProps={{ maxLength: 500 }} helperText="Required before pausing, resuming or cancelling. Existing PRs are never changed." />
+    <Typography variant="s3" color="text.secondary">A merged pull request does not mean apps are updated. Check their delivery reports; pinned versions stay unchanged.</Typography><TechnicalDetails title="Delivery details"><Typography variant="s3">PR open → merged → installed → delivered are independent observations. Unobserved consumers remain unknown. A rollout does not advance deliberate pins.</Typography></TechnicalDetails>
+    <TextField label="Reason for rollout change" size="small" fullWidth value={reason} onChange={(event) => setReason(event.target.value)} inputProps={{ maxLength: 500 }} helperText="Required before pausing, resuming or cancelling. Existing PRs are never changed." />
     <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap">
       {['authorized', 'running'].includes(campaign.status) && <Button disabled={!campaign.canAuthorize || pending} onClick={() => setConfirm('pause')}>Pause new claims</Button>}
       {campaign.status === 'paused' && <Button disabled={!campaign.canAuthorize || !campaign.enabled || pending} onClick={() => setConfirm('resume')}>Resume unchanged plans</Button>}
       {!['cancelled', 'settled'].includes(campaign.status) && <Button disabled={!campaign.canAuthorize || pending} onClick={() => setConfirm('cancel')}>Cancel unstarted work</Button>}
       <Button disabled={pending || !campaign.manifestDigest} onClick={() => run(() => onRollback({ revision: campaign.revision }))}>Preview reverse changes</Button>
     </Stack>
-    {rollback && <Section title="Reverse-plan review" description="This preview is not executable. Reinspect each repository, verify the retained previous lock and create a new campaign linked to this one.">
+    {rollback && <Section title="Reverse-plan review" description="This preview is not executable. Reinspect each repository, verify the retained previous lock and create a new rollout linked to this one.">
       {rollback.targets.map((target) => <Box key={target.bindingId} sx={{ py: 1 }}><Typography variant="s3">{targets.find((row) => row.bindingId === target.bindingId)?.name || 'Repository target'} · {target.reverseChanges.length} reverse changes</Typography><TechnicalDetails><IdentityChip label="Target ID" kind="id" value={target.bindingId} /><IdentityChip label="Previous lock" value={target.previousLockDigest || 'No previous lock recorded'} /></TechnicalDetails><Typography component="div" variant="s3">{target.blockers.join(', ')}</Typography></Box>)}
     </Section>}
     <ContextCampaignTargetDrawer target={selected} open={Boolean(selected)} onClose={() => onSelectTarget(null)}
       decision={selected ? (campaign.status === 'draft' ? chosen(selected) : { decision: selected.decision, reason: selected.reason }) : null}
       onDecision={(decision) => setDecisions((old) => ({ ...old, [selected.bindingId]: decision }))} editable={editable} observations={observations} onNext={nextTarget ? () => onSelectTarget(nextTarget.bindingId) : undefined} />
-    <ConfirmDialog open={Boolean(confirm)} onClose={() => setConfirm(null)} title={confirm === 'authorize' ? 'Authorize exact repository patches?' : `${confirm || 'Change'} campaign?`}
+    <ConfirmDialog open={Boolean(confirm)} onClose={() => setConfirm(null)} title={confirm === 'authorize' ? 'Authorize exact repository patches?' : `${confirm || 'Change'} rollout?`}
       content={confirm === 'authorize' ? 'Only included plans in this reviewed manifest may create pull requests. This does not authorize merges or deployments.' : 'In-flight Git requests may still complete. Existing branches, PRs and receipts are retained.'}
       action={<Button color="primary" variant="contained" disabled={pending || (confirm === 'authorize' ? (!editable || !ready || !acknowledged) : !reason.trim())} onClick={() => run(() => confirm === 'authorize' ? onAuthorize({ revision: basis.revision, expectedManifestDigest: basis.digest, decisions: targets.map(chosen), acknowledgeRepositoryWrites: true }) : onStatus({ action: confirm, revision: campaign.revision, reason }))}>{confirm === 'authorize' ? 'Authorize exact plans' : 'Confirm change'}</Button>}
     />

@@ -29,11 +29,11 @@ function CreateInventory({ inventory, submission, onSubmission, onClose, onCreat
     try { const result = await create.mutateAsync(input); onCreated(result.id); }
     catch { /* The original input and operation key remain available for retry. */ }
   };
-  return <ModalWrapper open onClose={onClose} title="Review fixed repository inventory" actionBtnTitle={submission ? 'Recover original submission' : 'Create draft campaign'} onSubmit={submit} isValid={valid && Boolean(name.trim())} isLoading={create.isPending}>
-    <TextField label="Campaign name" value={name} disabled={Boolean(submission)} onChange={(event) => setName(event.target.value)} inputProps={{ maxLength: 120 }} size="small" />
+  return <ModalWrapper open onClose={onClose} title="Review fixed repository inventory" actionBtnTitle={submission ? 'Recover original submission' : 'Create draft rollout'} onSubmit={submit} isValid={valid && Boolean(name.trim())} isLoading={create.isPending}>
+    <TextField label="Rollout name" value={name} disabled={Boolean(submission)} onChange={(event) => setName(event.target.value)} inputProps={{ maxLength: 120 }} size="small" />
     <Alert severity="info">This creates a draft with exactly {inventory.targets.length} targets. Each repository still needs a local plan and explicit authorization before a PR can be created.</Alert>
     <Stack spacing={1} sx={{ maxHeight: 320, overflow: 'auto' }}>{inventory.targets.map((target) => <Stack key={target.bindingId} direction="row" spacing={1} alignItems="center"><Typography variant="s3">v{target.version}</Typography><IdentityChip label="Target ID" kind="id" value={target.bindingId} /></Stack>)}</Stack>
-    {create.isError && <Alert severity="error">Creation was not confirmed. Retry this original submission to recover its receipt; do not create a new campaign with a fresh key.</Alert>}
+    {create.isError && <Alert severity="error">Creation was not confirmed. Retry this original submission to recover its receipt; do not create a new rollout with a fresh key.</Alert>}
   </ModalWrapper>;
 }
 CreateInventory.propTypes = { inventory: PropTypes.object.isRequired, submission: PropTypes.object, onSubmission: PropTypes.func.isRequired, onClose: PropTypes.func.isRequired, onCreated: PropTypes.func.isRequired };
@@ -66,9 +66,10 @@ function CampaignRoute() {
       onSubmission={(input) => navigate(location.pathname, { replace: true, state: { ...location.state, campaignSubmission: input } })}
       onClose={() => setCreating(false)} onCreated={back} />}
   </>;
-  if (state === 'loading' || detail.isLoading || targets.isLoading) return <ContentSkeleton sx={{ '& .MuiSkeleton-root': { bgcolor: 'action.selected' } }} variant="rows" rows={6} label="Loading exact campaign review" />;
-  if (state === 'error' || state === 'forbidden' || detail.isError || targets.isError) return <ErrorState title={state === 'forbidden' ? 'This rollout is not available to you' : 'Could not load the complete rollout'} onRetry={() => { detail.refetch(); targets.refetch(); }} />;
-  if (!detail.data || !targets.data) return <Alert severity="info">Select an authenticated workspace to inspect this campaign.</Alert>;
+  if (state === 'loading' || detail.isLoading || targets.isLoading) return <ContentSkeleton sx={{ '& .MuiSkeleton-root': { bgcolor: 'action.selected' } }} variant="rows" rows={6} label="Loading rollout review" />;
+  if (['denied', 'forbidden'].includes(state) || detail.error?.statusCode === 403 || targets.error?.statusCode === 403) return <CapabilityNotice title="Rollout access" description="You don't have access to repository rollouts. Ask a workspace admin." />;
+  if (state === 'error' || detail.isError || targets.isError) return <ErrorState title="Couldn't load rollouts." onRetry={() => { detail.refetch(); targets.refetch(); }} />;
+  if (!detail.data || !targets.data) return <Alert severity="info">Select an authenticated workspace to inspect this rollout.</Alert>;
   return <ContextCampaignReview campaign={detail.data} targets={targets.data.results}
     onAuthorize={authorize.mutateAsync} onStatus={status.mutateAsync} onRollback={rollback.mutateAsync}
     pending={authorize.isPending || status.isPending || rollback.isPending}
@@ -80,7 +81,7 @@ export default function ContextCampaignPage() {
   return <><Helmet><title>Repository rollouts · Skills</title></Helmet><Stack spacing={1.5} sx={{ minWidth: 0, px: { xs: 2, md: 3 }, py: 1.5 }}>
     {campaignsContractReady() ? <CampaignRoute key={access.identity} /> : <>
       <PageHeader title="Repository rollouts" description="Fixed repository plans with separate delivery observations." />
-      <CapabilityNotice title="Repository rollouts are off" description="New repository changes can't be started in this workspace. Existing rollout records stay readable." />
+      <CapabilityNotice title="Repository rollouts are off" description="New repository changes can't be started. Rollouts are turned on in your deployment settings. Ask a workspace admin to check the setting; existing records stay readable." details="SKILLS_CONTEXT_CAMPAIGNS_ENABLED is a deployment environment setting, not a workspace toggle." />
     </>}
   </Stack></>;
 }

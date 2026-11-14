@@ -25,3 +25,12 @@ export const humanizeCode = (code) => {
 // Completeness describes the bounded inventory read; unknown also includes missing
 // runtime reports, incomplete delivery, later failures and lost authority.
 export const needsDeliveryVerification = (row) => row.observationsComplete === false || row.states.includes('unknown');
+
+// The API reports age relative to its snapshot, not the viewer's current clock.
+// Missing, negative and out-of-range values must not invent a report timestamp.
+export function consumerReportAt(row, asOf) {
+  const age = row.observationAgeSeconds;
+  if (!Number.isFinite(age) || age < 0 || !asOf) return null;
+  const date = new Date(Date.parse(asOf) - age * 1000);
+  return Number.isFinite(date.getTime()) ? date.toISOString() : null;
+}

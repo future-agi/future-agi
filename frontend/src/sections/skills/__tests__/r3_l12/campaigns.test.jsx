@@ -85,7 +85,7 @@ describe('exact repository review', () => {
   it('collects a pause reason before the confirmation focus trap opens', async () => {
     const onStatus = vi.fn().mockResolvedValue({});
     render(<Harness value={{ ...campaign, status: 'running' }} onStatus={onStatus} />);
-    fireEvent.change(screen.getByLabelText('Reason for campaign change'), { target: { value: 'Inspect uncertain PR response' } });
+    fireEvent.change(screen.getByLabelText('Reason for rollout change'), { target: { value: 'Inspect uncertain PR response' } });
     fireEvent.click(screen.getByRole('button', { name: 'Pause new claims' }));
     fireEvent.click(screen.getByRole('button', { name: 'Confirm change' }));
     await waitFor(() => expect(onStatus).toHaveBeenCalledWith({ action: 'pause', revision: 3, reason: 'Inspect uncertain PR response' }));
@@ -120,7 +120,7 @@ describe('independent observations and availability', () => {
   });
   it.each(['loading', 'empty', 'error', 'forbidden'])('has a reachable %s list state', (state) => {
     render(<ContextCampaignList query={{ refetch: vi.fn() }} enabled state={state} onOpen={vi.fn()} page={1} onPageChange={vi.fn()} />);
-    const text = { loading: 'Checking rollout availability', empty: 'No repository rollouts yet', error: "Couldn't check rollout availability", forbidden: 'You cannot view these rollouts' };
+    const text = { loading: 'Checking rollout availability', empty: 'No repository rollouts yet', error: "Couldn't load rollouts.", forbidden: "You don't have access to repository rollouts. Ask a workspace admin." };
     expect(state === 'loading' ? screen.getByRole('progressbar', { name: text[state] }) : screen.getByText(text[state])).toBeInTheDocument();
   });
   it('labels a predecessor link as a follow-up and keeps same-named rollouts distinguishable', () => {
@@ -173,4 +173,31 @@ it('renders unified excerpts with the shared diff while retaining hunk boundarie
   expect(document.querySelectorAll('[data-status="added"]')).toHaveLength(2);
   expect(document.querySelectorAll('[data-status="removed"]')).toHaveLength(2);
   expect(container.querySelector('img')).toBeNull();
+});
+
+it('leads missing plans with a local command and keeps authorization blocked', () => {
+  render(<Harness targets={[{ ...target, plan: null }]} />);
+  expect(screen.getByText(/All 1 repository is blocked: no local plan yet/)).toBeVisible();
+  expect(screen.getByRole('button', { name: 'Authorize reviewed PR plans' })).toBeDisabled();
+  fireEvent.click(screen.getByRole('button', { name: 'Review target synthetic-repository' }));
+  expect(within(screen.getByRole('dialog')).getByText(/python -m fi.context plan --name/)).toBeVisible();
+  expect(within(screen.getByRole('dialog')).getByRole('link', { name: 'Plan and submit repository changes' })).toHaveAttribute('href', 'https://docs.futureagi.com/docs/skills/campaigns');
+});
+
+it('provides an inventory command instead of a dead-end empty state', () => {
+  render(<ContextCampaignList query={{ data: { count: 0, results: [] } }} enabled onOpen={vi.fn()} page={1} onPageChange={vi.fn()} />);
+  expect(screen.getByText('python -m fi.context inventory --repositories repositories.json')).toBeVisible();
+  expect(screen.getByRole('link', { name: 'Prepare a repository inventory' })).toBeVisible();
+});
+
+it.each([
+  ['cancelled', 'Unstarted work is cancelled. Existing pull requests and receipts are kept.'],
+  ['settled', 'Repository work has ended. Check each pull request and app delivery report before calling the rollout complete.'],
+  ['paused', 'New repository work is paused. Review the reason before resuming unchanged plans.'],
+  ['authorized', 'The reviewed plans are authorized. Open each repository to follow pull request progress.'],
+  ['running', 'Repository work is running. Open each repository to check its pull request and delivery reports.'],
+])('gives %s its own conclusion instead of restarting the missing-plan task', (status, conclusion) => {
+  render(<Harness value={{ ...campaign, status }} targets={[{ ...target, plan: null }]} />);
+  expect(screen.getByRole('status')).toHaveTextContent(conclusion);
+  expect(screen.queryByText(/python -m fi.context plan --name/)).toBeNull();
 });
