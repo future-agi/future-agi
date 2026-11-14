@@ -16,7 +16,7 @@ import os
 from datetime import datetime
 
 import structlog
-from redis.exceptions import RedisError
+from redis.exceptions import NoScriptError, RedisError
 
 from ee.usage.schemas.events import CheckResult, UpgradeCTA
 from ee.usage.services.config import BillingConfig
@@ -37,6 +37,16 @@ def _get_lua_sha() -> str:
         with open(script_path) as f:
             _lua_sha = get_redis().script_load(f.read())
     return _lua_sha
+
+
+def _eval_check_quota(usage_key: str, limit: str, amount: str):
+    """Run the check script, reloading it once if Redis has lost it."""
+    global _lua_sha
+    try:
+        return get_redis().evalsha(_get_lua_sha(), 1, usage_key, limit, amount)
+    except NoScriptError:
+        _lua_sha = None
+        return get_redis().evalsha(_get_lua_sha(), 1, usage_key, limit, amount)
 
 
 def _get_current_period() -> str:
@@ -177,12 +187,8 @@ def check_usage(org_id: str, event_type: str, amount: float = 0) -> CheckResult:
 
         if free_allowance_native > 0:
             usage_key = f"usage:{org_id}:{dimension}:{period}"
-            result = get_redis().evalsha(
-                _get_lua_sha(),
-                1,
-                usage_key,
-                str(free_allowance_native),
-                str(resolved_amount),
+            result = _eval_check_quota(
+                usage_key, str(free_allowance_native), str(resolved_amount)
             )
             current = float(result)
 
