@@ -1486,6 +1486,29 @@ class FrontendEntrypoint(unittest.TestCase):
                 "[entrypoint] TLS file missing, empty or unreadable", result.stderr
             )
 
+    def test_refuses_out_of_range_numbers_busybox_cannot_compare(self):
+        with tempfile.TemporaryDirectory() as directory:
+            cert = Path(directory) / "cert.pem"
+            key = Path(directory) / "key.pem"
+            cert.write_text("synthetic placeholder cert")
+            key.write_text("synthetic placeholder key")
+            tls = {
+                "FRONTEND_TLS_ENABLED": "true",
+                "FRONTEND_TLS_CERT_FILE": str(cert),
+                "FRONTEND_TLS_KEY_FILE": str(key),
+            }
+            for setting, value in (
+                ("FRONTEND_TLS_RELOAD_INTERVAL", "9" * 30),
+                ("FRONTEND_TLS_RELOAD_INTERVAL", "61"),
+                ("FRONTEND_TLS_RELOAD_INTERVAL", "0"),
+                ("FRONTEND_TLS_PORT", "9" * 30),
+                ("FRONTEND_HTTP_PORT", "65536"),
+            ):
+                with self.subTest(setting=setting, value=value):
+                    result, _ = self.run_entrypoint(**tls, **{setting: value})
+                    self.assertEqual(result.returncode, 1, result.stderr)
+                    self.assertIn(setting, result.stderr)
+
     def test_tls_only_generates_expected_nginx_directives(self):
         with tempfile.TemporaryDirectory() as directory:
             cert = Path(directory) / "cert.pem"

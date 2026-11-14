@@ -98,7 +98,7 @@ esac
 
 check_port() {
   case "$2" in
-    ''|*[!0-9]*) echo "[entrypoint] $1 must be a port from 1 to 65535" >&2; exit 1 ;;
+    ''|*[!0-9]*|??????*) echo "[entrypoint] $1 must be a port from 1 to 65535" >&2; exit 1 ;;
   esac
   if [ "$2" -lt 1 ] || [ "$2" -gt 65535 ]; then
     echo "[entrypoint] $1 must be a port from 1 to 65535" >&2
@@ -114,7 +114,7 @@ if [ "$tls_enabled" = true ]; then
     exit 1
   fi
   case "$reload_interval" in
-    ''|*[!0-9]*) echo '[entrypoint] FRONTEND_TLS_RELOAD_INTERVAL must be 1-60 seconds' >&2; exit 1 ;;
+    ''|*[!0-9]*|???*) echo '[entrypoint] FRONTEND_TLS_RELOAD_INTERVAL must be 1-60 seconds' >&2; exit 1 ;;
   esac
   if [ "$reload_interval" -lt 1 ] || [ "$reload_interval" -gt 60 ]; then
     echo '[entrypoint] FRONTEND_TLS_RELOAD_INTERVAL must be 1-60 seconds' >&2

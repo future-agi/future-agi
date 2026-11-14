@@ -112,6 +112,7 @@ refused=(
   "HTTPS-only frontend with Gateway API|frontend.tls.httpEnabled=false cannot be used with ingress.enabled or gatewayApi.enabled|--set frontend.tls.enabled=true --set frontend.tls.existingSecret=fe --set frontend.tls.httpEnabled=false --set gatewayApi.enabled=true"
   "HTTPS-only gateway without a CA bundle|agentccGateway.tls.httpEnabled=false requires global.caBundle|--set agentccGateway.tls.enabled=true --set agentccGateway.tls.existingSecret=gw --set agentccGateway.tls.httpEnabled=false"
   "HTTPS frontend with remote plain HTTP API|frontend.tls.enabled needs an HTTPS urls.api|--set frontend.tls.enabled=true --set frontend.tls.existingSecret=fe --set urls.api=http://api.example.com"
+  "HTTPS frontend with remote HTTP API, upper-case scheme|frontend.tls.enabled needs an HTTPS urls.api|--set frontend.tls.enabled=true --set frontend.tls.existingSecret=fe --set urls.api=HTTP://api.example.com"
   "recaptcha without its key|config.recaptcha needs secrets.extra.RECAPTCHA_SECRET_KEY|--set config.recaptcha=true"
   "gateway replicas without Redis|agentccGateway runs more than one replica without Redis|--set agentccGateway.replicas=2 --set agentccGateway.redis.enabled=false"
   "gateway Redis over TLS|the gateway has no Redis TLS|--set redis.mode=external --set redis.external.host=r --set redis.external.tls=true --set agentccGateway.redis.enabled=true"

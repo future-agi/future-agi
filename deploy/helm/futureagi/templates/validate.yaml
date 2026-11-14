@@ -144,7 +144,7 @@ Renders nothing when the values are consistent.
 {{- $errors = append $errors "agentccGateway.tls.httpEnabled=false requires global.caBundle.configMap or global.caBundle.secret: backend and workers call the gateway in-cluster and must trust its certificate" -}}
 {{- end -}}
 {{- $apiUrl := include "futureagi.url.api" . -}}
-{{- if and $v.frontend.tls.enabled (hasPrefix "http://" $apiUrl) (eq (include "futureagi.isLocalUrl" $apiUrl) "") -}}
+{{- if and $v.frontend.tls.enabled (hasPrefix "http://" (lower $apiUrl)) (eq (include "futureagi.isLocalUrl" $apiUrl) "") -}}
 {{- $errors = append $errors "frontend.tls.enabled needs an HTTPS urls.api: a non-local HTTP API URL causes mixed content in the dashboard" -}}
 {{- end -}}
 {{- $gwRedis := dig "redis" "enabled" "auto" $gw | toString -}}
