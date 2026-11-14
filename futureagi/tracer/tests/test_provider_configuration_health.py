@@ -321,9 +321,11 @@ def test_vapi_poll_and_every_recording_use_same_provider_key(
     assert seen == [expected] * 4
 
 
-def test_versioned_vapi_never_resurrects_plaintext_key(provider):
+def test_versioned_vapi_without_any_credential_row_keeps_the_definitions_key(provider):
+    # Versions created without a credential row must not lose imports: with no
+    # encrypted row anywhere, the definition's key is the agent's only key.
     provider.provider = "vapi"
-    agent = attach_agent(provider, api_key="obsolete-plaintext")
+    agent = attach_agent(provider, api_key="definition-plaintext")
     AgentVersion.objects.create(
         agent_definition=agent,
         organization=provider.organization,
@@ -331,7 +333,10 @@ def test_versioned_vapi_never_resurrects_plaintext_key(provider):
         commit_message="Synthetic version",
         version_number=1,
     )
-    assert VapiRecordingService._api_key_from_agent_definition(agent) is None
+    assert (
+        VapiRecordingService._api_key_from_agent_definition(agent)
+        == "definition-plaintext"
+    )
 
 
 def test_preversioned_encrypted_credential_is_authoritative(provider, monkeypatch):

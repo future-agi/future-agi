@@ -672,16 +672,27 @@ class TestApiKeyFromAgentDefinition:
         agent = self._agent(plaintext="obsolete-plaintext")
         type(agent.latest_version).credentials = PropertyMock(
             return_value=SimpleNamespace(
-                provider_type="vapi", get_api_key=lambda: "version-key"
+                provider_type="vapi",
+                get_api_key=lambda: "version-key",
+                assistant_id="row-assistant",
             )
         )
         assert (
             VapiRecordingService._api_key_from_agent_definition(agent) == "version-key"
         )
+        configuration = VapiRecordingService.configuration_from_agent_definition(agent)
+        # The row's assistant goes with the row's key, not the snapshot's.
+        assert configuration.assistant_id == "row-assistant"
 
-    def test_version_without_credentials_never_uses_plaintext(self):
-        agent = self._agent(plaintext="obsolete-plaintext")
-        assert VapiRecordingService._api_key_from_agent_definition(agent) is None
+    def test_version_without_any_credential_row_uses_the_definitions_pair(self):
+        # No version row and no legacy row: the definition's key and its own
+        # assistant together, never the version snapshot's assistant.
+        agent = self._agent(plaintext="definition-key")
+        configuration = VapiRecordingService.configuration_from_agent_definition(agent)
+        assert (configuration.api_key, configuration.assistant_id) == (
+            "definition-key",
+            "synthetic-assistant",
+        )
 
     def test_falls_back_when_no_version_or_encrypted_credentials(self):
         agent = self._agent(versioned=False, plaintext="legacy-plaintext")
@@ -707,7 +718,7 @@ class TestGetApiKeyForProject:
             latest_version=SimpleNamespace(
                 configuration_snapshot={"assistant_id": "synthetic-assistant"},
                 credentials=SimpleNamespace(
-                    provider_type="vapi", get_api_key=lambda: "abc"
+                    provider_type="vapi", get_api_key=lambda: "abc", assistant_id=""
                 ),
             ),
         )

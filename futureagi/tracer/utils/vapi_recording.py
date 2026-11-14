@@ -239,17 +239,22 @@ class VapiRecordingService:
     def configuration_from_agent_definition(
         cls, agent_def: AgentDefinition
     ) -> VapiConfiguration:
-        """Select a version once so its key cannot be paired with another assistant.
+        """Select one source for the key and the assistant, never one of each.
 
-        Activating a historical version does not restore AgentDefinition's fields.
-        Versioned assistants therefore come from that version's snapshot, never
-        the mutable definition. Only an absent version credential row permits
-        the encrypted legacy fallback for versions predating the migration.
+        The selected version's credential row holds both; in-place edits update
+        its assistant together with its key, while the version snapshot can
+        predate such edits and is only the fallback for a row without one.
+        Activating a historical version does not restore AgentDefinition's
+        fields, so a version's row is never mixed with the definition. A
+        version without a row uses the encrypted legacy row (predating the
+        migration). With no encrypted row at all, the definition's own key and
+        assistant are used together, as call listing did before versions held
+        credentials.
         """
         from simulate.models.agent_definition import ProviderCredentials
 
         version = agent_def.active_version or agent_def.latest_version
-        assistant_id = (
+        fallback_assistant = (
             (version.configuration_snapshot or {}).get("assistant_id")
             if version is not None
             else agent_def.assistant_id
@@ -263,20 +268,15 @@ class VapiRecordingService:
                 except ProviderCredentials.DoesNotExist:
                     credentials = agent_def.credentials_legacy
         except ProviderCredentials.DoesNotExist:
-            # Plaintext is allowed only for genuinely pre-versioned agents
-            # without an encrypted row, never for an incomplete version.
             return VapiConfiguration(
-                (agent_def.api_key or None) if version is None else None,
-                assistant_id,
+                agent_def.api_key or None, agent_def.assistant_id or None
             )
         if credentials.provider_type != ProviderCredentials.ProviderType.VAPI:
             return VapiConfiguration(None, None)
-        # A present row is authoritative even when empty or unreadable.
+        # A present row is authoritative for the key even when empty or unreadable.
         return VapiConfiguration(
             credentials.get_api_key() or None,
-            assistant_id
-            if version is not None
-            else (credentials.assistant_id or assistant_id),
+            credentials.assistant_id or fallback_assistant or None,
         )
 
     @classmethod

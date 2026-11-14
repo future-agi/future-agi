@@ -477,3 +477,75 @@ def test_update_serializer_synchronizes_selected_version(
     assert historical.configuration_snapshot == historical_snapshot
     assert historical_credentials.api_key == historical_key
     assert historical_credentials.assistant_id == "assistant-C"
+
+
+def test_versioned_agent_without_credentials_uses_the_definitions_pair(
+    monkeypatch, vapi_setup
+):
+    """A version with no credential row, and no legacy row, lists with the
+    definition's key and assistant together, as listing did before versions
+    held credentials. The snapshot's assistant is never paired with that key."""
+    provider, _ = vapi_setup
+    agent = AgentDefinition.objects.create(
+        agent_name="Synthetic voice agent",
+        agent_type="voice",
+        provider="vapi",
+        organization=provider.organization,
+        workspace=provider.workspace,
+        inbound=True,
+        authentication_method="api_key",
+        observability_provider=provider,
+        assistant_id="assistant-D",
+        api_key="synthetic-key-D",
+    )
+    AgentVersion.objects.create(
+        agent_definition=agent,
+        organization=provider.organization,
+        workspace=provider.workspace,
+        version_number=1,
+        status="active",
+        configuration_snapshot={"assistant_id": "assistant-S"},
+        commit_message="Synthetic fixture",
+    )
+    assert not ProviderCredentials.objects.filter(agent_version__agent_definition=agent)
+    configuration = VapiRecordingService.configuration_from_agent_definition(agent)
+    assert (configuration.api_key, configuration.assistant_id) == (
+        "synthetic-key-D",
+        "assistant-D",
+    )
+    requests_seen, imported = fake_upstream(monkeypatch, timezone.now())
+    poll(provider)
+    assert requests_seen == [("Bearer synthetic-key-D", "assistant-D")]
+    assert imported == [("call-for-assistant-D", "assistant-D")]
+    provider.refresh_from_db()
+    assert "configuration_health" not in provider.poll_state
+
+
+def test_edit_before_snapshots_tracked_assistants_uses_the_rows_pair(
+    monkeypatch, vapi_setup
+):
+    """An in-place edit made before snapshots tracked the assistant updated
+    the version's row (key and assistant) but left the snapshot behind."""
+    provider, _ = vapi_setup
+    agent, version, credentials = seed_version(provider, "assistant-A")
+    credentials.assistant_id = "assistant-B"
+    credentials.api_key = "synthetic-key-B"
+    credentials.save()
+    version.refresh_from_db()
+    assert version.configuration_snapshot["assistant_id"] == "assistant-A"
+    requests_seen, imported = fake_upstream(monkeypatch, timezone.now())
+    poll(provider)
+    assert requests_seen == [("Bearer synthetic-key-B", "assistant-B")]
+    assert imported == [("call-for-assistant-B", "assistant-B")]
+
+
+def test_row_without_an_assistant_falls_back_to_its_versions_snapshot(
+    monkeypatch, vapi_setup
+):
+    provider, _ = vapi_setup
+    agent, version, credentials = seed_version(provider, "assistant-A")
+    ProviderCredentials.objects.filter(pk=credentials.pk).update(assistant_id="")
+    requests_seen, imported = fake_upstream(monkeypatch, timezone.now())
+    poll(provider)
+    assert requests_seen == [("Bearer synthetic-key-A", "assistant-A")]
+    assert imported == [("call-for-assistant-A", "assistant-A")]
