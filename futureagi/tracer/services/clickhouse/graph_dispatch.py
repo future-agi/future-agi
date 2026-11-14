@@ -1851,6 +1851,9 @@ def _preflight_user_graph_tags(identity: dict[str, Any], analytics: Any) -> None
         end_date=end,
         include_trace_ids=False,
         all_snapshot_users=True,
+        # An aggregate eval leaf proves eval ownership, which needs a deadline.
+        started=monotonic(),
+        remaining_read_ms=getattr(analytics, "remaining_read_ms", None),
     )
     if not any(isinstance(value, EffectiveTagRelation) for value in params.values()):
         return

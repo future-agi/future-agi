@@ -1839,3 +1839,71 @@ def test_scheduled_users_graph_too_broad_tag_filter_is_a_request_error(
 def test_scheduled_users_graph_within_the_tag_budget_is_scheduled(stores, monkeypatch):
     scheduled = _scheduled_users_graph(stores, monkeypatch, leaf("tag", "wanted"))
     assert [call["namespace"] for call in scheduled] == ["observe-user-system-graph"]
+
+
+@pytest.mark.parametrize(
+    "namespace,aggregation_context",
+    [
+        ("observe-user-system-graph", None),
+        ("observe-eval-graph", "user"),
+        ("observe-annotation-graph", "user"),
+    ],
+)
+def test_scheduled_users_graph_preflight_compiles_aggregate_eval_leaves(
+    monkeypatch, namespace, aggregation_context
+):
+    """A Tag leaf next to an aggregate eval leaf (``eval_score >= 50``): the
+    Users selector proves eval ownership, which needs a request deadline. The
+    preflight must give it one, or the graph is a 500 instead of being
+    scheduled (or refused for a too-broad Tag)."""
+    from tracer.services.clickhouse import exact_graph_reads
+
+    owned = []
+
+    def owned_ids(project_id, *, started, remaining_read_ms=None):
+        assert started is not None, "eval ownership needs a request deadline"
+        owned.append(project_id)
+        return ("eval-config",)
+
+    monkeypatch.setattr(exact_graph_reads, "_owned_user_eval_config_ids", owned_ids)
+    bound = []
+    monkeypatch.setattr(
+        effective_tags,
+        "prepare_effective_tag_params",
+        lambda _execute, params, **kwargs: bound.append(kwargs) or params,
+    )
+    eval_leaf = {
+        "column_id": "eval_score",
+        "filter_config": {
+            "col_type": "SYSTEM_METRIC",
+            "filter_type": "number",
+            "filter_op": "greater_than_or_equal",
+            "filter_value": 50,
+        },
+    }
+    identity = {
+        "project_id": PROJECT,
+        "filters": filters(leaf("tag", "wanted"), eval_leaf),
+    }
+    if aggregation_context:
+        identity["aggregation_context"] = aggregation_context
+    scheduled = []
+    monkeypatch.setattr(
+        graph_dispatch,
+        "_read_or_refresh_exact_graph",
+        lambda **kwargs: scheduled.append(kwargs) or {"query_status": "pending"},
+    )
+    graph_dispatch._schedule_unaffordable_graph_read(
+        metric_id="m",
+        verdict=graph_dispatch._GraphReadUnaffordable(None),
+        identity=identity,
+        pending_payload={"query_status": "pending"},
+        refresh=False,
+        organization_id="org-1",
+        workspace_id=None,
+        namespace=namespace,
+        analytics=SimpleNamespace(execute_ch_query=None),
+    )
+    assert owned == [PROJECT]
+    assert bound and bound[0]["allow_window_scan"] and bound[0]["window_overlay"]
+    assert [call["namespace"] for call in scheduled] == [namespace]
