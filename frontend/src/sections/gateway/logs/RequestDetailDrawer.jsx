@@ -23,6 +23,7 @@ import {
   Tooltip,
 } from "@mui/material";
 import Section from "src/components/section";
+import StatusBadge from "src/components/status-badge";
 import { LoadingScreen } from "src/components/loading-screen";
 import Iconify from "src/components/iconify";
 import useRequestDetail from "./hooks/useRequestDetail";
@@ -395,10 +396,24 @@ function GuardrailsTab({ log }) {
     );
   }
 
+  const monitorOnly = checks.every((entry) => entry.mode === "monitor");
+  const outcomeLabels = {
+    blocked: "Blocked",
+    redacted: "Redacted",
+    warned: "Warned",
+    logged: "Logged",
+    would_block: "Would block",
+    would_redact: "Would redact",
+    would_warn: "Would warn",
+  };
+
   return (
     <Stack spacing={2} p={2}>
+      {monitorOnly && (
+        <Alert severity="info">Monitor only, request not changed</Alert>
+      )}
       {/* Overall action banner */}
-      {overallAction && (
+      {!monitorOnly && overallAction && (
         <Alert
           severity={overallAction === "block" ? "error" : "warning"}
           icon={
@@ -429,13 +444,37 @@ function GuardrailsTab({ log }) {
               justifyContent="space-between"
             >
               <Typography variant="subtitle2">{gr.name}</Typography>
-              <Chip
-                label={gr.action}
-                size="small"
-                color={gr.action === "block" ? "error" : "warning"}
-                variant="outlined"
+              <StatusBadge
+                status={gr.outcome || gr.action}
+                label={outcomeLabels[gr.outcome] || gr.action}
+                role={
+                  gr.outcome?.startsWith("would_")
+                    ? "info"
+                    : gr.action === "block"
+                      ? "danger"
+                      : "neutral"
+                }
               />
             </Stack>
+            {(gr.policy_name || gr.policy_scope || gr.mode) && (
+              <Stack direction="row" alignItems="center" spacing={1}>
+                <Typography variant="s1" color="text.secondary">
+                  {gr.policy_name ||
+                    (gr.policy_scope === "org"
+                      ? "Organization guardrails"
+                      : "Key policy")}
+                  {gr.policy_scope &&
+                    ` · ${gr.policy_scope === "org" ? "Org" : "Key"}`}
+                </Typography>
+                {gr.mode && (
+                  <StatusBadge
+                    status={gr.mode}
+                    label={gr.mode === "monitor" ? "Monitor" : "Enforce"}
+                    role={gr.mode === "monitor" ? "info" : "warning"}
+                  />
+                )}
+              </Stack>
+            )}
             {(gr.score != null || gr.confidence != null) && (
               <Typography variant="body2" color="text.secondary">
                 Score: {gr.score ?? gr.confidence}
@@ -637,7 +676,8 @@ const RequestDetailDrawer = ({ logId, open, onClose }) => {
       {!isLoading && log && (
         <>
           <Box sx={{ px: 2, borderBottom: 1, borderColor: "divider" }}>
-            <Tabs sx={{ boxShadow: "none" }}
+            <Tabs
+              sx={{ boxShadow: "none" }}
               value={activeTab}
               onChange={(_e, v) => setActiveTab(v)}
               variant="scrollable"

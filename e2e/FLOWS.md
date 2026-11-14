@@ -1652,6 +1652,31 @@
 - the gateway refuses the local webhook outage before opt-in and after revocation, and returns the unique mock echo only while opted in
 - an invalid boolean is refused without creating a configuration version
 
+### GW-E2E-007 — an admin applies a guardrail policy to one gateway key, first monitoring and then enforcing it
+
+**Goal:** An admin rolls a guardrail out to a single API key: monitor it first, then enforce it, without affecting other keys or weakening org-wide guardrails
+
+**Spec:** `flows/gateway/key-guardrail-policy.spec.ts:34`
+
+**Tags:** —
+
+**User steps:**
+
+1. seed a local mock provider and two gateway keys in an organization of this test
+2. open Guardrails Policies, create a Secret Detection block policy for key A in Monitor mode, picking the key by name; the dialog offers no Org-wide scope
+3. a prompt with a fake AWS key sent with key A gets the unchanged echo; key B also gets it
+4. switch the policy to Enforce in the dialog; key A is refused with content_blocked and key B still gets the echo
+5. add an org-wide Secret Detection block and set the key policy back to Monitor; key A is still refused
+6. create the documented key policy body through the API; an unknown key ID is refused without creating a policy
+
+**Backend state verified:**
+
+- the gateway admin config for the organization carries the key policy with key A's gateway key ID and the mode the UI saved
+- key A's monitored request log records the policy name, mode monitor and outcome would_block, with no triggered response header; key B's log has no guardrail entry
+- with the policy enforced, key A gets 403 content_blocked and its log records outcome blocked; key B gets 200
+- an org-wide block wins over a key policy in monitor mode for the same check
+- the documented request body is accepted verbatim, and an unknown key ID returns 400 without a new agentcc_guardrail_policy row
+
 ## knowledge-base
 
 ### KB-E2E-001 — a workspace reader downloads an owned knowledge-base file

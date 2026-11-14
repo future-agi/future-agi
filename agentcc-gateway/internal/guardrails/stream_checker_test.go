@@ -376,3 +376,83 @@ func (g *inspectorGuardrail) Stage() Stage  { return g.stage }
 func (g *inspectorGuardrail) Check(ctx context.Context, input *CheckInput) *CheckResult {
 	return g.onCheck(input)
 }
+
+// A stream block is stored on the request like a non-streaming block, so a
+// Monitor key-policy match is never the only stored result of a request a
+// guardrail stopped.
+func TestStreamChecker_StoreBlockRecordsTheBlockingCheck(t *testing.T) {
+	registry := map[string]Guardrail{
+		"blocker": &mockGuardrail{name: "blocker", stage: StagePost,
+			result: &CheckResult{Pass: false, Score: 0.95, Message: "toxic content detected"}},
+	}
+	engine := NewEngine(config.GuardrailsConfig{
+		Enabled: true, FailOpen: true, DefaultTimeout: 5 * time.Second,
+		Rules: []config.GuardrailRuleConfig{{Name: "blocker", Stage: "post", Mode: "sync", Action: "block", Threshold: 0.5}},
+	}, registry)
+	sc := NewStreamChecker(engine, config.StreamingGuardrailConfig{Enabled: true, CheckInterval: 10, FailureAction: "stop"},
+		nil, policy.RequestPolicyNone, &models.ChatCompletionRequest{Model: "gpt-4o"}, nil)
+
+	rc := models.AcquireRequestContext()
+	defer rc.Release()
+	rc.GuardrailResults = []models.GuardrailResult{{Name: "secret-detection", Action: "block", Mode: "monitor", Outcome: "would_block"}}
+	res := sc.ProcessChunk(context.Background(), makeChunk("This is more than ten characters of content"))
+	if !res.Blocked {
+		t.Fatal("expected a block")
+	}
+	res.StoreBlock(rc)
+	if !rc.Flags.GuardrailTriggered {
+		t.Fatal("a stream block must flag the request")
+	}
+	if len(rc.GuardrailResults) != 2 {
+		t.Fatalf("results=%+v, want the monitor match plus the stream block", rc.GuardrailResults)
+	}
+	got := rc.GuardrailResults[1]
+	if got.Name != "blocker" || got.Action != "block" || got.Mode == "monitor" {
+		t.Fatalf("stream block result=%+v", got)
+	}
+	if rc.Metadata["guardrail_name"] != "blocker" || rc.Metadata["guardrail_action"] != "blocked" {
+		t.Errorf("metadata=%v, want the blocking check and action blocked", rc.Metadata)
+	}
+
+	// Finalizing the stream runs post-plugins on the captured text, which
+	// re-runs the same check: it must not store the block a second time.
+	content, _ := json.Marshal("This is more than ten characters of content")
+	rc.Response = &models.ChatCompletionResponse{Choices: []models.Choice{{Message: models.Message{Role: "assistant", Content: content}}}}
+	rc.Request = &models.ChatCompletionRequest{Model: "gpt-4o"}
+	plugin := NewPlugin(engine, registry, nil, nil, nil)
+	if res := plugin.ProcessResponse(context.Background(), rc); res.Error == nil {
+		t.Fatal("the post stage still reports the block")
+	}
+	if len(rc.GuardrailResults) != 2 {
+		t.Fatalf("results=%+v, the stream block was stored twice", rc.GuardrailResults)
+	}
+}
+
+// A stream stopped after a log rule also triggered names the rule that
+// blocked, not the first triggered one.
+func TestStreamChecker_StoreBlockNamesTheBlockingRule(t *testing.T) {
+	triggered := func(name string) *mockGuardrail {
+		return &mockGuardrail{name: name, stage: StagePost,
+			result: &CheckResult{Pass: false, Score: 0.95, Message: name + " matched"}}
+	}
+	registry := map[string]Guardrail{"logger": triggered("logger"), "blocker": triggered("blocker")}
+	engine := NewEngine(config.GuardrailsConfig{
+		Enabled: true, FailOpen: true, DefaultTimeout: 5 * time.Second,
+		Rules: []config.GuardrailRuleConfig{
+			{Name: "logger", Stage: "post", Mode: "sync", Action: "log", Threshold: 0.5},
+			{Name: "blocker", Stage: "post", Mode: "sync", Action: "block", Threshold: 0.5},
+		},
+	}, registry)
+	sc := NewStreamChecker(engine, config.StreamingGuardrailConfig{Enabled: true, CheckInterval: 10, FailureAction: "stop"},
+		nil, policy.RequestPolicyNone, &models.ChatCompletionRequest{Model: "gpt-4o"}, nil)
+	rc := models.AcquireRequestContext()
+	defer rc.Release()
+	res := sc.ProcessChunk(context.Background(), makeChunk("This is more than ten characters of content"))
+	if !res.Blocked {
+		t.Fatal("expected a block")
+	}
+	res.StoreBlock(rc)
+	if rc.Metadata["guardrail_name"] != "blocker" || rc.Metadata["guardrail_action"] != "blocked" {
+		t.Fatalf("metadata=%v, want the blocking rule", rc.Metadata)
+	}
+}

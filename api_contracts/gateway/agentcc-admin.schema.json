@@ -49,6 +49,26 @@
         "checks": {
           "type": "object",
           "additionalProperties": { "$ref": "#/$defs/GuardrailCheck" }
+        },
+        "key_policies": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/KeyGuardrailPolicy" }
+        }
+      }
+    },
+    "KeyGuardrailPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "key_ids"],
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "mode": { "type": "string" },
+        "priority": { "type": "integer" },
+        "key_ids": { "type": "array", "items": { "type": "string" } },
+        "checks": {
+          "type": "object",
+          "additionalProperties": { "$ref": "#/$defs/GuardrailCheck" }
         }
       }
     },

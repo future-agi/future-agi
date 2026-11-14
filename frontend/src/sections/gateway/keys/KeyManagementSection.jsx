@@ -15,7 +15,16 @@ import {
   ToggleButtonGroup,
   Skeleton,
   InputAdornment,
+  Chip,
 } from "@mui/material";
+import {
+  useGuardrailPolicies,
+  policiesForKey,
+} from "../guardrails/hooks/useGuardrailPolicies";
+import {
+  DORMANT_POLICY_LABEL,
+  isDormantPolicy,
+} from "../guardrails/policyStatus";
 import Section from "src/components/section";
 import { enqueueSnackbar } from "notistack";
 import Iconify from "src/components/iconify";
@@ -47,6 +56,7 @@ const KeyManagementSection = () => {
 
   const { data: keys, isLoading, error, refetch } = useApiKeys(gatewayId);
   const syncMutation = useSyncApiKeys();
+  const { data: policies = [] } = useGuardrailPolicies();
 
   // Client-side filters
   const filteredKeys = useMemo(() => {
@@ -230,6 +240,7 @@ const KeyManagementSection = () => {
                   <TableCell>Status</TableCell>
                   <TableCell>Owner</TableCell>
                   <TableCell>Models</TableCell>
+                  <TableCell>Guardrail policies</TableCell>
                   <TableCell>Created</TableCell>
                   <TableCell>Last Used</TableCell>
                 </TableRow>
@@ -279,6 +290,39 @@ const KeyManagementSection = () => {
                       </Typography>
                     </TableCell>
                     <TableCell>
+                      <Stack direction="row" gap={0.5} alignItems="center">
+                        {policiesForKey(policies, key.id)
+                          .slice(0, 2)
+                          .map((policy) => (
+                            <Chip
+                              key={policy.id}
+                              label={
+                                isDormantPolicy(policy)
+                                  ? `${policy.name} · not running`
+                                  : policy.name
+                              }
+                              title={
+                                isDormantPolicy(policy)
+                                  ? DORMANT_POLICY_LABEL
+                                  : undefined
+                              }
+                              data-testid={
+                                isDormantPolicy(policy)
+                                  ? `key-policy-chip-dormant-${policy.id}`
+                                  : undefined
+                              }
+                              size="small"
+                              variant="outlined"
+                            />
+                          ))}
+                        {policiesForKey(policies, key.id).length > 2 && (
+                          <Typography variant="s3" color="text.secondary">
+                            +{policiesForKey(policies, key.id).length - 2}
+                          </Typography>
+                        )}
+                      </Stack>
+                    </TableCell>
+                    <TableCell>
                       <Typography variant="body2" color="text.secondary">
                         {formatDate(key.created_at)}
                       </Typography>
@@ -314,6 +358,7 @@ const KeyManagementSection = () => {
         open={Boolean(selectedKeyId)}
         onClose={() => setSelectedKeyId(null)}
         gatewayId={gatewayId}
+        policies={policies}
       />
     </Box>
   );

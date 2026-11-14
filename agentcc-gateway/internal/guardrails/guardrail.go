@@ -120,6 +120,7 @@ type CheckResult struct {
 	Err error `json:"-"`
 	// FailureAdmitted records an unavailable check admitted by explicit policy.
 	FailureAdmitted bool `json:"-"`
+	InputRewritten  bool `json:"-"` // a remediator actually changed checked content
 	// RealtimeErr marks a verdict envelope that realtime checks refuse as
 	// unavailable. Chat checks keep the decoded verdict and ignore it.
 	RealtimeErr error                  `json:"-"`
@@ -142,11 +143,17 @@ type Guardrail interface {
 
 // TriggeredGuardrail records a guardrail that was triggered during execution.
 type TriggeredGuardrail struct {
-	Name      string  `json:"name"`
-	Score     float64 `json:"score"`
-	Threshold float64 `json:"threshold"`
-	Action    Action  `json:"action"`
-	Message   string  `json:"message"`
+	Name        string  `json:"name"`
+	Score       float64 `json:"score"`
+	Threshold   float64 `json:"threshold"`
+	Action      Action  `json:"action"`
+	Message     string  `json:"message"`
+	PolicyID    string  `json:"policy_id,omitempty"`
+	PolicyName  string  `json:"policy_name,omitempty"`
+	PolicyScope string  `json:"policy_scope,omitempty"`
+	Mode        string  `json:"mode,omitempty"`
+	Outcome     string  `json:"outcome,omitempty"`
+	WouldAction string  `json:"would_action,omitempty"`
 }
 
 // PipelineResult is the aggregate result of running all guardrails in a stage.

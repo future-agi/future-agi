@@ -138,8 +138,15 @@ func (h *Handlers) relaySpeech(w http.ResponseWriter, r *http.Request, vendor, p
 			// session.
 			plugin = guardrails.NewPlugin(h.guardrailEngine, nil, nil, h.policyStore, h.tenantStore)
 		}
+		// Key-policy checks bind only where the relay reads text: synthesis input
+		// before the vendor, transcripts after it. The turns protocol has no
+		// transcript parser yet, so it reads neither.
+		readable := guardrails.RealtimeText{
+			guardrails.StagePre:  session.Kind == speech.Synthesis,
+			guardrails.StagePost: session.Kind == speech.Transcription && path != "/stt/turns/websocket",
+		}
 		var policyErr *models.APIError
-		speechPolicy, policyErr = plugin.BindRealtime(rc)
+		speechPolicy, policyErr = plugin.BindRealtime(rc, readable)
 		if policyErr != nil {
 			return policyErr
 		}

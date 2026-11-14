@@ -1,12 +1,22 @@
+from collections.abc import Callable
+
 import structlog
+from django.db import transaction
 from django.utils import timezone
 from rest_framework.decorators import action
+from rest_framework.exceptions import ValidationError
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.viewsets import ModelViewSet
 
 from agentcc.models.guardrail_policy import AgentccGuardrailPolicy
 from agentcc.serializers.guardrail_policy import AgentccGuardrailPolicySerializer
+from agentcc.services.config_push import (
+    OrgConfigRejected,
+    push_org_config,
+    validate_org_config,
+)
 from agentcc.services.guardrail_sync import sync_guardrail_policies
+from agentcc.services.org_config_service import get_or_create_org_config
 from tfc.utils.base_viewset import BaseModelViewSetMixinWithUserOrg
 from tfc.utils.general_methods import GeneralMethods
 
@@ -44,26 +54,43 @@ class AgentccGuardrailPolicyViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewS
             logger.exception("guardrail_policy_retrieve_error", error=str(e))
             return self._gm.not_found("Guardrail policy not found")
 
+    def _save_and_push(self, org, save, old_scope=None, new_scope=None):
+        with transaction.atomic():
+            policy = save()
+            config = get_or_create_org_config(org)
+            if "global" in (old_scope, new_scope):
+                # Never push from inside the transaction. The global sync only
+                # updates the active config; validation may still reject it.
+                sync_guardrail_policies(org, push=False)
+                config.refresh_from_db()
+            validate_org_config(config)
+        return policy, push_org_config(str(org.id), config)
+
+    def _response(self, policy, synced):
+        data = AgentccGuardrailPolicySerializer(policy).data
+        data["gateway_synced"] = synced
+        if not synced:
+            data["gateway_warning"] = _GATEWAY_SYNC_WARNING
+        return self._gm.success_response(data)
+
     def create(self, request, *args, **kwargs):
         try:
-            serializer = AgentccGuardrailPolicySerializer(data=request.data)
-            if not serializer.is_valid():
-                return self._gm.bad_request(serializer.errors)
-
             org = getattr(request, "organization", None)
             if org is None:
                 return self._gm.bad_request("Organization context is required")
-
-            policy = serializer.save(organization=org)
-
-            # Sync to gateway
-            synced = self._sync(org)
-
-            data = AgentccGuardrailPolicySerializer(policy).data
-            data["gateway_synced"] = synced
-            if not synced:
-                data["gateway_warning"] = _GATEWAY_SYNC_WARNING
-            return self._gm.success_response(data)
+            serializer = AgentccGuardrailPolicySerializer(
+                data=request.data, context={"request": request, "organization": org}
+            )
+            if not serializer.is_valid():
+                return self._gm.bad_request(serializer.errors)
+            policy, synced = self._save_and_push(
+                org,
+                lambda: serializer.save(organization=org, runs_on_gateway=True),
+                new_scope=serializer.validated_data.get("scope", "global"),
+            )
+            return self._response(policy, synced)
+        except (OrgConfigRejected, ValidationError) as e:
+            return self._gm.bad_request(str(e))
         except Exception as e:
             logger.exception("guardrail_policy_create_error", error=str(e))
             return self._gm.bad_request(str(e))
@@ -71,22 +98,24 @@ class AgentccGuardrailPolicyViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewS
     def update(self, request, *args, **kwargs):
         try:
             instance = self.get_object()
+            org = getattr(request, "organization", None)
             serializer = AgentccGuardrailPolicySerializer(
-                instance, data=request.data, partial=kwargs.get("partial", False)
+                instance,
+                data=request.data,
+                partial=kwargs.get("partial", False),
+                context={"request": request, "organization": org},
             )
             if not serializer.is_valid():
                 return self._gm.bad_request(serializer.errors)
-
-            policy = serializer.save()
-
-            # Sync to gateway
-            synced = self._sync(instance.organization)
-
-            data = AgentccGuardrailPolicySerializer(policy).data
-            data["gateway_synced"] = synced
-            if not synced:
-                data["gateway_warning"] = _GATEWAY_SYNC_WARNING
-            return self._gm.success_response(data)
+            policy, synced = self._save_and_push(
+                org,
+                lambda: serializer.save(runs_on_gateway=True),
+                old_scope=instance.scope,
+                new_scope=serializer.validated_data.get("scope", instance.scope),
+            )
+            return self._response(policy, synced)
+        except (OrgConfigRejected, ValidationError) as e:
+            return self._gm.bad_request(str(e))
         except Exception as e:
             logger.exception("guardrail_policy_update_error", error=str(e))
             return self._gm.bad_request(str(e))
@@ -98,24 +127,29 @@ class AgentccGuardrailPolicyViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewS
     def destroy(self, request, *args, **kwargs):
         try:
             instance = self.get_object()
-            instance.deleted = True
-            instance.deleted_at = timezone.now()
-            instance.save(update_fields=["deleted", "deleted_at", "updated_at"])
 
-            # Sync to gateway (policy removed from merged config)
-            synced = self._sync(instance.organization)
+            def remove():
+                instance.deleted = True
+                instance.deleted_at = timezone.now()
+                instance.save(update_fields=["deleted", "deleted_at", "updated_at"])
+                return instance
 
+            _, synced = self._save_and_push(
+                instance.organization, remove, old_scope=instance.scope
+            )
             data = {"deleted": True, "gateway_synced": synced}
             if not synced:
                 data["gateway_warning"] = _GATEWAY_SYNC_WARNING
             return self._gm.success_response(data)
+        except (OrgConfigRejected, ValidationError) as e:
+            return self._gm.bad_request(str(e))
         except Exception as e:
             logger.exception("guardrail_policy_delete_error", error=str(e))
             return self._gm.bad_request(str(e))
 
     @action(detail=True, methods=["post"])
     def apply(self, request, pk=None):
-        """Apply this policy to specific keys or projects."""
+        """Apply to dashboard key UUIDs, or persist a project-only assignment."""
         try:
             instance = self.get_object()
             org = getattr(request, "organization", None)
@@ -123,72 +157,62 @@ class AgentccGuardrailPolicyViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewS
                 return self._gm.bad_request("Organization context is required")
             key_ids = request.data.get("key_ids")
             project_ids = request.data.get("project_ids")
-
-            if key_ids is not None and project_ids is not None:
+            if (key_ids is None) == (project_ids is None):
                 return self._gm.bad_request(
-                    "Cannot apply to both keys and projects simultaneously. "
-                    "Provide either key_ids or project_ids, not both."
+                    "Provide either key_ids or project_ids, not both"
                 )
-
-            if key_ids is None and project_ids is None:
-                return self._gm.bad_request("Provide either key_ids or project_ids")
-
+            save: Callable[[], AgentccGuardrailPolicy]
             if key_ids is not None:
-                if not isinstance(key_ids, list):
-                    return self._gm.bad_request("key_ids must be a list")
-                # Validate key IDs belong to the same org
-                from agentcc.models import AgentccAPIKey
-
-                valid_keys = set(
-                    AgentccAPIKey.no_workspace_objects.filter(
-                        id__in=key_ids,
-                        organization=org,
-                        deleted=False,
-                    ).values_list("id", flat=True)
+                serializer = AgentccGuardrailPolicySerializer(
+                    instance,
+                    data={"scope": "key", "applied_keys": key_ids},
+                    partial=True,
+                    context={"request": request, "organization": org},
                 )
-                invalid_keys = set(str(k) for k in key_ids) - set(
-                    str(k) for k in valid_keys
-                )
-                if invalid_keys:
-                    return self._gm.bad_request(
-                        f"Invalid or unauthorized key IDs: {list(invalid_keys)}"
-                    )
-                instance.applied_keys = key_ids
-                instance.scope = AgentccGuardrailPolicy.SCOPE_KEY
+                if not serializer.is_valid():
+                    return self._gm.bad_request(serializer.errors)
 
-            if project_ids is not None:
+                def save_keys():
+                    return serializer.save(runs_on_gateway=True)
+
+                save = save_keys
+                new_scope = "key"
+            else:
                 if not isinstance(project_ids, list):
-                    return self._gm.bad_request("project_ids must be a list")
-                # Validate project IDs belong to the same org
+                    return self._gm.bad_request({"project_ids": ["Must be a list"]})
                 from agentcc.models.project import AgentccProject
 
-                valid_projects = set(
-                    AgentccProject.no_workspace_objects.filter(
-                        id__in=project_ids,
-                        organization=org,
-                        deleted=False,
+                valid_projects = {
+                    str(p)
+                    for p in AgentccProject.no_workspace_objects.filter(
+                        id__in=project_ids, organization=org, deleted=False
                     ).values_list("id", flat=True)
-                )
-                invalid_projects = set(str(p) for p in project_ids) - set(
-                    str(p) for p in valid_projects
-                )
-                if invalid_projects:
+                }
+                invalid = [str(p) for p in project_ids if str(p) not in valid_projects]
+                if invalid:
                     return self._gm.bad_request(
-                        f"Invalid or unauthorized project IDs: {list(invalid_projects)}"
+                        {
+                            "project_ids": [
+                                f"Invalid or unauthorized project IDs: {invalid}"
+                            ]
+                        }
                     )
-                instance.applied_projects = project_ids
-                instance.scope = AgentccGuardrailPolicy.SCOPE_PROJECT
 
-            instance.save()
+                def save_projects():
+                    instance.applied_projects = project_ids
+                    instance.applied_keys = []
+                    instance.scope = "project"
+                    instance.save()
+                    return instance
 
-            # Sync to gateway
-            synced = self._sync(org)
-
-            data = AgentccGuardrailPolicySerializer(instance).data
-            data["gateway_synced"] = synced
-            if not synced:
-                data["gateway_warning"] = _GATEWAY_SYNC_WARNING
-            return self._gm.success_response(data)
+                save = save_projects
+                new_scope = "project"
+            policy, synced = self._save_and_push(
+                org, save, old_scope=instance.scope, new_scope=new_scope
+            )
+            return self._response(policy, synced)
+        except (OrgConfigRejected, ValidationError) as e:
+            return self._gm.bad_request(str(e))
         except Exception as e:
             logger.exception("guardrail_policy_apply_error", error=str(e))
             return self._gm.bad_request(str(e))

@@ -12,11 +12,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/futureagi/agentcc-gateway/internal/auth"
 	"github.com/futureagi/agentcc-gateway/internal/cache"
 	"github.com/futureagi/agentcc-gateway/internal/config"
 	"github.com/futureagi/agentcc-gateway/internal/guardrails"
 	"github.com/futureagi/agentcc-gateway/internal/guardrails/secrets"
 	"github.com/futureagi/agentcc-gateway/internal/pipeline"
+	authplugin "github.com/futureagi/agentcc-gateway/internal/plugins/auth"
 	cacheplugin "github.com/futureagi/agentcc-gateway/internal/plugins/cache"
 	"github.com/futureagi/agentcc-gateway/internal/providers"
 	"github.com/futureagi/agentcc-gateway/internal/tenant"
@@ -238,5 +240,68 @@ func TestBlockedResponseIsNotCached(t *testing.T) {
 	}
 	if up.served()-before != 2 {
 		t.Fatalf("upstream calls = %d; want 2, one per request", up.served()-before)
+	}
+}
+
+// Key policies are evaluated on every wire format, independently of static rules.
+func TestKeyGuardrailPolicyRoutes(t *testing.T) {
+	for _, rt := range guardedRoutes {
+		for _, stream := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s stream=%v", rt.name, stream), func(t *testing.T) {
+				up := &dialectUpstream{reply: "safe reply"}
+				upstream := httptest.NewServer(up)
+				defer upstream.Close()
+				cfg := config.DefaultConfig()
+				cfg.Auth.Enabled = true
+				cfg.Auth.Keys = []config.AuthKeyConfig{
+					{Name: "a", Key: "sk-agentcc-policy-a", Owner: "synthetic", KeyType: "internal", Metadata: map[string]string{"org_id": "org-policy"}},
+					{Name: "b", Key: "sk-agentcc-policy-b", Owner: "synthetic", KeyType: "internal", Metadata: map[string]string{"org_id": "org-policy"}},
+				}
+				cfg.Providers["openai"] = config.ProviderConfig{BaseURL: upstream.URL, APIKey: "k", APIFormat: "openai", Models: []string{"gpt-5.5"}}
+				cfg.Providers["anthropic"] = config.ProviderConfig{BaseURL: upstream.URL, APIKey: "k", APIFormat: "anthropic", Models: []string{"claude-sonnet-5-5"}}
+				cfg.Providers["gemini"] = config.ProviderConfig{BaseURL: upstream.URL, APIKey: "k", APIFormat: "gemini", Models: []string{"gemini-3.8-flash"}}
+				cfg.Guardrails = config.GuardrailsConfig{Enabled: true, DefaultTimeout: time.Second}
+				store := tenant.NewStore()
+				policy := &tenant.KeyGuardrailPolicy{ID: "test", Name: "test", Mode: "enforce", KeyIDs: []string{"key_1"}, Checks: map[string]*tenant.GuardrailCheck{"secret-detection": {Enabled: true, Action: "block"}}}
+				store.Set("org-policy", &tenant.OrgConfig{Guardrails: &tenant.GuardrailConfig{KeyPolicies: []*tenant.KeyGuardrailPolicy{policy}}})
+				registry := map[string]guardrails.Guardrail{"secret-detection": secrets.New(nil)}
+				grEngine := guardrails.NewEngine(cfg.Guardrails, registry)
+				providersRegistry, err := providers.NewRegistry(cfg)
+				if err != nil {
+					t.Fatal(err)
+				}
+				keys := auth.NewKeyStore(cfg.Auth)
+				srv := New(cfg, "", providersRegistry, pipeline.NewEngine(authplugin.New(keys, true), guardrails.NewPlugin(grEngine, registry, nil, nil, store)), keys, grEngine, nil, nil, testModelDBPtr(), store, nil)
+				srv.ready.Store(true)
+				send := func(key string) *httptest.ResponseRecorder {
+					req := rt.request(stream, "deploy with "+awsKey)
+					req.Header.Set("Authorization", "Bearer "+key)
+					w := httptest.NewRecorder()
+					srv.httpServer.Handler.ServeHTTP(w, req)
+					return w
+				}
+				enforce := send("sk-agentcc-policy-a")
+				if enforce.Code != 403 || up.served() != 0 {
+					t.Fatalf("enforce status=%d calls=%d body=%s", enforce.Code, up.served(), enforce.Body.String())
+				}
+				other := send("sk-agentcc-policy-b")
+				if other.Code != 200 {
+					t.Fatalf("other status=%d body=%s", other.Code, other.Body.String())
+				}
+				policy.Mode = "monitor"
+				monitor := send("sk-agentcc-policy-a")
+				for name, values := range monitor.Header() {
+					if strings.HasPrefix(strings.ToLower(name), "x-agentcc-guardrail-") && strings.Join(values, ",") != other.Header().Get(name) {
+						t.Fatalf("monitor changed header %s: %v", name, values)
+					}
+				}
+				if monitor.Code != 200 || monitor.Header().Get("x-agentcc-guardrail-triggered") != "" || monitor.Body.String() != other.Body.String() {
+					t.Fatalf("monitor status=%d header=%q body=%s other=%s", monitor.Code, monitor.Header().Get("x-agentcc-guardrail-triggered"), monitor.Body.String(), other.Body.String())
+				}
+				if again := send("sk-agentcc-policy-b"); again.Code != 200 {
+					t.Fatalf("other monitor status=%d", again.Code)
+				}
+			})
+		}
 	}
 }

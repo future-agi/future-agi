@@ -51,6 +51,18 @@ func TestOrgConfigContractRoundTripsIntoGatewayTenantConfig(t *testing.T) {
 	if got := runtime.Providers["openai"].APIPathPrefix; got == nil || *got != "" {
 		t.Fatalf("provider api path prefix mismatch: %#v", got)
 	}
+	if runtime.Guardrails == nil || len(runtime.Guardrails.KeyPolicies) != 1 {
+		t.Fatalf("guardrail key policies missing: %#v", runtime.Guardrails)
+	}
+	keyPolicy := runtime.Guardrails.KeyPolicies[0]
+	if keyPolicy.ID != "7d3f9f0e-1c2b-4a5d-9e8f-0a1b2c3d4e5f" || keyPolicy.Name != "payments-rollout" ||
+		keyPolicy.Mode != "monitor" || keyPolicy.Priority != 100 ||
+		len(keyPolicy.KeyIDs) != 1 || keyPolicy.KeyIDs[0] != "key-gateway-1" {
+		t.Fatalf("guardrail key policy mismatch: %#v", keyPolicy)
+	}
+	if check := keyPolicy.Checks["secret-detection"]; check == nil || !check.Enabled || check.Action != "block" {
+		t.Fatalf("guardrail key policy check mismatch: %#v", keyPolicy.Checks)
+	}
 	if runtime.Routing == nil || runtime.Routing.Strategy != "weighted" {
 		t.Fatalf("routing strategy mismatch: %#v", runtime.Routing)
 	}

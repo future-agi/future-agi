@@ -128,6 +128,7 @@ export const paths = {
         root: `${ROOTS.DASHBOARD}/gateway/guardrails`,
         overview: `${ROOTS.DASHBOARD}/gateway/guardrails`,
         configuration: `${ROOTS.DASHBOARD}/gateway/guardrails/configuration`,
+        policies: `${ROOTS.DASHBOARD}/gateway/guardrails/policies`,
         analytics: `${ROOTS.DASHBOARD}/gateway/guardrails/analytics`,
         feedback: `${ROOTS.DASHBOARD}/gateway/guardrails/feedback`,
         playground: `${ROOTS.DASHBOARD}/gateway/guardrails/playground`,

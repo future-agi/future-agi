@@ -12,6 +12,7 @@ import (
 	"github.com/futureagi/agentcc-gateway/internal/cache"
 	"github.com/futureagi/agentcc-gateway/internal/models"
 	"github.com/futureagi/agentcc-gateway/internal/pipeline"
+	"github.com/futureagi/agentcc-gateway/internal/tenant"
 )
 
 // Plugin is a pipeline plugin that caches non-streaming chat completion responses.
@@ -22,6 +23,7 @@ type Plugin struct {
 	semanticStore cache.SemanticBackend
 	edgeHandler   *EdgeCacheHandler
 	defaultTTL    time.Duration
+	tenantStore   *tenant.Store // nil-safe; partitions entries by key policy
 }
 
 // New creates a new cache plugin with a pluggable backend.
@@ -48,6 +50,13 @@ func (p *Plugin) SetSemanticStore(s cache.SemanticBackend) {
 // SetSemanticStoreFromConcrete wraps an existing SemanticStore as a SemanticBackend (backward compat).
 func (p *Plugin) SetSemanticStoreFromConcrete(s *cache.SemanticStore) {
 	p.semanticStore = cache.NewMemorySemanticBackend(s)
+}
+
+// SetTenantStore lets the cache see the org's guardrail key policies. A cache
+// hit skips the pre-stage guardrails, so a request made with a key that has
+// key policies must only be served what was stored under the same policies.
+func (p *Plugin) SetTenantStore(s *tenant.Store) {
+	p.tenantStore = s
 }
 
 // SetEdgeHandler configures edge (CDN) caching support.
@@ -89,10 +98,16 @@ func (p *Plugin) ProcessRequest(_ context.Context, rc *models.RequestContext) pi
 	}
 
 	// Build cache key.
-	namespace := cacheNamespace(rc)
+	fp := p.keyPolicyFingerprint(rc)
+	rc.Metadata[keyPoliciesMetadata] = fp
+	namespace := namespaceWithKeyPolicies(cacheNamespace(rc), fp)
 	key := BuildCacheKey(namespace, rc.Request)
 	rc.Metadata["cache_key"] = key
-	if p.semanticStore != nil {
+	// A semantic hit answers a different (similar) prompt, so the request's
+	// own text never reached its key policies' pre-stage checks: requests on
+	// keys with key policies use exact matches only.
+	semantic := p.semanticStore != nil && fp == ""
+	if semantic {
 		// Fixed now so ProcessResponse stores under it even on force-refresh or
 		// after later plugins rewrite rc.Request.
 		rc.Metadata["cache_semantic_partition"] = semanticPartition(namespace, rc.Request)
@@ -138,7 +153,7 @@ func (p *Plugin) ProcessRequest(_ context.Context, rc *models.RequestContext) pi
 	}
 
 	// L2: Check semantic cache.
-	if p.semanticStore != nil {
+	if semantic {
 		text := extractLastUserMessage(rc.Request)
 		if text != "" {
 			vec := cache.Vectorize(text, p.semanticStore.Dims())
@@ -188,11 +203,19 @@ func (p *Plugin) ProcessResponse(_ context.Context, rc *models.RequestContext) p
 		return pipeline.ResultContinue()
 	}
 
+	// The key's policies changed while the request ran (Enforce to Monitor,
+	// say): the guardrails may have judged it under other policies than the
+	// ones its cache key names, so it is not stored there.
+	fp := rc.Metadata[keyPoliciesMetadata]
+	if p.keyPolicyFingerprint(rc) != fp {
+		return pipeline.ResultContinue()
+	}
+
 	ttl := p.resolveTTL(rc)
 	p.store.Set(key, rc.Response, ttl)
 
 	// Also store in semantic cache (L2).
-	if p.semanticStore != nil && rc.Request != nil {
+	if p.semanticStore != nil && rc.Request != nil && fp == "" {
 		text := extractLastUserMessage(rc.Request)
 		if text != "" {
 			vec := cache.Vectorize(text, p.semanticStore.Dims())
@@ -272,6 +295,40 @@ func cacheNamespace(rc *models.RequestContext) string {
 		return ns
 	}
 	return "default"
+}
+
+// keyPoliciesMetadata holds the key-policy fingerprint the request's cache key
+// was built with.
+const keyPoliciesMetadata = "cache_key_policies"
+
+// keyPolicyFingerprint identifies the request's key and the guardrail key
+// policies that apply to it, or is "" when none do. Guardrails run after the
+// cache (priority 50 vs 35), so a hit skips the pre-stage checks: an entry may
+// only be served to requests that face the same checks as the one that stored
+// it. Org-wide checks are the same for every key of the org; key policies are
+// not.
+func (p *Plugin) keyPolicyFingerprint(rc *models.RequestContext) string {
+	if p.tenantStore == nil {
+		return ""
+	}
+	orgCfg := p.tenantStore.Get(rc.Metadata["org_id"])
+	if orgCfg == nil || orgCfg.Guardrails == nil {
+		return ""
+	}
+	return orgCfg.Guardrails.KeyPolicyFingerprint(rc.Metadata["auth_key_id"])
+}
+
+// namespaceWithKeyPolicies partitions the namespace by the key-policy
+// fingerprint. A key with no key policies keeps the plain namespace, so its
+// entries (and every entry stored before key policies existed) stay where
+// they were.
+func namespaceWithKeyPolicies(ns, fp string) string {
+	if fp == "" {
+		return ns
+	}
+	// HTTP header values cannot carry a NUL byte, so no client-chosen
+	// x-agentcc-cache-namespace can name a key-policy partition.
+	return ns + "\x00key_policies=" + fp
 }
 
 // semanticPartition scopes semantic cache entries. Only the last user

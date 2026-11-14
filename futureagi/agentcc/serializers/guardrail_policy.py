@@ -1,10 +1,12 @@
 import copy
+import uuid
 
 import structlog
 from rest_framework import serializers
 
-from integrations.services.credentials import CredentialManager
+from agentcc.models import AgentccAPIKey
 from agentcc.models.guardrail_policy import AgentccGuardrailPolicy
+from integrations.services.credentials import CredentialManager
 
 logger = structlog.get_logger(__name__)
 
@@ -71,27 +73,123 @@ class AgentccGuardrailPolicySerializer(serializers.ModelSerializer):
             "priority",
             "applied_keys",
             "applied_projects",
+            "runs_on_gateway",
             "created_at",
             "updated_at",
         ]
         read_only_fields = [
             "id",
             "organization",
+            # Set by the policy API on every save; a key policy saved before
+            # the gateway ran them stays dormant until saved again.
+            "runs_on_gateway",
             "created_at",
             "updated_at",
         ]
 
+    def validate_name(self, value):
+        if value.startswith("__"):
+            raise serializers.ValidationError("Names starting with __ are reserved")
+        return value
+
+    def validate_applied_keys(self, value):
+        if not isinstance(value, list):
+            raise serializers.ValidationError("applied_keys must be a list")
+        normalized = []
+        malformed = []
+        for key_id in value:
+            try:
+                parsed = str(uuid.UUID(key_id)) if isinstance(key_id, str) else None
+            except (ValueError, AttributeError):
+                parsed = None
+            if parsed is None:
+                malformed.append(str(key_id))
+            elif parsed not in normalized:
+                normalized.append(parsed)
+        org = self.context.get("organization")
+        known = set()
+        if org is not None and normalized:
+            known = {
+                str(key_id)
+                for key_id in AgentccAPIKey.no_workspace_objects.filter(
+                    organization=org, deleted=False, id__in=normalized
+                ).values_list("id", flat=True)
+            }
+        invalid = malformed + [key_id for key_id in normalized if key_id not in known]
+        if invalid:
+            raise serializers.ValidationError(
+                f"Unknown or unauthorized key IDs: {invalid}"
+            )
+        return normalized
+
+    def validate(self, attrs):
+        if self.instance is not None and not ({"scope", "applied_keys"} & attrs.keys()):
+            # A change that leaves scope and keys alone (Active, mode, checks)
+            # is not refused for a pairing an older version saved.
+            return attrs
+        scope = attrs.get("scope", self.instance.scope if self.instance else "global")
+        keys = attrs.get(
+            "applied_keys", self.instance.applied_keys if self.instance else []
+        )
+        if scope == AgentccGuardrailPolicy.SCOPE_KEY and not keys:
+            raise serializers.ValidationError(
+                {"applied_keys": "Key policies require at least one applied key"}
+            )
+        if scope != AgentccGuardrailPolicy.SCOPE_KEY and keys:
+            raise serializers.ValidationError(
+                {"applied_keys": "Only key policies may have applied keys"}
+            )
+        # Project policies are persisted but not evaluated by the gateway yet.
+        return attrs
+
+    def _is_org_config_row(self):
+        # The org config editor (views/org_config.py) stores org-wide checks in
+        # the reserved __ui_guardrails__ row, and re-sends every org check on
+        # each settings save, including values the Overview tab and the
+        # update-guardrail API wrote (any action, a threshold such as 50).
+        # Those writers are not bounded like this API, so refusing such a
+        # value here would block every later settings save. The gateway
+        # contract still validates that row's checks before they go live.
+        instance = self.instance
+        return isinstance(
+            instance, AgentccGuardrailPolicy
+        ) and instance.name.startswith("__")
+
     def validate_checks(self, value):
         if not isinstance(value, list):
             raise serializers.ValidationError("checks must be a JSON array")
+        strict = not self._is_org_config_row()
         for i, check in enumerate(value):
             if not isinstance(check, dict):
                 raise serializers.ValidationError(
                     f"Check at index {i} must be a JSON object"
                 )
-            if "name" not in check:
+            if not isinstance(check.get("name"), str) or not check["name"].strip():
                 raise serializers.ValidationError(
-                    f"Check at index {i} must have a 'name' field"
+                    f"Check at index {i} must have a non-empty name"
+                )
+            if not strict:
+                continue
+            if "action" in check and check["action"] not in ("block", "warn", "log"):
+                raise serializers.ValidationError(
+                    f"Check at index {i} has invalid action"
+                )
+            for field in ("threshold", "confidence_threshold"):
+                if field in check and (
+                    isinstance(check[field], bool)
+                    or not isinstance(check[field], (int, float))
+                    or not 0 <= check[field] <= 1
+                ):
+                    raise serializers.ValidationError(
+                        f"Check at index {i} has invalid {field}"
+                    )
+            if "enabled" in check and not isinstance(check["enabled"], bool):
+                raise serializers.ValidationError(
+                    f"Check at index {i} has invalid enabled"
+                )
+            if "config" in check and not isinstance(check["config"], dict):
+                raise serializers.ValidationError(
+                    f"Check at index {i} has invalid config"
                 )
         return value
 

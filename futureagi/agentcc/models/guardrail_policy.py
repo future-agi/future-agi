@@ -53,6 +53,11 @@ class AgentccGuardrailPolicy(BaseModel):
     priority = models.IntegerField(default=100)
     applied_keys = models.JSONField(default=list, blank=True)
     applied_projects = models.JSONField(default=list, blank=True)
+    # Key policies saved before the gateway ran them were stored but never
+    # enforced. Only rows saved through the policy API since then reach the
+    # gateway; older ones stay dormant until an admin saves them again, so an
+    # upgrade never starts blocking requests on its own.
+    runs_on_gateway = models.BooleanField(default=False, db_default=False)
 
     class Meta:
         db_table = "agentcc_guardrail_policy"
