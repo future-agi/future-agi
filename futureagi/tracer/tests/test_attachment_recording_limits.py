@@ -294,7 +294,7 @@ def test_finished_and_dead_segments_leave_the_queue_and_stay(rec):
         is None
     )
     # A disabled scope is not terminal: its open segment stays queued.
-    # ``enabled`` is in the 0133 fence's policy tuple: bump the version with it.
+    # ``enabled`` is in the 0137 fence's policy tuple: bump the version with it.
     AttachmentScope.objects.filter(pk=rec.scope.pk).update(
         enabled=False, policy_version=F("policy_version") + 1
     )

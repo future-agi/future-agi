@@ -6,9 +6,9 @@ nullable columns on small attachment tables; no RunSQL. The derivative queue
 index is partial (open published segments only) and is created on an empty
 table. The provider connection's nullable ``created_by`` is a foreign key to
 ``accounts_user``: adding it takes SHARE ROW EXCLUSIVE on ``accounts_user``
-for the rest of the transaction, so run ``migrate`` with a ``lock_timeout``. The 0133 fences do
+for the rest of the transaction, so run ``migrate`` with a ``lock_timeout``. The 0137 fences do
 not cover these tables, and ``AttachmentScope.allow_import`` is created by
-0132 (it is in 0133's policy tuple), not here.
+0136 (it is in 0137's policy tuple), not here.
 """
 
 import uuid
