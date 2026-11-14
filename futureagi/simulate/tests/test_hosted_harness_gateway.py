@@ -31,6 +31,7 @@ from simulate.models import (
 )
 from simulate.models.test_execution import CallExecution
 from simulate.selectors.agent_fix import ran_at
+from simulate.services.agent_setup import store_agent
 from simulate.services.harness_capacity import SandboxCapacity
 from simulate.services.harness_provider import serialize_job
 from simulate.services.hosted_harness import (
@@ -79,6 +80,7 @@ from simulate.services.hosted_sandbox import (
     SandboxNotFoundError,
     SandboxProviderError,
 )
+from simulate.tests.test_agent_setup_service import source_agent
 
 
 @pytest.fixture(autouse=True)
@@ -3580,7 +3582,8 @@ class _ExportWorld:
     job. The three producers owned by other tickets (the agent summary, the hidden
     simulation project and the key resolver) are stand-ins that record how they were
     called; the hidden project's row is made in the database when the stand-in is called.
-    With ``hidden="real"`` the hidden project is made by the real function instead.
+    With ``hidden="real"`` the hidden project is made by the real function instead. With
+    ``summary="real"`` the agent's setup is read from the versions the test stores.
     """
 
     def __init__(
@@ -3602,6 +3605,7 @@ class _ExportWorld:
         measure_setting=_EXPORT_SNAPSHOT,
         collector=_COLLECTOR,
         credentials="ok",
+        summary="stub",
         summary_raises=False,
         hidden="ok",
         cap_at_baseline=False,
@@ -3625,6 +3629,7 @@ class _ExportWorld:
         self.hidden = None
         self.hidden_calls = []
         self.summary_calls = []
+        self.summary_versions = []
         self.credential_calls = []
         self.logs = _Logs()
         self.collector = collector
@@ -3749,22 +3754,12 @@ class _ExportWorld:
             monkeypatch.delenv(name, raising=False)
         if collector is not None:
             monkeypatch.setenv("ALK_HOSTED_FI_BASE_URL", collector)
-        if snapshot_setting:
-            monkeypatch.setenv(
-                "ALK_HOSTED_OBSERVABILITY_EXPORT_SNAPSHOTS", snapshot_setting
-            )
-        else:
-            monkeypatch.delenv(
-                "ALK_HOSTED_OBSERVABILITY_EXPORT_SNAPSHOTS", raising=False
-            )
-        if measure_setting:
-            monkeypatch.setenv(
-                "ALK_HOSTED_OBSERVABILITY_MEASURE_SNAPSHOTS", measure_setting
-            )
-        else:
-            monkeypatch.delenv(
-                "ALK_HOSTED_OBSERVABILITY_MEASURE_SNAPSHOTS", raising=False
-            )
+        settings.ALK_HOSTED_OBSERVABILITY_EXPORT_SNAPSHOTS = (
+            [snapshot_setting] if snapshot_setting else []
+        )
+        settings.ALK_HOSTED_OBSERVABILITY_MEASURE_SNAPSHOTS = (
+            [measure_setting] if measure_setting else []
+        )
         monkeypatch.setattr(f"{_GATEWAY}.structlog_logger", self.logs)
         monkeypatch.setattr(
             f"{_GATEWAY}.PlatformSecretResolver.resolve",
@@ -3773,16 +3768,18 @@ class _ExportWorld:
 
         summary_module = ModuleType("simulate.services.agent_setup")
 
-        def agent_summary(agent_definition_id, *, agent_version_id=None):
+        def launched_agent_summary(agent_definition_id, *, agent_version_id):
             self.summary_calls.append(agent_definition_id)
+            self.summary_versions.append(agent_version_id)
             if summary_raises:
                 raise RuntimeError(_LEAK_SENTINEL)
             return SimpleNamespace(kind=kind, instrumentation=instrumentation)
 
-        summary_module.agent_summary = agent_summary
-        monkeypatch.setitem(
-            sys.modules, "simulate.services.agent_setup", summary_module
-        )
+        summary_module.launched_agent_summary = launched_agent_summary
+        if summary == "stub":
+            monkeypatch.setitem(
+                sys.modules, "simulate.services.agent_setup", summary_module
+            )
 
         ingest_module = ModuleType("tracer.services.collector_ingest")
         ingest_module.ExportCredentials = _ExportCredentials
@@ -4254,6 +4251,137 @@ def test_an_untraced_agent_is_measured_whatever_its_observability_switch_says(
     assert world.secrets == _INGEST_PAIR
     # The spans go to the hidden project, never to the agent's own.
     assert quote(world.project.name, safe="") not in _mark_text(world.mark)
+
+
+def _store_versions(agent, *instrumentations):
+    """One version per word, oldest first, each with a stored source setup that traces so."""
+    versions = []
+    for number, instrumentation in enumerate(instrumentations, start=1):
+        version = agent.create_version(
+            description="", commit_message=f"v{number}", status="active"
+        )
+        if instrumentation is not None:
+            store_agent(
+                agent_version_id=version.id,
+                agent=source_agent(instrumentation=instrumentation),
+                sdk_version="0.2.3",
+            )
+        versions.append(version)
+    return versions
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    "pinned, newest, measured",
+    [
+        # A newer version that traces nothing does not measure an older traced one past
+        # its switch: the older one's own setup records prompts and replies.
+        ("traceai", "none", False),
+        # A newer traced version does not stop an older untraced one being measured.
+        ("none", "traceai", True),
+    ],
+)
+def test_the_version_a_run_launches_decides_its_export(
+    pinned, newest, measured, organization, workspace, user, settings, monkeypatch
+):
+    world = _ExportWorld(
+        organization,
+        workspace,
+        user,
+        settings,
+        monkeypatch,
+        tag=f"pin-{pinned}",
+        summary="real",
+        provider="disabled",
+    )
+    launched, _newer = _store_versions(world.agent, pinned, newest)
+    world.job.agent_version = launched
+    world.job.save(update_fields=["agent_version"])
+
+    world.launch()
+
+    if measured:
+        assert world.export_log() == []
+        assert world.mark["FI_SIMULATION_EXPORT"] == "our_keys"
+    else:
+        assert world.export_log() == [
+            ("info", {"job_id": str(world.job.id), "reason": "observability_off"})
+        ]
+        assert "FI_SIMULATION_EXPORT" not in world.mark
+
+
+@pytest.mark.django_db
+def test_a_run_pinned_to_a_version_with_no_stored_setup_reads_the_agent_s_own(
+    organization, workspace, user, settings, monkeypatch
+):
+    # A version made by a push stores no setup; the agent's newest stored one decides.
+    world = _ExportWorld(
+        organization,
+        workspace,
+        user,
+        settings,
+        monkeypatch,
+        tag="pin-pushed",
+        summary="real",
+        provider="disabled",
+    )
+    _stored, pushed = _store_versions(world.agent, "none", None)
+    world.job.agent_version = pushed
+    world.job.save(update_fields=["agent_version"])
+
+    world.launch()
+
+    assert world.export_log() == []
+    assert world.mark["FI_SIMULATION_EXPORT"] == "our_keys"
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("listed_in", ["settings", "environment"])
+@pytest.mark.parametrize(
+    "allowlist, instrumentation, refusal",
+    [
+        ("EXPORT", "traceai", "snapshot_unsupported"),
+        ("MEASURE", "none", "not_instrumented"),
+    ],
+)
+def test_the_snapshot_allowlists_are_read_from_django_settings(
+    allowlist,
+    instrumentation,
+    refusal,
+    listed_in,
+    organization,
+    workspace,
+    user,
+    settings,
+    monkeypatch,
+):
+    in_settings = _EXPORT_SNAPSHOT if listed_in == "settings" else ""
+    option = "snapshot_setting" if allowlist == "EXPORT" else "measure_setting"
+    world = _ExportWorld(
+        organization,
+        workspace,
+        user,
+        settings,
+        monkeypatch,
+        tag=f"{allowlist}-{listed_in}",
+        instrumentation=instrumentation,
+        **{option: in_settings},
+    )
+    # The process environment says the opposite of the setting; the setting decides.
+    monkeypatch.setenv(
+        f"ALK_HOSTED_OBSERVABILITY_{allowlist}_SNAPSHOTS",
+        "" if in_settings else _EXPORT_SNAPSHOT,
+    )
+
+    world.launch()
+
+    if in_settings:
+        assert world.export_log() == []
+        assert "FI_SIMULATION_EXPORT" in world.mark
+    else:
+        assert world.export_log() == [
+            ("info", {"job_id": str(world.job.id), "reason": refusal})
+        ]
 
 
 @pytest.mark.django_db

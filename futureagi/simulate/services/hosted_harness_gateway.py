@@ -1305,9 +1305,7 @@ def _bound_agent_definition(job: HostedHarnessJob, payload: Mapping[str, Any]):
 
 
 def _listed_snapshots(setting: str) -> set[str]:
-    return {
-        name.strip() for name in os.environ.get(setting, "").split(",") if name.strip()
-    }
+    return {name.strip() for name in getattr(settings, setting) if name.strip()}
 
 
 def _decide_observability_export(
@@ -1323,9 +1321,11 @@ def _decide_observability_export(
 
     agent = _bound_agent_definition(job, payload)
 
-    from simulate.services.agent_setup import agent_summary
+    from simulate.services.agent_setup import launched_agent_summary
 
-    summary = agent_summary(agent.id)
+    # The setup of the version this run launches decides, not the newest one's: a traced
+    # older version keeps its own observability switch when a newer one traces nothing.
+    summary = launched_agent_summary(agent.id, agent_version_id=job.agent_version_id)
     if summary.kind != "source":
         raise _ExportRefused("not_source")
     # Decided before the hidden project or the key is made: on a snapshot that cannot measure,
