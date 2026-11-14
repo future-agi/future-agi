@@ -12,6 +12,7 @@ from accounts.demo_seeding import (
 )
 from accounts.models.demo_seed import DemoSeedRequest, DemoTracePublication
 from accounts.utils import first_signup
+from tfc.tests.lagging_replica import lagging_replica  # noqa: F401  (fixture)
 from tracer.models.observation_span import ObservationSpan
 from tracer.models.project import Project
 from tracer.models.trace import Trace
@@ -151,6 +152,32 @@ def test_clickhouse_failure_keeps_publication_pending(signup):
         publish_pending_demo_trace(trace_id)
     assert write.call_args.args[0].id == trace_id
     assert len(write.call_args.args[1]) == 35
+
+
+@pytest.mark.django_db(transaction=True)
+def test_publication_reads_the_seeded_trace_from_the_primary(signup, request):
+    """With replica routing on, the trace and its spans were seeded moments
+    before the publication runs: a lagging replica has none of them, and a
+    publication that read them there would publish a trace with no spans
+    (or fail) and mark itself done."""
+    replica = request.getfixturevalue("lagging_replica")
+    user = signup()
+    replica.freeze()
+    with patch("accounts.user_onboard.upload_demo_dataset"):
+        seed_pending_demo_data(user.organization_id)
+    trace_id = (
+        DemoTracePublication.objects.filter(completed_at__isnull=True)
+        .values_list("trace_id", flat=True)
+        .first()
+    )
+    assert not Trace.objects.filter(pk=trace_id).exists()
+
+    with patch("accounts.user_onboard._write_demo_trace_to_clickhouse") as write:
+        publish_pending_demo_trace(trace_id)
+
+    assert write.call_args.args[0].id == trace_id
+    assert len(write.call_args.args[1]) == 35
+    assert DemoTracePublication.objects.get(pk=trace_id).completed_at is not None
 
 
 @pytest.mark.django_db(transaction=True)

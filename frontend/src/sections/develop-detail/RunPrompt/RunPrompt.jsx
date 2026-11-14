@@ -22,7 +22,7 @@ import React, {
   useRef,
   useState,
 } from "react";
-import { trackEvent, Events, PropertyName } from "src/utils/Mixpanel";
+import { trackEvent, Events } from "src/utils/Mixpanel";
 import Iconify from "src/components/iconify";
 import { useForm } from "react-hook-form";
 import { getRandomId } from "src/utils/utils";
@@ -96,6 +96,7 @@ import ChooseModelType from "./Components/ChooseModelType";
 import ModelOptionsState from "../Common/ModelOptionsState";
 import CustomAudioDialog from "../CustomAudioDialog";
 import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
+import { runPromptEventFields } from "./runPromptEventFields";
 
 const DEFAULT_CONFIG_KEYS = [
   "responseFormat",
@@ -987,24 +988,10 @@ export const RunPromptForm = React.forwardRef(
       } else {
         // @ts-ignore
         createRunPrompt(submitObject);
-        trackEvent(Events.datasetRunpromptRunClicked, {
-          [PropertyName.id]: dataset,
-          [PropertyName.concurrency]: submitObject.config?.concurrency,
-          [PropertyName.promptTemplate]:
-            submitObject.config?.messages?.map((msg) => msg.content) || [],
-          [PropertyName.toolConfig]: {
-            toolChoice: submitObject.config?.toolChoice,
-            tools: submitObject.config?.tools?.map((tool) => tool.id) || [],
-          },
-          [PropertyName.modelName]: submitObject.config?.model,
-          [PropertyName.modelOptions]: {
-            maxTokens: submitObject.config?.maxTokens,
-            presencePenalty: submitObject.config?.presencePenalty,
-            temperature: submitObject.config?.temperature,
-            topP: submitObject.config?.topP,
-            responseFormat: submitObject.config?.responseFormat,
-          },
-        });
+        trackEvent(
+          Events.datasetRunpromptRunClicked,
+          runPromptEventFields(dataset, submitObject),
+        );
       }
     };
 

@@ -43,6 +43,7 @@ import {
   voiceEvalColumns,
   chatEvalColumns,
   getVersionedEvalName,
+  runTestEventFields,
   useAgentDefinitions,
 } from "./common";
 import { useNavigate } from "react-router";
@@ -566,7 +567,7 @@ const CreateRunTestPage = ({ open, onClose }) => {
 
     // Submit the payload
     trackEvent(Events.runTestCreateTestClicked, {
-      [PropertyName.formFields]: payload,
+      [PropertyName.formFields]: runTestEventFields(payload),
     });
     createTestMutation.mutate(payload);
   };
