@@ -5,15 +5,34 @@ name: sdk-sync
 # refreshes its contract slice from this tag's api_contracts/openapi/swagger.json,
 # regenerates the Python and TypeScript clients, pins the
 # release in sdkgen/contracts/BACKEND_VERSION, and opens a pull request on the
-# SDK's dev branch that merges itself once the SDK's CI and E2E (against this
-# very release image) pass. From there the SDK's promote and release-please
-# workflows take it to main, PyPI and npm.
+# SDK's dev branch with auto-merge armed. It merges once a person approves it
+# and the SDK's CI and E2E (against this very release image) pass: dev needs
+# one approval, and no SDK workflow approves these pull requests. From there
+# the SDK's promote and release-please workflows take it to main, PyPI and npm.
 #
 # The commit is `feat(contract): ...` when generated code changed (a minor SDK
 # release) and `chore(contract): ...` when only the pin moved (no release).
 #
 # Needs the release bot app installed on futureagi-sdk (RELEASE_BOT_APP_ID /
 # RELEASE_BOT_PRIVATE_KEY, the secrets release-please.yml uses).
+#
+# This job holds the release-bot key and runs sdkgen code from the SDK checkout.
+# So it checks out only futureagi-sdk dev, never a ref the dispatcher chooses:
+# code on such a ref would run with the key. The key custody therefore also
+# needs every merge into futureagi-sdk dev to need a person's review, which is
+# an owner setting (docs/release-autopilot.md). To sync a feature branch, run
+# sdkgen/sync_contract.py and sdkgen/generate.py on that branch locally.
+#
+# Both checkouts name full refs. A bare name such as v1.59.0 makes
+# actions/checkout take a branch of that name before the tag, so any writer's
+# branch could supply the contract. The contract comes only from
+# refs/tags/<version>, checked before any token is minted, and the SDK only
+# from refs/heads/dev. Every Python call runs with -I (isolated mode), so
+# Python itself puts neither the current directory nor the script's directory
+# on sys.path. sdkgen/generate.py still adds the SDK checkout's root itself, so
+# for that call a top-level module on futureagi-sdk dev can still shadow the
+# standard library; closing that needs a futureagi-sdk change
+# (docs/release-autopilot.md, "Python calls in key-holding jobs").
 
 on:
   workflow_run:
@@ -26,9 +45,10 @@ on:
         required: true
         type: string
       sdk-base:
-        description: futureagi-sdk branch to open the pull request against
+        description: futureagi-sdk branch to open the pull request against (only dev; see the header)
         default: dev
-        type: string
+        type: choice
+        options: [dev]
 
 permissions:
   contents: read
@@ -44,6 +64,7 @@ jobs:
     if: >-
       github.event_name == 'workflow_dispatch'
       || (github.event.workflow_run.conclusion == 'success'
+          && github.event.workflow_run.head_repository.full_name == github.repository
           && startsWith(github.event.workflow_run.head_branch, 'v'))
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -55,9 +76,18 @@ jobs:
           RUN_REF: ${{ github.event.workflow_run.head_branch }}
           SDK_BASE: ${{ inputs.sdk-base || 'dev' }}
         run: |
+          set -euo pipefail
+          # Checked before any token or checkout, and as a whole string. The
+          # choice input already offers only dev; this also covers API callers.
+          if [ "$SDK_BASE" != dev ]; then
+            echo "::error::sdk-base must be dev: this job holds the release-bot key and runs code from that branch"
+            exit 1
+          fi
           version="${DISPATCHED:-$RUN_REF}"
-          if ! echo "$version" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$'; then
-            echo "not a release tag: $version"
+          # =~ matches the whole value. A per-line match would let a
+          # multi-line value add its own lines to GITHUB_OUTPUT.
+          if [[ ! "$version" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            printf 'not a release tag: %q\n' "$version"
             echo "skip=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
@@ -68,9 +98,33 @@ jobs:
         if: steps.release.outputs.skip != 'true'
         uses: actions/checkout@v4
         with:
-          ref: ${{ steps.release.outputs.version }}
+          ref: refs/tags/${{ steps.release.outputs.version }}
           sparse-checkout: api_contracts/openapi
           fetch-depth: 1
+
+      - name: Verify the contract is the release tag
+        if: steps.release.outputs.skip != 'true'
+        env:
+          VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          set -euo pipefail
+          # The tag ref must exist and name a commit (a lightweight or an
+          # annotated tag), and HEAD must be that commit, detached: never a
+          # branch, whatever its name.
+          type=$(git cat-file -t "refs/tags/$VERSION" 2>/dev/null) || type=missing
+          case "$type" in
+            commit | tag) ;;
+            *) echo "::error::refs/tags/$VERSION is not a release tag (object type: $type)"; exit 1 ;;
+          esac
+          tag=$(git rev-parse --verify --quiet "refs/tags/$VERSION^{commit}") || {
+            echo "::error::refs/tags/$VERSION does not point to a commit"; exit 1; }
+          if git symbolic-ref --quiet HEAD >/dev/null; then
+            echo "::error::the contract checkout is on a branch, not on refs/tags/$VERSION"
+            exit 1
+          fi
+          [ "$(git rev-parse --verify HEAD)" = "$tag" ] || {
+            echo "::error::the contract checkout is not the commit of refs/tags/$VERSION"; exit 1; }
+          echo "contract from refs/tags/$VERSION at $tag"
 
       - uses: actions/create-github-app-token@v2
         if: steps.release.outputs.skip != 'true'
@@ -86,10 +140,26 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: future-agi/futureagi-sdk
-          ref: ${{ steps.release.outputs.sdk-base }}
+          ref: refs/heads/${{ steps.release.outputs.sdk-base }}
           path: futureagi-sdk
           token: ${{ steps.app-token.outputs.token }}
           fetch-depth: 1
+
+      - name: Verify the SDK checkout is the base branch
+        if: steps.release.outputs.skip != 'true'
+        working-directory: futureagi-sdk
+        env:
+          BASE: ${{ steps.release.outputs.sdk-base }}
+        run: |
+          set -euo pipefail
+          # The branch itself, at the commit just fetched: not a tag or a
+          # detached commit of that name.
+          [ "$(git symbolic-ref --quiet HEAD)" = "refs/heads/$BASE" ] || {
+            echo "::error::the futureagi-sdk checkout is not on refs/heads/$BASE"; exit 1; }
+          remote=$(git rev-parse --verify --quiet "refs/remotes/origin/$BASE^{commit}") || {
+            echo "::error::refs/remotes/origin/$BASE is missing"; exit 1; }
+          [ "$(git rev-parse --verify HEAD)" = "$remote" ] || {
+            echo "::error::the futureagi-sdk checkout is not the fetched $BASE"; exit 1; }
 
       - uses: actions/setup-python@v5
         if: steps.release.outputs.skip != 'true'
@@ -103,9 +173,9 @@ jobs:
         env:
           VERSION: ${{ steps.release.outputs.version }}
         run: |
-          python -m pip install --quiet pyyaml
-          python sdkgen/sync_contract.py "$GITHUB_WORKSPACE/api_contracts/openapi/swagger.json" --backend-version "$VERSION"
-          python sdkgen/generate.py
+          python -I -m pip install --quiet PyYAML==6.0.3
+          python -I sdkgen/sync_contract.py "$GITHUB_WORKSPACE/api_contracts/openapi/swagger.json" --backend-version "$VERSION"
+          python -I sdkgen/generate.py
           # feat (a minor SDK release) only when generated client code changed. The slice
           # itself carries x-source-sha256, a hash of the whole monorepo swagger that moves
           # on nearly every release, so it must not decide; nor must the pin.
@@ -144,7 +214,7 @@ jobs:
           git push -f origin "$branch"
           fence='```'
           body=$(printf '%s\n\n%s\n%s\n%s\n\n%s\n' \
-            "Backend release **$VERSION** synced into the SDK: contract slice, generated Python and TypeScript clients, and sdkgen/contracts/BACKEND_VERSION. The E2E workflow on this PR runs against futureagi/standalone:$VERSION. Merges itself when CI and E2E pass; its CI fails if the release added MCP tools the SDK catalog does not list yet (sdkgen/check_mcp_parity.py), which is the cue to add their catalog entries." \
+            "Backend release **$VERSION** synced into the SDK: contract slice, generated Python and TypeScript clients, and sdkgen/contracts/BACKEND_VERSION. The E2E workflow on this PR runs against futureagi/standalone:$VERSION. Auto-merge is armed: it merges once a person approves it and CI and E2E pass. Its CI fails if the release added MCP tools the SDK catalog does not list yet (sdkgen/check_mcp_parity.py), which is the cue to add their catalog entries." \
             "$fence" "$(cat "$RUNNER_TEMP/diffstat.txt")" "$fence" \
             "Opened by future-agi's sdk-sync workflow: $SOURCE_RUN")
           number=$(gh pr list --head "$branch" --base "$BASE" --state open --json number --jq '.[0].number // empty')

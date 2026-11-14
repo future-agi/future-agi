@@ -2,7 +2,7 @@
 # or vX.Y.Z-rc.N. Prereleases stay in the beta channel: complete OSS images
 # and versioned Helm chart only, no shared image aliases, EE/docs dispatch,
 # deployment bump or Artifact Hub metadata update. Never promote a beta tag.
-# All publication still requires the ordinary production approval.
+# Publication requires Production approval unless the migration-free tag policy opts in.
 #
 # Every image builds through build-image-multiarch.yml: linux/amd64 and
 # linux/arm64 on native runners (the CUDA serving variant and the simulation
@@ -69,10 +69,17 @@ on:
 
 permissions:
   contents: read
+  # The release policy proves the previous release shipped (release-images runs).
+  actions: read
 
 concurrency:
   group: release-images-${{ inputs.version || github.ref_name }}
   cancel-in-progress: false
+
+# Every Python call in a run step uses -I (isolated mode). Several jobs hold
+# the release-bot key or a write token, and -I puts neither the current
+# directory nor the script's directory on sys.path, so no module file in a
+# checkout (pip.py, json.py) is imported.
 
 jobs:
   guard:
@@ -86,6 +93,8 @@ jobs:
       channel: ${{ steps.v.outputs.channel }}
       # JSON list of the components this run builds: all of them on a tag push.
       components: ${{ steps.v.outputs.components }}
+      environment: ${{ steps.policy.outputs.environment }}
+      tag-sha: ${{ steps.policy.outputs.tag_sha }}
     steps:
       - id: v
         shell: bash
@@ -209,12 +218,35 @@ jobs:
           echo "components=$components" >> "$GITHUB_OUTPUT"
           echo "components: $components"
 
-  # The one review of a release run: every other job waits on it. The image
-  # builds run in production-auto, which has no reviewers.
+      # Run policy code from reviewed main, never from the proposed tag. Full
+      # history supplies refs/remotes/origin/main ancestry and the previous
+      # stable baseline.
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: false
+          sparse-checkout: scripts
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Verify tag ancestry and select the approval environment
+        id: policy
+        env:
+          VERSION: ${{ steps.v.outputs.version }}
+          RELEASE_AUTO_APPROVE: ${{ vars.RELEASE_AUTO_APPROVE }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [ -f scripts/release_autopilot.py ] || { echo "::error::The release policy script is not on main yet. Promote dev to main before cutting a release tag."; exit 1; }
+          python3 -I scripts/release_autopilot.py environment --version "$VERSION"
+
+  # Every other job still waits here. Unknown/new migrations and dispatches
+  # retain Production review; only opted-in migration-free tag pushes skip it.
   approve:
     needs: guard
     runs-on: ubuntu-latest
-    environment: production
+    environment: ${{ needs.guard.outputs.environment }}
     timeout-minutes: 15
     env:
       REQUESTED_VERSION: ${{ inputs.version }}
@@ -344,6 +376,28 @@ jobs:
           components=$(printf '%s\n' $selected | jq -R . | jq -sc .)
           echo "components=$components" >> "$GITHUB_OUTPUT"
           echo "components: $components"
+
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: false
+          sparse-checkout: scripts
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Recheck ancestry and approval policy after the wait
+        env:
+          VERSION: ${{ needs.guard.outputs.version }}
+          EXPECTED_SHA: ${{ needs.guard.outputs.tag-sha }}
+          APPROVED_ENVIRONMENT: ${{ needs.guard.outputs.environment }}
+          RELEASE_AUTO_APPROVE: ${{ vars.RELEASE_AUTO_APPROVE }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [ -f scripts/release_autopilot.py ] || { echo "::error::The release policy script is not on main yet. Promote dev to main before cutting a release tag."; exit 1; }
+          python3 -I scripts/release_autopilot.py environment --version "$VERSION" \
+            --expected-sha "$EXPECTED_SHA" --approved-environment "$APPROVED_ENVIRONMENT"
 
   build:
     needs: [guard, approve]
@@ -779,7 +833,7 @@ jobs:
           VERSION: ${{ needs.guard.outputs.version }}
           WORKER_RELEASE_REF: ${{ vars.OMEGA_WORKER_RELEASE_REF }}
           RELEASE_REQUEST_ID: ${{ github.run_id }}-${{ github.run_attempt }}
-        run: python3 scripts/release-error-feed-worker.py
+        run: python3 -I scripts/release-error-feed-worker.py
       - uses: docker/setup-buildx-action@v3
       - uses: docker/login-action@v3
         with:
@@ -1028,7 +1082,7 @@ jobs:
       - name: Image sizes
         env:
           VERSION: ${{ needs.guard.outputs.version }}
-        run: python3 scripts/image_size_budget.py report --tag "$VERSION"
+        run: python3 -I scripts/image_size_budget.py report --tag "$VERSION"
 
   bump-deployment:
     needs: [guard, dispatch-ee, resolve-sdk, simulation-runner, release-worker]
@@ -1058,7 +1112,7 @@ jobs:
         .agentcc_gateway.image.tag .codeExecutor.image.tag .embedding.image.tag
         .errorFeed.image.tag
     steps:
-      - uses: actions/create-github-app-token@v2
+      - uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2.2.2
         id: app-token
         with:
           app-id: ${{ secrets.RELEASE_BOT_APP_ID }}
@@ -1068,41 +1122,45 @@ jobs:
           permission-contents: write
           permission-pull-requests: write
       - name: Checkout deployment repo
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           repository: future-agi/deployment
           token: ${{ steps.app-token.outputs.token }}
           ref: main
       # This repo's release scripts, beside the deployment checkout rather than
       # in place of it: the bump below addresses values files by relative path.
+      # All history and tags feed the migration count; the count reads file
+      # names from trees only, so no file contents are fetched.
       - name: Checkout release scripts
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           path: platform
           sparse-checkout: scripts
+          fetch-depth: 0
+          filter: blob:none
       - name: Install yq
         run: sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/download/v4.44.3/yq_linux_amd64 && sudo chmod +x /usr/local/bin/yq
       - name: Checkout release workflow for offline regression
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           path: .release-source
           sparse-checkout: .github/workflows/release-images.yml
           sparse-checkout-cone-mode: false
           persist-credentials: false
-      - uses: azure/setup-helm@v4
+      - uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4 # v4.3.1
         with:
           version: v3.17.3
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: "3.12"
       - name: Verify release scripts against deployment charts
         env:
           RELEASE_WORKFLOW: ${{ github.workspace }}/.release-source/.github/workflows/release-images.yml
         run: |
-          python3 -m pip install PyYAML==6.0.3
-          python3 tests/test-release-digest-bump.py
-      - uses: docker/setup-buildx-action@v3
-      - uses: docker/login-action@v3
+          python3 -I -m pip install PyYAML==6.0.3
+          python3 -I tests/test-release-digest-bump.py
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
@@ -1137,6 +1195,42 @@ jobs:
             done
             echo "${component}_digest=$digest" >> "$GITHUB_OUTPUT"
           done
+      # The deployment autopilot merges a bump unattended only when its commit
+      # says "Migrations: 0 new files" and every image tag the bump changes was
+      # the "Migration baseline" release. So the baseline is the release
+      # deployment main runs now, read before the bump rewrites the tags, and
+      # the count runs from it to this release. A release whose bump never
+      # merged is then counted too. The guard's count, since the previous
+      # shipped release, only picks the approval environment.
+      - name: Count migrations since the release deployment main runs
+        id: baseline
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Only the tags in the path list are read, and none is printed
+          # unless all of them are the same plain release tag.
+          tags=()
+          for file in eu/gcp/deployment/values.yaml us/gcp/deployment/values.yaml; do
+            # $COMMON_PATHS is intentionally unquoted: one yq path per word.
+            # shellcheck disable=SC2086
+            for p in $COMMON_PATHS; do
+              tags+=("$(yq "$p" "$file" 2>/dev/null || true)")
+            done
+          done
+          pinned=unknown
+          if [[ "${tags[0]:-}" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+            pinned="${tags[0]}"
+            for tag in "${tags[@]}"; do
+              [ "$tag" = "$pinned" ] || pinned=unknown
+            done
+          fi
+          # Unknown unless both tags exist here and the pinned one is an
+          # earlier ancestor of this release. Any failure is unknown, never 0.
+          count=$(cd platform && python3 -I scripts/release_autopilot.py migrations-since --from "$pinned" --to "$VERSION") || count=unknown
+          [[ "$count" =~ ^(0|[1-9][0-9]*)$ ]] || count=unknown
+          echo "pinned=$pinned" >> "$GITHUB_OUTPUT"
+          echo "migrations=$count" >> "$GITHUB_OUTPUT"
+          echo "Migration baseline (the release deployment main runs): $pinned. Migration and schema files from it to $VERSION: $count."
       - name: Bump platform tags and digests
         env:
           BACKEND_DIGEST: ${{ steps.catalog-images.outputs.backend_digest }}
@@ -1195,15 +1289,28 @@ jobs:
           # result: every image in the platform release lane must now carry
           # $VERSION, so a tag added to a values file but not to the path list
           # fails here instead of in a deploy. The image list lives in the
-          # script; scripts/test_verify_platform_image_tags.py pins it.
-          python3 -c 'import yaml' 2>/dev/null || python3 -m pip install --quiet --user pyyaml
-          python3 platform/scripts/verify-platform-image-tags.py "$VERSION" \
+          # script; scripts/test_verify_platform_image_tags.py pins it. PyYAML
+          # comes from the "Verify release scripts" step above.
+          python3 -I platform/scripts/verify-platform-image-tags.py "$VERSION" \
             eu/gcp/deployment/values.yaml us/gcp/deployment/values.yaml
       - name: Open bump PR
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          MIGRATIONS: ${{ steps.baseline.outputs.migrations }}
+          MIGRATION_BASELINE: ${{ steps.baseline.outputs.pinned }}
         run: |
           set -eu
+          # The deployment autopilot reads this count from the head commit
+          # message: only "Migrations: 0 new files" lets it merge unattended.
+          # Anything but a plain count is written as unknown, never dropped.
+          case "$MIGRATIONS" in
+            unknown) ;;
+            "" | *[!0-9]*) MIGRATIONS=unknown ;;
+          esac
+          # The release the count starts from: what deployment main ran before
+          # this bump. The autopilot requires every image tag the bump changes
+          # to have been this version.
+          [[ "$MIGRATION_BASELINE" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || MIGRATION_BASELINE=unknown
           branch="chore/bump-platform-${VERSION}"
           git config user.name "futureagi-release-bot"
           git config user.email "release-bot@futureagi.com"
@@ -1211,7 +1318,8 @@ jobs:
           git switch -c "$branch" 2>/dev/null || git switch "$branch"
           git add eu/gcp/deployment/values.yaml us/gcp/deployment/values.yaml
           git diff --cached --quiet && { echo "values already at ${VERSION}; nothing to do"; exit 0; }
-          git commit -m "chore(release): bump platform images to ${VERSION}"
+          git commit -m "chore(release): bump platform images to ${VERSION}" -m "Migrations: ${MIGRATIONS} new files" \
+            -m "Migration baseline: ${MIGRATION_BASELINE}"
           # Plain --force: the bump branch is bot-owned and regenerated from main
           # each run; a single-branch checkout never fetches its remote ref, so
           # --force-with-lease has no base to compare and is rejected as "stale
@@ -1225,7 +1333,11 @@ jobs:
             fi
             gh pr create --repo future-agi/deployment --base main --head "$branch" \
               --title "chore(release): bump platform to ${VERSION}" \
-              --body "Automated bump for [${VERSION}](https://github.com/future-agi/future-agi/releases/tag/${VERSION}). ${runner_line} Error Feed worker: ${VERSION}, commit ${WORKER_SOURCE_SHA}, digest ${WORKER_DIGEST}. Review release notes (check for the migrations callout) before deploying per the deployment guide."
+              --body "Automated bump for [${VERSION}](https://github.com/future-agi/future-agi/releases/tag/${VERSION}). ${runner_line} Error Feed worker: ${VERSION}, commit ${WORKER_SOURCE_SHA}, digest ${WORKER_DIGEST}. Review release notes (check for the migrations callout) before deploying per the deployment guide.
+
+          Migrations: ${MIGRATIONS} new files
+
+          Migration baseline: ${MIGRATION_BASELINE}"
           else
             echo "bump PR already open"
           fi

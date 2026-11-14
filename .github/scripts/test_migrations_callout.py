@@ -2,6 +2,7 @@
 """Stdlib-only CLI regressions; every test owns a throwaway git repository."""
 
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -73,12 +74,28 @@ class MigrationsCalloutTests(unittest.TestCase):
         warning = f"\n\n{CALLOUT}" if callout else ""
         return f"## [{version}](https://example.invalid/compare) (2026-11-03){warning}\n\n### Fixes\n\n* A fix"
 
+    def merge_preview(self, base=None, head=None, *more_parents):
+        """GitHub's refs/pull/N/merge shape, built without moving HEAD.
+
+        A real preview has the base tip as first parent and the PR head as
+        second, for example 0442e9abc "Merge 7bb512c2... into b3b8aebc..."
+        on release PR #3636.
+        """
+        base, head = base or self.base_sha, head or self.head_sha
+        tree = self.git("merge-tree", "--write-tree", base, head)
+        parents = [
+            arg for parent in (base, head, *more_parents) for arg in ("-p", parent)
+        ]
+        message = f"Merge {head} into {base}"
+        return self.git("commit-tree", tree, *parents, "-m", message)
+
     def pr(self, notes, header="Release bot", footer=FOOTER):
+        # An `opened` payload: GitHub has not computed the merge preview yet.
         return {
             "pull_request": {
                 "base": {"ref": "main", "sha": self.base_sha},
                 "head": {"ref": "release-please--branches--main", "sha": self.head_sha},
-                "merge_commit_sha": self.head_sha,
+                "merge_commit_sha": None,
                 "body": f"{header}\n---\n\n{notes}\n\n---\n{footer}",
             }
         }
@@ -94,9 +111,16 @@ class MigrationsCalloutTests(unittest.TestCase):
             }
         }
 
-    def check(self, event_name, event, *, success, count=None):
+    def check(self, event_name, event, *, success, count=None, github_sha=...):
         event_path = self.repo / "event.json"
         event_path.write_text(json.dumps(event))
+        # The self-test job runs this file on a runner that sets GITHUB_SHA, so
+        # the child's value is always the test's choice, never the runner's.
+        env = {key: value for key, value in os.environ.items() if key != "GITHUB_SHA"}
+        if github_sha is ...:
+            github_sha = self.merge_preview() if event_name == "pull_request" else None
+        if github_sha is not None:
+            env["GITHUB_SHA"] = github_sha
         result = subprocess.run(
             [
                 sys.executable,
@@ -110,6 +134,7 @@ class MigrationsCalloutTests(unittest.TestCase):
             cwd=self.repo,
             capture_output=True,
             text=True,
+            env=env,
         )
         self.assertEqual(
             result.returncode, 0 if success else 1, result.stdout + result.stderr
@@ -197,8 +222,10 @@ class MigrationsCalloutTests(unittest.TestCase):
         self.git("tag", "v1.52.0")
         path = self.repo / "futureagi/tracer/migrations/0001_initial.py"
         path.write_text("# Updated existing migration\n")
-        self.git("commit", "-am", "Edit existing migration")
-        self.base_sha = self.head_sha = self.git("rev-parse", "HEAD")
+        self.git("commit", "-qam", "Edit existing migration")
+        self.base_sha = self.git("rev-parse", "HEAD")
+        self.git("commit", "--allow-empty", "-qm", "Release 1.53.0")
+        self.head_sha = self.git("rev-parse", "HEAD")
         self.check("pull_request", self.pr(self.notes()), success=True, count=0)
 
     def test_first_release_with_no_prior_tag(self):
@@ -209,8 +236,10 @@ class MigrationsCalloutTests(unittest.TestCase):
     def test_missing_git_ref_fails_closed(self):
         self.prepare()
         event = self.pr(self.notes(callout=True))
-        event["pull_request"]["merge_commit_sha"] = "0" * 40
-        self.check("pull_request", event, success=False)
+        # A valid payload preview is no fallback for an unknown run commit.
+        event["pull_request"]["merge_commit_sha"] = self.merge_preview()
+        output = self.check("pull_request", event, success=False, github_sha="0" * 40)
+        self.assertNotIn("Added migrations", output)
 
     def test_stale_pr_head_does_not_hide_migrations_already_on_main(self):
         self.git("tag", "v1.52.0")
@@ -220,17 +249,78 @@ class MigrationsCalloutTests(unittest.TestCase):
         self.git("checkout", "-qb", "base-main", "v1.52.0")
         self.commit_files(["tracer/0001_new_on_main"])
         self.base_sha = self.git("rev-parse", "HEAD")
-        self.git("checkout", "release-pr")
-        self.git("merge", "--no-edit", "base-main")
-        event = self.pr(self.notes())
-        event["pull_request"]["merge_commit_sha"] = self.git("rev-parse", "HEAD")
-        self.check("pull_request", event, success=False, count=1)
+        # The head lacks main's migration; the preview merges it in.
+        self.check("pull_request", self.pr(self.notes()), success=False, count=1)
 
-    def test_missing_merge_preview_fails_closed(self):
+    def test_opened_payload_without_merge_preview_uses_the_run_merge(self):
+        # Release PRs #3636 and #3594 each got one callout run, from `opened`,
+        # whose payload carries merge_commit_sha null. GITHUB_SHA decides.
         self.prepare()
         event = self.pr(self.notes(callout=True))
-        event["pull_request"]["merge_commit_sha"] = None
-        self.check("pull_request", event, success=False)
+        self.assertIsNone(event["pull_request"]["merge_commit_sha"])
+        self.check("pull_request", event, success=True, count=6)
+        self.check("pull_request", self.pr(self.notes()), success=False, count=6)
+        # The payload's base.sha is not read either: the preview's first parent
+        # gives the base side, so an older or unknown base.sha changes nothing.
+        event["pull_request"]["base"]["sha"] = "0" * 40
+        self.check("pull_request", event, success=True, count=6)
+
+    def test_payload_merge_preview_is_ignored(self):
+        # A stale payload preview with no migrations cannot hide the run's own.
+        self.prepare()
+        event = self.pr(self.notes())
+        root = self.git("rev-list", "--max-parents=0", "HEAD")
+        event["pull_request"]["merge_commit_sha"] = root
+        self.check("pull_request", event, success=False, count=6)
+
+    def test_missing_merge_preview_fails_closed(self):
+        # The run's merge preview is GITHUB_SHA. A null payload preview passes
+        # with it, and nothing passes without it.
+        self.prepare()
+        event = self.pr(self.notes(callout=True))
+        self.check("pull_request", event, success=True, count=6)
+        merge = self.merge_preview()
+        for value in (None, "", "HEAD", merge[:12], merge.upper(), f"{merge}\n"):
+            with self.subTest(value=value):
+                output = self.check(
+                    "pull_request", event, success=False, github_sha=value
+                )
+                self.assertIn("GITHUB_SHA", output)
+                self.assertNotIn("Added migrations", output)
+        # A tag object that points at the merge is not the merge commit itself.
+        self.git("tag", "-a", "-m", "annotated", "preview-tag", merge)
+        tag_object = self.git("rev-parse", "preview-tag")
+        self.check("pull_request", event, success=False, github_sha=tag_object)
+
+    def test_a_commit_that_is_not_a_two_parent_merge_fails_closed(self):
+        self.prepare()
+        event = self.pr(self.notes(callout=True))
+        # The PR head itself, and the base tip, each have one parent.
+        for value in (self.head_sha, self.base_sha):
+            with self.subTest(value=value):
+                output = self.check(
+                    "pull_request", event, success=False, github_sha=value
+                )
+                self.assertIn("not a merge of this PR's head", output)
+        self.git("commit", "--allow-empty", "-qm", "Third parent")
+        octopus = self.merge_preview(None, None, self.git("rev-parse", "HEAD"))
+        self.check("pull_request", event, success=False, github_sha=octopus)
+
+    def test_a_merge_of_another_head_fails_closed(self):
+        self.prepare()
+        event = self.pr(self.notes(callout=True))
+        # The preview of an earlier head: a later push moved the PR on.
+        self.git("checkout", "-qb", "earlier-head", self.base_sha)
+        self.git("commit", "--allow-empty", "-qm", "Earlier release commit")
+        earlier = self.merge_preview(self.base_sha, self.git("rev-parse", "HEAD"))
+        # And a merge with the parents the other way round.
+        reversed_parents = self.merge_preview(self.head_sha, self.base_sha)
+        for value in (earlier, reversed_parents):
+            with self.subTest(value=value):
+                output = self.check(
+                    "pull_request", event, success=False, github_sha=value
+                )
+                self.assertIn("not a merge of this PR's head", output)
 
     def test_crlf_body_and_single_delimiter_follow_release_please(self):
         self.prepare()
@@ -257,12 +347,13 @@ class MigrationsCalloutTests(unittest.TestCase):
 
     def test_drafts_prereleases_and_unrelated_prs_are_ignored(self):
         self.prepare()
+        # Unrelated PRs return before GITHUB_SHA is read.
         event = self.pr(self.notes())
         event["pull_request"]["head"]["ref"] = "fix/ordinary-pr"
-        self.check("pull_request", event, success=True)
+        self.check("pull_request", event, success=True, github_sha=None)
         event = self.pr(self.notes())
         event["pull_request"]["base"]["ref"] = "dev"
-        self.check("pull_request", event, success=True)
+        self.check("pull_request", event, success=True, github_sha=None)
         for fields in [
             {"draft": True},
             {"prerelease": True},
