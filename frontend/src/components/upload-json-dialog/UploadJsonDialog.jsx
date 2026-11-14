@@ -135,13 +135,13 @@ export default function UploadJsonDialog({
     if (isDragReject) return "error.main";
     if (isDragActive) return "primary.main";
     if (displayError) return "error.light";
-    return "blue.500";
+    return "status.info.border";
   };
 
   // Get background color based on state
   const getBgColor = () => {
     if (isDragReject) return "error.lighter";
-    return "blue.o5";
+    return "status.info.bg";
   };
 
   const renderContent = () => {
@@ -204,7 +204,7 @@ export default function UploadJsonDialog({
       PaperProps={{
         sx: {
           borderRadius: 1,
-          maxWidth: 480,
+          maxWidth: 560,
         },
       }}
     >
@@ -214,11 +214,7 @@ export default function UploadJsonDialog({
           justifyContent="space-between"
           alignItems="center"
         >
-          <Typography
-            typography="m3"
-            fontWeight="fontWeightBold"
-            color="black.1000"
-          >
+          <Typography typography="m3" fontWeight={600} color="text.primary">
             {title}
           </Typography>
           <IconButton
@@ -226,7 +222,7 @@ export default function UploadJsonDialog({
             size="small"
             disabled={isLoading}
             sx={{
-              color: "black.1000",
+              color: "text.primary",
             }}
           >
             <SvgColor
@@ -256,7 +252,7 @@ export default function UploadJsonDialog({
             "&:hover": {
               borderColor:
                 isLoading || disabled ? getBorderColor() : "primary.main",
-              bgcolor: isLoading || disabled ? getBgColor() : "blue.50",
+              bgcolor: isLoading || disabled ? getBgColor() : "status.info.bg",
             },
           }}
         >

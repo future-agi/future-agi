@@ -228,6 +228,8 @@ class ALKSimulateProvisionRunTestRequestSerializer(serializers.Serializer):
     )
     agent_definition_id = serializers.UUIDField(required=False, allow_null=True)
     agent_name = serializers.CharField(required=False, allow_blank=True, max_length=255)
+    # Off by default; the caller opts in explicitly.
+    enable_tool_evaluation = serializers.BooleanField(required=False, default=False)
 
     def validate(self, attrs):
         # ALK contracts call conversational text agents "chat" while the

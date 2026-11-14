@@ -11,33 +11,46 @@ from rest_framework.parsers import MultiPartParser
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
+from simulate.selectors.held_back import coding_agent_key, coding_agent_run
+from simulate.serializers.harness_environment import (
+    HarnessAgentCredentialsResponseSerializer,
+)
 from simulate.serializers.harness_job import (
     HarnessJobActionSerializer,
     HarnessJobAdjustmentSerializer,
     HarnessJobCreateSerializer,
     HarnessJobExtendSerializer,
     HarnessJobReadSerializer,
+    HarnessPreflightResponseSerializer,
     HarnessPreflightSerializer,
+    HarnessRunCreateResponseSerializer,
+    HarnessRunCreateSerializer,
+    HarnessScenarioAmendSerializer,
     HarnessSecretFileUploadResponseSerializer,
-    HarnessSecretValuesResponseSerializer,
     HarnessSecretValuesSerializer,
     HarnessSourceUploadResponseSerializer,
 )
+from simulate.serializers.hosted_harness_conversation import (
+    HarnessConversationMessageCreateSerializer,
+    HarnessConversationReadSerializer,
+)
 from simulate.services.harness_credentials import (
+    HOSTED_FILE_KEY_PREFIX,
     credential_file_ref,
     request_scope,
     store_credential_file,
 )
 from simulate.services.harness_provider import get_harness_provider
 from tfc.utils.api_contracts import validated_request
+from tfc.utils.api_serializers import ApiTextErrorResponseSerializer
 
 
 class HarnessJobViewSet(viewsets.ViewSet):
     """Provider-neutral control plane for hosted ALK harness jobs.
 
-    Validates the v1.6 request contract and delegates execution to the backend
-    selected by ``settings.HARNESS_PROVIDER`` (``daytona`` default, or
-    ``sandbox``). See ``simulate.services.harness_provider``.
+    Validates the v1.6 request contract and delegates execution to the public backend selected by
+    ``settings.HARNESS_PROVIDER`` (``hosted`` or ``sandbox``). The hosted backend independently
+    selects its managed sandbox runtime.
     """
 
     permission_classes = [IsAuthenticated]
@@ -132,11 +145,10 @@ class HarnessJobViewSet(viewsets.ViewSet):
                 {"detail": "an organization is required"},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        # Daytona cannot dereference the local-sandbox
-        # ``harness_environment_file`` manager. Google ADC crosses the hosted
-        # seam as encrypted JSON; the guest recreates the 0600 file and exports
-        # GOOGLE_APPLICATION_CREDENTIALS inside the sandbox.
-        if get_harness_provider().name == "daytona":
+        # Managed sandboxes cannot dereference the local-sandbox
+        # ``harness_environment_file`` manager. Google ADC crosses the hosted seam as encrypted
+        # JSON; the guest recreates the 0600 file and exports GOOGLE_APPLICATION_CREDENTIALS.
+        if get_harness_provider().name == "hosted":
             if environment_name != "GOOGLE_APPLICATION_CREDENTIALS":
                 return Response(
                     {
@@ -147,24 +159,25 @@ class HarnessJobViewSet(viewsets.ViewSet):
                     },
                     status=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 )
-            content = uploaded.read()
+            # Named for the error reporters' scrubbers: it holds a private key.
+            secret_content = uploaded.read()
             try:
-                document = json.loads(content.decode("utf-8"))
+                secret_document = json.loads(secret_content.decode("utf-8"))
             except (UnicodeDecodeError, json.JSONDecodeError):
                 return Response(
                     {"detail": "Google credential file must contain valid UTF-8 JSON"},
                     status=status.HTTP_400_BAD_REQUEST,
                 )
-            if not isinstance(document, dict):
+            if not isinstance(secret_document, dict):
                 return Response(
                     {"detail": "Google credential JSON must contain an object"},
                     status=status.HTTP_400_BAD_REQUEST,
                 )
             required_fields = {"type", "project_id", "client_email", "private_key"}
             missing_fields = sorted(
-                field for field in required_fields if not document.get(field)
+                field for field in required_fields if not secret_document.get(field)
             )
-            if document.get("type") != "service_account" or missing_fields:
+            if secret_document.get("type") != "service_account" or missing_fields:
                 detail = (
                     "Google credential file must be service-account JSON containing "
                     "type, project_id, client_email, and private_key"
@@ -173,12 +186,12 @@ class HarnessJobViewSet(viewsets.ViewSet):
 
             from simulate.models import HostedHarnessSecret
 
-            key = f"harness-google-adc-{uuid.uuid4().hex}"
+            key = f"{HOSTED_FILE_KEY_PREFIX}{uuid.uuid4().hex}"
             HostedHarnessSecret.objects.create(
                 organization=organization,
                 name=key,
                 version="1",
-                encrypted_value=json.dumps(document, separators=(",", ":")),
+                encrypted_value=json.dumps(secret_document, separators=(",", ":")),
             )
             result = {
                 "environment_name": "GOOGLE_APPLICATION_CREDENTIALS_JSON",
@@ -188,7 +201,7 @@ class HarnessJobViewSet(viewsets.ViewSet):
                     "version": "1",
                     "purpose": "target_provider",
                 },
-                "size": len(content),
+                "size": len(secret_content),
             }
         else:
             record = store_credential_file(
@@ -206,48 +219,75 @@ class HarnessJobViewSet(viewsets.ViewSet):
 
     @validated_request(
         request_serializer=HarnessSecretValuesSerializer,
+        responses={202: HarnessAgentCredentialsResponseSerializer},
         reject_unknown_fields=True,
     )
     @action(detail=False, methods=["post"], url_path="secret-values")
     @swagger_auto_schema(
         request_body=HarnessSecretValuesSerializer,
-        responses={201: HarnessSecretValuesResponseSerializer},
+        responses={202: HarnessAgentCredentialsResponseSerializer},
     )
     def secret_values(self, request):
-        """Persist uploaded agent values encrypted and return opaque hosted refs.
+        """Make an environment's next agent version from new credential values.
 
-        Values are intentionally separate from platform/model-provider settings. They are scoped
-        to the submitting organization and only resolved inside the selected hosted job.
+        The values (and staged ``files``) are stored encrypted on the new version, which
+        is checked next and returned with 202.
         """
-        import uuid
-
-        from simulate.models import HostedHarnessSecret
-
         organization, _workspace = request_scope(request)
         if organization is None:
             return Response(
                 {"detail": "an organization is required"},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        refs = {}
-        for alias, value in request.validated_data["environment_values"].items():
-            key = f"harness-{alias.lower()}-{uuid.uuid4().hex}"
-            HostedHarnessSecret.objects.create(
+        return self._agent_credentials(request, organization)
+
+    @staticmethod
+    def _agent_credentials(request, organization):
+        from simulate.models import HostedHarnessJob
+        from simulate.services.harness_agent_versions import (
+            change_credentials,
+            staged_credential_files,
+        )
+        from simulate.services.harness_provider import scope_jobs
+        from simulate.services.harness_versioning.read import agent_version_item
+        from simulate.services.hosted_harness import HostedHarnessError
+
+        # Locals holding values are named for the error tracker's scrubber.
+        secret_values = request.validated_data["environment_values"]
+        environment = scope_jobs(
+            HostedHarnessJob.no_workspace_objects.filter(
                 organization=organization,
-                name=key,
-                version="1",
-                encrypted_value=value,
+                id=request.validated_data["environment_id"],
+                environment__isnull=True,
+                deleted=False,
+            ),
+            request,
+        ).first()
+        if environment is None:
+            return Response(
+                {"detail": "Environment not found"}, status=status.HTTP_404_NOT_FOUND
             )
-            refs[alias] = {
-                "manager": "platform-vault",
-                "key": key,
-                "version": "1",
-                "purpose": "target_provider",
-            }
-        return Response({"secret_refs": refs}, status=status.HTTP_201_CREATED)
+        try:
+            secret_files = staged_credential_files(
+                organization, request.validated_data.get("files") or []
+            )
+            version = change_credentials(
+                environment,
+                secret_values=secret_values,
+                secret_files=secret_files,
+                user=request.user,
+            )
+        except HostedHarnessError as exc:
+            return Response(exc.as_dict(), status=exc.status_code)
+        environment.refresh_from_db(fields=["agent_version"])
+        return Response(
+            {"agent_version": agent_version_item(environment, version)},
+            status=status.HTTP_202_ACCEPTED,
+        )
 
     @validated_request(
         request_serializer=HarnessPreflightSerializer,
+        responses={200: HarnessPreflightResponseSerializer},
         reject_unknown_fields=True,
     )
     @action(detail=False, methods=["post"])
@@ -256,7 +296,15 @@ class HarnessJobViewSet(viewsets.ViewSet):
 
     @swagger_auto_schema(responses={200: HarnessJobReadSerializer})
     def retrieve(self, request, pk=None):
-        return get_harness_provider().retrieve(request, pk)
+        """One harness job. A coding agent key reads its own run narrowly, outside
+        this schema: only `status` (its failure as domain, stage, code and a fixed
+        message), `receipts`, `consumption`, `platform`, and `job` with its ids and
+        five metadata keys. It never gets `events`, `stage_outputs`, `scenarios` or
+        `job.source`, which name every case of the suite."""
+        response = get_harness_provider().retrieve(request, pk)
+        if coding_agent_key(request) is None or response.status_code != 200:
+            return response
+        return Response(coding_agent_run(response.data))
 
     @validated_request(
         request_serializer=HarnessJobActionSerializer,
@@ -282,6 +330,43 @@ class HarnessJobViewSet(viewsets.ViewSet):
     @action(detail=True, methods=["post"])
     def extend(self, request, pk=None):
         return get_harness_provider().extend(request, pk)
+
+    @action(detail=True, methods=["get"], url_path="scenarios")
+    def scenarios(self, request, pk=None):
+        return get_harness_provider().list_scenarios(request, pk)
+
+    @action(detail=True, methods=["get"], url_path="scenarios/coverage")
+    def scenario_coverage(self, request, pk=None):
+        return get_harness_provider().scenario_coverage(request, pk)
+
+    @validated_request(
+        request_serializer=HarnessScenarioAmendSerializer,
+        reject_unknown_fields=True,
+    )
+    @action(detail=True, methods=["post"], url_path="scenarios/amend")
+    def amend_scenarios(self, request, pk=None):
+        return get_harness_provider().amend_scenarios(request, pk)
+
+    @validated_request(
+        request_serializer=HarnessRunCreateSerializer,
+        responses={202: HarnessRunCreateResponseSerializer},
+        reject_unknown_fields=True,
+    )
+    @action(detail=True, methods=["post"])
+    def runs(self, request, pk=None):
+        return get_harness_provider().run(request, pk)
+
+    @validated_request(
+        request_serializer=HarnessConversationMessageCreateSerializer,
+        responses={
+            202: HarnessConversationReadSerializer,
+            409: ApiTextErrorResponseSerializer,
+        },
+        reject_unknown_fields=True,
+    )
+    @action(detail=True, methods=["post"], url_path=r"conversation/messages")
+    def conversation_message(self, request, pk=None):
+        return get_harness_provider().send_message(request, pk)
 
     @action(detail=False, methods=["get"])
     def health(self, request):

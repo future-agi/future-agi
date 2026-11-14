@@ -270,17 +270,14 @@ SETTINGS index_granularity = 8192;
 # ---------------------------------------------------------------------------
 # 3. trace_session
 #    Mirrors: PostgreSQL model TraceSession
+#    External identity and first_seen live in CH-native trace_sessions (018).
+#    Keep this legacy CDC declaration limited to actual PostgreSQL fields.
 # ---------------------------------------------------------------------------
 CDC_TRACE_SESSION = """
 CREATE TABLE IF NOT EXISTS trace_session (
     id UUID,
     project_id UUID,
-    external_id Nullable(String),
     name Nullable(String),
-    end_user_id Nullable(UUID),
-    status LowCardinality(Nullable(String)),
-    attributes String DEFAULT '{}',
-    started_at Nullable(DateTime64(3)),
     bookmarked UInt8 DEFAULT 0,
 
     -- Soft-delete
@@ -450,10 +447,12 @@ CREATE TABLE IF NOT EXISTS model_hub_score (
     prototype_run_id Nullable(UUID),
     queue_item_id Nullable(UUID),
     project_id Nullable(UUID),
+    tracer_project_id Nullable(UUID),
 
     -- What was scored
     label_id UUID,
     value String DEFAULT '{}',
+    value_history String DEFAULT '[]',
 
     -- Who scored it
     annotator_id Nullable(UUID),
@@ -545,7 +544,7 @@ CREATE TABLE IF NOT EXISTS tracer_enduser (
     user_id String,
     user_id_type Nullable(String),
     user_id_hash Nullable(String),
-    metadata String DEFAULT '{{}}',
+    metadata String DEFAULT '{}',
     project_id UUID,
     organization_id UUID,
     workspace_id Nullable(UUID),
@@ -1567,6 +1566,7 @@ CREATE TABLE IF NOT EXISTS simulate_agent_definition (
     provider Nullable(String),
     contact_number Nullable(String),
     inbound UInt8 DEFAULT 0,
+    target_speaks_first Nullable(UInt8),
     description Nullable(String),
     assistant_id Nullable(String),
     language Nullable(String),
@@ -1599,7 +1599,7 @@ CREATE TABLE IF NOT EXISTS simulate_agent_version (
     version_name Nullable(String),
     status LowCardinality(String) DEFAULT 'draft',
     score Nullable(Decimal(3, 1)),
-    pass_rate Nullable(Decimal(3, 1)),
+    pass_rate Nullable(Decimal(5, 2)),
     test_count Nullable(Int64),
     description Nullable(String),
     release_notes Nullable(String),

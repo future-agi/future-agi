@@ -63,20 +63,233 @@ export const getDashboardMetricSeriesState = (metrics = []) => {
 };
 
 /**
- * A missing aggregate bucket is not a zero. For line charts, omit null points
- * so Apex connects the neighbouring observed points without mutating the exact
- * response used by table and non-line renderers.
+ * A missing aggregate bucket is not a zero, and nothing is drawn for it. Apex
+ * still emits a node per point it is handed, so a minute-granularity range
+ * spends thousands of nodes on buckets that render nothing (TH-7757) — a column
+ * chart over five days drew 7,201 paths for 36 observed values.
+ *
+ * How they are dropped depends on stacking, and the difference is not cosmetic:
+ *
+ * - Unstacked, each series is positioned by its own point's x, so each may drop
+ *   its own empty buckets. A line then connects across the gap, which is the
+ *   behaviour line and area charts have always had.
+ * - Stacked, ApexCharts sums BY ARRAY INDEX, not by x. The backend pads every
+ *   series over one shared bucket list precisely so index j is the same instant
+ *   everywhere. Filtering per series destroys that: a series would land on the
+ *   baseline and cover its neighbour instead of resting on it, and the stacked
+ *   totals Apex derives would be wrong. So only buckets that no series reported
+ *   are dropped, which keeps every series the same length and still collapses
+ *   the sparse case. A series that did not report a kept bucket is padded with
+ *   a zero, because a null in the stack baseline makes the next series render
+ *   above the grid, and the pad is marked `absent` so the tooltip can still
+ *   say the bucket had no data (`isAbsentChartPoint`).
+ *
+ * Either way the exact response is untouched for the table, the CSV export and
+ * the metric card, which all distinguish "no data" from zero.
  */
-export const getPlottedChartSeries = (series = [], isLineChart = false) =>
-  isLineChart
-    ? series.map((item) => ({
-        ...item,
-        data: (item?.data || []).filter((point) => point?.y != null),
-      }))
-    : series;
+export const getPlottedChartSeries = (
+  series = [],
+  { stacked = false } = {},
+) => {
+  const rows = Array.isArray(series) ? series : [];
 
-export const shouldConnectAcrossMissingBuckets = (apexType) =>
-  apexType === "line" || apexType === "area";
+  if (!stacked) {
+    return rows.map((item) => ({
+      ...item,
+      data: (item?.data || []).filter((point) => point?.y != null),
+    }));
+  }
+
+  const width = rows.reduce(
+    (widest, item) => Math.max(widest, item?.data?.length || 0),
+    0,
+  );
+  const kept = [];
+  for (let index = 0; index < width; index += 1) {
+    if (!rows.some((item) => item?.data?.[index]?.y != null)) continue;
+    // Carry the bucket's own x so a series missing this index can still be
+    // padded at the right instant rather than collapsing the row.
+    kept.push({
+      index,
+      x: rows.find((item) => item?.data?.[index])?.data?.[index]?.x,
+    });
+  }
+  return rows.map((item) => ({
+    ...item,
+    data: kept.map(({ index, x }) => {
+      const point = item?.data?.[index];
+      const y = point?.y;
+      const at = point ? point.x : x;
+      return Number.isFinite(y) ? { x: at, y } : { x: at, y: 0, absent: true };
+    }),
+  }));
+};
+
+/**
+ * Whether the stacked point Apex is asking about is a pad added by
+ * `getPlottedChartSeries` rather than a value the backend reported. `w` is the
+ * chart context Apex passes to its formatters.
+ */
+export const isAbsentChartPoint = (w, seriesIndex, dataPointIndex) =>
+  w?.config?.series?.[seriesIndex]?.data?.[dataPointIndex]?.absent === true;
+
+/**
+ * Past this many plotted points, ApexCharts' draw-in animation stops paying for
+ * itself: it re-serialises the entire SVG path on every frame, so its cost
+ * scales with the point count rather than with the amount of real data. A
+ * minute-granularity widget spanning days carries thousands of buckets and
+ * blocks the main thread for seconds per frame (TH-7757). Past the budget the
+ * chart is drawn in a single static pass, and its dense series lose their
+ * resting markers (`getChartMarkerSizes`).
+ */
+export const CHART_DENSE_POINT_BUDGET = 400;
+
+/**
+ * On a chart past the budget, a series with more points than this draws no
+ * resting markers. Apex emits a node per point for any series with a marker
+ * size, and past a few dozen dots across a widget they overlap into the line
+ * anyway. A sparser series keeps them: on a few points spread over a long
+ * range they are the only thing showing where observations sit, and without
+ * them the line reads as continuous data.
+ */
+export const CHART_MARKER_SERIES_LIMIT = 60;
+
+export const countPlottedPoints = (series = []) =>
+  (Array.isArray(series) ? series : []).reduce(
+    (total, item) => total + (item?.data?.length || 0),
+    0,
+  );
+
+export const isDenseChartSeries = (series = []) =>
+  countPlottedPoints(series) > CHART_DENSE_POINT_BUDGET;
+
+/**
+ * Apex `markers.size` for the plotted series: `size` for all of them within
+ * the budget, otherwise one size per series with 0 for each dense one. A
+ * per-series 0 is what actually keeps the nodes out: any `markers.discrete`
+ * entry makes Apex draw a node for every point of every series.
+ */
+export const getChartMarkerSizes = (series = [], size = 0) => {
+  if (!size || !isDenseChartSeries(series)) return size;
+  return series.map((item) =>
+    (item?.data?.length || 0) > CHART_MARKER_SERIES_LIMIT ? 0 : size,
+  );
+};
+
+/**
+ * Empty buckets are dropped before plotting, so the points alone describe only
+ * the stretch that reported values — left to infer the axis from them, Apex
+ * collapses a week-long widget onto the three days that happen to have data
+ * (TH-7757). The response states the window the backend actually queried,
+ * independently of which buckets survived, so pin the axis to that instead: an
+ * empty stretch then reads as empty rather than vanishing.
+ *
+ * Returns null when the response omits or malforms the window, leaving Apex to
+ * fall back to its own inference rather than rendering an inverted axis.
+ */
+export const getChartTimeWindow = (result) => {
+  const start = Date.parse(result?.time_range?.start ?? "");
+  const end = Date.parse(result?.time_range?.end ?? "");
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start)
+    return null;
+
+  // The window is the instant the query resolved to, but buckets snap to the
+  // start of their period, so the first bucket precedes it by up to a full
+  // granularity step. Pinning the axis at the raw instant puts that bucket
+  // outside the grid, where it is drawn off-canvas and silently lost.
+  let first = null;
+  let last = null;
+  for (const metric of result?.metrics || []) {
+    for (const item of metric?.series || []) {
+      const data = item?.data || [];
+      if (!data.length) continue;
+      const head = Date.parse(data[0]?.timestamp ?? "");
+      const tail = Date.parse(data[data.length - 1]?.timestamp ?? "");
+      if (Number.isFinite(head) && (first === null || head < first))
+        first = head;
+      if (Number.isFinite(tail) && (last === null || tail > last)) last = tail;
+    }
+  }
+
+  return {
+    min: first === null ? start : Math.min(start, first),
+    max: last === null ? end : Math.max(end, last),
+  };
+};
+
+/**
+ * A widget's table renders one cell per bucket per series, and a
+ * minute-granularity widget spanning days carries thousands of buckets
+ * (TH-7757).
+ *
+ * A table that already fits renders every bucket, empty ones included: a gap in
+ * a short range is information the reader wants. Only once the range is too
+ * long to read at all do empty buckets get dropped, which leaves the observed
+ * buckets adjacent instead of stranded in a wall of dashes; whatever survives is
+ * then capped so a dense series cannot render an unbounded table either. CSV
+ * export builds from the full response and is deliberately left alone.
+ */
+export const TABLE_BUCKET_LIMIT = 500;
+
+/**
+ * How a table should describe what it left out, or null when it left out
+ * nothing. Shared so the three tables cannot drift apart in wording: a capped
+ * table says which end it kept, one that only dropped empty buckets does not
+ * claim to have truncated.
+ */
+export const describeTableBuckets = ({
+  shown,
+  total,
+  omitted,
+  truncated,
+} = {}) => {
+  if (!omitted || omitted <= 0) return null;
+  const kept = Number(shown || 0).toLocaleString();
+  const all = Number(total || 0).toLocaleString();
+  return truncated
+    ? `latest ${kept} of ${all} buckets`
+    : `${kept} of ${all} buckets`;
+};
+
+export const getTableBucketPlan = (
+  series = [],
+  { limit = TABLE_BUCKET_LIMIT } = {},
+) => {
+  const rows = (Array.isArray(series) ? series : []).filter(Boolean);
+  const total = rows.reduce(
+    (widest, item) => Math.max(widest, item?.data?.length || 0),
+    0,
+  );
+
+  const everyBucket = Array.from({ length: total }, (_, index) => index);
+  if (total <= limit) {
+    return {
+      indices: everyBucket,
+      total,
+      shown: total,
+      omitted: 0,
+      truncated: false,
+    };
+  }
+
+  const observed = everyBucket.filter((index) =>
+    rows.some((item) => item?.data?.[index]?.y != null),
+  );
+  // With nothing observed anywhere, keep a window of buckets so the table still
+  // shows a time axis instead of collapsing to a bare header row.
+  const candidates = observed.length > 0 ? observed : everyBucket;
+  // The tail, not the head: a dashboard reader wants the most recent buckets,
+  // and slicing from the front silently discarded the newest days.
+  const indices = candidates.slice(-limit);
+
+  return {
+    indices,
+    total,
+    shown: indices.length,
+    omitted: total - indices.length,
+    truncated: candidates.length > limit,
+  };
+};
 
 /**
  * Dashboard responses are all-or-nothing aggregates. A single sampled,
@@ -191,8 +404,11 @@ export const getSeriesScalar = (points = [], aggregation = "avg") => {
   if (ADDITIVE_AGGREGATIONS.has(aggregation)) {
     return values.reduce((a, b) => a + b, 0);
   }
-  if (aggregation === "min") return Math.min(...values);
-  if (aggregation === "max") return Math.max(...values);
+  // Folded rather than spread into Math.min/max: a spread is an argument list,
+  // and a minute-granularity quarter carries ~132k values, well past the
+  // engine's limit. Spreading here crashed the whole page (TH-7757).
+  if (aggregation === "min") return values.reduce((a, b) => (b < a ? b : a));
+  if (aggregation === "max") return values.reduce((a, b) => (b > a ? b : a));
   return values.reduce((a, b) => a + b, 0) / values.length;
 };
 
@@ -335,41 +551,219 @@ export const getAggColumnLabel = (metrics, allAggregations) => {
 export const seriesHasDataPoints = (series = []) =>
   series.some((s) => (s?.data || []).length > 0);
 
+// Lines encode a value as a position, so fitting the band around the data
+// reads correctly. Bars encode it as a length measured from the baseline, so
+// a fitted non-zero floor lies about the data — a 250 bar on a 180-255 axis
+// draws as though it were 70. ApexCharts itself forces minY to 0 for bar
+// series unless an explicit min overrides it, so this only has to keep the
+// caller from asking it to fit. A stacked line is the same case: it renders as
+// a stacked area, every layer is filled from zero, and a fitted floor clips the
+// lower layers off the plot. `bar`/`stacked_bar` are listed here for
+// completeness, though in this codebase they render as the horizontal table,
+// not a y-axis chart.
+const BASELINE_ANCHORED_CHART_TYPES = new Set([
+  "column",
+  "stacked_column",
+  "stacked_line",
+  "bar",
+  "stacked_bar",
+]);
+export const chartTypeFitsBand = (chartType) =>
+  !BASELINE_ANCHORED_CHART_TYPES.has(chartType);
+
 // ApexCharts silently clips any series point outside yaxis min/max — if
 // every point in every series falls outside the configured bounds, the
 // chart renders fully blank with no indication why. Surface that as a
 // message instead of an empty canvas.
-export const getYAxisRangeWarning = (series = [], axisConfig = {}) => {
-  const rightCfg = axisConfig?.rightY || {};
-  const seriesAxis = axisConfig?.seriesAxis || {};
-  const hasRightAxis =
-    rightCfg.visible && Object.values(seriesAxis).some((s) => s === "right");
-  if (hasRightAxis) return null;
+/**
+ * Bounds that fit the data, never null unless there is genuinely nothing to
+ * scale. Prefers the zero-anchored result; where that is declined (a narrow
+ * band well above zero, or one that dips below it) it fits the band instead,
+ * snapping the floor onto the step grid so tick labels stay round.
+ *
+ * Every axis goes through this. Dual-axis is the case that *requires* it —
+ * every entry on a side must carry the same explicit bounds or ApexCharts
+ * scales each series on its own, which draws a small series as though it
+ * filled the plot. Single-axis wants it for the narrow-band case, where the
+ * alternative is ApexCharts' coarse {1,2,5,10} step ladder and the dead space
+ * that comes with it.
+ *
+ * Null still comes back where there is no band to fit: a logarithmic side,
+ * one with no finite points, or whose points are all equal — a single point
+ * being the degenerate case. Those keep ApexCharts' own scaling, so the
+ * invariant above is not absolute.
+ */
+export const getFittedYAxisBounds = (
+  series = [],
+  { stacked = false, logarithmic = false, tickAmount = 5 } = {},
+) => {
+  if (logarithmic) return null;
+  const zeroAnchored = getAutoYAxisBounds(series, {
+    stacked,
+    logarithmic,
+    tickAmount,
+  });
+  if (zeroAnchored) return zeroAnchored;
 
-  const leftAxisConfig = axisConfig?.leftY || {};
-  const parseBound = (value) => {
-    if (value === undefined || value === "") return null;
-    const n = Number(value);
-    return Number.isFinite(n) ? n : null;
-  };
-  const min = parseBound(leftAxisConfig.min);
-  const max = parseBound(leftAxisConfig.max);
-  if (min == null && max == null) return null;
+  const extent = getSeriesExtent(series, { stacked });
+  if (!extent || extent.max - extent.min <= 0) return null;
+  return getStepGridBounds(extent.min, extent.max, tickAmount);
+};
 
-  let sawPoint = false;
-  for (const s of series) {
-    for (const pt of s.data || []) {
-      if (pt?.y == null) continue;
-      const y = Number(pt.y);
-      if (!Number.isFinite(y)) continue;
-      sawPoint = true;
-      if ((min == null || y >= min) && (max == null || y <= max)) {
-        return null;
-      }
+/**
+ * Bounds for a mark measured from zero (a bar, a stacked area): always
+ * explicit, always containing zero, so a side that dips negative keeps one
+ * shared scale instead of handing its series back to ApexCharts. Null only
+ * where there is nothing to scale: a logarithmic side, no finite points, or
+ * every point at zero.
+ */
+const getBaselineYAxisBounds = (
+  series = [],
+  { stacked = false, logarithmic = false, tickAmount = 5 } = {},
+) => {
+  if (logarithmic) return null;
+  const extent = getSeriesExtent(series, { stacked });
+  if (!extent) return null;
+  const low = Math.min(0, extent.min);
+  const high = Math.max(0, extent.max);
+  if (high - low <= 0) return null;
+  return getStepGridBounds(low, high, tickAmount);
+};
+
+// One end typed and the other auto: the auto end was sized for its own floor
+// or ceiling, so pairing it with the typed one leaves an odd step (100 / 1580
+// / 3060 ...). Re-derive it from the typed end and the data instead. A zero
+// end is kept as it is, since it is a deliberate anchor rather than a fit.
+const roundFromTypedBound = (
+  { min, max },
+  { typedMin, typedMax, extent, tickAmount },
+) => {
+  if (typedMin != null && typedMax == null && max != null && max !== 0) {
+    const span = extent.max - typedMin;
+    if (span > 0) {
+      const top = normalize(
+        typedMin + niceCeil(span / tickAmount) * tickAmount,
+      );
+      return { min, max: max < 0 ? Math.min(top, 0) : top };
     }
   }
-  if (!sawPoint) return null;
+  if (typedMax != null && typedMin == null && min != null && min !== 0) {
+    const span = typedMax - extent.min;
+    if (span > 0) {
+      const floor = normalize(
+        typedMax - niceCeil(span / tickAmount) * tickAmount,
+      );
+      return { min: min > 0 ? Math.max(floor, 0) : floor, max };
+    }
+  }
+  return { min, max };
+};
 
+/**
+ * Final {min, max} for one axis, given the series plotted against it.
+ *
+ * A typed Threshold Bound is used as given; a side left empty is auto-scaled.
+ * With "Out of Bounds: Visible" a typed bound that would push data off the
+ * chart is widened so every point stays visible; "Hidden" keeps it as a hard
+ * cap and clips. Either value may come back undefined, meaning "say nothing
+ * and let ApexCharts decide".
+ *
+ * Pass only the series belonging to this axis. On a dual-axis chart every
+ * entry for a side must be given the same result, or ApexCharts scales each
+ * series independently and a small series is stretched to fill the plot.
+ */
+export const resolveAxisBounds = (
+  series = [],
+  cfg = {},
+  { stacked = false, tickAmount = 5, fit = false } = {},
+) => {
+  // A non-fitting axis (bars, stacked areas) still needs explicit bounds
+  // wherever the dual-axis invariant requires them — it just may not leave
+  // zero the way the fitted path does for a narrow band.
+  const logarithmic = cfg.scale === "logarithmic";
+  const auto = (fit ? getFittedYAxisBounds : getBaselineYAxisBounds)(series, {
+    stacked,
+    logarithmic,
+    tickAmount,
+  });
+  const extent = getSeriesExtent(series, { stacked });
+  const widen = cfg.outOfBounds !== "hidden" && extent;
+  const typedMin = parseBound(cfg.min);
+  const typedMax = parseBound(cfg.max);
+  const userMin =
+    widen && typedMin != null && typedMin > extent.min ? null : typedMin;
+  const userMax =
+    widen && typedMax != null && typedMax < extent.max ? null : typedMax;
+  const bounds = { min: userMin ?? auto?.min, max: userMax ?? auto?.max };
+  if (!auto || !extent) return bounds;
+  return roundFromTypedBound(bounds, {
+    typedMin: userMin,
+    typedMax: userMax,
+    extent,
+    tickAmount,
+  });
+};
+
+/**
+ * The y-axis plan for one widget: whether a right axis is actually drawn, which
+ * side each drawn series belongs to, and the bounds for each side.
+ *
+ * The saved widget (WidgetChart) and the editor preview (WidgetEditorView) both
+ * build their `yaxis` from this, so the two cannot disagree about scaling. They
+ * used to derive it separately, and a fix applied to one could silently miss
+ * the other.
+ *
+ * `chartSeries` is the visible series, `chartSeriesIndices` their original
+ * indices — `axisConfig.seriesAxis` is keyed by the unfiltered index, so
+ * anything reading it from the filtered list must map back through them.
+ */
+export const resolveWidgetAxisPlan = (
+  chartSeries = [],
+  chartSeriesIndices = [],
+  axisConfig = {},
+  { stacked = false, chartType = "line" } = {},
+) => {
+  const leftCfg = axisConfig?.leftY || {};
+  const rightCfg = axisConfig?.rightY || {};
+  const seriesAxis = axisConfig?.seriesAxis || {};
+
+  // Read off the *visible* series. Hiding the only right-assigned series must
+  // drop the chart back to single-axis, or the left axis keeps being scaled by
+  // dual-axis rules for an axis that is no longer on screen.
+  const hasRightAxis =
+    !!rightCfg.visible &&
+    chartSeriesIndices.some((idx) => seriesAxis[idx] === "right");
+
+  const sideOf = (i) =>
+    hasRightAxis && seriesAxis[chartSeriesIndices[i]] === "right"
+      ? "right"
+      : "left";
+
+  // fit on both paths for a line-shaped chart type. Zero-anchoring still wins
+  // wherever the data runs to the floor; fitting only adds the case it
+  // declines — a band well above zero, which otherwise falls to ApexCharts'
+  // coarse {1,2,5,10} step ladder. A bar-shaped chartType (column,
+  // stacked_column, bar, stacked_bar) never fits: its baseline is the value
+  // itself, so it stays anchored at zero even for a narrow band — see
+  // chartTypeFitsBand.
+  const opts = { stacked, fit: chartTypeFitsBand(chartType) };
+  const on = (side) => chartSeries.filter((__, i) => sideOf(i) === side);
+
+  return {
+    hasRightAxis,
+    sideOf,
+    bounds: hasRightAxis
+      ? {
+          left: resolveAxisBounds(on("left"), leftCfg, opts),
+          right: resolveAxisBounds(on("right"), rightCfg, opts),
+        }
+      : { left: resolveAxisBounds(chartSeries, leftCfg, opts) },
+  };
+};
+
+// The three warning strings, unchanged in wording from before this rewrite —
+// an e2e spec greps them, so the text stays byte-identical.
+const rangeMessage = (min, max) => {
   if (min != null && max != null) {
     return `Data is outside your configured Y-axis range (${min}–${max}). Adjust bounds to see your data.`;
   }
@@ -377,6 +771,209 @@ export const getYAxisRangeWarning = (series = [], axisConfig = {}) => {
     return `Data is outside your configured Y-axis minimum (${min}). Adjust bounds to see your data.`;
   }
   return `Data is outside your configured Y-axis maximum (${max}). Adjust bounds to see your data.`;
+};
+
+/**
+ * ApexCharts clips a series point outside the axis's *resolved* min/max, not
+ * its typed one — "Out of Bounds: Visible" widens a typed bound away
+ * whenever it would clip data (see resolveAxisBounds), so a typed bound is
+ * not proof anything is actually cut off. The old version judged straight
+ * from the typed value, so it used to fire "Adjust bounds to see your data"
+ * over a chart that was drawing every point fine, because the axis had
+ * already been widened underneath it before it ever reached the chart.
+ *
+ * So this reads the same resolved plan the chart itself is scaled against
+ * (`resolveWidgetAxisPlan`) and asks, per side, whether that side's resolved
+ * bounds actually clip every point assigned to it. A side widened by
+ * "Visible" resolves to bounds that contain the data, so it can never fire;
+ * a side left "Hidden" keeps its typed bound as a hard cap, so a fully
+ * clipped side — left or right — is reported instead of silently vanishing.
+ */
+export const getYAxisRangeWarning = (
+  chartSeries = [],
+  chartSeriesIndices = [],
+  axisConfig = {},
+  { stacked = false, chartType = "line" } = {},
+) => {
+  const { sideOf, bounds } = resolveWidgetAxisPlan(
+    chartSeries,
+    chartSeriesIndices,
+    axisConfig,
+    { stacked, chartType },
+  );
+
+  for (const side of ["left", "right"]) {
+    if (!bounds[side]) continue;
+
+    const cfg = axisConfig?.[side === "right" ? "rightY" : "leftY"] || {};
+    const typedMin = parseBound(cfg.min);
+    const typedMax = parseBound(cfg.max);
+    if (typedMin == null && typedMax == null) continue;
+
+    const { min, max } = bounds[side];
+    if (min === undefined && max === undefined) continue;
+
+    let sawPoint = false;
+    let anyVisible = false;
+    chartSeries.forEach((s, i) => {
+      if (sideOf(i) !== side) return;
+      for (const pt of s.data || []) {
+        if (pt?.y == null) continue;
+        const y = Number(pt.y);
+        if (!Number.isFinite(y)) continue;
+        sawPoint = true;
+        if ((min == null || y >= min) && (max == null || y <= max)) {
+          anyVisible = true;
+        }
+      }
+    });
+
+    if (sawPoint && !anyVisible) return rangeMessage(typedMin, typedMax);
+  }
+
+  return null;
+};
+
+// A bound counts as user-set only when it parses to a finite number. The
+// Threshold Bounds inputs are untyped text, so "abc" must read as unset rather
+// than reaching ApexCharts as NaN.
+export const parseBound = (value) => {
+  if (value === undefined || value === null || value === "") return null;
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
+};
+
+// Mantissas for the axis step. Finer than the {1,2,5,10} table ApexCharts uses
+// internally (settings/Globals.js niceScaleAllowedMagMsd), which is what leaves
+// the dead space this helper exists to remove: a 7,043 peak needs a step of
+// 1,408.6, which that table rounds to 2,000 and so an axis max of 10,000.
+const STEP_MANTISSAS = [1, 1.5, 2, 2.5, 3, 4, 5, 6, 8, 10];
+
+// Round to 12 significant digits before the ladder lookup. Without it,
+// 0.3 / 10 ** Math.floor(Math.log10(0.3)) is 2.9999999999999996 and picks the
+// rung above the right one — which sub-1 metrics (rates, cost per call) hit
+// constantly.
+const normalize = (n) => Number(n.toPrecision(12));
+
+const niceCeil = (value) => {
+  const magnitude = 10 ** Math.floor(Math.log10(value));
+  const mantissa = normalize(value / magnitude);
+  const rung = STEP_MANTISSAS.find((m) => m >= mantissa) ?? 10;
+  return normalize(rung * magnitude);
+};
+
+// The tightest `tickAmount`-step grid with a round step that contains
+// [low, high]. Flooring the min onto the grid consumes up to a full step, and
+// the max is measured from that lowered floor, so a step sized off the raw
+// span alone can land below `high`, which ApexCharts then clips. Grow the step
+// until the floored grid still reaches it.
+const getStepGridBounds = (low, high, tickAmount) => {
+  let step = niceCeil((high - low) / tickAmount);
+  let min = Math.floor(low / step) * step;
+  while (min + step * tickAmount < high) {
+    step = niceCeil(step + (high - (min + step * tickAmount)) / tickAmount);
+    min = Math.floor(low / step) * step;
+  }
+  return { min: normalize(min), max: normalize(min + step * tickAmount) };
+};
+
+/**
+ * Lowest and highest value the chart actually plots, or null if there is
+ * nothing finite to measure. Stacked charts are read off the summed height.
+ *
+ * One finite point is enough to return an extent — callers that need a real
+ * span (a min/max pair that differ) check for that themselves. The raw value
+ * must be checked for null/undefined before it reaches `Number()`, because
+ * `Number(null) === 0` would otherwise fold a gap bucket into the data as a
+ * real zero instead of skipping it.
+ */
+export const getSeriesExtent = (series = [], { stacked = false } = {}) => {
+  // `Number(null)` is 0, so reading a point's value arithmetically would let an
+  // empty bucket register as a real zero: it anchors the floor at 0 using data
+  // the chart never draws, and on a 90-day minute range it pads the sample from
+  // hundreds of observations to six figures.
+  const valueOf = (point) => {
+    const raw = typeof point === "number" ? point : point?.y;
+    if (raw == null) return null;
+    const value = Number(raw);
+    return Number.isFinite(value) ? value : null;
+  };
+
+  // Folded in one pass rather than collected and spread into `Math.min`:
+  // spreading is an argument list, and a minute-granularity quarter carries
+  // ~132k points, well past the engine's limit (TH-7757).
+  let min = Infinity;
+  let max = -Infinity;
+  let observed = 0;
+  const fold = (value) => {
+    if (value < min) min = value;
+    if (value > max) max = value;
+    observed += 1;
+  };
+
+  if (stacked) {
+    // The backend pads every bucket (null for gaps) so series are aligned and
+    // equal-length — the same positional sum ApexCharts itself does.
+    const byIndex = [];
+    for (const item of series) {
+      (item?.data || []).forEach((point, index) => {
+        const value = valueOf(point);
+        if (value === null) return;
+        byIndex[index] = (byIndex[index] || 0) + value;
+      });
+    }
+    // Sparse array: forEach visits only the buckets some series reported.
+    byIndex.forEach((total) => fold(total));
+  } else {
+    for (const item of series) {
+      for (const point of item?.data || []) {
+        const value = valueOf(point);
+        if (value !== null) fold(value);
+      }
+    }
+  }
+
+  return observed < 1 ? null : { min, max };
+};
+
+/**
+ * Zero-anchored axis bounds sized to the data, or null to leave ApexCharts alone.
+ *
+ * Derives the step first and multiplies up (max = step * tickAmount) so tick
+ * labels stay round, rather than rounding the max onto a coarse ladder.
+ *
+ * Returns null whenever zero-anchoring would be wrong or unsafe, most
+ * importantly for a narrow band sitting well above zero (40M-60M), where
+ * forcing 0 would waste *more* space than it saves. Null is a deferral, not a
+ * verdict: callers pass it to getFittedYAxisBounds, which fits the band where
+ * it actually sits.
+ */
+export const getAutoYAxisBounds = (
+  series = [],
+  { stacked = false, logarithmic = false, tickAmount = 5 } = {},
+) => {
+  if (logarithmic) return null;
+
+  const extent = getSeriesExtent(series, { stacked });
+  if (!extent) return null;
+
+  const { max: peak, min: floor } = extent;
+  if (floor < 0) return null;
+  if (peak <= 0) return null;
+
+  // Only act where the data already runs most of the way to zero. Above that
+  // the series is a narrow high band and zero-anchoring is a regression —
+  // getFittedYAxisBounds fits that band instead.
+  if (floor > 0.3 * peak) return null;
+
+  const step = niceCeil(peak / tickAmount);
+  const max = normalize(step * tickAmount);
+
+  // max === peak is left alone deliberately: it is a perfect fit. Nudging it to
+  // clear the topmost marker would mean either an off-ladder max (0/48/96/...
+  // instead of 0/40/80/...) or a whole extra rung, which on a 5,000 peak means
+  // a 7,500 axis — reintroducing the dead space this exists to remove.
+  return { min: 0, max };
 };
 
 export const formatValueWithConfig = (
@@ -410,6 +1007,22 @@ export const formatValueWithConfig = (
 // name. Survives metric renames and series reordering, unlike the display label.
 export const makeSeriesKey = (metric, bucketName) =>
   `${metric?.id ?? ""}|${metric?.aggregation ?? ""}|${bucketName ?? ""}`;
+
+/**
+ * Original indices of the currently visible series, in ascending order — the
+ * same order `series.filter((_, i) => visibleSeries.has(i))` produces.
+ *
+ * `axis_config.series_axis` is keyed by the index in the UNFILTERED series
+ * list, so anything reading it from the filtered chart series must map back
+ * through this. Reading it with the filtered index silently reassigns axes as
+ * soon as a series is hidden, and spreading the Set (`[...visibleSeries][i]`)
+ * is wrong too: it iterates in insertion order, which for a top-N selection is
+ * rank order, not index order.
+ */
+export const getVisibleIndices = (series = [], visibleSeries = null) => {
+  const all = series.map((_, i) => i);
+  return visibleSeries === null ? all : all.filter((i) => visibleSeries.has(i));
+};
 
 // Resolve a saved key list to the current series' indices. null => all visible.
 export const resolveVisibleSeries = (savedKeys, series) => {

@@ -8,7 +8,7 @@ import { flowAnnotation } from '../../lib/flow-meta';
 // The eval runs inside the worker container, so its judge model must reach the
 // gateway over the compose network — E2E.gatewayUrl is a host port the worker
 // cannot resolve. Address + shared key are the root compose defaults
-// (docker-compose.yml AGENTCC_INTERNAL_URL / AGENTCC_INTERNAL_API_KEY); the key
+// (docker-compose.distributed.yml AGENTCC_INTERNAL_URL / AGENTCC_INTERNAL_API_KEY); the key
 // is the same one harness/mock-llm.spec.ts authenticates with.
 const GATEWAY_INTERNAL_URL = 'http://agentcc-gateway:8080/v1';
 const GATEWAY_INTERNAL_KEY = 'local-dev-only-shared-secret-replace-me';

@@ -1,3 +1,4 @@
+import { isIncompleteCost, monetaryCostLabel } from "./common";
 /* eslint-disable react/prop-types */
 /**
  * PrimaryGraph
@@ -42,17 +43,11 @@ import {
   PROPERTY_CATALOG_REQUEST_TIMEOUT_MS,
   usePropertyCatalog,
 } from "src/hooks/useDashboards";
-import {
-  format,
-  startOfToday,
-  startOfTomorrow,
-  startOfYesterday,
-  sub,
-} from "date-fns";
+import { format } from "date-fns";
 import _ from "lodash";
 import GraphSkeleton from "./GraphSkeleton";
 import CustomDateRangePicker from "src/components/custom-datepicker/DatePicker";
-import { formatDate } from "src/utils/report-utils";
+import { observePresetDateFilter } from "../../timeWindowPresets";
 import { toBackendFilters } from "../common";
 import { combineGraphFilters } from "./graphFilterUtils";
 import {
@@ -365,8 +360,15 @@ const PrimaryGraph = ({
   // Label used for the traffic (bar) series in the tooltip, e.g. "traces",
   // "spans", "sessions", or "users". Defaults to "traces".
   trafficLabel = "traces",
+  // Optional: trace-graph population, e.g. "voice" to count only voice calls
+  // (the Voice screen's list_voice_calls population). Omitted = every trace.
+  observeType,
+  // Voice population only: the Voice list's "exclude simulation calls" toggle.
+  removeSimulationCalls = false,
 }) => {
   const { observeId } = useParams();
+  const excludeSimulationCalls =
+    observeType === "voice" && Boolean(removeSimulationCalls);
   const effectiveObserveId = observeIdOverride || observeId;
   // Keep the logical registry namespace (users/spans) distinct from the
   // physical transport adapter (sessions/traces).
@@ -383,9 +385,18 @@ const PrimaryGraph = ({
     : "traces";
   const theme = useTheme();
   const aggregationSourceId = useId();
-  const [selectedMetric, setSelectedMetric] = useState(
-    defaultMetric || "latency",
-  );
+  const initialMetric = defaultMetric || "latency";
+  const [selectedMetric, setSelectedMetric] = useState(initialMetric);
+  // A metric selected in one project may not exist in the next one's catalog,
+  // so a project change returns to the default. Only the project and the
+  // user's own pick decide the selection: the catalog loads while the picker
+  // is open, one category at a time and in any order, and must not change it.
+  const [selectedMetricProject, setSelectedMetricProject] =
+    useState(effectiveObserveId);
+  if (selectedMetricProject !== effectiveObserveId) {
+    setSelectedMetricProject(effectiveObserveId);
+    setSelectedMetric(initialMetric);
+  }
   const [pickerAnchor, setPickerAnchor] = useState(null);
   const [pickerSearch, setPickerSearch] = useState("");
   const [dateAnchor, setDateAnchor] = useState(null);
@@ -401,47 +412,9 @@ const PrimaryGraph = ({
         setCustomDateOpen(true);
         return;
       }
-      let filter = null;
-      switch (option) {
-        case "Today":
-          filter = [formatDate(startOfToday()), formatDate(startOfTomorrow())];
-          break;
-        case "Yesterday":
-          filter = [formatDate(startOfYesterday()), formatDate(startOfToday())];
-          break;
-        case "7D":
-          filter = [
-            formatDate(sub(new Date(), { days: 7 })),
-            formatDate(startOfTomorrow()),
-          ];
-          break;
-        case "30D":
-          filter = [
-            formatDate(sub(new Date(), { days: 30 })),
-            formatDate(startOfTomorrow()),
-          ];
-          break;
-        case "3M":
-          filter = [
-            formatDate(sub(new Date(), { months: 3 })),
-            formatDate(startOfTomorrow()),
-          ];
-          break;
-        case "6M":
-          filter = [
-            formatDate(sub(new Date(), { months: 6 })),
-            formatDate(startOfTomorrow()),
-          ];
-          break;
-        case "12M":
-          filter = [
-            formatDate(sub(new Date(), { months: 12 })),
-            formatDate(startOfTomorrow()),
-          ];
-          break;
-        default:
-          break;
-      }
+      // One shared window per preset: hour-floored start, next-midnight end,
+      // identical to the default load (see observePresetDateFilter).
+      const filter = observePresetDateFilter(option);
       if (filter)
         setDateFilter((prev) => ({
           ...prev,
@@ -455,7 +428,7 @@ const PrimaryGraph = ({
   const pillSx = {
     textTransform: "none",
     fontWeight: 500,
-    fontSize: 13,
+    fontSize: 12,
     fontFamily: "'IBM Plex Sans', sans-serif",
     height: 26,
     border: "1px solid",
@@ -493,14 +466,15 @@ const PrimaryGraph = ({
     return Object.values(metricGroups).flat();
   }, [metricGroups]);
 
-  // Current selected metric definition
+  // Current selected metric definition. Until the catalog lists the selection
+  // (the sessions and users catalogs never list latency), graph the system
+  // latency default rather than whichever catalog entry arrived first.
   const metricDef = useMemo(
     () =>
       allMetrics.find(
         (m) =>
           graphMetricIdentity(m) === selectedMetric || m.id === selectedMetric,
-      ) ||
-      allMetrics[0] || {
+      ) || {
         id: "latency",
         propertyId: `system_attribute:${graphPropertyNamespace}:latency`,
         source: graphTransportSource,
@@ -517,22 +491,6 @@ const PrimaryGraph = ({
     }
     return metricDef.propertyId || metricDef.property_id || "";
   }, [graphPropertyNamespace, metricDef]);
-
-  // A metric selected in one project may not exist in the next one's catalog.
-  // Drop it once loaded so the trigger label and picker highlight agree. The
-  // catalog-backed picker stores canonical property ids, while legacy entries
-  // may still be selected by metric id, so both identities must be accepted.
-  useEffect(() => {
-    if (!metricGroups || !allMetrics.length) return;
-    if (
-      !allMetrics.some(
-        (m) =>
-          graphMetricIdentity(m) === selectedMetric || m.id === selectedMetric,
-      )
-    ) {
-      setSelectedMetric(graphMetricIdentity(metricDef));
-    }
-  }, [metricGroups, allMetrics, selectedMetric, metricDef]);
 
   // Filter metrics by search term for the picker
   const filteredGroups = useMemo(() => {
@@ -666,6 +624,8 @@ const PrimaryGraph = ({
       apiEndpoint,
       graphPropertyId,
       graphTransportSource,
+      observeType,
+      excludeSimulationCalls,
     ],
     queryFn: async ({ queryKey, signal }) => {
       const refresh = forceRefreshRef.current;
@@ -694,6 +654,10 @@ const PrimaryGraph = ({
                   }),
                 },
                 project_id: effectiveObserveId,
+                ...(observeType && { observe_type: observeType }),
+                ...(excludeSimulationCalls && {
+                  remove_simulation_calls: true,
+                }),
               },
               {
                 params: refresh ? { refresh: true } : undefined,
@@ -717,6 +681,10 @@ const PrimaryGraph = ({
     },
     enabled: !!effectiveObserveId && !!metricDef.id,
     staleTime: Infinity,
+    // Rolling presets now keep one window for an hour, so an in-app revisit
+    // has the same key. Ask the server anyway: it serves the cached exact
+    // snapshot at once and says whether a newer read of it is under way.
+    refetchOnMount: "always",
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,
     refetchInterval: (query) => {
@@ -851,6 +819,17 @@ const PrimaryGraph = ({
         updatedAt: completedAt,
       });
     }
+    const publishSnapshotAge = () => {
+      if (!completedAt) return;
+      window.dispatchEvent(
+        new CustomEvent("observe-aggregation-completed", {
+          detail: {
+            observeId: effectiveObserveId,
+            queryCompletedAt: completedAt.toISOString(),
+          },
+        }),
+      );
+    };
     if (
       isRefreshing &&
       !refreshFailed &&
@@ -858,6 +837,10 @@ const PrimaryGraph = ({
     ) {
       setRefreshUnavailable(graphReadState !== "complete");
       notifyAggregationRefresh(true);
+      // A cached exact snapshot served while its window is re-read (a
+      // revisit's background revalidation, or an explicit Reload) is shown
+      // now: publish its age so the header says how old it is.
+      if (graphReadState === "complete") publishSnapshotAge();
       return;
     }
     notifyAggregationRefresh(false);
@@ -870,16 +853,7 @@ const PrimaryGraph = ({
       return;
     }
     setRefreshUnavailable(false);
-    if (completedAt) {
-      window.dispatchEvent(
-        new CustomEvent("observe-aggregation-completed", {
-          detail: {
-            observeId: effectiveObserveId,
-            queryCompletedAt: completedAt.toISOString(),
-          },
-        }),
-      );
-    }
+    publishSnapshotAge();
   }, [
     effectiveObserveId,
     graphData,
@@ -944,7 +918,8 @@ const PrimaryGraph = ({
       const ts = item.timestamp.replace(/\+00:00$/, "");
       mData.push({
         x: new Date(ts).getTime(),
-        y: item.value == null ? null : Number(item.value),
+        y: isIncompleteCost(item.cost_coverage) || item.value == null ? null : Number(item.value),
+        cost_coverage: item.cost_coverage,
       });
       tData.push({
         x: new Date(ts).getTime(),
@@ -967,10 +942,23 @@ const PrimaryGraph = ({
       ? "rgba(147, 130, 220, 0.30)"
       : "rgba(147, 160, 230, 0.25)");
 
-  const metricSeriesName = metricDef.unit
-    ? `${metricDef.label} (${metricDef.unit})`
+  // The server names the statistic of every system-metric series; latency is
+  // always the mean. Only the latency series is captioned, and only when the
+  // payload says "mean": one without the field (an older server) or with a
+  // retired or unknown statistic keeps the plain metric name rather than a
+  // guess. Cost is a mean too but has always been read as one.
+  const metricStatistic = (displayGraphData || graphData)?.metric_statistic;
+  const statisticLabel =
+    metricDef.id === "latency" && metricStatistic === "mean" ? "avg" : null;
+  const metricSeriesQualifiers = [statisticLabel, metricDef.unit].filter(
+    Boolean,
+  );
+  const metricSeriesName = metricSeriesQualifiers.length
+    ? `${metricDef.label} (${metricSeriesQualifiers.join(", ")})`
     : metricDef.label;
-  const lineSeriesName = metricSeriesName;
+  const lineSeriesName = metricData.some((point) => isIncompleteCost(point.cost_coverage))
+    ? `${metricSeriesName} · Cost coverage incomplete`
+    : metricSeriesName;
   const trafficSeriesName = "Traffic";
 
   // Series: metric line FIRST (left axis), traffic bars SECOND (right axis)
@@ -1046,7 +1034,7 @@ const PrimaryGraph = ({
         type: "datetime",
         labels: {
           datetimeUTC: false,
-          style: { fontSize: "10px", colors: theme.palette.text.disabled },
+          style: { fontSize: "12px", colors: theme.palette.text.disabled },
           datetimeFormatter: {
             year: "yyyy",
             month: "MMM 'yy",
@@ -1067,7 +1055,7 @@ const PrimaryGraph = ({
           opposite: false,
           title: { text: undefined },
           labels: {
-            style: { fontSize: "10px", colors: theme.palette.text.disabled },
+            style: { fontSize: "12px", colors: theme.palette.text.disabled },
             formatter: (v) => {
               if (v == null) return "";
               if (v >= 1000000) return `${(v / 1000000).toFixed(1)}M`;
@@ -1085,7 +1073,7 @@ const PrimaryGraph = ({
           opposite: true,
           title: { text: undefined },
           labels: {
-            style: { fontSize: "10px", colors: theme.palette.text.disabled },
+            style: { fontSize: "12px", colors: theme.palette.text.disabled },
             formatter: (v) => (v != null ? Math.round(v).toLocaleString() : ""),
             offsetX: 4,
           },
@@ -1108,7 +1096,9 @@ const PrimaryGraph = ({
         theme: theme.palette.mode,
         x: { format: "dd MMM yyyy" },
         y: {
-          formatter: (v, { seriesIndex }) => {
+          formatter: (v, { seriesIndex, dataPointIndex }) => {
+            const coverage = metricData[dataPointIndex]?.cost_coverage;
+            if (seriesIndex === 0 && isIncompleteCost(coverage)) return monetaryCostLabel(null, coverage);
             if (v == null) return "-";
             if (seriesIndex === 0) {
               return metricDef.unit
@@ -1130,20 +1120,9 @@ const PrimaryGraph = ({
       handleZoomed,
       trafficLabel,
       trafficSeriesName,
+      metricData,
     ],
   );
-
-  if (isColdGraphLoading) {
-    return (
-      <Box
-        role="status"
-        aria-label={GRAPH_LOADING_MESSAGE}
-        sx={{ px: 2, py: 1, height: CHART_HEIGHT + 40 }}
-      >
-        <GraphSkeleton />
-      </Box>
-    );
-  }
 
   const hasData = metricData.length > 0;
 
@@ -1163,7 +1142,7 @@ const PrimaryGraph = ({
       >
         <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
           <Typography
-            sx={{ fontSize: 13, fontWeight: 600, color: "text.primary" }}
+            sx={{ fontSize: 12, fontWeight: 600, color: "text.primary" }}
           >
             {graphLabel}
           </Typography>
@@ -1188,11 +1167,20 @@ const PrimaryGraph = ({
               {metricDef.label}
             </Typography>
             <Iconify
-              icon="mdi:chevron-down"
+              icon="solar:alt-arrow-down-linear"
               width={14}
               sx={{ flexShrink: 0, color: "text.secondary" }}
             />
           </ButtonBase>
+          {statisticLabel && (
+            <Typography
+              data-testid="graph-metric-statistic"
+              noWrap
+              sx={{ fontSize: 12, color: "text.secondary" }}
+            >
+              ({statisticLabel})
+            </Typography>
+          )}
 
           {/* Metric picker popover */}
           <Popover
@@ -1233,7 +1221,7 @@ const PrimaryGraph = ({
                     startAdornment: (
                       <InputAdornment position="start">
                         <Iconify
-                          icon="mdi:magnify"
+                          icon="solar:magnifier-linear"
                           width={16}
                           sx={{ color: "text.disabled" }}
                         />
@@ -1254,10 +1242,10 @@ const PrimaryGraph = ({
                   <Box key={groupKey}>
                     <Typography
                       sx={{
-                        fontSize: 10,
-                        fontWeight: 700,
+                        fontSize: 12,
+                        fontWeight: 600,
                         color: "text.disabled",
-                        textTransform: "uppercase",
+                        textTransform: "none",
                         letterSpacing: 0.5,
                         px: 1.5,
                         pt: 1,
@@ -1299,7 +1287,7 @@ const PrimaryGraph = ({
                         {m.unit && (
                           <Typography
                             sx={{
-                              fontSize: 10,
+                              fontSize: 12,
                               color: "text.disabled",
                               flexShrink: 0,
                             }}
@@ -1362,8 +1350,10 @@ const PrimaryGraph = ({
                 ref={dateButtonRef}
                 variant="outlined"
                 size="small"
-                startIcon={<Iconify icon="mdi:calendar-outline" width={16} />}
-                endIcon={<Iconify icon="mdi:chevron-down" width={14} />}
+                startIcon={<Iconify icon="solar:calendar-linear" width={16} />}
+                endIcon={
+                  <Iconify icon="solar:alt-arrow-down-linear" width={14} />
+                }
                 onClick={(e) => setDateAnchor(e.currentTarget)}
                 sx={pillSx}
               >
@@ -1386,7 +1376,7 @@ const PrimaryGraph = ({
                     key={opt.key}
                     selected={dateFilter?.dateOption === opt.key}
                     onClick={() => handleDateOptionChange(opt.key)}
-                    sx={{ fontSize: 13, py: 0.75 }}
+                    sx={{ py: 0.75 }}
                   >
                     {opt.label}
                   </MenuItem>
@@ -1396,6 +1386,7 @@ const PrimaryGraph = ({
                 open={customDateOpen}
                 onClose={() => setCustomDateOpen(false)}
                 anchorEl={dateButtonRef.current}
+                value={dateFilter?.dateFilter}
                 setDateFilter={(range) => {
                   setDateFilter?.((prev) => ({
                     ...prev,
@@ -1413,10 +1404,10 @@ const PrimaryGraph = ({
                   startIcon={
                     hasActiveFilter ? (
                       <Badge variant="dot" color="error" overlap="circular">
-                        <Iconify icon="mdi:filter-outline" width={16} />
+                        <Iconify icon="solar:filter-linear" width={16} />
                       </Badge>
                     ) : (
-                      <Iconify icon="mdi:filter-outline" width={16} />
+                      <Iconify icon="solar:filter-linear" width={16} />
                     )
                   }
                   onClick={(e) => onFilterToggle(e)}
@@ -1440,7 +1431,7 @@ const PrimaryGraph = ({
                 bgcolor: lineColor,
               }}
             />
-            <Typography sx={{ fontSize: 11, color: "text.secondary" }}>
+            <Typography sx={{ fontSize: 12, color: "text.secondary" }}>
               {lineSeriesName}
             </Typography>
           </Box>
@@ -1449,11 +1440,11 @@ const PrimaryGraph = ({
               sx={{
                 width: 10,
                 height: 10,
-                borderRadius: "2px",
+                borderRadius: "4px",
                 bgcolor: barColor,
               }}
             />
-            <Typography sx={{ fontSize: 11, color: "text.secondary" }}>
+            <Typography sx={{ fontSize: 12, color: "text.secondary" }}>
               Traffic
             </Typography>
           </Box>
@@ -1464,12 +1455,22 @@ const PrimaryGraph = ({
       {graphStatusMessage && displaySnapshot ? (
         <Typography
           role="status"
-          sx={{ px: 1, fontSize: 11, color: "text.secondary" }}
+          sx={{ px: 1, fontSize: 12, color: "text.secondary" }}
         >
           {graphStatusMessage}
         </Typography>
       ) : null}
-      {hasData ? (
+      {/* Only the chart area loads: the header stays mounted because an open
+          filter panel is anchored to its Filter button. */}
+      {isColdGraphLoading ? (
+        <Box
+          role="status"
+          aria-label={GRAPH_LOADING_MESSAGE}
+          sx={{ height: CHART_HEIGHT }}
+        >
+          <GraphSkeleton />
+        </Box>
+      ) : hasData ? (
         <Box sx={{ mx: -0.5 }}>
           <ReactApexChart
             options={chartOptions}
@@ -1511,6 +1512,8 @@ PrimaryGraph.propTypes = {
   observeIdOverride: PropTypes.string,
   hasActiveFilter: PropTypes.bool,
   onFilterToggle: PropTypes.func,
+  observeType: PropTypes.oneOf(["trace", "voice"]),
+  removeSimulationCalls: PropTypes.bool,
 };
 
 export default React.memo(PrimaryGraph);

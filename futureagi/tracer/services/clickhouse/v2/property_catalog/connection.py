@@ -1,13 +1,13 @@
-"""Dedicated read-only ClickHouse connection for property definitions.
+"""Dedicated read-only ClickHouse connection for observed-span indexes.
 
 This boundary deliberately uses a separate catalog identity/database and a
 hard physical-table allowlist.  It cannot read application fact tables and it
-cannot execute mutations. Production admission is fail-closed in settings and
-is repeated here so runtime overrides cannot bypass environment binding.
+cannot execute mutations. Current native metadata never needs this connection.
 """
 
 from __future__ import annotations
 
+import re
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -16,14 +16,8 @@ from typing import Any
 
 from django.conf import settings as django_settings
 
-from tfc.settings.settings import (
-    validate_property_catalog_database,
-    validate_property_catalog_read_admission,
-    validate_property_catalog_read_connection,
-)
 from tracer.services.clickhouse.application_read_policy import (
     application_read_context,
-    application_read_settings,
 )
 from tracer.services.clickhouse.client import ClickHouseClient
 from tracer.services.clickhouse.v2.attribute_catalog_connection import (
@@ -40,16 +34,17 @@ PROPERTY_CATALOG_READ_TRANSPORT_TIMEOUT_SECONDS = (
 )
 
 PROPERTY_CATALOG_TABLES = frozenset(
-    {
-        "property_definition_catalog",
-        "span_attribute_value_catalog",
-        "property_catalog_checkpoints",
-        "property_catalog_activations",
-        "property_catalog_activation_control_events",
-        "property_catalog_deliveries",
-        "property_catalog_source_streams",
-    }
+    {"observed_attribute_keys", "observed_attribute_values"}
 )
+
+
+def validate_property_catalog_database(value):
+    if (
+        not isinstance(value, str)
+        or re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", value) is None
+    ):
+        raise ValueError("invalid catalog database")
+    return value
 
 
 @dataclass(frozen=True, slots=True)
@@ -62,66 +57,26 @@ class PropertyCatalogConnectionConfig:
 
     @classmethod
     def from_settings(cls, source: Any = django_settings):
-        source_users = {
-            str(
-                (getattr(source, "CLICKHOUSE_V2", {}) or {}).get("CH25_USER") or ""
-            ).strip(),
-            str(
-                (getattr(source, "CLICKHOUSE", {}) or {}).get("CH_USERNAME") or ""
-            ).strip(),
-        } - {""}
         config = cls(
             host=getattr(source, "PROPERTY_CATALOG_CH_HOST", None),
             port=getattr(source, "PROPERTY_CATALOG_CH_PORT", None),
             database=getattr(source, "PROPERTY_CATALOG_DATABASE", None),
             user=getattr(source, "PROPERTY_CATALOG_CH_USER", None),
-            password=getattr(source, "PROPERTY_CATALOG_CH_PASSWORD", None),
+            password=getattr(source, "PROPERTY_CATALOG_CH_PASSWORD", ""),
         )
-        deployment = validate_property_catalog_read_admission(
-            read_mode=getattr(source, "PROPERTY_CATALOG_READ_MODE", "off"),
-            environment_type=getattr(source, "ENV_TYPE", None),
-            cloud_deployment=getattr(source, "CLOUD_DEPLOYMENT", None),
-            dev_acknowledgement=getattr(source, "PROPERTY_CATALOG_DEV_READ_ACK", None),
-            prod_acknowledgement=getattr(
-                source, "PROPERTY_CATALOG_PROD_READ_ACK", None
-            ),
-            database=config.database,
-            host=config.host,
-            port=config.port,
-            api_read_user=config.user,
-            password=config.password,
-            source_users=source_users,
-            dev_workspace_allowlist=getattr(
-                source, "PROPERTY_CATALOG_DEV_WORKSPACE_ALLOWLIST", None
-            ),
-            prod_workspace_allowlist=getattr(
-                source, "PROPERTY_CATALOG_PROD_WORKSPACE_ALLOWLIST", None
-            ),
-            prod_workspace_scope_mode=getattr(
-                source,
-                "PROPERTY_CATALOG_PROD_WORKSPACE_SCOPE_MODE",
-                "allowlist",
-            ),
-        )
-        if deployment is None:
-            raise ValueError("property catalog reads are disabled")
+        config.validate()
         return config
 
-    def validate(
-        self,
-        *,
-        source_users: set[str],
-        deployment: str = "dev",
-    ) -> None:
-        validate_property_catalog_read_connection(
-            host=self.host,
-            port=self.port,
-            database=self.database,
-            api_read_user=self.user,
-            password=self.password,
-            source_users=source_users,
-            deployment=deployment,
-        )
+    def validate(self, *, source_users=frozenset()):
+        validate_property_catalog_database(self.database)
+        if not isinstance(self.host, str) or not self.host.strip():
+            raise ValueError("catalog host is required")
+        if type(self.port) is not int or not 1 <= self.port <= 65535:
+            raise ValueError("invalid catalog port")
+        if not isinstance(self.user, str) or not self.user or self.user in source_users:
+            raise ValueError("dedicated catalog read user is required")
+        if not isinstance(self.password, str):
+            raise ValueError("invalid catalog password")
 
 
 _client: ClickHouseClient | None = None
@@ -167,11 +122,7 @@ def reset_property_catalog_read_client() -> None:
 
 
 class PropertyCatalogReadExecutor:
-    """Allowlisted catalog reads with explicit public/maintenance policies.
-
-    Public requests retain admission between statements, not statement aborts.
-    Direct maintenance callers keep the historical bounded execution policy.
-    """
+    """Allowlisted catalog reads with one bounded public/maintenance policy."""
 
     def __init__(
         self,
@@ -182,19 +133,13 @@ class PropertyCatalogReadExecutor:
         ] = get_property_catalog_read_client,
         clock: Callable[[], float] = monotonic,
         max_wall_ms: int = PROPERTY_CATALOG_READ_MAX_WALL_MS,
-        application_read: bool = False,
     ) -> None:
         if type(max_wall_ms) is not int or max_wall_ms < 1:
             raise ValueError("property catalog max_wall_ms must be a positive integer")
         self._config = config or PropertyCatalogConnectionConfig.from_settings()
         self._client_factory = client_factory
         self._clock = clock
-        self._application_read = application_read
-        self._max_wall_ms = (
-            max_wall_ms
-            if application_read
-            else min(max_wall_ms, PROPERTY_CATALOG_READ_MAX_WALL_MS)
-        )
+        self._max_wall_ms = min(max_wall_ms, PROPERTY_CATALOG_READ_MAX_WALL_MS)
         self._deadline = clock() + self._max_wall_ms / 1_000
         self._client: ClickHouseClient | None = None
 
@@ -219,24 +164,41 @@ class PropertyCatalogReadExecutor:
             remaining_ms,
             self._max_wall_ms,
         )
+        catalog_settings = {
+            **RUNTIME_LIMITS.clickhouse_read_settings,
+            "max_result_rows": RUNTIME_LIMITS.max_page_size + 1,
+        }
         query_settings = _bounded_query_settings(
-            settings, timeout_ms=bounded_timeout_ms
+            {**catalog_settings, **settings}, timeout_ms=bounded_timeout_ms
         )
-        if self._application_read:
-            # Validate caller settings above before adding the code-owned policy.
-            # Preserve the catalog memory budget: its read-only identity may
-            # enforce a smaller limit than the general application ceiling.
-            # Statement caps are removed; SQL LIMIT and spilling are unchanged.
-            bounded_timeout_ms = None
-            query_settings = application_read_settings(query_settings)
+        for key in (
+            "max_bytes_to_read",
+            "max_memory_usage",
+            "max_result_rows",
+            "max_result_bytes",
+        ):
+            value = query_settings[key]
+            if type(value) is not int or value < 1:
+                raise ValueError(f"catalog {key} must be a positive integer")
+            # Row limits belong to each query (including non-page type probes).
+            # Byte and memory limits may only tighten the catalog ceilings.
+            if key != "max_result_rows":
+                query_settings[key] = min(value, catalog_settings[key])
         if self._client is None:
             self._client = self._client_factory(self._config)
         started_at = self._clock()
+        bounded_timeout_ms = min(
+            bounded_timeout_ms, int((self._deadline - started_at) * 1_000)
+        )
+        if bounded_timeout_ms < 1:
+            raise TimeoutError("property catalog read deadline exhausted")
+        query_settings["max_execution_time"] = bounded_timeout_ms / 1_000
         try:
             progress_execute = getattr(
                 type(self._client), "execute_read_with_progress", None
             )
-            with application_read_context(self._application_read):
+            # Catalog bounds also apply inside an outer application request.
+            with application_read_context(False):
                 if callable(progress_execute):
                     rows, columns, _, read_rows, read_bytes = progress_execute(
                         self._client,
@@ -281,5 +243,4 @@ __all__ = [
     "get_property_catalog_read_client",
     "reset_property_catalog_read_client",
     "validate_property_catalog_database",
-    "validate_property_catalog_read_admission",
 ]

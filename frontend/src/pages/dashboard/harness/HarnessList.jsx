@@ -1,3 +1,4 @@
+import { ROW_HEIGHT } from "src/theme/sizes";
 import { useMemo, useState } from "react";
 import { Alert, Box, Button, Stack, Typography } from "@mui/material";
 import { useQuery } from "@tanstack/react-query";
@@ -173,22 +174,17 @@ export default function HarnessList() {
   const createButton = (
     <Button
       variant="contained"
-      startIcon={<Iconify icon="eva:plus-fill" />}
+      startIcon={<Iconify icon="solar:add-linear" />}
       onClick={goToCreate}
-      sx={{
-        bgcolor: "primary.main",
-        color: "primary.contrastText",
-        "&:hover": { bgcolor: "primary.dark" },
-      }}
     >
-      Create RL environment
+      Create environment
     </Button>
   );
 
   return (
     <>
       <Helmet>
-        <title>RL Environment | Future AGI</title>
+        <title>Environment | Future AGI</title>
       </Helmet>
 
       <Box sx={{ height: "100vh", p: 2 }}>
@@ -204,7 +200,7 @@ export default function HarnessList() {
         >
           <Box>
             <Typography typography="m2" fontWeight={600}>
-              RL Environments
+              Environments
             </Typography>
             <Typography typography="s1" color="text.secondary">
               Create an environment where you test your agent. Hand over a
@@ -221,7 +217,7 @@ export default function HarnessList() {
 
           {showEmptyScreen ? (
             <EmptyLayout
-              title="No RL environments yet"
+              title="No environments yet"
               description="Give us the agent folder; ALK does the rest."
               action={createButton}
               icon="/assets/icons/ic_bot.svg"
@@ -255,8 +251,8 @@ export default function HarnessList() {
                 rowCount={filtered.length}
                 onRowClick={(row) => goToDetail(row.job.job_id)}
                 getRowId={(row) => row.job.job_id}
-                rowHeight={44}
-                emptyMessage="No RL environments found"
+                rowHeight={ROW_HEIGHT.default}
+                emptyMessage="No environments found"
               />
             </>
           )}

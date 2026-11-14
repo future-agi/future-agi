@@ -2,32 +2,35 @@
 
 from __future__ import annotations
 
+import pytest
+
 from simulate.models import HostedHarnessJob
+from simulate.services.hosted_harness import create_hosted_job
 from simulate.services.hosted_harness_gateway import _record_harness_spend
+from simulate.tests.test_hosted_harness_channels import _payload
 
 
-class _Job(HostedHarnessJob):
-    """A job that records what it would have written instead of writing it."""
-
-    class Meta:
-        proxy = True
-
-    def save(self, *args, **kwargs):  # noqa: D102 - persistence is not what these test
-        self.saved = True
-
-
-def _job(metadata=None):
-    job = _Job(payload={"metadata": metadata or {}})
-    job.saved = False
+def _job(organization, metadata=None):
+    job, _ = create_hosted_job(
+        organization,
+        _payload(metadata=metadata or {}),
+        idempotency_key="harness-spend",
+    )
     return job
 
 
+def _row(job):
+    # The base manager, so a test that patches the named manager's `get` still reads the table.
+    return HostedHarnessJob._base_manager.get(id=job.id)
+
+
 def _spend(job):
-    return ((job.payload or {}).get("metadata") or {}).get("harness_spend")
+    return ((_row(job).payload or {}).get("metadata") or {}).get("harness_spend")
 
 
-def test_the_total_and_its_stages_land_on_the_job():
-    job = _job()
+@pytest.mark.django_db
+def test_the_total_and_its_stages_land_on_the_job(organization):
+    job = _job(organization)
     _record_harness_spend(
         job,
         {
@@ -42,56 +45,72 @@ def test_the_total_and_its_stages_land_on_the_job():
     assert _spend(job)["attempts"]["1"]["stages"] == [
         {"stage": "understand-agent", "usd": 0.8123, "turns": 9}
     ]
-    assert job.saved
+    # The caller's own object sees what was written.
+    assert job.payload == _row(job).payload
 
 
-def test_a_later_read_never_lowers_the_bill():
+@pytest.mark.django_db
+def test_a_later_read_never_lowers_the_bill(organization):
     """A half-written or reset ledger must not erase what a previous poll already saw."""
     job = _job(
+        organization,
         {
             "harness_spend": {
                 "total_usd": 1.5,
                 "unpriced_turns": 0,
-                "attempts": {"1": {"total_usd": 1.5, "unpriced_turns": 0, "stages": []}},
+                "attempts": {
+                    "1": {"total_usd": 1.5, "unpriced_turns": 0, "stages": []}
+                },
             }
-        }
+        },
     )
+    before = _row(job)
     _record_harness_spend(job, {"total_usd": 0.2, "stages": []})
 
+    after = _row(job)
     assert _spend(job)["total_usd"] == 1.5
-    assert not job.saved
+    assert (after.payload, after.updated_at) == (before.payload, before.updated_at)
 
 
-def test_a_growing_total_replaces_the_earlier_one():
+@pytest.mark.django_db
+def test_a_growing_total_replaces_the_earlier_one(organization):
     job = _job(
+        organization,
         {
             "harness_spend": {
                 "total_usd": 0.5,
                 "unpriced_turns": 0,
-                "attempts": {"1": {"total_usd": 0.5, "unpriced_turns": 0, "stages": []}},
+                "attempts": {
+                    "1": {"total_usd": 0.5, "unpriced_turns": 0, "stages": []}
+                },
             }
-        }
+        },
     )
-    _record_harness_spend(job, {"total_usd": 0.9, "stages": [{"stage": "x", "usd": 0.9}]})
+    _record_harness_spend(
+        job, {"total_usd": 0.9, "stages": [{"stage": "x", "usd": 0.9}]}
+    )
 
     assert _spend(job)["total_usd"] == 0.9
-    assert job.saved
 
 
-def test_nothing_readable_is_left_alone():
+@pytest.mark.django_db
+def test_nothing_readable_is_left_alone(organization):
     """An absent ledger is the ordinary case early in a run, not an error."""
+    job = _job(organization)
+    before = _row(job)
     for unreadable in (None, "", [], {"total_usd": "not a number"}):
-        job = _job()
         _record_harness_spend(job, unreadable)
+        after = _row(job)
         assert _spend(job) is None
-        assert not job.saved
+        assert (after.payload, after.updated_at) == (before.payload, before.updated_at)
 
 
-def test_a_dying_sandbox_is_read_before_it_is_deleted(monkeypatch):
+@pytest.mark.django_db
+def test_a_dying_sandbox_is_read_before_it_is_deleted(organization, monkeypatch):
     """The pull has to happen while the sandbox still exists, whatever ended the attempt."""
     from simulate.services import hosted_harness_gateway as gateway
 
-    job = _job()
+    job = _job(organization)
     read = {}
 
     class _Files:
@@ -135,9 +154,10 @@ def test_a_sandbox_that_cannot_be_read_never_blocks_its_own_deletion(monkeypatch
     gateway._read_harness_spend(_Attempt(), _Sandbox())
 
 
-def test_a_retry_adds_to_the_bill_instead_of_replacing_it():
+@pytest.mark.django_db
+def test_a_retry_adds_to_the_bill_instead_of_replacing_it(organization):
     """A retry's ledger starts at zero, so attempts are summed rather than replaced."""
-    job = _job()
+    job = _job(organization)
     _record_harness_spend(job, {"total_usd": 1.2, "unpriced_turns": 1, "stages": []}, 1)
     _record_harness_spend(job, {"total_usd": 0.8, "unpriced_turns": 0, "stages": []}, 2)
 
@@ -147,8 +167,9 @@ def test_a_retry_adds_to_the_bill_instead_of_replacing_it():
     assert sorted(spend["attempts"]) == ["1", "2"]
 
 
-def test_one_attempt_growing_does_not_disturb_another():
-    job = _job()
+@pytest.mark.django_db
+def test_one_attempt_growing_does_not_disturb_another(organization):
+    job = _job(organization)
     _record_harness_spend(job, {"total_usd": 1.0, "stages": []}, 1)
     _record_harness_spend(job, {"total_usd": 0.3, "stages": []}, 2)
     _record_harness_spend(job, {"total_usd": 0.9, "stages": []}, 2)
@@ -161,19 +182,13 @@ def test_one_attempt_growing_does_not_disturb_another():
 
 def test_the_ledger_is_read_before_the_only_delete_that_exists(monkeypatch):
     """Pins the ordering, so a reordered or second deletion path fails here."""
-    import sys
-    import types
-
     from simulate.services import hosted_harness_gateway as gateway
-
-    # The method imports daytona at call time, and the SDK is not a test dependency.
-    fake = types.ModuleType("daytona")
-    fake.DaytonaNotFoundError = type("DaytonaNotFoundError", (Exception,), {})
-    monkeypatch.setitem(sys.modules, "daytona", fake)
 
     order = []
 
     class _Client:
+        name = "test-provider"
+
         # **kwargs so a new option on the real call (request_timeout, say) does not read as a
         # broken ordering invariant.
         def get(self, ref, **kwargs):
@@ -196,9 +211,14 @@ def test_the_ledger_is_read_before_the_only_delete_that_exists(monkeypatch):
         gateway, "_read_harness_spend", lambda *_: order.append("read_spend")
     )
     monkeypatch.setattr(gateway, "record_cleanup", lambda *a, **k: None)
+    monkeypatch.setattr(
+        "simulate.services.harness_usage.record_sandbox_runtime",
+        lambda *args, **kwargs: None,
+    )
 
-    driver = gateway.DaytonaHostedGateway.__new__(gateway.DaytonaHostedGateway)
+    driver = gateway.HostedHarnessGateway.__new__(gateway.HostedHarnessGateway)
     driver.client = _Client()
+    monkeypatch.setattr(driver, "_cleanup_conversation_runtime", lambda job: None)
     driver._delete_and_record(_Attempt())
 
     assert order == ["read_spend", "delete"]

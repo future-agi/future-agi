@@ -25,11 +25,6 @@ _MIN_SECRET_FRAGMENT_LENGTH = 8
 _REDACTION_CACHE_LIMIT = 128
 _redaction_cache: dict[str, tuple[str, ...]] = {}
 _redaction_cache_lock = Lock()
-_PROCESS_LOG_COMMAND = (
-    "for f in $(find /work/authoring /work/build /work/worlds "
-    "-type f -name '*.log' 2>/dev/null | sort); do "
-    'echo "===== $f ====="; tail -400 "$f"; done'
-)
 _BEARER_TOKEN = re.compile(r"(?i)(bearer\s+)[A-Za-z0-9._~+/=-]+")
 _QUERY_TOKEN = re.compile(r"(?i)([?&](?:access_)?token=)[^&\s]+")
 _ANSI_ESCAPE = re.compile(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
@@ -56,8 +51,22 @@ _PRIVATE_KEY = re.compile(
 )
 
 
+def _process_log_command(work: str = "/work") -> str:
+    """List every process log, labelled build (carried in the authoring files) or run.
+
+    ``diagnostics`` holds the run's own worker logs, retained there when its worlds are torn
+    down. Sorting puts the build's logs first, so a tail-truncated capture keeps the run's.
+    """
+    return (
+        f"for f in $(find {work}/authoring {work}/build {work}/diagnostics {work}/worlds "
+        "-type f -name '*.log' 2>/dev/null | sort); do "
+        f'case "$f" in {work}/authoring/*) label=build ;; *) label=run ;; esac; '
+        'echo "===== $label: $f ====="; tail -400 "$f"; done'
+    )
+
+
 @dataclass(frozen=True)
-class DaytonaDiagnostics:
+class SandboxDiagnostics:
     entrypoint_log: str
     process_logs: str
     command_status: str | None
@@ -164,7 +173,7 @@ def _command_logs(sandbox: Any, session_id: str, command_id: str) -> str:
     )
 
 
-def poll_daytona_diagnostics(
+def poll_sandbox_diagnostics(
     attempt: HostedHarnessAttempt,
     sandbox: Any,
     *,
@@ -173,7 +182,7 @@ def poll_daytona_diagnostics(
     command: Any | None = None,
     final: bool = False,
     secret_values: Iterable[str] = (),
-) -> DaytonaDiagnostics:
+) -> SandboxDiagnostics:
     """Poll one sandbox and persist its latest secret-safe diagnostics snapshot.
 
     Collection and storage are deliberately best-effort: diagnostics must never change the
@@ -213,7 +222,7 @@ def poll_daytona_diagnostics(
 
     process_logs = ""
     try:
-        result = sandbox.process.exec(_PROCESS_LOG_COMMAND, timeout=30)
+        result = sandbox.process.exec(_process_log_command(), timeout=30)
         process_logs = getattr(result, "result", "") or ""
     except Exception as exc:  # noqa: BLE001 - entrypoint output can still be captured
         errors.append(f"processes:{type(exc).__name__}")
@@ -225,7 +234,7 @@ def poll_daytona_diagnostics(
     process_logs = _tail_utf8(
         _redact(process_logs, fragments), _PROCESS_LOG_LIMIT_BYTES
     )
-    capture = DaytonaDiagnostics(
+    capture = SandboxDiagnostics(
         entrypoint_log=entrypoint_log,
         process_logs=process_logs,
         command_status=str(command_status) if command_status is not None else None,
@@ -269,7 +278,7 @@ def poll_daytona_diagnostics(
     except Exception as exc:  # noqa: BLE001 - diagnostics cannot block the harness lifecycle
         attempt.diagnostics_error = f"storage:{type(exc).__name__}"
         attempt.save(update_fields=["diagnostics_error", "updated_at"])
-        logger.exception("could not persist Daytona diagnostics attempt=%s", attempt.id)
+        logger.exception("could not persist sandbox diagnostics attempt=%s", attempt.id)
         return capture
 
     attempt.diagnostics_object_key = object_key

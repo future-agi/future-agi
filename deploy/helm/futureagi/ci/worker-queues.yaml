@@ -1,0 +1,53 @@
+# CI only: per-queue workers with the production knobs, over
+# examples/bundled.yaml (hack/rendered_checks.py checks the result).
+topologySpread:
+  preset: hard
+backend:
+  replicas: 2
+worker:
+  preStopSleepSeconds: 20
+  podLabels:
+    team: workers
+  allQueues:
+    autoscaling:
+      enabled: true
+      targetMemoryUtilizationPercentage: 75
+      behavior:
+        scaleDown:
+          stabilizationWindowSeconds: 600
+  queues:
+    # Long jobs on a tainted pool, with their own HPA and drain time.
+    - name: tasks_xl
+      image:
+        pullPolicy: Always
+      gracefulShutdownSeconds: 900
+      preStopSleepSeconds: 30
+      autoscaling:
+        enabled: true
+        maxReplicas: 3
+        targetCPUUtilizationPercentage: ""
+        targetMemoryUtilizationPercentage: 70
+      nodeSelector:
+        workload: batch
+      tolerations:
+        - key: workload
+          operator: Equal
+          value: batch
+          effect: NoSchedule
+      priorityClassName: futureagi-batch
+      podLabels:
+        queue: tasks-xl
+      podAnnotations:
+        example.com/queue: tasks_xl
+      pdb:
+        maxUnavailable: 2
+    # A queue without its own PDB, preStop or spread.
+    - name: agent_compass
+      replicas: 1
+      preStopSleepSeconds: 0
+      pdb:
+        enabled: false
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
