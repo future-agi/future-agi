@@ -117,7 +117,7 @@ func TestOrgBlockPrecedesKeyMonitorAndKeyRemediation(t *testing.T) {
 			rc := keyTestContext("key-a")
 			defer rc.Release()
 			if result := p.ProcessRequest(context.Background(), rc); result.Action != pipeline.ShortCircuit {
-				t.Fatalf("org block bypassed: %+v", result)
+				t.Fatalf("key policy weakened the org block: %+v", result)
 			}
 			if g.calls != 1 || len(rc.GuardrailResults) != 1 || rc.GuardrailResults[0].PolicyScope != "org" || rc.GuardrailResults[0].PolicyName != "Organization guardrails" || rc.GuardrailResults[0].Mode != "enforce" {
 				t.Fatalf("org attribution %+v calls=%d", rc.GuardrailResults, g.calls)
