@@ -133,7 +133,7 @@ func (p *Plugin) ProcessResponse(_ context.Context, rc *models.RequestContext) p
 
 	// After org pricing, which is keyed by the name the org configured.
 	table := p.tableName(rc)
-	model = priceKey(db, model, rc.Provider, table)
+	model = db.PriceKey(model, rc.Provider, table)
 
 	opts := modeldb.CostOptions{
 		Cached: rc.Metadata["cache_status"] == "hit",
@@ -222,7 +222,7 @@ func (p *Plugin) ProcessResponse(_ context.Context, rc *models.RequestContext) p
 		billed = float64(usage.PromptTokens + usage.CompletionTokens)
 		cost, ok = db.CalculateCost(model, usage.PromptTokens, usage.CompletionTokens, opts)
 		if !ok && rc.ResolvedModel != "" && rc.Model != "" {
-			cost, ok = db.CalculateCost(priceKey(db, rc.Model, rc.Provider, table), usage.PromptTokens, usage.CompletionTokens, opts)
+			cost, ok = db.CalculateCost(db.PriceKey(rc.Model, rc.Provider, table), usage.PromptTokens, usage.CompletionTokens, opts)
 		}
 	}
 
@@ -249,45 +249,6 @@ func (p *Plugin) ProcessResponse(_ context.Context, rc *models.RequestContext) p
 	return pipeline.ResultContinue()
 }
 
-// priceKey is the key the price table lists a model under.
-//
-// The table keys many models by provider, as "mistral/mistral-ocr-latest" or
-// "perplexity/sonar", while a request names the bare model, and a lookup
-// strips a provider prefix but never adds one.
-//
-// A provider that resells other vendors' models names them with the vendor's
-// prefix, as Perplexity's "google/gemini-3.6-flash". The lookup would strip
-// that to the vendor's own price, so the provider's entry
-// ("perplexity/google/gemini-3.6-flash") is tried first.
-//
-// table is the name the provider states for itself, which its ID need not
-// match: the table lists new Gemini models only under "gemini/" and
-// "vertex_ai/", and a Gemini provider may be named "vertex_ai_global".
-func priceKey(db *modeldb.ModelDB, model, provider, table string) string {
-	if provider == "" || model == "" {
-		return model
-	}
-	if _, ok := db.Get(model); ok && !strings.Contains(model, "/") {
-		return model
-	}
-	for _, name := range []string{provider, table, tableProviderNames[provider]} {
-		if name == "" {
-			continue
-		}
-		if prefixed := name + "/" + model; listsExactly(db, prefixed) {
-			return prefixed
-		}
-	}
-	return model
-}
-
-// tableProviderNames spells a provider the way the price table keys it, where
-// that differs from the gateway's name: "fireworks_ai/accounts/fireworks/models/glm-5p3".
-var tableProviderNames = map[string]string{
-	"fireworks": "fireworks_ai",
-	"together":  "together_ai",
-}
-
 // tableName is the name the price table keys rc's provider's models under, or
 // "" when the provider states none.
 func (p *Plugin) tableName(rc *models.RequestContext) string {
@@ -295,13 +256,6 @@ func (p *Plugin) tableName(rc *models.RequestContext) string {
 		return ""
 	}
 	return p.priceTables(rc.Metadata[tenant.MetadataKeyOrgID], rc.Provider)
-}
-
-// listsExactly says whether the table has an entry under id itself, not
-// under id with its prefix stripped.
-func listsExactly(db *modeldb.ModelDB, id string) bool {
-	m, ok := db.Get(id)
-	return ok && m.ID == id
 }
 
 // imageCost prices an image call: by tokens when the upstream reported them,

@@ -116,6 +116,14 @@ Use this to refresh pricing without rebuilding the collector:
 FI_PRICING_JSON=/etc/fi-collector/model_prices.json ./bin/fi-collector --config config/collector.yaml
 ```
 
+### FI_PRICING_CATALOGUE_URL and FI_PRICING_SYNC_INTERVAL
+
+The collector refreshes its pricing table at runtime from a reviewed catalogue. Unset
+`FI_PRICING_CATALOGUE_URL` uses the default (the catalogue on `main`); set it to an empty string to turn
+the sync off (air-gapped). `FI_PRICING_SYNC_INTERVAL` sets the period (default 24h, minimum 1h). A fetch
+that fails, does not parse, or is much smaller than the embedded table is ignored and the last good
+table stays. When `FI_PRICING_JSON` pins a file and no URL is set, the sync stays off.
+
 Refresh the embedded snapshot by re-vendoring `fi-collector/pkg/pricing/model_prices.json` at build
 time (this is a compile-time `//go:embed`):
 

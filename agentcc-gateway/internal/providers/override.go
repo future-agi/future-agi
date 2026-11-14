@@ -12,6 +12,7 @@ import (
 
 	"github.com/futureagi/agentcc-gateway/internal/config"
 	"github.com/futureagi/agentcc-gateway/internal/netguard"
+	"github.com/futureagi/agentcc-gateway/internal/providers/gemini"
 	"github.com/futureagi/agentcc-gateway/internal/providers/systemone"
 	"github.com/futureagi/agentcc-gateway/internal/tenant"
 )
@@ -168,6 +169,24 @@ func (c *OrgProviderCache) APIFormat(providerID string, tenantCfg *tenant.Provid
 		return "", false
 	}
 	return baseCfg.APIFormat, true
+}
+
+// PriceTableName returns the PriceTableName of the provider
+// GetOrCreateWithTenantConfig would build for the org, without building it,
+// so the answer is the same before and after the org's first request. Only
+// Gemini states a name; "" for every other format, and when nothing would be
+// built.
+func (c *OrgProviderCache) PriceTableName(providerID string, tenantCfg *tenant.ProviderConfig) string {
+	format, ok := c.APIFormat(providerID, tenantCfg)
+	if !ok {
+		return ""
+	}
+	switch format {
+	case "gemini", "google":
+		base, _ := c.baseConfig(providerID, tenantCfg)
+		return gemini.PriceTableNameFor(base.BaseURL)
+	}
+	return ""
 }
 
 // resolveOrgConfig clones a base provider config for one org. The upstream it

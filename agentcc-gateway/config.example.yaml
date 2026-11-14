@@ -648,8 +648,16 @@ logging:
 #         Authorization: "Bearer ${ALERT_TOKEN}"
 
 # Override model metadata (pricing, token limits, capabilities, deprecation).
+# Layers, lowest first: bundled catalogue -> fetched catalogue (adds models and
+# wins on matching keys; never removes a bundled model) -> overrides.
 # model_database:
 #   validation_enabled: true                 # reject requests for unknown models
+#   # Newer pricing catalogue, fetched at startup and every sync interval. A
+#   # bad, small or failed fetch keeps the last good one. "" turns the sync off
+#   # (air-gapped). Read at startup; a reload does not change it.
+#   # GET /-/model-catalogue/source shows which catalogue is loaded.
+#   catalogue_url: "https://raw.githubusercontent.com/future-agi/future-agi/main/agentcc-gateway/internal/modeldb/litellm.json"
+#   catalogue_sync_interval: 24h             # minimum 1h
 #   overrides:
 #     gpt-4o:
 #       provider: "openai"

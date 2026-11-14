@@ -65,6 +65,8 @@ type Handlers struct {
 
 	// Model metadata database (shared atomic pointer for hot-reload).
 	modelDB *atomic.Pointer[modeldb.ModelDB]
+	// catalogue owns the layers under modelDB; nil until SetCatalogue.
+	catalogue *modeldb.Catalogue
 
 	// Per-org multi-tenant support.
 	tenantStore      *tenant.Store
@@ -271,8 +273,11 @@ func NewHandlers(registry *providers.Registry, engine *pipeline.Engine, maxBodyS
 
 // ReloadRouting rebuilds all routing components from new config and atomically swaps them.
 func (h *Handlers) ReloadRouting(cfg *config.Config, registry *providers.Registry) error {
-	// Rebuild model database and update shared pointer.
-	if h.modelDB != nil {
+	// Rebuild model database and update shared pointer. The catalogue keeps
+	// the last fetched models; rebuilding from BundledModels would drop them.
+	if h.catalogue != nil {
+		h.catalogue.SetOverrides(ConvertModelOverrides(cfg.ModelDatabase.Overrides))
+	} else if h.modelDB != nil {
 		newDB := modeldb.New(modeldb.BundledModels, ConvertModelOverrides(cfg.ModelDatabase.Overrides))
 		h.modelDB.Store(newDB)
 	}
@@ -2356,42 +2361,16 @@ func (h *Handlers) ListModels(w http.ResponseWriter, r *http.Request) {
 		allModels = mergeModelObjects(allModels, scopedModels)
 	}
 
+	orgID := h.headerOrgID(r)
+	tables := map[string]string{} // price-table name per provider, resolved once
 	enriched := make([]models.EnrichedModelObject, 0, len(allModels))
 	for _, m := range allModels {
-		em := models.EnrichedModelObject{
-			ID:      m.ID,
-			Object:  m.Object,
-			Created: m.Created,
-			OwnedBy: m.OwnedBy,
+		table, ok := tables[m.OwnedBy]
+		if !ok {
+			table = h.priceTableName(orgID, m.OwnedBy)
+			tables[m.OwnedBy] = table
 		}
-
-		if db != nil {
-			if info, ok := db.Get(m.ID); ok {
-				em.Mode = string(info.Mode)
-				em.MaxInputTokens = info.MaxInputTokens
-				em.MaxOutputTokens = info.MaxOutputTokens
-				if info.DeprecationDate != "" {
-					em.Deprecated = true
-				}
-				if info.Pricing.HasPricing() {
-					em.Pricing = &models.ModelPricingAPI{
-						InputPerMTokens:       info.Pricing.InputPerMTok(),
-						OutputPerMTokens:      info.Pricing.OutputPerMTok(),
-						CachedInputPerMTokens: info.Pricing.CachedInputPerToken * 1_000_000,
-					}
-				}
-				em.Capabilities = &models.ModelCapsAPI{
-					Vision:          info.Capabilities.Vision,
-					FunctionCalling: info.Capabilities.FunctionCalling,
-					Streaming:       info.Capabilities.Streaming,
-					ResponseSchema:  info.Capabilities.ResponseSchema,
-					PromptCaching:   info.Capabilities.PromptCaching,
-					Reasoning:       info.Capabilities.Reasoning,
-				}
-			}
-		}
-
-		enriched = append(enriched, em)
+		enriched = append(enriched, enrichModel(db, m, table))
 	}
 
 	resp := models.EnrichedModelListResponse{
@@ -2402,6 +2381,76 @@ func (h *Handlers) ListModels(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(resp)
+}
+
+// enrichModel adds what the price table says about m. The entry is found by
+// ModelDB.PriceKey, as the cost plugin prices a request, so a model the
+// provider lists bare ("sonar") shows the entry keyed under the provider
+// ("perplexity/sonar"). table is the provider's price-table name.
+func enrichModel(db *modeldb.ModelDB, m models.ModelObject, table string) models.EnrichedModelObject {
+	em := models.EnrichedModelObject{
+		ID:      m.ID,
+		Object:  m.Object,
+		Created: m.Created,
+		OwnedBy: m.OwnedBy,
+	}
+	if db == nil {
+		return em
+	}
+	info, ok := db.Get(db.PriceKey(m.ID, m.OwnedBy, table))
+	if !ok {
+		return em
+	}
+	em.Mode = string(info.Mode)
+	em.MaxInputTokens = info.MaxInputTokens
+	em.MaxOutputTokens = info.MaxOutputTokens
+	if info.DeprecationDate != "" {
+		em.Deprecated = true
+	}
+	if info.Pricing.HasPricing() {
+		em.Pricing = &models.ModelPricingAPI{
+			InputPerMTokens:       info.Pricing.InputPerMTok(),
+			OutputPerMTokens:      info.Pricing.OutputPerMTok(),
+			CachedInputPerMTokens: info.Pricing.CachedInputPerToken * 1_000_000,
+		}
+	}
+	em.Capabilities = &models.ModelCapsAPI{
+		Vision:          info.Capabilities.Vision,
+		FunctionCalling: info.Capabilities.FunctionCalling,
+		Streaming:       info.Capabilities.Streaming,
+		ResponseSchema:  info.Capabilities.ResponseSchema,
+		PromptCaching:   info.Capabilities.PromptCaching,
+		Reasoning:       info.Capabilities.Reasoning,
+	}
+	return em
+}
+
+// priceTableName is the name the price table keys a provider's models under,
+// as the provider that serves an org's request states it: the org's own
+// provider when the org has that provider enabled, else the config.yaml
+// provider with that ID. The org's name comes from its config, not from a
+// built instance, which exists only after the org's first request through it.
+func (h *Handlers) priceTableName(orgID, providerID string) string {
+	if orgID != "" && h.orgProviderCache != nil && h.tenantStore != nil {
+		if cfg := h.tenantStore.Get(orgID); cfg != nil {
+			if pc := cfg.Providers[providerID]; pc != nil && pc.Enabled {
+				return h.orgProviderCache.PriceTableName(providerID, pc)
+			}
+		}
+	}
+	if h.registry == nil {
+		return ""
+	}
+	p, _ := h.registry.GetProvider(providerID)
+	return providers.PriceTableName(p)
+}
+
+// headerOrgID is the org of the API key presented in r's headers, or "".
+func (h *Handlers) headerOrgID(r *http.Request) string {
+	if ki := h.lookupHeaderKey(r); ki != nil {
+		return ki.Metadata["org_id"]
+	}
+	return ""
 }
 
 // lookupHeaderKey returns the API key presented in r's headers, or nil.
@@ -2470,12 +2519,17 @@ func (h *Handlers) GetModel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	found := func(m models.ModelObject) {
+		em := enrichModel(h.ModelDB(), m, h.priceTableName(h.headerOrgID(r), m.OwnedBy))
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(em)
+	}
+
 	if scopedModels, ok := h.orgScopedModels(r); ok {
 		for _, m := range scopedModels {
 			if m.ID == modelID {
-				w.Header().Set("Content-Type", "application/json")
-				w.WriteHeader(http.StatusOK)
-				json.NewEncoder(w).Encode(m)
+				found(m)
 				return
 			}
 		}
@@ -2488,9 +2542,7 @@ func (h *Handlers) GetModel(w http.ResponseWriter, r *http.Request) {
 	}
 	for _, m := range allModels {
 		if m.ID == modelID {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusOK)
-			json.NewEncoder(w).Encode(m)
+			found(m)
 			return
 		}
 	}

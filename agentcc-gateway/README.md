@@ -787,7 +787,7 @@ Migration and release commit footer: [migration notes](docs/video-generation/mig
 </tr>
 <tr>
 <td><b>Admin — keys, orgs, config</b></td>
-<td><code>/-/keys</code> · <code>/-/orgs/{id}/config</code> · <code>/-/keys/{id}/credits</code> · <code>/-/reload</code></td>
+<td><code>/-/keys</code> · <code>/-/orgs/{id}/config</code> · <code>/-/keys/{id}/credits</code> · <code>/-/reload</code> · <code>/-/model-catalogue/source</code></td>
 <td>Virtual-key CRUD · per-org config · live reload without restart</td>
 </tr>
 <tr>

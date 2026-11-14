@@ -444,10 +444,9 @@ func main() {
 	plugins = append(plugins, ratelimitplugin.New(cfg.RateLimiting, keyStore, rateLimiter))
 
 	// Create model metadata database (shared between plugins and server).
-	mdb := modeldb.New(modeldb.BundledModels, server.ConvertModelOverrides(cfg.ModelDatabase.Overrides))
-	slog.Info("model database initialized", "models", mdb.Count())
 	var sharedModelDB atomic.Pointer[modeldb.ModelDB]
-	sharedModelDB.Store(mdb)
+	catalogue := modeldb.NewCatalogue(&sharedModelDB, server.ConvertModelOverrides(cfg.ModelDatabase.Overrides))
+	slog.Info("model database initialized", "source", modeldb.SourceBundled, "models", sharedModelDB.Load().Count())
 	modelDBGetter := func() *modeldb.ModelDB { return sharedModelDB.Load() }
 
 	// Create model validation plugin (priority 150: after auth, before cache).
@@ -579,6 +578,7 @@ func main() {
 	// Create and start server (shares the same ModelDB pointer for hot-reload).
 	srv := server.New(cfg, *configPath, registry, engine, keyStore, grEngine, policyStore, metricsRegistry, &sharedModelDB, tenantStore, onOrgConfigChange, redisClient)
 	costPlugin.SetPriceTables(srv.PriceTableName)
+	srv.SetCatalogue(catalogue)
 
 	// Register onChange callback on tenantStore so that periodic sync (MergeBulk)
 	// evicts the OrgProviderCache for any org whose config changed. Without this,
@@ -592,6 +592,13 @@ func main() {
 
 	// Background context for all sync + pub/sub goroutines. Cancelled on shutdown.
 	syncCtxBg, syncCancelBg := context.WithCancel(context.Background())
+
+	// Fetch a newer pricing catalogue in the background; boot never waits on it.
+	if syncer := modeldb.NewSyncer(catalogue, cfg.ModelDatabase.CatalogueURL, cfg.ModelDatabase.CatalogueSyncInterval); syncer != nil {
+		go syncer.Run(syncCtxBg)
+	} else {
+		slog.Info("model catalogue sync off; pricing from the bundled catalogue")
+	}
 
 	// Set up Redis pub/sub for multi-replica key revocation.
 	// When one replica revokes a key, all others revoke it immediately
