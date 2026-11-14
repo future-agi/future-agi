@@ -406,6 +406,126 @@ def test_one_user_erasure_keeps_other_live_rows_and_drops_anonymous_history(
 
 
 @pytest.mark.django_db(transaction=True)
+def test_physical_expiry_waits_its_interval_while_reads_and_erasure_stay_exact(
+    live_writer, workspace, observe_project
+):
+    """E1: a continuous cutoff no longer rewrites the head on every pass.
+
+    Physical expiry runs at most once per METRICS_EXPIRY_INTERVAL_SECONDS
+    (default one day): within the interval the head keeps the last expiry's
+    floor, a unit that has since aged out stays stored but every read masks it
+    at the exact cutoff, and a session erasure still removes its rows at once.
+    After the interval the next pass retires it.
+    """
+    from datetime import UTC, datetime
+
+    from tracer.tests.test_derived_metric_refresh_clickhouse import seed_span_revision
+
+    writer = live_writer
+    start = datetime(2026, 10, 28, 12, tzinfo=UTC)
+    clock = [start]
+    writer.lease.clock = lambda: clock[0]
+    writer.lease.renew()
+    writer.retention_days = lambda: 1
+    definition = definition_for(writer, workspace, observe_project)
+    scope = Scope(writer.org_id, writer.workspace_id, writer.lease.project_id)
+    kwargs = {"start": start - timedelta(days=2), "end": start + timedelta(days=3)}
+    sessions = {}
+
+    def seed(name, at, value):
+        sessions[name] = uuid4()
+        seed_span_revision(
+            writer, scope, uuid4(), name, sessions[name], at, value, revision=1
+        )
+
+    def run(at, name, cursor):
+        if at - clock[0] >= timedelta(minutes=4):
+            # Hours pass between these passes: the last lease has expired, so
+            # the next pass takes a new one, as the scheduler would.
+            grant = MetricProjectRefresh.take_lease(
+                scope.project, holder="e1", ttl=timedelta(minutes=5), now=at
+            )
+            # In place: the lifecycle lock budget holds this lease object.
+            writer.lease.grant, writer.lease.expires_at = grant, grant.expires_at
+        clock[0] = at
+        writer.lease.renew()
+        return writer.refresh(
+            change_for(sessions[name], cursor=cursor),
+            [definition],
+            scope,
+            as_of=at,
+            **kwargs,
+        )
+
+    def live(head):
+        return {row[0] for row in current_fields(writer, head) if not row[2]}
+
+    seed("first", start - timedelta(hours=23), 4)
+    seed("second", start - timedelta(hours=20), 6)
+    run(start, "first", 1)
+    head = run(start, "second", 2)
+    assert live(head) == {str(sessions["first"]), str(sessions["second"])}
+
+    # +2 h: "first" is past the cutoff and nothing has expired yet: retired now.
+    seed("third", start + timedelta(hours=1), 8)
+    head = run(start + timedelta(hours=2), "third", 3)
+    assert head.published_by.source_ceilings.get("logical_expiry")
+    floor = head.published_by.source_ceilings["retention_floor"]
+    assert live(head) == {str(sessions["second"]), str(sessions["third"])}
+
+    # +6 h: "second" is past the exact cutoff, but within one interval of the
+    # last expiry: stored as is (no rewrite), masked for every read.
+    seed("fourth", start + timedelta(hours=5), 2)
+    head = run(start + timedelta(hours=6), "fourth", 4)
+    assert not head.published_by.source_ceilings.get("logical_expiry")
+    assert head.published_by.source_ceilings["retention_floor"] == floor
+    assert str(sessions["second"]) in live(head)
+    pin = capture_pin(
+        scope.project, consumer_kind="request", ttl=timedelta(minutes=5), now=clock[0]
+    )
+    (cell,) = read_field_cells(
+        writer.store,
+        scope,
+        pin,
+        definition.metric_id,
+        definition.version,
+        [str(sessions["second"])],
+        retention_days=lambda: 1,
+        now=clock[0],
+    )
+    assert cell["no_value_reason"] == "retention_expired"
+    assert cell["value_number"] is None
+
+    # Erasure is not batched: a session erasure inside the interval is immediate.
+    purge_by_scope(
+        writer.store,
+        SimpleNamespace(
+            id=uuid4(),
+            organization_key=writer.org_id,
+            project_key=writer.lease.project_id,
+            scope_kind="sessions",
+            subject_ids=[str(sessions["fourth"])],
+        ),
+        writer=writer,
+    )
+    head = MetricProjectRefresh.for_project(scope.project).head_manifest
+    assert str(sessions["fourth"]) not in live(head)
+    for table in ("metric_field_values", "metric_field_values_checkpoint"):
+        assert writer.store.execute(
+            f"SELECT count() FROM {table} WHERE unit_id = %(unit)s",
+            {"unit": str(sessions["fourth"])},
+        ) == [(0,)]
+
+    # One interval after the last expiry, the next pass retires "second".
+    seed("fifth", start + timedelta(hours=25), 1)
+    head = run(start + timedelta(hours=26, minutes=1), "fifth", 5)
+    assert head.published_by.source_ceilings.get("logical_expiry")
+    assert head.published_by.source_ceilings["retention_floor"] > floor
+    assert str(sessions["second"]) not in live(head)
+    assert str(sessions["fifth"]) in live(head)
+
+
+@pytest.mark.django_db(transaction=True)
 def test_larger_horizon_and_incremental_refresh_cannot_restore_purged_evidence(
     live_writer, workspace, observe_project
 ):

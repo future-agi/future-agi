@@ -481,9 +481,10 @@ def _moment(value):
 
 
 def retained_cutoff(writer, now):
-    from tracer.services.derived_metrics.retention import retention_cutoff
+    """The cutoff a writer enforces physically (batched; reads stay exact)."""
+    from tracer.services.derived_metrics.retention import physical_cutoff
 
-    return retention_cutoff(writer.retention_days(), now=now)
+    return physical_cutoff(writer, now=now)
 
 
 def expiry_floor(attempt):

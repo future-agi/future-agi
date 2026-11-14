@@ -364,7 +364,7 @@ def test_span_text_sketch_evidence_and_repeated_span_id_are_typed_and_trace_scop
 
 
 def test_repeated_partial_bucket_retirement_never_recaptures_already_retired_raw_span(
-    live_writer, workspace, observe_project
+    live_writer, workspace, observe_project, settings
 ):
     from datetime import timedelta
     from uuid import uuid4
@@ -378,6 +378,9 @@ def test_repeated_partial_bucket_retirement_never_recaptures_already_retired_raw
         span_definition_for,
     )
 
+    # Two expiries two minutes apart: expire on each (physical expiry is
+    # otherwise batched per METRICS_EXPIRY_INTERVAL_SECONDS).
+    settings.METRICS_EXPIRY_INTERVAL_SECONDS = 60
     writer = live_writer
     wall = datetime.now(UTC).replace(second=0, microsecond=0)
     now = wall.replace(minute=wall.minute // 15 * 15 + 7)

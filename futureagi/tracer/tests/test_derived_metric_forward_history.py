@@ -272,6 +272,60 @@ def test_compaction_and_burst_settings_load_bounded_from_the_environment(
             read()
 
 
+@pytest.mark.parametrize(
+    ("name", "module", "accessor", "default", "low", "high"),
+    [
+        (
+            "METRICS_EXPIRY_INTERVAL_SECONDS",
+            "retention",
+            "expiry_interval",
+            86_400,
+            60,
+            604_800,
+        ),
+        ("METRICS_PASS_MAX_CAPTURES", "refresh", "pass_max_captures", 48, 1, 10_000),
+        (
+            "METRICS_PASS_SOFT_MARGIN_SECONDS",
+            "refresh",
+            "pass_soft_margin_seconds",
+            200,
+            30,
+            500,
+        ),
+    ],
+)
+def test_pass_and_expiry_settings_load_bounded(
+    settings, name, module, accessor, default, low, high
+):
+    from datetime import timedelta
+    from importlib import import_module
+
+    from django.core.exceptions import ImproperlyConfigured
+
+    from tfc.settings.runtime_setting_specs import (
+        RUNTIME_NUMERIC_SETTING_SPECS,
+        load_numeric_settings,
+    )
+
+    read = getattr(import_module(f"tracer.services.derived_metrics.{module}"), accessor)
+    expected = timedelta(seconds=default) if module == "retention" else default
+    assert load_numeric_settings(RUNTIME_NUMERIC_SETTING_SPECS, source={})[name] == (
+        default
+    )
+    for invalid in (low - 1, high + 1):
+        with pytest.raises(ValueError):
+            load_numeric_settings(
+                RUNTIME_NUMERIC_SETTING_SPECS, source={name: str(invalid)}
+            )
+    if hasattr(settings, name):
+        delattr(settings, name)
+    assert read() == expected
+    for invalid in (low - 1, high + 1, str(default)):
+        setattr(settings, name, invalid)
+        with pytest.raises(ImproperlyConfigured):
+            read()
+
+
 @pytest.mark.django_db
 def test_forward_version_is_served_from_its_first_computing_publication_without_history(
     setup_runner, observe_project, workspace, monkeypatch

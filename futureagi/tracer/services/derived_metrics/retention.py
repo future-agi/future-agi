@@ -65,6 +65,67 @@ def retention_cutoff(days, *, now=None):
     )
 
 
+DEFAULT_EXPIRY_INTERVAL_SECONDS = 86_400
+_CURRENT_HEAD = object()
+
+
+def expiry_interval():
+    """How far physical expiry may trail the policy (METRICS_EXPIRY_INTERVAL_SECONDS).
+
+    Default one day: like raw spans (dropped by daily parts after their TTL),
+    expired metric evidence is physically retired at most one interval late.
+    Reads always apply the exact cutoff (retention_cutoff); erasure is prompt.
+    """
+    from django.conf import settings
+    from django.core.exceptions import ImproperlyConfigured
+
+    value = getattr(
+        settings, "METRICS_EXPIRY_INTERVAL_SECONDS", DEFAULT_EXPIRY_INTERVAL_SECONDS
+    )
+    if type(value) is not int or not 60 <= value <= 604_800:
+        raise ImproperlyConfigured(
+            "METRICS_EXPIRY_INTERVAL_SECONDS must be an integer from 60 to 604800"
+        )
+    return timedelta(seconds=value)
+
+
+def physical_cutoff(writer, *, now, head=_CURRENT_HEAD, ceilings=None):
+    """The cutoff writers enforce physically: batched once per expiry interval.
+
+    Within one interval of the last logical expiry (retention_floor_set_at on
+    the head) it holds that expiry's floor, so a continuous cutoff no longer
+    rewrites the whole head on nearly every pass. After the interval it is the
+    exact cutoff again, and the next pass retires everything past it. Reads
+    keep the exact cutoff, so no reader sees evidence past the policy.
+    """
+    days = writer.retention_days() if writer.retention_days is not None else 0
+    exact = retention_cutoff(days, now=now)
+    if exact is None:
+        return None
+    if ceilings is None:
+        if head is _CURRENT_HEAD:
+            head = MetricProjectRefresh.for_project(
+                writer.lease.project_id
+            ).head_manifest
+        ceilings = head.published_by.source_ceilings if head is not None else {}
+    floor, stamped, stamped_days = (
+        ceilings.get("retention_floor"),
+        ceilings.get("retention_floor_set_at"),
+        ceilings.get("retention_floor_days"),
+    )
+    # A shortened policy is a retention CHANGE, not the cutoff moving: it
+    # applies at once, never batched.
+    if (
+        floor
+        and stamped
+        and type(stamped_days) is int
+        and days >= stamped_days
+        and now - datetime.fromisoformat(str(stamped)) < expiry_interval()
+    ):
+        return min(exact, datetime.fromisoformat(str(floor)))
+    return exact
+
+
 def retained_rows_select(sql, cutoff):
     """Wrap AFTER current-row collapse. No expiry predicate may select an old row."""
     if cutoff is None:
@@ -607,6 +668,13 @@ def retirement_plan(writer, draft, head, definitions, cutoff, *, captures=None):
     return _retirement_plan(writer, draft, head, definitions, cutoff, captures)
 
 
+class _PolicyWriter:
+    """A writer seen through an explicit retention policy (expire_project)."""
+
+    def __init__(self, writer, retention_days):
+        self.lease, self.retention_days = writer.lease, retention_days
+
+
 def _published_live_expiry(writer, head, cutoff, span_dirty):
     """Whether this expiry retires LIVE unit evidence a previous head published.
 
@@ -652,7 +720,16 @@ def _floor_ceilings(writer, head, cutoff, span_dirty):
     prior = inherited.get(
         "retention_retired_live", bool(inherited.get("retention_floor"))
     )
-    ceilings = {"retention_floor": cutoff}
+    # When this logical expiry ran, under which policy: physical_cutoff holds
+    # its floor for one METRICS_EXPIRY_INTERVAL_SECONDS before expiring again,
+    # unless the policy is shortened meanwhile.
+    ceilings = {
+        "retention_floor": cutoff,
+        "retention_floor_set_at": writer.lease.clock().isoformat(),
+        "retention_floor_days": writer.retention_days()
+        if writer.retention_days is not None
+        else None,
+    }
     if not _published_live_expiry(writer, head, cutoff, span_dirty):
         ceilings["retention_retired_live"] = bool(prior)
         ceilings["retention_floor_at"] = inherited.get("retention_floor_at")
@@ -1306,9 +1383,10 @@ def expire_project(writer, definitions, *, retention_days, now=None, as_of=None)
         raise MetricStateConflict("physical purge requires an outer commit boundary")
     definitions = list(definitions)
     now = now or writer.lease.clock()
-    cutoff = retention_cutoff(retention_days(), now=now)
-    if cutoff is None:
+    if retention_cutoff(retention_days(), now=now) is None:
         return {"unlimited": True, "purged": False}
+    # Physical expiry is batched (expiry_interval); reads stay exact.
+    cutoff = physical_cutoff(_PolicyWriter(writer, retention_days), now=now)
     project_id = writer.lease.project_id
     with serialized_project(project_id):
         writer.lease.check()

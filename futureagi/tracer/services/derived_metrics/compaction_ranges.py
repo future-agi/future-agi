@@ -559,16 +559,17 @@ def current_range_cutoff(writer, attempt):
     """Project lock, then organization row lock, as in final publication."""
     from django.apps import apps
 
-    from tracer.services.derived_metrics.retention import retention_cutoff
+    from tracer.services.derived_metrics.retention import physical_cutoff
 
     if not connection.in_atomic_block:
         raise MetricStateConflict("range policy validation requires publication lock")
     apps.get_model("accounts", "Organization")._base_manager.select_for_update().get(
         id=writer.org_id
     )
-    cutoff = retention_cutoff(
-        writer.retention_days() if writer.retention_days is not None else 0,
-        now=writer.lease.clock(),
+    # Batched like every physical expiry (E1): a row past the exact cutoff but
+    # not yet physically expired is copied unchanged; reads mask it.
+    cutoff = physical_cutoff(
+        writer, now=writer.lease.clock(), ceilings=attempt.source_ceilings
     )
     floor = attempt.source_ceilings.get("retention_floor")
     if floor:

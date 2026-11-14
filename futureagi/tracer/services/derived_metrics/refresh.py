@@ -330,6 +330,8 @@ class RefreshWriter:
                 for key, default in (
                     ("retention_retired_live", True),
                     ("retention_floor_at", None),
+                    ("retention_floor_set_at", None),
+                    ("retention_floor_days", None),
                 ):
                     if key not in ceilings:
                         ceilings[key] = inherited_ceilings.get(key, default)
@@ -918,12 +920,16 @@ class RefreshWriter:
             return
         from django.apps import apps
 
-        from tracer.services.derived_metrics.retention import retention_cutoff
+        from tracer.services.derived_metrics.retention import physical_cutoff
 
         apps.get_model(
             "accounts", "Organization"
         )._base_manager.select_for_update().get(id=self.org_id)
-        cutoff = retention_cutoff(self.retention_days(), now=self.lease.clock())
+        # The attempt carries its head's floor and when it was set: within one
+        # expiry interval the batched (physical) cutoff holds that floor.
+        cutoff = physical_cutoff(
+            self, now=self.lease.clock(), ceilings=attempt.source_ceilings
+        )
         floors = [
             datetime.fromisoformat(str(value))
             for value in (attempt.source_ceilings.get("retention_floor"), cutoff)
@@ -1437,17 +1443,18 @@ class RefreshWriter:
             require_computable(definition)
         if any(d.level not in {"conversation", "user", "span"} for d in definitions):
             raise ValueError("trace metric refresh is disabled")
-        from tracer.services.derived_metrics.retention import (
-            expire_project,
-            retention_cutoff,
-        )
+        from tracer.services.derived_metrics.retention import expire_project
 
         if self.retention_days is None:
             raise MetricStateConflict(
                 "refresh requires current organization retention policy"
             )
         refresh_now = self.lease.clock()
-        cutoff = retention_cutoff(self.retention_days(), now=refresh_now)
+        # Physical expiry is batched once per expiry interval (E1); reads keep
+        # the exact cutoff, so nothing past the policy is ever served.
+        from tracer.services.derived_metrics.retention import physical_cutoff
+
+        cutoff = physical_cutoff(self, now=refresh_now)
         from tracer.services.derived_metrics.backfill import pending_omissions
 
         head = MetricProjectRefresh.for_project(self.lease.project_id).head_manifest

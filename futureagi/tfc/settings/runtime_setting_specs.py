@@ -811,6 +811,9 @@ INTERACTIVE_READ_SETTING_SPECS = {
 # METRICS_PASS_MAX_CAPTURES bounds the capture statements one pass plans (a
 # larger arrival window goes to the paged burst sweep); a pass stops cleanly
 # METRICS_PASS_SOFT_MARGIN_SECONDS before its deadline.
+# METRICS_EXPIRY_INTERVAL_SECONDS is how far physical metric expiry may trail
+# the retention policy (batched, like raw spans' daily parts); reads always
+# apply the exact cutoff and erasure stays prompt.
 # METRICS_BURST_* bound one pass of a forward-only burst sweep: its wall budget,
 # its page count and the source keys per page.
 METRICS_FEATURE_SETTING_SPECS = _specs(
@@ -820,6 +823,7 @@ METRICS_FEATURE_SETTING_SPECS = _specs(
         ("METRICS_MAX_DELTAS_BEFORE_COMPACTION", 19, 1, 19),
         ("METRICS_PASS_MAX_CAPTURES", 48, 1, 10_000),
         ("METRICS_PASS_SOFT_MARGIN_SECONDS", 200, 30, 500),
+        ("METRICS_EXPIRY_INTERVAL_SECONDS", 86_400, 60, 604_800),
         ("METRICS_BURST_PASS_SECONDS", 20, 1, 300),
         ("METRICS_BURST_MAX_PAGES", 19, 1, 200),
         ("METRICS_BURST_PAGE_KEYS", 5_000, 1, 10_000),

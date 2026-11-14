@@ -1346,8 +1346,11 @@ def retained_values(steps, units=10):
 
 @pytest.mark.django_db(transaction=True)
 def test_steady_aging_backfill_activates_and_collects_superseded_draft(
-    history_writer, workspace, observe_project
+    history_writer, workspace, observe_project, settings
 ):
+    # Each ten-minute step ages one conversation out; expire on every pass
+    # (physical expiry is otherwise batched per METRICS_EXPIRY_INTERVAL_SECONDS).
+    settings.METRICS_EXPIRY_INTERVAL_SECONDS = 60
     writer = history_writer
     runner, old, step = steady_aging(writer, workspace, observe_project)
     draft = make_version(
@@ -1406,8 +1409,11 @@ def test_steady_aging_backfill_activates_and_collects_superseded_draft(
 
 @pytest.mark.django_db(transaction=True)
 def test_steady_aging_full_history_repair_completes_without_restarting(
-    history_writer, workspace, observe_project
+    history_writer, workspace, observe_project, settings
 ):
+    # Each ten-minute step ages one conversation out; expire on every pass
+    # (physical expiry is otherwise batched per METRICS_EXPIRY_INTERVAL_SECONDS).
+    settings.METRICS_EXPIRY_INTERVAL_SECONDS = 60
     writer = history_writer
     runner, old, step = steady_aging(writer, workspace, observe_project)
     queue_bulk_change(observe_project.id, now=writer.lease.clock())
