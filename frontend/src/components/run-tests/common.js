@@ -191,3 +191,18 @@ export const chatEvalColumns = [
     dataType: "text",
   },
 ];
+
+// Fields sent with the create test event: which agent version runs, how many
+// scenarios and evaluations, and the tool evaluation flag. The test's name,
+// description and evaluation settings are not part of the event.
+export const runTestEventFields = (payload = {}) => ({
+  agent_definition_id: payload.agent_definition_id,
+  agent_version: payload.agent_version,
+  scenario_count: Array.isArray(payload.scenario_ids)
+    ? payload.scenario_ids.length
+    : 0,
+  evaluation_count: Array.isArray(payload.evaluations_config)
+    ? payload.evaluations_config.length
+    : 0,
+  enable_tool_evaluation: Boolean(payload.enable_tool_evaluation),
+});
