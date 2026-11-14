@@ -1,6 +1,7 @@
 package guardrails
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -42,14 +43,27 @@ func (p *GuardrailPlugin) runOrgCheck(ctx context.Context, g Guardrail, input *C
 		// No check ran. Apply the same explicit failure policy and record it.
 		return &CheckResult{Err: err, FailureAdmitted: failOpen, Message: "guardrail_unavailable: could not snapshot guardrail input"}
 	}
+	var beforeRequest, beforeResponse []byte
+	if mutatesInput(g) {
+		if owned.Request != nil {
+			beforeRequest, _ = json.Marshal(owned.Request.Messages)
+		}
+		if owned.Response != nil {
+			beforeResponse, _ = json.Marshal(owned.Response.Choices)
+		}
+	}
 	cr := p.runGuardrailSafe(ctx, g, owned, timeout, failOpen)
 	if mutatesInput(g) && cr != nil && cr.Err == nil {
 		// Only content is remediated. Preserve request routing and response usage
 		// accounting, including native-route projections selected by checkInput.
 		if input.Request != nil && owned.Request != nil {
+			after, _ := json.Marshal(owned.Request.Messages)
+			cr.InputRewritten = cr.InputRewritten || !bytes.Equal(beforeRequest, after)
 			input.Request.Messages = owned.Request.Messages
 		}
 		if input.Response != nil && owned.Response != nil {
+			after, _ := json.Marshal(owned.Response.Choices)
+			cr.InputRewritten = cr.InputRewritten || !bytes.Equal(beforeResponse, after)
 			input.Response.Choices = owned.Response.Choices
 		}
 	}

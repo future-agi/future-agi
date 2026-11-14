@@ -10,11 +10,17 @@ import (
 // GuardrailResult captures a single guardrail check that was triggered.
 // Stored on RequestContext by the guardrails plugin for downstream logging.
 type GuardrailResult struct {
-	Name      string  `json:"name"`
-	Score     float64 `json:"score"`
-	Threshold float64 `json:"threshold"`
-	Action    string  `json:"action"` // "block", "warn", or "log"
-	Message   string  `json:"message"`
+	Name        string  `json:"name"`
+	Score       float64 `json:"score"`
+	Threshold   float64 `json:"threshold"`
+	Action      string  `json:"action"` // "block", "warn", or "log"
+	Message     string  `json:"message"`
+	PolicyID    string  `json:"policy_id,omitempty"`
+	PolicyName  string  `json:"policy_name,omitempty"`
+	PolicyScope string  `json:"policy_scope,omitempty"`
+	Mode        string  `json:"mode,omitempty"`
+	Outcome     string  `json:"outcome,omitempty"`
+	WouldAction string  `json:"would_action,omitempty"`
 }
 
 // TraceSnapshot is an immutable copy of RequestContext fields needed by
@@ -135,6 +141,7 @@ type RequestContext struct {
 type RequestFlags struct {
 	CacheHit           bool
 	GuardrailTriggered bool
+	GuardrailMonitored bool // monitor-only matches appear in logs, never in response headers
 	FallbackUsed       bool
 	Timeout            bool
 	ShortCircuited     bool
