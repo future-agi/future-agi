@@ -9,11 +9,11 @@ const EVAL_TYPE_CONFIG = {
   },
   code: {
     label: "Code",
-    icon: "mdi:code-braces",
+    icon: "solar:code-linear",
   },
   agent: {
     label: "Agent",
-    icon: "mdi:robot-excited-outline",
+    icon: "solar:bot-linear",
   },
 };
 

@@ -47,7 +47,7 @@ const FilterChip = ({ filter, labelFor, onRemove }) => (
     <Typography sx={{ fontSize: 12, color: "text.secondary" }}>
       {filter.fieldName || filter.field}
     </Typography>
-    <Typography sx={{ fontSize: 11, color: "text.disabled" }}>
+    <Typography sx={{ fontSize: 12, color: "text.disabled" }}>
       {OP_DISPLAY[filter.operator] || filter.operator}
     </Typography>
     <Typography
@@ -80,7 +80,7 @@ const FilterChip = ({ filter, labelFor, onRemove }) => (
         "&:hover": { color: "text.primary" },
       }}
     >
-      <Iconify icon="mdi:close" width={12} />
+      <Iconify icon="solar:close-linear" width={12} />
     </Box>
   </Box>
 );
@@ -175,18 +175,15 @@ export default function AlertFilterBar({ control, setValue, projectId }) {
 
       <Button
         ref={buttonRef}
-        startIcon={<Iconify color="text.primary" icon="material-symbols:add" />}
+        startIcon={<Iconify color="text.primary" icon="solar:add-linear" />}
         onClick={() => setOpen(true)}
         variant="text"
         color="primary"
         size="small"
         sx={{
-          fontSize: "12px",
           color: "text.disabled",
           border: "1px solid",
           borderColor: "divider",
-          borderRadius: "8px",
-          height: "30px",
           px: 1.5,
         }}
       >

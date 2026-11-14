@@ -21,6 +21,7 @@ import {
 import { resetUser } from "./Mixpanel";
 import logger from "./logger";
 import { RESPONSE_CODES } from "./constants";
+import { retryAfterSeconds } from "./retryAfter";
 import { SS_KEY_ORG_ID, SS_KEY_WORKSPACE_ID } from "./sessionKeys";
 
 // ----------------------------------------------------------------------
@@ -79,6 +80,7 @@ const avoidRedirect = [
   "/mcp/authorize",
   "/auth/jwt/two-factor",
   "/auth/jwt/org-removed",
+  "/shared/",
 ];
 
 axiosInstance.interceptors.request.use((config) =>
@@ -138,8 +140,34 @@ axiosInstance.interceptors.response.use(
       );
     }
 
+    // A signed-out viewer of a shared link has no session to refresh or end:
+    // let the page show its own "Sign in required" screen.
+    const signedOutOnSharedLink =
+      window.location.pathname.startsWith("/shared/") &&
+      (!getRememberMe() || !getRefreshToken());
+
+    // A dead session token on a shared link (nothing to refresh it with)
+    // turns even a public link into a 401. Drop the session and ask once
+    // more without it; a restricted link then answers 401 on its own.
+    if (
+      status === RESPONSE_CODES.UNAUTHORIZED &&
+      signedOutOnSharedLink &&
+      originalRequest?.headers?.Authorization &&
+      !originalRequest._sharedRetry
+    ) {
+      setSession(null);
+      clearTokens();
+      originalRequest._sharedRetry = true;
+      delete originalRequest.headers.Authorization;
+      return axiosInstance(originalRequest);
+    }
+
     // Handle 401 and try refresh
-    if (status === RESPONSE_CODES.UNAUTHORIZED && !originalRequest?._retry) {
+    if (
+      status === RESPONSE_CODES.UNAUTHORIZED &&
+      !originalRequest?._retry &&
+      !signedOutOnSharedLink
+    ) {
       const refreshToken = getRefreshToken();
       const rememberMe = getRememberMe();
 
@@ -273,7 +301,17 @@ axiosInstance.interceptors.response.use(
       statusCode: error.response?.status,
       // Keep Axios' transport classification without overwriting a semantic
       // API error code from the response body (for example snapshot_changed).
-      transportCode: error.code,
+      transportCode:
+        error.code ||
+        (!error.response && error.request ? "ERR_NETWORK" : undefined),
+      // Preserve only the validated admission wait, not all response headers.
+      ...(status === 429 && {
+        retryAfterSeconds: retryAfterSeconds(
+          error.response?.headers?.get?.("retry-after") ??
+            error.response?.headers?.["retry-after"] ??
+            error.response?.headers?.["Retry-After"],
+        ),
+      }),
     };
 
     return Promise.reject(customError);
@@ -495,6 +533,8 @@ export const endpoints = {
     knowledgeBase: apiPath("/model-hub/knowledge-base/"),
     list: apiPath("/model-hub/knowledge-base/get/"),
     files: apiPath("/model-hub/knowledge-base/files/"),
+    downloadFile: (kbId) =>
+      apiPath("/model-hub/kb/{id}/download-file/", { id: kbId }),
   },
   customMetric: {
     list: (modelId) =>
@@ -1381,6 +1421,30 @@ export const endpoints = {
       `${apiPath("/tracer/observation-span/retrieve_loading/")}?observation_span_id=${id}`,
     getTracesForObserveProject: () =>
       apiPath("/tracer/trace/list_traces_of_session/"),
+    insightsConfigs: () => apiPath("/tracer/insights/configs/"),
+    insightsConfig: (configId) =>
+      apiPath("/tracer/insights/configs/{config_id}/", { config_id: configId }),
+    insightsDraft: () => apiPath("/tracer/insights/draft/"),
+    insightsPreview: () => apiPath("/tracer/insights/preview/"),
+    insightsEstimate: () => apiPath("/tracer/insights/estimate/"),
+    insightsRuns: () => apiPath("/tracer/insights/runs/"),
+    insightsRun: (runId) =>
+      apiPath("/tracer/insights/runs/{run_id}/", { run_id: runId }),
+    insightsRunStop: (runId) =>
+      apiPath("/tracer/insights/runs/{run_id}/stop/", { run_id: runId }),
+    insightsRunUnits: (runId) =>
+      apiPath("/tracer/insights/runs/{run_id}/units/", { run_id: runId }),
+    insightsRunMedia: (runId) =>
+      apiPath("/tracer/insights/runs/{run_id}/media/", { run_id: runId }),
+    insightsRunAsk: (runId) =>
+      apiPath("/tracer/insights/runs/{run_id}/ask/", { run_id: runId }),
+    instantEvalRuns: () => apiPath("/tracer/instant-eval/runs/"),
+    instantEvalEstimate: () => apiPath("/tracer/instant-eval/estimate/"),
+    instantEvalStart: () => apiPath("/tracer/instant-eval/start/"),
+    instantEvalSummary: () => apiPath("/tracer/instant-eval/summary/"),
+    instantEvalRows: () => apiPath("/tracer/instant-eval/rows/"),
+    instantEvalExport: () => apiPath("/tracer/instant-eval/export/"),
+    instantEvalControl: () => apiPath("/tracer/instant-eval/control/"),
     getAgentGraph: () => apiPath("/tracer/trace/agent_graph/"),
     getTraceForObserveExport: apiPath("/tracer/trace/get_trace_export_data/"),
     getSpansForObserveProject: () =>
@@ -1421,6 +1485,8 @@ export const endpoints = {
     getEvalDetails: (observationSpanId, customEvalConfigId) =>
       `${apiPath("/tracer/observation-span/get_evaluation_details/")}?custom_eval_config_id=${customEvalConfigId}&observation_span_id=${observationSpanId}`,
     createEvalTask: () => apiPath("/tracer/eval-task/"),
+    samplingPreview: () => apiPath("/tracer/eval-task/sampling_preview/"),
+    samplingAudit: () => apiPath("/tracer/eval-task/sampling_audit/"),
     getEvalTaskDetails: (id) =>
       withQuery(apiPath("/tracer/eval-task/get_eval_details/"), {
         eval_id: id,
@@ -1524,6 +1590,10 @@ export const endpoints = {
   },
   agentDefinitions: {
     list: apiPath("/simulate/agent-definitions/"),
+    edit: (id) =>
+      apiPath("/simulate/agent-definitions/{agent_id}/edit/", {
+        agent_id: id,
+      }),
     create: apiPath("/simulate/agent-definitions/create/"),
     versions: (id) =>
       apiPath("/simulate/agent-definitions/{agent_id}/versions/", {
@@ -1545,6 +1615,15 @@ export const endpoints = {
       ),
     detail: (id) =>
       apiPath("/simulate/agent-definitions/{agent_id}/", { agent_id: id }),
+    runs: (id) =>
+      apiPath("/simulate/agent-definitions/{agent_id}/runs/", {
+        agent_id: id,
+      }),
+    storedAgent: (id, version) =>
+      apiPath(
+        "/simulate/agent-definitions/{agent_id}/versions/{version_id}/agent/",
+        { agent_id: id, version_id: version },
+      ),
     delete: apiPath("/simulate/agent-definitions/"),
     getTestAnalytics: (agent, version) =>
       apiPath(
@@ -1731,6 +1810,31 @@ export const endpoints = {
         { call_execution_id: id },
       ),
   },
+  // Fix my agent v0. Functions only: apiPath throws until the backend's
+  // paths are in the generated contract (yarn contracts:generate).
+  agentFixRuns: {
+    list: () => apiPath("/simulate/api/agent-fix-runs/"),
+    launchOptions: () =>
+      apiPath("/simulate/api/agent-fix-runs/launch-options/"),
+    detail: (id) => apiPath("/simulate/api/agent-fix-runs/{id}/", { id }),
+    stop: (id) => apiPath("/simulate/api/agent-fix-runs/{id}/stop/", { id }),
+    retry: (id) => apiPath("/simulate/api/agent-fix-runs/{id}/retry/", { id }),
+    makeDefault: (id, candidateId) =>
+      apiPath(
+        "/simulate/api/agent-fix-runs/{id}/candidates/{candidate_id}/make-default/",
+        { id, candidate_id: candidateId },
+      ),
+    pullRequest: (id, candidateId) =>
+      apiPath(
+        "/simulate/api/agent-fix-runs/{id}/candidates/{candidate_id}/pull-request/",
+        { id, candidate_id: candidateId },
+      ),
+    patch: (id, candidateId) =>
+      apiPath(
+        "/simulate/api/agent-fix-runs/{id}/candidates/{candidate_id}/patch/",
+        { id, candidate_id: candidateId },
+      ),
+  },
   runResultsV3: {
     calls: (id) =>
       apiPath("/simulate/v3/test-executions/{test_execution_id}/calls/", {
@@ -1740,8 +1844,16 @@ export const endpoints = {
       apiPath("/simulate/v3/call-executions/{call_execution_id}/", {
         call_execution_id: id,
       }),
+    traces: (id) =>
+      apiPath("/simulate/v3/test-executions/{test_execution_id}/traces/", {
+        test_execution_id: id,
+      }),
     analytics: (id) =>
       apiPath("/simulate/v3/test-executions/{test_execution_id}/analytics/", {
+        test_execution_id: id,
+      }),
+    reliability: (id) =>
+      apiPath("/simulate/v3/test-executions/{test_execution_id}/reliability/", {
         test_execution_id: id,
       }),
     export: (id) =>
@@ -1835,6 +1947,13 @@ export const endpoints = {
         access_id: accessId,
       }),
     resolve: (token) => apiPath("/tracer/shared/{token}/", { token: token }),
+    issueSidebar: (token) =>
+      apiPath("/tracer/shared/{token}/sidebar/", { token: token }),
+    issueTrace: (token, traceId) =>
+      apiPath("/tracer/shared/{token}/traces/{trace_id}/", {
+        token: token,
+        trace_id: traceId,
+      }),
   },
   organizations: {
     list: apiPath("/accounts/organizations/"),
@@ -1847,8 +1966,13 @@ export const endpoints = {
     alerts: {
       list: apiPath("/tracer/alerts/"),
       options: apiPath("/tracer/alerts/options/"),
-      detail: (id) => apiPath("/tracer/alerts/{kind}/{alert_id}/", { kind: "error_feed", alert_id: id }),
-      test: (id) => apiPath("/tracer/alerts/error_feed/{alert_id}/test/", { alert_id: id }),
+      detail: (id) =>
+        apiPath("/tracer/alerts/{kind}/{alert_id}/", {
+          kind: "error_feed",
+          alert_id: id,
+        }),
+      test: (id) =>
+        apiPath("/tracer/alerts/error_feed/{alert_id}/test/", { alert_id: id }),
     },
     list: apiPath("/tracer/feed/issues/"),
     stats: apiPath("/tracer/feed/issues/stats/"),
@@ -2063,7 +2187,10 @@ export const endpoints = {
   integrations: {
     slack: {
       install: apiPath("/integrations/slack/install/"),
-      channels: (id) => apiPath("/integrations/connections/{connection_id}/slack/channels/", { connection_id: id }),
+      channels: (id) =>
+        apiPath("/integrations/connections/{connection_id}/slack/channels/", {
+          connection_id: id,
+        }),
     },
     connections: {
       list: apiPath("/integrations/connections/"),

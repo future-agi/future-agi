@@ -1,4 +1,6 @@
+import { getDateRangeDisplayEnd } from "src/components/custom-datepicker/dateRange";
 import {
+  Checkbox,
   Badge,
   Box,
   Button,
@@ -145,6 +147,8 @@ import axios, { endpoints } from "src/utils/axios";
 
 import { PROJECT_SOURCE } from "src/utils/constants";
 import { OBSERVE_LIST_REFRESH_EVENT } from "../observeEvents";
+import { askLink, insightsReportLink } from "../observeHandoff";
+import { viewSeed } from "../observeScope";
 import { useLLMTracingFilters } from "./useLLMTracingFilters";
 import { isTraceListProjectReady } from "./projectSourceMode";
 import { canonicalObserveViewMode } from "./viewMode";
@@ -218,7 +222,6 @@ import {
   useSpanGridStoreShallow,
   useTraceGridStoreShallow,
 } from "./states";
-import { CircularProgress } from "@mui/material";
 import { LoadingButton } from "@mui/lab";
 // import ReplayTraces from "./ReplayTraces";
 import {
@@ -226,7 +229,12 @@ import {
   useSessionsGridStore,
 } from "../SessionsView/ReplaySessions/store";
 import { REPLAY_MODULES } from "../SessionsView/ReplaySessions/configurations";
-import { REPLAY_TYPES } from "../SessionsView/ReplaySessions/constants";
+import {
+  REPLAY_ACTION_ID,
+  REPLAY_TYPES,
+} from "../SessionsView/ReplaySessions/constants";
+import { withoutReplayForRestrictedOrgs } from "../SessionsView/ReplaySessions/replayAccess";
+import { useRestrictSimulateToEnvironments } from "src/hooks/useRestrictSimulateToEnvironments";
 import { dateFilterEqual, filtersContentEqual } from "../saved-view-utils";
 import { useCreateReplaySessions } from "src/api/project/replay-sessions";
 import { enqueueSnackbar } from "notistack";
@@ -262,6 +270,7 @@ import TraceGrid from "./TraceGrid";
 import SpanGrid from "./SpanGrid";
 import { useAgentGraph } from "src/api/project/agent-graph";
 import CustomDateRangePicker from "src/components/custom-datepicker/DatePicker";
+import ContentSkeleton from "src/components/content-skeleton";
 
 // Lazy load graph components — only loaded when viewMode changes
 const PrimaryGraph = lazy(() => import("./GraphSection/PrimaryGraph"));
@@ -279,7 +288,7 @@ const AgentVisualizationProjectScopePrompt = () => (
       color: "text.disabled",
     }}
   >
-    <Typography role="status" variant="body2" sx={{ fontSize: 13 }}>
+    <Typography role="status" variant="body2" sx={{ fontSize: 12 }}>
       Select a project filter to use agent visualizations
     </Typography>
   </Box>
@@ -331,7 +340,6 @@ CompareAgentGraph.propTypes = {
 const CallLogsGrid = lazy(
   () => import("src/sections/agents/CallLogs/CallLogsGrid"),
 );
-const LLMFiltersDrawer = lazy(() => import("./LLMFiltersDrawer"));
 const AddDataset = lazy(
   () => import("src/components/traceDetailDrawer/addToDataset/add-dataset"),
 );
@@ -362,7 +370,7 @@ const ComponentLoader = () => (
       minHeight: 200,
     }}
   >
-    <CircularProgress size={24} />
+    <ContentSkeleton variant="panel" />
   </Box>
 );
 
@@ -392,7 +400,7 @@ const COMPARE_DATE_OPTIONS = [
 const comparePillSx = {
   textTransform: "none",
   fontWeight: 500,
-  fontSize: 13,
+  fontSize: 12,
   fontFamily: "'IBM Plex Sans', sans-serif",
   height: 26,
   border: "1px solid",
@@ -450,7 +458,7 @@ export const CompareGraphHeader = ({
           return {
             width: 24,
             height: 25,
-            borderRadius: 0.5,
+            borderRadius: "4px",
             backgroundColor: bg,
             display: "flex",
             alignItems: "center",
@@ -463,13 +471,13 @@ export const CompareGraphHeader = ({
       >
         {compareType === "primary" ? "A" : "B"}
       </Box>
-      <Typography sx={{ fontSize: 13, fontWeight: 600 }}>{label}</Typography>
+      <Typography sx={{ fontSize: 12, fontWeight: 600 }}>{label}</Typography>
       <Button
         ref={dateButtonRef}
         variant="outlined"
         size="small"
-        startIcon={<Iconify icon="mdi:calendar-outline" width={16} />}
-        endIcon={<Iconify icon="mdi:chevron-down" width={14} />}
+        startIcon={<Iconify icon="solar:calendar-linear" width={16} />}
+        endIcon={<Iconify icon="solar:alt-arrow-down-linear" width={14} />}
         onClick={(e) => setDateAnchor(e.currentTarget)}
         sx={comparePillSx}
       >
@@ -482,7 +490,7 @@ export const CompareGraphHeader = ({
         anchorOrigin={{ vertical: "bottom", horizontal: "left" }}
         transformOrigin={{ vertical: "top", horizontal: "left" }}
         slotProps={{
-          paper: { sx: { mt: 0.5, borderRadius: "8px", minWidth: 140 } },
+          paper: { sx: { mt: 0.5, borderRadius: "8px", minWidth: 200 } },
         }}
       >
         {COMPARE_DATE_OPTIONS.map((opt) => (
@@ -490,7 +498,7 @@ export const CompareGraphHeader = ({
             key={opt.key}
             selected={dateFilter?.dateOption === opt.key}
             onClick={() => handleDateOptionChange(opt.key)}
-            sx={{ fontSize: 13, py: 0.75 }}
+            sx={{ py: 0.75 }}
           >
             {opt.label}
           </MenuItem>
@@ -518,10 +526,10 @@ export const CompareGraphHeader = ({
           startIcon={
             hasActiveFilter ? (
               <Badge variant="dot" color="error" overlap="circular">
-                <Iconify icon="mdi:filter-outline" width={16} />
+                <Iconify icon="solar:filter-linear" width={16} />
               </Badge>
             ) : (
-              <Iconify icon="mdi:filter-outline" width={16} />
+              <Iconify icon="solar:filter-linear" width={16} />
             )
           }
           onClick={(e) => onFilterToggle(e)}
@@ -574,7 +582,10 @@ export const CompareGraphHeader = ({
                 onDelete={() => onRemoveFilter(idx)}
                 label={
                   <Box sx={{ display: "flex", alignItems: "center", gap: 0.5 }}>
-                    <Typography sx={{ fontSize: 11, color: "text.secondary" }}>
+                    <Typography
+                      variant="caption"
+                      sx={{ color: "text.secondary" }}
+                    >
                       {(() => {
                         if (f.display_name) return f.display_name;
                         // `_.startCase` on a UUID mangles it into spaced
@@ -587,13 +598,16 @@ export const CompareGraphHeader = ({
                           : _.startCase(field);
                       })()}
                     </Typography>
-                    <Typography sx={{ fontSize: 10, color: "text.disabled" }}>
+                    <Typography
+                      variant="caption"
+                      sx={{ color: "text.disabled" }}
+                    >
                       {opLabel}
                     </Typography>
                     <Typography
+                      variant="caption"
+                      fontWeight={600}
                       sx={{
-                        fontSize: 11,
-                        fontWeight: 600,
                         color: "text.primary",
                       }}
                     >
@@ -602,11 +616,9 @@ export const CompareGraphHeader = ({
                   </Box>
                 }
                 sx={{
-                  height: 24,
                   bgcolor: "action.hover",
                   border: "1px solid",
                   borderColor: "divider",
-                  borderRadius: "6px",
                   transition: (theme) =>
                     theme.transitions.create(
                       ["background-color", "border-color"],
@@ -620,7 +632,6 @@ export const CompareGraphHeader = ({
                   },
                   "& .MuiChip-label": { px: 0.5 },
                   "& .MuiChip-deleteIcon": {
-                    fontSize: 12,
                     color: "text.disabled",
                     "&:hover": { color: "text.secondary" },
                   },
@@ -632,8 +643,6 @@ export const CompareGraphHeader = ({
             size="small"
             onClick={onClearFilters}
             sx={{
-              textTransform: "none",
-              fontSize: 11,
               color: "text.disabled",
               minWidth: "auto",
               p: 0,
@@ -681,6 +690,7 @@ const slotKeyFromColumnState = (columnState, fallbackSlotKey) => {
 };
 
 const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
+  const restrictSimulateToEnvironments = useRestrictSimulateToEnvironments();
   const isUserMode = mode === "user";
   const { currentWorkspaceId } = useWorkspace();
   const { role, user } = useAuthContext();
@@ -2047,7 +2057,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
     if (!dates || dates.length < 2) return "Past 6M";
     try {
       const start = new Date(dates[0]);
-      const end = new Date(dates[1]);
+      const end = getDateRangeDisplayEnd(dates);
       if (isNaN(start.getTime()) || isNaN(end.getTime())) return "Past 6M";
       return `${start.toLocaleDateString()} - ${end.toLocaleDateString()}`;
     } catch {
@@ -2906,6 +2916,65 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
     navigate,
   ]);
 
+  // Instant eval and Insights ask about exactly the traces the grid shows: its
+  // date window, filters, chips and toggles, as its list request sends them,
+  // and open with the tab's date preset. "Show simulated calls" isn't carried:
+  // it exists only on simulator projects, where neither is offered.
+  const traceViewSeed = useMemo(
+    () =>
+      viewSeed({
+        unit: "traces",
+        filters: toBackendFilters([
+          ...primaryCombinedFilters,
+          ...(hasEvalFilter ? [FILTER_FOR_HAS_EVAL] : []),
+          ...(extraFilters || []),
+          ...(metricFilters || []),
+        ]),
+        dateFilter: primaryTraceDateFilter,
+      }),
+    [
+      primaryCombinedFilters,
+      hasEvalFilter,
+      extraFilters,
+      metricFilters,
+      primaryTraceDateFilter,
+    ],
+  );
+  // The Spans tab asks about exactly the spans its grid shows (SpanGrid sends
+  // the same list, its date window included).
+  const spanViewSeed = useMemo(
+    () =>
+      viewSeed({
+        unit: "spans",
+        filters: toBackendFilters([
+          ...primarySpanValidatedFilters,
+          ...(hasEvalFilter ? [FILTER_FOR_HAS_EVAL] : []),
+          ...(extraFilters || []),
+          ...(metricFilters || []),
+        ]),
+        dateFilter: primarySpanDateFilter,
+      }),
+    [
+      primarySpanValidatedFilters,
+      hasEvalFilter,
+      extraFilters,
+      metricFilters,
+      primarySpanDateFilter,
+    ],
+  );
+  // Evaluate → Ask a question: the Ask page, about the rows this tab shows.
+  const openAsk = useCallback(() => {
+    navigate(
+      askLink(
+        observeId,
+        selectedTab === "spans" ? spanViewSeed : traceViewSeed,
+      ),
+    );
+  }, [selectedTab, spanViewSeed, traceViewSeed, observeId, navigate]);
+  const openInsights = useCallback(() => {
+    navigate(insightsReportLink(observeId, traceViewSeed));
+  }, [observeId, traceViewSeed, navigate]);
+
   const handleResetView = useCallback(() => {
     setViewMode(DEFAULT_DISPLAY_CONFIG.viewMode);
     setHasEvalFilter(DEFAULT_DISPLAY_CONFIG.hasEvalFilter);
@@ -3306,7 +3375,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                     {loading && latestActive ? (
                       <CircularProgress size={16} />
                     ) : (
-                      <Iconify width={18} icon="clarity:refresh-line" />
+                      <Iconify width={20} icon="solar:refresh-linear" />
                     )}
                   </Box>
 
@@ -3317,61 +3386,61 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
               </Box>
               {/* Filter Button */}
               <Box sx={{ display: "flex", alignItems: "center", gap: "12px" }}>
-                {projectSource === PROJECT_SOURCE.SIMULATOR && (
-                  <LoadingButton
-                    color={selectedCallIds.length > 0 ? "primary" : "inherit"}
-                    loading={isCreatingReplaySessions}
-                    startIcon={
-                      <SvgColor
-                        src="/assets/icons/navbar/ic_get_started.svg"
-                        sx={{ height: 16, width: 16 }}
-                      />
-                    }
-                    onClick={() => {
-                      if (openReplaySessionDrawer[REPLAY_MODULES.TRACES]) {
-                        setIsReplayDrawerCollapsed(
-                          REPLAY_MODULES.TRACES,
-                          false,
-                        );
-                        return;
+                {projectSource === PROJECT_SOURCE.SIMULATOR &&
+                  !restrictSimulateToEnvironments && (
+                    <LoadingButton
+                      color={selectedCallIds.length > 0 ? "primary" : "inherit"}
+                      loading={isCreatingReplaySessions}
+                      startIcon={
+                        <SvgColor
+                          src="/assets/icons/navbar/ic_get_started.svg"
+                          width={16}
+                        />
                       }
-                      createReplaySessions(
-                        {
-                          project_id: observeId,
-                          replay_type: REPLAY_MODULES.TRACES,
-                          ids: selectedCallIds,
-                          select_all: false,
-                        },
-                        {
-                          onSuccess: (data) => {
-                            useSessionsGridStore
-                              .getState()
-                              .setToggledNodes(selectedCallIds);
-                            setCreatedReplay(data?.data?.result);
-                            setReplayType(REPLAY_TYPES.NEW_GROUP);
-                            setOpenReplaySessionDrawer(
-                              REPLAY_MODULES.TRACES,
-                              true,
-                            );
+                      onClick={() => {
+                        if (openReplaySessionDrawer[REPLAY_MODULES.TRACES]) {
+                          setIsReplayDrawerCollapsed(
+                            REPLAY_MODULES.TRACES,
+                            false,
+                          );
+                          return;
+                        }
+                        createReplaySessions(
+                          {
+                            project_id: observeId,
+                            replay_type: REPLAY_MODULES.TRACES,
+                            ids: selectedCallIds,
+                            select_all: false,
                           },
-                        },
-                      );
-                    }}
-                    size="small"
-                    variant="outlined"
-                    disabled={
-                      selectedCallIds.length === 0 ||
-                      Object.values(openReplaySessionDrawer).some(
-                        (open) => open,
-                      )
-                    }
-                  >
-                    {`Replay Call${selectedCallIds.length !== 1 ? "s" : ""} (${selectedCallIds.length})`}
-                  </LoadingButton>
-                )}
+                          {
+                            onSuccess: (data) => {
+                              useSessionsGridStore
+                                .getState()
+                                .setToggledNodes(selectedCallIds);
+                              setCreatedReplay(data?.data?.result);
+                              setReplayType(REPLAY_TYPES.NEW_GROUP);
+                              setOpenReplaySessionDrawer(
+                                REPLAY_MODULES.TRACES,
+                                true,
+                              );
+                            },
+                          },
+                        );
+                      }}
+                      size="small"
+                      variant="outlined"
+                      disabled={
+                        selectedCallIds.length === 0 ||
+                        Object.values(openReplaySessionDrawer).some(
+                          (open) => open,
+                        )
+                      }
+                    >
+                      {`Replay Call${selectedCallIds.length !== 1 ? "s" : ""} (${selectedCallIds.length})`}
+                    </LoadingButton>
+                  )}
                 <Button
                   sx={{
-                    paddingX: theme.spacing(2),
                     minWidth: "fit-content",
                     ml: 1,
                     whiteSpace: "nowrap",
@@ -3383,21 +3452,15 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                       <Badge variant="dot" color="error" overlap="circular">
                         <SvgColor
                           src="/assets/icons/components/ic_newfilter.svg"
-                          sx={{
-                            color: "text.primary",
-                            width: "20px",
-                            height: "20px",
-                          }}
+                          width="20px"
+                          sx={{ color: "text.primary" }}
                         />
                       </Badge>
                     ) : (
                       <SvgColor
                         src="/assets/icons/components/ic_newfilter.svg"
-                        sx={{
-                          color: "text.primary",
-                          height: "20px",
-                          width: "20px",
-                        }}
+                        width="20px"
+                        sx={{ color: "text.primary" }}
                       />
                     )
                   }
@@ -3416,18 +3479,12 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                   size="small"
                   type="black"
                   slotProps={{
-                    tooltip: {
-                      sx: {
-                        maxWidth: "200px !important",
-                      },
-                    },
                     popper: {
                       modifiers: [
                         {
                           name: "preventOverflow",
                           options: {
                             boundary: "viewport",
-                            padding: 12,
                           },
                         },
                       ],
@@ -3445,7 +3502,9 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                         [PropertyName.id]: observeId,
                       });
                     }}
-                    startIcon={<Iconify icon="iconamoon:compare" />}
+                    startIcon={
+                      <Iconify icon="solar:transfer-horizontal-linear" />
+                    }
                   >
                     Compare
                   </Button>
@@ -3569,7 +3628,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                   {loading && latestActive ? (
                     <CircularProgress size={16} />
                   ) : (
-                    <Iconify icon="clarity:refresh-line" />
+                    <Iconify icon="solar:refresh-linear" />
                   )}
                 </ObserveIconButton> */}
 
@@ -3581,7 +3640,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                   size="small"
                 >
                   <Iconify
-                    icon="mingcute:close-line"
+                    icon="solar:close-linear"
                     sx={{ color: "text.disabled" }}
                   />
                 </ObserveIconButton>
@@ -3679,8 +3738,6 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                 }
               }}
               sx={{
-                textTransform: "none",
-                fontSize: 12,
                 color: "text.secondary",
                 minWidth: "auto",
                 p: 0,
@@ -3731,11 +3788,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                 enqueueSnackbar("Filters saved", { variant: "success" });
               }}
               sx={{
-                textTransform: "none",
-                fontSize: 12,
-                fontWeight: 600,
-                color: (t) =>
-                  t.palette.mode === "dark" ? "text.primary" : "#573FCC",
+                color: "text.link",
                 minWidth: "auto",
                 p: 0,
                 "&:hover": { bgcolor: "transparent" },
@@ -3766,7 +3819,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                 justifyContent: "center",
               }}
             >
-              <CircularProgress size={20} />
+              <ContentSkeleton variant="panel" />
             </Box>
           }
         >
@@ -4042,28 +4095,16 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                 }}
                 aria-label="changes tabs"
                 textColor="primary"
-                TabIndicatorProps={{
-                  style: {
-                    backgroundColor: theme.palette.primary.main,
-                  },
-                }}
                 sx={{
-                  minHeight: 0,
+                  boxShadow: "none",
                   "& .MuiTab-root": {
                     margin: "0 !important",
-                    fontWeight: "600",
-                    color: "primary.main",
-                    "&:not(.Mui-selected)": {
-                      color: "text.disabled",
-                      fontWeight: "500",
-                    },
                   },
                 }}
               >
                 <Tab
                   sx={{
                     margin: theme.spacing(0),
-                    px: theme.spacing(1.875),
                   }}
                   label="Primary Graph"
                   value="primary"
@@ -4071,7 +4112,6 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                 <Tab
                   sx={{
                     margin: theme.spacing(0),
-                    px: theme.spacing(1.875),
                   }}
                   label="Comparison Graph"
                   value="compare"
@@ -4178,56 +4218,59 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
               agentGraphEnabled={Boolean(primaryAgentGraphProjectId)}
               bulkActions={(() => {
                 if (projectSource === PROJECT_SOURCE.SIMULATOR) {
-                  return [
-                    {
-                      id: "replay",
-                      label: "Replay Calls",
-                      icon: "mdi:play-outline",
-                    },
-                    {
-                      id: "dataset",
-                      label: "Move to dataset",
-                      icon: "mdi:folder-move-outline",
-                    },
-                    {
-                      id: "tags",
-                      label: "Add tags",
-                      icon: "mdi:tag-outline",
-                    },
-                    {
-                      id: "annotation-queue",
-                      label: "Add to annotation queue",
-                      icon: "mdi:clipboard-list-outline",
-                      disabled:
-                        !simCallFilterSelectionMode &&
-                        (selectedCallIds?.length || 0) > 0 &&
-                        (simCallMeta.unavailableSelectedCount || 0) >=
-                          (selectedCallIds?.length || 0),
-                      disabledReason:
-                        "Selected calls are still in progress. Wait for traces to finish before adding them to an annotation queue.",
-                    },
-                  ];
+                  return withoutReplayForRestrictedOrgs(
+                    [
+                      {
+                        id: REPLAY_ACTION_ID,
+                        label: "Replay Calls",
+                        icon: "solar:play-linear",
+                      },
+                      {
+                        id: "dataset",
+                        label: "Move to dataset",
+                        icon: "solar:move-to-folder-linear",
+                      },
+                      {
+                        id: "tags",
+                        label: "Add tags",
+                        icon: "solar:tag-linear",
+                      },
+                      {
+                        id: "annotation-queue",
+                        label: "Add to annotation queue",
+                        icon: "solar:clipboard-list-linear",
+                        disabled:
+                          !simCallFilterSelectionMode &&
+                          (selectedCallIds?.length || 0) > 0 &&
+                          (simCallMeta.unavailableSelectedCount || 0) >=
+                            (selectedCallIds?.length || 0),
+                        disabledReason:
+                          "Selected calls are still in progress. Wait for traces to finish before adding them to an annotation queue.",
+                      },
+                    ],
+                    restrictSimulateToEnvironments,
+                  );
                 }
                 const all = [
                   {
                     id: "dataset",
                     label: "Move to dataset",
-                    icon: "mdi:folder-move-outline",
+                    icon: "solar:move-to-folder-linear",
                   },
                   {
                     id: "tags",
                     label: "Add tags",
-                    icon: "mdi:tag-outline",
+                    icon: "solar:tag-linear",
                   },
                   {
                     id: "annotation-queue",
                     label: "Add to annotation queue",
-                    icon: "mdi:clipboard-list-outline",
+                    icon: "solar:clipboard-list-linear",
                   },
                   {
                     id: "annotate",
                     label: "Annotate",
-                    icon: "mdi:pencil-box-outline",
+                    icon: "solar:pen-new-square-linear",
                     requiresSingle: true,
                   },
                 ];
@@ -4288,7 +4331,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                     setQueueAnchorEl(anchor);
                   } else if (actionId === "dataset") {
                     setOpenAddDataset(true);
-                  } else if (actionId === "replay") {
+                  } else if (actionId === REPLAY_ACTION_ID) {
                     // Mirror the standalone "Replay Calls" button flow
                     if (openReplaySessionDrawer[REPLAY_MODULES.TRACES]) {
                       setIsReplayDrawerCollapsed(REPLAY_MODULES.TRACES, false);
@@ -4453,6 +4496,12 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                 setExcludeSimulationCalls(excludeSimulationCalls ? null : true)
               }
               onAddEvals={handleAddEvals}
+              // Instant eval and Insights are per project: not in the
+              // cross-project user view. Insights doesn't read spans.
+              onInstantEval={observeId ? openAsk : undefined}
+              onInsights={
+                observeId && selectedTab !== "spans" ? openInsights : undefined
+              }
             />
             {/* FilterChips moved above graph section */}
             {/* Hidden: Old secondary Trace/Spans tabs — replaced by top-level tab bar */}
@@ -4475,21 +4524,9 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                   }}
                   aria-label="change tabs"
                   sx={{
-                    minHeight: 0,
+                    boxShadow: "none",
                     "& .MuiTab-root": {
                       margin: "0 !important",
-                      fontWeight: "600",
-                      typography: "s1",
-                      color: "primary.main",
-                      "&:not(.Mui-selected)": {
-                        color: "text.disabled",
-                        fontWeight: "500",
-                      },
-                    },
-                  }}
-                  TabIndicatorProps={{
-                    style: {
-                      backgroundColor: theme.palette.primary.main,
                     },
                   }}
                 >
@@ -4498,7 +4535,6 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                     value="trace"
                     sx={{
                       margin: theme.spacing(0),
-                      px: theme.spacing(1.875),
                     }}
                   />
                   <Tab
@@ -4506,7 +4542,6 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                     value="spans"
                     sx={{
                       margin: theme.spacing(0),
-                      px: theme.spacing(1.875),
                     }}
                   />
                 </Tabs>
@@ -4529,10 +4564,10 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                     sx={{ my: theme.spacing(1) }}
                   />{" "}
                   <Button
+                    size="small"
                     sx={{
                       padding: 0,
                       width: 30,
-                      height: 30,
                       margin: 0,
                       minWidth: 0,
                       "& .MuiButton-startIcon": {
@@ -4570,7 +4605,6 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                     >
                       <Button
                         sx={{
-                          padding: "12px",
                           borderColor: hasEvalFilter
                             ? "action.selected"
                             : undefined,
@@ -4579,16 +4613,13 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                         size="small"
                         onClick={() => setHasEvalFilter(!hasEvalFilter)}
                         startIcon={
-                          <Iconify
-                            icon={
-                              hasEvalFilter
-                                ? "famicons:checkbox"
-                                : "system-uicons:checkbox-empty"
-                            }
-                            color={
-                              hasEvalFilter ? "primary.main" : "text.disabled"
-                            }
-                            width={22}
+                          <Checkbox
+                            size="small"
+                            checked={hasEvalFilter}
+                            tabIndex={-1}
+                            disableRipple
+                            inputProps={{ "aria-hidden": true }}
+                            sx={{ p: 0 }}
                           />
                         }
                       >
@@ -4608,18 +4639,12 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                       size="small"
                       type="black"
                       slotProps={{
-                        tooltip: {
-                          sx: {
-                            maxWidth: "200px !important",
-                          },
-                        },
                         popper: {
                           modifiers: [
                             {
                               name: "preventOverflow",
                               options: {
                                 boundary: "viewport",
-                                padding: 12,
                               },
                             },
                           ],
@@ -4627,7 +4652,6 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                       }}
                     >
                       <Button
-                        sx={{ height: "30px" }}
                         variant="outlined"
                         size="medium"
                         onClick={handleAutoSize}
@@ -4667,18 +4691,12 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                       size="small"
                       type="black"
                       slotProps={{
-                        tooltip: {
-                          sx: {
-                            maxWidth: "200px !important",
-                          },
-                        },
                         popper: {
                           modifiers: [
                             {
                               name: "preventOverflow",
                               options: {
                                 boundary: "viewport",
-                                padding: 12,
                               },
                             },
                           ],
@@ -4687,11 +4705,10 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                     >
                       <span>
                         <Button
+                          size="small"
                           variant="contained"
                           color="primary"
                           sx={{
-                            borderRadius: theme.spacing(1),
-                            height: "30px",
                             "&:disabled": {
                               color: "common.white",
                               backgroundColor: "action.hover",
@@ -4699,7 +4716,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                           }}
                           startIcon={
                             <Iconify
-                              icon="line-md:plus"
+                              icon="solar:add-linear"
                               color="background.paper"
                               width="16px"
                               height="16px"
@@ -5048,6 +5065,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                     setFilterOpen={setIsPrimaryFilterOpen}
                     setLoading={setLoadingEnhanced}
                     compareType="primary"
+                    hideDetailDrawer={selectedGraph !== "primary"}
                     projectId={observeId}
                     hasEvalFilter={hasEvalFilter}
                     cellHeight={cellHeight}
@@ -5088,6 +5106,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                     setFilterOpen={setIsPrimaryFilterOpen}
                     setLoading={setLoadingEnhanced}
                     compareType="compare"
+                    hideDetailDrawer={selectedGraph !== "compare"}
                     hasEvalFilter={hasEvalFilter}
                     cellHeight={cellHeight}
                     metricFilters={metricFilters}
@@ -5164,6 +5183,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                     setFilterOpen={setIsPrimaryFilterOpen}
                     setLoading={setLoadingEnhanced}
                     compareType="primary"
+                    hideDetailDrawer={selectedGraph !== "primary"}
                     enabled={
                       traceListProjectReady &&
                       selectedTab === "spans" &&
@@ -5202,6 +5222,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                     setFilterOpen={setIsPrimaryFilterOpen}
                     setLoading={setLoadingEnhanced}
                     compareType="compare"
+                    hideDetailDrawer={selectedGraph !== "compare"}
                     enabled={
                       traceListProjectReady &&
                       selectedTab === "spans" &&

@@ -5,7 +5,6 @@ import {
   Box,
   Button,
   Checkbox,
-  CircularProgress,
   FormControlLabel,
   IconButton,
   Stack,
@@ -22,6 +21,7 @@ import {
 import {
   runAnalyticsKey,
   callDetailKeyPrefix,
+  compareRunsKeyPrefix,
   runResultsKey,
 } from "src/api/simulate-environments/runEvals";
 import SideDrawer from "../../../components/SideDrawer";
@@ -34,6 +34,7 @@ import {
   NOT_COMPLETED_TOOLTIP,
   NOT_EDITABLE_TOOLTIP,
 } from "./allEvaluationsDrawer.constants";
+import { LoadingScreen } from "src/components/loading-screen";
 
 const REMOVE_FALLBACK = "Couldn’t remove the evaluation. Try again.";
 // A stable empty-array constant: `= []` as a hook default is a fresh
@@ -132,6 +133,7 @@ export default function AllEvaluationsDrawer({
           queryClient.invalidateQueries({
             queryKey: runAnalyticsKey(executionId),
           });
+          queryClient.invalidateQueries({ queryKey: compareRunsKeyPrefix });
           // Call rows are built from the live catalog, and a drawer keeps
           // its detail for minutes: reopened, it must not list the removed eval.
           queryClient.invalidateQueries({ queryKey: callDetailKeyPrefix });
@@ -150,9 +152,7 @@ export default function AllEvaluationsDrawer({
     <SideDrawer open={open} onClose={onClose} width={520}>
       <Box sx={{ display: "flex", flexDirection: "column", height: "100%" }}>
         <Box sx={{ p: 3, pb: 1 }}>
-          <Typography
-            sx={{ typography: "m2", fontWeight: "fontWeightSemiBold", pr: 4 }}
-          >
+          <Typography sx={{ typography: "m2", fontWeight: 500, pr: 4 }}>
             All Evaluations
           </Typography>
           <Stack
@@ -178,16 +178,14 @@ export default function AllEvaluationsDrawer({
               startIcon={<Iconify icon="solar:add-circle-linear" width={16} />}
               onClick={() => onAddEvaluations?.()}
             >
-              Add Evaluations
+              Add evaluations
             </Button>
           </Stack>
         </Box>
 
         <Box sx={{ flex: 1, overflowY: "auto", px: 3 }}>
           {isPending ? (
-            <Stack alignItems="center" sx={{ py: 6 }}>
-              <CircularProgress size={22} />
-            </Stack>
+            <LoadingScreen compact />
           ) : isError && configsData === undefined ? (
             <EmptyState
               title="Couldn’t load evaluations"

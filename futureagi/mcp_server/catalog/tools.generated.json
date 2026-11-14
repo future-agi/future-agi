@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
   "source_contract": "swagger.json",
-  "source_contract_sha256": "5a65154db85de24de454e493d07f262ff4c7dc57f407c58ae686f353ede59b57",
-  "tool_count": 105,
+  "source_contract_sha256": "9111e90daa35f6f35a8fc716eceb1aa946cf085e75bc496fe7c6962dddfaf508",
+  "tool_count": 111,
   "tools": [
     {
       "name": "whoami",
@@ -197,7 +197,7 @@
           },
           "search": {
             "type": "string",
-            "default": {}
+            "default": "{}"
           },
           "page_size": {
             "type": "integer",
@@ -327,7 +327,7 @@
     },
     {
       "name": "add_dataset_rows",
-      "description": "Add rows to an existing dataset using cells with column_name and value. Column names must already exist in the dataset.",
+      "description": "Add rows to an existing dataset using rows: [{cells: [{column_name: \"input\", value: \"hello\"}]}]. Flat column-to-value row dictionaries are invalid. Column names must already exist and be writable; unknown or duplicate columns reject the batch. Read back the dataset to verify values and counts after writing.",
       "group": "datasets",
       "inputSchema": {
         "type": "object",
@@ -363,7 +363,8 @@
                 "title": "Value",
                 "description": "Any valid JSON value."
               }
-            }
+            },
+            "additionalProperties": false
           },
           "DatasetRowRequest": {
             "type": "object",
@@ -373,6 +374,11 @@
                 "type": "string",
                 "format": "uuid"
               },
+              "order": {
+                "title": "Order",
+                "description": "Legacy input accepted for compatibility; rows are appended in request order.",
+                "type": "integer"
+              },
               "cells": {
                 "type": "array",
                 "items": {
@@ -380,7 +386,8 @@
                 },
                 "default": []
               }
-            }
+            },
+            "additionalProperties": false
           }
         }
       },
@@ -2516,6 +2523,33 @@
       "inputSchema": {
         "type": "object",
         "properties": {
+          "jev_mapping": {
+            "anyOf": [
+              {
+                "title": "Jev mapping",
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "multi_choice": {
+            "title": "Multi choice",
+            "type": "boolean",
+            "default": false
+          },
+          "input_data_types": {
+            "anyOf": [
+              {
+                "title": "Input data types",
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "name": {
             "title": "Name",
             "type": "string",
@@ -2744,6 +2778,9 @@
           "path": [],
           "query": [],
           "body": [
+            "jev_mapping",
+            "multi_choice",
+            "input_data_types",
             "name",
             "is_draft",
             "eval_type",
@@ -2785,6 +2822,28 @@
         "properties": {
           "template_id": {
             "type": "string"
+          },
+          "jev_mapping": {
+            "anyOf": [
+              {
+                "title": "Jev mapping",
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "input_data_types": {
+            "anyOf": [
+              {
+                "title": "Input data types",
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "name": {
             "anyOf": [
@@ -3099,6 +3158,8 @@
           ],
           "query": [],
           "body": [
+            "jev_mapping",
+            "input_data_types",
             "name",
             "eval_type",
             "instructions",
@@ -3627,6 +3688,11 @@
       "inputSchema": {
         "type": "object",
         "properties": {
+          "sort_params": {
+            "type": "string",
+            "default": "[]",
+            "minLength": 1
+          },
           "project_id": {
             "type": "string",
             "format": "uuid"
@@ -3692,6 +3758,7 @@
         "parameters": {
           "path": [],
           "query": [
+            "sort_params",
             "project_id",
             "project_version_id",
             "session_id",
@@ -3724,6 +3791,16 @@
           "id": {
             "type": "string"
           },
+          "test_execution_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "A run the caller can read; opens the hidden simulation project of that run's agent."
+          },
+          "call_execution_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "A run the caller can read; opens the hidden simulation project of that run's agent."
+          },
           "project_id": {
             "type": "string",
             "format": "uuid",
@@ -3749,6 +3826,8 @@
             "id"
           ],
           "query": [
+            "test_execution_id",
+            "call_execution_id",
             "project_id"
           ],
           "body": []
@@ -3857,6 +3936,16 @@
           "id": {
             "type": "string"
           },
+          "test_execution_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "A run the caller can read; opens the hidden simulation project of that run's agent."
+          },
+          "call_execution_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "A run the caller can read; opens the hidden simulation project of that run's agent."
+          },
           "project_id": {
             "type": "string",
             "format": "uuid"
@@ -3903,6 +3992,8 @@
             "id"
           ],
           "query": [
+            "test_execution_id",
+            "call_execution_id",
             "project_id",
             "trace_id",
             "start_hour",
@@ -4503,6 +4594,9 @@
             "maximum": 100.0,
             "minimum": 1.0
           },
+          "sampling_policy": {
+            "$ref": "#/definitions/SamplingPolicy"
+          },
           "last_run": {
             "anyOf": [
               {
@@ -4628,7 +4722,259 @@
           "sampling_rate",
           "run_type",
           "evals"
-        ]
+        ],
+        "definitions": {
+          "SamplingAttribute": {
+            "required": [
+              "key"
+            ],
+            "type": "object",
+            "properties": {
+              "source": {
+                "title": "Source",
+                "type": "string",
+                "enum": [
+                  "span",
+                  "resource",
+                  "metadata"
+                ],
+                "default": "span"
+              },
+              "key": {
+                "title": "Key",
+                "type": "string",
+                "maxLength": 200,
+                "minLength": 1
+              }
+            }
+          },
+          "SamplingPolicy": {
+            "anyOf": [
+              {
+                "required": [
+                  "version",
+                  "sampling_unit",
+                  "window"
+                ],
+                "type": "object",
+                "properties": {
+                  "version": {
+                    "title": "Version",
+                    "type": "integer",
+                    "maximum": 1,
+                    "minimum": 1
+                  },
+                  "sampling_unit": {
+                    "title": "Sampling unit",
+                    "type": "string",
+                    "enum": [
+                      "span",
+                      "trace",
+                      "session",
+                      "user",
+                      "attribute"
+                    ]
+                  },
+                  "unit_attribute": {
+                    "$ref": "#/definitions/SamplingAttribute"
+                  },
+                  "missing_id": {
+                    "title": "Missing id",
+                    "type": "string",
+                    "enum": [
+                      "exclude",
+                      "row"
+                    ],
+                    "default": "exclude"
+                  },
+                  "mode": {
+                    "title": "Mode",
+                    "type": "string",
+                    "enum": [
+                      "closed",
+                      "live"
+                    ],
+                    "default": "closed"
+                  },
+                  "window": {
+                    "$ref": "#/definitions/SamplingWindow"
+                  },
+                  "strata": {
+                    "type": "array",
+                    "items": {
+                      "$ref": "#/definitions/SamplingRule"
+                    }
+                  },
+                  "group_by": {
+                    "type": "array",
+                    "items": {
+                      "$ref": "#/definitions/SamplingAttribute"
+                    }
+                  },
+                  "default": {
+                    "$ref": "#/definitions/SamplingRule"
+                  },
+                  "cell_quotas": {
+                    "title": "Cell quotas",
+                    "description": "Closed only: explicit target units keyed by the opaque stratum identity from preview. Replaces that cell's rate, floor, cap and census, without changing unit classification. Unlisted cells keep their rule.",
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": "integer",
+                      "maximum": 1000000,
+                      "minimum": 0
+                    }
+                  },
+                  "coordination": {
+                    "title": "Coordination",
+                    "description": "independent (default): this policy draws its own sample. project: every coordinated policy of the project (and panel) shares one permanent random number per unit, so samples nest as rates or quotas grow and overlap across tasks.",
+                    "type": "string",
+                    "enum": [
+                      "independent",
+                      "project"
+                    ]
+                  },
+                  "panel": {
+                    "title": "Panel",
+                    "description": "Project coordination only: a named PRN panel; different panels draw independent numbers.",
+                    "type": "string",
+                    "maxLength": 64
+                  },
+                  "prn_start": {
+                    "title": "Prn start",
+                    "description": "Project coordination only: start point (percent of the hash circle, below 100, at most six decimals). Disjoint start intervals give disjoint live samples.",
+                    "type": "number",
+                    "maximum": 100,
+                    "minimum": 0
+                  }
+                }
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "SamplingPredicate": {
+            "required": [
+              "key"
+            ],
+            "type": "object",
+            "properties": {
+              "source": {
+                "title": "Source",
+                "type": "string",
+                "enum": [
+                  "span",
+                  "resource",
+                  "metadata"
+                ],
+                "default": "span"
+              },
+              "key": {
+                "title": "Key",
+                "type": "string",
+                "maxLength": 200,
+                "minLength": 1
+              },
+              "op": {
+                "title": "Op",
+                "type": "string",
+                "enum": [
+                  "in",
+                  "not_in",
+                  "exists",
+                  "missing",
+                  "gt",
+                  "gte",
+                  "lt",
+                  "lte"
+                ],
+                "default": "in"
+              },
+              "values": {
+                "type": "array",
+                "items": {
+                  "description": "Any valid JSON value."
+                },
+                "maxItems": 100
+              }
+            }
+          },
+          "SamplingRule": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "title": "Name",
+                "type": "string",
+                "maxLength": 80,
+                "minLength": 1
+              },
+              "filters": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/definitions/SamplingPredicate"
+                }
+              },
+              "rate": {
+                "title": "Rate",
+                "description": "Percentage with at most six decimal places; closed quotas use exact integer arithmetic.",
+                "type": "number",
+                "maximum": 100,
+                "minimum": 0
+              },
+              "target_n": {
+                "title": "Target n",
+                "type": "integer",
+                "maximum": 1000000,
+                "minimum": 0
+              },
+              "min_n": {
+                "title": "Min n",
+                "type": "integer",
+                "maximum": 1000000,
+                "minimum": 0
+              },
+              "max_n": {
+                "title": "Max n",
+                "type": "integer",
+                "maximum": 1000000,
+                "minimum": 0
+              },
+              "rare_below": {
+                "title": "Rare below",
+                "type": "integer",
+                "maximum": 1000000,
+                "minimum": 0
+              }
+            }
+          },
+          "SamplingWindow": {
+            "required": [
+              "start"
+            ],
+            "type": "object",
+            "properties": {
+              "start": {
+                "title": "Start",
+                "description": "Inclusive ISO 8601 UTC event time.",
+                "type": "string",
+                "minLength": 1
+              },
+              "end": {
+                "anyOf": [
+                  {
+                    "title": "End",
+                    "description": "Closed mode: exclusive UTC end, at most 31 days. Live mode: null (ongoing).",
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            }
+          }
+        }
       },
       "annotations": {
         "readOnlyHint": false,
@@ -4647,6 +4993,7 @@
             "name",
             "filters",
             "sampling_rate",
+            "sampling_policy",
             "last_run",
             "spans_limit",
             "run_type",
@@ -4674,6 +5021,9 @@
       "inputSchema": {
         "type": "object",
         "properties": {
+          "sampling_policy": {
+            "$ref": "#/definitions/SamplingPolicy"
+          },
           "name": {
             "title": "Name",
             "type": "string",
@@ -4993,7 +5343,259 @@
             "format": "uuid"
           }
         },
-        "additionalProperties": false
+        "additionalProperties": false,
+        "definitions": {
+          "SamplingAttribute": {
+            "required": [
+              "key"
+            ],
+            "type": "object",
+            "properties": {
+              "source": {
+                "title": "Source",
+                "type": "string",
+                "enum": [
+                  "span",
+                  "resource",
+                  "metadata"
+                ],
+                "default": "span"
+              },
+              "key": {
+                "title": "Key",
+                "type": "string",
+                "maxLength": 200,
+                "minLength": 1
+              }
+            }
+          },
+          "SamplingPolicy": {
+            "anyOf": [
+              {
+                "required": [
+                  "version",
+                  "sampling_unit",
+                  "window"
+                ],
+                "type": "object",
+                "properties": {
+                  "version": {
+                    "title": "Version",
+                    "type": "integer",
+                    "maximum": 1,
+                    "minimum": 1
+                  },
+                  "sampling_unit": {
+                    "title": "Sampling unit",
+                    "type": "string",
+                    "enum": [
+                      "span",
+                      "trace",
+                      "session",
+                      "user",
+                      "attribute"
+                    ]
+                  },
+                  "unit_attribute": {
+                    "$ref": "#/definitions/SamplingAttribute"
+                  },
+                  "missing_id": {
+                    "title": "Missing id",
+                    "type": "string",
+                    "enum": [
+                      "exclude",
+                      "row"
+                    ],
+                    "default": "exclude"
+                  },
+                  "mode": {
+                    "title": "Mode",
+                    "type": "string",
+                    "enum": [
+                      "closed",
+                      "live"
+                    ],
+                    "default": "closed"
+                  },
+                  "window": {
+                    "$ref": "#/definitions/SamplingWindow"
+                  },
+                  "strata": {
+                    "type": "array",
+                    "items": {
+                      "$ref": "#/definitions/SamplingRule"
+                    }
+                  },
+                  "group_by": {
+                    "type": "array",
+                    "items": {
+                      "$ref": "#/definitions/SamplingAttribute"
+                    }
+                  },
+                  "default": {
+                    "$ref": "#/definitions/SamplingRule"
+                  },
+                  "cell_quotas": {
+                    "title": "Cell quotas",
+                    "description": "Closed only: explicit target units keyed by the opaque stratum identity from preview. Replaces that cell's rate, floor, cap and census, without changing unit classification. Unlisted cells keep their rule.",
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": "integer",
+                      "maximum": 1000000,
+                      "minimum": 0
+                    }
+                  },
+                  "coordination": {
+                    "title": "Coordination",
+                    "description": "independent (default): this policy draws its own sample. project: every coordinated policy of the project (and panel) shares one permanent random number per unit, so samples nest as rates or quotas grow and overlap across tasks.",
+                    "type": "string",
+                    "enum": [
+                      "independent",
+                      "project"
+                    ]
+                  },
+                  "panel": {
+                    "title": "Panel",
+                    "description": "Project coordination only: a named PRN panel; different panels draw independent numbers.",
+                    "type": "string",
+                    "maxLength": 64
+                  },
+                  "prn_start": {
+                    "title": "Prn start",
+                    "description": "Project coordination only: start point (percent of the hash circle, below 100, at most six decimals). Disjoint start intervals give disjoint live samples.",
+                    "type": "number",
+                    "maximum": 100,
+                    "minimum": 0
+                  }
+                }
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "SamplingPredicate": {
+            "required": [
+              "key"
+            ],
+            "type": "object",
+            "properties": {
+              "source": {
+                "title": "Source",
+                "type": "string",
+                "enum": [
+                  "span",
+                  "resource",
+                  "metadata"
+                ],
+                "default": "span"
+              },
+              "key": {
+                "title": "Key",
+                "type": "string",
+                "maxLength": 200,
+                "minLength": 1
+              },
+              "op": {
+                "title": "Op",
+                "type": "string",
+                "enum": [
+                  "in",
+                  "not_in",
+                  "exists",
+                  "missing",
+                  "gt",
+                  "gte",
+                  "lt",
+                  "lte"
+                ],
+                "default": "in"
+              },
+              "values": {
+                "type": "array",
+                "items": {
+                  "description": "Any valid JSON value."
+                },
+                "maxItems": 100
+              }
+            }
+          },
+          "SamplingRule": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "title": "Name",
+                "type": "string",
+                "maxLength": 80,
+                "minLength": 1
+              },
+              "filters": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/definitions/SamplingPredicate"
+                }
+              },
+              "rate": {
+                "title": "Rate",
+                "description": "Percentage with at most six decimal places; closed quotas use exact integer arithmetic.",
+                "type": "number",
+                "maximum": 100,
+                "minimum": 0
+              },
+              "target_n": {
+                "title": "Target n",
+                "type": "integer",
+                "maximum": 1000000,
+                "minimum": 0
+              },
+              "min_n": {
+                "title": "Min n",
+                "type": "integer",
+                "maximum": 1000000,
+                "minimum": 0
+              },
+              "max_n": {
+                "title": "Max n",
+                "type": "integer",
+                "maximum": 1000000,
+                "minimum": 0
+              },
+              "rare_below": {
+                "title": "Rare below",
+                "type": "integer",
+                "maximum": 1000000,
+                "minimum": 0
+              }
+            }
+          },
+          "SamplingWindow": {
+            "required": [
+              "start"
+            ],
+            "type": "object",
+            "properties": {
+              "start": {
+                "title": "Start",
+                "description": "Inclusive ISO 8601 UTC event time.",
+                "type": "string",
+                "minLength": 1
+              },
+              "end": {
+                "anyOf": [
+                  {
+                    "title": "End",
+                    "description": "Closed mode: exclusive UTC end, at most 31 days. Live mode: null (ongoing).",
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            }
+          }
+        }
       },
       "annotations": {
         "readOnlyHint": false,
@@ -5008,6 +5610,7 @@
           "path": [],
           "query": [],
           "body": [
+            "sampling_policy",
             "name",
             "filters",
             "sampling_rate",
@@ -5219,7 +5822,7 @@
           },
           "project_ids": {
             "type": "string",
-            "default": []
+            "default": ""
           },
           "agent_definition_id": {
             "type": "string",
@@ -5241,6 +5844,7 @@
           "category": {
             "type": "string",
             "enum": [
+              "",
               "system_metric",
               "eval_metric",
               "annotation_metric",
@@ -5252,6 +5856,7 @@
           "role": {
             "type": "string",
             "enum": [
+              "",
               "metric",
               "dimension"
             ],
@@ -5260,6 +5865,7 @@
           "source": {
             "type": "string",
             "enum": [
+              "",
               "traces",
               "spans",
               "sessions",
@@ -5667,7 +6273,7 @@
     },
     {
       "name": "get_error_cluster",
-      "description": "Return an error issue and its grouped trace information.",
+      "description": "Return an error issue, its grouped trace information and its stored root-cause analysis. `rca` holds the synthesis, the recommended fix, a confidence and the evidence trace ids; it stays empty (analyzed_at null) until someone runs Analyze Cluster on the issue in the Error Feed. The step-by-step investigation trail is left out because it exceeds the MCP response size limit; read the evidence traces with get_trace instead.",
       "group": "error_feed",
       "inputSchema": {
         "type": "object",
@@ -5705,10 +6311,115 @@
         }
       },
       "response": {
-        "unwrap": "result"
+        "unwrap": "result",
+        "omit": [
+          "rca.trace"
+        ]
       },
       "source": {
         "operationId": "tracer_feed_issues_read"
+      }
+    },
+    {
+      "name": "get_error_cluster_overview",
+      "description": "Return a cluster's pattern summary - the statistical insights that separate its failing traces from the passing baseline - plus its daily error counts and representative traces with their evidence and agent flow. Representative traces carry inputs, outputs and conversation reels, and long conversations can push the response past the MCP size limit, so start with rep_limit=3. If even rep_limit=1 is too large, read list_error_cluster_traces instead - the pattern summary is not available in a smaller form.",
+      "group": "error_feed",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "cluster_id": {
+            "type": "string"
+          },
+          "rep_limit": {
+            "type": "integer",
+            "default": 20,
+            "minimum": 1,
+            "maximum": 20
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "cluster_id"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "GET",
+        "path": "/tracer/feed/issues/{cluster_id}/overview/",
+        "parameters": {
+          "path": [
+            "cluster_id"
+          ],
+          "query": [
+            "rep_limit"
+          ],
+          "body": []
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "tracer_feed_issues_overview_list"
+      }
+    },
+    {
+      "name": "list_error_cluster_traces",
+      "description": "List the traces grouped into a cluster with each one's score, latency, tokens and cost, alongside cluster-wide aggregates. Use the returned trace ids with get_trace.",
+      "group": "error_feed",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "cluster_id": {
+            "type": "string"
+          },
+          "limit": {
+            "type": "integer",
+            "default": 50,
+            "minimum": 1,
+            "maximum": 100
+          },
+          "offset": {
+            "type": "integer",
+            "default": 0,
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "cluster_id"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "GET",
+        "path": "/tracer/feed/issues/{cluster_id}/traces/",
+        "parameters": {
+          "path": [
+            "cluster_id"
+          ],
+          "query": [
+            "limit",
+            "offset"
+          ],
+          "body": []
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "tracer_feed_issues_traces_list"
       }
     },
     {
@@ -7648,13 +8359,17 @@
     },
     {
       "name": "update_agent",
-      "description": "Edit an agent definition. To use changed configuration in a versioned simulation, subsequently call create_agent_version, or supply the changes directly to create_agent_version.",
+      "description": "Edit an agent definition. Leave observability_enabled out to keep observability as it is; send true or false to turn it on or off. To use changed configuration in a versioned simulation, subsequently call create_agent_version, or supply the changes directly to create_agent_version.",
       "group": "simulation",
       "inputSchema": {
         "type": "object",
         "properties": {
           "agent_id": {
             "type": "string"
+          },
+          "observability_enabled": {
+            "title": "Observability enabled",
+            "type": "boolean"
           },
           "agent_name": {
             "title": "Agent name",
@@ -7926,6 +8641,7 @@
           ],
           "query": [],
           "body": [
+            "observability_enabled",
             "agent_name",
             "agent_type",
             "description",
@@ -8170,8 +8886,7 @@
           },
           "observability_enabled": {
             "title": "Observability enabled",
-            "type": "boolean",
-            "default": false
+            "type": "boolean"
           }
         },
         "additionalProperties": false,
@@ -8617,6 +9332,7 @@
           "simulation_type": {
             "type": "string",
             "enum": [
+              "",
               "agent_definition",
               "prompt"
             ],
@@ -10599,7 +11315,7 @@
           },
           "project_ids": {
             "type": "string",
-            "default": []
+            "default": ""
           },
           "agent_definition_id": {
             "type": "string",
@@ -10621,6 +11337,7 @@
           "category": {
             "type": "string",
             "enum": [
+              "",
               "system_metric",
               "eval_metric",
               "annotation_metric",
@@ -10632,6 +11349,7 @@
           "role": {
             "type": "string",
             "enum": [
+              "",
               "metric",
               "dimension"
             ],
@@ -10640,6 +11358,7 @@
           "source": {
             "type": "string",
             "enum": [
+              "",
               "traces",
               "spans",
               "sessions",
@@ -10872,6 +11591,226 @@
       },
       "source": {
         "operationId": "usage_v2_usage-overview_list"
+      }
+    },
+    {
+      "name": "run_sql",
+      "description": "Start one read-only project-scoped ClickHouse SELECT or JOIN in a required time window (at most 31 days). Returns a personal job id; poll get_sql_result. No raw tables, settings, writes, external functions, or public result links.",
+      "group": "observability",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "project_id": {
+            "title": "Project id",
+            "type": "string",
+            "format": "uuid"
+          },
+          "sql": {
+            "title": "Sql",
+            "type": "string",
+            "maxLength": 32768,
+            "minLength": 1
+          },
+          "start": {
+            "title": "Start",
+            "type": "string",
+            "format": "date-time"
+          },
+          "end": {
+            "title": "End",
+            "type": "string",
+            "format": "date-time"
+          },
+          "reuse": {
+            "title": "Reuse",
+            "type": "boolean",
+            "default": true
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "project_id",
+          "sql",
+          "start",
+          "end"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "POST",
+        "path": "/tracer/sql-query/run/",
+        "parameters": {
+          "path": [],
+          "query": [],
+          "body": [
+            "project_id",
+            "sql",
+            "start",
+            "end",
+            "reuse"
+          ]
+        }
+      },
+      "response": {
+        "unwrap": null
+      },
+      "source": {
+        "operationId": "tracer_sql-query_run"
+      }
+    },
+    {
+      "name": "get_sql_result",
+      "description": "Poll a SQL job owned by the caller. Defaults to 100 rows within a bounded byte page; pass result.next_offset as offset until has_more is false. Wide rows are marked previewed; use the authenticated REST download for full cells. Results expire after 24 hours; current project membership is required on every page.",
+      "group": "observability",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "project_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "offset": {
+            "type": "integer",
+            "default": 0,
+            "minimum": 0,
+            "maximum": 10000
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100,
+            "description": "Optional bounded result page; omitted REST requests retain the full snapshot. MCP defaults to 100. Wide rows are explicitly previewed; download for full cells."
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "project_id"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "GET",
+        "path": "/tracer/sql-query/{id}/",
+        "parameters": {
+          "path": [
+            "id"
+          ],
+          "query": [
+            "project_id",
+            "offset",
+            "limit"
+          ],
+          "body": []
+        }
+      },
+      "response": {
+        "unwrap": null
+      },
+      "source": {
+        "operationId": "tracer_sql-query_read"
+      }
+    },
+    {
+      "name": "cancel_sql",
+      "description": "Cancel a SQL job owned by the caller without changing project data.",
+      "group": "observability",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "project_id": {
+            "title": "Project id",
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "project_id"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "POST",
+        "path": "/tracer/sql-query/{id}/cancel/",
+        "parameters": {
+          "path": [
+            "id"
+          ],
+          "query": [],
+          "body": [
+            "project_id"
+          ]
+        }
+      },
+      "response": {
+        "unwrap": null
+      },
+      "source": {
+        "operationId": "tracer_sql-query_cancel"
+      }
+    },
+    {
+      "name": "get_sql_catalog",
+      "description": "List the stable scoped SQL datasets and columns available in a project.",
+      "group": "observability",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "project_id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "project_id"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "GET",
+        "path": "/tracer/sql-query/catalog/",
+        "parameters": {
+          "path": [],
+          "query": [
+            "project_id"
+          ],
+          "body": []
+        }
+      },
+      "response": {
+        "unwrap": null
+      },
+      "source": {
+        "operationId": "tracer_sql-query_catalog"
       }
     }
   ]

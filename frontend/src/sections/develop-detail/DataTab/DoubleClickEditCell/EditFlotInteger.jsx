@@ -148,8 +148,6 @@ const EditFlotInteger = ({
           onClick={handleClose}
           sx={{
             width: "90px",
-            fontSize: "14px",
-            fontWeight: 500,
             marginRight: "-5px",
           }}
         >
@@ -161,7 +159,7 @@ const EditFlotInteger = ({
           type="submit"
           size="small"
           loading={false}
-          sx={{ width: "90px", fontSize: "14px", fontWeight: 700 }}
+          sx={{ width: "90px" }}
         >
           Save
         </LoadingButton>

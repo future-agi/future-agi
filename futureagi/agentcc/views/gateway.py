@@ -4,6 +4,7 @@ import os
 import re
 import uuid
 
+import httpx
 import structlog
 from cryptography.exceptions import UnsupportedAlgorithm
 from cryptography.hazmat.primitives import serialization
@@ -17,6 +18,11 @@ from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.viewsets import ViewSet
 
+from agentcc.guardrail_settings import (
+    canonical_setting_keys,
+    normalize_guardrail_settings,
+    normalize_saved_guardrail_settings,
+)
 from agentcc.models.org_config import AgentccOrgConfig
 from agentcc.models.provider_credential import AgentccProviderCredential
 from agentcc.models.request_log import AgentccRequestLog
@@ -38,6 +44,7 @@ from agentcc.serializers.contracts import (
     GatewayConfigPatchRequestSerializer,
     GatewayConfigResponseSerializer,
     GatewayDetailResponseSerializer,
+    GatewayHealthErrorResponseSerializer,
     GatewayHealthResponseSerializer,
     GatewayListResponseSerializer,
     GatewayMCPGuardrailsUpdateRequestSerializer,
@@ -55,8 +62,13 @@ from agentcc.serializers.contracts import (
     GatewayProviderUpdateRequestSerializer,
     GatewayToggleGuardrailRequestSerializer,
 )
+from agentcc.serializers.provider_credential import (
+    ProviderBaseURLField,
+    allows_keyless_system_one,
+)
 from agentcc.services.config_push import (
-    push_all_org_configs,
+    _RULE_TO_REGISTRY,
+    push_all_org_configs_activity,
     push_org_config,
     validate_org_config,
 )
@@ -181,6 +193,64 @@ def _remove_budget_level_config(budgets, level):
     return updated
 
 
+def _guardrail_checks_map(guardrails):
+    """
+    Return the checks{} map when guardrails use the Settings editor's shape.
+
+    The gateway contract has no rules[] next to a non-empty checks{} map (see
+    config_push._transform_guardrails), so edits must go into the map.
+    """
+    checks = guardrails.get("checks")
+    if isinstance(checks, dict) and checks:
+        return checks
+    return None
+
+
+def _guardrail_check_key(checks, name):
+    """
+    The checks{} key that `name` refers to. A rule name and its registry name
+    (pii-detector / pii-detection) are the same check at the gateway, so an
+    existing entry under either is reused instead of adding a duplicate.
+    """
+    aliases = [name, _RULE_TO_REGISTRY.get(name, name)]
+    aliases += [rule for rule, registry in _RULE_TO_REGISTRY.items() if registry == name]
+    return next((alias for alias in aliases if alias in checks), name)
+
+
+def _guardrail_check_fields(guardrail_config):
+    """Map a rules-style guardrail config onto the fields a checks{} entry has."""
+    fields = {
+        key: guardrail_config[key]
+        for key in ("enabled", "action", "confidence_threshold", "config")
+        if key in guardrail_config
+    }
+    if "threshold" in guardrail_config:
+        fields["confidence_threshold"] = guardrail_config["threshold"]
+    return fields
+
+
+# User-facing health-check failure text. The raw GatewayClientError carries the
+# internal gateway URL and upstream response bodies; those go to the logs only.
+HEALTH_CHECK_UNREACHABLE = "The gateway could not be reached."
+HEALTH_CHECK_TIMED_OUT = (
+    "The gateway did not respond before the health-check timeout."
+)
+HEALTH_CHECK_UNEXPECTED = (
+    "The health check could not be completed because of a server error."
+)
+
+
+def _health_check_failure_message(error):
+    cause = error.__cause__
+    if isinstance(cause, httpx.TimeoutException):
+        return HEALTH_CHECK_TIMED_OUT
+    if isinstance(cause, httpx.TransportError):
+        return HEALTH_CHECK_UNREACHABLE
+    if error.status_code:
+        return f"The gateway returned HTTP {error.status_code}."
+    return HEALTH_CHECK_UNREACHABLE
+
+
 def _build_virtual_gateway(status="healthy", health=None):
     """Build the virtual gateway dict returned by list/retrieve."""
     data = {
@@ -236,6 +306,7 @@ class AgentccGatewayViewSet(ViewSet):
                 status = "unreachable"
 
             data = _build_virtual_gateway(status=status, health=health)
+            data["last_health_check"] = timezone.now().isoformat()
 
             org = self._current_org(request)
             if org:
@@ -263,6 +334,7 @@ class AgentccGatewayViewSet(ViewSet):
                 status = "unreachable"
 
             data = _build_virtual_gateway(status=status, health=health)
+            data["last_health_check"] = timezone.now().isoformat()
 
             org = self._current_org(request)
             if org:
@@ -297,7 +369,7 @@ class AgentccGatewayViewSet(ViewSet):
         request_serializer=AgentccEmptyRequestSerializer,
         responses={
             200: GatewayHealthResponseSerializer,
-            **GATEWAY_BAD_REQUEST_RESPONSES,
+            400: GatewayHealthErrorResponseSerializer,
         },
         reject_unknown_fields=True,
     )
@@ -309,6 +381,8 @@ class AgentccGatewayViewSet(ViewSet):
 
             try:
                 health = client.health_check()
+                # This is the live probe's completion time, not persisted history.
+                last_health_check = timezone.now().isoformat()
 
                 db_providers = AgentccProviderCredential.no_workspace_objects.filter(
                     organization=org, is_active=True, deleted=False
@@ -333,17 +407,31 @@ class AgentccGatewayViewSet(ViewSet):
 
                 # Auto-sync org configs to gateway on first successful health check
                 # (e.g. after gateway container restart). Throttled to once per 5 min.
+                # The re-sync pushes every active org config and can outlast the
+                # client's request timeout, so it runs off the request path and the
+                # response reports only this probe. cache.add claims the slot so
+                # concurrent checks dispatch it at most once per window.
                 cache_key = "agentcc:gateway_config_synced"
-                if not cache.get(cache_key):
-                    try:
-                        push_all_org_configs()
-                        cache.set(cache_key, True, 300)
-                        logger.info("gateway_auto_sync", reason="first_health_check")
-                    except Exception:
-                        logger.warning("gateway_auto_sync_failed", exc_info=True)
+                # Claim and release are best-effort too: cache failures must not
+                # replace a successful probe with a health-check error.
+                try:
+                    if not cache.get(cache_key) and cache.add(cache_key, True, 300):
+                        try:
+                            push_all_org_configs_activity.apply_async(
+                                dispatch_timeout_seconds=5
+                            )
+                        except Exception:
+                            cache.delete(cache_key)
+                            raise
+                        logger.info(
+                            "gateway_auto_sync_dispatched", reason="first_health_check"
+                        )
+                except Exception:
+                    logger.warning("gateway_auto_sync_dispatch_failed", exc_info=True)
 
                 data = {
                     "status": "healthy",
+                    "last_health_check": last_health_check,
                     "health": health,
                     "providers": provider_health,
                     "provider_count": p_count,
@@ -351,15 +439,22 @@ class AgentccGatewayViewSet(ViewSet):
                 }
                 return self._gm.success_response(data)
             except GatewayClientError as e:
+                last_health_check = timezone.now().isoformat()
+                logger.warning(
+                    "gateway_health_check_failed",
+                    error=str(e),
+                    status_code=e.status_code,
+                )
                 return self._gm.bad_request(
                     {
                         "status": "unreachable",
-                        "error": str(e),
+                        "last_health_check": last_health_check,
+                        "error": _health_check_failure_message(e),
                     }
                 )
         except Exception as e:
             logger.exception("health_check_error", error=str(e))
-            return self._gm.bad_request(str(e))
+            return self._gm.bad_request(HEALTH_CHECK_UNEXPECTED)
 
     # ------------------------------------------------------------------
     # config / reload / update-config
@@ -515,10 +610,15 @@ class AgentccGatewayViewSet(ViewSet):
             def updater(cfg):
                 for field, value in config_patch.items():
                     existing = getattr(cfg, field, None)
+                    if field == "guardrails" and isinstance(existing, dict):
+                        existing = normalize_saved_guardrail_settings(existing)
+                        value = canonical_setting_keys(value)
                     if isinstance(existing, dict) and isinstance(value, dict):
-                        setattr(cfg, field, _deep_merge(existing, value))
-                    else:
-                        setattr(cfg, field, value)
+                        value = _deep_merge(existing, value)
+                    if field == "guardrails" and isinstance(value, dict):
+                        # A patched value is a new write: refuse ambiguous settings.
+                        value = normalize_guardrail_settings(value)
+                    setattr(cfg, field, value)
 
             new_config, synced = self._update_org_config(
                 org,
@@ -561,6 +661,9 @@ class AgentccGatewayViewSet(ViewSet):
                 return self._gm.bad_request(
                     "Google service-account credentials can only be used with Vertex AI."
                 )
+            provider_config["base_url"] = ProviderBaseURLField(
+                max_length=500, allow_blank=True
+            ).run_validation(provider_config.get("base_url", ""))
             saved_base_url = (
                 AgentccProviderCredential.no_workspace_objects.filter(
                     organization=org, provider_name=provider_name, deleted=False
@@ -578,6 +681,10 @@ class AgentccGatewayViewSet(ViewSet):
             from integrations.services.credentials import CredentialManager
 
             api_key = provider_config.pop("api_key", None)
+            if api_key is not None and not isinstance(api_key, str):
+                return self._gm.bad_request("API key must be a string")
+            if isinstance(api_key, str):
+                api_key = api_key.strip()
             credential_fields = (
                 "api_secret",
                 "access_key",
@@ -646,21 +753,48 @@ class AgentccGatewayViewSet(ViewSet):
                     cred = AgentccProviderCredential.no_workspace_objects.select_for_update().get(
                         **lookup
                     )
+                except AgentccProviderCredential.DoesNotExist:
+                    cred = None
+
+                # Omitted keys keep the stored credentials; an explicit empty
+                # key must still pass the same rules as a new provider.
+                credentials = (
+                    CredentialManager.decrypt(bytes(cred.encrypted_credentials))
+                    if cred is not None
+                    else {}
+                )
+                credentials.update(new_cred_values)
+                has_credentials = isinstance(credentials.get("api_key"), str) and bool(
+                    credentials["api_key"].strip()
+                )
+                if (
+                    provider_name in ("bedrock", "vertex")
+                    or defaults["api_format"] == "bedrock"
+                ):
+                    has_credentials = any(
+                        isinstance(value, str) and value.strip()
+                        for value in credentials.values()
+                    )
+                if not has_credentials and not allows_keyless_system_one(
+                    provider_name, defaults["api_format"], defaults["base_url"]
+                ):
+                    return self._gm.bad_request(
+                        "API key or provider credentials are required"
+                    )
+
+                if cred is not None:
                     for k, v in defaults.items():
                         setattr(cred, k, v)
-                    # Merge new credential values into existing encrypted credentials.
                     if new_cred_values:
-                        existing = CredentialManager.decrypt(cred.encrypted_credentials)
-                        existing.update(new_cred_values)
-                        cred.encrypted_credentials = CredentialManager.encrypt(existing)
-                    cred.save()
-                except AgentccProviderCredential.DoesNotExist:
-                    if not new_cred_values:
-                        return self._gm.bad_request(
-                            "credentials are required for new providers"
+                        cred.encrypted_credentials = CredentialManager.encrypt(
+                            credentials
                         )
+                    cred.save()
+                else:
+                    # Encrypt even an empty dict: config push decrypts every
+                    # provider row, including a keyless Generic endpoint.
                     defaults["encrypted_credentials"] = CredentialManager.encrypt(
-                        new_cred_values
+                        credentials
                     )
                     cred = AgentccProviderCredential.no_workspace_objects.create(
                         **lookup, **defaults
@@ -743,6 +877,17 @@ class AgentccGatewayViewSet(ViewSet):
 
             def updater(cfg):
                 guardrails = cfg.guardrails or {}
+                checks = _guardrail_checks_map(guardrails)
+                if checks is not None:
+                    # Same upsert defaults as a new rule below
+                    check = checks.setdefault(
+                        _guardrail_check_key(checks, guardrail_name),
+                        {"action": "block", "confidence_threshold": 0.8, "config": {}},
+                    )
+                    check["enabled"] = enabled
+                    cfg.guardrails = guardrails
+                    return
+
                 rules = guardrails.get("rules", [])
 
                 # Find existing rule or create one with defaults
@@ -858,6 +1003,19 @@ class AgentccGatewayViewSet(ViewSet):
 
             def updater(cfg):
                 guardrails = cfg.guardrails or {}
+                checks = _guardrail_checks_map(guardrails)
+                if checks is not None:
+                    # Merge, so _policy and fields the payload leaves out stay.
+                    # A new check is enabled unless the payload says otherwise,
+                    # as a new rule is (rules default enabled when pushed).
+                    key = _guardrail_check_key(checks, guardrail_name)
+                    checks[key] = {
+                        **checks.get(key, {"enabled": True}),
+                        **_guardrail_check_fields(guardrail_config),
+                    }
+                    cfg.guardrails = guardrails
+                    return
+
                 rules = guardrails.get("rules", [])
                 found = False
                 for i, rule in enumerate(rules):
@@ -950,10 +1108,14 @@ class AgentccGatewayViewSet(ViewSet):
 
             # Extract guardrail info from response
             guardrail_info = {}
+            triggered = False
             for key, val in headers.items():
                 lk = key.lower()
                 if "guardrail" in lk or "x-agentcc" in lk:
                     guardrail_info[key] = val
+                if lk == "x-agentcc-guardrail-triggered":
+                    triggered = str(val).lower() == "true"
+            blocked = status_code in (403, 446)
 
             return self._gm.success_response(
                 {
@@ -961,8 +1123,11 @@ class AgentccGatewayViewSet(ViewSet):
                     "body": body,
                     "guardrail_headers": guardrail_info,
                     "model": model,
-                    "blocked": status_code in (403, 446),
-                    "warned": status_code == 246,
+                    "blocked": blocked,
+                    # A warn or log hit goes through and is marked by the
+                    # guardrail-triggered header; 246 is the legacy warn code.
+                    "warned": status_code == 246
+                    or (triggered and not blocked and status_code < 400),
                 }
             )
         except GatewayClientError as e:

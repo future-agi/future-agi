@@ -12,6 +12,7 @@ describe("CapabilityGraph", () => {
       <CapabilityGraph
         env={env}
         envState={{}}
+        defaultOpen
         data={{
           tools: ["book_ride"],
           flows: ["Book a ride"],
@@ -37,6 +38,7 @@ describe("CapabilityGraph", () => {
       <CapabilityGraph
         env={env}
         envState={{}}
+        defaultOpen
         data={{ tools: [], flows, personas: [], guardrails: [] }}
       />,
     );
@@ -50,5 +52,27 @@ describe("CapabilityGraph", () => {
     fireEvent.click(screen.getByText(/\+ 3 more/));
     expect(screen.queryByText("flow-7")).toBeNull();
     expect(screen.getByText(/\+ 3 more/)).toBeInTheDocument();
+  });
+
+  it("starts collapsed and opens on click", () => {
+    render(
+      <CapabilityGraph
+        env={env}
+        envState={{}}
+        data={{ tools: ["book_ride"], flows: [], personas: [], guardrails: [] }}
+      />,
+    );
+
+    expect(screen.getByText("Capability graph")).toBeInTheDocument();
+    expect(screen.queryByText("book_ride")).toBeNull();
+    expect(screen.queryByRole("tab", { name: "Tools" })).toBeNull();
+
+    expect(screen.getByText("Tools, flows, personas and guardrails as one picture")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /Capability graph/ }));
+    expect(screen.getByText("book_ride")).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Tools" })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Hide capability graph" }));
+    expect(screen.queryByRole("tab", { name: "Tools" })).toBeNull();
   });
 });

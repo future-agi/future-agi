@@ -1,7 +1,7 @@
 import React from "react";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render } from "src/utils/test-utils";
-import { screen, waitFor } from "@testing-library/react";
+import { act, render, userEvent } from "src/utils/test-utils";
+import { screen, waitFor, within } from "@testing-library/react";
 
 import EvalPickerProvider from "./context/EvalPickerProvider";
 import EvalPickerConfigFull from "./EvalPickerConfigFull";
@@ -43,6 +43,10 @@ vi.mock("src/sections/evals/components/TestPlayground", () => {
   return { default: M };
 });
 
+vi.mock("src/api/evaluations/decision-models", () => ({
+  default: () => ({ data: [] }),
+  decisionModelsQueryKey: ["eval-decision-models"],
+}));
 vi.mock("src/sections/evals/components/ModelSelector", () => ({
   default: () => <div />,
   FAGI_MODEL_VALUES: new Set(),
@@ -84,10 +88,10 @@ vi.mock("src/sections/tasks/components/TaskFilterBar", () => ({
 // can assert on the disabled-reason copy without simulating a real hover.
 vi.mock("src/components/tooltip/CustomTooltip", () => ({
   default: ({ show, title, children }) => (
-    <>
+    <span data-tooltip-host>
       {children}
-      {show && title ? <div data-testid="tooltip-text">{title}</div> : null}
-    </>
+      {show && title ? <span data-testid="tooltip-text">{title}</span> : null}
+    </span>
   ),
 }));
 
@@ -152,6 +156,7 @@ vi.mock("src/hooks/useCapabilities", async (importOriginal) => {
     ...actual,
     useFeatureAllowed: () => ({ allowed: true, isLoading: false }),
     useFeatureLocked: () => ({ locked: false, isLoading: false }),
+    useFeatureDenied: () => false,
     useCapabilities: () => ({ data: undefined, isLoading: false }),
   };
 });
@@ -193,28 +198,326 @@ const DEFAULT_DETAIL = {
   config: {},
 };
 
-const renderConfigFull = ({ sourceTimeWindow, evalData, requireInputs } = {}) =>
-  render(
-    <EvalPickerProvider
-      source="task"
-      sourceId="project-1"
-      sourceRowType="traces"
-      sourceColumns={[]}
-      existingEvals={[]}
-      onEvalAdded={() => {}}
-      onClose={() => {}}
-      sourceTimeWindow={sourceTimeWindow}
-      initialEval={evalData || null}
-      requireInputs={requireInputs}
-    >
-      <EvalPickerConfigFull
-        evalData={evalData || DEFAULT_EVAL_DATA}
-        onBack={() => {}}
-        onSave={() => {}}
-        isSaving={false}
-      />
-    </EvalPickerProvider>,
-  );
+const configFullTree = ({
+  sourceTimeWindow,
+  evalData,
+  requireInputs,
+  onSave = () => {},
+} = {}) => (
+  <EvalPickerProvider
+    source="task"
+    sourceId="project-1"
+    sourceRowType="traces"
+    sourceColumns={[]}
+    existingEvals={[]}
+    onEvalAdded={() => {}}
+    onClose={() => {}}
+    sourceTimeWindow={sourceTimeWindow}
+    initialEval={evalData || null}
+    requireInputs={requireInputs}
+  >
+    <EvalPickerConfigFull
+      evalData={evalData || DEFAULT_EVAL_DATA}
+      onBack={() => {}}
+      onSave={onSave}
+      isSaving={false}
+    />
+  </EvalPickerProvider>
+);
+
+const renderConfigFull = (options = {}) => render(configFullTree(options));
+
+it("authors a decision rubric in the attach drawer and forwards the exact route and mapping to preview and binding", async () => {
+  const previous = stableEvalDetail.data;
+  const route = "decision/openrouter/openai/gpt-6-luna-decisions";
+  stableEvalDetail.data = {
+    id: "tpl-1",
+    name: "quality",
+    owner: "user",
+    eval_type: "llm",
+    output_type: "percentage",
+    instructions: "Rate {{input}}",
+    required_keys: ["input"],
+    config: { model: route, output: "score" },
+  };
+  try {
+    const onSave = vi.fn();
+    renderConfigFull({ onSave });
+    await waitFor(() => expect(capturedProps.llmPrompt?.model).toBe(route));
+    expect(capturedProps.llmPrompt.outputType).toBe("percentage");
+    await act(async () =>
+      capturedProps.tracing.onReadyChange(true, { input: "output" }),
+    );
+    expect(
+      screen.getByRole("button", { name: "Add Evaluation" }),
+    ).toBeDisabled();
+    await userEvent.click(screen.getByRole("button", { name: "Add level" }));
+    await userEvent.type(screen.getByLabelText("Level 0"), "Incorrect");
+    await userEvent.click(screen.getByRole("button", { name: "Add level" }));
+    await userEvent.type(screen.getByLabelText("Level 1"), "Correct");
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Add Evaluation" }),
+      ).toBeEnabled(),
+    );
+    expect(capturedProps.tracing.runConfig).toMatchObject({
+      model: route,
+      output_type: "score",
+      jev_mapping: {
+        question_type: "score",
+        score: { levels: ["Incorrect", "Correct"] },
+      },
+    });
+    await userEvent.click(
+      screen.getByRole("button", { name: "Add Evaluation" }),
+    );
+    expect(onSave).toHaveBeenCalledWith(
+      expect.objectContaining({
+        model: route,
+        jev_mapping: expect.objectContaining({ question_type: "score" }),
+        config: expect.objectContaining({
+          run_config: expect.objectContaining({
+            model: route,
+            jev_mapping: expect.objectContaining({
+              score: { levels: ["Incorrect", "Correct"] },
+            }),
+          }),
+        }),
+      }),
+    );
+  } finally {
+    stableEvalDetail.data = previous;
+  }
+});
+
+it("reopens a decision score binding without replacing it with the template's Pass/Fail output", async () => {
+  const previous = stableEvalDetail.data;
+  const route = "decision/openrouter/morph/reflex";
+  stableEvalDetail.data = {
+    ...DEFAULT_DETAIL,
+    owner: "user",
+    instructions: "Judge {{input}}",
+    required_keys: ["input"],
+    config: { model: "ordinary-model", output: "Pass/Fail" },
+  };
+  try {
+    renderConfigFull({
+      evalData: {
+        ...DEFAULT_EVAL_DATA,
+        userEvalId: "binding-decision-score",
+        runConfig: {
+          model: route,
+          output_type: "score",
+          jev_mapping: { score: { levels: ["Incorrect", "Correct"] } },
+        },
+      },
+    });
+    await waitFor(() => expect(capturedProps.llmPrompt?.model).toBe(route));
+    expect(capturedProps.llmPrompt.outputType).toBe("percentage");
+    expect(screen.getByLabelText("Level 0")).toHaveValue("Incorrect");
+    expect(capturedProps.tracing.runConfig).toMatchObject({
+      model: route,
+      output_type: "score",
+      jev_mapping: {
+        question_type: "score",
+        score: { levels: ["Incorrect", "Correct"] },
+      },
+    });
+  } finally {
+    stableEvalDetail.data = previous;
+  }
+});
+
+describe("pinned decision binding hydration", () => {
+  const route = "decision/openrouter/morph/reflex";
+  const rubric = (label) => ({
+    score: { levels: [`${label} bad`, `${label} good`] },
+  });
+  const snapshot = (label) => ({
+    model: route,
+    output: "score",
+    rule_prompt: "Judge {{input}}",
+    jev_mapping: rubric(label),
+  });
+  let previousDetail;
+  let previousVersions;
+
+  beforeEach(() => {
+    previousDetail = stableEvalDetail.data;
+    previousVersions = stableVersions.data;
+    stableEvalDetail.data = {
+      ...DEFAULT_DETAIL,
+      owner: "user",
+      output_type: "percentage",
+      instructions: "Judge {{input}}",
+      required_keys: ["input"],
+      config: snapshot("Current"),
+    };
+    stableVersions.data = {
+      versions: [
+        {
+          id: "v1",
+          version_number: 1,
+          config_snapshot: snapshot("Version one"),
+        },
+        {
+          id: "v2",
+          version_number: 2,
+          config_snapshot: snapshot("Version two"),
+        },
+      ],
+    };
+  });
+
+  afterEach(() => {
+    stableEvalDetail.data = previousDetail;
+    stableVersions.data = previousVersions;
+  });
+
+  const savedBinding = () => ({
+    ...DEFAULT_EVAL_DATA,
+    name: "saved_quality",
+    userEvalId: "binding-1",
+    pinned_version_id: "v1",
+    bindingConfig: { jev_mapping: rubric("Authored") },
+    run_config: { model: route, agent_mode: "quick" },
+  });
+
+  it("preserves authored levels across clean refetch, save, and reopen", async () => {
+    const evalData = savedBinding();
+    const onSave = vi.fn();
+    const view = renderConfigFull({ evalData, onSave });
+    await waitFor(() =>
+      expect(screen.getByLabelText("Level 0")).toHaveValue("Authored bad"),
+    );
+    expect(capturedProps.tracing.runConfig.jev_mapping.score).toEqual(
+      rubric("Authored").score,
+    );
+
+    stableEvalDetail.data = {
+      ...stableEvalDetail.data,
+      description: "Fresh detail",
+    };
+    stableVersions.data = {
+      versions: stableVersions.data.versions.map((version) => ({
+        ...version,
+        usage_count: 2,
+      })),
+    };
+    view.rerender(configFullTree({ evalData, onSave }));
+    await waitFor(() =>
+      expect(screen.getByLabelText("Level 0")).toHaveValue("Authored bad"),
+    );
+    await act(async () =>
+      capturedProps.tracing.onReadyChange(true, { input: "output" }),
+    );
+    await userEvent.click(
+      screen.getByRole("button", { name: "Update Evaluation" }),
+    );
+    expect(onSave).toHaveBeenCalledWith(
+      expect.objectContaining({
+        versionId: "v1",
+        config: expect.objectContaining({
+          jev_mapping: expect.objectContaining(rubric("Authored")),
+        }),
+      }),
+    );
+    const saved = onSave.mock.calls[0][0];
+    view.unmount();
+    renderConfigFull({
+      evalData: {
+        ...evalData,
+        bindingConfig: saved.config,
+        run_config: saved.config.run_config,
+      },
+    });
+    await waitFor(() =>
+      expect(screen.getByLabelText("Level 0")).toHaveValue("Authored bad"),
+    );
+    expect(screen.getByLabelText("Level 1")).toHaveValue("Authored good");
+  });
+
+  it("resets to an explicitly chosen version and does not reapply the saved binding on refetch", async () => {
+    const evalData = savedBinding();
+    const view = renderConfigFull({ evalData });
+    await waitFor(() =>
+      expect(screen.getByLabelText("Level 0")).toHaveValue("Authored bad"),
+    );
+    await userEvent.click(screen.getByRole("combobox"));
+    await userEvent.click(screen.getByRole("option", { name: "V2" }));
+    expect(screen.getByLabelText("Level 0")).toHaveValue("Version two bad");
+
+    stableVersions.data = {
+      versions: stableVersions.data.versions.map((version) => ({
+        ...version,
+        usage_count: 3,
+      })),
+    };
+    view.rerender(configFullTree({ evalData }));
+    await waitFor(() =>
+      expect(screen.getByLabelText("Level 0")).toHaveValue("Version two bad"),
+    );
+
+    await userEvent.click(screen.getByRole("combobox"));
+    await userEvent.click(
+      screen.getByRole("option", { name: "Default version" }),
+    );
+    await waitFor(() =>
+      expect(screen.getByLabelText("Level 0")).toHaveValue("Current bad"),
+    );
+    expect(screen.getByRole("combobox")).toHaveTextContent("Default version");
+
+    await userEvent.click(screen.getByRole("combobox"));
+    await userEvent.click(screen.getByRole("option", { name: "V1" }));
+    await waitFor(() =>
+      expect(screen.getByLabelText("Level 0")).toHaveValue("Version one bad"),
+    );
+  });
+});
+
+it("names the sample-row blocker in the task footer and disabled action explanations", async () => {
+  const original = stableEvalDetail.data;
+  stableEvalDetail.data = {
+    ...original,
+    eval_type: "llm",
+    instructions: "Grade {{input}}",
+    config: { model: "template-model" },
+  };
+  try {
+    renderConfigFull();
+    const message =
+      "Sample row could not be loaded. Retry loading the sample row.";
+    await act(async () => {
+      capturedProps.tracing.onReadyChange(false, { input: "locale" });
+      capturedProps.tracing.onReadinessChange?.({ message });
+    });
+    // Three independent sites: a surviving tooltip cannot stand in for the
+    // footer or for the other disabled action's explanation.
+    expect(
+      screen.getByText(message, { selector: ".MuiTypography-caption" }),
+    ).toBeVisible();
+    for (const name of ["Test Evaluation", "Add Evaluation"]) {
+      const button = screen.getByRole("button", { name });
+      expect(button).toBeDisabled();
+      expect(
+        within(button.closest("[data-tooltip-host]")).getByTestId(
+          "tooltip-text",
+        ),
+      ).toHaveTextContent(message);
+    }
+    expect(
+      screen.queryByText("Map all variables to enable testing & adding"),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByText(/Map all variables before/),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /Add Evaluation/ }),
+    ).toBeDisabled();
+  } finally {
+    stableEvalDetail.data = original;
+  }
+});
 
 it("restores saved system-eval binding configuration", async () => {
   renderConfigFull({
@@ -264,6 +567,11 @@ describe("EvalPickerConfigFull — task preview time window", () => {
         filter_value: [TIME_WINDOW.startDate, TIME_WINDOW.endDate],
       },
     });
+  });
+
+  it("enables the backend native-field contract only for task mapping", () => {
+    renderConfigFull();
+    expect(capturedProps.tracing.taskMapping).toBe(true);
   });
 
   it("omits the created_at filter when no time window is provided", () => {

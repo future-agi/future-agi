@@ -75,12 +75,15 @@ class MCPRequestContext:
     authentication time; the executor refuses to run a tool anywhere else.
     ``api_key`` is the ``OrgApiKey`` row when the caller used key auth, so the
     Django request resolves the tenant exactly as the REST API would for it.
+    ``oauth_scopes`` is the set of tool groups an OAuth access token was granted;
+    ``None`` means the caller did not authenticate with an OAuth token.
     """
 
     user: Any
     organization: Any
     workspace: Any
     api_key: Any = None
+    oauth_scopes: frozenset[str] | None = None
 
 
 class DjangoAPIExecutor:
@@ -161,6 +164,7 @@ class DjangoAPIExecutor:
                 f"Generated API route no longer resolves: {method} {path}"
             ) from exc
         request.resolver_match = match
+        request.mcp_response = True
 
         # Reuse the existing workspace membership and write-access checks, then
         # inject the already authenticated MCP user for normal DRF permissions.
@@ -314,7 +318,14 @@ class DjangoAPIExecutor:
 
         unwrap = tool.response.get("unwrap")
         if unwrap and isinstance(data, dict) and unwrap in data:
-            return data[unwrap]
+            data = data[unwrap]
+        for dotted in tool.response.get("omit", []):
+            *parents, leaf = dotted.split(".")
+            target = data
+            for key in parents:
+                target = target.get(key) if isinstance(target, dict) else None
+            if isinstance(target, dict):
+                target.pop(leaf, None)
         return data
 
 

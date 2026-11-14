@@ -21,6 +21,7 @@ import { useParams } from "react-router";
 import { LoadingButton } from "@mui/lab";
 import { useAgentDetailsStore } from "../store/agentDetailsStore";
 import { handleOnDocsClicked } from "src/utils/Mixpanel";
+import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
 
 const AddNewVersionDrawer = ({ open, onClose, latestVersion }) => {
   const { agentDefinitionId } = useParams();
@@ -28,6 +29,7 @@ const AddNewVersionDrawer = ({ open, onClose, latestVersion }) => {
     useAgentDetailsStore();
   const { enqueueSnackbar } = useSnackbar();
   const queryClient = useQueryClient();
+  const agentKind = agentDetails?.agent_kind;
 
   const {
     control,
@@ -35,12 +37,13 @@ const AddNewVersionDrawer = ({ open, onClose, latestVersion }) => {
     reset,
     watch,
     formState,
+    setError: setFieldError,
     setValue,
     getValues,
     trigger,
     clearErrors,
   } = useAgentConfigForm(
-    createAgentDefinitionSchema({ agentDefinitionId }),
+    createAgentDefinitionSchema({ agentDefinitionId, agentKind }),
     agentDetails,
   );
 
@@ -71,19 +74,25 @@ const AddNewVersionDrawer = ({ open, onClose, latestVersion }) => {
 
   const { onSubmit } = useAgentSubmit({
     agentDefinitionId,
+    agentKind,
     reset,
     queryClient,
     enqueueSnackbar,
     setError,
+    setFieldError,
+    setValue,
     setSelectedVersion,
     onClose: resetFormAndClose,
   });
+
+  const covered = useDrawerCovered(open);
 
   return (
     <>
       <Drawer
         anchor="right"
         open={open}
+        sx={coveredDrawerSx(covered)}
         variant="temporary"
         onClose={handleDrawerClose}
         PaperProps={{
@@ -92,7 +101,7 @@ const AddNewVersionDrawer = ({ open, onClose, latestVersion }) => {
             position: "fixed",
             display: "flex",
             flexDirection: "column",
-            borderRadius: "10px 0 0 10px",
+            borderRadius: "8px 0 0 8px",
             backgroundColor: "background.paper",
             width: "50vw",
           },
@@ -136,12 +145,12 @@ const AddNewVersionDrawer = ({ open, onClose, latestVersion }) => {
               <Link
                 onClick={() => handleOnDocsClicked("agent_definition_page")}
                 href="https://docs.futureagi.com/docs/simulation/concepts/agent-definition"
-                color="blue.500"
+                color="status.info.fg"
                 target="_blank"
                 rel="noopener noreferrer"
                 fontWeight="fontWeightMedium"
-                fontSize="14px"
-                sx={{ textDecoration: "underline", fontSize: "13px" }}
+                fontSize="12px"
+                sx={{ textDecoration: "underline", fontSize: "12px" }}
               >
                 Learn more
               </Link>{" "}
@@ -149,7 +158,7 @@ const AddNewVersionDrawer = ({ open, onClose, latestVersion }) => {
           </Box>
 
           <IconButton onClick={handleDrawerClose}>
-            <Iconify icon="mingcute:close-line" color="text.primary" />
+            <Iconify icon="solar:close-linear" color="text.primary" />
           </IconButton>
         </Box>
 
@@ -166,8 +175,8 @@ const AddNewVersionDrawer = ({ open, onClose, latestVersion }) => {
               width: "6px",
             },
             "&::-webkit-scrollbar-thumb": {
-              backgroundColor: "rgba(0, 0, 0, 0.3)",
-              borderRadius: "3px",
+              backgroundColor: "border.strong",
+              borderRadius: "4px",
             },
             "&::-webkit-scrollbar-track": {
               backgroundColor: "transparent",
@@ -205,6 +214,7 @@ const AddNewVersionDrawer = ({ open, onClose, latestVersion }) => {
             getValues={getValues}
             trigger={trigger}
             clearErrors={clearErrors}
+            agentKind={agentKind}
           />
         </Box>
         <Box
@@ -223,7 +233,6 @@ const AddNewVersionDrawer = ({ open, onClose, latestVersion }) => {
             onClick={handleSubmit(onSubmit)}
             loading={isSubmitting}
             disabled={!isValid || !commitMessage}
-            sx={{ borderRadius: "4px", height: "34px" }}
           >
             {`Create version v${latestVersion + 1}`}
           </LoadingButton>
@@ -239,7 +248,6 @@ const AddNewVersionDrawer = ({ open, onClose, latestVersion }) => {
             size="small"
             variant="contained"
             color="error"
-            sx={{ paddingX: "24px" }}
             onClick={() => {
               setConfirmDialogOpen(false);
               resetFormAndClose();

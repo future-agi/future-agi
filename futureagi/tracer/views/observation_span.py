@@ -99,7 +99,11 @@ from tracer.serializers.observation_span import (
     SubmitFeedbackActionTypeSerializer,
     SubmitFeedbackSerializer,
 )
-from tracer.serializers.trace import TraceNavigationResponseSerializer, TraceSerializer
+from tracer.serializers.trace import (
+    RUN_SCOPE_KEYS,
+    TraceNavigationResponseSerializer,
+    TraceSerializer,
+)
 from tracer.services.clickhouse.attribute_reads import (
     ATTRIBUTE_READ_EXPLICIT_SEGMENT,
     AttributeReadMetadata,
@@ -163,6 +167,7 @@ from tracer.services.clickhouse.v2.span_selectors import (
     flatten_span_attributes_into_entry,
     merge_content_rows,
 )
+from tracer.services.eval_tasks.entries import soft_delete_eval_results
 from tracer.services.eval_tiles import count_column_metadata
 from tracer.services.filter_attestation import (
     applied_filter_attestation,
@@ -839,7 +844,10 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
             TraceDetailReadUnavailable,
         )
 
-        selector = getattr(request, "validated_query_data", {}) or {}
+        query = getattr(request, "validated_query_data", {}) or {}
+        # The run parameters are not part of the selector: they only replace the
+        # project set with a run's hidden project, never describe a span.
+        selector = {k: v for k, v in query.items() if k not in RUN_SCOPE_KEYS}
         # ``project_id`` alone pins a bare span id to the project the span was
         # opened from; any other selector is a full physical reference.
         physical_reference = selector if selector.keys() - {"project_id"} else None
@@ -848,15 +856,32 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
             observation_span_id = kwargs.get("pk")
             organization = _get_request_organization(request)
             project_manager = getattr(Project, "no_workspace_objects", Project.objects)
+            run_scope = None
+            if any(query.get(key) is not None for key in RUN_SCOPE_KEYS):
+                from tracer.services.simulation_project import (
+                    run_scope_project_ids,
+                    simulation_scope_for_run,
+                )
+
+                run_scope = simulation_scope_for_run(
+                    request,
+                    test_execution_id=query.get("test_execution_id"),
+                    call_execution_id=query.get("call_execution_id"),
+                )
             if physical_reference:
                 # Explicit identity is authority-scoped before a CH service is
                 # constructed. Never widen a denied selector to bare-ID lookup.
-                if not project_manager.filter(
-                    _project_workspace_scope_q(request, project_prefix=""),
-                    organization=organization,
-                    deleted=False,
-                    id=physical_reference["project_id"],
-                ).exists():
+                # With a run, the only project that opens is the run's hidden one.
+                if run_scope is not None:
+                    allowed = str(physical_reference["project_id"]) == str(run_scope.id)
+                else:
+                    allowed = project_manager.filter(
+                        _project_workspace_scope_q(request, project_prefix=""),
+                        organization=organization,
+                        deleted=False,
+                        id=physical_reference["project_id"],
+                    ).exists()
+                if not allowed:
                     raise PhysicalSpanDetailError("span_reference_not_found")
                 return self._retrieve_clickhouse(
                     request,
@@ -865,20 +890,25 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                     authorized_project_ids=[str(physical_reference["project_id"])],
                     physical_reference=physical_reference,
                 )
-            project_scope = project_manager.filter(
-                _project_workspace_scope_q(request, project_prefix=""),
-                organization=organization,
-                deleted=False,
-            )
-            if pinned_project_id:
-                # Outside the caller's scope this resolves like a missing span.
-                project_scope = project_scope.filter(id=pinned_project_id)
-            authorized_project_ids = [
-                str(project_id)
-                for project_id in project_scope.values_list("id", flat=True)[:4097]
-            ]
-            if len(authorized_project_ids) > 4096:
-                raise TraceDetailReadUnavailable("project_scope_too_large")
+            if run_scope is not None:
+                authorized_project_ids = run_scope_project_ids(
+                    run_scope, pinned_project_id
+                )
+            else:
+                project_scope = project_manager.filter(
+                    _project_workspace_scope_q(request, project_prefix=""),
+                    organization=organization,
+                    deleted=False,
+                )
+                if pinned_project_id:
+                    # Outside the caller's scope this resolves like a missing span.
+                    project_scope = project_scope.filter(id=pinned_project_id)
+                authorized_project_ids = [
+                    str(project_id)
+                    for project_id in project_scope.values_list("id", flat=True)[:4097]
+                ]
+                if len(authorized_project_ids) > 4096:
+                    raise TraceDetailReadUnavailable("project_scope_too_large")
 
             # Direct-write CH25 is the sole span source.  The project dimension
             # above is the tenant authority; no PG ObservationSpan existence
@@ -1826,9 +1856,9 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                     )
                     task_id = eval_logger.eval_task_id
 
-                    eval_logger.deleted = True
-                    eval_logger.deleted_at = timezone.now()
-                    eval_logger.save(update_fields=["deleted", "deleted_at"])
+                    soft_delete_eval_results(
+                        EvalLogger.objects.filter(pk=eval_logger.pk)
+                    )
                 except EvalLogger.DoesNotExist:
                     raise Exception("No eval associated with this span")  # noqa: B904
 
@@ -3874,10 +3904,20 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
         max_traces: int | None = None,
         max_spans: int | None = None,
     ) -> list:
-        """Session-level paths: session fields + ``traces.<i>.<trace_field>``
-        + ``traces.<i>.spans.<j>.<key>`` up to the observed max traces-per-
-        session and spans-per-trace."""
-        paths = list(self._SESSION_PUBLIC_FIELDS)
+        """Session-level paths: session fields, the whole conversation
+        (``transcript``, and ``transcript_full`` with tool calls) +
+        ``traces.<i>.<trace_field>`` + ``traces.<i>.spans.<j>.<key>`` up to
+        the observed max traces-per-session and spans-per-trace."""
+        from tracer.utils.eval import (
+            SESSION_FULL_TRANSCRIPT_FIELD,
+            SESSION_TRANSCRIPT_FIELD,
+        )
+
+        paths = [
+            *self._SESSION_PUBLIC_FIELDS,
+            SESSION_TRANSCRIPT_FIELD,
+            SESSION_FULL_TRANSCRIPT_FIELD,
+        ]
         if max_traces is None:
             max_traces = self._max_traces_per_session(project_id)
         if max_spans is None:

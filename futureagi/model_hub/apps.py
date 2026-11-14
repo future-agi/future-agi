@@ -1,4 +1,5 @@
 import os
+import uuid
 
 import structlog
 from django.apps import AppConfig
@@ -21,6 +22,8 @@ STARTUP_SAFE_MANAGEMENT_COMMANDS = frozenset(
         "createsuperuser",
         "reset_password",
         "generate_swagger",
+        "provision_sql_reader",
+        "provision_sql_service",
         "grpcrunaioserver",
         "runserver",
         # Read the migration table and the migration files; write nothing.
@@ -46,6 +49,7 @@ OPERATOR_STARTUP_MUTATION_COMMANDS = frozenset(
         "bootstrap_install",
         "createcachetable",
         "drop_legacy_observation_span",
+        "harness_versions_backfill",
         "migrate",
         "provision_grouping_features",
         "enable_sampled_grouping",
@@ -54,6 +58,7 @@ OPERATOR_STARTUP_MUTATION_COMMANDS = frozenset(
         "requeue_investigations",
         "register_temporal_schedules",
         "seed_system_evals",
+        "purge_sql_results",
     }
 )
 # Developer tools that only the explicit local mode (./bin/dev manage) may run:
@@ -183,11 +188,47 @@ def explicit_management_mutation_authorized(argv: list[str]) -> bool:
     return explicit_local_mode
 
 
+def _is_uuid(value: str) -> bool:
+    try:
+        uuid.UUID(value)
+    except ValueError:
+        return False
+    return True
+
+
+def _harness_backfill_check_only(options: list[str]) -> bool:
+    """The read-only ``harness_versions_backfill --check`` form, and nothing else.
+
+    Only exact tokens pass: ``--check``, ``--json``, ``--job <uuid>`` and
+    ``--output <path>`` (a local file, not the database). Abbreviations and ``=`` forms
+    stay blocked.
+    """
+    if "--check" not in options:
+        return False
+    index = 0
+    while index < len(options):
+        token = options[index]
+        following = options[index + 1] if index + 1 < len(options) else ""
+        if token in {"--check", "--json"}:
+            index += 1
+        elif token == "--job" and _is_uuid(following):
+            index += 2
+        elif token == "--output" and following and not following.startswith("-"):
+            index += 2
+        else:
+            return False
+    return True
+
+
 def guarded_management_command(argv: list[str]) -> str | None:
     """Return a Django command forbidden during mutation-free startup."""
 
     command = _management_command(argv)
     if command is None or command in STARTUP_SAFE_MANAGEMENT_COMMANDS:
+        return None
+    if command == "harness_versions_backfill" and _harness_backfill_check_only(
+        argv[argv.index(command) + 1 :]
+    ):
         return None
     if command == "migrate":
         # Django 5.1 runs --prune before the --check exit. Permit only this

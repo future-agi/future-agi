@@ -6,8 +6,10 @@
 
 ### AGENT-E2E-001 — Observe voice Call Logs show and filter the newest evaluation count
 
-**Goal:** Read and filter the newest completed evaluation on a voice call in Observe Call Logs, then inspect its explanation.  
-**Spec:** `flows/agents/call-log-eval-columns.spec.ts:56`  
+**Goal:** Read and filter the newest completed evaluation on a voice call in Observe Call Logs, then inspect its explanation.
+
+**Spec:** `flows/agents/call-log-eval-columns.spec.ts:56`
+
 **Tags:** —
 
 **User steps:**
@@ -28,12 +30,36 @@
 - voice detail preserves scalar Fail and adds the exact latest per-span rollup; eval-cell click selects Evals and shows its explanation
 - native Failed and Passed filters send the config-bound predicate; browser and API return exactly the call ID or the empty set, respectively
 
+### AGENT-E2E-002 — Agents remain complete across bounded list pages
+
+**Goal:** A developer can browse all of their agents in bounded pages without losing rows or changing supported page sizes.
+
+**Spec:** `flows/agents/graph-page-size-cap.spec.ts:20`
+
+**Tags:** —
+
+**User steps:**
+
+1. create 101 uniquely named graphs through the public graph API
+2. open Agents Playground and search for the unique flow prefix
+3. compare the exact first-page names and IDs with the authorized 25-row list response
+4. move to page two and compare the exact next 25 rows with the list API
+5. request page sizes 101 and 100000000 and require a 100-row page with capped metadata
+6. follow next_page and require the final seeded graph without duplicated or omitted IDs
+
+**Backend state verified:**
+
+- The UI displays the exact ordered graph set returned by the authorized list request at supported page sizes.
+- Above-cap graph requests return at most 100 rows, metadata reflects the cap, and following next_page returns the complete seeded ID set once.
+
 ## alerts
 
 ### ALERT-E2E-001 — a fired alert opens the traces from that fire’s own window
 
-**Goal:** An on-call engineer opens a fired alert and lands on the traces from that fire’s own time window  
-**Spec:** `flows/alerts/view-trace-scoping.spec.ts:45`  
+**Goal:** An on-call engineer opens a fired alert and lands on the traces from that fire’s own time window
+
+**Spec:** `flows/alerts/view-trace-scoping.spec.ts:45`
+
 **Tags:** —
 
 **User steps:**
@@ -60,8 +86,10 @@
 
 ### ALERT-E2E-002 — a scoring-eval alert measures the score while a labelled eval alerts on a chosen label
 
-**Goal:** A user sets up an alert on a scoring evaluation and it measures the score itself, while a labelled evaluation still alerts on a chosen label  
-**Spec:** `flows/alerts/scoring-eval-alert.spec.ts:26`  
+**Goal:** A user sets up an alert on a scoring evaluation and it measures the score itself, while a labelled evaluation still alerts on a chosen label
+
+**Spec:** `flows/alerts/scoring-eval-alert.spec.ts:26`
+
 **Tags:** —
 
 **User steps:**
@@ -82,12 +110,36 @@
 - PG tracer_useralertmonitor: the scoring monitor’s threshold_metric_value is NULL, the choices monitor’s is the label, both org-scoped
 - alerts list shows the scoring alert’s Alert Type as the bare eval name and the choices alert’s as "name (label)"
 
+### ALERT-E2E-003 — alert owners configure webhooks without private destinations or unauthorized changes
+
+**Goal:** An authorized alert owner configures a public webhook through the alert editor while private destinations and unauthorized changes are refused.
+
+**Spec:** `flows/alerts/webhook-configuration.spec.ts:11`
+
+**Tags:** —
+
+**User steps:**
+
+1. create a uniquely named muted monitor with no notification destinations
+2. open the alert editor, choose Webhook, enter a public URL and save
+3. read the exact saved destination through the detail API and Postgres
+4. try a private destination through the editor and verify rejection
+5. try cross-organization, cross-workspace and viewer updates
+
+**Backend state verified:**
+
+- The browser-saved webhook is returned by the alert detail API and stored on the owner organization's muted monitor.
+- A private destination is rejected and the saved webhook remains unchanged.
+- Cross-organization, cross-workspace and viewer updates are refused without changing the saved webhook.
+
 ## annotations
 
 ### ANNOT-E2E-001 — workspace annotation choices follow UI edits without scores
 
-**Goal:** Create a projectless annotation label and discover its current choices in a workspace filter  
-**Spec:** `flows/annotations/label-catalog.spec.ts:25`  
+**Goal:** Create a projectless annotation label and discover its current choices in a workspace filter
+
+**Spec:** `flows/annotations/label-catalog.spec.ts:25`
+
 **Tags:** —
 
 **User steps:**
@@ -105,8 +157,10 @@
 
 ### ANNOT-E2E-002 — corrected trace annotations change exact filter matches
 
-**Goal:** Submit and correct typed human trace annotations and find only traces with the current score  
-**Spec:** `flows/annotations/catalog-score-lifecycle.spec.ts:34`  
+**Goal:** Submit and correct typed human trace annotations and find only traces with the current score
+
+**Spec:** `flows/annotations/catalog-score-lifecycle.spec.ts:34`
+
 **Tags:** —
 
 **User steps:**
@@ -127,8 +181,10 @@
 
 ### ANNOT-E2E-003 — corrected span annotations change exact filter matches
 
-**Goal:** Submit and correct typed human span annotations and find only spans with the current score  
-**Spec:** `flows/annotations/catalog-score-lifecycle.spec.ts:34`  
+**Goal:** Submit and correct typed human span annotations and find only spans with the current score
+
+**Spec:** `flows/annotations/catalog-score-lifecycle.spec.ts:34`
+
 **Tags:** —
 
 **User steps:**
@@ -149,8 +205,10 @@
 
 ### ANNOT-E2E-004 — corrected session annotations match only current authorized sessions
 
-**Goal:** Submit and correct all six native session annotations, then find only sessions with current, authorized scores  
-**Spec:** `flows/annotations/session-score-lifecycle.spec.ts:42`  
+**Goal:** Submit and correct all six native session annotations, then find only sessions with current, authorized scores
+
+**Spec:** `flows/annotations/session-score-lifecycle.spec.ts:42`
+
 **Tags:** —
 
 **User steps:**
@@ -176,8 +234,10 @@
 
 ### AUTH-E2E-001 — user signs in with email and password
 
-**Goal:** A new user signs in with email and password and is routed to organization setup  
-**Spec:** `flows/auth/login.spec.ts:10`  
+**Goal:** A new user signs in with email and password and is routed to organization setup
+
+**Spec:** `flows/auth/login.spec.ts:10`
+
 **Tags:** @smoke
 
 **User steps:**
@@ -194,8 +254,10 @@
 
 ### AUTH-E2E-002 — workspace switching updates implicit scope without replacing the signed-in session
 
-**Goal:** Switch workspaces and continue seeing the selected workspace after refresh, while explicitly scoped requests still reach the requested authorized workspace  
-**Spec:** `flows/auth/default-workspace-switch.spec.ts:44`  
+**Goal:** Switch workspaces and continue seeing the selected workspace after refresh, while explicitly scoped requests still reach the requested authorized workspace
+
+**Spec:** `flows/auth/default-workspace-switch.spec.ts:44`
+
 **Tags:** —
 
 **User steps:**
@@ -215,8 +277,10 @@
 
 ### AUTH-E2E-003 — first-run setup sends an existing owner to sign in
 
-**Goal:** An operator whose install already created the owner account runs the first-run checks at /setup and is sent to sign in with that account instead of signing up again  
-**Spec:** `flows/auth/first-run-existing-account.spec.ts:30`  
+**Goal:** An operator whose install already created the owner account runs the first-run checks at /setup and is sent to sign in with that account instead of signing up again
+
+**Spec:** `flows/auth/first-run-existing-account.spec.ts:30`
+
 **Tags:** —
 
 **User steps:**
@@ -235,10 +299,103 @@
 - Continue routes to /auth/jwt/login, not /auth/jwt/register
 - signing in as the owner returns a token pair from POST /accounts/token/ and moves on to organization setup
 
+### AUTH-E2E-004 — fresh signup seeds demo traces visible in Observe
+
+**Goal:** A new user signs up with their own password and can inspect the seeded demo trace in Observe
+
+**Spec:** `flows/auth/signup-demo-traces.spec.ts:31`
+
+**Tags:** —
+
+**User steps:**
+
+1. complete first-run checks if required
+2. sign up with a unique email and a user-supplied password
+3. wait for the held initial profile read before role and goal controls become interactive
+4. select a role and click one goal once, then save and complete organization onboarding
+5. see both demo datasets
+6. open the Observe demo project
+7. open its single demo trace and inspect the span tree
+
+**Backend state verified:**
+
+- the onboarding POST and the fresh accounts_user row contain exactly the selected role and goal
+- the fresh user organization has both demo datasets and both demo projects, each with one trace, one session and 35 linked spans in PostgreSQL
+- ClickHouse has the same trace, session and span identities for both projects, without depending on legacy span CDC
+
+### AUTH-E2E-005 — Google sign-in accepts only verified identities including rotated keys
+
+**Goal:** An existing user signs in with Google only when Google supplies a valid identity, including after signing-key rotation
+
+**Spec:** `flows/auth/google-signin.spec.ts:17`
+
+**Tags:** —
+
+**User steps:**
+
+1. provision one uniquely named synthetic account
+2. click Continue with Google on the real login page
+3. authorize the identity at the owned mock provider
+4. see the authenticated dataset dashboard for a valid identity
+5. see login refusal for invalid signature, issuer, audience, expiry and unknown key
+6. sign in successfully after the provider rotates its signing key
+
+**Backend state verified:**
+
+- Successful Google callbacks persist exactly one new active AuthToken for the minted user and its existing organization.
+- Rejected Google callbacks leave account and token counts unchanged and return the expected login-error redirect.
+- The owned provider witnesses token exchange and JWKS verification; an unknown cached kid refreshes once, then succeeds only when the key is published.
+
+### AUTH-E2E-016 — after a same-tab logout the next account sees none of the previous account's state
+
+**Goal:** After account A logs out in a tab, account B signing in on the same tab sees none of A's state
+
+**Spec:** `flows/auth/logout-clears-previous-account.spec.ts:33`
+
+**Tags:** —
+
+**User steps:**
+
+1. sign in as account A through the login form
+2. open Error Feed from the sidebar and search for a value only A typed
+3. log out through the workspace menu and confirm
+4. sign in as account B through the login form in the same tab, without a page reload
+5. open Error Feed from the sidebar as B
+
+**Backend state verified:**
+
+- both seeded organizations have completed setup in PG with their minted names
+- A's Error Feed list request carries A's organization and A's search value
+- no request B sends carries another organization, every request B sends from the app after signing in carries exactly B's organization, and no Error Feed list request of B carries a search value
+- the access token left in the tab after B signs in resolves to B's user and organization
+- no A-identifying value appears in B's page text, API requests, localStorage or sessionStorage
+
+### AUTH-E2E-017 — late SAML markers do not replace an existing session
+
+**Goal:** Keep the same authorized workspace and session after an invalid late SAML code URL, while ordinary navigation remains usable
+
+**Spec:** `flows/auth/late-saml-marker.spec.ts:20`
+
+**Tags:** —
+
+**User steps:**
+
+1. open Observe with an existing session and a uniquely named project
+2. reject late hash, pushState, replaceState, object URL and history-restoration markers
+3. preserve native ordinary-anchor events and history errors
+4. reload Observe and read the same authorized project without obtaining new credentials
+
+**Backend state verified:**
+
+- The exact active token row IDs for the actor are unchanged after rejected markers
+- The same authenticated project-list API and UI still expose the seeded project with the unchanged credential pair
+
 ### SAML-E2E-001 — signed login issues one organization-scoped session
 
-**Goal:** A member signs in through the tenant IdP and receives one scoped session  
-**Spec:** `flows/auth/saml-tenant-isolation.spec.ts:183`  
+**Goal:** A member signs in through the tenant IdP and receives one scoped session
+
+**Spec:** `flows/auth/saml-tenant-isolation.spec.ts:145`
+
 **Tags:** @saml
 
 **User steps:**
@@ -256,8 +413,10 @@
 
 ### SAML-E2E-002 — another browser cannot consume the initiating browser candidate
 
-**Goal:** The browser that initiated SSO can complete after another browser posts first  
-**Spec:** `flows/auth/saml-tenant-isolation.spec.ts:232`  
+**Goal:** The browser that initiated SSO can complete after another browser posts first
+
+**Spec:** `flows/auth/saml-tenant-isolation.spec.ts:191`
+
 **Tags:** @saml
 
 **User steps:**
@@ -274,8 +433,10 @@
 
 ### SAML-E2E-003 — the cross-site ACS post omits the binder and completion carries it
 
-**Goal:** A real cross-site IdP POST does not leak the browser binding cookie  
-**Spec:** `flows/auth/saml-tenant-isolation.spec.ts:293`  
+**Goal:** A real cross-site IdP POST does not leak the browser binding cookie
+
+**Spec:** `flows/auth/saml-tenant-isolation.spec.ts:255`
+
 **Tags:** @saml
 
 **User steps:**
@@ -291,8 +452,10 @@
 
 ### SAML-E2E-004 — safe next survives the binding while external next values do not
 
-**Goal:** A SAML user returns to the approved deep page and cannot be redirected off-site  
-**Spec:** `flows/auth/saml-tenant-isolation.spec.ts:316`  
+**Goal:** A SAML user returns to the approved deep page and cannot be redirected off-site
+
+**Spec:** `flows/auth/saml-tenant-isolation.spec.ts:276`
+
 **Tags:** @saml
 
 **User steps:**
@@ -308,8 +471,10 @@
 
 ### SAML-E2E-005 — a SAML landing resolves the authenticated organization without configuration writes
 
-**Goal:** A SAML session lands in the organization that signed the assertion  
-**Spec:** `flows/auth/saml-tenant-isolation.spec.ts:348`  
+**Goal:** A SAML session lands in the organization that signed the assertion
+
+**Spec:** `flows/auth/saml-tenant-isolation.spec.ts:308`
+
 **Tags:** @saml
 
 **User steps:**
@@ -325,8 +490,10 @@
 
 ### SAML-E2E-006 — SAML replaces a live password session before any stale scope is sent
 
-**Goal:** A SAML callback replaces a live session without using its stale organization scope  
-**Spec:** `flows/auth/saml-tenant-isolation.spec.ts:379`  
+**Goal:** A SAML callback replaces a live session without using its stale organization scope
+
+**Spec:** `flows/auth/saml-tenant-isolation.spec.ts:339`
+
 **Tags:** @saml
 
 **User steps:**
@@ -346,8 +513,10 @@
 
 ### DASH-E2E-001 — an imported numeric dataset column works in a saved widget
 
-**Goal:** Select a newly imported numeric dataset column and see its correct aggregate in a saved dashboard widget  
-**Spec:** `flows/dashboards/dataset-catalog-widget.spec.ts:27`  
+**Goal:** Select a newly imported numeric dataset column and see its correct aggregate in a saved dashboard widget
+
+**Spec:** `flows/dashboards/dataset-catalog-widget.spec.ts:27`
+
 **Tags:** —
 
 **User steps:**
@@ -366,8 +535,10 @@
 
 ### DASH-E2E-002 — a saved trace-metric widget preserves its project, cohort and model results
 
-**Goal:** A developer saves a trace-metric widget for one project and cohort and sees the same exact model results after reopening it  
-**Spec:** `flows/dashboards/catalog-source-parity.spec.ts:48`  
+**Goal:** A developer saves a trace-metric widget for one project and cohort and sees the same exact model results after reopening it
+
+**Spec:** `flows/dashboards/catalog-source-parity.spec.ts:48`
+
 **Tags:** —
 
 **User steps:**
@@ -386,8 +557,10 @@
 
 ### DASH-E2E-003 — a metric-specific Model filter changes only that metric after save and reopen
 
-**Goal:** A metric-specific Model filter changes only that metric after save and reopen.  
-**Spec:** `flows/dashboards/trace-metric-local-filter.spec.ts:54`  
+**Goal:** A metric-specific Model filter changes only that metric after save and reopen.
+
+**Spec:** `flows/dashboards/trace-metric-local-filter.spec.ts:54`
+
 **Tags:** —
 
 **User steps:**
@@ -406,8 +579,10 @@
 
 ### DASH-E2E-004 — a saved numeric attribute widget preserves numeric filtering and groups
 
-**Goal:** A saved numeric attribute widget preserves numeric filtering and groups.  
-**Spec:** `flows/dashboards/numeric-attribute-widget.spec.ts:54`  
+**Goal:** A saved numeric attribute widget preserves numeric filtering and groups.
+
+**Spec:** `flows/dashboards/numeric-attribute-widget.spec.ts:54`
+
 **Tags:** —
 
 **User steps:**
@@ -426,8 +601,10 @@
 
 ### DASH-E2E-005 — a saved widget keeps boolean scope distinct from same-spelled text
 
-**Goal:** A saved widget keeps boolean scope distinct from same-spelled text.  
-**Spec:** `flows/dashboards/boolean-attribute-widget.spec.ts:56`  
+**Goal:** A saved widget keeps boolean scope distinct from same-spelled text.
+
+**Spec:** `flows/dashboards/boolean-attribute-widget.spec.ts:56`
+
 **Tags:** —
 
 **User steps:**
@@ -446,8 +623,10 @@
 
 ### DASH-E2E-006 — a saved widget retains native array membership through popup edits
 
-**Goal:** A saved widget retains array membership without treating arrays as scalar metrics.  
-**Spec:** `flows/dashboards/array-membership-widget.spec.ts:51`  
+**Goal:** A saved widget retains array membership without treating arrays as scalar metrics.
+
+**Spec:** `flows/dashboards/array-membership-widget.spec.ts:51`
+
 **Tags:** —
 
 **User steps:**
@@ -467,8 +646,10 @@
 
 ### DASH-E2E-007 — a saved Session widget counts only the selected project session traces
 
-**Goal:** A saved Session widget counts only the selected project's session traces.  
-**Spec:** `flows/dashboards/trace-backed-session-widget.spec.ts:54`  
+**Goal:** A saved Session widget counts only the selected project's session traces.
+
+**Spec:** `flows/dashboards/trace-backed-session-widget.spec.ts:54`
+
 **Tags:** —
 
 **User steps:**
@@ -491,8 +672,10 @@
 
 ### DASH-E2E-008 — a saved User widget keeps project and identifier-type scope
 
-**Goal:** A saved User widget keeps project and identifier-type scope.  
-**Spec:** `flows/dashboards/trace-backed-user-widget.spec.ts:61`  
+**Goal:** A saved User widget keeps project and identifier-type scope.
+
+**Spec:** `flows/dashboards/trace-backed-user-widget.spec.ts:61`
+
 **Tags:** —
 
 **User steps:**
@@ -515,8 +698,10 @@
 
 ### DASH-E2E-009 — a saved conversation widget excludes child-model call-metric decoys
 
-**Goal:** A saved conversation widget excludes child-model call-metric decoys.  
-**Spec:** `flows/dashboards/conversation-attribute-widget.spec.ts:54`  
+**Goal:** A saved conversation widget excludes child-model call-metric decoys.
+
+**Spec:** `flows/dashboards/conversation-attribute-widget.spec.ts:54`
+
 **Tags:** —
 
 **User steps:**
@@ -538,8 +723,10 @@
 
 ### DASH-E2E-010 — a saved trace annotation widget retains numeric scores
 
-**Goal:** A saved trace annotation widget retains numeric scores.  
-**Spec:** `flows/dashboards/trace-numeric-annotation-widget.spec.ts:56`  
+**Goal:** A saved trace annotation widget retains numeric scores.
+
+**Spec:** `flows/dashboards/trace-numeric-annotation-widget.spec.ts:56`
+
 **Tags:** —
 
 **User steps:**
@@ -561,8 +748,10 @@
 
 ### DASH-E2E-011 — a saved trace annotation widget retains star ratings
 
-**Goal:** A saved trace annotation widget retains star ratings.  
-**Spec:** `flows/dashboards/trace-star-annotation-widget.spec.ts:57`  
+**Goal:** A saved trace annotation widget retains star ratings.
+
+**Spec:** `flows/dashboards/trace-star-annotation-widget.spec.ts:57`
+
 **Tags:** —
 
 **User steps:**
@@ -584,8 +773,10 @@
 
 ### DASH-E2E-012 — a saved trace annotation widget retains exact text membership
 
-**Goal:** A saved trace annotation widget retains exact text membership.  
-**Spec:** `flows/dashboards/trace-text-annotation-widget.spec.ts:60`  
+**Goal:** A saved trace annotation widget retains exact text membership.
+
+**Spec:** `flows/dashboards/trace-text-annotation-widget.spec.ts:60`
+
 **Tags:** —
 
 **User steps:**
@@ -607,8 +798,10 @@
 
 ### DASH-E2E-013 — widget y-axis fits its data unless a bound is typed
 
-**Goal:** A user reading a dashboard widget gets a y-axis sized to the data, and can override it by typing a Threshold Bound  
-**Spec:** `flows/dashboards/widget-y-axis.spec.ts:450`  
+**Goal:** A user reading a dashboard widget gets a y-axis sized to the data, and can override it by typing a Threshold Bound
+
+**Spec:** `flows/dashboards/widget-y-axis.spec.ts:450`
+
 **Tags:** —
 
 **User steps:**
@@ -626,8 +819,10 @@
 
 ### DASH-E2E-014 — Out of Bounds decides whether a typed bound clips the data
 
-**Goal:** A user who typed a Threshold Bound tighter than their data chooses whether the chart widens to keep every point visible or clips at the bound  
-**Spec:** `flows/dashboards/widget-y-axis.spec.ts:531`  
+**Goal:** A user who typed a Threshold Bound tighter than their data chooses whether the chart widens to keep every point visible or clips at the bound
+
+**Spec:** `flows/dashboards/widget-y-axis.spec.ts:531`
+
 **Tags:** —
 
 **User steps:**
@@ -645,8 +840,10 @@
 
 ### DASH-E2E-015 — a dual-axis widget keeps one scale per side and keeps it when a series is hidden
 
-**Goal:** A user plotting a large and a small metric together assigns one of them to the right axis, reads both off their own scale, and keeps that layout after hiding a series  
-**Spec:** `flows/dashboards/widget-y-axis.spec.ts:612`  
+**Goal:** A user plotting a large and a small metric together assigns one of them to the right axis, reads both off their own scale, and keeps that layout after hiding a series
+
+**Spec:** `flows/dashboards/widget-y-axis.spec.ts:612`
+
 **Tags:** —
 
 **User steps:**
@@ -664,8 +861,10 @@
 
 ### DASH-E2E-016 — a column widget keeps its bars proportional while a line widget fits the band
 
-**Goal:** A user switching a widget to columns reads bar heights that are true to their values, while the same data on a line widget still gets the tight fitted axis  
-**Spec:** `flows/dashboards/widget-y-axis.spec.ts:715`  
+**Goal:** A user switching a widget to columns reads bar heights that are true to their values, while the same data on a line widget still gets the tight fitted axis
+
+**Spec:** `flows/dashboards/widget-y-axis.spec.ts:715`
+
 **Tags:** —
 
 **User steps:**
@@ -684,8 +883,10 @@
 
 ### DATA-E2E-001 — uploaded dataset values can be discovered and filtered
 
-**Goal:** Upload a dataset and select a real column value to narrow its rows  
-**Spec:** `flows/datasets/uploaded-catalog-values.spec.ts:12`  
+**Goal:** Upload a dataset and select a real column value to narrow its rows
+
+**Spec:** `flows/datasets/uploaded-catalog-values.spec.ts:12`
+
 **Tags:** —
 
 **User steps:**
@@ -705,8 +906,10 @@
 
 ### DATA-E2E-002 — dataset discovery follows cell edits and column deletion
 
-**Goal:** Edit dataset cells and columns and discover only their current authorized values without manual catalog repair  
-**Spec:** `flows/datasets/catalog-column-lifecycle.spec.ts:18`  
+**Goal:** Edit dataset cells and columns and discover only their current authorized values without manual catalog repair
+
+**Spec:** `flows/datasets/catalog-column-lifecycle.spec.ts:18`
+
 **Tags:** —
 
 **User steps:**
@@ -724,12 +927,62 @@
 - current property label, value choices and filtered UI/API rows agree after editing
 - removed columns and datasets cannot be rediscovered through metadata or value requests
 
+### DATA-E2E-003 — dataset PDFs render without a runtime CDN worker
+
+**Goal:** Read a stored PDF from a dataset cell without a CDN dependency and recognize an unreadable document
+
+**Spec:** `flows/datasets/pdf-document-preview.spec.ts:31`
+
+**Tags:** —
+
+**User steps:**
+
+1. create a document dataset and upload a synthetic PDF through the product input
+2. open the dataset document preview with external runtime requests denied
+3. read both pages and the JPEG 2000 image, navigate back, follow the in-document link to page 2, follow section links to a position on the same page and on page 2, close and reopen, then download the PDF
+4. upload an unreadable PDF and verify the error state with no rendered page
+
+**Backend state verified:**
+
+- the stored dataset and document cell belong to the actor scope
+- the storage URL and browser download return exactly the uploaded PDF bytes
+- the document cell opens the correct PDF through a same-origin worker without a CDN request
+- the JPEG 2000 image is decoded with same-origin decoder files and painted on the page
+- the in-document link moves the preview to its page and the external link opens in a new tab
+- a section link scrolls its destination position to the top of the preview, on its own page or another
+
+### DATA-E2E-004 — experiment PDFs render without a runtime CDN worker
+
+**Goal:** Read a stored PDF from a experiment cell without a CDN dependency and recognize an unreadable document
+
+**Spec:** `flows/datasets/pdf-document-preview.spec.ts:31`
+
+**Tags:** —
+
+**User steps:**
+
+1. create a document dataset and upload a synthetic PDF through the product input
+2. open the experiment document preview with external runtime requests denied
+3. read both pages and the JPEG 2000 image, navigate back, follow the in-document link to page 2, follow section links to a position on the same page and on page 2, close and reopen, then download the PDF
+4. upload an unreadable PDF and verify the error state with no rendered page
+
+**Backend state verified:**
+
+- the stored dataset and document cell belong to the actor scope
+- the storage URL and browser download return exactly the uploaded PDF bytes
+- the document cell opens the correct PDF through a same-origin worker without a CDN request
+- the JPEG 2000 image is decoded with same-origin decoder files and painted on the page
+- the in-document link moves the preview to its page and the external link opens in a new tab
+- a section link scrolls its destination position to the top of the preview, on its own page or another
+
 ## error-feed
 
 ### ERR-E2E-001 — connect Slack and notify only for matching Error Feed issues
 
-**Goal:** A developer connects Slack, creates an Error Feed rule, and receives only matching issue notifications  
-**Spec:** `flows/error-feed/slack-alert.spec.ts:22`  
+**Goal:** A developer connects Slack, creates an Error Feed rule, and receives only matching issue notifications
+
+**Spec:** `flows/error-feed/slack-alert.spec.ts:22`
+
 **Tags:** —
 
 **User steps:**
@@ -748,8 +1001,10 @@
 
 ### ERR-E2E-002 — every issue trigger sends only after its selected transition
 
-**Goal:** A developer chooses each issue trigger and receives a Slack alert when its condition occurs  
-**Spec:** `flows/error-feed/trigger-matrix.spec.ts:30`  
+**Goal:** A developer chooses each issue trigger and receives a Slack alert when its condition occurs
+
+**Spec:** `flows/error-feed/trigger-matrix.spec.ts:30`
+
 **Tags:** —
 
 **User steps:**
@@ -767,8 +1022,10 @@
 
 ### ERR-E2E-003 — failed Slack reconnect can recover and the connection can be removed
 
-**Goal:** A developer can recover from a denied Slack reconnect and disconnect the integration  
-**Spec:** `flows/error-feed/slack-integration-management.spec.ts:17`  
+**Goal:** A developer can recover from a denied Slack reconnect and disconnect the integration
+
+**Spec:** `flows/error-feed/slack-integration-management.spec.ts:17`
+
 **Tags:** —
 
 **User steps:**
@@ -784,10 +1041,65 @@
 - successful reconnect preserves the same workspace connection ID
 - disconnect removes the connection from the scoped integrations API
 
+### ERR-E2E-004 — an issue's traces download as a dataset-ready CSV
+
+**Goal:** A developer downloads an issue's traces from the issue page and uploads the file unchanged as a dataset (overview response stubbed)
+
+**Spec:** `flows/error-feed/export-traces-csv.spec.ts:33`
+
+**Tags:** —
+
+**User steps:**
+
+1. open the issue page
+2. click Export
+3. save the downloaded CSV
+4. upload the downloaded CSV using the Add Dataset form
+
+**Backend state verified:**
+
+- the imported dataset has exactly the 12 export columns
+- each exported trace becomes one dataset row, with its quoted multiline input and leading-symbol output stored unchanged
+
+**Browser observations:**
+
+- the export requests the issue overview once, with rep_limit=200
+- the file is named error-feed-<issue>-traces.csv and its header is exactly the 12 export columns
+- the file has exactly one row per stubbed trace, with quoted cells intact and no formula prefix
+- the snackbar reports exactly the exported trace count
+- the uploaded dataset's grid shows exactly the exported trace ids
+
+### ERR-E2E-005 — a shared issue opens read-only for someone who is not signed in
+
+**Goal:** Someone who is not signed in opens a shared Error Feed issue and reads it without being able to change it
+
+**Spec:** `flows/error-feed/shared-issue.spec.ts:28`
+
+**Tags:** —
+
+**User steps:**
+
+1. open the issue's public share link while signed out
+2. read the issue on Overview
+3. pick another trace in Traces affected
+4. open a trace from the Traces tab
+5. open the Trends and Fix tabs
+6. open a restricted share link while signed out
+
+**Browser observations:**
+
+- the page shows the issue title and View only, with no Resolve, Acknowledge, Ignore, Share, Debug or Create Linear issue action
+- the browser never calls the signed-in Error Feed endpoints (/tracer/feed/issues/)
+- picking a trace reads the sidebar through the share token for exactly that trace
+- opening a trace reads it through the share token and shows its spans
+- a restricted link shows Sign in required, with no error toast, and stays on the shared URL
+
 ### FEED-E2E-001 — an old issue URL opens the surviving issue
 
-**Goal:** A saved link to a retired issue opens its surviving issue  
-**Spec:** `flows/error-feed/retired-issue-redirect.spec.ts:7`  
+**Goal:** A saved link to a retired issue opens its surviving issue
+
+**Spec:** `flows/error-feed/retired-issue-redirect.spec.ts:7`
+
 **Tags:** —
 
 **User steps:**
@@ -804,8 +1116,10 @@
 
 ### EVAL-E2E-001 — eval task runs over ingested spans via the mock LLM
 
-**Goal:** A developer runs an LLM eval over ingested spans and reads the results  
-**Spec:** `flows/evals/eval-task.spec.ts:34`  
+**Goal:** A developer runs an LLM eval over ingested spans and reads the results
+
+**Spec:** `flows/evals/eval-task.spec.ts:34`
+
 **Tags:** —
 
 **User steps:**
@@ -826,8 +1140,10 @@
 
 ### EVAL-E2E-002 — configured evaluator choices stay current in the bound project
 
-**Goal:** Create and edit a choice evaluator through the UI and discover only its current choices in its bound Observe project  
-**Spec:** `flows/evals/choice-catalog.spec.ts:32`  
+**Goal:** Create and edit a choice evaluator through the UI and discover only its current choices in its bound Observe project
+
+**Spec:** `flows/evals/choice-catalog.spec.ts:32`
+
 **Tags:** —
 
 **User steps:**
@@ -848,8 +1164,10 @@
 
 ### EVAL-E2E-003 — typed executed evaluations retain exact native results and reject invalid output
 
-**Goal:** Read typed evaluations on real spans, find exactly their matching traces and reject invalid judge output visibly  
-**Spec:** `flows/evals/catalog-result-types.spec.ts:137`  
+**Goal:** Read typed evaluations on real spans, find exactly their matching traces and reject invalid judge output visibly
+
+**Spec:** `flows/evals/catalog-result-types.spec.ts:137`
+
 **Tags:** —
 
 **User steps:**
@@ -870,8 +1188,10 @@
 
 ### EVAL-E2E-004 — executed dataset evaluations retain typed cells, exact filters and a saved numeric widget
 
-**Goal:** Evaluate new dataset rows and use their actual results in dataset filters and a saved dashboard widget  
-**Spec:** `flows/evals/dataset-catalog-results.spec.ts:86`  
+**Goal:** Evaluate new dataset rows and use their actual results in dataset filters and a saved dashboard widget
+
+**Spec:** `flows/evals/dataset-catalog-results.spec.ts:86`
+
 **Tags:** —
 
 **User steps:**
@@ -891,17 +1211,19 @@
 
 ### EVAL-E2E-005 — browser task submit retains a custom attribute predicate and excludes other spans
 
-**Goal:** Create an evaluation task from the browser for exactly the selected custom attribute value  
-**Spec:** `flows/evals/task-filter-submit.spec.ts:33`  
+**Goal:** Create an evaluation task from the browser for exactly the selected custom attribute value
+
+**Spec:** `flows/evals/task-filter-submit.spec.ts:33`
+
 **Tags:** —
 
 **User steps:**
 
 1. seed two differently attributed spans in an isolated project
-2. select the project, custom property and value on the task create page
+2. select the project, All sampling preset, custom property and value on the task create page
 3. verify the exact matching preview
 4. select and configure an echo judge
-5. click the final Create Task button
+5. click the final Create task button
 6. verify task and result inclusion and exclusion
 
 **Backend state verified:**
@@ -910,12 +1232,274 @@
 - UI POST and stored task retain the custom predicate
 - completed task has exactly the matching span in PG and CH, with mock verdict and usage
 
+### EVAL-E2E-006 — a task run opens its trace in a drawer from the Usage tab
+
+**Goal:** Open the trace behind an eval task result without leaving the task Usage tab
+
+**Spec:** `flows/evals/task-usage-trace-drawer.spec.ts:45`
+
+**Tags:** —
+
+**User steps:**
+
+1. seed the same native two-span trace and run the same eval task via the managed mock judge
+2. verify the task and exact PG child/root outcomes
+3. wait for the completed child's exact CDC mirror row, then verify its run/task/span identity and unique verdict
+4. open Usage and click the exact successful run
+5. read the seeded Trace ID and Span ID in the run panel
+6. open the trace drawer on the evaluated child and its Evals tab
+7. press Esc to close only the drawer, then Esc to close the run panel
+
+**Backend state verified:**
+
+- the task completes with exactly two PG results: the evaluated child completed, the unmapped root errored
+- the completed evaluation's exact run, task, span and verdict reach the ClickHouse mirror before drawer navigation
+- the Usage runs response carries only the completed run, with the seeded trace and span IDs
+- the run panel shows the seeded trace and span IDs
+- the drawer opens on the seeded trace with the evaluated span selected and its Evals tab open
+- the first Esc closes only the drawer and the second closes the run panel
+
+### EVAL-E2E-007 — choosing a Jev model without a TypeSafe key opens the keys drawer on TypeSafe
+
+**Goal:** Choose a Jev evaluator model before saving a TypeSafe key and land in the keys drawer on TypeSafe
+
+**Spec:** `flows/evals/jev-evaluator-models.spec.ts:305`
+
+**Tags:** —
+
+**User steps:**
+
+1. open the evaluator create page on the LLM-As-A-Judge tab and open the model picker
+2. choose Jev latest
+3. type into the TypeSafe API key field without adding it
+
+**Backend state verified:**
+
+- the provider-status API reports no TypeSafe key before and after, and the drawer sent no API-key write
+
+**Browser observations:**
+
+- all three Jev rows are enabled and prompt for a TypeSafe API key
+- choosing Jev latest closes the picker and opens the keys drawer with TypeSafe as its first provider
+- the drawer takes input (Add enables) and the evaluator model stays unselected
+
+### EVAL-E2E-008 — a Jev pass/fail evaluator keeps its model, output type and criteria after reload
+
+**Goal:** Author a Jev pass/fail evaluator in the UI and find its model, output type and criteria intact after reload (TypeSafe key faked in the browser)
+
+**Spec:** `flows/evals/jev-evaluator-models.spec.ts:376`
+
+**Tags:** —
+
+**User steps:**
+
+1. FAKE: the browser's decision-catalog read shows a TypeSafe key on file, so the picker selects Jev; no key is stored and nothing calls TypeSafe
+2. author an LLM-As-A-Judge evaluator and choose Jev latest
+3. keep Pass/fail and describe a pass and a fail
+4. save the evaluation
+5. reload its detail page
+
+**Backend state verified:**
+
+- PG keeps the validated noul mapping with both criteria, Pass/Fail output, org/workspace scope, model jev-latest and an identical V1 snapshot
+
+**Browser observations:**
+
+- the publish request carries jev-latest, pass_fail and both criteria
+- after reload the pill reads Jev latest, Pass/fail is selected and both criteria are filled
+
+### EVAL-E2E-009 — a Jev choices evaluator keeps its authored label order and scores after reload
+
+**Goal:** Author a Jev choices evaluator whose labels are not shortest-first and find their order and scores intact after reload (TypeSafe key faked in the browser)
+
+**Spec:** `flows/evals/jev-evaluator-models.spec.ts:431`
+
+**Tags:** —
+
+**User steps:**
+
+1. FAKE: the browser's decision-catalog read shows a TypeSafe key on file, so the picker selects Jev; no key is stored and nothing calls TypeSafe
+2. author an LLM-As-A-Judge evaluator and choose Jev latest
+3. choose Choices and enter Resolved (Pass), Escalated (Neutral), No (Fail), describing Escalated
+4. save the evaluation
+5. reload its detail page
+
+**Backend state verified:**
+
+- PG choice_scores holds the three scores with jsonb keys shortest-first, while choices and the validated mapping keep Resolved, Escalated, No with the Escalated description; V1 snapshot identical
+
+**Browser observations:**
+
+- the publish request carries jev-latest, deterministic and the labels in authored order
+- after reload the rows read Resolved, Escalated, No as Pass, Neutral, Fail and the description is kept
+
+### EVAL-E2E-010 — a Jev scoring evaluator keeps its four ordered levels after reload
+
+**Goal:** Author a Jev scoring evaluator with four ordered rubric levels and find them intact after reload (TypeSafe key faked in the browser)
+
+**Spec:** `flows/evals/jev-evaluator-models.spec.ts:510`
+
+**Tags:** —
+
+**User steps:**
+
+1. FAKE: the browser's decision-catalog read shows a TypeSafe key on file, so the picker selects Jev; no key is stored and nothing calls TypeSafe
+2. author an LLM-As-A-Judge evaluator and choose Jev latest
+3. choose Scoring and add four ordered levels
+4. save the evaluation
+5. reload its detail page
+
+**Backend state verified:**
+
+- PG keeps the validated score mapping with the four levels in order, no choice scores and an identical V1 snapshot
+
+**Browser observations:**
+
+- the publish request carries jev-latest, percentage and the four levels
+- after reload Scoring is selected and the four levels read back in order
+
+### EVAL-E2E-011 — Jev models are listed and saved on a Community stack without a licence
+
+**Goal:** See, with nothing stubbed, that Jev evaluator models can be chosen and saved on an unlicensed self-hosted install
+
+**Spec:** `flows/evals/jev-evaluator-models.spec.ts:207`
+
+**Tags:** —
+
+**User steps:**
+
+1. open the evaluator create page on the LLM-As-A-Judge tab
+2. open the model picker and read the Jev group
+3. read each Jev row's plan tooltip label
+4. save a Turing-model evaluator through the create API, then switch it to jev-latest through the update API
+5. create a Jev evaluator through the create API
+
+**Backend state verified:**
+
+- the capabilities API allows jev_models and still denies turing_models for the actor org
+- the provider-status API lists TypeSafe with no key
+- the update to jev-latest answers 200 and the PG template row holds jev-latest in model and config with the validated noul mapping
+- create-v2 with jev-latest answers 200 and stores one row with model jev-latest
+
+**Browser observations:**
+
+- searching Jev lists exactly Jev 1.14, Jev 1.13 and Jev latest, in catalog order, with native TypeSafe selected; the Decision models group follows Future AGI
+- all three Jev rows are enabled, prompt for a TypeSafe API key and have no plan-denied label (a locked row carries "Not included in your plan")
+
+### EVAL-E2E-012 — a decision evaluator runs through the chosen direct or OpenRouter connection and retains it after reload
+
+**Goal:** Choose a decision model’s direct or OpenRouter connection, run a Pass/Fail evaluation through it, and retain the explicit choice after reload
+
+**Spec:** `flows/evals/decision-model-connections.spec.ts:93`
+
+**Tags:** —
+
+**User steps:**
+
+1. attest the isolated managed mock routing
+2. search one decision model with native OpenAI and OpenRouter connections
+3. add the native synthetic key through the product drawer and publish a Pass/Fail evaluator
+4. run the evaluator through native OpenAI against deterministic synthetic input
+5. choose OpenRouter, add its synthetic key through the drawer and run again
+6. save the new version as default and reload the persisted connection
+
+**Backend state verified:**
+
+- the model-list API exposes one group with the exact native OpenAI and OpenRouter route IDs shown by the UI
+- UI-created provider keys belong only to the isolated actor scope and update that connection’s catalog readiness
+- the template and its version store the explicit route, Pass/Fail criteria and exact organization/workspace scope
+- both UI playground calls run through the real backend/gateway and return exact synthetic probability, verdict, usage and connection metadata
+- the reloaded editor, detail API and default version retain the saved OpenRouter route and authored criteria
+
+### EVAL-E2E-013 — a Jev choice stays under the pointer while ordinary model search loads
+
+**Goal:** Choose Jev latest with one gesture during model search and reach the TypeSafe keys drawer without selecting a model or saving a key
+
+**Spec:** `flows/evals/evaluator-picker-search.spec.ts:30`
+
+**Tags:** —
+
+**User steps:**
+
+1. open a real evaluator draft at normal and constrained viewport heights
+2. wait for the initial decision and ordinary-model catalogs, then search Jev
+3. observe the Jev row before and during ordinary-model loading
+4. press the row, release the unmodified search response, and release the pointer at the same position
+5. read the TypeSafe drawer and the still-unselected evaluation model
+
+**Backend state verified:**
+
+- the real provider-status API reports no TypeSafe key before and after each gesture
+- the browser sends no API-key write during either gesture
+
+**Browser observations:**
+
+- Jev latest does not move at loading onset or response completion
+- one native pointer gesture closes the picker and opens one TypeSafe drawer without selecting a model
+- the picker stays within the viewport at both heights
+
+### EVAL-E2E-014 — an eval log opens the exact trace span it evaluated from the eval Usage tab
+
+**Goal:** Open an evaluation, open one of its Observe evaluation logs, and view exactly the trace span that log evaluated
+
+**Spec:** `flows/evals/eval-log-source-navigation.spec.ts:49`
+
+**Tags:** —
+
+**User steps:**
+
+1. seed a root → child → grandchild trace and run one eval task over it via the managed mock judge
+2. open the eval, its Usage tab, and the grandchild span's evaluation log
+3. View trace opens that trace on the grandchild span; Back to evaluation returns to the same log
+4. open the child span's log; View trace opens the child span; Esc closes only the trace, then the log
+5. reopen the grandchild log, delete its project, then View trace: unavailable, with no trace and no link
+6. read the log through the API without the opt-in
+
+**Backend state verified:**
+
+- the task completes with the child and grandchild evaluations completed and the unmapped root errored
+- the usage ledger holds one successful Observe log per evaluated span, stamped with its exact project, trace and span, and both reach the ClickHouse mirror the Usage tab reads
+- the Usage tab lists exactly those two logs, as source tracer
+- opening a log asks for its source with the opt-in and gets ready/trace with the exact project, trace and span
+- the trace opens on the evaluated span (grandchild, then child), not the root or the sibling
+- when the project is deleted after the log opened, View trace re-checks and gets unavailable with every id null; no trace or link opens
+- without the opt-in the log response has no source_navigation, and =false is identical
+
+### EVAL-E2E-020 — sample whole contacts, retain late spans, and explicitly rerun an edited quota
+
+**Goal:** Preview and run a contact quota without splitting contacts, including late spans, then edit the quota with clear new-run provenance
+
+**Spec:** `flows/evals/cohort-sampling.spec.ts:36`
+
+**Tags:** —
+
+**User steps:**
+
+1. seed two sessions with two traces and two spans per trace
+2. choose the project, set a past live start and preview incoming conversation shares
+3. choose the historical schedule, confirm count one, preview, configure an echo judge and create the task
+4. verify the independently hash-ranked contact is the exact evaluated set
+5. ingest late traces and Edit & Re-run to expand only the frozen sampled contact
+6. reload the saved count, edit it to two, preview and explicitly Delete & rerun
+7. verify one new cohort with probability one and the exact expanded span set
+
+**Backend state verified:**
+
+- all eight initial spans have two canonical session identities in ClickHouse
+- incoming 100 percent share preview selects both contacts and all eight spans with an open-ended live policy
+- historical count preview returns exactly two eligible contacts, one selected contact and four selected spans
+- created task evaluates exactly the independently hash-ranked contact with probability one half
+- historical append rerun admits late rows only for the frozen contact without reranking
+- edited quota is persisted and visible results have one new cohort with probability one, while old provenance remains archived
+
 ## gateway
 
 ### GW-E2E-001 — gateway traffic is filtered by the application that sent it
 
-**Goal:** A platform engineer finds the gateway requests one application made, out of everything the org sent  
-**Spec:** `flows/gateway/request-log-tags.spec.ts:44`  
+**Goal:** A platform engineer finds the gateway requests one application made, out of everything the org sent
+
+**Spec:** `flows/gateway/request-log-tags.spec.ts:43`
+
 **Tags:** —
 
 **User steps:**
@@ -938,8 +1522,10 @@
 
 ### GW-E2E-002 — custom provider keeps an explicitly empty API path prefix
 
-**Goal:** A user configures a custom OpenAI-compatible provider without an API version prefix  
-**Spec:** `flows/gateway/provider-path-prefix.spec.ts:30`  
+**Goal:** A user configures a custom OpenAI-compatible provider without an API version prefix
+
+**Spec:** `flows/gateway/provider-path-prefix.spec.ts:30`
+
 **Tags:** @smoke
 
 **User steps:**
@@ -958,8 +1544,10 @@
 
 ### GW-E2E-003 — a platform engineer adds a declared custom property as a Request Logs column
 
-**Goal:** A platform engineer shows a declared custom property beside the built-in Request Logs columns, keeps that choice across reloads in this browser, and never sees it under another organization  
-**Spec:** `flows/gateway/request-log-columns.spec.ts:83`  
+**Goal:** A platform engineer shows a declared custom property beside the built-in Request Logs columns, keeps that choice across reloads in this browser, and never sees it under another organization
+
+**Spec:** `flows/gateway/request-log-columns.spec.ts:87`
+
 **Tags:** —
 
 **User steps:**
@@ -994,12 +1582,60 @@
 - the picker opens, toggles, reorders and closes by keyboard alone: focus stays on the pressed Move button, moves to the opposite Move button when the column reaches the end of its group, and returns to Columns on Escape
 - a tenant value longer than 80 characters shows its preview in the cell, and Tab to it shows the full value in a tooltip
 
+### GW-E2E-004 — an organization explicitly opts into continuing after a guardrail outage
+
+**Goal:** An organization owner explicitly opts into continuing through a failed guardrail, and can turn that permission off again
+
+**Spec:** `flows/gateway/org-fail-open.spec.ts:23`
+
+**Tags:** —
+
+**User steps:**
+
+1. seed a local mock provider and a failing local webhook without opting into fail-open
+2. open Guardrails Rules and see Fail Open off; a gateway request is refused
+3. turn Fail Open on, save and reload; the same request succeeds with its unique mock echo
+4. turn Fail Open off, save and reload; the same request is refused again
+5. submit an invalid boolean and confirm no configuration version is created
+
+**Backend state verified:**
+
+- the active organization config and pushed gateway config store false before opt-in, true after opt-in, and false after revocation
+- the gateway refuses the local webhook outage before opt-in and after revocation, and returns the unique mock echo only while opted in
+- an invalid boolean is refused without creating a configuration version
+
+## knowledge-base
+
+### KB-E2E-001 — a workspace reader downloads an owned knowledge-base file
+
+**Goal:** A workspace reader downloads an uploaded file with its original filename and exact bytes, while other scopes cannot download it
+
+**Spec:** `flows/knowledge-base/file-download.spec.ts:12`
+
+**Tags:** —
+
+**User steps:**
+
+1. upload a synthetic text document
+2. open its knowledge-base file table
+3. click Download on the file row
+4. save the browser download
+5. check foreign-organization, sibling-workspace and anonymous refusals
+
+**Backend state verified:**
+
+- the file list API returns the uploaded file identity and name
+- authorized download returns exactly the uploaded bytes as an attachment with no storage URL
+- foreign-org, sibling-workspace and anonymous requests return refusal without file bytes
+
 ## observe
 
 ### OBS-E2E-001 — SDK trace appears in Observe with coherent backend state
 
-**Goal:** A developer sends a trace from their app and inspects it in Observe  
-**Spec:** `flows/observe/trace-ingestion.spec.ts:24`  
+**Goal:** A developer sends a trace from their app and inspects it in Observe
+
+**Spec:** `flows/observe/trace-ingestion.spec.ts:24`
+
 **Tags:** @smoke
 
 **User steps:**
@@ -1019,8 +1655,10 @@
 
 ### OBS-E2E-002 — span table filter matches the API for the same query
 
-**Goal:** A developer narrows the span table to one operation and trusts the result set  
-**Spec:** `flows/observe/span-filter-parity.spec.ts:28`  
+**Goal:** A developer narrows the span table to one operation and trusts the result set
+
+**Spec:** `flows/observe/span-filter-parity.spec.ts:28`
+
 **Tags:** —
 
 **User steps:**
@@ -1038,8 +1676,10 @@
 
 ### OBS-E2E-003 — graph metric picker lists only the current project's evals
 
-**Goal:** A developer picking a metric to graph sees only the evals attached to the project they are viewing  
-**Spec:** `flows/observe/graph-metric-scoping.spec.ts:51`  
+**Goal:** A developer picking a metric to graph sees only the evals attached to the project they are viewing
+
+**Spec:** `flows/observe/graph-metric-scoping.spec.ts:51`
+
 **Tags:** —
 
 **User steps:**
@@ -1058,8 +1698,10 @@
 
 ### OBS-E2E-004 — live observed attributes retain types and work in the filter UI
 
-**Goal:** Discover and filter live attributes without activating a catalog revision  
-**Spec:** `flows/observe/observed-catalog.spec.ts:12`  
+**Goal:** Discover and filter live attributes without activating a catalog revision
+
+**Spec:** `flows/observe/observed-catalog.spec.ts:12`
+
 **Tags:** —
 
 **User steps:**
@@ -1077,8 +1719,10 @@
 
 ### OBS-E2E-005 — discovered attributes filter traces and graph traffic consistently
 
-**Goal:** Select typed attribute suggestions and see the same exact traces in the list and graph  
-**Spec:** `flows/observe/catalog-trace-filter-parity.spec.ts:16`  
+**Goal:** Select typed attribute suggestions and see the same exact traces in the list and graph
+
+**Spec:** `flows/observe/catalog-trace-filter-parity.spec.ts:16`
+
 **Tags:** —
 
 **User steps:**
@@ -1097,8 +1741,10 @@
 
 ### OBS-E2E-006 — session suggestions select only their own traces
 
-**Goal:** Find a session through discovered values and inspect only its traces  
-**Spec:** `flows/observe/catalog-session-parity.spec.ts:19`  
+**Goal:** Find a session through discovered values and inspect only its traces
+
+**Spec:** `flows/observe/catalog-session-parity.spec.ts:19`
+
 **Tags:** —
 
 **User steps:**
@@ -1117,8 +1763,10 @@
 
 ### OBS-E2E-007 — Users discovery selects only authorized user activity
 
-**Goal:** Find a user through supported system/custom filters and navigate to exactly their authorized sessions and traces after changing workspace  
-**Spec:** `flows/observe/catalog-user-parity.spec.ts:76`  
+**Goal:** Find a user through supported system/custom filters and navigate to exactly their authorized sessions and traces after changing workspace
+
+**Spec:** `flows/observe/catalog-user-parity.spec.ts:76`
+
 **Tags:** —
 
 **User steps:**
@@ -1140,8 +1788,10 @@
 
 ### OBS-E2E-008 — native and custom voice filters select only the current project calls
 
-**Goal:** Discover voice-call properties and use their native and custom filters to find exactly the calls belonging to the selected project  
-**Spec:** `flows/observe/catalog-voice-values.spec.ts:86`  
+**Goal:** Discover voice-call properties and use their native and custom filters to find exactly the calls belonging to the selected project
+
+**Spec:** `flows/observe/catalog-voice-values.spec.ts:86`
+
 **Tags:** —
 
 **User steps:**
@@ -1160,8 +1810,10 @@
 
 ### OBS-E2E-009 — catalog permissions follow explicit scope and membership removal
 
-**Goal:** Discover only currently authorized catalog properties and choices, including after workspace membership removal  
-**Spec:** `flows/observe/catalog-permission-boundaries.spec.ts:40`  
+**Goal:** Discover only currently authorized catalog properties and choices, including after workspace membership removal
+
+**Spec:** `flows/observe/catalog-permission-boundaries.spec.ts:40`
+
 **Tags:** —
 
 **User steps:**
@@ -1182,8 +1834,10 @@
 
 ### OBS-E2E-010 — historical and live suggestions retain history while filters use current facts
 
-**Goal:** Discover repaired historical and live values, then distinguish a stale suggestion from current trace matches  
-**Spec:** `flows/observe/catalog-history-live-parity.spec.ts:55`  
+**Goal:** Discover repaired historical and live values, then distinguish a stale suggestion from current trace matches
+
+**Spec:** `flows/observe/catalog-history-live-parity.spec.ts:55`
+
 **Tags:** @h5-local
 
 **User steps:**
@@ -1204,8 +1858,10 @@
 
 ### OBS-E2E-011 — Sessions custom property/value selection preserves project and result scope
 
-**Goal:** Select a discovered custom attribute value in Sessions and inspect only its matching session traces  
-**Spec:** `flows/observe/catalog-session-custom-filter.spec.ts:19`  
+**Goal:** Select a discovered custom attribute value in Sessions and inspect only its matching session traces
+
+**Spec:** `flows/observe/catalog-session-custom-filter.spec.ts:19`
+
 **Tags:** —
 
 **User steps:**
@@ -1222,42 +1878,50 @@
 
 ### OBS-E2E-012 — an unreachable recording shows an error, not an endless loader
 
-**Goal:** A user opens a voice call whose recording cannot be fetched and learns that, instead of watching a spinner forever  
-**Spec:** `flows/observe/voice-recording-error.spec.ts:51`  
+**Goal:** A user opens a voice call whose recording cannot be fetched and learns that, instead of watching a spinner forever
+
+**Spec:** `flows/observe/voice-recording-error.spec.ts:100`
+
 **Tags:** —
 
 **User steps:**
 
-1. seed a voice call whose recording URLs 404
-2. open Voice Observe
-3. open the call detail drawer
-4. see "Recording unavailable", with no retry offered
+1. create a scoped voice project through the public API and ingest a call whose recording URLs 404
+2. open Voice Observe and the exact seeded call detail drawer
+3. see "Recording unavailable", with no loader, retry or exposed recording URL
 
 **Backend state verified:**
 
-- the seeded conversation span is queryable in CH
-- voice_call_detail returns the recording URLs unchanged
+- the project is source=simulator in the actor organization and workspace
+- the exact seeded conversation root is live in ClickHouse under that project and organization
+- the browser voice list and detail select only the seeded call and retain its four recording URLs
 
 ### OBS-E2E-013 — a voice call with no recording says so
 
-**Goal:** A user opens a voice call that has no recording at all and sees a plain explanation  
-**Spec:** `flows/observe/voice-recording-error.spec.ts:116`  
+**Goal:** A user opens a voice call that has no recording at all and sees a plain explanation
+
+**Spec:** `flows/observe/voice-recording-error.spec.ts:153`
+
 **Tags:** —
 
 **User steps:**
 
-1. seed a voice call with no recording attributes
-2. open the call detail drawer
-3. see "No recording found"
+1. create a scoped voice project through the public API and ingest a call with no recording attributes
+2. open the exact seeded call detail drawer
+3. see "No recording found" without a loader or recording error
 
 **Backend state verified:**
 
-- voice_call_detail reports recording_available false
+- the project is source=simulator in the actor organization and workspace
+- the exact seeded conversation root is live in ClickHouse under that project and organization
+- the browser voice list and detail select only the seeded call, with recording_available false and no recording URLs
 
 ### OBS-E2E-020 — duplicate saved-view names are rejected
 
-**Goal:** A user cannot silently overwrite an existing observability view by reusing its name  
-**Spec:** `flows/observe/saved-view-duplicate-name.spec.ts:14`  
+**Goal:** A user cannot silently overwrite an existing observability view by reusing its name
+
+**Spec:** `flows/observe/saved-view-duplicate-name.spec.ts:14`
+
 **Tags:** —
 
 **User steps:**
@@ -1275,8 +1939,10 @@
 
 ### OBS-E2E-027 — trace list pager windows forward without an endless page count
 
-**Goal:** A developer paging through a large trace list always knows where they are and when they have reached the end  
-**Spec:** `flows/observe/list-pagination.spec.ts:311`  
+**Goal:** A developer paging through a large trace list always knows where they are and when they have reached the end
+
+**Spec:** `flows/observe/list-pagination.spec.ts:220`
+
 **Tags:** —
 
 **User steps:**
@@ -1296,8 +1962,10 @@
 
 ### OBS-E2E-028 — Next stays usable through a full Back-Back-Next-Next round trip from the terminal page
 
-**Goal:** A developer bouncing back and forth near the end of a trace list never loses forward navigation  
-**Spec:** `flows/observe/list-pagination.spec.ts:537`  
+**Goal:** A developer bouncing back and forth near the end of a trace list never loses forward navigation
+
+**Spec:** `flows/observe/list-pagination.spec.ts:446`
+
 **Tags:** —
 
 **User steps:**
@@ -1314,8 +1982,10 @@
 
 ### OBS-E2E-029 — an exactly-full final page ends pagination without offering a phantom next page
 
-**Goal:** A developer whose trace count divides evenly by the page size sees a real last page, not an empty page N+1  
-**Spec:** `flows/observe/list-pagination.spec.ts:629`  
+**Goal:** A developer whose trace count divides evenly by the page size sees a real last page, not an empty page N+1
+
+**Spec:** `flows/observe/list-pagination.spec.ts:538`
+
 **Tags:** —
 
 **User steps:**
@@ -1331,8 +2001,10 @@
 
 ### OBS-E2E-030 — has_more without a strictly greater total promises no page number, but keeps Next enabled
 
-**Goal:** A developer searching a sparse cursor window is never shown a page number the transport cannot prove exists  
-**Spec:** `flows/observe/list-pagination.spec.ts:683`  
+**Goal:** A developer searching a sparse cursor window is never shown a page number the transport cannot prove exists
+
+**Spec:** `flows/observe/list-pagination.spec.ts:592`
+
 **Tags:** —
 
 **User steps:**
@@ -1349,8 +2021,10 @@
 
 ### OBS-E2E-031 — the Next label DOM node survives ~1.5s of ancestor re-render churn
 
-**Goal:** A developer's pointer never lands on a button whose label React just tore down and rebuilt underneath it  
-**Spec:** `flows/observe/list-pagination.spec.ts:762`  
+**Goal:** A developer's pointer never lands on a button whose label React just tore down and rebuilt underneath it
+
+**Spec:** `flows/observe/list-pagination.spec.ts:671`
+
 **Tags:** —
 
 **User steps:**
@@ -1367,8 +2041,10 @@
 
 ### OBS-E2E-032 — a real dwell-click on Next/Back actually fires a click, not just a press
 
-**Goal:** A developer's mouse press on Back/Next always produces a click, even while the ancestor is mid-re-render  
-**Spec:** `flows/observe/list-pagination.spec.ts:828`  
+**Goal:** A developer's mouse press on Back/Next always produces a click, even while the ancestor is mid-re-render
+
+**Spec:** `flows/observe/list-pagination.spec.ts:737`
+
 **Tags:** —
 
 **User steps:**
@@ -1386,8 +2062,10 @@
 
 ### OBS-E2E-033 — changing page size changes the outbound page_size, the rendered row count, and resets to page 1
 
-**Goal:** A developer who changes results-per-page gets exactly that many rows and starts back at page 1, not a stale mid-list position  
-**Spec:** `flows/observe/list-pagination.spec.ts:897`  
+**Goal:** A developer who changes results-per-page gets exactly that many rows and starts back at page 1, not a stale mid-list position
+
+**Spec:** `flows/observe/list-pagination.spec.ts:806`
+
 **Tags:** —
 
 **User steps:**
@@ -1403,8 +2081,10 @@
 
 ### OBS-E2E-034 — the agent call-log pager (a plain DRF-paginated, non-cursor screen) still paginates and reaches its last row
 
-**Goal:** A developer browsing an agent version's call logs gets a working pager even though this screen has no cursor `has_more` contract  
-**Spec:** `flows/observe/list-pagination.spec.ts:937`  
+**Goal:** A developer browsing an agent version's call logs gets a working pager even though this screen has no cursor `has_more` contract
+
+**Spec:** `flows/observe/agent-call-log-pager.spec.ts:11`
+
 **Tags:** —
 
 **User steps:**
@@ -1422,8 +2102,10 @@
 
 ### OBS-E2E-035 — changing the date filter resets pagination to page 1 and drops the old cursor
 
-**Goal:** A developer who narrows the date range never sees stale rows or a stale page position from the filter they just replaced  
-**Spec:** `flows/observe/list-pagination.spec.ts:995`  
+**Goal:** A developer who narrows the date range never sees stale rows or a stale page position from the filter they just replaced
+
+**Spec:** `flows/observe/list-pagination.spec.ts:846`
+
 **Tags:** —
 
 **User steps:**
@@ -1440,8 +2122,10 @@
 
 ### OBS-E2E-036 — the furthest-visited page reappears as a boundary after walking back to page 1
 
-**Goal:** A developer who has already paged deep into a trace list and jumps back to page 1 can still return straight to the page they left off on  
-**Spec:** `flows/observe/list-pagination.spec.ts:1082`  
+**Goal:** A developer who has already paged deep into a trace list and jumps back to page 1 can still return straight to the page they left off on
+
+**Spec:** `flows/observe/list-pagination.spec.ts:933`
+
 **Tags:** —
 
 **User steps:**
@@ -1458,8 +2142,10 @@
 
 ### OBS-E2E-037 — Observe count tiles use one latest completed eval per span
 
-**Goal:** See only the newest completed result for a rerun span in Observe count tiles and the detail breakdown.  
-**Spec:** `flows/observe/eval-count-tiles.spec.ts:55`  
+**Goal:** See only the newest completed result for a rerun span in Observe count tiles and the detail breakdown.
+
+**Spec:** `flows/observe/eval-count-tiles.spec.ts:55`
+
 **Tags:** —
 
 **User steps:**
@@ -1480,8 +2166,10 @@
 
 ### OBS-E2E-038 — a saved view opens its preset date on fresh dates, and Custom on its saved range
 
-**Goal:** A user who reopens a saved trace view set to a preset date (Today, Yesterday, 7D…12M) days later sees that preset as of now, while a Custom view keeps the exact range it was saved with  
-**Spec:** `flows/observe/saved-view-preset-dates.spec.ts:390`  
+**Goal:** A user who reopens a saved trace view set to a preset date (Today, Yesterday, 7D…12M) days later sees that preset as of now, while a Custom view keeps the exact range it was saved with
+
+**Spec:** `flows/observe/saved-view-preset-dates.spec.ts:438`
+
 **Tags:** —
 
 **User steps:**
@@ -1501,8 +2189,10 @@
 
 ### OBS-E2E-039 — a saved span view opens its preset date on fresh dates, and Custom on its saved range
 
-**Goal:** A user who reopens a saved span view set to a preset date (Today, Yesterday, 7D…12M) days later sees that preset as of now, while a Custom view keeps the exact range it was saved with  
-**Spec:** `flows/observe/saved-view-preset-dates.spec.ts:444`  
+**Goal:** A user who reopens a saved span view set to a preset date (Today, Yesterday, 7D…12M) days later sees that preset as of now, while a Custom view keeps the exact range it was saved with
+
+**Spec:** `flows/observe/saved-view-preset-dates.spec.ts:492`
+
 **Tags:** —
 
 **User steps:**
@@ -1522,8 +2212,10 @@
 
 ### OBS-E2E-040 — a saved compare view opens its compare preset date on fresh dates, and a Custom compare range as saved
 
-**Goal:** A user who reopens a saved trace view in compare mode days later sees its compare preset (Today, Yesterday, 7D…12M) as of now, while a Custom compare range stays exactly as saved  
-**Spec:** `flows/observe/saved-view-preset-dates.spec.ts:498`  
+**Goal:** A user who reopens a saved trace view in compare mode days later sees its compare preset (Today, Yesterday, 7D…12M) as of now, while a Custom compare range stays exactly as saved
+
+**Spec:** `flows/observe/saved-view-preset-dates.spec.ts:546`
+
 **Tags:** —
 
 **User steps:**
@@ -1542,8 +2234,10 @@
 
 ### OBS-E2E-041 — a saved session view opens its preset date on fresh dates, and Custom on its saved range
 
-**Goal:** A user who reopens a saved session view set to a preset date (Today, Yesterday, 7D…12M) days later sees that preset as of now, while a Custom view keeps the exact range it was saved with  
-**Spec:** `flows/observe/saved-view-preset-dates.spec.ts:589`  
+**Goal:** A user who reopens a saved session view set to a preset date (Today, Yesterday, 7D…12M) days later sees that preset as of now, while a Custom view keeps the exact range it was saved with
+
+**Spec:** `flows/observe/saved-view-preset-dates.spec.ts:637`
+
 **Tags:** —
 
 **User steps:**
@@ -1563,8 +2257,10 @@
 
 ### OBS-E2E-042 — a saved user view opens its preset date on fresh dates, and Custom on its saved range
 
-**Goal:** A user who reopens a saved user view set to a preset date (Today, Yesterday, 7D…12M) days later sees that preset as of now, while a Custom view keeps the exact range it was saved with  
-**Spec:** `flows/observe/saved-view-preset-dates.spec.ts:589`  
+**Goal:** A user who reopens a saved user view set to a preset date (Today, Yesterday, 7D…12M) days later sees that preset as of now, while a Custom view keeps the exact range it was saved with
+
+**Spec:** `flows/observe/saved-view-preset-dates.spec.ts:637`
+
 **Tags:** —
 
 **User steps:**
@@ -1584,8 +2280,10 @@
 
 ### OBS-E2E-043 — a bookmarked trace list link loads its preset date fresh, and a Custom range as bookmarked
 
-**Goal:** A user who opens a trace list bookmark made days ago with a preset date (Today, Yesterday, 7D…12M) sees that preset as of now, while a bookmark with a Custom range shows exactly that range  
-**Spec:** `flows/observe/saved-view-preset-dates.spec.ts:684`  
+**Goal:** A user who opens a trace list bookmark made days ago with a preset date (Today, Yesterday, 7D…12M) sees that preset as of now, while a bookmark with a Custom range shows exactly that range
+
+**Spec:** `flows/observe/saved-view-preset-dates.spec.ts:732`
+
 **Tags:** —
 
 **User steps:**
@@ -1604,8 +2302,10 @@
 
 ### OBS-E2E-044 — a bookmarked span list link loads its preset date fresh, and a Custom range as bookmarked
 
-**Goal:** A user who opens a span list bookmark made days ago with a preset date (Today, Yesterday, 7D…12M) sees that preset as of now, while a bookmark with a Custom range shows exactly that range  
-**Spec:** `flows/observe/saved-view-preset-dates.spec.ts:684`  
+**Goal:** A user who opens a span list bookmark made days ago with a preset date (Today, Yesterday, 7D…12M) sees that preset as of now, while a bookmark with a Custom range shows exactly that range
+
+**Spec:** `flows/observe/saved-view-preset-dates.spec.ts:732`
+
 **Tags:** —
 
 **User steps:**
@@ -1624,8 +2324,10 @@
 
 ### OBS-E2E-045 — a bookmarked session list link loads its preset date fresh, and a Custom range as bookmarked
 
-**Goal:** A user who opens a session list bookmark made days ago with a preset date (Today, Yesterday, 7D…12M) sees that preset as of now, while a bookmark with a Custom range shows exactly that range  
-**Spec:** `flows/observe/saved-view-preset-dates.spec.ts:684`  
+**Goal:** A user who opens a session list bookmark made days ago with a preset date (Today, Yesterday, 7D…12M) sees that preset as of now, while a bookmark with a Custom range shows exactly that range
+
+**Spec:** `flows/observe/saved-view-preset-dates.spec.ts:732`
+
 **Tags:** —
 
 **User steps:**
@@ -1644,8 +2346,10 @@
 
 ### OBS-E2E-046 — a bookmarked user list link loads its preset date fresh, and a Custom range as bookmarked
 
-**Goal:** A user who opens a user list bookmark made days ago with a preset date (Today, Yesterday, 7D…12M) sees that preset as of now, while a bookmark with a Custom range shows exactly that range  
-**Spec:** `flows/observe/saved-view-preset-dates.spec.ts:684`  
+**Goal:** A user who opens a user list bookmark made days ago with a preset date (Today, Yesterday, 7D…12M) sees that preset as of now, while a bookmark with a Custom range shows exactly that range
+
+**Spec:** `flows/observe/saved-view-preset-dates.spec.ts:732`
+
 **Tags:** —
 
 **User steps:**
@@ -1664,8 +2368,10 @@
 
 ### OBS-E2E-047 — a bookmarked compare date link loads its preset date fresh, and a Custom range as bookmarked
 
-**Goal:** A user who opens a compare date bookmark made days ago with a preset date (Today, Yesterday, 7D…12M) sees that preset as of now, while a bookmark with a Custom range shows exactly that range  
-**Spec:** `flows/observe/saved-view-preset-dates.spec.ts:684`  
+**Goal:** A user who opens a compare date bookmark made days ago with a preset date (Today, Yesterday, 7D…12M) sees that preset as of now, while a bookmark with a Custom range shows exactly that range
+
+**Spec:** `flows/observe/saved-view-preset-dates.spec.ts:732`
+
 **Tags:** —
 
 **User steps:**
@@ -1683,8 +2389,10 @@
 
 ### OBS-E2E-048 — the workspace Users list opens a preset date fresh from a bookmark or a saved view, and Custom as stored
 
-**Goal:** A user who reopens the workspace Users list days later, from a bookmark or a saved view set to a preset date (Today, Yesterday, 7D…12M), sees that preset as of now, while Custom keeps its exact range  
-**Spec:** `flows/observe/saved-view-preset-dates.spec.ts:801`  
+**Goal:** A user who reopens the workspace Users list days later, from a bookmark or a saved view set to a preset date (Today, Yesterday, 7D…12M), sees that preset as of now, while Custom keeps its exact range
+
+**Spec:** `flows/observe/saved-view-preset-dates.spec.ts:849`
+
 **Tags:** —
 
 **User steps:**
@@ -1693,6 +2401,7 @@
 2. for each preset and Custom, open a /dashboard/users link carrying that option with a range from ~400 days ago
 3. save one workspace Users view per preset and Custom, all storing that range
 4. open /dashboard/users and click each saved view tab in turn
+5. wheel-scroll each nonempty complete Users API page, including a target beyond the first virtualized viewport; verify the confirmed empty Users screen for Custom
 
 **Backend state verified:**
 
@@ -1700,12 +2409,15 @@
 - each preset link and view sends every user-list request with the preset window as of now, never the stored one, and the URL date param is rewritten to it
 - Today lists only the today user, Yesterday only the yesterday user, and 7D–12M exactly both, among this flow's users
 - Custom links and views send and keep their stored range verbatim and list neither user
+- the complete wheel-scrolled rendered user-ID set equals the actual API page; a rolling view reveals the initially offscreen target; an empty API page shows the confirmed empty Users screen with no visible grid or user rows
 - opening the views writes nothing back: every tracer_saved_view row in PG still holds its stored range
 
 ### OBS-E2E-049 — a user's session tab opens a preset date fresh from a bookmark or a saved view, and Custom as stored
 
-**Goal:** A user who reopens one end user's session tab days later, from a bookmark or a saved view set to a preset date (Today, Yesterday, 7D…12M), sees that preset as of now, while Custom keeps its exact range  
-**Spec:** `flows/observe/saved-view-preset-dates.spec.ts:878`  
+**Goal:** A user who reopens one end user's session tab days later, from a bookmark or a saved view set to a preset date (Today, Yesterday, 7D…12M), sees that preset as of now, while Custom keeps its exact range
+
+**Spec:** `flows/observe/saved-view-preset-dates.spec.ts:965`
+
 **Tags:** —
 
 **User steps:**
@@ -1725,8 +2437,10 @@
 
 ### OBS-E2E-050 — a user's trace tab opens a preset date fresh from a bookmark or a saved view, and Custom as stored
 
-**Goal:** A user who reopens one end user's trace tab days later, from a bookmark or a saved view set to a preset date (Today, Yesterday, 7D…12M), sees that preset as of now, while Custom keeps its exact range  
-**Spec:** `flows/observe/saved-view-preset-dates.spec.ts:878`  
+**Goal:** A user who reopens one end user's trace tab days later, from a bookmark or a saved view set to a preset date (Today, Yesterday, 7D…12M), sees that preset as of now, while Custom keeps its exact range
+
+**Spec:** `flows/observe/saved-view-preset-dates.spec.ts:965`
+
 **Tags:** —
 
 **User steps:**
@@ -1746,8 +2460,10 @@
 
 ### OBS-E2E-051 — a user's span tab opens a preset date fresh from a bookmark or a saved view, and Custom as stored
 
-**Goal:** A user who reopens one end user's span tab days later, from a bookmark or a saved view set to a preset date (Today, Yesterday, 7D…12M), sees that preset as of now, while Custom keeps its exact range  
-**Spec:** `flows/observe/saved-view-preset-dates.spec.ts:878`  
+**Goal:** A user who reopens one end user's span tab days later, from a bookmark or a saved view set to a preset date (Today, Yesterday, 7D…12M), sees that preset as of now, while Custom keeps its exact range
+
+**Spec:** `flows/observe/saved-view-preset-dates.spec.ts:965`
+
 **Tags:** —
 
 **User steps:**
@@ -1765,34 +2481,301 @@
 - Custom links and views send and keep their stored range verbatim and list no span
 - opening the views writes nothing back: every tracer_saved_view row in PG still holds its stored range
 
+### OBS-E2E-052 — OpenRouter-shaped traces keep coherent usage through filters, sorting and details
+
+**Goal:** A developer inspects OpenRouter-shaped traces and trusts content, identities and usage through filtering, sorting and trace/session details
+
+**Spec:** `flows/observe/openrouter-usage.spec.ts:45`
+
+**Tags:** —
+
+**User steps:**
+
+1. ingest empty-root generation/attempt trees, tiny/zero costs, nested summaries, parent-only and independent-call controls
+2. select Total Tokens greater than 20 in the real Filter panel and cross a real page boundary
+3. scroll to Tokens and Total Cost, sort each ascending and descending, and compare complete UI/API pages with the independent oracle
+4. inspect tiny-cost and usage-control trace details
+5. inspect first-generation session messages and exact Users identities
+
+**Backend state verified:**
+
+- A: exact latest source hierarchy, usage, project type and user linkage retain the scoped fixture identities
+- B: actual filter/sort requests and two complete pages equal the canonical usage oracle with exact total, stable ties and no duplicates
+- C: trace/span/session API precision and UI displays retain positive subprecision costs, nested 18, equal independent calls and parent-only usage
+- D: session first-generation messages and Users UI/API identities equal the scoped storage facts
+
+### OBS-E2E-053 — without a licence, Ask a question opens the Instant eval upgrade page and its API answers 402
+
+**Goal:** Try Instant eval on a self-hosted install with no Enterprise licence and be shown its upgrade page instead of the feature (nothing stubbed)
+
+**Spec:** `flows/observe/instant-eval-insights-gates.spec.ts:106`
+
+**Tags:** —
+
+**User steps:**
+
+1. create an Observe project through the API
+2. open the project's Traces view and its Evaluate menu
+3. choose Ask a question
+4. open the Ask page from a bookmarked link
+5. post an Instant eval estimate for the project through the API
+
+**Backend state verified:**
+
+- the project row exists in PG tracer_project under the actor org
+- the capabilities API denies instant_eval with LICENSE_MISSING
+- the estimate API answers 402 with upgrade_required, code LICENSE_MISSING and feature instant_eval
+
+**Browser observations:**
+
+- the Evaluate menu lists Ask a question, Find patterns, Add evaluators, and only the first two carry the Enterprise mark
+- Ask a question lands on /observe/:id/ask showing the Instant eval upgrade page, its upgrade link and the Jev footnote
+- the bookmarked /ask link shows the same upgrade page
+- the browser never requests an Instant eval endpoint
+
+### OBS-E2E-054 — native source accounting retains exact usage and known, zero and unknown costs
+
+**Goal:** A developer trusts native trace accounting and can filter and sort costs without treating unknown as zero
+
+**Spec:** `flows/observe/native-accounting-and-source-details.spec.ts:17`
+
+**Tags:** —
+
+**User steps:**
+
+1. read parent-only native trace and session list coverage, deliver children later, then replay identical IDs
+2. ingest synthetic Copilot and Gemini trees plus a legacy control, including duplicate delivery
+3. verify exact source identities, normalized counters and session grouping in storage
+4. read exact trace membership and known, zero and unknown costs in the desktop grid
+5. filter by trace name and by zero or positive cost
+6. sort positive costs and the full set both ways, replaying each captured API request
+
+**Backend state verified:**
+
+- root-only, late-child and replay lists keep observed request counts 0, 3, 3 with coverage unknown and unchanged source summary presence
+- source IDs, parents, normalization profiles, summary counters and sanitized event attributes persist exactly
+- trace API totals and grid distinguish zero from unknown costs
+- session fallback and explicit identities match exact source membership
+- filtered and sorted API, replay and DOM IDs match independent expected sets and order, with exact counts and no lower-bound marker
+
+### OBS-E2E-056 — native sessions preserve exact membership, costs and trace navigation
+
+**Goal:** A developer trusts native session totals and opens the intended source trace from ordered conversation history
+
+**Spec:** `flows/observe/native-session-accounting-navigation.spec.ts:15`
+
+**Tags:** —
+
+**User steps:**
+
+1. read the exact six seeded session identities in the API and desktop grid
+2. open the two-turn Copilot session and navigate to its first source trace
+3. scroll the grid to inspect observed-only native costs, coverage unknown and exact request and trace counts
+4. open each remaining session and match its history card, source trace, tokens and cost
+
+**Backend state verified:**
+
+- session list and history totals sum all request contributions, not parent summaries
+- two-turn history has exactly the source chronology, 86142 tokens, two traces and 1.20 USD
+- single-trace session API, card and header retain exact membership, token breakdown and known, zero or null cost
+- View Trace opens the exact source trace, without unexpected browser or HTTP errors
+
+### OBS-E2E-057 — native tree, model, tool and timeline details preserve source truth
+
+**Goal:** A developer inspects native model and tool work on a normal desktop with truthful costs and sanitized events
+
+**Spec:** `flows/observe/native-trace-desktop-detail.spec.ts:7`
+
+**Tags:** —
+
+**User steps:**
+
+1. open known, zero, unknown and legacy traces from the real grid
+2. select root and model nodes and inspect source IDs and canonical token and cost summaries
+3. inspect Gemini tool output and sanitized exception attributes
+4. switch to timeline and back to tree using the display controls
+
+**Backend state verified:**
+
+- trace detail contains exact source IDs, parents, token contributions and LLM call counts
+- trace and selected model costs preserve known, zero and unknown semantics
+- Copilot links and exception types and Gemini sanitized events survive in the detail API
+- tool output and exception type render in the selected node; unexpected browser and HTTP errors fail
+
+### OBS-E2E-058 — without a licence, Find patterns opens the Insights upgrade page and its API answers 402
+
+**Goal:** Try Insights on a self-hosted install with no Enterprise licence and be shown its upgrade page instead of the feature (nothing stubbed)
+
+**Spec:** `flows/observe/instant-eval-insights-gates.spec.ts:168`
+
+**Tags:** —
+
+**User steps:**
+
+1. create an Observe project through the API
+2. open the project's Traces view and its Evaluate menu
+3. choose Find patterns
+4. open the Insights page from a bookmarked link
+5. list the project's Insights reports through the API
+
+**Backend state verified:**
+
+- the project row exists in PG tracer_project under the actor org
+- the capabilities API denies insights with LICENSE_MISSING
+- the report list API answers 402 with upgrade_required, code LICENSE_MISSING and feature insights
+
+**Browser observations:**
+
+- the Evaluate menu lists Ask a question, Find patterns, Add evaluators, and only the first two carry the Enterprise mark
+- Find patterns lands on /observe/:id/insights showing the Insights upgrade page and its upgrade link
+- the bookmarked /insights link shows the same upgrade page
+- the browser never requests an Insights endpoint
+
+### OBS-E2E-059 — Copilot agent traces show request usage and optional timing detail
+
+**Goal:** A developer inspects a VS Code Copilot turn with accurate token usage, an Agent label and optional internal timing detail
+
+**Spec:** `flows/observe/copilot-agent-usage-timing.spec.ts:19`
+
+**Tags:** —
+
+**User steps:**
+
+1. send the sanitized native VS Code capture plus Strands, Pydantic and parent-only controls
+2. open the captured trace from the real Observe grid
+3. read the agent label and observed token summary with timing activity hidden
+4. show timing spans and hide them again without losing their stored data
+
+**Backend state verified:**
+
+- all 91 captured spans retain their IDs; one agent, five model calls and 72 internal timing spans are stored
+- trace detail and trace list report 88073 captured tokens, 193 Strands tokens, 193 Pydantic tokens and 193 parent-only tokens
+- all 72 timing span IDs remain in the detail API while the tree hides them by default and shows their exact names on request
+
+### OBS-E2E-060 — Error Feed stays error-free without projects and Retry restores existing issues
+
+**Goal:** A developer opens Error Feed in an empty workspace without a spurious error, reads existing issues in a populated workspace, and recovers from a failed read using Retry.
+
+**Spec:** `flows/observe/error-feed-empty-projects.spec.ts:44`
+
+**Tags:** —
+
+**User steps:**
+
+1. open Observe in a test-owned empty workspace and click Error Feed
+2. read the no-projects status without an error notification on first visit, reload and revisit
+3. create a project and two uniquely titled issues through the existing test-image issue seeder in the original workspace
+4. open Error Feed in the populated workspace and read exactly the seeded issue titles
+5. inject a browser-only feed-list 500 and read the inline error and Retry, never a success empty state
+6. remove the injected fault and click Retry to recover the same issue set from fresh real feed and project reads
+
+**Backend state verified:**
+
+- The empty workspace has zero live Observe projects in PG; its real project catalog and feed list return successful exact empty results on first visit, reload and revisit.
+- The project retains its organization/workspace binding and the seeded issues retain their exact IDs, titles and project binding in PG tracer_trace_error_group; the real feed response and rendered table agree on the exact issue set. This does not qualify automatic detection or trace membership.
+- After the browser-only injected failure, Retry performs fresh real successful feed and catalog reads and restores exactly the seeded issues while removing the inline error.
+
+### OBS-E2E-061 — an analyst saves a scoped SQL result as a live dashboard query
+
+**Goal:** An analyst runs a project-scoped query, shares its definition with project members, and adds it to a dashboard.
+
+**Spec:** `flows/observe/sql-workbench.spec.ts:23`
+
+**Tags:** —
+
+**User steps:**
+
+1. send a trace with two independently named spans to a new project
+2. open Observe Query and run a grouped span query using the SQL editor
+3. inspect exact rows, switch Table/Chart tabs, download CSV/Parquet, and save a project-shared query
+4. add the saved query to a dashboard using the Query page
+5. open the dashboard and verify it reruns the saved query
+
+**Backend state verified:**
+
+- exactly the two seeded spans exist in ClickHouse FINAL under the created project
+- the created PostgreSQL project belongs to the actor organization and workspace
+- the completed SQL API result equals the two seeded names and counts shown in the UI
+- the saved project query and dashboard widget persist the same scoped query reference
+- the dashboard starts a new personal execution of the saved query and shows the same exact rows
+
+### OBS-E2E-062 — Users setup preserves project names as Python string literals
+
+**Goal:** A developer opens an empty project's Users setup and obtains a Python example that preserves the project name as one string literal
+
+**Spec:** `flows/observe/user-code-literal.spec.ts:15`
+
+**Tags:** —
+
+**User steps:**
+
+1. ingest a trace without end-user attributes for an ordinary project
+2. open project Users and read its setup example
+3. repeat for names containing a quote, a backslash and a non-BMP Unicode character
+4. compare displayed code with the public API result and inspect the project_name argument
+
+**Backend state verified:**
+
+- the collector-created PostgreSQL project retains the exact minted name and actor organization
+- the example API encodes the exact project name into one quoted Python literal
+- the visible Users setup code equals the exact example API result
+
 ## prompts
 
 ### PROMPT-E2E-001 — a mock-run prompt exposes its current evaluation configuration lifecycle
 
-**Goal:** Run a synthetic prompt through the local mock, then discover, edit and remove its current evaluation configuration through supported UI  
-**Spec:** `flows/prompts/catalog-definition-lifecycle.spec.ts:34`  
+**Goal:** Run a synthetic prompt through the local mock, then discover, edit and remove its current evaluation configuration through supported UI
+
+**Spec:** `flows/prompts/catalog-definition-lifecycle.spec.ts:38`
+
 **Tags:** —
 
 **User steps:**
 
 1. create and name a prompt from scratch and select the local mock model
-2. Run Prompt and wait for real stored output before opening the Evaluation tab
+2. immediately Run Prompt after selecting the model while autosave is held, then release it and open Evaluation after real stored output
 3. Add Evaluation mapped to model_output and inspect its current catalog choices
 4. edit mapping to model_input with the same binding ID and name and wait for completion
 5. delete the binding and reload to verify current discovery excludes it
 
 **Backend state verified:**
 
-- real mock output and the prompt evaluation binding retain exact parent, actor scope and model with terminal stored results
+- no prompt-run WebSocket is constructed before the selected model save responds; real mock output and the evaluation binding retain exact parent, actor scope and model with terminal stored results
 - current prompt catalog identifies the exact binding and its two configured choices
 - mapping edit preserves binding ID/name, completes, and deletion removes it from UI and current discovery
+
+## sdk-ingestion
+
+### SDK-E2E-001 — SDK returns a saved evaluator structure only in its own workspace
+
+**Goal:** Inspect a saved legacy-numeric evaluator in the browser and retrieve its structure with API credentials, while evaluators of other organizations and workspaces are reported as not found
+
+**Spec:** `flows/sdk-ingestion/eval-structure-scope.spec.ts:15`
+
+**Tags:** —
+
+**User steps:**
+
+1. create one evaluator in each of two isolated organizations and assign distinct legacy identities through the separate test-image fixture
+2. open the owner's evaluator detail and inspect its exact name and instructions
+3. retrieve the same evaluator using the owner API credentials
+4. check that other-organization, sibling-workspace, malformed and nonexistent evaluator IDs return the same not-found response and that anonymous requests are refused
+5. retrieve the other organization's evaluator with that organization's own credentials
+
+**Backend state verified:**
+
+- the created evaluator identity and organization/workspace are stored in Postgres and its name is visible in the owner browser
+- the owner API credentials retrieve the exact saved evaluator ID, name and criteria
+- other-organization and nonexistent evaluator requests get the identical not-found response while the other organization still retrieves its own evaluator
 
 ## settings
 
 ### SET-E2E-001 — admin restricts MCP tool groups for connected clients
 
-**Goal:** An admin restricts which MCP tool groups are available to connected clients  
-**Spec:** `flows/settings/mcp-tool-groups.spec.ts:19`  
+**Goal:** An admin restricts which MCP tool groups are available to connected clients
+
+**Spec:** `flows/settings/mcp-tool-groups.spec.ts:19`
+
 **Tags:** @smoke
 
 **User steps:**
@@ -1808,3 +2791,110 @@
 - PG mcp_server_mcptoolgroupconfig.enabled_groups equals that exact set for the actor connection
 - GET /mcp/internal/tools/ equals the initial tool set minus all dataset tools
 - POST /mcp/internal/tool-call/ list_datasets returns 403 while whoami and list_projects still succeed
+
+### SET-E2E-002 — admin reads fresh host update reports and missing reporting stays unknown
+
+**Goal:** An organisation admin reads host-reported restoration progress and the restored previous version separately from a failed update, alongside available release and freshness, through a sanitized read-only report; missing reporting stays unknown.
+
+**Spec:** `flows/settings/host-update-status.spec.ts:79`
+
+**Tags:** —
+
+**User steps:**
+
+1. atomically publish a fresh status.json from the committed valid_status fixture with a minted available version
+2. open /dashboard/settings/updates as the actor
+3. read restoring progress with an unverified installed version and recovery explanation
+4. atomically replace the report with restored status, a known running component and a second minted candidate, then reload
+5. delete the report and reload
+
+**Backend state verified:**
+
+- GET /api/host-update-status/ returns 200 with the minted version and its keys are a subset of the closed public schema, with no path, env, command or secret strings
+- the page version and freshness equal the API values
+- an atomic replace on the host is seen by the container without restarting anything
+- with the file removed the API reports the unavailable state and the page shows reporting unavailable and never up to date
+- POST, PUT, PATCH and DELETE return 405 and an unauthenticated GET returns 401
+
+### SET-E2E-003 — optional-expiry keys stop access and remain distinguishable from disabled keys
+
+**Goal:** An administrator creates optional-expiry keys and distinguishes automatically expired access from a manually disabled key while non-expiring and future keys keep working.
+
+**Spec:** `flows/settings/api-key-expiry.spec.ts:33`
+
+**Tags:** —
+
+**User steps:**
+
+1. seed a short-lived key and a manually disabled key through the public key API
+2. open Keys and create a non-expiring key without touching the optional date
+3. create a future calendar-expiry key and see both saved expiries without reloading
+4. authenticate non-expiring and future keys through headers and Basic auth
+5. after natural expiry, replay both auth paths and distinguish expired from disabled rejection
+6. reload Keys and read the exact Expired and Disabled rows
+7. warm collector authentication with non-expiring and far-future keys
+8. save past and near-future expiries in Django admin and refuse previously cached access at each boundary
+9. keep the unrelated non-expiring key usable and show the admin-edited keys as Expired
+
+**Backend state verified:**
+
+- UI-created no-expiry and future keys persist with their exact optional expiry and actor organization.
+- Non-expiring and future keys authenticate using headers and Basic auth; expired keys consistently return api_key_expired, distinct from manually disabled keys.
+- The Keys list reports the exact minted expiry/status set and matches Never, future date, Expired and Disabled in the browser.
+- Admin-saved expiry persists exactly and invalidates previously warmed collector credentials; a newly cached near-future expiry also fails after its boundary, while the no-expiry control works.
+
+## simulate
+
+### SIM-E2E-001 — Simulate opens on Environments, and an org from after the cutoff sees only Environments
+
+**Goal:** A developer opening Simulate lands on Environments, old Harness, Simulator Agent, Personas and template links go somewhere sensible, Personas opens as a tab on Environments, and a new org sees only Environment in the menu and gets not found from direct Scenarios, Run Simulation and Agent Definition links
+
+**Spec:** `flows/simulate/environments-only-routing.spec.ts:33`
+
+**Tags:** —
+
+**User steps:**
+
+1. open /dashboard/simulate
+2. open the old Harness list, new and job links
+3. open the old Simulator Agent link
+4. open the old Personas link
+5. open the Personas tab
+6. open the Prebuilt template links
+7. read the Simulate menu
+8. open the old Agent Definition link
+9. open the Scenarios, Run Simulation and Agent Definition links directly
+
+**Browser observations:**
+
+- /dashboard/simulate lands on Environments
+- harness lands on Environments, harness/new on the Build tab, harness/<id> on environments/<id>
+- simulator-agent lands on Environments
+- personas lands on the Environments Personas tab
+- the Personas tab is selected and shows the persona search
+- both template URLs stay on their URL and open their page by title
+- agent-definitions lands on Connected agents
+- the Simulate menu is exactly Environment
+- /dashboard/simulate/scenarios, /test and /agent-definitions/<id> land on /404
+
+### SIM-E2E-002 — an org from before the Simulate cutoff keeps Scenarios and Run Simulation
+
+**Goal:** An existing customer, whose org predates the cutoff, still reaches every Simulate page from the menu
+
+**Spec:** `flows/simulate/existing-customer-pages.spec.ts:22`
+
+**Tags:** —
+
+**User steps:**
+
+1. read the Simulate menu
+2. open Scenarios and Run Simulation from the menu
+
+**Backend state verified:**
+
+- user-info for the actor's org reports restrict_simulate_to_environments: false
+
+**Browser observations:**
+
+- the Simulate menu is exactly Environment, Scenarios, Run Simulation
+- each of those two items opens its page by URL and title, never /404

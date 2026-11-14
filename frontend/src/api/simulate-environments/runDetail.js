@@ -36,6 +36,8 @@ import { fetchRunCalls, runSummaryKey } from "./runCalls";
  * @property {?string} executionStatus  The execution's own status
  *                                   (`completed`, `evaluating`, …).
  * @property {string} runState      Execution lifecycle shared with the runs list.
+ * @property {?{id: string, label: string}} fixRun  The fix that started this
+ *                                   check run; null on the user's own runs.
  */
 
 /**
@@ -225,6 +227,22 @@ export function useRunDetail(
         ? execution.selected_scenario_keys
         : undefined,
       trials: execution.trials ?? 1,
+      pinnedAgentVersion: execution.pinned_agent_version ?? null,
+      environmentVersion: execution.environment_version ?? null,
+      suiteVersion: execution.suite_version ?? null,
+      agentDiffers: Boolean(execution.agent_differs),
+      // A fix's check run: `{ id, label }` of the fix that started it, else null.
+      fixRun: execution.fix_run ?? null,
+      // How far an interrupted run got and whether it can resume; null when the
+      // backend does not say.
+      resume: execution.resume
+        ? {
+            resumable: Boolean(execution.resume.resumable),
+            finished: execution.resume.finished ?? null,
+            unfinished: execution.resume.unfinished ?? null,
+            history: execution.resume.history ?? [],
+          }
+        : null,
     };
   }, [execution, envName, summary]);
   const stats = useMemo(
@@ -646,6 +664,37 @@ export function useCallExecutionV3Detail(callExecId, enabled = true, options) {
       return isScoring || isLocalizing ? 3000 : false;
     },
   });
+}
+
+const traceRow = (raw) => ({
+  traceId: raw.trace_id,
+  name: raw.name ?? null,
+  startTime: raw.start_time ?? null,
+  status: raw.status ?? null,
+  latencyMs: raw.latency_ms ?? null,
+});
+
+export function useCallTraces(executionId, callExecutionId) {
+  const query = useQuery({
+    queryKey: ["simulation-call-traces-v3", executionId, callExecutionId],
+    queryFn: async () => {
+      const response = await axios.get(
+        endpoints.runResultsV3.traces(executionId),
+        { params: { call_execution_id: callExecutionId } },
+      );
+      return response.data;
+    },
+    enabled: !!executionId && !!callExecutionId,
+  });
+  const traces = useMemo(
+    () => (query.data?.traces ?? []).map(traceRow),
+    [query.data],
+  );
+  return {
+    projectId: query.data?.project_id ?? null,
+    traces,
+    isError: query.isError,
+  };
 }
 
 /**
