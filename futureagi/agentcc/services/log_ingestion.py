@@ -346,14 +346,19 @@ def _compute_cost(entry):
     return 0
 
 
+# A refused chunk this small is tried one row at a time instead of halved.
+ROW_BY_ROW_AT_MOST = 8
+
+
 def _store_request_logs(objects):
     """Insert the rows, skipping only the ones the database refuses.
 
     A row the database refuses (a value too long for its column, a NUL byte
     in text, a duplicate key outside ``ignore_conflicts``) fails the whole
-    INSERT. The batch is then split in halves until each refused row is on
-    its own, so one bad entry costs only itself, not every org's rows in the
-    gateway batch. Only errors about a row's values split the batch
+    INSERT. The batch is then split in halves, and a chunk of at most
+    ``ROW_BY_ROW_AT_MOST`` rows is tried one row at a time, until each
+    refused row is on its own, so one bad entry costs only itself, not every
+    org's rows in the gateway batch. Only errors about a row's values split the batch
     (DataError, IntegrityError, and a value Django cannot adapt). Any other
     database error (a lost connection, a permission or read-only failure, a
     schema mismatch) would hit every row: it propagates once, and the
@@ -375,6 +380,10 @@ def _store_request_logs(objects):
                 error_type=type(exc).__name__,
             )
             return 1
+        if len(objects) <= ROW_BY_ROW_AT_MOST:
+            # Halving all the way down costs 2n-1 INSERTs when every row is
+            # refused; a small chunk is cheaper one row at a time.
+            return sum(_store_request_logs([obj]) for obj in objects)
         middle = len(objects) // 2
         return _store_request_logs(objects[:middle]) + _store_request_logs(
             objects[middle:]

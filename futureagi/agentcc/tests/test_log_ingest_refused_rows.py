@@ -226,3 +226,27 @@ def test_a_whole_batch_database_error_is_one_503_not_row_by_row(
     assert response.status_code == 503, response.content
     assert insert.call_count == 1
     assert "permission denied" not in response.content.decode()
+
+
+@pytest.mark.integration
+@patch("agentcc.views.webhook.AGENTCC_WEBHOOK_SECRET", SECRET)
+def test_a_small_chunk_of_refused_rows_is_tried_row_by_row_not_halved(
+    api_client, two_orgs
+):
+    """Round 3 (P3): halving all the way down costs 2n-1 INSERTs when every
+    row is refused; a small chunk is tried one row at a time instead."""
+    from agentcc.models import AgentccRequestLog as Log
+
+    real = Log.no_workspace_objects.bulk_create
+    with patch.object(
+        type(Log.no_workspace_objects), "bulk_create", autospec=True
+    ) as insert:
+        insert.side_effect = lambda manager, *a, **k: real(*a, **k)
+        response = _post(
+            api_client, [_entry(f"{i}" + "r" * 300, "key-a") for i in range(8)]
+        )
+
+    assert response.status_code == 200, response.content
+    assert response.json()["result"]["ingested"] == 0
+    # One INSERT for the chunk, then one per row: 9, not 15.
+    assert insert.call_count == 9
