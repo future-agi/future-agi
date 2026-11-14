@@ -199,7 +199,7 @@ async def test_historical_claim_connect_failure_recovers(
 @pytest.mark.e2e
 @pytest.mark.django_db(transaction=True, databases=["default", "default_direct"])
 @pytest.mark.parametrize("outcome", ["rolled_back", "committed"])
-async def test_historical_lost_claim_reply_completes_without_a_second_claim(
+async def test_historical_lost_claim_reply_completes_with_each_entry_evaluated_once(
     workflow_environment, eval_task, make_pending_entries, monkeypatch, outcome
 ):
     """Real PG/Temporal; only paid computation and preseeded reconciliation stubbed.
@@ -207,8 +207,7 @@ async def test_historical_lost_claim_reply_completes_without_a_second_claim(
     The writer's connection drops after the claim SQL was submitted, so the
     activity cannot know whether the claim committed and raises the
     non-retryable ``EvalTaskClaimOutcomeUnknown``. A historical task must not
-    fail on it, and must not claim the same batch again while its outcome is
-    unknown:
+    fail on it, and no entry may be claimed or billed twice:
 
     * ``rolled_back``: the server connection is terminated between the claim's
       UPDATE and its COMMIT, so the commit fails on a real dropped connection
@@ -216,7 +215,9 @@ async def test_historical_lost_claim_reply_completes_without_a_second_claim(
     * ``committed``: the claim commits and the reply is then lost, so the
       batch stays RUNNING with no evaluation dispatched until the stale-claim
       reaper requeues it. Its claim is aged past the reaper's threshold right
-      after the commit, standing in for the wait in production.
+      after the commit, so the first reap takes it back; the window in which
+      the batch is still too young to reap is covered by
+      ``test_committed_lost_reply_before_the_reaper_can_reclaim_it``.
     """
     from datetime import timedelta
 
@@ -321,10 +322,12 @@ async def test_historical_lost_claim_reply_completes_without_a_second_claim(
     print(
         f"lost_claim={outcome} events={events} statuses={statuses} completed={dict(completions)}"
     )
-    # Nothing was claimed again until the drain had waited and reaped: the
-    # claim after the lost one takes the same two oldest entries -- requeued by
-    # the reaper if the lost claim committed, still pending if it rolled back
-    # -- and never skips ahead to the third.
+    # The lost claim was not re-run in place: the drain waited and reaped
+    # first. Here the next claim takes the first two entries, still pending if
+    # the claim rolled back, or requeued by that reap because the committed
+    # batch was aged past the reaper's threshold. A batch too young to reap
+    # instead waits while other pending work is claimed (see
+    # test_committed_lost_reply_before_the_reaper_can_reclaim_it).
     first_two = sorted(str(entry.id) for entry in created[:2])
     lost_at = events.index(("lost", None))
     after = events[lost_at + 1 :]
@@ -358,6 +361,141 @@ async def test_historical_lost_claim_reply_completes_without_a_second_claim(
             )
         )()
         assert len(lost_batch) == 2 and requeued == [1, 1]
+    await Replayer(
+        workflows=[HistoricalEvalTaskWorkflow],
+        workflow_runner=UnsandboxedWorkflowRunner(),
+    ).replay_workflow(history)
+
+
+@pytest.mark.e2e
+@pytest.mark.django_db(transaction=True)
+async def test_committed_lost_reply_before_the_reaper_can_reclaim_it(
+    workflow_environment, eval_task, make_pending_entries, monkeypatch
+):
+    """A committed claim whose reply is lost, with the batch left as young as
+    it really is: the reaper cannot take it back yet.
+
+    The reaper's staleness floor (ninety minutes in production) is scaled down
+    to a few seconds and the finalize wait to one; the batch is not aged. The
+    drain must not fail, must go on claiming the task's other pending work
+    while the lost batch is still RUNNING, and once the reaper requeues that
+    batch it is claimed and evaluated once. No entry is claimed or billed
+    twice, and the task ends COMPLETED.
+    """
+    from datetime import timedelta
+
+    from tfc.temporal.eval_tasks import workflows as wf
+    from tracer.services.eval_tasks import reaper
+
+    _patch_noop_reconcile(monkeypatch)
+    monkeypatch.setattr(wf, "_FINALIZE_WAIT", timedelta(seconds=1))
+    stale_after = 5
+    monkeypatch.setattr(
+        reaper, "effective_stale_seconds", lambda requested, **kwargs: stale_after
+    )
+    created = await sync_to_async(make_pending_entries)(eval_task, 3)
+    completions = Counter()
+    events, statuses, lost_batch = [], [], []
+    lost_batch_status_at_claim = []
+
+    def complete(entry):
+        completions[str(entry.id)] += 1
+        EvalLogger.objects.filter(id=entry.id).update(
+            status=EvalEntryStatus.COMPLETED, config_hash="0" * 64, error=False
+        )
+        return EvalEntryStatus.COMPLETED
+
+    monkeypatch.setattr("tracer.services.eval_tasks.run_entry.run_entry", complete)
+    original_set_status = activities._set_task_status_sync
+
+    def record_status(task_id, status, *args, **kwargs):
+        statuses.append(status)
+        return original_set_status(task_id, status, *args, **kwargs)
+
+    monkeypatch.setattr(activities, "_set_task_status_sync", record_status)
+    original_reap = activities._reap_sync
+
+    def record_reap(*args, **kwargs):
+        reaped = original_reap(*args, **kwargs)
+        events.append(("reap", reaped["requeued"]))
+        return reaped
+
+    monkeypatch.setattr(activities, "_reap_sync", record_reap)
+    original_claim = entries.claim_pending_batch
+
+    def lose_first_reply(task, n):
+        if lost_batch:
+            lost_batch_status_at_claim.append(
+                sorted(
+                    EvalLogger.objects.filter(id__in=lost_batch).values_list(
+                        "status", flat=True
+                    )
+                )
+            )
+        claimed = original_claim(task, n)
+        ids = sorted(str(entry.id) for entry in claimed)
+        if not lost_batch:
+            # Committed, then the reply is lost.
+            lost_batch.extend(ids)
+            events.append(("lost", ids))
+            raise OperationalError("writer unavailable") from psycopg.InterfaceError(
+                "the connection is closed"
+            )
+        events.append(("claim", ids))
+        return claimed
+
+    monkeypatch.setattr(entries, "claim_pending_batch", lose_first_reply)
+    queue = f"claim-lost-young-{uuid.uuid4().hex}"
+    async with Worker(
+        workflow_environment.client,
+        task_queue=queue,
+        workflows=get_workflows(),
+        activities=get_activities(),
+        workflow_runner=UnsandboxedWorkflowRunner(),
+    ):
+        handle = await workflow_environment.client.start_workflow(
+            HistoricalEvalTaskWorkflow.run,
+            EvalTaskWorkflowInput(
+                task_id=str(eval_task.id), task_queue=queue, batch_size=2
+            ),
+            id=f"eval-task-{eval_task.id}",
+            task_queue=queue,
+        )
+        result = await handle.result()
+        history = await handle.fetch_history()
+
+    print(f"events={events} statuses={statuses} completed={dict(completions)}")
+    first_two = sorted(str(entry.id) for entry in created[:2])
+    third = [str(created[2].id)]
+    assert lost_batch == first_two
+    lost_at = events.index(("lost", first_two))
+    after = events[lost_at + 1 :]
+    # The first reap after the loss finds the batch too young to take back,
+    # and the next claim takes the other pending entry while the lost batch is
+    # still RUNNING.
+    assert after[0] == ("reap", 0), events
+    claims = [e for e in after if e[0] == "claim"]
+    assert claims[0] == ("claim", third), events
+    assert lost_batch_status_at_claim[0] == [EvalEntryStatus.RUNNING] * 2
+    # Only the reaper brings the lost batch back, once, and only then is it
+    # claimed again.
+    assert [e for e in after if e[0] == "reap" and e[1]] == [("reap", 2)], events
+    assert ("claim", first_two) in claims, events
+    assert events.index(("reap", 2)) < events.index(("claim", first_two)), events
+    assert result.status == "completed" and result.processed == 3
+    assert await _task_status(str(eval_task.id)) == EvalTaskStatus.COMPLETED
+    assert EvalTaskStatus.FAILED not in statuses
+    counts = await _status_counts(str(eval_task.id))
+    assert counts["completed"] == 3 and counts["total"] == 3
+    assert completions == Counter({str(entry.id): 1 for entry in created})
+    requeued = await sync_to_async(
+        lambda: sorted(
+            EvalLogger.objects.filter(id__in=lost_batch).values_list(
+                "attempts", flat=True
+            )
+        )
+    )()
+    assert requeued == [1, 1]
     await Replayer(
         workflows=[HistoricalEvalTaskWorkflow],
         workflow_runner=UnsandboxedWorkflowRunner(),

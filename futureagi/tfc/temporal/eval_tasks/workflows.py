@@ -75,9 +75,13 @@ from tfc.temporal.eval_tasks.types import (
 #   the terminal fail path.
 # * A claim whose reply was lost after its SQL was submitted is raised as
 #   non-retryable ``EvalTaskClaimOutcomeUnknown``, which Temporal never retries
-#   whatever ``maximum_attempts`` says, so a longer window cannot claim (and
-#   bill) a second batch. Neither workflow type fails on it, and neither
-#   dispatches an evaluation for the lost batch, whose IDs it never learned:
+#   whatever ``maximum_attempts`` says, so the claim is never re-run in place
+#   and no entry is claimed or billed twice. Neither workflow type fails on it
+#   (the historical drain within the cap of
+#   ``_MAX_CLAIM_OUTCOME_UNKNOWN_WAITS`` lost replies in a row; histories
+#   recorded before ``_HISTORICAL_CLAIM_OUTCOME_UNKNOWN_PATCH`` keep failing
+#   on replay, see its comment), and neither dispatches an evaluation for the
+#   lost batch, whose IDs it never learned:
 #   - the continuous workflow parks (``waiting_for_database``) for one poll,
 #     reaps before its next claim and goes on from its unchanged cursor;
 #   - the historical workflow treats it as an empty claim: it asks finalize,
@@ -86,6 +90,8 @@ from tfc.temporal.eval_tasks.types import (
 #   In both, a batch that did commit stays RUNNING until the stale-claim
 #   reaper requeues it, and only then is it claimed again and evaluated once;
 #   a batch that rolled back is still pending and the next claim takes it.
+#   While a committed batch waits for the reaper, other pending work may be
+#   claimed and evaluated.
 CONTROL_RETRY_POLICY = RetryPolicy(
     initial_interval=timedelta(seconds=2),
     maximum_interval=timedelta(seconds=60),
@@ -184,10 +190,12 @@ _CONTINUOUS_DATABASE_ADOPTION_PATCH = "continuous-eval-live-database-backoff-v1"
 # pressed Resume. The drain now treats that claim as an empty one: finalize
 # (which only succeeds if nothing is pending or running), else wait
 # ``_FINALIZE_WAIT``, reap, and claim again. The claim is never retried in
-# place, so one lost reply cannot claim or bill a second batch: if the lost
-# claim committed, its entries stay RUNNING with no activity dispatched for
-# them until the reaper requeues them, and they are then claimed and evaluated
+# place, and no entry is claimed or billed twice: if the lost claim
+# committed, its entries stay RUNNING with no activity dispatched for them
+# until the reaper requeues them, and they are then claimed and evaluated
 # once; if it rolled back, the next claim takes them as ordinary pending work.
+# While a committed batch is still too young for the reaper, the drain goes on
+# claiming and evaluating the task's other pending entries.
 #
 # These waits are counted apart from ``idle_waits``, so a lost reply never
 # eats into the budget that lets a blind-floor reap reclaim stranded rows
