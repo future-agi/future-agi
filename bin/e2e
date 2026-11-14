@@ -15,14 +15,15 @@ die() { printf '%s\n' "$*" >&2; exit 1; }
 ENV_FILE="$ROOT/e2e/stack/e2e.env"
 COMPOSE=(docker compose --env-file "$ENV_FILE"
   -f "$ROOT/docker-compose.distributed.yml" -f "$ROOT/e2e/stack/docker-compose.e2e.yml"
-  -p futureagi-e2e)
-# Trimmed profile: no serving/code-executor; general ALL_QUEUES worker plus a
-# dedicated exact-aggregation worker. PeerDB is included through the same
+  -p "${E2E_COMPOSE_PROJECT:-futureagi-e2e}")
+# Trimmed profile: no serving/code-executor; general ALL_QUEUES worker plus
+# dedicated exact-aggregation and SQL workers. The generic worker deliberately
+# excludes both admission-bound queues. PeerDB is included through the same
 # bootstrap graph as OSS. Completed one-shot dependencies gate the application;
 # the harness never recreates failed jobs.
-SERVICES=(frontend backend worker worker-exact-aggregation
+SERVICES=(frontend backend worker worker-exact-aggregation worker-sql-workbench
   postgres clickhouse redis minio
-  temporal agentcc-gateway fi-collector fi-property-catalog-consumer mock-llm
+  temporal agentcc-gateway fi-collector fi-property-catalog-consumer mock-llm mock-slack mock-google
   peerdb-server peerdb-flow-worker peerdb-flow-snapshot-worker peerdb-minio)
 # E2E_STACK=standalone: the same suite against the Standalone setup
 # (docker-compose.yml: one `app` container plus Postgres and ClickHouse) on the
@@ -32,8 +33,13 @@ if [[ "${E2E_STACK:-distributed}" == standalone ]]; then
   COMPOSE=(docker compose --env-file "$ENV_FILE"
     -f "$ROOT/docker-compose.yml" -f "$ROOT/e2e/stack/docker-compose.standalone-e2e.yml"
     -p futureagi-e2e-standalone)
-  SERVICES=(app postgres clickhouse mock-llm)
+  SERVICES=(app postgres clickhouse mock-llm mock-google)
 fi
+
+# Telemetry registration from an E2E stack always goes to loopback, whatever
+# the caller's shell exports (Compose prefers exported values over the env file).
+export FUTURE_AGI_TELEMETRY_DISABLED=true
+export FUTURE_AGI_TELEMETRY_URL=http://127.0.0.1:9
 
 BUILD_TARGETS="backend|frontend|collector|all|standalone|standalone-app"
 
@@ -64,6 +70,13 @@ wait_ready() {
     "query=SELECT throwIf(count() != 2, 'observed indexes missing') FROM system.tables WHERE database={database:String} AND name IN ('observed_attribute_keys', 'observed_attribute_values')" \
     --data-urlencode "param_database=${PROPERTY_CATALOG_DATABASE:-property_catalog}" >/dev/null \
     || { echo "Observed attribute indexes missing"; exit 1; }
+  if [[ "${E2E_STACK:-distributed}" == standalone ]]; then
+    # App health follows migrations; the probes above witness ClickHouse schema.
+    # Reuse the guarded distributed fixture without changing the shipped image.
+    echo "Provisioning read-only SQL fixture account ..."
+    "${COMPOSE[@]}" exec -T -w /app/backend -e FUTURE_AGI_E2E_FIXTURE=sql-workbench \
+      app python - < "$ROOT/e2e/stack/backend/bootstrap_sql.py"
+  fi
   echo "Waiting for frontend ..."
   until curl -fsS "http://localhost:$(frontend_port)/" >/dev/null 2>&1; do
     ((SECONDS < deadline)) || { echo "frontend not up in 600s"; exit 1; }
@@ -74,7 +87,8 @@ wait_ready() {
 
 build_target() {
   case "$1" in
-    backend)   docker build -t futureagi/future-agi:e2e-local -f "$ROOT/futureagi/Dockerfile.oss" "$ROOT/futureagi"
+    backend)   docker build -t futureagi/future-agi:e2e-base -f "$ROOT/futureagi/Dockerfile.oss" "$ROOT/futureagi"
+               docker build -t futureagi/future-agi:e2e-local --build-arg BASE_TAG=e2e-base -f "$ROOT/e2e/stack/backend/Dockerfile" "$ROOT"
                echo "built. run with: FUTURE_AGI_VERSION=e2e-local bin/e2e up" ;;
     frontend)  docker build -t futureagi/frontend:e2e-local "$ROOT/frontend"
                echo "built. run with: FRONTEND_VERSION=e2e-local bin/e2e up" ;;
@@ -100,7 +114,31 @@ build_target() {
   esac
 }
 
+# Repo-independent and HOME-reachable for Docker VMs which do not share /Volumes.
+# Export for BOTH Compose and the Playwright process, including separate up/test
+# invocations. Standalone keeps its existing topology and never mounts this slot.
+if [[ "${E2E_STACK:-distributed}" != standalone ]]; then
+  export E2E_HOST_UPDATE_STATUS_DIR="${E2E_HOST_UPDATE_STATUS_DIR:-${HOME}/.cache/futureagi-e2e/${E2E_COMPOSE_PROJECT:-futureagi-e2e}/host-update-status}"
+fi
+prepare_host_update_status() {
+  [[ "${E2E_STACK:-distributed}" != standalone ]] || return 0
+  [[ "$E2E_HOST_UPDATE_STATUS_DIR" == /* && ! -L "$E2E_HOST_UPDATE_STATUS_DIR" ]] \
+    || die "E2E_HOST_UPDATE_STATUS_DIR must be an absolute, non-symlink directory"
+  mkdir -p "$E2E_HOST_UPDATE_STATUS_DIR"
+  chmod 0755 "$E2E_HOST_UPDATE_STATUS_DIR"
+  # Never seed, rewrite, chmod or remove a pre-existing report here. The flow
+  # publishes its own 0644 file atomically and refuses somebody else's report.
+}
+
 cmd="${1:-}"; shift || true
+case "$cmd" in
+  up|test|ui) prepare_host_update_status ;;
+  compose)
+    # Global Compose flags may precede the subcommand (e.g. --profile peerdb).
+    for arg in "$@"; do
+      case "$arg" in up|create|run) prepare_host_update_status; break ;; esac
+    done ;;
+esac
 case "$cmd" in
   # PG migrations and initial snapshots precede backend readiness. No hidden
   # force-recreate/retry loop: failed or uncertain setup must be inspected.

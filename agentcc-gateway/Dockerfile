@@ -2,23 +2,25 @@
 # static binary on an empty (scratch) base.
 # Conventions shared by every futureagi/* image: TESTING.md › Image conventions.
 #
-# The toolchain tag floats on the 1.26 minor on purpose: Go patch releases
-# carry standard-library security fixes, and those are compiled into the
-# binary, so each release build picks them up. Build stages only, never
-# shipped; the runtime is `scratch`, which has no tag or digest to pin.
+# The builder starts from agentcc-gateway-base (golang + `go mod download`
+# already baked in, see Dockerfile.base), so a source edit never re-downloads
+# modules; republish it (base-image-publish.yml) when go.mod/go.sum change,
+# then bump the tag and digest together.
+# The healthcheck probe keeps the plain toolchain, whose tag floats on the
+# 1.26 minor on purpose: Go patch releases carry standard-library security
+# fixes that are compiled into the binary. Build stages only, never shipped;
+# the runtime is `scratch`, which has no tag or digest to pin.
+ARG BUILDER_IMAGE=futureagi/agentcc-gateway-base:v1.0.0@sha256:8f5de0143555b97bad63f356588dbe44d2b419c95b9cd60a1368822122c28f81
 ARG GO_IMAGE=golang:1.26-alpine
 
 # Cross-compile on the build host ($BUILDPLATFORM) instead of running the Go
 # toolchain under QEMU for linux/arm64: the binary is static, so only CI time
 # changes. -trimpath drops host paths from the binary.
-FROM --platform=$BUILDPLATFORM ${GO_IMAGE} AS builder
+FROM --platform=$BUILDPLATFORM ${BUILDER_IMAGE} AS builder
 ARG TARGETOS
 ARG TARGETARCH
 
 WORKDIR /build
-
-COPY go.mod go.sum ./
-RUN go mod download
 
 COPY . .
 

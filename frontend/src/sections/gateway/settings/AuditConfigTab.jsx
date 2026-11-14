@@ -91,7 +91,7 @@ const AuditConfigTab = ({ audit, onChange }) => {
   return (
     <Box>
       <Stack direction="row" alignItems="center" spacing={1} sx={{ mb: 2 }}>
-        <Icon icon="mdi:file-document-edit-outline" width={24} />
+        <Icon icon="solar:pen-new-square-linear" width={24} />
         <Typography variant="h6">Audit Logging</Typography>
       </Stack>
 
@@ -132,7 +132,7 @@ const AuditConfigTab = ({ audit, onChange }) => {
 
           {/* ===== CATEGORIES ===== */}
           <Paper variant="outlined" sx={{ p: 2 }}>
-            <Typography variant="subtitle1" fontWeight="bold" sx={{ mb: 1 }}>
+            <Typography variant="subtitle1" fontWeight={400} sx={{ mb: 1 }}>
               Event Categories
             </Typography>
             <Typography
@@ -168,14 +168,14 @@ const AuditConfigTab = ({ audit, onChange }) => {
               alignItems="center"
               sx={{ mb: 2 }}
             >
-              <Typography variant="subtitle1" fontWeight="bold">
+              <Typography variant="subtitle1" fontWeight="600">
                 Audit Sinks
               </Typography>
               <Button
                 size="small"
                 variant="outlined"
                 onClick={handleAddSink}
-                startIcon={<Icon icon="mdi:plus" width={16} />}
+                startIcon={<Icon icon="solar:add-linear" width={16} />}
               >
                 Add Sink
               </Button>
@@ -241,14 +241,11 @@ const AuditConfigTab = ({ audit, onChange }) => {
                     )}
 
                     <IconButton
+                      sx={{ color: "status.danger.fg" }}
                       size="small"
                       onClick={() => handleRemoveSink(idx)}
                     >
-                      <Icon
-                        icon="mdi:delete-outline"
-                        width={18}
-                        color="#d32f2f"
-                      />
+                      <Icon icon="solar:trash-bin-trash-linear" width={18} />
                     </IconButton>
                   </Stack>
 

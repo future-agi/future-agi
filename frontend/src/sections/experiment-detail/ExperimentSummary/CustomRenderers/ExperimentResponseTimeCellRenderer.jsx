@@ -18,8 +18,8 @@ const ExperimentResponseTimeCellRenderer = ({ value }) => {
     >
       <Box sx={{ display: "flex", gap: 1, alignItems: "center" }}>
         {/* <Iconify
-          icon="ic:baseline-schedule"
-          sx={{ width: "14px", height: "14px", color: "black.900" }}
+          icon="solar:clock-circle-linear"
+          sx={{ width: "14px", height: "14px", color: "text.primary" }}
         /> */}
         {value}
       </Box>

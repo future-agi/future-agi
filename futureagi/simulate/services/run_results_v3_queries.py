@@ -2,20 +2,28 @@
 
 from __future__ import annotations
 
-from collections import Counter
+import json
+import re
+from collections import Counter, defaultdict
+from collections.abc import Callable
 from typing import Any
 
 from django.core.cache import cache
+from django.db import connections, router
 from django.db.models import (
     Avg,
+    BooleanField,
     Case,
     CharField,
     Count,
+    Exists,
+    Expression,
     F,
     FloatField,
     Func,
     IntegerField,
     JSONField,
+    Max,
     OuterRef,
     Q,
     QuerySet,
@@ -25,24 +33,77 @@ from django.db.models import (
     Value,
     When,
 )
-from django.db.models.fields.json import KeyTextTransform, KeyTransform
-from django.db.models.functions import Cast, Coalesce, Lower, NullIf, Trim
-from django.db.models.lookups import Exact, GreaterThan, In
+from django.db.models.fields.json import (
+    DataContains,
+    HasKey,
+    KeyTextTransform,
+    KeyTransform,
+)
+from django.db.models.functions import (
+    Cast,
+    Coalesce,
+    Greatest,
+    Least,
+    Lower,
+    NullIf,
+    Trim,
+)
+from django.db.models.lookups import (
+    Exact,
+    GreaterThan,
+    GreaterThanOrEqual,
+    In,
+    IsNull,
+    LessThan,
+    LessThanOrEqual,
+)
+from django.db.models.sql.datastructures import BaseTable
 
 from model_hub.models.develop_dataset import Cell
-from simulate.models import CallExecution, SimulateEvalConfig, TestExecution
-from simulate.models.hosted_harness import HostedHarnessScenario
+from simulate.models import (
+    CallExecution,
+    HarnessSuiteMember,
+    SimulateEvalConfig,
+    TestExecution,
+)
+from simulate.models.hosted_harness import HostedHarnessJob, HostedHarnessScenario
+from simulate.selectors.runs import user_executions
 from simulate.semantics import SupportedProviders
 from simulate.services.harness_scenarios import GROUP_BY as SCENARIO_GROUP_BY
-from simulate.services.harness_scenarios import level_label
-from simulate.services.run_results_v3 import build_evaluation_catalog
+from simulate.services.run_reliability_v3 import build_reliability
+from simulate.services.run_results_v3 import OUTCOME_LABELS, build_evaluation_catalog
 from simulate.services.run_results_v3_expressions import (
+    NormalizedEvalNumber,
     PercentileCont,
     _json_text,
     _safe_json_float,
+    project_annotation,
+)
+from simulate.services.run_results_v3_scoring import (
+    ERRORED_CALL_STATUSES,
+    ERRORED_EVAL_STATUSES,
+    HARNESS_ERROR,
+    HARNESS_FAILED,
+    HARNESS_INCONCLUSIVE,
+    HARNESS_PASSED,
+    IN_PROGRESS_CALL_STATUSES,
+    NATIVE_FAILED,
+    NATIVE_PASSED,
+    QUEUED_CALL_STATUSES,
+    UNMEASURED_EVAL_STATUSES,
+    EvalScoringSpec,
+    LiveEvals,
+    live_eval_specs,
+    resolve_eval_scoring_spec,
+    score_tokens,
 )
 
-OUTCOMES = ("passed", "failed", "error", "inconclusive")
+OUTCOMES = tuple(OUTCOME_LABELS)
+# Outcomes that judge the agent. Errored and inconclusive calls never ran to a verdict,
+# so they are reported as run health rather than counted against the agent.
+EVALUATED_OUTCOMES = ("passed", "failed")
+# Fewer evaluated calls than this and a slice's pass rate is too noisy to rank.
+MIN_RANKED_SLICE = 3
 # The Scenarios tab's axes, plus the run's own outcome.
 GROUP_FIELDS = {
     **{axis: f"result_{axis}" for axis in SCENARIO_GROUP_BY},
@@ -50,12 +111,139 @@ GROUP_FIELDS = {
 }
 UNGROUPED = "Ungrouped"
 LIST_AXES = frozenset({"sub_goal"})
+# The ``ordering`` values a run's calls sort by, and the field each one orders on.
+ORDERING_FIELDS = {
+    "started_at": "started_at",
+    "duration_seconds": "duration_seconds",
+    "latency_ms": "result_latency_ms",
+    "turn_count": "result_turn_count",
+    "tokens": "result_tokens",
+    "cost_cents": "result_cost_cents",
+    "scenario": "scenario__name",
+    "goal": "result_goal",
+    "outcome": "result_outcome",
+}
+READ_ONCE_JSON_COLUMNS = frozenset({"call_metadata", "eval_outputs"})
+
+
+class _RunCallsTable(BaseTable):
+    def __init__(self, table_name, alias, execution_ids):
+        super().__init__(table_name, alias)
+        self.execution_ids = tuple(str(execution_id) for execution_id in execution_ids)
+
+    def as_sql(self, compiler, connection):
+        quote = connection.ops.quote_name
+        columns = ", ".join(
+            (
+                f"jsonb_path_query_first({quote(column)}, '$') AS {quote(column)}"
+                if column in READ_ONCE_JSON_COLUMNS
+                else quote(column)
+            )
+            for column in (
+                field.column for field in CallExecution._meta.concrete_fields
+            )
+        )
+        placeholders = ", ".join(["%s"] * len(self.execution_ids))
+        sql = (
+            f"(SELECT {columns} FROM {quote(self.table_name)} "
+            f"WHERE {quote('test_execution_id')} IN ({placeholders}) OFFSET 0) "
+            f"{compiler.quote_name_unless_alias(self.table_alias)}"
+        )
+        return sql, list(self.execution_ids)
+
+    def relabeled_clone(self, change_map):
+        return self.__class__(
+            self.table_name,
+            change_map.get(self.table_alias, self.table_alias),
+            self.execution_ids,
+        )
+
+    @property
+    def identity(self):
+        return (*super().identity, self.execution_ids)
+
+
+def _read_large_json_once(queryset: QuerySet, execution_ids: list[Any]) -> QuerySet:
+    if not execution_ids:
+        return queryset
+    query = queryset.query
+    alias = query.base_table
+    query.alias_map[alias] = _RunCallsTable(
+        query.alias_map[alias].table_name, alias, execution_ids
+    )
+    return queryset
 
 
 def _authored_level(field: str):
     """One authored-scenario value for grouping, read from its JSON document."""
     head, _, tail = field.partition(".")
     return KeyTextTransform(tail, head)
+
+
+def _member_level(field: str, *, text: bool = True):
+    """The same value read from a suite member's ``content`` document."""
+    head, _, tail = field.partition(".")
+    transform = KeyTextTransform if text else KeyTransform
+    if not tail:
+        return transform(head, "content")
+    return transform(tail, KeyTransform(head, "content"))
+
+
+def _member_first(
+    member: QuerySet | None,
+    member_value: Any,
+    authored: QuerySet,
+    output_field: Any,
+    *,
+    empty: Any = None,
+) -> tuple[Any, ...]:
+    """A pinned run's suite member value, else the authored scenario's.
+
+    The member is authoritative: when a pinned run has one, a value it lacks reads
+    empty rather than the identity row's newer one. Without pinned runs the member read
+    is left out, so the query is unchanged.
+    """
+
+    def first(rows: QuerySet) -> Any:
+        value = Subquery(rows[:1], output_field=output_field)
+        return NullIf(value, empty) if empty is not None else value
+
+    if member is None:
+        return (first(authored),)
+    return (
+        first(member.values(level=member_value)),
+        Case(When(~Exists(member), then=first(authored)), output_field=output_field),
+    )
+
+
+def _member_json(field: str):
+    """A member ``content`` value as JSON, NULL when it is absent or JSON null."""
+    return Case(
+        When(
+            ~Q(IsNull(_member_level(field), True)),
+            then=_member_level(field, text=False),
+        ),
+        output_field=JSONField(),
+    )
+
+
+def _member_scenario_key():
+    """The call's scenario key, else its linked scenario's: the scan's rule too."""
+    linked = (
+        HostedHarnessScenario.all_objects.filter(
+            call_execution_id=OuterRef(OuterRef("pk"))
+        )
+        .order_by("-created_at")
+        .values("scenario_key")[:1]
+    )
+    return Coalesce(
+        NullIf(
+            KeyTextTransform("harness_scenario_key", OuterRef("call_metadata")),
+            Value(""),
+        ),
+        Subquery(linked, output_field=CharField()),
+        output_field=CharField(),
+    )
 
 
 def _group_q(group_by: str, key: str) -> Q:
@@ -75,11 +263,87 @@ def _group_keys(group_by: str, value: Any) -> list[str]:
     return list(dict.fromkeys(keys)) or [UNGROUPED]
 
 
-def _json_value(field: str, *keys: str):
-    expression = F(field)
+def _json_value(field: str | Expression, *keys: str):
+    expression = F(field) if isinstance(field, str) else field
     for key in keys:
         expression = KeyTransform(key, expression)
     return expression
+
+
+# The rows show the authored scenario's sub-goals when the call carries none of
+# its own (see ``build_call_rows``), so the filter and facets read the same way.
+_NO_RESULT_SUB_GOALS = (
+    Q(call_metadata__hosted_harness_receipt__sub_goals__isnull=True)
+    | Q(call_metadata__hosted_harness_receipt__sub_goals=[])
+) & (Q(call_metadata__sub_goals__isnull=True) | Q(call_metadata__sub_goals=[]))
+
+
+def _member_sub_goals() -> Subquery:
+    """The sub-goals of a call's scenario in the suite version its run was pinned to.
+
+    Self-contained, so it also works on unannotated call querysets. NULL when the call
+    has no member; an empty list when its member lists none.
+    """
+    pinned_suite = (
+        HostedHarnessJob.no_workspace_objects.filter(
+            test_execution_id=OuterRef(OuterRef("test_execution_id")),
+            suite_version__isnull=False,
+        )
+        .order_by("-created_at")
+        .values("suite_version_id")[:1]
+    )
+    member = HarnessSuiteMember.no_workspace_objects.filter(
+        suite_version_id=Subquery(pinned_suite),
+        scenario_key=_member_scenario_key(),
+    ).values(
+        level=Coalesce(
+            _member_json("sub_goals"),
+            Value([], output_field=JSONField()),
+            output_field=JSONField(),
+        )
+    )[
+        :1
+    ]
+    return Subquery(member, output_field=JSONField())
+
+
+def _authored_sub_goal_q(value: Any, *, pinned: bool = False) -> Q:
+    """Match a call whose linked scenario lists ``value`` as a sub-goal.
+
+    A trial's source scenario wins over a registration, as in the rows. With pinned
+    runs in view, the pinned suite's member wins over both.
+    """
+    execution = "hosted_harness_execution__source_scenario__sub_goals"
+    registration = "hosted_registration__sub_goals"
+    authored = (
+        Q(**{f"{execution}__contains": [value]})
+        | Q(**{f"{execution}__contains": [{"name": value}]})
+        | (
+            Q(hosted_harness_execution__isnull=True)
+            & (
+                Q(**{f"{registration}__contains": [value]})
+                | Q(**{f"{registration}__contains": [{"name": value}]})
+            )
+        )
+    )
+    if not pinned:
+        return authored
+    member = _member_sub_goals()
+    return (
+        Q(DataContains(member, Value([value], output_field=JSONField())))
+        | Q(DataContains(member, Value([{"name": value}], output_field=JSONField())))
+        | (Q(IsNull(member, True)) & authored)
+    )
+
+
+def _authored_sub_goals_expression(*, pinned: bool = False):
+    empty = Value([], output_field=JSONField())
+    return Coalesce(
+        *([_member_sub_goals()] if pinned else []),
+        NullIf(F("hosted_harness_execution__source_scenario__sub_goals"), empty),
+        NullIf(F("hosted_registration__sub_goals"), empty),
+        output_field=JSONField(),
+    )
 
 
 def _eval_verdict_q(eval_ids: set[str], values: list[Any]) -> Q:
@@ -92,100 +356,406 @@ def _eval_verdict_q(eval_ids: set[str], values: list[Any]) -> Q:
     return verdict
 
 
-def _eval_measured_q(eval_id: str) -> Q:
+def _eval_measured_q(eval_id: str, field: str | Expression = "eval_outputs") -> Q:
+    status = Coalesce(
+        _json_text(field, eval_id, "status"),
+        Value(""),
+        output_field=TextField(),
+    )
+    return Q(HasKey(_json_value(field), eval_id)) & ~Q(
+        In(Lower(Trim(status)), list(UNMEASURED_EVAL_STATUSES))
+    )
+
+
+def _eval_errored_q(eval_id: str) -> Q:
     status = Coalesce(
         _json_text("eval_outputs", eval_id, "status"),
         Value(""),
         output_field=TextField(),
     )
-    return ~Q(In(Lower(Trim(status)), ["pending", "skipped", "error"]))
-
-
-def _object_score(eval_id: str):
-    """A choice-scored eval's numeric `score` key, or NULL when it isn't a JSON number."""
-    inner = _json_value("eval_outputs", eval_id, "output", "score")
-    is_number = Exact(
-        Func(inner, function="jsonb_typeof", output_field=TextField()),
-        Value("number"),
-    )
-    return Case(
-        When(
-            is_number,
-            then=Cast(
-                _json_text("eval_outputs", eval_id, "output", "score"), FloatField()
-            ),
-        ),
-        default=None,
-        output_field=FloatField(),
+    return Q(eval_outputs__has_key=eval_id) & Q(
+        In(Lower(Trim(status)), list(ERRORED_EVAL_STATUSES))
     )
 
 
-def _eval_score(eval_id: str):
-    numeric = _safe_json_float("eval_outputs", eval_id, "output")
-    numeric_type = Exact(
+def _choice_array_matches(
+    eval_id: str, label: str, *, nested: bool, field: str | Expression = "eval_outputs"
+) -> Q:
+    keys = (eval_id, "output", "choices") if nested else (eval_id, "output")
+    pattern = f"^[[:space:]]*{re.escape(label)}[[:space:]]*$"
+    path = f'$[*] ? (@ like_regex {json.dumps(pattern)} flag "i")'
+    return Q(
         Func(
-            _json_value("eval_outputs", eval_id, "output"),
-            function="jsonb_typeof",
-            output_field=TextField(),
-        ),
-        Value("number"),
+            _json_value(field, *keys),
+            Value(path),
+            function="jsonb_path_exists",
+            template="%(function)s(%(expressions)s::jsonpath)",
+            output_field=BooleanField(),
+        )
     )
-    object_score = _object_score(eval_id)
-    return Case(
-        When(~_eval_measured_q(eval_id), then=Value(None, output_field=FloatField())),
+
+
+# Twin: ``_EvalScore`` in run_results_v3_scan; change both. Guarded by
+# test_every_stored_entry_shape_scores_like_the_sql_read_model.
+def _expanded_eval_score(
+    eval_id: str,
+    spec: EvalScoringSpec | None = None,
+    field: str | Expression = "eval_outputs",
+):
+    output = _json_value(field, eval_id, "output")
+    raw_text = Coalesce(
+        *(
+            KeyTextTransform(key, output)
+            for key in ("score", "result", "output", "choice", "value")
+        ),
+        KeyTextTransform("output", _json_value(field, eval_id)),
+        output_field=TextField(),
+    )
+    normalized = Lower(Trim(raw_text))
+    numeric_score = NormalizedEvalNumber(
+        normalized, pass_fail=spec is not None and spec.output_type == "pass_fail"
+    )
+    choice_scores = (
+        spec.choice_scores
+        if spec is not None and spec.output_type == "deterministic"
+        else {}
+    )
+    choice_cases = [
         When(
-            _eval_verdict_q(
-                {eval_id}, [True, "true", "pass", "passed", "success", "successful"]
+            Q(
+                Exact(
+                    Lower(Trim(_json_text(field, eval_id, "output"))),
+                    Value(label),
+                )
+            )
+            | (
+                Q(
+                    Exact(
+                        Lower(Trim(_json_text(field, eval_id, "output", "choice"))),
+                        Value(label),
+                    )
+                )
+                & ~Q(HasKey(output, "choices"))
             ),
+            then=Value(min(max(float(score), 0.0), 1.0)),
+        )
+        for label, score in choice_scores.items()
+    ]
+    choice_score = None
+    if spec is not None and spec.output_type == "deterministic" and choice_scores:
+        weighted = [Value(0.0)]
+        count = [Value(0.0)]
+        for label, weight in choice_scores.items():
+            present = _choice_array_matches(
+                eval_id, label, nested=False, field=field
+            ) | _choice_array_matches(eval_id, label, nested=True, field=field)
+            weighted.append(
+                Case(
+                    When(present, then=Value(weight)),
+                    default=Value(0.0),
+                    output_field=FloatField(),
+                )
+            )
+            count.append(
+                Case(
+                    When(present, then=Value(1.0)),
+                    default=Value(0.0),
+                    output_field=FloatField(),
+                )
+            )
+        weighted_sum = Func(
+            *weighted,
+            function="",
+            template="(%(expressions)s)",
+            arg_joiner=" + ",
+            output_field=FloatField(),
+        )
+        count_sum = Func(
+            *count,
+            function="",
+            template="(%(expressions)s)",
+            arg_joiner=" + ",
+            output_field=FloatField(),
+        )
+        choice_score = Case(
+            When(
+                GreaterThan(count_sum, Value(0.0)),
+                then=Least(
+                    Greatest(weighted_sum / NullIf(count_sum, Value(0.0)), Value(0.0)),
+                    Value(1.0),
+                ),
+            ),
+            output_field=FloatField(),
+        )
+    positive, negative = score_tokens(spec)
+    raw_score = Case(
+        When(
+            In(normalized, positive),
             then=Value(1.0),
         ),
         When(
-            _eval_verdict_q(
-                {eval_id}, [False, "false", "fail", "failed", "failure", "unsuccessful"]
-            ),
+            In(normalized, negative),
             then=Value(0.0),
         ),
-        When(
-            numeric_type,
-            then=Case(
-                When(GreaterThan(numeric, Value(1.0)), then=numeric / Value(100.0)),
-                default=numeric,
-                output_field=FloatField(),
-            ),
+        default=numeric_score,
+        output_field=FloatField(),
+    )
+    selected_score = Case(
+        *choice_cases,
+        default=(
+            Coalesce(choice_score, raw_score, output_field=FloatField())
+            if choice_score is not None
+            else raw_score
         ),
-        default=Case(
+        output_field=FloatField(),
+    )
+    if spec is None:
+        object_score = _json_value(field, eval_id, "output", "score")
+        selected_score = Case(
             When(
-                GreaterThan(object_score, Value(1.0)), then=object_score / Value(100.0)
+                Exact(
+                    Func(output, function="jsonb_typeof", output_field=TextField()),
+                    Value("object"),
+                ),
+                then=Case(
+                    When(
+                        Exact(
+                            Func(
+                                object_score,
+                                function="jsonb_typeof",
+                                output_field=TextField(),
+                            ),
+                            Value("number"),
+                        ),
+                        then=numeric_score,
+                    ),
+                    output_field=FloatField(),
+                ),
             ),
-            default=object_score,
+            default=selected_score,
             output_field=FloatField(),
+        )
+    return Case(
+        When(
+            ~_eval_measured_q(eval_id, field),
+            then=Value(None, output_field=FloatField()),
         ),
+        default=selected_score,
         output_field=FloatField(),
     )
 
 
-def run_calls_queryset(
-    execution: TestExecution, execution_ids: list[Any] | None = None
-) -> QuerySet[CallExecution]:
-    live_eval_ids = set(
-        SimulateEvalConfig.objects.filter(
-            run_test=execution.run_test, deleted=False
-        ).values_list("id", flat=True)
-    )
-    live_eval_ids = {str(value) for value in live_eval_ids}
-    failed_eval = _eval_verdict_q(
-        live_eval_ids,
-        [False, "false", "fail", "failed", "failure", "unsuccessful"],
-    )
-    passed_eval = Q() if live_eval_ids else Q(pk__in=[])
-    for eval_id in live_eval_ids:
-        passed_eval &= _eval_verdict_q(
-            {eval_id}, [True, "true", "pass", "passed", "success", "successful"]
+class _EvalScoreExpression(Func):
+    """Reuse compiled scoring across clones of a request's expression."""
+
+    output_field = FloatField()
+
+    def __init__(
+        self,
+        eval_id: str,
+        output_type: str | None,
+        choices: tuple[tuple[str, float], ...],
+    ):
+        super().__init__(F("eval_outputs"))
+        self._compiled_sql = {}
+        self.eval_id = eval_id
+        # Threshold and reversal are applied separately by the verdict expression.
+        self.spec = (
+            None
+            if output_type is None
+            else EvalScoringSpec(output_type, 0.5, False, dict(choices))
         )
+
+    def as_sql(self, compiler, connection, **extra_context):
+        source = self.source_expressions[0]
+        key = (
+            self.eval_id,
+            self.spec.output_type if self.spec else None,
+            tuple(self.spec.choice_scores.items()) if self.spec else (),
+            source,
+        )
+        expression_key = (connection.alias, connection.vendor, type(compiler), key)
+        if expression_key in self._compiled_sql:
+            sql, params = self._compiled_sql[expression_key]
+            return sql, list(params)
+        cache = getattr(compiler, "_simulation_score_sql", None)
+        # SQL only: this cache never survives its compiler or stores query results.
+        if cache is None:
+            cache = compiler._simulation_score_sql = {}
+        if key not in cache:
+            expression = _expanded_eval_score(self.eval_id, self.spec, source)
+            sql, params = compiler.compile(
+                expression.resolve_expression(compiler.query)
+            )
+            cache[key] = (sql, tuple(params))
+        sql, params = cache[key]
+        self._compiled_sql[expression_key] = (sql, params)
+        return sql, list(params)
+
+
+def _eval_score(eval_id: str, spec: EvalScoringSpec | None = None):
+    return _EvalScoreExpression(
+        eval_id,
+        spec.output_type if spec else None,
+        tuple(spec.choice_scores.items()) if spec else (),
+    )
+
+
+# Twin: ``_ConfiguredVerdict`` in run_results_v3_scan; change both. Guarded by
+# test_every_stored_entry_shape_scores_like_the_sql_read_model.
+def _configured_eval_verdict(
+    eval_id: str, config: SimulateEvalConfig, spec: EvalScoringSpec | None = None
+):
+    if spec is None:
+        spec = resolve_eval_scoring_spec(config)
+    raw_score = (
+        _eval_score(eval_id, spec)
+        if spec.threshold is not None
+        else Value(None, output_field=FloatField())
+    )
+    final_pass = Q(
+        Exact(
+            Lower(Trim(_json_text("eval_outputs", eval_id, "output"))),
+            Value("passed"),
+        )
+    ) | Q(
+        Exact(
+            _json_value("eval_outputs", eval_id, "output", "failure"),
+            Value(False, output_field=JSONField()),
+        )
+    )
+    final_fail = Q(
+        Exact(
+            Lower(Trim(_json_text("eval_outputs", eval_id, "output"))),
+            Value("failed"),
+        )
+    ) | Q(
+        Exact(
+            _json_value("eval_outputs", eval_id, "output", "failure"),
+            Value(True, output_field=JSONField()),
+        )
+    )
+    if spec.output_type != "pass_fail":
+        stored_verdict = Q(
+            In(
+                Lower(Trim(_json_text("eval_outputs", eval_id, "output_type"))),
+                ["pass/fail", "pass_fail"],
+            )
+        )
+        final_pass &= stored_verdict
+        final_fail &= stored_verdict
+    measured = _eval_measured_q(eval_id)
+    score = Case(
+        When(~measured, then=Value(None, output_field=FloatField())),
+        When(final_pass, then=Value(1.0)),
+        When(final_fail, then=Value(0.0)),
+        default=Value(1.0) - raw_score if spec.reverse_output else raw_score,
+        output_field=FloatField(),
+    )
+    if spec.threshold is None:
+        return score, measured & final_pass, measured & final_fail
+    raw_pass = (
+        GreaterThan(raw_score, Value(0.0))
+        if spec.output_type == "pass_fail"
+        else GreaterThanOrEqual(raw_score, Value(spec.threshold))
+    )
+    raw_fail = (
+        LessThanOrEqual(raw_score, Value(0.0))
+        if spec.output_type == "pass_fail"
+        else LessThan(raw_score, Value(spec.threshold))
+    )
+    passed = measured & Q(
+        Case(
+            When(final_pass, then=Value(True)),
+            When(final_fail, then=Value(False)),
+            default=raw_fail if spec.reverse_output else raw_pass,
+            output_field=BooleanField(),
+        )
+    )
+    failed = measured & Q(
+        Case(
+            When(final_fail, then=Value(True)),
+            When(final_pass, then=Value(False)),
+            default=raw_pass if spec.reverse_output else raw_fail,
+            output_field=BooleanField(),
+        )
+    )
+    return score, passed, failed
+
+
+def _sql_texts(values: tuple[str, ...]) -> str:
+    """Constant words as SQL string literals."""
+    return ", ".join(f"'{value}'" for value in values)
+
+
+# Twin: ``_native_verdicts`` in run_results_v3_scan; change both. Guarded by
+# test_every_stored_entry_shape_scores_like_the_sql_read_model.
+class _NativeHarnessVerdict(Func):
+    """Judge template-less harness checks using the call-row verdict rules."""
+
+    output_field = BooleanField()
+
+    def __init__(self, configured_ids: list[str], verdict: str):
+        super().__init__(
+            F("eval_outputs"), Value(configured_ids, output_field=JSONField())
+        )
+        self.verdict = verdict
+
+    def as_sql(self, compiler, connection, **extra_context):
+        source_sql, source_params = compiler.compile(self.source_expressions[0])
+        ids_sql, ids_params = compiler.compile(self.source_expressions[1])
+        status_sql = "lower(btrim(COALESCE(check_result.value->>'status', '')))"
+        if self.verdict == "error":
+            condition = f"{status_sql} IN ({_sql_texts(ERRORED_EVAL_STATUSES)})"
+            verdict_params = []
+        else:
+            tokens = list(NATIVE_PASSED if self.verdict == "passed" else NATIVE_FAILED)
+            condition = (
+                f"{status_sql} NOT IN ({_sql_texts(UNMEASURED_EVAL_STATUSES)}) "
+                "AND jsonb_typeof(check_result.value->'output') IN ('string', 'boolean') "
+                "AND lower(btrim(check_result.value->>'output')) = ANY(%s)"
+            )
+            verdict_params = [tokens]
+        sql = (
+            "EXISTS (SELECT 1 FROM jsonb_each("
+            f"CASE WHEN jsonb_typeof({source_sql}) = 'object' "
+            f"THEN {source_sql} ELSE '{{}}'::jsonb END) AS check_result(key, value) "
+            "WHERE jsonb_typeof(check_result.value) = 'object' "
+            "AND check_result.value->>'source' = 'harness' "
+            f"AND NOT ({ids_sql} ? check_result.key) AND {condition})"
+        )
+        return sql, [*source_params, *source_params, *ids_params, *verdict_params]
+
+
+def run_calls_queryset(
+    execution: TestExecution,
+    execution_ids: list[Any] | None = None,
+    *,
+    live_evals: LiveEvals | None = None,
+) -> QuerySet[CallExecution]:
+    if live_evals is None:
+        live_evals = live_eval_specs(execution.run_test_id)
+    live_evals.warn_invalid_thresholds()
+    failed_eval = Q(pk__in=[])
+    passed_eval = Q(pk__in=[])
+    errored_eval = Q(pk__in=[])
+    for eval_id, live in live_evals.items():
+        _, passed_q, failed_q = _configured_eval_verdict(
+            eval_id, live.config, live.spec
+        )
+        failed_eval |= failed_q
+        passed_eval |= passed_q
+        errored_eval |= _eval_errored_q(eval_id)
+
+    configured_ids = list(live_evals)
+    failed_eval |= Q(_NativeHarnessVerdict(configured_ids, "failed"))
+    passed_eval |= Q(_NativeHarnessVerdict(configured_ids, "passed"))
+    errored_eval |= Q(_NativeHarnessVerdict(configured_ids, "error"))
 
     # The common hosted-harness fields live in JSONB today. These annotations
     # keep filtering, grouping, ordering and aggregation inside PostgreSQL while
     # the page serializer continues to preserve the richer fallback behavior.
+    run_ids = execution_ids if execution_ids is not None else [execution.id]
     execution_filter = (
         Q(test_execution_id__in=execution_ids)
         if execution_ids is not None
@@ -208,10 +778,36 @@ def run_calls_queryset(
     # A hosted call's use case, sub-goals, persona and coverage live on its
     # authored scenario: linked to the call on a direct run, or found by the
     # call's scenario key on the run's own job or its parent environment.
-    own_run = Q(job__test_execution_id=OuterRef("test_execution_id"))
-    own_environment = Q(
-        job__simulation_runs__test_execution_id=OuterRef("test_execution_id")
+    # The jobs are resolved here, once, so each per-call lookup is a
+    # (job, scenario_key) index hit. Keys repeat on every run of an
+    # environment, so matching the key first and joining back to the run
+    # scanned the job table for every call.
+    own_run = Q(pk__in=[])
+    own_environment = Q(pk__in=[])
+    # A run pinned to a suite version shows that version's scenario content. A run
+    # has one job; a deleted one pins nothing, as everywhere else that reads the pin.
+    pinned_suites: dict[Any, Any] = {}
+    # Oldest first, so the newest pinned job wins.
+    run_jobs = (
+        HostedHarnessJob.all_objects.filter(test_execution_id__in=run_ids)
+        .order_by("created_at", "id")
+        .values_list(
+            "test_execution_id", "id", "environment_id", "suite_version_id", "deleted"
+        )
     )
+    for run_id, job_id, environment_id, suite_version_id, deleted in run_jobs:
+        this_run = Exact(OuterRef("test_execution_id"), Value(run_id))
+        own_run |= Q(this_run, job_id=job_id)
+        if environment_id:
+            own_environment |= Q(this_run, job_id=environment_id)
+        if suite_version_id and not deleted:
+            pinned_suites[run_id] = suite_version_id
+    pinned_suite = Q(pk__in=[])
+    for run_id, suite_version_id in pinned_suites.items():
+        pinned_suite |= Q(
+            Exact(OuterRef("test_execution_id"), Value(run_id)),
+            suite_version_id=suite_version_id,
+        )
     authored = (
         HostedHarnessScenario.all_objects.filter(
             Q(call_execution_id=OuterRef("pk"))
@@ -227,18 +823,38 @@ def run_calls_queryset(
         )
         .order_by("match_rank", "-created_at")
     )
-    queryset = CallExecution.objects.filter(execution_filter).annotate(
-        result_scenario_key=_json_text("call_metadata", "harness_scenario_key")
-    )
+    queryset = _read_large_json_once(
+        CallExecution.objects.filter(execution_filter), run_ids
+    ).annotate(result_scenario_key=_json_text("call_metadata", "harness_scenario_key"))
+    member = None
+    if pinned_suites:
+        queryset = queryset.alias(
+            result_pinned_suite=Value(True),
+            result_member_key=Coalesce(
+                NullIf(F("result_scenario_key"), Value("")),
+                Subquery(
+                    HostedHarnessScenario.all_objects.filter(
+                        call_execution_id=OuterRef("pk")
+                    )
+                    .order_by("-created_at")
+                    .values("scenario_key")[:1],
+                    output_field=CharField(),
+                ),
+                output_field=CharField(),
+            ),
+        )
+        member = HarnessSuiteMember.no_workspace_objects.filter(
+            pinned_suite, scenario_key=OuterRef("result_member_key")
+        )
     queryset = queryset.annotate(
         **{
             GROUP_FIELDS[axis]: Coalesce(
-                NullIf(
-                    Subquery(
-                        authored.values(level=_authored_level(field))[:1],
-                        output_field=TextField(),
-                    ),
-                    Value(""),
+                *_member_first(
+                    member,
+                    _member_level(field),
+                    authored.values(level=_authored_level(field)),
+                    TextField(),
+                    empty=Value(""),
                 ),
                 Value(UNGROUPED),
                 output_field=CharField(),
@@ -248,9 +864,11 @@ def run_calls_queryset(
         },
         **{
             GROUP_FIELDS[axis]: Coalesce(
-                Subquery(
-                    authored.values(SCENARIO_GROUP_BY[axis])[:1],
-                    output_field=JSONField(),
+                *_member_first(
+                    member,
+                    _member_json(SCENARIO_GROUP_BY[axis]),
+                    authored.values(SCENARIO_GROUP_BY[axis]),
+                    JSONField(),
                 ),
                 Value([], output_field=JSONField()),
                 output_field=JSONField(),
@@ -259,14 +877,19 @@ def run_calls_queryset(
         },
         result_eval_outcome=Case(
             When(failed_eval, then=Value("failed")),
+            When(errored_eval, then=Value("inconclusive")),
             When(passed_eval, then=Value("passed")),
             default=Value("inconclusive"),
             output_field=CharField(),
         ),
+        # Twin: the goal fallbacks in run_results_v3_scan.scan_call_values; change both.
         result_goal=Coalesce(
-            NullIf(
-                Subquery(authored.values("use_case")[:1], output_field=TextField()),
-                Value(""),
+            *_member_first(
+                member,
+                _member_level("use_case"),
+                authored.values("use_case"),
+                TextField(),
+                empty=Value(""),
             ),
             _json_text("call_metadata", "use_case"),
             _json_text("call_metadata", "goal"),
@@ -278,44 +901,31 @@ def run_calls_queryset(
             F("scenario__name"),
             output_field=CharField(),
         ),
+        # Twin: ``_outcome`` in run_results_v3_scan; change both. Guarded by
+        # test_every_stored_entry_shape_scores_like_the_sql_read_model.
         result_outcome=Case(
+            When(status__in=list(QUEUED_CALL_STATUSES), then=Value("queued")),
+            When(status__in=list(IN_PROGRESS_CALL_STATUSES), then=Value("in_progress")),
             When(
-                call_metadata__harness_outcome_status__in=[
-                    "passed",
-                    "pass",
-                    "success",
-                    "successful",
-                ],
-                then=Value("passed"),
-            ),
-            When(
-                call_metadata__harness_outcome_status__in=[
-                    "failed",
-                    "fail",
-                    "failure",
-                ],
-                then=Value("failed"),
-            ),
-            When(
-                call_metadata__harness_outcome_status__in=[
-                    "error",
-                    "errored",
-                    "cancelled",
-                    "canceled",
-                ],
+                call_metadata__harness_outcome_status__in=list(HARNESS_ERROR),
                 then=Value("error"),
             ),
+            When(status__in=list(ERRORED_CALL_STATUSES), then=Value("error")),
+            When(~Q(status="completed"), then=Value("inconclusive")),
             When(
-                call_metadata__harness_outcome_status__in=[
-                    "inconclusive",
-                    "unknown",
-                    "skipped",
-                ],
+                call_metadata__harness_outcome_status__in=list(HARNESS_FAILED),
+                then=Value("failed"),
+            ),
+            When(failed_eval, then=Value("failed")),
+            When(errored_eval, then=Value("inconclusive")),
+            When(
+                call_metadata__harness_outcome_status__in=list(HARNESS_INCONCLUSIVE),
                 then=Value("inconclusive"),
             ),
-            When(status__in=["failed", "cancelled"], then=Value("error")),
-            When(~Q(status="completed"), then=Value("inconclusive")),
-            When(failed_eval, then=Value("failed")),
+            When(
+                call_metadata__harness_outcome_status__in=list(HARNESS_PASSED),
+                then=Value("passed"),
+            ),
             When(passed_eval, then=Value("passed")),
             default=Value("inconclusive"),
             output_field=CharField(),
@@ -329,6 +939,7 @@ def run_calls_queryset(
             _safe_json_float("conversation_metrics_data", "bot_message_count"),
         ),
         result_tokens=_safe_json_float("conversation_metrics_data", "total_tokens"),
+        result_cost_cents=Cast("customer_cost_cents", FloatField()),
         result_provider=Case(
             *provider_cases,
             default=Coalesce(
@@ -336,8 +947,66 @@ def run_calls_queryset(
             ),
             output_field=CharField(),
         ),
+        result_scenario_key=Coalesce(
+            _json_text("call_metadata", "harness_scenario_key"),
+            _json_text("call_metadata", "hosted_harness_receipt", "scenario_key"),
+            Cast("row_id", TextField()),
+            Cast("scenario_id", TextField()),
+            output_field=CharField(),
+        ),
+        result_scenario=Coalesce(
+            NullIf(F("hosted_registration__name"), Value("")),
+            _json_text("call_metadata", "harness_scenario_key"),
+            _json_text("call_metadata", "hosted_harness_receipt", "scenario_key"),
+            NullIf(F("scenario__name"), Value("")),
+            Cast("row_id", TextField()),
+            output_field=CharField(),
+        ),
+        result_csat=Case(
+            When(
+                Q(
+                    GreaterThanOrEqual(
+                        _safe_json_float("conversation_metrics_data", "csat_score"),
+                        Value(0.0),
+                    )
+                )
+                & Q(
+                    LessThanOrEqual(
+                        _safe_json_float("conversation_metrics_data", "csat_score"),
+                        Value(10.0),
+                    )
+                ),
+                then=_safe_json_float("conversation_metrics_data", "csat_score"),
+            ),
+            default=None,
+            output_field=FloatField(),
+        ),
     )
-    return queryset.select_related("scenario", "test_execution__agent_definition")
+    return project_annotation(queryset, "result_outcome").select_related(
+        "scenario", "test_execution__agent_definition"
+    )
+
+
+def run_call_rows_queryset(queryset: QuerySet) -> QuerySet:
+    """Keep SQL verdicts for filtering; call-row serialization judges each row."""
+    return queryset.alias(
+        result_outcome=F("result_outcome"),
+        result_eval_outcome=F("result_eval_outcome"),
+    )
+
+
+def _sub_goal_q(values: list[str], *, pinned: bool = False) -> Q:
+    sub_goal_query = Q(pk__in=[])
+    for value in values:
+        sub_goal_query |= Q(
+            call_metadata__hosted_harness_receipt__sub_goals__contains=[{"name": value}]
+        )
+        sub_goal_query |= Q(call_metadata__sub_goals__contains=[value])
+        sub_goal_query |= Q(call_metadata__sub_goals__contains=[{"name": value}])
+        sub_goal_query |= _NO_RESULT_SUB_GOALS & _authored_sub_goal_q(
+            value, pinned=pinned
+        )
+    return sub_goal_query
 
 
 def apply_run_call_query(queryset: QuerySet, query: dict[str, Any]) -> QuerySet:
@@ -355,21 +1024,35 @@ def apply_run_call_query(queryset: QuerySet, query: dict[str, Any]) -> QuerySet:
         queryset = queryset.filter(id__in=values)
     if values := filters.get("goal"):
         queryset = queryset.filter(result_goal__in=values)
+    if values := filters.get("goal_not"):
+        queryset = queryset.filter(
+            ~Q(result_goal__in=values) | Q(result_goal__isnull=True)
+        )
     if values := filters.get("status"):
         queryset = queryset.filter(
             result_outcome__in=[str(value).lower() for value in values]
         )
+    if values := filters.get("status_not"):
+        queryset = queryset.filter(
+            ~Q(result_outcome__in=[str(value).lower() for value in values])
+            | Q(result_outcome__isnull=True)
+        )
+    if values := filters.get("goal_outcome"):
+        from simulate.services.run_dashboard_v3 import annotate_goal_outcome
+
+        queryset = annotate_goal_outcome(queryset).filter(dashboard_goal__in=values)
+    pinned = "result_pinned_suite" in queryset.query.annotations
     if values := filters.get("sub_goal"):
-        sub_goal_query = Q(pk__in=[])
-        for value in values:
-            sub_goal_query |= Q(
-                call_metadata__hosted_harness_receipt__sub_goals__contains=[
-                    {"name": value}
-                ]
+        queryset = queryset.filter(_sub_goal_q(values, pinned=pinned))
+    if values := filters.get("sub_goal_not"):
+        # NOT EXISTS, so a call whose sub-goal JSON is NULL still counts as "not".
+        queryset = queryset.filter(
+            ~Exists(
+                CallExecution._base_manager.filter(
+                    _sub_goal_q(values, pinned=pinned), pk=OuterRef("pk")
+                )
             )
-            sub_goal_query |= Q(call_metadata__sub_goals__contains=[value])
-            sub_goal_query |= Q(call_metadata__sub_goals__contains=[{"name": value}])
-        queryset = queryset.filter(sub_goal_query)
+        )
 
     group_by = query.get("group_by")
     group_key = query.get("group_key")
@@ -379,30 +1062,17 @@ def apply_run_call_query(queryset: QuerySet, query: dict[str, Any]) -> QuerySet:
     ordering = str(query.get("ordering") or "-started_at")
     descending = ordering.startswith("-")
     requested = ordering.lstrip("-")
-    fields = {
-        "started_at": "started_at",
-        "duration_seconds": "duration_seconds",
-        "latency_ms": "result_latency_ms",
-        "turn_count": "result_turn_count",
-        "tokens": "result_tokens",
-        "cost_cents": "cost_cents",
-        "scenario": "scenario__name",
-        "goal": "result_goal",
-        "outcome": "result_outcome",
-    }
-    field = fields.get(requested, "started_at")
+    field = ORDERING_FIELDS.get(requested, "started_at")
     return queryset.order_by(f"-{field}" if descending else field, "id")
 
 
 def _aggregate_expressions(include_percentiles: bool = True) -> dict[str, Any]:
     expressions: dict[str, Any] = {
         "total": Count("id"),
-        "measured": Count(
-            "id", filter=Q(result_outcome__in=["passed", "failed", "error"])
-        ),
+        "measured": Count("id", filter=Q(result_outcome__in=EVALUATED_OUTCOMES)),
         "tokens_total_value": Sum("result_tokens"),
-        "cost_cents_total_value": Sum("cost_cents"),
-        "csat_average": Avg("overall_score"),
+        "cost_cents_total_value": Sum("result_cost_cents"),
+        "csat_average": Avg("result_csat"),
         "turns_average": Avg("result_turn_count"),
     }
     for outcome in OUTCOMES:
@@ -413,7 +1083,7 @@ def _aggregate_expressions(include_percentiles: bool = True) -> dict[str, Any]:
         "duration": "duration_seconds",
         "latency": "result_latency_ms",
         "tokens": "result_tokens",
-        "cost_cents": "cost_cents",
+        "cost_cents": "result_cost_cents",
     }.items():
         expressions[f"{name}_average"] = Avg(field)
         expressions[f"{name}_measured"] = Count(field)
@@ -460,39 +1130,66 @@ def _summary_from_values(values: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def summarize_run_calls(
-    queryset: QuerySet, include_percentiles: bool = True
-) -> dict[str, Any]:
-    return _summary_from_values(
-        queryset.aggregate(**_aggregate_expressions(include_percentiles))
+def _result_sub_goals_expression(*, pinned: bool = False) -> Coalesce:
+    """A call's own sub-goals, else its authored scenario's, as the rows show."""
+    empty = Value([], output_field=JSONField())
+    return Coalesce(
+        NullIf(
+            _json_value("call_metadata", "hosted_harness_receipt", "sub_goals"), empty
+        ),
+        NullIf(_json_value("call_metadata", "sub_goals"), empty),
+        _authored_sub_goals_expression(pinned=pinned),
+        empty,
+        output_field=JSONField(),
     )
 
 
-def run_call_facets(
-    queryset: QuerySet, facets_cache_key: str | None = None
-) -> dict[str, list[dict[str, Any]]]:
-    if facets_cache_key and (cached := cache.get(facets_cache_key)) is not None:
-        return cached
-    facets = {}
-    for name, field in (("goal", "result_goal"), ("status", "result_outcome")):
-        facets[name] = [
-            {"value": row[field], "count": row["count"]}
-            for row in queryset.values(field)
-            .annotate(count=Count("id"))
-            .order_by("-count", field)
-        ]
+def _collation_order(values: list[str]) -> dict[str, int]:
+    """Rank values as the database collation sorts them."""
+    with connections[router.db_for_read(CallExecution)].cursor() as cursor:
+        cursor.execute(
+            "SELECT value FROM unnest(%s::text[]) AS value ORDER BY value", [values]
+        )
+        return {value: index for index, (value,) in enumerate(cursor.fetchall())}
 
+
+def _value_facets(
+    rows: list[dict[str, Any]], fields: dict[str, str]
+) -> dict[str, list[dict[str, Any]]]:
+    """Count each field's values, ordered as ``ORDER BY -count, value`` would."""
+    counts = {
+        name: Counter(row[field] for row in rows) for name, field in fields.items()
+    }
+    tied = set()
+    for counter in counts.values():
+        repeats = Counter(counter.values())
+        tied.update(
+            value
+            for value, count in counter.items()
+            if value is not None and repeats[count] > 1
+        )
+    order = _collation_order(sorted(tied)) if tied else {}
+    return {
+        name: [
+            {"value": value, "count": count}
+            for value, count in sorted(
+                counter.items(),
+                key=lambda item: (-item[1], item[0] is None, order.get(item[0], 0)),
+            )
+        ]
+        for name, counter in counts.items()
+    }
+
+
+def _sub_goal_facet(calls: QuerySet) -> list[dict[str, Any]]:
+    pinned = HostedHarnessJob.no_workspace_objects.filter(
+        test_execution_id__in=calls.order_by().values("test_execution_id"),
+        suite_version__isnull=False,
+    ).exists()
     sub_goals = Counter()
     metadata_rows = (
-        queryset.order_by()
-        .annotate(
-            result_sub_goals=Coalesce(
-                _json_value("call_metadata", "hosted_harness_receipt", "sub_goals"),
-                _json_value("call_metadata", "sub_goals"),
-                Value([], output_field=JSONField()),
-                output_field=JSONField(),
-            )
-        )
+        calls.order_by()
+        .annotate(result_sub_goals=_result_sub_goals_expression(pinned=pinned))
         .values_list("result_sub_goals", flat=True)
         .iterator(chunk_size=2000)
     )
@@ -503,127 +1200,273 @@ def run_call_facets(
             name = value.get("name") if isinstance(value, dict) else value
             if name:
                 sub_goals[str(name)] += 1
-    facets["sub_goal"] = [
+    return [
         {"value": value, "count": count}
         for value, count in sorted(
             sub_goals.items(), key=lambda item: (-item[1], item[0].lower())
         )
     ]
+
+
+def run_call_facets(
+    rows: Callable[[], list[dict[str, Any]]],
+    calls: Callable[[], QuerySet],
+    facets_cache_key: str | None = None,
+) -> dict[str, list[dict[str, Any]]]:
+    """Facets of the call-value rows; ``calls`` are the same calls, unannotated."""
+    if facets_cache_key and (cached := cache.get(facets_cache_key)) is not None:
+        return cached
+    facets = _value_facets(rows(), {"goal": "result_goal", "status": "result_outcome"})
+    facets["sub_goal"] = _sub_goal_facet(calls())
     if facets_cache_key:
         cache.set(facets_cache_key, facets, timeout=60 * 60)
     return facets
 
 
-def group_run_calls(
-    queryset: QuerySet,
-    group_by: str | None,
-    page_rows: list[dict[str, Any]],
-    columns: list[dict[str, str]],
-) -> list[dict[str, Any]]:
-    if group_by not in GROUP_FIELDS:
-        return []
-    field = GROUP_FIELDS[group_by]
-    expressions = _aggregate_expressions(include_percentiles=False)
-
-    for index, column in enumerate(columns):
-        eval_id = str(column["id"])
-        score = _eval_score(eval_id)
-        expressions[f"eval_{index}_average"] = Avg(score)
-        expressions[f"eval_{index}_scored"] = Count(score)
-    page_ids = [str(row["id"]) for row in page_rows]
-    keys_by_id = {
-        str(call_id): _group_keys(group_by, value)
-        for call_id, value in queryset.filter(id__in=page_ids).values_list("id", field)
-    }
-    ids_by_key: dict[str, list[str]] = {}
-    for call_id in page_ids:
-        for key in keys_by_id.get(call_id, []):
-            ids_by_key.setdefault(key, []).append(call_id)
-    if group_by in LIST_AXES:
-        summaries = [
-            {
-                field: key,
-                **queryset.filter(_group_q(group_by, key))
-                .order_by()
-                .aggregate(**expressions),
-            }
-            for key in ids_by_key
-        ]
-    else:
-        summaries = queryset.order_by().values(field).annotate(**expressions)
-    labels = {
-        "passed": "Passed",
-        "failed": "Failed",
-        "error": "Errored",
-        "inconclusive": "Not measured",
-    }
-    # Levels read as the Scenarios tab names them ("none" is "No attack").
-    labelled_axis = group_by in {"sub_goal", "attack", "task"}
-    groups = []
-    for values in summaries:
-        key = str(values[field])
-        if key not in ids_by_key:
-            continue
-        summary = _summary_from_values(values)
-        evaluation_aggregates = {}
-        for index, column in enumerate(columns):
-            scored = values.get(f"eval_{index}_scored") or 0
-            average = values.get(f"eval_{index}_average")
-            evaluation_aggregates[str(column["id"])] = {
-                "scored": scored,
-                "score_sum": average * scored if average is not None else 0,
-            }
-        groups.append(
-            {
-                "key": key,
-                "label": (
-                    level_label(key)
-                    if labelled_axis and key != UNGROUPED
-                    else labels.get(key, key)
-                ),
-                "result_ids": ids_by_key[key],
-                "aggregates": {
-                    "csat": values.get("csat_average"),
-                    "turns": values.get("turns_average"),
-                    "latency_ms": summary["latency"]["average"],
-                    "tokens": summary["tokens"]["total_value"],
-                    "evaluations": evaluation_aggregates,
-                },
-                **summary,
-            }
-        )
-    return sorted(groups, key=lambda group: (-group["total"], group["label"].lower()))
-
-
 def _breakdown_run_calls(queryset: QuerySet, field: str) -> list[dict[str, Any]]:
     orm_fields = {
         "goal": "result_goal",
+        "scenario": "result_scenario",
         "provider": "result_provider",
         "modality": "simulation_call_type",
     }
     orm_field = orm_fields[field]
-    rows = (
-        queryset.order_by()
-        .values(orm_field)
-        .annotate(**_aggregate_expressions(include_percentiles=False))
-    )
-    result = [
-        {field: str(values[orm_field] or "Unknown"), **_summary_from_values(values)}
-        for values in rows
-    ]
+    if field == "scenario":
+        rows = (
+            queryset.order_by()
+            .values("result_scenario_key")
+            .annotate(
+                scenario_label=Max("result_scenario"),
+                **_aggregate_expressions(include_percentiles=False),
+            )
+        )
+        result = [
+            {
+                "scenario": str(values["scenario_label"] or "Unknown"),
+                "scenario_key": str(values["result_scenario_key"]),
+                **_summary_from_values(values),
+            }
+            for values in rows
+        ]
+    else:
+        rows = (
+            queryset.order_by()
+            .values(orm_field)
+            .annotate(**_aggregate_expressions(include_percentiles=False))
+        )
+        result = [
+            {field: str(values[orm_field] or "Unknown"), **_summary_from_values(values)}
+            for values in rows
+        ]
     return sorted(result, key=lambda row: (-row["total"], row[field].lower()))
+
+
+def build_run_comparison(
+    execution: TestExecution,
+    queryset: QuerySet,
+    *,
+    against: TestExecution | None = None,
+    with_pairs: bool = False,
+) -> dict[str, Any]:
+    """Compare scenario verdicts with ``against``, else the immediately preceding
+    completed run.
+
+    Only scenarios evaluated in both runs participate. A scenario passes when every
+    evaluated trial passed; any evaluated failure makes it failing. Infrastructure
+    errors and unevaluated trials do not invent a verdict.
+
+    ``with_pairs`` also judges each scenario on its pass rate over trials, where a
+    trial passes when all its sub-goal checks held (see ``run_compare``), and adds
+    ``pairs``, ``summary`` and ``versions``.
+    """
+    from simulate.services import run_compare
+
+    def verdicts(
+        calls: QuerySet,
+    ) -> tuple[dict[str, bool], dict[str, str], dict[str, run_compare.ScenarioTrials]]:
+        counts: dict[str, list[int]] = defaultdict(lambda: [0, 0])
+        labels: dict[str, str] = {}
+        trials: dict[str, run_compare.ScenarioTrials] = {}
+        fields = ["result_scenario_key", "result_scenario", "result_outcome"]
+        calls = calls.order_by()
+        if with_pairs:
+            calls = calls.annotate(
+                result_receipt_sub_goals=_json_value(
+                    "call_metadata", "hosted_harness_receipt", "sub_goals"
+                ),
+                result_harness_status=_json_text(
+                    "call_metadata", "harness_outcome_status"
+                ),
+            )
+            fields += [
+                "result_eval_outcome",
+                "result_receipt_sub_goals",
+                "result_harness_status",
+            ]
+        for scenario_key, scenario_label, outcome, *trial in calls.values_list(
+            *fields
+        ).iterator(chunk_size=2000):
+            key = str(scenario_key)
+            labels[key] = str(scenario_label or key)
+            if outcome == "passed":
+                counts[key][0] += 1
+            elif outcome == "failed":
+                counts[key][1] += 1
+            if trial:
+                eval_outcome, sub_goals, harness_status = trial
+                trials.setdefault(key, run_compare.ScenarioTrials(labels[key])).add(
+                    sub_goals if isinstance(sub_goals, list) else None,
+                    harness_status,
+                    outcome,
+                    eval_outcome,
+                )
+        return (
+            {
+                scenario: failed == 0
+                for scenario, (passed, failed) in counts.items()
+                if passed or failed
+            },
+            labels,
+            trials,
+        )
+
+    previous = against or (
+        user_executions()
+        .filter(
+            run_test=execution.run_test,
+            status=TestExecution.ExecutionStatus.COMPLETED,
+            created_at__lt=execution.created_at,
+        )
+        .order_by("-created_at")
+        .first()
+    )
+    if previous is None:
+        comparison: dict[str, Any] = {
+            "available": False,
+            "previous_execution_id": None,
+            "shared_scenarios": 0,
+            "newly_passing": [],
+            "newly_failing": [],
+        }
+        if with_pairs:
+            current_trials = verdicts(queryset)[2]
+            pairs, summary = run_compare.scenario_pairs(current_trials, {})
+            comparison.update(
+                pairs=pairs,
+                summary=summary,
+                versions={
+                    "current": run_compare.run_versions([execution.id])[
+                        str(execution.id)
+                    ],
+                    "against": None,
+                },
+            )
+        return comparison
+    current_verdicts, current_labels, current_trials = verdicts(queryset)
+    previous_verdicts, _, previous_trials = verdicts(run_calls_queryset(previous))
+    shared = sorted(current_verdicts.keys() & previous_verdicts.keys())
+    comparison = {
+        "available": True,
+        "previous_execution_id": str(previous.id),
+        "shared_scenarios": len(shared),
+        "newly_passing": [
+            current_labels[scenario]
+            for scenario in shared
+            if current_verdicts[scenario] and not previous_verdicts[scenario]
+        ],
+        "newly_failing": [
+            current_labels[scenario]
+            for scenario in shared
+            if not current_verdicts[scenario] and previous_verdicts[scenario]
+        ],
+    }
+    if with_pairs:
+        comparison.update(
+            _run_pairs(execution, previous, current_trials, previous_trials)
+        )
+    return comparison
+
+
+def _run_pairs(
+    execution: TestExecution,
+    previous: TestExecution,
+    current_trials: dict[str, Any],
+    previous_trials: dict[str, Any],
+) -> dict[str, Any]:
+    """The pairs of two runs, with the bands read from their suite versions."""
+    from simulate.services import run_compare
+
+    versions = run_compare.run_versions([execution.id, previous.id])
+    current_versions = versions[str(execution.id)]
+    previous_versions = versions[str(previous.id)]
+    environments = [
+        (one["environment"] or {}).get("id")
+        for one in (current_versions, previous_versions)
+    ]
+    digests = (
+        run_compare.sub_goal_digests(environments)
+        if all(environments) and environments[0] != environments[1]
+        else {}
+    )
+    current_suite, previous_suite = (
+        (pinned["suite"] or {}).get("id")
+        for pinned in (current_versions, previous_versions)
+    )
+    # Bands read from the older run to the newer, whichever one is compared against:
+    # by suite lineage, as a rerun or a picked version can pin an older suite, else
+    # by when the runs were made.
+    against_is_newer = run_compare.suite_is_newer(previous_suite, current_suite)
+    if against_is_newer is None:
+        against_is_newer = previous.created_at > execution.created_at
+    newer, older = (
+        (previous_trials, current_trials)
+        if against_is_newer
+        else (current_trials, previous_trials)
+    )
+    newer_suite, older_suite = (
+        (previous_suite, current_suite)
+        if against_is_newer
+        else (current_suite, previous_suite)
+    )
+    pairs, summary = run_compare.scenario_pairs(
+        current_trials,
+        previous_trials,
+        digests=digests.get(environments[0]),
+        against_digests=digests.get(environments[1]),
+        removed=run_compare.removed_keys(
+            older_suite, newer_suite, older.keys() - newer.keys()
+        ),
+        not_run=run_compare.suite_members(older_suite, newer.keys() - older.keys()),
+        against_is_newer=against_is_newer,
+    )
+    return {
+        "pairs": pairs,
+        "summary": summary,
+        "versions": {"current": current_versions, "against": previous_versions},
+    }
+
+
+def build_run_reliability(execution: TestExecution) -> dict[str, Any]:
+    return build_reliability(run_calls_queryset(execution), execution.trials)
 
 
 def build_run_analytics(execution: TestExecution) -> dict[str, Any]:
     from simulate.services.run_dashboard_v3 import build_run_dashboard
 
     queryset = run_calls_queryset(execution)
-    summary = summarize_run_calls(queryset)
     configs, _ = build_evaluation_catalog(execution)
+    scoring_configs = {
+        str(config.id): config
+        for config in SimulateEvalConfig.objects.filter(
+            run_test=execution.run_test, deleted=False
+        ).select_related("eval_template")
+    }
 
-    risk = _breakdown_run_calls(queryset, "goal")
+    risk = _breakdown_run_calls(queryset, "scenario")
+    # Weakest first; slices with too few evaluated calls to rank go last.
     risk.sort(
         key=lambda item: (
+            item["measured"] < MIN_RANKED_SLICE,
             item["pass_rate"] is None,
             item["pass_rate"] or 0,
             -item["total"],
@@ -647,39 +1490,44 @@ def build_run_analytics(execution: TestExecution) -> dict[str, Any]:
     evaluation_expressions = {}
     for config in configs:
         eval_id = config["id"]
-        passed_q = _eval_verdict_q(
-            {eval_id}, [True, "true", "pass", "passed", "success", "successful"]
-        )
-        failed_q = _eval_verdict_q(
-            {eval_id},
-            [False, "false", "fail", "failed", "failure", "unsuccessful"],
-        )
+        scoring_config = scoring_configs.get(eval_id)
+        if scoring_config is None:
+            score = _eval_score(eval_id)
+            passed_q = _eval_verdict_q(
+                {eval_id}, [True, "true", "pass", "passed", "success", "successful"]
+            )
+            failed_q = _eval_verdict_q(
+                {eval_id},
+                [False, "false", "fail", "failed", "failure", "unsuccessful"],
+            )
+        else:
+            score, passed_q, failed_q = _configured_eval_verdict(
+                eval_id, scoring_config
+            )
         evaluation_expressions[f"passed_{eval_id}"] = Count("id", filter=passed_q)
         evaluation_expressions[f"failed_{eval_id}"] = Count("id", filter=failed_q)
         evaluation_expressions[f"present_{eval_id}"] = Count(
             "id", filter=Q(eval_outputs__has_key=eval_id)
         )
-        output_type_key = f"eval_outputs__{eval_id}__output_type"
-        # Choice-scored evals keep their number at output.score, whatever output_type they carry.
-        evaluation_expressions[f"score_{eval_id}"] = Avg(
-            Coalesce(
-                Case(
-                    When(
-                        **{
-                            output_type_key: "score",
-                            "then": _safe_json_float("eval_outputs", eval_id, "output"),
-                        }
-                    ),
-                    default=None,
-                    output_field=FloatField(),
-                ),
-                _object_score(eval_id),
-                output_field=FloatField(),
-            )
+        evaluation_expressions[f"errored_{eval_id}"] = Count(
+            "id", filter=_eval_errored_q(eval_id)
         )
-    evaluation_values = (
-        queryset.aggregate(**evaluation_expressions) if evaluation_expressions else {}
+        evaluation_expressions[f"score_{eval_id}"] = Avg(score)
+    cost_fields = {
+        "stt": "stt_cost_cents",
+        "llm": "llm_cost_cents",
+        "tts": "tts_cost_cents",
+        "storage": "storage_cost_cents",
+        "customer": "customer_cost_cents",
+    }
+    cost_expressions = {}
+    for key, field in cost_fields.items():
+        cost_expressions[f"{key}_total"] = Sum(field)
+        cost_expressions[f"{key}_measured"] = Count(field)
+    evaluation_values = queryset.aggregate(
+        **_aggregate_expressions(), **evaluation_expressions, **cost_expressions
     )
+    summary = _summary_from_values(evaluation_values)
     evaluations = []
     for config in configs:
         eval_id = config["id"]
@@ -694,6 +1542,8 @@ def build_run_analytics(execution: TestExecution) -> dict[str, Any]:
                 "passed": passed,
                 "failed": failed,
                 "measured": measured,
+                # The evaluator ran but could not produce a verdict; not a fail.
+                "errored": evaluation_values.get(f"errored_{eval_id}") or 0,
                 "missing": summary["total"] - present,
                 "pass_rate": round(passed / measured * 100, 2) if measured else None,
                 "average_score": evaluation_values.get(f"score_{eval_id}"),
@@ -724,29 +1574,18 @@ def build_run_analytics(execution: TestExecution) -> dict[str, Any]:
     )
     failure_total = sum(failure_counts.values())
 
-    cost_fields = {
-        "stt": "stt_cost_cents",
-        "llm": "llm_cost_cents",
-        "tts": "tts_cost_cents",
-        "storage": "storage_cost_cents",
-        "customer": "customer_cost_cents",
-    }
-    cost_expressions = {}
-    for key, field in cost_fields.items():
-        cost_expressions[f"{key}_total"] = Sum(field)
-        cost_expressions[f"{key}_measured"] = Count(field)
-    cost_values = queryset.aggregate(**cost_expressions)
     cost_breakdown = {
         key: {
-            "total": cost_values[f"{key}_total"],
-            "measured": cost_values[f"{key}_measured"],
+            "total": evaluation_values[f"{key}_total"],
+            "measured": evaluation_values[f"{key}_measured"],
             "calls": summary["total"],
         }
         for key in cost_fields
     }
 
     siblings = list(
-        TestExecution.objects.filter(
+        user_executions()
+        .filter(
             run_test=execution.run_test,
             status=TestExecution.ExecutionStatus.COMPLETED,
         )
@@ -772,7 +1611,8 @@ def build_run_analytics(execution: TestExecution) -> dict[str, Any]:
         }
         for sibling in reversed(siblings)
     ]
-
+    reliability = build_reliability(queryset, execution.trials)
+    comparison = build_run_comparison(execution, queryset)
     return {
         "execution": {
             "id": str(execution.id),
@@ -782,6 +1622,7 @@ def build_run_analytics(execution: TestExecution) -> dict[str, Any]:
         },
         "summary": {**summary, "evaluators": len(configs)},
         "scenario_risk": risk,
+        "reliability": reliability,
         "turn_distribution": list(turn_distribution.values()),
         "evaluations": sorted(
             evaluations,
@@ -791,7 +1632,9 @@ def build_run_analytics(execution: TestExecution) -> dict[str, Any]:
                 row["name"],
             ),
         ),
-        "dashboard": build_run_dashboard(queryset, summary, evaluations, risk),
+        "dashboard": build_run_dashboard(
+            queryset, summary, evaluations, risk, comparison
+        ),
         "failure_breakdown": [
             {
                 "reason": reason,

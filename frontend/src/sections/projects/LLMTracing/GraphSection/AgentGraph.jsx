@@ -1,3 +1,5 @@
+/* eslint-disable no-restricted-syntax -- ds: data colours (span-type encodings) */
+import { isIncompleteCost, monetaryCostLabel } from "./common";
 /**
  * AgentGraph — Aggregate agent DAG visualization
  *
@@ -75,30 +77,42 @@ const getDiffOverlay = (diffStatus, isFailurePoint) => {
 // Node type → color + icon
 // ---------------------------------------------------------------------------
 const TYPE_COLORS = {
-  agent: { text: "#7c3aed", icon: "mdi:robot-outline", label: "Agent" },
-  llm: { text: "#2563eb", icon: "mdi:brain", label: "LLM" },
-  generation: { text: "#2563eb", icon: "mdi:brain", label: "Generation" },
-  tool: { text: "#16a34a", icon: "mdi:wrench-outline", label: "Tool" },
-  retriever: { text: "#0d9488", icon: "mdi:magnify", label: "Retriever" },
-  chain: { text: "#c026d3", icon: "mdi:link-variant", label: "Chain" },
-  embedding: { text: "#ea580c", icon: "mdi:vector-square", label: "Embedding" },
+  agent: { text: "#7857FC", icon: "solar:bot-linear", label: "Agent" },
+  llm: { text: "#2563eb", icon: "solar:brain-linear", label: "LLM" },
+  generation: {
+    text: "#2563eb",
+    icon: "solar:brain-linear",
+    label: "Generation",
+  },
+  tool: { text: "#16a34a", icon: "solar:toolbox-linear", label: "Tool" },
+  retriever: {
+    text: "#0d9488",
+    icon: "solar:magnifier-linear",
+    label: "Retriever",
+  },
+  chain: { text: "#c026d3", icon: "solar:link-linear", label: "Chain" },
+  embedding: {
+    text: "#ea580c",
+    icon: "solar:graph-linear",
+    label: "Embedding",
+  },
   guardrail: {
     text: "#dc2626",
-    icon: "mdi:shield-check-outline",
+    icon: "solar:shield-check-linear",
     label: "Guardrail",
   },
   aggregate: {
     text: "#71717a",
-    icon: "mdi:dots-horizontal-circle-outline",
+    icon: "solar:menu-dots-linear",
     label: "Aggregate",
   },
   unknown: {
     text: "#6b7280",
-    icon: "mdi:help-circle-outline",
+    icon: "solar:question-circle-linear",
     label: "Unknown",
   },
-  start: { text: "#16a34a", icon: "mdi:play-circle-outline", label: "Start" },
-  end: { text: "#dc2626", icon: "mdi:stop-circle-outline", label: "Stop" },
+  start: { text: "#16a34a", icon: "solar:play-circle-linear", label: "Start" },
+  end: { text: "#dc2626", icon: "solar:stop-circle-linear", label: "Stop" },
 };
 
 // Derive bg (alpha 0.08) and border (alpha 0.24) from the text color at runtime
@@ -203,7 +217,7 @@ const AgentNode = ({ data }) => {
         <Box>
           <Typography
             sx={{
-              fontSize: 10,
+              fontSize: 12,
               color: "rgba(255,255,255,0.5)",
               fontWeight: 500,
             }}
@@ -217,7 +231,7 @@ const AgentNode = ({ data }) => {
         <Box>
           <Typography
             sx={{
-              fontSize: 10,
+              fontSize: 12,
               color: "rgba(255,255,255,0.5)",
               fontWeight: 500,
             }}
@@ -233,11 +247,11 @@ const AgentNode = ({ data }) => {
       </Box>
 
       {/* Cost */}
-      {(data.total_cost > 0 || data.avg_cost > 0) && (
+      {(data.cost_coverage || data.total_cost > 0 || data.avg_cost > 0) && (
         <Box sx={{ px: 1.25, pt: 0.25 }}>
           <Typography
             sx={{
-              fontSize: 10,
+              fontSize: 12,
               color: "rgba(255,255,255,0.5)",
               fontWeight: 500,
             }}
@@ -245,7 +259,10 @@ const AgentNode = ({ data }) => {
             Estimated LLM cost
           </Typography>
           <Typography sx={{ fontSize: 12, color: "#fff", fontWeight: 600 }}>
-            ${(data.total_cost || data.avg_cost || 0).toFixed(4)}
+            {monetaryCostLabel(
+              (data.total_cost || data.avg_cost || 0).toFixed(4),
+              data.cost_coverage,
+            )}
           </Typography>
         </Box>
       )}
@@ -255,7 +272,7 @@ const AgentNode = ({ data }) => {
         <Box sx={{ px: 1.25, pt: 0.25 }}>
           <Typography
             sx={{
-              fontSize: 10,
+              fontSize: 12,
               color: "rgba(255,255,255,0.5)",
               fontWeight: 500,
             }}
@@ -273,7 +290,7 @@ const AgentNode = ({ data }) => {
         <Box sx={{ px: 1.25, pt: 0.25 }}>
           <Typography
             sx={{
-              fontSize: 10,
+              fontSize: 12,
               color: "rgba(255,255,255,0.5)",
               fontWeight: 500,
             }}
@@ -299,7 +316,7 @@ const AgentNode = ({ data }) => {
         >
           <Typography
             sx={{
-              fontSize: 10,
+              fontSize: 12,
               color: "rgba(255,255,255,0.5)",
               fontWeight: 500,
               mb: 0.5,
@@ -318,11 +335,11 @@ const AgentNode = ({ data }) => {
                     mb: 0.15,
                   }}
                 >
-                  <Typography sx={{ fontSize: 10, color: "#fff" }}>
+                  <Typography sx={{ fontSize: 12, color: "#fff" }}>
                     {ev.name}
                   </Typography>
                   <Typography
-                    sx={{ fontSize: 10, color: "#fff", fontWeight: 600 }}
+                    sx={{ fontSize: 12, color: "#fff", fontWeight: 600 }}
                   >
                     {Math.round(ev.score)}%
                   </Typography>
@@ -367,7 +384,7 @@ const AgentNode = ({ data }) => {
         >
           <Typography
             sx={{
-              fontSize: 10,
+              fontSize: 12,
               color: "rgba(255,255,255,0.5)",
               fontWeight: 500,
               mb: 0.25,
@@ -384,19 +401,19 @@ const AgentNode = ({ data }) => {
                 py: 0.15,
               }}
             >
-              <Typography sx={{ fontSize: 10, color: "#fff" }}>
+              <Typography sx={{ fontSize: 12, color: "#fff" }}>
                 {ann.label_name ||
                   ann.annotation_label_name ||
                   `Annotation ${i + 1}`}
               </Typography>
-              <Typography sx={{ fontSize: 10, color: "#fff", fontWeight: 600 }}>
+              <Typography sx={{ fontSize: 12, color: "#fff", fontWeight: 600 }}>
                 {ann.score != null ? `${ann.score}` : ann.value || "—"}
               </Typography>
             </Box>
           ))}
           {annotations.length > 3 && (
             <Typography
-              sx={{ fontSize: 9, color: "rgba(255,255,255,0.4)", mt: 0.25 }}
+              sx={{ fontSize: 12, color: "rgba(255,255,255,0.4)", mt: 0.25 }}
             >
               +{annotations.length - 3} more
             </Typography>
@@ -455,36 +472,27 @@ const AgentNode = ({ data }) => {
             bgcolor: isSentinel
               ? "transparent"
               : isFailurePoint
-                ? (theme) =>
-                    alpha(
-                      "#DB2F2D",
-                      theme.palette.mode === "dark" ? 0.12 : 0.06,
-                    )
+                ? "status.danger.bg"
                 : "background.paper",
-            boxShadow: (theme) => {
-              const base = isSentinel
-                ? "none"
-                : `0 1px 3px ${alpha(theme.palette.common.black, 0.06)}`;
-              if (!diffRingColor) return base;
+            boxShadow: () => {
+              if (!diffRingColor) return "none";
               // Outer halo so the diff status reads at a glance even when
               // the graph is zoomed out. Failure points get a stronger halo.
               const haloAlpha = isFailurePoint ? 0.35 : 0.22;
               const haloRadius = isFailurePoint ? 4 : 3;
               const halo = `0 0 0 ${haloRadius}px ${alpha(diffRingColor, haloAlpha)}`;
-              return base === "none" ? halo : `${halo}, ${base}`;
+              return halo;
             },
             minWidth: isSentinel ? 44 : 80,
             justifyContent: isSentinel ? "center" : "flex-start",
             cursor: isSentinel ? "default" : "pointer",
             // Ghosts read as semi-transparent without losing the badge.
             opacity: isGhost ? 0.6 : isDimmed ? 0.3 : 1,
-            transition: "all 0.15s ease",
+            transition: "all 150ms ease",
             "&:hover": isSentinel
               ? {}
               : {
-                  boxShadow: (theme) =>
-                    `0 0 0 2px ${diffRingColor ?? color.border}, 0 2px 8px ${alpha(theme.palette.common.black, 0.1)}`,
-                  transform: "scale(1.03)",
+                  boxShadow: `0 0 0 2px ${diffRingColor ?? color.border}`,
                   opacity: 1,
                 },
           }}
@@ -503,20 +511,18 @@ const AgentNode = ({ data }) => {
                 height: 16,
                 px: diffBadgeLabel ? 0.65 : 0.5,
                 gap: diffBadgeLabel ? 0.3 : 0,
-                borderRadius: "9px",
+                borderRadius: "8px",
                 bgcolor: diffRingColor,
                 color: (theme) => theme.palette.common.white,
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "center",
-                fontSize: 9.5,
-                fontWeight: 700,
+                fontSize: 12,
+                fontWeight: 600,
                 lineHeight: 1,
                 fontFamily: "ui-monospace, SFMono-Regular, monospace",
                 letterSpacing: "0.02em",
-                textTransform: "uppercase",
-                boxShadow: (theme) =>
-                  `0 1px 4px ${alpha(theme.palette.common.black, 0.25)}`,
+                textTransform: "none",
                 pointerEvents: "none",
                 whiteSpace: "nowrap",
               }}
@@ -546,7 +552,7 @@ const AgentNode = ({ data }) => {
             {/* Show span count directly on the node for non-sentinel */}
             {!isSentinel && data.span_count > 0 && (
               <Typography
-                sx={{ fontSize: 9, color: "text.disabled", lineHeight: 1 }}
+                sx={{ fontSize: 12, color: "text.disabled", lineHeight: 1 }}
               >
                 {data.span_count.toLocaleString()} spans
               </Typography>
@@ -565,29 +571,98 @@ const nodeTypes = { agentNode: AgentNode };
 // ---------------------------------------------------------------------------
 // Dagre layout — direction-aware (LR for trace list, TB for trace detail)
 // ---------------------------------------------------------------------------
+
+// Stop closes the drawing; its edges record no relation between spans. If
+// they took part in the layout, a leaf's distance to its parent and to Stop
+// would cost the same, so dagre sank leaf siblings onto the row above Stop
+// while siblings with nested work stayed one level below the parent:
+// parallel steps landed on different levels and read as a sequence
+// (TH-4321). Lay out the recorded graph alone, then put Stop one level past
+// its deepest node.
+const SENTINEL_WIDTH = 50;
+const SENTINEL_HEIGHT = 32;
+
+const isStopNode = (node) => node.data?.type === "end";
+
+// Read rankdir the way dagre does: case-insensitive, LR/RL lay ranks along
+// x, BT/RL reverse the rank axis, anything else is top-to-bottom.
+const rankAxis = (direction) => {
+  const dir = String(direction).toLowerCase();
+  return {
+    horizontal: dir === "lr" || dir === "rl",
+    reversed: dir === "bt" || dir === "rl",
+  };
+};
+
+const placeStop = (g, laidOutIds, direction, ranksep) => {
+  if (!laidOutIds.length) return { x: 0, y: 0 };
+  const boxes = laidOutIds.map((id) => g.node(id));
+  const min = (pick) => Math.min(...boxes.map(pick));
+  const max = (pick) => Math.max(...boxes.map(pick));
+  const { horizontal, reversed } = rankAxis(direction);
+  const [main, mainSize, stopSize, cross, crossSize] = horizontal
+    ? ["x", "width", SENTINEL_WIDTH, "y", "height"]
+    : ["y", "height", SENTINEL_HEIGHT, "x", "width"];
+  const stopMain = reversed
+    ? min((b) => b[main] - b[mainSize] / 2) - ranksep - stopSize / 2
+    : max((b) => b[main] + b[mainSize] / 2) + ranksep + stopSize / 2;
+  const stopCross =
+    (min((b) => b[cross] - b[crossSize] / 2) +
+      max((b) => b[cross] + b[crossSize] / 2)) /
+    2;
+  return { [main]: stopMain, [cross]: stopCross };
+};
+
+// A row means "runs after everything above it", so each node sits on the
+// first row after its deepest recorded parent. dagre's default ranker only
+// minimises total edge length, and whenever two rows cost the same it may
+// push a node down next to an unrelated deeper branch (for example when
+// every ChatOpenAI call is grouped into one node with parents on two
+// levels). Called on dagre's internal graph after its acyclic pass, so a
+// topological order exists; `minlen` already includes dagre's own spacing.
+const rankAtEarliestLevel = (g) => {
+  Dagre.graphlib.alg.topsort(g).forEach((v) => {
+    g.node(v).rank = g
+      .inEdges(v)
+      .reduce(
+        (rank, edge) =>
+          Math.max(rank, g.node(edge.v).rank + g.edge(edge).minlen),
+        0,
+      );
+  });
+};
+
 const layoutGraph = (nodes, edges, direction = "LR") => {
+  const ranksep = direction === "LR" ? 80 : 50;
   const g = new Dagre.graphlib.Graph().setDefaultEdgeLabel(() => ({}));
   g.setGraph({
     rankdir: direction,
-    ranksep: direction === "LR" ? 80 : 50,
+    ranksep,
     nodesep: 25,
+    ranker: rankAtEarliestLevel,
   });
 
+  const stopIds = new Set(nodes.filter(isStopNode).map((node) => node.id));
+  const laidOutIds = [];
   nodes.forEach((node) => {
-    const isSentinel = node.data?.type === "start" || node.data?.type === "end";
+    if (stopIds.has(node.id)) return;
+    const isSentinel = node.data?.type === "start";
     g.setNode(node.id, {
-      width: isSentinel ? 50 : 140,
-      height: isSentinel ? 32 : 44,
+      width: isSentinel ? SENTINEL_WIDTH : 140,
+      height: isSentinel ? SENTINEL_HEIGHT : 44,
     });
+    laidOutIds.push(node.id);
   });
   edges.forEach((edge) => {
+    if (stopIds.has(edge.source) || stopIds.has(edge.target)) return;
     g.setEdge(edge.source, edge.target);
   });
 
   Dagre.layout(g);
+  const stop = placeStop(g, laidOutIds, direction, ranksep);
 
   return nodes.map((node) => {
-    const pos = g.node(node.id);
+    const pos = stopIds.has(node.id) ? stop : g.node(node.id);
     return { ...node, position: { x: pos.x - 70, y: pos.y - 22 } };
   });
 };
@@ -743,10 +818,10 @@ export const buildFlowData = (graphData, direction = "LR", theme = null) => {
         },
         label: "SKIPPED PATH",
         labelStyle: {
-          fontSize: 9,
+          fontSize: 12,
           fill: "#fff",
-          fontWeight: 700,
-          letterSpacing: "0.04em",
+          fontWeight: 600,
+          letterSpacing: 0,
         },
         labelBgStyle: { fill: skippedColor, fillOpacity: 0.95 },
         labelBgPadding: [5, 3],
@@ -772,9 +847,11 @@ export const buildFlowData = (graphData, direction = "LR", theme = null) => {
         strokeWidth: Math.round(thickness * 10) / 10,
       },
       // Show transition count on edges with > 1 transition
-      ...(count > 1 && {
-        label: `×${count}`,
-        labelStyle: { fontSize: 9, fill: edgeColor, fontWeight: 500 },
+      ...((count > 1 || isIncompleteCost(edge.cost_coverage)) && {
+        label: isIncompleteCost(edge.cost_coverage)
+          ? `×${count} · ${monetaryCostLabel(null, edge.cost_coverage)}`
+          : `×${count}`,
+        labelStyle: { fontSize: 12, fill: edgeColor, fontWeight: 500 },
         labelBgStyle: { fill: labelBgColor, fillOpacity: 0.9 },
         labelBgPadding: [3, 2],
       }),
@@ -810,8 +887,6 @@ const ZoomControls = ({ isFullscreen, onToggleFullscreen }) => {
         border: "1px solid",
         borderColor: "divider",
         borderRadius: "6px",
-        boxShadow: (theme) =>
-          `0 1px 3px ${alpha(theme.palette.common.black, 0.06)}`,
         overflow: "hidden",
       }}
     >
@@ -820,21 +895,21 @@ const ZoomControls = ({ isFullscreen, onToggleFullscreen }) => {
         onClick={() => zoomIn({ duration: 200 })}
         sx={btnSx}
       >
-        <Iconify icon="mdi:plus" width={14} />
+        <Iconify icon="solar:add-linear" width={14} />
       </IconButton>
       <IconButton
         size="small"
         onClick={() => zoomOut({ duration: 200 })}
         sx={btnSx}
       >
-        <Iconify icon="mdi:minus" width={14} />
+        <Iconify icon="solar:minus-linear" width={14} />
       </IconButton>
       <IconButton
         size="small"
         onClick={() => fitView({ duration: 300, padding: 0.3 })}
         sx={btnSx}
       >
-        <Iconify icon="mdi:crosshairs-gps" width={14} />
+        <Iconify icon="solar:target-linear" width={14} />
       </IconButton>
       <IconButton
         size="small"
@@ -843,7 +918,11 @@ const ZoomControls = ({ isFullscreen, onToggleFullscreen }) => {
         sx={btnSx}
       >
         <Iconify
-          icon={isFullscreen ? "mdi:fullscreen-exit" : "mdi:fullscreen"}
+          icon={
+            isFullscreen
+              ? "solar:quit-full-screen-linear"
+              : "solar:full-screen-linear"
+          }
           width={14}
         />
       </IconButton>
@@ -903,7 +982,7 @@ const AgentGraphInner = ({
         <Typography
           variant="body2"
           color="text.secondary"
-          sx={{ fontSize: 13 }}
+          sx={{ fontSize: 12 }}
         >
           {GRAPH_LOADING_MESSAGE}
         </Typography>
@@ -922,7 +1001,7 @@ const AgentGraphInner = ({
           color: "text.disabled",
         }}
       >
-        <Typography variant="body2" sx={{ fontSize: 13 }}>
+        <Typography variant="body2" sx={{ fontSize: 12 }}>
           We couldn&apos;t load the agent graph. Please retry in a moment.
         </Typography>
       </Box>
@@ -940,7 +1019,7 @@ const AgentGraphInner = ({
           color: "text.disabled",
         }}
       >
-        <Typography role="status" variant="body2" sx={{ fontSize: 13 }}>
+        <Typography role="status" variant="body2" sx={{ fontSize: 12 }}>
           {AGGREGATION_POLLING_PAUSED_MESSAGE}
         </Typography>
       </Box>
@@ -958,7 +1037,7 @@ const AgentGraphInner = ({
           color: "text.disabled",
         }}
       >
-        <Typography variant="body2" sx={{ fontSize: 13 }}>
+        <Typography variant="body2" sx={{ fontSize: 12 }}>
           No agent graph data available
         </Typography>
       </Box>
@@ -990,7 +1069,7 @@ const AgentGraphInner = ({
             transform: "translateX(-50%)",
             bgcolor: "background.paper",
             px: 1,
-            borderRadius: 0.5,
+            borderRadius: "4px",
             whiteSpace: "nowrap",
           }}
         >

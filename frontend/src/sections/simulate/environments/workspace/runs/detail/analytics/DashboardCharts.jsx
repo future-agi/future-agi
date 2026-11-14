@@ -26,28 +26,37 @@ import {
   YAxis,
 } from "recharts";
 
-export const COLORS = [
-  "#7954f8",
-  "#32c99b",
-  "#f56b74",
-  "#f6b847",
-  "#3898e8",
-  "#9a9fac",
-];
-const OUTCOME_COLORS = {
-  passed: COLORS[1],
-  failed: COLORS[2],
-  error: COLORS[3],
-  inconclusive: COLORS[5],
-  true: COLORS[0],
-  false: COLORS[2],
-  positive: COLORS[1],
-  neutral: COLORS[5],
-  negative: COLORS[2],
-  unknown: COLORS[5],
-  successful: COLORS[0],
-  unsuccessful: COLORS[2],
-  escalated: COLORS[0],
+// Chart colours come from the theme: categories and series take the data
+// palette (theme.palette.data); an outcome that is a status takes its status
+// role. Nothing here is a literal colour.
+export const dataColor = (theme, index = 0) => {
+  const palette = theme.palette.data;
+  if (!palette?.length) return theme.palette.text.secondary;
+  return palette[Math.max(0, index) % palette.length];
+};
+export const roleColor = (theme, role) =>
+  theme.palette.status?.[role]?.solid ?? theme.palette.text.secondary;
+
+// The status role of each outcome label a donut can show.
+const OUTCOME_ROLES = {
+  queued: "neutral",
+  in_progress: "info",
+  passed: "success",
+  failed: "danger",
+  error: "warning",
+  inconclusive: "neutral",
+  true: "success",
+  false: "danger",
+  positive: "success",
+  neutral: "neutral",
+  negative: "danger",
+  unknown: "neutral",
+  "not reported": "neutral",
+  escalated: "warning",
+};
+const outcomeColor = (theme, label, index) => {
+  const role = OUTCOME_ROLES[label.toLowerCase()];
+  return role ? roleColor(theme, role) : dataColor(theme, index);
 };
 export const number = (value, digits = 1) =>
   value == null
@@ -73,7 +82,7 @@ export function Widget({ id, title, subtitle, help, children, wide = false }) {
         border: "1px solid",
         borderColor: "divider",
         bgcolor: "background.paper",
-        borderRadius: 1.5,
+        borderRadius: "8px",
         overflow: "hidden",
         gridColumn: wide ? "1 / -1" : undefined,
         breakInside: "avoid",
@@ -86,14 +95,14 @@ export function Widget({ id, title, subtitle, help, children, wide = false }) {
         sx={{ px: 2, pt: 1.5, pb: 1 }}
       >
         <Box>
-          <Typography component="h3" sx={{ fontSize: 13, fontWeight: 600 }}>
+          <Typography component="h3" sx={{ typography: "m3", fontWeight: 500 }}>
             {title}
             {help && (
               <Help title={help} arrow>
                 <IconButton
                   size="small"
                   aria-label={`About ${title}`}
-                  sx={{ ml: 0.5, fontSize: 13 }}
+                  sx={{ ml: 0.5 }}
                 >
                   ⓘ
                 </IconButton>
@@ -101,7 +110,7 @@ export function Widget({ id, title, subtitle, help, children, wide = false }) {
             )}
           </Typography>
           {subtitle && (
-            <Typography sx={{ fontSize: 11, color: "text.secondary", mt: 0.4 }}>
+            <Typography sx={{ typography: "s3", color: "text.secondary", mt: 0.5 }}>
               {subtitle}
             </Typography>
           )}
@@ -126,7 +135,7 @@ export function NoMeasurement({ text = "No measurements recorded" }) {
       justifyContent="center"
       sx={{ minHeight: 190, p: 3 }}
     >
-      <Typography sx={{ fontSize: 12, color: "text.secondary" }}>
+      <Typography sx={{ typography: "s1", color: "text.secondary" }}>
         {text}
       </Typography>
     </Stack>
@@ -149,22 +158,21 @@ export const chartTooltipProps = (theme) => ({
   labelStyle: { color: theme.palette.text.secondary },
   wrapperStyle: { zIndex: 1 },
 });
-const tick = { fontSize: 10, fill: "#92929e" };
+const tickOf = (theme) => ({ fontSize: 11, fill: theme.palette.text.secondary });
 const pieLabel = (label) =>
   ({
     true: "Successful",
     false: "Unsuccessful",
-    successful: "Successful",
-    unsuccessful: "Unsuccessful",
     escalated: "Escalated",
+    queued: "Queued",
+    in_progress: "In progress",
     passed: "Passed",
     failed: "Failed",
-    error: "Errored",
+    error: "Error",
     inconclusive: "Inconclusive",
     positive: "Positive",
     neutral: "Neutral",
     negative: "Negative",
-    unknown: "Unknown",
   })[label.toLowerCase()] || label;
 export function Donut({ data, onOpen }) {
   const theme = useTheme();
@@ -188,7 +196,7 @@ export function Donut({ data, onOpen }) {
                   ? (segment) =>
                       segment.count > 0 &&
                       segment.statuses?.length &&
-                      onOpen({ status: segment.statuses })
+                      onOpen({ goal_outcome: segment.statuses })
                   : undefined
               }
               style={{ cursor: onOpen ? "pointer" : "default" }}
@@ -196,10 +204,7 @@ export function Donut({ data, onOpen }) {
               {data.segments.map((segment, index) => (
                 <Cell
                   key={segment.label}
-                  fill={
-                    OUTCOME_COLORS[segment.label.toLowerCase()] ||
-                    COLORS[index % COLORS.length]
-                  }
+                  fill={outcomeColor(theme, segment.label, index)}
                 />
               ))}
             </Pie>
@@ -214,13 +219,13 @@ export function Donut({ data, onOpen }) {
           alignItems="center"
           justifyContent="center"
         >
-          <Typography sx={{ fontSize: 10, color: "text.secondary" }}>
+          <Typography sx={{ typography: "s3", color: "text.secondary" }}>
             {data.headline ? pieLabel(data.headline.label) : "Calls"}
           </Typography>
           <Typography
             sx={{
-              fontSize: 22,
-              fontWeight: emptyHeadline ? 400 : 600,
+              typography: "l3",
+              fontWeight: emptyHeadline ? 400 : 500,
               color: emptyHeadline ? "text.disabled" : "text.primary",
             }}
           >
@@ -239,7 +244,7 @@ export function Donut({ data, onOpen }) {
             disabled={onOpen ? !segment.count : undefined}
             onClick={
               onOpen && segment.statuses?.length
-                ? () => onOpen({ status: segment.statuses })
+                ? () => onOpen({ goal_outcome: segment.statuses })
                 : undefined
             }
             aria-label={
@@ -265,12 +270,10 @@ export function Donut({ data, onOpen }) {
                 height: 5,
                 width: 5,
                 borderRadius: "50%",
-                bgcolor:
-                  OUTCOME_COLORS[segment.label.toLowerCase()] ||
-                  COLORS[index % COLORS.length],
+                bgcolor: (t) => outcomeColor(t, segment.label, index),
               }}
             />
-            <Typography sx={{ fontSize: 10, color: "text.secondary" }}>
+            <Typography sx={{ typography: "s3", color: "text.secondary" }}>
               {pieLabel(segment.label)} {segment.count} (
               {number(segment.share, 0)}%)
             </Typography>
@@ -299,6 +302,7 @@ export function Bars({
   axisLabel,
 }) {
   const theme = useTheme();
+  const tick = tickOf(theme);
   if (
     !rows.length ||
     !rows.some((row) => series.some(({ key }) => row[key] != null))
@@ -319,9 +323,8 @@ export function Bars({
             }}
           >
             <CartesianGrid
-              stroke="#41414b"
+              stroke={theme.palette.divider}
               strokeDasharray="3 4"
-              opacity={0.35}
               horizontal={!horizontal}
               vertical={horizontal}
             />
@@ -369,15 +372,15 @@ export function Bars({
                 onOpen ? payload?.[0]?.payload?.label || label : label
               }
               formatter={(value, name) => [format(value, unit), name]}
-              cursor={{ fill: "#ffffff09" }}
+              cursor={{ fill: theme.palette.action.hover }}
             />
             {legend && (
-              <Legend wrapperStyle={{ fontSize: 10, paddingTop: 8 }} />
+              <Legend wrapperStyle={{ fontSize: 11, paddingTop: 8 }} />
             )}
             {threshold != null && (
               <ReferenceLine
                 x={threshold}
-                stroke={COLORS[2]}
+                stroke={roleColor(theme, "danger")}
                 strokeDasharray="4 4"
               />
             )}
@@ -386,7 +389,11 @@ export function Bars({
                 key={s.key}
                 dataKey={s.key}
                 name={s.label}
-                fill={s.color || COLORS[index % COLORS.length]}
+                fill={
+                  s.role
+                    ? roleColor(theme, s.role)
+                    : dataColor(theme, s.colorIndex ?? index)
+                }
                 stackId="value"
                 maxBarSize={40}
                 isAnimationActive={false}
@@ -400,9 +407,9 @@ export function Bars({
                       fill={
                         histogram
                           ? row.danger
-                            ? COLORS[2]
-                            : COLORS[0]
-                          : COLORS[rowIndex % COLORS.length]
+                            ? roleColor(theme, "danger")
+                            : dataColor(theme, 0)
+                          : dataColor(theme, rowIndex)
                       }
                     />
                   ))}
@@ -416,8 +423,12 @@ export function Bars({
                           : "right"
                         : "insideTop"
                     }
-                    fill="#eeeeee"
-                    fontSize={10}
+                    fill={
+                      horizontal && series.length === 1
+                        ? theme.palette.text.primary
+                        : theme.palette.common.white
+                    }
+                    fontSize={11}
                     formatter={(value) =>
                       labelKey ? value : value ? format(value, unit) : ""
                     }
@@ -435,7 +446,6 @@ export function Bars({
               key={row.id}
               size="small"
               onClick={() => onOpen(row)}
-              sx={{ fontSize: 10 }}
               title={row.label}
             >
               Open task {index + 1}
@@ -467,10 +477,12 @@ export function TrendLine({
   rows = [],
   xKey,
   valueKey,
+  valueLabel,
   percentile = false,
   bucketed = false,
 }) {
   const theme = useTheme();
+  const tick = tickOf(theme);
   if (!rows.some((row) => row[valueKey] != null)) return <NoMeasurement />;
   return (
     <Box sx={{ height: 250, px: 1.5, pb: 2 }}>
@@ -480,9 +492,8 @@ export function TrendLine({
           margin={{ top: 14, right: 20, left: 0, bottom: 5 }}
         >
           <CartesianGrid
-            stroke="#41414b"
+            stroke={theme.palette.divider}
             strokeDasharray="3 4"
-            opacity={0.35}
           />
           <XAxis
             dataKey={xKey}
@@ -495,14 +506,14 @@ export function TrendLine({
           />
           <YAxis
             tick={tick}
-            width={55}
-            tickFormatter={(value) => `${number(value / 1000)}s`}
+            width={64}
+            tickFormatter={(value) => format(value, "ms")}
             axisLine={false}
             tickLine={false}
           />
           <Tooltip
             {...chartTooltipProps(theme)}
-            formatter={(value) => [format(value, "ms"), "Task duration"]}
+            formatter={(value) => [format(value, "ms"), valueLabel]}
             labelFormatter={(label) =>
               percentile
                 ? `Percentile ${label}`
@@ -512,9 +523,9 @@ export function TrendLine({
           <Line
             type="linear"
             dataKey={valueKey}
-            stroke={percentile ? COLORS[4] : COLORS[0]}
+            stroke={dataColor(theme, percentile ? 1 : 0)}
             strokeWidth={2}
-            dot={false}
+            dot={percentile ? false : { r: 2 }}
             isAnimationActive={false}
             connectNulls={false}
           />
@@ -523,8 +534,8 @@ export function TrendLine({
               <ReferenceLine
                 key={p}
                 x={p}
-                label={{ value: `p${p}`, fill: tick.fill, fontSize: 10 }}
-                stroke="#5a5a65"
+                label={{ value: `p${p}`, fill: tick.fill, fontSize: 11 }}
+                stroke={theme.palette.text.disabled}
                 strokeDasharray="3 3"
               />
             ))}
@@ -537,6 +548,7 @@ TrendLine.propTypes = {
   rows: PropTypes.array,
   xKey: PropTypes.string,
   valueKey: PropTypes.string,
+  valueLabel: PropTypes.string.isRequired,
   percentile: PropTypes.bool,
   bucketed: PropTypes.bool,
 };

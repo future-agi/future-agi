@@ -1,11 +1,12 @@
 import PropTypes from "prop-types";
-import { alpha } from "@mui/material/styles";
-import { Box, Stack, Typography, Chip, CircularProgress } from "@mui/material";
+import { Box, Stack, Typography } from "@mui/material";
 
 import Iconify from "src/components/iconify";
 import { fToNow } from "src/utils/format-time";
+import { ROW_HEIGHT } from "src/theme/sizes";
+import StatusBadge from "src/components/status-badge/StatusBadge";
 import EmptyState from "../../../../components/EmptyState";
-import { BUILD_TONES } from "../../../../buildEnvironment/buildTones";
+import { LoadingScreen } from "src/components/loading-screen";
 
 /**
  * Past self-improvement (optimization) runs for this execution — the Trials tab.
@@ -22,21 +23,17 @@ import { BUILD_TONES } from "../../../../buildEnvironment/buildTones";
  * mock run view).
  */
 
-// The list statuses the endpoint returns, mapped to a BUILD_TONES colour.
+// The list statuses the endpoint returns, mapped to a label and a status role.
 const STATUS_TONE = {
-  pending: { label: "Queued", tone: BUILD_TONES.grey },
-  running: { label: "Running", tone: BUILD_TONES.blue },
-  completed: { label: "Completed", tone: BUILD_TONES.green },
-  failed: { label: "Failed", tone: BUILD_TONES.red },
+  pending: { label: "Queued", role: "neutral" },
+  running: { label: "Running", role: "info" },
+  completed: { label: "Completed", role: "success" },
+  failed: { label: "Failed", role: "danger" },
 };
 
-export default function OptimizationRunsList({ runs, isLoading, onOpen }) {
+export default function OptimizationRunsList({ runs = [], isLoading, onOpen }) {
   if (isLoading) {
-    return (
-      <Stack alignItems="center" sx={{ py: 8 }}>
-        <CircularProgress size={22} thickness={5} />
-      </Stack>
-    );
+    return <LoadingScreen compact />;
   }
 
   if (!runs.length) {
@@ -50,8 +47,19 @@ export default function OptimizationRunsList({ runs, isLoading, onOpen }) {
   }
 
   return (
-    <Box sx={{ border: "1px solid", borderColor: "divider", borderRadius: 1.5, overflow: "hidden" }}>
-      <Stack divider={<Box sx={{ borderBottom: "1px solid", borderColor: "divider" }} />}>
+    <Box
+      sx={{
+        border: "1px solid",
+        borderColor: "divider",
+        borderRadius: "8px",
+        overflow: "hidden",
+      }}
+    >
+      <Stack
+        divider={
+          <Box sx={{ borderBottom: "1px solid", borderColor: "divider" }} />
+        }
+      >
         {runs.map((r) => {
           const st = STATUS_TONE[r.status];
           return (
@@ -61,33 +69,44 @@ export default function OptimizationRunsList({ runs, isLoading, onOpen }) {
               alignItems="center"
               spacing={2}
               onClick={() => onOpen?.(r)}
-              sx={{ px: 2.5, py: 1.75, cursor: "pointer", "&:hover": { bgcolor: "action.hover" } }}
+              sx={{
+                px: 2,
+                py: 0.5,
+                minHeight: ROW_HEIGHT.twoLine,
+                cursor: "pointer",
+                "&:hover": { bgcolor: "action.hover" },
+              }}
             >
               <Box flex={1} minWidth={0}>
-                <Stack direction="row" alignItems="center" spacing={0.875} flexWrap="wrap" rowGap={0.5}>
-                  <Typography noWrap sx={{ typography: "s2", fontWeight: 700 }}>{r.name}</Typography>
+                <Stack
+                  direction="row"
+                  alignItems="center"
+                  spacing={0.875}
+                  flexWrap="wrap"
+                  rowGap={0.5}
+                >
+                  <Typography noWrap sx={{ typography: "s2", fontWeight: 500 }}>
+                    {r.name}
+                  </Typography>
                   {st && (
-                    <Chip
-                      size="small"
+                    <StatusBadge
+                      status={r.status}
                       label={st.label}
-                      sx={{
-                        height: 18,
-                        borderRadius: 0.5,
-                        color: st.tone,
-                        border: "1px solid",
-                        borderColor: alpha(st.tone, 0.4),
-                        bgcolor: "transparent",
-                        "& .MuiChip-label": { px: 0.625, typography: "s3", fontWeight: 700 },
-                      }}
+                      role={st.role}
                     />
                   )}
                 </Stack>
                 <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
-                  {r.optimiserLabel} · {r.trials} trial{r.trials === 1 ? "" : "s"}
+                  {r.optimiserLabel} · {r.trials} trial
+                  {r.trials === 1 ? "" : "s"}
                   {r.startedAt ? ` · started ${fToNow(r.startedAt)}` : ""}
                 </Typography>
               </Box>
-              <Iconify icon="eva:arrow-ios-forward-fill" width={15} sx={{ color: "text.disabled", flexShrink: 0 }} />
+              <Iconify
+                icon="solar:alt-arrow-right-linear"
+                width={15}
+                sx={{ color: "text.disabled", flexShrink: 0 }}
+              />
             </Stack>
           );
         })}

@@ -61,7 +61,7 @@ x-backend-env: &backend-env
   FUTURE_AGI_DEPLOYMENT_TYPE: ${FUTURE_AGI_DEPLOYMENT_TYPE:-docker}
   FUTURE_AGI_TELEMETRY_DISABLED: ${FUTURE_AGI_TELEMETRY_DISABLED:-false}
   FUTURE_AGI_TELEMETRY_JITTER_SECONDS: ${FUTURE_AGI_TELEMETRY_JITTER_SECONDS:-1800}
-  FUTURE_AGI_TELEMETRY_BUFFER_DIR: ${FUTURE_AGI_TELEMETRY_BUFFER_DIR:-/tmp/futureagi-deployment-telemetry}
+  FUTURE_AGI_TELEMETRY_BUFFER_DIR: ${FUTURE_AGI_TELEMETRY_BUFFER_DIR:-/data/telemetry}
   # The next three are forwarded so staging/test installs can redirect the
   # sender at an alternate receiver and tune cadence/timeout without rebuilding
   # the image. Defaults match the sender so leaving them unset is identical to
@@ -77,8 +77,10 @@ x-backend-env: &backend-env
   # accepted as hosted from silently falling back to the local sandbox path.
   HARNESS_PUBLIC_BASE_URL: ${HARNESS_PUBLIC_BASE_URL:-}
   HARNESS_PROVIDER: ${HARNESS_PROVIDER:-daytona}
+  HARNESS_MAX_ARTIFACT_BYTES: ${HARNESS_MAX_ARTIFACT_BYTES:-1073741824}
   HOSTED_SANDBOX_PROVIDER: ${HOSTED_SANDBOX_PROVIDER:-daytona}
   ALK_HOSTED_BASE_EGRESS_DOMAINS: ${ALK_HOSTED_BASE_EGRESS_DOMAINS:-}
+  ALK_HOSTED_OBSERVABILITY_EXPORT_SNAPSHOTS: ${ALK_HOSTED_OBSERVABILITY_EXPORT_SNAPSHOTS:-}
   ALK_HOSTED_EGRESS_UNRESTRICTED: ${ALK_HOSTED_EGRESS_UNRESTRICTED:-false}
   ALK_HOSTED_AUTHORING_MAX_DURATION_SECONDS: ${ALK_HOSTED_AUTHORING_MAX_DURATION_SECONDS:-3600}
   ALK_HOSTED_AUTHORING_TIMEOUT: ${ALK_HOSTED_AUTHORING_TIMEOUT:-}
@@ -367,6 +369,8 @@ services:
       # starts fast and we don't want a slow boot to block backend.
       fi-collector:
         condition: service_started
+    volumes:
+      - telemetry-data:/data/telemetry
     restart: unless-stopped
 
   worker:
@@ -392,6 +396,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+    volumes:
+      - telemetry-data:/data/telemetry
     restart: unless-stopped
 
   worker-default:
@@ -446,6 +452,20 @@ services:
       TEMPORAL_TASK_QUEUE: tasks_xl
       TEMPORAL_MAX_CONCURRENT_ACTIVITIES: ${TEMPORAL_TASKS_XL_MAX_ACTIVITIES:-10}
       TEMPORAL_MAX_CONCURRENT_WORKFLOW_TASKS: ${TEMPORAL_TASKS_XL_MAX_WORKFLOWS:-20}
+
+  worker-sql-workbench:
+    <<: *queue-worker
+    profiles: []
+    environment:
+      <<: *backend-env
+      SERVICE_TYPE: temporal-worker
+      TEMPORAL_TASK_QUEUE: sql_workbench
+      NO_STARTUP_DB_MUTATIONS: "true"
+      CH25_DROP_LEGACY_CDC_CHAIN: "false"
+      CH25_TRACE_DUAL_WRITE: "false"
+      CH_DUAL_WRITE: "false"
+      TEMPORAL_MAX_CONCURRENT_ACTIVITIES: 2
+      TEMPORAL_MAX_CONCURRENT_WORKFLOW_TASKS: 2
 
   worker-exact-aggregation:
     <<: *queue-worker
@@ -839,6 +859,12 @@ services:
       FI_OBSERVED_CATALOG_MAX_ARRAY_MEMBERS_PER_SPAN: ${FI_OBSERVED_CATALOG_MAX_ARRAY_MEMBERS_PER_SPAN:-256}
       FI_ERROR_FEED_KAFKA_BROKERS: property-catalog-kafka:9092
       FI_ERROR_FEED_KAFKA_TOPIC: ${ERROR_FEED_KAFKA_TOPIC:-error-feed.trace-available.v1}
+      # OTLP ingest limits; empty leaves the collector's defaults, derived from
+      # its memory limit (mem_limit above, with no GOMEMLIMIT set).
+      FI_INGEST_BUDGET_MIB: ${FI_INGEST_BUDGET_MIB:-}
+      FI_OTLP_MAX_BODY_MIB: ${FI_OTLP_MAX_BODY_MIB:-}
+      FI_GRPC_MAX_RECV_MIB: ${FI_GRPC_MAX_RECV_MIB:-}
+      FI_OTLP_MAX_CONNECTIONS: ${FI_OTLP_MAX_CONNECTIONS:-}
       # Point at the same ClickHouse the backend uses (HTTP port 8123).
       FI_CH_URL: http://clickhouse:8123
       FI_CH_DATABASE: ${FI_CH_DATABASE:-${CH25_DATABASE:-${CH_DATABASE:-default}}}
@@ -969,7 +995,7 @@ services:
   # ==========================================================================
 
   temporal:
-    image: temporalio/auto-setup:1.29.1
+    image: temporalio/auto-setup:1.29.7@sha256:f14912b699cf73015ad5c4fc18d522d4b014db90e794039214dfb7c022c2644f
     environment:
       DB: postgres12
       DB_PORT: 5432
@@ -1044,7 +1070,7 @@ services:
     restart: unless-stopped
 
   peerdb-temporal:
-    image: temporalio/auto-setup:1.29
+    image: temporalio/auto-setup:1.29.7@sha256:f14912b699cf73015ad5c4fc18d522d4b014db90e794039214dfb7c022c2644f
     environment:
       DB: postgres12
       DB_PORT: 5432
@@ -1232,6 +1258,7 @@ services:
         condition: service_healthy
 
 volumes:
+  telemetry-data:
   postgres-data:
   clickhouse-data:
   redis-data:

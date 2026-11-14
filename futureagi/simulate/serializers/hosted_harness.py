@@ -18,6 +18,7 @@ class HarnessIngressResponseSerializer(serializers.Serializer):
     url = serializers.URLField()
     expires_in_seconds = serializers.IntegerField(min_value=60, max_value=86400)
 
+
 class HarnessIngressProxyRequestSerializer(serializers.Serializer):
     """Accept arbitrary callback payloads while keeping the relay in the API contract."""
 
@@ -25,6 +26,23 @@ class HarnessIngressProxyRequestSerializer(serializers.Serializer):
 
     def to_internal_value(self, data):
         return {"payload": data}
+
+
+class HarnessGitHubPushRepositorySerializer(serializers.Serializer):
+    id = serializers.IntegerField(required=False, allow_null=True, min_value=1)
+    full_name = serializers.CharField(max_length=256)
+    default_branch = serializers.CharField(
+        max_length=256, required=False, allow_blank=True, allow_null=True
+    )
+
+
+class HarnessGitHubPushSerializer(serializers.Serializer):
+    """The fields of a GitHub push event the webhook reads; the rest is ignored."""
+
+    ref = serializers.CharField(max_length=512)
+    deleted = serializers.BooleanField(required=False, default=False)
+    repository = HarnessGitHubPushRepositorySerializer()
+
 
 def _reject_non_finite(value: float) -> None:
     # FloatField min/max never reject NaN/inf: every comparison with NaN is
@@ -77,6 +95,40 @@ class HarnessCheckpointEvaluationSerializer(serializers.Serializer):
     grading_error = serializers.BooleanField(required=False)
 
 
+class HarnessTargetUsageSerializer(serializers.Serializer):
+    prompt_tokens = serializers.IntegerField(min_value=0, required=False)
+    completion_tokens = serializers.IntegerField(min_value=0, required=False)
+    total_tokens = serializers.IntegerField(min_value=0, required=False)
+
+
+class HarnessTargetLatencySerializer(serializers.Serializer):
+    turn = serializers.IntegerField(min_value=0, required=False)
+    model = serializers.IntegerField(min_value=0, required=False)
+    voice = serializers.IntegerField(min_value=0, required=False)
+    transcriber = serializers.IntegerField(min_value=0, required=False)
+    endpointing = serializers.IntegerField(min_value=0, required=False)
+    turns = serializers.ListField(
+        child=serializers.IntegerField(min_value=0),
+        max_length=1000,
+        required=False,
+    )
+
+
+class HarnessTargetMetricsSerializer(serializers.Serializer):
+    """The agent under test's own provider-reported figures, never the simulator's."""
+
+    provider = serializers.ChoiceField(choices=("vapi", "retell", "livekit"))
+    usage = HarnessTargetUsageSerializer(required=False)
+    cost_cents = serializers.IntegerField(min_value=0, required=False)
+    latency = HarnessTargetLatencySerializer(required=False)
+    provider_call_id = serializers.CharField(
+        max_length=255, required=False, allow_blank=False
+    )
+    provider_end_reason = serializers.CharField(
+        max_length=255, required=False, allow_blank=False
+    )
+
+
 class HarnessCallSerializer(serializers.Serializer):
     started_at = serializers.DateTimeField()
     ended_at = serializers.DateTimeField()
@@ -91,20 +143,23 @@ class HarnessCallSerializer(serializers.Serializer):
     stop_reason = serializers.CharField(
         required=False, allow_null=True, allow_blank=False, max_length=128
     )
+    script_completed = serializers.BooleanField(required=False)
+    target_metrics = HarnessTargetMetricsSerializer(required=False, allow_null=True)
+
+
+HARNESS_FAILURE_DOMAINS = (
+    "agent",
+    "simulator",
+    "environment",
+    "connectivity",
+    "infrastructure",
+    "grading",
+    "platform_sync",
+)
 
 
 class HarnessFailureSerializer(serializers.Serializer):
-    domain = serializers.ChoiceField(
-        choices=(
-            "agent",
-            "simulator",
-            "environment",
-            "connectivity",
-            "infrastructure",
-            "grading",
-            "platform_sync",
-        )
-    )
+    domain = serializers.ChoiceField(choices=HARNESS_FAILURE_DOMAINS)
     stage = serializers.CharField(max_length=64)
     code = serializers.CharField(max_length=128)
     message = serializers.CharField(max_length=2000)
@@ -212,6 +267,7 @@ class HarnessScenarioProvisionSerializer(serializers.Serializer):
     chosen_evals = serializers.ListField(
         child=serializers.CharField(max_length=2000), required=False
     )
+    agent = serializers.DictField(required=False)
 
     def validate_personas(self, personas):
         keys = [persona["scenario_key"] for persona in personas]
@@ -241,6 +297,7 @@ class HarnessScenarioOperationSerializer(serializers.Serializer):
     chosen_evals = serializers.ListField(
         child=serializers.CharField(max_length=2000), required=False
     )
+    agent = serializers.DictField(required=False)
     run_test_id = serializers.UUIDField(required=False)
     scenario_keys = serializers.ListField(
         child=serializers.CharField(max_length=255), required=False

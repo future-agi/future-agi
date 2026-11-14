@@ -5,8 +5,13 @@ DNS-rebinding TOCTOU gap), and every redirect hop is re-validated.
 """
 
 import enum
+import io
 import ipaddress
+import math
 import socket
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor
 from urllib.parse import urljoin, urlparse
 
 import certifi
@@ -15,6 +20,7 @@ import urllib3
 _MAX_REDIRECTS = 5
 _DEFAULT_TIMEOUT_SECONDS = 5
 _DEFAULT_MAX_BODY_BYTES = 25 * 1024 * 1024
+_monotonic = time.monotonic
 
 
 class SsrfBlocked(ValueError):
@@ -82,7 +88,11 @@ class SsrfResponse:
         # HTTPHeaderDict is case-insensitive (matches requests.Response's
         # CaseInsensitiveDict contract): callers can look up 'Content-Type'
         # regardless of the casing the server sent (or a test constructed).
-        self.headers = urllib3.HTTPHeaderDict(headers) if headers is not None else urllib3.HTTPHeaderDict()
+        self.headers = (
+            urllib3.HTTPHeaderDict(headers)
+            if headers is not None
+            else urllib3.HTTPHeaderDict()
+        )
         self.content = content
         self.final_url = final_url
 
@@ -167,6 +177,122 @@ def assert_url_host_public(url: str) -> None:
     _resolve_pinned_ip(parsed.hostname)  # resolves + rejects every A/AAAA record
 
 
+# getaddrinfo has no timeout API. Bound the caller's wait and the number of
+# outstanding resolver threads; an expired lookup can finish but never connect.
+_RESOLVERS = ThreadPoolExecutor(max_workers=4, thread_name_prefix="url-resolver")
+_RESOLVER_SLOTS = threading.BoundedSemaphore(4)
+
+
+def _remaining(deadline):
+    remaining = deadline - _monotonic()
+    if remaining <= 0:
+        raise TimeoutError("URL fetch deadline exceeded.")
+    return remaining
+
+
+def _resolve_before_deadline(host, deadline):
+    slots = _RESOLVER_SLOTS
+    if not slots.acquire(timeout=_remaining(deadline)):
+        raise TimeoutError("URL fetch deadline exceeded.")
+    try:
+        _remaining(deadline)
+        future = _RESOLVERS.submit(_resolve_pinned_ip, host)
+    except BaseException:
+        slots.release()
+        raise
+    # Keep the slot until the lookup really finishes. Cancelling a queued future
+    # does not remove its work item from ThreadPoolExecutor's unbounded queue.
+    future.add_done_callback(lambda _: slots.release())
+    try:
+        return future.result(timeout=_remaining(deadline))
+    except TimeoutError:
+        raise TimeoutError("URL fetch deadline exceeded.") from None
+
+
+class _DeadlineReader(io.RawIOBase):
+    """Budget every raw receive, including reads hidden inside HTTP buffering.
+
+    Checking response.stream() chunks is insufficient: one chunk (or one HTTP
+    header/chunk-size line) can require arbitrarily many slowly progressing
+    socket reads. Keep urllib3's parser/decompression, but bound each raw read.
+    """
+
+    def __init__(self, sock, deadline):
+        self._sock = sock
+        self._deadline = deadline
+        self._raw = sock.makefile("rb", buffering=0)
+        self._timeout = sock.gettimeout()
+
+    def readable(self):
+        return True
+
+    def readinto(self, buffer):
+        remaining = _remaining(self._deadline)
+        timeout = (
+            min(self._timeout, remaining) if self._timeout is not None else remaining
+        )
+        self._sock.settimeout(timeout)
+        return self._raw.readinto(buffer)
+
+    def close(self):
+        try:
+            self._raw.close()
+        finally:
+            super().close()
+
+
+class _DeadlineSocket:
+    def __init__(self, sock, deadline):
+        self._sock = sock
+        self._deadline = deadline
+
+    def __getattr__(self, name):
+        return getattr(self._sock, name)
+
+    def makefile(self, mode, buffering=None):
+        # http.client requests a buffered binary reader for headers and body.
+        assert mode == "rb"
+        return io.BufferedReader(_DeadlineReader(self._sock, self._deadline))
+
+
+class _DeadlineHTTPConnection(urllib3.connection.HTTPConnection):
+    def __init__(self, *args, deadline, **kwargs):
+        self._deadline = deadline
+        super().__init__(*args, **kwargs)
+
+    def connect(self):
+        self.timeout = min(self.timeout, _remaining(self._deadline))
+        super().connect()
+
+    def _new_conn(self):
+        sock = super()._new_conn()
+        # TCP establishment and TLS negotiation share the same budget.
+        try:
+            sock.settimeout(min(self.timeout, _remaining(self._deadline)))
+            return sock
+        except BaseException:
+            sock.close()
+            raise
+
+    def send(self, data):
+        if self.sock is None:
+            self.connect()
+        # Connection setup (including TLS) has already spent part of the budget.
+        self.sock.settimeout(min(self.timeout, _remaining(self._deadline)))
+        return super().send(data)
+
+    def getresponse(self):
+        _remaining(self._deadline)
+        self.sock = _DeadlineSocket(self.sock, self._deadline)
+        return super().getresponse()
+
+
+class _DeadlineHTTPSConnection(
+    _DeadlineHTTPConnection, urllib3.connection.HTTPSConnection
+):
+    """Keep urllib3's TLS verification/SNI, sharing only the deadline hooks."""
+
+
 def _open_pinned_pool(scheme, pinned_ip, host, port, timeout):
     if scheme == "https":
         return urllib3.HTTPSConnectionPool(
@@ -191,17 +317,28 @@ def safe_fetch(
     timeout: float = _DEFAULT_TIMEOUT_SECONDS,
     max_bytes: int = _DEFAULT_MAX_BODY_BYTES,
     headers: dict = None,
+    total_timeout: float | None = None,
 ) -> SsrfResponse:
     """Fetch `url` with SSRF protection.
 
     Method: HEAD or GET. For GET, the body is buffered up to `max_bytes`.
     Redirects are followed manually (5 hops max), re-validating each hop.
-    Raises ValueError on any SSRF-relevant rejection.
+    Raises ValueError when the URL or response is rejected. Optional total_timeout
+    bounds DNS waiting, connection setup, headers and body across all hops;
+    None preserves the existing per-operation inactivity timeout. A deadline
+    raises TimeoutError and closes the active response/pool.
     """
+    deadline = None
+    if total_timeout is not None:
+        if not math.isfinite(total_timeout) or total_timeout <= 0:
+            raise ValueError("total_timeout must be finite and positive.")
+        deadline = _monotonic() + total_timeout
     current_url = url
     caller_headers = headers or {}
     origin_host = urlparse(url).hostname
     for _ in range(_MAX_REDIRECTS):
+        if deadline is not None:
+            _remaining(deadline)
         parsed = urlparse(current_url)
         if parsed.scheme not in ("http", "https"):
             raise SsrfBlocked(f"Unsupported URL scheme: '{parsed.scheme}'.")
@@ -209,16 +346,22 @@ def safe_fetch(
         if not host:
             raise SsrfBlocked("Invalid URL: missing host.")
         port = parsed.port or (443 if parsed.scheme == "https" else 80)
-        pinned_ip = _resolve_pinned_ip(host)
+        pinned_ip = (
+            _resolve_pinned_ip(host)
+            if deadline is None
+            else _resolve_before_deadline(host, deadline)
+        )
 
         path = parsed.path or "/"
         if parsed.query:
             path = f"{path}?{parsed.query}"
 
-        # Host header must include the port for non-default ports so
-        # vhost-routed backends match the correct server_name.
+        # Host header keeps IPv6 literals bracketed and non-default ports explicit.
         default_port = 443 if parsed.scheme == "https" else 80
-        host_header = host if port == default_port else f"{host}:{port}"
+        authority_host = f"[{host}]" if ":" in host else host
+        host_header = (
+            authority_host if port == default_port else f"{authority_host}:{port}"
+        )
 
         # Strip sensitive headers on cross-origin hops so a redirect to
         # attacker.com does not leak Authorization/Cookie/etc.
@@ -229,6 +372,13 @@ def safe_fetch(
                 hop_headers.pop(sensitive.lower(), None)
 
         pool = _open_pinned_pool(parsed.scheme, pinned_ip, host, port, timeout)
+        if deadline is not None:
+            pool.ConnectionCls = (
+                _DeadlineHTTPSConnection
+                if parsed.scheme == "https"
+                else _DeadlineHTTPConnection
+            )
+            pool.conn_kw["deadline"] = deadline
         response = None
         try:
             response = pool.request(
@@ -239,6 +389,8 @@ def safe_fetch(
                 preload_content=False,
             )
 
+            if deadline is not None:
+                _remaining(deadline)
             if response.status in (301, 302, 303, 307, 308):
                 location = response.headers.get("Location")
                 if not location:
@@ -252,13 +404,16 @@ def safe_fetch(
             if method == "GET" and response.status == 200:
                 body = bytearray()
                 for chunk in response.stream(64 * 1024):
+                    if deadline is not None:
+                        # Second guard after the raw reader's per-read budget.
+                        _remaining(deadline)
                     body.extend(chunk)
                     if len(body) > max_bytes:
-                        raise ValueError(
-                            f"URL body exceeds {max_bytes} byte limit."
-                        )
+                        raise ValueError(f"URL body exceeds {max_bytes} byte limit.")
                 content = bytes(body)
 
+            if deadline is not None:
+                _remaining(deadline)
             return SsrfResponse(
                 status_code=response.status,
                 headers=response.headers,
@@ -266,9 +421,16 @@ def safe_fetch(
                 final_url=current_url,
             )
         except urllib3.exceptions.HTTPError as e:
+            if deadline is not None:
+                _remaining(deadline)
             raise ValueError(f"Cannot access URL: {e}") from None
         finally:
             if response is not None:
+                if deadline is not None:
+                    # Incomplete bodies/redirects must close their file/socket,
+                    # not just return a still-reading connection to the pool.
+                    # Close the response before releasing its connection.
+                    response.close()
                 response.release_conn()
             pool.close()
 

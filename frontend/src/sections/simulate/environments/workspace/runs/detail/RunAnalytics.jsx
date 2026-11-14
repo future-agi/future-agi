@@ -1,9 +1,9 @@
-import { useRef } from "react";
+import { useRef, useState } from "react";
 import PropTypes from "prop-types";
 import {
+  Alert,
   Box,
   Button,
-  CircularProgress,
   LinearProgress,
   Stack,
   Table,
@@ -15,10 +15,10 @@ import {
   Typography,
 } from "@mui/material";
 import { useRunAnalytics } from "src/api/simulate-environments/runAnalytics";
+import { ROW_HEIGHT } from "src/theme/sizes";
 import EmptyState from "../../../components/EmptyState";
 import {
   Bars,
-  COLORS,
   Donut,
   format,
   NoMeasurement,
@@ -31,16 +31,27 @@ import DashboardControls, {
 } from "./analytics/DashboardControls";
 import DashboardHistogram from "./analytics/DashboardHistogram";
 import { CHART_GUIDE } from "./analytics/chartGuide";
+import { LoadingScreen } from "src/components/loading-screen";
 
 const WIDGETS = [
-  { id: "call_success", title: "Call successful", section: "Breakdowns" },
+  { id: "goal_outcome", title: "Goal outcome breakdown", section: "Outcomes" },
   {
-    id: "goal_outcome",
-    title: "Goal outcome breakdown",
-    section: "Breakdowns",
+    id: "disconnection",
+    title: "How calls ended",
+    section: "Outcomes",
   },
-  { id: "sentiment", title: "User sentiment", section: "Breakdowns" },
-  { id: "disconnection", title: "Disconnection reason", section: "Breakdowns" },
+  {
+    id: "provider_success",
+    title: "Provider's own success flag",
+    section: "Outcomes",
+  },
+  { id: "sentiment", title: "Provider sentiment", section: "Outcomes" },
+  {
+    id: "reliability",
+    title: "Reliability across trials",
+    section: "Reliability",
+    wide: true,
+  },
   {
     id: "evaluations",
     title: "Evaluations",
@@ -49,13 +60,13 @@ const WIDGETS = [
   },
   {
     id: "voice_slos",
-    title: "Voice latency SLOs",
-    section: "Voice latency SLOs",
+    title: "Voice pipeline latency",
+    section: "Voice latency",
   },
   {
     id: "pipeline_cost",
     title: "Cost breakdown by pipeline stage",
-    section: "Voice latency SLOs",
+    section: "Voice latency",
   },
   {
     id: "csat",
@@ -63,8 +74,12 @@ const WIDGETS = [
     section: "CSAT and provider scores",
     wide: true,
   },
-  { id: "task_latency", title: "Task latency", section: "Latency" },
-  { id: "percentiles", title: "Latency percentiles", section: "Latency" },
+  { id: "task_latency", title: "Agent latency", section: "Latency" },
+  {
+    id: "percentiles",
+    title: "Agent response time percentiles",
+    section: "Latency",
+  },
   {
     id: "response_time",
     title: "Agent response time per call",
@@ -79,46 +94,61 @@ const WIDGETS = [
   },
   {
     id: "risk",
-    title: "Use case risk",
+    title: "Weakest scenarios",
     section: "Failure analysis",
     wide: true,
   },
   { id: "tools_volume", title: "Tool call volume", section: "Tools" },
   { id: "tools_failure", title: "Tool failure rate", section: "Tools" },
-  { id: "slowest", title: "Slowest tasks", section: "Performance tails" },
+  { id: "slowest", title: "Slowest calls", section: "Performance tails" },
   {
     id: "expensive",
-    title: "Most expensive tasks",
+    title: "Most expensive calls",
     section: "Performance tails",
   },
 ];
 const SECTIONS = [
-  "Breakdowns",
+  "Outcomes",
+  "Reliability",
   "Evaluations",
   "CSAT and provider scores",
-  "Voice latency SLOs",
+  "Voice latency",
   "Latency",
   "Distribution",
   "Failure analysis",
   "Tools",
   "Performance tails",
 ];
+const BREAKDOWNS = [
+  "goal_outcome",
+  "disconnection",
+  "provider_success",
+  "sentiment",
+];
+const VERDICTS = {
+  passed: "Passed all evaluated trials",
+  failed: "Failed all evaluated trials",
+  flaky: "Flipped between trials",
+  not_evaluated: "Not evaluated",
+};
 const OUTCOMES = [
-  { key: "passed", label: "Passed", color: COLORS[0] },
-  { key: "failed", label: "Failed", color: COLORS[2] },
-  { key: "error", label: "Errored", color: COLORS[3] },
-  { key: "inconclusive", label: "Inconclusive", color: COLORS[5] },
+  { key: "queued", label: "Queued", role: "neutral" },
+  { key: "in_progress", label: "In progress", role: "info" },
+  { key: "passed", label: "Passed", role: "success" },
+  { key: "failed", label: "Failed", role: "danger" },
+  { key: "error", label: "Error", role: "warning" },
+  { key: "inconclusive", label: "Inconclusive", role: "neutral" },
 ];
 const DISTRIBUTIONS = {
-  end_to_end_ms: ["End-to-end latency", "ms"],
-  duration_seconds: ["Task duration", "seconds"],
-  tokens: ["Tokens per task", "number"],
-  cost_cents: ["Cost per task", "cents"],
-  turns: ["Turns per task", "number"],
+  latency_ms: ["Agent response time", "ms"],
+  duration_seconds: ["Call duration", "seconds"],
+  tokens: ["Tokens per call", "number"],
+  cost_cents: ["Cost per call", "cents"],
+  turns: ["Turns per call", "number"],
 };
 const tableSx = {
-  "& th": { fontSize: 10, textTransform: "uppercase", color: "text.secondary" },
-  "& td": { fontSize: 12 },
+  "& th": { typography: "s3", fontWeight: 500, color: "text.secondary" },
+  "& td": { typography: "s1", height: ROW_HEIGHT.default },
   "& tr:last-child td": { borderBottom: 0 },
 };
 
@@ -141,12 +171,8 @@ RunAnalytics.propTypes = {
 function AnalyticsDashboard({ executionId, onOpenCall, onOpenCalls }) {
   const { data, isPending, isError, refetch } = useRunAnalytics(executionId);
   const printable = useRef(null);
-  if (isPending)
-    return (
-      <Stack alignItems="center" sx={{ py: 8 }}>
-        <CircularProgress size={26} />
-      </Stack>
-    );
+  const [showDetails, setShowDetails] = useState(false);
+  if (isPending) return <LoadingScreen compact />;
   if (isError)
     return (
       <Stack alignItems="center">
@@ -169,6 +195,17 @@ function AnalyticsDashboard({ executionId, onOpenCall, onOpenCalls }) {
       />
     );
   const dashboard = data.dashboard;
+  const latencyLabel =
+    dashboard.metrics.find((metric) => metric.key === "agent_latency")?.label ||
+    "Agent latency";
+  // Call length kept in the payload for earlier builds of this page.
+  const distributionRows = dashboard.distributions.filter(
+    (row) => row.key !== "end_to_end_ms",
+  );
+  const latencyAt = (percentile) =>
+    dashboard.agent_latency_percentiles?.find(
+      (row) => row.percentile === percentile,
+    )?.value;
   const open = onOpenCall
     ? (task) =>
         onOpenCall({
@@ -178,15 +215,23 @@ function AnalyticsDashboard({ executionId, onOpenCall, onOpenCalls }) {
           provider: task.provider,
         })
     : undefined;
+  const { summary } = data;
+  const reliability = data.reliability ?? {};
+  const interval = reliability?.pass_rate_interval;
+  const evalSummary = dashboard.evaluation_summary;
   const subtitles = {
-    call_success:
-      "Successful vs unsuccessful: the top-level task verdict; unknowns shown separately",
-    goal_outcome: `${data.summary.total} tasks · shares use all tasks, including unknown outcomes`,
-    sentiment: "How the counterparty came across during the task",
-    disconnection: "Why each call ended",
-    evaluations: `${dashboard.evaluation_summary.graders} graders · ${dashboard.evaluation_summary.passed} of ${dashboard.evaluation_summary.measured} measured checks passed (${format(dashboard.evaluation_summary.pass_rate, "percent")})`,
-    csat: "Existing score · scores the run already produced; no new cost",
-    response_time: "Platform, transcript timing",
+    goal_outcome: `${summary.measured} evaluated of ${summary.total} · errored and not-evaluated calls never count against the agent`,
+    disconnection:
+      "Every provider's end reason mapped to one list; unrecognised reasons stay visible",
+    provider_success:
+      "The provider's own judgement as reported; it never replaces your evals",
+    sentiment:
+      "As reported by the provider; the platform does not compute sentiment",
+    reliability: `${reliability.scenarios ?? 0} scenarios × ${reliability.trials ?? 0} trial${reliability.trials === 1 ? "" : "s"}${interval ? ` · pass^1 95% range ${format(interval.low, "percent")}–${format(interval.high, "percent")}` : ""}`,
+    evaluations: `${evalSummary.graders} evals · ${evalSummary.passed} of ${evalSummary.measured} evaluated calls passed every eval (${format(evalSummary.pass_rate, "percent")})${evalSummary.errored_checks ? ` · ${evalSummary.errored_checks} checks could not run` : ""}`,
+    csat: "Scorer CSAT on a 0–10 scale; a provider success flag is never mixed in",
+    response_time:
+      "Each call's average wait before the agent replies; one long pause inside a call is not visible here",
     voice_slos: "p50 / p90 / p99 of recorded per-call pipeline timings (ms)",
     pipeline_cost:
       dashboard.series_mode === "time_buckets"
@@ -194,29 +239,190 @@ function AnalyticsDashboard({ executionId, onOpenCall, onOpenCalls }) {
         : "Recorded LLM / TTS / STT / Storage cost per call",
     task_latency:
       dashboard.series_mode === "time_buckets"
-        ? "End-to-end task wall clock · average per time bucket"
-        : "End-to-end task wall clock per call",
-    percentiles: `p50 ${format(dashboard.distributions.find((row) => row.key === "end_to_end_ms")?.p50, "ms")} · p90 ${format(dashboard.distributions.find((row) => row.key === "end_to_end_ms")?.p90, "ms")} · p99 ${format(dashboard.distributions.find((row) => row.key === "end_to_end_ms")?.p99, "ms")}`,
-    distribution: "p50 · p90 · p99 · max for every measured task metric",
-    risk: `Weakest ${dashboard.use_case_risk.length} of ${dashboard.goal_count} goals`,
+        ? `${latencyLabel} · average per time bucket`
+        : `${latencyLabel} per call`,
+    percentiles: `p50 ${format(latencyAt(50), "ms")} · p90 ${format(latencyAt(90), "ms")} · p99 ${format(latencyAt(99), "ms")} of per-call averages`,
+    distribution: "p50 · p90 · p99 · max for every measured metric",
+    risk: `Weakest ${dashboard.use_case_risk.length} of ${dashboard.goal_count} scenarios · fewer than 3 evaluated calls ranked last`,
     tools_volume: `${dashboard.tools.total_invocations} recorded invocations · ${dashboard.tools.total_tools} tools · top 20`,
     tools_failure:
       "Failures among invocations with a recorded verdict · threshold at 40%",
-    slowest: "Top 8 by wall-clock duration · select a task to inspect the call",
-    expensive: "Top 8 by recorded cost · select a task to inspect the call",
+    slowest: "Top 8 by wall-clock duration · select a call to inspect it",
+    expensive: "Top 8 by recorded cost · select a call to inspect it",
   };
+  const breakdown = (key) =>
+    dashboard.breakdowns.find((item) => item.key === key);
+  // Provider-only charts render only when some call reported the value.
+  const availableWidgets = WIDGETS.filter(
+    (widget) =>
+      !["provider_success", "sentiment"].includes(widget.id) ||
+      breakdown(widget.id),
+  );
+  // The details toggle only reveals the reliability section.
+  const widgets = availableWidgets.filter(
+    (widget) => widget.id !== "reliability" || showDetails,
+  );
+  const metricsByKey = Object.fromEntries(
+    dashboard.metrics.map((metric) => [metric.key, metric]),
+  );
+  const passRate = metricsByKey.pass_rate;
+  const dropOff = metricsByKey.drop_off;
+  const costPerPass = metricsByKey.cost_per_pass;
+  const comparison = dashboard.comparison;
+  const health = dashboard.run_health;
+  const metricTile = (key, label, coverage, unit) => {
+    const metric = metricsByKey[key];
+    if (!metric) return null;
+    return {
+      key,
+      label,
+      value: format(metric.value, unit ?? metric.unit),
+      reported: metric.value != null,
+      coverage: coverage(metric),
+      note: metric.note,
+    };
+  };
+  const measuredOf = (metric) =>
+    `${metric.measured ?? 0} / ${metric.total ?? 0} measured`;
+  // Voice-only metrics are absent from chat runs, so their tiles drop out.
+  const callTiles = [
+    metricTile("total", "Total calls", () => "this run"),
+    health && {
+      key: "connected",
+      label: "Connected",
+      value: format(health.connected),
+      reported: health.connected != null,
+      coverage: `of ${health.attempted ?? 0}`,
+      note: "Calls that exchanged at least one message",
+    },
+    metricTile(
+      "connected_rate",
+      "Calls connected (%)",
+      (metric) => `${metric.measured ?? 0} / ${metric.total ?? 0} calls`,
+    ),
+    metricTile("agent_latency", "Agent latency", measuredOf),
+    metricTile("wpm", "Agent WPM", () => "words/min"),
+    metricTile("stop", "Agent stop latency", measuredOf),
+    // API sends the agent's share as a percent; show it as agent/customer.
+    metricTile("talk", "Talk ratio", () => "agent/customer", "ratio"),
+    metricTile(
+      "duration",
+      "Avg duration",
+      (metric) => `${metric.measured ?? 0} timed calls`,
+    ),
+    metricTile(
+      "turns",
+      "Avg turns",
+      (metric) => `${metric.measured ?? 0} calls`,
+    ),
+  ].filter(Boolean);
+  const headlines = [
+    {
+      key: "pass_rate",
+      label: "Calls passed",
+      value: format(passRate?.value, "percent"),
+      reported: passRate?.value != null,
+      // No range here: pass^1's range brackets the scenario average, which this
+      // pooled rate need not sit inside.
+      detail: null,
+      coverage: `${passRate?.measured ?? 0} / ${passRate?.total ?? 0} evaluated`,
+      note: passRate?.note,
+    },
+    {
+      key: "drop_off",
+      label: "Drop-off",
+      value: format(dropOff?.value, "percent"),
+      reported: dropOff?.value != null,
+      coverage: `${dropOff?.measured ?? 0} / ${dropOff?.total ?? 0} assessed`,
+      note: dropOff?.note,
+    },
+    {
+      key: "response_p95",
+      label: "Response time p95",
+      value: format(dashboard.agent_response_time.p95, "ms"),
+      reported: dashboard.agent_response_time.p95 != null,
+      coverage: `${dashboard.agent_response_time.measured} / ${dashboard.agent_response_time.total} measured`,
+      note: "Slow 1-in-20 per-call average response time",
+    },
+    {
+      key: "cost_per_pass",
+      label: "Cost / pass",
+      value: format(costPerPass?.value, "cents"),
+      reported: costPerPass?.value != null,
+      coverage: `${costPerPass?.measured ?? 0} / ${costPerPass?.total ?? 0} reported`,
+      note: costPerPass?.note,
+    },
+    {
+      key: "csat_satisfied",
+      label: "CSAT satisfied",
+      value: format(dashboard.csat.satisfied_percent, "percent"),
+      reported: dashboard.csat.satisfied_percent != null,
+      coverage: `${dashboard.csat.satisfied} / ${dashboard.csat.measured} scored`,
+      note: "Share of true 0–10 CSAT scores at 8 or above",
+    },
+    {
+      key: "change",
+      label: "Change vs last run",
+      value: comparison?.available
+        ? `+${comparison.newly_passing.length} / −${comparison.newly_failing.length}`
+        : "-",
+      reported: Boolean(comparison?.available),
+      coverage: comparison?.available
+        ? `${comparison.shared_scenarios} shared scenarios`
+        : "No previous comparable run",
+      note: "Newly passing / newly failing, on scenarios evaluated in both runs",
+    },
+    ...callTiles,
+  ];
+  const healthIssues = [];
+  const notConnected = (health?.attempted ?? 0) - (health?.connected ?? 0);
+  if (notConnected)
+    healthIssues.push(
+      `${notConnected} call${notConnected === 1 ? "" : "s"} did not connect`,
+    );
+  if (health?.errored)
+    healthIssues.push(
+      `${health.errored} call${health.errored === 1 ? "" : "s"} failed to run`,
+    );
+  if (health?.not_evaluated)
+    healthIssues.push(
+      `${health.not_evaluated} call${health.not_evaluated === 1 ? " was" : "s were"} not evaluated`,
+    );
+  if (health?.eval_errors)
+    healthIssues.push(
+      `${health.eval_errors} eval check${health.eval_errors === 1 ? "" : "s"} could not run`,
+    );
+  const findings = [];
+  if ((dropOff?.value ?? 0) > 5)
+    findings.push(
+      `Drop-off is ${format(dropOff.value, "percent")} (target ≤5%).`,
+    );
+  if (reliability.flaky)
+    findings.push(
+      `${reliability.flaky} scenario${reliability.flaky === 1 ? "" : "s"} flipped across trials.`,
+    );
+  if ((dashboard.agent_response_time.at_or_above_target_percent ?? 0) > 5)
+    findings.push(
+      `${format(dashboard.agent_response_time.at_or_above_target_percent, "percent")} of measured calls exceeded the response-time target.`,
+    );
+  const failingTools = dashboard.tools.failures.filter(
+    (tool) => (tool.failure_rate ?? 0) > 5,
+  );
+  if (failingTools.length)
+    findings.push(
+      `${failingTools.length} tool${failingTools.length === 1 ? "" : "s"} exceeded 5% errors.`,
+    );
+
   const renderWidget = (id) => {
-    if (
-      ["call_success", "goal_outcome", "sentiment", "disconnection"].includes(
-        id,
-      )
-    )
+    if (BREAKDOWNS.includes(id))
       return (
         <Donut
-          data={dashboard.breakdowns.find((item) => item.key === id)}
-          onOpen={id === "call_success" ? onOpenCalls : undefined}
+          data={breakdown(id)}
+          onOpen={id === "goal_outcome" ? onOpenCalls : undefined}
         />
       );
+    if (id === "reliability")
+      return <Reliability data={reliability} onOpenCalls={onOpenCalls} />;
     if (id === "csat" || id === "response_time")
       return (
         <DashboardHistogram
@@ -230,18 +436,18 @@ function AnalyticsDashboard({ executionId, onOpenCall, onOpenCalls }) {
           <Table size="small" sx={tableSx}>
             <TableHead>
               <TableRow>
-                <TableCell>Grader</TableCell>
-                <TableCell>Category</TableCell>
+                <TableCell>Eval</TableCell>
                 <TableCell sx={{ minWidth: 180 }}>Pass rate</TableCell>
                 <TableCell align="right">%</TableCell>
-                <TableCell align="right">Passed / measured</TableCell>
+                <TableCell align="right">Passed / evaluated</TableCell>
+                <TableCell align="right">Could not run</TableCell>
+                <TableCell align="right">Not applicable</TableCell>
               </TableRow>
             </TableHead>
             <TableBody>
               {data.evaluations.map((row) => (
                 <TableRow key={row.id}>
                   <TableCell>{row.name}</TableCell>
-                  <TableCell>-</TableCell>
                   <TableCell>
                     {row.pass_rate == null ? (
                       "-"
@@ -251,10 +457,13 @@ function AnalyticsDashboard({ executionId, onOpenCall, onOpenCalls }) {
                         value={row.pass_rate}
                         sx={{
                           height: 6,
-                          borderRadius: 1,
+                          borderRadius: "4px",
                           bgcolor: "action.hover",
                           "& .MuiLinearProgress-bar": {
-                            bgcolor: row.pass_rate < 50 ? COLORS[2] : COLORS[1],
+                            bgcolor: (t) =>
+                              t.palette.status[
+                                row.pass_rate < 50 ? "danger" : "success"
+                              ].solid,
                           },
                         }}
                       />
@@ -266,6 +475,8 @@ function AnalyticsDashboard({ executionId, onOpenCall, onOpenCalls }) {
                   <TableCell align="right">
                     {row.passed} / {row.measured}
                   </TableCell>
+                  <TableCell align="right">{row.errored}</TableCell>
+                  <TableCell align="right">{row.missing}</TableCell>
                 </TableRow>
               ))}
             </TableBody>
@@ -303,7 +514,7 @@ function AnalyticsDashboard({ executionId, onOpenCall, onOpenCalls }) {
               ))}
             </TableBody>
           </Table>
-          <Typography sx={{ p: 2, fontSize: 11, color: "text.secondary" }}>
+          <Typography sx={{ p: 2, typography: "s3", color: "text.secondary" }}>
             ASR word-error rate: not recorded · User interruptions:{" "}
             {number(dashboard.interruptions.average)} / measured call ·{" "}
             {number(dashboard.interruptions.total, 0)} total
@@ -319,9 +530,9 @@ function AnalyticsDashboard({ executionId, onOpenCall, onOpenCalls }) {
             unit="cents"
             series={[
               { key: "llm_cents", label: "LLM" },
-              { key: "tts_cents", label: "TTS", color: COLORS[4] },
-              { key: "stt_cents", label: "STT", color: COLORS[3] },
-              { key: "storage_cents", label: "Storage", color: COLORS[5] },
+              { key: "tts_cents", label: "TTS" },
+              { key: "stt_cents", label: "STT" },
+              { key: "storage_cents", label: "Storage" },
             ]}
           />
           <Stack
@@ -333,7 +544,7 @@ function AnalyticsDashboard({ executionId, onOpenCall, onOpenCalls }) {
             {dashboard.pipeline_cost?.map((component) => (
               <Typography
                 key={component.key}
-                sx={{ fontSize: 10, color: "text.secondary" }}
+                sx={{ typography: "s3", color: "text.secondary" }}
               >
                 {component.label} {format(component.total_cents, "cents")} (
                 {format(component.share, "percent")})
@@ -341,7 +552,7 @@ function AnalyticsDashboard({ executionId, onOpenCall, onOpenCalls }) {
             ))}
           </Stack>
           <Typography
-            sx={{ px: 2, pb: 1.5, fontSize: 10, color: "text.secondary" }}
+            sx={{ px: 2, pb: 1.5, typography: "s3", color: "text.secondary" }}
           >
             Transport cost is not recorded. Storage is shown separately.
           </Typography>
@@ -352,16 +563,18 @@ function AnalyticsDashboard({ executionId, onOpenCall, onOpenCalls }) {
         <TrendLine
           rows={dashboard.series}
           xKey="label"
-          valueKey="duration_ms"
+          valueKey="latency_ms"
+          valueLabel={latencyLabel}
           bucketed={dashboard.series_mode === "time_buckets"}
         />
       );
     if (id === "percentiles")
       return (
         <TrendLine
-          rows={dashboard.latency_percentiles}
+          rows={dashboard.agent_latency_percentiles}
           xKey="percentile"
           valueKey="value"
+          valueLabel={latencyLabel}
           percentile
         />
       );
@@ -376,22 +589,20 @@ function AnalyticsDashboard({ executionId, onOpenCall, onOpenCalls }) {
             pb: 2,
           }}
         >
-          {dashboard.distributions.map((row) => {
-            const [label, unit] = DISTRIBUTIONS[row.key] || [row.key, "number"];
+          {distributionRows.map((row) => {
+            const [mapped, unit] = DISTRIBUTIONS[row.key] || [
+              row.key,
+              "number",
+            ];
+            const label = row.key === "latency_ms" ? latencyLabel : mapped;
             return (
               <Box key={row.key}>
-                <Typography
-                  sx={{
-                    fontSize: 10,
-                    color: "text.secondary",
-                    textTransform: "uppercase",
-                  }}
-                >
+                <Typography sx={{ typography: "s3", color: "text.secondary" }}>
                   {label}
                 </Typography>
                 <Typography
                   sx={{
-                    fontSize: 21,
+                    typography: "l3",
                     my: 0.5,
                     fontWeight: row.p90 == null ? 400 : 600,
                     color: row.p90 == null ? "text.disabled" : "text.primary",
@@ -400,7 +611,7 @@ function AnalyticsDashboard({ executionId, onOpenCall, onOpenCalls }) {
                   {format(row.p90, unit)}{" "}
                   <Typography
                     component="span"
-                    sx={{ fontSize: 10, color: "text.secondary" }}
+                    sx={{ typography: "s3", color: "text.secondary" }}
                   >
                     p90
                   </Typography>
@@ -408,21 +619,17 @@ function AnalyticsDashboard({ executionId, onOpenCall, onOpenCalls }) {
                 {["p50", "p99", "max"].map((p) => (
                   <Stack key={p} direction="row" justifyContent="space-between">
                     <Typography
-                      sx={{
-                        fontSize: 10,
-                        color: "text.secondary",
-                        textTransform: "uppercase",
-                      }}
+                      sx={{ typography: "s3", color: "text.secondary" }}
                     >
-                      {p}
+                      {p === "max" ? "Max" : p}
                     </Typography>
-                    <Typography sx={{ fontSize: 11 }}>
+                    <Typography sx={{ typography: "s3" }}>
                       {format(row[p], unit)}
                     </Typography>
                   </Stack>
                 ))}
                 <Typography
-                  sx={{ mt: 0.5, fontSize: 10, color: "text.secondary" }}
+                  sx={{ mt: 0.5, typography: "s3", color: "text.secondary" }}
                 >
                   {row.measured} measured
                 </Typography>
@@ -435,7 +642,7 @@ function AnalyticsDashboard({ executionId, onOpenCall, onOpenCalls }) {
       return (
         <Bars
           rows={dashboard.use_case_risk}
-          xKey="goal"
+          xKey="scenario"
           series={OUTCOMES}
           horizontal
           height={330}
@@ -452,9 +659,7 @@ function AnalyticsDashboard({ executionId, onOpenCall, onOpenCalls }) {
           labels
           multicolor
           angled
-          series={[
-            { key: "invocations", label: "Invocations", color: COLORS[4] },
-          ]}
+          series={[{ key: "invocations", label: "Invocations", colorIndex: 1 }]}
         />
       );
     if (id === "tools_failure")
@@ -470,7 +675,7 @@ function AnalyticsDashboard({ executionId, onOpenCall, onOpenCalls }) {
           labelKey="failure_label"
           multicolor
           series={[
-            { key: "failure_rate", label: "Failure rate", color: COLORS[2] },
+            { key: "failure_rate", label: "Failure rate", role: "danger" },
           ]}
         />
       );
@@ -490,7 +695,7 @@ function AnalyticsDashboard({ executionId, onOpenCall, onOpenCalls }) {
             {
               key: "value",
               label: id === "slowest" ? "Duration" : "Cost",
-              color: id === "slowest" ? COLORS[0] : "#c02f80",
+              colorIndex: id === "slowest" ? 0 : 4,
             },
           ]}
           onOpen={open}
@@ -508,27 +713,41 @@ function AnalyticsDashboard({ executionId, onOpenCall, onOpenCalls }) {
           )
         }
       />
+      <Box
+        className="analytics-no-print"
+        sx={{ display: "flex", justifyContent: "flex-end", mt: -1.5, mb: 2 }}
+      >
+        <Button
+          size="small"
+          variant="text"
+          onClick={() => setShowDetails((current) => !current)}
+        >
+          {showDetails ? "Hide detailed analytics" : "Show detailed analytics"}
+        </Button>
+      </Box>
       <Stack ref={printable} spacing={2.5}>
+        {health?.show_banner && (
+          <Alert severity="warning">
+            <strong>Run health:</strong> {healthIssues.join(" · ")}
+          </Alert>
+        )}
         <Box
           sx={{
             display: "grid",
             gridTemplateColumns: {
               xs: "repeat(2,minmax(0,1fr))",
-              md: "repeat(4,minmax(0,1fr))",
-              lg: "repeat(7,minmax(0,1fr))",
+              md: "repeat(3,minmax(0,1fr))",
+              lg: "repeat(5,minmax(0,1fr))",
             },
             border: "1px solid",
             borderColor: "divider",
             bgcolor: "background.paper",
-            borderRadius: 1.5,
+            borderRadius: "8px",
             overflow: "hidden",
           }}
         >
-          {dashboard.metrics.map((metric) => (
-            <Tooltip
-              key={metric.key}
-              title={metric.note || `${metric.measured ?? 0} measured calls`}
-            >
+          {headlines.map((card) => (
+            <Tooltip key={card.key} title={card.note || card.coverage}>
               <Box
                 sx={{
                   p: 1.5,
@@ -540,37 +759,80 @@ function AnalyticsDashboard({ executionId, onOpenCall, onOpenCalls }) {
               >
                 <Typography
                   sx={{
-                    fontSize: 10,
-                    fontWeight: 600,
+                    typography: "s3",
+                    fontWeight: 500,
                     color: "text.secondary",
                   }}
                 >
-                  {metric.label}
+                  {card.label}
                 </Typography>
+                <Stack direction="row" alignItems="baseline" spacing={0.75}>
+                  <Typography
+                    sx={{
+                      typography: "l3",
+                      mt: 0.5,
+                      fontWeight: card.reported ? 600 : 400,
+                      color: card.reported ? "text.primary" : "text.disabled",
+                    }}
+                  >
+                    {card.value}
+                  </Typography>
+                  {card.detail && (
+                    <Typography
+                      sx={{ typography: "s3", color: "text.secondary" }}
+                    >
+                      {card.detail}
+                    </Typography>
+                  )}
+                </Stack>
                 <Typography
-                  sx={{
-                    fontSize: 22,
-                    mt: 0.5,
-                    fontWeight: metric.value == null ? 400 : 650,
-                    color:
-                      metric.value == null ? "text.disabled" : "text.primary",
-                  }}
+                  sx={{ typography: "s3", color: "text.secondary", mt: 0.5 }}
                 >
-                  {format(metric.value, metric.unit)}
-                </Typography>
-                <Typography
-                  sx={{ fontSize: 10, color: "text.secondary", mt: 0.3 }}
-                >
-                  {metric.value == null
-                    ? "Not recorded"
-                    : `${metric.measured ?? 0} / ${metric.total} measured`}
+                  {card.reported || card.key === "drop_off"
+                    ? card.coverage
+                    : "Not reported"}
                 </Typography>
               </Box>
             </Tooltip>
           ))}
         </Box>
+        <Box
+          component="section"
+          aria-label="What to look at first"
+          sx={{
+            border: "1px solid",
+            borderColor: "divider",
+            bgcolor: "background.paper",
+            borderRadius: "8px",
+            px: 2,
+            py: 1.5,
+          }}
+        >
+          <Typography component="h2" sx={{ typography: "m3", fontWeight: 500 }}>
+            What to look at first
+          </Typography>
+          {findings.length ? (
+            <Box component="ul" sx={{ m: 0, mt: 1, pl: 2.5 }}>
+              {findings.map((finding) => (
+                <Typography
+                  component="li"
+                  key={finding}
+                  sx={{ typography: "s1" }}
+                >
+                  {finding}
+                </Typography>
+              ))}
+            </Box>
+          ) : (
+            <Typography
+              sx={{ mt: 0.75, typography: "s1", color: "text.secondary" }}
+            >
+              No priority findings in this run.
+            </Typography>
+          )}
+        </Box>
         {SECTIONS.map((section) => {
-          const visible = WIDGETS.filter(
+          const visible = widgets.filter(
             (widget) => widget.section === section,
           );
           if (!visible.length) return null;
@@ -579,8 +841,8 @@ function AnalyticsDashboard({ executionId, onOpenCall, onOpenCalls }) {
               <Typography
                 component="h2"
                 sx={{
-                  fontSize: 13,
-                  fontWeight: 600,
+                  typography: "m3",
+                  fontWeight: 500,
                   mb: 1,
                   pt: 1,
                   borderTop: "1px solid",
@@ -596,7 +858,7 @@ function AnalyticsDashboard({ executionId, onOpenCall, onOpenCalls }) {
                     xs: "1fr",
                     md: "repeat(2,minmax(0,1fr))",
                     lg:
-                      section === "Breakdowns"
+                      section === "Outcomes"
                         ? "repeat(4,minmax(0,1fr))"
                         : "repeat(2,minmax(0,1fr))",
                   },
@@ -622,3 +884,86 @@ function AnalyticsDashboard({ executionId, onOpenCall, onOpenCalls }) {
   );
 }
 AnalyticsDashboard.propTypes = RunAnalytics.propTypes;
+
+function Reliability({ data, onOpenCalls }) {
+  if (!data?.scenarios) return <NoMeasurement />;
+  const tiles = [
+    ["Passed every trial", data.consistent_pass, data.scenarios],
+    ["Passed at least once", data.passed_at_least_once, data.scenarios],
+    ["Flipped between trials", data.flaky, data.repeated],
+  ];
+  return (
+    <>
+      <Stack direction="row" gap={3} sx={{ px: 2, pb: 1.5 }} flexWrap="wrap">
+        {tiles.map(([label, value, of]) => (
+          <Box key={label}>
+            <Typography sx={{ typography: "s3", color: "text.secondary" }}>
+              {label}
+            </Typography>
+            <Typography sx={{ typography: "l3", fontWeight: 600 }}>
+              {of ? `${value} / ${of}` : "-"}
+            </Typography>
+          </Box>
+        ))}
+      </Stack>
+      {data.trials < 2 && (
+        <Typography
+          sx={{ px: 2, pb: 1, typography: "s3", color: "text.secondary" }}
+        >
+          Run 2 or more trials to see which scenarios give different results on
+          repeat.
+        </Typography>
+      )}
+      <Box sx={{ overflowX: "auto" }}>
+        <Table size="small" sx={tableSx}>
+          <TableHead>
+            <TableRow>
+              <TableCell>Scenario</TableCell>
+              <TableCell>Result</TableCell>
+              <TableCell align="right">Trials</TableCell>
+              <TableCell align="right">Inconclusive</TableCell>
+            </TableRow>
+          </TableHead>
+          <TableBody>
+            {data.rows.map((row) => (
+              <TableRow
+                key={row.scenario_key || row.scenario}
+                hover={!!onOpenCalls}
+                onClick={
+                  onOpenCalls && row.call_ids?.length
+                    ? () => onOpenCalls({ callExecutionId: row.call_ids })
+                    : undefined
+                }
+                sx={onOpenCalls ? { cursor: "pointer" } : undefined}
+              >
+                <TableCell>{row.scenario}</TableCell>
+                <TableCell
+                  sx={{
+                    color: (t) =>
+                      row.verdict === "flaky"
+                        ? t.palette.status.warning.fg
+                        : row.verdict === "failed"
+                          ? t.palette.status.danger.fg
+                          : undefined,
+                  }}
+                >
+                  {VERDICTS[row.verdict]}
+                </TableCell>
+                {/* Inconclusive trials sit outside the denominator. */}
+                <TableCell align="right">
+                  {row.evaluated
+                    ? `${row.passed}/${row.evaluated} trials passed`
+                    : "No conclusive trial"}
+                </TableCell>
+                <TableCell align="right">
+                  {row.error + row.inconclusive}
+                </TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      </Box>
+    </>
+  );
+}
+Reliability.propTypes = { data: PropTypes.object, onOpenCalls: PropTypes.func };

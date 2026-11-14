@@ -1,4 +1,5 @@
 import { Box, Typography, useTheme } from "@mui/material";
+import { chartAxisColors } from "src/theme/data-colors";
 import PropTypes from "prop-types";
 import React from "react";
 import ReactApexChart from "react-apexcharts";
@@ -29,10 +30,10 @@ const ExperimentEvaluationChart = ({ col, rows }) => {
     >
       <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
         <Iconify
-          icon="material-symbols:check-circle-outline"
+          icon="solar:check-circle-linear"
           sx={{ color: "text.secondary" }}
         />
-        <Typography color="text.secondary" fontSize="13px" fontWeight={700}>
+        <Typography color="text.secondary" fontSize="12px" fontWeight={600}>
           {col?.name?.split("-")?.[0]}
         </Typography>
       </Box>
@@ -45,7 +46,7 @@ const ExperimentEvaluationChart = ({ col, rows }) => {
               toolbar: {
                 show: false,
               },
-              foreColor: isDark ? "#a1a1aa" : undefined,
+              foreColor: chartAxisColors(theme).foreColor,
             },
             theme: {
               mode: isDark ? "dark" : "light",
@@ -70,7 +71,7 @@ const ExperimentEvaluationChart = ({ col, rows }) => {
               theme: isDark ? "dark" : "light",
             },
             grid: {
-              borderColor: isDark ? "#27272a" : undefined,
+              borderColor: chartAxisColors(theme).gridColor,
             },
           }}
           series={[

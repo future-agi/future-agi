@@ -157,7 +157,7 @@ describe("VoiceRightPanel", () => {
     getContext.mockRestore();
   });
 
-  describe("Fix with Falcon on the Evals tab", () => {
+  describe("Fix with AI on the Evals tab", () => {
     const failingEval = {
       id: "call-2",
       module: "simulate",
@@ -178,17 +178,65 @@ describe("VoiceRightPanel", () => {
     it("shows by default, on the summary bar and on the expanded failing eval", async () => {
       renderWithQueryClient(<VoiceRightPanel data={failingEval} />);
       await userEvent.click(screen.getByRole("tab", { name: "Evals" }));
-      expect(screen.getAllByText("Fix with Falcon")).toHaveLength(1);
+      expect(screen.getAllByText("Fix with AI")).toHaveLength(1);
       await userEvent.click(screen.getByText("Concise replies"));
-      expect(screen.getAllByText("Fix with Falcon")).toHaveLength(2);
+      expect(screen.getAllByText("Fix with AI")).toHaveLength(2);
+    });
+
+    it("keeps the eval list and Falcon when the call also carries a rollup", async () => {
+      const withRollup = {
+        ...failingEval,
+        eval_rollup: {
+          scope: "trace",
+          evals: [
+            {
+              eval_config_id: "eval-1",
+              eval_name: "Concise replies",
+              aggregate: { pass: 0, fail: 1 },
+              spans: [{ span_id: "root", span_name: "call", value: "Failed" }],
+            },
+          ],
+        },
+      };
+      renderWithQueryClient(<VoiceRightPanel data={withRollup} />);
+      await userEvent.click(screen.getByRole("tab", { name: "Evals" }));
+      expect(
+        screen.getByPlaceholderText("Search evals..."),
+      ).toBeInTheDocument();
+      expect(screen.getAllByText("Fix with AI")).toHaveLength(1);
+      await userEvent.click(screen.getByText("Concise replies"));
+      expect(screen.getAllByText("Fix with AI")).toHaveLength(2);
+      expect(
+        screen.getByRole("button", { name: /per-span breakdown/i }),
+      ).toBeInTheDocument();
     });
 
     it("hides when the host has no Falcon flow wired", async () => {
-      renderWithQueryClient(<VoiceRightPanel data={failingEval} showFixWithFalcon={false} />);
+      renderWithQueryClient(
+        <VoiceRightPanel data={failingEval} showFixWithFalcon={false} />,
+      );
       await userEvent.click(screen.getByRole("tab", { name: "Evals" }));
       await userEvent.click(screen.getByText("Concise replies"));
-      expect(screen.queryByText("Fix with Falcon")).not.toBeInTheDocument();
+      expect(screen.queryByText("Fix with AI")).not.toBeInTheDocument();
     });
+  });
+
+  it("drops the Annotations tab, and its Add Label, when the host hides it", () => {
+    const call = {
+      id: "call-1",
+      module: "simulate",
+      status: "completed",
+      transcript: [],
+    };
+    const { unmount } = renderWithQueryClient(<VoiceRightPanel data={call} />);
+    expect(
+      screen.getByRole("tab", { name: "Annotations" }),
+    ).toBeInTheDocument();
+    unmount();
+
+    renderWithQueryClient(<VoiceRightPanel data={call} hideAnnotationTab />);
+    expect(screen.queryByRole("tab", { name: "Annotations" })).toBeNull();
+    expect(screen.queryByText("Add Label")).toBeNull();
   });
 
   it("shows the Scenario tab for a call with a persona but no scenario columns", () => {
@@ -201,11 +249,53 @@ describe("VoiceRightPanel", () => {
           provider: "livekit",
           transcript: [],
           scenario_columns: {},
-          persona_details: { name: "Siddharth Nair", voice: null, age: null, traits: [] },
+          persona_details: {
+            name: "Siddharth Nair",
+            voice: null,
+            age: null,
+            traits: [],
+          },
         }}
       />,
     );
     expect(screen.getByRole("tab", { name: "Scenario" })).toBeInTheDocument();
+  });
+
+  describe("stop latency on Call Analytics", () => {
+    const renderCall = (extra) =>
+      renderWithQueryClient(
+        <VoiceRightPanel
+          data={{
+            id: "call-5",
+            module: "simulate",
+            status: "completed",
+            provider: "livekit",
+            transcript: [],
+            user_interruption_count: 1,
+            ai_interruption_count: 0,
+            ...extra,
+          }}
+        />,
+      );
+
+    it("shows the agent's stop time after the user interrupts, in ms", () => {
+      renderCall({ avg_stop_time_after_interruption: 640 });
+      expect(screen.getByText("Stop latency")).toBeInTheDocument();
+      expect(screen.getByText("640ms")).toBeInTheDocument();
+    });
+
+    it("keeps a measured zero", () => {
+      renderCall({ avg_stop_time_after_interruption: 0 });
+      expect(screen.getByText("Stop latency")).toBeInTheDocument();
+      expect(screen.getByText("0ms")).toBeInTheDocument();
+    });
+
+    it("shows a dash when the call has no stop time", () => {
+      renderCall({ avg_stop_time_after_interruption: null });
+      expect(screen.getByText("Stop latency").parentElement).toHaveTextContent(
+        "Stop latency—",
+      );
+    });
   });
 
   it("still has no Scenario tab when there is neither", () => {
@@ -222,6 +312,8 @@ describe("VoiceRightPanel", () => {
         }}
       />,
     );
-    expect(screen.queryByRole("tab", { name: "Scenario" })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("tab", { name: "Scenario" }),
+    ).not.toBeInTheDocument();
   });
 });

@@ -18,7 +18,7 @@ import { identifyPostHogUser, resetPostHogUser } from "src/utils/PostHog";
 import { useQueryClient } from "@tanstack/react-query";
 import { setUser } from "@sentry/react";
 import logger from "src/utils/logger";
-import useFalconStore from "src/sections/falcon-ai/store/useFalconStore";
+import { resetAllUserStores } from "src/utils/auth/clearStores";
 import {
   SS_KEY_ORG_DISPLAY_NAME,
   SS_KEY_ORG_ID,
@@ -27,6 +27,10 @@ import {
   SS_KEY_ORG_ROLE,
   SS_KEY_USER_ID,
 } from "src/utils/sessionKeys";
+import {
+  SAML_AUTH_GENERATION_KEY,
+  SESSION_KEYS_TO_CLEAR,
+} from "src/auth/saml-bootstrap";
 
 // Helper to decode JWT and extract user ID (without verification)
 function decodeTokenUserId(token) {
@@ -190,6 +194,14 @@ export function AuthProvider({ children }) {
   // When another tab logs in as a different user, force logout this tab
   useEffect(() => {
     const handleStorageChange = (event) => {
+      if (event.key === SAML_AUTH_GENERATION_KEY) {
+        queryClient.clear();
+        SESSION_KEYS_TO_CLEAR.forEach((key) => sessionStorage.removeItem(key));
+        dispatch({ type: "LOGOUT" });
+        window.location.replace("/dashboard/develop");
+        return;
+      }
+
       // Only handle accessToken changes from other tabs
       if (event.key !== STORAGE_KEY) return;
 
@@ -327,7 +339,7 @@ export function AuthProvider({ children }) {
       sessionStorage.removeItem("2fa_challenge");
       sessionStorage.removeItem(SS_KEY_USER_ID);
       localStorage.removeItem("initial-render"); // Clear flag so next login triggers redirect logic
-      useFalconStore.getState().resetAll();
+      resetAllUserStores();
       dispatch({
         type: "LOGOUT",
       });
@@ -340,10 +352,14 @@ export function AuthProvider({ children }) {
           },
         },
       );
-      queryClient.clear();
     } catch (error) {
       logger.error("Logout Error:", error);
       throw error; // Ensure errors are caught by caller
+    } finally {
+      // Also when the logout request fails (expired token, network error):
+      // the tab is signed out either way, and the next account signed in on
+      // it must not get the previous account's cached responses.
+      queryClient.clear();
     }
   }, [queryClient]);
 

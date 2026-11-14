@@ -202,6 +202,12 @@ def navigation_context_call():
             "build_session_navigation_query",
             side_effect=AssertionError("context cannot use legacy navigation"),
         ) as legacy,
+        # The reads are mocked, so the wall deadline must not see a slow runner.
+        mock.patch(
+            "tracer.services.clickhouse.read_budget.time",
+            SimpleNamespace(monotonic=lambda: 0.0),
+        ),
+        mock.patch("tracer.selectors.trace_filter_reads.monotonic", return_value=0.0),
     ):
         display_users.return_value.filter.return_value = display_users.return_value
         display_users.return_value.values.return_value.first.return_value = None
@@ -271,7 +277,9 @@ def test_context_project_and_custom_sort(navigation_context_call):
     query, params = service.execute_ch_query.call_args.args
     assert params["project_id"] == PROJECT_ID
     assert "ORDER BY total_tokens ASC, session_id ASC" in query
-    assert "sum(total_tokens) AS total_tokens" in query
+    assert "sum(usage_total_tokens) AS member_total_tokens" in query
+    assert "LEFT JOIN session_usage USING (project_id, session_id)" in query
+    assert "max(member_total_tokens) AS total_tokens" in query
 
 
 def test_context_cannot_pin_a_different_authorized_project(navigation_context_call):

@@ -22,9 +22,10 @@ export function printDashboard(element, title) {
     }
     doc.head.appendChild(copy);
   });
+  // The export reads like the page it came from: same surface and text colour.
+  const page = getComputedStyle(document.body);
   const style = doc.createElement("style");
-  style.textContent =
-    "@page { size: A3 portrait; margin: 10mm; } body { margin: 0; padding: 16px; background: #0c0c0e; color: #eee; font-family: Arial,sans-serif; -webkit-print-color-adjust: exact; print-color-adjust: exact; } .analytics-no-print { display: none !important; } section { break-inside: avoid; }";
+  style.textContent = `@page { size: A3 portrait; margin: 10mm; } body { margin: 0; padding: 16px; background: ${page.backgroundColor}; color: ${page.color}; font-family: Arial,sans-serif; -webkit-print-color-adjust: exact; print-color-adjust: exact; } .analytics-no-print { display: none !important; } section { break-inside: avoid; }`;
   doc.head.appendChild(style);
   const heading = doc.createElement("h1");
   heading.textContent = title;

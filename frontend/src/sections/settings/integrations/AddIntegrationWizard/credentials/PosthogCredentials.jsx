@@ -115,7 +115,7 @@ export default function PosthogCredentials({ data, onUpdate, onNext, onBack }) {
             setHostUrl(DEFAULT_POSTHOG_HOST);
           }
         }}
-        sx={{ alignSelf: "flex-start", textTransform: "none", px: 0 }}
+        sx={{ alignSelf: "flex-start" }}
       >
         {isSelfHosted ? "Use PostHog Cloud" : "Using self-hosted PostHog?"}
       </Button>
@@ -159,7 +159,9 @@ export default function PosthogCredentials({ data, onUpdate, onNext, onBack }) {
           size="small"
           variant="outlined"
           onClick={onBack}
-          startIcon={<Iconify icon="formkit:left" width={16} height={16} />}
+          startIcon={
+            <Iconify icon="solar:arrow-left-linear" width={16} height={16} />
+          }
           sx={backButtonSx}
         >
           Back
@@ -170,7 +172,6 @@ export default function PosthogCredentials({ data, onUpdate, onNext, onBack }) {
           size="small"
           loading={isPending}
           onClick={handleValidate}
-          sx={{ fontWeight: 500 }}
         >
           Validate & Continue
         </LoadingButton>

@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from tracer.services.clickhouse.query_builders.span_list import SpanListQueryBuilder
 from tracer.services.clickhouse.query_builders.trace_list import TraceListQueryBuilder
 from tracer.services.clickhouse.v2.query_builders.span_list import (
@@ -70,6 +72,39 @@ class TestFlattenSpanAttributes:
             entry, {"attrs_string": {"name": "attr"}, "attributes_extra": "{}"}
         )
         assert entry["name"] == "keep"
+
+    @pytest.mark.parametrize("attribute_map", ["attrs_string", "attributes_extra"])
+    @pytest.mark.parametrize("alias", ["id", "project", "trace", "start_hour"])
+    def test_span_identity_aliases_cannot_come_from_custom_attributes(
+        self, attribute_map, alias
+    ):
+        # Real list response f587085e... failed exact-row collection at row 1:
+        # attrs_string.id became a conflicting legacy alias for span_id.
+        # Preserve the captured field shape, replacing identifiers and content.
+        entry = {
+            "project_id": PROJECT_ID,
+            "trace_id": "22222222-2222-4222-8222-222222222222",
+            "span_id": "0123456789abcdef",
+            "observation_type": "span",
+            "service_name": "synthetic-service",
+            "start_time": "2026-10-27T10:00:01.123456Z",
+            "_version": "18446744073709551614",
+        }
+        original = dict(entry)
+        attrs = {alias: "custom-value", "locale": "en-US"}
+        row = {
+            attribute_map: json.dumps(attrs)
+            if attribute_map == "attributes_extra"
+            else attrs
+        }
+
+        flatten_span_attributes_into_entry(entry, row)
+
+        assert alias not in entry
+        assert entry == {**original, "locale": "en-US"}
+
+    def test_non_span_custom_id_still_surfaces(self):
+        assert _flatten(attrs_string={"id": "custom-id"}) == {"id": "custom-id"}
 
     def test_skip_prefixes_are_hidden(self):
         entry = _flatten(

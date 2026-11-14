@@ -258,6 +258,7 @@ def test_hosted_recording_artifacts_surface_in_detail_recording_shape(simulation
     agent_definition.save(update_fields=["agent_type"])
     call_execution.simulation_call_type = CallExecution.SimulationCallType.VOICE
     call_execution.call_metadata = {
+        "call_direction": "inbound",
         "hosted_harness_artifacts": {
             "recording_combined": {"url": "https://media.example/combined.wav"},
             "recording_stereo": {"url": "https://media.example/stereo.wav"},
@@ -275,6 +276,7 @@ def test_hosted_recording_artifacts_surface_in_detail_recording_shape(simulation
         "stereo": "https://media.example/stereo.wav",
         "customer": "https://media.example/customer.wav",
         "assistant": "https://media.example/assistant.wav",
+        "stereo_channels": {"left": "customer", "right": "assistant"},
     }
 
 

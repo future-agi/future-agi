@@ -1,7 +1,8 @@
-import { useMemo } from "react";
+import { useEffect, useMemo } from "react";
 import { useUrlState } from "src/routes/hooks/use-url-state";
 import useReverseEvalFilters from "src/hooks/use-reverse-eval-filters";
 import { convertToISO } from "../ChartsView/ChartsViewProvider/common";
+import { resolvePresetDateFilter } from "../timeWindowPresets";
 
 // Helper to check if filters are in default state (no active filters)
 const isDefaultFilters = (filters) => {
@@ -19,10 +20,24 @@ export const useLLMTracingFilters = (
 ) => {
   const [filters, setFilters] = useUrlState(mainFilterName, defaultFilter);
 
-  const [dateFilter, setDateFilter] = useUrlState(
+  const [rawDateFilter, setDateFilter] = useUrlState(
     dateFilterName,
     defaultDateFilter,
   );
+
+  // A preset in the URL (from a saved view, a shared link or a reload on a
+  // later day) still carries the dates it resolved to back then. Query fresh
+  // dates from the first render, and write them back so the URL shows them.
+  // The default isn't in the URL, so re-resolving it must not add it there.
+  const dateFilter = useMemo(
+    () => resolvePresetDateFilter(rawDateFilter),
+    [rawDateFilter],
+  );
+  useEffect(() => {
+    if (dateFilter !== rawDateFilter && rawDateFilter !== defaultDateFilter) {
+      setDateFilter(dateFilter);
+    }
+  }, [dateFilter, rawDateFilter, defaultDateFilter, setDateFilter]);
 
   const reverseEvalColumnIds = useMemo(() => {
     return columns.filter((c) => c?.reverseOutput).map((c) => c.id);

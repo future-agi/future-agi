@@ -1,3 +1,4 @@
+import inspect
 import os
 import re
 import secrets
@@ -43,7 +44,22 @@ from tfc.utils.parse_errors import parse_serialized_errors
 logger = structlog.get_logger(__name__)
 
 
-def _fire_deployment_telemetry_registration():
+def _record_signup_api_key_event(key_id, organization_id):
+    try:
+        from tfc.deployment_telemetry.events import record_event
+
+        record_event(
+            "api_key_created",
+            actor_type="api_key",
+            actor_id=key_id,
+            source="system",
+            organization_id=organization_id,
+        )
+    except Exception:
+        logger.debug("deployment_telemetry_signup_api_key_event_failed", exc_info=True)
+
+
+def _fire_deployment_telemetry_registration(user_id=None, source="system"):
     import threading
 
     try:
@@ -58,6 +74,15 @@ def _fire_deployment_telemetry_registration():
                 from tfc.deployment_telemetry.sender import attempt_registration
 
                 attempt_registration()
+                from tfc.deployment_telemetry.events import record_event
+
+                if user_id is not None:
+                    record_event(
+                        "user_created",
+                        actor_type="human_user",
+                        actor_id=user_id,
+                        source=source,
+                    )
             finally:
                 close_old_connections()
 
@@ -266,7 +291,8 @@ def is_work_email(email):
     return not is_disposable_email_domain(domain)
 
 
-def first_signup(data, mode=None):
+@transaction.atomic
+def first_signup(data, mode=None, telemetry_source="web", *, seed_demo_data=True):
     if not data.get("email"):
         raise Exception("Email not provided")
 
@@ -356,13 +382,32 @@ def first_signup(data, mode=None):
         track_mixpanel_event(event_name, properties)
 
         if len(apiKeys) == 0:
-            OrgApiKey.no_workspace_objects.create(
+            system_key = OrgApiKey.no_workspace_objects.create(
                 organization=organization, type="system"
             )
-        if generated_password:
-            process_post_registration(user.id, generated_password)
+            transaction.on_commit(
+                lambda key_id=system_key.id, org_id=organization.id: _record_signup_api_key_event(
+                    key_id, org_id
+                )
+            )
+        # The intent and account commit together. Only the E2E image's explicit
+        # clean-actor endpoint opts out; public signup always uses the default.
+        if seed_demo_data:
+            from accounts.models.demo_seed import DemoSeedRequest
 
-        transaction.on_commit(_fire_deployment_telemetry_registration)
+            DemoSeedRequest.objects.create(user=user, organization=organization)
+            transaction.on_commit(
+                lambda user_id=user.id, password=generated_password: (
+                    process_post_registration(user_id, password)
+                ),
+                robust=True,
+            )
+
+        transaction.on_commit(
+            lambda user_id=user.id, source=telemetry_source: _fire_deployment_telemetry_registration(
+                user_id, source
+            )
+        )
         return user
 
     else:
@@ -370,7 +415,7 @@ def first_signup(data, mode=None):
         raise Exception(str(error_messages))
 
 
-def create_owner_account(email, full_name, password):
+def create_owner_account(email, full_name, password, telemetry_source=None):
     """An account that owns a new organization, as a first signup creates it:
     ``manage.py create_user`` and the Helm chart's first admin
     (``bootstrap_install``). Raises ValidationError, with messages for the
@@ -384,14 +429,20 @@ def create_owner_account(email, full_name, password):
         raise ValidationError(f"A user with the email {email} already exists.")
     # UserSignupSerializer trims the password before it validates and stores it.
     validate_password(password.strip())
-    return first_signup(
-        {
-            "email": email,
-            "full_name": full_name,
-            "password": password,
-            "allow_email": True,
-        }
-    )
+    signup_data = {
+        "email": email,
+        "full_name": full_name,
+        "password": password,
+        "allow_email": True,
+    }
+    if telemetry_source is None:
+        return first_signup(signup_data)
+    # Keep compatibility with callers that replace first_signup with a simple
+    # one-argument callback (management-command tests and downstream hooks),
+    # while passing the source to the real implementation.
+    if "telemetry_source" not in inspect.signature(first_signup).parameters:
+        return first_signup(signup_data)
+    return first_signup(signup_data, telemetry_source=telemetry_source)
 
 
 def persist_pending_org_invite(
@@ -422,6 +473,25 @@ def persist_pending_org_invite(
             "invited_by": invited_by,
         },
     )
+
+
+def refresh_pending_invite_expiration(organization, email):
+    """Reset the expiry of the matching PENDING OrganizationInvite for this
+    email, if one exists (#2437).
+
+    Every place that resends an invitation email must call this, or the
+    invite still reads as expired anywhere OrganizationInvite.is_expired is
+    checked (e.g. the members list), even though a fresh email went out.
+    A no-op when there's no matching invite row — not every legacy invitee
+    has one, and that's fine; resending still just re-sends their email.
+    """
+    invite = OrganizationInvite.objects.filter(
+        organization=organization,
+        target_email__iexact=email,
+        status=InviteStatus.PENDING,
+    ).first()
+    if invite:
+        invite.refresh_expiration()
 
 
 def build_invite_accept_link(user):
@@ -746,11 +816,42 @@ def record_hubspot_login(user):
         return None
 
 
-def _run_post_registration(user_id, generated_password):
+def _dispatch_demo_seeding(organization_id):
+    """Hand seeding to its own activity so seeder retries never re-run the
+    notifications in ``_run_post_registration``. The seeder raises on
+    transient failures by design and the post-registration activity retries;
+    sharing that retry boundary would resend the welcome email, HubSpot
+    request and Slack notification on every seeding failure. A failed
+    dispatch stays safe to swallow here: the DemoSeedRequest row committed by
+    the caller is re-dispatched by the recover-demo-seeding schedule."""
+    from temporalio.common import WorkflowIDConflictPolicy
+
+    import tfc.temporal.background_tasks.activities  # noqa: F401
+    from tfc.temporal.drop_in import start_activity
+
+    try:
+        start_activity(
+            "seed_demo_data_activity",
+            args=(str(organization_id),),
+            queue="default",
+            task_id=f"seed-demo-data-{organization_id}",
+            id_conflict_policy=WorkflowIDConflictPolicy.USE_EXISTING,
+            dispatch_timeout_seconds=2,
+        )
+    except Exception:
+        logger.warning(
+            "demo_seed_dispatch_deferred_to_recovery",
+            organization_id=str(organization_id),
+            exc_info=True,
+        )
+
+
+def _run_post_registration(user_id, generated_password, organization_id=None):
     """Process post-registration steps in a separate thread"""
     user = User.objects.get(id=user_id)
     if user:
-        send_signup_email(generated_password, user.email, user.name)
+        if generated_password:
+            send_signup_email(generated_password, user.email, user.name)
 
         # Each of these returns without a network call unless its key is set
         # (HUBSPOT_API_TOKEN, SLACK_WEBHOOK_CHANNEL), so a self-hosted install
@@ -759,15 +860,17 @@ def _run_post_registration(user_id, generated_password):
             updated, err = send_hubspot_notification(user)
             send_slack_notification(user, updated=updated, err=err)
 
-        org = get_user_organization(user)
-        if org:
-            from accounts.user_onboard import (
-                create_demo_traces_and_spans,
-                upload_demo_dataset,
-            )
+        org = get_user_organization(user) if organization_id is None else None
+        org_id = organization_id or (org.id if org else None)
+        if org_id is None:
+            return
+        from accounts.models.demo_seed import DemoSeedRequest
 
-            upload_demo_dataset(org.id, str(user.id))
-            create_demo_traces_and_spans(str(org.id))
+        # Also accept workflows dispatched by older app versions.
+        DemoSeedRequest.objects.get_or_create(
+            organization_id=org_id, defaults={"user": user}
+        )
+        _dispatch_demo_seeding(org_id)
 
 
 def existing_member_access_will_change(
@@ -806,14 +909,29 @@ def existing_member_access_will_change(
 
 
 # TODO: use async views to replace this code. its wrong
-def process_post_registration(user_id, generated_password):
-    """Process post-registration steps using Temporal"""
+def process_post_registration(user_id, generated_password, organization_id=None):
+    """Best-effort fast path; the persisted seed request is recovered on a schedule."""
+    from temporalio.common import WorkflowIDConflictPolicy
+
     # Import the activity to register it
     import tfc.temporal.background_tasks.activities  # noqa: F401
+    from accounts.models.demo_seed import DemoSeedRequest
     from tfc.temporal.drop_in import start_activity
 
+    if organization_id is None:
+        organization = get_user_organization(User.objects.get(id=user_id))
+        organization_id = organization.id if organization else None
+    # Marketplace / additional-org onboarding also needs a durable intent.
+    if organization_id is not None:
+        DemoSeedRequest.objects.get_or_create(
+            organization_id=organization_id, defaults={"user_id": user_id}
+        )
     start_activity(
         "run_post_registration_activity",
         args=(user_id, generated_password),
+        kwargs={"organization_id": str(organization_id)} if organization_id else {},
         queue="default",
+        task_id=f"post-registration-{organization_id or user_id}",
+        id_conflict_policy=WorkflowIDConflictPolicy.USE_EXISTING,
+        dispatch_timeout_seconds=2,
     )

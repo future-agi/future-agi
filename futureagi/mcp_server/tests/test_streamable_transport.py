@@ -1,3 +1,4 @@
+import json
 from contextlib import asynccontextmanager
 from unittest.mock import patch
 from uuid import uuid4
@@ -5,6 +6,7 @@ from uuid import uuid4
 import httpx
 import pytest
 from asgiref.sync import sync_to_async
+from django.conf import settings
 from mcp import ClientSession
 from mcp.client.streamable_http import streamable_http_client
 
@@ -22,7 +24,7 @@ pytestmark = [pytest.mark.e2e, pytest.mark.django_db(transaction=True)]
 @pytest.fixture
 def protocol_client(user, workspace, monkeypatch):
     @asynccontextmanager
-    async def connect(key_workspace=None):
+    async def connect(key_workspace=None, expires_at=None):
         credentials = await sync_to_async(OrgApiKey.objects.create)(
             name="MCP transport test",
             api_key=f"mcp-transport-{uuid4().hex}",
@@ -31,6 +33,7 @@ def protocol_client(user, workspace, monkeypatch):
             workspace=key_workspace or workspace,
             user=user,
             type="mcp",
+            expires_at=expires_at,
         )
         monkeypatch.setattr(mcp_app, "_streamable_app", None)
         monkeypatch.setattr(mcp_app, "_session_manager", None)
@@ -99,7 +102,7 @@ def oauth_protocol_client(user, workspace, monkeypatch):
     return connect
 
 
-async def _post_initialize(authorization):
+async def _post_initialize(authorization, extra_headers=None):
     """POST an initialize request with a raw header, bypassing the MCP client.
 
     An unauthenticated request never reaches the MCP app, so the SDK client
@@ -109,6 +112,7 @@ async def _post_initialize(authorization):
     headers = {
         "Content-Type": "application/json",
         "Accept": "application/json, text/event-stream",
+        **(extra_headers or {}),
     }
     if authorization is not None:
         headers["Authorization"] = authorization
@@ -130,6 +134,89 @@ async def _post_initialize(authorization):
                 },
             },
         )
+
+
+async def _post_raw_body(body: bytes, authorization):
+    """POST a raw body, bypassing JSON serialization, to probe transport-level
+    behaviour (body-size limits) independently of JSON-RPC semantics."""
+    mcp_app.get_mcp_streamable_app()
+    headers = {
+        "Content-Type": "application/json",
+        "Accept": "application/json, text/event-stream",
+    }
+    if authorization is not None:
+        headers["Authorization"] = authorization
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=mcp_app.mcp_streamable_with_auth),
+        base_url="http://localhost",
+    ) as http_client:
+        return await http_client.post("/mcp", headers=headers, content=body)
+
+
+def _initialize_payload(client_name_size: int) -> bytes:
+    return json.dumps(
+        {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": "2025-06-18",
+                "capabilities": {},
+                "clientInfo": {"name": "A" * client_name_size, "version": "1.0"},
+            },
+        }
+    ).encode()
+
+
+async def test_streamable_http_rejects_a_request_body_over_the_configured_limit(
+    user, monkeypatch
+):
+    """A body past DATA_UPLOAD_MAX_MEMORY_SIZE must 413 before touching MCP
+    dispatch, same as mcp 1.30's own default — we only move the ceiling."""
+    from mcp_server.oauth_utils import generate_oauth_token
+
+    token, _ = await sync_to_async(generate_oauth_token)(
+        user.id, user.organization_id, None, "test-client", "context", expires_in=3600
+    )
+    # A real body past the production 1 GiB ceiling would allocate multiple
+    # GiB at peak (the JSON string, then its encoded bytes) just to prove a
+    # boundary check -- fragile on a small CI/local worker. Override the
+    # ceiling to a few KiB for this test only; the rejection path doesn't
+    # care how large the real limit is, only that something over it 413s.
+    small_limit = 4096
+    monkeypatch.setattr(settings, "DATA_UPLOAD_MAX_MEMORY_SIZE", small_limit)
+    oversized = _initialize_payload(small_limit + 1024)
+
+    monkeypatch.setattr(mcp_app, "_streamable_app", None)
+    monkeypatch.setattr(mcp_app, "_session_manager", None)
+    response = await _post_raw_body(oversized, f"Bearer {token}")
+
+    assert response.status_code == 413
+
+
+async def test_streamable_http_accepts_a_request_body_past_mcps_old_default(
+    user, monkeypatch
+):
+    """mcp 1.30 defaults max_request_body_size to 4 MiB; get_mcp_streamable_app
+    overrides it to DATA_UPLOAD_MAX_MEMORY_SIZE so a >4 MiB request (e.g. an
+    add_dataset_rows cell carrying inline base64 media) still dispatches
+    instead of 413ing, matching what the rest of the ingress path accepts."""
+    from mcp_server.oauth_utils import generate_oauth_token
+
+    token, _ = await sync_to_async(generate_oauth_token)(
+        user.id, user.organization_id, None, "test-client", "context", expires_in=3600
+    )
+    payload = _initialize_payload(5 * 1024 * 1024)
+    assert len(payload) > 4 * 1024 * 1024  # exceeds mcp's old default cap
+
+    monkeypatch.setattr(mcp_app, "_streamable_app", None)
+    monkeypatch.setattr(mcp_app, "_session_manager", None)
+    mcp_app.get_mcp_streamable_app()
+    async with mcp_app._session_manager.run():
+        response = await _post_raw_body(payload, f"Bearer {token}")
+
+    assert response.status_code == 200
+    assert response.json()["id"] == 1
 
 
 async def test_streamable_http_accepts_a_valid_bearer_token(
@@ -178,6 +265,84 @@ async def test_streamable_http_requires_credentials():
 
     assert response.status_code == 401
     assert response.json()["error_description"] == "Authentication required"
+
+
+@pytest.mark.parametrize(
+    "enabled",
+    [True, False],
+    ids=["still-enabled", "disabled-by-rest-auth"],
+)
+async def test_streamable_http_rejects_an_expired_api_key(user, workspace, enabled):
+    """An expired key gets the distinct api_key_expired error, not a generic
+    one, including after REST auth has auto-disabled it."""
+    from datetime import timedelta
+
+    from django.utils import timezone
+
+    credentials = await sync_to_async(OrgApiKey.objects.create)(
+        name="MCP expired key",
+        api_key=f"mcp-expired-{uuid4().hex}",
+        secret_key=uuid4().hex,
+        organization=user.organization,
+        workspace=workspace,
+        user=user,
+        type="mcp",
+        enabled=enabled,
+        expires_at=timezone.now() - timedelta(minutes=1),
+    )
+
+    response = await _post_initialize(
+        None,
+        extra_headers={
+            "X-Api-Key": credentials.api_key,
+            "X-Secret-Key": credentials.secret_key,
+        },
+    )
+
+    assert response.status_code == 401
+    assert "oauth-protected-resource" in response.headers["WWW-Authenticate"]
+    body = response.json()
+    assert body["error"] == "invalid_token"
+    assert body["code"] == "api_key_expired"
+    assert body["error_description"] == "API key has expired"
+
+
+async def test_streamable_http_still_rejects_a_disabled_api_key(user, workspace):
+    credentials = await sync_to_async(OrgApiKey.objects.create)(
+        name="MCP disabled key",
+        api_key=f"mcp-disabled-{uuid4().hex}",
+        secret_key=uuid4().hex,
+        organization=user.organization,
+        workspace=workspace,
+        user=user,
+        type="mcp",
+        enabled=False,
+    )
+
+    response = await _post_initialize(
+        None,
+        extra_headers={
+            "X-Api-Key": credentials.api_key,
+            "X-Secret-Key": credentials.secret_key,
+        },
+    )
+
+    assert response.status_code == 401
+    assert response.json()["error_description"] == "Invalid credentials"
+
+
+async def test_streamable_http_accepts_an_api_key_before_its_expiry(
+    protocol_client, user, workspace
+):
+    """A key with a future expiry authenticates exactly like one without."""
+    from datetime import timedelta
+
+    from django.utils import timezone
+
+    async with protocol_client(expires_at=timezone.now() + timedelta(days=1)) as client:
+        result = await client.call_tool("whoami", {})
+
+    assert result.isError is False
 
 
 async def test_bearer_transport_fails_closed_when_org_access_is_revoked(
