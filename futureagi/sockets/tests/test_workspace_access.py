@@ -18,10 +18,13 @@ from sockets.workspace_access import (
     WorkspaceAccessGate,
 )
 
+
 @pytest.fixture(autouse=True)
 def bypass_database_connection_management(monkeypatch):
     """Keep these mocked unit tests independent of Django's database wrapper."""
-    monkeypatch.setattr("sockets.workspace_access.database_sync_to_async", sync_to_async)
+    monkeypatch.setattr(
+        "sockets.workspace_access.database_sync_to_async", sync_to_async
+    )
 
 
 def test_resolve_denies_with_not_found_when_workspace_id_missing():

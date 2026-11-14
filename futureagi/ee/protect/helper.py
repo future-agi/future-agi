@@ -63,6 +63,7 @@ _FLASH_OUTPUT_RE = re.compile(r".*:(.*)\n.*:(.*)\n.*:(.*)")
 # Public API
 # ---------------------------------------------------------------------------
 
+
 class ProtectHelper:
     """Stateless helper for protect evaluation logic."""
 
@@ -71,18 +72,14 @@ class ProtectHelper:
     @staticmethod
     def validate_input_types(input_types: List[str]) -> None:
         """Raise ValueError if any input type is unsupported by protect."""
-        normalized = {
-            str(t).strip().lower() for t in input_types if t
-        }
+        normalized = {str(t).strip().lower() for t in input_types if t}
         if "images" in normalized:
             raise ValueError(
                 "Protect does not support image sets (`images`). "
                 "Please provide a single image input."
             )
         if "pdf" in normalized or "knowledge_base" in normalized:
-            raise ValueError(
-                "Protect does not support PDF or knowledge base inputs."
-            )
+            raise ValueError("Protect does not support PDF or knowledge base inputs.")
         unsupported = normalized - _ALLOWED_INPUT_TYPES
         if unsupported:
             raise ValueError(
@@ -131,11 +128,7 @@ class ProtectHelper:
     ) -> List[Dict[str, Any]]:
         """Build the chat messages payload for a protect evaluation."""
         inp = inputs[0] if inputs else ""
-        itype = (
-            (input_types[0] or "text").strip().lower()
-            if input_types
-            else "text"
-        )
+        itype = (input_types[0] or "text").strip().lower() if input_types else "text"
 
         if is_flash:
             prompt = PROTECT_FLASH_PROMPT_TEMPLATE.format(
@@ -148,7 +141,9 @@ class ProtectHelper:
         # Use "vanilla" suffix (label only, no explanation) when max_tokens
         # is low — saves output tokens and reduces latency for guardrails.
         metric = ProtectHelper.resolve_metric(eval_name)
-        suffix = "vanilla" if max_tokens and max_tokens <= 20 else "explanation_assistant"
+        suffix = (
+            "vanilla" if max_tokens and max_tokens <= 20 else "explanation_assistant"
+        )
         return build_mm_messages_for_protect(
             metric=metric,
             input_type=itype,
@@ -198,20 +193,12 @@ class ProtectHelper:
                 "response_refusal": (
                     "yes"
                     if response_refusal.strip().lower() == "yes"
-                    else (
-                        "no"
-                        if response_refusal.strip().lower() == "no"
-                        else "n/a"
-                    )
+                    else ("no" if response_refusal.strip().lower() == "no" else "n/a")
                 ),
                 "response_harmfulness": (
                     "yes"
                     if harmful_response.strip().lower() == "yes"
-                    else (
-                        "no"
-                        if harmful_response.strip().lower() == "no"
-                        else "n/a"
-                    )
+                    else ("no" if harmful_response.strip().lower() == "no" else "n/a")
                 ),
             }
 

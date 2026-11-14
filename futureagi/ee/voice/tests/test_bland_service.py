@@ -237,9 +237,11 @@ async def test_monitor_outbound_bland_polls_bland_engine_not_vapi():
     def _explode(*args, **kwargs):
         raise AssertionError("VAPI must never be polled for an outbound Bland customer")
 
-    with patch.object(BlandService, "_get_call", _fake_get_call), patch.object(
-        VapiService, "get_call_async", _explode
-    ), patch("tfc.temporal.common.heartbeat.Heartbeater", _NoopHeartbeater):
+    with (
+        patch.object(BlandService, "_get_call", _fake_get_call),
+        patch.object(VapiService, "get_call_async", _explode),
+        patch("tfc.temporal.common.heartbeat.Heartbeater", _NoopHeartbeater),
+    ):
         result = await voice_large.monitor_call_until_complete(monitor_input)
 
     assert seen["id"] == "bland-call-1"  # the Bland engine polled Bland's id
@@ -280,9 +282,11 @@ async def test_monitor_inbound_bland_uses_vapi_engine(monkeypatch):
     def _explode(self, provider_call_id):
         raise AssertionError("Bland must never be polled for an inbound call")
 
-    with patch.object(VapiService, "get_call_async", _fake_vapi_get), patch.object(
-        BlandService, "_get_call", _explode
-    ), patch("tfc.temporal.common.heartbeat.Heartbeater", _NoopHeartbeater):
+    with (
+        patch.object(VapiService, "get_call_async", _fake_vapi_get),
+        patch.object(BlandService, "_get_call", _explode),
+        patch("tfc.temporal.common.heartbeat.Heartbeater", _NoopHeartbeater),
+    ):
         result = await voice_large.monitor_call_until_complete(monitor_input)
 
     assert result.success is True
@@ -338,7 +342,9 @@ def scenario(db, organization, workspace, user, agent_definition):
         source=DatasetSourceChoices.SCENARIO.value,
     )
     col = Column.objects.create(
-        dataset=dataset, name="situation", data_type="text",
+        dataset=dataset,
+        name="situation",
+        data_type="text",
         source=SourceChoices.OTHERS.value,
     )
     dataset.column_order = [str(col.id)]
@@ -346,30 +352,45 @@ def scenario(db, organization, workspace, user, agent_definition):
     row = Row.objects.create(dataset=dataset, order=0)
     Cell.objects.create(dataset=dataset, column=col, row=row, value="situation")
     return Scenarios.objects.create(
-        name="Scn", description="d", source="s",
+        name="Scn",
+        description="d",
+        source="s",
         scenario_type=Scenarios.ScenarioTypes.DATASET,
-        organization=organization, workspace=workspace,
-        dataset=dataset, agent_definition=agent_definition,
+        organization=organization,
+        workspace=workspace,
+        dataset=dataset,
+        agent_definition=agent_definition,
         status=StatusType.COMPLETED.value,
     )
 
 
 @pytest.fixture
-def call_execution(db, organization, workspace, agent_definition, simulator_agent, scenario):
+def call_execution(
+    db, organization, workspace, agent_definition, simulator_agent, scenario
+):
     from simulate.models.run_test import RunTest
     from simulate.models.test_execution import CallExecution, TestExecution
 
     run_test = RunTest.objects.create(
-        name="RT", description="d", agent_definition=agent_definition,
-        simulator_agent=simulator_agent, organization=organization, workspace=workspace,
+        name="RT",
+        description="d",
+        agent_definition=agent_definition,
+        simulator_agent=simulator_agent,
+        organization=organization,
+        workspace=workspace,
     )
     te = TestExecution.objects.create(
-        run_test=run_test, status=TestExecution.ExecutionStatus.PENDING,
-        total_scenarios=1, total_calls=1,
-        simulator_agent=simulator_agent, agent_definition=agent_definition,
+        run_test=run_test,
+        status=TestExecution.ExecutionStatus.PENDING,
+        total_scenarios=1,
+        total_calls=1,
+        simulator_agent=simulator_agent,
+        agent_definition=agent_definition,
     )
     return CallExecution.objects.create(
-        test_execution=te, scenario=scenario, phone_number="+16505550100",
+        test_execution=te,
+        scenario=scenario,
+        phone_number="+16505550100",
         status=CallExecution.CallStatus.ANALYZING,
         call_metadata={"call_direction": "outbound"},
     )
@@ -650,7 +671,9 @@ def test_metrics_no_fake_latency_or_negative_duration_without_durations():
     messages = [
         TranscriptMessage(role="assistant", content="Hi, this is Alex.", time=0.0),
         TranscriptMessage(role="user", content="Hello, I have a minute.", time=8000.0),
-        TranscriptMessage(role="assistant", content="Great, one question.", time=15000.0),
+        TranscriptMessage(
+            role="assistant", content="Great, one question.", time=15000.0
+        ),
         TranscriptMessage(role="user", content="No thanks, I'm set.", time=36000.0),
     ]
     calc = ConversationMetricsCalculator(voice_service_provider=ProviderChoices.BLAND)
@@ -715,10 +738,22 @@ async def test_normalized_transcript_orders_partial_timestamps(call_execution):
         call_execution.provider_call_data = {
             "bland": {
                 "transcripts": [
-                    {"user": "assistant", "text": "a", "created_at": "2026-07-21T11:00:00.000Z"},
-                    {"user": "user", "text": "b", "created_at": "2026-07-21T11:00:10.000Z"},
+                    {
+                        "user": "assistant",
+                        "text": "a",
+                        "created_at": "2026-07-21T11:00:00.000Z",
+                    },
+                    {
+                        "user": "user",
+                        "text": "b",
+                        "created_at": "2026-07-21T11:00:10.000Z",
+                    },
                     {"user": "assistant", "text": "c"},  # no timestamp
-                    {"user": "user", "text": "d", "created_at": "2026-07-21T11:00:20.000Z"},
+                    {
+                        "user": "user",
+                        "text": "d",
+                        "created_at": "2026-07-21T11:00:20.000Z",
+                    },
                 ]
             }
         }
@@ -760,11 +795,14 @@ async def test_extract_and_persist_recordings_rehosts_scopes_and_meters(
 
     await _seed()
 
-    with patch(
-        "simulate.temporal.utils.async_storage."
-        "convert_audio_url_to_s3_async_with_size",
-        new_callable=AsyncMock,
-    ) as mock_convert, patch("ee.usage.services.emitter.emit") as mock_emit:
+    with (
+        patch(
+            "simulate.temporal.utils.async_storage."
+            "convert_audio_url_to_s3_async_with_size",
+            new_callable=AsyncMock,
+        ) as mock_convert,
+        patch("ee.usage.services.emitter.emit") as mock_emit,
+    ):
         mock_convert.return_value = (_S3_URL, 4096)
         result = await BlandService(api_key=_KEY).extract_and_persist_recordings(
             str(call_execution.id)
@@ -794,11 +832,14 @@ async def test_extract_and_persist_recordings_skips_billing_on_failed_download(
 
     await _seed()
 
-    with patch(
-        "simulate.temporal.utils.async_storage."
-        "convert_audio_url_to_s3_async_with_size",
-        new_callable=AsyncMock,
-    ) as mock_convert, patch("ee.usage.services.emitter.emit") as mock_emit:
+    with (
+        patch(
+            "simulate.temporal.utils.async_storage."
+            "convert_audio_url_to_s3_async_with_size",
+            new_callable=AsyncMock,
+        ) as mock_convert,
+        patch("ee.usage.services.emitter.emit") as mock_emit,
+    ):
         mock_convert.return_value = (_RAW, 0)
         result = await BlandService(api_key=_KEY).extract_and_persist_recordings(
             str(call_execution.id)
@@ -826,11 +867,14 @@ async def test_extract_and_persist_recordings_meters_idempotently_on_retry(
 
     await _seed()
 
-    with patch(
-        "simulate.temporal.utils.async_storage."
-        "convert_audio_url_to_s3_async_with_size",
-        new_callable=AsyncMock,
-    ) as mock_convert, patch("ee.usage.services.emitter.emit") as mock_emit:
+    with (
+        patch(
+            "simulate.temporal.utils.async_storage."
+            "convert_audio_url_to_s3_async_with_size",
+            new_callable=AsyncMock,
+        ) as mock_convert,
+        patch("ee.usage.services.emitter.emit") as mock_emit,
+    ):
         mock_convert.return_value = ("https://s3.example/rec.mp3", 4096)
         client = BlandService(api_key=_KEY)
         await client.extract_and_persist_recordings(str(call_execution.id))
@@ -868,14 +912,21 @@ async def test_extract_and_persist_recordings_repolls_until_ready(call_execution
 
     # Empty on the first two polls, ready on the third.
     get_call = MagicMock(
-        side_effect=[{"recording_url": ""}, {"recording_url": None}, {"recording_url": _READY}]
+        side_effect=[
+            {"recording_url": ""},
+            {"recording_url": None},
+            {"recording_url": _READY},
+        ]
     )
-    with patch.object(BlandService, "_get_call", get_call), patch(
-        "ee.voice.services.bland_service.asyncio.sleep", new_callable=AsyncMock
-    ), patch(
-        "simulate.temporal.utils.async_storage.convert_audio_url_to_s3_async_with_size",
-        new_callable=AsyncMock,
-    ) as mock_convert, patch("ee.usage.services.emitter.emit") as mock_emit:
+    with (
+        patch.object(BlandService, "_get_call", get_call),
+        patch("ee.voice.services.bland_service.asyncio.sleep", new_callable=AsyncMock),
+        patch(
+            "simulate.temporal.utils.async_storage.convert_audio_url_to_s3_async_with_size",
+            new_callable=AsyncMock,
+        ) as mock_convert,
+        patch("ee.usage.services.emitter.emit") as mock_emit,
+    ):
         mock_convert.return_value = (_S3_URL, 4096)
         result = await BlandService(api_key=_KEY).extract_and_persist_recordings(
             str(call_execution.id)
@@ -911,12 +962,14 @@ async def test_extract_and_persist_recordings_gives_up_when_never_ready(call_exe
     await _seed()
 
     get_call = MagicMock(return_value={"recording_url": ""})
-    with patch.object(BlandService, "_get_call", get_call), patch(
-        "ee.voice.services.bland_service.asyncio.sleep", new_callable=AsyncMock
-    ), patch(
-        "simulate.temporal.utils.async_storage.convert_audio_url_to_s3_async_with_size",
-        new_callable=AsyncMock,
-    ) as mock_convert:
+    with (
+        patch.object(BlandService, "_get_call", get_call),
+        patch("ee.voice.services.bland_service.asyncio.sleep", new_callable=AsyncMock),
+        patch(
+            "simulate.temporal.utils.async_storage.convert_audio_url_to_s3_async_with_size",
+            new_callable=AsyncMock,
+        ) as mock_convert,
+    ):
         result = await BlandService(api_key=_KEY).extract_and_persist_recordings(
             str(call_execution.id)
         )
@@ -992,9 +1045,12 @@ async def test_prepare_call_rejects_bland_without_web_connector(
     from ee.voice.temporal.activities.voice_small import prepare_call
     from simulate.temporal.types.activities import PrepareCallInput
 
-    with patch("temporalio.activity.info"), patch(
-        "simulate.services.agent_definition.resolve_api_key_for_version",
-        return_value="org_bland_key",
+    with (
+        patch("temporalio.activity.info"),
+        patch(
+            "simulate.services.agent_definition.resolve_api_key_for_version",
+            return_value="org_bland_key",
+        ),
     ):
         result = await prepare_call(
             PrepareCallInput(

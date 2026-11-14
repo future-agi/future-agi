@@ -44,9 +44,13 @@ def _run(inputs):
         assert len(inps) == len(embeddings), "inputs and embeddings misaligned"
         return len(inps)
 
-    with patch.object(trace_scanner, "get_trace_input_data", return_value=inputs), \
-         patch.object(trace_scanner, "embed_texts", side_effect=fake_embed), \
-         patch.object(trace_scanner, "store_trace_input_embeddings", side_effect=fake_store):
+    with (
+        patch.object(trace_scanner, "get_trace_input_data", return_value=inputs),
+        patch.object(trace_scanner, "embed_texts", side_effect=fake_embed),
+        patch.object(
+            trace_scanner, "store_trace_input_embeddings", side_effect=fake_store
+        ),
+    ):
         stored = trace_scanner.embed_trace_inputs(["t1", "t2", "t3"], "p1")
     return stored, seen.get("texts"), seen.get("stored_inputs")
 
@@ -54,7 +58,11 @@ def _run(inputs):
 class TestOneBadTraceDoesNotSinkTheBatch:
     def test_empty_text_is_skipped_and_the_rest_survive(self):
         stored, texts, inputs = _run(
-            [_inp("t1", "refund status please"), _inp("t2", ""), _inp("t3", "where is my order")]
+            [
+                _inp("t1", "refund status please"),
+                _inp("t2", ""),
+                _inp("t3", "where is my order"),
+            ]
         )
         assert stored == 2, "the batch died on one empty trace"
         assert texts == ["refund status please", "where is my order"]
@@ -86,6 +94,8 @@ class TestOneBadTraceDoesNotSinkTheBatch:
 def test_stored_inputs_stay_aligned_with_their_embeddings(bad):
     """The store call receives the filtered list, not the original — otherwise
     trace N's embedding gets written against trace N+1's id."""
-    stored, _, inputs = _run([_inp("keep1", "a"), _inp("drop", bad), _inp("keep2", "b")])
+    stored, _, inputs = _run(
+        [_inp("keep1", "a"), _inp("drop", bad), _inp("keep2", "b")]
+    )
     assert stored == 2
     assert [i.trace_id for i in inputs] == ["keep1", "keep2"]

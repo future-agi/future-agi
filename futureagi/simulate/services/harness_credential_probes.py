@@ -85,7 +85,9 @@ def _bearer(url: str, alias: str, **extra_headers: str):
 
 def _header(url: str, alias: str, header: str, **extra_headers: str):
     def build(values: Mapping[str, str]) -> ProbeRequest:
-        return ProbeRequest("GET", url, {header: values[alias].strip(), **extra_headers})
+        return ProbeRequest(
+            "GET", url, {header: values[alias].strip(), **extra_headers}
+        )
 
     return build
 
@@ -121,7 +123,9 @@ PROVIDER_PROBES: dict[str, ProviderProbe] = {
         "LiveKit", ("LIVEKIT_URL", "LIVEKIT_API_KEY", "LIVEKIT_API_SECRET"), _livekit
     ),
     "vapi": ProviderProbe(
-        "Vapi", ("VAPI_API_KEY",), _bearer("https://api.vapi.ai/assistant?limit=1", "VAPI_API_KEY")
+        "Vapi",
+        ("VAPI_API_KEY",),
+        _bearer("https://api.vapi.ai/assistant?limit=1", "VAPI_API_KEY"),
     ),
     "retell": ProviderProbe(
         "Retell",
@@ -175,7 +179,9 @@ PROVIDER_PROBES: dict[str, ProviderProbe] = {
     "elevenlabs": ProviderProbe(
         "ElevenLabs",
         ("ELEVENLABS_API_KEY",),
-        _header("https://api.elevenlabs.io/v1/user", "ELEVENLABS_API_KEY", "xi-api-key"),
+        _header(
+            "https://api.elevenlabs.io/v1/user", "ELEVENLABS_API_KEY", "xi-api-key"
+        ),
     ),
 }
 
@@ -196,22 +202,34 @@ def probe(provider: str, values: Mapping[str, str]) -> ProbeResult:
     except requests.RequestException as exc:
         # The run's own connect stage would hit the same wall, so this is a failure too.
         return ProbeResult(
-            provider, spec.label, spec.aliases, False,
+            provider,
+            spec.label,
+            spec.aliases,
+            False,
             f"{spec.label} is unreachable ({type(exc).__name__}); check {named}",
         )
     except Exception as exc:  # noqa: BLE001 - a malformed URL/secret must not 500 preflight
         return ProbeResult(
-            provider, spec.label, spec.aliases, False,
+            provider,
+            spec.label,
+            spec.aliases,
+            False,
             f"{spec.label} check could not run ({type(exc).__name__}); check {named}",
         )
     if response.status_code in spec.rejected_statuses:
         return ProbeResult(
-            provider, spec.label, spec.aliases, False,
+            provider,
+            spec.label,
+            spec.aliases,
+            False,
             f"{spec.label} rejected {named} (HTTP {response.status_code})",
         )
     if response.status_code >= 400:
         return ProbeResult(
-            provider, spec.label, spec.aliases, False,
+            provider,
+            spec.label,
+            spec.aliases,
+            False,
             f"{spec.label} returned HTTP {response.status_code} for {named}",
         )
     return ProbeResult(

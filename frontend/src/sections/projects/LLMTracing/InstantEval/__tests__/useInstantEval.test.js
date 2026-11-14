@@ -384,6 +384,117 @@ describe("startAskRun", () => {
   });
 });
 
+describe("the Ask page against a backend without `fresh`", () => {
+  // The app's error envelope (src/utils/axios) for the 400 a backend released
+  // before `fresh` answers: its strict query serializer names the field.
+  const UNKNOWN_FRESH = {
+    status: false,
+    code: "invalid",
+    message: "Unknown field.",
+    attr: "fresh",
+    details: { fresh: ["Unknown field."] },
+    statusCode: 400,
+  };
+  const SAVED = {
+    id: "c7",
+    name: QUESTION.question,
+    eval_template: "t7",
+    config: {
+      instant_eval: {
+        question: QUESTION.question,
+        answer_type: "yes_no",
+        labels: ["Yes", "No"],
+        reads: "transcript",
+        unit: "sessions",
+      },
+    },
+  };
+  const STARTED = { task_id: "task-1", rows_requested: 10, population: 10 };
+  const serve = ({ refuseFresh }) => {
+    http.get.mockImplementation((url, { params } = {}) => {
+      if (url !== "/configs")
+        return Promise.reject(new Error(`unexpected GET ${url}`));
+      if (params?.fresh && refuseFresh) return Promise.reject(refuseFresh);
+      return Promise.resolve(ok([SAVED]));
+    });
+    http.post.mockImplementation((url) => {
+      if (url === "/template") return Promise.resolve(ok({ id: "t1" }));
+      if (url === "/config") return Promise.resolve(ok({ id: "c1" }));
+      if (url === "/start") return Promise.resolve(ok(STARTED));
+      return Promise.reject(new Error(`unexpected POST ${url}`));
+    });
+  };
+  const ask = () =>
+    startAskRun({
+      projectId: "p1",
+      questions: [QUESTION],
+      unit: "sessions",
+      reads: "transcript",
+      confirm: true,
+    });
+
+  it("reads the list once, from the primary, on a backend that knows it", async () => {
+    serve({ refuseFresh: null });
+    await ask();
+    expect(getCalls("/configs").map(([, config]) => config.params)).toEqual([
+      { project_id: "p1", fresh: true },
+    ]);
+    expect(postBody("/config")).toBeUndefined();
+    expect(postBody("/start").config_ids).toEqual(["c7"]);
+  });
+
+  it("asks an older backend again without it, and still reuses the evaluator", async () => {
+    serve({ refuseFresh: UNKNOWN_FRESH });
+    await ask();
+    expect(getCalls("/configs").map(([, config]) => config.params)).toEqual([
+      { project_id: "p1", fresh: true },
+      { project_id: "p1" },
+    ]);
+    expect(postBody("/template")).toBeUndefined();
+    expect(postBody("/config")).toBeUndefined();
+    expect(postBody("/start").config_ids).toEqual(["c7"]);
+  });
+
+  it("checks for a live task on an older backend too", async () => {
+    http.get.mockImplementation((url, { params } = {}) => {
+      if (url === "/configs")
+        return params?.fresh
+          ? Promise.reject(UNKNOWN_FRESH)
+          : Promise.resolve(ok([SAVED]));
+      if (url === "/tasks")
+        return Promise.resolve(
+          ok({ metadata: { total_rows: 0 }, table: [], config: [] }),
+        );
+      return Promise.reject(new Error(`unexpected GET ${url}`));
+    });
+    expect(
+      await findContinuousTask({
+        projectId: "p1",
+        items: [itemFromConfig(SAVED)],
+        scopeFilters: [],
+        userId: "u1",
+      }),
+    ).toBeUndefined();
+    expect(getCalls("/configs").map(([, config]) => config.params)).toEqual([
+      { project_id: "p1", fresh: true },
+      { project_id: "p1" },
+    ]);
+    expect(getCalls("/tasks")).toHaveLength(1);
+  });
+
+  it("does not retry other refusals", async () => {
+    const otherRefusal = {
+      ...UNKNOWN_FRESH,
+      attr: "project_id",
+      details: { project_id: ["Not a valid UUID."] },
+    };
+    serve({ refuseFresh: otherRefusal });
+    await expect(ask()).rejects.toBe(otherRefusal);
+    expect(getCalls("/configs")).toHaveLength(1);
+    expect(http.post).not.toHaveBeenCalled();
+  });
+});
+
 describe("Keep answering", () => {
   // The project's evaluators, as list_custom_eval_configs returns them.
   const CONFIGS = [
@@ -481,8 +592,9 @@ describe("Keep answering", () => {
       ],
     ]);
     expect(await find()).toEqual(live);
+    // Read from the primary: the question may have been saved a moment ago.
     expect(http.get).toHaveBeenCalledWith("/configs", {
-      params: { project_id: "p1" },
+      params: { project_id: "p1", fresh: true },
     });
     expect(getCalls("/tasks")[0][1].params).toMatchObject({
       project_id: "p1",
