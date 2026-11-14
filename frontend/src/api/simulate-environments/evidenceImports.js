@@ -56,6 +56,12 @@ export const evidenceImportsKey = (envId) => [
 ];
 const refreshImports = (queryClient, envId) =>
   queryClient.invalidateQueries({ queryKey: evidenceImportsKey(envId) });
+// Every import review of the environment: one import's change can move another's
+// cases, as a discard that makes another import's repeat the case to draft.
+const refreshReviews = (queryClient, envId) =>
+  queryClient.invalidateQueries({
+    queryKey: evidenceImportKey(envId).slice(0, 2),
+  });
 
 // An Observe import names its project and ids. A dataset import names its
 // dataset, row ids and columns ({conversation, labels, expected}); a transcript
@@ -225,6 +231,7 @@ export function useDiscardEvidenceImport(envId) {
       queryClient.removeQueries({
         queryKey: evidenceImportKey(envId, importId),
       });
+      refreshReviews(queryClient, envId);
       refreshImports(queryClient, envId);
     },
   });
