@@ -769,9 +769,7 @@ def test_protect_runtime_context_is_not_shared_with_nested_evaluation(call_type)
 @pytest.mark.parametrize("mapped_value", [True, False, "synthetic-template-value"])
 @pytest.mark.parametrize("protect_runtime", [False, True])
 def test_run_preserves_protect_runtime_template_variable(mapped_value, protect_runtime):
-    evaluator = AgentEvaluator(
-        rule_prompt="Check {{protect_runtime}}", model="protect"
-    )
+    evaluator = AgentEvaluator(rule_prompt="Check {{protect_runtime}}", model="protect")
     inputs = {
         "eval_name": "Toxicity",
         "input": "hello",
@@ -789,7 +787,9 @@ def test_run_preserves_protect_runtime_template_variable(mapped_value, protect_r
         )
     assert result.eval_results[0]["output"] == "Passed"
     assert f"Check {mapped_value}" in evaluator._eval_prompt
-    assert f"<protect_runtime>{mapped_value}</protect_runtime>" in evaluator._eval_prompt
+    assert (
+        f"<protect_runtime>{mapped_value}</protect_runtime>" in evaluator._eval_prompt
+    )
     assert inputs["protect_runtime"] == mapped_value
 
 
@@ -839,7 +839,9 @@ def test_direct_eval_entrypoints_keep_truthy_runtime_named_inputs_strict(
     )
     monkeypatch.setattr(playground.GroundTruthService, "inject_context", Mock())
     monkeypatch.setattr(playground, "log_and_deduct_cost_for_api_request", None)
-    monkeypatch.setattr(playground, "_get_api_call_type", Mock(return_value="synthetic"))
+    monkeypatch.setattr(
+        playground, "_get_api_call_type", Mock(return_value="synthetic")
+    )
     monkeypatch.setattr(
         "ee.usage.services.metering.check_usage",
         Mock(return_value=SimpleNamespace(allowed=True)),
