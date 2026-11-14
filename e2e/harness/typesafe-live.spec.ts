@@ -31,7 +31,11 @@ import { E2E } from '../lib/env';
 const LIVE = process.env.E2E_TYPESAFE_LIVE === '1';
 const TYPESAFE_KEY = process.env.TYPESAFE_API_KEY ?? '';
 const BASE_URL = process.env.TYPESAFE_BASE_URL ?? '';
-const DRY_RUN = BASE_URL !== '' && new URL(BASE_URL).hostname !== 'api.typesafe.ai';
+// A dry run is any override that is not TypeSafe's own host; an unparsable one
+// counts as a dry run rather than breaking test discovery while disabled.
+const DRY_RUN = BASE_URL !== '' && (() => {
+  try { return new URL(BASE_URL).hostname !== 'api.typesafe.ai'; } catch { return true; }
+})();
 // docker-compose.distributed.yml AGENTCC_ADMIN_TOKEN default; see provider-path-prefix.spec.ts.
 const GATEWAY_ADMIN_TOKEN = 'local-dev-only-admin-token-replace-me';
 // internal/modeldb/decision_models.go: Jev input $0.042 per million tokens, output $0.
@@ -133,6 +137,8 @@ test.describe('TypeSafe Jev live decision route (opt-in)', () => {
 
       try {
         await run(page, owner, gw, admin, suffix);
+      } catch (e) {
+        throw sanitized(e);
       } finally {
         writeReport();
         await gw.dispose();
@@ -152,6 +158,24 @@ async function tryApi<T>(fn: () => Promise<T>): Promise<{ status: number; body: 
   }
 }
 
+// Playwright errors can carry a request's call log, headers included. Every
+// error leaving a step is rethrown with the keys redacted.
+function sanitized(e: unknown): Error {
+  const err = e instanceof Error ? e : new Error(String(e));
+  const clean = new Error(redact(err.message));
+  clean.stack = redact(err.stack ?? err.message);
+  return clean;
+}
+function step<T>(name: string, body: () => Promise<T>): Promise<T> {
+  return test.step(name, async () => {
+    try {
+      return await body();
+    } catch (e) {
+      throw sanitized(e);
+    }
+  });
+}
+
 function addCase(c: CaseRecord) {
   report.cases.push(safe(c));
   expect.soft(c.verdict, `${c.id} ${c.title}: ${redact(c.actual)}`).not.toBe('FAIL');
@@ -159,7 +183,7 @@ function addCase(c: CaseRecord) {
 
 async function run(page: Page, owner: ScopeActor, gw: APIRequestContext, admin: APIRequestContext, suffix: string) {
   // ---------------------------------------------------------------- Case 1
-  const providerCfg = await test.step('Case 1: add the TypeSafe provider in the dashboard', async () => {
+  const providerCfg = await step('Case 1: add the TypeSafe provider in the dashboard', async () => {
     await page.goto('/dashboard/gateway/providers', { waitUntil: 'domcontentloaded' });
     await page.getByRole('button', { name: 'Add Provider' }).first().click({ timeout: UI_READY });
     const dialog = page.getByRole('dialog');
@@ -195,7 +219,7 @@ async function run(page: Page, owner: ScopeActor, gw: APIRequestContext, admin: 
   secrets.push(key.result.key);
   const auth = { Authorization: `Bearer ${key.result.key}` };
 
-  await test.step('gateway has the org providers and the key', async () => {
+  await step('gateway has the org providers and the key', async () => {
     await expect.poll(async () => {
       const res = await admin.get('/-/orgs/configs');
       if (res.status() !== 200) return `status ${res.status()}`;
@@ -252,7 +276,7 @@ async function run(page: Page, owner: ScopeActor, gw: APIRequestContext, admin: 
 
   // ---------------------------------------------------------------- Cases 2–4
   const typed: CallRecord[] = [];
-  await test.step('Cases 2–4: question types, unchanged answer, resolved model, Request Logs', async () => {
+  await step('Cases 2–4: question types, unchanged answer, resolved model, Request Logs', async () => {
     const shapes: Array<[string, Record<string, unknown>]> = [['noul', Q.noul], ['choice', Q.choice], ['score', Q.score], ['all three', ALL]];
     for (const [name, questions] of shapes) {
       const c = await call(`jev-latest ${name}`, { model: 'typesafe/jev-latest', state: `${TICKET} e2e-decision:pass`, questions });
@@ -262,12 +286,14 @@ async function run(page: Page, owner: ScopeActor, gw: APIRequestContext, admin: 
       const answers = (c.body as { answers?: Record<string, { type?: string }> })?.answers ?? {};
       return `${c.label}: ${c.status} ${Object.entries(answers).map(([k, v]) => `${k}=${v?.type}`).join(',')}`;
     });
-    const typesOk = typed.every(c => c.status === 200) && typed.slice(0, 3).every((c, i) => {
-      const a = Object.values((c.body as { answers?: Record<string, { type?: string }> }).answers ?? {});
-      return a.length === 1 && a[0]?.type === ['noul', 'choice', 'score'][i];
+    // Each call must answer exactly the questions it asked, each with its own type.
+    const asked = shapes.map(([, questions]) => Object.fromEntries(
+      Object.entries(questions).map(([id, q]) => [id, (q as { type: string }).type])));
+    const typesOk = typed.every((c, i) => {
+      const answers = (c.body as { answers?: Record<string, { type?: string }> })?.answers ?? {};
+      const got = Object.fromEntries(Object.entries(answers).map(([id, a]) => [id, a?.type]));
+      return c.status === 200 && isDeepStrictEqual(got, asked[i]);
     });
-    addCase({ id: '2', title: 'noul, choice, score and a combined call', ticket: 'Each question type: Noul, single choice, rubric score',
-      verdict: typesOk ? 'PASS' : 'FAIL', actual: answerTypes.join('; '), calls: typed });
 
     const shapeIssues: string[] = [];
     for (const c of typed) {
@@ -285,7 +311,7 @@ async function run(page: Page, owner: ScopeActor, gw: APIRequestContext, admin: 
     }
     addCase({ id: '3', title: 'Answer unchanged; resolved model recorded', ticket: 'The answer comes back unchanged, and the resolved model version is recorded',
       verdict: shapeIssues.length ? 'FAIL' : 'PASS',
-      actual: shapeIssues.join('; ') || `body keys answers,model,usage; TypeSafe model "${String((typed[0].body as Record<string, unknown>)?.model)}" = x-agentcc-model-used`, calls: [] });
+      actual: shapeIssues.join('; ') || `body keys answers,model,usage; TypeSafe model "${String((typed[0].body as Record<string, unknown>)?.model)}" = x-agentcc-model-used`, calls: [typed[0]] });
 
     const logIssues: string[] = [];
     for (const c of typed) {
@@ -302,21 +328,26 @@ async function run(page: Page, owner: ScopeActor, gw: APIRequestContext, admin: 
       ];
       for (const [name, got, want] of checks) if (got !== want) logIssues.push(`${c.label}: ${name} ${String(got)} ≠ ${String(want)}`);
     }
-    addCase({ id: '4', title: 'Request Logs: one decision row per call, tokens and cost', ticket: 'One row per call, endpoint type decision, input tokens, cost at $0.042/M input and $0 output',
-      verdict: logIssues.length ? 'FAIL' : 'PASS', actual: logIssues.join('; ') || 'every call has exactly one matching row', calls: [] });
     await page.goto('/dashboard/gateway/logs', { waitUntil: 'domcontentloaded' });
-    await expect(page.getByText('typesafe/jev-latest').first()).toBeVisible({ timeout: UI_READY }).catch(() => undefined);
+    const uiRow = await page.getByText('typesafe/jev-latest').first().waitFor({ state: 'visible', timeout: UI_READY })
+      .then(() => true, () => false);
+    if (!uiRow) logIssues.push('Request Logs page shows no typesafe/jev-latest row');
     await page.screenshot({ path: `${OUT_DIR}/02-request-logs.png`, fullPage: true });
+    // Recorded after the log lookups, so each call carries its row and expected cost.
+    addCase({ id: '2', title: 'noul, choice, score and a combined call', ticket: 'Each question type: Noul, single choice, rubric score',
+      verdict: typesOk ? 'PASS' : 'FAIL', actual: answerTypes.join('; '), calls: typed });
+    addCase({ id: '4', title: 'Request Logs: one decision row per call, tokens and cost', ticket: 'One row per call, endpoint type decision, input tokens, cost at $0.042/M input and $0 output',
+      verdict: logIssues.length ? 'FAIL' : 'PASS', actual: logIssues.join('; ') || 'every call has exactly one matching row; the row shows in Request Logs', calls: typed });
   });
 
   // ---------------------------------------------------------------- Case 5
-  await test.step('Case 5: key auth, provider allow-list, rate limit and budget', async () => {
+  await step('Case 5: key auth, provider allow-list, rate limit and budget', async () => {
     const body = { model: 'typesafe/jev-latest', state: TICKET, questions: Q.noul };
-    const missing = await gw.post('/v1/systemone', { data: body });
-    const invalid = await gw.post('/v1/systemone', { headers: { Authorization: 'Bearer sk-agentcc-not-a-real-key' }, data: body });
-    addCase({ id: '5a', title: 'Missing or invalid gateway key', ticket: 'Key auth applies', calls: [],
-      verdict: missing.status() === 401 && invalid.status() === 401 ? 'PASS' : 'FAIL',
-      actual: `missing ${missing.status()}, invalid ${invalid.status()}` });
+    const missing = await call('no gateway key', body, { headers: { Authorization: '' }, upstream: false });
+    const invalid = await call('invalid gateway key', body, { headers: { Authorization: 'Bearer sk-agentcc-not-a-real-key' }, upstream: false });
+    addCase({ id: '5a', title: 'Missing or invalid gateway key', ticket: 'Key auth applies', calls: [missing, invalid],
+      verdict: missing.status === 401 && invalid.status === 401 ? 'PASS' : 'FAIL',
+      actual: `missing ${missing.status} ${errorOf(missing).code ?? ''}, invalid ${invalid.status} ${errorOf(invalid).code ?? ''}` });
 
     const narrow = await owner.api.post<{ result: { key: string } }>('/agentcc/api-keys/',
       { name: `e2e-typesafe-noprov-${suffix}`, allowed_providers: ['openai'] });
@@ -346,50 +377,59 @@ async function run(page: Page, owner: ScopeActor, gw: APIRequestContext, admin: 
       }, { ...CONFIG_VISIBLE, message: 'org limits reach the gateway' }).toBe(true);
     };
 
-    // (c) one request per minute per key.
-    await pushConfig({ rate_limiting: { enabled: true, per_key_rpm: 1 } }, org => (org.rate_limiting as { per_key_rpm?: number })?.per_key_rpm === 1);
-    const rl = await owner.api.post<{ result: { key: string } }>('/agentcc/api-keys/', { name: `e2e-typesafe-rpm-${suffix}` });
-    secrets.push(rl.result.key);
-    const rlAuth = { Authorization: `Bearer ${rl.result.key}` };
-    await expect.poll(async () => (await gw.get('/v1/decisions/models', { headers: rlAuth })).status(), CONFIG_VISIBLE).not.toBe(401);
-    const first = await call('rpm=1 first', body, { headers: rlAuth });
-    const before = await metric();
-    const second = await call('rpm=1 second', body, { headers: rlAuth, upstream: false });
-    const after = await metric();
-    second.logRow = await logRow(second.headers['x-agentcc-request-id'], false);
-    addCase({ id: '5c', title: 'Org per_key_rpm=1: the second call is refused before the upstream', ticket: 'Rate limit applies; refused before the upstream call',
-      calls: [first, second],
-      verdict: first.status === 200 && second.status === 429 && !second.headers['x-agentcc-upstream-status'] && (before === undefined || before === after) ? 'PASS' : 'FAIL',
-      actual: `first ${first.status}, second ${second.status} ${errorOf(second).code ?? ''}; upstream status ${second.headers['x-agentcc-upstream-status'] ?? 'none'}; `
-        + `agentcc_tokens_input_total{provider="typesafe"} ${before === undefined ? 'n/a (/-/metrics disabled in this stack)' : `${before} → ${after}`}; log row ${JSON.stringify(second.logRow)}` });
+    try {
+      // (c) one request per minute per key.
+      await pushConfig({ rate_limiting: { enabled: true, per_key_rpm: 1 } }, org => (org.rate_limiting as { per_key_rpm?: number })?.per_key_rpm === 1);
+      const rl = await owner.api.post<{ result: { key: string } }>('/agentcc/api-keys/', { name: `e2e-typesafe-rpm-${suffix}` });
+      secrets.push(rl.result.key);
+      const rlAuth = { Authorization: `Bearer ${rl.result.key}` };
+      await expect.poll(async () => (await gw.get('/v1/decisions/models', { headers: rlAuth })).status(), CONFIG_VISIBLE).not.toBe(401);
+      const first = await call('rpm=1 first', body, { headers: rlAuth });
+      const before = await metric();
+      const second = await call('rpm=1 second', body, { headers: rlAuth, upstream: false });
+      const after = await metric();
+      second.logRow = await logRow(second.headers['x-agentcc-request-id'], false);
+      addCase({ id: '5c', title: 'Org per_key_rpm=1: the second call is refused before the upstream', ticket: 'Rate limit applies; refused before the upstream call',
+        calls: [first, second],
+        // Without /-/metrics the third proof is missing: NOTE, not PASS.
+        verdict: first.status === 200 && second.status === 429 && !second.headers['x-agentcc-upstream-status'] && (before === undefined || before === after)
+          ? (before === undefined ? 'NOTE' : 'PASS') : 'FAIL',
+        actual: `first ${first.status}, second ${second.status} ${errorOf(second).code ?? ''}; upstream status ${second.headers['x-agentcc-upstream-status'] ?? 'none'}; `
+          + `agentcc_tokens_input_total{provider="typesafe"} ${before === undefined ? 'n/a (/-/metrics disabled in this stack)' : `${before} → ${after}`}; log row ${JSON.stringify(second.logRow)}` });
 
-    // (d) a key budget smaller than one call.
-    const bk = await owner.api.post<{ result: { key: string; name: string } }>('/agentcc/api-keys/', { name: `e2e-typesafe-budget-${suffix}` });
-    secrets.push(bk.result.key);
-    await pushConfig({ rate_limiting: {}, budgets: { enabled: true, default_period: 'total', keys: { [bk.result.name]: { limit: 0.000001, hard: true } } } },
-      org => !!(org.budgets as { keys?: Record<string, unknown> })?.keys?.[bk.result.name] && !(org.rate_limiting as { per_key_rpm?: number })?.per_key_rpm);
-    const bkAuth = { Authorization: `Bearer ${bk.result.key}` };
-    await expect.poll(async () => (await gw.get('/v1/decisions/models', { headers: bkAuth })).status(), CONFIG_VISIBLE).not.toBe(401);
-    const spend = await call('budget first (spends past the limit)', body, { headers: bkAuth });
-    const b1 = await metric();
-    const refused = await call('budget second', body, { headers: bkAuth, upstream: false });
-    const b2 = await metric();
-    refused.logRow = await logRow(refused.headers['x-agentcc-request-id'], false);
-    addCase({ id: '5d', title: 'Key budget: once spend crosses it the next call is refused before the upstream', ticket: 'Budget applies; refused before the upstream call',
-      calls: [spend, refused],
-      verdict: spend.status === 200 && refused.status >= 400 && refused.status < 500 && !refused.headers['x-agentcc-upstream-status'] && (b1 === undefined || b1 === b2) ? 'PASS' : 'FAIL',
-      actual: `first ${spend.status} cost ${spend.headers['x-agentcc-cost']}; second ${refused.status} ${errorOf(refused).code ?? ''}; upstream status ${refused.headers['x-agentcc-upstream-status'] ?? 'none'}; `
-        + `metric ${b1 === undefined ? 'n/a' : `${b1} → ${b2}`}; log row ${JSON.stringify(refused.logRow)}` });
-    if (refused.status === 200) {
-      report.specQuestions.push('A key budget set in the dashboard (org config budgets.keys) is not enforced when the gateway\'s config.yaml '
-        + 'leaves budgets.enabled unset: the budget plugin is only added to the pipeline then (cmd/agentcc/main.go), and '
-        + 'applyOrgBudgetOverrides only sets request metadata. Intended for self-hosted gateways, or should org budgets load the plugin?');
+      // (d) a key budget smaller than one call.
+      const bk = await owner.api.post<{ result: { key: string; name: string } }>('/agentcc/api-keys/', { name: `e2e-typesafe-budget-${suffix}` });
+      secrets.push(bk.result.key);
+      await pushConfig({ rate_limiting: {}, budgets: { enabled: true, default_period: 'total', keys: { [bk.result.name]: { limit: 0.000001, hard: true } } } },
+        org => !!(org.budgets as { keys?: Record<string, unknown> })?.keys?.[bk.result.name] && !(org.rate_limiting as { per_key_rpm?: number })?.per_key_rpm);
+      const bkAuth = { Authorization: `Bearer ${bk.result.key}` };
+      await expect.poll(async () => (await gw.get('/v1/decisions/models', { headers: bkAuth })).status(), CONFIG_VISIBLE).not.toBe(401);
+      const spend = await call('budget first (spends past the limit)', body, { headers: bkAuth });
+      const b1 = await metric();
+      const refused = await call('budget second', body, { headers: bkAuth, upstream: false });
+      const b2 = await metric();
+      refused.logRow = await logRow(refused.headers['x-agentcc-request-id'], false);
+      addCase({ id: '5d', title: 'Key budget: once spend crosses it the next call is refused before the upstream', ticket: 'Budget applies; refused before the upstream call',
+        calls: [spend, refused],
+        verdict: spend.status === 200 && refused.status === 429 && /budget/.test(errorOf(refused).code ?? '') && !refused.headers['x-agentcc-upstream-status'] && (b1 === undefined || b1 === b2)
+          ? (b1 === undefined ? 'NOTE' : 'PASS') : 'FAIL',
+        actual: `first ${spend.status} cost ${spend.headers['x-agentcc-cost']}; second ${refused.status} ${errorOf(refused).code ?? ''}; upstream status ${refused.headers['x-agentcc-upstream-status'] ?? 'none'}; `
+          + `metric ${b1 === undefined ? 'n/a' : `${b1} → ${b2}`}; log row ${JSON.stringify(refused.logRow)}` });
+      if (refused.status === 200) {
+        report.specQuestions.push('A key budget set in the dashboard (org config budgets.keys) is not enforced when the gateway\'s config.yaml '
+          + 'leaves budgets.enabled unset: the budget plugin is only added to the pipeline then (cmd/agentcc/main.go), and '
+          + 'applyOrgBudgetOverrides only sets request metadata. Intended for self-hosted gateways, or should org budgets load the plugin?');
+      }
+    } finally {
+      // Always lift the org limits, even when a step above failed.
+      await pushConfig({ rate_limiting: {}, budgets: {} },
+        org => !(org.budgets as { enabled?: boolean })?.enabled && !(org.rate_limiting as { per_key_rpm?: number })?.per_key_rpm)
+        .catch(() => undefined);
     }
-    await pushConfig({ rate_limiting: {}, budgets: {} }, org => !(org.budgets as { enabled?: boolean })?.enabled);
   });
 
   // ---------------------------------------------------------------- Case 6
-  await test.step('Case 6: error paths', async () => {
+  await step('Case 6: error paths', async () => {
     // No provider key on the org path: can the dashboard API save one at all?
     const nokey = await tryApi(() => owner.api.post('/agentcc/provider-credentials/', {
       provider_name: 'typesafe-nokey', base_url: BASE_URL || 'https://api.typesafe.ai', api_format: 'systemone', models_list: ['jev-latest'],
@@ -435,7 +475,7 @@ async function run(page: Page, owner: ScopeActor, gw: APIRequestContext, admin: 
       c.logRow = await logRow(c.headers['x-agentcc-request-id'], c.status === 200 || !!c.headers['x-agentcc-upstream-status']);
       semantic.push(c);
     }
-    const semOk = semantic.every(c => c.status === 400 || c.status === 422);
+    const semOk = semantic.every(c => (c.status === 400 || c.status === 422) && !!c.headers['x-agentcc-upstream-status']);
     addCase({ id: '6c', title: 'Semantically bad questions reach TypeSafe', ticket: 'Malformed questions: 400 with a clear message', calls: semantic,
       verdict: semOk ? (semantic.some(c => errorOf(c).message === 'TypeSafe rejected the request.') ? 'NOTE' : 'PASS') : 'FAIL',
       actual: semantic.map(c => `${c.label}: gateway ${c.status} ${errorOf(c).code}, upstream ${c.headers['x-agentcc-upstream-status'] ?? 'none'}, message "${errorOf(c).message}"`).join('; ') });
@@ -455,7 +495,7 @@ async function run(page: Page, owner: ScopeActor, gw: APIRequestContext, admin: 
   });
 
   // ---------------------------------------------------------------- Case 7
-  await test.step('Case 7: pinned jev-1.14.0 vs jev-latest pricing', async () => {
+  await step('Case 7: pinned jev-1.14.0 vs jev-latest pricing', async () => {
     const body = (model: string, state = TICKET) => ({ model, state, questions: Q.noul });
     const asShipped = await call('jev-1.14.0 on the preset provider', body('typesafe/jev-1.14.0'), { upstream: false });
     asShipped.logRow = await logRow(asShipped.headers['x-agentcc-request-id'], false);
@@ -522,7 +562,8 @@ async function run(page: Page, owner: ScopeActor, gw: APIRequestContext, admin: 
     const unknown = await call('unknown version jev-0.0.0', body('typesafe/jev-0.0.0'));
     unknown.logRow = await logRow(unknown.headers['x-agentcc-request-id'], !!unknown.headers['x-agentcc-upstream-status']);
     addCase({ id: '6f', title: 'Unknown model upstream', ticket: 'Upstream refusal: passed through, not a 502', calls: [unknown],
-      verdict: unknown.status === 502 ? 'FAIL' : (unknown.status === 404 ? 'PASS' : 'NOTE'),
+      verdict: DRY_RUN ? (unknown.status === 502 ? 'FAIL' : 'NOTE')
+        : (unknown.status === 404 && errorOf(unknown).code === 'model_not_found' && unknown.headers['x-agentcc-upstream-status'] === '404' ? 'PASS' : 'FAIL'),
       actual: `${unknown.status} ${errorOf(unknown).code}, upstream status ${unknown.headers['x-agentcc-upstream-status'] ?? 'none'}`
         + (DRY_RUN ? ' (the mock answers 400 for a model it does not know; live TypeSafe is expected to answer 404 → model_not_found)' : '') });
   });
