@@ -571,9 +571,9 @@ const EvaluationDrawerChild = ({
           setEvalPickerOpen(false);
           setEditingEval(null);
         }}
-        // Dataset adds save-only — keep the picker open so the user can
-        // queue more evals back-to-back without re-opening the drawer.
-        keepOpenAfterSave={(module || "dataset") === "dataset"}
+        // Dataset adds take several evals in one pass: tick them in the
+        // list, then each gets its own config screen in turn.
+        multiSelect={(module || "dataset") === "dataset"}
         initialEval={editingEval}
         source={module || "dataset"}
         sourceId={id || ""}
@@ -784,11 +784,12 @@ const EvaluationDrawerChild = ({
             payload.user_eval_id = evalConfig.userEvalId;
           }
           // await so errors propagate to EvalPickerDrawer's handleSaveEval
-          // catch block — keeps the drawer open on failure.
+          // catch block — keeps the drawer open on failure. The picker
+          // closes itself after a save (after the last eval of a
+          // multi-select pass), so it isn't closed here.
           const addedName = payload.name;
           await handleRun(payload, () => {
             requestAutoSelect(addedName);
-            setEvalPickerOpen(false);
             setVisibleSection("list");
           });
         }}
