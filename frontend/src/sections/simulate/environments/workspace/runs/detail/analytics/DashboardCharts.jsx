@@ -182,13 +182,16 @@ const pieLabel = (label) =>
 // Any of these keeps the server's headline. Matches when the runs list calls a
 // run No score, where errored calls count as failed.
 const OUTRANKS_NO_SCORE = ["passed", "failed", "error", "queued", "in_progress"];
-// "Passed 0%" misreads a run with no pass or fail and nothing left to run.
+// "Passed 0%" misreads a run with no pass or fail and nothing left to run: it
+// headlines the larger of No score and Cancelled (calls the user stopped) instead.
 const donutHeadline = ({ segments = [], headline }) => {
-  const noScore = segments.find((segment) => segment.label === "no_score");
+  const [unscored] = segments
+    .filter((segment) => ["no_score", "cancelled"].includes(segment.label))
+    .sort((a, b) => b.count - a.count);
   const outranked = segments.some(
     (segment) => OUTRANKS_NO_SCORE.includes(segment.label) && segment.count > 0,
   );
-  return noScore?.count && !outranked ? noScore : headline;
+  return unscored?.count && !outranked ? unscored : headline;
 };
 export function Donut({ data, onOpen }) {
   const theme = useTheme();

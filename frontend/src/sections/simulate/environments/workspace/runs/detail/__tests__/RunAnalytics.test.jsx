@@ -442,6 +442,7 @@ describe("RunAnalytics", () => {
     ["a failed call", { failed: 1 }, "Passed", "0%"],
     ["an errored call", { error: 1 }, "Passed", "0%"],
     ["a call still running", { in_progress: 1 }, "Passed", "0%"],
+    ["every call stopped by the user", { no_score: 0, cancelled: 3 }, "Cancelled", "100%"],
   ])(
     "headlines the goal outcome donut for a run with %s",
     (_name, counts, label, share) => {
@@ -455,7 +456,8 @@ describe("RunAnalytics", () => {
         { label: "failed", count: counts.failed ?? 0, share: 0 },
         { label: "error", count: counts.error ?? 0, share: 0 },
         { label: "in_progress", count: counts.in_progress ?? 0, share: 0 },
-        { label: "no_score", count: 3, share: 100 },
+        { label: "no_score", count: counts.no_score ?? 3, share: counts.no_score === 0 ? 0 : 100 },
+        { label: "cancelled", count: counts.cancelled ?? 0, share: counts.cancelled ? 100 : 0 },
       ];
       useRunAnalytics.mockReturnValue({ data, isPending: false, isError: false });
       render(<RunAnalytics executionId="execution-1" />);
