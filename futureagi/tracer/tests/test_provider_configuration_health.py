@@ -373,7 +373,14 @@ def test_direct_vapi_rehost_preserves_preversioned_plaintext_key(provider, monke
 @pytest.mark.parametrize("legacy", [False, True], ids=["no-legacy", "stale-legacy"])
 @pytest.mark.parametrize(
     "state",
-    ["keyed", "absent", "empty", "wrong_provider", "wrong_provider_empty", "unreadable"],
+    [
+        "keyed",
+        "absent",
+        "empty",
+        "wrong_provider",
+        "wrong_provider_empty",
+        "unreadable",
+    ],
 )
 def test_versioned_vapi_credential_authority_with_legacy_key(
     provider, monkeypatch, state, legacy
