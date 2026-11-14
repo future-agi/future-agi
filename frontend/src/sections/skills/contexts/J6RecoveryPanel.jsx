@@ -17,6 +17,7 @@ import {
   TableRow,
   TextField,
   Typography,
+  IconButton,
   Tooltip,
 } from "@mui/material";
 import Section from "src/components/section";
@@ -42,18 +43,21 @@ import TechnicalDetails from '../components/TechnicalDetails';
 import OperationFeedback from '../components/OperationFeedback';
 import CapabilityNotice from '../components/CapabilityNotice';
 import TextDiff from '../components/TextDiff';
-import { fDateTimeUTC } from 'src/utils/format-time';
+import When from '../components/When';
+import CodeBlock from 'src/components/code-block';
+import { reviewComposerUrl } from '../utils/review-links';
 import Iconify from 'src/components/iconify';
 import { consumerNextStep, humanizeCode, needsDeliveryVerification } from './consumerPresentation';
 import { paths } from "src/routes/paths";
 import { restoreCommands } from "./restoreCommands";
-import { suggestRelease, suggestReviewer } from "./recoverySuggestion";
+import { suggestRelease, suggestReviewer, initialReleaseState } from "./recoverySuggestion";
 import { recipientsOf } from "../utils/conclusions";
 
 // Intent: an operator turns a retained incident into one reviewed recovery
 // choice, then recovers local locks and applications without a false
-// "recovered" claim. Hierarchy: incident cohort, eligible release, reviewed
-// request, then local/application work. Neutral surfaces; status only on badges.
+// "recovered" claim. Hierarchy: release review beside its request, then approval
+// and local/application work. Neutral surfaces, hairline borders, m3/s1/s3 type
+// and an 8px spacing unit match the workspace; green means released, not delivered.
 const stateNames = {
   matches_target: "Matches target",
   pinned_as_intended: "Pinned as intended",
@@ -66,7 +70,7 @@ const stateNames = {
   quarantined: "Quarantined",
 };
 const reasonNames = {
-  current_production: "Current production",
+  current_production: "Production",
   quarantined: "Quarantined",
   context_quarantined: "Closure quarantined",
   dependency_unavailable: "Dependency unavailable",
@@ -76,13 +80,13 @@ const reasonNames = {
 const uuid = () => crypto.randomUUID();
 const mobileLabel = (label) => ({ '&::before': { content: { xs: `"${label}"`, sm: 'none' }, display: 'block', typography: 's3', color: 'text.secondary', mb: 0.5 } });
 
-function Cohort({ cohort, numbers, asOf }) {
+function Cohort({ cohort, numbers, asOf, active = false }) {
   const missing = cohort.filter(needsDeliveryVerification).length;
   return (
     <Section title="Verify consumers">
       <Stack spacing={1.5}>
-        <Typography variant="s3" color="text.secondary"><Tooltip title={asOf || "Time not reported"}><Box component="span" tabIndex={0}>As of {fDateTimeUTC(asOf)}</Box></Tooltip>. Moving production doesn&apos;t update running apps. Each app must report the new version before it counts as recovered.</Typography>
-        {missing > 0 && <Alert severity="warning">{missing} of {cohort.length} consumers still need delivery verification.</Alert>}
+        <Typography variant="s3" color="text.secondary">As of <When value={asOf} fallback="Time not reported" />. Moving production doesn&apos;t update running apps. Each app must report the new version before it counts as recovered.</Typography>
+        {active && missing > 0 && <Alert severity="warning">{missing} of {cohort.length} consumers still need delivery verification.</Alert>}
         {!cohort.length && <EmptyState title="No declared consumers" description="No runtime delivery can be verified until consumers are registered and report it." />}
         <TableContainer sx={{ maxWidth: 1 }}>
           <Table size="small" aria-label="Recovery cohort">
@@ -155,6 +159,7 @@ Cohort.propTypes = {
   cohort: PropTypes.array.isRequired,
   numbers: PropTypes.object.isRequired,
   asOf: PropTypes.string,
+  active: PropTypes.bool,
 };
 
 function Candidates({ candidates, chosen, onChoose, bare = false }) {
@@ -191,7 +196,7 @@ function Candidates({ candidates, chosen, onChoose, bare = false }) {
                           key={reason}
                           status={
                             reason === "current_production"
-                              ? "current_only"
+                              ? "released"
                               : "failed"
                           }
                           label={reasonNames[reason] ?? humanizeCode(reason)}
@@ -283,30 +288,18 @@ function ClosureReview({ candidate, production, closure }) {
       <Stack spacing={1.5}>
         {/* Conclusion first: the readable consequence, then the files people read, then machine records. */}
         <Typography variant="m3" role="status">
-          Roll back to v{candidate.number}{links.length ? `: ${linkSentence(links)}` : ''} ({changedCount} file{changedCount === 1 ? '' : 's'} change{changedCount === 1 ? 's' : ''})
+          {links.length ? linkSentence(links) : `Roll back to v${candidate.number}`} · {changedCount} file{changedCount === 1 ? '' : 's'}
         </Typography>
         <Typography variant="s3" color="text.secondary">
           {counts.unchanged ?? 0} file{counts.unchanged === 1 ? ' stays' : 's stay'} the same.
           {counts.added > 0 && ` ${counts.added} added.`}
           {counts.removed > 0 && ` ${counts.removed} removed.`}
-          {candidate.children.length > 0 && " Linked skills keep their pinned versions."}
+          {candidate.children.length > 0 && ` The rollback restores the linked-skill versions locked in context v${candidate.number}; it doesn't fetch newer skill versions.`}
           {candidate.unavailableChildren.length > 0 && ` ${candidate.unavailableChildren.length} source${candidate.unavailableChildren.length === 1 ? " is" : "s are"} retired; their exact files are kept.`}
         </Typography>
-        {content.map((change) => <Stack key={change.path} spacing={0.5}>
-          <Typography variant="m3">{changeNames[change.status]}: {change.path}</Typography>
-          <Box aria-label={`${change.path} change from production`} tabIndex={0}>{diff(change)}</Box>
-        </Stack>)}
-        {descriptor && <Stack spacing={0.5}>
-          <Typography variant="m3">Linked skill versions</Typography>
-          {/* The descriptor is a machine record: its readable meaning leads, its exact bytes stay one click away. */}
-          <Box aria-label={`${descriptor.path} change from production`} tabIndex={0}>
-            <Typography variant="s1">{links.length ? linkSentence(links) : descriptor.links === null ? 'The context description changed.' : 'No linked skill changes version.'}</Typography>
-            <TechnicalDetails title={`Raw ${descriptor.path} change`} keepMounted>{diff(descriptor)}</TechnicalDetails>
-          </Box>
-        </Stack>}
         {/* Every unchanged row stays visible: the measured J6 review inspects every file. */}
-        <TableContainer sx={{ maxWidth: 1 }}>
-          <Table size="small" aria-label="Recovery closure files">
+        <TableContainer sx={{ maxWidth: 1, maxHeight: 240 }}>
+          <Table size="small" stickyHeader aria-label="Recovery closure files">
             <TableHead sx={{ display: { xs: 'none', sm: 'table-header-group' } }}>
               <TableRow sx={{ height: TABLE_HEADER_HEIGHT.default }}>
                 <TableCell>File</TableCell>
@@ -327,6 +320,20 @@ function ClosureReview({ candidate, production, closure }) {
             </TableBody>
           </Table>
         </TableContainer>
+        <Stack spacing={1.5} sx={{ maxHeight: 360, overflowY: 'auto', minWidth: 0 }} aria-label="Recovery file changes" tabIndex={0}>
+        {content.map((change) => <Stack key={change.path} spacing={0.5}>
+          <Typography variant="m3">{changeNames[change.status]}: {change.path}</Typography>
+          <Box aria-label={`${change.path} change from production`} tabIndex={0}>{diff(change)}</Box>
+        </Stack>)}
+        {descriptor && <Stack spacing={0.5}>
+          <Typography variant="m3">Linked skill versions</Typography>
+          {/* The descriptor is a machine record: its readable meaning leads, its exact bytes stay one click away. */}
+          <Box aria-label={`${descriptor.path} change from production`} tabIndex={0}>
+            <Typography variant="s1">{links.length ? linkSentence(links) : descriptor.links === null ? 'The context description changed.' : 'No linked skill changes version.'}</Typography>
+            <TechnicalDetails title={`Raw ${descriptor.path} change`} keepMounted>{diff(descriptor)}</TechnicalDetails>
+          </Box>
+        </Stack>}
+        </Stack>
       </Stack>
     </Section>
   );
@@ -394,7 +401,7 @@ function RollbackRequest({
       <Stack spacing={1.5}>
         <Typography variant="m3">Production v{production?.number ?? "?"} → v{candidate.number}</Typography>
         {submit.data && <><Alert severity="success" role="status">Rollback request submitted. Production has not moved. The reviewer approves and releases it from Skills Reviews.</Alert><TechnicalDetails title="Attached test evidence"><EvidenceSummary items={evidenceRows(originalPreview.current?.evidence ?? evidence)} emptyText="No matching test evidence attached. Not tested is not a pass." /></TechnicalDetails></>}
-        {!submit.data && <Section title="Test evidence">
+        {!submit.data && <Section title="Test evidence"><Stack spacing={1}>
           {options.isLoading ? <ContentSkeleton sx={{ '& .MuiSkeleton-root': { bgcolor: 'action.selected' } }} variant="rows" /> : options.isError ? <ErrorState title="Couldn't load test evidence" onRetry={options.refetch} /> : <>
             <EvidenceSummary items={evidenceRows(matchingEvidence.filter((item) => item.visibility === 'workspace'))} selectable selected={selectedEvidence}
               onToggle={reviewed || packet ? undefined : (item) => { const id = `${item.source}:${item.id}`; setSelectedEvidence((old) => old.includes(id) ? old.filter((value) => value !== id) : [...old, id]); }}
@@ -402,7 +409,7 @@ function RollbackRequest({
             {matchingEvidence.some((item) => item.visibility === 'private') && <><Typography variant="s3">Private evidence is not attached. Share it from Tests before including it in a workspace review.</Typography><EvidenceSummary items={evidenceRows(matchingEvidence.filter((item) => item.visibility === 'private'))} /></>}
           </>}
           <Button variant="outlined" sx={{ alignSelf: 'flex-start' }} href={`?tab=tests&version=${candidate.number}`}>Run tests</Button>
-        </Section>}
+        </Stack></Section>}
         {/* The revision this review is bound to stays in view: it is what tells the author a restart happened. */}
         <Typography variant="s3" color="text.secondary">Reviewed against release revision {releaseRevision}. If production changes, review and acknowledge the rollback again.</Typography>
         {packet && <TechnicalDetails title="Request details" keepMounted><IdentityChip label="Packet fingerprint" value={packet.fingerprint} /></TechnicalDetails>}
@@ -583,23 +590,14 @@ function LocalRecovery({ contextId, contextName, candidate, canIssue }) {
           error={Boolean(commit) && !validCommit}
           helperText={validCommit ? "The restore verifies this reviewed lock and preserves local work." : "Enter the reviewed 40-character commit"}
         />
-        <Typography
-          component="pre"
-          variant="s1"
-          aria-label="Lock restore commands"
-          sx={{
-            m: 0,
-            p: 1.5,
-            border: 1,
-            borderColor: "divider",
-            borderRadius: 1,
-            whiteSpace: "pre-wrap",
-            overflowWrap: "anywhere",
-          }}
-        >
-          {commands}
-        </Typography>
-        <Button variant="outlined" sx={{ alignSelf: 'flex-start' }} disabled={!validCommit} onClick={async () => { try { await navigator.clipboard.writeText(commands); setCopyStatus('Copied restore commands.'); } catch { setCopyStatus("Couldn't copy. Select the commands above."); } }}>Copy restore commands</Button>
+        <CodeBlock code={commands} wrap label="Lock restore commands" copyLabel="Copy restore commands"
+          action={<Tooltip title={validCommit ? 'Copy restore commands' : 'Enter the reviewed 40-character commit'}><span><IconButton aria-label="Copy restore commands" disabled={!validCommit} onClick={async () => {
+            try {
+              if (!navigator.clipboard?.writeText) throw new Error('Clipboard unavailable');
+              await navigator.clipboard.writeText(commands);
+              setCopyStatus('Copied restore commands.');
+            } catch { setCopyStatus("Couldn't copy. Select the commands below."); }
+          }}><Iconify icon="solar:copy-linear" width={16} /></IconButton></span></Tooltip>} />
         {copyStatus && <Typography role="status" variant="s3">{copyStatus}</Typography>}
         </Stack></Section><Section title="Review application threads">
         <Stack component="ul" spacing={1} sx={{ m: 0, pl: 2.5 }}>
@@ -695,7 +693,7 @@ export default function J6RecoveryPanel({ contextId, contextName }) {
   if (previewState === 'inventory-limit' || query.error?.code === 'recovery_inventory_limit') return <CapabilityNotice title="Recovery needs a complete inventory" description="This context has more than 100 releases or consumers, which recovery can't review completely here. Use the CLI restore for contexts this large." actions={<Button href="?tab=use" variant="outlined">Open CLI restore instructions</Button>} details={query.error?.message} />;
   if (previewState === 'denied' || query.error?.statusCode === 403) return <CapabilityNotice title="Rollback access" description="Only admins and reviewers can start a rollback. Ask a workspace admin." />;
   if (previewState === 'off') return <CapabilityNotice title="Recovery is not available" description="Ask a workspace administrator to check recovery access." />;
-  if (previewState === 'empty') return <EmptyState title="No eligible recovery release" description="Publish and review a recovery candidate before requesting a production change." />;
+  if (previewState === 'empty') return <EmptyState title="Nothing to roll back to yet" description="v1 is the only released version, so there's nothing to roll back to yet." />;
   if (previewState === 'error' || query.error || !data)
     return (
       <ErrorState
@@ -712,12 +710,10 @@ export default function J6RecoveryPanel({ contextId, contextName }) {
   const step = candidate?.isProduction ? 2 : awaiting ? 1 : 0;
   // An initial release is not a recovery task. Link to delivery facts, but do not
   // invite an impossible rollback or expose a replacement credential form.
-  const onlyVersion = data.candidates.length === 1 && production;
-  if (onlyVersion) return <Stack spacing={3}>
-    <Typography variant="s1" role="status">v{production.number} is the only version, so there&apos;s nothing to roll back to.</Typography>
-    <Typography variant="s3" color="text.secondary">Check Consumers for app delivery reports. Production alone does not confirm that apps are updated.</Typography>
-    <Button variant="outlined" sx={{ alignSelf: 'flex-start' }} href="?tab=consumers">Open consumers</Button>
-  </Stack>;
+  const initial = initialReleaseState(data.candidates, data.releaseRevision);
+  if (initial && !from && !submitted) return <EmptyState title="Nothing to roll back to yet"
+    description={<>{`v${initial.production.number} is the only released version, so there's nothing to roll back to yet.`}{initial.next && <Typography component="span" variant="s1" sx={{ display: 'block', mt: 1 }}>{`To change production, request a release review for v${initial.next.number}.`}</Typography>}</>}
+    action={initial.next ? <Button variant="outlined" href={reviewComposerUrl({ kind: 'agent_context', subjectId: contextId, name: contextName, candidateId: initial.next.id, number: initial.next.number, digest: initial.next.digest, label: 'production' })}>Request release review for v{initial.next.number}</Button> : <Button variant="outlined" href="?tab=consumers">Open consumers</Button>} />;
   return (
     <Stack spacing={3} sx={{ minWidth: 0 }}>
       <Stack spacing={1}>
@@ -733,21 +729,21 @@ export default function J6RecoveryPanel({ contextId, contextName }) {
       {data.canPromote === false && <CapabilityNotice title="Rollback access" description="Only admins and reviewers can start a rollback. Ask a workspace admin." />}
       {query.isFetching && <StatusBadge status="checking" label="Updating…" sx={{ alignSelf: 'flex-start' }} />}
       {!data.candidates.some((row) => row.eligible) && !candidate?.isProduction && <EmptyState title="No eligible recovery release" description="Excluded releases cannot be requested. Review their restrictions below." />}
-      {!candidate?.isProduction && <Stack spacing={3}>
-      {!awaiting && <>
+      {!candidate?.isProduction && <Box sx={{ display: 'grid', gridTemplateColumns: { xs: 'minmax(0, 1fr)', lg: awaiting ? 'minmax(0, 1fr)' : 'minmax(0, 3fr) minmax(300px, 2fr)' }, gap: 3, alignItems: 'start' }}>
+      {!awaiting && <Stack spacing={1.5} sx={{ minWidth: 0 }}>
         <Section title={candidate ? `Recovery release: v${candidate.number}${suggestion?.candidateId === candidate.id ? ' (suggested)' : ''}` : 'Choose a recovery release'}>
           {suggestion && <Typography variant="s3" color="text.secondary">v{suggestion.number} is the newest eligible release before v{suggestion.failing}. Review it below or choose another.</Typography>}
           {/* The excluded alternatives stay visible: the closure acknowledgment covers them, and a closed disclosure would add a gesture to every recovery. */}
           <Candidates bare candidates={data.candidates} chosen={chosen} onChoose={setChosen} />
         </Section>
         {candidate && <ClosureReview candidate={candidate} production={production} closure={closure} />}
-      </>}
         <TechnicalDetails title="Exact identities">
           <Stack spacing={1}>
             {data.candidates.map((release) => <IdentityChip key={release.id} label={`Release v${release.number}`} value={release.digest} />)}
             {(closure.data?.rows ?? []).map((row) => <Stack key={`${row.status}:${row.path}`} spacing={0.5}><Typography variant="s3" sx={{ overflowWrap: 'anywhere' }}>{row.path} · {row.sizeBytes} B</Typography><IdentityChip label="File digest" value={row.sha256} /></Stack>)}
           </Stack>
         </TechnicalDetails>
+      </Stack>}
       {candidate && !candidate.isProduction && (
         <RollbackRequest
           // A moved release revision makes an earlier packet stale: start a fresh review.
@@ -764,9 +760,13 @@ export default function J6RecoveryPanel({ contextId, contextName }) {
           onRefresh={() => refreshFacts()}
         />
       )}
-      </Stack>}
+      </Box>}
       {candidate?.isProduction && <TechnicalDetails title="Choose another recovery release"><Candidates candidates={data.candidates} chosen={chosen} onChoose={setChosen} /><TechnicalDetails title="Exact identities">{data.candidates.map((release) => <IdentityChip key={release.id} label={`Release v${release.number}`} value={release.digest} />)}</TechnicalDetails></TechnicalDetails>}
-      <Cohort cohort={data.cohort} numbers={numbers} asOf={data.asOf} />
+      {step < 1 && <Typography variant="s1" color="text.secondary" sx={{ py: 1, borderTop: 1, borderColor: 'divider' }}>2 · Await approval — submit the rollback for independent review.</Typography>}
+      {step < 2 && <Typography variant="s1" color="text.secondary" sx={{ py: 1, borderTop: 1, borderColor: 'divider' }}>3 · Confirm apps updated — available after production moves.</Typography>}
+      {/* J6 inspects the incident cohort before requesting a rollback. Keep its facts visible,
+          but defer the delivery warning and local tasks until verification is active. */}
+      {(step === 2 || data.cohort.some((row) => row.latestFailure)) && <Cohort cohort={data.cohort} numbers={numbers} asOf={data.asOf} active={step === 2} />}
       {candidate && (candidate.isProduction ? <LocalRecovery key={`local-${candidate.id}`} contextId={contextId} contextName={contextName} candidate={candidate} canIssue={data.canIssueCredentials} /> : <TechnicalDetails title="Prepare local recovery in advance"><LocalRecovery key={`local-${candidate.id}`} contextId={contextId} contextName={contextName} candidate={candidate} canIssue={data.canIssueCredentials} /></TechnicalDetails>)}
       <Button variant="outlined" sx={{ alignSelf: 'flex-start' }} onClick={() => refreshFacts()}>
         Refresh recovery facts

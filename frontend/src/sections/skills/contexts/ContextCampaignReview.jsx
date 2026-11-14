@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useId, useState } from 'react';
 import PropTypes from 'prop-types';
 import { Alert, Box, Button, Checkbox, FormControlLabel, Link, MenuItem, Stack, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, TextField, Typography } from '@mui/material';
 import ListToolbar from 'src/components/list-toolbar';
@@ -11,6 +11,7 @@ import StatusBadge from 'src/components/status-badge';
 import Section from 'src/components/section';
 import { ConfirmDialog } from 'src/components/custom-dialog';
 import { ROW_HEIGHT, TABLE_HEADER_HEIGHT } from 'src/theme/sizes';
+import ActionReason, { reasonProps } from '../components/ActionReason';
 import CapabilityNotice from '../components/CapabilityNotice';
 import RolloutInstructions from './RolloutInstructions';
 import ContextCampaignTargetDrawer from './ContextCampaignTargetDrawer';
@@ -19,6 +20,7 @@ const decisionLabels = { pending: 'Not decided', include: 'Included', exclude: '
 const fileCount = (plan) => plan ? `${plan.changes.length} file${plan.changes.length === 1 ? '' : 's'} changed` : 'No plan';
 
 export default function ContextCampaignReview({ campaign, targets, onAuthorize, onStatus, onRollback, pending = false, selectedTarget, onSelectTarget, observations, rollback }) {
+  const cancelReasonId = useId();
   const [basis, setBasis] = useState(() => ({ revision: campaign.revision, digest: campaign.manifestDigest }));
   const [decisions, setDecisions] = useState({});
   const [acknowledged, setAcknowledged] = useState(false);
@@ -109,9 +111,10 @@ export default function ContextCampaignReview({ campaign, targets, onAuthorize, 
     <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap">
       {['authorized', 'running'].includes(campaign.status) && <Button disabled={!campaign.canAuthorize || pending} onClick={() => setConfirm('pause')}>Pause new claims</Button>}
       {campaign.status === 'paused' && <Button disabled={!campaign.canAuthorize || !campaign.enabled || pending} onClick={() => setConfirm('resume')}>Resume unchanged plans</Button>}
-      {!['cancelled', 'settled'].includes(campaign.status) && <Button disabled={!campaign.canAuthorize || pending} onClick={() => setConfirm('cancel')}>Cancel unstarted work</Button>}
+      {!['cancelled', 'settled'].includes(campaign.status) && <Button disabled={!campaign.canAuthorize || pending || !reason.trim()} {...reasonProps(cancelReasonId, !reason.trim() && 'Enter a reason to cancel')} onClick={() => setConfirm('cancel')}>Cancel unstarted work</Button>}
       <Button disabled={pending || !campaign.manifestDigest} onClick={() => run(() => onRollback({ revision: campaign.revision }))}>Preview reverse changes</Button>
     </Stack>
+    {!['cancelled', 'settled'].includes(campaign.status) && <ActionReason id={cancelReasonId} reason={!reason.trim() && 'Enter a reason to cancel'} />}
     {rollback && <Section title="Reverse-plan review" description="This preview is not executable. Reinspect each repository, verify the retained previous lock and create a new rollout linked to this one.">
       {rollback.targets.map((target) => <Box key={target.bindingId} sx={{ py: 1 }}><Typography variant="s3">{targets.find((row) => row.bindingId === target.bindingId)?.name || 'Repository target'} · {target.reverseChanges.length} reverse changes</Typography><TechnicalDetails><IdentityChip label="Target ID" kind="id" value={target.bindingId} /><IdentityChip label="Previous lock" value={target.previousLockDigest || 'No previous lock recorded'} /></TechnicalDetails><Typography component="div" variant="s3">{target.blockers.join(', ')}</Typography></Box>)}
     </Section>}

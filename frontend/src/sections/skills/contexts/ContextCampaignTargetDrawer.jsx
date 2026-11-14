@@ -1,4 +1,4 @@
-import { useId } from 'react';
+import { useId, useState } from 'react';
 import PropTypes from 'prop-types';
 import { Alert, Box, Button, Drawer, IconButton, MenuItem, Stack, TextField, Typography } from '@mui/material';
 import Iconify from 'src/components/iconify';
@@ -6,6 +6,8 @@ import { fDateTimeUTC } from 'src/utils/format-time';
 import '../components/skillIcons';
 import { humanizeCode } from './consumerPresentation';
 import RolloutInstructions from './RolloutInstructions';
+import { planCommand } from './rolloutCommands';
+import CapabilityNotice from '../components/CapabilityNotice';
 import Section from 'src/components/section';
 import IdentityChip from '../components/IdentityChip';
 import TechnicalDetails from '../components/TechnicalDetails';
@@ -31,6 +33,7 @@ function ChangeExcerpt({ text }) {
 ChangeExcerpt.propTypes = { text: PropTypes.string.isRequired };
 export default function ContextCampaignTargetDrawer({ target, open, onClose, decision, onDecision, editable = false, observations, onNext }) {
   const title = useId();
+  const [copyState, setCopyState] = useState(null);
   const covered = useDrawerCovered(open);
   return <Drawer anchor="right" open={open} onClose={onClose} sx={coveredDrawerSx(covered)}
     PaperProps={{ role: 'dialog', 'aria-modal': true, 'aria-labelledby': title, sx: { width: { xs: 1, sm: 640 }, maxWidth: 1, overflow: 'hidden' } }}>
@@ -39,7 +42,7 @@ export default function ContextCampaignTargetDrawer({ target, open, onClose, dec
       <IconButton aria-label="Close target" onClick={onClose}><Iconify icon="solar:close-linear" width={18} /></IconButton>
     </Stack>
     {target && <Stack spacing={2} sx={{ minWidth: 0, overflowY: 'auto', flex: 1, p: 2 }}>
-      <Alert severity="info">Pull request status comes from your Git client. A merged PR doesn&apos;t mean the app has the change.</Alert>
+      <CapabilityNotice title="Pull requests and delivery are separate" description="Pull request status comes from your Git client. A merged PR doesn't mean the app has the change." />
       <Section title="Target">
         <Typography component="p" variant="s1">Release v{target.desiredVersion} · {target.selector.version ? `Pinned v${target.selector.version}` : `Follows ${target.selector.label}`}</Typography>
         {target.repository ? <Typography component="p" variant="s3" sx={source}>Branch: {target.repository.defaultBranch} · {target.repository.projectScope ? `Folder: ${target.repository.projectScope}` : 'Root folder'}</Typography> : <Alert severity="warning">This target no longer names a repository. The old plan cannot authorize new writes.</Alert>}
@@ -82,7 +85,16 @@ export default function ContextCampaignTargetDrawer({ target, open, onClose, dec
         })}</Stack>}
       </Section>
     </Stack>}
-    {target && <Stack spacing={1} alignItems="flex-start" sx={{ p: 2, borderTop: 1, borderColor: 'divider', bgcolor: 'background.paper', flexShrink: 0 }}><Typography variant="s3" color="text.secondary">Decisions are saved to this draft for this review session.</Typography>{onNext && <Button color="primary" variant="contained" onClick={onNext}>Next target needing review</Button>}</Stack>}
+    {target && <Stack spacing={1} alignItems="flex-start" sx={{ p: 2, borderTop: 1, borderColor: 'divider', bgcolor: 'background.paper', flexShrink: 0 }}><Typography variant="s3" color="text.secondary">Decisions are saved to this draft for this review session.</Typography><Stack direction="row" spacing={1}>
+      {!target.plan && <Button color="primary" variant="contained" onClick={async () => {
+        try {
+          if (!navigator.clipboard?.writeText) throw new Error('Clipboard unavailable');
+          await navigator.clipboard.writeText(planCommand(target.desiredVersion));
+          setCopyState({ id: target.bindingId, message: 'Copied plan command.' });
+        } catch { setCopyState({ id: target.bindingId, message: "Couldn't copy. Select the plan command above." }); }
+      }}>Copy plan command</Button>}
+      {onNext && <Button color="primary" variant={target.plan ? 'contained' : 'outlined'} onClick={onNext}>{target.plan ? 'Next target needing review' : 'Next target'}</Button>}
+    </Stack>{copyState?.id === target.bindingId && <Typography variant="s3" role="status">{copyState.message}</Typography>}</Stack>}
   </Drawer>;
 }
 ContextCampaignTargetDrawer.propTypes = {

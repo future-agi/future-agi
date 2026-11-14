@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { cloneElement, isValidElement, useState } from 'react';
 import PropTypes from 'prop-types';
 import { Alert, Box, Button, Drawer, IconButton, Link, MenuItem, Stack, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, TextField, Typography } from '@mui/material';
 import When from '../components/When';
@@ -25,6 +25,7 @@ function Stage({ stage, versionNumbers = {} }) {
   return versionNumbers[stage.versionId] !== undefined ? <Typography variant="s1">v{versionNumbers[stage.versionId]}</Typography> : <IdentityChip label="Release" kind="id" value={stage.versionId} />;
 }
 Stage.propTypes = { stage: PropTypes.object, versionNumbers: PropTypes.object };
+const primaryRegistration = (action) => isValidElement(action) ? cloneElement(action, { variant: 'contained' }) : action;
 const emptyDescription = 'Register an application or repository so its deliveries can be checked.';
 function ConsumerRows({ data, windowDays, onWindowChange, onPageChange, versionNumbers, previewState, registrationAction }) {
   const [selectedId, setSelectedId] = useState(null);
@@ -38,7 +39,7 @@ function ConsumerRows({ data, windowDays, onWindowChange, onPageChange, versionN
     <Typography variant="s1" color="text.secondary">{missing > 0 ? `${missing} of ${data.results.length} connected ${data.results.length === 1 ? 'consumer' : 'consumers'} ${missing === 1 ? 'needs' : 'need'} a delivery report to confirm the version received.` : 'Connected consumers report the version they receive; delivery does not prove use.'} <Link href="https://docs.futureagi.com/docs/skills/rollout-recovery" target="_blank" rel="noopener noreferrer">How apps report</Link></Typography>
     <Typography variant="s3" color="text.secondary">As of <When value={data.asOf} fallback="Time not reported" /></Typography>
     {data.results.length > 0 && registrationAction}
-    <ListToolbar sx={{ flexWrap: 'wrap', gap: 1 }}>
+    {data.results.length > 0 && <ListToolbar sx={{ flexWrap: 'wrap', gap: 1 }}>
       <FormSearchField label="Search consumers" placeholder="Search consumers" searchQuery={search} onChange={(event) => setSearch(event.target.value)} sx={{ minWidth: 0 }} />
       <TextField select size="small" label="Verification" value={status} onChange={(event) => setStatus(event.target.value)}>
         <MenuItem value="all">All statuses</MenuItem>
@@ -47,9 +48,9 @@ function ConsumerRows({ data, windowDays, onWindowChange, onPageChange, versionN
       <TextField select size="small" label="Observation window" value={windowDays} onChange={(event) => onWindowChange(Number(event.target.value))} sx={{ minWidth: '16ch' }}>
         {[7, 30, 90].map((days) => <MenuItem key={days} value={days}>{days} days</MenuItem>)}
       </TextField>
-    </ListToolbar>
+    </ListToolbar>}
     {data.count > data.pageSize && <Typography variant="s3" color="text.secondary">Search and filters apply to the consumers on this page.</Typography>}
-    {!data.results.length ? <EmptyState variant="first-run" title="No declared consumers" description={emptyDescription} action={registrationAction} />
+    {!data.results.length ? <EmptyState variant="first-run" title="No declared consumers" description={emptyDescription} action={primaryRegistration(registrationAction)} />
       : !rows.length ? <EmptyState variant="no-results" title="No consumers match these filters" onClearFilters={clear} />
         : <TableContainer sx={{ maxWidth: 1 }}><Table size="small" aria-label="Context delivery observations">
           <TableHead sx={{ display: { xs: 'none', sm: 'table-header-group' } }}><TableRow sx={{ height: TABLE_HEADER_HEIGHT.default }}>{['Consumer', 'Kind', 'Target release', 'Last delivered', 'Verification', 'Last report', 'Inspect'].map((name) => <TableCell key={name}>{name}</TableCell>)}</TableRow></TableHead>
@@ -95,7 +96,7 @@ export default function ContextConsumersView({ scopeKey, state: resolvedState = 
       : state === 'loading' ? <ContentSkeleton sx={{ '& .MuiSkeleton-root': { bgcolor: 'action.selected' } }} variant="rows" />
         : state === 'error' ? <ErrorState detail="Delivery status is unknown until this loads." title="Couldn't load consumers" onRetry={onRetry} />
           : state === 'off' ? <CapabilityNotice title="Consumer observations are off" description="Delivery can only be verified when a registered runtime reports it." />
-            : state === 'empty' ? <EmptyState variant="first-run" title="No declared consumers" description={emptyDescription} action={registrationAction} />
+            : state === 'empty' ? <EmptyState variant="first-run" title="No declared consumers" description={emptyDescription} action={primaryRegistration(registrationAction)} />
               : ['ready', 'filtered-empty'].includes(state) && data ? <ConsumerRows key={scopeKey} {...{ data, windowDays, onWindowChange, onPageChange, versionNumbers, registrationAction }} previewState={state} />
                 : <ReviewState state={state} onRetry={onRetry} />}
   </Section>;

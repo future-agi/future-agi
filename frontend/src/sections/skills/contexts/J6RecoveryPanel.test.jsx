@@ -318,7 +318,7 @@ it("leads the rollback review with its consequence and keeps the descriptor byte
   };
   render(<J6RecoveryPanel contextId="ctx" contextName="Support policy" />);
   fireEvent.click(screen.getByRole("button", { name: "Choose v1" }));
-  expect(screen.getByText("Roll back to v1: refund-policy v2 → v1 (2 files change)")).toBeVisible();
+  expect(screen.getByText("refund-policy v2 → v1 · 2 files")).toBeVisible();
   expect(screen.getAllByText("Earlier version")[0]).toBeVisible();
   expect(screen.queryByText("Lower-number rollback")).toBeNull();
   const readable = screen.getByLabelText("skills/refund-policy/policy.md change from production");
@@ -333,7 +333,7 @@ it("leads the rollback review with its consequence and keeps the descriptor byte
 it('explains a single release without offering a rollback or replacement credential', () => {
   recovery = { cohort: [], releaseRevision: 1, candidates: [{ ...rollbackCandidate, isProduction: true, eligible: false }] };
   render(<J6RecoveryPanel contextId="ctx" contextName="Support policy" />);
-  expect(screen.getByText("v1 is the only version, so there's nothing to roll back to.")).toBeVisible();
+  expect(screen.getByText("v1 is the only released version, so there's nothing to roll back to yet.")).toBeVisible();
   expect(screen.queryByRole('list', { name: 'Recovery progress' })).toBeNull();
   expect(screen.queryByRole('table')).toBeNull();
   expect(screen.queryByRole('button', { name: 'Issue replacement credential' })).toBeNull();
@@ -357,4 +357,62 @@ it('gives denied rollback access a calm next step', () => {
     expect(screen.getByText('Only admins and reviewers can start a rollback. Ask a workspace admin.')).toBeVisible();
     expect(screen.queryByRole('alert')).toBeNull();
   } finally { window.history.replaceState({}, '', '/'); }
+});
+
+it('keeps incident facts visible but defers the warning and local actions until verification', () => {
+  recovery = { cohort: failedCohort, releaseRevision: 7, candidates: suggestedCandidates };
+  const view = render(<J6RecoveryPanel contextId="ctx" contextName="Support policy" />);
+  expect(screen.getByRole('table', { name: 'Recovery cohort' })).toBeVisible();
+  expect(screen.queryByText(/consumers still need delivery verification/)).toBeNull();
+  expect(screen.queryByRole('button', { name: 'Issue replacement credential' })).toBeNull();
+  expect(screen.getByText(/2 · Await approval/)).toBeVisible();
+  expect(screen.getByText(/3 · Confirm apps updated/)).toBeVisible();
+  recovery = { ...recovery, releaseRevision: 8, candidates: suggestedCandidates.map((row) => ({ ...row, isProduction: row.id === 'v1-id' })) };
+  view.rerender(<J6RecoveryPanel contextId="ctx" contextName="Support policy" />);
+  expect(screen.getByText(/consumers still need delivery verification/)).toBeVisible();
+  expect(screen.getByRole('button', { name: 'Issue replacement credential' })).toBeVisible();
+});
+
+it('offers the canonical release review for a newer publication without calling it a rollback', () => {
+  recovery = { cohort: [], releaseRevision: 1, candidates: [{ ...rollbackCandidate, isProduction: true, eligible: false }, { ...rollbackCandidate, id: 'v2-id', number: 2 }] };
+  render(<J6RecoveryPanel contextId="ctx" contextName="Support policy" />);
+  expect(screen.getByText("v1 is the only released version, so there's nothing to roll back to yet.")).toBeVisible();
+  const link = new URL(screen.getByRole('link', { name: 'Request release review for v2' }).href);
+  expect(link.searchParams.get('candidate')).toBe('v2-id');
+  expect(link.searchParams.get('label')).toBe('production');
+  expect(screen.queryByRole('button', { name: 'Submit rollback for review' })).toBeNull();
+});
+
+it('keeps excluded alternatives and their restriction visible', () => {
+  recovery = { cohort: [], releaseRevision: 1, candidates: suggestedCandidates.map((row) => ({ ...row, eligible: false, selectable: false })) };
+  render(<J6RecoveryPanel contextId="ctx" contextName="Support policy" />);
+  fireEvent.click(screen.getByRole('button', { name: 'Choose another recovery release' }));
+  expect(screen.getByText('Quarantined', { exact: true })).toBeVisible();
+  expect(screen.getByRole('button', { name: 'Choose v2' })).toBeDisabled();
+});
+
+it('keeps restore copy beside the commands and disabled until a full commit is entered', async () => {
+  recovery = { cohort: failedCohort, releaseRevision: 7, candidates: suggestedCandidates };
+  const writeText = vi.fn().mockResolvedValue(undefined);
+  Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } });
+  render(<J6RecoveryPanel contextId="ctx" contextName="Support policy" />);
+  fireEvent.click(screen.getByRole('button', { name: 'Prepare local recovery in advance' }));
+  const copy = screen.getByRole('button', { name: 'Copy restore commands' });
+  expect(copy).toBeDisabled();
+  fireEvent.change(screen.getByLabelText('Last reviewed commit'), { target: { value: 'a'.repeat(40) } });
+  await act(async () => fireEvent.click(copy));
+  expect(writeText).toHaveBeenCalledWith(expect.stringContaining('a'.repeat(40)));
+  expect(screen.getByText('Copied restore commands.')).toBeVisible();
+});
+
+it('keeps verification reachable after reloading a completed rollback with newer eligible releases', () => {
+  recovery = { cohort: failedCohort, releaseRevision: 8, candidates: [
+    { ...rollbackCandidate, isProduction: true, eligible: false },
+    { ...rollbackCandidate, id: 'v3-id', number: 3 },
+  ] };
+  render(<J6RecoveryPanel contextId="ctx" contextName="Support policy" />);
+  expect(screen.getByRole('table', { name: 'Recovery cohort' })).toBeVisible();
+  expect(screen.getByRole('button', { name: 'Issue replacement credential' })).toBeVisible();
+  expect(screen.queryByText(/only released version/)).toBeNull();
+  expect(screen.getByRole('list', { name: 'Recovery progress' }).lastChild).toHaveAttribute('aria-current', 'step');
 });
