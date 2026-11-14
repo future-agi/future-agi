@@ -54,13 +54,101 @@ describe("jobToBuildProgress", () => {
   it("maps a failure stage to its milestone's first pipeline step", () => {
     const out = jobToBuildProgress(
       jobAt("failed", {
-        failure: { stage: "building_environment", message: "boom", domain: "infrastructure" },
+        failure: {
+          stage: "building_environment",
+          message: "boom",
+          domain: "infrastructure",
+        },
       }),
     );
     expect(out.running).toBe(false);
     expect(out.done).toEqual(["understand"]);
-    expect(out.failure).toMatchObject({ stepId: "generate-env", retryable: true });
-    expect(out.failure.detail).toBe("boom");
+    expect(out.failure).toMatchObject({
+      stepId: "generate-env",
+      retryable: true,
+    });
+    // A run issue reads as one that doesn't count against the agent; "boom" stays on the record.
+    expect(out.failure.detail).toBe(
+      "Stopped — an issue occurred while running this. Run it again; it doesn't count against the agent.",
+    );
+  });
+
+  it("reads an older build's start timeout as a slow start, not as a run issue", () => {
+    // Recorded before failures carried a cause: infrastructure domain, depends_on_timeout.
+    const out = jobToBuildProgress(
+      jobAt("failed", {
+        failure: {
+          stage: "generating_environment",
+          domain: "infrastructure",
+          message:
+            "depends_on/depends_on_timeout (agent): agent: started_check did not pass within 180.0s",
+        },
+      }),
+    );
+    expect(out.failure.detail).toBe(
+      "Didn't start in time — the agent wasn't ready within the limit. Run it again; if it repeats, make it start or listen sooner.",
+    );
+
+    // An older image certifies without recording a cause: the start timeout still reads so.
+    const unrecorded = jobToBuildProgress(
+      jobAt("failed", {
+        failure: {
+          stage: "validating_environment",
+          domain: "environment",
+          code: "authoring_runtime_validation_failed",
+          cause: "unknown",
+          message:
+            "We couldn't run this agent version in its environment: ProcessRuntimeError: depends_on/depends_on_timeout (agent)",
+        },
+      }),
+    );
+    expect(unrecorded.failure.detail).toBe(
+      "Didn't start in time — the agent wasn't ready within the limit. Run it again; if it repeats, make it start or listen sooner.",
+    );
+  });
+
+  it("says a named failure cause in plain words, never the raw guest line", () => {
+    const failedWith = (cause) =>
+      jobToBuildProgress(
+        jobAt("failed", {
+          failure: {
+            stage: "validating_environment",
+            domain: "environment",
+            code: "authoring_runtime_validation_failed",
+            cause,
+            message:
+              "We couldn't run this agent version in its environment: ProcessRuntimeError: depends_on/spawn_failed (agent)",
+          },
+        }),
+      ).failure.detail;
+
+    expect(failedWith("agent_exited_before_ready")).toBe(
+      "Didn't start — the agent exited before it was ready. Fix the crash on startup, then push a new agent version.",
+    );
+    expect(failedWith("agent_not_ready_in_time")).toBe(
+      "Didn't start in time — the agent wasn't ready within the limit. Run it again; if it repeats, make it start or listen sooner.",
+    );
+    // Exit 78 with no recorded cause, or one this page does not know: a next step, no code,
+    // and never "run it again" for a deterministic failure.
+    for (const cause of ["unknown", "a_value_from_a_newer_server"]) {
+      expect(failedWith(cause)).toBe(
+        "The agent stopped before it was ready and didn't say why. Start it on your own machine to see the error it prints.",
+      );
+    }
+  });
+
+  it("leaves a failure with no cause outside our infrastructure as recorded", () => {
+    const out = jobToBuildProgress(
+      jobAt("failed", {
+        failure: {
+          stage: "building_environment",
+          domain: "environment",
+          code: "provider_credentials_invalid",
+          message: "The Vapi key was rejected.",
+        },
+      }),
+    );
+    expect(out.failure.detail).toBe("The Vapi key was rejected.");
   });
 
   it("marks a canceled build terminal (freezes the animation) without failing a step", () => {
@@ -74,7 +162,11 @@ describe("jobToBuildProgress", () => {
   });
 
   it("returns an empty slice for a job with no status", () => {
-    expect(jobToBuildProgress(undefined)).toEqual({ done: [], running: false, failure: null });
+    expect(jobToBuildProgress(undefined)).toEqual({
+      done: [],
+      running: false,
+      failure: null,
+    });
   });
 });
 
@@ -88,7 +180,12 @@ describe("useBuildProgress — real poll", () => {
   it("derives the slice from the live job and narrates milestones", async () => {
     getHarnessJob.mockResolvedValue(jobAt("completed"));
     const { result } = renderHook(
-      () => useBuildProgress({ envId: "job-1", agentRef: "acme/bot@main", enabled: true }),
+      () =>
+        useBuildProgress({
+          envId: "job-1",
+          agentRef: "acme/bot@main",
+          enabled: true,
+        }),
       { wrapper: makeWrapper() },
     );
     await waitFor(() =>
@@ -101,7 +198,12 @@ describe("useBuildProgress — real poll", () => {
   it("does not fetch while disabled", () => {
     getHarnessJob.mockResolvedValue(jobAt("completed"));
     const { result } = renderHook(
-      () => useBuildProgress({ envId: "job-1", agentRef: "acme/bot@main", enabled: false }),
+      () =>
+        useBuildProgress({
+          envId: "job-1",
+          agentRef: "acme/bot@main",
+          enabled: false,
+        }),
       { wrapper: makeWrapper() },
     );
     expect(getHarnessJob).not.toHaveBeenCalled();
@@ -110,13 +212,24 @@ describe("useBuildProgress — real poll", () => {
 
   it("answers a console ask with a fixture reply (no build API)", () => {
     const { result } = renderHook(
-      () => useBuildProgress({ envId: "job-1", agentRef: "acme/bot@main", enabled: false }),
+      () =>
+        useBuildProgress({
+          envId: "job-1",
+          agentRef: "acme/bot@main",
+          enabled: false,
+        }),
       { wrapper: makeWrapper() },
     );
     act(() => result.current.send("what did you seed?"));
     const [userTurn, builderTurn] = result.current.turns;
-    expect(userTurn).toMatchObject({ role: "user", text: "what did you seed?" });
-    expect(builderTurn.steps[0]).toMatchObject({ kind: "json", label: "seeded" });
+    expect(userTurn).toMatchObject({
+      role: "user",
+      text: "what did you seed?",
+    });
+    expect(builderTurn.steps[0]).toMatchObject({
+      kind: "json",
+      label: "seeded",
+    });
   });
 });
 

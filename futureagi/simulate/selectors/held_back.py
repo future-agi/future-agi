@@ -24,6 +24,8 @@ from simulate.selectors.agent_fix import FINISHED_RUN_STATES
 from simulate.services.hosted_harness_gateway import (
     AUTHORING_FAILED,
     RUNTIME_VALIDATION_FAILED,
+    UNKNOWN_FAILURE_CAUSE,
+    closed_failure_cause,
 )
 from simulate.services.run_compare import trial_passed, wilson_interval
 
@@ -130,7 +132,8 @@ _RUN_METADATA_FIELDS = (
     "version_pins",
 )
 # A failure's details hold the guest's logs, and a certify on a cache miss runs every
-# case of the suite there, held-back ones included; only these fields stay.
+# case of the suite there, held-back ones included; only these fields stay, and a cause
+# only as a value from the closed set.
 _RUN_FAILURE_FIELDS = ("domain", "stage", "code", "message")
 # The message a coding agent reads instead of the stored one, which can end with what
 # the guest printed: the label of its code.
@@ -138,10 +141,58 @@ _FAILURE_LABELS = {
     "authoring_runtime_validation_failed": RUNTIME_VALIDATION_FAILED,
     "authoring_failed": AUTHORING_FAILED,
 }
+# What each cause means and what to do next, in plain words; the stable code stays beside it.
+CAUSE_WORDS = {
+    "agent_exited_before_ready": (
+        "Didn't start — the agent exited before it was ready. "
+        "Fix the crash on startup, then push a new agent version."
+    ),
+    "agent_not_ready_in_time": (
+        "Didn't start in time — the agent wasn't ready within the limit. "
+        "Run it again; if it repeats, make it start or listen sooner."
+    ),
+    "chat_target_timeout": (
+        "Stopped — the agent didn't reply to a message in time. "
+        "Run it again. If it repeats, make the agent reply faster."
+    ),
+    "chat_target_refused": (
+        "Stopped — the agent refused the connection. "
+        "Check that it listens on the port it was given, then push a new agent version."
+    ),
+    # Exit 78 is deterministic, so running it again cannot help; the agent's own start, on the
+    # reader's machine, shows the error. No guest text reaches the reader.
+    "unknown": (
+        "The agent stopped before it was ready and didn't say why. "
+        "Start it on your own machine to see the error it prints."
+    ),
+}
+
+
+# A start timeout recorded without a cause (before failures carried one, or by an older
+# image) names its closed code in the failure; it reads as the slow start it was.
+_START_TIMEOUT_CODE = "depends_on_timeout"
+
+
+def failure_cause(failure: Mapping[str, Any]) -> str | None:
+    """The cause a failure reads with: its own from the closed set, or the slow start that a
+    start timeout without one names; None for a failure that has neither."""
+    cause = closed_failure_cause(failure["cause"]) if "cause" in failure else None
+    if cause in (None, UNKNOWN_FAILURE_CAUSE) and _START_TIMEOUT_CODE in (
+        f"{failure.get('code') or ''} {failure.get('message') or ''}"
+    ):
+        return "agent_not_ready_in_time"
+    return cause
 
 
 def coding_agent_failure_message(failure: Mapping[str, Any]) -> str:
-    """A failure's message as a coding agent reads it: fixed text for its code."""
+    """A failure's message as a coding agent and a call row read it: when the failure has a
+    cause, what it means and what to do, with a named cause's code last; otherwise fixed text
+    for its code. An unknown cause reads as words only: the machine field still says it."""
+    cause = failure_cause(failure)
+    if cause == UNKNOWN_FAILURE_CAUSE:
+        return CAUSE_WORDS[cause]
+    if cause is not None:
+        return f"{CAUSE_WORDS[cause]} (cause: {cause})"
     code = str(failure.get("code") or "failed")
     return _FAILURE_LABELS.get(code, f"The run failed ({code})")
 
@@ -161,6 +212,11 @@ def coding_agent_run(read: Mapping[str, Any]) -> dict[str, Any]:
                     for name in _RUN_FAILURE_FIELDS
                     if name in failure
                 },
+                **(
+                    {"cause": cause}
+                    if (cause := failure_cause(failure)) is not None
+                    else {}
+                ),
                 "message": coding_agent_failure_message(failure),
             },
         }

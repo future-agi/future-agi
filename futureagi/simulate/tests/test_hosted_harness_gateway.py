@@ -2771,10 +2771,24 @@ def test_reconcile_waits_when_daytona_deletion_is_already_in_progress(
     assert attempt.terminal_failure["code"] == "sandbox_unreachable"
 
 
+_NO_FILE = object()  # an older guest image writes no cause file
+
+
 @pytest.mark.django_db
-@pytest.mark.parametrize("exit_code", [3, 78])
+@pytest.mark.parametrize(
+    "exit_code,guest_cause,stored",
+    [
+        (3, _NO_FILE, None),
+        (78, _NO_FILE, "unknown"),
+        (78, None, "unknown"),
+        (78, "agent_exited_before_ready", "agent_exited_before_ready"),
+        (78, "chat_target_timeout", "chat_target_timeout"),
+        (78, "RuntimeError: a held-back case", "unknown"),
+        (78, ["agent_exited_before_ready"], "unknown"),
+    ],
+)
 def test_reconcile_terminal_and_authoring_exits_never_retry(
-    organization, monkeypatch, exit_code
+    organization, monkeypatch, exit_code, guest_cause, stored
 ):
     from simulate.services.hosted_harness import record_cleanup
 
@@ -2809,18 +2823,60 @@ def test_reconcile_terminal_and_authoring_exits_never_retry(
 
     with acquire:
         attempt = gateway.launch(job, endpoint_base_url="https://platform.example.com")
-    monkeypatch.setattr(
-        gateway, "inspect", lambda _: {"exit_code": exit_code, "logs": ""}
-    )
+    observation = {"exit_code": exit_code, "logs": ""}
+    if guest_cause is not _NO_FILE:
+        observation["failure_cause"] = guest_cause
+    monkeypatch.setattr(gateway, "inspect", lambda _: observation)
     assert gateway.reconcile_completed(attempt).state != (
         HostedHarnessJob.State.RETRY_WAIT
     )
     assert captured["retry_pending"] is False
 
+    attempt.refresh_from_db()
+    assert (attempt.terminal_failure or {}).get("cause") == stored
     if exit_code == 78:
-        attempt.refresh_from_db()
         assert attempt.terminal_failure["domain"] == "environment"
         assert attempt.terminal_failure["code"] == "authoring_runtime_validation_failed"
+
+
+@pytest.mark.parametrize(
+    "exit_code,result,cause",
+    [
+        (0, '{"cause": "agent_not_ready_in_time"}', "agent_not_ready_in_time"),
+        (0, '{"cause": null}', None),
+        (1, "", None),  # an older guest image wrote no file
+        (0, "not json", None),
+        (0, '["agent_exited_before_ready"]', None),
+    ],
+)
+def test_guest_failure_cause_is_a_bounded_read_that_never_raises(
+    exit_code, result, cause
+):
+    commands = []
+
+    def run(command, **kwargs):
+        commands.append(command)
+        return SimpleNamespace(exit_code=exit_code, result=result)
+
+    sandbox = SimpleNamespace(process=SimpleNamespace(exec=run))
+    attempt = SimpleNamespace(id="attempt-1")
+
+    assert HostedHarnessGateway._guest_failure_cause(attempt, sandbox) == cause
+    assert commands == ["head -c 512 /run/futureagi/failure-cause.json 2>/dev/null"]
+
+
+def test_guest_failure_cause_reads_none_when_the_provider_fails():
+    def run(command, **kwargs):
+        raise TimeoutError("toolbox unavailable")
+
+    sandbox = SimpleNamespace(process=SimpleNamespace(exec=run))
+
+    assert (
+        HostedHarnessGateway._guest_failure_cause(
+            SimpleNamespace(id="attempt-1"), sandbox
+        )
+        is None
+    )
 
 
 @pytest.mark.django_db

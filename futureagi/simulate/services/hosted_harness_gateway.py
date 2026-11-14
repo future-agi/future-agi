@@ -147,6 +147,9 @@ _SCENARIO_DIRECTORY_COUNT_COMMAND = (
 _ADJUSTMENTS_PATH = "/run/futureagi/adjustments.jsonl"
 _ADJUSTMENT_STATUS_PATH = "/run/futureagi/adjustment-status.jsonl"
 _SIMULATOR_SECRETS_PATH = "/run/futureagi/simulator-secrets.json"
+# Written by the guest after exit 78: {"cause": <a FAILURE_CAUSES value or null>}.
+_FAILURE_CAUSE_PATH = "/run/futureagi/failure-cause.json"
+_FAILURE_CAUSE_MAX_BYTES = 512
 _PROVIDER_POLL_TIMEOUT_SECONDS = 15
 _DIAGNOSTICS_POLL_INTERVAL_SECONDS = 15
 _PROGRESS_FILE_TIMEOUT_SECONDS = 5
@@ -859,10 +862,29 @@ _GUEST_INNER_EXCEPTION = re.compile(
 
 
 # The labels of a guest's typed failures; the stored message adds the cause it printed.
-RUNTIME_VALIDATION_FAILED = (
-    "Generated environment failed real-runtime validation after bounded repair"
-)
+RUNTIME_VALIDATION_FAILED = "We couldn't run this agent version in its environment"
 AUTHORING_FAILED = "Environment authoring failed before a runnable world was saved"
+
+# Why a candidate failed real-runtime validation, as the harness names it. The only failure
+# fact a coding agent's key reads beyond the label: guest text can quote a held-back case.
+FAILURE_CAUSES = frozenset(
+    {
+        "agent_exited_before_ready",
+        "agent_not_ready_in_time",
+        "chat_target_timeout",
+        "chat_target_refused",
+    }
+)
+UNKNOWN_FAILURE_CAUSE = "unknown"
+
+
+def closed_failure_cause(value: object) -> str:
+    """A cause as stored or read: a value from ``FAILURE_CAUSES``, else ``unknown``."""
+    return (
+        value
+        if isinstance(value, str) and value in FAILURE_CAUSES
+        else UNKNOWN_FAILURE_CAUSE
+    )
 
 
 def guest_failure_cause(tail: str) -> str:
@@ -3550,6 +3572,8 @@ class HostedHarnessGateway:
         if capture is not None:
             observation["logs"] = capture.entrypoint_log[-8000:]
             observation["process_logs"] = capture.process_logs[-16000:]
+        if command.exit_code == 78:
+            observation["failure_cause"] = self._guest_failure_cause(attempt, sandbox)
         if command.exit_code is not None:
             # Keep the bounded failure tails in the worker log as well as the durable S3
             # snapshot so an operator can diagnose a run from either surface.
@@ -3561,6 +3585,31 @@ class HostedHarnessGateway:
                 observation["process_logs"],
             )
         return observation
+
+    @staticmethod
+    def _guest_failure_cause(attempt: HostedHarnessAttempt, sandbox) -> object:
+        """The cause the guest recorded after exit 78, unchecked; ``None`` when it recorded
+        none, an older image wrote no file, or the read fails. The guest wrote it, so the read
+        is bounded, and a failed read never changes the attempt's outcome."""
+        try:
+            read = sandbox.process.exec(
+                f"head -c {_FAILURE_CAUSE_MAX_BYTES} {_FAILURE_CAUSE_PATH} 2>/dev/null",
+                timeout=_PROGRESS_FILE_TIMEOUT_SECONDS,
+            )
+        except Exception:  # noqa: BLE001 - the cause is optional; the exit code decides
+            logger.exception(
+                "could not read the guest failure cause attempt=%s", attempt.id
+            )
+            return None
+        if read.exit_code:
+            return None
+        try:
+            body = json.loads(str(read.result or ""))
+        except ValueError:
+            # The guest wrote this file; what it holds is the guest's, not a platform fault.
+            logger.warning("unreadable guest failure cause attempt=%s", attempt.id)
+            return None
+        return body.get("cause") if isinstance(body, dict) else None
 
     @staticmethod
     def _sync_offline_control(attempt: HostedHarnessAttempt, sandbox) -> None:
@@ -4661,6 +4710,10 @@ class HostedHarnessGateway:
                     "process_logs": observation.get("process_logs", ""),
                 },
             }
+            if exit_code == 78:
+                attempt.terminal_failure["cause"] = closed_failure_cause(
+                    observation.get("failure_cause")
+                )
             attempt.state = HostedHarnessAttempt.State.FAILED
             attempt.save(
                 update_fields=[
