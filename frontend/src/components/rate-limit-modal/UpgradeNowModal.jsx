@@ -233,7 +233,7 @@ function PlanCard({
       {includesLowerTier && (
         <Typography
           variant="subtitle2"
-          fontSize={"13px"}
+          fontSize={"12px"}
           color={"text.primary"}
           fontWeight={600}
           sx={{ mt: 1 }}
@@ -405,7 +405,7 @@ const PricingDialog = ({ open, onClose, title, description }) => {
         </Box>
         <Typography
           variant="body2"
-          fontSize={"13px"}
+          fontSize={"12px"}
           color="text.secondary"
           sx={{ mb: 1 }}
         >

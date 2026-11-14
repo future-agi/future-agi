@@ -113,7 +113,7 @@ const DerivedDatasetsDrawer = ({
             >
               <ListItem sx={{ padding: 0 }}>
                 <Typography
-                  fontSize={13}
+                  fontSize={12}
                   lineHeight="20px"
                   color="text.primary"
                   fontWeight={"fontWeightMedium"}
@@ -159,7 +159,7 @@ const DerivedDatasetsDrawer = ({
                       placement="bottom"
                     >
                       <Typography
-                        fontSize={13}
+                        fontSize={12}
                         lineHeight="20px"
                         color="text.primary"
                         fontWeight={"fontWeightRegular"}

@@ -76,7 +76,7 @@ const SpecialEvaluationCard = () => {
           <Typography
             sx={{
               fontWeight: 500,
-              fontSize: "13px",
+              fontSize: "12px",
               lineHeight: "22px",
               color: "text.primary",
             }}

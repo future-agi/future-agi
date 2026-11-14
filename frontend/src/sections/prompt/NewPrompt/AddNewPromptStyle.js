@@ -7,6 +7,6 @@ export const PromptBox = styled(Box)(() => ({
 }));
 export const PromptBoxTitle = styled(Typography)(({ theme }) => ({
   color: theme.palette.text.disabled,
-  fontSize: "13px",
+  fontSize: "12px",
   fontWeight: theme.typography.fontWeightBold,
 }));

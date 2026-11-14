@@ -1,4 +1,4 @@
-import { Box, LinearProgress, Tab, Tabs } from "@mui/material";
+import { Box, Tab, Tabs } from "@mui/material";
 import Section from "src/components/section";
 import React, { useMemo } from "react";
 import { Outlet, useLocation, useNavigate } from "react-router-dom";
@@ -6,6 +6,7 @@ import PropTypes from "prop-types";
 import _ from "lodash";
 import { formatDashedToTitleCase } from "src/utils/utils";
 import { HeaderComponent } from "../HeaderComponent";
+import { LoadingScreen } from "src/components/loading-screen";
 
 const allTabs = ["connectors", "job-status"];
 
@@ -85,7 +86,7 @@ function CustomTabPanel(props) {
       role="tabpanel"
       {...other}
     >
-      {loading ? <LinearProgress /> : null}
+      {loading ? <LoadingScreen compact /> : null}
       {value === panelValue && !loading && children}
     </div>
   );

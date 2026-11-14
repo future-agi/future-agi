@@ -569,7 +569,7 @@ export default function CreateQueueDrawer({
                 <Typography
                   variant="subtitle2"
                   color="text.secondary"
-                  sx={{ fontSize: 13 }}
+                  sx={{ fontSize: 12 }}
                 >
                   Advanced settings
                 </Typography>
@@ -599,7 +599,7 @@ export default function CreateQueueDrawer({
                     <FormControl>
                       <FormLabel
                         sx={{
-                          fontSize: 13,
+                          fontSize: 12,
                           mb: 0.5,
                           color: "text.secondary",
                           fontWeight: "fontWeightMedium",

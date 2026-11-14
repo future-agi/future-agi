@@ -56,7 +56,7 @@ const AttributeGroupList = ({ groups, selectedGroup, onSelectGroup }) => {
           <ListItemText
             primary="All"
             primaryTypographyProps={{
-              fontSize: 13,
+              fontSize: 12,
               fontWeight: selectedGroup === null ? 500 : 400,
             }}
           />
@@ -74,7 +74,7 @@ const AttributeGroupList = ({ groups, selectedGroup, onSelectGroup }) => {
               primary={`${group.prefix}.*`}
               secondary={`${group.keys.length} keys`}
               primaryTypographyProps={{
-                fontSize: 13,
+                fontSize: 12,
                 fontWeight: selectedGroup === group.prefix ? 500 : 400,
                 noWrap: true,
               }}

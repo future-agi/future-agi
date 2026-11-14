@@ -1,6 +1,7 @@
 import React, { useMemo } from "react";
 import { Box } from "@mui/material";
 import { AgGridReact } from "ag-grid-react";
+import "src/utils/ag-grid-setup";
 import { computeSpanInfo } from "./common";
 import AnnotationValueCellRenderer from "../traceDetailDrawer/CustomRenderer/AnnotationValueCellRenderer";
 import AnnotatorCellRenderer from "../traceDetailDrawer/CustomRenderer/AnnotatorCellRenderer";

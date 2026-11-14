@@ -24,7 +24,7 @@ export const DATE_OPTION_LABELS = DATE_OPTIONS.reduce((acc, o) => {
 const DEFAULT_PILL_SX = {
   textTransform: "none",
   fontWeight: 500,
-  fontSize: 13,
+  fontSize: 12,
   height: 32,
   borderColor: "divider",
   color: "text.primary",

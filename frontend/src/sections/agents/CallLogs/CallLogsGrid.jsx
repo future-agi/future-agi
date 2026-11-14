@@ -7,6 +7,7 @@ import React, {
   useState,
 } from "react";
 import { AgGridReact } from "ag-grid-react";
+import "src/utils/ag-grid-setup";
 import "src/styles/clean-data-table.css";
 import { useQueryClient } from "@tanstack/react-query";
 import { useAgThemeWith } from "src/hooks/use-ag-theme";

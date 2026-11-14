@@ -172,9 +172,7 @@ def test_limit_by_matches_final_including_deleted_rows():
 
     table = f"th7226_probe_{uuid.uuid4().hex[:8]}"
     config = get_v2_config()
-    _require_safe_ch25_test_target(
-        host=config["host"], database=config["database"]
-    )
+    _require_safe_ch25_test_target(host=config["host"], database=config["database"])
     ch = clickhouse_connect.get_client(
         host=config["host"],
         port=config["http_port"],

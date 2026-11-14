@@ -205,7 +205,7 @@ export default function ClientSetupGuide({ config }) {
     p: 2,
     borderRadius: 1,
     fontFamily: "monospace",
-    fontSize: 13,
+    fontSize: 12,
     overflow: "auto",
     whiteSpace: "pre",
     position: "relative",
@@ -241,7 +241,7 @@ export default function ClientSetupGuide({ config }) {
           readOnly: true,
           sx: {
             fontFamily: "monospace",
-            fontSize: 13,
+            fontSize: 12,
             bgcolor: "background.neutral",
           },
           endAdornment: (
@@ -284,7 +284,7 @@ export default function ClientSetupGuide({ config }) {
                 alignItems: "center",
                 justifyContent: "center",
                 flexShrink: 0,
-                fontSize: 13,
+                fontSize: 12,
                 fontWeight: 600,
               }}
             >

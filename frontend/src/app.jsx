@@ -1,6 +1,5 @@
 import React, { useEffect } from "react";
 import { useLocation } from "react-router-dom";
-import "src/global.css";
 import {
   clearChunkReloadAttempt,
   isChunkError,
@@ -15,7 +14,7 @@ import ThemeProvider from "src/theme";
 
 import { useScrollToTop } from "src/hooks/use-scroll-to-top";
 
-import ProgressBar from "src/components/progress-bar";
+import { releaseBootSplash } from "src/components/loading-screen";
 import { MotionLazy } from "src/components/animate/motion-lazy";
 import { SettingsDrawer, SettingsProvider } from "src/components/settings";
 
@@ -31,12 +30,7 @@ import {
   QueryClientProvider,
 } from "@tanstack/react-query";
 import { ReactQueryDevtools } from "@tanstack/react-query-devtools";
-import { BrowserAgent } from "@newrelic/browser-agent/loaders/browser-agent";
-import { newRelicTracing } from "./newrelic";
-import {
-  CURRENT_ENVIRONMENT,
-  REACT_QUERY_DEVTOOLS_ENABLED,
-} from "./config-global";
+import { REACT_QUERY_DEVTOOLS_ENABLED } from "./config-global";
 import { ErrorBoundary } from "react-error-boundary";
 import ErrorFallback from "./pages/ErrorFallback";
 import UploadLimitNotification from "./components/rate-limit-modal/RateLimitModal";
@@ -75,10 +69,6 @@ const queryClient = new QueryClient({
   },
 });
 
-// Initialize the BrowserAgent, only in a build with New Relic keys.
-const newRelic = newRelicTracing(CURRENT_ENVIRONMENT);
-if (newRelic) new BrowserAgent(newRelic);
-
 export default function App() {
   useScrollToTop();
   const location = useLocation();
@@ -88,10 +78,13 @@ export default function App() {
     return registerGlobalCleanup();
   }, []);
 
+  // First commit: drop the index.html boot splash unless a SplashScreen
+  // (auth or deployment check) took it over.
   useEffect(() => {
-    if (window.Appcues) {
-      window.Appcues.page();
-    }
+    releaseBootSplash();
+  }, []);
+
+  useEffect(() => {
     syncMixpanelSessionReplay(location.pathname);
   }, [location.pathname]);
 
@@ -140,7 +133,6 @@ export default function App() {
                       <SnackbarProvider>
                         <AudioPlaybackProvider>
                           <SettingsDrawer />
-                          <ProgressBar />
                           <ErrorBoundary
                             FallbackComponent={({
                               error,

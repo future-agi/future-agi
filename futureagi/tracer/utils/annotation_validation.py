@@ -94,8 +94,7 @@ def validate_annotation_value(
                 value_str_list = [v.strip() for v in value.split(",")]
             else:
                 return (
-                    "CATEGORICAL annotation requires "
-                    '"value_str_list" or "value" field.'
+                    'CATEGORICAL annotation requires "value_str_list" or "value" field.'
                 )
 
         if not isinstance(value_str_list, list):

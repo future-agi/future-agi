@@ -12,7 +12,7 @@ const TalkRatioCell = (params) => {
     return (
       <Typography
         variant="body2"
-        sx={{ fontSize: 13, color: "text.disabled", px: 2 }}
+        sx={{ fontSize: 12, color: "text.disabled", px: 2 }}
       >
         -
       </Typography>

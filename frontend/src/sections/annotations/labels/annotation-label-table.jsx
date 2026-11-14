@@ -12,6 +12,7 @@ import {
   Typography,
 } from "@mui/material";
 import { AgGridReact } from "ag-grid-react";
+import "src/utils/ag-grid-setup";
 import Iconify from "src/components/iconify";
 import SvgColor from "src/components/svg-color";
 import { fDate } from "src/utils/format-time";

@@ -107,7 +107,7 @@ function CompactSelect({ value, onChange, options, minWidth = 130 }) {
       displayEmpty
       SelectDisplayProps={{
         style: {
-          fontSize: "13px",
+          fontSize: "12px",
           lineHeight: "32px",
           padding: "0 28px 0 10px",
           minHeight: "unset",
@@ -115,7 +115,7 @@ function CompactSelect({ value, onChange, options, minWidth = 130 }) {
       }}
       sx={{
         height: 32,
-        fontSize: "13px",
+        fontSize: "12px",
         minWidth,
         borderRadius: "6px",
         "& .MuiOutlinedInput-notchedOutline": { borderColor: "divider" },
@@ -127,7 +127,7 @@ function CompactSelect({ value, onChange, options, minWidth = 130 }) {
           borderWidth: "1px",
         },
         "& .MuiSelect-select": {
-          fontSize: "13px !important",
+          fontSize: "12px !important",
           padding: "0 28px 0 10px !important",
           lineHeight: "32px",
         },
@@ -142,7 +142,7 @@ function CompactSelect({ value, onChange, options, minWidth = 130 }) {
             borderColor: "divider",
             mt: 0.5,
             "& .MuiMenuItem-root": {
-              fontSize: "13px",
+              fontSize: "12px",
               minHeight: 32,
               py: 0.75,
             },
@@ -240,8 +240,6 @@ function BulkActionMenu({ count, selected, onClear }) {
           elevation: 3,
           sx: {
             borderRadius: 1,
-            border: "1px solid",
-            borderColor: "divider",
             minWidth: 180,
           },
         }}
@@ -378,7 +376,7 @@ export default function ErrorFeedFilters({
             sx={{
               height: 32,
               width: 280,
-              fontSize: "13px",
+              fontSize: "12px",
               borderRadius: "6px",
               "& .MuiOutlinedInput-notchedOutline": { borderColor: "divider" },
             }}

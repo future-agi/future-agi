@@ -10,7 +10,7 @@ class Model(Enum):
     GPT35_TURBO_1106 = "gpt-3.5-turbo-1106"
     GPT4 = "gpt-4"
     GPT4_O = "gpt-4o"
-    GPT4_O_AUDIO="gpt-4o-audio-preview"
+    GPT4_O_AUDIO = "gpt-4o-audio-preview"
     GPT4_32K = "gpt-4-32k"
     GPT4_1106_PREVIEW = "gpt-4-1106-preview"
     GPT4_TURBO_PREVIEW = "gpt-4-turbo-preview"
@@ -19,8 +19,8 @@ class Model(Enum):
     GPT35_TURBO_16K = "gpt-3.5-turbo-16k"
     COMMAND_LIGHT = "command-light"
     COMMAND = "command"
-    COMMAND_R = 'command-r'
-    COMMAND_R_PLUS = 'command-r-plus'
+    COMMAND_R = "command-r"
+    COMMAND_R_PLUS = "command-r-plus"
     AZURE_GPT35_TURBO = "azure/gpt-3.5-turbo"
     AZURE_GPT35_TURBO_1106 = "azure/gpt-3.5-turbo-1106"
     AZURE_GPT4 = "azure/gpt-4"
@@ -37,10 +37,10 @@ class Model(Enum):
     MISTRAL_SMALL = "mistral/mistral-small"
     MISTRAL_MEDIUM = "mistral/mistral-medium"
     MISTRAL_LARGE = "mistral/mistral-large-latest"
-    GROQ_LLAMA3_8B_8192 = 'groq/llama3-8b-8192'
-    GROQ_LLAMA3_70B_8192 = 'groq/llama3-70b-8192'
-    HUGGINGFACE_META_LLAMA_3_8B ='huggingface/meta-llama/meta-llama-3-8b'
-    HUGGINGFACE_META_LLAMA_3_70B ='huggingface/meta-llama/meta-llama-3-70b'
+    GROQ_LLAMA3_8B_8192 = "groq/llama3-8b-8192"
+    GROQ_LLAMA3_70B_8192 = "groq/llama3-70b-8192"
+    HUGGINGFACE_META_LLAMA_3_8B = "huggingface/meta-llama/meta-llama-3-8b"
+    HUGGINGFACE_META_LLAMA_3_70B = "huggingface/meta-llama/meta-llama-3-70b"
 
     @staticmethod
     def is_supported(model_name: str) -> bool:

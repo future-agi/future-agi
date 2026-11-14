@@ -375,12 +375,12 @@ const DrawerToolbar = ({
           </CustomTooltip>
         )}
 
-        {/* Imagine with Falcon — only in trace detail, not list page or read-only */}
+        {/* Imagine with AI — only in trace detail, not list page or read-only */}
         {!readOnly && onCreateImagineTab && (
           <CustomTooltip
             show
             title={
-              isOSS ? "Imagine is not available in OSS" : "Imagine with Falcon"
+              isOSS ? "Imagine is not available in OSS" : "Imagine with AI"
             }
             placement="bottom"
             arrow

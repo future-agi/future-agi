@@ -89,7 +89,7 @@ const LeftSection = () => {
                   </Typography>
                 }
                 secondary={
-                  <Typography fontSize="13px">{item.secondary}</Typography>
+                  <Typography fontSize="12px">{item.secondary}</Typography>
                 }
               />
             </ListItem>

@@ -464,6 +464,7 @@ import type {
   EvalTaskApi,
   EvalTaskCreateResponseApi,
   EvalTaskDeleteRequestApi,
+  EvalTaskDetailsResponseApi,
   EvalTaskMessageResponseApi,
   EvalTaskUpdateRequestApi,
   EvalTaskUpdateResponseApi,
@@ -865,7 +866,9 @@ import type {
   ModelHubFeedbackListParams,
   ModelHubGetEvalConfigListParams,
   ModelHubGetEvalLogsDetailsListParams,
+  ModelHubGetEvalLogsListParams,
   ModelHubGetEvalMetricsListParams,
+  ModelHubKbDownloadFileParams,
   ModelHubKbListParams,
   ModelHubKbSupportedEmbeddingModelsParams,
   ModelHubOptimisationList200,
@@ -1018,6 +1021,7 @@ import type {
   ProjectGraphDataResponseApi,
   ProjectIdListResponseApi,
   ProjectListResponseApi,
+  ProjectNameUpdateApi,
   ProjectUserGraphDataRequestApi,
   ProjectUserGraphDataResponseApi,
   ProjectUserMetricsRequestApi,
@@ -1179,6 +1183,9 @@ import type {
   Saml2AuthMicrosoftCallbackListParams,
   Saml2AuthMicrosoftReadParams,
   Saml2AuthReadParams,
+  SamplingAuditResponseApi,
+  SamplingPreviewRequestApi,
+  SamplingPreviewResponseApi,
   SavedViewDetailResponseApi,
   SavedViewListApi,
   SavedViewListResponseApi,
@@ -1394,7 +1401,6 @@ import type {
   TracerDashboardWidgetsPreviewQueryParams,
   TracerDatasetList200,
   TracerDatasetListParams,
-  TracerEvalTaskGetEvalDetails200,
   TracerEvalTaskGetEvalDetailsParams,
   TracerEvalTaskGetEvalTaskLogs200,
   TracerEvalTaskGetEvalTaskLogsParams,
@@ -1404,6 +1410,7 @@ import type {
   TracerEvalTaskListEvalTasksWithProjectNameParams,
   TracerEvalTaskListParams,
   TracerEvalTaskPauseEvalTaskParams,
+  TracerEvalTaskSamplingAuditParams,
   TracerEvalTaskUnpauseEvalTaskParams,
   TracerFeedIssuesListParams,
   TracerFeedIssuesOverviewListParams,
@@ -44185,15 +44192,34 @@ export type modelHubGetEvalLogsListResponse =
   | modelHubGetEvalLogsListResponseSuccess
   | modelHubGetEvalLogsListResponseError;
 
-export const getModelHubGetEvalLogsListUrl = () => {
-  return `/model-hub/get-eval-logs`;
+export const getModelHubGetEvalLogsListUrl = (
+  params: ModelHubGetEvalLogsListParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/model-hub/get-eval-logs?${stringifiedParams}`
+    : `/model-hub/get-eval-logs`;
 };
 
 export const modelHubGetEvalLogsList = async (
+  params: ModelHubGetEvalLogsListParams,
   options?: RequestInit,
 ): Promise<modelHubGetEvalLogsListResponse> => {
   return apiMutator<modelHubGetEvalLogsListResponse>(
-    getModelHubGetEvalLogsListUrl(),
+    getModelHubGetEvalLogsListUrl(params),
     {
       ...options,
       method: "GET",
@@ -45676,6 +45702,101 @@ export const modelHubKbDelete = async (
     ...options,
     method: "DELETE",
   });
+};
+
+export type modelHubKbDownloadFileResponse200 = {
+  data: Blob;
+  status: 200;
+};
+
+export type modelHubKbDownloadFileResponse400 = {
+  data: ModelHubErrorResponseApi;
+  status: 400;
+};
+
+export type modelHubKbDownloadFileResponse403 = {
+  data: ModelHubErrorResponseApi;
+  status: 403;
+};
+
+export type modelHubKbDownloadFileResponse404 = {
+  data: ModelHubErrorResponseApi;
+  status: 404;
+};
+
+export type modelHubKbDownloadFileResponse409 = {
+  data: ModelHubErrorResponseApi;
+  status: 409;
+};
+
+export type modelHubKbDownloadFileResponse500 = {
+  data: ModelHubErrorResponseApi;
+  status: 500;
+};
+
+export type modelHubKbDownloadFileResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 403 | 404 | 409 | 500>;
+};
+
+export type modelHubKbDownloadFileResponseSuccess =
+  modelHubKbDownloadFileResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type modelHubKbDownloadFileResponseError = (
+  | modelHubKbDownloadFileResponse400
+  | modelHubKbDownloadFileResponse403
+  | modelHubKbDownloadFileResponse404
+  | modelHubKbDownloadFileResponse409
+  | modelHubKbDownloadFileResponse500
+  | modelHubKbDownloadFileResponseDefault
+) & {
+  headers: ApiResponseHeaders;
+};
+
+export type modelHubKbDownloadFileResponse =
+  | modelHubKbDownloadFileResponseSuccess
+  | modelHubKbDownloadFileResponseError;
+
+export const getModelHubKbDownloadFileUrl = (
+  id: string,
+  params: ModelHubKbDownloadFileParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/model-hub/kb/${id}/download-file/?${stringifiedParams}`
+    : `/model-hub/kb/${id}/download-file/`;
+};
+
+/**
+ * Download an active file from the knowledge-base file collection. Requires current organization and workspace read access. Returns an attachment, never a public storage URL. Unauthorized scope is 403; a missing or deleted file is 404.
+ * @summary Download a KB file.
+ */
+export const modelHubKbDownloadFile = async (
+  id: string,
+  params: ModelHubKbDownloadFileParams,
+  options?: RequestInit,
+): Promise<modelHubKbDownloadFileResponse> => {
+  return apiMutator<modelHubKbDownloadFileResponse>(
+    getModelHubKbDownloadFileUrl(id, params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
 };
 
 export type modelHubKnowledgeBaseListResponse200 = {
@@ -72872,7 +72993,7 @@ export const tracerEvalTaskCreate = async (
 };
 
 export type tracerEvalTaskGetEvalDetailsResponse200 = {
-  data: TracerEvalTaskGetEvalDetails200;
+  data: EvalTaskDetailsResponseApi;
   status: 200;
 };
 
@@ -72926,7 +73047,7 @@ export type tracerEvalTaskGetEvalDetailsResponse =
   | tracerEvalTaskGetEvalDetailsResponseError;
 
 export const getTracerEvalTaskGetEvalDetailsUrl = (
-  params?: TracerEvalTaskGetEvalDetailsParams,
+  params: TracerEvalTaskGetEvalDetailsParams,
 ) => {
   const normalizedParams = new URLSearchParams();
 
@@ -72948,7 +73069,7 @@ export const getTracerEvalTaskGetEvalDetailsUrl = (
 };
 
 export const tracerEvalTaskGetEvalDetails = async (
-  params?: TracerEvalTaskGetEvalDetailsParams,
+  params: TracerEvalTaskGetEvalDetailsParams,
   options?: RequestInit,
 ): Promise<tracerEvalTaskGetEvalDetailsResponse> => {
   return apiMutator<tracerEvalTaskGetEvalDetailsResponse>(
@@ -73423,6 +73544,171 @@ export const tracerEvalTaskPauseEvalTask = async (
       method: "POST",
       headers: { "Content-Type": "application/json", ...options?.headers },
       body: JSON.stringify(emptyRequestApi),
+    },
+  );
+};
+
+export type tracerEvalTaskSamplingAuditResponse200 = {
+  data: SamplingAuditResponseApi;
+  status: 200;
+};
+
+export type tracerEvalTaskSamplingAuditResponse400 = {
+  data: ApiErrorResponseApi;
+  status: 400;
+};
+
+export type tracerEvalTaskSamplingAuditResponse404 = {
+  data: ApiErrorResponseApi;
+  status: 404;
+};
+
+export type tracerEvalTaskSamplingAuditResponse409 = {
+  data: ApiErrorResponseApi;
+  status: 409;
+};
+
+export type tracerEvalTaskSamplingAuditResponse429 = {
+  data: ApiErrorResponseApi;
+  status: 429;
+};
+
+export type tracerEvalTaskSamplingAuditResponse500 = {
+  data: ApiErrorResponseApi;
+  status: 500;
+};
+
+export type tracerEvalTaskSamplingAuditResponse503 = {
+  data: ApiErrorResponseApi;
+  status: 503;
+};
+
+export type tracerEvalTaskSamplingAuditResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 404 | 409 | 429 | 500 | 503>;
+};
+
+export type tracerEvalTaskSamplingAuditResponseSuccess =
+  tracerEvalTaskSamplingAuditResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type tracerEvalTaskSamplingAuditResponseError = (
+  | tracerEvalTaskSamplingAuditResponse400
+  | tracerEvalTaskSamplingAuditResponse404
+  | tracerEvalTaskSamplingAuditResponse409
+  | tracerEvalTaskSamplingAuditResponse429
+  | tracerEvalTaskSamplingAuditResponse500
+  | tracerEvalTaskSamplingAuditResponse503
+  | tracerEvalTaskSamplingAuditResponseDefault
+) & {
+  headers: ApiResponseHeaders;
+};
+
+export type tracerEvalTaskSamplingAuditResponse =
+  | tracerEvalTaskSamplingAuditResponseSuccess
+  | tracerEvalTaskSamplingAuditResponseError;
+
+export const getTracerEvalTaskSamplingAuditUrl = (
+  params: TracerEvalTaskSamplingAuditParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/tracer/eval-task/sampling_audit/?${stringifiedParams}`
+    : `/tracer/eval-task/sampling_audit/`;
+};
+
+/**
+ * Per-stratum design, realized sample, weights, Kish and balance.
+ */
+export const tracerEvalTaskSamplingAudit = async (
+  params: TracerEvalTaskSamplingAuditParams,
+  options?: RequestInit,
+): Promise<tracerEvalTaskSamplingAuditResponse> => {
+  return apiMutator<tracerEvalTaskSamplingAuditResponse>(
+    getTracerEvalTaskSamplingAuditUrl(params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type tracerEvalTaskSamplingPreviewResponse200 = {
+  data: SamplingPreviewResponseApi;
+  status: 200;
+};
+
+export type tracerEvalTaskSamplingPreviewResponse400 = {
+  data: ApiErrorResponseApi;
+  status: 400;
+};
+
+export type tracerEvalTaskSamplingPreviewResponse429 = {
+  data: ApiErrorResponseApi;
+  status: 429;
+};
+
+export type tracerEvalTaskSamplingPreviewResponse500 = {
+  data: ApiErrorResponseApi;
+  status: 500;
+};
+
+export type tracerEvalTaskSamplingPreviewResponse503 = {
+  data: ApiErrorResponseApi;
+  status: 503;
+};
+
+export type tracerEvalTaskSamplingPreviewResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 429 | 500 | 503>;
+};
+
+export type tracerEvalTaskSamplingPreviewResponseSuccess =
+  tracerEvalTaskSamplingPreviewResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type tracerEvalTaskSamplingPreviewResponseError = (
+  | tracerEvalTaskSamplingPreviewResponse400
+  | tracerEvalTaskSamplingPreviewResponse429
+  | tracerEvalTaskSamplingPreviewResponse500
+  | tracerEvalTaskSamplingPreviewResponse503
+  | tracerEvalTaskSamplingPreviewResponseDefault
+) & {
+  headers: ApiResponseHeaders;
+};
+
+export type tracerEvalTaskSamplingPreviewResponse =
+  | tracerEvalTaskSamplingPreviewResponseSuccess
+  | tracerEvalTaskSamplingPreviewResponseError;
+
+export const getTracerEvalTaskSamplingPreviewUrl = () => {
+  return `/tracer/eval-task/sampling_preview/`;
+};
+
+export const tracerEvalTaskSamplingPreview = async (
+  samplingPreviewRequestApi: SamplingPreviewRequestApi,
+  options?: RequestInit,
+): Promise<tracerEvalTaskSamplingPreviewResponse> => {
+  return apiMutator<tracerEvalTaskSamplingPreviewResponse>(
+    getTracerEvalTaskSamplingPreviewUrl(),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(samplingPreviewRequestApi),
     },
   );
 };
@@ -82002,7 +82288,7 @@ export const tracerProjectUpdateProjectConfig = async (
 };
 
 export type tracerProjectUpdateProjectNameResponse201 = {
-  data: ProjectApi;
+  data: ProjectNameUpdateApi;
   status: 201;
 };
 
@@ -82029,7 +82315,7 @@ export const getTracerProjectUpdateProjectNameUrl = () => {
 };
 
 export const tracerProjectUpdateProjectName = async (
-  projectApi: NonReadonly<ProjectApi>,
+  projectNameUpdateApi: ProjectNameUpdateApi,
   options?: RequestInit,
 ): Promise<tracerProjectUpdateProjectNameResponse> => {
   return apiMutator<tracerProjectUpdateProjectNameResponse>(
@@ -82038,7 +82324,7 @@ export const tracerProjectUpdateProjectName = async (
       ...options,
       method: "POST",
       headers: { "Content-Type": "application/json", ...options?.headers },
-      body: JSON.stringify(projectApi),
+      body: JSON.stringify(projectNameUpdateApi),
     },
   );
 };
@@ -86714,6 +87000,11 @@ export type tracerTraceVoiceCallDetailResponse404 = {
   status: 404;
 };
 
+export type tracerTraceVoiceCallDetailResponse409 = {
+  data: ApiErrorResponseApi;
+  status: 409;
+};
+
 export type tracerTraceVoiceCallDetailResponse500 = {
   data: ApiErrorResponseApi;
   status: 500;
@@ -86726,7 +87017,7 @@ export type tracerTraceVoiceCallDetailResponse503 = {
 
 export type tracerTraceVoiceCallDetailResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 200 | 400 | 404 | 500 | 503>;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 404 | 409 | 500 | 503>;
 };
 
 export type tracerTraceVoiceCallDetailResponseSuccess =
@@ -86736,6 +87027,7 @@ export type tracerTraceVoiceCallDetailResponseSuccess =
 export type tracerTraceVoiceCallDetailResponseError = (
   | tracerTraceVoiceCallDetailResponse400
   | tracerTraceVoiceCallDetailResponse404
+  | tracerTraceVoiceCallDetailResponse409
   | tracerTraceVoiceCallDetailResponse500
   | tracerTraceVoiceCallDetailResponse503
   | tracerTraceVoiceCallDetailResponseDefault

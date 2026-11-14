@@ -56,6 +56,7 @@ func (h *Handlers) Rerank(w http.ResponseWriter, r *http.Request) {
 	rc.Model = req.Model
 	rc.RerankRequest = &req
 
+	rc.Metadata["client_ip"] = h.clientIP(r)
 	setAuthMetadataFromRequest(rc, r)
 	applyCallerMetadata(rc, r, nil)
 

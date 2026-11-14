@@ -127,10 +127,10 @@ class FiExperiment(TypedDict):
     - prompt_template: The prompt template you are using for your LLM inference.
     - dataset_name: The name of the dataset you are using.
     """
+
     experiment_name: str
     experiment_description: str
     language_model_provider: str
     language_model_id: str
     prompt_template: list[OpenAiPromptMessage]
     dataset_name: str
-
