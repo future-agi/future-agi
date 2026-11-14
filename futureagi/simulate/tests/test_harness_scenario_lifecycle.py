@@ -12,6 +12,7 @@ from simulate.models import (
     HostedHarnessScenario,
 )
 from simulate.services.harness_scenario_lifecycle import scenario_lifecycle
+from simulate.services.harness_versioning.versions import record_proofs
 from simulate.tests.test_harness_affected_scenarios import (
     LOOKUP_KEYS,
     PROVED,
@@ -225,8 +226,10 @@ def test_legacy_survives_missing_control(user, workspace, storage):
     _proofs(environment, {REFUND_KEYS[0]: {"holds": True}})
     views_before = _views(environment)
     assert views_before[REFUND_KEYS[0]]["legacy"] is True
-    _proofs(
-        environment,
+    # The first certify writes through record_proofs, which replaces the old entry key by key.
+    record_proofs(
+        environment.suite_version,
+        environment.environment_version,
         {
             REFUND_KEYS[0]: {
                 "format": 2,
@@ -241,7 +244,9 @@ def test_legacy_survives_missing_control(user, workspace, storage):
                 "blocked_reason": "answer_leaked",
             },
         },
+        None,
     )
+    cache.clear()
 
     views = _views(environment)
 

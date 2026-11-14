@@ -649,6 +649,18 @@ def _validation_status(proofs: Mapping[str, Any], keys: list[str]) -> str:
     return HarnessSuiteValidation.Status.FAILED
 
 
+def _legacy_validated(entry: object, certified: bool) -> bool:
+    """Whether a legacy pair validated this key before a format-2 proof: its old proof held, an
+    earlier re-proof kept the mark, or the pair was certified with no proof for it."""
+    if isinstance(entry, Mapping):
+        if entry.get("legacy_validated") is True:
+            return True
+        if entry.get("format") != 2:
+            return entry.get("holds") is True
+        return certified and entry.get("blocked_reason") == "validation_incomplete"
+    return certified
+
+
 def record_proofs(
     suite_version: HarnessSuiteVersion,
     environment_version: HarnessEnvironmentVersion,
@@ -695,9 +707,25 @@ def record_proofs(
         merged = (
             dict(validation.proofs or {}) if isinstance(validation.proofs, dict) else {}
         )
+        certified = suite_version.lifecycle_legacy and (
+            HarnessAssembledBundle._base_manager.filter(
+                suite_version_id=suite_version.id,
+                environment_version_id=environment_version.id,
+                state=HarnessAssembledBundle.State.READY,
+            ).exists()
+        )
         for key, entry in incoming.items():
             if entry.get("blocked_reason") == "validation_incomplete" and key in merged:
                 continue
+            if (
+                suite_version.lifecycle_legacy
+                and entry.get("format") == 2
+                and entry.get("proved") is not True
+                and _legacy_validated(merged.get(key), certified)
+            ):
+                # The re-proof replaces the old entry, so the key keeps the fact that it was
+                # validated by legacy on this pair (section 4.15 reads it).
+                entry = {**entry, "legacy_validated": True}
             merged[key] = entry
         validation.proofs = merged
         validation.status = _validation_status(merged, [key for key, _, _ in members])

@@ -293,13 +293,15 @@ def _legacy_keys(
             continue
         proofs = proofs_by_suite.get(suite_id) or {}
         entry = proofs.get(key) if isinstance(proofs, Mapping) else None
-        if (
-            isinstance(entry, Mapping)
-            and entry.get("format") != 2
-            and entry.get("holds") is True
+        if isinstance(entry, Mapping) and (
+            entry.get("legacy_validated") is True
+            or (entry.get("format") != 2 and entry.get("holds") is True)
         ):
             found[key] = entry
-        elif entry is None and suite_id in certified:
+        elif suite_id in certified and (
+            entry is None or entry.get("blocked_reason") == "validation_incomplete"
+        ):
+            # A `validation_incomplete` entry counts as no format-2 proof (section 4.15).
             found.setdefault(key, None)
     return found
 
