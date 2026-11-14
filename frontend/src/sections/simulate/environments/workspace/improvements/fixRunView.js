@@ -411,8 +411,8 @@ export function describeChecks(
   const failed = tiers.findIndex((t) => t.status === "failed");
   return tiers.map((t, i) => {
     // The engine marks a tier it skipped after a failure; one after a failed must-pass still ran
-    // (a final check runs every tier), so a skip there is unknown, not "not run". A verdict
-    // without the marker falls back to the order.
+    // (a final check runs every tier), so a skip there is unknown, not "not run". Only a skip
+    // with no detail at all falls back to the order; one with any other detail is unknown.
     const marked = /^not run/.test(t.detail || "");
     const notRun =
       t.status === "skipped" &&
