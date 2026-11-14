@@ -112,6 +112,21 @@ describe("analyticsUrl", () => {
     ).toBe("https://app.example.test/dashboard#tab?view=grid");
   });
 
+  it("removes a parameter fragment whose later value holds a question mark", () => {
+    expect(
+      analyticsUrl(
+        `https://app.example.test/dashboard#sso_token=${CODE}&next=/dashboard?tab=1`,
+      ),
+    ).toBe("https://app.example.test/dashboard");
+  });
+
+  it.each([
+    "https://docs.example.test/reference/callback?code=python&state=open&c=3",
+    "/dashboard/settings/callback?code=python&state=open",
+  ])("keeps code and state on the other callback page %s", (href) => {
+    expect(analyticsUrl(href)).toBe(href);
+  });
+
   it("cleans a link that was percent-encoded twice inside a parameter", () => {
     const twice = encodeURIComponent(
       encodeURIComponent(`/shared/${CODE}?sso_token=${CODE}`),

@@ -44,6 +44,13 @@ const decodedPath = (pathname) => {
 const pathSegments = (pathname) =>
   decodedPath(pathname).toLowerCase().split("/").filter(Boolean);
 
+const endsWith = (segments, ...expected) =>
+  segments.length >= expected.length &&
+  expected.every(
+    (segment, index) =>
+      segments[segments.length - expected.length + index] === segment,
+  );
+
 const isPath = (segments, ...expected) =>
   segments.length === expected.length &&
   expected.every((segment, index) => segments[index] === segment);
@@ -65,9 +72,14 @@ const PAGE_PARAMS = [
     params: ["request_id", "code", "state"],
   },
   {
-    // Sign-in and connector callbacks (/saml2_auth/..., .../callback/).
+    // Sign-in and connector callbacks: /saml2_auth/...,
+    // /integrations/slack/callback/ and
+    // /falcon-ai/mcp-connectors/<id>/oauth/callback/.
     matches: (segments) =>
-      segments.includes("saml2_auth") || segments.includes("callback"),
+      segments.includes("saml2_auth") ||
+      endsWith(segments, "integrations", "slack", "callback") ||
+      (segments.includes("mcp-connectors") &&
+        endsWith(segments, "oauth", "callback")),
     params: ["code", "state", "c"],
   },
 ];
@@ -159,8 +171,9 @@ const cleanHash = (hash, removed, depth) => {
     return `#${route[1]}${cleanUrl(route[2], depth + 1)}`;
   }
   // A fragment with its own query ("#tab?view=grid"): the query is cleaned.
+  // A "?" after the first parameter ("#a=1&next=/x?y=2") is part of a value.
   const queryStart = hash.indexOf("?");
-  if (queryStart >= 0) {
+  if (queryStart >= 0 && !/[=&]/.test(hash.slice(1, queryStart))) {
     const query = cleanSearch(hash.slice(queryStart), removed, depth);
     return `${hash.slice(0, queryStart)}${query}`;
   }

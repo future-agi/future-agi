@@ -83,6 +83,7 @@ describe("runPromptEventFields", () => {
     expect(fields.model_options).toEqual({
       maxTokens: 512,
       presencePenalty: 0.5,
+      frequencyPenalty: 0,
       temperature: 0.1,
       topP: 0.9,
       responseFormat: "json_object",
@@ -91,6 +92,18 @@ describe("runPromptEventFields", () => {
       toolChoice: "auto",
       tools: ["tool-9"],
     });
+  });
+
+  it("reports the frequency penalty setting", () => {
+    const fields = runPromptEventFields("dataset-6", {
+      config: {
+        run_prompt_config: runPromptConfig([
+          { label: "Frequency Penalty", value: 0.7 },
+        ]),
+      },
+    });
+
+    expect(fields.model_options.frequencyPenalty).toBe(0.7);
   });
 
   it("sends a saved response schema's id and format, not the schema", () => {

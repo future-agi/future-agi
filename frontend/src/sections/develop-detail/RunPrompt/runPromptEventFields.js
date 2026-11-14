@@ -62,6 +62,7 @@ export const runPromptEventFields = (datasetId, submitObject) => {
     model_options: {
       maxTokens: setting("max_tokens", "maxTokens"),
       presencePenalty: setting("presence_penalty", "presencePenalty"),
+      frequencyPenalty: setting("frequency_penalty", "frequencyPenalty"),
       temperature: setting("temperature", "temperature"),
       topP: setting("top_p", "topP"),
       ...responseFormatFields(config.response_format ?? config.responseFormat),
