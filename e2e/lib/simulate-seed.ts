@@ -239,6 +239,10 @@ export function seedHarnessEnvironment(opts: {
   certified?: boolean;
   productionOnly?: 'lookup_order' | 'issue_refund';
   failedCheck?: 'lookup_order' | 'issue_refund';
+  /** The default pair's proofs by key; without it every case is proved. A key left out has no proof. */
+  proofs?: Record<string, Record<string, unknown>>;
+  /** Keys archived with their content kept. */
+  archived?: string[];
 }): HarnessEnvironmentSeed {
   const suffix = seedSuffix();
   return runSeedScript(
@@ -255,6 +259,8 @@ export function seedHarnessEnvironment(opts: {
         certified: opts.certified ?? true,
         production_only: opts.productionOnly ?? null,
         failed_check: opts.failedCheck ?? null,
+        proofs: opts.proofs ?? null,
+        archived: opts.archived ?? [],
       }),
     },
   ) as HarnessEnvironmentSeed;
