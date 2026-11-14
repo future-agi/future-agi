@@ -4,6 +4,7 @@ from uuid import UUID
 from django.db.models import Manager, QuerySet
 from rest_framework.decorators import action
 from rest_framework.mixins import UpdateModelMixin
+
 from tfc.utils.api_contracts import validated_request
 from tfc.utils.api_errors import build_error_envelope
 from tfc.utils.api_serializers import ApiErrorResponseSerializer
@@ -15,6 +16,17 @@ from tracer.serializers.eval_sampling import (
     SamplingAuditResponseSerializer,
     SamplingPreviewRequestSerializer,
     SamplingPreviewResponseSerializer,
+)
+from tracer.services.eval_tasks.sampling.audit import (
+    SamplingAuditIncomplete,
+    SamplingAuditNotFound,
+    SamplingAuditTooLarge,
+    sampling_audit,
+)
+from tracer.services.eval_tasks.sampling.policy import (
+    InvalidSamplingPolicy,
+    policy_task_filters,
+    population_changed,
 )
 from tracer.services.eval_tasks.sampling.preview_guard import (
     PreviewGuardUnavailable,
@@ -28,18 +40,6 @@ from tracer.services.eval_tasks.sampling.service import (
 from tracer.services.filter_principal_context import (
     FilterPrincipalContextError,
     bind_request_my_annotations_principal,
-)
-
-from tracer.services.eval_tasks.sampling.audit import (
-    SamplingAuditIncomplete,
-    SamplingAuditNotFound,
-    SamplingAuditTooLarge,
-    sampling_audit,
-)
-from tracer.services.eval_tasks.sampling.policy import (
-    InvalidSamplingPolicy,
-    policy_task_filters,
-    population_changed,
 )
 
 _UNAVAILABLE = (
@@ -109,6 +109,7 @@ class SamplingPreviewMixin(UpdateModelMixin):
         incoming = serializer.validated_data
         if population_changed(serializer.instance, incoming):
             from rest_framework.exceptions import ValidationError
+
             from tracer.models.observation_span import EvalLogger
 
             if EvalLogger.objects.filter(

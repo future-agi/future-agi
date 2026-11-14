@@ -19,9 +19,9 @@ from datetime import UTC, datetime
 from typing import cast
 
 from django.db.models import Count, Max, Min, Q
+
 from tracer.models.eval_sampling import EvalSamplingCohort, EvalSamplingMember
 from tracer.models.eval_task import EvalTask
-
 from tracer.services.eval_tasks.sampling import stats
 from tracer.services.eval_tasks.sampling.policy import (
     InvalidSamplingPolicy,
