@@ -149,8 +149,8 @@ const AddNewVersionDrawer = ({ open, onClose, latestVersion }) => {
                 target="_blank"
                 rel="noopener noreferrer"
                 fontWeight="fontWeightMedium"
-                fontSize="13px"
-                sx={{ textDecoration: "underline", fontSize: "13px" }}
+                fontSize="12px"
+                sx={{ textDecoration: "underline", fontSize: "12px" }}
               >
                 Learn more
               </Link>{" "}

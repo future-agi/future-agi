@@ -19,7 +19,7 @@ const AnnotationValues = ({ value, annotationType, maxChips, settings }) => {
         : 0;
 
     return (
-      <Typography sx={{ fontSize: 13, color: "text.primary" }} noWrap>
+      <Typography sx={{ fontSize: 12, color: "text.primary" }} noWrap>
         {shown?.join(" · ")}
         {overflow > 0 && (
           <Box

@@ -7,6 +7,7 @@ import uuid
 from datetime import datetime
 
 from django.db import connection, models
+from django.db.models.functions import Cast
 
 from model_hub.models.develop_dataset import Column, Row
 from simulate.models.agent_definition import AgentDefinition
@@ -789,37 +790,37 @@ class TestExecutionUtils:
                 avg_response_time=models.Avg("response_time_ms"),
                 # Chat metrics from conversation_metrics_data JSONField
                 total_tokens=models.Avg(
-                    models.Cast(
+                    Cast(
                         models.F("conversation_metrics_data__total_tokens"),
                         models.IntegerField(),
                     )
                 ),
                 input_tokens=models.Avg(
-                    models.Cast(
+                    Cast(
                         models.F("conversation_metrics_data__input_tokens"),
                         models.IntegerField(),
                     )
                 ),
                 output_tokens=models.Avg(
-                    models.Cast(
+                    Cast(
                         models.F("conversation_metrics_data__output_tokens"),
                         models.IntegerField(),
                     )
                 ),
                 avg_latency_ms=models.Avg(
-                    models.Cast(
+                    Cast(
                         models.F("conversation_metrics_data__avg_latency_ms"),
                         models.IntegerField(),
                     )
                 ),
                 turn_count=models.Avg(
-                    models.Cast(
+                    Cast(
                         models.F("conversation_metrics_data__turn_count"),
                         models.IntegerField(),
                     )
                 ),
                 csat_score=models.Avg(
-                    models.Cast(
+                    Cast(
                         models.F("conversation_metrics_data__csat_score"),
                         models.FloatField(),
                     )

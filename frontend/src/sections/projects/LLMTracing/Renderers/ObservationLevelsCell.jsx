@@ -90,7 +90,7 @@ const LevelBadge = ({ icon, color, count }) => (
     <Iconify icon={icon} width={14} sx={{ color }} />
     <Typography
       sx={{
-        fontSize: 13,
+        fontSize: 12,
         fontWeight: 500,
         color: "text.primary",
         fontVariantNumeric: "tabular-nums",

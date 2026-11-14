@@ -27,10 +27,10 @@ class TestMissingBillingYaml:
 
     def test_missing_file_non_cloud_returns_empty_config(self):
         BillingConfig._instance = None
-        with _missing_path(), patch(
-            "ee.usage.deployment.DeploymentMode.is_cloud", return_value=False
-        ), patch(
-            "ee.usage.deployment.DeploymentMode.get_mode", return_value="oss"
+        with (
+            _missing_path(),
+            patch("ee.usage.deployment.DeploymentMode.is_cloud", return_value=False),
+            patch("ee.usage.deployment.DeploymentMode.get_mode", return_value="oss"),
         ):
             config = BillingConfig.get()
 
@@ -44,10 +44,10 @@ class TestMissingBillingYaml:
 
     def test_missing_file_non_cloud_metering_fails_open(self):
         BillingConfig._instance = None
-        with _missing_path(), patch(
-            "ee.usage.deployment.DeploymentMode.is_cloud", return_value=False
-        ), patch(
-            "ee.usage.deployment.DeploymentMode.get_mode", return_value="ee"
+        with (
+            _missing_path(),
+            patch("ee.usage.deployment.DeploymentMode.is_cloud", return_value=False),
+            patch("ee.usage.deployment.DeploymentMode.get_mode", return_value="ee"),
         ):
             from ee.usage.services.metering import check_usage
 
@@ -57,8 +57,9 @@ class TestMissingBillingYaml:
 
     def test_missing_file_on_cloud_raises(self):
         BillingConfig._instance = None
-        with _missing_path(), patch(
-            "ee.usage.deployment.DeploymentMode.is_cloud", return_value=True
+        with (
+            _missing_path(),
+            patch("ee.usage.deployment.DeploymentMode.is_cloud", return_value=True),
         ):
             with pytest.raises(BillingConfigError, match="not found"):
                 BillingConfig.get()

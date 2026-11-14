@@ -115,9 +115,9 @@ organization (unlimited retention means never). A current-version expiry
 deletes live, still-referenced media regardless of the organization's policy;
 the erase outbox is what implements per-organization retention.
 
-## Database fences (0133)
+## Database fences (0137)
 
-`0133_attachment_fences` installs plpgsql triggers. Their policy tuple
+`0137_attachment_fences` installs plpgsql triggers. Their policy tuple
 (`enabled`, `require_media_redaction`, `allow_unredacted_media_with_text_pii`,
 `record_audio`, `allow_import`), their identity array (including the
 placement columns) and their state-transition table are literal SQL. Adding a
@@ -125,7 +125,7 @@ scope policy column, an immutable column or a state needs a follow-up RunSQL
 migration that redefines the function, with its own `UPDATE_SAFETY`
 declaration. A model change alone is not fenced.
 
-`0132`'s deferred foreign keys take `SHARE ROW EXCLUSIVE` on `accounts_user`,
+`0136`'s deferred foreign keys take `SHARE ROW EXCLUSIVE` on `accounts_user`,
 `accounts_organization`, `accounts_workspace`, `accounts_orgapikey` and
 `tracer_project` for the length of that transaction. Run `migrate` with a
 `lock_timeout` and retry on timeout.
