@@ -76,6 +76,7 @@ def _as_context_dict(
         return {k: v for k, v in asdict(context).items() if v is not None}
     return context
 
+
 LITELLM_EXCEPTION_ERROR_CODES = {
     BadRequestError: "LITELLM_BAD_REQUEST",
     UnsupportedParamsError: "LITELLM_UNSUPPORTED_PARAMS",

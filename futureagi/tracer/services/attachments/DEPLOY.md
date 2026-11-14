@@ -115,9 +115,9 @@ organization (unlimited retention means never). A current-version expiry
 deletes live, still-referenced media regardless of the organization's policy;
 the erase outbox is what implements per-organization retention.
 
-## Database fences (0133)
+## Database fences (0137)
 
-`0133_attachment_fences` installs plpgsql triggers. Their policy tuple
+`0137_attachment_fences` installs plpgsql triggers. Their policy tuple
 (`enabled`, `require_media_redaction`, `allow_unredacted_media_with_text_pii`,
 `record_audio`, `allow_import`), their identity array (including the
 placement columns) and their state-transition table are literal SQL. Adding a
@@ -125,15 +125,15 @@ scope policy column, an immutable column or a state needs a follow-up RunSQL
 migration that redefines the function, with its own `UPDATE_SAFETY`
 declaration. A model change alone is not fenced.
 
-`0132`'s deferred foreign keys take `SHARE ROW EXCLUSIVE` on `accounts_user`,
+`0136`'s deferred foreign keys take `SHARE ROW EXCLUSIVE` on `accounts_user`,
 `accounts_organization`, `accounts_workspace`, `accounts_orgapikey` and
 `tracer_project` for the length of that transaction. Run `migrate` with a
 `lock_timeout` and retry on timeout.
 
-`0135_attachment_recordings` adds one more foreign key to `accounts_user`:
+`0139_attachment_recordings` adds one more foreign key to `accounts_user`:
 `tracer_attachmentproviderconnection.created_by_id` (nullable, `SET_NULL` in
 the model). Its deferred `ADD CONSTRAINT ... FOREIGN KEY` takes
-`SHARE ROW EXCLUSIVE` on `accounts_user` until 0135's transaction commits, and
+`SHARE ROW EXCLUSIVE` on `accounts_user` until 0139's transaction commits, and
 its other foreign keys take the same lock on the attachment tables they
 reference. The same `lock_timeout` advice applies. With `PG_DIRECT_HOST` set,
 `manage.py migrate --database default_direct` connects past PgBouncer with
@@ -219,7 +219,7 @@ per 30 s per worker, one at a time) and are not separately reserved.
 Imports are a per-project opt-in: `AttachmentScope.allow_import` (default
 off). Admission needs it on the scope AND in the capture session's policy
 snapshot, so switching it off denies live sessions and queued jobs at once.
-`allow_import` is in the 0133 scope-fence policy tuple, so flipping it (either
+`allow_import` is in the 0137 scope-fence policy tuple, so flipping it (either
 way) must bump `policy_version` in the same update. Live capture sessions then
 carry a stale policy version and the SDK has to bootstrap a new session before
 it can import. While it is on, bootstrap advertises an import source in
