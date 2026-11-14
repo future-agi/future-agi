@@ -48,6 +48,10 @@ USER_NATIVE_SPAN_DIMENSIONS: dict[str, str] = {
         "trace_name",
     )
 }
+# The native-user replay uses this value as a *bare identifier* when naming
+# ``latest_<column>``. Its membership flag is compiled independently by the
+# shared filter builder and resolves the name from the root via a semi-join.
+USER_NATIVE_SPAN_DIMENSIONS["trace_name"] = "trace_name"
 
 
 class MembershipTerm(NamedTuple):
@@ -2127,6 +2131,27 @@ class UserListQueryBuilder(BaseQueryBuilder):
         flags, condition, params, terms = compile_user_membership_leaf(
             item, project_id=str(project_id), namespace=f"native_leaf_{index}"
         )
+        # A trace-name leaf resolves a child from its root through a semi-join
+        # bounded by the list's own window; every caller of these flags binds
+        # the same values under these names.
+        start_date, end_date = self.parse_time_range(self.filters)
+        params = {**params, "start_date": start_date, "end_date": end_date}
+        if self.project_ids is not None:
+            # The graph compiles for one project; an organization Users list
+            # binds only project_ids. A root-name semi-join must use the same
+            # authorized project set while preserving (project_id, trace_id)
+            # correlation, even when trace IDs repeat in different projects.
+            scalar_scope = "project_id = %(project_id)s"
+            organization_scope = "project_id IN %(project_ids)s"
+            flags = tuple(
+                flag.replace(scalar_scope, organization_scope) for flag in flags
+            )
+            terms = tuple(
+                term._replace(
+                    predicate=term.predicate.replace(scalar_scope, organization_scope)
+                )
+                for term in terms
+            )
         return flags, condition, params, self._native_witness_flag(terms)
 
     @staticmethod
@@ -2245,6 +2270,8 @@ class UserListQueryBuilder(BaseQueryBuilder):
             FROM (
                 SELECT
                     toString({resolved_eu}) AS end_user_id,
+                    project_id,
+                    trace_id,
                     latest_start_time AS native_span_start_time,
                     {projected}
                 FROM latest_candidate_spans

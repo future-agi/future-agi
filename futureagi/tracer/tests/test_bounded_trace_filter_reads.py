@@ -34,6 +34,7 @@ from tracer.services.clickhouse.query_builders.voice_call_list import (
 )
 from tracer.services.clickhouse.query_service import QueryResult
 from tracer.services.clickhouse.read_budget import ReadDeadlineExceeded
+from tracer.services.clickhouse.trace_name_sql import TRACE_NAME_SQL
 from tracer.services.clickhouse.v2.query_builders.session_list import (
     SessionListQueryBuilderV2,
 )
@@ -3800,7 +3801,7 @@ def test_trace_mixed_root_and_any_span_filters_keep_distinct_scopes() -> None:
 
     assert "lowerUTF8(toString(trace_name))" not in seed_sql
     assert "has(span_attr_str.keys, %(latest_filter_key_1)s)" in seed_sql
-    assert "argMax(trace_name, _peerdb_version)" in match_sql
+    assert f"argMax({TRACE_NAME_SQL}, _peerdb_version)" in match_sql
     assert "mapContains(span_attr_str, %(latest_filter_key_1)s)" in match_sql
     assert params["latest_filter_param_0"] == "café"
     assert params["latest_filter_param_1"] == "rejected"
@@ -4771,7 +4772,7 @@ def test_trace_search_is_a_literal_latest_root_predicate_in_bounded_reads() -> N
     match_sql, match_params = builder.build_filter_match_query(["trace-a"])
 
     literal_seed = (
-        "positionUTF8(lowerUTF8(toString(trace_name)), "
+        f"positionUTF8(lowerUTF8(toString({TRACE_NAME_SQL})), "
         "lowerUTF8(toString(%(latest_filter_param_0)s))) > 0"
     )
     literal_latest = (
@@ -4780,7 +4781,10 @@ def test_trace_search_is_a_literal_latest_root_predicate_in_bounded_reads() -> N
     )
     assert literal_seed in seed_sql
     assert literal_latest in match_sql
-    assert "argMax(trace_name, _peerdb_version) AS latest_column_value_0" in match_sql
+    assert (
+        f"argMax({TRACE_NAME_SQL}, _peerdb_version) AS latest_column_value_0"
+        in match_sql
+    )
     assert seed_params["latest_filter_param_0"] == "100%_D"
     assert match_params["latest_filter_param_0"] == "100%_D"
     assert "ILIKE" not in seed_sql + match_sql
@@ -4814,7 +4818,7 @@ def test_trace_search_and_any_span_filter_share_bounded_classifier() -> None:
     # a root predicate, so it belongs in the ordered-root seed and classifier.
     assert "has(span_attr_str.keys, %(latest_filter_key_0)s)" in anchor_sql
     assert "latest_filter_param_1" not in anchor_params
-    assert "positionUTF8(lowerUTF8(toString(trace_name))" in ordered_sql
+    assert f"positionUTF8(lowerUTF8(toString({TRACE_NAME_SQL}))" in ordered_sql
     assert ordered_params["latest_filter_param_1"] == "SyntheticAgent"
     assert "latest_attr_value_0" in match_sql
     assert "latest_column_value_1" in match_sql

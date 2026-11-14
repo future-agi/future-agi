@@ -17,6 +17,10 @@ from tracer.services.clickhouse.query_builders.voice_filter_expressions import (
     VOICE_NORMALIZED_ROOT_SYSTEM_METRIC_EXPRS,
     voice_conversation_root_expression,
 )
+from tracer.services.clickhouse.trace_name_sql import (
+    TRACE_NAME_SQL,
+    TRACE_ROOT_LOOKBACK,
+)
 from tracer.utils.constants import (
     LIST_OPS,
     NO_VALUE_OPS,
@@ -578,6 +582,7 @@ class ClickHouseFilterBuilder:
         "latency_ms",
         "avg_latency",
         "name",  # trace name = root span name; restrict to root spans to avoid child-span false positives
+        "trace_name",
     }
 
     # System metric column mappings (frontend name -> ClickHouse column)
@@ -627,7 +632,7 @@ class ClickHouseFilterBuilder:
         "trace_session_id": "trace_session_id",
         "name": "name",
         "span_name": "name",
-        "trace_name": "trace_name",
+        "trace_name": TRACE_NAME_SQL,
         "start_time": "start_time",
         "end_time": "end_time",
         "created_at": "created_at",
@@ -2031,6 +2036,31 @@ class ClickHouseFilterBuilder:
         if not inner:
             return None
 
+        if col_id == "trace_name":
+            # The child's materialized value is deliberately empty after 028.
+            # Compare the root, but retain every span of its trace. Keep both
+            # tenant identity and the physical read window in the semi-join.
+            project_pred = (
+                "project_id IN %(project_ids)s"
+                if self._org_scoped
+                else "project_id = %(project_id)s"
+            )
+            if self.query_mode == self.QUERY_MODE_SPAN:
+                # FINAL collapses the physical root versions before deciding
+                # its live name. A deleted or renamed old root cannot witness
+                # membership just because a newer tombstone is still unmerged.
+                return (
+                    f"(project_id, trace_id) IN ("
+                    f"SELECT project_id, trace_id FROM spans FINAL "
+                    f"PREWHERE {project_pred} "
+                    f"AND start_time >= %(start_date)s - {TRACE_ROOT_LOOKBACK} "
+                    f"AND start_time < %(end_date)s "
+                    f"WHERE is_deleted = 0 "
+                    f"AND (parent_span_id IS NULL OR parent_span_id = '') "
+                    f"AND ({inner}))"
+                )
+            # Trace-list callers historically use the trace_id membership
+            # form below; their root lookup is independently window-bounded.
         if self.query_mode == self.QUERY_MODE_SPAN:
             return inner
         # Trace-list mode: wrap in trace_id subquery so filters on
@@ -2430,6 +2460,7 @@ class ClickHouseFilterBuilder:
         "observation_type",
         "name",
         "trace_name",
+        TRACE_NAME_SQL,
         "model",
         "provider",
     }

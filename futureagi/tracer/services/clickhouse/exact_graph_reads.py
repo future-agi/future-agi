@@ -4205,6 +4205,10 @@ def _user_aggregate_source_sql(
         **filter_params,
         **membership_params,
         "project_id": project_id,
+        # A trace-name membership flag resolves an in-window child from its
+        # possibly earlier root. Both limits are bound by this read budget.
+        "start_date": start_date,
+        "end_date": end_date,
         "snapshot_start_date": start_date,
         "snapshot_end_date": end_date,
     }

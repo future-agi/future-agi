@@ -23,6 +23,7 @@ from tracer.services.clickhouse.query_builders.filters import ClickHouseFilterBu
 from tracer.services.clickhouse.query_builders.user_list import (
     USER_NATIVE_SPAN_DIMENSIONS,
 )
+from tracer.services.clickhouse.trace_name_sql import TRACE_NAME_SQL
 from tracer.services.clickhouse.v2.query_builders import user_time_series
 from tracer.services.clickhouse.v2.query_builders.user_time_series import (
     SPANS_FILTERABLE_MATERIALIZED_COLUMNS,
@@ -177,11 +178,18 @@ def _trace_name_leaf():
 def _names_trace_name(query: str) -> None:
     reads = _final_reads(query)
     assert reads, "no FINAL snapshot read"
+    assert TRACE_NAME_SQL in query
+    # Root-name membership adds a bounded FINAL root read alongside the
+    # snapshot. Its projection is the trace's tenant-scoped identity, not *.
+    assert any(
+        [part.strip() for part in read.split(",")] == ["*", "trace_name"]
+        for read in reads
+    )
     for selected in reads:
-        assert [part.strip() for part in selected.split(",")] == [
-            "*",
-            "trace_name",
-        ], selected
+        assert [part.strip() for part in selected.split(",")] in (
+            ["*", "trace_name"],
+            ["project_id", "trace_id"],
+        ), selected
 
 
 def test_the_standalone_membership_snapshot_names_trace_name():
