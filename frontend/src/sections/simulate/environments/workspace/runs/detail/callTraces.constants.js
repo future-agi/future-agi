@@ -116,4 +116,17 @@ export const CALL_WORKERS_COPY = {
   // Past its action deadline: the world refused its later calls; its execution was not stopped.
   workersPastDeadline: (names) => `Past their action deadline: ${names}`,
   workersNotDeclared: (names) => `Not declared: ${names}`,
+  // What happened to a cut-short worker when the call ended. Never "stopped" for one worker: the harness cannot stop
+  // a worker inside the app's one process, only the run's whole sandbox.
+  cleanup: {
+    stopped_with_sandbox: (time) =>
+      `Stopped when the run's sandbox was removed, ${time}`,
+    still_running: "Still running when the call ended",
+    unknown: "Cleanup not confirmed",
+  },
+  workerCleanup: (name, cleanup) => `${name}: ${cleanup}`,
+  stoppedByUser:
+    "Stopped by the user during this call. Turns up to the stop are shown; the agent's reply to the last message never arrived.",
+  stoppedByUserNoEvidence:
+    "Stopped by the user; nothing from the call was kept.",
 };

@@ -294,6 +294,7 @@ export default function ChatCallDrawer({
                 <CallWorkersPanel
                   key={task.id}
                   callExecutionId={task.id}
+                  callStatus={task.status}
                   onOpenTrace={openTrace}
                   traceIds={traceIds}
                 />

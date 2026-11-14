@@ -997,4 +997,70 @@ describe("CallWorkersPanel", () => {
       expect(screen.queryByTestId("worker-row")).toBeNull();
     });
   });
+
+  describe("a cut-short worker and a stopped call", () => {
+    const cut = (cleanup) => ({
+      ...WORKERS[0],
+      state: "cancelled",
+      ...(cleanup ? { cleanup } : {}),
+    });
+
+    it.each([
+      [
+        { status: "stopped_with_sandbox", at: "2026-10-31T12:01:00Z" },
+        "Order-lookup worker: Stopped when the run's sandbox was removed",
+      ],
+      [
+        { status: "still_running", at: null },
+        "Order-lookup worker: Still running when the call ended",
+      ],
+      [
+        { status: "unknown", at: null },
+        "Order-lookup worker: Cleanup not confirmed",
+      ],
+    ])("shows each cleanup status (%o)", (cleanup, text) => {
+      result = {
+        data: timeline({ workers: [cut(cleanup)] }),
+        isLoading: false,
+        isError: false,
+      };
+      render(<CallWorkersPanel callExecutionId="c1" />);
+      expect(screen.getByTestId("worker-cleanup").textContent).toContain(text);
+    });
+
+    it("shows no cleanup line on an old record", () => {
+      result = {
+        data: timeline({ workers: [cut(null)] }),
+        isLoading: false,
+        isError: false,
+      };
+      render(<CallWorkersPanel callExecutionId="c1" />);
+      expect(screen.queryByTestId("worker-cleanup")).toBeNull();
+    });
+
+    it("says a cancelled call with events was stopped by the user, and only then", () => {
+      render(<CallWorkersPanel callExecutionId="c1" callStatus="cancelled" />);
+      expect(screen.getByTestId("stopped-by-user").textContent).toBe(
+        "Stopped by the user during this call. Turns up to the stop are shown; the agent's reply to the last message never arrived.",
+      );
+      cleanup();
+      render(<CallWorkersPanel callExecutionId="c1" callStatus="completed" />);
+      expect(screen.queryByTestId("stopped-by-user")).toBeNull();
+    });
+
+    it("says nothing was kept for a cancelled call with no evidence", () => {
+      result = {
+        data: timeline({ collection: "no_evidence", events: [], steps: [] }),
+        isLoading: false,
+        isError: false,
+      };
+      render(<CallWorkersPanel callExecutionId="c1" callStatus="cancelled" />);
+      expect(
+        screen.getByText(
+          "Stopped by the user; nothing from the call was kept.",
+        ),
+      ).toBeInTheDocument();
+      expect(screen.queryByTestId("stopped-by-user")).toBeNull();
+    });
+  });
 });

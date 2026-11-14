@@ -82,6 +82,15 @@ export const TRIAL_CHANGES_COPY = {
   usageBy: (who, model, line) =>
     `${who}${model ? ` on ${model}` : ""}: ${line}`,
   usageTotal: (line) => `In all: ${line}, counted in the simulator's usage`,
+  // Records two or more participants named; the key states what the calls named, never a database identity.
+  sharedHeading: "Records touched by more than one participant",
+  sharedRecord: (one) => `${one.argument} ${one.value}`,
+  sharedAction: (action, who) =>
+    `${who} · ${action.tool} · ${action.outcome}${action.write === true ? " (write)" : ""}`,
+  committedWrites: (n) =>
+    `Committed writes: ${n} (tools with recorded effects)`,
+  sharedTruncated:
+    "More records not shown: this trial's record reached its size limit",
   nothing: "Did nothing",
   empty: "Nothing changed in the world in this trial.",
 };

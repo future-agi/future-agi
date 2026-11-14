@@ -40,6 +40,7 @@ export default function TrialChangesPanel({ trialState }) {
   const decisions = all.filter((one) => one.play !== "history");
   const approvals = trialState?.approvals || [];
   const usage = trialState?.usage || [];
+  const shared = trialState?.shared_records || [];
   // How the trial ran that the reader must know, e.g. a scenario fault that did not take effect: said first.
   const notices = (trialState?.notices || []).filter((one) => one?.message);
   const noticeList = notices.length > 0 && (
@@ -124,6 +125,31 @@ export default function TrialChangesPanel({ trialState }) {
           )}
         </Box>
       ))}
+      {shared.length > 0 && (
+        <Box data-testid="shared-records">
+          <Typography sx={{ typography: "s2", fontWeight: 600 }}>
+            {C.sharedHeading}
+          </Typography>
+          {shared.map((record) => (
+            <Box key={record.key}>
+              <Typography sx={{ ...quiet, fontWeight: 600 }}>
+                {C.sharedRecord(record)}
+              </Typography>
+              {record.actions.map((action, index) => (
+                <Typography key={`${record.key}-${index}`} sx={quiet}>
+                  {C.sharedAction(action, name(action.who))}
+                </Typography>
+              ))}
+              <Typography sx={quiet}>
+                {C.committedWrites(record.committed_writes)}
+              </Typography>
+            </Box>
+          ))}
+          {shared.some((record) => record.truncated) && (
+            <Typography sx={quiet}>{C.sharedTruncated}</Typography>
+          )}
+        </Box>
+      )}
       {preRun.length > 0 && (
         <Box>
           <Typography sx={{ typography: "s2", fontWeight: 600 }}>
@@ -191,8 +217,13 @@ TrialChangesPanel.propTypes = {
     decisions: PropTypes.arrayOf(PropTypes.object),
     approvals: PropTypes.arrayOf(PropTypes.object),
     usage: PropTypes.arrayOf(PropTypes.object),
+    shared_records: PropTypes.arrayOf(PropTypes.object),
     notices: PropTypes.arrayOf(
-      PropTypes.shape({ code: PropTypes.string, message: PropTypes.string }),
+      PropTypes.shape({
+        code: PropTypes.string,
+        message: PropTypes.string,
+        workers: PropTypes.arrayOf(PropTypes.string),
+      }),
     ),
   }),
 };

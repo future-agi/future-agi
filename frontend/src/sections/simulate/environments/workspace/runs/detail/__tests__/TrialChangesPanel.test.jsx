@@ -483,4 +483,86 @@ describe("TrialChangesPanel", () => {
       screen.queryByText("Worth knowing about this trial"),
     ).not.toBeInTheDocument();
   });
+
+  const twoWorkers = [
+    {
+      who: "worker:order_lookup",
+      name: "order_lookup",
+      attempted: 1,
+      committed: 1,
+      committed_actions: ["list_refunds"],
+    },
+    {
+      who: "worker:refund",
+      name: "refund",
+      attempted: 2,
+      committed: 2,
+      committed_actions: ["issue_refund"],
+    },
+  ];
+  const record = {
+    key: "order_id=1042",
+    argument: "order_id",
+    value: "1042",
+    actions: [
+      {
+        who: "worker:order_lookup",
+        tool: "list_refunds",
+        outcome: "committed",
+        write: null,
+      },
+      {
+        who: "worker:refund",
+        tool: "issue_refund",
+        outcome: "committed",
+        write: true,
+      },
+    ],
+    committed_writes: 1,
+    truncated: false,
+  };
+
+  it("lists a record two participants named, with each action and the committed writes", () => {
+    render(
+      <TrialChangesPanel
+        trialState={{ state_changes: twoWorkers, shared_records: [record] }}
+      />,
+    );
+    const section = screen.getByTestId("shared-records");
+    expect(section.textContent).toContain(
+      "Records touched by more than one participant",
+    );
+    expect(section.textContent).toContain("order_id 1042");
+    expect(section.textContent).toContain(
+      "refund · issue_refund · committed (write)",
+    );
+    expect(section.textContent).toContain(
+      "order_lookup · list_refunds · committed",
+    );
+    expect(section.textContent).toContain("Committed writes: 1");
+    expect(section.textContent).not.toContain("More records not shown");
+  });
+
+  it("hides the section when no record was shared and says when records were cut", () => {
+    const { unmount } = render(
+      <TrialChangesPanel
+        trialState={{ state_changes: twoWorkers, shared_records: [] }}
+      />,
+    );
+    expect(screen.queryByTestId("shared-records")).toBeNull();
+    unmount();
+    render(
+      <TrialChangesPanel
+        trialState={{
+          state_changes: twoWorkers,
+          shared_records: [{ ...record, truncated: true }],
+        }}
+      />,
+    );
+    expect(
+      screen.getByText(
+        "More records not shown: this trial's record reached its size limit",
+      ),
+    ).toBeInTheDocument();
+  });
 });
