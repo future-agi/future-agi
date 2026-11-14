@@ -23,12 +23,22 @@ class AgentccWebhookSerializer(serializers.ModelSerializer):
             "is_active",
             "headers",
             "description",
+            "consecutive_failures",
+            "disabled_reason",
+            "disabled_at",
+            "dropped_events_total",
+            "last_dropped_at",
             "created_at",
             "updated_at",
         ]
         read_only_fields = [
             "id",
             "organization",
+            "consecutive_failures",
+            "disabled_reason",
+            "disabled_at",
+            "dropped_events_total",
+            "last_dropped_at",
             "created_at",
             "updated_at",
         ]

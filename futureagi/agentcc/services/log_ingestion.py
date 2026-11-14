@@ -99,13 +99,12 @@ def _dispatch_webhook_events(org, logs):
             org_id=str(org.id),
             count=len(events_to_create),
         )
+        # Delivery is not this request's job: the agentcc-webhook-delivery
+        # schedule sends these, so a slow or failing webhook never holds up
+        # log ingest. Here the events are only kept within their cap.
+        from agentcc.services.webhook_hygiene import enforce_pending_cap
 
-        from agentcc.services.webhook_delivery import deliver_webhook_events
-
-        try:
-            deliver_webhook_events(org_id=org.id, limit=max(len(events_to_create), 100))
-        except Exception:
-            logger.exception("webhook_immediate_delivery_failed", org_id=str(org.id))
+        enforce_pending_cap({event.webhook_id for event in events_to_create})
 
 
 def _send_email_alerts(org, logs):

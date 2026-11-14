@@ -30,6 +30,13 @@ class AgentccWebhook(BaseModel):
     is_active = models.BooleanField(default=True)
     headers = models.JSONField(default=dict, blank=True)
     description = models.TextField(blank=True, default="")
+    # Delivery health. db_default lets pods still on the old code keep
+    # inserting webhooks while a deploy rolls out.
+    consecutive_failures = models.IntegerField(default=0, db_default=0)
+    disabled_reason = models.TextField(blank=True, default="", db_default="")
+    disabled_at = models.DateTimeField(null=True, blank=True)
+    dropped_events_total = models.PositiveBigIntegerField(default=0, db_default=0)
+    last_dropped_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         db_table = "agentcc_webhook"
@@ -56,13 +63,21 @@ class AgentccWebhookEvent(BaseModel):
     DELIVERED = "delivered"
     FAILED = "failed"
     DEAD_LETTER = "dead_letter"
+    # Terminal: delivery never selects them and Retry refuses them.
+    CANCELLED = "cancelled"  # its webhook was deleted
+    EXPIRED = "expired"  # pending longer than AGENTCC_WEBHOOK_PENDING_MAX_AGE_HOURS
+    DROPPED = "dropped"  # over AGENTCC_WEBHOOK_MAX_PENDING_PER_WEBHOOK
 
     STATUS_CHOICES = [
         (PENDING, "Pending"),
         (DELIVERED, "Delivered"),
         (FAILED, "Failed"),
         (DEAD_LETTER, "Dead Letter"),
+        (CANCELLED, "Cancelled"),
+        (EXPIRED, "Expired"),
+        (DROPPED, "Dropped"),
     ]
+    NOT_RETRYABLE = frozenset({DELIVERED, CANCELLED, EXPIRED, DROPPED})
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     organization = models.ForeignKey(
@@ -97,6 +112,14 @@ class AgentccWebhookEvent(BaseModel):
             models.Index(fields=["webhook"]),
             models.Index(fields=["status"]),
             models.Index(fields=["next_retry_at"]),
+            models.Index(
+                fields=["webhook", "status", "created_at"],
+                name="agentcc_whevt_wh_status_ts",
+            ),
+            models.Index(
+                fields=["status", "created_at"],
+                name="agentcc_whevt_status_ts",
+            ),
         ]
 
     def __str__(self):
