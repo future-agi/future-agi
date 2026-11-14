@@ -1,0 +1,439 @@
+"""Lifecycle actions on one environment's scenarios: validate, archive, restore, revisions.
+
+The views stay thin: each action resolves its environment, then calls one function here. Errors are
+``HostedHarnessError`` with a code and a status the views pass through.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Mapping
+from typing import Any
+
+import structlog
+from django.db import transaction
+from django.utils import timezone
+
+from simulate.models import (
+    HarnessEnvironmentVersion,
+    HarnessSuiteMember,
+    HarnessSuiteValidation,
+    HarnessSuiteVersion,
+    HostedHarnessJob,
+    HostedHarnessScenario,
+)
+from simulate.services.canonical_json import canonical_digest
+from simulate.services.hosted_harness import HostedHarnessError
+
+logger = structlog.get_logger(__name__)
+
+REVISIONS_MAX = 50
+NO_RESULTS = "Validation finished but recorded no results; try again."
+
+
+def _error(code: str, message: str, status_code: int) -> HostedHarnessError:
+    return HostedHarnessError(code, message, status_code=status_code)
+
+
+def _of_environment(
+    model: Any, environment: HostedHarnessJob, value: Any, default: Any
+) -> Any:
+    if value in (None, ""):
+        return (
+            model._base_manager.filter(id=default, job_id=environment.id).first()
+            if default
+            else None
+        )
+    found = model._base_manager.filter(
+        id=value, job_id=environment.id, deleted=False
+    ).first()
+    if found is None:
+        raise _error(
+            "versions_invalid", "those versions are not this environment's", 400
+        )
+    return found
+
+
+def _pair(environment: HostedHarnessJob, body: Mapping[str, Any]):
+    from simulate.models import AgentVersion
+
+    agent_id = body.get("agent_version_id") or environment.agent_version_id
+    agent = (
+        AgentVersion.no_workspace_objects.filter(id=agent_id).first()
+        if agent_id
+        else None
+    )
+    if body.get("agent_version_id") and agent is None:
+        raise _error(
+            "versions_invalid", "that agent version is not this environment's", 400
+        )
+    environment_version = _of_environment(
+        HarnessEnvironmentVersion,
+        environment,
+        body.get("environment_version_id"),
+        environment.environment_version_id,
+    )
+    suite_version = _of_environment(
+        HarnessSuiteVersion,
+        environment,
+        body.get("suite_version_id"),
+        environment.suite_version_id,
+    )
+    return agent, environment_version, suite_version
+
+
+def _last_change(
+    environment: HostedHarnessJob, suite_version: Any, environment_version: Any
+) -> Any:
+    from django.db.models import Max
+
+    proved = (
+        HarnessSuiteValidation.no_workspace_objects.filter(
+            suite_version=suite_version, environment_version=environment_version
+        )
+        .values_list("updated_at", flat=True)
+        .first()
+    )
+    archived = HostedHarnessScenario.no_workspace_objects.filter(
+        job=environment
+    ).aggregate(newest=Max("archived_at"))["newest"]
+    return max((one for one in (proved, archived) if one is not None), default=None)
+
+
+def validate_scenarios(
+    environment: HostedHarnessJob, body: Mapping[str, Any]
+) -> tuple[dict[str, Any], int]:
+    """Start proving every scenario of the pair; ``(body, status)``. A live job is reported, never
+    refused; "proofs already exist" never skips one, unless the caller asks with ``if_fresh``."""
+    from simulate.services.harness_versioning import validation
+
+    agent, environment_version, suite_version = _pair(environment, body)
+    if agent is None or environment_version is None or suite_version is None:
+        raise _error(
+            "cannot_validate",
+            "This agent version can't be validated here: the environment has no versions",
+            422,
+        )
+    if not validation.can_validate(environment, agent.id):
+        raise _error(
+            "cannot_validate",
+            "This agent version can't be validated here: validation is not enabled for it",
+            422,
+        )
+    if body.get("if_fresh"):
+        newest = (
+            HostedHarnessJob.no_workspace_objects.filter(
+                environment_id=environment.id,
+                suite_version=suite_version,
+                environment_version=environment_version,
+                state=HostedHarnessJob.State.COMPLETED,
+                payload__metadata__scenario_proving__in=["only", "with_certify"],
+            )
+            .order_by("-updated_at")
+            .first()
+        )
+        changed = _last_change(environment, suite_version, environment_version)
+        if newest is not None and (changed is None or newest.updated_at >= changed):
+            return {
+                "state": "ready",
+                "job_id": str(newest.id),
+                "finished_at": newest.updated_at.isoformat(),
+            }, 200
+    started = validation.start_validation(
+        environment, agent, environment_version, suite_version, purpose="prove"
+    )
+    if started is None:
+        raise _error(
+            "cannot_validate",
+            "This agent version can't be validated here: validation is not available",
+            422,
+        )
+    if started.state == validation.CHECK_UNAVAILABLE:
+        return {
+            "state": "unavailable",
+            "message": validation.failed_reason(started.bundle.error or {}),
+        }, 200
+    job = started.job
+    deadline = validation.check_deadline(job) if job is not None else None
+    return {
+        "state": "validating",
+        "job_id": str(job.id) if job is not None else None,
+        "deadline_at": deadline.isoformat() if deadline is not None else None,
+    }, 202
+
+
+def validation_status(environment: HostedHarnessJob, job_id: Any) -> dict[str, Any]:
+    from simulate.services.harness_versioning import validation
+
+    job = HostedHarnessJob.no_workspace_objects.filter(
+        id=job_id, environment_id=environment.id, payload__metadata__certify_only=True
+    ).first()
+    if job is None:
+        raise _error(
+            "job_not_found", "No validation of this environment has that id", 404
+        )
+    metadata = (job.payload or {}).get("metadata") or {}
+    recorded = metadata.get("scenario_proofs_recorded") is True
+    if job.state in validation._LIVE_STATES:
+        state, message, finished = "validating", None, None
+        recorded = False
+    elif job.state == HostedHarnessJob.State.COMPLETED:
+        state, finished = "finished", job.updated_at.isoformat()
+        message = None if recorded else NO_RESULTS
+    else:
+        state, finished = "failed", job.updated_at.isoformat()
+        message = validation.failed_reason(job.failure or {})
+    return {
+        "state": state,
+        "job_id": str(job.id),
+        "deadline_at": validation.check_deadline(job).isoformat(),
+        "finished_at": finished,
+        "proofs_recorded": recorded,
+        "message": message,
+    }
+
+
+def _row(environment: HostedHarnessJob, key: str) -> HostedHarnessScenario | None:
+    from simulate.services.hosted_harness_gateway import _scenario_token
+
+    token = _scenario_token(key)
+    return next(
+        (
+            row
+            for row in HostedHarnessScenario.no_workspace_objects.filter(
+                job=environment, deleted=False
+            )
+            if _scenario_token(row.scenario_key) == token
+        ),
+        None,
+    )
+
+
+def _suite_now(environment: HostedHarnessJob) -> list[dict[str, Any]]:
+    from simulate.services.harness_versioning.drafts import edit_sides
+    from simulate.services.harness_versioning.versions import suite_documents
+
+    return [dict(one) for one in suite_documents(edit_sides(environment)["suite"])]
+
+
+def _lifecycle_of(environment: HostedHarnessJob, key: str) -> Any:
+    from simulate.services.harness_scenario_lifecycle import (
+        in_draft_view,
+        scenario_lifecycle,
+    )
+
+    environment.refresh_from_db()
+    views = scenario_lifecycle(
+        environment,
+        suite_version=environment.suite_version,
+        environment_version=environment.environment_version,
+        keys=[key],
+    )
+    return views.get(key) or in_draft_view()
+
+
+def archive_scenario(
+    environment: HostedHarnessJob, key: str, *, reason: str, user: Any
+) -> dict[str, Any]:
+    """Take a case out of future selection, keeping its identity, runs and evidence."""
+    from simulate.services.harness_versioning import read as version_reads
+    from simulate.services.harness_versioning.drafts import draft_rows, write_suite_edit
+    from simulate.services.harness_versioning.versions import lock_environment
+    from simulate.services.hosted_harness_gateway import _scenario_token
+
+    version_reads.require_versioning()
+    with transaction.atomic():
+        locked = lock_environment(environment)
+        row = _row(locked, key)
+        drafted = draft_rows(locked)
+        if row is None:
+            added = any(
+                _scenario_token(one.scenario_key) == _scenario_token(key)
+                and one.draft_change == "added"
+                for one in drafted or []
+            )
+            if added:
+                raise _error(
+                    "scenario_unsaved",
+                    "This scenario isn't saved yet; remove it instead.",
+                    409,
+                )
+            raise _error(
+                "scenario_not_found", "No scenario of that key in this environment", 404
+            )
+        if row.archived_at is not None:
+            raise _error("scenario_archived", "This scenario is already archived", 409)
+        suite = _suite_now(locked)
+        content = next(
+            (
+                one
+                for one in suite
+                if _scenario_token(one.get("scenario_key"))
+                == _scenario_token(row.scenario_key)
+            ),
+            None,
+        )
+        if content is None:
+            member = (
+                HarnessSuiteMember.no_workspace_objects.filter(
+                    suite_version_id=locked.suite_version_id,
+                    scenario_key=row.scenario_key,
+                )
+                .values_list("content", flat=True)
+                .first()
+            )
+            content = dict(member or {})
+        else:
+            write_suite_edit(
+                locked,
+                [one for one in suite if one is not content],
+                user=user,
+            )
+        row.archived_at = timezone.now()
+        row.archived_by = user if getattr(user, "is_authenticated", False) else None
+        row.archive_reason = (reason or "")[:255]
+        row.archived_content = content
+        row.save(
+            update_fields=[
+                "archived_at",
+                "archived_by",
+                "archive_reason",
+                "archived_content",
+                "updated_at",
+            ]
+        )
+    logger.info(
+        "harness_scenario_archived",
+        environment_id=str(environment.id),
+        scenario_key=row.scenario_key,
+    )
+    return {
+        "scenario_key": row.scenario_key,
+        "lifecycle": _lifecycle_of(environment, row.scenario_key),
+    }
+
+
+def restore_scenario(
+    environment: HostedHarnessJob, key: str, *, user: Any
+) -> dict[str, Any]:
+    """Put an archived case back into the suite draft under its own key; it reads Draft until saved."""
+    from simulate.services.harness_scenario_lifecycle import in_draft_view
+    from simulate.services.harness_versioning import read as version_reads
+    from simulate.services.harness_versioning.drafts import write_suite_edit
+    from simulate.services.harness_versioning.versions import lock_environment
+
+    version_reads.require_versioning()
+    with transaction.atomic():
+        locked = lock_environment(environment)
+        row = _row(locked, key)
+        if row is None:
+            raise _error(
+                "scenario_not_found", "No scenario of that key in this environment", 404
+            )
+        if row.archived_at is None:
+            raise _error("scenario_not_archived", "This scenario is not archived", 409)
+        content = dict(row.archived_content or {})
+        content["scenario_key"] = row.scenario_key
+        # Cleared first: Save refuses a new scenario that takes an archived key.
+        row.archived_at = None
+        row.archived_by = None
+        row.archive_reason = ""
+        row.archived_content = None
+        row.save(
+            update_fields=[
+                "archived_at",
+                "archived_by",
+                "archive_reason",
+                "archived_content",
+                "updated_at",
+            ]
+        )
+        write_suite_edit(locked, [*_suite_now(locked), content], user=user)
+    logger.info(
+        "harness_scenario_restored",
+        environment_id=str(environment.id),
+        scenario_key=row.scenario_key,
+    )
+    return {"scenario_key": row.scenario_key, "lifecycle": in_draft_view()}
+
+
+def scenario_revisions(environment: HostedHarnessJob, key: str) -> dict[str, Any]:
+    """Each distinct content of a case across the environment's active suite versions, newest first."""
+    from simulate.services.harness_scenario_lifecycle import scenario_lifecycle
+
+    members = list(
+        HarnessSuiteMember.no_workspace_objects.filter(
+            suite_version__job_id=environment.id,
+            suite_version__status="active",
+            suite_version__deleted=False,
+            scenario_key=key,
+        )
+        .order_by("suite_version__version_number")
+        .values_list("suite_version__version_number", "suite_version_id", "content")
+    )
+    if not members and _row(environment, key) is None:
+        raise _error(
+            "scenario_not_found", "No scenario of that key in this environment", 404
+        )
+    revisions: list[dict[str, Any]] = []
+    previous: Mapping[str, Any] | None = None
+    for number, suite_id, content in members:
+        content = content if isinstance(content, Mapping) else {}
+        digest = canonical_digest(content)
+        if revisions and revisions[-1]["digest"] == digest:
+            revisions[-1]["suite_versions"].append(number)
+            continue
+        changed = sorted(
+            name
+            for name in set(content) | set(previous or {})
+            if previous is not None and content.get(name) != previous.get(name)
+        )
+        revisions.append(
+            {
+                "revision": len(revisions) + 1,
+                "digest": digest,
+                "suite_versions": [number],
+                "first_suite_version": number,
+                "changed_fields": changed,
+                "_suite_id": suite_id,
+            }
+        )
+        previous = content
+    environment_version = environment.environment_version
+    for one in revisions:
+        suite = HarnessSuiteVersion._base_manager.filter(
+            id=one.pop("_suite_id")
+        ).first()
+        views = scenario_lifecycle(
+            environment,
+            suite_version=suite,
+            environment_version=environment_version,
+            keys=[key],
+        )
+        one["lifecycle_on_default_environment"] = views.get(key)
+    revisions.reverse()
+    return {
+        "scenario_key": key,
+        "revisions": revisions[:REVISIONS_MAX],
+        "truncated": len(revisions) > REVISIONS_MAX,
+    }
+
+
+def not_active(environment: HostedHarnessJob) -> list[dict[str, Any]]:
+    """The cases of the default suite that are not Active on the new defaults, for the Save response."""
+    from simulate.services.harness_scenario_lifecycle import scenario_lifecycle
+
+    environment.refresh_from_db()
+    views = scenario_lifecycle(
+        environment,
+        suite_version=environment.suite_version,
+        environment_version=environment.environment_version,
+    )
+    return [
+        {
+            "scenario_key": key,
+            "reason": view["reason"],
+            "reason_text": view["reason_text"],
+        }
+        for key, view in views.items()
+        if view["state"] not in ("active", "archived")
+    ]

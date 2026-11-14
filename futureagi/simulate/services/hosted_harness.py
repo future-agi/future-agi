@@ -429,7 +429,12 @@ def create_selected_harness_run(
 
             # Before the pins are made: making them resets a failed bundle.
             require_pair_runnable(environment, resolved)
-        run_keys = _held_back_checked(environment, planned, resolved, scenario_keys)
+        released = _validate_unproved_pair(
+            environment, planned, resolved, scenario_keys
+        )
+        run_keys = _held_back_checked(
+            environment, planned, resolved, scenario_keys, released=released
+        )
         pins = _pinned_versions(environment, resolved)
         if pins is None:
             registrations = list(
@@ -938,11 +943,93 @@ def _readiness_plan(
     return _ReadinessPlan(pins=_pins(resolved), plan=plan)
 
 
+def _only_unvalidated(planned: _ReadinessPlan, key: str) -> bool:
+    """Whether the case's only held-back row is that it is not validated on the pair."""
+    from simulate.services.harness_readiness.selection import NOT_VALIDATED_ROW
+
+    rows = ((planned.plan.view.get("cases") or {}).get(key) or {}).get("by")
+    if rows is not None:
+        return list(rows) == [NOT_VALIDATED_ROW]
+    by = planned.plan.view.get("held_back", {}).get("by") or {}
+    return set(by) == {NOT_VALIDATED_ROW}
+
+
+def _validate_unproved_pair(
+    environment: HostedHarnessJob,
+    planned: _ReadinessPlan | None,
+    resolved: ResolvedPins | None,
+    scenario_keys: list[str],
+) -> set[str]:
+    """A pairing with no proofs on its versions: start a validation that proves it and ask
+    for the run again, rather than refusing every case. Returns the keys to run unvalidated
+    when the check cannot run here.
+
+    Raises:
+        HostedHarnessError: 409 ``pair_validating`` once the validation is started.
+    """
+    from simulate.models import HarnessAssembledBundle
+    from simulate.services.harness_versioning import assembly, validation
+
+    if (
+        resolved is None
+        or resolved.runtime is None
+        or planned is None
+        or planned.plan is None
+    ):
+        return set()
+    held = planned.plan.held
+    if not scenario_keys or not all(key in held for key in scenario_keys):
+        return set()
+    if not all(_only_unvalidated(planned, key) for key in scenario_keys):
+        return set()
+    key = resolved.assembly_key or assembly.bundle_key(
+        resolved.runtime, resolved.environment_version, resolved.suite_version
+    )
+    bundle = HarnessAssembledBundle._base_manager.filter(
+        job_id=environment.id, assembly_key=key
+    ).first()
+    if bundle is not None and validation.live_check(bundle.id) is not None:
+        return set()
+    ready = bundle is not None and bundle.state == HarnessAssembledBundle.State.READY
+    started = validation.start_validation(
+        environment,
+        resolved.agent_version,
+        resolved.environment_version,
+        resolved.suite_version,
+        purpose="prove" if ready else "save",
+    )
+    if started is None:
+        return set()
+    if started.state == validation.CHECK_UNAVAILABLE:
+        # As where validation cannot run: the cases run unvalidated and certify in the run's sandbox.
+        return set(scenario_keys)
+    if started.job is None:
+        return set()
+    deadline = validation.check_deadline(started.job)
+    retry_after = max(60, int((deadline - timezone.now()).total_seconds()))
+    raise HostedHarnessError(
+        "pair_validating",
+        "These versions are being validated. Run them again when it ends, at the latest in "
+        f"{-(-retry_after // 60)} minutes.",
+        status_code=409,
+        retryable=True,
+        details={
+            "retry_after": retry_after,
+            "check": {
+                "job_id": str(started.job.id),
+                "deadline_at": deadline.isoformat(),
+            },
+        },
+    )
+
+
 def _held_back_checked(
     environment: HostedHarnessJob,
     planned: _ReadinessPlan | None,
     resolved: ResolvedPins | None,
     scenario_keys: list[str],
+    *,
+    released: set[str] = frozenset(),
 ) -> list[str]:
     """The requested keys the run sends: all but the ones readiness holds back.
 
@@ -960,23 +1047,33 @@ def _held_back_checked(
         return list(scenario_keys)
     if planned.plan.revision != _evidence_revision(environment, resolved):
         raise _readiness_moved()
-    held = planned.plan.held
+    held = set(planned.plan.held) - set(released)
     if held and all(key in held for key in scenario_keys):
         from simulate.services.harness_readiness import CATALOGUE
+        from simulate.services.harness_readiness.selection import (
+            LIFECYCLE_LABELS,
+            NOT_VALIDATED_ROW,
+        )
 
         labels = {one.id: one.label for one in CATALOGUE}
         labels["scenario_dropped"] = "Certification"
+        labels.update(LIFECYCLE_LABELS)
         reasons = planned.plan.view["reasons"]
         named = "; ".join(
             f"{labels.get(row, row)}: {reason}" for row, reason in reasons.items()
         )
+        unvalidated = NOT_VALIDATED_ROW in reasons
         raise HostedHarnessError(
             "all_cases_blocked",
             "No run was created: every selected case is held back"
             + (f" ({named})" if named else "")
-            + ". Fix it, or select cases it does not hold back.",
+            + ". Fix it, or select cases it does not hold back."
+            + (" Validate scenarios to run them." if unvalidated else ""),
             status_code=409,
-            details={"selection": planned.plan.view},
+            details={
+                "selection": planned.plan.view,
+                **({"action": "validate_scenarios"} if unvalidated else {}),
+            },
         )
     return [key for key in scenario_keys if key not in held]
 
