@@ -56,12 +56,20 @@ def test_window_excludes_old_includes_recent(
     # Distinct eval_task_ids: two live evals on the same (task, span, config)
     # would collide on the eval_logger_live_span_uniq work-item constraint.
     _make_failing_eval(
-        trace, observation_span, custom_eval_config,
-        old_exp, age_days=_CLUSTER_WINDOW_DAYS + 30, eval_task_id="et-old",
+        trace,
+        observation_span,
+        custom_eval_config,
+        old_exp,
+        age_days=_CLUSTER_WINDOW_DAYS + 30,
+        eval_task_id="et-old",
     )
     _make_failing_eval(
-        trace, observation_span, custom_eval_config,
-        new_exp, age_days=1, eval_task_id="et-new",
+        trace,
+        observation_span,
+        custom_eval_config,
+        new_exp,
+        age_days=1,
+        eval_task_id="et-new",
     )
 
     explanations = {
@@ -78,8 +86,11 @@ def test_boundary_just_inside_window_is_included(
 ):
     exp = "failure just inside the window boundary"
     _make_failing_eval(
-        trace, observation_span, custom_eval_config,
-        exp, age_days=_CLUSTER_WINDOW_DAYS - 1,
+        trace,
+        observation_span,
+        custom_eval_config,
+        exp,
+        age_days=_CLUSTER_WINDOW_DAYS - 1,
     )
 
     explanations = {
@@ -323,8 +334,12 @@ def test_a_batch_reads_only_the_pages_it_needs(
     monkeypatch.setattr(eval_clustering, "_FETCH_PAGE", 2)
     made = [
         _make_failing_eval(
-            trace, observation_span, custom_eval_config,
-            f"failure {i}", age_days=10 - i, eval_task_id=f"et-page-{i}",
+            trace,
+            observation_span,
+            custom_eval_config,
+            f"failure {i}",
+            age_days=10 - i,
+            eval_task_id=f"et-page-{i}",
         )
         for i in range(7)
     ]

@@ -279,7 +279,9 @@ class AgentccShadowExperimentViewSet(BaseModelViewSetMixinWithUserOrg, ModelView
             return self._gm.bad_request(str(e))
 
 
-class AgentccShadowResultViewSet(BaseModelViewSetMixinWithUserOrg, ReadOnlyModelViewSet):
+class AgentccShadowResultViewSet(
+    BaseModelViewSetMixinWithUserOrg, ReadOnlyModelViewSet
+):
     """Read-only viewset for shadow results. Paginated."""
 
     permission_classes = [IsAuthenticated]
@@ -310,7 +312,9 @@ class AgentccShadowResultViewSet(BaseModelViewSetMixinWithUserOrg, ReadOnlyModel
     def retrieve(self, request, *args, **kwargs):
         try:
             instance = self.get_object()
-            return self._gm.success_response(AgentccShadowResultSerializer(instance).data)
+            return self._gm.success_response(
+                AgentccShadowResultSerializer(instance).data
+            )
         except Exception as e:
             logger.exception("shadow_result_retrieve_error", error=str(e))
             return self._gm.not_found("Shadow result not found")

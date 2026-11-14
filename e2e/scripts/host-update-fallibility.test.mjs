@@ -584,11 +584,11 @@ test('workflow opt-in is dispatch-only, validates before builds, follows the unc
   assert.deepEqual(workflow.jobs.e2e.permissions, { contents: 'read', packages: 'write' });
   assert.equal(Object.values(workflow.jobs).filter(job => job.permissions).length, 2);
   const builds = steps.filter(step => step.uses === 'docker/build-push-action@v5');
-  assert.equal(builds.length, 4);
+  assert.equal(builds.length, 5);
   for (const step of builds) {
     assert.equal(step.with.push, undefined);
     assert.equal(step.with.load, true);
-    assert.match(step.with['cache-to'], /^\$\{\{ github.event_name == 'push' && format\('type=registry,ref=\{0\}:(backend|fi-collector|frontend|gateway),mode=max', env.CACHE_REPO\) \|\| '' \}\}$/);
+    assert.match(step.with['cache-to'], /^\$\{\{ github.event_name == 'push' && format\('type=registry,ref=\{0\}:(backend|fi-collector|frontend|gateway|code-executor),mode=max', env.CACHE_REPO\) \|\| '' \}\}$/);
   }
   assert.equal(steps.find(step => step.name === 'Save Playwright browser cache').if,
     "github.event_name == 'push' && steps.pw-cache.outputs.cache-hit != 'true'");
