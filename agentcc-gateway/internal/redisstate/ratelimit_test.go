@@ -1,9 +1,13 @@
 package redisstate
 
 import (
+	"context"
 	"os"
+	"strconv"
 	"testing"
 	"time"
+
+	"github.com/redis/go-redis/v9"
 )
 
 // ---------------------------------------------------------------------------
@@ -209,4 +213,72 @@ func TestRateLimiter_Redis_IndependentKeys(t *testing.T) {
 	if remaining != limit-1 {
 		t.Errorf("key-b remaining = %d, want %d", remaining, limit-1)
 	}
+}
+
+// scriptAdmitsAt runs the sliding-window script for key as Allow would at unix
+// second now, which may be in the future: the script takes the time as an
+// argument, so this asks what a caller arriving then would be told.
+func scriptAdmitsAt(t *testing.T, client *Client, prefix, key string, limit int, now int64) bool {
+	t.Helper()
+	windowStart := now - (now % windowSeconds)
+	currKey := prefix + key + ":" + strconv.FormatInt(windowStart, 10)
+	prevKey := prefix + key + ":" + strconv.FormatInt(windowStart-windowSeconds, 10)
+	var result []int64
+	err := client.Do(func(rdb redis.UniversalClient) error {
+		res, err := slidingWindowScript.Run(context.Background(), rdb,
+			[]string{currKey, prevKey}, limit, windowSeconds, now,
+		).Int64Slice()
+		result = res
+		return err
+	})
+	if err != nil || len(result) < 1 {
+		t.Fatalf("running the script at %d: %v (%v)", now, err, result)
+	}
+	return result[0] == 1
+}
+
+// A refusal's reset is sent to the caller as Retry-After. A caller that waits
+// exactly that long must be admitted, and one that waits a second less must
+// still be refused: the value is when the window reopens, not the counter
+// key's two-window TTL (which said 120 s for a window reopening within 61).
+func TestRateLimiter_Redis_RefusalResetIsWhenTheWindowReopens(t *testing.T) {
+	client := skipIfNoRedis(t)
+	defer client.Close()
+
+	for attempt := 0; attempt < 3; attempt++ {
+		ts := strconv.FormatInt(time.Now().UnixNano(), 10)
+		prefix := "test:rl:reopen:" + ts + ":"
+		key := "reopen-key"
+		local := &mockLocalLimiter{allowed: true, remain: 99, resetSec: 60}
+		rl := NewRateLimiter(client, local, prefix)
+
+		before := time.Now().Unix()
+		first, _, _ := rl.Allow(key, 1)
+		allowed, _, reset := rl.Allow(key, 1)
+		after := time.Now().Unix()
+		if before != after {
+			continue // the refusal's second is ambiguous; try again
+		}
+		if !first || allowed {
+			t.Fatalf("limit 1: first allowed=%v, second allowed=%v; want true, false", first, allowed)
+		}
+		if local.calls != 0 {
+			t.Fatalf("local fallback answered %d calls; the Redis path is under test", local.calls)
+		}
+
+		// The window holds one request, so the next one is admitted one
+		// second into the next window, when its weighted share drops below 1.
+		elapsed := after % windowSeconds
+		if want := int(windowSeconds - elapsed + 1); reset != want {
+			t.Errorf("refused %ds into the window: reset = %d, want %d (seconds until the window reopens)", elapsed, reset, want)
+		}
+		if scriptAdmitsAt(t, client, prefix, key, 1, after+int64(reset)-1) {
+			t.Errorf("a caller arriving %ds after the refusal is admitted: reset = %d is longer than the wait", reset-1, reset)
+		}
+		if !scriptAdmitsAt(t, client, prefix, key, 1, after+int64(reset)) {
+			t.Errorf("a caller arriving %ds after the refusal, as Retry-After says, is refused again", reset)
+		}
+		return
+	}
+	t.Fatal("every attempt straddled a second boundary")
 }

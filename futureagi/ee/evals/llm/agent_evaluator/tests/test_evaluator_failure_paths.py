@@ -1,17 +1,6 @@
-"""Black-box tests for AgentEvaluator's failure surface.
+"""Failure messages, output validation, diagnostic context and media anchors.
 
-Focused tests:
-  - USER_FACING_EVAL_FAILED is the single user-visible message
-  - Distinct structlog event names per failure cause (Sentry fingerprint)
-  - ``_failure_context()`` payload completeness + None-stripping
-  - ``_capture_target_info`` covers span / trace / session / call / row / custom
-  - Oversized + content_str → "recovered_oversized_attempt" info (no raise)
-  - Oversized + empty → "input_too_large" + raise
-  - Force-finalize fires only when content empty + tool_log non-empty
-  - Force-finalize preserves multimodal in user anchor
-
-The retry-loop tests are kept lean (assert ValueError propagates;
-non-ValueError retries) — we don't reconstruct the full agent loop.
+The real agent/retry integration is covered by test_grading_errors.py.
 """
 
 import asyncio
@@ -25,6 +14,7 @@ from structlog.testing import LogCapture
 from ee.evals.llm.agent_evaluator.evaluator import (
     AgentEvaluator,
     USER_FACING_EVAL_FAILED,
+    GradingError,
 )
 
 
@@ -246,8 +236,8 @@ def test_build_result_passfail_mismatch_raises_user_message(evaluator, log_captu
     with pytest.raises(ValueError) as exc:
         evaluator._build_result(agent_result, runtime_ms=10)
     assert str(exc.value) == USER_FACING_EVAL_FAILED
-    events = [e["event"] for e in log_capture.entries]
-    assert "eval_result_type_mismatch_pass_fail" in events
+    assert isinstance(exc.value, GradingError)
+    assert exc.value.code == "invalid_output"
 
 
 def test_build_result_score_mismatch_raises_user_message(evaluator, log_capture):
@@ -256,8 +246,8 @@ def test_build_result_score_mismatch_raises_user_message(evaluator, log_capture)
     with pytest.raises(ValueError) as exc:
         evaluator._build_result(agent_result, runtime_ms=10)
     assert str(exc.value) == USER_FACING_EVAL_FAILED
-    events = [e["event"] for e in log_capture.entries]
-    assert "eval_result_type_mismatch_numeric" in events
+    assert isinstance(exc.value, GradingError)
+    assert exc.value.code == "invalid_output"
 
 
 def test_build_result_choices_mismatch_raises_user_message(evaluator, log_capture):
@@ -267,33 +257,21 @@ def test_build_result_choices_mismatch_raises_user_message(evaluator, log_captur
     with pytest.raises(ValueError) as exc:
         evaluator._build_result(agent_result, runtime_ms=10)
     assert str(exc.value) == USER_FACING_EVAL_FAILED
-    events = [e["event"] for e in log_capture.entries]
-    assert "eval_result_type_mismatch_choices" in events
+    assert isinstance(exc.value, GradingError)
+    assert exc.value.code == "invalid_output"
 
 
-def test_build_result_empty_content_raises_user_message(evaluator, log_capture):
-    """When content is empty AND no JSON could be extracted, _build_result
-    raises the user-facing message and logs ``agent_evaluator_no_json``."""
-    evaluator._output_type = "Pass/Fail"
-    agent_result = {"content": "", "tool_calls": []}
-    with pytest.raises(ValueError) as exc:
-        evaluator._build_result(agent_result, runtime_ms=10)
+@pytest.mark.parametrize(
+    "content",
+    ["", "I think it failed.", '{"result": "Pass", "explanation": "unfinished'],
+)
+def test_build_result_invalid_content_is_grading_error(evaluator, log_capture, content):
+    """Invalid output never synthesizes a grade; the caller logs the failure."""
+    with pytest.raises(GradingError) as exc:
+        evaluator._build_result({"content": content, "tool_calls": []}, runtime_ms=10)
     assert str(exc.value) == USER_FACING_EVAL_FAILED
-    events = [e["event"] for e in log_capture.entries]
-    assert "agent_evaluator_no_json" in events
-
-
-def test_build_result_nonempty_garbage_falls_back_to_fail(evaluator):
-    """If the agent returned text but with no parseable JSON, we don't
-    raise — we synthesize ``result=Fail`` from the raw content. This is
-    the existing fallback behavior; verify it still holds."""
-    evaluator._output_type = "Pass/Fail"
-    agent_result = {"content": "I think it failed.", "tool_calls": []}
-    # No JSON → fallback to Fail
-    out = evaluator._build_result(agent_result, runtime_ms=10)
-    # Accept either a dict-shaped or EvalResult-shaped return
-    failure = out.get("failure") if isinstance(out, dict) else out.failure
-    assert failure is True
+    assert exc.value.code == ("invalid_output" if content else "empty_output")
+    assert not log_capture.entries
 
 
 # ──────────────────────────────────────────────────────────────────────────
@@ -561,6 +539,8 @@ def _drive_run_agent(evaluator, *, agent_run_result, finalize_text):
     """
     mock_agent = MagicMock()
     mock_agent.run = AsyncMock(return_value=agent_run_result)
+    mock_agent.total_input_tokens = 0
+    mock_agent.total_output_tokens = 0
 
     async def _fake_stream(messages, tools=None):
         yield {"choices": [{"delta": {"content": finalize_text}}]}

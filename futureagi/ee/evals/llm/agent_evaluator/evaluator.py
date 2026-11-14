@@ -15,6 +15,7 @@ a structured JSON result.
 
 import asyncio
 import json
+import math
 import os
 import re
 import time
@@ -24,6 +25,16 @@ from typing import Any, Optional
 
 import httpx
 import structlog
+
+from ee.licensing.activation_client import (
+    MANAGED_STREAM_TIMEOUT_SECONDS,
+    MAX_RETRY_AFTER_SECONDS,
+)
+
+# One initial request and one shared transport/structured recovery, including
+# the longest accepted Retry-After. HTTP timeouts bound inactivity, so the
+# worker also owns a cancellable wall-clock deadline for the whole agent run.
+AGENT_RUN_TIMEOUT_SECONDS = 2 * MANAGED_STREAM_TIMEOUT_SECONDS + MAX_RETRY_AFTER_SECONDS
 
 
 def _extract_gateway_diagnostics(exc: BaseException | None) -> dict:
@@ -79,18 +90,26 @@ from agentic_eval.core_evals.fi_utils.exceptions import MediaNotAccessibleError
 
 # ── User-facing error message ────────────────────────────────────────────
 #
-# Every failure path inside the agent eval loop surfaces this same
-# neutral message to the end user. The cause (oversized input, model
-# flake, agent loop crash, JSON parse failure, output-type mismatch)
-# is logged separately via distinct structlog event names so Sentry
-# fingerprints each cause as its own issue. That keeps:
-#   - users out of internal jargon (no "context window", "compaction",
-#     "retries exhausted", model aliases, token counts)
-#   - engineers able to triage by cause via the Sentry dashboard
-#     (one error type per failure mode, not all merged together)
+# Grading failures keep a neutral public message. The evaluation boundary logs
+# one event with a typed error code and safe diagnostics; parsers and the agent
+# loop propagate the cause instead of logging it again or inventing a verdict.
 USER_FACING_EVAL_FAILED = (
     "Evaluation failed. Please try again. If the problem persists, contact support."
 )
+
+
+class GradingError(ValueError):
+    """A failed evaluation, never a verdict about the agent under test.
+
+    Existing evaluation callers persist exceptions as output=null/error rather
+    than including them in score aggregates. Keep the public message neutral;
+    the code and chained cause are for internal diagnostics.
+    """
+
+    def __init__(self, code: str, **diagnostics):
+        super().__init__(USER_FACING_EVAL_FAILED)
+        self.code = code
+        self.diagnostics = diagnostics
 
 
 class ManagedGatewayRequiredError(ValueError):
@@ -1329,6 +1348,9 @@ class AgentEvaluator:
                 url_to_key=_url_to_key,
                 tool_scaffolding=tool_scaffolding,
             )
+            return self._build_result(
+                agent_result, int((time.time() - start_time) * 1000)
+            )
         except MediaNotAccessibleError:
             raise
         except ManagedGatewayRequiredError:
@@ -1340,6 +1362,23 @@ class AgentEvaluator:
                 "agent_eval_managed_model_requires_license",
                 model=self._effective_model or self._model,
                 eval_id=self._current_eval_id,
+            )
+            raise
+        except GradingError as e:
+            # One terminal event at the evaluation boundary. Never log raw
+            # provider bodies or judge content on this failure path.
+            diagnostics = _extract_gateway_diagnostics(e)
+            logger.error(
+                "agent_evaluator_error",
+                error_code=e.code,
+                eval_id=self._current_eval_id,
+                model=self._model,
+                **{
+                    k: v
+                    for k, v in diagnostics.items()
+                    if k in {"upstream_status_code", "gateway_request_id"}
+                },
+                **e.diagnostics,
             )
             raise
         except Exception as e:
@@ -1367,12 +1406,6 @@ class AgentEvaluator:
                 from ai_tools.tools.web.trace_explorer import clear_trace_data
 
                 clear_trace_data(self._current_eval_id)
-
-        # 3. Parse the agent's response into eval result
-        end_time = time.time()
-        eval_runtime_ms = int((end_time - start_time) * 1000)
-
-        return self._build_result(agent_result, eval_runtime_ms)
 
     def _run_protect(
         self,
@@ -2069,6 +2102,7 @@ class AgentEvaluator:
         # agent consolidates before hitting the cap. Eval-only — Falcon
         # AI chat uses ``FalconLLMClient`` and never sees these hints.
         agent.llm_client.max_iterations = agent.MAX_ITERATIONS
+        agent.llm_client.retry_budget = 1
 
         # Also tell the wrapper what output shape the agent must
         # produce, so the 90% hardstop hint mentions ONLY that shape
@@ -2229,6 +2263,7 @@ class AgentEvaluator:
                 tools_override=eval_tools,
                 file_images=file_images if file_images else None,
                 precontent_blocks=gt_blocks if gt_blocks else None,
+                raise_on_stream_error=True,
             )
 
             # Deterministic-failure check: did the L4 budget cascade
@@ -2263,189 +2298,122 @@ class AgentEvaluator:
                 return agent_result
 
             if oversized and not content_str:
-                logger.error(
-                    "agent_evaluator_input_too_large",
-                    **self._failure_context(
-                        tokens=oversized.get("tokens"),
-                        guard=oversized.get("guard"),
-                        msg_count=oversized.get("msg_count"),
-                        iterations=agent_result.get("_iterations", 0),
-                        tool_calls_count=len(agent_result.get("tool_calls", []) or []),
-                    ),
-                )
-                raise ValueError(USER_FACING_EVAL_FAILED)
+                raise GradingError("input_too_large")
 
-            # Eval-only force-finalize.
-            #
-            # Failure mode this handles: the agent ran the full iteration
-            # budget calling tools but never committed to a final text
-            # answer, so ``content == ""`` and the eval would fail with
-            # "evaluator model returned an empty response".
-            #
-            # Why a clean rebuild (vs. appending one more user message to
-            # the existing conversation): at 15 iterations with 20+ tool
-            # calls, the model's working state has so much tool-call
-            # momentum that an explicit "stop calling tools" instruction
-            # still returns empty content from the Turing model a
-            # meaningful fraction of the time. Rebuilding from scratch
-            # with just the system prompt, the original eval prompt, a
-            # synthesized assistant turn summarizing the investigation,
-            # and a fresh user request for the verdict gives the model
-            # a clean shot.
-            #
-            # This is implemented at the evaluator level (not in the
-            # generic AgentLoop) so it only affects eval flows. Falcon AI
-            # chat is unchanged — a chat agent that runs out of iterations
-            # without committing is a different UX problem.
-            content_str = str(agent_result.get("content", "") or "").strip()
+            # A single tools-disabled structured recovery shares the transport
+            # retry budget. Never replay the agent or its tool side effects.
             tool_log = agent_result.get("tool_calls") or []
-            if not content_str and tool_log:
-                logger.warning(
-                    "agent_evaluator_force_finalize_triggered",
-                    **self._failure_context(
-                        iterations_done=agent_result.get("_iterations", 0),
-                        tool_calls=len(tool_log),
-                    ),
+            if (
+                self._extract_eval_json(content_str) is None
+                and agent.llm_client.take_retry()
+            ):
+                agent_result["_initial_content_length"] = len(content_str)
+                agent_result["_initial_finish_reason"] = agent_result.get(
+                    "finish_reason"
                 )
-                try:
-                    # Build investigation summary from the tool-call log.
-                    #
-                    # Per-call preview: head+tail to preserve information at
-                    # BOTH ends of long tool results (head-only would lose
-                    # stack traces / final-line verdicts emitted by sub-
-                    # agents). 1000 head + 500 tail = ~1500 chars per call.
-                    #
-                    # Budget math (worst case = 25 calls, all maxed out):
-                    #     25 * ~1500 chars = ~37_500 chars = ~9_400 tokens
-                    # Plus system + user anchor + final ask, total clean-
-                    # messages payload stays well under the 80K soft budget
-                    # so the force-finalize call itself never triggers
-                    # compaction (defense pipeline still runs as defense
-                    # in depth).
-                    _RESULT_HEAD = 1000
-                    _RESULT_TAIL = 500
-                    summary_lines = ["Investigation summary:"]
-                    for i, tc in enumerate(tool_log[:25], start=1):
-                        tn = tc.get("tool_name", "?")
-                        params = tc.get("params") or {}
-                        try:
-                            params_str = json.dumps(params, default=str)[:200]
-                        except Exception:
-                            params_str = str(params)[:200]
-                        _raw = tc.get("result_summary") or tc.get("result_full") or ""
-                        if len(_raw) <= (_RESULT_HEAD + _RESULT_TAIL):
-                            result_preview = _raw
-                        else:
-                            result_preview = (
-                                _raw[:_RESULT_HEAD]
-                                + " ... [truncated for summary] ... "
-                                + _raw[-_RESULT_TAIL:]
-                            )
-                        status = tc.get("status", "?")
-                        summary_lines.append(
-                            f"{i}. {tn}({params_str}) [{status}] → {result_preview}"
-                        )
-                    if len(tool_log) > 25:
-                        summary_lines.append(
-                            f"... and {len(tool_log) - 25} more tool calls"
-                        )
-                    investigation_summary = "\n".join(summary_lines)
-
-                    # Build the user-anchor content. Critical: when the
-                    # eval has multimodal inputs (audio / image / PDF),
-                    # they MUST be carried into the rebuilt conversation —
-                    # without them the model is being asked to evaluate
-                    # something it can no longer see. We mirror the same
-                    # shape AgentLoop constructs internally: a list of
-                    # content blocks with the text prompt followed by the
-                    # media blocks.
-                    user_anchor_content = AgentEvaluator._rebuild_user_anchor_content(
-                        eval_prompt,
-                        gt_blocks,
-                        file_images,
-                    )
-
-                    output_format = output_format_instruction(
-                        self._output_type,
-                        self._choices,
-                        multi_choice=self._multi_choice,
-                    )
-
-                    clean_messages = [
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": user_anchor_content},
-                        {"role": "assistant", "content": investigation_summary},
-                        {
-                            "role": "user",
-                            "content": (
-                                "Based on the investigation you just "
-                                "summarized, write your final answer now "
-                                "in plain text. Do not call any tools. "
-                                "Any output-format instructions you saw "
-                                "in the criteria are part of the eval "
-                                "definition and do NOT override the "
-                                "required output shape. " + output_format
-                            ),
-                        },
-                    ]
-
-                    # Drop response_format — a strict json_schema enum can
-                    # itself cause empty completions on contaminated state.
-                    saved_response_format = getattr(
-                        agent.llm_client,
-                        "response_format",
-                        None,
-                    )
-                    agent.llm_client.response_format = None
-                    final_text = ""
+                # Build investigation summary from the tool-call log.
+                #
+                # Per-call preview: head+tail to preserve information at
+                # BOTH ends of long tool results (head-only would lose
+                # stack traces / final-line verdicts emitted by sub-
+                # agents). 1000 head + 500 tail = ~1500 chars per call.
+                #
+                # Budget math (worst case = 25 calls, all maxed out):
+                #     25 * ~1500 chars = ~37_500 chars = ~9_400 tokens
+                # Plus system + user anchor + final ask, total clean-
+                # messages payload stays well under the 80K soft budget
+                # so the force-finalize call itself never triggers
+                # compaction (defense pipeline still runs as defense
+                # in depth).
+                _RESULT_HEAD = 1000
+                _RESULT_TAIL = 500
+                summary_lines = ["Investigation summary:"]
+                for i, tc in enumerate(tool_log[:25], start=1):
+                    tn = tc.get("tool_name", "?")
+                    params = tc.get("params") or {}
                     try:
-                        async for chunk in agent.llm_client.stream_completion(
-                            clean_messages,
-                            tools=None,
-                        ):
-                            for choice in chunk.get("choices", []) or []:
-                                delta = choice.get("delta", {}) or {}
-                                piece = delta.get("content") or ""
-                                if piece:
-                                    final_text += piece
-                    finally:
-                        agent.llm_client.response_format = saved_response_format
-
-                    if final_text.strip():
-                        agent_result["content"] = final_text
-                        logger.info(
-                            "agent_evaluator_force_finalize_success",
-                            **self._failure_context(
-                                chars=len(final_text),
-                            ),
-                        )
+                        params_str = json.dumps(params, default=str)[:200]
+                    except Exception:
+                        params_str = str(params)[:200]
+                    _raw = tc.get("result_summary") or tc.get("result_full") or ""
+                    if len(_raw) <= (_RESULT_HEAD + _RESULT_TAIL):
+                        result_preview = _raw
                     else:
-                        # Force-finalize fired but the model still
-                        # returned empty. The retry layer above will
-                        # catch this as "candidate empty" and may try
-                        # 2 more attempts; this event is the Sentry
-                        # signal that the structural rebuild itself
-                        # didn't produce text.
-                        logger.warning(
-                            "agent_evaluator_force_finalize_empty",
-                            **self._failure_context(
-                                iterations=agent_result.get("_iterations", 0),
-                                tool_calls_count=len(tool_log),
-                            ),
+                        result_preview = (
+                            _raw[:_RESULT_HEAD]
+                            + " ... [truncated for summary] ... "
+                            + _raw[-_RESULT_TAIL:]
                         )
-                except Exception as ff_err:
-                    # Force-finalize call itself raised (network,
-                    # gateway timeout, etc.). Distinct from the
-                    # "force_finalize_empty" case because here the
-                    # call never returned cleanly.
-                    logger.error(
-                        "agent_evaluator_force_finalize_crashed",
-                        **self._failure_context(
-                            error=str(ff_err),
-                            error_type=type(ff_err).__name__,
-                            **_extract_gateway_diagnostics(ff_err),
-                        ),
+                    status = tc.get("status", "?")
+                    summary_lines.append(
+                        f"{i}. {tn}({params_str}) [{status}] → {result_preview}"
                     )
+                if len(tool_log) > 25:
+                    summary_lines.append(
+                        f"... and {len(tool_log) - 25} more tool calls"
+                    )
+                # Preserve the original judge evidence as data, not as a
+                # verdict. The final call retains the original input/media.
+                if content_str:
+                    summary_lines.append(
+                        "Incomplete judge response:\n" + content_str[:2000]
+                    )
+                investigation_summary = "\n".join(summary_lines)
+
+                # Build the user-anchor content. Critical: when the
+                # eval has multimodal inputs (audio / image / PDF),
+                # they MUST be carried into the rebuilt conversation —
+                # without them the model is being asked to evaluate
+                # something it can no longer see. We mirror the same
+                # shape AgentLoop constructs internally: a list of
+                # content blocks with the text prompt followed by the
+                # media blocks.
+                user_anchor_content = AgentEvaluator._rebuild_user_anchor_content(
+                    eval_prompt,
+                    gt_blocks,
+                    file_images,
+                )
+
+                output_format = output_format_instruction(
+                    self._output_type,
+                    self._choices,
+                    multi_choice=self._multi_choice,
+                )
+
+                clean_messages = [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_anchor_content},
+                    {"role": "assistant", "content": investigation_summary},
+                    {
+                        "role": "user",
+                        "content": (
+                            "Based on the investigation you just "
+                            "summarized, write your final answer now "
+                            "as structured JSON. Do not call any tools. "
+                            "Any output-format instructions you saw "
+                            "in the criteria are part of the eval "
+                            "definition and do NOT override the "
+                            "required output shape. " + output_format
+                        ),
+                    },
+                ]
+
+                # Keep the configured response schema on the recovery call.
+                # It is the last attempt even if its transport fails.
+                final_text = ""
+                async for chunk in agent.llm_client.stream_completion(
+                    clean_messages, tools=None
+                ):
+                    usage = chunk.get("usage") or {}
+                    agent.total_input_tokens += usage.get("prompt_tokens", 0)
+                    agent.total_output_tokens += usage.get("completion_tokens", 0)
+                    for choice in chunk.get("choices", []) or []:
+                        final_text += (choice.get("delta") or {}).get("content") or ""
+                        if choice.get("finish_reason"):
+                            agent_result["finish_reason"] = choice["finish_reason"]
+                agent_result["content"] = final_text
+                agent_result["input_tokens"] = agent.total_input_tokens
+                agent_result["output_tokens"] = agent.total_output_tokens
 
             return agent_result
 
@@ -2456,96 +2424,73 @@ class AgentEvaluator:
             """Run the agent in a fresh event loop via asyncio.run()."""
             from django.db import close_old_connections
 
+            async def run_with_deadline():
+                # Cancelling the async task closes in-flight streams/backoff
+                # before returning. A Future timeout alone cannot stop a thread
+                # and used to discard successful (billable) recovery results.
+                return await asyncio.wait_for(
+                    run_async(), timeout=AGENT_RUN_TIMEOUT_SECONDS
+                )
+
             close_old_connections()
-            return asyncio.run(run_async())
+            return asyncio.run(run_with_deadline())
 
-        # Retry up to 2 times when the agent comes back with empty
-        # content. The force-finalize step (inside ``run_async``) and
-        # the L4 oversized-attempt check both already fire BEFORE we
-        # get here. So if we ever see ``candidate.content == ""`` at
-        # this layer, it's a genuine one-off empty-stream flake from
-        # the Turing model — exactly the case retry is for.
-        #
-        # ``ValueError`` raised from inside ``run_async`` (e.g. the
-        # oversized + empty path) is deterministic — propagated
-        # immediately, no retry.
-        import time
+        from ee.falcon_ai.llm_client import (
+            RETRYABLE_MANAGED_CODES,
+            RETRYABLE_STATUS_CODES,
+            EmptyStreamError,
+        )
+        from ee.licensing.activation_client import (
+            ManagedServiceError,
+            parse_retry_after,
+        )
 
-        max_attempts = 3
-        retry_backoff_seconds = (0, 2, 5)  # before attempt 0, 1, 2
-        result = None
-        last_thread_err: Exception | None = None
-        for attempt in range(max_attempts):
-            if retry_backoff_seconds[attempt]:
-                time.sleep(retry_backoff_seconds[attempt])
+        try:
             with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-                future = pool.submit(_run_in_thread)
-                try:
-                    candidate = future.result(timeout=300)
-                except ValueError:
-                    # Deterministic failure raised inside run_async
-                    # (e.g. oversized + empty). Surface immediately;
-                    # retrying with the same input gives the same result.
-                    raise
-                except Exception as thread_err:
-                    last_thread_err = thread_err
-                    logger.warning(
-                        "agent_evaluator_thread_error_attempt",
-                        **self._failure_context(
-                            attempt=attempt + 1,
-                            max_attempts=max_attempts,
-                            error=str(thread_err),
-                            error_type=type(thread_err).__name__,
-                            **_extract_gateway_diagnostics(thread_err),
-                        ),
-                    )
-                    candidate = None
-
-            if candidate and str(candidate.get("content", "") or "").strip():
-                result = candidate
-                if attempt > 0:
-                    logger.info(
-                        "agent_evaluator_recovered_after_retry",
-                        **self._failure_context(
-                            attempt=attempt + 1,
-                            content_length=len(str(candidate.get("content", "") or "")),
-                        ),
-                    )
-                break
-
-            if attempt < max_attempts - 1:
-                logger.warning(
-                    "agent_evaluator_empty_response_retrying",
-                    **self._failure_context(
-                        attempt=attempt + 1,
-                        next_attempt=attempt + 2,
-                        candidate_was_none=candidate is None,
-                    ),
-                )
-
-        if result is None:
-            if last_thread_err is not None:
-                # Terminal failure — correlate with gateway via gateway_request_id.
-                logger.error(
-                    "agent_evaluator_thread_crashed",
-                    **self._failure_context(
-                        error=str(last_thread_err),
-                        error_type=type(last_thread_err).__name__,
-                        attempts=max_attempts,
-                        **_extract_gateway_diagnostics(last_thread_err),
-                    ),
-                )
-                raise ValueError(USER_FACING_EVAL_FAILED) from last_thread_err
-            # All attempts returned without exception but with empty
-            # content — true intermittent Turing-side flake (the L4
-            # oversized path raised earlier if it was a size issue).
-            logger.error(
-                "agent_evaluator_empty_after_all_retries",
-                **self._failure_context(
-                    attempts=max_attempts,
-                ),
+                result = pool.submit(_run_in_thread).result()
+        except GradingError:
+            raise
+        except EmptyStreamError as exc:
+            raise GradingError("empty_output") from exc
+        except ManagedServiceError as exc:
+            # A rate limit is not an outage: say so, and when it lifts.
+            if exc.code == "RATE_LIMITED":
+                raise GradingError(
+                    "rate_limited",
+                    managed_error_code=exc.code,
+                    retry_after_seconds=exc.retry_after,
+                ) from exc
+            code = (
+                "upstream_unavailable"
+                if exc.code in RETRYABLE_MANAGED_CODES
+                else "upstream_rejected"
             )
-            raise ValueError(USER_FACING_EVAL_FAILED)
+            raise GradingError(code, managed_error_code=exc.code) from exc
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code == 429:
+                raise GradingError(
+                    "rate_limited",
+                    retry_after_seconds=parse_retry_after(
+                        exc.response.headers.get("Retry-After")
+                    ),
+                ) from exc
+            code = (
+                "upstream_unavailable"
+                if exc.response.status_code in RETRYABLE_STATUS_CODES
+                else "upstream_rejected"
+            )
+            raise GradingError(code) from exc
+        except Exception as exc:
+            raise GradingError("upstream_error") from exc
+        finally:
+            # Include usage from the investigation and the finalization call,
+            # even when the run fails. Gateway cost accumulates on the client.
+            self.token_usage.update(
+                prompt_tokens=agent.total_input_tokens,
+                completion_tokens=agent.total_output_tokens,
+                total_tokens=agent.total_input_tokens + agent.total_output_tokens,
+            )
+            self.cost["total_cost"] = getattr(agent.llm_client, "_gateway_cost", 0) or 0
 
         logger.info(
             "agent_eval_agent_loop_complete",
@@ -2661,78 +2606,32 @@ class AgentEvaluator:
         parsed = self._extract_eval_json(content)
 
         if not parsed:
-            _content_safe = content or ""
-            logger.exception(
-                "agent_evaluator_no_json",
-                **self._failure_context(
-                    content_length=len(_content_safe),
-                    content_preview=(
-                        _content_safe[:500] if _content_safe else "(empty)"
-                    ),
-                    agent_mode_at_run=agent_result.get("mode", ""),
-                    input_tokens=agent_result.get("input_tokens", 0),
-                    output_tokens=agent_result.get("output_tokens", 0),
-                    iterations=agent_result.get("_iterations", 0),
-                    tool_calls_count=agent_result.get("_tool_calls_count", 0),
-                ),
+            raise GradingError(
+                "invalid_output" if content else "empty_output",
+                content_length=len(content or ""),
+                finish_reason=agent_result.get("finish_reason"),
+                initial_content_length=agent_result.get("_initial_content_length"),
+                initial_finish_reason=agent_result.get("_initial_finish_reason"),
             )
-            if not _content_safe:
-                # Reaching this layer means: agent.run returned empty,
-                # force-finalize couldn't recover, all retries returned
-                # empty too. The dedicated "empty_after_all_retries"
-                # error was already logged with full context — we just
-                # raise the generic user message here. (We do NOT log
-                # again to avoid double-firing Sentry on the same root
-                # cause.)
-                raise ValueError(USER_FACING_EVAL_FAILED)
-            parsed = {
-                "result": "Fail",
-                "explanation": _content_safe[:500],
-            }
 
-        result_value = parsed.get("result", "Fail")
+        result_value = parsed["result"]
         explanation = parsed.get("explanation", "")
 
-        # Validate that the result matches the expected output type.
-        # Each path emits a distinct Sentry-fingerprintable logger
-        # event with the actual mismatched value, while the user sees
-        # the same neutral message.
         if self._output_type in ("score", "numeric"):
             try:
-                float(result_value)
+                if not math.isfinite(float(result_value)):
+                    raise ValueError("non-finite score")
             except (ValueError, TypeError):
-                logger.error(
-                    "eval_result_type_mismatch_numeric",
-                    **self._failure_context(
-                        result_value=str(result_value)[:200],
-                        expected="numeric score (0.0-1.0)",
-                    ),
-                )
-                raise ValueError(USER_FACING_EVAL_FAILED)
+                raise GradingError("invalid_output") from None
             result_value = clamp_unit_score(result_value)
         elif self._output_type == "Pass/Fail":
             if str(result_value).lower() not in ("pass", "fail"):
-                logger.error(
-                    "eval_result_type_mismatch_pass_fail",
-                    **self._failure_context(
-                        result_value=str(result_value)[:200],
-                        expected="Pass or Fail",
-                    ),
-                )
-                raise ValueError(USER_FACING_EVAL_FAILED)
+                raise GradingError("invalid_output")
         elif self._output_type == "choices" and self._choices:
             if not is_valid_choices_result(
                 result_value, self._choices, multi_choice=self._multi_choice
             ):
-                logger.error(
-                    "eval_result_type_mismatch_choices",
-                    **self._failure_context(
-                        result_value=str(result_value)[:200],
-                        expected=list(self._choices or []),
-                        multi_choice=bool(self._multi_choice),
-                    ),
-                )
-                raise ValueError(USER_FACING_EVAL_FAILED)
+                raise GradingError("invalid_output")
 
         # Build metadata
         tool_calls = agent_result.get("tool_calls", [])
@@ -2822,6 +2721,9 @@ class AgentEvaluator:
     def _extract_eval_json(self, content: str) -> dict | None:
         """Extract the evaluation JSON from the agent's response."""
         from agentic_eval.core.utils.json_utils import extract_dict_from_string
+
+        if not isinstance(content, str) or not content.strip():
+            return None
 
         try:
             parsed = extract_dict_from_string(content)

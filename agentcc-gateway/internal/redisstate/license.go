@@ -3,6 +3,7 @@ package redisstate
 import (
 	"context"
 	"fmt"
+	"math"
 	"strconv"
 	"time"
 
@@ -81,17 +82,21 @@ func (s *LicenseStore) InstanceActive(licenseID, instanceID string) (bool, error
 	return exists, nil
 }
 
-func (s *LicenseStore) AllowRate(licenseID string, limit int) (bool, error) {
+// AllowRate counts a request against the licence's per-minute window. On a
+// refusal, resetSeconds is the time until the next window opens, rounded up so
+// a caller that waits that long, as Retry-After tells it to, lands in it.
+func (s *LicenseStore) AllowRate(licenseID string, limit int) (allowed bool, resetSeconds int, err error) {
 	if limit <= 0 {
-		return true, nil
+		return true, 0, nil
 	}
 	if s == nil || s.client == nil {
-		return false, fmt.Errorf("license redis store unavailable")
+		return false, 0, fmt.Errorf("license redis store unavailable")
 	}
-	window := time.Now().Unix() / 60
+	now := time.Now()
+	window := now.Unix() / 60
 	key := "license_rate:" + licenseID + ":" + strconv.FormatInt(window, 10)
 	var count int64
-	err := s.client.Do(func(rdb redis.UniversalClient) error {
+	err = s.client.Do(func(rdb redis.UniversalClient) error {
 		ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
 		defer cancel()
 		pipe := rdb.TxPipeline()
@@ -105,9 +110,13 @@ func (s *LicenseStore) AllowRate(licenseID string, limit int) (bool, error) {
 		return nil
 	})
 	if err != nil {
-		return false, err
+		return false, 0, err
 	}
-	return count <= int64(limit), nil
+	resetSeconds = int(math.Ceil(time.Unix((window+1)*60, 0).Sub(now).Seconds()))
+	if resetSeconds < 1 {
+		resetSeconds = 1
+	}
+	return count <= int64(limit), resetSeconds, nil
 }
 
 // PeekMonthlyUsage returns whether the current monthly usage is below the

@@ -169,12 +169,15 @@ class AgentLoop:
         skill=None,
         system_prompt_override=None,
         tools_override=None,
+        raise_on_stream_error: bool = False,
     ):
         """Execute the agent loop with mode detection, parallel tool execution, and retry.
 
         Args:
             system_prompt_override: If provided, replaces the default PromptBuilder
                 system prompt. Used by AgentEvaluator to inject eval-specific instructions.
+            raise_on_stream_error: Evaluation callers propagate failures instead of
+                returning partial content. Chat keeps its error callback behavior.
             tools_override: If provided, replaces the mode-detected tools list.
                 Used by AgentEvaluator to restrict available tools.
         """
@@ -326,6 +329,7 @@ class AgentLoop:
         tool_call_counter = 0
         consecutive_errors = 0
 
+        finish_reason = None
         for iteration in range(self.MAX_ITERATIONS):
             # Force wrap-up when approaching the limit
             # Token-budget-based warning — more natural than iteration count
@@ -458,6 +462,8 @@ class AgentLoop:
             except ManagedServiceError:
                 raise
             except Exception as e:
+                if raise_on_stream_error:
+                    raise
                 error_detail = str(e)
                 # Extract response body from httpx errors for debugging
                 if hasattr(e, "response") and e.response is not None:
@@ -805,6 +811,7 @@ class AgentLoop:
             "input_tokens": self.total_input_tokens,
             "output_tokens": self.total_output_tokens,
             "title": title,
+            "finish_reason": finish_reason,
         }
 
     async def _maybe_generate_title(
