@@ -32,6 +32,10 @@ class Migration(migrations.Migration):
                 ),
                 ("restored_at", models.DateTimeField(db_index=True)),
                 (
+                    "checked_at",
+                    models.DateTimeField(blank=True, db_index=True, null=True),
+                ),
+                (
                     "result",
                     models.OneToOneField(
                         on_delete=django.db.models.deletion.CASCADE,

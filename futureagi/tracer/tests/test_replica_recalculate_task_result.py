@@ -2045,6 +2045,51 @@ def test_put_back_watch_is_released_once_the_result_is_retired_again(
     assert not _put_back_watches().exists()
 
 
+def test_recheck_batch_rotates_through_more_put_backs_than_it_holds(
+    observation_span, custom_eval_config, eval_task
+):
+    """More put-backs are watched than one tick's batch holds: the next tick
+    reads the ones the last tick did not, rather than the same oldest ones
+    again, so a late delete under the newest put-back is caught a tick
+    later, not once the older watches expire an hour on."""
+    from datetime import timedelta
+
+    from django.utils import timezone
+
+    from tracer.models.observation_span import EvalPutBack
+    from tracer.models.observation_span import ObservationSpan as Span
+    from tracer.services.eval_tasks.recalculate import recheck_put_backs
+
+    now = timezone.now()
+    results = []
+    for i in range(3):
+        span = Span.objects.using("default").create(
+            id=f"{observation_span.id}-w{i}",
+            project=observation_span.project,
+            trace=observation_span.trace,
+            name=f"watched span {i}",
+            observation_type="llm",
+        )
+        result = _task_result(eval_task, span, custom_eval_config)
+        EvalPutBack.objects.using("default").create(
+            result=result, restored_at=now - timedelta(minutes=30 - i)
+        )
+        results.append((span, result))
+
+    first = recheck_put_backs(limit=2)
+    assert (first["rechecked"], first["retired"]) == (2, 0)
+    # The newest put-back's span is deleted after the first tick read the
+    # two older ones.
+    newest_span, newest = results[-1]
+    Span._base_manager.using("default").filter(pk=newest_span.pk).update(deleted=True)
+
+    second = recheck_put_backs(limit=2)
+
+    assert _stored(newest.pk).deleted is True
+    assert second["retired"] == 1
+    assert all(_stored(result.pk).deleted is False for _span, result in results[:2])
+
+
 @pytest.mark.parametrize("status", [EvalEntryStatus.PENDING, EvalEntryStatus.RUNNING])
 def test_task_result_on_a_span_with_a_project_version_is_still_a_task_result(
     replica,

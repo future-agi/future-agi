@@ -588,6 +588,10 @@ class EvalPutBack(models.Model):
         related_name="+",
     )
     restored_at = models.DateTimeField(db_index=True)
+    # When the sweep last re-read it (null: not yet since the put-back). Each
+    # tick takes the least recently read first, so a backlog larger than one
+    # tick's batch rotates rather than re-reading the same rows.
+    checked_at = models.DateTimeField(null=True, blank=True, db_index=True)
 
     class Meta:
         db_table = "tracer_eval_put_back"

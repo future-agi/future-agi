@@ -62,7 +62,7 @@ from datetime import timedelta
 
 import structlog
 from django.db import DatabaseError, IntegrityError, transaction
-from django.db.models import Exists, OuterRef, Q, TextField
+from django.db.models import Exists, F, OuterRef, Q, TextField
 from django.db.models.functions import Cast
 from django.utils import timezone
 
@@ -376,10 +376,16 @@ def _watch_put_back(previous_id) -> None:
     try:
         with transaction.atomic(using="default"):
             _put_backs().bulk_create(
-                [EvalPutBack(result_id=previous_id, restored_at=timezone.now())],
+                [
+                    EvalPutBack(
+                        result_id=previous_id,
+                        restored_at=timezone.now(),
+                        checked_at=None,
+                    )
+                ],
                 update_conflicts=True,
                 unique_fields=["result"],
-                update_fields=["restored_at"],
+                update_fields=["restored_at", "checked_at"],
             )
     except DatabaseError:
         logger.exception(
@@ -929,25 +935,30 @@ def recheck_put_backs(
 ) -> dict:
     """Re-read the parents of recent put-backs. Counts only.
 
-    For each ``EvalPutBack``, oldest first: if the result is live and its
+    For each ``EvalPutBack``, least recently read first (one not read since
+    its put-back before any other), up to ``limit``: if the result is live and its
     span, trace, session or eval config is deleted now, retire it for good
     with its Error Feed memberships (``_retire_if_parents_deleted``). The row
     is removed once that retired the result, once the result is no longer
     live (a later Recalculate retired it, and writes its own row if it puts
     it back), or once it is older than ``window_seconds``. Until then each
     tick reads it again, so a delete that commits after the put-back's own
-    checks is still caught, at the next tick. A delete that commits after
-    the window is not.
+    checks is still caught, at the next tick that reaches it (the next one
+    unless more than ``limit`` put-backs are watched: the batch rotates
+    through them). A delete that commits after the window is not.
 
     * ``rechecked``: put-backs whose parents were read;
     * ``retired``: of those, results retired because a parent was deleted;
     * ``released``: rows removed;
     * ``busy``: rows another tick holds right now.
     """
-    expired_before = timezone.now() - timedelta(seconds=window_seconds)
+    now = timezone.now()
+    expired_before = now - timedelta(seconds=window_seconds)
     counts = {"rechecked": 0, "retired": 0, "released": 0, "busy": 0, "errors": 0}
     watch_ids = list(
-        _put_backs().order_by("restored_at").values_list("pk", flat=True)[:limit]
+        _put_backs()
+        .order_by(F("checked_at").asc(nulls_first=True), "restored_at", "pk")
+        .values_list("pk", flat=True)[:limit]
     )
     for watch_id in watch_ids:
         try:
@@ -968,6 +979,9 @@ def recheck_put_backs(
                 if not live or retired or watch.restored_at < expired_before:
                     watch.delete()
                     counts["released"] += 1
+                else:
+                    watch.checked_at = now
+                    watch.save(update_fields=["checked_at"])
         except Exception:
             logger.exception("recalculate_put_back_recheck_failed", watch_id=watch_id)
             counts["errors"] += 1
