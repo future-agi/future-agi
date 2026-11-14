@@ -141,20 +141,25 @@ class LocalizationCase:
     def missing_media_tool(self) -> MediaToolUnavailable | None:
         """The stored ffmpeg error, unless the agent answered without it.
 
-        Findings, or an "unlocalizable" answer about an input that opened, are
-        the agent's own result. "Unlocalizable" about the input ffmpeg could
-        not open is the missing tool, not the agent's free-text reason.
+        Findings are the agent's own result, and so is "unlocalizable" about
+        an input that opened, or about a non-audio input. "Unlocalizable"
+        about the input ffmpeg could not open, or about an audio input never
+        opened (it would fail the same way), is the missing tool, not the
+        agent's free-text reason.
         """
-        if self.result is None:
+        if self.result is None or self.media_tool_error is None:
             return self.media_tool_error
         if self.result.analysis:
             return None
+        key = self.result.selected_key
+        if not self.media_tool_failed_keys or key in self.media_tool_failed_keys:
+            return self.media_tool_error
         if (
-            self.media_tool_failed_keys
-            and self.result.selected_key not in self.media_tool_failed_keys
+            key not in self.inputs
+            and (self.localizer.input_type or {}).get(key) == "audio"
         ):
-            return None
-        return self.media_tool_error
+            return self.media_tool_error
+        return None
 
     def _source(self, key):
         if key not in (self.localizer.input_type or {}) or key not in (

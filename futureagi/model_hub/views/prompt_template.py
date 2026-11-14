@@ -270,7 +270,12 @@ def handle_media(item: dict, model_name: str):
                 "input_audio": {"data": encoded_string, "format": audio_type},
             }
 
-        except MediaToolUnavailable:
+        except MediaToolUnavailable as exc:
+            if model_mode == "stt":
+                # Speech-to-text reads the audio_url item itself and sends the
+                # audio unconverted when ffmpeg is missing (RunPrompt STT).
+                logger.warning("stt_audio_not_converted", reason=str(exc))
+                return item
             # Names the missing ffmpeg and the image to use; a None item would
             # fail later with an unrelated error.
             raise
