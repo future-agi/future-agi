@@ -11,6 +11,7 @@ The Vertex token going stale within an hour of a passing smoke test is the
 observed version of this, so these pin the deferral rather than the fail-closed
 default.
 """
+
 from types import SimpleNamespace
 from unittest.mock import patch
 

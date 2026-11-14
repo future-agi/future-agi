@@ -792,9 +792,7 @@ def _load_voice_conversation_spans(trace_query: QuerySet) -> list[dict]:
         spans = reader.list_by_trace_ids([str(t) for t in trace_ids])
 
     return [
-        _chspan_to_legacy_dict(s)
-        for s in spans
-        if s.observation_type == "conversation"
+        _chspan_to_legacy_dict(s) for s in spans if s.observation_type == "conversation"
     ]
 
 

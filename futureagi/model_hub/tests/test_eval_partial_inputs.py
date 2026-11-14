@@ -350,9 +350,7 @@ class TestSharedValidator:
         from model_hub.utils.eval_input_validation import validate_eval_inputs
 
         template = _FakeTemplate(required_keys=["content", "context"])
-        warning, _ = validate_eval_inputs(
-            template, {"content": "x", "context": ""}
-        )
+        warning, _ = validate_eval_inputs(template, {"content": "x", "context": ""})
         assert warning is not None
         assert warning["type"] == "partial_input"
         assert warning["empty_keys"] == ["context"]

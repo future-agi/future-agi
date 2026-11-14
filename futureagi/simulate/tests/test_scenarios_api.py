@@ -478,8 +478,9 @@ class TestScenarioDetailView:
         assert "prompts" in data
         assert "dataset_rows" in data
 
-
-    def test_get_scenario_detail_dataset_column_config_shape_and_null(self, auth_client, scenario, user):
+    def test_get_scenario_detail_dataset_column_config_shape_and_null(
+        self, auth_client, scenario, user
+    ):
         # 1. Test null branch when scenario has no dataset
         scenario.dataset = None
         scenario.save()
@@ -513,7 +514,9 @@ class TestScenarioDetailView:
         assert str(col1.id) in config
         assert config[str(col1.id)] == {"name": "Age", "type": "integer"}
 
-    def test_get_scenario_detail_dataset_column_ordering(self, auth_client, scenario, user):
+    def test_get_scenario_detail_dataset_column_ordering(
+        self, auth_client, scenario, user
+    ):
         dataset = Dataset.no_workspace_objects.create(
             name="test",
             organization=scenario.organization,
@@ -522,10 +525,16 @@ class TestScenarioDetailView:
             source=DatasetSourceChoices.SCENARIO.value,
         )
         col1 = Column.objects.create(
-            name="Col1", data_type="text", dataset=dataset, source=SourceChoices.OTHERS.value,
+            name="Col1",
+            data_type="text",
+            dataset=dataset,
+            source=SourceChoices.OTHERS.value,
         )
         col2 = Column.objects.create(
-            name="Col2", data_type="text", dataset=dataset, source=SourceChoices.OTHERS.value,
+            name="Col2",
+            data_type="text",
+            dataset=dataset,
+            source=SourceChoices.OTHERS.value,
         )
 
         # Declare in reverse order of creation
@@ -542,7 +551,9 @@ class TestScenarioDetailView:
         keys = list(config.keys())
         assert keys == [str(col2.id), str(col1.id)]
 
-    def test_get_scenario_detail_dataset_column_isolation(self, auth_client, scenario, user):
+    def test_get_scenario_detail_dataset_column_isolation(
+        self, auth_client, scenario, user
+    ):
         dataset = Dataset.no_workspace_objects.create(
             name="test",
             organization=scenario.organization,
@@ -551,7 +562,10 @@ class TestScenarioDetailView:
             source=DatasetSourceChoices.SCENARIO.value,
         )
         col1 = Column.objects.create(
-            name="Valid", data_type="text", dataset=dataset, source=SourceChoices.OTHERS.value,
+            name="Valid",
+            data_type="text",
+            dataset=dataset,
+            source=SourceChoices.OTHERS.value,
         )
 
         # Create a foreign column in another dataset
@@ -563,7 +577,10 @@ class TestScenarioDetailView:
             source=DatasetSourceChoices.SCENARIO.value,
         )
         col_foreign = Column.objects.create(
-            name="Foreign", data_type="text", dataset=other_dataset, source=SourceChoices.OTHERS.value,
+            name="Foreign",
+            data_type="text",
+            dataset=other_dataset,
+            source=SourceChoices.OTHERS.value,
         )
 
         # Pollute column_order with foreign column ID

@@ -44,11 +44,17 @@ def main():
 
     # Test type options
     parser.add_argument("--unit", action="store_true", help="Run unit tests only")
-    parser.add_argument("--integration", action="store_true", help="Run integration tests only")
-    parser.add_argument("--performance", action="store_true", help="Run performance tests only")
+    parser.add_argument(
+        "--integration", action="store_true", help="Run integration tests only"
+    )
+    parser.add_argument(
+        "--performance", action="store_true", help="Run performance tests only"
+    )
 
     # Output options
-    parser.add_argument("--coverage", action="store_true", help="Run with coverage report")
+    parser.add_argument(
+        "--coverage", action="store_true", help="Run with coverage report"
+    )
     parser.add_argument("--html", action="store_true", help="Generate HTML test report")
     parser.add_argument("--parallel", action="store_true", help="Run tests in parallel")
     parser.add_argument("--fast", action="store_true", help="Skip slow tests")
@@ -100,11 +106,9 @@ def main():
 
     # Coverage options
     if args.coverage:
-        cmd.extend([
-            "--cov=core",
-            "--cov-report=term-missing",
-            "--cov-report=html:htmlcov"
-        ])
+        cmd.extend(
+            ["--cov=core", "--cov-report=term-missing", "--cov-report=html:htmlcov"]
+        )
 
     # HTML report
     if args.html:
@@ -131,7 +135,9 @@ if __name__ == "__main__":
 
     # Check if we're in the right directory
     if not Path("tests").exists():
-        print("❌ Tests directory not found. Please run from agentic_eval root directory.")
+        print(
+            "❌ Tests directory not found. Please run from agentic_eval root directory."
+        )
         sys.exit(1)
 
     main()

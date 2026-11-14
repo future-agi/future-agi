@@ -20,7 +20,10 @@ NAMES = (
 
 
 @pytest.mark.django_db
-def test_version_30_catalog_receives_distinct_lexical_templates(auth_client):
+@pytest.mark.parametrize("previous_version", [30, 31])
+def test_previous_catalog_receives_distinct_lexical_templates(
+    auth_client, previous_version
+):
     previous = cache.get("system_evals_version")
     try:
         seed_evals(force=True)
@@ -30,10 +33,10 @@ def test_version_30_catalog_receives_distinct_lexical_templates(auth_client):
             ).values_list("name", "id")
         )
         EvalTemplate.no_workspace_objects.filter(name__in=NAMES).delete()
-        cache.set("system_evals_version", 30, timeout=None)
+        cache.set("system_evals_version", previous_version, timeout=None)
         seed_evals()
         assert cache.get("system_evals_version") == SYSTEM_EVALS_VERSION
-        assert SYSTEM_EVALS_VERSION > 30
+        assert SYSTEM_EVALS_VERSION > previous_version
         for name, eval_id in zip(NAMES, range(221, 225), strict=True):
             template = EvalTemplate.no_workspace_objects.get(name=name, owner="system")
             assert template.eval_id == eval_id

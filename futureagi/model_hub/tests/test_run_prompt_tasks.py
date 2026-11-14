@@ -277,9 +277,7 @@ class TestRecoverStuckRunPrompts:
 
         # Mock stuck prompts query
         stuck_ids = ["prompt-1", "prompt-2"]
-        mock_prompter.objects.filter.return_value.values_list.return_value.__getitem__.return_value = (
-            stuck_ids
-        )
+        mock_prompter.objects.filter.return_value.values_list.return_value.__getitem__.return_value = stuck_ids
 
         recover_stuck_run_prompts()
 
@@ -298,9 +296,7 @@ class TestRecoverStuckRunPrompts:
         from model_hub.tasks.run_prompt import recover_stuck_run_prompts
 
         # No stuck prompts
-        mock_prompter.objects.filter.return_value.values_list.return_value.__getitem__.return_value = (
-            []
-        )
+        mock_prompter.objects.filter.return_value.values_list.return_value.__getitem__.return_value = []
 
         recover_stuck_run_prompts()
 
@@ -316,9 +312,7 @@ class TestRecoverStuckRunPrompts:
         """Test that stale tracker entries are cleaned up."""
         from model_hub.tasks.run_prompt import recover_stuck_run_prompts
 
-        mock_prompter.objects.filter.return_value.values_list.return_value.__getitem__.return_value = (
-            []
-        )
+        mock_prompter.objects.filter.return_value.values_list.return_value.__getitem__.return_value = []
         mock_tracker.cleanup_stale.return_value = 5  # 5 stale entries cleaned
 
         recover_stuck_run_prompts()

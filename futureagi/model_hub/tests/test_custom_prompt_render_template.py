@@ -77,9 +77,7 @@ class TestRenderTemplateJinjaBlockConstructs:
         assert out == "a,b,c,"
 
     def test_filter_pipe(self, stub_evaluator):
-        out = stub_evaluator._render_template(
-            "{{ name | upper }}", {"name": "karthik"}
-        )
+        out = stub_evaluator._render_template("{{ name | upper }}", {"name": "karthik"})
         assert out == "KARTHIK"
 
 
@@ -98,9 +96,7 @@ class TestRenderTemplateEdgeCases:
     ):
         """When the spaced-name key is missing from context AND from the
         fallback_kwargs, the raw {{name}} form is preserved."""
-        out = stub_evaluator._render_template(
-            "Result: {{TTS Testing}}", {}, {}
-        )
+        out = stub_evaluator._render_template("Result: {{TTS Testing}}", {}, {})
         assert out == "Result: {{TTS Testing}}"
 
     def test_variable_name_with_spaces_fallback_kwargs(self, stub_evaluator):
@@ -217,7 +213,5 @@ class TestRenderTemplateSSTIProtection:
         assert "Marker" not in out
 
     def test_plain_variable_still_works_under_sandbox(self, stub_evaluator):
-        out = stub_evaluator._render_template(
-            "Hello {{ name }}", {"name": "Karthik"}
-        )
+        out = stub_evaluator._render_template("Hello {{ name }}", {"name": "Karthik"})
         assert out == "Hello Karthik"

@@ -169,7 +169,9 @@ def persist_eval_result(logger_kwargs: dict[str, Any]) -> EvalLogger | None:
         # A deleted/reclaimed entry did not accept this result. Do not hand a
         # newer claim to callers that may start follow-up work such as localization.
         return None
-    return EvalLogger.objects.filter(**fence).first()
+    # Primary: the entry was materialized and claimed moments ago, and the
+    # caller hands this row to the error localizer.
+    return EvalLogger.objects.using("default").filter(**fence).first()
 
 
 def serialize_trace_witnesses(
@@ -296,17 +298,23 @@ def _refresh_waiting_trace_witnesses(
     """
 
     updates: list[EvalLogger] = []
-    entries = EvalLogger.objects.filter(
-        eval_task_id=str(task.id),
-        target_type=EvalTargetType.TRACE,
-        trace_id__in=list(trace_ids),
-    ).only(
-        "id",
-        "trace_id",
-        "status",
-        "config_hash",
-        "custom_eval_config_id",
-        "output_metadata",
+    # Primary: an earlier pass may have just rewritten these witnesses, and a
+    # stale replica copy that already equals the new metadata skips the update.
+    entries = (
+        EvalLogger.objects.using("default")
+        .filter(
+            eval_task_id=str(task.id),
+            target_type=EvalTargetType.TRACE,
+            trace_id__in=list(trace_ids),
+        )
+        .only(
+            "id",
+            "trace_id",
+            "status",
+            "config_hash",
+            "custom_eval_config_id",
+            "output_metadata",
+        )
     )
     for entry in entries:
         expected_hash = config_hashes.get(entry.custom_eval_config_id)
@@ -370,6 +378,36 @@ def soft_delete_eval_results(results: QuerySet[EvalLogger]) -> int:
         list(results.select_for_update(of=("self",)).values_list("id", flat=True))
         retire_eval_memberships(results)
         return results.update(deleted=True, deleted_at=timezone.now())
+
+
+def retire_pending_replacement(results: QuerySet[EvalLogger]) -> int:
+    """Phase one of a two-phase delete: retire eval results that may come back.
+
+    Recalculate retires a result while its replacement is computed. Its Error
+    Feed memberships stay, because a recompute that fails puts it back whole,
+    still counted in its issue. Every call must be followed by
+    ``finish_retirement`` (the retirement is final) or ``restore_retired``
+    (it is undone). Returns how many results were retired.
+    """
+    return results.update(deleted=True, deleted_at=timezone.now())
+
+
+def finish_retirement(results: QuerySet[EvalLogger]) -> None:
+    """Phase two: the retirement of ``results`` is final.
+
+    Retires the Error Feed memberships of those still retired, so an issue
+    never keeps a trace whose eval no longer exists. A result put back
+    meanwhile keeps its memberships. Idempotent."""
+    retire_eval_memberships(results.filter(deleted=True))
+
+
+def restore_retired(results: QuerySet[EvalLogger]) -> int:
+    """Phase two, undone: put retired results back. Returns how many.
+
+    Their memberships were never retired (``retire_pending_replacement``).
+    Raises ``IntegrityError`` when a newer entry holds a result's live slot;
+    run it in a savepoint and ``finish_retirement`` on that failure."""
+    return results.filter(deleted=True).update(deleted=False, deleted_at=None)
 
 
 def soft_delete_live(task: EvalTask) -> int:

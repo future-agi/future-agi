@@ -21,7 +21,11 @@ def _load_eval(name: str):
     path = YAML_DIR / f"{name}.yaml"
     code = yaml.safe_load(path.read_text())["config"]["code"]
     ns: dict = {}
-    runner = __builtins__["exec"] if isinstance(__builtins__, dict) else getattr(__builtins__, "exec")
+    runner = (
+        __builtins__["exec"]
+        if isinstance(__builtins__, dict)
+        else getattr(__builtins__, "exec")
+    )
     runner(compile(code, str(path), "exec"), ns)
     return ns["evaluate"]
 
@@ -32,7 +36,8 @@ def _load_eval(name: str):
 
 
 @pytest.mark.parametrize(
-    "eval_name", [
+    "eval_name",
+    [
         "accuracy",
         "balanced_accuracy",
         "cohen_kappa",
@@ -51,7 +56,8 @@ def test_empty_inputs_score_one(eval_name):
 
 
 @pytest.mark.parametrize(
-    "eval_name", [
+    "eval_name",
+    [
         "accuracy",
         "balanced_accuracy",
         "cohen_kappa",
@@ -70,8 +76,7 @@ def test_whitespace_normalization(eval_name):
     r1 = ev(None, ["yes", "no"], ["yes", "no"], None, **extra)
     r2 = ev(None, ["yes ", " no"], ["yes", "no"], None, **extra)
     assert r1["score"] == r2["score"], (
-        f"{eval_name}: whitespace changed score "
-        f"clean={r1['score']} vs ws={r2['score']}"
+        f"{eval_name}: whitespace changed score clean={r1['score']} vs ws={r2['score']}"
     )
 
 
@@ -99,24 +104,30 @@ def is_email():
     return _load_eval("is_email")
 
 
-@pytest.mark.parametrize("addr", [
-    "foo@example.com",
-    "a.b@example.com",
-    "first+tag@x.io",
-    "user_123@sub.example.co.uk",
-])
+@pytest.mark.parametrize(
+    "addr",
+    [
+        "foo@example.com",
+        "a.b@example.com",
+        "first+tag@x.io",
+        "user_123@sub.example.co.uk",
+    ],
+)
 def test_is_email_accepts_valid(is_email, addr):
     assert is_email(None, addr, None, None, text=addr)["score"] == 1.0
 
 
-@pytest.mark.parametrize("addr", [
-    "a..b@x.com",
-    ".a@x.com",
-    "a.@x.com",
-    "a@.x.com",
-    "a@-x.com",
-    "a@x-.com",
-])
+@pytest.mark.parametrize(
+    "addr",
+    [
+        "a..b@x.com",
+        ".a@x.com",
+        "a.@x.com",
+        "a@.x.com",
+        "a@-x.com",
+        "a@x-.com",
+    ],
+)
 def test_is_email_rejects_rfc_violations(is_email, addr):
     assert is_email(None, addr, None, None, text=addr)["score"] == 0.0, addr
 
@@ -132,8 +143,13 @@ def is_html():
 
 
 def test_is_html_accepts_valid(is_html):
-    assert is_html(None, "<p>hello</p>", None, None, text="<p>hello</p>")["score"] == 1.0
-    assert is_html(None, "<b><i>x</i></b>", None, None, text="<b><i>x</i></b>")["score"] == 1.0
+    assert (
+        is_html(None, "<p>hello</p>", None, None, text="<p>hello</p>")["score"] == 1.0
+    )
+    assert (
+        is_html(None, "<b><i>x</i></b>", None, None, text="<b><i>x</i></b>")["score"]
+        == 1.0
+    )
 
 
 def test_is_html_rejects_orphan_close(is_html):
@@ -190,24 +206,30 @@ def is_url():
     return _load_eval("is_url")
 
 
-@pytest.mark.parametrize("u", [
-    "https://example.com",
-    "http://sub.example.co.uk/path?q=1",
-    "mailto:user@example.com",
-    "file:///etc/passwd",
-    "tel:+15551234567",
-])
+@pytest.mark.parametrize(
+    "u",
+    [
+        "https://example.com",
+        "http://sub.example.co.uk/path?q=1",
+        "mailto:user@example.com",
+        "file:///etc/passwd",
+        "tel:+15551234567",
+    ],
+)
 def test_is_url_accepts_valid(is_url, u):
     assert is_url(None, u, None, None, text=u)["score"] == 1.0, u
 
 
-@pytest.mark.parametrize("u", [
-    "not a url",
-    "http://",
-    "http://.example.com",
-    "http://-example.com",
-    "http://example-.com",
-])
+@pytest.mark.parametrize(
+    "u",
+    [
+        "not a url",
+        "http://",
+        "http://.example.com",
+        "http://-example.com",
+        "http://example-.com",
+    ],
+)
 def test_is_url_rejects_malformed(is_url, u):
     assert is_url(None, u, None, None, text=u)["score"] == 0.0, u
 
@@ -228,7 +250,7 @@ def test_is_xml_accepts_well_formed(is_xml):
 
 
 def test_is_xml_rejects_doctype(is_xml):
-    payload = '<!DOCTYPE x><x/>'
+    payload = "<!DOCTYPE x><x/>"
     assert is_xml(None, payload, None, None, text=payload)["score"] == 0.0
 
 
@@ -236,7 +258,7 @@ def test_is_xml_rejects_billion_laughs(is_xml):
     payload = (
         '<!DOCTYPE lolz [<!ENTITY lol "lol">'
         '<!ENTITY lol2 "&lol;&lol;">]>'
-        '<lolz>&lol2;</lolz>'
+        "<lolz>&lol2;</lolz>"
     )
     assert is_xml(None, payload, None, None, text=payload)["score"] == 0.0
 
@@ -269,6 +291,7 @@ def test_json_diff_nested_empty_is_perfect():
 
 def test_fleiss_kappa_score_always_in_unit_interval():
     import json
+
     ev = _load_eval("fleiss_kappa")
     for matrix in [
         [[5, 0], [5, 0], [5, 0]],
@@ -282,6 +305,7 @@ def test_fleiss_kappa_score_always_in_unit_interval():
 
 def test_fleiss_kappa_rejects_inconsistent_rows():
     import json
+
     ev = _load_eval("fleiss_kappa")
     r = ev(None, json.dumps([[5, 0], [7, 0]]), None, None)
     assert r["score"] == 0.0
@@ -295,15 +319,27 @@ def test_fleiss_kappa_rejects_inconsistent_rows():
 
 def test_mer_insertion_does_not_zero_hits():
     ev = _load_eval("match_error_rate")
-    r = ev(None, "the cat sat happily", "the cat sat", None,
-           reference="the cat sat", hypothesis="the cat sat happily")
+    r = ev(
+        None,
+        "the cat sat happily",
+        "the cat sat",
+        None,
+        reference="the cat sat",
+        hypothesis="the cat sat happily",
+    )
     assert "H=3" in r["reason"], r["reason"]
 
 
 def test_wil_insertion_does_not_zero_hits():
     ev = _load_eval("word_info_lost")
-    r = ev(None, "the cat sat happily", "the cat sat", None,
-           reference="the cat sat", hypothesis="the cat sat happily")
+    r = ev(
+        None,
+        "the cat sat happily",
+        "the cat sat",
+        None,
+        reference="the cat sat",
+        hypothesis="the cat sat happily",
+    )
     assert "H=3" in r["reason"], r["reason"]
 
 
@@ -320,6 +356,7 @@ def test_wil_insertion_does_not_zero_hits():
 def _meteor_full_path(reference, hypothesis):
     """Run the preprocessor + eval body the same way `run_eval_func` would."""
     from evaluations.engine.preprocessing import preprocess_inputs
+
     ev = _load_eval("meteor_score")
     inputs = {"reference": reference, "hypothesis": hypothesis}
     inputs = preprocess_inputs("meteor_score", inputs)
@@ -330,8 +367,14 @@ def test_meteor_body_without_preprocessing_reports_required():
     """Sanity: eval body alone (no preprocessor run) must surface a clear
     error, not silently zero-score."""
     ev = _load_eval("meteor_score")
-    r = ev(None, "the cat sat", "the cat sat", None,
-           reference="the cat sat", hypothesis="the cat sat")
+    r = ev(
+        None,
+        "the cat sat",
+        "the cat sat",
+        None,
+        reference="the cat sat",
+        hypothesis="the cat sat",
+    )
     assert r["score"] == 0.0
     assert "preprocessing" in r["reason"].lower()
 
@@ -367,9 +410,19 @@ def test_meteor_one_empty_reports_missing():
 def test_context_precision_ranking_decay():
     ev = _load_eval("context_precision_score")
     # Top rank relevant -> higher score
-    r1 = ev(None, ["Paris is the capital of France", "Random fact about cars"], ["France capital is Paris"], None)
+    r1 = ev(
+        None,
+        ["Paris is the capital of France", "Random fact about cars"],
+        ["France capital is Paris"],
+        None,
+    )
     # Bottom rank relevant -> lower score (rank decayed)
-    r2 = ev(None, ["Random fact about cars", "Paris is the capital of France"], ["France capital is Paris"], None)
+    r2 = ev(
+        None,
+        ["Random fact about cars", "Paris is the capital of France"],
+        ["France capital is Paris"],
+        None,
+    )
     assert r1["score"] > r2["score"]
     assert r1["score"] == 1.0  # Hit at rank 1: AP = (1/1)/1 = 1.0
     assert r2["score"] == 0.5  # Hit at rank 2: AP = (1/2)/1 = 0.5
@@ -385,10 +438,14 @@ def test_context_recall_coverage():
     ev = _load_eval("context_recall_score")
     ref = ["France capital is Paris", "Germany capital is Berlin"]
     # Full coverage
-    r_full = ev(None, ["Paris is the capital of France", "Berlin is Germany capital"], ref, None)
+    r_full = ev(
+        None, ["Paris is the capital of France", "Berlin is Germany capital"], ref, None
+    )
     assert r_full["score"] == 1.0
     # Half coverage
-    r_half = ev(None, ["Paris is the capital of France", "Tokyo is in Japan"], ref, None)
+    r_half = ev(
+        None, ["Paris is the capital of France", "Tokyo is in Japan"], ref, None
+    )
     assert r_half["score"] == 0.5
 
 
@@ -396,10 +453,17 @@ def test_faithfulness_groundedness():
     ev = _load_eval("faithfulness_score")
     ctx = "The Apollo 11 mission landed on the Moon in July 1969. Neil Armstrong was the mission commander."
     # Faithful answer
-    r_faithful = ev(None, "Neil Armstrong commanded Apollo 11 which landed on the Moon in July 1969.", None, ctx)
+    r_faithful = ev(
+        None,
+        "Neil Armstrong commanded Apollo 11 which landed on the Moon in July 1969.",
+        None,
+        ctx,
+    )
     assert r_faithful["score"] == 1.0
     # Hallucinated answer
-    r_hallucinated = ev(None, "Neil Armstrong walked on Mars with Elon Musk in 2024.", None, ctx)
+    r_hallucinated = ev(
+        None, "Neil Armstrong walked on Mars with Elon Musk in 2024.", None, ctx
+    )
     assert r_hallucinated["score"] == 0.0
 
 
@@ -411,5 +475,10 @@ def test_noise_sensitivity_detection():
     r_clean = ev(None, "Paris is the capital of France.", expected, ctx)
     assert r_clean["score"] == 1.0
     # Extra context tokens lower the normalized score (higher is better).
-    r_noisy = ev(None, "Paris is France capital and bananas are yellow potassium fruits.", expected, ctx)
+    r_noisy = ev(
+        None,
+        "Paris is France capital and bananas are yellow potassium fruits.",
+        expected,
+        ctx,
+    )
     assert r_noisy["score"] < r_clean["score"]
