@@ -1944,3 +1944,18 @@ class HarnessScenarioRevisionsSerializer(serializers.Serializer):
     scenario_key = serializers.CharField()
     revisions = HarnessScenarioRevisionSerializer(many=True)
     truncated = serializers.BooleanField()
+
+
+class HarnessSourceChangeSerializer(serializers.Serializer):
+    kind = serializers.ChoiceField(choices=["rule", "file"])
+    ref = serializers.CharField(allow_blank=True)
+    before = serializers.CharField(allow_null=True)
+    after = serializers.CharField(allow_null=True)
+    cited_by = serializers.ListField(child=serializers.CharField())
+
+
+class HarnessSourceChangesSerializer(serializers.Serializer):
+    from_version = serializers.IntegerField(allow_null=True)
+    to_version = serializers.IntegerField(allow_null=True)
+    changes = HarnessSourceChangeSerializer(many=True)
+    truncated = serializers.BooleanField()

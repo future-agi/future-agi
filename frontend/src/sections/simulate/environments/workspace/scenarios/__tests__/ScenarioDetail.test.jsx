@@ -113,3 +113,18 @@ describe("ScenarioDetail lifecycle", () => {
     expect(screen.getByText("No source: assumed by the builder.")).toBeInTheDocument();
   });
 });
+
+describe("ScenarioDetail source changes", () => {
+  it("names the environment version a cited source changed in", () => {
+    const lifecycle = {
+      state: "draft",
+      reason: "not_validated",
+      reason_text: "Not validated on these versions yet.",
+      sources: [],
+      source_changed: ["rule:1"],
+      source_changed_version: 4,
+    };
+    render(<ScenarioDetailBody row={{ id: "r1", name: "Refund", lifecycle }} />);
+    expect(screen.getByTestId("lifecycle-source-changed")).toHaveTextContent("Source changed in environment v4: rule:1");
+  });
+});
