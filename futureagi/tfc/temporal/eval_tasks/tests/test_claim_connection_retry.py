@@ -230,7 +230,8 @@ async def test_historical_lost_claim_reply_completes_without_a_second_claim(
     monkeypatch.setattr(wf, "_FINALIZE_WAIT", timedelta(seconds=1))
     created = await sync_to_async(make_pending_entries)(eval_task, 3)
     completions = Counter()
-    claim_calls, lost_batch, statuses = [], [], []
+    lost_batch, statuses = [], []
+    claim_calls = []
     original_claim = entries.claim_pending_batch
     original_set_status = activities._set_task_status_sync
 
@@ -267,10 +268,23 @@ async def test_historical_lost_claim_reply_completes_without_a_second_claim(
                 admin.execute("SELECT pg_terminate_backend(%s, 5000)", [pid])
         return result
 
+    events = []
+    original_reap = activities._reap_sync
+
+    def record_reap(*args, **kwargs):
+        reaped = original_reap(*args, **kwargs)
+        events.append(("reap", reaped["requeued"]))
+        return reaped
+
+    monkeypatch.setattr(activities, "_reap_sync", record_reap)
+
     def lose_first_reply(task, n):
         claim_calls.append(n)
         if lost_batch:
-            return original_claim(task, n)
+            claimed = original_claim(task, n)
+            events.append(("claim", sorted(str(entry.id) for entry in claimed)))
+            return claimed
+        events.append(("lost", None))
         if outcome == "rolled_back":
             lost_batch.append(None)
             with connections["default"].execute_wrapper(terminate_after_update):
@@ -305,8 +319,19 @@ async def test_historical_lost_claim_reply_completes_without_a_second_claim(
         history = await handle.fetch_history()
 
     print(
-        f"lost_claim={outcome} claims={claim_calls} statuses={statuses} completed={dict(completions)}"
+        f"lost_claim={outcome} events={events} statuses={statuses} completed={dict(completions)}"
     )
+    # Nothing was claimed again until the drain had waited and reaped: the
+    # claim after the lost one takes the same two oldest entries -- requeued by
+    # the reaper if the lost claim committed, still pending if it rolled back
+    # -- and never skips ahead to the third.
+    first_two = sorted(str(entry.id) for entry in created[:2])
+    lost_at = events.index(("lost", None))
+    after = events[lost_at + 1 :]
+    assert after[0][0] == "reap", events
+    assert [e for e in after if e[0] == "claim"][0] == ("claim", first_two), events
+    if outcome == "committed":
+        assert after[0] == ("reap", 2), events
     assert result.status == "completed" and result.processed == 3
     assert await _task_status(str(eval_task.id)) == EvalTaskStatus.COMPLETED
     assert EvalTaskStatus.FAILED not in statuses
@@ -393,3 +418,67 @@ async def test_historical_lost_claim_replies_in_a_row_are_bounded(
     assert ran == []
     assert await _task_status(str(eval_task.id)) == EvalTaskStatus.FAILED
     assert (await _status_counts(str(eval_task.id)))["pending"] == 2
+
+
+@pytest.mark.e2e
+@pytest.mark.django_db(transaction=True)
+async def test_historical_lost_claim_reply_leaves_the_idle_wait_budget_alone(
+    workflow_environment, eval_task, make_pending_entries, monkeypatch
+):
+    """Waits after a lost claim reply are not idle finalize waits.
+
+    One entry stays RUNNING under a fresh claim the reaper may not take yet,
+    so every empty claim costs an idle wait. After eleven of them a claim
+    reply is lost, and the next empty claim must still get the twelfth idle
+    wait rather than fail the drain. The entry then finishes and the task
+    completes.
+    """
+    from datetime import timedelta
+
+    from tfc.temporal.eval_tasks import workflows as wf
+
+    _patch_noop_reconcile(monkeypatch)
+    monkeypatch.setattr(wf, "_FINALIZE_WAIT", timedelta(seconds=0.2))
+    [stranded] = await sync_to_async(make_pending_entries)(
+        eval_task, 1, status=EvalEntryStatus.RUNNING
+    )
+    idle_cap = wf._MAX_IDLE_FINALIZE_WAITS
+    claim_calls = []
+    original_claim = entries.claim_pending_batch
+
+    def claim(task, n):
+        claim_calls.append(n)
+        if len(claim_calls) == idle_cap:
+            with connections["default"].cursor() as cursor:
+                cursor.execute("SELECT 1")  # the claim's SQL reached the server
+            raise OperationalError("writer unavailable") from psycopg.InterfaceError(
+                "the connection is closed"
+            )
+        if len(claim_calls) == idle_cap + 2:
+            # Only reachable if the lost reply did not use up an idle wait.
+            EvalLogger.objects.filter(id=stranded.id).update(
+                status=EvalEntryStatus.COMPLETED, config_hash="0" * 64, error=False
+            )
+        return original_claim(task, n)
+
+    monkeypatch.setattr(entries, "claim_pending_batch", claim)
+    queue = f"claim-lost-idle-{uuid.uuid4().hex}"
+    async with Worker(
+        workflow_environment.client,
+        task_queue=queue,
+        workflows=get_workflows(),
+        activities=get_activities(),
+        workflow_runner=UnsandboxedWorkflowRunner(),
+    ):
+        result = await workflow_environment.client.execute_workflow(
+            HistoricalEvalTaskWorkflow.run,
+            EvalTaskWorkflowInput(
+                task_id=str(eval_task.id), task_queue=queue, batch_size=2
+            ),
+            id=f"eval-task-{eval_task.id}",
+            task_queue=queue,
+        )
+
+    assert result.status == "completed"
+    assert len(claim_calls) == idle_cap + 2
+    assert await _task_status(str(eval_task.id)) == EvalTaskStatus.COMPLETED
