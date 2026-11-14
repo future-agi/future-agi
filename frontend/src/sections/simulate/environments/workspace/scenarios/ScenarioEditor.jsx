@@ -1,12 +1,13 @@
 import PropTypes from "prop-types";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
-  Autocomplete, Box, Stack, Typography, Button, TextField, Slider,
+  Autocomplete, Box, MenuItem, Stack, Typography, Button, TextField, Slider,
   ToggleButton, ToggleButtonGroup,
 } from "@mui/material";
 
 import SideDrawer from "../../components/SideDrawer";
 import { SCENARIO_SHAPE } from "./scenarios.shapes";
+import { SCENARIOS_COPY } from "./scenarios.constants";
 import { EDITOR_COPY, noiseKey, noiseValue, subTasksToText } from "./scenarioEditor.constants";
 
 // The server names which fields may be written, in `scenario_editing`
@@ -59,6 +60,12 @@ export default function ScenarioEditor({ open, onClose, row, onSave, scenarioEdi
       maxTurns: row.maxTurns ?? "",
       backgroundNoise: noiseKey(row.backgroundNoise),
       keywords: asList(row.keywords),
+      sources: ((row._raw?.lifecycle ?? row.lifecycle)?.sources ?? []).map((one) => ({
+        kind: one.kind ?? "assumption",
+        ref: one.ref ?? "",
+        quote: one.quote ?? "",
+        supports: one.supports ?? "",
+      })),
       persona: {
         name: p.name ?? "",
         ageGroup: p.age_group ?? "",
@@ -90,6 +97,9 @@ export default function ScenarioEditor({ open, onClose, row, onSave, scenarioEdi
     };
 
     if (canEdit("tests") && draft.tests !== base.tests) setField("tests", draft.tests);
+    if (canEdit("sources") && JSON.stringify(draft.sources ?? []) !== JSON.stringify(base.sources ?? [])) {
+      setField("sources", draft.sources ?? []);
+    }
     if (canEdit("max_turns") && String(draft.maxTurns) !== String(base.maxTurns)) {
       setField("max_turns", Number(draft.maxTurns) || 0);
     }
@@ -188,6 +198,13 @@ export default function ScenarioEditor({ open, onClose, row, onSave, scenarioEdi
             value={draft.subGoalsText || ""} disabled
             helperText={READ_ONLY_HINT}
           />
+
+          <SourcesEditor
+            sources={draft.sources ?? []}
+            disabled={!canEdit("sources")}
+            onChange={(sources) => setDraft((d) => ({ ...d, sources }))}
+          />
+          <NegativeControlsList controls={(row._raw?.lifecycle ?? row.lifecycle)?.proof?.controls ?? []} />
 
           <SectionHeader title={EDITOR_COPY.personaSection} hint="Who is on the other end of the run." />
           <Stack direction={{ xs: "column", sm: "row" }} spacing={2}>
@@ -344,3 +361,72 @@ function SectionHeader({ title, hint }) {
   );
 }
 SectionHeader.propTypes = { title: PropTypes.string, hint: PropTypes.string };
+
+const SOURCE_KINDS = ["rule", "file", "chat_message", "evidence_case", "requirement", "assumption"];
+const EMPTY_SOURCE = { kind: "requirement", ref: "", quote: "", supports: "" };
+
+// Where each requirement comes from: a rule, a file, a chat message, an evidence case, the
+// person's words or an assumption. Saved through the amend route as one `sources` field.
+function SourcesEditor({ sources, disabled, onChange }) {
+  const update = (index, field) => (e) =>
+    onChange(sources.map((one, at) => (at === index ? { ...one, [field]: e.target.value } : one)));
+  return (
+    <Stack spacing={1.5} data-testid="sources-editor">
+      <SectionHeader title={SCENARIOS_COPY.sourcesTitle} hint="Where each requirement of this case comes from." />
+      {sources.length === 0 && (
+        <Typography sx={{ typography: "s2", color: "text.subtitle" }}>{SCENARIOS_COPY.noSources}</Typography>
+      )}
+      {sources.map((source, index) => (
+        <Stack key={index} direction={{ xs: "column", sm: "row" }} spacing={1}>
+          <TextField
+            select size="small" label="Kind" value={source.kind} disabled={disabled}
+            onChange={update(index, "kind")} sx={{ minWidth: 150 }}
+          >
+            {SOURCE_KINDS.map((kind) => (
+              <MenuItem key={kind} value={kind}>{kind}</MenuItem>
+            ))}
+          </TextField>
+          <TextField size="small" label="Ref" value={source.ref} disabled={disabled} onChange={update(index, "ref")} />
+          <TextField
+            size="small" label="Quote" value={source.quote} disabled={disabled} fullWidth
+            inputProps={{ maxLength: 500 }} onChange={update(index, "quote")}
+          />
+          <TextField size="small" label="Supports" value={source.supports} disabled={disabled} onChange={update(index, "supports")} />
+          {!disabled && (
+            <Button size="small" color="inherit" onClick={() => onChange(sources.filter((_, at) => at !== index))}>
+              Remove
+            </Button>
+          )}
+        </Stack>
+      ))}
+      {!disabled && (
+        <Button size="small" color="inherit" onClick={() => onChange([...sources, EMPTY_SOURCE])} sx={{ alignSelf: "flex-start" }}>
+          Add a source
+        </Button>
+      )}
+    </Stack>
+  );
+}
+
+SourcesEditor.propTypes = {
+  sources: PropTypes.arrayOf(PropTypes.object).isRequired,
+  disabled: PropTypes.bool,
+  onChange: PropTypes.func.isRequired,
+};
+
+// Written by the builder; shown so the person sees which wrong behaviours the checks must fail.
+function NegativeControlsList({ controls }) {
+  if (!controls.length) return null;
+  return (
+    <Stack spacing={0.5}>
+      <SectionHeader title={SCENARIOS_COPY.controlsTitle} hint="Written by the builder; not editable here." />
+      {controls.map((control) => (
+        <Typography key={control.name} sx={{ typography: "s2", color: "text.primary" }}>
+          {control.name}: {control.why} ({SCENARIOS_COPY.controlResult(control)})
+        </Typography>
+      ))}
+    </Stack>
+  );
+}
+
+NegativeControlsList.propTypes = { controls: PropTypes.arrayOf(PropTypes.object).isRequired };

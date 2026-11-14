@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import { render, screen } from "src/utils/test-utils";
+import userEvent from "@testing-library/user-event";
 
 import ScenarioToolbar from "../ScenarioToolbar";
 
@@ -26,5 +27,18 @@ describe("ScenarioToolbar — proof counts", () => {
   it("shows no counts line when the server sends none", () => {
     render(<ScenarioToolbar {...props} />);
     expect(screen.queryByTestId("scenario-proof-counts")).not.toBeInTheDocument();
+  });
+});
+
+describe("ScenarioToolbar — lifecycle filter", () => {
+  it("sends the picked lifecycle", async () => {
+    const user = userEvent.setup();
+    const onLifecycleFilterChange = vi.fn();
+    render(
+      <ScenarioToolbar {...props} lifecycleFilter="" onLifecycleFilterChange={onLifecycleFilterChange} />,
+    );
+    await user.click(screen.getByRole("combobox", { name: "Lifecycle" }));
+    await user.click(screen.getByRole("option", { name: "Source changed" }));
+    expect(onLifecycleFilterChange).toHaveBeenCalledWith("source_changed");
   });
 });

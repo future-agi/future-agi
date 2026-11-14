@@ -46,7 +46,56 @@ export const SCENARIOS_COPY = {
   critical: "Critical: a failure here is a release blocker",
   proofCounts: ({ proved = 0, kept_as_written: kept = 0, not_proved: notProved = 0 }) =>
     `${proved} proved · ${kept} kept as written · ${notProved} not proved`,
+  lifecycle: {
+    draft: "Draft",
+    validated: "Validated",
+    active: "Active",
+    archived: "Archived",
+  },
+  legacyTooltip: "Validated before checks were recorded. Validate again to confirm.",
+  keptAsWritten: "Kept as written",
+  lifecycleFilterLabel: "Lifecycle",
+  lifecycleFilters: [
+    { value: "", label: "All" },
+    { value: "draft", label: "Draft" },
+    { value: "validated", label: "Validated" },
+    { value: "active", label: "Active" },
+    { value: "archived", label: "Archived" },
+    { value: "source_changed", label: "Source changed" },
+    { value: "kept_as_written", label: "Kept as written" },
+  ],
+  validate: "Validate scenarios",
+  validating: "Validating… (up to 45 min)",
+  validationNoResults: "Validation finished but recorded no results; try again.",
+  archive: "Archive",
+  restore: "Restore",
+  archiveTitle: "Archive this scenario?",
+  archiveReason: "Reason (optional)",
+  archived: "Archived. It stays out of runs once you save.",
+  restored: "Restored as a draft. Validate and save to run it.",
+  draftChanged: "The environment was edited elsewhere; reload and try again.",
+  savedAsDraft: (n) => `${n} cases saved as Draft; validate them to run them`,
+  noSources: "No source: assumed by the builder.",
+  assumption: "Assumption",
+  sourcesTitle: "Sources",
+  statusTitle: "Status",
+  controlsTitle: "Negative controls",
+  revisionsTitle: "Revisions",
+  controlResult: (control) =>
+    control.assumed?.length ? "Not run" : control.failed === false ? "Passed" : control.failed ? "Failed" : "Not run",
+  sourceChanged: (version) => `Source changed in environment v${version}`,
+  addMissingCases: "Add missing cases",
+  uncoveredTitle: "Planned levels no scenario covers yet",
 };
+
+// Badge role per lifecycle state, from the design system's status roles.
+export const LIFECYCLE_ROLES = {
+  draft: "neutral",
+  validated: "info",
+  active: "success",
+  archived: "neutral",
+};
+export const LANE_WARNINGS = ["solution_assumed", "proof_deferred", "control_not_run"];
 
 // A row the unsaved changes add or change; an added one can't be picked for a
 // run yet.

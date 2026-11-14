@@ -2229,14 +2229,13 @@ class HostedHarnessProvider:
         queryset = apply_filters(queryset, request.query_params)
         from simulate.services.harness_environment import AGENT_TYPE_VOICE, agent_type
 
-        return Response(
-            coverage_grid(
-                queryset,
-                request.query_params.get("row_axis") or DEFAULT_ROW_AXIS,
-                request.query_params.get("col_axis") or DEFAULT_COL_AXIS,
-                spoken=agent_type(job) == AGENT_TYPE_VOICE,
-            )
+        grid = coverage_grid(
+            queryset,
+            request.query_params.get("row_axis") or DEFAULT_ROW_AXIS,
+            request.query_params.get("col_axis") or DEFAULT_COL_AXIS,
+            spoken=agent_type(job) == AGENT_TYPE_VOICE,
         )
+        return Response({**grid, **uncovered_levels(job)})
 
     def amend_scenarios(self, request, pk) -> Response:
         """Edit an environment's authored suite, one receipt per requested change."""
@@ -3376,3 +3375,29 @@ def _store_edited_sources(
     HostedHarnessScenario.no_workspace_objects.filter(job=job, scenario_key=key).update(
         sources=[dict(one) for one in sources if one.get("kind") != "file"] + results
     )
+
+
+def uncovered_levels(job: HostedHarnessJob) -> dict[str, Any]:
+    """The levels the build planned that no scenario uses, from the default suite's coverage.json."""
+    from simulate.models import HarnessSuiteVersion
+
+    documents = (
+        HarnessSuiteVersion._base_manager.filter(id=job.suite_version_id)
+        .values_list("documents", flat=True)
+        .first()
+        if job.suite_version_id
+        else None
+    ) or {}
+    coverage = documents.get("coverage") if isinstance(documents, dict) else None
+    axes = coverage.get("axes") if isinstance(coverage, dict) else None
+    if not isinstance(axes, dict):
+        return {"uncovered": [], "coverage_recorded": False}
+    return {
+        "uncovered": [
+            {"axis": str(axis), "level": str(level)}
+            for axis, entry in axes.items()
+            if isinstance(entry, dict)
+            for level in entry.get("unused") or []
+        ],
+        "coverage_recorded": True,
+    }

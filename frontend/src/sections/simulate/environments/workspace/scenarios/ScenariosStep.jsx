@@ -17,6 +17,8 @@ import ScenarioToolbar from "./ScenarioToolbar";
 import SelectionBar from "./SelectionBar";
 import CoverageMatrix from "./CoverageMatrix";
 import AddScenariosDrawer from "./AddScenariosDrawer";
+import ValidateScenariosButton from "./ValidateScenariosButton";
+import { clampCount, missingCasesGuidance } from "./addScenarios.constants";
 import ScenarioEditor from "./ScenarioEditor";
 import ScenarioDrawer from "./ScenarioDrawer";
 import PropTypes from "prop-types";
@@ -134,6 +136,10 @@ export default function ScenariosStep({
   const [trials, setTrials] = useState(1);
   const [query, setQuery] = useState("");
   const [filters, setFilters] = useState({});
+  // The lifecycle filter rides with the filters, so a page or grouping change keeps it.
+  const [lifecycleFilter, setLifecycleFilter] = useState("");
+  // "Add missing cases" opens Add scenarios prefilled for the uncovered levels.
+  const [addPreset, setAddPreset] = useState(null);
   const [adding, setAdding] = useState(false);
   const [editing, setEditing] = useState(null);
   // The row opened in full from the table (the scenario drawer).
@@ -186,7 +192,7 @@ export default function ScenariosStep({
   const pageData = useScenarioPage({
     jobId: env?.id,
     search: debouncedQuery,
-    filters,
+    filters: lifecycleFilter ? { ...filters, lifecycle: lifecycleFilter } : filters,
     groupBy,
     page,
     pageSize,
@@ -534,12 +540,29 @@ export default function ScenariosStep({
                   onApplyFilters={applyFilters}
                   filterCount={filterCount}
                   proofCounts={pageData.proofCounts}
+                  lifecycleFilter={lifecycleFilter}
+                  onLifecycleFilterChange={(value) => {
+                    setLifecycleFilter(value);
+                    setPage(0);
+                  }}
                   actions={
                     <>
+                      {!locked && <ValidateScenariosButton jobId={env?.id} />}
                       <CoverageMatrix
                         jobId={env?.id}
                         search={debouncedQuery}
                         filters={filters}
+                        onAddMissing={
+                          locked
+                            ? undefined
+                            : (uncovered) => {
+                                setAddPreset({
+                                  guidance: missingCasesGuidance(uncovered),
+                                  count: clampCount(uncovered.length),
+                                });
+                                setAdding(true);
+                              }
+                        }
                       />
                       <AddButton
                         onClick={() => setAdding(true)}
@@ -638,11 +661,15 @@ export default function ScenariosStep({
       )}
 
       <AddScenariosDrawer
+        key={addPreset ? addPreset.guidance : "add"}
         open={adding}
-        onClose={() => setAdding(false)}
+        onClose={() => {
+          setAdding(false);
+          setAddPreset(null);
+        }}
         env={env}
-        selected={selected}
-        onAdd={addScenarios}
+        initialGuidance={addPreset?.guidance ?? ""}
+        initialCount={addPreset?.count}
       />
       <ScenarioDrawer
         row={openRow}

@@ -41,6 +41,11 @@ vi.mock("src/api/simulate-environments/versions", async () => {
   };
 });
 
+const validateScenarios = vi.fn();
+vi.mock("src/api/harness/scenarios", () => ({
+  useValidateScenarios: () => ({ mutate: validateScenarios, isPending: false, isSuccess: false }),
+}));
+
 const { default: RunDialog } = await import("../RunDialog");
 
 const ENV = { id: "env-1", versioning: { enabled: true } };
@@ -774,5 +779,50 @@ describe("RunDialog", () => {
   it("leaves other failures to the snackbar", () => {
     renderDialog({ error: { statusCode: 500, message: "boom" } });
     expect(screen.queryByTestId("run-error")).toBeNull();
+  });
+});
+
+
+describe("RunDialog lifecycle refusals", () => {
+  beforeEach(() => {
+    state.versions = VERSIONS;
+    state.plans = {};
+    state.members = {};
+    state.drafts = null;
+    validateScenarios.mockReset();
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+  });
+
+  it("disables Try again for retry_after seconds, then re-submits the same picks", async () => {
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    const { onSubmit } = renderDialog({
+      error: { statusCode: 409, error: "pair_validating", message: "being validated", retry_after: 3 },
+    });
+    const again = screen.getByTestId("run-try-again");
+    expect(again).toBeDisabled();
+    expect(again).toHaveTextContent("Try again in 3s");
+
+    await vi.advanceTimersByTimeAsync(3000);
+
+    expect(again).toBeEnabled();
+    await user.click(again);
+    expect(onSubmit).toHaveBeenCalledWith({}, ["k1", "k2"], expect.anything());
+    vi.useRealTimers();
+  });
+
+  it("offers Validate scenarios when every case waits for validation", async () => {
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    renderDialog({
+      error: { statusCode: 409, error: "all_cases_blocked", message: "held", action: "validate_scenarios" },
+    });
+    await user.click(screen.getByTestId("run-validate-scenarios"));
+    expect(validateScenarios).toHaveBeenCalledWith({});
+    vi.useRealTimers();
+  });
+
+  it("offers no button for a block of another kind", () => {
+    renderDialog({ error: { statusCode: 409, error: "all_cases_blocked", message: "held" } });
+    expect(screen.queryByTestId("run-validate-scenarios")).toBeNull();
+    vi.useRealTimers();
   });
 });

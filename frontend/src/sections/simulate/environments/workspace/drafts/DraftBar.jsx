@@ -1,6 +1,7 @@
 import PropTypes from "prop-types";
 import { useEffect, useId, useRef, useState } from "react";
 import { Box, Button, Stack, Typography } from "@mui/material";
+import { useSnackbar } from "notistack";
 
 import { ConfirmDialog } from "src/components/custom-dialog";
 import { relativeTime } from "src/utils/format-time";
@@ -12,6 +13,7 @@ import {
 import { refusalText } from "../evals/refusalText";
 import { DRAFTS_COPY as COPY } from "../workspace.constants";
 import { changeCount } from "./changeCount";
+import { SCENARIOS_COPY } from "../scenarios/scenarios.constants";
 
 const pieceLine = (piece, draft) =>
   `${COPY.pieces[piece]} · ${
@@ -53,6 +55,7 @@ export default function DraftBar({
   const enabled = Boolean(env?.versioning?.enabled);
   const { data: drafts } = useDrafts(env?.id, { enabled });
   const save = useSaveDrafts(env?.id);
+  const { enqueueSnackbar } = useSnackbar();
   const discard = useDiscardDraft(env?.id);
   const [confirming, setConfirming] = useState(false);
   const staleId = useId();
@@ -95,6 +98,13 @@ export default function DraftBar({
         parentId: drafts[piece].parentId,
         revision: drafts[piece].revision,
       })),
+      {
+        // Saving never activates an unvalidated case: it is saved as Draft and does not run.
+        onSuccess: (saved) => {
+          const drafted = saved?.not_active?.length ?? 0;
+          if (drafted) enqueueSnackbar(SCENARIOS_COPY.savedAsDraft(drafted), { variant: "info" });
+        },
+      },
     );
   };
   const onDiscard = () => {

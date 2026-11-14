@@ -1,5 +1,16 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { render, screen } from "src/utils/test-utils";
+
+vi.mock("src/api/harness/scenarios", () => ({
+  useScenarioRevisions: () => ({
+    data: {
+      revisions: [
+        { revision: 2, digest: "d2", suite_versions: [3, 4], changed_fields: ["tests"] },
+        { revision: 1, digest: "d1", suite_versions: [1], changed_fields: [] },
+      ],
+    },
+  }),
+}));
 
 import ScenarioDetail, { ScenarioDetailBody } from "../ScenarioDetail";
 
@@ -68,5 +79,37 @@ describe("ScenarioDetailBody — empty scenario", () => {
     render(<ScenarioDetailBody row={{ id: "x", name: "orphan", subTasks: [] }} />);
     expect(screen.queryByText("What this tests")).toBeNull();
     expect(screen.queryByText("The person is told")).toBeNull();
+  });
+});
+
+describe("ScenarioDetail lifecycle", () => {
+  const lifecycle = {
+    state: "draft",
+    reason: "negative_control_passed",
+    reason_text: "The checks pass a wrong behaviour: two_refunds (refunds twice). Tighten refund_once.",
+    sources: [
+      { kind: "rule", ref: "rule:3", quote: "Refund at most once.", label: "Refund at most once.", resolved: true },
+      { kind: "assumption", ref: "", quote: "", label: "Assumption", resolved: true },
+    ],
+    proof: { controls: [{ name: "two_refunds", why: "refunds twice", failed: false, assumed: [] }] },
+  };
+
+  it("shows the status, sources, controls and revisions", () => {
+    render(
+      <ScenarioDetailBody
+        jobId="env-1"
+        row={{ id: "r1", name: "Refund", scenarioKey: "refund", lifecycle }}
+      />,
+    );
+    expect(screen.getByTestId("lifecycle-status")).toHaveTextContent(lifecycle.reason_text);
+    expect(screen.getByTestId("lifecycle-sources")).toHaveTextContent("Refund at most once.");
+    expect(screen.getByText("Assumption")).toBeInTheDocument();
+    expect(screen.getByTestId("lifecycle-controls")).toHaveTextContent("Passed");
+    expect(screen.getByTestId("lifecycle-revisions")).toHaveTextContent("Revision 2");
+  });
+
+  it("says a case with no sources was assumed by the builder", () => {
+    render(<ScenarioDetailBody row={{ id: "r1", name: "Refund", lifecycle: { ...lifecycle, sources: [] } }} />);
+    expect(screen.getByText("No source: assumed by the builder.")).toBeInTheDocument();
   });
 });

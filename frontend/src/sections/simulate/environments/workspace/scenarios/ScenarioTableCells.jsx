@@ -7,10 +7,54 @@ import { DRAFTS_COPY } from "../workspace.constants";
 import { SUB_TASK_SHAPE } from "./scenarios.shapes";
 import { normaliseSubTasks } from "./scenarioEditor.constants";
 import {
+  LANE_WARNINGS,
+  LIFECYCLE_ROLES,
+  SCENARIOS_COPY,
   hasUnsavedChange,
   isUnsavedAddition,
   unsavedReasonId,
 } from "./scenarios.constants";
+
+// The case's lifecycle on the versions in view: Draft, Validated, Active or Archived, with why on
+// hover. A case kept as written (its solution could not run here) also carries a chip.
+export function LifecycleBadge({ row }) {
+  const lifecycle = row?.lifecycle ?? row?._raw?.lifecycle;
+  if (!lifecycle) return null;
+  const label = SCENARIOS_COPY.lifecycle[lifecycle.state] ?? lifecycle.state;
+  const tooltip = lifecycle.reason_text || (lifecycle.legacy ? SCENARIOS_COPY.legacyTooltip : "");
+  const kept = LANE_WARNINGS.includes(lifecycle.warning);
+  return (
+    <Stack direction="row" alignItems="center" spacing={0.5} sx={{ flexShrink: 0 }}>
+      <Tooltip title={tooltip} disableHoverListener={!tooltip}>
+        <span data-testid="lifecycle-badge">
+          <StatusBadge
+            status={lifecycle.state}
+            role={LIFECYCLE_ROLES[lifecycle.state] ?? "neutral"}
+            label={lifecycle.legacy ? `${label} ·` : label}
+            size="sm"
+            dot={false}
+          />
+        </span>
+      </Tooltip>
+      {kept && (
+        <Tooltip title={lifecycle.warning_text || ""}>
+          <span data-testid="lifecycle-kept-chip">
+            <StatusBadge
+              status="kept_as_written"
+              role="warning"
+              label={SCENARIOS_COPY.keptAsWritten}
+              size="sm"
+              dot={false}
+            />
+          </span>
+        </Tooltip>
+      )}
+    </Stack>
+  );
+}
+LifecycleBadge.propTypes = {
+  row: PropTypes.shape({ lifecycle: PropTypes.object, _raw: PropTypes.object }),
+};
 
 // "Unsaved" on a row the unsaved changes add or change; an added row also says
 // why it can't be selected.

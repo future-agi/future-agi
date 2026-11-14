@@ -7,8 +7,13 @@ import {
 
 import {
   amendHarnessScenarios,
+  archiveHarnessScenario,
   getHarnessScenarioCoverage,
+  getHarnessScenarioValidation,
+  listHarnessScenarioRevisions,
   listHarnessScenarios,
+  restoreHarnessScenario,
+  validateHarnessScenarios,
 } from "src/api/harness/harness";
 
 export const HARNESS_SCENARIOS_KEY = ["harness-scenarios"];
@@ -122,5 +127,63 @@ export function useHarnessScenarioCoverage(
     queryFn: () => getHarnessScenarioCoverage(jobId, params),
     enabled: Boolean(jobId),
     placeholderData: keepPreviousData,
+  });
+}
+
+// How often a running scenario validation is read; it can take up to the 45-minute check deadline.
+export const VALIDATION_POLL_MS = 15_000;
+
+/** Start proving every scenario of the environment's default pair. */
+export function useValidateScenarios(jobId) {
+  return useMutation({
+    meta: { errorHandled: true },
+    mutationFn: (body = {}) => validateHarnessScenarios(jobId, body),
+  });
+}
+
+/**
+ * Poll one scenario validation until it is no longer validating, then refetch the list so each
+ * case shows the lifecycle its new proof gives it.
+ */
+export function useScenarioValidation(jobId, validationJobId) {
+  const queryClient = useQueryClient();
+  return useQuery({
+    queryKey: [...scenariosListKey(jobId), "validation", validationJobId],
+    queryFn: async () => {
+      const status = await getHarnessScenarioValidation(jobId, validationJobId);
+      if (status.state !== "validating") {
+        queryClient.invalidateQueries({ queryKey: scenariosListKey(jobId) });
+      }
+      return status;
+    },
+    enabled: Boolean(jobId && validationJobId),
+    refetchInterval: (query) =>
+      query.state.data?.state === "validating" || !query.state.data
+        ? VALIDATION_POLL_MS
+        : false,
+  });
+}
+
+/** Archive or restore one scenario; both refetch the list. */
+export function useArchiveScenario(jobId) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    meta: { errorHandled: true },
+    mutationFn: ({ key, reason, restore = false }) =>
+      restore
+        ? restoreHarnessScenario(jobId, key)
+        : archiveHarnessScenario(jobId, key, reason),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: scenariosListKey(jobId) });
+    },
+  });
+}
+
+/** A scenario's revisions, newest first. */
+export function useScenarioRevisions(jobId, key) {
+  return useQuery({
+    queryKey: [...scenariosListKey(jobId), "revisions", key],
+    queryFn: () => listHarnessScenarioRevisions(jobId, key),
+    enabled: Boolean(jobId && key),
   });
 }

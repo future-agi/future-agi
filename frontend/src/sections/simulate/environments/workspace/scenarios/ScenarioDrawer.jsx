@@ -1,5 +1,10 @@
 import PropTypes from "prop-types";
-import { Box, Button, Stack, Typography } from "@mui/material";
+import { useState } from "react";
+import { Box, Button, Stack, TextField, Typography } from "@mui/material";
+import { useSnackbar } from "notistack";
+import { ConfirmDialog } from "src/components/custom-dialog";
+import { useArchiveScenario } from "src/api/harness/scenarios";
+import { LifecycleSections } from "./ScenarioDetail";
 import Iconify from "src/components/iconify";
 import SideDrawer from "../../components/SideDrawer";
 import { normaliseSubTasks } from "./scenarioEditor.constants";
@@ -10,6 +15,7 @@ import {
   effectiveTrigger,
 } from "./callActorLabels";
 import { SCENARIO_SHAPE } from "./scenarios.shapes";
+import { SCENARIOS_COPY } from "./scenarios.constants";
 
 // One scenario, opened from its table row, laid out as the designer's
 // ScenarioDrawer: the name (the table's Scenario column) and Edit in the
@@ -27,6 +33,75 @@ const SECTION_HEAD = {
   fontWeight: "fontWeightMedium",
   color: "text.primary",
   mb: 1,
+};
+
+// Archive is offered on a saved case; an unsaved addition has no identity yet, so "remove" applies.
+function ArchiveAction({ row, jobId, onDone }) {
+  const [confirming, setConfirming] = useState(false);
+  const [reason, setReason] = useState("");
+  const { enqueueSnackbar } = useSnackbar();
+  const archive = useArchiveScenario(jobId);
+  const lifecycle = row.lifecycle ?? row._raw?.lifecycle;
+  if (!jobId || !lifecycle || row.draftChange === "added") return null;
+  const archived = lifecycle.state === "archived";
+  const key = row.scenarioKey ?? row._raw?.scenario_key;
+
+  const run = async () => {
+    try {
+      await archive.mutateAsync({ key, reason, restore: archived });
+      enqueueSnackbar(archived ? SCENARIOS_COPY.restored : SCENARIOS_COPY.archived, { variant: "success" });
+      setConfirming(false);
+      onDone?.();
+    } catch (error) {
+      const code = error?.response?.data?.error;
+      enqueueSnackbar(
+        code === "draft_changed" ? SCENARIOS_COPY.draftChanged : error?.response?.data?.message || error?.message,
+        { variant: "error" },
+      );
+    }
+  };
+
+  return (
+    <>
+      <Button
+        size="small"
+        variant="outlined"
+        color="inherit"
+        onClick={() => (archived ? run() : setConfirming(true))}
+        disabled={archive.isPending}
+        startIcon={<Iconify icon={archived ? "solar:restart-linear" : "solar:archive-linear"} width={14} />}
+        sx={{ flexShrink: 0 }}
+      >
+        {archived ? SCENARIOS_COPY.restore : SCENARIOS_COPY.archive}
+      </Button>
+      <ConfirmDialog
+        open={confirming}
+        onClose={() => setConfirming(false)}
+        title={SCENARIOS_COPY.archiveTitle}
+        content={
+          <TextField
+            fullWidth
+            size="small"
+            label={SCENARIOS_COPY.archiveReason}
+            value={reason}
+            inputProps={{ maxLength: 255 }}
+            onChange={(e) => setReason(e.target.value)}
+          />
+        }
+        action={
+          <Button variant="contained" color="primary" onClick={run} disabled={archive.isPending}>
+            {SCENARIOS_COPY.archive}
+          </Button>
+        }
+      />
+    </>
+  );
+}
+
+ArchiveAction.propTypes = {
+  row: PropTypes.object.isRequired,
+  jobId: PropTypes.string,
+  onDone: PropTypes.func,
 };
 
 export default function ScenarioDrawer({
@@ -75,9 +150,13 @@ export default function ScenarioDrawer({
                 Edit
               </Button>
             )}
+            {!locked && <ArchiveAction row={row} jobId={env?.id} onDone={onClose} />}
           </Stack>
           <Box sx={{ flex: 1, overflow: "auto" }}>
             <ScenarioSheet row={row} env={env} />
+            <Stack spacing={3} sx={{ px: 3, pb: 3 }}>
+              <LifecycleSections row={row} jobId={env?.id} />
+            </Stack>
           </Box>
         </Stack>
       )}
@@ -87,7 +166,7 @@ export default function ScenarioDrawer({
 
 ScenarioDrawer.propTypes = {
   row: SCENARIO_SHAPE,
-  env: PropTypes.shape({ callActors: PropTypes.array }),
+  env: PropTypes.shape({ id: PropTypes.string, callActors: PropTypes.array }),
   onClose: PropTypes.func.isRequired,
   onEdit: PropTypes.func,
   locked: PropTypes.bool,

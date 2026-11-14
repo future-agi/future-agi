@@ -1,6 +1,6 @@
 import PropTypes from "prop-types";
 import { useState } from "react";
-import { Box, Stack, Button, TextField, Typography } from "@mui/material";
+import { Box, Stack, Button, MenuItem, TextField, Typography } from "@mui/material";
 
 import Iconify from "src/components/iconify";
 import { FilterPanel } from "src/components/filter-panel";
@@ -25,6 +25,8 @@ export default function ScenarioToolbar({
   filterFields, filters, onApplyFilters, filterCount,
   rowHeight = "Short", onRowHeightChange,
   proofCounts = null,
+  lifecycleFilter = "",
+  onLifecycleFilterChange,
   actions,
 }) {
   const [filterAnchor, setFilterAnchor] = useState(null);
@@ -70,6 +72,23 @@ export default function ScenarioToolbar({
           >
             {SCENARIOS_COPY.filterLabel}{filterCount ? ` (${filterCount})` : ""}
           </Button>
+          {onLifecycleFilterChange ? (
+            <TextField
+              select
+              size="small"
+              label={SCENARIOS_COPY.lifecycleFilterLabel}
+              value={lifecycleFilter}
+              onChange={(e) => onLifecycleFilterChange(e.target.value)}
+              inputProps={{ "data-testid": "lifecycle-filter" }}
+              sx={{ minWidth: 150 }}
+            >
+              {SCENARIOS_COPY.lifecycleFilters.map((one) => (
+                <MenuItem key={one.value || "all"} value={one.value}>
+                  {one.label}
+                </MenuItem>
+              ))}
+            </TextField>
+          ) : null}
           <Button
             size="small"
             variant="outlined"
@@ -146,5 +165,7 @@ ScenarioToolbar.propTypes = {
     kept_as_written: PropTypes.number,
     not_proved: PropTypes.number,
   }),
+  lifecycleFilter: PropTypes.string,
+  onLifecycleFilterChange: PropTypes.func,
   actions: PropTypes.node,
 };

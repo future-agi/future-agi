@@ -6,6 +6,8 @@ import Iconify from "src/components/iconify";
 import { SCENARIO_SHAPE } from "./scenarios.shapes";
 import { normaliseSubTasks } from "./scenarioEditor.constants";
 import { genderLabel } from "./personaLabels";
+import { SCENARIOS_COPY } from "./scenarios.constants";
+import { useScenarioRevisions } from "src/api/harness/scenarios";
 
 // A scenario, in full — the expanded body of a list-view row.
 //
@@ -83,7 +85,7 @@ const PERSONA_ROWS = [
 // What a scenario is, section by section: the brief, its sub-goals, the
 // persona, the conversation flow and what it tests: the list view's expanded
 // row.
-export function ScenarioDetailBody({ row, sx }) {
+export function ScenarioDetailBody({ row, sx, jobId }) {
   const s = row;
   if (!s) return null;
   // A section with nothing to say is left out rather than shown empty.
@@ -181,6 +183,8 @@ export function ScenarioDetailBody({ row, sx }) {
       )}
 
       {whatItTests}
+
+      <LifecycleSections row={row} jobId={jobId} />
     </Stack>
   );
 }
@@ -188,7 +192,99 @@ export function ScenarioDetailBody({ row, sx }) {
 ScenarioDetailBody.propTypes = {
   row: SCENARIO_SHAPE,
   sx: PropTypes.object,
+  jobId: PropTypes.string,
 };
+
+// Status, sources, negative controls and revisions: what the lifecycle says about this case and why.
+export function LifecycleSections({ row, jobId }) {
+  const lifecycle = row?.lifecycle ?? row?._raw?.lifecycle;
+  if (!lifecycle) return null;
+  const sources = lifecycle.sources ?? [];
+  const controls = lifecycle.proof?.controls ?? [];
+  return (
+    <>
+      <Section title={SCENARIOS_COPY.statusTitle}>
+        <Stack spacing={0.5} data-testid="lifecycle-status">
+          <Typography sx={{ typography: "s1", color: "text.primary" }}>
+            {SCENARIOS_COPY.lifecycle[lifecycle.state] ?? lifecycle.state}
+            {lifecycle.proof?.proved_at ? ` · ${lifecycle.proof.proved_at}` : ""}
+          </Typography>
+          {lifecycle.reason_text && (
+            <Typography sx={{ typography: "s2", color: "text.subtitle" }}>{lifecycle.reason_text}</Typography>
+          )}
+          {lifecycle.warning_text && (
+            <Typography sx={{ typography: "s2", color: "text.subtitle" }}>{lifecycle.warning_text}</Typography>
+          )}
+          {lifecycle.legacy && !lifecycle.warning_text && (
+            <Typography sx={{ typography: "s2", color: "text.subtitle" }}>{SCENARIOS_COPY.legacyTooltip}</Typography>
+          )}
+          {lifecycle.source_changed?.length > 0 && (
+            <Typography sx={{ typography: "s2", color: "text.subtitle" }} data-testid="lifecycle-source-changed">
+              {SCENARIOS_COPY.sourceChanged(lifecycle.source_changed_version ?? "")}: {lifecycle.source_changed.join(", ")}
+            </Typography>
+          )}
+        </Stack>
+      </Section>
+      <Section title={SCENARIOS_COPY.sourcesTitle}>
+        {sources.length === 0 ? (
+          <Typography sx={{ typography: "s2", color: "text.subtitle" }}>{SCENARIOS_COPY.noSources}</Typography>
+        ) : (
+          <Stack spacing={1} data-testid="lifecycle-sources">
+            {sources.map((source, index) => (
+              <Stack key={`${source.kind}-${source.ref}-${index}`} spacing={0.25}>
+                <Typography sx={{ typography: "s2", color: "text.primary", fontWeight: "fontWeightMedium" }}>
+                  {source.kind === "assumption" ? SCENARIOS_COPY.assumption : source.label}
+                  {source.resolved === false ? ` · ${source.problem}` : ""}
+                </Typography>
+                {source.quote && (
+                  <Typography sx={{ typography: "s2", color: "text.subtitle" }}>“{source.quote}”</Typography>
+                )}
+              </Stack>
+            ))}
+          </Stack>
+        )}
+      </Section>
+      {controls.length > 0 && (
+        <Section title={SCENARIOS_COPY.controlsTitle}>
+          <Stack spacing={0.5} data-testid="lifecycle-controls">
+            {controls.map((control) => (
+              <PolicyRow key={control.name} label={SCENARIOS_COPY.controlResult(control)}>
+                <Typography sx={{ typography: "s2", color: "text.primary" }}>
+                  {control.name}: {control.why}
+                </Typography>
+              </PolicyRow>
+            ))}
+          </Stack>
+        </Section>
+      )}
+      {jobId && row?.scenarioKey && <Revisions jobId={jobId} scenarioKey={row.scenarioKey} />}
+    </>
+  );
+}
+
+LifecycleSections.propTypes = { row: PropTypes.object, jobId: PropTypes.string };
+
+function Revisions({ jobId, scenarioKey }) {
+  const { data } = useScenarioRevisions(jobId, scenarioKey);
+  const revisions = data?.revisions ?? [];
+  if (revisions.length === 0) return null;
+  return (
+    <Section title={SCENARIOS_COPY.revisionsTitle}>
+      <Stack spacing={0.5} data-testid="lifecycle-revisions">
+        {revisions.map((one) => (
+          <PolicyRow key={one.digest} label={`Revision ${one.revision}`}>
+            <Typography sx={{ typography: "s2", color: "text.primary" }}>
+              Suite v{one.suite_versions.join(", v")}
+              {one.changed_fields.length ? ` · changed ${one.changed_fields.join(", ")}` : ""}
+            </Typography>
+          </PolicyRow>
+        ))}
+      </Stack>
+    </Section>
+  );
+}
+
+Revisions.propTypes = { jobId: PropTypes.string, scenarioKey: PropTypes.string };
 
 ScenarioDetail.propTypes = {
   row: SCENARIO_SHAPE,
