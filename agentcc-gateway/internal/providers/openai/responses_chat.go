@@ -45,6 +45,12 @@ func (p *Provider) ChatNeedsResponses(req *models.ChatCompletionRequest) bool {
 
 // ChatCompletionViaResponses serves a chat request on the Responses API.
 func (p *Provider) ChatCompletionViaResponses(ctx context.Context, req *models.ChatCompletionRequest) (*models.ChatCompletionResponse, error) {
+	prepared, policyErr := common.PrepareDirectToolPolicy(req, common.ToolPolicySupport{Provider: "openai", ParallelCalls: true, RequiredChoice: true, NamedChoice: true, NoneChoice: true})
+	if policyErr != nil {
+		return nil, policyErr
+	}
+	req = prepared
+
 	body, err := json.Marshal(toResponsesRequest(req, false))
 	if err != nil {
 		return nil, models.ErrInternal(fmt.Sprintf("marshaling responses request: %v", err))
@@ -70,6 +76,12 @@ func (p *Provider) StreamChatCompletionViaResponses(ctx context.Context, req *mo
 	go func() {
 		defer close(chunks)
 		defer close(errs)
+		prepared, policyErr := common.PrepareDirectToolPolicy(req, common.ToolPolicySupport{Provider: "openai", ParallelCalls: true, RequiredChoice: true, NamedChoice: true, NoneChoice: true})
+		if policyErr != nil {
+			errs <- policyErr
+			return
+		}
+		req = prepared
 
 		body, err := json.Marshal(toResponsesRequest(req, true))
 		if err != nil {
@@ -210,7 +222,9 @@ func toResponsesRequest(req *models.ChatCompletionRequest, stream bool) *respons
 	if out.MaxOutputTokens == nil {
 		out.MaxOutputTokens = req.MaxTokens
 	}
-	if raw, ok := req.Extra["parallel_tool_calls"]; ok {
+	if req.ParallelToolCalls != nil {
+		out.ParallelToolCalls = req.ParallelToolCalls
+	} else if raw, ok := req.Extra["parallel_tool_calls"]; ok {
 		var parallel bool
 		if json.Unmarshal(raw, &parallel) == nil {
 			out.ParallelToolCalls = &parallel
