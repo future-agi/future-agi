@@ -123,9 +123,24 @@ func TestDecisionPricingExactKeyBeatsJevNormalization(t *testing.T) {
 	if cost, ok := db.CalculateDecisionCost("typesafe/jev-1.13", 1_000_000, 0); !ok || math.Abs(cost-0.5) > 1e-9 {
 		t.Errorf("typesafe/jev-1.13 = %g, %v; want the 0.5 override", cost, ok)
 	}
-	// The dated name has no exact key and still normalizes to jev-1.13.0.
-	if cost, ok := db.CalculateDecisionCost("typesafe/jev-1.13-20260917", 1_000_000, 0); !ok || math.Abs(cost-0.042) > 1e-9 {
-		t.Errorf("typesafe/jev-1.13-20260917 = %g, %v; want 0.042", cost, ok)
+	// The dated name is a release of jev-1.13, so the jev-1.13 override prices
+	// it too: the cost plugin looks up the dated resolved name first, and the
+	// override must not lose to the bundled jev-1.13.0 there.
+	if cost, ok := db.CalculateDecisionCost("typesafe/jev-1.13-20260917", 1_000_000, 0); !ok || math.Abs(cost-0.5) > 1e-9 {
+		t.Errorf("typesafe/jev-1.13-20260917 = %g, %v; want the 0.5 override", cost, ok)
+	}
+	// Another version keeps the bundled price.
+	if cost, ok := db.CalculateDecisionCost("typesafe/jev-1.14-20261015", 1_000_000, 0); !ok || math.Abs(cost-0.042) > 1e-9 {
+		t.Errorf("typesafe/jev-1.14-20261015 = %g, %v; want 0.042", cost, ok)
+	}
+	// An override on the dated name itself beats the undated one.
+	q := 0.7 / 1_000_000
+	db = New(BundledModels, map[string]ModelOverride{
+		DecisionKeyPrefix + "jev-1.13":          {Mode: string(ModeDecision), Pricing: &PricingOverride{InputPerToken: &p}},
+		DecisionKeyPrefix + "jev-1.13-20260917": {Mode: string(ModeDecision), Pricing: &PricingOverride{InputPerToken: &q}},
+	})
+	if cost, ok := db.CalculateDecisionCost("typesafe/jev-1.13-20260917", 1_000_000, 0); !ok || math.Abs(cost-0.7) > 1e-9 {
+		t.Errorf("typesafe/jev-1.13-20260917 = %g, %v; want the 0.7 dated override", cost, ok)
 	}
 }
 

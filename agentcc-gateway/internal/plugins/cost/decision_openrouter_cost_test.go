@@ -43,3 +43,18 @@ func TestCostPlugin_DecisionOpenRouterJev(t *testing.T) {
 		}
 	})
 }
+
+// An operator override on the name OpenRouter is called with prices the call
+// even though the cost plugin looks up the dated resolved name first.
+func TestCostPlugin_DecisionOpenRouterJevOverride(t *testing.T) {
+	price := 0.5 / 1_000_000
+	db := modeldb.New(modeldb.BundledModels, map[string]modeldb.ModelOverride{
+		modeldb.DecisionKeyPrefix + "jev-1.13": {Mode: string(modeldb.ModeDecision), Pricing: &modeldb.PricingOverride{InputPerToken: &price}},
+	})
+	p := New(true, func() *modeldb.ModelDB { return db }, nil, nil)
+	rc := decisionRC("openrouter/typesafe/jev-1.13", "typesafe/jev-1.13", "typesafe/jev-1.13-20260917", 1_000_000, 5)
+	p.ProcessResponse(context.Background(), rc)
+	if got := rc.Metadata["cost"]; got != "0.500000" {
+		t.Fatalf("cost = %q, want the 0.500000 override", got)
+	}
+}
