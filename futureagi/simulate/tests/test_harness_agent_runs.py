@@ -176,9 +176,9 @@ class TestRunPayload:
         a1 = _a1(environment)
         payload = json.loads(json.dumps(environment.payload))
         payload["agent"]["connector"] = "livekit"
-        payload["agent"].setdefault("config", {})[
-            "target_system_prompt"
-        ] = "This environment's prompt"
+        payload["agent"].setdefault("config", {})["target_system_prompt"] = (
+            "This environment's prompt"
+        )
         HostedHarnessJob.no_workspace_objects.filter(id=environment.id).update(
             payload=payload
         )
@@ -204,9 +204,9 @@ class TestRunPayload:
         a1 = _a1(environment)
         payload = json.loads(json.dumps(environment.payload))
         payload["agent"]["connector"] = "livekit"
-        payload["agent"].setdefault("config", {})[
-            "target_system_prompt"
-        ] = "This environment's prompt"
+        payload["agent"].setdefault("config", {})["target_system_prompt"] = (
+            "This environment's prompt"
+        )
         HostedHarnessJob.no_workspace_objects.filter(id=environment.id).update(
             payload=payload
         )
@@ -362,8 +362,9 @@ class TestSharedLegacyRuns:
         # A value-only change keys the same: it finds what this environment's build
         # sealed under its own facts.
         assert run.payload["metadata"]["assembly"]["cached"] is True
-        assert run.payload["metadata"]["assembly"]["key"] == (
-            before.payload["metadata"]["assembly"]["key"]
+        assert (
+            run.payload["metadata"]["assembly"]["key"]
+            == (before.payload["metadata"]["assembly"]["key"])
         )
         _no_values(json.dumps(run.payload))
 
@@ -744,8 +745,9 @@ class TestSecretValues:
         assert [one["outcome"] for one in logs if "outcome" in one] == ["miss_fallback"]
         assert "source_fingerprint" not in _command(gateway)
         assert run.payload["metadata"]["authoring_object_key"] == key
-        assert gateway.client.sandbox.fs.uploads["/work/authoring.tar.gz"] == (
-            storage.objects[key]
+        assert (
+            gateway.client.sandbox.fs.uploads["/work/authoring.tar.gz"]
+            == (storage.objects[key])
         )
 
     def test_refusals(self, auth_client, user, workspace, storage, settings):
@@ -988,8 +990,9 @@ class TestRerunWithCredentials:
             "val-openai-new"
         )
         assert assembly.prepare_launch(run) is None
-        assert run.payload["metadata"]["authoring_object_key"] == (
-            environment.payload["metadata"]["authoring_object_key"]
+        assert (
+            run.payload["metadata"]["authoring_object_key"]
+            == (environment.payload["metadata"]["authoring_object_key"])
         )
         environment.refresh_from_db()
         assert environment.agent_version_id == a1.id

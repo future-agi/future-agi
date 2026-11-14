@@ -1594,6 +1594,33 @@ def test_a_call_keeps_its_trial_s_state_changes_and_actor_decisions_and_serves_t
     assert TRIAL_STATE_KEY not in cleared
 
 
+def test_a_trial_s_reads_are_served_apart_from_its_committed_changes():
+    from simulate.views.run_results_v3 import TrialStateSerializer
+
+    change = {
+        "who": "agent",
+        "name": "the agent",
+        "attempted": 3,
+        "committed": 1,
+        "refused": 0,
+        "faulted": 0,
+        "duplicate": 0,
+        "committed_actions": ["orders.refund"],
+        "read": 2,
+        "read_actions": ["get_order", "list_refunds"],
+    }
+    served = TrialStateSerializer({"state_changes": [change]}).data["state_changes"][0]
+    assert (served["committed"], served["read"], served["read_actions"]) == (
+        1,
+        2,
+        ["get_order", "list_refunds"],
+    )
+    assert TrialStateSerializer(data={"state_changes": [change]}).is_valid()
+    # A trial stored before reads were told apart still serves.
+    older = {key: value for key, value in change.items() if not key.startswith("read")}
+    assert TrialStateSerializer(data={"state_changes": [older]}).is_valid()
+
+
 def test_a_fault_that_did_not_take_effect_is_kept_on_the_trial_for_the_person(
     organization, workspace
 ):

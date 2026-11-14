@@ -221,11 +221,7 @@ class TestReadCsvCurlyQuotesAsContent:
             '"{""role"": ""system"", ""content"": ""Say \u201chi\u201d to the\n'
             'customer, then stop.""}"'
         )
-        csv = (
-            "id,assistant,score\n"
-            f"a1,{json_cell},0.9\n"
-            f"a2,{json_cell},0.7\n"
-        )
+        csv = f"id,assistant,score\na1,{json_cell},0.9\na2,{json_cell},0.7\n"
         df, err = FileProcessor.process_file(self._make_file(csv))
         assert err is None
         assert list(df.columns) == ["id", "assistant", "score"]
@@ -236,11 +232,7 @@ class TestReadCsvCurlyQuotesAsContent:
     def test_widest_consistent_parse_wins_over_single_column(self):
         """A delimiter absent from the file always yields a 'consistent'
         1-column parse; the true delimiter's wider parse must win."""
-        csv = (
-            "a;b;c\n"
-            "1;2;3\n"
-            "4;5;6\n"
-        )
+        csv = "a;b;c\n1;2;3\n4;5;6\n"
         df, err = FileProcessor.process_file(self._make_file(csv))
         assert err is None
         assert list(df.columns) == ["a", "b", "c"]
