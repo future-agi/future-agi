@@ -1,4 +1,6 @@
 import { describe, test, expect, vi } from "vitest";
+import { Typography } from "@mui/material";
+import { within } from "@testing-library/react";
 import { render, screen } from "src/utils/test-utils";
 import QueueAgreementTab from "../queue-agreement-tab";
 
@@ -23,6 +25,50 @@ function mockAgreement(overrides = {}) {
 }
 
 describe("QueueAgreementTab — judge vs human section", () => {
+  test.each([0.25, 0.65, 0.85, null])(
+    "keeps per-label values neutral at %s agreement",
+    (value) => {
+      mockAgreement({
+        labels: {
+          human: {
+            label_name: "Human label",
+            label_type: "categorical",
+            agreement_pct: value,
+          },
+        },
+        judge_vs_human: {
+          evaluator_name: "Review evaluator",
+          overall_agreement: value,
+          total_comparisons: 2,
+          labels: {
+            judge: {
+              label_name: "Judge label",
+              label_type: "categorical",
+              judge_human_agreement: value,
+              total_comparisons: 2,
+            },
+          },
+        },
+      });
+      render(
+        <>
+          <Typography color="text.secondary">Neutral reference</Typography>
+          <QueueAgreementTab queueId="q-1" />
+        </>,
+      );
+      const neutral = getComputedStyle(
+        screen.getByText("Neutral reference"),
+      ).color;
+      const text = value === null ? "N/A" : `${(value * 100).toFixed(1)}%`;
+      for (const name of ["Human label", "Judge label"]) {
+        const row = screen.getByRole("row", { name: new RegExp(name) });
+        expect(getComputedStyle(within(row).getByText(text)).color).toBe(
+          neutral,
+        );
+      }
+    },
+  );
+
   test("shows empty-state prompt when no evaluator is linked", () => {
     mockAgreement();
 

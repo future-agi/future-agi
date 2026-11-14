@@ -105,10 +105,7 @@ export default function QueueAgreementTab({ queueId, queue }) {
                       sx={{ fontVariantNumeric: "tabular-nums" }}
                       align="right"
                     >
-                      <Typography
-                        color={getAgreementColor(label.agreement_pct)}
-                        fontWeight={600}
-                      >
+                      <Typography color="text.secondary" fontWeight={600}>
                         {formatPct(label.agreement_pct)}
                       </Typography>
                     </TableCell>
@@ -259,12 +256,7 @@ export default function QueueAgreementTab({ queueId, queue }) {
                             N/A
                           </Typography>
                         ) : (
-                          <Typography
-                            color={getAgreementColor(
-                              label.judge_human_agreement,
-                            )}
-                            fontWeight={600}
-                          >
+                          <Typography color="text.secondary" fontWeight={600}>
                             {formatPct(label.judge_human_agreement)}
                           </Typography>
                         )}
