@@ -47,6 +47,7 @@ import { useGatewayContext } from "../context/useGatewayContext";
 
 import OrgConfigSection from "./OrgConfigSection";
 import EmailAlertsCard from "./EmailAlertsCard";
+import RequestLogRetentionCard from "./RequestLogRetentionCard";
 import {
   useSubmitBatch,
   useBatchStatus,
@@ -156,6 +157,8 @@ const SettingsTab = ({ config, gateway }) => {
           />
         </Stack>
       </Section>
+
+      <RequestLogRetentionCard />
 
       {/* Cost Tracking */}
       <Section variant="panel">
