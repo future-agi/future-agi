@@ -468,6 +468,14 @@ def archived_keys(job: HostedHarnessJob, documents: list[dict[str, Any]]) -> lis
         if str(doc.get("scenario_key") or "").strip()
     }
     keys -= {""}
+    # Archiving changes no draft, so the default suite can still hold an archived case: an edit
+    # that carries it is not adding it.
+    keys -= {
+        _scenario_token(key)
+        for key in HarnessSuiteMember.no_workspace_objects.filter(
+            suite_version_id=job.suite_version_id
+        ).values_list("scenario_key", flat=True)
+    }
     if not keys:
         return []
     return sorted(
