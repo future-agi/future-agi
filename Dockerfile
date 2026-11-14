@@ -37,7 +37,7 @@ RUN pip install --no-cache-dir \
 # daytona, httpx-ws and e2b mirror the `sandbox` extra of
 # futureagi/pyproject.toml and claude-agent-sdk its `localizer` extra;
 # aiohttp, granian, channels-redis and asgiref mirror futureagi/requirements.txt
-# until a future-agi-base rebuilt from it (v1.0.5) replaces v1.0.4.
+# until a future-agi-base rebuilt from it replaces v1.0.6.
 # django, litellm, pyjwt and openai are the critical-CVE upgrades of TH-8369
 # (CVE-2025-64459, CVE-2026-35030, CVE-2026-49468, CVE-2026-48526); v1.0.5 still
 # carries the vulnerable django 5.1.8 / litellm 1.81.11 / pyjwt 2.10.1, so they

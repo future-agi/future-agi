@@ -3,13 +3,13 @@ FROM futureagi/future-agi-base:v1.0.6
 ENV NLTK_DATA=/usr/local/share/nltk_data
 
 # Mirrors the root Dockerfile until a future-agi-base rebuilt from
-# requirements.txt (v1.0.5) replaces v1.0.4: granian>=2.7.1 (granian#798),
-# channels-redis and the asgiref it needs, plus the critical-CVE upgrades of
-# TH-8369 (django, litellm, pyjwt and the openai that litellm 1.84.x requires)
-# and the high-CVE upgrades of TH-8370 (mcp, nltk and the document/image
-# parsing set; pdfplumber and pypdfium2 move with pdfminer.six, which
-# pdfplumber pins exactly). nltk lands before the corpus install below, so
-# install_nltk_data.py verifies the data against the upgraded nltk.
+# requirements.txt replaces v1.0.6: granian>=2.7.1 (granian#798),
+# channels-redis and the asgiref it needs, plus the upgrades the base does not
+# carry yet: django, litellm, pyjwt and the openai that litellm 1.100.x
+# requires, and mcp, nltk and the document/image parsing set (pdfplumber and
+# pypdfium2 move with pdfminer.six, which pdfplumber pins exactly). nltk lands
+# before the corpus install below, so install_nltk_data.py verifies the data
+# against the upgraded nltk.
 # litellm 1.100.x needs openai>=2.20.0, boto3>=1.43.1, pydantic-settings>=2.14.1
 # and aiohttp>=3.14.2. The base's boto3 1.42.28 and pydantic-settings 2.12.0
 # are older, so boto3, botocore, s3transfer, pydantic-settings and the

@@ -603,12 +603,31 @@ class FutureAgiBaseDockerfiles(unittest.TestCase):
 
     def pip_install(self, name: str) -> tuple[int, str]:
         steps = instructions(ROOT / name)
-        ((index, rest),) = [
+        # Every step that installs Python packages, in any form, must be the
+        # one RUN these tests read, or a floor in another one goes unchecked.
+        installs = [
             (index, rest)
             for index, (keyword, rest) in enumerate(steps)
-            if keyword == "RUN" and rest.startswith("pip install")
+            if keyword == "RUN"
+            and re.search(r"\b(?:pip3?|uv\s+pip|uv)\s+(?:install|add|sync)\b", rest)
         ]
+        self.assertEqual(len(installs), 1, installs)
+        ((index, rest),) = installs
+        self.assertTrue(rest.startswith("pip install"), rest)
         return index, rest
+
+    def test_the_comments_name_the_pinned_litellm_and_base(self):
+        for name in FUTURE_AGI_BASE_DOCKERFILES:
+            with self.subTest(dockerfile=name):
+                text = (ROOT / name).read_text(encoding="utf-8")
+                (litellm,) = re.findall(r'"litellm==(\d+\.\d+)\.\d+"', text)
+                noted = re.findall(r"^#.*\blitellm (\d+\.\d+)\.x\b", text, re.MULTILINE)
+                self.assertTrue(noted)
+                self.assertEqual(set(noted), {litellm})
+                (base,) = re.findall(r"^FROM futureagi/future-agi-base:(\S+)", text, re.MULTILINE)
+                replaced = re.findall(r"^#.*\breplaces (v\d+\.\d+\.\d+)", text, re.MULTILINE)
+                self.assertTrue(replaced)
+                self.assertEqual(set(replaced), {base})
 
     def test_the_pins_are_installed_before_the_source_copy(self):
         for name in FUTURE_AGI_BASE_DOCKERFILES:
@@ -704,7 +723,50 @@ def arg_default(path: Path, name: str) -> str:
     return value
 
 
+def setup_uv_versions(workflow: Path) -> list[str | None]:
+    """The `version` input of every astral-sh/setup-uv step (None: not set)."""
+    lines = workflow.read_text(encoding="utf-8").splitlines()
+    versions = []
+    for i, line in enumerate(lines):
+        if not re.match(r"^\s*(?:- )?uses: astral-sh/setup-uv@", line):
+            continue
+        step_indent = len(line) - len(line.lstrip(" -"))
+        version = None
+        for following in lines[i + 1 :]:
+            stripped = following.strip()
+            if not stripped or stripped.startswith("#"):
+                continue
+            indent = len(following) - len(following.lstrip(" "))
+            if indent < step_indent or stripped.startswith("- "):
+                break
+            if match := re.match(r"""version:\s*["']?([^"'\s]+)""", stripped):
+                version = match.group(1)
+        versions.append(version)
+    return versions
+
+
 class PinnedVersionNotes(unittest.TestCase):
+    def test_setup_uv_versions_are_read_whatever_the_key_order(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workflow = Path(tmp) / "w.yml"
+            workflow.write_text(
+                "steps:\n"
+                "  - uses: astral-sh/setup-uv@v5\n"
+                "    with:\n"
+                "      enable-cache: true\n"
+                '      version: "1.2.3"\n'
+                "  - uses: astral-sh/setup-uv@v5\n"
+                "  - name: other\n"
+                "    with:\n"
+                "      version: 9\n"
+                "  - uses: astral-sh/setup-uv@v5\n"
+                "    with:\n"
+                '      version: "4.5.6"\n'
+                "      enable-cache: true\n",
+                encoding="utf-8",
+            )
+            self.assertEqual(setup_uv_versions(workflow), ["1.2.3", None, "4.5.6"])
+
     def test_the_images_and_backend_ci_share_one_uv(self):
         oss = ROOT / "futureagi" / "Dockerfile.oss"
         serving = ROOT / "futureagi" / "model_serving" / "Dockerfile.oss"
@@ -716,12 +778,12 @@ class PinnedVersionNotes(unittest.TestCase):
             for path in (oss, serving)
         }
         self.assertEqual(len(pinned), 1)
-        ci = re.findall(
-            r'astral-sh/setup-uv@\S+\s+with:\s+version:\s+"([^"]+)"',
-            (WORKFLOWS / "backend-ci.yml").read_text(encoding="utf-8"),
-        )
-        self.assertTrue(ci)
-        self.assertEqual(set(ci), pinned)
+        ci = setup_uv_versions(WORKFLOWS / "backend-ci.yml")
+        # Steps that name no version run whatever uv is current (see the PR
+        # notes); every version that is named must be the images' uv.
+        named = {version for version in ci if version is not None}
+        self.assertTrue(named)
+        self.assertEqual(named, pinned)
         notes = re.findall(
             r'^# Same uv as backend-ci\.yml \(astral-sh/setup-uv version "([^"]+)"\)',
             oss.read_text(encoding="utf-8"),
