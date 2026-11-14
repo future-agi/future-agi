@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import PropTypes from 'prop-types';
 import { useNavigate } from 'react-router-dom';
+import { visuallyHidden } from '@mui/utils';
 import { v4 as uuid } from 'uuid';
 import {
   Alert, Box, Button, Checkbox, Collapse, Drawer, FormControl, FormControlLabel, FormLabel, IconButton, LinearProgress, MenuItem, Radio, RadioGroup, Stack, Table, TableBody,
@@ -18,7 +19,7 @@ import { useSkillsSpendPolicy } from 'src/api/skills/r3-spend';
 import { getSkillErrorCode } from 'src/api/skills/operation-errors';
 import OperationFeedback from '../components/OperationFeedback';
 import { noReviewsYet } from '../utils/conclusions';
-import { applicationConclusion, coverageLine } from '../tests/resultConclusion';
+import { answerOutcome, applicationConclusion, applicationOutcome, coverageLine } from '../tests/resultConclusion';
 import ActionReason, { reasonProps } from '../components/ActionReason';
 import When from '../components/When';
 import { useSkillsAccess } from '../utils/access';
@@ -47,6 +48,21 @@ const FAMILIES = [['selection', 'Skill selected'], ['delivery', 'File delivered'
 const disagreementLabel = (count) => `${count} disagreement${count === 1 ? '' : 's'}`;
 const ACTIVE_STATES = ['queued', 'provisioning', 'preparing', 'running'];
 const VERDICTS = [['agree', 'Agree with the automatic outcome'], ['disagree', 'Disagree with the automatic outcome'], ['cannot_assess', 'Cannot assess']];
+
+// Move only the page's own scroller (the closest <main>) so `element` sits near its top. scrollIntoView
+// and a bare focus() scroll every scrollable ancestor, the dashboard frame and the document included,
+// which pushed the whole shell sideways. Focus always goes with { preventScroll: true }.
+function revealInMain(element) {
+  const main = element?.closest?.('main');
+  if (!main || typeof main.scrollTo !== 'function') return;
+  const top = main.scrollTop + element.getBoundingClientRect().top - main.getBoundingClientRect().top - 16;
+  main.scrollTo({ top: Math.max(0, top), behavior: 'smooth' });
+}
+const focusQuietly = (element) => element?.focus?.({ preventScroll: true });
+// The SH1 shell shift had one source here: a screen-reader-only header label with sx width 1 (MUI
+// reads that as 100%) and no positioned ancestor, so a viewport-wide span sat past the right edge
+// and gave the document its own sideways and vertical scroll. It now uses MUI's 1px visuallyHidden
+// inside a positioned cell.
 
 function Verdict({ value, status }) {
   return value ? <StatusBadge status={value === 'pass' ? 'passed' : value === 'fail' ? 'failed' : 'unknown'} /> : <StatusBadge status={status === 'failed' ? 'failed' : 'pending'} />;
@@ -119,7 +135,10 @@ function CellDrawer({ run, cell, caseTitle, onClose, canWrite }) {
   const seen = cell.observed;
   const version = run.arms.find((arm) => arm.variant === cell.variant)?.version;
   const repeats = (run.cells || []).filter((other) => other.caseId === cell.caseId && other.variant === cell.variant).length || 1;
-  return <Drawer anchor="right" open onClose={onClose} PaperProps={{ role: 'dialog', 'aria-modal': true, 'aria-labelledby': 'attempt-heading', sx: { width: 460, maxWidth: '100vw', overflow: 'hidden' } }}>
+  // A human review is recorded against this one attempt (attemptId), never the whole test run.
+  const scope = `Applies to this attempt: ${ARM[cell.variant].toLowerCase()}${version ? ` v${version}` : ''} · ${caseTitle || 'this case'} · run ${cell.repeatIndex + 1}`;
+  // Focus goes back to the opener without scrolling (see revealInMain), so MUI's own restore is off.
+  return <Drawer anchor="right" open onClose={onClose} disableRestoreFocus PaperProps={{ role: 'dialog', 'aria-modal': true, 'aria-labelledby': 'attempt-heading', sx: { width: 460, maxWidth: '100vw', overflow: 'hidden' } }}>
     <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ p: 2, borderBottom: 1, borderColor: 'divider', flexShrink: 0 }}><Typography id="attempt-heading" component="h2" variant="m1">{caseTitle}</Typography><IconButton aria-label="Close" onClick={onClose}><Iconify icon="solar:close-circle-linear" /></IconButton></Stack>
     <Stack spacing={1.5} sx={{ p: 2, flex: 1, minHeight: 0, overflowY: 'auto' }}>
       <Typography variant="s3" color="text.secondary">{ARM[cell.variant]}{version ? ` v${version}` : ''} · Run {cell.repeatIndex + 1} of {Math.max(repeats, cell.repeatIndex + 1)}</Typography>
@@ -129,7 +148,7 @@ function CellDrawer({ run, cell, caseTitle, onClose, canWrite }) {
           <Typography variant="s1">Business actions: {seen.actions.length ? seen.actions.map((a) => `${a.action} (${a.status})`).join(', ') : 'none attempted'}</Typography>
           <Typography variant="s1" sx={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>Answer: {seen.answer || '—'}</Typography>
           <TechnicalDetails title="Technical details"><IdentityChip value={seen.context_digest} label="Context" /><IdentityChip value={seen.session_id} label="Session" kind="id" /></TechnicalDetails>
-        </Stack> : <Typography variant="s1">This cell did not return an observation.</Typography>}
+        </Stack> : <Typography variant="s1">This attempt did not return an observation.</Typography>}
       </Section>
       <Section title={<Typography component="span" variant="m3">Automatic outcomes</Typography>}>
         <Stack spacing={0.5}>{FAMILIES.map(([key, label]) => <Stack key={key} direction="row" justifyContent="space-between"><Typography variant="s1">{label}</Typography><Verdict value={cell[key]} /></Stack>)}</Stack>
@@ -140,7 +159,7 @@ function CellDrawer({ run, cell, caseTitle, onClose, canWrite }) {
           <StatusBadge status={row.verdict === 'disagree' ? 'warning' : 'info'} role={row.verdict === 'disagree' ? 'warning' : 'info'} label={{ agree: 'Agrees', disagree: 'Disagrees', cannot_assess: "Can’t assess" }[row.verdict]} sx={{ alignSelf: 'flex-start' }} />
           <Stack direction="row" spacing={1} flexWrap="wrap"><Typography variant="s3">{authorName(row.actorId)}</Typography><When value={row.createdAt} /></Stack>
           <Typography variant="s1" sx={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{row.comment || 'No comment'}</Typography>
-          <Typography variant="s3" color="text.secondary">Applies to this whole run</Typography>
+          <Typography variant="s3" color="text.secondary">{scope}</Typography>
           <TechnicalDetails title="Author details"><IdentityChip value={row.actorId} label="Author" kind="id" /></TechnicalDetails>
         </Stack>)}
       </Section>
@@ -164,9 +183,9 @@ CellDrawer.propTypes = { run: PropTypes.object.isRequired, cell: PropTypes.objec
 
 // The CI attachment is optional: the release review can start from this run alone. Attaching a CI
 // run shares this run with the workspace and prepares the packet the reviewer will see; nothing is
-// released here and sharing is never implied by opening the release review. It is shown open under
-// the result (and can be folded away) so teams that do attach CI need no extra step; its title says
-// it is optional and "Continue to release review" stays the one primary action.
+// released here and sharing is never implied by opening the release review. It is shown open below
+// the per-case table (and can be folded away) so teams that do attach CI need no extra step; its
+// title says it is optional and "Continue to release review" stays the one release action.
 function CiAttachment({ contextId, run, target, canWrite, earlier }) {
   const { user } = useAuthContext();
   const prepare = usePrepareReleasePacket(contextId);
@@ -189,7 +208,7 @@ function CiAttachment({ contextId, run, target, canWrite, earlier }) {
       </>}
       {earlier && <Typography variant="s3">This applies to the earlier run, not your current selection.</Typography>}
       <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.5} alignItems={{ xs: 'flex-start', sm: 'center' }}>
-        <Button color="primary" variant="outlined" size="small" disabled={Boolean(reason)} {...reasonProps('ci-attach-reason', reason)} onClick={() => prepare.mutate({ run, target, label: 'production', pipeline, userId: user?.id })}>Share evidence and prepare packet</Button>
+        <Button color="primary" variant="outlined" size="small" disabled={Boolean(reason)} {...reasonProps('ci-attach-reason', reason)} onClick={() => prepare.mutate({ run, target, label: 'production', pipeline, userId: user?.id })}>Share run and attach CI result</Button>
         <ActionReason id="ci-attach-reason" reason={reason} />
       </Stack>
     </Stack>
@@ -209,7 +228,7 @@ const cellsTableSx = {
   '& tbody tr': { display: { xs: 'grid', sm: 'table-row' }, gridTemplateColumns: '1fr 1fr', height: { xs: 'auto', sm: ROW_HEIGHT.default }, py: { xs: 1, sm: 0 }, borderBottomStyle: 'solid', borderBottomColor: 'divider', borderBottomWidth: { xs: 1, sm: 0 } },
 };
 
-function RunDetail({ contextId, evidenceId, canWrite, target, selection, cases, onReady, onRunCurrent, onEarlier, currentForm }) {
+function RunDetail({ contextId, evidenceId, canWrite, target, selection, cases, onReady, onRunCurrent, onEarlier, currentForm, formPrimary }) {
   const query = useNativeRun(contextId, evidenceId);
   const context = useContextDetail(contextId);
   const navigate = useNavigate();
@@ -221,6 +240,13 @@ function RunDetail({ contextId, evidenceId, canWrite, target, selection, cases, 
   const annotations = noReviewsYet(annotationQuery);
   const origin = useRef(null);
   const [open, setOpen] = useState(null);
+  // Focus returns to the opener once the drawer and its focus trap are gone, without scrolling.
+  const restoreFocus = useRef(false);
+  useEffect(() => {
+    if (open || !restoreFocus.current) return;
+    restoreFocus.current = false;
+    focusQuietly(origin.current);
+  }, [open]);
   const selectedCandidate = query.data?.arms.find((arm) => arm.variant === 'candidate');
   const stale = Boolean(selection && query.data && (selectedCandidate?.version !== selection.candidateVersion || JSON.stringify((query.data.cases || []).map((item) => item.id).sort()) !== JSON.stringify([...selection.caseIds].sort())));
   const releaseReady = Boolean(query.data) && finished && query.data.decision?.state === 'release_ready';
@@ -239,7 +265,7 @@ function RunDetail({ contextId, evidenceId, canWrite, target, selection, cases, 
   const runCases = (run.cases || []).map((item) => item.id).sort();
   const earlier = stale;
   const disagreements = annotations.data?.results.filter((row) => row.verdict === 'disagree') || [];
-  const inspect = (cell, event) => { origin.current = event.currentTarget; setOpen(cell); };
+  const inspect = (cell, event) => { origin.current = event.currentTarget.closest?.('tr')?.querySelector('button') || event.currentTarget; setOpen(cell); };
   const referenceArm = run.arms.find((arm) => arm.variant === 'reference');
   const productionArm = run.arms.find((arm) => arm.variant === 'production');
   const comparedWith = referenceArm ? ` vs recorded v${referenceArm.version}` : productionArm ? ` vs production v${productionArm.version}` : '';
@@ -249,7 +275,7 @@ function RunDetail({ contextId, evidenceId, canWrite, target, selection, cases, 
   const composerUrl = reviewComposerUrl({ kind: 'agent_context', subjectId: contextId, name: context.data?.name, candidateId: candidate?.versionId, number: candidate?.version, digest: candidate?.digest, label: 'production', evidence: [{ source: 'simulation_native', sourceId: run.id }], target: target?.bindingId });
   return <Stack spacing={1.5}>
     <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.5} alignItems={{ xs: 'flex-start', sm: 'center' }} sx={{ minWidth: 0 }}>
-      <Typography component="h3" variant="m3" data-execution-fingerprint={run.executionFingerprint}>Application verification</Typography>
+      <Typography component="h2" variant="m3" data-execution-fingerprint={run.executionFingerprint}>Application verification</Typography>
       <StatusBadge status={status === 'preparing' ? 'running' : status} label={status === 'preparing' ? 'Preparing' : undefined} />
       <Typography variant="s3" color="text.secondary" role="status">{received} of {run.planned} runs finished{active && received === run.planned ? ' · Finalizing result' : ''}</Typography>
     </Stack>
@@ -258,11 +284,11 @@ function RunDetail({ contextId, evidenceId, canWrite, target, selection, cases, 
     {earlier && <Stack spacing={1} sx={{ p: 1.5, border: 1, borderColor: 'divider', borderRadius: 1 }}><StatusBadge status="unknown" label="Earlier result" sx={{ alignSelf: 'flex-start' }} /><Typography variant="s1">This result is for v{candidate?.version} with {runCases.length} case{runCases.length === 1 ? '' : 's'}; your current selection is different.</Typography><Button color="primary" variant={currentForm ? "outlined" : "contained"} onClick={onRunCurrent} sx={{ alignSelf: 'flex-start' }}>Run on current selection</Button></Stack>}
     {run.failure && <Alert severity="error">The run stopped: {run.failure.replaceAll('_', ' ')}. No outcome is inferred.</Alert>}
     {!active && (run.result || run.decision) && <Stack spacing={1} sx={{ p: 1.5, border: 1, borderColor: 'divider', borderRadius: 1 }}>
-      <Typography variant="m3" component="p" sx={{ m: 0 }}>{applicationConclusion(run)}</Typography>
+      <Typography variant="m3" component="p" sx={{ m: 0 }}>{applicationConclusion(run, Math.max(cases.length, runCases.length))}</Typography>
       {annotations.isError ? <ErrorState title="Couldn't load human reviews" onRetry={annotations.refetch} /> : annotations.isLoading ? <Typography variant="s3">Loading human reviews…</Typography> : firstDisagreement ? <Button variant="text" size="small" sx={{ alignSelf: 'flex-start' }} onClick={(event) => inspect(firstDisagreement, event)}>{disagreementLabel(disagreements.length)} to inspect</Button> : <Typography variant="s3" color="text.secondary">{disagreements.length ? `${disagreementLabel(disagreements.length)} recorded; attempt details unavailable` : annotations.data?.results?.length ? 'No reviewer disagreed with these grades' : 'No human reviews yet'}</Typography>}
       {ready && <StatusBadge status="passed" label="Ready for release review" sx={{ alignSelf: 'flex-start' }} />}
       {ready && <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.5} alignItems={{ xs: 'flex-start', sm: 'center' }}>
-        <Button color="primary" variant={earlier ? 'outlined' : 'contained'} href={continueReason ? undefined : composerUrl} disabled={Boolean(continueReason)} {...reasonProps('continue-review-reason', continueReason)}>Continue to release review</Button>
+        <Button color="primary" variant={earlier || formPrimary ? 'outlined' : 'contained'} href={continueReason ? undefined : composerUrl} disabled={Boolean(continueReason)} {...reasonProps('continue-review-reason', continueReason)}>Continue to release review</Button>
         <ActionReason id="continue-review-reason" reason={continueReason || "You'll choose a reviewer and confirm sharing this run there."} />
       </Stack>}
       {run.decision && <TechnicalDetails title="How it was decided">{run.decision.reasons.map((reason) => <Typography key={reason} variant="s1" component="div">{reason}</Typography>)}</TechnicalDetails>}
@@ -270,7 +296,6 @@ function RunDetail({ contextId, evidenceId, canWrite, target, selection, cases, 
     {!active && canWrite && run.result?.reproduction === 'reproduced' && referenceArm && <Box>
       <Button variant="outlined" size="small" onClick={() => navigate(`${paths.dashboard.skills.contextEdit(contextId)}?from=${referenceArm.version}&preserve=1`)}>{`Repair from recorded v${referenceArm.version}`}</Button>
     </Box>}
-    {ready && <CiAttachment contextId={contextId} run={run} target={target} canWrite={canWrite} earlier={earlier} />}
     {run.runtime && <TechnicalDetails title="Runtime evidence"><Typography variant="s3" color="text.secondary">Runtime proved read-only source {String(run.runtime.read_only_source)}, read-only context {String(run.runtime.read_only_context)}, closed paid egress {String(run.runtime.controlled_paid_egress)}.</Typography><IdentityChip value={run.executionFingerprint} label="Execution fingerprint" /></TechnicalDetails>}
     {run.cells && <TableContainer>
       <Table size="small" aria-label="Verification cells" sx={cellsTableSx}><TableHead><TableRow sx={{ height: TABLE_HEADER_HEIGHT.default }}>
@@ -282,10 +307,11 @@ function RunDetail({ contextId, evidenceId, canWrite, target, selection, cases, 
         <TableCell>{cell.status === 'completed' && FAMILIES.every(([key]) => cell[key] === 'pass') && <Typography variant="s3" color="text.secondary" sx={{ display: { xs: 'block', sm: 'none' }, mb: 0.5 }}>All 4 checks passed</Typography>}<Button size="small" variant="outlined" disabled={!cell.attemptId} aria-label={`Inspect ${titles[cell.caseId] || cell.caseId} ${ARM[cell.variant]} repeat ${cell.repeatIndex + 1}`} onClick={(event) => { event.stopPropagation(); inspect(cell, event); }}>Inspect</Button></TableCell>
       </TableRow>)}</TableBody></Table>
     </TableContainer>}
-    {open && <CellDrawer run={run} cell={open} caseTitle={titles[open.caseId]} canWrite={canWrite} onClose={() => { setOpen(null); origin.current?.focus(); }} />}
+    {ready && <CiAttachment contextId={contextId} run={run} target={target} canWrite={canWrite} earlier={earlier} />}
+    {open && <CellDrawer run={run} cell={open} caseTitle={titles[open.caseId]} canWrite={canWrite} onClose={() => { restoreFocus.current = true; setOpen(null); }} />}
   </Stack>;
 }
-RunDetail.propTypes = { currentForm: PropTypes.bool, onEarlier: PropTypes.func, onReady: PropTypes.func, onRunCurrent: PropTypes.func, contextId: PropTypes.string.isRequired, evidenceId: PropTypes.string.isRequired, canWrite: PropTypes.bool.isRequired, target: PropTypes.object, selection: PropTypes.object, cases: PropTypes.array.isRequired };
+RunDetail.propTypes = { formPrimary: PropTypes.bool, currentForm: PropTypes.bool, onEarlier: PropTypes.func, onReady: PropTypes.func, onRunCurrent: PropTypes.func, contextId: PropTypes.string.isRequired, evidenceId: PropTypes.string.isRequired, canWrite: PropTypes.bool.isRequired, target: PropTypes.object, selection: PropTypes.object, cases: PropTypes.array.isRequired };
 
 function PlanSection({ contextId, versions, viewed, cases, target, canWrite, onStarted, runs, productionVersion, seed, onSelectionChange, primary }) {
   const preview = usePreviewNativeRun(contextId);
@@ -365,7 +391,7 @@ function PlanSection({ contextId, versions, viewed, cases, target, canWrite, onS
         <TextField select size="small" label="Runs per case" value={repetitions} onChange={(event) => setRepetitions(Number(event.target.value))} sx={{ minWidth: 130 }}><MenuItem value={1}>1</MenuItem><MenuItem value={3}>3</MenuItem></TextField>
       </Stack>
       <Box role="group" aria-label="Examples to run">
-        {reviewed.length ? <Table size="small" aria-label="Cases to run"><TableHead><TableRow><TableCell>Case</TableCell><TableCell><Box component="span" sx={{ position: 'absolute', width: 1, height: 1, overflow: 'hidden', clip: 'rect(0 0 0 0)' }}>Was failing</Box></TableCell></TableRow></TableHead><TableBody>{reviewed.map((item) => <TableRow key={item.id}><TableCell>
+        {reviewed.length ? <Table size="small" aria-label="Cases to run"><TableHead><TableRow><TableCell>Case</TableCell><TableCell sx={{ position: 'relative' }}><Box component="span" sx={visuallyHidden}>Was failing</Box></TableCell></TableRow></TableHead><TableBody>{reviewed.map((item) => <TableRow key={item.id}><TableCell>
           <FormControlLabel control={<Checkbox size="small" checked={isChosen(item.id)} onChange={(event) => setChosenOver({ ...chosenOver, [item.id]: event.target.checked })} />} label={<Typography variant="s1">{item.title}</Typography>} />
           </TableCell><TableCell><FormControlLabel control={<Checkbox size="small" disabled={!isChosen(item.id)} checked={isChosen(item.id) && isHistorical(item.id)} onChange={(event) => setHistoricalOver({ ...historicalOver, [item.id]: event.target.checked })} />} label={<Typography variant="s3" color="text.secondary">{reference !== '' ? `Was failing on v${reference}` : 'Was failing before'}</Typography>} />
         </TableCell></TableRow>)}</TableBody></Table> : <Typography variant="s1">Review at least one case below before running it on the application.</Typography>}
@@ -384,7 +410,7 @@ function PlanSection({ contextId, versions, viewed, cases, target, canWrite, onS
         <FormControlLabel control={<Checkbox size="small" checked={ack} disabled={!result.reproducible || !current} onChange={(event) => setAck(event.target.checked)} />} label={<Typography variant="s1">I accept up to ${result.ceilingUsd} in provider charges for this run.</Typography>} />
         {getSkillErrorCode(error) !== 'spend_policy_required' && <OperationFeedback error={error} action="start this run" onRetry={run} onReconcile={run} onRefresh={() => { setError(null); setFresh(''); preview.mutate(plan, { onSuccess: () => setFresh(planKey) }); }} />}
         <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.5} alignItems={{ xs: 'flex-start', sm: 'center' }}>
-          <Button variant={primary ? "contained" : "outlined"} color="primary" size="small" disabled={Boolean(runReason)} {...reasonProps('native-run-reason', runReason)} onClick={run}>Run on the application</Button>
+          <Button variant={primary ? "contained" : "outlined"} color="primary" disabled={Boolean(runReason)} {...reasonProps('native-run-reason', runReason)} onClick={run}>Run on the application</Button>
           <ActionReason id="native-run-reason" reason={runReason} />
         </Stack>
       </Stack>}
@@ -392,6 +418,35 @@ function PlanSection({ contextId, versions, viewed, cases, target, canWrite, onS
   </Section>;
 }
 PlanSection.propTypes = { primary: PropTypes.bool, contextId: PropTypes.string.isRequired, versions: PropTypes.array.isRequired, viewed: PropTypes.object, cases: PropTypes.array.isRequired, target: PropTypes.object, canWrite: PropTypes.bool.isRequired, onStarted: PropTypes.func.isRequired, runs: PropTypes.array, productionVersion: PropTypes.number, seed: PropTypes.object, onSelectionChange: PropTypes.func };
+
+// One History row: what was tested against what, how many cases, and a separate outcome badge.
+// Application rows read their cases and decision from the run detail (shared with the result view);
+// until it loads the outcome is a neutral placeholder, never a verdict.
+const plural = (count, one) => `${count} ${one}${count === 1 ? '' : 's'}`;
+function HistoryRow({ contextId, run, selected, onInspect }) {
+  const application = run.type === 'application';
+  const detail = useNativeRun(contextId, application ? run.id : null);
+  let description;
+  let outcome;
+  if (application) {
+    const arm = (variant) => run.arms.find((item) => item.variant === variant);
+    const against = [arm('production') && `production v${arm('production').version}`, arm('reference') && `recorded v${arm('reference').version}`].filter(Boolean);
+    const cases = detail.data?.cases?.length;
+    description = [`Application verification`, `v${arm('candidate')?.version ?? '?'}${against.length ? ` vs ${against.join(' and ')}` : ''}`, cases ? plural(cases, 'case') : null].filter(Boolean).join(' · ');
+    outcome = applicationOutcome(detail.data ?? { jobState: run.jobState, status: run.status });
+  } else {
+    const cases = run.selected_case_ids?.length;
+    description = [`Answer check`, `${run.candidate?.version ? `v${run.candidate.version}` : 'Saved draft'} vs ${run.reference?.version ? `v${run.reference.version}` : 'no context'}`, cases ? plural(cases, 'case') : null].filter(Boolean).join(' · ');
+    outcome = answerOutcome(run);
+  }
+  return <TableRow hover selected={selected} sx={{ height: ROW_HEIGHT.default }}>
+    <TableCell><Typography variant="s1">{description}</Typography></TableCell>
+    <TableCell>{outcome ? <StatusBadge status={outcome[0]} label={outcome[1]} /> : <Typography variant="s3" color="text.secondary">Loading…</Typography>}</TableCell>
+    <TableCell><When value={run.createdAt} /></TableCell>
+    <TableCell align="right"><Button variant="outlined" size="small" aria-label={`Inspect ${description}`} onClick={onInspect}>Inspect</Button></TableCell>
+  </TableRow>;
+}
+HistoryRow.propTypes = { contextId: PropTypes.string.isRequired, run: PropTypes.object.isRequired, selected: PropTypes.bool, onInspect: PropTypes.func.isRequired };
 
 export default function ContextNativePanel({ contextId, versions, viewed, cases, canWrite, productionVersion, seed, children, reviewedCases, state, answerHistory, renderAnswer, answerRunId, historyPagination, latestAnswer, draftHandoff = false }) {
   const targets = useNativeTargets(contextId);
@@ -405,12 +460,20 @@ export default function ContextNativePanel({ contextId, versions, viewed, cases,
   const [packetReady, setPacketReady] = useState(false);
   const [startedForm, setStartedForm] = useState(false);
   const [formOpen, setFormOpen] = useState(null);
+  // The result the reviewer last engaged the setup for: choosing a test type, opening the setup or
+  // starting a run from a result. While engaged, the setup's run or preview is the page's one primary.
+  const [engagedFor, setEngagedFor] = useState(null);
   const resultRegion = useRef(null);
   const formRegion = useRef(null);
   const answerForm = useRef(null);
   const applicationForm = useRef(null);
   useEffect(() => { if (answerRunId) setSelected({ type: 'answers', id: answerRunId }); }, [answerRunId]);
-  useEffect(() => { setCurrentForm(false); if (selected) resultRegion.current?.focus(); }, [selected]);
+  useEffect(() => {
+    setCurrentForm(false);
+    if (!selected) return;
+    focusQuietly(resultRegion.current);
+    revealInMain(resultRegion.current);
+  }, [selected]);
   const history = [
     ...(runs.data || []).map((run) => ({ ...run, type: 'application' })),
     ...(answerHistory?.data?.results || []).map((run) => ({ ...run, createdAt: run.created_at, type: 'answers' })),
@@ -418,8 +481,8 @@ export default function ContextNativePanel({ contextId, versions, viewed, cases,
   const visibleHistory = history.filter((run) => historyFilter === 'all' || run.type === historyFilter);
   const latest = [...(runs.data?.[0] ? [{ ...runs.data[0], type: 'application' }] : []), ...(latestAnswer ? [{ ...latestAnswer, createdAt: latestAnswer.created_at, type: 'answers' }] : history.filter((run) => run.type === 'answers').slice(0, 1))].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))[0];
   const focus = state === 'empty' ? null : selected || latest;
-  // A reproduction handoff (seed) opens with its run form active: the empty-state button would be a second primary.
-  const firstRun = !focus && (state === 'empty' || !history.length) && !startedForm && !seed;
+  const focusKey = focus ? `${focus.type}/${focus.id}` : 'none';
+  const engage = () => setEngagedFor(focusKey);
   const target = targets.data?.targets[0];
   // The application test is the default only where it can run: a reproduction handoff or a registered
   // application. With nothing registered (or no hosted runtime) the answer check comes first. Until the
@@ -438,48 +501,49 @@ export default function ContextNativePanel({ contextId, versions, viewed, cases,
     const nextKind = typeof requestedKind === 'string' ? requestedKind : kind;
     setStartedForm(true);
     setFormOpen(true);
+    engage();
     requestAnimationFrame(() => {
-      formRegion.current?.scrollIntoView?.({ block: 'start', behavior: 'smooth' });
+      revealInMain(formRegion.current);
       const form = nextKind === 'answers' ? answerForm.current : applicationForm.current;
       const field = form?.querySelector('textarea:not([disabled]),input:not([type="radio"]):not([aria-hidden="true"]):not([disabled]),[role="combobox"]:not([aria-disabled="true"])');
-      (field || form?.querySelector('button:not([disabled])'))?.focus();
+      focusQuietly(field || form?.querySelector('button:not([disabled])'));
     });
   };
   const runCurrent = () => { setCurrentForm(true); setKind('application'); focusForm('application'); };
   const runOnApplication = () => { setKind('application'); setCurrentForm(true); focusForm('application'); };
-  const formPrimary = !firstRun && (!packetReady || earlier) && (!earlier || currentForm);
+  // One contained primary at a time. With no result, or once the reviewer engages the setup, it is the
+  // setup's run or preview button; while a result offers its release review and the setup is not
+  // engaged, it is that release action. An earlier result keeps "Run on current selection" first.
+  const engaged = !focus || engagedFor === focusKey || Boolean(seed) || draftHandoff;
+  const formPrimary = runOpen && (earlier ? currentForm : (!packetReady || engaged));
   const historySection = <Section title={<Typography component="span" variant="m3">History</Typography>} description="Both kinds of test, newest first. Open a run to inspect the version it tested.">
     <TextField select size="small" label="Test type" value={historyFilter} onChange={(event) => setHistoryFilter(event.target.value)} sx={{ minWidth: 180, mb: 1.5 }}><MenuItem value="all">All tests</MenuItem><MenuItem value="answers">Answer checks</MenuItem><MenuItem value="application">Application verifications</MenuItem></TextField>
     {runs.isError && <ErrorState title="Couldn't load application test history." onRetry={runs.refetch} />}
     {answerHistory?.isError && <ErrorState title="Couldn't load answer-check history." onRetry={answerHistory.refetch} />}
-    {runs.isLoading || answerHistory?.isLoading ? <ContentSkeleton variant="rows" /> : visibleHistory.length && state !== 'empty' ? <TableContainer><Table size="small" aria-label="Test history"><TableHead><TableRow><TableCell>Type</TableCell><TableCell>Version</TableCell><TableCell>Status</TableCell><TableCell>Started</TableCell><TableCell /></TableRow></TableHead><TableBody>{visibleHistory.map((run) => <TableRow key={`${run.type}/${run.id}`} hover selected={focus?.type === run.type && focus?.id === run.id} sx={{ height: ROW_HEIGHT.default }}>
-      <TableCell>{run.type === 'application' ? 'Application verification' : 'Answer check'}</TableCell>
-      <TableCell>{run.type === 'application' ? `v${run.arms.find((arm) => arm.variant === 'candidate')?.version ?? '?'}` : run.candidate?.version ? `v${run.candidate.version}` : 'Saved draft'}</TableCell>
-      <TableCell><StatusBadge status={run.jobState || run.status} /></TableCell><TableCell><When value={run.createdAt} /></TableCell>
-      <TableCell><Button variant="outlined" size="small" onClick={() => setSelected({ type: run.type, id: run.id })}>Inspect run</Button></TableCell>
-    </TableRow>)}</TableBody></Table></TableContainer> : historyFilter !== 'all' ? <EmptyState variant="no-results" title="No matching test runs" description="Try the other test type or show all runs." onClearFilters={() => setHistoryFilter('all')} /> : <Typography component="div" variant="s3" color="text.secondary">Your test runs will appear here.</Typography>}
+    {runs.isLoading || answerHistory?.isLoading ? <ContentSkeleton variant="rows" /> : visibleHistory.length && state !== 'empty' ? <TableContainer><Table size="small" aria-label="Test history"><TableHead><TableRow><TableCell>Test run</TableCell><TableCell>Outcome</TableCell><TableCell>Started</TableCell><TableCell /></TableRow></TableHead><TableBody>{visibleHistory.map((run) => <HistoryRow key={`${run.type}/${run.id}`} contextId={contextId} run={run} selected={focus?.type === run.type && focus?.id === run.id} onInspect={() => setSelected({ type: run.type, id: run.id })} />)}</TableBody></Table></TableContainer> : historyFilter !== 'all' ? <EmptyState variant="no-results" title="No matching test runs" description="Try the other test type or show all runs." onClearFilters={() => setHistoryFilter('all')} /> : <Typography component="div" variant="s3" color="text.secondary">Your test runs will appear here.</Typography>}
     {historyPagination}
   </Section>;
   const showHistoryFirst = history.length > 0 && state !== 'empty';
   return <Stack spacing={3}>
     <Box ref={resultRegion} tabIndex={-1} role="region" aria-label="Latest result">
-      <Section title={<Typography component="span" variant="m3">Latest result</Typography>}>
-        {state === 'loading' ? <ContentSkeleton variant="panel" label="Loading test results" /> : focus ? focus.type === 'answers' ? renderAnswer?.(focus.id, { onRunApplication: runOnApplication, onReady: setPacketReady }) : <RunDetail key={focus.id} contextId={contextId} evidenceId={focus.id} canWrite={canWrite} target={target} selection={selection} cases={cases} onReady={setPacketReady} onRunCurrent={runCurrent} onEarlier={setEarlier} currentForm={currentForm} /> : runs.isLoading || answerHistory?.isLoading ? <ContentSkeleton variant="panel" label="Loading test results" /> : runs.isError || answerHistory?.isError ? <ErrorState title="Couldn't load latest results." onRetry={() => { runs.refetch(); answerHistory?.refetch(); }} /> : <EmptyState sx={{ py: 3 }} title="No tests yet" description="Choose an answer check or verify reviewed cases on your application. Neither changes production." action={firstRun ? <Button color="primary" variant="contained" onClick={focusForm}>Run your first test</Button> : undefined} />}
+      <Section>
+        {state === 'loading' ? <ContentSkeleton variant="panel" label="Loading test results" /> : focus ? focus.type === 'answers' ? renderAnswer?.(focus.id, { onRunApplication: runOnApplication, onReady: setPacketReady, secondary: formPrimary }) : <RunDetail key={focus.id} contextId={contextId} evidenceId={focus.id} canWrite={canWrite} target={target} selection={selection} cases={cases} onReady={setPacketReady} onRunCurrent={runCurrent} onEarlier={setEarlier} currentForm={currentForm} formPrimary={formPrimary} /> : runs.isLoading || answerHistory?.isLoading ? <ContentSkeleton variant="panel" label="Loading test results" /> : runs.isError || answerHistory?.isError ? <ErrorState title="Couldn't load latest results." onRetry={() => { runs.refetch(); answerHistory?.refetch(); }} /> : <EmptyState sx={{ py: 3 }} title="No tests yet" description="Choose an answer check or verify reviewed cases on your application below. Neither changes production." />}
       </Section>
     </Box>
     {showHistoryFirst && historySection}
     <Box ref={formRegion}>
       <Stack direction="row" alignItems="center" justifyContent="space-between" spacing={1.5} sx={{ minWidth: 0 }}>
         <Typography component="h2" id="run-a-test-heading" variant="m3">Run a test</Typography>
-        <Button size="small" color="inherit" aria-expanded={runOpen} aria-controls="run-a-test-body" onClick={() => setFormOpen(!runOpen)} startIcon={<Iconify icon={runOpen ? 'solar:alt-arrow-down-linear' : 'solar:alt-arrow-right-linear'} width={16} />}>{runOpen ? 'Hide setup' : 'Show setup'}</Button>
+        <Button size="small" color="inherit" aria-expanded={runOpen} aria-controls="run-a-test-body" onClick={() => { if (!runOpen) engage(); setFormOpen(!runOpen); }} startIcon={<Iconify icon={runOpen ? 'solar:alt-arrow-down-linear' : 'solar:alt-arrow-right-linear'} width={16} />}>{runOpen ? 'Hide setup' : 'Show setup'}</Button>
       </Stack>
       <Collapse in={runOpen} id="run-a-test-body" role="region" aria-labelledby="run-a-test-heading">
         <Stack spacing={2} sx={{ pt: 1.5 }}>
           <FormControl><FormLabel id="test-kind-label" sx={{ color: 'text.primary' }}>Choose what to test</FormLabel>
-            {kindPending ? <ContentSkeleton variant="rows" rows={1} label="Loading test options" /> : <RadioGroup aria-labelledby="test-kind-label" value={kind} onChange={(event) => { setKind(event.target.value); setStartedForm(true); setCurrentForm(true); }} sx={{ flexDirection: { xs: 'column', sm: 'row' }, gap: 1.5 }}>
+            {kindPending ? <ContentSkeleton variant="rows" rows={1} label="Loading test options" /> : <RadioGroup aria-labelledby="test-kind-label" value={kind} onChange={(event) => { setKind(event.target.value); setStartedForm(true); setCurrentForm(true); engage(); }} sx={{ flexDirection: { xs: 'column', sm: 'row' }, gap: 1.5 }}>
               <FormControlLabel value="answers" control={<Radio size="small" />} label={<Stack><Typography variant="s1">Check answers with this context</Typography><Typography variant="s3" color="text.secondary">Compare answers using your instructions and linked skills.</Typography></Stack>} />
               <FormControlLabel value="application" control={<Radio size="small" />} label={<Stack><Typography variant="s1">Verify on the application</Typography><Typography variant="s3" color="text.secondary">Check skill selection, delivered files, actions and answers.</Typography></Stack>} />
             </RadioGroup>}
+            {!kindPending && <Typography variant="s3" color="text.secondary" sx={{ mt: 0.5 }}>Answer checks don’t need a workspace allowance; application verification spends from it.</Typography>}
           </FormControl>
           <Box ref={answerForm} hidden={kindPending || kind !== 'answers'}>{typeof children === 'function' ? children(formPrimary && kind === 'answers') : children}</Box>
           <Box ref={applicationForm} hidden={kindPending || kind !== 'application'}><Stack spacing={2}>

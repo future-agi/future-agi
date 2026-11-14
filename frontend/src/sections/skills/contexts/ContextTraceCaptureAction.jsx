@@ -30,11 +30,11 @@ function ChooseContext({ traceRef, contextHint, onClose }) {
   if (review) return <ContextCaptureController contextId={contextId} traceRef={traceRef} canCapture={canCapture} onClose={onClose}
     onChangeContext={() => { setDeclined(true); setReview(false); setContextId(''); }} />;
   return <ClosableDialog open onClose={onClose} fullWidth maxWidth="sm" aria-labelledby="context-capture-destination">
-    <DialogTitle id="context-capture-destination">Choose a regression context</DialogTitle>
+    <DialogTitle id="context-capture-destination">Choose a context for this test case</DialogTitle>
     <DialogContent><Stack spacing={1.5} sx={{ pt: 1 }}>
       <Alert severity="info">The selected span identity is carried automatically. Review and redact its request and tool results before sharing a case.</Alert>
       {hinted && detail.isError && <Alert severity="warning">The context this span was delivered from is not available to you. Choose another context.</Alert>}
-      {resolving ? <ContentSkeleton label="Opening the context this span was delivered from" /> : contexts.isLoading ? <ContentSkeleton label="Loading contexts" /> : contexts.isError ? <ErrorState title="Could not load contexts" onRetry={contexts.refetch} /> : !contexts.data?.results.length ? <EmptyState title="No contexts on this page" description="Create a context in Skills before capturing a regression case." /> : <TextField select size="small" label="Regression context" value={contextId} onChange={(event) => setContextId(event.target.value)}>
+      {resolving ? <ContentSkeleton label="Opening the context this span was delivered from" /> : contexts.isLoading ? <ContentSkeleton label="Loading contexts" /> : contexts.isError ? <ErrorState title="Could not load contexts" onRetry={contexts.refetch} /> : !contexts.data?.results.length ? <EmptyState title="No contexts on this page" description="Create a context in Skills before saving a test case." /> : <TextField select size="small" label="Context" value={contextId} onChange={(event) => setContextId(event.target.value)}>
         {contexts.data.results.map((context) => <MenuItem key={context.id} value={context.id}>{context.name}</MenuItem>)}
       </TextField>}
       <Stack direction="row" spacing={1}>
@@ -42,7 +42,7 @@ function ChooseContext({ traceRef, contextHint, onClose }) {
         <Button disabled={!contexts.data || page >= contexts.data.totalPages || contexts.isFetching} onClick={() => { setContextId(''); setPage((value) => value + 1); }}>More contexts</Button>
       </Stack>
       {detail.isError && <ErrorState title="Context access unavailable" onRetry={detail.refetch} />}
-      {contextId && detail.data && !detail.isFetching && !canCapture && <Alert severity="info">Only a workspace author can capture cases into this context.</Alert>}
+      {contextId && detail.data && !detail.isFetching && !canCapture && <Alert severity="info">Only a workspace author can save test cases to this context.</Alert>}
     </Stack></DialogContent>
     <DialogActions><Button onClick={onClose}>Cancel</Button><Button color="primary" variant="contained" disabled={!contextId || !canCapture || contexts.isError} onClick={() => setReview(true)}>Review selected span</Button></DialogActions>
   </ClosableDialog>;
@@ -50,7 +50,7 @@ function ChooseContext({ traceRef, contextHint, onClose }) {
 ChooseContext.propTypes = { traceRef: PropTypes.object.isRequired, contextHint: PropTypes.string, onClose: PropTypes.func.isRequired };
 function ScopedAction({ traceRef, contextHint }) {
   const [open, setOpen] = useState(false);
-  return <><Button size="small" variant="outlined" onClick={() => setOpen(true)}>Create context regression case</Button>
+  return <><Button size="small" variant="outlined" onClick={() => setOpen(true)}>Save as test case</Button>
     {open && <ChooseContext traceRef={traceRef} contextHint={contextHint} onClose={() => setOpen(false)} />}</>;
 }
 ScopedAction.propTypes = { traceRef: PropTypes.object.isRequired, contextHint: PropTypes.string };

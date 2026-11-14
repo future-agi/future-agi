@@ -35,7 +35,7 @@ afterEach(cleanup);
 it('shows regression cases, application verification and whole-context tests in one panel', () => {
   h.targets = registered;
   mount();
-  expect(screen.getByText('Reviewed cases')).toBeVisible();
+  expect(screen.getByText('Test cases')).toBeVisible();
   expect(screen.getByRole('link', { name: 'Add case from a trace' })).toHaveAttribute('href', '/dashboard/observe');
   expect(screen.getByRole('table', { name: 'Context regression cases' })).toHaveTextContent('Refund failure');
   expect(screen.getByText('Application target')).toBeVisible();
@@ -58,7 +58,7 @@ it('keeps application verification when whole-context testing is unavailable', (
 it('keeps whole-context tests when the regression suite cannot load', () => {
   h.suiteError = true;
   mount();
-  expect(screen.getByText('Could not load context regression cases')).toBeVisible();
+  expect(screen.getByText("Couldn't load test cases")).toBeVisible();
   expect(screen.getByRole('textbox', { name: 'Test request' })).toBeVisible();
 });
 it('switches only the whole-context candidate to the saved draft', () => {
@@ -71,7 +71,7 @@ it('switches only the whole-context candidate to the saved draft', () => {
   view.rerender(<MemoryRouter><ContextTestsPanel contextId="context" version={version} versions={[version]} canWrite source={{ ...source, testingDraft: true }} draft={{ revision: 9, digest }} /></MemoryRouter>);
   expect(screen.getByText('Testing your saved draft (revision 9)')).toBeVisible();
   // Application verification still names the viewed release.
-  expect(screen.getByText('Reviewed cases')).toBeVisible();
+  expect(screen.getByText('Test cases')).toBeVisible();
   expect(screen.getByRole('radio', { name: 'Saved draft' })).toBeChecked();
   expect(screen.getByRole('radio', { name: 'Published version' })).toBeEnabled();
 });
@@ -87,7 +87,7 @@ it('never falls back to the release while the saved draft is loading or failed',
 it('hands the editor draft off to the saved-revision tests without an inline run', () => {
   const onOpen = vi.fn();
   render(<MemoryRouter><ContextTestsPanel contextId="context" canWrite onOpenSavedDraft={onOpen} /></MemoryRouter>);
-  expect(screen.getByText('Reviewed cases')).toBeVisible();
+  expect(screen.getByText('Test cases')).toBeVisible();
   expect(screen.queryByRole('textbox', { name: 'Test request' })).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole('radio', { name: /^Check answers with this context/ }));
   fireEvent.click(screen.getByRole('button', { name: 'Save and open whole-context tests' }));
@@ -97,27 +97,31 @@ it('hands the editor draft off to the saved-revision tests without an inline run
 it('keeps a single first-run action and unticked acknowledgments while switching test types', () => {
   h.targets = registered;
   mount();
-  expect(screen.getByRole('button', { name: 'Run your first test' })).toHaveClass('MuiButton-contained');
-  fireEvent.click(screen.getByRole('radio', { name: /^Check answers with this context/ }));
+  // The setup is already open, so the empty state adds no second button.
   expect(screen.queryByRole('button', { name: 'Run your first test' })).not.toBeInTheDocument();
-  expect(screen.getByRole('button', { name: 'Preview whole-context test' })).toHaveClass('MuiButton-contained');
+  expect(screen.getByText('No tests yet')).toBeVisible();
+  fireEvent.click(screen.getByRole('radio', { name: /^Check answers with this context/ }));
+  const preview = screen.getByRole('button', { name: 'Preview whole-context test' });
+  expect(preview).toHaveClass('MuiButton-contained');
+  expect(preview).not.toHaveClass('MuiButton-sizeSmall');
+  expect([...document.querySelectorAll('.MuiButton-contained')].filter((el) => !el.closest('[hidden]'))).toHaveLength(1);
   expect(screen.getByRole('checkbox', { name: 'I reviewed this request and its expected answer.' })).not.toBeChecked();
   expect(screen.getByText('History')).toBeVisible();
   expect(screen.queryByText('Context test history')).not.toBeInTheDocument();
 });
 
-it('moves the first-run action into the selected form rather than its hidden sibling', async () => {
-  h.targets = [{ ...registered[0], qualified: true, configurationDigest: digest }];
-  mount();
-  fireEvent.click(screen.getByRole('button', { name: 'Run your first test' }));
-  await waitFor(() => expect(screen.getByRole('combobox', { name: /^Test version/ })).toHaveFocus());
-  expect(screen.queryByRole('textbox', { name: 'Test request' })).not.toBeInTheDocument();
-});
-it('starts with the answer check when no application is registered', async () => {
+it('starts with the answer check, open and primary, when no application is registered', () => {
   mount();
   expect(screen.getByRole('radio', { name: /^Check answers with this context/ })).toBeChecked();
-  fireEvent.click(screen.getByRole('button', { name: 'Run your first test' }));
-  await waitFor(() => expect(screen.getByRole('textbox', { name: 'Test request' })).toHaveFocus());
+  expect(screen.getByRole('textbox', { name: 'Test request' })).toBeVisible();
+  expect(screen.getByRole('button', { name: 'Preview whole-context test' })).toHaveClass('MuiButton-contained');
+});
+it('explains why the saved draft cannot be chosen', async () => {
+  mount({ source: { testingDraft: false, draftAvailable: false, releaseAvailable: true, onSelect: () => {} } });
+  const draft = screen.getByRole('radio', { name: 'Saved draft' });
+  expect(draft).toBeDisabled();
+  fireEvent.mouseOver(draft.closest('label').parentElement);
+  expect(await screen.findByRole('tooltip')).toHaveTextContent('No saved draft for this context');
 });
 it('compares the answer check with a chosen published version, never a typed number', () => {
   const versions = [version, { id: 'v3', number: 3, digest }];
@@ -147,7 +151,22 @@ it('reads answer grades in plain words and offers the release review for a passi
   expect(params.get('evidence')).toBe('skills_text:answer-run');
   expect(params.get('candidate')).toBe('v4');
   expect(screen.getByRole('button', { name: 'Verify v4 on the application' })).toHaveClass('MuiButton-outlined');
-  // The run form steps back while the result carries the primary action.
+  // The result carries the one primary until the reviewer opens the setup; then the setup leads.
+  expect([...document.querySelectorAll('.MuiButton-contained')].map((el) => el.textContent)).toEqual(['Request release review for v4']);
   fireEvent.click(screen.getByRole('button', { name: 'Show setup' }));
-  expect(screen.getByRole('button', { name: 'Preview whole-context test' })).toHaveClass('MuiButton-outlined');
+  expect(screen.getByRole('button', { name: 'Preview whole-context test' })).toHaveClass('MuiButton-contained');
+  expect(request).toHaveClass('MuiButton-outlined');
+});
+it('moves focus into the application form without scrolling the page when the answer result hands off', async () => {
+  h.targets = [{ ...registered[0], qualified: true, configurationDigest: digest }];
+  h.answerRuns = [{ id: 'answer-run', status: 'completed', created_at: '2026-11-13T12:00:00Z', candidate: { kind: 'version', version: 4, digest } }];
+  h.run = { data: { status: 'completed', created_at: '2026-11-13T12:00:00Z', candidate: { kind: 'version', version: 4, digest } } };
+  h.results = { data: { total_pages: 1, results: [{ case_id: 'c1', title: 'Refund', variants: [{ variant: 'candidate', attempts: [{ id: 'a1', status: 'completed', answer_verdict: 'pass', repeat_index: 0 }] }] }] } };
+  const scrollIntoView = vi.fn();
+  Element.prototype.scrollIntoView = scrollIntoView;
+  mount();
+  fireEvent.click(screen.getByRole('button', { name: 'Verify v4 on the application' }));
+  await waitFor(() => expect(screen.getByRole('combobox', { name: /^Test version/ })).toHaveFocus());
+  expect(scrollIntoView).not.toHaveBeenCalled();
+  delete Element.prototype.scrollIntoView;
 });
