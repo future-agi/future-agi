@@ -794,6 +794,47 @@ def test_compare_download_uses_rows_from_resolved_datasets(
 
 
 @pytest.mark.django_db(transaction=True)
+def test_compare_download_ignores_rows_from_another_dataset_in_organization(
+    auth_client, compare_datasets
+):
+    base = compare_datasets["base_dataset"]
+    compared = compare_datasets["other_dataset"]
+    another = Dataset.objects.create(
+        name="Additional Compare Dataset",
+        organization=base.organization,
+        workspace=base.workspace,
+    )
+    column = Column.objects.create(
+        name="judge",
+        dataset=another,
+        data_type=DataTypeChoices.TEXT.value,
+        source=SourceChoices.EVALUATION.value,
+    )
+    row = Row.objects.create(dataset=another, order=0)
+    Cell.objects.create(dataset=another, column=column, row=row, value="extra-row")
+    response = auth_client.post(
+        f"/model-hub/datasets/{base.id}/compare-datasets/download/",
+        {
+            "dataset_ids": [str(compared.id)],
+            "base_column_name": "input",
+            "dataset_info": {
+                "alpha": {
+                    str(base.id): str(compare_datasets["base_row"].id),
+                    str(compared.id): str(row.id),
+                }
+            },
+            "common_column_names": ["judge"],
+        },
+        format="json",
+    )
+    assert response.status_code == status.HTTP_200_OK, response.content
+    csv = b"".join(response.streaming_content).decode()
+    assert "pass" in csv
+    assert "extra-row" not in csv
+    assert "judge-Other Compare Dataset" not in csv
+
+
+@pytest.mark.django_db(transaction=True)
 @pytest.mark.parametrize("download", [False, True])
 @pytest.mark.parametrize("repeat_base", [False, True])
 def test_compare_repeated_dataset_ids_return_bad_request(
@@ -805,18 +846,95 @@ def test_compare_repeated_dataset_ids_return_bad_request(
         [str(base.id)] if repeat_base else [str(compared.id), str(compared.id)]
     )
     endpoint = "compare-datasets/download/" if download else "compare-datasets/"
+    payload: dict[str, object] = {
+        "dataset_ids": dataset_ids,
+        "base_column_name": "input",
+        "page_size": 10,
+        "current_page_index": 0,
+    }
+    if download:
+        payload["dataset_info"] = {
+            "alpha": {
+                str(base.id): str(compare_datasets["base_row"].id),
+                str(compared.id): str(compare_datasets["other_row"].id),
+            }
+        }
+        payload["common_column_names"] = ["judge"]
     response = auth_client.post(
-        f"/model-hub/datasets/{base.id}/{endpoint}",
+        f"/model-hub/datasets/{base.id}/{endpoint}", payload, format="json"
+    )
+    if download:
+        assert response.status_code == status.HTTP_200_OK, response.content
+        csv = b"".join(response.streaming_content).decode()
+        assert "judge-Base Compare Dataset" in csv
+        assert csv.count("judge-Other Compare Dataset") == (0 if repeat_base else 1)
+        assert csv.count("pass") == 1
+        assert csv.count("fail") == (0 if repeat_base else 1)
+    else:
+        assert response.status_code == status.HTTP_400_BAD_REQUEST, response.content
+        assert "Invalid dataset IDs provided." in response.content.decode()
+
+
+@pytest.mark.django_db(transaction=True)
+def test_compare_download_resolves_repeated_dataset_once(auth_client, compare_datasets):
+    from django.db import connection
+    from django.test.utils import CaptureQueriesContext
+
+    base = compare_datasets["base_dataset"]
+    compared = compare_datasets["other_dataset"]
+    with CaptureQueriesContext(connection) as queries:
+        response = auth_client.post(
+            f"/model-hub/datasets/{base.id}/compare-datasets/download/",
+            {
+                "dataset_ids": [str(compared.id), str(compared.id)],
+                "base_column_name": "input",
+                "dataset_info": {
+                    "alpha": {
+                        str(base.id): str(compare_datasets["base_row"].id),
+                        str(compared.id): str(compare_datasets["other_row"].id),
+                    }
+                },
+                "common_column_names": ["judge"],
+            },
+            format="json",
+        )
+    assert response.status_code == status.HTTP_200_OK, response.content
+    compared_lookups = [
+        query
+        for query in queries
+        if f'FROM "{Dataset._meta.db_table}"' in query["sql"]
+        and compared.id.hex in query["sql"]
+        and "LIMIT 1" in query["sql"]
+    ]
+    assert len(compared_lookups) == 1
+
+
+@pytest.mark.django_db(transaction=True)
+def test_compare_download_base_in_selected_ids_returns_rows(
+    auth_client, compare_datasets
+):
+    base = compare_datasets["base_dataset"]
+    compared = compare_datasets["other_dataset"]
+    response = auth_client.post(
+        f"/model-hub/datasets/{base.id}/compare-datasets/download/",
         {
-            "dataset_ids": dataset_ids,
+            "dataset_ids": [str(base.id), str(compared.id)],
             "base_column_name": "input",
-            "page_size": 10,
-            "current_page_index": 0,
+            "dataset_info": {
+                "alpha": {
+                    str(base.id): str(compare_datasets["base_row"].id),
+                    str(compared.id): str(compare_datasets["other_row"].id),
+                }
+            },
+            "common_column_names": ["judge"],
         },
         format="json",
     )
-    assert response.status_code == status.HTTP_400_BAD_REQUEST, response.content
-    assert "Invalid dataset IDs provided." in response.content.decode()
+    assert response.status_code == status.HTTP_200_OK, response.content
+    csv = b"".join(response.streaming_content).decode()
+    assert csv.count("judge-Base Compare Dataset") == 1
+    assert csv.count("judge-Other Compare Dataset") == 1
+    assert "pass" in csv and "fail" in csv
 
 
 @pytest.mark.django_db(transaction=True)

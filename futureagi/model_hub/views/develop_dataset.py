@@ -14828,14 +14828,10 @@ class DownloadComparisonDatasetView(APIView):
                     get_error_message("FAILED_TO_GET_BASE_COLUMNS")
                 )
 
-            if (
-                len(set(dataset_ids)) != len(dataset_ids)
-                or str(dataset_id) in dataset_ids
-            ):
-                return self._gm.bad_request("Invalid dataset IDs provided.")
-
             # Ensure main dataset is included in comparison
-            dataset_ids.insert(0, str(dataset_id))
+            if str(dataset_id) not in dataset_ids:
+                dataset_ids.insert(0, str(dataset_id))
+            dataset_ids = list(dict.fromkeys(dataset_ids))
             comparison_datasets = []
             for ds_id in dataset_ids:
                 dataset = datasets_in_scope.filter(id=ds_id).first()
