@@ -1,11 +1,16 @@
 package server
 
 import (
+	"context"
+	"net"
 	"net/http"
+	"net/url"
 	"strings"
 	"testing"
 
 	"github.com/futureagi/agentcc-gateway/internal/config"
+	"github.com/futureagi/agentcc-gateway/internal/guardrails"
+	"github.com/futureagi/agentcc-gateway/internal/guardrails/pii"
 	"github.com/futureagi/agentcc-gateway/internal/models"
 	"github.com/futureagi/agentcc-gateway/internal/providers"
 	"github.com/futureagi/agentcc-gateway/internal/tenant"
@@ -51,4 +56,65 @@ func TestOrgOpenRouterJudgedByTheEffectiveBaseURL(t *testing.T) {
 	if h.isOrgOpenRouterChat("team-router", own) {
 		t.Error("an org entry with its own non-OpenRouter base_url is judged OpenRouter")
 	}
+}
+
+// postOnlyGuardrail is an org check that runs on responses only.
+type postOnlyGuardrail struct{}
+
+func (postOnlyGuardrail) Name() string            { return "post-only" }
+func (postOnlyGuardrail) Stage() guardrails.Stage { return guardrails.StagePost }
+func (postOnlyGuardrail) Check(context.Context, *guardrails.CheckInput) *guardrails.CheckResult {
+	return &guardrails.CheckResult{Pass: true}
+}
+
+// An org whose only enabled check runs on responses has no input guardrail:
+// no decision text is extracted, so a deep but valid body is not refused.
+func TestDecisionPostOnlyOrgCheckDoesNotExtractInput(t *testing.T) {
+	org := defaultOrgA()
+	org.Guardrails = &tenant.GuardrailConfig{Checks: map[string]*tenant.GuardrailCheck{"post-only": {Enabled: true, Action: "block"}}}
+	g := newDecisionGateway(t, decisionGatewayOptions{orgs: map[string]*tenant.OrgConfig{"org-a": org}})
+	reg := map[string]guardrails.Guardrail{"post-only": postOnlyGuardrail{}}
+	plugin := guardrails.NewPlugin(nil, reg, nil, nil, g.tenants)
+	g.srv.SetOrgInputGuardrails(plugin.HasOrgInputChecks)
+	if rr := g.post(t, keyByok, nestedCriteria(maxDecisionTextDepth+6)); rr.Code != http.StatusOK {
+		t.Fatalf("status %d: %s", rr.Code, rr.Body.String())
+	}
+	expectOnlyKey(t, g, orgTypeSafeKey, 1)
+
+	// An enabled input check still gets the depth refusal.
+	org.Guardrails.Checks["pii-detection"] = &tenant.GuardrailCheck{Enabled: true, Action: "block"}
+	reg["pii-detection"] = pii.New(map[string]interface{}{})
+	g.tenants.Set("org-a", org)
+	plugin = guardrails.NewPlugin(nil, reg, nil, nil, g.tenants)
+	g.srv.SetOrgInputGuardrails(plugin.HasOrgInputChecks)
+	expectError(t, g.post(t, keyByok, nestedCriteria(maxDecisionTextDepth+6)), http.StatusBadRequest, "decision_too_deep")
+}
+
+// With auth off, a config.yaml OpenRouter connection under another name
+// (judged by its openrouter.ai base_url) neither lists nor routes a chat ID
+// as an OpenAI decision.
+func TestRegistryOpenRouterChatIDIsNotAnOpenAIDecision(t *testing.T) {
+	g := newDecisionGateway(t, decisionGatewayOptions{authOff: true, config: func(cfg *config.Config, upstreamURL string) {
+		u, _ := url.Parse(upstreamURL)
+		cfg.Providers["team-router"] = config.ProviderConfig{
+			APIFormat: "openai", BaseURL: "http://openrouter.ai/api/v1", APIKey: fagiHeldKey,
+			Models: []string{"openai/gpt-6-luna", "typesafe/jev-1.13"},
+			DialContext: func(ctx context.Context, network, _ string) (net.Conn, error) {
+				var d net.Dialer
+				return d.DialContext(ctx, network, u.Host)
+			},
+		}
+	}})
+	rr := g.do(t, http.MethodGet, "/v1/decisions/models", "", "")
+	if strings.Contains(rr.Body.String(), "team-router/openai/gpt-6-luna") {
+		t.Errorf("listing has the chat model: %s", rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), "team-router/typesafe/jev-1.13") {
+		t.Errorf("listing lacks the Jev model: %s", rr.Body.String())
+	}
+	oai := strings.Replace(decisionOAIBody, "openai/gpt-6-luna", "team-router/openai/gpt-6-luna", 1)
+	if rr := g.post(t, "", oai); rr.Code < 400 {
+		t.Fatalf("an OpenAI decision on an OpenRouter chat model got %d: %s", rr.Code, rr.Body.String())
+	}
+	expectNoCalls(t, g)
 }

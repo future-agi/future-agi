@@ -223,13 +223,11 @@ func (h *Handlers) registryDecisionTarget(rc *models.RequestContext, header http
 		if !slices.Contains(exact, id) && !(hasPrefix && strings.EqualFold(prefix, id) && slices.Contains(bare, id)) {
 			continue
 		}
-		p, ok := h.registryDecisionProvider(id, stripProviderPrefix(req.Model, id))
+		p, format, openRouterChat, ok := h.registryDecisionFormat(id, stripProviderPrefix(req.Model, id))
 		if !ok {
 			continue
 		}
-		dp, _ := h.registry.DecisionProvider(id)
-		chat, _ := h.registry.GetProvider(id)
-		candidates = append(candidates, decisionCandidate{id: id, provider: p, format: decisionFormatOf(p, id, ""), openRouterChat: dp != chat})
+		candidates = append(candidates, decisionCandidate{id: id, provider: p, format: format, openRouterChat: openRouterChat})
 	}
 	if len(candidates) == 0 {
 		return nil, models.ErrNotFound("model_not_found",
@@ -266,6 +264,24 @@ func (h *Handlers) registryDecisionProvider(id, model string) (providers.Provide
 		return dp, true
 	}
 	return p, true
+}
+
+// registryDecisionFormat returns the config.yaml provider that serves model as
+// a decision and the decision format it speaks. On an OpenAI-format OpenRouter
+// connection a chat model speaks none: it is neither an OpenAI decision (the
+// chat provider is not a decisions endpoint) nor routed to OpenRouter's.
+func (h *Handlers) registryDecisionFormat(id, model string) (p providers.Provider, format string, openRouterChat, ok bool) {
+	p, ok = h.registryDecisionProvider(id, model)
+	if !ok {
+		return nil, "", false, false
+	}
+	dp, _ := h.registry.DecisionProvider(id)
+	chat, _ := h.registry.GetProvider(id)
+	openRouterChat = dp != chat
+	if openRouterChat && p == chat {
+		return p, "", true, true
+	}
+	return p, decisionFormatOf(p, id, ""), openRouterChat, true
 }
 
 // isOpenRouterDecisionModel reports whether a model an OpenAI-format

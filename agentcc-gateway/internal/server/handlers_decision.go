@@ -224,7 +224,8 @@ func isGuardrailBlock(err error) bool {
 }
 
 // decisionInputGuardrailsApply reports whether input guardrails may check
-// this decision: a static (config.yaml) input rule, or any enabled org check.
+// this decision: a static (config.yaml) input rule, or an enabled org check
+// that runs on input.
 // Internal-key traffic is the platform's own (the Jev evaluator judges traces
 // that may hold PII or injection text on purpose), so it is not checked; org
 // keys, BYOK and managed, are.
@@ -235,11 +236,16 @@ func (h *Handlers) decisionInputGuardrailsApply(rc *models.RequestContext, orgCf
 	if h.guardrailEngine != nil && h.guardrailEngine.PreCount() > 0 {
 		return true
 	}
-	if orgCfg != nil && orgCfg.Guardrails != nil {
-		for _, check := range orgCfg.Guardrails.Checks {
-			if check != nil && check.Enabled {
-				return true
-			}
+	if orgCfg == nil || orgCfg.Guardrails == nil {
+		return false
+	}
+	if h.orgInputGuardrails != nil {
+		// The guardrail plugin knows each check's stage.
+		return h.orgInputGuardrails(rc.Metadata["org_id"])
+	}
+	for _, check := range orgCfg.Guardrails.Checks {
+		if check != nil && check.Enabled {
+			return true
 		}
 	}
 	return false
@@ -443,11 +449,11 @@ func (h *Handlers) registryDecisionModels() []decisionModel {
 	entries := []decisionModel{}
 	db := h.ModelDB()
 	for _, m := range h.registry.ListAllModels() {
-		p, ok := h.registryDecisionProvider(m.OwnedBy, stripProviderPrefix(m.ID, m.OwnedBy))
+		_, format, _, ok := h.registryDecisionFormat(m.OwnedBy, stripProviderPrefix(m.ID, m.OwnedBy))
 		if !ok {
 			continue
 		}
-		if entry, ok := newDecisionModel(db, nil, m.OwnedBy, m.ID, decisionFormatOf(p, m.OwnedBy, "")); ok {
+		if entry, ok := newDecisionModel(db, nil, m.OwnedBy, m.ID, format); ok {
 			entries = append(entries, entry)
 		}
 	}
