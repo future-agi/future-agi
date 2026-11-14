@@ -16,7 +16,7 @@ from tracer.services.clickhouse.v2.apply_schema import split_statements
 from tracer.services.clickhouse.v2.apply_schema_rewriter import rewrite_for_replicated
 
 
-def test_schema_028_rewrites_to_replicated_and_uses_row_local_name():
+def test_schema_039_rewrites_to_replicated_and_uses_row_local_name():
     from pathlib import Path
 
     path = (
@@ -25,7 +25,7 @@ def test_schema_028_rewrites_to_replicated_and_uses_row_local_name():
         / "clickhouse"
         / "v2"
         / "schema"
-        / "028_trace_name_row_local.sql"
+        / "039_trace_name_row_local.sql"
     )
     (statement,) = split_statements(path.read_text())
     assert "MODIFY COLUMN trace_name String" in statement

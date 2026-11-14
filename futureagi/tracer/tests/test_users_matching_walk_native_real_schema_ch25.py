@@ -119,7 +119,7 @@ def survivor_of_e(ch_client):
             "trace_id": _trace(sid),
             "id": sid,
             # Every span here is its trace's root, and a root names its trace
-            # (028): the same name the traces row gives the old dictionary.
+            # (039): the same name the traces row gives the old dictionary.
             "name": TRACE_NAMES.get(sid, "") if name is None else name,
             "end_user_id": uuid.UUID(user),
             "end_time": start + timedelta(seconds=1),

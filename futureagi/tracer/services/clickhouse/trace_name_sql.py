@@ -10,7 +10,7 @@ name stayed blank. Readers therefore resolve the name from the row itself:
 - otherwise a root span (empty ``parent_span_id``) is named by its own name;
 - a child span never names its trace: readers resolve it through the root.
 
-The expression gives the same answer under the old (015) and the new (028)
+The expression gives the same answer under the old (015) and the new (039)
 column definition, so reader code and schema can ship in either order.
 """
 

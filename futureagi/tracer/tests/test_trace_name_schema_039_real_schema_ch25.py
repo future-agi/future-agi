@@ -1,4 +1,4 @@
-"""Verify that the 028 row-local expression works on a real CH25 schema."""
+"""Verify that the 039 row-local expression works on a real CH25 schema."""
 
 from __future__ import annotations
 

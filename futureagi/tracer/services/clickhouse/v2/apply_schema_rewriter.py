@@ -204,9 +204,9 @@ def rewrite_for_replicated(stmt: str, *, table_name: str, cluster: str,
 # A dictionary declared with `SOURCE(CLICKHOUSE(TABLE '...'))` and no USER reads
 # its local source as user `default` with an EMPTY password. When the server's
 # users have passwords, dictionary lookups fail with AUTHENTICATION_FAILED.
-# Before 028, spans.trace_name also evaluates dictGetOrDefault('trace_dict', ...)
+# Before 039, spans.trace_name also evaluates dictGetOrDefault('trace_dict', ...)
 # on insert, so installations still applying 015 need these credentials. After
-# 028, other dictionaries still need credentials for their readers. The
+# 039, other dictionaries still need credentials for their readers. The
 # packaged DDL stays credential-free (its text is hashed for drift detection
 # and compared against live metadata); every path that executes it injects
 # the credentials it connects with, at apply time.

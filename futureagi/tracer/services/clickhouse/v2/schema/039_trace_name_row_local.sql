@@ -1,4 +1,4 @@
--- 028 — row-local trace names. The dictionary consumed too much memory (and
+-- 039 — row-local trace names. The dictionary consumed too much memory (and
 -- reloads need a second copy); spans are inserted before traces, so dictionary
 -- enrichment cannot reliably supply the name on insert anyway.
 -- MODIFY COLUMN changes metadata only: existing stored names remain intact.

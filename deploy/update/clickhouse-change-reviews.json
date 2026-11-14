@@ -29,9 +29,9 @@
       }
     },
     {
-      "path": "futureagi/tracer/services/clickhouse/v2/schema/028_trace_name_row_local.sql",
+      "path": "futureagi/tracer/services/clickhouse/v2/schema/039_trace_name_row_local.sql",
       "before_sha256": null,
-      "after_sha256": "cebf0ab6b39ef33152f12998bc9b5255e22c89e39332e3b0231f9fbd5f76e3cf",
+      "after_sha256": "531f1010e270a6edcd2f5936b9110c54ddf8e335a04399d51134aca6d8b80497",
       "declaration": {
         "schema_version": 1,
         "risk_classes": [

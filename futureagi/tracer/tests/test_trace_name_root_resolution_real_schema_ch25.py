@@ -37,7 +37,7 @@ def seeded_roots():
             root = f"root-{uuid.uuid4()}"
             columns = "project_id, trace_id, id, parent_span_id, name, start_time, observation_type, service_name"
             values = (project, traces[key], root, "", name, now, "agent", "reader-test")
-            # A pre-028 collector insert before traces persisted the empty
+            # A pre-039 collector insert before traces persisted the empty
             # dictionary result. Reproduce that historic physical row on the
             # new lane schema (which otherwise computes the name at INSERT).
             # The demo instead writes its explicit stored presentation name.

@@ -2037,7 +2037,7 @@ class ClickHouseFilterBuilder:
             return None
 
         if col_id == "trace_name":
-            # The child's materialized value is deliberately empty after 028.
+            # The child's materialized value is deliberately empty after 039.
             # Compare the root, but retain every span of its trace. Keep both
             # tenant identity and the physical read window in the semi-join.
             project_pred = (
