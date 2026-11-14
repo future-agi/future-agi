@@ -4,7 +4,8 @@ import json
 import re
 import time
 
-from jinja2 import Environment, StrictUndefined, TemplateError, UndefinedError
+from jinja2 import StrictUndefined, TemplateError, UndefinedError
+from jinja2.sandbox import SandboxedEnvironment
 
 from agentic_eval.core.llm.llm import LLM
 from agentic_eval.core.utils.llm_payloads import compute_choices_failure
@@ -52,9 +53,23 @@ def _reject_media(value):
             _reject_media(item)
 
 
-class JevEvaluator(LLM):
+class TypedDecisionEvaluator(LLM):
+    """Shared typed-question execution; subclasses own routing and billing identity."""
+
     name = "jev_eval"
     display_name = "Jev Evaluation"
+    model_label = "Jev"
+    metadata_key = "jev"
+    connection = "typesafe"
+
+    def _validate_model(self, model):
+        if not is_jev_model(model):
+            raise JevMappingError(
+                "JEV_MODEL_UNKNOWN", "model", "Unsupported Jev model."
+            )
+
+    def _make_client(self, api_key):
+        return JevSystemOneClient(api_key=api_key)
 
     def __init__(
         self,
@@ -70,10 +85,7 @@ class JevEvaluator(LLM):
         client=None,
         **config,
     ):
-        if not is_jev_model(model):
-            raise JevMappingError(
-                "JEV_MODEL_UNKNOWN", "model", "Unsupported Jev model."
-            )
+        self._validate_model(model)
         self._model = model
         self.rule_prompt = rule_prompt
         self.required_keys = required_keys
@@ -85,10 +97,9 @@ class JevEvaluator(LLM):
         # The org's own TypeSafe key: kept on the client only, never in config,
         # which flows into result metadata.
         api_key = config.pop("api_key", None)
+        config["model"] = model
         self._jev_config = config
-        self.client = (
-            client if client is not None else JevSystemOneClient(api_key=api_key)
-        )
+        self.client = client if client is not None else self._make_client(api_key)
         self.mapping = validate_jev_mapping(
             None,
             output=output_type,
@@ -96,12 +107,25 @@ class JevEvaluator(LLM):
             multi_choice=config.get("multi_choice", False),
             config=config,
         )
-        self.env = Environment(undefined=StrictUndefined)
+        # Same template environment as the custom prompt evaluator: plain
+        # variables, filters and loops; underscore attributes are not resolved.
+        self.env = SandboxedEnvironment(undefined=StrictUndefined)
         self.last_jev = None
-        super().__init__(model_name=model, provider="typesafe", api_key=None)
+        super().__init__(model_name=model, provider=self.connection, api_key=None)
 
     def _init_client(self, api_key):
-        """The typed TypeSafe client is the only transport for this evaluator."""
+        """The typed decision client is the only transport for this evaluator."""
+
+    def _record_cost(self, response):
+        # Native Jev is charged the flat per-run fee, not provider token cost.
+        self.cost.update(
+            {
+                "model": response["model"],
+                "prompt_cost": 0.0,
+                "completion_cost": 0.0,
+                "total_cost": 0.0,
+            }
+        )
 
     def format_result(self, result_data, eval_template):
         """Use effective binding/version scores in the existing formatter."""
@@ -123,19 +147,19 @@ class JevEvaluator(LLM):
         returns no rationale, so this never offers one."""
         if answer.question_type == "noul":
             reason = (
-                f"Jev probability {answer.probability:.2f} vs threshold "
+                f"{self.model_label} probability {answer.probability:.2f} vs threshold "
                 f"{self._pass_threshold:.2f} → {value}"
             )
             return reason + " (reversed)" if self._reverse_output else reason
         if answer.question_type == "choice":
-            return f'Jev chose "{value}" (probability {answer.distribution[value]:.2f})'
+            return f'{self.model_label} chose "{value}" (probability {answer.distribution[value]:.2f})'
         score = answer.raw_score
         if float(score).is_integer():
             level = f'{int(score)} of {level_count} "{answer.legend[str(int(score))]}"'
         else:
             # Between two levels: no single rubric label to name.
             level = f"{score:.2f} of {level_count}"
-        return f"Jev scored level {level} (normalized {answer.normalized_score:.2f})"
+        return f"{self.model_label} scored level {level} (normalized {answer.normalized_score:.2f})"
 
     def _evaluate(self, **kwargs):
         started = time.monotonic()
@@ -253,17 +277,7 @@ class JevEvaluator(LLM):
             "completion_tokens": usage["output_tokens"],
             "total_tokens": usage["input_tokens"] + usage["output_tokens"],
         }
-        # Jev runs on the org's own TypeSafe key, so TypeSafe bills them, not
-        # us. No provider cost here leaves the flat per-run eval fee as the
-        # whole platform charge.
-        self.cost.update(
-            {
-                "model": response["model"],
-                "prompt_cost": 0.0,
-                "completion_cost": 0.0,
-                "total_cost": 0.0,
-            }
-        )
+        self._record_cost(response)
         runtime = int((time.monotonic() - started) * 1000)
         jev = {
             "requested_model": self._model,
@@ -306,8 +320,12 @@ class JevEvaluator(LLM):
                     "usage": self.token_usage,
                     "cost": self.cost,
                     "response_time": runtime,
-                    "jev": jev,
+                    self.metadata_key: {**jev, "connection": self.connection},
                 }
             ),
             "datapoint_field_annotations": None,
         }
+
+
+class JevEvaluator(TypedDecisionEvaluator):
+    """Native TypeSafe evaluator; its class identity preserves Jev billing."""

@@ -39,7 +39,7 @@ from ee.agenthub.cluster_rca.constants import (
 )
 from ee.agenthub.cluster_rca.context_builder import build_project_schema_context
 from ee.agenthub.cluster_rca.filter_adapter import resolve_group_by, to_canonical
-from ee.agenthub.cluster_rca.prompts import SYSTEM_PROMPT
+from ee.agenthub.cluster_rca.prompts import SYSTEM_PROMPT, TOOL_RESULT_LABEL
 from ee.agenthub.cluster_rca.tools import (
     CLUSTER_RCA_TOOLS,
     ERROR_CODE_INVALID_ARGS,
@@ -54,6 +54,7 @@ from ee.agenthub.cluster_rca.types import (
     ClusterFinding,
     ClusterSynthesis,
 )
+from ee.agenthub.untrusted_content import json_data_block
 from ee.usage.services.gateway_llm_client import call_llm_raw, get_gateway_client
 from tracer.models.trace_error_analysis import ErrorClusterTraces
 from tracer.services.clickhouse.cluster_rca_spans import (
@@ -312,6 +313,22 @@ def _match_snippet(query: str, *fields: Any, window: int = 80) -> str:
         if f:
             return _snippet(f)
     return ""
+
+
+def _tool_message(tool_call_id: Any, tool_name: str, result: Any) -> dict:
+    """The model-facing message for one tool result.
+
+    The result is customer telemetry, so it is serialised as JSON inside a
+    ⟦TOOL RESULT⟧ block with every string neutralised (prompts.py tells the
+    model what the block means). Only the model sees this form; the
+    ``tool_result`` stream event keeps carrying the bare result dict.
+    """
+    return {
+        "role": "tool",
+        "tool_call_id": tool_call_id,
+        "name": tool_name,
+        "content": json_data_block(TOOL_RESULT_LABEL, result),
+    }
 
 
 class _AggUnknownGroupBy(Exception):
@@ -926,12 +943,7 @@ class ClusterAnalysisAgent:
                         },
                     )
                     messages.append(
-                        {
-                            "role": "tool",
-                            "tool_call_id": tool_call.id,
-                            "name": tool_name,
-                            "content": json.dumps(result, default=str),
-                        }
+                        _tool_message(tool_call.id, tool_name, result)
                     )
 
                 self._compact_old_tool_results(messages)

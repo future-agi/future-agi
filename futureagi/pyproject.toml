@@ -19,6 +19,8 @@ dependencies = [
     "django-cors-headers",
 
     "clickhouse-driver",
+    "sqlglot==28.10.1",
+    "pyarrow>=23.0.1,<24",
     "clickhouse-cityhash==1.0.2.5",
     "lz4==4.4.5",
     # HTTP-based CH client used by tracer/services/clickhouse/v2/apply_schema.py.
@@ -110,7 +112,6 @@ dependencies = [
     "protobuf",
     "xmlsec",
     "pysaml2",
-    "python-jose",
     "mixpanel",
     "posthog>=7.9.0",
     "minio",
@@ -307,30 +308,6 @@ dev = [
     "types-pyyaml",
 ]
 
-[tool.black]
-line-length = 88
-exclude = '''
-/(
-    \.git
-  | \.mypy_cache
-  | \.tox
-  | \.venv
-  | _build
-  | buck-out
-  | build
-  | dist
-)/
-'''
-
-[tool.isort]
-profile = "black"
-line_length = 88
-known_third_party = ["your_third_party_packages"]
-known_first_party = ["your_project_name"]
-multi_line_output = 3
-include_trailing_comma = true
-use_parentheses = true
-
 [tool.bandit]
 exclude_dirs = ["tests", "*/tests/*", "agentic_eval/tests"]
 skips = ["B101", "B601"]  # B101: assert_used, B601: paramiko_calls
@@ -363,7 +340,7 @@ select = [
     "TID251", # flake8-tidy-imports: banned-api
 ]
 ignore = [
-    "E501",  # line too long (handled by black)
+    "E501",  # line too long (ruff format wraps what it can)
     "B008",  # do not perform function calls in argument defaults
     "C901",  # too complex
 ]
@@ -405,7 +382,12 @@ exclude = [
 ]
 
 [tool.django-stubs]
-django_settings_module = "tfc.settings"
+# The production settings, the module every runtime entry point selects. The
+# plugin imports it inside mypy to build the model registry; run mypy with
+# EE_LICENSE_KEY=mypy-placeholder (as `make mypy` and CI do) so ee.falcon_ai is
+# registered too, as in EE, Cloud and the pytest shards. This value wins over
+# DJANGO_SETTINGS_MODULE. Not tfc.settings.test: it prints to stdout on import.
+django_settings_module = "tfc.settings.settings"
 
 [dependency-groups]
 dev = [

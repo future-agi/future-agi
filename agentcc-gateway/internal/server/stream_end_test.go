@@ -80,17 +80,21 @@ var upstreamStreams = map[string]upstreamStream{
 	},
 }
 
+// anthropicUpstreamRejection is the 429 body an Anthropic upstream sends.
+const anthropicUpstreamRejection = `{"type":"error","error":{"type":"rate_limit_error","message":"slow down"}}`
+
 type upstreamEnd int
 
 const (
-	upstreamFinishes        upstreamEnd = iota
-	upstreamStalls                      // until the gateway gives up on it
-	upstreamDrops                       // the connection, between events
-	upstreamDropsMidEvent               // the connection, inside an event
-	upstreamDropsInTerminal             // the connection, inside the last event
-	upstreamSendsError                  // an error event, then closes
-	upstreamTrickles                    // one chunk every few milliseconds, for ever
-	upstreamRejects                     // with a 429, before any chunk
+	upstreamFinishes            upstreamEnd = iota
+	upstreamStalls                          // until the gateway gives up on it
+	upstreamDrops                           // the connection, between events
+	upstreamDropsMidEvent                   // the connection, inside an event
+	upstreamDropsInTerminal                 // the connection, inside the last event
+	upstreamSendsError                      // an error event, then closes
+	upstreamTrickles                        // one chunk every few milliseconds, for ever
+	upstreamRejects                         // with a 429, before any chunk
+	upstreamStallsBeforeHeaders             // before its status line, until the gateway gives up on it
 )
 
 // streamingUpstream serves the stream for whichever route the gateway calls,
@@ -112,7 +116,20 @@ func streamingUpstream(t *testing.T, end upstreamEnd) (*httptest.Server, *sync.M
 		if end == upstreamRejects {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusTooManyRequests)
+			if strings.HasSuffix(r.URL.Path, "/messages") {
+				io.WriteString(w, anthropicUpstreamRejection)
+				return
+			}
 			io.WriteString(w, `{"error":{"message":"slow down","type":"rate_limit_error","code":"rate_limited"}}`)
+			return
+		}
+		if end == upstreamStallsBeforeHeaders {
+			// The server notices the gateway hang up only once the body is read.
+			_, _ = io.Copy(io.Discard, r.Body)
+			select {
+			case <-r.Context().Done():
+			case <-time.After(10 * time.Second):
+			}
 			return
 		}
 		seen, _ := conns.LoadOrStore(r.URL.Path, &sync.Map{})
@@ -934,7 +951,7 @@ func TestStreamedCharsCountsEachDialectsDeltas(t *testing.T) {
 	n.addChunk(models.StreamChunk{Choices: []models.StreamChoice{{Delta: models.Delta{
 		Content:          &text,
 		ReasoningContent: &reasoning,
-		ToolCalls:        []models.ToolCallDelta{{Function: &models.FunctionCall{Arguments: "[1]"}}},
+		ToolCalls:        []models.ToolCallDelta{{Function: &models.FunctionCallDelta{Arguments: "[1]"}}},
 	}}}})
 	if want := 3 + 7 + 2 + 4 + 2 + 2 + 1 + 3; int(n) != want {
 		t.Errorf("streamedChars = %d, want %d", n, want)

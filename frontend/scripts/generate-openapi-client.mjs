@@ -8,6 +8,12 @@ import { fileURLToPath } from "node:url";
 import { generate } from "orval";
 import prettier from "prettier";
 
+import {
+  deduplicateTypeAliases,
+  makeObjectPropertiesNullable,
+  preserveDefaultLiterals,
+} from "./openapi-typescript.mjs";
+
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const frontendRoot = path.resolve(__dirname, "..");
 const repoRoot = path.resolve(frontendRoot, "..");
@@ -124,7 +130,11 @@ function normalizeHostStatusSpec(spec) {
       schemas: Object.fromEntries(
         Object.entries(spec.components?.schemas || {}).map(([name, schema]) => [
           name,
-          name.startsWith("HostUpdateStatusResponse")
+          name.startsWith("HostUpdateStatusResponse") ||
+          // Every non-ready source state sends kind and the ids as explicit null.
+          name === "EvalLogSourceNavigation" ||
+          // A log row sends explicit null for ids its source does not have.
+          name === "EvalApiLogRowResponseResult"
             ? normalizeHostStatusSchema(schema)
             : schema,
         ]),
@@ -396,6 +406,29 @@ async function runGeneration(schemaPath) {
     return source.slice(0, start) + rewritten + source.slice(end);
   }
 
+  // The Fetch generator assumes browser Headers, but this mutator returns an
+  // Axios response unchanged. Keep its envelope and header type truthful.
+  let api = fs.readFileSync(apiOutputPath, "utf8");
+  api = assertReplaceRegex(
+    api,
+    /import \{ apiMutator \} from ['"]\.\.\/\.\.\/api\/contracts\/openapi-mutator['"];?/,
+    '$&\nimport type { ApiResponseHeaders } from "../../api/contracts/openapi-mutator";',
+    "Axios response headers import",
+  );
+  api = assertReplaceRegex(
+    api,
+    /headers: Headers\b/g,
+    "headers: ApiResponseHeaders",
+    "Axios response headers",
+  );
+  fs.writeFileSync(apiOutputPath, api);
+
+  const promptConfigNullableFields = Object.entries(
+    swagger.definitions.PromptConfig.properties,
+  )
+    .filter(([, schema]) => schema["x-nullable"] === true)
+    .map(([field]) => field);
+
   const interruptionNullableFields = {
     RunCallApi: ["avg_stop_time_after_interruption", "ai_interruption_count"],
     GroupAggregatesApi: [
@@ -454,7 +487,39 @@ async function runGeneration(schemaPath) {
   ];
   const schemasOutputPath = path.join(outputDir, "api.schemas.ts");
   if (fs.existsSync(schemasOutputPath)) {
-    let schemas = fs.readFileSync(schemasOutputPath, "utf8");
+    let schemas = deduplicateTypeAliases(
+      fs.readFileSync(schemasOutputPath, "utf8"),
+    );
+
+    // Closed coverage objects are JSON values. Type aliases get TS's implicit
+    // index signature; interfaces deliberately do not (declaration merging).
+    // This changes neither the field types nor the row's JSON-only catchall.
+    for (const typeName of ["CostCoverageApi", "CaptureCoverageApi"]) {
+      schemas = assertReplaceRegex(
+        schemas,
+        new RegExp(`export interface ${typeName} \\{([^}]+)\\}`),
+        `export type ${typeName} = {$1};`,
+        `${typeName} implicit JSON index signature`,
+      );
+    }
+    // Optional known keys can be absent, even when present additional keys must
+    // be arrays. Preserve the value type instead of requiring optional fields.
+    schemas = assertReplaceInNamedBlock(
+      schemas,
+      "export type ModelHubPerformanceTagDistributionCreate200Result =",
+      "[key: string]: string[][]",
+      "[key: string]: string[][] | undefined",
+      "optional tag distribution keys",
+    );
+    for (const field of promptConfigNullableFields) {
+      schemas = assertReplaceRegexInNamedBlock(
+        schemas,
+        "export interface PromptConfigApi {",
+        new RegExp(`(^\\s*${field}\\??: [^;]+)(;)$`, "m"),
+        "$1 | null$2",
+        `PromptConfigApi.${field} nullable`,
+      );
+    }
 
     for (const [typeName, fields] of Object.entries(
       interruptionNullableFields,
@@ -490,6 +555,17 @@ async function runGeneration(schemaPath) {
       "x-string-or-object TS aliases → string | object",
     );
 
+    // This error-only x-string-or-object serializer has a typed object branch.
+    // Preserve Orval's generated fields instead of widening them to a record.
+    // Error responses are emitted as TS models, not response Zod validators;
+    // the runtime mapper already handles the extension on shaped definitions.
+    schemas = assertReplace(
+      schemas,
+      "export interface GatewayHealthErrorResultApi {",
+      "export type GatewayHealthErrorResultApi = string | {",
+      "GatewayHealthErrorResultApi → string | typed probe result",
+    );
+
     // Orval ignores x-json-value and narrows arbitrary JSON to object-only.
     // Define one recursive JSON type, then use it for every field carrying the
     // extension (including dynamic trace/span list row cells).
@@ -518,6 +594,7 @@ export type SpanAttributeTopValueApiValue = JsonValueApi;`,
     );
     for (const jsonAlias of [
       "SpanAttributeValueApiValue",
+      "TestEvalTemplateApiVariableKeys",
       "DashboardFilterValueOptionApiValue",
       "TraceSessionTableRowApiFirstMessage",
       "TraceSessionTableRowApiLastMessage",
@@ -530,6 +607,12 @@ export type SpanAttributeTopValueApiValue = JsonValueApi;`,
       "EvalRollupSpanApiValue",
       "EvalRollupEvalApiChoicesMap",
       "EvalRollupEvalApiAggregate",
+      "ModelListEntryApiBestFor",
+      "ModelListEntryApiUseCase",
+      "ModelListEntryApiCutoff",
+      "ModelListEntryApiRateLimits",
+      "ModelListEntryApiLatency",
+      "ModelListEntryApiPricing",
     ]) {
       schemas = assertReplace(
         schemas,
@@ -544,6 +627,33 @@ export type ${jsonAlias} = JsonValueApi;`,
         `${jsonAlias} → recursive JSON value`,
       );
     }
+
+    // drf-yasg emits x-nullable for these SQL responses, but Orval drops it.
+    // Keep rewrites scoped to the SQL declarations and fail if the source
+    // shape changes; never hand-edit the generated client.
+    for (const [name, field, type, optional] of [
+      ["SQLExecutionApi", "finished_at", "string", false],
+      ["SQLResultApi", "next_offset", "number", true],
+      ["SQLEstimateSourceApi", "parts", "number", false],
+      ["SQLEstimateSourceApi", "marks", "number", false],
+      ["SQLEstimateSourceApi", "max_rows", "number", false],
+      ["SQLEstimateApi", "exceeds_scan_bound", "boolean", false],
+    ]) {
+      const marker = optional ? "?" : "";
+      schemas = assertReplaceInNamedBlock(
+        schemas,
+        `export interface ${name} {`,
+        `${field}${marker}: ${type};`,
+        `${field}${marker}: ${type} | null;`,
+        `${name}.${field} nullable`,
+      );
+    }
+    schemas = assertReplace(
+      schemas,
+      "export type SQLResultApiRowsItemItem = { [key: string]: unknown };",
+      "export type SQLResultApiRowsItemItem = JsonValueApi;",
+      "SQL result cells support JSON scalars and null",
+    );
 
     for (const rowType of [
       "TracePrototypeListResultApiTableItem",
@@ -561,6 +671,21 @@ export type ${jsonAlias} = JsonValueApi;`,
         `export type ${rowType} = { [key: string]: JsonValueApi };`,
         `${rowType} → recursive JSON row`,
       );
+    }
+
+    for (const [type, fields] of [
+      ["ModelListEntryApi", ["unavailable_reason", "logo_url"]],
+      ["ModelListResponseApi", ["next", "previous"]],
+    ]) {
+      for (const field of fields) {
+        schemas = assertReplaceInNamedBlock(
+          schemas,
+          `export interface ${type} {`,
+          `${field}?: string;`,
+          `${field}?: string | null;`,
+          `${type}.${field} nullable`,
+        );
+      }
     }
 
     // Eval rollups use nullable JSON/scalar fields in the wire response. Keep
@@ -1045,6 +1170,21 @@ export type ${jsonAlias} = JsonValueApi;`,
       "expires_at: string | null;",
       "APIKeyBulkItemApi.expires_at nullable",
     );
+    // An organization API key without expiry is created with, and returned
+    // with, expires_at: null.
+    for (const [type, anchor] of [
+      ["CreateSecretKeyApi", "expires_at?: string;"],
+      ["SecretKeyCreateResultApi", "expires_at: string;"],
+      ["SecretKeyListItemApi", "expires_at: string;"],
+    ]) {
+      schemas = assertReplaceInNamedBlock(
+        schemas,
+        `export interface ${type} {`,
+        anchor,
+        anchor.replace("string;", "string | null;"),
+        `${type}.expires_at nullable`,
+      );
+    }
 
     // The compact conversation record passes provider values on as they were
     // logged, and the times it computes are null when the provider gave none.
@@ -1058,6 +1198,8 @@ export type ${jsonAlias} = JsonValueApi;`,
       "ConversationVariablesApiConfigured",
       "ConversationVariablesApiCollected",
       "ConversationAnalysisApiFlags",
+      "EvalTaskDetailsEvalApiMapping",
+      "EvalTaskDetailsEvalApiConfig",
     ]) {
       schemas = assertReplace(
         schemas,
@@ -1081,6 +1223,42 @@ export type ${jsonAlias} = JsonValueApi;`,
         "$1 | null$2",
         `${typeName}.${field} nullable`,
       );
+    }
+
+    // Swagger 2 x-nullable is lost by Orval. Keep the explicit task-details
+    // response aligned with legacy nullable fields and absent sampling policies.
+    for (const [typeName, fields] of Object.entries({
+      EvalTaskDetailsResultApi: [
+        "name",
+        "project_name",
+        "status",
+        "filters_applied",
+        "spans_limit",
+        "sampling_rate",
+        "sampling_policy",
+        "last_run",
+        "run_type",
+      ],
+      SamplingWindowApi: ["end"],
+      EvalTaskDetailsEvalApi: [
+        "name",
+        "template_id",
+        "templateId",
+        "model",
+        "evalType",
+        "templateType",
+        "outputType",
+      ],
+    })) {
+      for (const field of fields) {
+        schemas = assertReplaceRegexInNamedBlock(
+          schemas,
+          `export interface ${typeName} {`,
+          new RegExp(`(^\\s*${field}\\??: [^;]+)(;)$`, "m"),
+          "$1 | null$2",
+          `${typeName}.${field} nullable`,
+        );
+      }
     }
 
     fs.writeFileSync(schemasOutputPath, schemas);
@@ -1483,6 +1661,30 @@ const jsonValueSchema: zod.ZodType<JsonValue> =
       '"error": zod.boolean().optional()\n}).optional(),',
       '"error": zod.boolean().optional()\n}).nullish(),',
       "TracerTraceVoiceCallDetailResponse.eval_rollup nullable",
+    );
+
+    const modelListResponse = "export const ModelHubApiModelsListListResponse = zod.object({";
+    for (const [field, schema] of [
+      ["next", "zod.string()"],
+      ["previous", "zod.string()"],
+      ["logo_url", "zod.string()"],
+      ["unavailable_reason", "zod.string().min(1)"],
+    ]) {
+      zod = assertReplaceInNamedBlock(
+        zod,
+        modelListResponse,
+        `"${field}": ${schema}.optional()`,
+        `"${field}": ${schema}.nullish()`,
+        `ModelHubApiModelsListListResponse.${field} nullable`,
+      );
+    }
+
+    zod = assertReplaceRegexInNamedBlock(
+      zod,
+      modelListResponse,
+      /zod\.object\(\{\n\n\}\)\.passthrough\(\)(?=(?:\.(?:optional|nullish|nullable)\(\)|\.default\([^)]*\))*\.describe\('Any valid JSON value\.'\))/g,
+      "jsonValueSchema",
+      "ModelHubApiModelsListListResponse provider metadata → JSON value",
     );
 
     const listResponseExports = [
@@ -2017,6 +2219,27 @@ const jsonValueSchema: zod.ZodType<JsonValue> =
       "MessageItem → .passthrough() (additionalProperties: true)",
     );
 
+    // PromptConfig already declares these fields x-nullable in Swagger; Orval
+    // drops that extension and incorrectly rejects the serializer's null defaults.
+    zod = makeObjectPropertiesNullable(
+      zod,
+      [
+        "ModelHubDevelopsAddRunPromptColumnCreateBody",
+        "ModelHubDevelopsEditRunPromptColumnCreateBody",
+        "ModelHubDevelopsPreviewRunPromptColumnCreateBody",
+      ],
+      "config",
+      promptConfigNullableFields,
+    );
+    zod = assertReplaceRegexInNamedBlock(
+      zod,
+      "export const ModelHubTestEvaluationCreateBody =",
+      /("variable_keys": )zod\.object\(\{\s*\}\)\.passthrough\(\)/,
+      "$1jsonValueSchema",
+      "TestEvalTemplate.variable_keys JSON value",
+    );
+    zod = preserveDefaultLiterals(zod);
+
     // Read aliases share the existing GET validator, including its JSON/nullable fixes.
     const responseName = (id) =>
       id
@@ -2041,6 +2264,80 @@ const jsonValueSchema: zod.ZodType<JsonValue> =
         / =[\s\S]*/,
         ` = ${getName};\n\n`,
         postName,
+      );
+    }
+    const taskDetailsDeclaration =
+      "export const TracerEvalTaskGetEvalDetailsResponse = zod.object({";
+    zod = assertReplaceInNamedBlock(
+      zod,
+      taskDetailsDeclaration,
+      '"end": zod.string().min(1).optional()',
+      '"end": zod.string().min(1).nullish()',
+      "task details live sampling window end nullable",
+    );
+    zod = assertReplaceRegexInNamedBlock(
+      zod,
+      taskDetailsDeclaration,
+      /zod\.object\(\{\n\n\}\)\.passthrough\(\)(?=(?:\.(?:optional|nullish|nullable)\(\)|\.default\([^)]*\))*\.describe\('Any valid JSON value\.'\))/g,
+      "jsonValueSchema",
+      "task details mapping/config recursive JSON values",
+    );
+    for (const field of [
+      "name",
+      "project_name",
+      "template_id",
+      "templateId",
+      "model",
+      "evalType",
+      "templateType",
+      "outputType",
+      "last_run",
+      "spans_limit",
+      "sampling_rate",
+    ]) {
+      zod = assertReplaceRegexInNamedBlock(
+        zod,
+        taskDetailsDeclaration,
+        new RegExp(
+          `("${field}": zod\\.(?:string|number)\\(\\)(?:\\.(?:uuid|datetime)\\([^)]*\\))?)(?=,|\\n)`,
+          "g",
+        ),
+        "$1.nullable()",
+        `task details ${field} nullable`,
+      );
+    }
+    for (const field of ["status", "run_type"]) {
+      zod = assertReplaceRegexInNamedBlock(
+        zod,
+        taskDetailsDeclaration,
+        new RegExp(`("${field}": zod\\.enum\\(\\[[^\\]]+\\]\\))(?=,|\\n)`, "g"),
+        "$1.nullable()",
+        `task details ${field} nullable`,
+      );
+    }
+    // These two nested objects end immediately before the next required field.
+    for (const next of ["created_at", "last_run"]) {
+      zod = assertReplaceRegexInNamedBlock(
+        zod,
+        taskDetailsDeclaration,
+        new RegExp(`(\\}\\))(?=,\\n  "${next}")`),
+        "$1.nullable()",
+        `task details nullable object before ${next}`,
+      );
+    }
+
+    // The same organization API key expiry fields, in the zod schemas.
+    for (const name of [
+      "AccountsKeyGenerateSecretKeyBody",
+      "AccountsKeyGenerateSecretKeyResponse",
+      "AccountsKeyGetSecretKeysResponse",
+    ]) {
+      zod = assertReplaceRegexInNamedBlock(
+        zod,
+        `export const ${name} =`,
+        /("expires_at": zod\.string\(\)\.datetime\(\{[^}]*\}\))/g,
+        "$1.nullable()",
+        `${name}.expires_at nullable`,
       );
     }
     fs.writeFileSync(zodOutputPath, zod);

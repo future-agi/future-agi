@@ -145,7 +145,9 @@ describe("Choose Scenarios step — paging", () => {
     // The in-flight fetch empties the list; the step must not read that as
     // "this workspace has no scenarios".
     await waitFor(() =>
-      expect(screen.getByRole("progressbar")).toBeInTheDocument(),
+      expect(
+        screen.getByRole("status", { name: "Loading" }),
+      ).toBeInTheDocument(),
     );
     expect(
       screen.queryByText("Add your first scenario"),
@@ -171,6 +173,55 @@ describe("Choose Scenarios step — paging", () => {
     expect(await screen.findByText("Scenario 1-0")).toBeInTheDocument();
 
     expect(screen.getByText(/rows per page/i)).toBeInTheDocument();
+  });
+
+  // #1485: a term typed on page 2+ must be searched from page 1. The old page
+  // can be past the end of the filtered set, and the backend answers that
+  // request with "Invalid page." — which the app toasts even once the list
+  // recovers, so the stale request must never go out at all.
+  it("searches from page 1 when the term changes on a later page", async () => {
+    mocks.get.mockImplementation((url, { params } = {}) => {
+      if (url !== "/scenarios/") return Promise.resolve({ data: {} });
+      if (params.search !== "morg")
+        return Promise.resolve({ data: scenarioPage(params.page) });
+      if (params.page > 1)
+        return Promise.reject({ statusCode: 404, result: "Invalid page." });
+      return Promise.resolve({
+        data: {
+          count: 1,
+          results: [
+            {
+              id: "morgan",
+              name: "Morgan refund",
+              description: "desc",
+              dataset_rows: 5,
+            },
+          ],
+        },
+      });
+    });
+
+    renderPage();
+    await goToScenarioStep();
+    expect(await screen.findByText("Scenario 1-0")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /next page/i }));
+    expect(await screen.findByText("Scenario 2-0")).toBeInTheDocument();
+
+    fireEvent.change(screen.getByPlaceholderText("Search scenarios..."), {
+      target: { value: "morg" },
+    });
+
+    // The search is debounced by 500ms before it reaches the request.
+    expect(
+      await screen.findByText("Morgan refund", {}, { timeout: 3000 }),
+    ).toBeInTheDocument();
+    const searchedPages = mocks.get.mock.calls
+      .filter(
+        ([url, config]) =>
+          url === "/scenarios/" && config.params.search === "morg",
+      )
+      .map(([, config]) => config.params.page);
+    expect(searchedPages).toEqual([1]);
   });
 
   // Guards the fix from over-correcting: the empty state must still appear

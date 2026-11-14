@@ -30,6 +30,20 @@ _RUNTIME_ALLOWED_KEYS = {
         "choice_scores",
         "output_type",
         "choices",
+        "jev_mapping",
+        # Keep unsupported binding settings visible to typed validation instead
+        # of silently dropping them on SDK/worker entry points.
+        "multi_choice",
+        "agent_mode",
+        "check_internet",
+        "knowledge_base_id",
+        "knowledge_bases",
+        "tools",
+        "data_injection",
+        "messages",
+        "few_shot_examples",
+        "ground_truth_few_shot",
+        "input_data_types",
     },
     "AgentEvaluator": {
         "model",
@@ -380,7 +394,12 @@ def prepare_eval_config(
 
             config["few_shot_examples"] = expand_static_few_shot_examples(
                 eval_template.config.get("few_shot_examples"),
-                organization=eval_template.organization,
+                organization=organization_id or eval_template.organization,
+                workspace_id=(
+                    workspace_id
+                    if organization_id is not None or workspace_id is not None
+                    else getattr(eval_template, "workspace_id", None)
+                ),
             )
 
         # Resolve model
@@ -443,6 +462,27 @@ def _get_typesafe_api_key(organization_id, workspace_id=None):
     )
 
 
+def _get_decision_api_key(model, organization_id, workspace_id):
+    from agentic_eval.core_evals.run_prompt.litellm_models import (
+        LiteLLMModelManager,
+        MissingProviderKeyError,
+    )
+
+    from ee.decisions.errors import DecisionGatewayError
+    from ee.jev.client import JevGatewayError
+    from evaluations.decision_models import get_decision_model
+
+    provider = get_decision_model(model).connection
+    try:
+        return LiteLLMModelManager(model).get_provider_api_key(
+            organization_id, provider, workspace_id
+        )
+    except MissingProviderKeyError:
+        raise DecisionGatewayError(
+            provider, JevGatewayError("JEV_KEY_MISSING")
+        ) from None
+
+
 def prepare_jev_config(
     eval_template,
     config,
@@ -464,8 +504,11 @@ def prepare_jev_config(
     effective.update(config)
     effective, _ = apply_version_overrides(effective, resolved_version)
     effective.pop("api_key", None)
+    from evaluations.decision_models import get_decision_model
+
     effective["model"] = effective_model
-    effective["provider"] = "typesafe"
+    spec = get_decision_model(effective_model)
+    effective["provider"] = spec.connection if spec else "typesafe"
     effective["output_type"] = effective.get(
         "output_type", effective.get("output", "Pass/Fail")
     )
@@ -522,8 +565,20 @@ def reject_jev_without_code():
 
 def reject_unknown_jev_model(model):
     """Raise JEV_MODEL_UNKNOWN for a jev-* ID that is not a supported Jev model."""
+    from evaluations.decision_models import get_decision_model
     from tfc.ee_gates import is_jev_model
 
+    if isinstance(model, str) and model.lower().startswith("decision/"):
+        if get_decision_model(model) is None:
+            reject_jev_without_code()
+            from ee.decisions.errors import DecisionMappingError
+
+            raise DecisionMappingError(
+                "DECISION_MODEL_UNKNOWN",
+                "model",
+                "Select a supported decision model and connection.",
+            )
+        return
     if (
         isinstance(model, str)
         and model.lower().startswith("jev-")
@@ -536,7 +591,7 @@ def reject_unknown_jev_model(model):
             "JEV_MODEL_UNKNOWN",
             "model",
             f"Model {model!r} is not a supported Jev evaluator model. Supported: "
-            "jev-1.13.0, jev-latest.",
+            "jev-1.13.0, jev-1.14.0, jev-latest.",
         )
 
 
@@ -598,15 +653,29 @@ def create_eval_instance(
     # An unsupported jev-* ID fails closed before any chat, Turing or BYOK logic:
     # the direct engine path (SDK and other callers) never reaches the view-level
     # validate_jev_binding guard, so the rejection has to live here (R-06).
+    from evaluations.decision_models import (
+        has_decision_prefix,
+        is_decision_model,
+        uses_jev_billing,
+    )
+
     reject_unknown_jev_model(effective_model)
-    if is_jev_model(effective_model):
+    if is_decision_model(effective_model):
         from tfc.capabilities import service as capability_service
 
         reject_jev_without_code()
-        capability_service.check_or_raise(
-            "jev_models", org_id=str(org.id) if org is not None else organization_id
-        )
-        from ee.evals.llm.jev_evaluator.evaluator import JevEvaluator
+        if uses_jev_billing(effective_model):
+            capability_service.check_or_raise(
+                "jev_models", org_id=str(org.id) if org is not None else organization_id
+            )
+        if is_jev_model(effective_model):
+            from ee.evals.llm.jev_evaluator.evaluator import JevEvaluator
+
+            evaluator_class = JevEvaluator
+        else:
+            from ee.decisions.evaluator import DecisionEvaluator
+
+            evaluator_class = DecisionEvaluator
 
         if kb_id:
             config = {**config, "knowledge_base_id": str(kb_id)}
@@ -620,20 +689,33 @@ def create_eval_instance(
         )
         # Validated first; the key is looked up only then and goes straight
         # to the evaluator.
-        jev_config = prepare_jev_config(
-            eval_template,
-            config,
-            effective_model,
-            resolved_version,
-            runtime_config,
-        )
-        return (
-            JevEvaluator(**jev_config, api_key=_get_typesafe_api_key(org_id, ws_id)),
-            None,
-        )
+        try:
+            jev_config = prepare_jev_config(
+                eval_template,
+                config,
+                effective_model,
+                resolved_version,
+                runtime_config,
+            )
+        except ValueError as exc:
+            from ee.jev.mapping import JevMappingError
+
+            if isinstance(exc, JevMappingError) and not is_jev_model(effective_model):
+                from ee.decisions.errors import mapping_error
+
+                raise mapping_error(exc) from None
+            raise
+        if is_jev_model(effective_model):
+            return evaluator_class(
+                **jev_config, api_key=_get_typesafe_api_key(org_id, ws_id)
+            ), None
+        return evaluator_class(
+            **jev_config,
+            api_key=_get_decision_api_key(effective_model, org_id, ws_id),
+        ), None
 
     jev_selection = any(
-        isinstance(value, str) and value.lower().startswith("jev-")
+        has_decision_prefix(value)
         for value in (template_model, version_model, effective_model)
     )
     if jev_selection:

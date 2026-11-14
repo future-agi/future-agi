@@ -2,7 +2,7 @@ name: Backend CI
 
 on:
   pull_request:
-    branches: [dev, main]
+    # Every base branch, so stacked PRs into feature branches get CI too.
   push:
     branches: [dev, main]
   merge_group:
@@ -438,6 +438,17 @@ jobs:
         run: |
           tail -n 200 "$RUNNER_TEMP"/worker-*.log || true
           docker compose -f docker-compose.test.yml -p futureagi-test logs --tail 100
+
+      - name: Stop the workers
+        # The two `uv run granian` workers above run in the background and
+        # hold uv's cache lock. If they are still alive, setup-uv's post step
+        # waits the full lock timeout (300 s) to prune the cache and then
+        # fails with exit code 2, turning this job red after the races pass.
+        if: always()
+        run: |
+          pkill -TERM -f 'granian --interface asgi' || true
+          for _ in $(seq 1 15); do pgrep -f 'granian --interface asgi' >/dev/null || exit 0; sleep 1; done
+          pkill -KILL -f 'granian --interface asgi' || true
 
   slim-smoke:
     # The only leg that exercises the slim (base-only) environment the OSS

@@ -1,5 +1,6 @@
 import { startTransition } from "react";
-import { create } from "zustand";
+import { create } from "src/utils/zustand";
+import { registerUserStoreReset } from "src/utils/auth/userStoreResets";
 import { devtools } from "zustand/middleware";
 import { useShallow } from "zustand/react/shallow";
 import { CURRENT_ENVIRONMENT } from "src/config-global";
@@ -860,3 +861,5 @@ export const useAgentPlaygroundStoreShallow = (fun) =>
 export const resetAgentPlaygroundStore = () => {
   useAgentPlaygroundStore.getState().reset();
 };
+
+registerUserStoreReset("agent-playground", resetAgentPlaygroundStore);
