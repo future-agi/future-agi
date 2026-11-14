@@ -529,6 +529,11 @@ logging:
 #         alice@example.com: {}
 
 # Spend caps per org / team / user / key / tag. Requires cost_tracking enabled.
+# Spend is counted in whole micro-dollars ($0.000001); a non-zero cost below
+# half a micro-dollar counts as one. At startup the counters are seeded from
+# Request Logs, whose cost column keeps 6 decimals, so such sub-micro costs are
+# seeded as 0: after a restart the seeded spend can be lower than what was
+# counted, by up to one micro-dollar per such request.
 # budgets:
 #   enabled: true
 #   default_period: "monthly"       # daily | weekly | monthly | total
