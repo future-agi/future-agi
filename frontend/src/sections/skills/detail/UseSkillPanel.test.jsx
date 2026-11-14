@@ -44,7 +44,7 @@ function show(overrides = {}) {
 }
 async function selectLabel(label) {
   fireEvent.mouseDown(
-    screen.getByRole("combobox", { name: "Version to install" }),
+    screen.getByRole("combobox", { name: "Version to download" }),
   );
   fireEvent.click(
     await screen.findByRole("option", { name: label, exact: true }),
@@ -178,7 +178,7 @@ describe("Use skill panel", () => {
     const { container } = show({ labels: [], latestVersion: 1 });
     expect(container.querySelector('pre')).toHaveTextContent('version=1');
     expect(container.querySelector('pre')).not.toHaveTextContent('label=');
-    expect(screen.getByText(/This copies the files/)).toBeVisible();
+    expect(screen.getByText(/Downloads v1; installed files don/)).toBeVisible();
     expect(screen.getAllByRole('tab').map((tab) => tab.textContent)).toEqual(['Coding agent', 'Application', 'MCP', 'Project', 'Personal']);
   });
   it("shows publish guidance for an unpublished skill", () => {
@@ -194,4 +194,25 @@ describe("Use skill panel", () => {
       screen.queryByText("Install every skill with a tag"),
     ).not.toBeInTheDocument();
   });
+});
+
+it('distinguishes downloaded files from on-demand fetches and keeps overwrite warnings beside commands', () => {
+  const { container } = show();
+  expect(screen.getByRole('combobox', { name: 'Version to download' })).toHaveTextContent('Production (currently v1)');
+  expect(screen.getByText(/Production resolves to v1 when you run this command/)).toBeVisible();
+  expect(screen.getAllByText(/This can overwrite files in .claude\/skills/)).toHaveLength(2);
+  expect(container.querySelector('pre').parentElement.parentElement.parentElement).toHaveTextContent("It doesn't remove files deleted from the published skill.");
+  fireEvent.click(screen.getByRole('tab', { name: 'Application', exact: true }));
+  expect(screen.getByRole('combobox', { name: 'Version to fetch' })).toBeVisible();
+  expect(screen.getByText('Production resolves when requested; a numbered version stays fixed.')).toBeVisible();
+  expect(screen.queryByText(/This can overwrite files/)).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole('tab', { name: 'MCP', exact: true }));
+  expect(screen.getByRole('combobox', { name: 'Version to fetch' })).toBeVisible();
+});
+
+it('does not report success when copying the command fails', async () => {
+  Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: vi.fn().mockRejectedValue(new Error('denied')) } });
+  show({ tags: [] });
+  fireEvent.click(screen.getByRole('button', { name: 'Copy', exact: true }));
+  expect(await screen.findByRole('status')).toHaveTextContent("Couldn't copy. Select the command and copy it manually.");
 });

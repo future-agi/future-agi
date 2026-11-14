@@ -5,16 +5,17 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import SkillEditorView from "./SkillEditorView";
 
-const api = vi.hoisted(() => ({ skill: {}, draft: {}, version: {}, file: vi.fn(), save: vi.fn(), discard: vi.fn(), refetch: vi.fn(), tests: null, assist: null, testSnapshot: null, assistEnabled: true, scope: "org:ws:user", validation: null }));
+const api = vi.hoisted(() => ({ skill: {}, draft: {}, version: {}, file: vi.fn(), save: vi.fn(), discard: vi.fn(), refetch: vi.fn(), tests: null, assist: null, testSnapshot: null, assistEnabled: true, scope: "org:ws:user", validation: null, access: { ready: true, canWrite: true }, draftRead: vi.fn() }));
 vi.mock("src/api/skills", () => ({
   useSkill: () => api.skill,
-  useSkillDraft: () => ({ ...api.draft, refetch: api.refetch }),
+  useSkillDraft: () => { api.draftRead(); return { ...api.draft, refetch: api.refetch }; },
   useSkillVersion: () => api.version,
   useSkillFile: (...args) => api.file(...args),
   useSaveSkillDraft: () => ({ mutateAsync: api.save }),
   useDiscardSkillDraft: () => ({ mutateAsync: api.discard }),
   getSkillErrorCode: (error) => error.code,
 }));
+vi.mock("../utils/access", () => ({ useSkillsAccess: () => api.access }));
 vi.mock("notistack", () => ({ enqueueSnackbar: vi.fn() }));
 vi.mock("./SkillFileEditor", () => ({ default: ({ file, onChange, readOnly, target }) => <textarea aria-label="File content" data-line={target?.line} value={file.content} readOnly={readOnly} onChange={(event) => onChange(event.target.value)} /> }));
 vi.mock("./DraftChecksPanel", () => ({ default: ({ onSelect }) => <button onClick={() => onSelect({ path: "SKILL.md", line: 3 })}>Open check</button> }));
@@ -45,6 +46,7 @@ const mount = (entry = "/dashboard/skills/skill-id/edit") => {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  api.access = { ready: true, canWrite: true };
   api.validation = { current: true, pending: false, checks: { summary: { errors: 0, warnings: 0 }, items: [] } };
   api.assistEnabled = true; api.tests = null; api.assist = null; api.testSnapshot = null; api.scope = "org:ws:user";
   api.skill = { data: { id: "skill-id", name: "sample-skill", latestVersion: 1, permissions: { canRunTests: true } } };
@@ -372,4 +374,29 @@ it('keeps publish entry closed until checks match the current files', async () =
   expect(screen.getByRole('button', { name: 'Publish', exact: true })).toBeDisabled();
   expect(screen.getByRole('button', { name: 'Open check' })).toBeInTheDocument();
   expect(api.save).not.toHaveBeenCalled();
+});
+
+it('blocks a viewer before draft, checks, and editor sessions mount', () => {
+  api.access = { ready: true, canWrite: false };
+  mount();
+  expect(screen.getByText('You can view this skill but not edit it')).toBeVisible();
+  expect(screen.getByText('Ask a workspace admin for edit access.')).toBeVisible();
+  expect(screen.getByRole('link', { name: 'Back to sample-skill' })).toHaveAttribute('href', '/dashboard/skills/skill-id');
+  expect(screen.getByRole('link', { name: 'Use skill' })).toHaveAttribute('href', '/dashboard/skills/skill-id?tab=use');
+  expect(api.draftRead).not.toHaveBeenCalled();
+  expect(api.file).not.toHaveBeenCalled();
+  expect(screen.queryByRole('button', { name: 'Discard draft' })).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Publish' })).not.toBeInTheDocument();
+});
+it('does not mount a draft while access is still loading', () => {
+  api.access = { ready: false, canWrite: false };
+  mount();
+  expect(api.draftRead).not.toHaveBeenCalled();
+  expect(screen.queryByText('You can view this skill but not edit it')).not.toBeInTheDocument();
+});
+it('explains the disabled publish action during a recheck', async () => {
+  api.validation = { current: false, pending: true, checks: null };
+  mount();
+  expect(await screen.findByText('Waiting for checks…')).toBeVisible();
+  expect(screen.getByRole('button', { name: 'Publish', exact: true })).toBeDisabled();
 });

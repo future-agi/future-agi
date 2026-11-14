@@ -14,13 +14,14 @@ import { GitHubPreviewReview } from './GitHubImportPanel';
 export function GitHubSourceStatus({ skill, onOpen }) {
   const source = useSkillSource(skill.id);
   const missing = getSkillErrorCode(source.error) === 'source_not_found';
-  return <MenuItem disabled={source.isPending || missing} onClick={onOpen}>{source.isPending ? 'Checking GitHub source…' : missing ? 'Not linked to GitHub' : source.isError ? 'GitHub source could not load' : 'GitHub source'}</MenuItem>;
+  if (missing) return null;
+  return <MenuItem disabled={source.isPending} onClick={onOpen}>{source.isPending ? 'Checking GitHub source…' : source.isError ? 'GitHub source could not load' : 'GitHub source'}</MenuItem>;
 }
 GitHubSourceStatus.propTypes = { skill: PropTypes.object.isRequired, onOpen: PropTypes.func.isRequired };
 
 // Source evidence stays quiet; the actionable replacement diff receives the space.
 // `linkedOnly` (Files tab): render nothing until a linked source has loaded, so an unlinked
-// skill shows no stray status there (the ⋯ menu says "Not linked to GitHub").
+// skill shows no stray status there or in the actions menu.
 export default function GitHubSourcePanel({ skill, linkedOnly = false }) {
   const source = useSkillSource(skill.id);
   const draft = useSkillDraft(skill.id);

@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link as RouterLink, useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import When from "../components/When";
+import { httpStatus } from "../utils/conclusions";
 import { useSkillsAccess } from "../utils/access";
 import { Autocomplete, Avatar, Box, Button, Link, MenuItem, Stack, TextField, Typography } from "@mui/material";
 import { useSkillsList } from "src/api/skills";
@@ -50,7 +51,12 @@ export default function SkillsLibraryView() {
   const statePreview = usePreviewState();
   const previewState = params.get("state") === "filtered-empty" ? "filtered-empty" : statePreview;
   const loading = previewState === "loading" || (!previewState && query.isPending);
-  const outOfRange = !previewState && page > 1 && (query.error?.response?.status === 404 || (query.data?.count > 0 && !query.data.results?.length));
+  const status = httpStatus(query.error);
+  const errorData = query.error?.response?.data ?? query.error?.data ?? query.error;
+  const pageError = errorData?.page ?? errorData?.errors?.page ?? errorData?.detail?.page ?? errorData?.details?.page;
+  const outOfRange = !previewState && page > 1 && (status === 404
+    || ([400, 422].includes(status) && Boolean(pageError))
+    || (!query.isError && query.data?.count > 0 && !query.data.results?.length));
   const failed = !outOfRange && (previewState === "error" || (!previewState && query.isError));
   const rows = ['empty', 'filtered-empty'].includes(previewState) ? [] : query.data?.results || [];
   const count = ['empty', 'filtered-empty'].includes(previewState) ? 0 : query.data?.count || 0;
@@ -100,7 +106,7 @@ export default function SkillsLibraryView() {
   return (
     <Stack sx={{ p: { xs: 2, md: 3 }, minWidth: 0 }}>
       <PageHeader title="Skills" description="Versioned instructions and files your agents load on demand." sx={{ mb: 0 }}
-        actions={canWrite && !firstRun && <><Button variant="outlined" onClick={() => setImportOpen(true)}>Import</Button><Button variant="contained" color="primary" onClick={() => setNewTemplate("blank")}>New skill</Button></>} />
+        actions={canWrite && !firstRun && <><Button variant="outlined" onClick={() => setImportOpen(true)}>Import</Button><Button variant={outOfRange ? "outlined" : "contained"} color="primary" onClick={() => setNewTemplate("blank")}>New skill</Button></>} />
       {!loading && !failed && stats?.total > 0 && <Typography variant="s3" color="text.secondary" sx={{ mt: 1.5 }}>{[`${stats.total} ${stats.total === 1 ? 'skill' : 'skills'}`, stats.inProduction > 0 && `${stats.inProduction} in production`, stats.fetches7d > 0 && `${stats.fetches7d} ${stats.fetches7d === 1 ? 'fetch' : 'fetches'} in 7 days`, stats.myDrafts > 0 && `${stats.myDrafts} ${stats.myDrafts === 1 ? 'draft' : 'drafts'}`].filter(Boolean).join(' · ')}</Typography>}
       {!loading && query.isFetching && query.data && <StatusBadge status="checking" label="Updating…" />}
       {!firstRun && <ListToolbar alignItems="flex-end" sx={{ flexWrap: "wrap", rowGap: 1 }}>
@@ -121,7 +127,7 @@ export default function SkillsLibraryView() {
         </TextField>
       </ListToolbar>}
       {loading ? <ContentSkeleton variant="rows" rows={6} label="Loading skills" />
-        : outOfRange ? <EmptyState variant="no-results" title={`Page ${page} doesn't exist.`} action={<Button variant="outlined" onClick={() => changeParams({ page: 1 }, false)}>Go to page 1</Button>} />
+        : outOfRange ? <EmptyState variant="no-results" title="This page is no longer available" action={<Button variant="contained" onClick={() => changeParams({ page: 1 }, false)}>Go to first page</Button>} />
         : failed ? <ErrorState title="Couldn't load skills." detail="Your library is still saved. Try loading it again." onRetry={() => { changeParams({ state: null }, false); query.refetch(); }} />
         : firstRun ? <LibraryEmptyState isViewer={!canWrite} onCreate={setNewTemplate} onImport={() => setImportOpen(true)} />
         : rows.length === 0 && count > 0 ? <EmptyState variant="no-results" title="No skills on this page" description="The library changed since you opened this page."

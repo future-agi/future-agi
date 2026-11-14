@@ -1,7 +1,7 @@
 import { useEffect, useId, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import PropTypes from "prop-types";
-import { Button, Checkbox, FormControlLabel, MenuItem, TextField, Radio, RadioGroup, Stack, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, Typography } from "@mui/material";
+import { Button, Checkbox, FormControl, FormLabel, FormControlLabel, MenuItem, TextField, Radio, RadioGroup, Stack, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, Typography } from "@mui/material";
 import { ROW_HEIGHT, TABLE_HEADER_HEIGHT } from "src/theme/sizes";
 import { isDefiniteRejection } from "src/api/skills/operation-errors";
 import { stackedTableSx } from "../components/responsiveTable";
@@ -133,9 +133,15 @@ export default function MigrationBatchReview({ plans, onAccept, onKeep, onPublis
     : failed ? `Retry ${pending.length} remaining with the same decisions` : `${verb} ${pending.length} ${pending.length === 1 ? "item" : "items"}`;
   const disabledReason = !pending.length ? held.length ? 'Resolve the held items, then preview again' : 'No items ready to import' : undecided.length ? 'Choose keep or replace to continue' : excluded.length && !excludeAcknowledged ? 'Confirm the excluded items to continue' : !rights || rightsKey !== reviewKey ? 'Confirm your rights to continue' : warningRows.length && !warningsAcknowledged ? 'Review the publication warnings to continue' : !ready ? 'Import is unavailable for this selection' : '';
   const footer = <Stack spacing={0.5} sx={{ borderTop: 1, borderColor: "divider", pt: 1.5, bgcolor: "background.paper" }}>
+    {pending.length > 0 && <FormControl disabled={running}>
+      <FormLabel id={`${formId}-import-as`}>Import as</FormLabel>
+      <RadioGroup aria-labelledby={`${formId}-import-as`} value={publish ? "published" : "drafts"} onChange={(event) => setPublish(event.target.value === "published")}>
+        <FormControlLabel value="published" control={<Radio />} label="Published v1, no labels" />
+        <FormControlLabel value="drafts" control={<Radio />} label="Drafts to review first" />
+      </RadioGroup>
+    </FormControl>}
     {excluded.map((row) => <Typography key={row.key} variant="s3" sx={{ overflowWrap: 'anywhere' }}>Left out: {importBlockerSummary(row.item)}.</Typography>)}
     {excluded.length > 0 && <FormControlLabel control={<Checkbox checked={excludeAcknowledged} disabled={running} onChange={(event) => setExcludeAcknowledged(event.target.checked)} />} label={`Leave out ${excluded.length} ${excluded.length === 1 ? "skill" : "skills"} that can't be imported. The others import without ${excluded.length === 1 ? "it" : "them"}.`} />}
-    {pending.length > 0 && <FormControlLabel control={<Checkbox checked={publish} disabled={running} onChange={(event) => setPublish(event.target.checked)} />} label="Publish each imported draft as a new version without labels" />}
     {decided.length > 0 && <FormControlLabel control={<Checkbox checked={rights} disabled={running} onChange={(event) => { setRights(event.target.checked); setRightsKey(reviewKey); }} />} label={`I confirm my rights to copy all ${decided.length} items, including their licenses and retained notices.`} />}
     {warningRows.length > 0 && <FormControlLabel control={<Checkbox checked={warningsAcknowledged} disabled={running} onChange={(event) => setWarningsAcknowledged(event.target.checked)} />} label={`I reviewed the publication warnings for ${warningRows.length} ${warningRows.length === 1 ? "item" : "items"} and want to publish ${warningRows.length === 1 ? "it" : "them"}.`} />}
     {!onConsequenceChange && <Typography variant="s1" role="status">{consequence}</Typography>}

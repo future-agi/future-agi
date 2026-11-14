@@ -88,7 +88,7 @@ describe("Usage tab", () => {
         x: Date.parse(`${day}T00:00:00Z`),
         y: 4,
       });
-      expect(screen.getByText("Versions in use")).toBeInTheDocument();
+      expect(screen.getByText("Versions fetched")).toBeInTheDocument();
       expect(
         screen.getByText(
           "Counts requests that fetched this skill. A fetch doesn't prove an agent used it.",

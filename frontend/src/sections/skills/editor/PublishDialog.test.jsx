@@ -368,3 +368,14 @@ it('does not promise a new version when the reviewed bytes already match latest'
   fireEvent.click(screen.getByRole('checkbox', { name: 'production', exact: true }));
   expect(screen.getByRole('status')).toHaveTextContent('Reuses v2 and moves production to v2.');
 });
+
+it('keeps production visible but unavailable while a credential warning is open', async () => {
+  api.checks.mockResolvedValue({ summary: { errors: 0, warnings: 1 }, items: [{ severity: 'warning', code: 'secret_suspected', message: 'Possible credential found.', path: 'SKILL.md' }] });
+  renderDialog();
+  await screen.findByText("Production can't be set while a possible credential warning is open.");
+  expect(screen.getByRole('checkbox', { name: 'production', exact: true })).toBeDisabled();
+  expect(screen.getByRole('checkbox', { name: 'production', exact: true })).not.toBeChecked();
+  fireEvent.click(screen.getByRole('checkbox', { name: /I reviewed the warnings/ }));
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Publish', exact: true })).toBeEnabled());
+  expect(screen.getByRole('checkbox', { name: 'production', exact: true })).toBeDisabled();
+});

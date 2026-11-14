@@ -143,8 +143,8 @@ function MoveLabelForm({ onClose, skill, label, version }) {
     <ModalWrapper
       open
       title="Move label"
-      modalWidth="960px"
-      paperSx={{ maxWidth: "100%" }}
+      modalWidth="600px"
+      paperSx={{ maxWidth: "sm" }}
       subTitle="A label controls which version agents fetch. Existing versions stay unchanged."
       onClose={onClose}
       onSubmit={handleMove}

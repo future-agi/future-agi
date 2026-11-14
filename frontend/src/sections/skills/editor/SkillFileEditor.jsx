@@ -65,7 +65,7 @@ export default function SkillFileEditor({ file, onChange, target, readOnly = fal
       readOnly={readOnly}
       language={languageForPath(file.path)}
       height="100%"
-      sx={{ flex: 1, minHeight: 0, bgcolor: 'background.paper', border: 1, borderColor: 'divider', borderRadius: 1, overflow: 'hidden', '& > .MuiBox-root': { flex: 1, minHeight: 0 } }}
+      sx={{ flex: 1, minHeight: 0, bgcolor: 'background.paper', border: 1, borderColor: 'divider', borderRadius: 1, overflow: 'hidden', '& > .MuiTypography-root': { px: 1.5, py: 1 }, '& > .MuiBox-root': { flex: 1, minHeight: 0 } }}
       options={{ renderLineHighlight: "none", readOnly, domReadOnly: readOnly, automaticLayout: true, minimap: { enabled: false }, wordWrap: "on", scrollBeyondLastLine: false }}
     />
   );
