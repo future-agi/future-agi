@@ -849,6 +849,7 @@ class EvaluationRunner:
         organization_id=None,
         workspace_id=None,
         version_number=None,
+        update_metric_status=True,
     ):
         self.user_eval_metric_id = user_eval_metric_id
         self.column = column
@@ -891,7 +892,7 @@ class EvaluationRunner:
         self._effective_config_cache: dict | None = None
         self._effective_config_cache_key: tuple | None = None
         if not format_output:
-            self._initialize_eval_metric()
+            self._initialize_eval_metric(update_status=update_metric_status)
 
     def get_few_shot_examples(self, mapping, required_field=None):
         """
@@ -987,8 +988,8 @@ class EvaluationRunner:
         embedding_manager.close()
         return all_examples
 
-    def _initialize_eval_metric(self):
-        """Initialize and set status of user eval metric"""
+    def _initialize_eval_metric(self, *, update_status=True):
+        """Load metric metadata; batch row runners leave status to their task."""
         self.user_eval_metric = UserEvalMetric.objects.select_related(
             "pinned_version",
         ).get(id=self.user_eval_metric_id)
@@ -1017,8 +1018,9 @@ class EvaluationRunner:
             if self._resolved_version:
                 self.version_number = self._resolved_version.version_number
 
-        self.user_eval_metric.status = StatusType.RUNNING.value
-        self.user_eval_metric.save(update_fields=["status"])
+        if update_status:
+            self.user_eval_metric.status = StatusType.RUNNING.value
+            self.user_eval_metric.save(update_fields=["status"])
 
     def _get_effective_eval_config(self):
         """Return template config with the resolved version snapshot applied.
@@ -1689,6 +1691,10 @@ class EvaluationRunner:
             )
         except Exception as e:
             logger.exception(f"Error updating or creating cell: {str(e)}")
+            # The result was not stored, so the cell keeps its RUNNING state.
+            # Fail the row so the caller finishes it instead of counting it as
+            # a success.
+            raise
 
     def _get_required_fields_and_mappings(
         self, user_eval_metric=None, mapping=None, config=None, required_field=None
