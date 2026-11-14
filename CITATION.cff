@@ -2,11 +2,12 @@ cff-version: 1.2.0
 message: "If you use this software, please cite it as below."
 authors:
   - name: "Future AGI"
-    affiliation: "Future AGI"
     website: "https://futureagi.com"
-title: "Future AGI: Open-source e2e agent engineering and optimization platform"
-version: 1.35.0
-date-released: 2026-09-03  
+title: "Future AGI"
+# Keep these fields aligned with the release manifest and changelog.
+# release-please refreshes both when preparing a release; do not pin them manually.
+version: 1.56.1 # x-release-please-version
+date-released: 2026-10-28 # x-release-please-date
 repository-code: "https://github.com/future-agi/future-agi"
 license: "Apache-2.0"
 keywords:
