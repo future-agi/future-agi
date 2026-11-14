@@ -17,13 +17,13 @@ RUN pip install --no-cache-dir \
     "channels-redis==4.3.0" \
     "asgiref==3.11.0" \
     "django==5.1.15" \
-    "litellm==1.84.10" \
+    "litellm==1.95.0" \
     "pyjwt==2.15.1" \
     "openai==2.54.0" \
     "mcp==1.30.0" \
-    "nltk==3.10.3" \
-    "pillow==12.3.0" \
-    "pypdf==6.19.0" \
+    "nltk==3.10.4" \
+    "pillow==13.0.0" \
+    "pypdf==6.21.4" \
     "pdfplumber==0.11.10" \
     "pdfminer.six==20260107" \
     "pypdfium2==5.14.0" \

@@ -18,7 +18,7 @@
 #   CODE_EXECUTOR_BASE=futureagi/code-executor-base:v1.1.0@sha256:<index digest>
 # To build without publishing, build the base locally under that tag first:
 #   docker build -f Dockerfile.base -t futureagi/code-executor-base:v1.1.0 .
-ARG CODE_EXECUTOR_BASE=futureagi/code-executor-base:v1.1.0
+ARG CODE_EXECUTOR_BASE=futureagi/code-executor-base:v1.1.1
 FROM ${CODE_EXECUTOR_BASE}
 
 # config/python.cfg is not read: server.py passes nsjail flags (see above).

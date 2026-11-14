@@ -13,7 +13,7 @@
 #     the modules alpine-slim leaves out (njs, geoip, image-filter, xslt, acme)
 #     nor nginx:alpine's curl are used.
 ARG NODE_IMAGE=futureagi/frontend-base:v1.1.0-dev@sha256:bc90d2229b7155ed6ba69c47f3e5a634a0cd85fafab1e8f6c6609f0c1762e2ad
-ARG NGINX_IMAGE=nginx:1.31.6-alpine-slim@sha256:f761b94f2cb9e8e05e2943d5f773609596113ef69b54e2433a996d109a8f78b7
+ARG NGINX_IMAGE=nginx:1.31.8-alpine-slim@sha256:4c734d33ee731135dc9f2349914a34551c920f4451fca8bb05bf5880eb9079e8
 
 # Stage 1: Build the React app.
 # dist/ is architecture-independent, so build it once on the build host
