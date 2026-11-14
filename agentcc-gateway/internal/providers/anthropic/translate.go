@@ -263,11 +263,11 @@ func translateMessage(msg models.Message) (anthropicMessage, error) {
 
 		// Add tool use blocks.
 		for _, tc := range msg.ToolCalls {
-			var input json.RawMessage
-			if tc.Function.Arguments == "" || tc.Function.Arguments == "null" {
+			input := json.RawMessage(strings.TrimSpace(tc.Function.Arguments))
+			// Empty or malformed arguments must not discard the assistant's
+			// content when the tool use blocks are marshaled below.
+			if !json.Valid(input) || string(input) == "null" {
 				input = json.RawMessage("{}")
-			} else {
-				input = json.RawMessage(tc.Function.Arguments)
 			}
 
 			blocks = append(blocks, anthropicContentBlock{
