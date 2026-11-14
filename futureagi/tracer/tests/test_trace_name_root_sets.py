@@ -450,3 +450,78 @@ def test_a_span_list_without_a_time_filter_binds_every_batch_of_its_request():
     builder.filters = [_date(), _leaf()]
     sql, _ = builder.build_filter_match_query(["a" * 32])
     assert ROOT_LOOKUP in sql
+
+
+def test_the_annotation_span_graph_resolves_roots_once_for_all_its_batches(
+    monkeypatch,
+):
+    from contextlib import nullcontext
+
+    from tracer.services.clickhouse import exact_graph_reads as exact_module
+    from tracer.tests.test_exact_aggregation_contract import _ScoreListManager
+
+    class Analytics:
+        def __init__(self):
+            self.calls = []
+
+        def execute_ch_query(self, query, params, *, timeout_ms, settings):
+            self.calls.append((query, params, settings))
+            if query.startswith("SELECT DISTINCT project_id, trace_id FROM ("):
+                return SimpleNamespace(data=[{"project_id": PROJECT, "trace_id": "t1"}])
+            return SimpleNamespace(
+                data=[
+                    {"id": span_id, "identity_count": 1, "matched": 1}
+                    for span_id in params["candidate_span_ids"]
+                ]
+            )
+
+    scores = [
+        {
+            "trace_id": f"t{n}",
+            "observation_span_id": f"span-{n}",
+            "created_at": (START + timedelta(days=1, hours=n)).replace(tzinfo=None),
+            "value": {"rating": 4},
+        }
+        for n in range(3)
+    ]
+    label = SimpleNamespace(name="quality", type="numeric")
+    monkeypatch.setattr(
+        exact_module,
+        "Score",
+        SimpleNamespace(no_workspace_objects=_ScoreListManager(scores)),
+    )
+    monkeypatch.setattr(
+        exact_module,
+        "get_annotation_labels_for_project",
+        lambda _project_id: SimpleNamespace(get=lambda **_kwargs: label),
+    )
+    monkeypatch.setattr(
+        exact_module, "_annotation_label_ids_for_filters", lambda *_a, **_k: []
+    )
+    monkeypatch.setattr(exact_module.transaction, "atomic", nullcontext)
+    monkeypatch.setattr(exact_module, "connection", SimpleNamespace(vendor="sqlite"))
+    monkeypatch.setattr(exact_module, "EXACT_GRAPH_MEMBERSHIP_BATCH_SIZE", 1)
+    analytics = Analytics()
+
+    result = exact_module.read_exact_annotation_graph(
+        analytics=analytics,
+        project_id=PROJECT,
+        filters=[_date(), _leaf()],
+        interval="day",
+        req_data_config={
+            "id": "55555555-5555-4555-8555-555555555555",
+            "output_type": "float",
+        },
+        observe_type="span",
+    )
+
+    statements = [query for query, _params, _settings in analytics.calls]
+    assert len(statements) == 4
+    assert statements[0].startswith("SELECT DISTINCT project_id, trace_id FROM (")
+    assert sum(ROOT_LOOKUP in sql for sql in statements) == 1
+    for query, params, _settings in analytics.calls[1:]:
+        assert ROOT_LOOKUP not in query
+        _render(query, params)
+    # The resolution reads under the graph's own settings, one row over the cap.
+    assert analytics.calls[0][2]["max_result_rows"] == TRACE_NAME_ROOT_SET_MAX_ROOTS + 1
+    assert result["query_complete"] is True
