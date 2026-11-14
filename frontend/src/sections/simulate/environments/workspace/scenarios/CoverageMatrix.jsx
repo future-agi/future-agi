@@ -40,7 +40,14 @@ const humanize = (s) =>
 // height: hover names the three summary numbers (Axes / Pairs / Forced), and a
 // click opens the per-axis table, the forced overlays and the pairwise heatmap
 // in a right-side drawer.
-export default function CoverageMatrix({ jobId, search, filters, defaultOpen = false, onAddMissing }) {
+export default function CoverageMatrix({
+  jobId,
+  search,
+  filters,
+  defaultOpen = false,
+  onAddMissing,
+  onAddGuidance,
+}) {
   // Left undefined until the user picks, so the server default (task × overlay)
   // drives the initial grid.
   const [rowAxis, setRowAxis] = useState(undefined);
@@ -391,6 +398,17 @@ export default function CoverageMatrix({ jobId, search, filters, defaultOpen = f
                   </Box>
                 </Box>
               </Box>
+              <WorkflowChecks
+                workflows={data?.workflows ?? []}
+                onAddMissing={
+                  onAddGuidance
+                    ? (guidance) => {
+                        close();
+                        onAddGuidance(guidance, 1);
+                      }
+                    : undefined
+                }
+              />
               <UncoveredLevels
                 uncovered={data?.uncovered ?? []}
                 onAddMissing={
@@ -409,6 +427,72 @@ export default function CoverageMatrix({ jobId, search, filters, defaultOpen = f
     </>
   );
 }
+
+const WORKFLOW_KINDS = ["success", "refusal", "wrong_result"];
+
+// Per release-critical workflow: a proved success, a proved refusal and a wrong result its checks
+// fail. A missing one offers to ask the builder for it.
+export function WorkflowChecks({ workflows, onAddMissing }) {
+  if (!workflows.length) return null;
+  return (
+    <Stack spacing={1} sx={{ px: 3, py: 2 }} data-testid="coverage-workflows">
+      <Typography sx={{ typography: "s1", fontWeight: "fontWeightMedium" }}>
+        {SCENARIOS_COPY.workflowTitle}
+      </Typography>
+      <Box component="table" sx={{ borderCollapse: "collapse", typography: "s2", "& td, & th": { py: 0.5, pr: 2, textAlign: "left" } }}>
+        <thead>
+          <tr>
+            <th>{SCENARIOS_COPY.workflowColumn}</th>
+            {WORKFLOW_KINDS.map((kind) => (
+              <th key={kind}>{SCENARIOS_COPY.workflowKinds[kind]}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {workflows.map((row) => (
+            <tr key={row.workflow}>
+              <td>{row.workflow}</td>
+              {WORKFLOW_KINDS.map((kind) => (
+                <td key={kind}>
+                  {row[kind] > 0 ? (
+                    row[kind]
+                  ) : (
+                    <Stack direction="row" spacing={1} alignItems="center">
+                      <Typography component="span" sx={{ typography: "s2", color: "status.danger.fg" }}>
+                        {SCENARIOS_COPY.workflowMissing}
+                      </Typography>
+                      {onAddMissing && (
+                        <Button
+                          size="small"
+                          variant="text"
+                          onClick={() => onAddMissing(SCENARIOS_COPY.workflowGuidance(kind, row.workflow))}
+                        >
+                          {SCENARIOS_COPY.addMissingCases}
+                        </Button>
+                      )}
+                    </Stack>
+                  )}
+                </td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </Box>
+    </Stack>
+  );
+}
+
+WorkflowChecks.propTypes = {
+  workflows: PropTypes.arrayOf(
+    PropTypes.shape({
+      workflow: PropTypes.string,
+      success: PropTypes.number,
+      refusal: PropTypes.number,
+      wrong_result: PropTypes.number,
+    }),
+  ).isRequired,
+  onAddMissing: PropTypes.func,
+};
 
 // The levels the build planned and no scenario uses, with one way to ask for them.
 export function UncoveredLevels({ uncovered, onAddMissing }) {
@@ -454,6 +538,8 @@ CoverageMatrix.propTypes = {
   defaultOpen: PropTypes.bool,
   // Opens Add scenarios on "Generate more", prefilled for the uncovered levels.
   onAddMissing: PropTypes.func,
+  // Opens Add scenarios prefilled with one request (a missing workflow case, or an asked-for line).
+  onAddGuidance: PropTypes.func,
 };
 
 const headerCellSx = {

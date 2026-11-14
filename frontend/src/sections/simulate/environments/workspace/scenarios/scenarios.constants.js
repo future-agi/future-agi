@@ -121,6 +121,12 @@ export const SCENARIOS_COPY = {
     `Cited by ${keys.length === 1 ? "1 case" : `${keys.length} cases`}: ${keys.join(", ")}`,
   addMissingCases: "Add missing cases",
   uncoveredTitle: "Planned levels no scenario covers yet",
+  workflowTitle: "Release checks per workflow",
+  workflowColumn: "Workflow",
+  workflowKinds: { success: "Success", refusal: "Refusal", wrong_result: "Wrong result" },
+  workflowMissing: "Missing",
+  workflowGuidance: (kind, workflow) =>
+    `Write the missing ${kind.replace("_", " ")} case for the workflow "${workflow}".`,
 };
 
 // The version pairs the Scenarios tab can show besides the saved one: each candidate pair Validate

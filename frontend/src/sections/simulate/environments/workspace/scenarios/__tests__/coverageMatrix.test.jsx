@@ -107,3 +107,25 @@ describe("CoverageMatrix uncovered levels", () => {
     expect(screen.queryByRole("button", { name: "Add missing cases" })).toBeNull();
   });
 });
+
+describe("WorkflowChecks", () => {
+  it("Missing cell offers Add missing cases with the request prefilled", async () => {
+    const { WorkflowChecks } = await import("../CoverageMatrix");
+    const onAddMissing = vi.fn();
+    render(
+      <WorkflowChecks
+        workflows={[{ workflow: "refunds", success: 2, refusal: 0, wrong_result: 1, missing: ["refusal"] }]}
+        onAddMissing={onAddMissing}
+      />,
+    );
+    expect(screen.getByTestId("coverage-workflows")).toHaveTextContent("Missing");
+    fireEvent.click(screen.getByRole("button", { name: "Add missing cases" }));
+    expect(onAddMissing).toHaveBeenCalledWith('Write the missing refusal case for the workflow "refunds".');
+  });
+
+  it("shows nothing without workflows", async () => {
+    const { WorkflowChecks } = await import("../CoverageMatrix");
+    render(<WorkflowChecks workflows={[]} />);
+    expect(screen.queryByTestId("coverage-workflows")).toBeNull();
+  });
+});

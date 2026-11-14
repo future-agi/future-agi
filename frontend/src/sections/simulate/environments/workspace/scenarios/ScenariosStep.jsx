@@ -566,6 +566,14 @@ export default function ScenariosStep({
                                 setAdding(true);
                               }
                         }
+                        onAddGuidance={
+                          locked
+                            ? undefined
+                            : (guidance, count) => {
+                                setAddPreset({ guidance, count: clampCount(count) });
+                                setAdding(true);
+                              }
+                        }
                       />
                       <AddButton
                         onClick={() => setAdding(true)}
