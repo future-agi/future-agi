@@ -72,6 +72,7 @@ export const RUN_STATUS = {
   unreachable: { role: "danger", label: "Unreachable" },
   revoked: { role: "danger", label: "Revoked" },
   expired: { role: "warning", label: "Expired" },
+  dropped: { role: "warning", label: "Dropped" },
   delivered: { role: "success", label: "Delivered" },
   dead_letter: { role: "neutral", label: "Dead letter" },
 };

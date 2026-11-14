@@ -59,6 +59,7 @@ OPERATOR_STARTUP_MUTATION_COMMANDS = frozenset(
         "register_temporal_schedules",
         "seed_system_evals",
         "purge_sql_results",
+        "purge_agentcc_webhook_events",
     }
 )
 # Developer tools that only the explicit local mode (./bin/dev manage) may run:

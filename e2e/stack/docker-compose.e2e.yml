@@ -78,6 +78,10 @@ services:
     # Keep the worker mount-free for the managed-mock attestation as well.
     volumes: !reset []
     environment:
+      # GW-E2E-006 watches the delivery schedule disable a failing webhook;
+      # the defaults (100 failures spanning 60 minutes) would take hours.
+      AGENTCC_WEBHOOK_DISABLE_AFTER_FAILURES: "3"
+      AGENTCC_WEBHOOK_DISABLE_AFTER_MINUTES: "0"
       MODEL_SERVING_URL: http://mock-llm:8080
       FUTURE_AGI_TELEMETRY_DISABLED: "true"
       FUTURE_AGI_TELEMETRY_URL: http://127.0.0.1:9

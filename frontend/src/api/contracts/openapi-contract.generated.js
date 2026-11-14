@@ -8506,6 +8506,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           400: {
             $ref: "#/definitions/AgentccErrorResponse",
           },
+          503: {
+            $ref: "#/definitions/AgentccErrorResponse",
+          },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
           },
@@ -53998,6 +54001,36 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Description",
           type: "string",
         },
+        consecutive_failures: {
+          title: "Consecutive failures",
+          type: "integer",
+          readOnly: true,
+        },
+        disabled_reason: {
+          title: "Disabled reason",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+        },
+        disabled_at: {
+          title: "Disabled at",
+          type: "string",
+          format: "date-time",
+          readOnly: true,
+          "x-nullable": true,
+        },
+        dropped_events_total: {
+          title: "Dropped events total",
+          type: "integer",
+          readOnly: true,
+        },
+        last_dropped_at: {
+          title: "Last dropped at",
+          type: "string",
+          format: "date-time",
+          readOnly: true,
+          "x-nullable": true,
+        },
         created_at: {
           title: "Created at",
           type: "string",
@@ -54053,7 +54086,15 @@ export const OPENAPI_CONTRACT = Object.freeze({
         status: {
           title: "Status",
           type: "string",
-          enum: ["pending", "delivered", "failed", "dead_letter"],
+          enum: [
+            "pending",
+            "delivered",
+            "failed",
+            "dead_letter",
+            "cancelled",
+            "expired",
+            "dropped",
+          ],
           readOnly: true,
         },
         attempts: {

@@ -674,10 +674,8 @@ class TestLogIngestion:
             ).count()
             == 1
         )
-        mock_deliver_webhook_events.assert_called_once_with(
-            org_id=organization.id,
-            limit=100,
-        )
+        # Ingest only records the event; the delivery schedule sends it.
+        mock_deliver_webhook_events.assert_not_called()
 
     @patch("agentcc.services.webhook_delivery.deliver_webhook_events")
     def test_ingest_maps_error_and_guardrail_events(
@@ -721,7 +719,7 @@ class TestLogIngestion:
             "error.occurred",
             "guardrail.triggered",
         }
-        assert mock_deliver_webhook_events.call_count == 1
+        mock_deliver_webhook_events.assert_not_called()
 
     @patch("agentcc.services.webhook_delivery.deliver_webhook_events")
     def test_resent_batch_adds_no_rows_or_webhook_events(
@@ -769,7 +767,7 @@ class TestLogIngestion:
             AgentccWebhookEvent.no_workspace_objects.filter(webhook=webhook).count()
             == 3
         )
-        assert mock_deliver_webhook_events.call_count == 2
+        mock_deliver_webhook_events.assert_not_called()
 
     def test_rows_without_a_request_id_are_all_kept(self, organization):
         AgentccAPIKey.objects.create(
@@ -991,11 +989,12 @@ class TestWebhookDelivery:
         http = MagicMock()
         resp = MagicMock()
         resp.status_code = 500
-        resp.text = "server error"
+        resp.encoding = "utf-8"
+        resp.raw.read.return_value = b"server error"
         http.post.return_value = resp
         mock_build_session.return_value = http
 
-        result = deliver_webhook_events(event_ids=[event.id], limit=10)
+        result = deliver_webhook_events(event_ids=[event.id])
 
         event.refresh_from_db()
         assert result["delivered"] == 0
@@ -1003,3 +1002,4 @@ class TestWebhookDelivery:
         assert event.status == AgentccWebhookEvent.PENDING
         assert event.attempts == 1
         assert event.next_retry_at is not None
+        assert event.last_error == "HTTP 500: server error"

@@ -136,9 +136,17 @@ def ensure_provider_base_url_allowed(
 
 
 def build_ssrf_safe_session(
-    connect_error_message: str, *, allow_private: bool = False
+    connect_error_message: str,
+    *,
+    allow_private: bool = False,
+    adapter_base: type[http_requests.adapters.HTTPAdapter] = (
+        http_requests.adapters.HTTPAdapter
+    ),
 ) -> http_requests.Session:
-    class _SSRFSafeAdapter(http_requests.adapters.HTTPAdapter):
+    """A session that checks every request's URL, each redirect hop included,
+    before it connects. ``adapter_base`` is the transport the check wraps."""
+
+    class _SSRFSafeAdapter(adapter_base):  # type: ignore[valid-type,misc]
         def send(self, request, **kwargs):
             _raise_if_unsafe_url(
                 request.url,

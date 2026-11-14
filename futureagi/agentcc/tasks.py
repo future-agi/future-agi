@@ -1,8 +1,6 @@
 import structlog
 from celery import shared_task
 
-from agentcc.services.webhook_delivery import deliver_webhook_events
-
 logger = structlog.get_logger(__name__)
 
 
@@ -26,8 +24,3 @@ def check_gateway_health():
     except Exception as e:
         logger.exception("gateway_health_check_unexpected_error", error=str(e))
         return {"status": "error", "error": str(e)}
-
-
-@shared_task(name="agentcc.process_webhook_events")
-def process_webhook_events():
-    return deliver_webhook_events(limit=100)

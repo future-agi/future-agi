@@ -83,6 +83,50 @@ class TestAgentccWebhookCRUD:
         webhook.refresh_from_db()
         assert webhook.description == "now with a description"
 
+    @pytest.mark.parametrize(
+        "change",
+        [
+            {"url": "https://example.com/fixed"},
+            {"secret": "a-new-secret"},
+            {"headers": {"X-Fixed": "1"}},
+        ],
+    )
+    def test_fixing_the_receiver_ends_the_failure_pause(
+        self, auth_client, user, change
+    ):
+        """Round 3: a new url, secret or headers ends the pause a failing
+        run set, so the fixed webhook is delivered at the next tick."""
+        from datetime import timedelta
+
+        from django.utils import timezone
+
+        webhook = _make_webhook(
+            user,
+            name="paused",
+            consecutive_failures=2,
+            next_delivery_at=timezone.now() + timedelta(minutes=4),
+        )
+        response = auth_client.patch(
+            f"/agentcc/webhooks/{webhook.id}/", change, format="json"
+        )
+        assert response.status_code == 200
+        webhook.refresh_from_db()
+        assert webhook.next_delivery_at is None
+
+    def test_a_description_edit_keeps_the_failure_pause(self, auth_client, user):
+        from datetime import timedelta
+
+        from django.utils import timezone
+
+        until = timezone.now() + timedelta(minutes=4)
+        webhook = _make_webhook(user, name="kept", next_delivery_at=until)
+        response = auth_client.patch(
+            f"/agentcc/webhooks/{webhook.id}/", {"description": "x"}, format="json"
+        )
+        assert response.status_code == 200
+        webhook.refresh_from_db()
+        assert webhook.next_delivery_at == until
+
     def test_destroy_soft_deletes_webhook(self, auth_client, user):
         webhook = _make_webhook(user, name="to-delete")
         response = auth_client.delete(f"/agentcc/webhooks/{webhook.id}/")
@@ -210,6 +254,72 @@ class TestAgentccWebhookEvent:
         assert event.status == AgentccWebhookEvent.PENDING
         assert event.attempts == 0
         assert event.last_error == ""
+
+    def test_retry_of_an_event_past_the_age_limit_is_delivered_not_expired(
+        self, auth_client, user, settings
+    ):
+        """A dead-lettered event from before the pending age limit, retried by
+        hand, is due again and is not expired by the maintenance run."""
+        from datetime import timedelta
+
+        from django.utils import timezone
+
+        from agentcc.services.webhook_delivery import _due
+        from agentcc.services.webhook_hygiene import expire_pending_events
+
+        settings.AGENTCC_WEBHOOK_PENDING_MAX_AGE_HOURS = 24
+        webhook = _make_webhook(user)
+        event = _make_event(
+            webhook, user, status=AgentccWebhookEvent.DEAD_LETTER, attempts=5
+        )
+        AgentccWebhookEvent.all_objects.filter(pk=event.pk).update(
+            created_at=timezone.now() - timedelta(hours=72)
+        )
+
+        response = auth_client.post(f"/agentcc/webhook-events/{event.id}/retry/")
+        assert response.status_code == 200
+
+        due = _due(AgentccWebhookEvent.all_objects.filter(pk=event.pk), timezone.now())
+        assert list(due.values_list("pk", flat=True)) == [event.pk]
+        assert expire_pending_events() == 0
+        event.refresh_from_db()
+        assert event.status == AgentccWebhookEvent.PENDING
+
+    def test_a_retried_old_event_that_fails_once_backs_off_not_expires(
+        self, auth_client, user, settings
+    ):
+        """Round 3 review: the re-queue time, not the attempt count, anchors
+        the age. A hand-retried old event whose first new attempt fails is
+        backed off and due again, not expired by the next maintenance run."""
+        from datetime import timedelta
+
+        from django.utils import timezone
+
+        from agentcc.services.webhook_delivery import _due, _record_attempt
+        from agentcc.services.webhook_hygiene import expire_pending_events
+
+        settings.AGENTCC_WEBHOOK_PENDING_MAX_AGE_HOURS = 24
+        webhook = _make_webhook(user)
+        event = _make_event(
+            webhook, user, status=AgentccWebhookEvent.DEAD_LETTER, attempts=5
+        )
+        AgentccWebhookEvent.all_objects.filter(pk=event.pk).update(
+            created_at=timezone.now() - timedelta(hours=72)
+        )
+        assert (
+            auth_client.post(f"/agentcc/webhook-events/{event.id}/retry/").status_code
+            == 200
+        )
+        event.refresh_from_db()
+
+        _record_attempt(event, 502, "HTTP 502")  # the first new attempt fails
+
+        assert expire_pending_events() == 0
+        event.refresh_from_db()
+        assert (event.status, event.attempts) == (AgentccWebhookEvent.PENDING, 1)
+        later = event.next_retry_at + timedelta(seconds=1)
+        due = _due(AgentccWebhookEvent.all_objects.filter(pk=event.pk), later)
+        assert list(due.values_list("pk", flat=True)) == [event.pk]
 
     def test_retry_rejects_already_delivered(self, auth_client, user):
         webhook = _make_webhook(user)

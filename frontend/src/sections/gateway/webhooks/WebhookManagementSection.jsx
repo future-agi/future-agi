@@ -18,6 +18,9 @@ import {
   Tab,
   Tabs,
   IconButton,
+  Menu,
+  MenuItem,
+  ListItemIcon,
   Dialog,
   DialogTitle,
   DialogContent,
@@ -43,17 +46,8 @@ import {
 import CreateEditWebhookDialog from "./CreateEditWebhookDialog";
 import WebhookEventLog from "./WebhookEventLog";
 import { formatDate } from "../utils/formatters";
+import { relativeTime } from "src/utils/format-time";
 import EmptyState from "src/components/empty-state";
-
-const CHIP_ROLE = {
-  success: "success",
-  warning: "warning",
-  error: "danger",
-  info: "info",
-  primary: "discovery",
-  secondary: "discovery",
-  default: "neutral",
-};
 
 const TAB_SLUGS = ["endpoints", "delivery"];
 
@@ -85,6 +79,7 @@ const WebhookManagementSection = () => {
   const [editWebhook, setEditWebhook] = useState(null);
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [selectedWebhookId, setSelectedWebhookId] = useState(null);
+  const [actionMenu, setActionMenu] = useState(null);
 
   const { gatewayId: _gatewayId } = useGatewayContext();
   const { data: webhooks, isLoading, error, refetch } = useWebhooks();
@@ -129,6 +124,27 @@ const WebhookManagementSection = () => {
         });
       },
     });
+  };
+
+  const handleToggleActive = (wh) => {
+    const isActive = !wh.is_active;
+    updateMutation.mutate(
+      { id: wh.id, is_active: isActive },
+      {
+        onSuccess: () =>
+          enqueueSnackbar(`Webhook ${isActive ? "enabled" : "disabled"}`, {
+            variant: "success",
+          }),
+        onError: (err) =>
+          enqueueSnackbar(
+            getErrorMessage(
+              err,
+              `Failed to ${isActive ? "enable" : "disable"} webhook`,
+            ),
+            { variant: "error" },
+          ),
+      },
+    );
   };
 
   const handleDelete = () => {
@@ -328,13 +344,68 @@ const WebhookManagementSection = () => {
                           </Typography>
                         </TableCell>
                         <TableCell>
-                          <StatusBadge
-                            status={wh.is_active ? "Active" : "Inactive"}
-                            label={String(wh.is_active ? "Active" : "Inactive")}
-                            role={
-                              CHIP_ROLE[wh.is_active ? "success" : "default"]
-                            }
-                          />
+                          {!wh.is_active && wh.disabled_reason ? (
+                            // Turned off by the delivery health check, not by a person.
+                            <StatusBadge
+                              status="disabled"
+                              label="Disabled"
+                              role="danger"
+                            />
+                          ) : (
+                            <StatusBadge
+                              status={wh.is_active ? "active" : "inactive"}
+                            />
+                          )}
+                          {!wh.is_active && wh.disabled_reason && (
+                            <Typography
+                              variant="s3"
+                              color="text.secondary"
+                              sx={{ display: "block", maxWidth: 240 }}
+                              noWrap
+                              title={`${wh.disabled_reason}${wh.disabled_at ? ` · ${relativeTime(wh.disabled_at)}` : ""}`}
+                            >
+                              {wh.disabled_reason}
+                              {wh.disabled_at &&
+                                ` · ${relativeTime(wh.disabled_at)}`}
+                            </Typography>
+                          )}
+                          {wh.is_active && wh.consecutive_failures > 0 && (
+                            <Typography
+                              variant="s3"
+                              sx={{
+                                display: "block",
+                                maxWidth: 240,
+                                color: "status.warning.fg",
+                              }}
+                              noWrap
+                            >
+                              {wh.consecutive_failures.toLocaleString()} failed{" "}
+                              {wh.consecutive_failures === 1
+                                ? "delivery"
+                                : "deliveries"}{" "}
+                              in a row
+                            </Typography>
+                          )}
+                          {wh.dropped_events_total > 0 && (
+                            <Typography
+                              variant="s3"
+                              sx={{
+                                display: "block",
+                                maxWidth: 240,
+                                color: "status.warning.fg",
+                              }}
+                              noWrap
+                              title="Events dropped because this webhook reached its pending-event limit or they waited longer than the maximum age"
+                            >
+                              {wh.dropped_events_total.toLocaleString()}{" "}
+                              {wh.dropped_events_total === 1
+                                ? "event"
+                                : "events"}{" "}
+                              dropped
+                              {wh.last_dropped_at &&
+                                ` · ${relativeTime(wh.last_dropped_at)}`}
+                            </Typography>
+                          )}
                         </TableCell>
                         <TableCell>
                           <Typography variant="body2" color="text.secondary">
@@ -345,68 +416,101 @@ const WebhookManagementSection = () => {
                           sx={{ fontVariantNumeric: "tabular-nums" }}
                           align="right"
                         >
-                          <Stack
-                            direction="row"
-                            spacing={0.5}
-                            justifyContent="flex-end"
-                          >
-                            <Tooltip title="Test webhook">
-                              <IconButton
-                                className="row-hover-action"
-                                size="small"
-                                onClick={() => handleTest(wh.id)}
-                                disabled={testMutation.isPending}
-                              >
-                                <Iconify
-                                  icon="solar:play-circle-linear"
-                                  width={20}
-                                />
-                              </IconButton>
-                            </Tooltip>
-                            <Tooltip title="View events">
-                              <IconButton
-                                className="row-hover-action"
-                                size="small"
-                                onClick={() => {
-                                  setSelectedWebhookId(wh.id);
-                                  navigate(
-                                    "/dashboard/gateway/webhooks/delivery",
-                                    { replace: true },
-                                  );
-                                }}
-                              >
-                                <Iconify icon="solar:list-linear" width={20} />
-                              </IconButton>
-                            </Tooltip>
-                            <Tooltip title="Edit">
-                              <IconButton
-                                className="row-hover-action"
-                                size="small"
-                                onClick={() => setEditWebhook(wh)}
-                              >
-                                <Iconify icon="solar:pen-linear" width={20} />
-                              </IconButton>
-                            </Tooltip>
-                            <Tooltip title="Delete">
-                              <IconButton
-                                className="row-hover-action"
-                                size="small"
-                                color="error"
-                                onClick={() => setDeleteTarget(wh)}
-                              >
-                                <Iconify
-                                  icon="solar:trash-bin-trash-linear"
-                                  width={20}
-                                />
-                              </IconButton>
-                            </Tooltip>
-                          </Stack>
+                          <Tooltip title="Webhook actions">
+                            <IconButton
+                              className="row-hover-action"
+                              size="small"
+                              aria-label="Webhook actions"
+                              aria-haspopup="menu"
+                              onClick={(event) =>
+                                setActionMenu({
+                                  anchor: event.currentTarget,
+                                  webhook: wh,
+                                })
+                              }
+                            >
+                              <Iconify icon="solar:menu-dots-bold" width={20} />
+                            </IconButton>
+                          </Tooltip>
                         </TableCell>
                       </TableRow>
                     ))}
                   </TableBody>
                 </Table>
               </TableContainer>
+              <Menu
+                anchorEl={actionMenu?.anchor}
+                open={Boolean(actionMenu)}
+                onClose={() => setActionMenu(null)}
+              >
+                <MenuItem
+                  disabled={testMutation.isPending}
+                  onClick={() => {
+                    handleTest(actionMenu.webhook.id);
+                    setActionMenu(null);
+                  }}
+                >
+                  <ListItemIcon>
+                    <Iconify icon="solar:play-circle-linear" width={16} />
+                  </ListItemIcon>
+                  Test webhook
+                </MenuItem>
+                <MenuItem
+                  onClick={() => {
+                    setSelectedWebhookId(actionMenu.webhook.id);
+                    navigate("/dashboard/gateway/webhooks/delivery", {
+                      replace: true,
+                    });
+                    setActionMenu(null);
+                  }}
+                >
+                  <ListItemIcon>
+                    <Iconify icon="solar:list-linear" width={16} />
+                  </ListItemIcon>
+                  View events
+                </MenuItem>
+                <MenuItem
+                  onClick={() => {
+                    setEditWebhook(actionMenu.webhook);
+                    setActionMenu(null);
+                  }}
+                >
+                  <ListItemIcon>
+                    <Iconify icon="solar:pen-linear" width={16} />
+                  </ListItemIcon>
+                  Edit
+                </MenuItem>
+                <MenuItem
+                  disabled={updateMutation.isPending}
+                  onClick={() => {
+                    handleToggleActive(actionMenu.webhook);
+                    setActionMenu(null);
+                  }}
+                >
+                  <ListItemIcon>
+                    <Iconify
+                      icon={
+                        actionMenu?.webhook.is_active
+                          ? "solar:pause-linear"
+                          : "solar:play-linear"
+                      }
+                      width={16}
+                    />
+                  </ListItemIcon>
+                  {actionMenu?.webhook.is_active ? "Disable" : "Enable"}
+                </MenuItem>
+                <MenuItem
+                  onClick={() => {
+                    setDeleteTarget(actionMenu.webhook);
+                    setActionMenu(null);
+                  }}
+                >
+                  <ListItemIcon>
+                    <Iconify icon="solar:trash-bin-trash-linear" width={16} />
+                  </ListItemIcon>
+                  Delete
+                </MenuItem>
+              </Menu>
               <Typography variant="body2" color="text.secondary" mt={2}>
                 Showing {filteredWebhooks.length} webhook
                 {filteredWebhooks.length !== 1 ? "s" : ""}

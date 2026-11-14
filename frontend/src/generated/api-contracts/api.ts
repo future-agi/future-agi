@@ -18460,9 +18460,14 @@ export type agentccWebhookLogsCreateResponse400 = {
   status: 400;
 };
 
+export type agentccWebhookLogsCreateResponse503 = {
+  data: AgentccErrorResponseApi;
+  status: 503;
+};
+
 export type agentccWebhookLogsCreateResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 200 | 400>;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 503>;
 };
 
 export type agentccWebhookLogsCreateResponseSuccess =
@@ -18471,6 +18476,7 @@ export type agentccWebhookLogsCreateResponseSuccess =
   };
 export type agentccWebhookLogsCreateResponseError = (
   | agentccWebhookLogsCreateResponse400
+  | agentccWebhookLogsCreateResponse503
   | agentccWebhookLogsCreateResponseDefault
 ) & {
   headers: ApiResponseHeaders;
