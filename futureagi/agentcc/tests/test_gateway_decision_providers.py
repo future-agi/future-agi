@@ -65,7 +65,7 @@ class TestDecisionProvidersReachTheGateway:
             credential = AgentccProviderCredential.no_workspace_objects.get(
                 organization=organization, provider_name=save["name"], deleted=False
             )
-            assert credential.api_format == "systemone"
+            assert credential.api_format == save["config"]["api_format"]
             assert credential.base_url == save["config"]["base_url"]
             assert credential.models_list == save["config"]["models"]
             assert credential.extra_config == {}

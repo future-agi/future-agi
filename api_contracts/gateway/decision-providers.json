@@ -29,6 +29,15 @@
       }
     },
     {
+      "name": "openrouter-chat",
+      "config": {
+        "base_url": "https://openrouter.ai/api/v1",
+        "api_format": "openai",
+        "api_key": "synthetic-openrouter-chat-key",
+        "models": ["meta-llama/llama-3.3-70b-instruct", "typesafe/jev-1.13", "~typesafe/jev-latest"]
+      }
+    },
+    {
       "name": "custom-systemone",
       "config": {
         "base_url": "https://decider.example.com",
@@ -76,6 +85,16 @@
         "max_concurrent": 100,
         "conn_pool_size": 100
       },
+      "openrouter-chat": {
+        "api_key": "synthetic-openrouter-chat-key",
+        "base_url": "https://openrouter.ai/api/v1",
+        "api_format": "openai",
+        "models": ["meta-llama/llama-3.3-70b-instruct", "typesafe/jev-1.13", "~typesafe/jev-latest"],
+        "timeout": 60,
+        "enabled": true,
+        "max_concurrent": 100,
+        "conn_pool_size": 100
+      },
       "custom-systemone": {
         "api_key": "synthetic-custom-key",
         "base_url": "https://decider.example.com",
@@ -98,6 +117,10 @@
       "endpoint": "https://api.perplexity.ai/v1/decisions"
     },
     "openrouter": {
+      "dialect": "openrouter",
+      "endpoint": "https://openrouter.ai/api/alpha/decisions"
+    },
+    "openrouter-chat": {
       "dialect": "openrouter",
       "endpoint": "https://openrouter.ai/api/alpha/decisions"
     },
