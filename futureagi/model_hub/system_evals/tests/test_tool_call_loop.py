@@ -67,6 +67,30 @@ def test_registered_evaluator_uses_configured_threshold_and_progress():
     assert evaluator._evaluate(output=calls)["failure"] is False
 
 
+def test_configured_loop_parameters_are_exported_without_aliasing():
+    parameters = {
+        "min_repeats": 4,
+        "max_cycle_length": 2,
+        "near_duplicate_threshold": 0.85,
+        "also_compare_results": False,
+    }
+    evaluator = get_eval_class("ToolCallLoopRepetition")(**parameters)
+    exported = evaluator.to_config()
+    assert exported == parameters
+    exported["min_repeats"] = 99
+    assert evaluator.to_config() == parameters
+
+
+def test_exported_parameters_round_trip_and_allow_runtime_override():
+    evaluator_class = get_eval_class("ToolCallLoopRepetition")
+    evaluator = evaluator_class(min_repeats=4, max_cycle_length=2)
+    assert evaluator.to_config() is not None
+    restored = evaluator_class(**evaluator.to_config())
+    calls = [{"name": "poll", "arguments": {"id": "job-1"}, "result": "waiting"}] * 3
+    assert restored._evaluate(output=calls)["failure"] is False
+    assert restored._evaluate(output=calls, min_repeats=3)["failure"] is True
+
+
 @pytest.mark.django_db
 @pytest.mark.parametrize("progress,min_repeats", [(False, 3), (True, 3), (False, 4)])
 def test_actual_eval_api_executes_registered_diagnostic(

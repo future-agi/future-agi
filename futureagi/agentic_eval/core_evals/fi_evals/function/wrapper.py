@@ -749,6 +749,11 @@ class ToolCallLoopRepetition(FunctionEvaluator):
             display_name=display_name,
         )
 
+    def to_config(self) -> dict:
+        # These constructor settings are merged at run time rather than held in
+        # _function_arguments, but still belong in the exported configuration.
+        return dict(self._loop_parameters)
+
     def _evaluate(self, **kwargs):
         # API execution supplies schema parameters again at run time. Merge
         # them once rather than passing duplicate keywords to the operation.
