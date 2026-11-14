@@ -9,7 +9,7 @@ import type { ScopeActor } from '../lib/scope-actors';
 import { ApiError } from '../lib/api-client';
 import { E2E } from '../lib/env';
 import {
-  TICKET, answerShape, countUpstream, expectedCost, largeCallIssues, largeState, refusalVerdict, rowIssues,
+  MOCK_REFUSAL_TEXT, TICKET, answerShape, countUpstream, expectedCost, largeCallIssues, largeState, refusalVerdict, rowIssues,
   semanticVerdict, unknownModelVerdict,
 } from '../lib/typesafe-live';
 import type { CallRecord, Verdict } from '../lib/typesafe-live';
@@ -41,7 +41,8 @@ import type { CallRecord, Verdict } from '../lib/typesafe-live';
 // artefacts before sharing them:
 //   SCAN_SECRET="$TYPESAFE_API_KEY" node scripts/scan-artefacts-for-secret.mjs playwright-report test-results
 //
-// Budget: about 40 upstream calls and 45k input tokens per run (< $0.01).
+// Budget: about 40 upstream calls and 60k-85k input tokens per run (< $0.01);
+// the header's totals count every call TypeSafe answered.
 
 const LIVE = process.env.E2E_TYPESAFE_LIVE === '1';
 const TYPESAFE_KEY = process.env.TYPESAFE_API_KEY ?? '';
@@ -255,7 +256,7 @@ async function run(page: Page, owner: ScopeActor, suffix: string) {
       { ...CONFIG_VISIBLE, message: 'gateway key synced' }).toBe(200);
   });
 
-  const call = async (label: string, body: unknown, opts: { headers?: Record<string, string>; raw?: string; upstream?: boolean } = {})
+  const call = async (label: string, body: unknown, opts: { headers?: Record<string, string>; raw?: string } = {})
     : Promise<CallRecord> => {
     const res = await gateway('POST', '/v1/systemone', { ...auth, ...(opts.headers ?? {}), 'Content-Type': 'application/json' },
       opts.raw ?? JSON.stringify(body));
@@ -265,8 +266,8 @@ async function run(page: Page, owner: ScopeActor, suffix: string) {
     const headers = Object.fromEntries(Object.entries(res.headers).filter(([k]) => k.startsWith('x-agentcc-')));
     const model = (body as { model?: string })?.model;
     const record: CallRecord = { label, request: { route: '/v1/systemone', model, body: truncateState(body ?? opts.raw) },
-      status: res.status, headers, body: parsed, logRow: 'not checked' };
-    countUpstream(report.header, record, opts.upstream !== false);
+      status: res.status, headers, body: parsed, text, logRow: 'not checked' };
+    countUpstream(report.header, record);
     return record;
   };
   const logRow = async (requestId: string | undefined, expectRow: boolean) => {
@@ -343,8 +344,8 @@ async function run(page: Page, owner: ScopeActor, suffix: string) {
   // ---------------------------------------------------------------- Case 5
   await step('Case 5: key auth, provider allow-list, rate limit and budget', async () => {
     const body = { model: 'typesafe/jev-latest', state: TICKET, questions: Q.noul };
-    const missing = await call('no gateway key', body, { headers: { Authorization: '' }, upstream: false });
-    const invalid = await call('invalid gateway key', body, { headers: { Authorization: 'Bearer sk-agentcc-not-a-real-key' }, upstream: false });
+    const missing = await call('no gateway key', body, { headers: { Authorization: '' } });
+    const invalid = await call('invalid gateway key', body, { headers: { Authorization: 'Bearer sk-agentcc-not-a-real-key' } });
     addCase({ id: '5a', title: 'Missing or invalid gateway key', ticket: 'Key auth applies', calls: [missing, invalid],
       verdict: missing.status === 401 && invalid.status === 401 ? 'PASS' : 'FAIL',
       actual: `missing ${missing.status} ${errorOf(missing).code ?? ''}, invalid ${invalid.status} ${errorOf(invalid).code ?? ''}` });
@@ -354,7 +355,7 @@ async function run(page: Page, owner: ScopeActor, suffix: string) {
     secrets.push(narrow.result.key);
     await expect.poll(async () => (await gateway('GET', '/v1/decisions/models', { Authorization: `Bearer ${narrow.result.key}` })).status,
       CONFIG_VISIBLE).not.toBe(401);
-    const b = await call('allowed_providers excludes typesafe', body, { headers: { Authorization: `Bearer ${narrow.result.key}` }, upstream: false });
+    const b = await call('allowed_providers excludes typesafe', body, { headers: { Authorization: `Bearer ${narrow.result.key}` } });
     addCase({ id: '5b', title: 'Key whose allowed_providers excludes typesafe', ticket: 'refused (403)', calls: [b],
       verdict: b.status === 403 && !b.headers['x-agentcc-upstream-status'] ? 'PASS' : 'FAIL',
       actual: `${b.status} ${errorOf(b).code ?? ''}; upstream status ${b.headers['x-agentcc-upstream-status'] ?? 'none'}` });
@@ -385,7 +386,7 @@ async function run(page: Page, owner: ScopeActor, suffix: string) {
       await expect.poll(async () => (await gateway('GET', '/v1/decisions/models', rlAuth)).status, CONFIG_VISIBLE).not.toBe(401);
       const first = await call('rpm=1 first', body, { headers: rlAuth });
       const before = await metric();
-      const second = await call('rpm=1 second', body, { headers: rlAuth, upstream: false });
+      const second = await call('rpm=1 second', body, { headers: rlAuth });
       const after = await metric();
       second.logRow = await logRow(second.headers['x-agentcc-request-id'], false);
       addCase({ id: '5c', title: 'Org per_key_rpm=1: the second call is refused before the upstream', ticket: 'Rate limit applies; refused before the upstream call',
@@ -405,7 +406,7 @@ async function run(page: Page, owner: ScopeActor, suffix: string) {
       await expect.poll(async () => (await gateway('GET', '/v1/decisions/models', bkAuth)).status, CONFIG_VISIBLE).not.toBe(401);
       const spend = await call('budget first (spends past the limit)', body, { headers: bkAuth });
       const b1 = await metric();
-      const refused = await call('budget second', body, { headers: bkAuth, upstream: false });
+      const refused = await call('budget second', body, { headers: bkAuth });
       const b2 = await metric();
       refused.logRow = await logRow(refused.headers['x-agentcc-request-id'], false);
       addCase({ id: '5d', title: 'Key budget: once spend crosses it the next call is refused before the upstream', ticket: 'Budget applies; refused before the upstream call',
@@ -429,20 +430,31 @@ async function run(page: Page, owner: ScopeActor, suffix: string) {
 
   // ---------------------------------------------------------------- Case 6
   await step('Case 6: error paths', async () => {
-    // No provider key on the org path: can the dashboard API save one at all?
-    const nokey = await tryApi(() => owner.api.post('/agentcc/provider-credentials/', {
-      provider_name: 'typesafe-nokey', base_url: BASE_URL || 'https://api.typesafe.ai', api_format: 'systemone', models_list: ['jev-latest'],
+    // No provider key: save a keyless TypeSafe provider on both paths, the
+    // dashboard dialog's (update-provider, key omitted as the dialog does when
+    // the field is blank) and the provider-credentials API (an empty key), so a
+    // refusal is the keyless-provider rule rather than a missing field.
+    const nokeyBase = BASE_URL || 'https://api.typesafe.ai';
+    const viaDialog = await tryApi(() => owner.api.post(new URL(providerCfg.saveUrl).pathname,
+      { name: 'typesafe-nokey', config: { base_url: nokeyBase, api_format: 'systemone', models: ['jev-latest'] } }));
+    const viaApi = await tryApi(() => owner.api.post('/agentcc/provider-credentials/', {
+      provider_name: 'typesafe-nokey', credentials: { api_key: '' }, base_url: nokeyBase, api_format: 'systemone', models_list: ['jev-latest'],
     }));
+    const saves = [['dashboard save (update-provider)', viaDialog], ['provider-credentials API', viaApi]] as const;
+    // The keyless rule names the key; DRF's own "This field is required." does not.
+    const keyRule = (r: { status: number; body: unknown }) => r.status === 400 && /api[ _]key/i.test(JSON.stringify(r.body));
     let nokeyCall: CallRecord | undefined;
-    if (nokey.status >= 200 && nokey.status < 300) {
+    if (saves.some(([, r]) => r.status >= 200 && r.status < 300)) {
       await new Promise(r => setTimeout(r, 5_000));
-      nokeyCall = await call('provider saved without a key', { model: 'typesafe-nokey/jev-latest', state: TICKET, questions: Q.noul }, { upstream: false });
+      nokeyCall = await call('provider saved without a key', { model: 'typesafe-nokey/jev-latest', state: TICKET, questions: Q.noul });
       nokeyCall.logRow = await logRow(nokeyCall.headers['x-agentcc-request-id'], false);
     }
+    const saveText = saves.map(([name, r]) => `${name} ${r.status} ${JSON.stringify(r.body).slice(0, 160)}`).join('; ');
     addCase({ id: '6a', title: 'No provider key', ticket: 'No provider key: refused locally', calls: nokeyCall ? [nokeyCall] : [],
-      verdict: nokeyCall ? (nokeyCall.status === 403 && !nokeyCall.headers['x-agentcc-upstream-status'] ? 'PASS' : 'FAIL') : 'NOTE',
-      actual: nokeyCall ? `${nokeyCall.status} ${errorOf(nokeyCall).code}: ${errorOf(nokeyCall).message}; log row ${JSON.stringify(nokeyCall.logRow)}`
-        : `the provider-credentials API refused a TypeSafe provider without a key (${nokey.status}), so the gateway path cannot be reached from the dashboard` });
+      verdict: nokeyCall ? (nokeyCall.status === 403 && !nokeyCall.headers['x-agentcc-upstream-status'] ? 'PASS' : 'FAIL')
+        : saves.every(([, r]) => keyRule(r)) ? 'PASS' : 'NOTE',
+      actual: nokeyCall ? `${saveText}; gateway ${nokeyCall.status} ${errorOf(nokeyCall).code}: ${errorOf(nokeyCall).message}; log row ${JSON.stringify(nokeyCall.logRow)}`
+        : `refused at save time, no upstream call possible: ${saveText}` });
 
     const malformed: Array<[string, unknown, string | undefined, number, string]> = [
       ['questions missing', { model: 'typesafe/jev-latest', state: TICKET }, undefined, 400, 'missing_questions'],
@@ -453,7 +465,7 @@ async function run(page: Page, owner: ScopeActor, suffix: string) {
     const envelopeCalls: CallRecord[] = [];
     const envelopeIssues: string[] = [];
     for (const [label, body, raw, status, code] of malformed) {
-      const c = await call(label, body, { raw, upstream: false });
+      const c = await call(label, body, { raw });
       c.logRow = await logRow(c.headers['x-agentcc-request-id'], false);
       envelopeCalls.push(c);
       if (c.status !== status || errorOf(c).code !== code || c.headers['x-agentcc-upstream-status']) {
@@ -477,13 +489,20 @@ async function run(page: Page, owner: ScopeActor, suffix: string) {
     addCase({ id: '6c', title: 'Semantically bad questions reach TypeSafe', ticket: 'Malformed questions: 400 with a clear message', calls: semantic,
       verdict: semanticVerdict(semantic, { dryRun: DRY_RUN }),
       actual: semantic.map(c => `${c.label}: gateway ${c.status} ${errorOf(c).code}, upstream ${c.headers['x-agentcc-upstream-status'] ?? 'none'}, message "${errorOf(c).message}"`).join('; ') });
+    for (const c of semantic.filter(x => x.status === 200)) {
+      report.specQuestions.push(`TypeSafe answered "${c.label}" (200) rather than refusing it. Is that its intended reading of the question, or should the gateway validate it?`);
+    }
 
     const refusal = await call('200 refusal answer', { model: 'typesafe/jev-latest', state: `${TICKET} e2e-decision:refuse`, questions: Q.noul });
     const refusalAnswer = (refusal.body as { answers?: Record<string, { type?: string }> })?.answers?.resolved?.type;
+    const refusalVerdictValue = refusalVerdict(refusal, { dryRun: DRY_RUN });
     addCase({ id: '6d', title: 'A 200 answer holding a refusal passes through', ticket: 'Upstream refusal: passed through, not a 502', calls: [refusal],
-      verdict: refusalVerdict(refusal, { dryRun: DRY_RUN }),
-      actual: refusalAnswer === 'refusal' ? '200 with answers.resolved = {"type":"refusal"}, unchanged'
-        : `${refusal.status}; TypeSafe answered "${refusalAnswer}" (a live refusal cannot be forced with synthetic text; dry-run evidence covers it)` });
+      verdict: refusalVerdictValue,
+      actual: DRY_RUN
+        ? (refusalVerdictValue === 'PASS' ? `200 with the mock's refusal body byte for byte: ${MOCK_REFUSAL_TEXT}`
+          : `${refusal.status} ${String(refusal.text)}; want 200 with the mock's bytes ${MOCK_REFUSAL_TEXT}`)
+        : refusalAnswer === 'refusal' ? '200 with answers.resolved = {"type":"refusal"}'
+          : `${refusal.status}; TypeSafe answered "${refusalAnswer}" (a live refusal cannot be forced with synthetic text; dry-run evidence covers it)` });
 
     const badKey = await call('provider with an invalid TypeSafe key', { model: `${BAD_KEY_PROVIDER}/jev-latest`, state: TICKET, questions: Q.noul });
     badKey.logRow = await logRow(badKey.headers['x-agentcc-request-id'], true);
@@ -495,7 +514,7 @@ async function run(page: Page, owner: ScopeActor, suffix: string) {
   // ---------------------------------------------------------------- Case 7
   await step('Case 7: pinned jev-1.14.0 vs jev-latest pricing', async () => {
     const body = (model: string, state = TICKET) => ({ model, state, questions: Q.noul });
-    const asShipped = await call('jev-1.14.0 on the preset provider', body('typesafe/jev-1.14.0'), { upstream: false });
+    const asShipped = await call('jev-1.14.0 on the preset provider', body('typesafe/jev-1.14.0'));
     asShipped.logRow = await logRow(asShipped.headers['x-agentcc-request-id'], false);
     const presetListsPinned = asShipped.status === 200;
     addCase({ id: '7a', title: 'typesafe/jev-1.14.0 on a preset-created provider', ticket: 'The pinned version and jev-latest give the same pricing',
