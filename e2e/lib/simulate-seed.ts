@@ -211,6 +211,8 @@ export interface ParticipantsSeed {
   testExecutionId: string;
   callExecutionId: string;
   traceId: string;
+  // A second call the user stopped mid-call: a worker cut short as cancelled, its run's sandbox removed.
+  cancelledCallExecutionId: string;
 }
 
 const PARTICIPANTS_SEED_SCRIPT = `
@@ -229,7 +231,7 @@ from django.utils import timezone
 from accounts.models import Organization
 from accounts.models.workspace import Workspace
 from model_hub.models.choices import StatusType
-from simulate.models import AgentDefinition, HostedHarnessJob, RunTest, Scenarios
+from simulate.models import AgentDefinition, HostedHarnessAttempt, HostedHarnessJob, RunTest, Scenarios
 from simulate.models.test_execution import CallExecution, TestExecution
 from simulate.services.agent_setup import store_agent
 from tracer.services.simulation_project import ensure_simulation_project
@@ -377,6 +379,15 @@ def main():
                                   "reason": "orders.update_status is not permitted for order_lookup"}]},
         ],
         "decisions": [],
+        # Two workers named the same order: the World changes tab lists the record and its committed writes.
+        "shared_records": [
+            {"key": "order_id=1042", "argument": "order_id", "value": "1042", "committed_writes": 1,
+             "truncated": False,
+             "actions": [
+                 {"who": "worker:order_lookup", "tool": "list_refunds", "outcome": "committed", "write": None},
+                 {"who": "worker:refund", "tool": "issue_refund", "outcome": "committed", "write": True},
+             ]},
+        ],
     }
     call = CallExecution.objects.create(
         test_execution=execution,
@@ -388,12 +399,35 @@ def main():
     )
     # The span the trace is: in the agent's project, marked with this run and this call, as the harness marks them.
     send_span(project.id, trace_id, environment.id, call.id)
+    # The run's attempt with its sandbox removed, and a call the user stopped while the refund hand-off was out.
+    HostedHarnessJob.no_workspace_objects.filter(id=environment.id).update(current_attempt_number=1)
+    HostedHarnessAttempt.no_workspace_objects.create(
+        job=environment, attempt_number=1, token_hash="t" * 64, fence_hash="f" * 64,
+        expires_at=timezone.now() + timedelta(hours=1), cleanup_verified_at=timezone.now(),
+    )
+    stopped = {
+        **record,
+        "workers": [
+            {**record["workers"][0], "state": "completed"},
+            {**record["workers"][1], "state": "cancelled"},
+        ],
+        "events": record["events"][:4],
+    }
+    cancelled = CallExecution.objects.create(
+        test_execution=execution,
+        scenario=scenario,
+        status=CallExecution.CallStatus.CANCELLED,
+        simulation_call_type=CallExecution.SimulationCallType.TEXT,
+        completed_at=timezone.now(),
+        call_metadata={"harness_workers": stopped},
+    )
     print(json.dumps({
         "environmentId": str(environment.id),
         "runTestId": str(run_test.id),
         "testExecutionId": str(execution.id),
         "callExecutionId": str(call.id),
         "traceId": trace_id,
+        "cancelledCallExecutionId": str(cancelled.id),
     }))
 
 
