@@ -1479,6 +1479,40 @@ class TestReviewFollowUps:
         )
         assert sum(read) < len(body) // 4
 
+    @pytest.mark.parametrize(
+        "stored",
+        [
+            {"tools": [], "actions": [], "routed": [], "unobserved": []},
+            ({"tools": []}, True, "extra"),
+            "garbage",
+        ],
+    )
+    def test_a_cached_reading_of_another_shape_is_read_again(self, storage, stored):
+        import hashlib
+
+        from simulate.services.harness_readiness import evidence
+
+        key = "harness-sealed/stream/old-shape.tar.gz"
+        storage.objects[key] = archives.pack_archive(
+            {
+                harness_readiness.TOOL_CERTIFICATION: json.dumps(
+                    {"tools": TOOLS}
+                ).encode(),
+            }
+        )
+        cache_key = (
+            "harness-readiness-certification:"
+            + hashlib.sha256(key.encode()).hexdigest()
+        )
+        # What an earlier release could have left under the same key.
+        cache.set(cache_key, stored)
+
+        files, readable = evidence._read_once(key)
+
+        assert readable is True
+        assert files["tools"] == TOOLS
+        cache.delete(cache_key)
+
     def test_a_second_reader_waits_for_the_first_instead_of_downloading(self, storage):
         import hashlib
 
