@@ -452,7 +452,12 @@ class GraphDataConsumer(DataConsumer):
         if self.eval_id and self.eval_id not in evaluations:
             evaluations[self.eval_id] = {
                 "name": "",
-                "data": [{"name": selected_name[0], "value": []}],
+                "data": [
+                    {
+                        "name": selected_name[0][0] if selected_name else "",
+                        "value": [],
+                    }
+                ],
             }
 
         if self.property:
