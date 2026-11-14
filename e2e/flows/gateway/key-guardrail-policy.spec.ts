@@ -31,10 +31,10 @@ type KeyPolicyWire = { id: string; name: string; mode: string; key_ids: string[]
 type GatewayConfigs = { data: Record<string, { guardrails?: { key_policies?: KeyPolicyWire[] } }> };
 type GuardrailEntry = { name: string; action: string; policy_name?: string; policy_scope?: string; mode?: string; outcome?: string; would_action?: string };
 
-test('GW-E2E-005: an admin applies a guardrail policy to one gateway key, first monitoring and then enforcing it', {
+test('GW-E2E-006: an admin applies a guardrail policy to one gateway key, first monitoring and then enforcing it', {
   tag: ['@flow'],
   annotation: flowAnnotation({
-    id: 'GW-E2E-005',
+    id: 'GW-E2E-006',
     area: 'gateway',
     userGoal: 'An admin rolls a guardrail out to a single API key: monitor it first, then enforce it, without affecting other keys or weakening org-wide guardrails',
     steps: [
