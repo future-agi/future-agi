@@ -1065,7 +1065,8 @@ _FILED_BY_MODULE: dict[str, dict[str, Filing]] = {
             why="health check compares Postgres with the change-data-capture tables",
             table="tracer_trace, trace_session and tracer_eval_logger",
         ),
-        "ConsistencyChecker.get_cdc_lag": _CDC_LAG_CHECK,
+        "ConsistencyChecker._latest_sync": _CDC_LAG_CHECK,
+        "ConsistencyChecker._sample_source": _CDC_LAG_CHECK,
     },
     "tracer.services.clickhouse.eval_logger_table": {
         "latest_completed_eval_rows": filed(
