@@ -376,7 +376,9 @@ def build_prompt_v8_with_view(payloads):
             if s.get("out"):
                 parts.append(f"      out: {field(s['out'])}")
             span_parts.append((s, len(parts) - 1))
-    header = f"TRACE {u(t.get('tid', 't1'))}\n{_TRACE_DATA_PREAMBLE}\n{TRACE_DATA_OPEN}\n"
+    header = (
+        f"TRACE {u(t.get('tid', 't1'))}\n{_TRACE_DATA_PREAMBLE}\n{TRACE_DATA_OPEN}\n"
+    )
     footer = f"\n{TRACE_DATA_CLOSE}\n{_TRACE_DATA_REMINDER}"
     body = "\n".join(parts)
     # The framing counts against the guard, so a cut trace still closes its

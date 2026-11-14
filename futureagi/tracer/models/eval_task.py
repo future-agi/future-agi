@@ -83,9 +83,7 @@ class EvalTask(BaseModel):
     # Eval-config revision (see ``reconciler._evals_revision``) that the last
     # cursor-less full reclassification pass covered. A continuous task runs one
     # full pass per revision; while this matches, every poll is a cheap delta.
-    reclassified_evals_revision = models.CharField(
-        max_length=64, blank=True, null=True
-    )
+    reclassified_evals_revision = models.CharField(max_length=64, blank=True, null=True)
     evals_details = models.JSONField(default=list, blank=True, null=True)
     evals = models.ManyToManyField(
         CustomEvalConfig, related_name="eval_tasks", blank=True, null=True
