@@ -66,10 +66,11 @@ def _agent(spans: list[dict]) -> ClusterAnalysisAgent:
 
 
 def _read(agent, depth="summary"):
-    with patch(
-        "ee.agenthub.cluster_rca.agent.list_attributes_for_trace", return_value=[]
-    ), patch(
-        "ee.agenthub.cluster_rca.selectors.trace_eval_results", return_value=[]
+    with (
+        patch(
+            "ee.agenthub.cluster_rca.agent.list_attributes_for_trace", return_value=[]
+        ),
+        patch("ee.agenthub.cluster_rca.selectors.trace_eval_results", return_value=[]),
     ):
         return agent._read_trace("T01", depth)
 

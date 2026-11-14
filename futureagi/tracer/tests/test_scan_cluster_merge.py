@@ -28,7 +28,9 @@ from tracer.models.trace_error_analysis import (
 from tracer.queries.scan_clustering import merge_duplicate_clusters
 
 
-def _cluster(project_id, cluster_id, *, members, traces, unique=None, category="Tool-related"):
+def _cluster(
+    project_id, cluster_id, *, members, traces, unique=None, category="Tool-related"
+):
     return TraceErrorGroup.objects.create(
         project_id=project_id,
         cluster_id=cluster_id,
@@ -57,8 +59,8 @@ def _ch(rows):
 
 CAT = "Tool-related"
 NEAR_A = [1.0, 0.0, 0.0]
-NEAR_B = [0.98, 0.02, 0.0]      # cosine distance well under threshold
-FAR = [0.0, 1.0, 0.0]           # orthogonal — must never merge
+NEAR_B = [0.98, 0.02, 0.0]  # cosine distance well under threshold
+FAR = [0.0, 1.0, 0.0]  # orthogonal — must never merge
 
 
 @pytest.mark.django_db
@@ -68,11 +70,13 @@ class TestMergeDuplicateClusters:
         big = _cluster(pid, "C1", members=9, traces=[])
         small = _cluster(pid, "C2", members=2, traces=[])
         rows = [("C1", NEAR_A, 9, CAT), ("C2", NEAR_B, 2, CAT)]
-        with patch("tracer.queries.scan_clustering.ClickHouseVectorDB", _ch(rows)), \
-             patch("tracer.queries.scan_clustering.ensure_centroid_table"), \
-             patch("tracer.queries.scan_clustering._absorb_centroid"), \
-             patch("tracer.queries.scan_clustering._absorb_centroid"), \
-             patch("tracer.queries.scan_clustering.delete_centroid") as dc:
+        with (
+            patch("tracer.queries.scan_clustering.ClickHouseVectorDB", _ch(rows)),
+            patch("tracer.queries.scan_clustering.ensure_centroid_table"),
+            patch("tracer.queries.scan_clustering._absorb_centroid"),
+            patch("tracer.queries.scan_clustering._absorb_centroid"),
+            patch("tracer.queries.scan_clustering.delete_centroid") as dc,
+        ):
             merged = merge_duplicate_clusters(pid)
 
         assert merged == 1
@@ -80,9 +84,9 @@ class TestMergeDuplicateClusters:
         # the id users already see in the feed is the one that survives
         survivor = TraceErrorGroup.objects.get(project_id=pid)
         assert survivor.cluster_id == "C1"
-        assert survivor.error_count == 11        # 9 + 2, nothing dropped
+        assert survivor.error_count == 11  # 9 + 2, nothing dropped
         assert survivor.total_events == 11
-        dc.assert_called_once_with("C2", pid)    # orphan centroid cleaned up
+        dc.assert_called_once_with("C2", pid)  # orphan centroid cleaned up
         assert not TraceErrorGroup.objects.filter(cluster_id=small.cluster_id).exists()
         assert big.cluster_id == survivor.cluster_id
 
@@ -91,10 +95,12 @@ class TestMergeDuplicateClusters:
         _cluster(pid, "C1", members=5, traces=[])
         _cluster(pid, "C2", members=5, traces=[])
         rows = [("C1", NEAR_A, 5, CAT), ("C2", FAR, 5, CAT)]
-        with patch("tracer.queries.scan_clustering.ClickHouseVectorDB", _ch(rows)), \
-             patch("tracer.queries.scan_clustering.ensure_centroid_table"), \
-             patch("tracer.queries.scan_clustering._absorb_centroid"), \
-             patch("tracer.queries.scan_clustering.delete_centroid"):
+        with (
+            patch("tracer.queries.scan_clustering.ClickHouseVectorDB", _ch(rows)),
+            patch("tracer.queries.scan_clustering.ensure_centroid_table"),
+            patch("tracer.queries.scan_clustering._absorb_centroid"),
+            patch("tracer.queries.scan_clustering.delete_centroid"),
+        ):
             merged = merge_duplicate_clusters(pid)
 
         assert merged == 0
@@ -106,10 +112,12 @@ class TestMergeDuplicateClusters:
         pid = project.id
         _cluster(pid, "C1", members=5, traces=[])
         rows = [("C1", NEAR_A, 5, CAT), ("GHOST", NEAR_B, 4, CAT)]
-        with patch("tracer.queries.scan_clustering.ClickHouseVectorDB", _ch(rows)), \
-             patch("tracer.queries.scan_clustering.ensure_centroid_table"), \
-             patch("tracer.queries.scan_clustering._absorb_centroid"), \
-             patch("tracer.queries.scan_clustering.delete_centroid"):
+        with (
+            patch("tracer.queries.scan_clustering.ClickHouseVectorDB", _ch(rows)),
+            patch("tracer.queries.scan_clustering.ensure_centroid_table"),
+            patch("tracer.queries.scan_clustering._absorb_centroid"),
+            patch("tracer.queries.scan_clustering.delete_centroid"),
+        ):
             merged = merge_duplicate_clusters(pid)
 
         assert merged == 0
@@ -130,10 +138,12 @@ class TestMergeDuplicateClusters:
                 cid = f"C{k}{half}"
                 _cluster(pid, cid, members=size, traces=[])
                 rows.append((cid, vec, size, CAT))
-        with patch("tracer.queries.scan_clustering.ClickHouseVectorDB", _ch(rows)), \
-             patch("tracer.queries.scan_clustering.ensure_centroid_table"), \
-             patch("tracer.queries.scan_clustering._absorb_centroid"), \
-             patch("tracer.queries.scan_clustering.delete_centroid"):
+        with (
+            patch("tracer.queries.scan_clustering.ClickHouseVectorDB", _ch(rows)),
+            patch("tracer.queries.scan_clustering.ensure_centroid_table"),
+            patch("tracer.queries.scan_clustering._absorb_centroid"),
+            patch("tracer.queries.scan_clustering.delete_centroid"),
+        ):
             merged = merge_duplicate_clusters(pid, max_merges=2)
 
         assert merged == 2
@@ -143,10 +153,12 @@ class TestMergeDuplicateClusters:
         pid = project.id
         _cluster(pid, "C1", members=3, traces=[])
         rows = [("C1", NEAR_A, 3, CAT)]
-        with patch("tracer.queries.scan_clustering.ClickHouseVectorDB", _ch(rows)), \
-             patch("tracer.queries.scan_clustering.ensure_centroid_table"), \
-             patch("tracer.queries.scan_clustering._absorb_centroid"), \
-             patch("tracer.queries.scan_clustering.delete_centroid"):
+        with (
+            patch("tracer.queries.scan_clustering.ClickHouseVectorDB", _ch(rows)),
+            patch("tracer.queries.scan_clustering.ensure_centroid_table"),
+            patch("tracer.queries.scan_clustering._absorb_centroid"),
+            patch("tracer.queries.scan_clustering.delete_centroid"),
+        ):
             assert merge_duplicate_clusters(pid) == 0
 
 
@@ -167,12 +179,16 @@ class TestMergeNeverBecomesReclustering:
         pid = project.id
         _cluster(pid, "C1", members=9, traces=[], category="Tool-related")
         _cluster(pid, "C2", members=2, traces=[], category="Incorrect Memory Usage")
-        rows = [("C1", NEAR_A, 9, "Tool-related"),
-                ("C2", NEAR_B, 2, "Incorrect Memory Usage")]
-        with patch("tracer.queries.scan_clustering.ClickHouseVectorDB", _ch(rows)), \
-             patch("tracer.queries.scan_clustering.ensure_centroid_table"), \
-             patch("tracer.queries.scan_clustering._absorb_centroid"), \
-             patch("tracer.queries.scan_clustering.delete_centroid"):
+        rows = [
+            ("C1", NEAR_A, 9, "Tool-related"),
+            ("C2", NEAR_B, 2, "Incorrect Memory Usage"),
+        ]
+        with (
+            patch("tracer.queries.scan_clustering.ClickHouseVectorDB", _ch(rows)),
+            patch("tracer.queries.scan_clustering.ensure_centroid_table"),
+            patch("tracer.queries.scan_clustering._absorb_centroid"),
+            patch("tracer.queries.scan_clustering.delete_centroid"),
+        ):
             assert merge_duplicate_clusters(pid) == 0
         assert TraceErrorGroup.objects.filter(project_id=pid).count() == 2
 
@@ -186,18 +202,22 @@ class TestMergeNeverBecomesReclustering:
             _cluster(pid, cid, members=size, traces=[])
         rows = [
             ("H", [1.0, 0.0, 0.0], 9, CAT),
-            ("X", [0.70, 0.7141428, 0.0], 4, CAT),      # 0.30 from H
-            ("Y", [0.65, 0.0, 0.7599342], 3, CAT),      # 0.35 from H, 0.545 from X
+            ("X", [0.70, 0.7141428, 0.0], 4, CAT),  # 0.30 from H
+            ("Y", [0.65, 0.0, 0.7599342], 3, CAT),  # 0.35 from H, 0.545 from X
         ]
-        with patch("tracer.queries.scan_clustering.ClickHouseVectorDB", _ch(rows)), \
-             patch("tracer.queries.scan_clustering.ensure_centroid_table"), \
-             patch("tracer.queries.scan_clustering._absorb_centroid"), \
-             patch("tracer.queries.scan_clustering.delete_centroid"):
+        with (
+            patch("tracer.queries.scan_clustering.ClickHouseVectorDB", _ch(rows)),
+            patch("tracer.queries.scan_clustering.ensure_centroid_table"),
+            patch("tracer.queries.scan_clustering._absorb_centroid"),
+            patch("tracer.queries.scan_clustering.delete_centroid"),
+        ):
             assert merge_duplicate_clusters(pid) == 1
 
         assert TraceErrorGroup.objects.filter(project_id=pid).count() == 2
         assert TraceErrorGroup.objects.filter(cluster_id="Y").exists()
-        assert TraceErrorGroup.objects.get(cluster_id="H").error_count == 13  # H + X only
+        assert (
+            TraceErrorGroup.objects.get(cluster_id="H").error_count == 13
+        )  # H + X only
 
 
 @pytest.mark.django_db
@@ -215,10 +235,12 @@ class TestJunctionReconciliation:
         ErrorClusterTraces.objects.create(cluster=absorb, trace_id=only_in_absorb)
 
         rows = [("C1", NEAR_A, 4, CAT), ("C2", NEAR_B, 2, CAT)]
-        with patch("tracer.queries.scan_clustering.ClickHouseVectorDB", _ch(rows)), \
-             patch("tracer.queries.scan_clustering.ensure_centroid_table"), \
-             patch("tracer.queries.scan_clustering._absorb_centroid"), \
-             patch("tracer.queries.scan_clustering.delete_centroid"):
+        with (
+            patch("tracer.queries.scan_clustering.ClickHouseVectorDB", _ch(rows)),
+            patch("tracer.queries.scan_clustering.ensure_centroid_table"),
+            patch("tracer.queries.scan_clustering._absorb_centroid"),
+            patch("tracer.queries.scan_clustering.delete_centroid"),
+        ):
             assert merge_duplicate_clusters(pid) == 1
 
         survivor = TraceErrorGroup.objects.get(project_id=pid)
@@ -227,7 +249,7 @@ class TestJunctionReconciliation:
                 "trace_id", flat=True
             )
         )
-        assert traces == {shared, only_in_absorb}       # deduped, nothing lost
+        assert traces == {shared, only_in_absorb}  # deduped, nothing lost
         assert ErrorClusterTraces.objects.filter(cluster=survivor).count() == 2
         assert survivor.unique_traces == 2
 
@@ -243,29 +265,34 @@ class TestTriageIsNeverTrampled:
 
     def _run(self, pid):
         rows = [("C1", NEAR_A, 9, CAT), ("C2", NEAR_B, 2, CAT)]
-        with patch("tracer.queries.scan_clustering.ClickHouseVectorDB", _ch(rows)), \
-             patch("tracer.queries.scan_clustering.ensure_centroid_table"), \
-             patch("tracer.queries.scan_clustering._absorb_centroid"), \
-             patch("tracer.queries.scan_clustering.delete_centroid"):
+        with (
+            patch("tracer.queries.scan_clustering.ClickHouseVectorDB", _ch(rows)),
+            patch("tracer.queries.scan_clustering.ensure_centroid_table"),
+            patch("tracer.queries.scan_clustering._absorb_centroid"),
+            patch("tracer.queries.scan_clustering.delete_centroid"),
+        ):
             return merge_duplicate_clusters(pid)
 
     def test_triaged_cluster_survives_even_when_smaller(self, project):
         pid = project.id
-        big = _cluster(pid, "C1", members=9, traces=[])          # would normally win
+        big = _cluster(pid, "C1", members=9, traces=[])  # would normally win
         small = _cluster(pid, "C2", members=2, traces=[])
         small.status = FeedIssueStatus.RESOLVED
         small.save(update_fields=["status"])
 
         assert self._run(pid) == 1
         survivor = TraceErrorGroup.objects.get(project_id=pid)
-        assert survivor.cluster_id == "C2"                        # the triaged one survives
-        assert survivor.status == FeedIssueStatus.RESOLVED        # and keeps its decision
-        assert survivor.error_count == 11                         # nothing lost
+        assert survivor.cluster_id == "C2"  # the triaged one survives
+        assert survivor.status == FeedIssueStatus.RESOLVED  # and keeps its decision
+        assert survivor.error_count == 11  # nothing lost
         assert not TraceErrorGroup.objects.filter(cluster_id=big.cluster_id).exists()
 
     def test_two_triaged_clusters_are_left_alone(self, project):
         pid = project.id
-        for cid, st in (("C1", FeedIssueStatus.ACKNOWLEDGED), ("C2", FeedIssueStatus.RESOLVED)):
+        for cid, st in (
+            ("C1", FeedIssueStatus.ACKNOWLEDGED),
+            ("C2", FeedIssueStatus.RESOLVED),
+        ):
             c = _cluster(pid, cid, members=5, traces=[])
             c.status = st
             c.save(update_fields=["status"])

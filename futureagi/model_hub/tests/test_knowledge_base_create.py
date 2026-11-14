@@ -251,9 +251,7 @@ class TestLegacyKbCreateHappyPath:
     def test_kb_created_without_files_is_scoped_to_caller_org(
         self, auth_client, allow_entitlements, stub_upload_pipeline, organization
     ):
-        response = auth_client.post(
-            KB_URL, {"name": "empty-kb"}, format="multipart"
-        )
+        response = auth_client.post(KB_URL, {"name": "empty-kb"}, format="multipart")
 
         assert response.status_code == status.HTTP_200_OK
         kb = KnowledgeBaseFile.objects.get(id=response.json()["result"]["kb_id"])
@@ -271,7 +269,7 @@ class TestLegacyKbSdkSnippet:
 
         assert response.status_code == status.HTTP_200_OK
         code = response.json()["result"]["code"]
-        assert "client.create_kb(name=\"snippet-kb\"" in code
+        assert 'client.create_kb(name="snippet-kb"' in code
         assert "from fi.kb.client import KnowledgeBase" in code
 
     def test_update_branch_is_selected_by_type_param(self, auth_client):

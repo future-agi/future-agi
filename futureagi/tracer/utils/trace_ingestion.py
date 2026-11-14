@@ -251,7 +251,12 @@ def _fetch_or_create_traces(
     if not trace_ids:
         return {}
 
-    existing_traces = {t.id: t for t in Trace.objects.filter(id__in=trace_ids)}
+    # Primary: an earlier export batch of the same trace creates it moments
+    # before this one, and a replica that has not applied it would make this
+    # batch COPY it again.
+    existing_traces = {
+        t.id: t for t in Trace.objects.using("default").filter(id__in=trace_ids)
+    }
 
     unique_new_traces = {}
     for d in parsed_data_list:

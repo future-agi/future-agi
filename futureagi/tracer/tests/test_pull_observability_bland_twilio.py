@@ -222,16 +222,16 @@ def _provider(provider_value, api_key="k", assistant_id="a"):
 @pytest.mark.unit
 def test_get_call_logs_dispatches_bland_and_twilio():
     with patch.object(ObservabilityService, "_fetch_bland_logs", return_value=[1]) as b:
-        assert (
-            ObservabilityService.get_call_logs(_provider(ProviderChoices.BLAND)) == [1]
-        )
+        assert ObservabilityService.get_call_logs(_provider(ProviderChoices.BLAND)) == [
+            1
+        ]
         b.assert_called_once()
     with patch.object(
         ObservabilityService, "_fetch_twilio_logs", return_value=[2]
     ) as t:
-        assert (
-            ObservabilityService.get_call_logs(_provider(ProviderChoices.TWILIO)) == [2]
-        )
+        assert ObservabilityService.get_call_logs(
+            _provider(ProviderChoices.TWILIO)
+        ) == [2]
         t.assert_called_once()
 
 
@@ -303,7 +303,11 @@ def test_process_raw_logs_eleven_labs_normalizes_status_and_utc():
     ("provider", "payload", "expected"),
     [
         (ProviderChoices.BLAND, {**BLAND_CALL, "status": "queued"}, "in-progress"),
-        (ProviderChoices.TWILIO, {**TWILIO_CALL, "status": "no-answer"}, "not-connected"),
+        (
+            ProviderChoices.TWILIO,
+            {**TWILIO_CALL, "status": "no-answer"},
+            "not-connected",
+        ),
         (
             ProviderChoices.ELEVEN_LABS,
             {**ELEVEN_LABS_RAW, "status": "failed"},
@@ -317,7 +321,9 @@ def test_process_raw_logs_eleven_labs_normalizes_status_and_utc():
     ],
 )
 def test_process_raw_logs_canonicalizes_provider_status(provider, payload, expected):
-    assert ObservabilityService.process_raw_logs(payload, provider)["status"] == expected
+    assert (
+        ObservabilityService.process_raw_logs(payload, provider)["status"] == expected
+    )
 
 
 @pytest.mark.unit
@@ -334,9 +340,9 @@ def test_process_raw_logs_status_always_stays_in_closed_vocabulary():
     for value in transitions:
         payload = {**ELEVEN_LABS_RAW, "status": value}
         assert (
-            ObservabilityService.process_raw_logs(
-                payload, ProviderChoices.ELEVEN_LABS
-            )["status"]
+            ObservabilityService.process_raw_logs(payload, ProviderChoices.ELEVEN_LABS)[
+                "status"
+            ]
             == "in-progress"
         )
 
@@ -358,13 +364,19 @@ def test_process_raw_logs_status_always_stays_in_closed_vocabulary():
         (ProviderChoices.TWILIO, {"sid": "t-1"}, None),
     )
     for provider, payload, expected in missing_cases:
-        assert ObservabilityService.process_raw_logs(payload, provider)["status"] == expected
+        assert (
+            ObservabilityService.process_raw_logs(payload, provider)["status"]
+            == expected
+        )
 
     for provider, payload in (
         (ProviderChoices.BLAND, {**BLAND_CALL, "status": "future-provider-state"}),
         (ProviderChoices.TWILIO, {**TWILIO_CALL, "status": "future-provider-state"}),
     ):
-        assert ObservabilityService.process_raw_logs(payload, provider)["status"] == "in-progress"
+        assert (
+            ObservabilityService.process_raw_logs(payload, provider)["status"]
+            == "in-progress"
+        )
 
 
 @pytest.mark.unit

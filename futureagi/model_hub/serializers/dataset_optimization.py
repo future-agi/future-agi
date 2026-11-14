@@ -591,14 +591,10 @@ class DatasetOptimizationDetailSerializer(serializers.ModelSerializer):
                     "id": str(eval_metric.id),
                     "eval_id": str(eval_metric.id),
                     "name": (
-                        eval_metric.template.name
-                        if eval_metric.template
-                        else "Eval"
+                        eval_metric.template.name if eval_metric.template else "Eval"
                     ),
                     "template_id": (
-                        str(eval_metric.template.id)
-                        if eval_metric.template
-                        else None
+                        str(eval_metric.template.id) if eval_metric.template else None
                     ),
                 }
             )

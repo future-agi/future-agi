@@ -533,6 +533,8 @@ export const endpoints = {
     knowledgeBase: apiPath("/model-hub/knowledge-base/"),
     list: apiPath("/model-hub/knowledge-base/get/"),
     files: apiPath("/model-hub/knowledge-base/files/"),
+    downloadFile: (kbId) =>
+      apiPath("/model-hub/kb/{id}/download-file/", { id: kbId }),
   },
   customMetric: {
     list: (modelId) =>
