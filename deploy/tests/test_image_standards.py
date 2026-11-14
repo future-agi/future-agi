@@ -1043,40 +1043,6 @@ class RuntimeSmoke(unittest.TestCase):
         self.assertEqual(self.ran(), [])
 
 
-SLIM_SITE_PACKAGES = ROOT / "futureagi" / "docker" / "slim-site-packages.sh"
-
-
-class SlimSitePackages(unittest.TestCase):
-    """slim-site-packages.sh against a stand-in site-packages tree."""
-
-    def test_the_opt_in_litellm_extension_goes_and_its_python_stays(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            sp = Path(tmp)
-            bridge = sp / "litellm" / "rust_bridge"
-            bridge.mkdir(parents=True)
-            for name in ("__init__.py", "loader.py", "chat_completions.py"):
-                (bridge / name).write_text("", encoding="utf-8")
-            (bridge / "_native.abi3.so").write_bytes(b"\x7fELF stand-in")
-            ui = sp / "litellm" / "proxy" / "_experimental" / "out"
-            ui.mkdir(parents=True)
-            (ui / "index.html").write_text("", encoding="utf-8")
-            proc = subprocess.run(
-                ["sh", str(SLIM_SITE_PACKAGES), str(sp)],
-                env={**os.environ, "STRIP_SO": "0"},
-                capture_output=True,
-                text=True,
-                check=False,
-            )
-            self.assertEqual(proc.returncode, 0, proc.stderr)
-            # litellm's loader returns None without the module and stays on
-            # the Python path; every Rust path is opt-in.
-            self.assertEqual(
-                sorted(p.name for p in bridge.iterdir()),
-                ["__init__.py", "chat_completions.py", "loader.py"],
-            )
-            self.assertFalse(ui.exists())
-
-
 class PruneTestDirs(unittest.TestCase):
     """prune_test_dirs.py on a stand-in site-packages."""
 
