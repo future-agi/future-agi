@@ -1863,7 +1863,7 @@ def _preflight_user_graph_tags(identity: dict[str, Any], analytics: Any) -> None
             # An aggregate eval leaf proves eval ownership, which needs a
             # deadline: the preflight's own.
             started=monotonic(),
-            remaining_read_ms=GRAPH_TAG_OVERLAY_READ_MS,
+            remaining_read_ms=deadline.remaining_ms,
         )
         if not any(
             isinstance(value, effective_tags.EffectiveTagRelation)
@@ -1872,8 +1872,23 @@ def _preflight_user_graph_tags(identity: dict[str, Any], analytics: Any) -> None
             return
         reader = effective_tags.graph_overlay_executor()
 
-        def execute(query, query_params, *, timeout_ms, settings=None, **_caps):
-            return reader(query, query_params, timeout_ms=timeout_ms, settings=settings)
+        def execute(
+            query,
+            query_params,
+            *,
+            timeout_ms,
+            settings=None,
+            server_execution_cap_ms=None,
+            **_caps,
+        ):
+            # Not wall-capped itself: the server-side cap bounds each read.
+            return reader(
+                query,
+                query_params,
+                timeout_ms=timeout_ms,
+                settings=settings,
+                server_execution_cap_ms=server_execution_cap_ms,
+            )
 
         effective_tags.prepare_effective_tag_params(
             execute,

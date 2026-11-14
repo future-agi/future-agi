@@ -2019,3 +2019,70 @@ def test_scheduled_users_graph_preflight_eval_ownership_failure_still_schedules(
         monkeypatch, None, leaf("tag", "wanted"), eval_leaf
     )
     assert [call["namespace"] for call in scheduled] == ["observe-user-system-graph"]
+
+
+def test_scheduled_users_graph_preflight_gives_eval_ownership_its_deadline(
+    monkeypatch,
+):
+    """Eval ownership caps its Postgres read with ``remaining_read_ms(cap)``,
+    a callable: the preflight must hand it its own deadline's, or a Tag next
+    to an aggregate eval leaf fails before anything is scheduled."""
+    from tracer.services.clickhouse import exact_graph_reads
+
+    caps = []
+
+    def owned_ids(_project_id, *, started, remaining_read_ms=None):
+        caps.append(remaining_read_ms(1_000))
+        return ("eval-config",)
+
+    monkeypatch.setattr(exact_graph_reads, "_owned_user_eval_config_ids", owned_ids)
+    eval_leaf = {
+        "column_id": "eval_score",
+        "filter_config": {
+            "col_type": "SYSTEM_METRIC",
+            "filter_type": "number",
+            "filter_op": "greater_than_or_equal",
+            "filter_value": 50,
+        },
+    }
+    scheduled, _binds, _reads = _schedule_users_graph_with_preflight_failure(
+        monkeypatch, None, leaf("tag", "wanted"), eval_leaf
+    )
+    assert caps and 0 < caps[0] <= 1_000
+    assert [call["namespace"] for call in scheduled] == ["observe-user-system-graph"]
+
+
+def test_scheduled_users_graph_preflight_caps_overlay_reads_on_the_server(
+    monkeypatch,
+):
+    """The preflight's reader is not wall-capped itself, so the server-side
+    execution cap the overlay reader asks for must reach it."""
+    sent = []
+
+    def prepare(execute, params, **_kwargs):
+        execute("SELECT 1", {}, timeout_ms=10, server_execution_cap_ms=1_234)
+        return params
+
+    monkeypatch.setattr(effective_tags, "prepare_effective_tag_params", prepare)
+    monkeypatch.setattr(
+        effective_tags,
+        "graph_overlay_executor",
+        lambda: lambda query, query_params, **kwargs: sent.append(kwargs) or [],
+    )
+    monkeypatch.setattr(
+        graph_dispatch,
+        "_read_or_refresh_exact_graph",
+        lambda **kwargs: {"query_status": "pending"},
+    )
+    graph_dispatch._schedule_unaffordable_graph_read(
+        metric_id="active_users",
+        verdict=graph_dispatch._GraphReadUnaffordable(None),
+        identity={"project_id": PROJECT, "filters": filters(leaf("tag", "wanted"))},
+        pending_payload={"query_status": "pending"},
+        refresh=False,
+        organization_id="org-1",
+        workspace_id=None,
+        namespace="observe-user-system-graph",
+        analytics=SimpleNamespace(execute_ch_query=None),
+    )
+    assert sent and sent[0].get("server_execution_cap_ms") == 1_234
