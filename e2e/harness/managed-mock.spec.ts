@@ -64,6 +64,9 @@ const unsafeRoutes: [string, (cfg: any) => void][] = [
   ['decision real key', c => { c.providers.perplexity.api_key = 'not-a-synthetic-key'; }],
   ['decision unknown model', c => { c.providers.openrouter.models.push('unknown/model'); }],
   ['missing decision connection', c => { delete c.providers.openrouter; }],
+  ['chat OpenRouter external upstream', c => { c.providers['openrouter-chat'].base_url = 'https://openrouter.ai/api/v1'; }],
+  ['chat OpenRouter wrong format', c => { c.providers['openrouter-chat'].api_format = 'systemone'; }],
+  ['chat OpenRouter unknown model', c => { c.providers['openrouter-chat'].models.push('meta-llama/llama-3.3-70b-instruct'); }],
 ];
 for (const [name, mutate] of unsafeRoutes) {
   test(`managed mock rejects ${name} before registration`, async () => {
