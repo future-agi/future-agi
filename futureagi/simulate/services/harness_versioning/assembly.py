@@ -204,6 +204,10 @@ def _json_object(body: bytes | None) -> dict[str, Any] | None:
     return value if isinstance(value, dict) else None
 
 
+# Bumped when the kept certification files gain a file: readiness reads an older row's archive once more.
+CERTIFICATION_FILES_VERSION = 2
+
+
 def certification_files(files: Mapping[str, bytes], object_key: str) -> dict[str, Any]:
     """The per-tool and per-action certification and the tool routing among a sealed
     bundle's files, with the key of the archive they are kept with."""
@@ -214,6 +218,7 @@ def certification_files(files: Mapping[str, bytes], object_key: str) -> dict[str
 
     return {
         "object_key": object_key,
+        "files_version": CERTIFICATION_FILES_VERSION,
         "tools": items(TOOL_CERTIFICATION, "tools"),
         "actions": items(ACTION_CERTIFICATION, "actions"),
         "routed": items(TOOL_ROUTING, "tools"),

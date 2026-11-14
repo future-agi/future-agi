@@ -115,7 +115,7 @@ _FILES = ("tools", "actions", "routed", "unobserved")
 # Read by key, never through `_items`: each is a mapping or None.
 _DOOR_FILES = ("door", "worker_permissions")
 # Kept rows and cached reads from before the door files were read lack them, so they are read once more.
-_FILES_VERSION = 2
+_FILES_VERSION = assembly.CERTIFICATION_FILES_VERSION
 
 
 def _mapping(value: Any) -> Mapping[str, Any] | None:

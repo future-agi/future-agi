@@ -259,7 +259,12 @@ def _call(record, trial=None, receipt=None):
     )
 
 
-def _children(monkeypatch, calls, contract=CONTRACT, runs=("job-1",)):
+def _children(
+    monkeypatch,
+    calls,
+    contract=CONTRACT,
+    runs=("00000000-0000-4000-8000-000000000001",),
+):
     from simulate.models import CallExecution
 
     monkeypatch.setattr(CallExecution, "objects", _Calls(calls))

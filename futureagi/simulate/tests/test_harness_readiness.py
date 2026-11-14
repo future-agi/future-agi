@@ -1009,7 +1009,10 @@ class TestApi:
             "rules_version",
             "computed_at",
             "selection",
+            "workers",
         }
+        # A single agent declares no workers: no worker rows.
+        assert body["workers"] == []
         assert set(body["selection"]) == {
             "suite_total",
             "excluded",
@@ -1102,9 +1105,10 @@ class TestApi:
         assert body["counts"] == {
             "blocked": 0,
             "stale": 0,
-            "untested": 9,
+            "untested": 8,
             "partial": 0,
-            "unavailable": 1,
+            # Sub-agent evidence reads not applicable for an agent that declares no workers.
+            "unavailable": 2,
             "supported": 6,
         }
         assert body["validation"]["state"] == "ready"
@@ -1286,11 +1290,16 @@ class TestDoneWhen:
         assert body["counts"] == {
             "blocked": 1,
             "stale": 0,
-            "untested": 9,
+            "untested": 8,
             "partial": 0,
-            "unavailable": 1,
+            # Sub-agent evidence reads not applicable for an agent that declares no workers and showed none.
+            "unavailable": 2,
             "supported": 5,
         }
+        assert (rows["children"]["status"], rows["children"]["reason_code"]) == (
+            "unavailable",
+            "single_agent",
+        )
 
         HostedHarnessJob.no_workspace_objects.filter(id=environment.id).update(
             agent_version=a2
@@ -1418,7 +1427,14 @@ class TestReviewFollowUps:
         files, readable = evidence._read_once("harness-sealed/stream/a.tar.gz")
 
         assert (files, readable) == (
-            {"tools": TOOLS, "actions": ACTIONS, "routed": [], "unobserved": []},
+            {
+                "tools": TOOLS,
+                "actions": ACTIONS,
+                "routed": [],
+                "unobserved": [],
+                "door": None,
+                "worker_permissions": None,
+            },
             True,
         )
 
@@ -1453,7 +1469,14 @@ class TestReviewFollowUps:
             files, readable = evidence._read_once("harness-sealed/stream/old.tar.gz")
 
         assert (files, readable) == (
-            {"tools": [], "actions": [], "routed": [], "unobserved": []},
+            {
+                "tools": [],
+                "actions": [],
+                "routed": [],
+                "unobserved": [],
+                "door": None,
+                "worker_permissions": None,
+            },
             True,
         )
         assert sum(read) < len(body) // 4
@@ -1465,7 +1488,7 @@ class TestReviewFollowUps:
 
         key = "harness-sealed/stream/busy.tar.gz"
         cache_key = (
-            "harness-readiness-certification:"
+            f"harness-readiness-certification:v{evidence._FILES_VERSION}:"
             + hashlib.sha256(key.encode()).hexdigest()
         )
         cache.add(cache_key + ":reading", 1)
@@ -1522,10 +1545,15 @@ class TestReviewFollowUps:
 
         assert bundle.certification_files == {
             "object_key": "harness-sealed/stored/never-read.tar.gz",
+            # Stamped with the current files version, so readiness never reads it again.
+            "files_version": 2,
             "tools": TOOLS,
             "actions": ACTIONS,
             "routed": [],
             "unobserved": [],
+            # No world door files in this sealed archive.
+            "door": None,
+            "worker_permissions": None,
         }
         with patch.object(evidence.archives, "stream_members") as streamed:
             read = evidence.read_evidence(pairing, bundle)
@@ -1557,6 +1585,9 @@ class TestReviewFollowUps:
                 if one["status"] in ("passed", "refused")
             ],
             "unobserved": [],
+            "door": None,
+            "worker_permissions": None,
+            "files_version": 2,
         }
         cache.clear()
         with patch.object(evidence.archives, "stream_members") as streamed:
@@ -1574,7 +1605,7 @@ class TestReviewFollowUps:
 
         key = "harness-sealed/stream/slow.tar.gz"
         reading = (
-            "harness-readiness-certification:"
+            f"harness-readiness-certification:v{evidence._FILES_VERSION}:"
             + hashlib.sha256(key.encode()).hexdigest()
             + ":reading"
         )
