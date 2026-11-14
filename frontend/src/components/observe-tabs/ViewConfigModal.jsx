@@ -175,7 +175,7 @@ const ViewConfigModal = ({
           </FormControl>
 
           <FormControl>
-            <FormLabel sx={{ fontSize: 13, mb: 0.5 }}>Visibility</FormLabel>
+            <FormLabel sx={{ fontSize: 12, mb: 0.5 }}>Visibility</FormLabel>
             <RadioGroup
               value={visibility}
               onChange={(e) => setVisibility(e.target.value)}

@@ -419,7 +419,7 @@ function ReportBody({ config, run, lens, methodOpen, onMethod }) {
         <Typography
           variant="body2"
           color="text.secondary"
-          sx={{ mt: 0.5, fontSize: 13, fontVariantNumeric: "tabular-nums" }}
+          sx={{ mt: 0.5, fontSize: 12, fontVariantNumeric: "tabular-nums" }}
         >
           {meta.join(" · ")}
         </Typography>
@@ -441,7 +441,7 @@ function ReportBody({ config, run, lens, methodOpen, onMethod }) {
               <Typography
                 variant="body2"
                 color="text.secondary"
-                sx={{ fontSize: 13 }}
+                sx={{ fontSize: 12 }}
               >
                 None of the {formatCount(run.sample_size)} sampled matched the
                 question. Try a wider window, a different lens, or remove an

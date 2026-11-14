@@ -710,13 +710,13 @@ const EvaluationConfig = () => {
       >
         <Typography
           color={"text.primary"}
-          fontSize="13px"
+          fontSize="12px"
           fontWeight={600}
           sx={{ mt: 0 }}
         >
           {evalConfig?.name}
           <Typography
-            fontSize="13px"
+            fontSize="12px"
             fontWeight={600}
             sx={{ mb: "1.5rem", mt: "0.2rem" }}
           >
@@ -1009,14 +1009,14 @@ const EvaluationConfig = () => {
         <Box>
           <Typography
             color={"text.primary"}
-            fontSize="13px"
+            fontSize="12px"
             fontWeight={600}
             sx={{ mt: 0 }}
           >
             {"Evaluation Test"}
           </Typography>
           <Typography
-            fontSize="13px"
+            fontSize="12px"
             fontWeight={600}
             sx={{ mb: "2rem", mt: "0.2rem" }}
           >
@@ -1036,7 +1036,7 @@ const EvaluationConfig = () => {
         </Box>
 
         <Box>
-          <Typography fontSize="13px" fontWeight={600} sx={{ mb: 1 }}>
+          <Typography fontSize="12px" fontWeight={600} sx={{ mb: 1 }}>
             <Box
               sx={{
                 display: "flex",

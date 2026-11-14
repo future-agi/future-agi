@@ -304,10 +304,11 @@ def sync_integration_connection(connection_id: str):
             .values_list("trace_id", flat=True)
             .distinct()
         )
+        # Read the repairs above on primary; the unevaluated span subquery
+        # inherits this connection as part of the same SQL statement.
         incomplete_traces = list(
-            Trace.no_workspace_objects.filter(
-                project_id=_project_id, external_id__isnull=False
-            )
+            Trace.no_workspace_objects.using("default")
+            .filter(project_id=_project_id, external_id__isnull=False)
             .exclude(external_id="")
             .exclude(id__in=traces_with_spans)
         )
@@ -649,7 +650,6 @@ def _export_datadog(connection, credentials, service, sync_from, sync_to):
                 f"model:{log.model}",
                 f"provider:{log.provider}",
                 f"status_code:{log.status_code}",
-                f"gateway:{log.gateway_id}",
             ]
             if log.is_error:
                 tags.append("error:true")

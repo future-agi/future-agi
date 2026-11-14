@@ -1252,24 +1252,24 @@ def check_if_api_call_is_rate_limited(organization, api_call_type, source=None):
         # check if the number of api calls made in the last minute, hour, day,
         # month is greater than the limit
 
-        if api_calls_made_in_last_minute >= minute_limit:
+        if minute_limit is not None and api_calls_made_in_last_minute >= minute_limit:
             config["time"] = "minutely"
             config["title"] = " ".join(call_type.split("_"))
             config["duration"] = "minute"
             return True, config
-        if api_calls_made_in_last_hour >= hour_limit:
+        if hour_limit is not None and api_calls_made_in_last_hour >= hour_limit:
             config["time"] = "hourly"
             config["title"] = " ".join(call_type.split("_"))
             config["duration"] = "hour"
             config["limit"] = hour_limit
             return True, config
-        if api_calls_made_in_last_day >= day_limit:
+        if day_limit is not None and api_calls_made_in_last_day >= day_limit:
             config["time"] = "daily"
             config["title"] = " ".join(call_type.split("_"))
             config["duration"] = "day"
             config["limit"] = day_limit
             return True, config
-        if api_calls_made_in_last_month >= month_limit:
+        if month_limit is not None and api_calls_made_in_last_month >= month_limit:
             config["time"] = "monthly"
             config["title"] = " ".join(call_type.split("_"))
             config["duration"] = "month"

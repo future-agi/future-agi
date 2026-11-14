@@ -72,7 +72,7 @@
 .ds-input.is-disabled { background: var(--ds-bg-muted); border-color: transparent; color: var(--ds-fg-disabled); }
 .ds-input.is-readonly { background: var(--ds-bg-subtle); border-color: var(--ds-border-default); }
 .ds-input--sm { height: var(--ds-size-control-sm); font-size: 11px; }
-.ds-textarea { height: auto; min-height: 76px; align-items: flex-start; padding: 6px 10px; font-size: 13px; line-height: 20px; }
+.ds-textarea { height: auto; min-height: 76px; align-items: flex-start; padding: 6px 10px; font-size: 12px; line-height: 18px; }
 .ds-kbd { font: 500 11px/16px var(--ds-font-mono); padding: 0 5px; border-radius: var(--ds-radius-xs); border: 1px solid var(--ds-border-default); background: var(--ds-bg-subtle); color: var(--ds-fg-tertiary); }
 
 /* ---------------------------------------------------------------- checkbox, radio, switch */
@@ -174,7 +174,7 @@
 .ds-dialog { width: 100%; max-width: var(--ds-size-dialog-sm); border-radius: var(--ds-radius-xl); background: var(--ds-bg-overlay); box-shadow: var(--ds-shadow-modal); overflow: hidden; }
 .ds-dialog-head { display: flex; align-items: flex-start; gap: 12px; padding: 16px 20px 0; }
 .ds-dialog-head h4 { margin: 0; flex: 1; font: 600 15px/22px var(--ds-font-sans); color: var(--ds-fg-default); }
-.ds-dialog-body { padding: 8px 20px 20px; font: 400 13px/20px var(--ds-font-sans); color: var(--ds-fg-secondary); display: grid; gap: 14px; }
+.ds-dialog-body { padding: 8px 20px 20px; font: 400 12px/18px var(--ds-font-sans); color: var(--ds-fg-secondary); display: grid; gap: 14px; }
 .ds-dialog-foot { display: flex; justify-content: flex-end; gap: 8px; padding: 12px 20px; border-top: 1px solid var(--ds-border-default); background: var(--ds-bg-subtle); }
 .ds-drawer { width: 100%; max-width: 380px; border-left: 1px solid var(--ds-border-default); background: var(--ds-bg-overlay); box-shadow: var(--ds-shadow-drawer); display: grid; grid-template-rows: auto 1fr auto; min-height: 300px; }
 .ds-drawer-head { display: flex; align-items: center; gap: 8px; padding: 12px 16px; border-bottom: 1px solid var(--ds-border-default); }
@@ -183,11 +183,11 @@
 .ds-drawer-foot { display: flex; justify-content: flex-end; gap: 8px; padding: 12px 16px; border-top: 1px solid var(--ds-border-default); }
 /* Toast: matches the product's notistack toast (components/snackbar). Bottom right, slides in from the
    right, auto-hides after 6s with a countdown bar that pauses on hover, at most 5, always closable. */
-.ds-toast { position: relative; overflow: hidden; display: flex; align-items: center; gap: 10px; min-width: 320px; max-width: 420px; padding: 12px 10px 16px 14px; border: 1px solid var(--ds-border-default); border-radius: var(--ds-radius-lg); background: var(--ds-bg-overlay); box-shadow: var(--ds-shadow-overlay); font: 500 13px/20px var(--ds-font-sans); color: var(--ds-fg-default); }
+.ds-toast { position: relative; overflow: hidden; display: flex; align-items: center; gap: 10px; min-width: 320px; max-width: 420px; padding: 12px 10px 16px 14px; border: 1px solid var(--ds-border-default); border-radius: var(--ds-radius-lg); background: var(--ds-bg-overlay); box-shadow: var(--ds-shadow-overlay); font: 500 12px/18px var(--ds-font-sans); color: var(--ds-fg-default); }
 .ds-toast .lead { width: 28px; height: 28px; flex: none; border-radius: 50%; display: grid; place-items: center; background: var(--ds-status-neutral-bg); color: var(--ds-status-neutral-solid); }
 .ds-toast .lead svg { width: 18px; height: 18px; }
 .ds-toast .msg { flex: 1; min-width: 0; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden; word-break: break-word; }
-.ds-toast .more { all: unset; display: block; margin-top: 2px; font: 600 13px/20px var(--ds-font-sans); color: var(--ds-fg-secondary); text-decoration: underline; cursor: pointer; }
+.ds-toast .more { all: unset; display: block; margin-top: 2px; font: 600 12px/18px var(--ds-font-sans); color: var(--ds-fg-secondary); text-decoration: underline; cursor: pointer; }
 .ds-toast .act { flex: none; }
 .ds-toast .close { appearance: none; border: 0; padding: 0; background: none; font: inherit; flex: none; width: 26px; height: 26px; border-radius: var(--ds-radius-md); display: grid; place-items: center; color: var(--ds-fg-secondary); cursor: pointer; }
 .ds-toast .close:hover { color: var(--ds-fg-default); background: var(--ds-bg-hover); }
@@ -224,7 +224,7 @@
 /* ---------------------------------------------------------------- panel, key-value, metric */
 .ds-panel { border: 1px solid var(--ds-border-default); border-radius: var(--ds-radius-lg); background: var(--ds-bg-surface); overflow: hidden; min-width: 0; }
 .ds-panel-head { display: flex; align-items: center; gap: 8px; min-height: 36px; padding: 4px 8px 4px 12px; border-bottom: 1px solid var(--ds-border-default); }
-.ds-panel-head h4 { margin: 0; flex: 1; font: 500 13px/20px var(--ds-font-sans); color: var(--ds-fg-default); }
+.ds-panel-head h4 { margin: 0; flex: 1; font: 500 12px/18px var(--ds-font-sans); color: var(--ds-fg-default); }
 .ds-panel-head .meta { font: 400 11px/16px var(--ds-font-sans); color: var(--ds-fg-tertiary); }
 .ds-panel-body { padding: 12px; }
 .ds-kv { display: grid; grid-template-columns: minmax(120px, max-content) minmax(0, 1fr); margin: 0; }
@@ -267,7 +267,7 @@
 
 /* ---------------------------------------------------------------- nav, breadcrumb, pagination, page header */
 /* App sidebar. Benchmarked against PostHog, Stripe, Linear and Braintrust: 28px rows 1px apart,
-   13px regular labels, 16px monochrome icons, sentence-case section labels with no rules,
+   12px regular labels, 16px monochrome icons, sentence-case section labels with no rules,
    12px between sections. */
 .ds-nav { width: var(--ds-size-sidebar-expanded); display: flex; flex-direction: column; gap: 12px; padding: 8px; background: var(--ds-bg-canvas); border-right: 1px solid var(--ds-border-default); font: 400 12px/18px var(--ds-font-sans); color: var(--ds-fg-default); }
 .ds-nav-head { display: flex; align-items: center; gap: 4px; }
@@ -344,7 +344,7 @@
 .ds-empty { display: grid; justify-items: center; gap: 12px; padding: 32px 24px; text-align: center; }
 .ds-empty .art { width: 40px; height: 40px; border-radius: var(--ds-radius-lg); display: grid; place-items: center; background: var(--ds-bg-muted); color: var(--ds-icon-default); }
 .ds-empty .art.is-danger { background: var(--ds-status-danger-bg); color: var(--ds-status-danger-fg); }
-.ds-empty h5 { margin: 0; font: 600 13px/20px var(--ds-font-sans); color: var(--ds-fg-default); }
+.ds-empty h5 { margin: 0; font: 600 12px/18px var(--ds-font-sans); color: var(--ds-fg-default); }
 .ds-empty p { margin: 0; max-width: 340px; font: 400 12px/18px var(--ds-font-sans); color: var(--ds-fg-tertiary); }
 .ds-empty .actions { display: flex; gap: 8px; margin-top: 4px; }
 .ds-skel { display: block; height: 10px; border-radius: var(--ds-radius-xs); background: var(--ds-bg-muted); position: relative; overflow: hidden; }

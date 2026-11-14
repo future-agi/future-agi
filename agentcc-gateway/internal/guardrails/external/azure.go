@@ -32,10 +32,14 @@ type azureCategory struct {
 }
 
 func newAzureAdapter(cfg map[string]interface{}) *azureAdapter {
+	categories := getStringSliceConfig(cfg, "categories")
+	if len(categories) == 0 {
+		categories = []string{"Hate", "SelfHarm", "Sexual", "Violence"}
+	}
 	return &azureAdapter{
 		endpoint:          getStringConfig(cfg, "endpoint", ""),
 		apiKey:            getStringConfig(cfg, "api_key", ""),
-		categories:        getStringSliceConfig(cfg, "categories"),
+		categories:        categories,
 		severityThreshold: getIntConfig(cfg, "severity_threshold", 2),
 	}
 }
@@ -52,9 +56,12 @@ func (a *azureAdapter) buildRequest(ctx context.Context, text string) (*http.Req
 }
 
 func (a *azureAdapter) parseResponse(body []byte) *guardrails.CheckResult {
+	if err := validateEnvelope(a, body); err != nil {
+		return guardrails.ExecutionFailure(err.Error())
+	}
 	var resp azureResponse
 	if err := json.Unmarshal(body, &resp); err != nil {
-		return &guardrails.CheckResult{Pass: false, Score: 1.0, Message: fmt.Sprintf("failed to parse azure response: %v", err)}
+		return guardrails.ExecutionFailure(fmt.Sprintf("failed to parse azure response: %v", err))
 	}
 
 	var triggered []string

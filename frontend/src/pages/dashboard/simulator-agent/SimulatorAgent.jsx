@@ -21,7 +21,9 @@ import { useAgThemeWith } from "src/hooks/use-ag-theme";
 import { AG_THEME_OVERRIDES } from "src/theme/ag-theme";
 import { useDebounce } from "src/hooks/use-debounce";
 import { AgGridReact } from "ag-grid-react";
+import "src/utils/ag-grid-setup";
 import { getSimulatorAgentColumnDefs } from "./common";
+import { simulatorAgentEventFields } from "./simulatorAgentEventFields";
 import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
 import { useAuthContext } from "src/auth/hooks";
 
@@ -192,13 +194,13 @@ function SimulatorAgent() {
     if (defaultValues.name === "") {
       addAgent(data);
       trackEvent(Events.simulatorAgentCreatesimClicked, {
-        [PropertyName.formFields]: data,
+        [PropertyName.formFields]: simulatorAgentEventFields(data),
       });
     } else {
       editAgent(data);
       trackEvent(Events.simulatorAgentEditsimSubmitted, {
         [PropertyName.id]: agent?.id,
-        [PropertyName.formFields]: data,
+        [PropertyName.formFields]: simulatorAgentEventFields(data),
       });
     }
   }

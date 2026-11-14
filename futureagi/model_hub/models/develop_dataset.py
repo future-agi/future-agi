@@ -278,6 +278,10 @@ def validate_column_metadata(value):
         else:
             json_data = value
 
+        # Other metadata can remain after an audio duration is cleared.
+        if isinstance(json_data, dict) and "audio_duration_seconds" not in json_data:
+            return
+
         ColumnMetadataSchema(**json_data)
     except pydantic.ValidationError as e:
         raise ValidationError(f"Invalid column_metadata format: {e}")  # noqa: B904

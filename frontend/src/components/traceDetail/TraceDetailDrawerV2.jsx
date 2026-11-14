@@ -145,8 +145,11 @@ const TraceDetailDrawerV2 = ({
   hasNext = true,
   initialFullscreen = false,
   initialSpanId = null,
+  keepInitialSpanVisible = false,
   initialEvalFocus = false,
   refreshParentGrid,
+  hideOpenInNewTab = false,
+  disablePortal = false,
   readOnly = false,
   sharedToken = null,
 }) => {
@@ -557,6 +560,12 @@ const TraceDetailDrawerV2 = ({
   const graph = data?.graph;
 
   // Apply span type filter + span filters to the tree
+  // A caller that pins the span it opened (an evaluation's source span)
+  // keeps that span in the tree whatever filters the user saved. The saved
+  // filters themselves stay as they are. Without a pin this is null, so a
+  // drawer that does not pin (Observe) keeps one spans identity when only the
+  // opened span changes, and the Agent Graph keeps its node positions.
+  const pinnedSpanId = keepInitialSpanVisible ? initialSpanId : null;
   const spans = useMemo(() => {
     if (!rawSpans?.length) return rawSpans;
 
@@ -599,6 +608,7 @@ const TraceDetailDrawerV2 = ({
 
     function matchesSpan(entry) {
       const span = getSpan(entry);
+      if (pinnedSpanId && span.id === pinnedSpanId) return true;
 
       // Span type filter from Display panel
       if (hasTypeFilter) {
@@ -650,7 +660,7 @@ const TraceDetailDrawerV2 = ({
     }
 
     return filterTree(rawSpans);
-  }, [rawSpans, spanFilters, spanTypeFilter]);
+  }, [rawSpans, spanFilters, spanTypeFilter, pinnedSpanId]);
 
   // Auto-select root span when trace data loads (or when trace changes).
   // If caller passed ``initialSpanId`` (e.g. opened from span-grid), prefer
@@ -871,7 +881,8 @@ const TraceDetailDrawerV2 = ({
     // A persistent drawer renders in place, not in a portal. Opened from
     // inside another drawer (a session's View Trace), it would sit inside that
     // drawer's panel and be hidden with it when the drawer stack covers it.
-    <Portal>
+    // A modal host can instead keep it inside its own focus/ARIA boundary.
+    <Portal disablePortal={disablePortal}>
       <Drawer
         anchor="right"
         open={open}
@@ -953,7 +964,7 @@ const TraceDetailDrawerV2 = ({
           }
           isFullscreen={isFullscreen}
           onOpenNewTab={
-            readOnly || initialFullscreen
+            readOnly || initialFullscreen || hideOpenInNewTab
               ? undefined
               : () => {
                   if (traceId && projectId) {
@@ -1420,7 +1431,7 @@ const TraceDetailDrawerV2 = ({
                       width={40}
                       sx={{ mb: 1, opacity: 0.5 }}
                     />
-                    <Typography variant="body2" fontSize={13}>
+                    <Typography variant="body2" fontSize={12}>
                       Select a span to view details
                     </Typography>
                     {summary && (
@@ -1472,7 +1483,7 @@ const TraceDetailDrawerV2 = ({
               sx: {
                 minWidth: 240,
                 borderRadius: "8px",
-                "& .MuiMenuItem-root": { fontSize: 13, gap: 1, py: 0.75 },
+                "& .MuiMenuItem-root": { fontSize: 12, gap: 1, py: 0.75 },
               },
             },
           }}
@@ -1671,8 +1682,11 @@ TraceDetailDrawerV2.propTypes = {
   hasNext: PropTypes.bool,
   initialFullscreen: PropTypes.bool,
   initialSpanId: PropTypes.string,
+  keepInitialSpanVisible: PropTypes.bool,
   initialEvalFocus: PropTypes.bool,
   refreshParentGrid: PropTypes.func,
+  hideOpenInNewTab: PropTypes.bool,
+  disablePortal: PropTypes.bool,
   readOnly: PropTypes.bool,
   sharedToken: PropTypes.string,
 };

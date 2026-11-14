@@ -21,6 +21,7 @@ import {
 import { resetUser } from "./Mixpanel";
 import logger from "./logger";
 import { RESPONSE_CODES } from "./constants";
+import { retryAfterSeconds } from "./retryAfter";
 import { SS_KEY_ORG_ID, SS_KEY_WORKSPACE_ID } from "./sessionKeys";
 
 // ----------------------------------------------------------------------
@@ -300,7 +301,17 @@ axiosInstance.interceptors.response.use(
       statusCode: error.response?.status,
       // Keep Axios' transport classification without overwriting a semantic
       // API error code from the response body (for example snapshot_changed).
-      transportCode: error.code,
+      transportCode:
+        error.code ||
+        (!error.response && error.request ? "ERR_NETWORK" : undefined),
+      // Preserve only the validated admission wait, not all response headers.
+      ...(status === 429 && {
+        retryAfterSeconds: retryAfterSeconds(
+          error.response?.headers?.get?.("retry-after") ??
+            error.response?.headers?.["retry-after"] ??
+            error.response?.headers?.["Retry-After"],
+        ),
+      }),
     };
 
     return Promise.reject(customError);
@@ -522,6 +533,8 @@ export const endpoints = {
     knowledgeBase: apiPath("/model-hub/knowledge-base/"),
     list: apiPath("/model-hub/knowledge-base/get/"),
     files: apiPath("/model-hub/knowledge-base/files/"),
+    downloadFile: (kbId) =>
+      apiPath("/model-hub/kb/{id}/download-file/", { id: kbId }),
   },
   customMetric: {
     list: (modelId) =>
@@ -1472,6 +1485,8 @@ export const endpoints = {
     getEvalDetails: (observationSpanId, customEvalConfigId) =>
       `${apiPath("/tracer/observation-span/get_evaluation_details/")}?custom_eval_config_id=${customEvalConfigId}&observation_span_id=${observationSpanId}`,
     createEvalTask: () => apiPath("/tracer/eval-task/"),
+    samplingPreview: () => apiPath("/tracer/eval-task/sampling_preview/"),
+    samplingAudit: () => apiPath("/tracer/eval-task/sampling_audit/"),
     getEvalTaskDetails: (id) =>
       withQuery(apiPath("/tracer/eval-task/get_eval_details/"), {
         eval_id: id,

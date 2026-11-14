@@ -220,7 +220,7 @@ export default function AnnotatorPicker({
                 sx={{ p: 0.5 }}
               />
               <Box sx={{ minWidth: 0, flex: 1 }}>
-                <Typography noWrap sx={{ fontSize: 13, fontWeight: 500 }}>
+                <Typography noWrap sx={{ fontSize: 12, fontWeight: 500 }}>
                   {m.name || "Unnamed"}
                   {isCreator && (
                     <Typography
