@@ -190,3 +190,23 @@ def test_the_seal_still_gets_its_wait_when_the_cache_is_down(monkeypatch, clock)
     _gateway()._await_guest_seal(_attempt())
     # The receipt landed one poll into the wait: the wait ran instead of being skipped for the cache.
     assert clock["t"] == 2
+
+
+def test_a_call_still_reading_pending_counts_as_in_flight(monkeypatch, clock):
+    """The guest's scenario-started event can arrive with the receipt, so a call under way may read pending."""
+    from simulate.models import CallExecution
+
+    seen = []
+
+    class Recording(_InFlight):
+        def filter(self, **kwargs):
+            seen.append(kwargs)
+            return self
+
+    monkeypatch.setattr(HostedHarnessExecution, "objects", Recording([True, False]))
+    _gateway()._await_guest_seal(_attempt())
+    assert set(seen[0]["call_execution__status__in"]) == {
+        CallExecution.CallStatus.PENDING,
+        CallExecution.CallStatus.ONGOING,
+    }
+    assert seen[0]["receipt__isnull"] is True

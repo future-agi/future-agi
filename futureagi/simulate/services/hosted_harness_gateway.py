@@ -4419,9 +4419,14 @@ class HostedHarnessGateway:
         from simulate.models import CallExecution, HostedHarnessExecution
 
         def in_flight() -> bool:
+            # Pending too: the guest's "scenario started" event can reach us only with the call's receipt, so a call
+            # under way may still read pending here.
             return HostedHarnessExecution.objects.filter(
                 job_id=attempt.job_id,
-                call_execution__status=CallExecution.CallStatus.ONGOING,
+                call_execution__status__in=(
+                    CallExecution.CallStatus.PENDING,
+                    CallExecution.CallStatus.ONGOING,
+                ),
                 receipt__isnull=True,
             ).exists()
 
