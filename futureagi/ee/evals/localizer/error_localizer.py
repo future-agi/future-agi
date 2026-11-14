@@ -23,6 +23,7 @@ from ee.evals.localizer.prompts import (
     SYSTEM_PROMPT,
 )
 from PIL import Image
+from tfc.utils.media_tools import require_ffmpeg
 from tfc.utils.storage import (
     audio_bytes_from_url_or_base64,
     image_bytes_from_url_or_base64,
@@ -93,6 +94,7 @@ def _create_audio_segments(audio_input: Any) -> dict[str, dict[str, Any]]:
             if not isinstance(audio_input, bytes)
             else audio_input
         )
+        require_ffmpeg("splitting audio for error localization", ffprobe=True)
         from pydub import AudioSegment
 
         audio = AudioSegment.from_file(BytesIO(raw))

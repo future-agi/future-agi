@@ -18,6 +18,7 @@ from tfc.utils.lazy_extras import av
 from tfc.utils.lazy_extras import soundfile as sf
 import structlog
 from PIL import Image
+from tfc.utils.media_tools import MediaToolUnavailable, require_ffmpeg
 
 # from pydub import AudioSegment
 from requests.exceptions import ChunkedEncodingError, ConnectionError, RequestException
@@ -699,6 +700,7 @@ def upload_image_to_s3(
 
 
 def detect_audio_format(audio_bytes):
+    require_ffmpeg("audio format detection")
     process = subprocess.Popen(
         ["ffmpeg", "-i", "-", "-f", "ffmetadata", "-"],
         stdin=subprocess.PIPE,
@@ -728,6 +730,7 @@ def detect_audio_format(audio_bytes):
 
 def convert_to_mp3(audio_bytes):
     try:
+        require_ffmpeg("audio conversion to MP3")
         process = subprocess.Popen(
             [
                 "ffmpeg",
@@ -759,7 +762,7 @@ def convert_to_mp3(audio_bytes):
             raise Exception(f"FFmpeg Conversion Error: {stderr.decode('utf-8')}")
 
         return stdout, "mp3"
-    except TimeoutError:
+    except (TimeoutError, MediaToolUnavailable):
         raise
     except Exception as e:
         traceback.print_exc()
@@ -862,6 +865,10 @@ def upload_audio_to_s3_duration(
 
             container.close()
 
+        except ImportError as e:
+            # PyAV is in the optional `audio` extra, which the default image
+            # does not install: name the extra instead of blaming the file.
+            raise ValueError(str(e)) from e
         except Exception as e:
             logger.exception(f"Error decoding audio: {e}")
             raise ValueError(get_storage_error_message("CORRUPTED_AUDIO")) from e
@@ -1959,6 +1966,8 @@ def upload_audio_to_s3(
 
         return url
 
+    except MediaToolUnavailable:
+        raise
     except Exception as e:
         error_code = str(e.code) if hasattr(e, "code") else str(e)
         logger.error("s3_upload_failed", bucket=bucket_name, object_key=object_key, error_code=error_code, exc_info=True)
@@ -2214,6 +2223,7 @@ def extract_video_thumbnail(video_bytes):
     Extract a thumbnail from video bytes using ffmpeg.
     Returns the thumbnail as JPEG bytes.
     """
+    require_ffmpeg("video thumbnail extraction")
     try:
         # Create a temporary file for the video
         with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as temp_video:

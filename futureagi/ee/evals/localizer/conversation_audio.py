@@ -5,6 +5,7 @@ import math
 import uuid
 from io import BytesIO
 
+from tfc.utils.media_tools import require_ffmpeg
 from tfc.utils.storage import audio_bytes_from_url_or_base64, upload_audio_to_s3
 
 
@@ -105,6 +106,8 @@ def simulation_audio_snapshot(call_execution, eval_config, input_types):
 def create_utterance_segments(audio_input, turns):
     """Cut at stored boundaries; never guess missing times or speaker roles."""
     from pydub import AudioSegment
+
+    require_ffmpeg("splitting call audio for error localization", ffprobe=True)
 
     turns = deduplicate_utterance_turns(turns)
     if not turns:
