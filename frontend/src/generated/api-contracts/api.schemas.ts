@@ -3513,6 +3513,37 @@ export interface AgentccProviderCredentialApi {
   readonly updated_at?: string;
 }
 
+export interface RequestLogRetentionLastRunApi {
+  started_at: string;
+  finished_at: string;
+  deleted_rows: number;
+  error: string;
+}
+
+export interface RequestLogRetentionApi {
+  retention_days: number;
+  min_retention_days: number;
+  keep_forever_required: boolean;
+  effective_cutoff: string;
+  next_run_at: string;
+  estimated_rows: number;
+  estimate_capped: boolean;
+  last_run: RequestLogRetentionLastRunApi;
+}
+
+export interface RequestLogRetentionResponseApi {
+  status: boolean;
+  result: RequestLogRetentionApi;
+}
+
+export interface RequestLogRetentionUpdateApi {
+  /**
+   * @minimum 1
+   * @maximum 36500
+   */
+  retention_days: number;
+}
+
 export interface AgentccRequestLogMetadataValuesApi {
   application: string[];
   service: string[];
@@ -38320,6 +38351,14 @@ export type AgentccProviderCredentialsList200 = {
   next?: string;
   previous?: string;
   results: AgentccProviderCredentialApi[];
+};
+
+export type AgentccRequestLogRetentionListParams = {
+  /**
+   * @minimum 1
+   * @maximum 36500
+   */
+  retention_days?: number;
 };
 
 export type AgentccRequestLogsListParams = {

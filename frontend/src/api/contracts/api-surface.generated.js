@@ -5,7 +5,7 @@
 export const API_SURFACE_CONTRACT = Object.freeze({
   generatedFrom: "api_contracts/openapi/swagger.json",
   swaggerVersion: "2.0",
-  endpointCount: 1142,
+  endpointCount: 1143,
   groups: {
     accounts: {
       "/accounts/2fa/recovery-codes/": ["get"],
@@ -208,6 +208,7 @@ export const API_SURFACE_CONTRACT = Object.freeze({
       "/agentcc/provider-credentials/fetch_models/": ["post"],
       "/agentcc/provider-credentials/{id}/": ["delete", "get", "patch", "put"],
       "/agentcc/provider-credentials/{id}/rotate/": ["post"],
+      "/agentcc/request-log-retention/": ["get", "put"],
       "/agentcc/request-logs/": ["get"],
       "/agentcc/request-logs/export/": ["get"],
       "/agentcc/request-logs/metadata-values/": ["get"],
@@ -1627,6 +1628,7 @@ export const API_SURFACE_PATHS = Object.freeze({
   "/agentcc/provider-credentials/fetch_models/": ["post"],
   "/agentcc/provider-credentials/{id}/": ["delete", "get", "patch", "put"],
   "/agentcc/provider-credentials/{id}/rotate/": ["post"],
+  "/agentcc/request-log-retention/": ["get", "put"],
   "/agentcc/request-logs/": ["get"],
   "/agentcc/request-logs/export/": ["get"],
   "/agentcc/request-logs/metadata-values/": ["get"],
