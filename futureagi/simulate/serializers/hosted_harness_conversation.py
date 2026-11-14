@@ -266,11 +266,16 @@ class HarnessConversationScenarioQuerySerializer(serializers.Serializer):
     full = serializers.BooleanField(required=False, default=False)
 
 
+class HarnessConversationFailedScenarioSerializer(serializers.Serializer):
+    scenario_key = serializers.CharField(max_length=255)
+    reason = serializers.CharField(required=False, allow_blank=True, max_length=2000)
+
+
 class HarnessConversationPublishSerializer(serializers.Serializer):
     digest = serializers.CharField(max_length=128)
-    # Scenarios the builder could not apply in this save: [{scenario_key, reason}].
+    # Scenarios the builder could not apply in this save.
     failed_scenarios = serializers.ListField(
-        child=serializers.DictField(), required=False, max_length=200
+        child=HarnessConversationFailedScenarioSerializer(), required=False, max_length=200
     )
 
 
