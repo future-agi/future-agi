@@ -14317,6 +14317,8 @@ class CompareDatasetsView(APIView):
         responses={200: CompareDatasetResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
     )
     def post(self, request, dataset_id, *args, **kwargs):
+        if getattr(request, "organization", None) is None:
+            return self._gm.not_found(get_error_message("DATASET_NOT_FOUND"))
         try:
             start_time = time.time()
             # Pagination parameters
@@ -14392,13 +14394,13 @@ class CompareDatasetsView(APIView):
                     output_field=IntegerField(),
                 )
 
-                datasets = Dataset.objects.filter(
-                    id__in=ordered_ids, deleted=False
-                ).order_by(preserved_order)
+                datasets = (
+                    _request_dataset_queryset(request)
+                    .filter(id__in=ordered_ids)
+                    .order_by(preserved_order)
+                )
                 if len(datasets) != len(dataset_ids) + 1:
-                    return self._gm.bad_request(
-                        get_error_message("INVALID_DATASET_IDS")
-                    )
+                    return self._gm.not_found(get_error_message("DATASET_NOT_FOUND"))
 
                 comparison_datasets = list(datasets)
                 columns_qs = (
@@ -14511,13 +14513,15 @@ class CompareDatasetsView(APIView):
             )
 
             # Apply the filter and ordering
-            datasets = Dataset.objects.filter(
-                id__in=ordered_ids, deleted=False
-            ).order_by(preserved_order)
+            datasets = (
+                _request_dataset_queryset(request)
+                .filter(id__in=ordered_ids)
+                .order_by(preserved_order)
+            )
+            if len(datasets) != len(dataset_ids) + 1:
+                return self._gm.not_found(get_error_message("DATASET_NOT_FOUND"))
             for dst in datasets:
                 logger.info(f"Datasets: {dst.id}  {dst.name}")
-            if len(datasets) != len(dataset_ids) + 1:
-                return self._gm.bad_request(get_error_message("INVALID_DATASET_IDS"))
 
             comparison_datasets = list(datasets)
             columns_qs = (
@@ -14766,9 +14770,11 @@ class DownloadComparisonDatasetView(APIView):
         },
     )
     def post(self, request, dataset_id, *args, **kwargs):
+        if getattr(request, "organization", None) is None:
+            return self._gm.not_found(get_error_message("DATASET_NOT_FOUND"))
         try:
-            # Get main dataset and validate request data
-            get_object_or_404(Dataset, id=dataset_id, deleted=False)
+            # Validate request data before resolving the comparison datasets
+            datasets_in_scope = _request_dataset_queryset(request)
             validated_data = request.validated_data
             compare_id = (
                 str(validated_data["compare_id"])
@@ -14804,10 +14810,12 @@ class DownloadComparisonDatasetView(APIView):
             # Ensure main dataset is included in comparison
             if str(dataset_id) not in dataset_ids:
                 dataset_ids.insert(0, str(dataset_id))
-            comparison_datasets = [
-                get_object_or_404(Dataset, id=ds_id, deleted=False)
-                for ds_id in dataset_ids
-            ]
+            comparison_datasets = []
+            for ds_id in dataset_ids:
+                dataset = datasets_in_scope.filter(id=ds_id).first()
+                if dataset is None:
+                    return self._gm.not_found(get_error_message("DATASET_NOT_FOUND"))
+                comparison_datasets.append(dataset)
 
             if not dataset_info or not common_column_names:
                 return self._gm.bad_request(
