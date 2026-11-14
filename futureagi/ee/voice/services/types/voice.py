@@ -213,3 +213,6 @@ class RecordingUrls:
     assistant_recording_url: str | None = None
     customer_recording_url: str | None = None
     provider_call_data: dict[str, Any] | None = None
+    # Set when some tracks could not be made: {"code", "message", "tracks"}.
+    # ``code`` is "ffmpeg_unavailable" when ffmpeg is missing from the image.
+    error: dict[str, Any] | None = None

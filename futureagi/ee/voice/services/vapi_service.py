@@ -54,6 +54,7 @@ from ee.voice.services.types.voice import (
     TranscriptMessage,
 )
 from ee.voice.services.voice_engine import VoiceServiceBlueprint
+from tfc.utils.media_tools import find_media_tool_unavailable
 from tfc.utils.slack import send_critical_slack_notification
 from tfc.utils.storage import download_audio_from_url, upload_audio_to_s3
 from tracer.models.observability_provider import ProviderChoices
@@ -1711,8 +1712,23 @@ class VapiService(VoiceServiceBlueprint):
             return s3_url
 
         except Exception as e:
-            logger.error(f"Error converting {input.url_type} URL to S3: {str(e)}")
-            traceback.print_exc()
+            missing = find_media_tool_unavailable(e)
+            logger.error(
+                "recording_rehost_failed",
+                call_id=str(input.call_id),
+                artifact_type=input.url_type,
+                provider=ProviderChoices.VAPI.value,
+                error_type=type(e).__name__,
+                outcome="kept_original_url",
+                error=str(e),
+                **(
+                    {"code": missing.code, "missing_tool": missing.tool}
+                    if missing is not None
+                    else {}
+                ),
+            )
+            if missing is None:
+                traceback.print_exc()
             return audio_url
 
     # -- Client call matching -------------------------------------------------

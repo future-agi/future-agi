@@ -71,7 +71,7 @@ def raise_non_retryable_if_media_tool_missing(exc: BaseException) -> None:
     Retrying cannot install ffmpeg, so the workflow fails at once with the
     message instead of retrying until its timeout. Does nothing otherwise, so
     the caller re-raises ``exc`` with its usual retry policy."""
-    missing = _find_media_tool_unavailable(exc)
+    missing = find_media_tool_unavailable(exc)
     if missing is None:
         return
     from temporalio.exceptions import ApplicationError
@@ -81,9 +81,19 @@ def raise_non_retryable_if_media_tool_missing(exc: BaseException) -> None:
     ) from exc
 
 
-def _find_media_tool_unavailable(
+def media_tool_error_code(exc: BaseException | None) -> str | None:
+    """``"ffmpeg_unavailable"`` when ``exc`` is, or was caused by, a
+    :class:`MediaToolUnavailable`; else ``None``.
+
+    For HTTP bodies and stored cell errors, so a client can branch on the
+    code instead of matching the message."""
+    return FFMPEG_UNAVAILABLE if find_media_tool_unavailable(exc) else None
+
+
+def find_media_tool_unavailable(
     exc: BaseException | None,
 ) -> MediaToolUnavailable | None:
+    """The :class:`MediaToolUnavailable` in ``exc``'s cause chain, if any."""
     seen: set[int] = set()
     while exc is not None and id(exc) not in seen:
         if isinstance(exc, MediaToolUnavailable):

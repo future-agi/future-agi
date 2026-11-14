@@ -313,6 +313,7 @@ from tfc.utils.functions import (
     get_prompt_stats,
 )
 from tfc.utils.general_methods import GeneralMethods
+from tfc.utils.media_tools import media_tool_error_code
 from tfc.utils.parse_errors import parse_serialized_errors
 from tfc.utils.storage import (
     delete_compare_folder,
@@ -338,6 +339,24 @@ except ImportError:
     log_and_deduct_cost_for_resource_request = None
 
 logger = structlog.get_logger(__name__)
+
+
+def _cell_upload_error(exc: Exception, data_type: str) -> dict:
+    """value_infos for a cell whose media value could not be stored.
+
+    The storage helpers raise ValueError with a message meant for the user
+    (a missing ffmpeg or ``audio`` extra, an unsupported format); other
+    errors can carry storage details, so they get a fixed reason. ``code`` is
+    set when a missing ffmpeg caused it."""
+    if isinstance(exc, ValueError):
+        reason = str(exc)
+    else:
+        reason = f"Could not store this {data_type} value."
+    infos = {"reason": reason}
+    code = media_tool_error_code(exc)
+    if code:
+        infos["code"] = code
+    return infos
 
 
 def _request_organization(request):
@@ -948,6 +967,7 @@ class AddRowsFromFile(CreateAPIView):
                         value = row[column.name]
                     except KeyError:
                         value = None
+                    cell_error = None
 
                     if column.data_type == DataTypeChoices.IMAGE.value and value:
                         try:
@@ -963,6 +983,7 @@ class AddRowsFromFile(CreateAPIView):
                         except Exception as e:
                             logger.error(f"Error uploading image: {str(e)}")
                             cell_value = None
+                            cell_error = _cell_upload_error(e, column.data_type)
 
                     elif column.data_type == DataTypeChoices.AUDIO.value and value:
                         try:
@@ -978,6 +999,7 @@ class AddRowsFromFile(CreateAPIView):
                                 f"Error in uploading audio to s3: {str(e)}"
                             )
                             cell_value = None
+                            cell_error = _cell_upload_error(e, column.data_type)
 
                     else:
                         cell_value = str(value)
@@ -988,6 +1010,14 @@ class AddRowsFromFile(CreateAPIView):
                         column=column,
                         row=new_row,
                         value=cell_value,
+                        **(
+                            {
+                                "status": CellStatus.ERROR.value,
+                                "value_infos": json.dumps(cell_error),
+                            }
+                            if cell_error
+                            else {}
+                        ),
                     )
 
             # insert_embeddings_task.delay(
@@ -5542,6 +5572,7 @@ class AddDataRowsView(APIView):
                     for column in columns:
                         cell_value = ""
                         cell_value_infos = None
+                        cell_status = CellStatus.PASS.value
                         column_metadata = {}
 
                         if column.name in provided_columns:
@@ -5596,7 +5627,14 @@ class AddDataRowsView(APIView):
                                 logger.error(
                                     f"Error processing {column.data_type} for column {column.name}: {str(e)}"
                                 )
-                                cell_value = ""  # Set to empty if upload fails
+                                # The row is still added; the cell shows why
+                                # its value is missing, as a cell edit does.
+                                cell_value = None
+                                cell_status = CellStatus.ERROR.value
+                                cell_value_infos = json.dumps(
+                                    _cell_upload_error(e, column.data_type)
+                                )
+                                column_metadata = {}
 
                         cells_to_create.append(
                             Cell(
@@ -5607,6 +5645,7 @@ class AddDataRowsView(APIView):
                                 value=cell_value,
                                 value_infos=cell_value_infos,
                                 column_metadata=column_metadata,
+                                status=cell_status,
                             )
                         )
 
@@ -6237,11 +6276,16 @@ class UpdateCellValueView(APIView):
 
                 except Exception as e:
                     logger.error(f"ERROR: {e}")
+                    code = media_tool_error_code(e)
                     cell.value = None
                     cell.status = CellStatus.ERROR.value
-                    cell.value_infos = json.dumps({"reason": str(e)})
+                    cell.value_infos = json.dumps(
+                        {"reason": str(e), **({"code": code} if code else {})}
+                    )
                     cell.save()
-                    return self._gm.bad_request(str(e))
+                    return self._gm.custom_error_response(
+                        status.HTTP_400_BAD_REQUEST, str(e), code=code
+                    )
 
             elif column_data_type == DataTypeChoices.DOCUMENT.value:
                 try:
@@ -6871,12 +6915,16 @@ class DatatypeConverter:
             )
 
         except Exception as e:
+            value_infos = {"reason": str(e)}
+            code = media_tool_error_code(e)
+            if code:
+                value_infos["code"] = code
             return ConversionResult(
                 cell_id=str(cell.id),
                 success=False,
                 new_value=None,
                 status=CellStatus.ERROR.value,
-                value_infos={"reason": str(e)},
+                value_infos=value_infos,
                 error_message=str(e),
             )
 
