@@ -44,17 +44,18 @@ def env_int(
 
 def env_datetime(
     name: str,
+    default: str | None = None,
     *,
     env: Mapping[str, str] | None = None,
 ) -> datetime | None:
     """``name`` from ``env`` (default ``os.environ``) as an aware datetime.
 
-    Unset or blank means ``None``. The value is an ISO-8601 date and time; ``Z``
-    or an offset keeps its zone and a value without one is UTC, so it compares
-    with the database's aware times. Anything else, a date without a time
+    Unset means ``default``, read the same way; blank means ``None``. The value
+    is an ISO-8601 date and time; ``Z`` or an offset keeps its zone and a value
+    without one is UTC, so it compares with the database's aware times. Anything else, a date without a time
     included, raises ImproperlyConfigured naming the variable.
     """
-    raw = ((os.environ if env is None else env).get(name) or "").strip()
+    raw = ((os.environ if env is None else env).get(name, default) or "").strip()
     if not raw:
         return None
     invalid = ImproperlyConfigured(
