@@ -27,8 +27,12 @@ import (
 // Thread-safe: protects the cache with a RWMutex.
 type OrgProviderCache struct {
 	mu        sync.RWMutex
-	providers map[string]Provider              // key: "orgID:providerID"
-	baseCfgs  map[string]config.ProviderConfig // providerID → base config
+	providers map[string]Provider // key: "orgID:providerID"
+	// decisionProviders are the System One providers OpenAI-format OpenRouter
+	// connections serve decisions with, under the same keys; a map of their
+	// own, so no provider ID can name one of them.
+	decisionProviders map[string]Provider
+	baseCfgs          map[string]config.ProviderConfig // providerID → base config
 
 	// allowPrivateBaseURLs lets an org base_url point at private and LAN
 	// addresses; see validateBaseURL.
@@ -130,13 +134,13 @@ func (c *OrgProviderCache) GetOrCreateWithTenantConfig(orgID, providerID, apiKey
 // provider is: the org's own base_url, checked as validateBaseURL checks it and
 // dialled through the same guarded dialer as an org System One provider, or
 // the config.yaml entry it is layered onto, and never that entry's key. It is
-// cached beside the org's other providers, under "orgID:providerID#decision",
-// so Evict and EvictAll drop it on a config change.
+// cached beside the org's other providers, under the same "orgID:providerID"
+// key in a map of its own, so Evict and EvictAll drop it on a config change.
 func (c *OrgProviderCache) GetOrCreateOpenRouterDecision(orgID, providerID, apiKey string, tenantCfg *tenant.ProviderConfig) (Provider, error) {
-	key := orgID + ":" + providerID + "#decision"
+	key := orgID + ":" + providerID
 
 	c.mu.RLock()
-	if p, ok := c.providers[key]; ok {
+	if p, ok := c.decisionProviders[key]; ok {
 		c.mu.RUnlock()
 		return p, nil
 	}
@@ -144,7 +148,7 @@ func (c *OrgProviderCache) GetOrCreateOpenRouterDecision(orgID, providerID, apiK
 
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if p, ok := c.providers[key]; ok {
+	if p, ok := c.decisionProviders[key]; ok {
 		return p, nil
 	}
 
@@ -165,7 +169,10 @@ func (c *OrgProviderCache) GetOrCreateOpenRouterDecision(orgID, providerID, apiK
 	if err != nil {
 		return nil, fmt.Errorf("creating org decision provider %s/%s: %w", orgID, providerID, err)
 	}
-	c.providers[key] = p
+	if c.decisionProviders == nil {
+		c.decisionProviders = make(map[string]Provider)
+	}
+	c.decisionProviders[key] = p
 	slog.Info("created per-org OpenRouter decision provider", "org_id", orgID, "provider", providerID)
 	return p, nil
 }
@@ -422,11 +429,13 @@ func (c *OrgProviderCache) Evict(orgID string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	for key, p := range c.providers {
-		// Keys are formatted as "orgID:providerID".
-		if len(key) > len(orgID) && key[:len(orgID)+1] == orgID+":" {
-			p.Close()
-			delete(c.providers, key)
+	for _, cached := range []map[string]Provider{c.providers, c.decisionProviders} {
+		for key, p := range cached {
+			// Keys are formatted as "orgID:providerID".
+			if len(key) > len(orgID) && key[:len(orgID)+1] == orgID+":" {
+				p.Close()
+				delete(cached, key)
+			}
 		}
 	}
 }
@@ -436,9 +445,11 @@ func (c *OrgProviderCache) EvictAll() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	for key, p := range c.providers {
-		p.Close()
-		delete(c.providers, key)
+	for _, cached := range []map[string]Provider{c.providers, c.decisionProviders} {
+		for key, p := range cached {
+			p.Close()
+			delete(cached, key)
+		}
 	}
 }
 
@@ -446,5 +457,5 @@ func (c *OrgProviderCache) EvictAll() {
 func (c *OrgProviderCache) Count() int {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	return len(c.providers)
+	return len(c.providers) + len(c.decisionProviders)
 }

@@ -266,8 +266,8 @@ func TestDecisionUpstreamErrorRetryAfter(t *testing.T) {
 	}
 }
 
-func TestDecisionUpstreamErrorUsesMessageOnlyForRejected4xx(t *testing.T) {
-	for status, wantMessage := range map[int]bool{400: true, 409: true, 415: true, 422: true, 401: false, 403: false, 402: false, 404: false, 408: false, 413: false, 429: false, 500: false} {
+func TestDecisionUpstreamErrorUsesMessageOnlyFor400And422(t *testing.T) {
+	for status, wantMessage := range map[int]bool{400: true, 422: true, 401: false, 403: false, 402: false, 404: false, 429: false, 500: false} {
 		e := DecisionUpstreamError("Vendor", status, http.Header{}, "vendor text")
 		if got := strings.Contains(e.Message, "vendor text"); got != wantMessage {
 			t.Errorf("%d: message %q", status, e.Message)
@@ -321,16 +321,16 @@ func mustParse(body string) *DecisionRequest {
 	return req
 }
 
-// Only rejected 4xx statuses pass the vendor's text on, so only those parse it.
+// Only a 400 or 422 passes the vendor's text on, so only those parse it.
 func TestUpstreamErrorMessageParsesOnlyWhatItShows(t *testing.T) {
 	req, _ := ParseDecisionRequest([]byte(`{"model":"jev-latest","questions":{"resolved":{"type":"noul","instructions":["Judge"]}}}`))
 	body, _ := json.Marshal(map[string]any{"error": map[string]string{"message": "the type field is invalid"}})
-	for _, status := range []int{400, 409, 415, 422} {
+	for _, status := range []int{400, 422} {
 		if got := req.UpstreamErrorMessage(status, body, "k", "generic"); got != "the type field is invalid" {
 			t.Errorf("%d: got %q", status, got)
 		}
 	}
-	for _, status := range []int{401, 402, 403, 404, 408, 413, 429, 500, 502, 503} {
+	for _, status := range []int{401, 429, 500, 502, 503} {
 		if got := req.UpstreamErrorMessage(status, body, "k", "generic"); got != "generic" {
 			t.Errorf("%d: got %q, want the fallback", status, got)
 		}

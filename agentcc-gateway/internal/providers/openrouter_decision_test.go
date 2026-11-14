@@ -74,9 +74,6 @@ func TestOrgProviderCacheOpenRouterDecision(t *testing.T) {
 	if again, _ := cache.GetOrCreateOpenRouterDecision("org-a", "openrouter", stated.APIKey, stated); again != p {
 		t.Error("the decision provider was not cached")
 	}
-	if cache.Get("org-a", "openrouter#decision") != p {
-		t.Error("cached under another key")
-	}
 
 	// Layered onto config.yaml's entry: its upstream, not its key.
 	layered := &tenant.ProviderConfig{APIKey: "ORG-KEY", APIFormat: "openai", Enabled: true}
@@ -102,7 +99,31 @@ func TestOrgProviderCacheOpenRouterDecision(t *testing.T) {
 		t.Fatalf("count = %d, want 2", n)
 	}
 	cache.Evict("org-a")
-	if cache.Get("org-a", "openrouter#decision") != nil || cache.Count() != 1 {
+	if again, _ := cache.GetOrCreateOpenRouterDecision("org-a", "openrouter", stated.APIKey, stated); again == p || cache.Count() != 2 {
 		t.Fatalf("Evict left the decision provider (count %d)", cache.Count())
+	}
+}
+
+// A provider whose ID looks like a decision cache entry cannot be returned as
+// another provider's decision provider.
+func TestOrgProviderCacheOpenRouterDecisionDoesNotAliasProviderIDs(t *testing.T) {
+	stubLookupIP(t, map[string][]string{"openrouter.ai": {"203.0.113.7"}})
+	cache := NewOrgProviderCache(nil, false)
+	defer cache.EvictAll()
+	odd := &tenant.ProviderConfig{APIKey: "OTHER-KEY", APIFormat: "openai", BaseURL: "https://openrouter.ai/api/v1", Enabled: true}
+	chat, err := cache.GetOrCreateWithTenantConfig("org-a", "openrouter#decision", odd.APIKey, odd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := &tenant.ProviderConfig{APIKey: "ORG-KEY", APIFormat: "openai", BaseURL: "https://openrouter.ai/api/v1", Enabled: true}
+	p, err := cache.GetOrCreateOpenRouterDecision("org-a", "openrouter", cfg.APIKey, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p == chat {
+		t.Fatal("the decision provider is another provider's cached chat provider")
+	}
+	if _, ok := p.(*systemone.Provider); !ok {
+		t.Fatalf("built %T, want a System One provider", p)
 	}
 }

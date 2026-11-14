@@ -160,7 +160,7 @@ func TestDecisionGuardrailContentIsDeterministic(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := string(decisionGuardrailContent(req))
-	if want != `"s\none\nay\nbee\nsee\ntwo\nthree"` {
+	if want != `"s\none\na\nay\nb\nbee\nc\nsee\ntwo\nthree"` {
 		t.Fatalf("content = %s", want)
 	}
 	for i := 0; i < 50; i++ {
@@ -168,4 +168,15 @@ func TestDecisionGuardrailContentIsDeterministic(t *testing.T) {
 			t.Fatalf("run %d: %s, want %s", i, got, want)
 		}
 	}
+}
+
+// Criteria named by their keys ({"<criterion text>": ...}) are checked too.
+func TestDecisionGuardrailSeesCriteriaKeys(t *testing.T) {
+	g, c := decisionWithGuardrail(t, "block", "criteria-key-marker")
+	body := `{"model":"typesafe/jev-latest","state":"safe","questions":{"one":{"type":"choice","criteria":{"criteria-key-marker":null,"other":"fine"}}}}`
+	expectError(t, g.post(t, keyByok, body), http.StatusForbidden, "content_blocked")
+	if len(c.inputs) != 1 || !strings.Contains(c.inputs[0], "criteria-key-marker") {
+		t.Fatalf("guardrail saw %q", c.inputs)
+	}
+	expectNoCalls(t, g)
 }

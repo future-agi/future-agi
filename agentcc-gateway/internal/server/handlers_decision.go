@@ -253,7 +253,9 @@ func appendDecisionQuestionText(parts *[]string, raw json.RawMessage) {
 	}
 }
 
-// Criteria can be a string or a nested collection of named criteria.
+// Criteria can be a string or a nested collection of criteria. A criterion's
+// name is text too ({"<criterion>": "<description>"}), so object keys are
+// checked as well as their values.
 func appendDecisionText(parts *[]string, raw json.RawMessage) {
 	var text string
 	if json.Unmarshal(raw, &text) == nil {
@@ -270,6 +272,7 @@ func appendDecisionText(parts *[]string, raw json.RawMessage) {
 	var fields map[string]json.RawMessage
 	if json.Unmarshal(raw, &fields) == nil {
 		for _, key := range slices.Sorted(maps.Keys(fields)) {
+			*parts = append(*parts, key)
 			appendDecisionText(parts, fields[key])
 		}
 	}
