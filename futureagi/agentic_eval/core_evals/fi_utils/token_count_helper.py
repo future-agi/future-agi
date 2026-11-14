@@ -182,7 +182,7 @@ DEFAULT_STT_FALLBACK_PRICING = {"input_per_minute": 0.006}
 
 
 def _select_fallback_pricing(
-    token_usage: dict, fallback_pricing: Optional[dict]
+    token_usage: dict, fallback_pricing: dict | None
 ) -> tuple[dict, str]:
     """
     Choose a fallback pricing dict based on the token_usage fields.
@@ -430,8 +430,7 @@ def calculate_total_cost(
     # stamp a detectable source so downstream can distinguish a real $0.
     if not recognized and pricing_source == "available_models":
         logger.warning(
-            f"Unrecognized pricing structure for model '{model_name}', "
-            f"using fallback pricing instead of $0: {pricing}",
+            "unrecognized_model_pricing_using_fallback",
             model=model_name,
             pricing=pricing,
         )

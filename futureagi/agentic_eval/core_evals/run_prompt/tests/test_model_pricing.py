@@ -321,7 +321,9 @@ class TestVisionModelImageInputPerImageAlias:
         # The default image omits the optional Vertex SDK and hides its models.
         # Exercise the catalog pricing contract independently of that UI filter.
         from agentic_eval.core_evals.run_prompt import model_pricing
-        from agentic_eval.core_evals.run_prompt.available_models import OSS_AVAILABLE_MODELS
+        from agentic_eval.core_evals.run_prompt.available_models import (
+            OSS_AVAILABLE_MODELS,
+        )
 
         monkeypatch.setattr(model_pricing, "AVAILABLE_MODELS", OSS_AVAILABLE_MODELS)
         model_pricing.get_model_info.cache_clear()
