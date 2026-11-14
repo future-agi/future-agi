@@ -13,6 +13,7 @@ this module also accepts the legacy definition.inputs/formula recipe unchanged.
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime
 from types import SimpleNamespace
@@ -290,6 +291,45 @@ def committed_unit_values_select(
     return f"SELECT * FROM ({latest}){deleted}", params
 
 
+# A pass's source identities go to every capture statement it runs. Inlined,
+# they made each statement over 1 MB of SQL (10M: 23,688 UUID literals in one
+# capture, Code 241 at 514 MiB before reading a row). They are copied once
+# into a session table, at most SOURCE_IDENTITY_CHUNK pairs per INSERT, and
+# every statement names that table.
+SOURCE_IDENTITY_SCHEMA = (("trace_id", "String"), ("span_id", "String"))
+SOURCE_IDENTITY_CHUNK = 500
+
+
+@contextmanager
+def source_identity_relation(store, pairs):
+    """Yield a session table of ``pairs`` (trace_id, span_id), or () if none.
+
+    Pass the result as ``source_identities``: _source_plan then names the table
+    instead of inlining the pairs, so the SQL stays a few kilobytes whatever
+    the pass's size. Duplicates collapse (the nominees are a UNION DISTINCT).
+    """
+    from tracer.services.derived_metrics.frozen_relations import SessionCapture
+
+    pairs = sorted({(str(trace), str(span)) for trace, span in pairs})
+    if not pairs:
+        yield ()
+        return
+
+    def sources():
+        for offset in range(0, len(pairs), SOURCE_IDENTITY_CHUNK):
+            yield (
+                "SELECT tupleElement(pair, 1) AS trace_id, "
+                "tupleElement(pair, 2) AS span_id "
+                "FROM (SELECT arrayJoin(%(identity_pairs)s) AS pair)",
+                {"identity_pairs": pairs[offset : offset + SOURCE_IDENTITY_CHUNK]},
+            )
+
+    with SessionCapture(
+        store, schema=SOURCE_IDENTITY_SCHEMA, sources=sources, role="source"
+    ) as relation:
+        yield relation
+
+
 def _source_plan(
     scope: Scope, ids: tuple[str, ...], manifest, source_identities, start_floor=None
 ) -> tuple[tuple[str, ...], str, dict]:
@@ -328,7 +368,13 @@ def _source_plan(
         + """
         WHERE org_id = %(org_id)s OR isNull(org_id)"""
     ]
-    if source_identities:
+    if hasattr(source_identities, "select"):
+        # A session table (source_identity_relation): named, never inlined.
+        nominees.append(
+            "SELECT trace_id AS trace_key, span_id AS span_key "
+            f"FROM ({source_identities.select})"
+        )
+    elif source_identities:
         params["unit_read_source_ids"] = [
             (str(trace), str(span)) for trace, span in source_identities
         ]

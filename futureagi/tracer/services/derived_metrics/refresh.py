@@ -76,6 +76,7 @@ from tracer.services.derived_metrics.storage import (
     UNIT_STATE,
 )
 from tracer.services.derived_metrics.unit_reads import (
+    source_identity_relation,
     unit_first_created_select,
     unit_source_floor_select,
     unit_source_guard_select,
@@ -1217,54 +1218,55 @@ class RefreshWriter:
             for e in entries
             if e.get("trace_id") and e.get("span_id")
         ]
-        for offset in range(0, len(ids), MAX_BATCH_ROWS):
-            page = tuple(ids[offset : offset + MAX_BATCH_ROWS])
-            anchors = {}
-            # Split only the pinned lookup. Keep the original source-capture
-            # page and its subsequent admission checks unchanged.
-            for membership in iter_key_membership_batches(
-                FIELD_VALUES,
-                fixed={},
-                columns="unit_id",
-                values=page,
-                max_items=MAX_BATCH_ROWS,
-            ):
-                fields, fp = committed_rows_select(
+        with source_identity_relation(self.store, keys) as source_relation:
+            for offset in range(0, len(ids), MAX_BATCH_ROWS):
+                page = tuple(ids[offset : offset + MAX_BATCH_ROWS])
+                anchors = {}
+                # Split only the pinned lookup. Keep the original source-capture
+                # page and its subsequent admission checks unchanged.
+                for membership in iter_key_membership_batches(
                     FIELD_VALUES,
-                    head,
-                    org_id=self.org_id,
-                    project_id=self.lease.project_id,
-                    key_in=membership,
-                    param_prefix="takeover_fields",
-                )
-                anchors.update(
-                    self.store.execute(
-                        f"SELECT unit_id, min(unit_start) FROM ({fields}) WHERE unit_id IN %(takeover_ids)s GROUP BY unit_id",
-                        {**fp, "takeover_ids": membership["unit_id"]},
+                    fixed={},
+                    columns="unit_id",
+                    values=page,
+                    max_items=MAX_BATCH_ROWS,
+                ):
+                    fields, fp = committed_rows_select(
+                        FIELD_VALUES,
+                        head,
+                        org_id=self.org_id,
+                        project_id=self.lease.project_id,
+                        key_in=membership,
+                        param_prefix="takeover_fields",
                     )
-                )
-            if any(unit not in anchors or anchors[unit] < cutoff for unit in page):
-                return False
-            for definition in definitions:
-                if definition.level == "span":
-                    continue
-                sql, params = unit_values_select(
-                    definition,
-                    scope,
-                    page,
-                    start=start,
-                    end=end,
-                    as_of=as_of,
-                    settle_minutes=settle_minutes,
-                    manifest=head,
-                    source_identities=keys,
-                    start_floor=self._unit_source_floor(scope, page, head),
-                )
-                if self.store.execute(
-                    f"SELECT count() FROM ({sql}) WHERE unit_start < toDateTime64(%(takeover_cutoff)s, 6, 'UTC')",
-                    {**params, "takeover_cutoff": cutoff},
-                )[0][0]:
+                    anchors.update(
+                        self.store.execute(
+                            f"SELECT unit_id, min(unit_start) FROM ({fields}) WHERE unit_id IN %(takeover_ids)s GROUP BY unit_id",
+                            {**fp, "takeover_ids": membership["unit_id"]},
+                        )
+                    )
+                if any(unit not in anchors or anchors[unit] < cutoff for unit in page):
                     return False
+                for definition in definitions:
+                    if definition.level == "span":
+                        continue
+                    sql, params = unit_values_select(
+                        definition,
+                        scope,
+                        page,
+                        start=start,
+                        end=end,
+                        as_of=as_of,
+                        settle_minutes=settle_minutes,
+                        manifest=head,
+                        source_identities=source_relation,
+                        start_floor=self._unit_source_floor(scope, page, head),
+                    )
+                    if self.store.execute(
+                        f"SELECT count() FROM ({sql}) WHERE unit_start < toDateTime64(%(takeover_cutoff)s, 6, 'UTC')",
+                        {**params, "takeover_cutoff": cutoff},
+                    )[0][0]:
+                        return False
         return True
 
     def _unit_source_floor(self, scope, units, head):
@@ -1526,113 +1528,56 @@ class RefreshWriter:
                 owners = self._unowned_span_sessions(attempt, head, ids)
                 if len(ids | owners) <= MAX_PASS_UNITS:
                     ids |= owners
-        floors = {}
-        for definition in definitions:
-            if definition.level == "span":
-                continue
-            for offset in range(0, len(ids), MAX_BATCH_ROWS):
-                candidates = tuple(sorted(ids))[offset : offset + MAX_BATCH_ROWS]
-                if candidates not in floors:
-                    floors[candidates] = self._unit_source_floor(
-                        scope, candidates, head
-                    )
-                where = "field_id = toUUID(%(field)s) AND field_version = %(version)s"
-                candidate_params_fixed = {
-                    "field": str(definition.metric_id),
-                    "version": definition.version,
-                }
-                # Dirty-before is indexed by raw candidate owners. Keep its
-                # membership separate from the remap-aware output-domain
-                # readers below: their canonical unit_id can differ from
-                # every candidate supplied to unit_values_select.
-                before = []
-                for membership in iter_key_membership_batches(
-                    FIELD_VALUES,
-                    fixed={
-                        "field_id": (definition.metric_id,),
-                        "field_version": (definition.version,),
-                    },
-                    columns="unit_id",
-                    values=candidates,
-                ):
-                    candidate_sql, candidate_params = committed_rows_select(
-                        FIELD_VALUES,
-                        head,
-                        org_id=self.org_id,
-                        project_id=scope.project,
-                        key_in=membership,
-                        param_prefix="dirty_candidate",
-                    )
-                    before.extend(
-                        self.store.execute(
-                            f"SELECT unit_id, bucket_start, group_key, sampling_scope, sampling_stratum FROM ({candidate_sql}) WHERE {where}",
-                            merge_bindings(candidate_params, candidate_params_fixed),
+        # Every capture statement names the pass's source identities in a
+        # session table instead of inlining them (bug 7: ~1 MB statements).
+        with source_identity_relation(self.store, source_ids) as source_relation:
+            floors = {}
+            for definition in definitions:
+                if definition.level == "span":
+                    continue
+                for offset in range(0, len(ids), MAX_BATCH_ROWS):
+                    candidates = tuple(sorted(ids))[offset : offset + MAX_BATCH_ROWS]
+                    if candidates not in floors:
+                        floors[candidates] = self._unit_source_floor(
+                            scope, candidates, head
                         )
+                    where = (
+                        "field_id = toUUID(%(field)s) AND field_version = %(version)s"
                     )
-                self.append(
-                    attempt,
-                    "dirty_before",
-                    [
-                        dict(
-                            zip(
-                                (
-                                    "unit_id",
-                                    "bucket_start",
-                                    "group_key",
-                                    "scope_key",
-                                    "stratum_key",
-                                ),
-                                row,
-                                strict=True,
-                            )
-                        )
-                        for row in before
-                    ],
-                )
-                query, params = unit_values_select(
-                    definition,
-                    scope,
-                    candidates,
-                    start=start,
-                    end=end,
-                    as_of=as_of,
-                    filters=definition.filters,
-                    settle_minutes=settle_minutes,
-                    manifest=head,
-                    source_identities=source_ids,
-                    start_floor=floors[candidates],
-                )
-                captured = capture_source_output(
-                    self.store,
-                    query,
-                    params,
-                    field_id=definition.metric_id,
-                    field_version=definition.version,
-                    candidate_count=len(candidates),
-                )
-                for source_page in captured.pages():
-                    query, params = source_page.select()
-                    old_sql, old_params = committed_rows_select(
+                    candidate_params_fixed = {
+                        "field": str(definition.metric_id),
+                        "version": definition.version,
+                    }
+                    # Dirty-before is indexed by raw candidate owners. Keep its
+                    # membership separate from the remap-aware output-domain
+                    # readers below: their canonical unit_id can differ from
+                    # every candidate supplied to unit_values_select.
+                    before = []
+                    for membership in iter_key_membership_batches(
                         FIELD_VALUES,
-                        head,
-                        org_id=self.org_id,
-                        project_id=scope.project,
-                        key_in={
+                        fixed={
                             "field_id": (definition.metric_id,),
                             "field_version": (definition.version,),
-                            "unit_id": source_page.unit_ids,
                         },
-                        param_prefix="source_old_fields",
-                    )
-                    old_params = merge_bindings(old_params, candidate_params_fixed)
-                    # The raw candidate dirty-before/has_before guard above is
-                    # unchanged. Also invalidate prior buckets of emitted survivors
-                    # outside that domain; this must NOT change bool(before).
-                    supplemental = self.store.execute(
-                        f"SELECT unit_id, bucket_start, group_key, sampling_scope, sampling_stratum "
-                        f"FROM ({old_sql}) WHERE unit_id NOT IN %(raw_candidates)s",
-                        {**old_params, "raw_candidates": candidates},
-                    )
+                        columns="unit_id",
+                        values=candidates,
+                    ):
+                        candidate_sql, candidate_params = committed_rows_select(
+                            FIELD_VALUES,
+                            head,
+                            org_id=self.org_id,
+                            project_id=scope.project,
+                            key_in=membership,
+                            param_prefix="dirty_candidate",
+                        )
+                        before.extend(
+                            self.store.execute(
+                                f"SELECT unit_id, bucket_start, group_key, sampling_scope, sampling_stratum FROM ({candidate_sql}) WHERE {where}",
+                                merge_bindings(
+                                    candidate_params, candidate_params_fixed
+                                ),
+                            )
+                        )
                     self.append(
                         attempt,
                         "dirty_before",
@@ -1650,141 +1595,209 @@ class RefreshWriter:
                                     strict=True,
                                 )
                             )
-                            for row in supplemental
+                            for row in before
                         ],
                     )
-                    states, state_params = committed_rows_select(
-                        UNIT_STATE,
-                        head,
-                        org_id=self.org_id,
-                        project_id=scope.project,
-                        key_in={
-                            "level": ("conversation",),
-                            "unit_id": source_page.unit_ids,
-                        },
-                        param_prefix="state_floor",
+                    query, params = unit_values_select(
+                        definition,
+                        scope,
+                        candidates,
+                        start=start,
+                        end=end,
+                        as_of=as_of,
+                        filters=definition.filters,
+                        settle_minutes=settle_minutes,
+                        manifest=head,
+                        source_identities=source_relation,
+                        start_floor=floors[candidates],
                     )
-                    # A deleted latest span can lower the live-source arrival.
-                    # Durable committed knowledge is a floor, never settle early.
-                    floor = "greatest(f.last_arrival_ns, ifNull(p.last_arrival_ns, 0))"
-                    due = f"fromUnixTimestamp64Nano(toInt64({floor}), 'UTC') + toIntervalMinute(%(floor_settle)s)"
-                    still_open = f"f.is_deleted = 0 AND {due} > toDateTime64(%(floor_as_of)s, 6, 'UTC')"
-                    provisional = ", ".join(
-                        f"if({still_open}, NULL, f.{c}) AS {c}"
-                        for c in ("value_bool", "value_number", "value_text")
-                    )
-                    query = (
-                        f"SELECT f.* REPLACE({floor} AS last_arrival_ns, "
-                        f"if({still_open}, 'open', f.status) AS status, "
-                        f"{provisional}, if({still_open}, NULL, f.settled_at) AS settled_at) "
-                        f"FROM ({query}) f LEFT JOIN ({states}) p ON f.level = p.level AND f.unit_id = p.unit_id"
-                    )
-                    params = merge_bindings(params, state_params)
-                    params.update(floor_settle=settle_minutes, floor_as_of=as_of)
-                    if cutoff is not None:
-                        # Keep an expired proposal for an EXISTING logical field:
-                        # the same publication must retire it and invalidate its
-                        # former bucket, not silently leave that field current.
-                        # Previously purged/unknown old evidence is not a backfill.
-                        query = (
-                            f"SELECT * FROM ({query}) WHERE unit_start >= "
-                            "toDateTime64(%(refresh_cutoff)s, 6, 'UTC') "
-                            f"OR unit_id IN (SELECT unit_id FROM ({old_sql}) WHERE {where})"
-                        )
-                        params = merge_bindings(params, old_params)
-                        params["refresh_cutoff"] = cutoff
-                        if (
-                            before
-                            and self.store.execute(
-                                f"SELECT count() FROM ({query}) f INNER JOIN "
-                                f"(SELECT unit_id, unit_start AS previous_start FROM ({old_sql}) WHERE {where}) o "
-                                "ON f.unit_id = o.unit_id WHERE f.is_deleted = 0 "
-                                "AND o.previous_start < toDateTime64(%(refresh_cutoff)s, 6, 'UTC') "
-                                "AND f.unit_start >= toDateTime64(%(refresh_cutoff)s, 6, 'UTC')",
-                                params,
-                            )[0][0]
-                        ):
-                            # Surviving young members alone cannot distinguish
-                            # physical pruning from an authoritative deletion.
-                            raise MetricAdmissionUnproven("metric_admission_unproven")
-                    coverage = forward_coverage_start(definition)
-                    if coverage is not None:
-                        # Start with no history: a forward-only version owns
-                        # only units starting at or after its coverage start.
-                        # An EXISTING field still gets its replacement (moved
-                        # or deleted), so no committed value goes stale.
-                        query = (
-                            f"SELECT * FROM ({query}) WHERE unit_start >= "
-                            "toDateTime64(%(forward_coverage_start)s, 6, 'UTC') "
-                            f"OR unit_id IN (SELECT unit_id FROM ({old_sql}) WHERE {where})"
-                        )
-                        params = merge_bindings(
-                            params, old_params, {"forward_coverage_start": coverage}
-                        )
-                    if (
-                        inherited_floor
-                        and admission_requires_proof(head)
-                        and self._unproven_source_admission(
-                            head,
-                            source_page,
-                            query,
-                            params,
-                            old_sql,
-                            old_params,
-                            cutoff or inherited_floor,
-                        )
-                    ):
-                        # Unknown or corrected anchors cannot be proven from a
-                        # recent raw row alone (TH-8975 remains held).
-                        raise MetricAdmissionUnproven("metric_admission_unproven")
-                    extra = {
-                        "field_id": "toUUID(%(metric)s)",
-                        "field_version": "toUInt32(%(metric_version)s)",
-                    }
-                    frozen = self.freeze(
-                        attempt,
-                        FIELD_VALUES,
+                    captured = capture_source_output(
+                        self.store,
                         query,
-                        {
-                            **params,
-                            "metric": str(definition.metric_id),
-                            "metric_version": definition.version,
-                        },
-                        extra=extra,
+                        params,
+                        field_id=definition.metric_id,
+                        field_version=definition.version,
+                        candidate_count=len(candidates),
                     )
-                    new_sql, new_params = payload_select(
-                        FIELD_VALUES, frozen, prefix="new_fields"
-                    )
-                    after = self.store.execute(
-                        f"SELECT unit_id, bucket_start, group_key, sampling_scope, sampling_stratum, is_deleted FROM ({new_sql})",
-                        new_params,
-                    )
-                    self.append(
-                        attempt,
-                        "dirty_after",
-                        [
-                            dict(
-                                zip(
-                                    (
-                                        "unit_id",
-                                        "bucket_start",
-                                        "group_key",
-                                        "scope_key",
-                                        "stratum_key",
-                                        "is_deleted",
-                                    ),
-                                    row,
-                                    strict=True,
+                    for source_page in captured.pages():
+                        query, params = source_page.select()
+                        old_sql, old_params = committed_rows_select(
+                            FIELD_VALUES,
+                            head,
+                            org_id=self.org_id,
+                            project_id=scope.project,
+                            key_in={
+                                "field_id": (definition.metric_id,),
+                                "field_version": (definition.version,),
+                                "unit_id": source_page.unit_ids,
+                            },
+                            param_prefix="source_old_fields",
+                        )
+                        old_params = merge_bindings(old_params, candidate_params_fixed)
+                        # The raw candidate dirty-before/has_before guard above is
+                        # unchanged. Also invalidate prior buckets of emitted survivors
+                        # outside that domain; this must NOT change bool(before).
+                        supplemental = self.store.execute(
+                            f"SELECT unit_id, bucket_start, group_key, sampling_scope, sampling_stratum "
+                            f"FROM ({old_sql}) WHERE unit_id NOT IN %(raw_candidates)s",
+                            {**old_params, "raw_candidates": candidates},
+                        )
+                        self.append(
+                            attempt,
+                            "dirty_before",
+                            [
+                                dict(
+                                    zip(
+                                        (
+                                            "unit_id",
+                                            "bucket_start",
+                                            "group_key",
+                                            "scope_key",
+                                            "stratum_key",
+                                        ),
+                                        row,
+                                        strict=True,
+                                    )
                                 )
+                                for row in supplemental
+                            ],
+                        )
+                        states, state_params = committed_rows_select(
+                            UNIT_STATE,
+                            head,
+                            org_id=self.org_id,
+                            project_id=scope.project,
+                            key_in={
+                                "level": ("conversation",),
+                                "unit_id": source_page.unit_ids,
+                            },
+                            param_prefix="state_floor",
+                        )
+                        # A deleted latest span can lower the live-source arrival.
+                        # Durable committed knowledge is a floor, never settle early.
+                        floor = (
+                            "greatest(f.last_arrival_ns, ifNull(p.last_arrival_ns, 0))"
+                        )
+                        due = f"fromUnixTimestamp64Nano(toInt64({floor}), 'UTC') + toIntervalMinute(%(floor_settle)s)"
+                        still_open = f"f.is_deleted = 0 AND {due} > toDateTime64(%(floor_as_of)s, 6, 'UTC')"
+                        provisional = ", ".join(
+                            f"if({still_open}, NULL, f.{c}) AS {c}"
+                            for c in ("value_bool", "value_number", "value_text")
+                        )
+                        query = (
+                            f"SELECT f.* REPLACE({floor} AS last_arrival_ns, "
+                            f"if({still_open}, 'open', f.status) AS status, "
+                            f"{provisional}, if({still_open}, NULL, f.settled_at) AS settled_at) "
+                            f"FROM ({query}) f LEFT JOIN ({states}) p ON f.level = p.level AND f.unit_id = p.unit_id"
+                        )
+                        params = merge_bindings(params, state_params)
+                        params.update(floor_settle=settle_minutes, floor_as_of=as_of)
+                        if cutoff is not None:
+                            # Keep an expired proposal for an EXISTING logical field:
+                            # the same publication must retire it and invalidate its
+                            # former bucket, not silently leave that field current.
+                            # Previously purged/unknown old evidence is not a backfill.
+                            query = (
+                                f"SELECT * FROM ({query}) WHERE unit_start >= "
+                                "toDateTime64(%(refresh_cutoff)s, 6, 'UTC') "
+                                f"OR unit_id IN (SELECT unit_id FROM ({old_sql}) WHERE {where})"
                             )
-                            for row in after
-                        ],
-                    )
-                    self.append(
-                        attempt,
-                        "vanished",
-                        [{"unit_id": row[0]} for row in after if row[-1]],
-                    )
+                            params = merge_bindings(params, old_params)
+                            params["refresh_cutoff"] = cutoff
+                            if (
+                                before
+                                and self.store.execute(
+                                    f"SELECT count() FROM ({query}) f INNER JOIN "
+                                    f"(SELECT unit_id, unit_start AS previous_start FROM ({old_sql}) WHERE {where}) o "
+                                    "ON f.unit_id = o.unit_id WHERE f.is_deleted = 0 "
+                                    "AND o.previous_start < toDateTime64(%(refresh_cutoff)s, 6, 'UTC') "
+                                    "AND f.unit_start >= toDateTime64(%(refresh_cutoff)s, 6, 'UTC')",
+                                    params,
+                                )[0][0]
+                            ):
+                                # Surviving young members alone cannot distinguish
+                                # physical pruning from an authoritative deletion.
+                                raise MetricAdmissionUnproven(
+                                    "metric_admission_unproven"
+                                )
+                        coverage = forward_coverage_start(definition)
+                        if coverage is not None:
+                            # Start with no history: a forward-only version owns
+                            # only units starting at or after its coverage start.
+                            # An EXISTING field still gets its replacement (moved
+                            # or deleted), so no committed value goes stale.
+                            query = (
+                                f"SELECT * FROM ({query}) WHERE unit_start >= "
+                                "toDateTime64(%(forward_coverage_start)s, 6, 'UTC') "
+                                f"OR unit_id IN (SELECT unit_id FROM ({old_sql}) WHERE {where})"
+                            )
+                            params = merge_bindings(
+                                params, old_params, {"forward_coverage_start": coverage}
+                            )
+                        if (
+                            inherited_floor
+                            and admission_requires_proof(head)
+                            and self._unproven_source_admission(
+                                head,
+                                source_page,
+                                query,
+                                params,
+                                old_sql,
+                                old_params,
+                                cutoff or inherited_floor,
+                            )
+                        ):
+                            # Unknown or corrected anchors cannot be proven from a
+                            # recent raw row alone (TH-8975 remains held).
+                            raise MetricAdmissionUnproven("metric_admission_unproven")
+                        extra = {
+                            "field_id": "toUUID(%(metric)s)",
+                            "field_version": "toUInt32(%(metric_version)s)",
+                        }
+                        frozen = self.freeze(
+                            attempt,
+                            FIELD_VALUES,
+                            query,
+                            {
+                                **params,
+                                "metric": str(definition.metric_id),
+                                "metric_version": definition.version,
+                            },
+                            extra=extra,
+                        )
+                        new_sql, new_params = payload_select(
+                            FIELD_VALUES, frozen, prefix="new_fields"
+                        )
+                        after = self.store.execute(
+                            f"SELECT unit_id, bucket_start, group_key, sampling_scope, sampling_stratum, is_deleted FROM ({new_sql})",
+                            new_params,
+                        )
+                        self.append(
+                            attempt,
+                            "dirty_after",
+                            [
+                                dict(
+                                    zip(
+                                        (
+                                            "unit_id",
+                                            "bucket_start",
+                                            "group_key",
+                                            "scope_key",
+                                            "stratum_key",
+                                            "is_deleted",
+                                        ),
+                                        row,
+                                        strict=True,
+                                    )
+                                )
+                                for row in after
+                            ],
+                        )
+                        self.append(
+                            attempt,
+                            "vanished",
+                            [{"unit_id": row[0]} for row in after if row[-1]],
+                        )
         # Dependencies/lifecycle are part of the SAME generation. B04 carries
         # tombstones as well as old memberships; neither is an independent write.
         self.freeze_dependencies(attempt, dependencies.values(), cutoff=cutoff)

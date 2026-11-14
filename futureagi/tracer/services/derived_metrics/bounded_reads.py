@@ -775,6 +775,11 @@ def capture_source_output(
         "result_overflow_mode": "throw",
     }
     rows, seen, size = [], {}, 0
+    # The capture can name session tables (source_identity_relation): replay
+    # them first if the native session was replaced, as store.execute does.
+    restore = getattr(store, "_restore_transients", None)
+    if restore is not None:
+        restore()
     iterator = stream(
         query,
         params,

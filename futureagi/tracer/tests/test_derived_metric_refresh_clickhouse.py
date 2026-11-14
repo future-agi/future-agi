@@ -196,6 +196,79 @@ def test_real_source_refresh_fields_and_user_metrics_have_zero_buckets(
         assert len(buckets) == 1 and buckets[0][2:5] == (1, 4.0, 1.0)
 
 
+CAPTURE_SQL_BYTES = 64 * 1024
+
+
+@pytest.mark.django_db(transaction=True)
+def test_capture_sql_stays_small_whatever_the_pass_size(
+    live_writer, workspace, observe_project
+):
+    """10M: every capture inlined the pass's source identities, so one
+    statement was over 1 MB (23,688 UUID literals) and failed with Code 241 at
+    514 MiB before reading a row. A discovery page holds up to 10,000 source
+    keys; every capture statement must stay a few kilobytes regardless."""
+    writer = live_writer
+    scope = Scope(workspace.organization_id, workspace.id, observe_project.id)
+    definition = definition_for(writer, workspace, observe_project)
+    session, user, trace = uuid4(), uuid4(), uuid4()
+    at = datetime.now(UTC).replace(microsecond=0) - timedelta(hours=2)
+    seed_span(
+        writer.store.client,
+        scope,
+        "span-live",
+        session,
+        user,
+        at,
+        resolved=4,
+        trace_id=trace,
+    )
+    dependencies = [
+        Dependency(
+            str(trace),
+            "span-live",
+            str(session),
+            str(session),
+            str(user),
+            str(user),
+            at,
+        )
+    ] + [
+        # Keys discovery nominated whose spans are gone (or never landed).
+        Dependency(
+            str(uuid4()),
+            f"span-{index:05d}",
+            str(session),
+            str(session),
+            str(user),
+            str(user),
+            at,
+        )
+        for index in range(9_999)
+    ]
+    started = writer.store.execute("SELECT now()")[0][0]
+    head = writer.refresh(
+        change_for(session, dependencies=dependencies),
+        [definition],
+        scope,
+        start=at - timedelta(days=1),
+        end=at + timedelta(days=1),
+        as_of=at + timedelta(hours=1),
+    )
+    values = current_fields(writer, head)
+    assert len(values) == 1 and values[0][1] == 4
+    writer.store.execute("SYSTEM FLUSH LOGS")
+    count, longest, memory = writer.store.execute(
+        "SELECT count(), max(length(query)), max(memory_usage) FROM system.query_log "
+        "WHERE type IN ('QueryFinish', 'ExceptionWhileProcessing') "
+        "AND current_database = currentDatabase() AND event_time >= %(started)s "
+        "AND query_id LIKE 'metric-source-capture-%%'",
+        {"started": started},
+    )[0]
+    print(f"CAPTURE_SQL count={count} longest={longest} memory={memory}")
+    assert count >= 1
+    assert longest <= CAPTURE_SQL_BYTES, longest
+
+
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.parametrize("configured", [None, 1, 4])
 def test_a_head_compacts_only_once_it_carries_the_configured_deltas(
