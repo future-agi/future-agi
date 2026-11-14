@@ -39,7 +39,7 @@ def _stored_status(row):
 
 @pytest.mark.django_db
 @pytest.mark.parametrize(
-    ("settings", "expected_temperature", "expected_max_tokens"),
+    ("settings", "temp", "tokens"),
     [
         ({}, 0.0, 4000),
         ({"temperature": 0.6}, 0.6, 4000),
@@ -47,38 +47,29 @@ def _stored_status(row):
         ({"temperature": None, "max_tokens": None}, 0.0, 4000),
     ],
 )
-def test_process_optimization_applies_optional_model_settings(
-    optimization, settings, expected_temperature, expected_max_tokens
-):
+def test_optional_model_settings_in_runner(optimization, settings, temp, tokens):
     optimization.model_config = {"model_name": "gpt-4o-mini", **settings}
-    optimization.messages = [
-        {"role": "user", "content": [{"type": "text", "text": "Improve this prompt"}]}
-    ]
+    optimization.messages = [dict(role="user", content=[dict(type="text", text="Hi")])]
     optimization.save()
-
+    view = "model_hub.views.develop_optimiser"
     with (
         patch(f"{RUNNER}.close_old_connections"),
-        patch(
-            "model_hub.views.develop_optimiser.DevelopOptimizer._calculate_tokens_and_deduct"
-        ),
-        patch("model_hub.views.develop_optimiser.LiteLLMModelManager") as model_manager,
-        patch("model_hub.views.develop_optimiser.PromptOptimizer") as prompt_optimizer,
-        patch("model_hub.views.develop_optimiser.LLM") as llm,
+        patch(f"{view}.DevelopOptimizer._calculate_tokens_and_deduct"),
+        patch(f"{view}.LiteLLMModelManager") as model_manager,
+        patch(f"{view}.PromptOptimizer") as prompt_optimizer,
+        patch(f"{view}.LLM") as llm,
     ):
         model_manager.return_value.get_provider.return_value = "openai"
-        prompt_optimizer.return_value.get_optimized_prompt.return_value = [
-            {"instruction_template": "Better prompt", "train_score": 1.0}
-        ]
+        result = prompt_optimizer.return_value.get_optimized_prompt
+        result.return_value = [dict(instruction_template="Better", train_score=1.0)]
         process_optimization(optimization)
 
-    assert prompt_optimizer.call_args.kwargs["temperature"] == expected_temperature
-    assert prompt_optimizer.call_args.kwargs["max_tokens"] == expected_max_tokens
-    assert llm.call_args.kwargs["temperature"] == (
-        0.7 if settings.get("temperature") is None else settings["temperature"]
-    )
-    assert llm.call_args.kwargs["max_tokens"] == (
-        1000 if settings.get("max_tokens") is None else settings["max_tokens"]
-    )
+    assert prompt_optimizer.call_args.kwargs["temperature"] == temp
+    assert prompt_optimizer.call_args.kwargs["max_tokens"] == tokens
+    for key, default in (("temperature", 0.7), ("max_tokens", 1000)):
+        assert llm.call_args.kwargs[key] == (
+            default if settings.get(key) is None else settings[key]
+        )
     assert _stored_status(optimization) == StatusType.COMPLETED.value
     optimization.refresh_from_db()
     assert optimization.model_config == {"model_name": "gpt-4o-mini", **settings}
