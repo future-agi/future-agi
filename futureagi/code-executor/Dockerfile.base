@@ -16,7 +16,7 @@
 # Same digest-pinned Python base as futureagi/Dockerfile.oss and
 # model_serving/Dockerfile.oss, so a distributed install downloads it once.
 
-ARG PYTHON_IMAGE=python:3.11-slim-bookworm@sha256:a83ba18aef0f865b1a4a611c2cf460fe446f2795673bbb9fe43be570439e3b39
+ARG PYTHON_IMAGE=python:3.11-slim-bookworm@sha256:a36c24f9cbdf4fd0f52d67f0823eeac19c2028c637cecc392d97f980d4fec56b
 
 # --------------- nsjail (build only) ---------------
 FROM ${PYTHON_IMAGE} AS nsjail

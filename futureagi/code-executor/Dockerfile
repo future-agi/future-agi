@@ -13,13 +13,12 @@
 # .github/workflows/base-image-publish.yml.
 #
 # v1.1.0 is the multi-stage base (~185 MB gzip instead of v1.0.0's 331 MB) with
-# the sandbox libs pinned to futureagi/uv.lock; v1.1.1 rebuilds it on the
-# current python:3.11-slim-bookworm digest. It must be published before a
+# the sandbox libs pinned to futureagi/uv.lock. It must be published before a
 # release builds this file; pin it by digest once it is:
-#   CODE_EXECUTOR_BASE=futureagi/code-executor-base:v1.1.1@sha256:<index digest>
+#   CODE_EXECUTOR_BASE=futureagi/code-executor-base:v1.1.0@sha256:<index digest>
 # To build without publishing, build the base locally under that tag first:
-#   docker build -f Dockerfile.base -t futureagi/code-executor-base:v1.1.1 .
-ARG CODE_EXECUTOR_BASE=futureagi/code-executor-base:v1.1.1
+#   docker build -f Dockerfile.base -t futureagi/code-executor-base:v1.1.0 .
+ARG CODE_EXECUTOR_BASE=futureagi/code-executor-base:v1.1.0
 FROM ${CODE_EXECUTOR_BASE}
 
 # config/python.cfg is not read: server.py passes nsjail flags (see above).
