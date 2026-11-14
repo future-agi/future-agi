@@ -147,6 +147,7 @@ from tfc.utils.base_viewset import (
 )
 from tfc.utils.error_codes import get_error_message
 from tfc.utils.general_methods import GeneralMethods
+from tfc.utils.media_tools import MediaToolUnavailable
 from tfc.utils.pagination import ExtendedPageNumberPagination
 from tfc.utils.parse_errors import parse_serialized_errors
 from tfc.utils.storage import (
@@ -269,6 +270,10 @@ def handle_media(item: dict, model_name: str):
                 "input_audio": {"data": encoded_string, "format": audio_type},
             }
 
+        except MediaToolUnavailable:
+            # Names the missing ffmpeg and the image to use; a None item would
+            # fail later with an unrelated error.
+            raise
         except (KeyError, ValueError) as e:
             logger.error(f"Data processing error: {e}")
         except Exception as e:
