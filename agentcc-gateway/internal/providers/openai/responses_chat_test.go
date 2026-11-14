@@ -302,6 +302,24 @@ func TestChatCompletionViaResponsesKeepsTheUpstreamError(t *testing.T) {
 	}
 }
 
+// A Responses answer can arrive as HTTP 200 with status "failed". The caller
+// gets the failure, as a stream's response.failed already does, not an empty
+// chat completion that health checks, failover and Request Logs count as a
+// success.
+func TestChatCompletionViaResponsesReportsAFailedResponse(t *testing.T) {
+	ts := fakeOpenAI(t, func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, `{"id":"resp_1","object":"response","created_at":1761580000,"status":"failed","model":"gpt-5.6-terra","output":[],"error":{"code":"server_error","message":"The model failed to generate a response."},"usage":null}`)
+	})
+	defer ts.Close()
+	p := newTestProvider(t, ts.URL)
+
+	resp, err := p.ChatCompletionViaResponses(context.Background(), toolTurnRequest("gpt-5.6-terra"))
+	var apiErr *models.APIError
+	if !asAPIError(err, &apiErr) || apiErr.Status != http.StatusBadGateway || !strings.Contains(apiErr.Message, "failed to generate") {
+		t.Fatalf("resp = %+v, err = %v; want a 502 carrying the upstream's message", resp, err)
+	}
+}
+
 func asAPIError(err error, target **models.APIError) bool {
 	e, ok := err.(*models.APIError)
 	if ok {

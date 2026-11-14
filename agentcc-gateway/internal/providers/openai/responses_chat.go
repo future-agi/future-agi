@@ -76,6 +76,15 @@ func (p *Provider) ChatCompletionViaResponses(ctx context.Context, req *models.C
 	if err := json.Unmarshal(respBody, &resp); err != nil {
 		return nil, models.ErrUpstreamProvider(http.StatusBadGateway, fmt.Sprintf("parsing responses response: %v", err))
 	}
+	// A failed response can come back as a 200; fail it as the stream's
+	// response.failed does, rather than answer an empty completion.
+	if resp.Status == "failed" {
+		msg := "response failed"
+		if resp.Error != nil && resp.Error.Message != "" {
+			msg = resp.Error.Message
+		}
+		return nil, models.ErrUpstreamProvider(http.StatusBadGateway, msg)
+	}
 	return resp.toChat(), nil
 }
 
