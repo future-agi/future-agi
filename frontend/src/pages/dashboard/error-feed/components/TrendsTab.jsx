@@ -3,7 +3,6 @@ import ApexCharts from "apexcharts";
 import { format } from "date-fns";
 import {
   Box,
-  CircularProgress,
   Stack,
   Tooltip,
   Typography,
@@ -14,6 +13,7 @@ import PropTypes from "prop-types";
 import Iconify from "src/components/iconify";
 import { useErrorFeedTrends } from "src/api/errorFeed/error-feed";
 import { useSharedIssue } from "../sharedIssueContext";
+import { LoadingScreen } from "src/components/loading-screen";
 
 const TRENDS_WINDOW_DAYS = 14;
 // The API's value for a metric with nothing to measure in the window.
@@ -584,7 +584,7 @@ export default function TrendsTab({ error }) {
   if (shared && !data) {
     return (
       <Stack alignItems="center" justifyContent="center" sx={{ py: 6 }}>
-        <Typography fontSize="13px" color="text.disabled">
+        <Typography fontSize="12px" color="text.disabled">
           No trend data for this issue.
         </Typography>
       </Stack>
@@ -592,11 +592,7 @@ export default function TrendsTab({ error }) {
   }
 
   if (isLoading || !data) {
-    return (
-      <Stack alignItems="center" justifyContent="center" sx={{ py: 6 }}>
-        <CircularProgress size={18} />
-      </Stack>
-    );
+    return <LoadingScreen compact />;
   }
 
   const hasHeatmapData = (data.activity_heatmap ?? []).some((row) =>

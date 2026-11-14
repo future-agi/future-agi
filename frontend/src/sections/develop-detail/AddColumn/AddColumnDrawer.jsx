@@ -178,7 +178,7 @@ const AddColumnForm = ({
                 <Iconify icon={icon} width={20} height={20} />
                 <Typography
                   sx={{
-                    fontSize: "13px",
+                    fontSize: "12px",
                     fontWeight: 600,
                     color: "text.primary",
                   }}
@@ -333,7 +333,7 @@ const AddColumnDrawer = ({ hideScenarioFeatures = false }) => {
                       >
                         <Typography
                           sx={{
-                            fontSize: "13px",
+                            fontSize: "12px",
                             fontWeight: 600,
                             color:
                               selectedDataType === val.name

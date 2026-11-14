@@ -365,6 +365,7 @@ class UserListRequestSerializer(PaginationSerializer):
             sort_items.setdefault(index, {})[sort_key] = data.get(key)
 
         return [sort_items[index] for index in sorted(sort_items.keys())]
+
     filter_role = serializers.ListField(
         child=serializers.ChoiceField(choices=OrganizationRoles.choices),
         required=False,

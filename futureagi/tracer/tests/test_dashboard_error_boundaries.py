@@ -699,11 +699,15 @@ def test_dashboard_running_refresh_suppresses_duplicate_direct_read(
         ) as cache_probe,
         patch(
             "tracer.views.dashboard._read_dashboard_rollup_fast_path",
-            side_effect=AssertionError("an in-flight worker must suppress direct reads"),
+            side_effect=AssertionError(
+                "an in-flight worker must suppress direct reads"
+            ),
         ),
         patch(
             "tracer.views.dashboard.V2AnalyticsQueryService",
-            side_effect=AssertionError("an in-flight worker must suppress direct reads"),
+            side_effect=AssertionError(
+                "an in-flight worker must suppress direct reads"
+            ),
         ),
     ):
         response = auth_client.post(

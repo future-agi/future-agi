@@ -1,6 +1,7 @@
 import { Box, Typography } from "@mui/material";
 import { useMemo } from "react";
 import { AgGridReact } from "ag-grid-react";
+import "src/utils/ag-grid-setup";
 import { useAgThemeWith } from "src/hooks/use-ag-theme";
 import SvgColor from "../../../../../components/svg-color";
 import { useQuery } from "@tanstack/react-query";

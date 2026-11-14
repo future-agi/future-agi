@@ -491,9 +491,7 @@ class TestExtractEntitiesView(DynamicColumnsBaseTestCase):
             mock_resp.choices[0].message = Mock()
             mock_resp.choices[0].message.content = '["Paris", "France"]'
             mock_resp.choices[0].message.tool_calls = None
-            mock_resp.usage = Mock(
-                prompt_tokens=1, completion_tokens=1, total_tokens=2
-            )
+            mock_resp.usage = Mock(prompt_tokens=1, completion_tokens=1, total_tokens=2)
             mock_resp.model = "gpt-4o"
             return ResponseFormatter.format_llm_response(
                 response=mock_resp,
@@ -914,9 +912,9 @@ class TestRerunOperationView(DynamicColumnsBaseTestCase):
         column.refresh_from_db()
         assert column.status == StatusType.COMPLETED.value
         assert list(
-            Cell.objects.filter(column=column).order_by("row__order").values_list(
-                "value", "value_infos", "status"
-            )
+            Cell.objects.filter(column=column)
+            .order_by("row__order")
+            .values_list("value", "value_infos", "status")
         ) == [
             ("original", {"reason": "kept"}, CellStatus.PASS.value),
             ("original", {"reason": "kept"}, CellStatus.PASS.value),
@@ -957,9 +955,9 @@ class TestRerunOperationView(DynamicColumnsBaseTestCase):
         assert column.metadata == original_metadata
         assert column.status == StatusType.COMPLETED.value
         assert list(
-            Cell.objects.filter(column=column).order_by("row__order").values_list(
-                "value", "value_infos", "status"
-            )
+            Cell.objects.filter(column=column)
+            .order_by("row__order")
+            .values_list("value", "value_infos", "status")
         ) == [
             ("original", {"reason": "kept"}, CellStatus.PASS.value),
             ("original", {"reason": "kept"}, CellStatus.PASS.value),
@@ -1247,7 +1245,9 @@ class TestAddApiColumnViewHelpers(DynamicColumnsBaseTestCase):
         """Test _resolve_cell_value with deeply nested path."""
         dataset, column, rows = self.create_json_dataset()
 
-        result = AddApiColumnView._resolve_cell_value(f"{column.id}.nested.key", rows[1])
+        result = AddApiColumnView._resolve_cell_value(
+            f"{column.id}.nested.key", rows[1]
+        )
         assert result == "value1"
 
     def test_replace_variables_multiple_in_string(self):
