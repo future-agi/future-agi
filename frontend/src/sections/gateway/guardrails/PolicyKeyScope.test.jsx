@@ -144,4 +144,28 @@ describe("Edit guardrail threshold", () => {
       expect.anything(),
     );
   });
+
+  it("shows and replaces a threshold stored as confidence_threshold", async () => {
+    render(
+      <EditGuardrailDialog
+        open
+        onClose={vi.fn()}
+        gatewayId="gateway"
+        guardrail={{
+          name: "pii-detection",
+          action: "block",
+          confidence_threshold: 50,
+        }}
+      />,
+    );
+    const field = screen.getByRole("spinbutton", { name: "Threshold" });
+    expect(field).toHaveValue(50);
+    expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+    await userEvent.clear(field);
+    await userEvent.type(field, "0.7");
+    await userEvent.click(screen.getByRole("button", { name: "Save" }));
+    const sent = updateGuardrail.mock.calls[0][0].config;
+    expect(sent.threshold).toBe(0.7);
+    expect(sent).not.toHaveProperty("confidence_threshold");
+  });
 });

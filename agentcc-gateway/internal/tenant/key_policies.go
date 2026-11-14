@@ -29,11 +29,13 @@ func (g *GuardrailConfig) KeyPoliciesFor(keyID string) []*KeyGuardrailPolicy {
 	return matched
 }
 
-// KeyPolicyFingerprint identifies what the key policies that apply to keyID
-// check: their IDs, modes, priorities and checks. It is "" when none apply.
-// Two keys with the same fingerprint face the same key-policy checks, and any
-// change to a policy that applies to the key (a check, an action, Monitor to
-// Enforce) changes it.
+// KeyPolicyFingerprint identifies the key and what the key policies that apply
+// to it check: their IDs, names, modes, priorities and checks. It is "" when
+// none apply. Any change to a policy that applies to the key (a check, an
+// action, Monitor to Enforce, a rename that changes the order policies run in)
+// changes it. It includes the key ID, so two keys never share a fingerprint
+// even under the same policies: a check may read the request's key (an
+// expression on metadata.auth_key_id, for example).
 func (g *GuardrailConfig) KeyPolicyFingerprint(keyID string) string {
 	matched := g.KeyPoliciesFor(keyID)
 	if len(matched) == 0 {
@@ -41,13 +43,14 @@ func (g *GuardrailConfig) KeyPolicyFingerprint(keyID string) string {
 	}
 	type entry struct {
 		ID       string                     `json:"id"`
+		Name     string                     `json:"name"`
 		Mode     string                     `json:"mode"`
 		Priority int                        `json:"priority"`
 		Checks   map[string]*GuardrailCheck `json:"checks"`
 	}
 	entries := make([]entry, 0, len(matched))
 	for _, pol := range matched {
-		entries = append(entries, entry{ID: pol.ID, Mode: strings.ToLower(strings.TrimSpace(pol.Mode)), Priority: pol.Priority, Checks: pol.Checks})
+		entries = append(entries, entry{ID: pol.ID, Name: pol.Name, Mode: strings.ToLower(strings.TrimSpace(pol.Mode)), Priority: pol.Priority, Checks: pol.Checks})
 	}
 	sort.Slice(entries, func(i, j int) bool { return entries[i].ID < entries[j].ID })
 	// encoding/json sorts map keys, so the encoding is deterministic.
@@ -62,6 +65,8 @@ func (g *GuardrailConfig) KeyPolicyFingerprint(keyID string) string {
 		}
 	}
 	h := fnv.New128a()
+	h.Write([]byte(keyID))
+	h.Write([]byte{0})
 	h.Write(b)
 	return hex.EncodeToString(h.Sum(nil))
 }

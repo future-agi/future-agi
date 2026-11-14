@@ -98,10 +98,16 @@ func (p *Plugin) ProcessRequest(_ context.Context, rc *models.RequestContext) pi
 	}
 
 	// Build cache key.
-	namespace := p.namespace(rc)
+	fp := p.keyPolicyFingerprint(rc)
+	rc.Metadata[keyPoliciesMetadata] = fp
+	namespace := namespaceWithKeyPolicies(cacheNamespace(rc), fp)
 	key := BuildCacheKey(namespace, rc.Request)
 	rc.Metadata["cache_key"] = key
-	if p.semanticStore != nil {
+	// A semantic hit answers a different (similar) prompt, so the request's
+	// own text never reached its key policies' pre-stage checks: requests on
+	// keys with key policies use exact matches only.
+	semantic := p.semanticStore != nil && fp == ""
+	if semantic {
 		// Fixed now so ProcessResponse stores under it even on force-refresh or
 		// after later plugins rewrite rc.Request.
 		rc.Metadata["cache_semantic_partition"] = semanticPartition(namespace, rc.Request)
@@ -147,7 +153,7 @@ func (p *Plugin) ProcessRequest(_ context.Context, rc *models.RequestContext) pi
 	}
 
 	// L2: Check semantic cache.
-	if p.semanticStore != nil {
+	if semantic {
 		text := extractLastUserMessage(rc.Request)
 		if text != "" {
 			vec := cache.Vectorize(text, p.semanticStore.Dims())
@@ -197,11 +203,19 @@ func (p *Plugin) ProcessResponse(_ context.Context, rc *models.RequestContext) p
 		return pipeline.ResultContinue()
 	}
 
+	// The key's policies changed while the request ran (Enforce to Monitor,
+	// say): the guardrails may have judged it under other policies than the
+	// ones its cache key names, so it is not stored there.
+	fp := rc.Metadata[keyPoliciesMetadata]
+	if p.keyPolicyFingerprint(rc) != fp {
+		return pipeline.ResultContinue()
+	}
+
 	ttl := p.resolveTTL(rc)
 	p.store.Set(key, rc.Response, ttl)
 
 	// Also store in semantic cache (L2).
-	if p.semanticStore != nil && rc.Request != nil {
+	if p.semanticStore != nil && rc.Request != nil && fp == "" {
 		text := extractLastUserMessage(rc.Request)
 		if text != "" {
 			vec := cache.Vectorize(text, p.semanticStore.Dims())
@@ -209,7 +223,7 @@ func (p *Plugin) ProcessResponse(_ context.Context, rc *models.RequestContext) p
 			// remediation, fallback model rewrites) may have changed rc.Request.
 			partition := rc.Metadata["cache_semantic_partition"]
 			if partition == "" {
-				partition = semanticPartition(p.namespace(rc), rc.Request)
+				partition = semanticPartition(cacheNamespace(rc), rc.Request)
 			}
 			p.semanticStore.Set(key, vec, partition, rc.Response, ttl)
 		}
@@ -283,23 +297,32 @@ func cacheNamespace(rc *models.RequestContext) string {
 	return "default"
 }
 
-// namespace is the request's cache namespace, partitioned by the guardrail key
-// policies that apply to the request's key. Guardrails run after the cache
-// (priority 50 vs 35), so a hit skips the pre-stage checks: an entry may only
-// be served to requests that face the same checks as the one that stored it.
-// Org-wide checks are the same for every key of the org; key policies are not.
-// A key with no key policies keeps the plain namespace, so its entries (and
-// every entry stored before key policies existed) stay where they were.
-func (p *Plugin) namespace(rc *models.RequestContext) string {
-	ns := cacheNamespace(rc)
+// keyPoliciesMetadata holds the key-policy fingerprint the request's cache key
+// was built with.
+const keyPoliciesMetadata = "cache_key_policies"
+
+// keyPolicyFingerprint identifies the request's key and the guardrail key
+// policies that apply to it, or is "" when none do. Guardrails run after the
+// cache (priority 50 vs 35), so a hit skips the pre-stage checks: an entry may
+// only be served to requests that face the same checks as the one that stored
+// it. Org-wide checks are the same for every key of the org; key policies are
+// not.
+func (p *Plugin) keyPolicyFingerprint(rc *models.RequestContext) string {
 	if p.tenantStore == nil {
-		return ns
+		return ""
 	}
 	orgCfg := p.tenantStore.Get(rc.Metadata["org_id"])
 	if orgCfg == nil || orgCfg.Guardrails == nil {
-		return ns
+		return ""
 	}
-	fp := orgCfg.Guardrails.KeyPolicyFingerprint(rc.Metadata["auth_key_id"])
+	return orgCfg.Guardrails.KeyPolicyFingerprint(rc.Metadata["auth_key_id"])
+}
+
+// namespaceWithKeyPolicies partitions the namespace by the key-policy
+// fingerprint. A key with no key policies keeps the plain namespace, so its
+// entries (and every entry stored before key policies existed) stay where
+// they were.
+func namespaceWithKeyPolicies(ns, fp string) string {
 	if fp == "" {
 		return ns
 	}

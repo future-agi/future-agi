@@ -32,7 +32,9 @@ const EditGuardrailDialog = ({ open, onClose, guardrail, gatewayId }) => {
     if (guardrail && open) {
       setAction(guardrail.action || "block");
       setStage(guardrail.stage || guardrail.phase || "pre");
-      setThreshold(guardrail.threshold ?? "");
+      // Checks saved from the Rules tab or the API keep the threshold as
+      // confidence_threshold.
+      setThreshold(guardrail.threshold ?? guardrail.confidence_threshold ?? "");
     }
   }, [guardrail, open]);
 
@@ -48,6 +50,9 @@ const EditGuardrailDialog = ({ open, onClose, guardrail, gatewayId }) => {
       stage,
       mode: resolveExecutionMode(guardrail),
     };
+    // Send one spelling: a stored confidence_threshold the field replaced
+    // must not ride along (the API refuses one outside 0 to 1).
+    delete config.confidence_threshold;
     if (threshold !== "") config.threshold = Number(threshold);
 
     updateGuardrail.mutate(

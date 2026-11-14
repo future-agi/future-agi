@@ -34,9 +34,16 @@ func TestKeyPolicyFingerprint(t *testing.T) {
 	if cfg.KeyPolicyFingerprint("key_a") == enforced {
 		t.Fatal("changing a check's action kept the fingerprint")
 	}
-	// Keys with the same policies share a fingerprint: they face the same checks.
+	// A rename can change the order policies run in.
+	before := cfg.KeyPolicyFingerprint("key_a")
+	pol.Name = "renamed"
+	if cfg.KeyPolicyFingerprint("key_a") == before {
+		t.Fatal("renaming the policy kept the fingerprint")
+	}
+	// Two keys never share one, even under the same policy: a check may read
+	// the request's key.
 	pol.KeyIDs = append(pol.KeyIDs, "key_d")
-	if cfg.KeyPolicyFingerprint("key_d") != cfg.KeyPolicyFingerprint("key_a") {
-		t.Fatal("two keys under the same single policy got different fingerprints")
+	if cfg.KeyPolicyFingerprint("key_d") == cfg.KeyPolicyFingerprint("key_a") {
+		t.Fatal("two keys under the same policy share a fingerprint")
 	}
 }
