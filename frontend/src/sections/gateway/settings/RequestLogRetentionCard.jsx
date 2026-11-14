@@ -203,7 +203,7 @@ export default function RequestLogRetentionCard() {
             sx={{ borderTop: 1, borderColor: "divider", pt: 1.5 }}
           >
             <Box>
-              <Typography variant="s3" color="text.secondary">
+              <Typography variant="s3" color="text.secondary" component="div">
                 Next cleanup
               </Typography>
               <Typography variant="s1">
@@ -211,7 +211,7 @@ export default function RequestLogRetentionCard() {
               </Typography>
             </Box>
             <Box>
-              <Typography variant="s3" color="text.secondary">
+              <Typography variant="s3" color="text.secondary" component="div">
                 Estimated rows removed on next run
               </Typography>
               <Typography variant="s1">
@@ -234,7 +234,7 @@ export default function RequestLogRetentionCard() {
               )}
             </Box>
             <Box>
-              <Typography variant="s3" color="text.secondary">
+              <Typography variant="s3" color="text.secondary" component="div">
                 Last run
               </Typography>
               {data.last_run?.started_at || data.last_run?.finished_at ? (
