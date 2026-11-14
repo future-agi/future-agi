@@ -36,6 +36,30 @@ def test_embedding_cost_is_persisted(organization, model, tokens, metadata, expe
     assert stored.metadata == metadata
 
 
+@pytest.mark.parametrize(
+    ("input_characters", "output_characters", "expected"),
+    [(50000, "10000", "0.420000"), (50000, 0, "0.350000"), (0, 10000, "0.070000")],
+)
+@pytest.mark.django_db
+def test_both_character_counts_reach_persisted_cost(
+    organization, input_characters, output_characters, expected
+):
+    entry = {
+        "request_id": "character-cost-example",
+        "model": "gemini-1.5-pro",
+        "metadata": {
+            "org_id": str(organization.id),
+            "input_characters": input_characters,
+            "output_characters": output_characters,
+        },
+        "status_code": 200,
+    }
+
+    assert ingest_request_logs([entry]) == 1
+    stored = AgentccRequestLog.no_workspace_objects.get(request_id=entry["request_id"])
+    assert stored.cost == Decimal(expected)
+
+
 def test_input_image_count_does_not_replace_explicit_gateway_cost():
     entry = {
         "model": "amazon.titan-embed-image-v1",

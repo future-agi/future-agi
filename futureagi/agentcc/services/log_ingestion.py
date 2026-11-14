@@ -254,6 +254,19 @@ def _compute_cost(entry):
     except (TypeError, ValueError):
         input_characters = 0
 
+    raw_output_characters = metadata.get("output_characters")
+    try:
+        output_characters = (
+            int(raw_output_characters)
+            if raw_output_characters is not None
+            and not isinstance(raw_output_characters, bool)
+            else None
+        )
+        if output_characters is not None and output_characters < 0:
+            output_characters = None
+    except (TypeError, ValueError, OverflowError):
+        output_characters = None
+
     try:
         audio_seconds = float(metadata.get("audio_seconds") or 0)
     except (TypeError, ValueError):
@@ -292,6 +305,7 @@ def _compute_cost(entry):
             not prompt_tokens
             and not completion_tokens
             and not input_characters
+            and not output_characters
             and not audio_seconds
             and not (images_generated or 0)
             and not num_images
@@ -307,6 +321,8 @@ def _compute_cost(entry):
         # character/audio usage for token-only requests.
         if "input_characters" in metadata:
             token_usage["input_characters"] = input_characters
+        if "output_characters" in metadata:
+            token_usage["output_characters"] = output_characters
         if "audio_seconds" in metadata:
             token_usage["audio_seconds"] = audio_seconds
 
