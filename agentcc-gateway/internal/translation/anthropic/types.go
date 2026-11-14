@@ -109,6 +109,7 @@ type AnthropicTool struct {
 	Name        string          `json:"name"`
 	Description string          `json:"description,omitempty"`
 	InputSchema json.RawMessage `json:"input_schema"`
+	Strict      *bool           `json:"strict,omitempty"`
 
 	// cache_control is supported at the tool level.
 	CacheControl *CacheControl `json:"cache_control,omitempty"`
