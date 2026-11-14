@@ -236,7 +236,9 @@ providers:
   #   openrouter  usage.cost (credits = USD). On a BYOK call (is_byok: true)
   #               usage.cost is only OpenRouter's fee, so
   #               usage.cost_details.upstream_inference_cost is used, or the
-  #               catalogue when that is missing.
+  #               catalogue when that is missing. Known limit: OpenRouter's
+  #               own BYOK fee (charged from credits once past the free
+  #               allowance) is not added to that.
   #   perplexity  usage.cost.total_cost in USD (includes search, tool and
   #               request fees).
   #   xai         usage.cost_in_usd_ticks / 1e10.
@@ -244,14 +246,24 @@ providers:
   # served the request:
   #   1. its type is the vendor (an entry with no type, or a dashboard
   #      provider, counts by its provider ID/name: "openrouter",
-  #      "perplexity" or "xai"), and it speaks the OpenAI format;
+  #      "perplexity" or "xai"), and it speaks the OpenAI format. Dashboard
+  #      providers have no type, so one is trusted only when named exactly
+  #      "openrouter", "perplexity" or "xai"; "OpenRouter-prod" uses the
+  #      catalogue;
   #   2. its base_url hostname is the vendor's official host: openrouter.ai,
   #      api.perplexity.ai or api.x.ai (scheme and port are not compared).
   # Anything else (type "openai" at openrouter.ai, a vendor type behind a
   # proxy, a custom-named provider) is priced from the catalogue. Org custom
   # pricing (cost_tracking.custom_pricing on the org) always wins. A stated
   # cost that is missing, null, non-numeric or negative falls back to the
-  # catalogue; a stated 0 is recorded as 0.
+  # catalogue; a stated 0 is recorded as 0. A stated cost below $0.0000005 is
+  # recorded unrounded (e.g. 0.0000004) rather than as 0.000000; the Request
+  # Logs cost column itself keeps six decimal places.
+  #
+  # A cache hit never takes a stated cost: no vendor served it, even though
+  # the cached response still carries the original call's usage. An exact
+  # hit is not priced; a semantic hit is priced from the catalogue on the
+  # cached usage, as before.
   #
   # ignore_provider_cost: true prices a provider from the catalogue (and
   # model_database.overrides) even when it would be trusted. Org instances of
