@@ -8,6 +8,7 @@ export const TRIAL_CHANGES_COPY = {
     [
       `${one.attempted} attempted`,
       `${one.committed} committed`,
+      one.read ? `${one.read} read` : null,
       one.refused ? `${one.refused} refused` : null,
       one.faulted ? `${one.faulted} faulted` : null,
       one.duplicate ? `${one.duplicate} duplicate` : null,
@@ -15,6 +16,8 @@ export const TRIAL_CHANGES_COPY = {
       .filter(Boolean)
       .join(" · "),
   committed: (actions) => `Committed: ${actions.join(", ")}`,
+  // A read changed nothing in the world: said apart, never as a committed change.
+  read: (actions) => `Read, changing nothing: ${actions.join(", ")}`,
   // A commit the scenario's timeout hid: the world made it, the one who acted was told it timed out.
   answerLost: (actions) =>
     `Committed but answered with a timeout: ${actions.join(", ")}`,

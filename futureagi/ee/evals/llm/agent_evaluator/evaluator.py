@@ -89,7 +89,7 @@ from agentic_eval.core_evals.fi_utils.exceptions import MediaNotAccessibleError
 #   - engineers able to triage by cause via the Sentry dashboard
 #     (one error type per failure mode, not all merged together)
 USER_FACING_EVAL_FAILED = (
-    "Evaluation failed. Please try again. If the problem persists, " "contact support."
+    "Evaluation failed. Please try again. If the problem persists, contact support."
 )
 
 
@@ -1020,7 +1020,7 @@ class AgentEvaluator:
         # Inject few-shot feedback examples into the rendered prompt
         if few_shots:
             few_shot_texts = []
-            for block in (few_shots if isinstance(few_shots, list) else [few_shots]):
+            for block in few_shots if isinstance(few_shots, list) else [few_shots]:
                 if isinstance(block, dict) and block.get("type") == "text":
                     few_shot_texts.append(block["text"])
                 elif isinstance(block, str):

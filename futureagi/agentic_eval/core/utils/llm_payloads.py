@@ -453,15 +453,19 @@ def build_media_content_block(
                     )
                     raise MediaNotAccessibleError(key=key) from e
                 mime = mimetypes.guess_type(img_str)[0] or "image/jpeg"
-                url = f"data:{mime};base64,{base64.b64encode(img_bytes).decode('utf-8')}"
+                url = (
+                    f"data:{mime};base64,{base64.b64encode(img_bytes).decode('utf-8')}"
+                )
             else:
                 url = standardize_to_data_uri(img, "image/jpeg")
             tag = f"{key}_{img_num}" if len(image_inputs) > 1 else key
-            blocks.extend([
-                {"type": "text", "text": f"<{tag}>"},
-                {"type": "image_url", "image_url": {"url": url}},
-                {"type": "text", "text": f"</{tag}>"},
-            ])
+            blocks.extend(
+                [
+                    {"type": "text", "text": f"<{tag}>"},
+                    {"type": "image_url", "image_url": {"url": url}},
+                    {"type": "text", "text": f"</{tag}>"},
+                ]
+            )
 
     elif media_type == "audio":
         if not value or (isinstance(value, str) and not value.strip()):
@@ -488,25 +492,35 @@ def build_media_content_block(
             data_uri = f"data:audio/{audio_fmt};base64,{b64_data}"
         else:
             data_uri = standardize_to_data_uri(value, "audio/mp3")
-        blocks.extend([
-            {"type": "text", "text": f"<{key}>"},
-            {"type": "image_url", "image_url": {"url": data_uri}},
-            {"type": "text", "text": f"</{key}>"},
-        ])
+        blocks.extend(
+            [
+                {"type": "text", "text": f"<{key}>"},
+                {"type": "image_url", "image_url": {"url": data_uri}},
+                {"type": "text", "text": f"</{key}>"},
+            ]
+        )
 
     elif media_type == "pdf":
         if not value or (isinstance(value, str) and not value.strip()):
             return blocks
         if is_url_like(value) and not str(value).startswith("data:"):
-            pdf_block: ContentBlock = {"type": "file", "file": {"file_id": value, "format": "application/pdf"}}
+            pdf_block: ContentBlock = {
+                "type": "file",
+                "file": {"file_id": value, "format": "application/pdf"},
+            }
         else:
             data_uri = standardize_to_data_uri(value, "application/pdf")
-            pdf_block = {"type": "file", "file": {"file_data": data_uri, "format": "application/pdf"}}
-        blocks.extend([
-            {"type": "text", "text": f"<{key}>"},
-            pdf_block,
-            {"type": "text", "text": f"</{key}>"},
-        ])
+            pdf_block = {
+                "type": "file",
+                "file": {"file_data": data_uri, "format": "application/pdf"},
+            }
+        blocks.extend(
+            [
+                {"type": "text", "text": f"<{key}>"},
+                pdf_block,
+                {"type": "text", "text": f"</{key}>"},
+            ]
+        )
 
     return blocks
 
@@ -610,7 +624,9 @@ def detect_and_build_media_blocks(
     if image_urls:
         for url in image_urls:
             if isinstance(url, str) and url.strip():
-                media_blocks.append({"type": "image_url", "image_url": {"url": url.strip()}})
+                media_blocks.append(
+                    {"type": "image_url", "image_url": {"url": url.strip()}}
+                )
 
     return media_blocks, key_media_types
 
@@ -719,6 +735,7 @@ def compute_choices_failure(
     ``pass_threshold`` (mean over picks for multi_choice). Without: ordinal
     convention — the first declared choice is the pass label.
     """
+
     def _norm(s) -> str:
         return str(s).strip().lower()
 
@@ -749,5 +766,3 @@ def compute_choices_failure(
                     return True
         return True
     return actual != _norm(choices[0])
-
-

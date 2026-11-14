@@ -90,7 +90,7 @@ func (h *Handlers) serveDecision(w http.ResponseWriter, r *http.Request, routeFo
 
 	rc.Model = req.Model
 	rc.DecisionRequest = req
-	rc.Metadata["client_ip"] = extractClientIP(r)
+	rc.Metadata["client_ip"] = h.clientIP(r)
 	setAuthMetadataFromRequest(rc, r)
 	applyCallerMetadata(rc, r, nil)
 	rc.Metadata["endpoint_type"] = "decision"

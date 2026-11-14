@@ -1409,7 +1409,7 @@ const SimulationTestMode = React.forwardRef(
                 placeholder="Search simulations..."
                 InputProps={{
                   ...params.InputProps,
-                  sx: { ...params.InputProps.sx, fontSize: "13px" },
+                  sx: { ...params.InputProps.sx, fontSize: "12px" },
                   endAdornment: loadingRunTests ? (
                     <InputAdornment position="end">
                       <CircularProgress size={14} />
@@ -1431,7 +1431,7 @@ const SimulationTestMode = React.forwardRef(
                   {...rest}
                   sx={{
                     ...rest.sx,
-                    fontSize: "13px",
+                    fontSize: "12px",
                     display: "flex",
                     gap: 1,
                     alignItems: "center",
@@ -1459,7 +1459,7 @@ const SimulationTestMode = React.forwardRef(
                   <Box sx={{ minWidth: 0 }}>
                     <Typography
                       variant="body2"
-                      sx={{ fontSize: "13px" }}
+                      sx={{ fontSize: "12px" }}
                       noWrap
                     >
                       {option.name || option.id}
@@ -1532,7 +1532,7 @@ const SimulationTestMode = React.forwardRef(
                 setCallDetail(null);
               }}
               disabled={!!initialExecutionId}
-              sx={{ fontSize: "13px" }}
+              sx={{ fontSize: "12px" }}
             >
               {selectedExecutionId &&
                 !executions.some((ex) => ex.id === selectedExecutionId) && (

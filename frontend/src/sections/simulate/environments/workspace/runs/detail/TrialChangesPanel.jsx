@@ -101,6 +101,9 @@ export default function TrialChangesPanel({ trialState }) {
               {C.committed(one.committed_actions)}
             </Typography>
           )}
+          {one.read_actions?.length > 0 && (
+            <Typography sx={quiet}>{C.read(one.read_actions)}</Typography>
+          )}
           {one.answer_lost_actions?.length > 0 && (
             <Typography sx={quiet}>
               {C.answerLost(one.answer_lost_actions)}
