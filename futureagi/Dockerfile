@@ -10,6 +10,13 @@ ENV NLTK_DATA=/usr/local/share/nltk_data
 # parsing set; pdfplumber and pypdfium2 move with pdfminer.six, which
 # pdfplumber pins exactly). nltk lands before the corpus install below, so
 # install_nltk_data.py verifies the data against the upgraded nltk.
+# litellm 1.100.x needs openai>=2.20.0, boto3>=1.43.1, pydantic-settings>=2.14.1
+# and aiohttp>=3.14.2. The base's boto3 1.42.28 and pydantic-settings 2.12.0
+# are older, so boto3, botocore, s3transfer, pydantic-settings and the
+# python-dotenv it needs are pinned at the futureagi/uv.lock versions rather
+# than whatever is newest at build time. aiohttp and urllib3 are pinned at the
+# lock versions too, which meet the futureagi/pyproject.toml floors, with the
+# yarl that aiohttp 3.14.5 needs.
 # Installed before the source copy, so a source change reuses this layer.
 RUN pip install --no-cache-dir \
     "granian[uvloop,reload]==2.8.3" \
@@ -17,6 +24,14 @@ RUN pip install --no-cache-dir \
     "asgiref==3.11.0" \
     "django==5.1.15" \
     "litellm==1.100.4" \
+    "boto3==1.44.3" \
+    "botocore==1.44.3" \
+    "s3transfer==0.19.3" \
+    "pydantic-settings==2.16.3" \
+    "python-dotenv==1.2.4" \
+    "aiohttp==3.14.5" \
+    "yarl==1.25.1" \
+    "urllib3==2.8.0" \
     "pyjwt==2.15.1" \
     "openai==2.54.0" \
     "mcp==1.30.0" \

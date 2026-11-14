@@ -557,8 +557,34 @@ def project_pins() -> dict[str, set[str]]:
     return pins
 
 
+FUTURE_AGI_BASE_IMAGE = "futureagi/future-agi-base:v1.0.6"
+
+# What FUTURE_AGI_BASE_IMAGE ships of the packages the pinned upgrades need
+# newer releases of (`pip list` in the image). pip moves such a package to its
+# newest release on the day the layer is built unless the layer pins it, so
+# each one that futureagi/uv.lock has at another version is pinned too. Find
+# them with a dry run of the layer on the base:
+#   pip install --dry-run --report report.json "<each requirement>"
+# and refresh this map when the base image or the pins change.
+FUTURE_AGI_BASE_VERSIONS = {
+    "aiohttp": "3.14.3",
+    "boto3": "1.42.28",
+    "botocore": "1.42.28",
+    "pydantic-settings": "2.12.0",
+    "python-dotenv": "1.2.1",
+    "s3transfer": "0.16.0",
+    "urllib3": "2.7.0",
+    "yarl": "1.22.0",
+}
+
+
+def locked_versions() -> dict[str, str]:
+    lock = tomllib.loads((ROOT / "futureagi" / "uv.lock").read_text("utf-8"))
+    return {_normalized(p["name"]): p["version"] for p in lock["package"]}
+
+
 class FutureAgiBaseDockerfiles(unittest.TestCase):
-    """The packages these Dockerfiles install over future-agi-base v1.0.4
+    """The packages these Dockerfiles install over future-agi-base
     until a base rebuilt from requirements.txt replaces it."""
 
     def pip_install(self, name: str) -> tuple[int, str]:
@@ -589,6 +615,49 @@ class FutureAgiBaseDockerfiles(unittest.TestCase):
             for package, version in mirrored:
                 with self.subTest(dockerfile=name, package=package):
                     self.assertEqual(pins.get(_normalized(package)), {version})
+
+    def requirements(self, name: str) -> list[str]:
+        _, rest = self.pip_install(name)
+        return re.findall(r'"([^"]+)"', rest)
+
+    def test_every_requirement_is_pinned_exactly(self):
+        # A floor lets pip pick whatever is newest at build time, so two
+        # builds of one commit can differ; pins keep the layer reproducible.
+        for name in FUTURE_AGI_BASE_DOCKERFILES:
+            requirements = self.requirements(name)
+            self.assertTrue(requirements)
+            for requirement in requirements:
+                with self.subTest(dockerfile=name, requirement=requirement):
+                    self.assertRegex(
+                        requirement, r"^[A-Za-z0-9_.-]+(\[[^\]]*\])?==[^=<>!~,]+$"
+                    )
+
+    def test_the_base_image_is_the_one_its_versions_describe(self):
+        for name in FUTURE_AGI_BASE_DOCKERFILES:
+            with self.subTest(dockerfile=name):
+                ((base,),) = [
+                    rest.split()[:1]
+                    for keyword, rest in instructions(ROOT / name)
+                    if keyword == "FROM"
+                ]
+                self.assertEqual(base, FUTURE_AGI_BASE_IMAGE)
+
+    def test_dependencies_the_base_has_older_releases_of_are_pinned(self):
+        locked = locked_versions()
+        for name in FUTURE_AGI_BASE_DOCKERFILES:
+            pinned = {
+                _normalized(package): version
+                for package, version in re.findall(
+                    r"^([A-Za-z0-9_.-]+)(?:\[[^\]]*\])?==(.+)$",
+                    "\n".join(self.requirements(name)),
+                    re.MULTILINE,
+                )
+            }
+            for package, base_version in FUTURE_AGI_BASE_VERSIONS.items():
+                if locked[package] == base_version:
+                    continue
+                with self.subTest(dockerfile=name, package=package):
+                    self.assertEqual(pinned.get(package), locked[package])
 
 
 # ---------------------------------------------------------------------------
