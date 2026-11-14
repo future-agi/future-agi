@@ -662,9 +662,12 @@ const AddProviderDialog = ({
       } else {
         setBaseUrl(preset.baseUrl);
       }
-      // Reset apiFormat to preset default if the current value isn't supported
+      // Reset apiFormat to the preset default if the current value isn't
+      // supported, or if it is a System One format carried over from a
+      // decision preset into one that defaults to chat (OpenRouter).
       setApiFormat((prev) =>
-        preset.supportedFormats && !preset.supportedFormats.includes(prev)
+        (preset.supportedFormats && !preset.supportedFormats.includes(prev)) ||
+        (isSystemOneFormat(prev) && !isSystemOneFormat(preset.apiFormat))
           ? preset.apiFormat
           : prev,
       );

@@ -77,6 +77,18 @@ describe("OpenRouter provider configuration", () => {
     });
   });
 
+  it("starts OpenRouter on its chat format after a System One preset", async () => {
+    renderDialog();
+    await pickProvider("TypeSafe");
+    expect(
+      screen.getByRole("combobox", { name: /^API Format/ }).textContent,
+    ).toMatch(/System One/);
+    await pickProvider("OpenRouter");
+    expect(
+      screen.getByRole("combobox", { name: /^API Format/ }).textContent,
+    ).toBe("openai");
+  });
+
   it("edits a saved systemone OpenRouter provider without probing it", async () => {
     fetchMutate.mockClear();
     renderDialog({
