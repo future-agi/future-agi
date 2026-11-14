@@ -2172,8 +2172,9 @@ class ClickHouseFilterBuilder:
             # One scalar subquery for both bounds: ClickHouse evaluates an
             # identical scalar once per query, and the candidate relation is
             # an inlined CTE, so two different ones would resolve it twice.
+            # A validated internal relation name (see __init__).
             span = (
-                "(SELECT (min(start_time), max(start_time)) "
+                "(SELECT (min(start_time), max(start_time)) "  # noqa: S608
                 f"FROM {self.resolved_candidate_spans_table})"
             )
             return (f"tupleElement({span}, 1)", f"tupleElement({span}, 2)")

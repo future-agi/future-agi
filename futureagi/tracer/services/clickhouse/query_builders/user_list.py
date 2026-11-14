@@ -1213,7 +1213,8 @@ class UserListQueryBuilder(BaseQueryBuilder):
 
         return scope_trace_name_roots(
             query,
-            "trace_id IN (SELECT trace_id FROM spans "
+            # A code-owned predicate over bound parameters.
+            "trace_id IN (SELECT trace_id FROM spans "  # noqa: S608
             f"PREWHERE {self._matching_activity_range_predicate()})",
         )
 
