@@ -49,10 +49,10 @@ const RenderAnnotationInfo = ({ annotationData }) => {
       <ShowComponent condition={isAutoAnnotated}>
         <CustomTooltip show={true} title={"Auto annotated"} arrow>
           <Iconify
-            icon="iconoir:auto-flash"
+            icon="solar:stars-minimalistic-linear"
             width="24px"
             height="24px"
-            sx={{ color: "orange.300" }}
+            sx={{ color: "status.warning.fg" }}
           />
         </CustomTooltip>
       </ShowComponent>

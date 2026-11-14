@@ -75,7 +75,13 @@ class TestCallExecutionDetailSerializerGetRecordings:
         )
         serializer, obj = self._serializer(obj=obj)
         result = serializer.get_recordings(obj)
-        assert set(result.keys()) == {"combined", "stereo", "customer", "assistant"}
+        assert set(result.keys()) == {
+            "combined",
+            "stereo",
+            "customer",
+            "assistant",
+            "stereo_channels",
+        }
         assert result["combined"] == "https://bucket.s3.amazonaws.com/combined.mp3"
         assert result["stereo"] == "https://bucket.s3.amazonaws.com/stereo.mp3"
         assert result["customer"] == "https://bucket.s3.amazonaws.com/customer.mp3"

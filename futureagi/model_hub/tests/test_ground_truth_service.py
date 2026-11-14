@@ -147,6 +147,29 @@ def test_embed_dataset_fails_when_no_mapped_columns():
     assert "mapping" in (result.error or "").lower()
 
 
+def test_embed_dataset_fails_fast_without_model_serving(model_serving_down):
+    """No serving, no embeddings: fail with the reason, before the soft-delete
+    that would throw away the vectors an earlier pass wrote."""
+    from agentic_eval.core.embeddings.serving_client import (
+        SERVING_UNAVAILABLE_MESSAGE,
+    )
+
+    gt = _FakeGT(data=[{"q": "hi"}], variable_mapping={"q": "q"})
+
+    with patch(
+        "agentic_eval.core.embeddings.embedding_manager.EmbeddingManager.soft_delete_vectors"
+    ) as soft_delete, patch(
+        "agentic_eval.core.embeddings.embedding_manager.EmbeddingManager.parallel_process_metadata"
+    ) as process:
+        result = GroundTruthService.embed_dataset(gt=gt)
+
+    assert result.status == EvalGroundTruth.EmbeddingStatus.FAILED
+    assert result.error == SERVING_UNAVAILABLE_MESSAGE
+    assert gt.embedding_status == EvalGroundTruth.EmbeddingStatus.FAILED
+    soft_delete.assert_not_called()
+    process.assert_not_called()
+
+
 def test_embed_dataset_marks_failed_when_writer_raises():
     gt = _FakeGT(
         data=[{"q": "hi"}],

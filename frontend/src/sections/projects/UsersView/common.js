@@ -1,4 +1,7 @@
+import { TracerProjectGetUserGraphDataResponse } from "src/generated/api-contracts/api.zod";
+import { isIncompleteCost, monetaryCostLabel } from "../LLMTracing/GraphSection/common";
 import UserIdCellRenderer from "./UserCellRenderers/UserIdCellRenderer";
+import ProjectCellRenderer from "./UserCellRenderers/ProjectCellRenderer";
 import LastActiveCellRenderer from "./UserCellRenderers/LastActiveCellRenderer";
 import EvaluateCellRenderer from "./UserCellRenderers/EvaluateCellRenderer";
 import { GeneralStatCellRenderer } from "./UserCellRenderers/GenericMetricCellRenderer";
@@ -23,7 +26,9 @@ import {
 } from "date-fns";
 import logger from "src/utils/logger";
 import { canonicalEntries, formatMs } from "../../../utils/utils";
+import { formatCost } from "../LLMTracing/formatters";
 import { serializeFilterListForApi } from "src/api/contracts/filter-contract";
+import { ROW_HEIGHT } from "src/theme/sizes";
 
 export const buildUsersRequestFilters = (filters) =>
   serializeFilterListForApi(filters || []);
@@ -49,6 +54,7 @@ export const tabsData = [
 
 export const DEFAULT_VISIBLE_COLUMNS = [
   "user_id",
+  "project_name", // only present outside a single project's Users tab
   "activated_at",
   "last_active",
   "num_traces",
@@ -117,13 +123,17 @@ export const transformGraphDataToChartData = (response) => {
   if (!response?.result) return [];
 
   const charts = [];
+  const coverage = TracerProjectGetUserGraphDataResponse.shape.result.shape.cost_coverage.parse(
+    response.result.cost_coverage,
+  );
+  const byTimestamp = new Map((coverage || []).map((point) => [point.timestamp, point]));
 
   // canonicalEntries filters out the camelCase aliases the axios
   // response interceptor attaches alongside snake_case metric keys.
   // Without it each metric renders twice (once for `tokens_used` and
   // once for `tokensUsed`, both pointing at the same series).
   for (const [metricKey, metricData] of canonicalEntries(response.result)) {
-    if (!Array.isArray(metricData) || metricData.length === 0) continue;
+    if (metricKey === "cost_coverage" || !Array.isArray(metricData) || metricData.length === 0) continue;
 
     const displayName = toDisplayName(metricKey);
 
@@ -133,18 +143,25 @@ export const transformGraphDataToChartData = (response) => {
       0,
     );
 
+    const incomplete = metricKey === "cost" && coverage?.some(isIncompleteCost);
+    const known = coverage?.reduce((sum, point) => sum + point.known_fact_count, 0) || 0;
+    const subtotal = coverage?.reduce((sum, point) => sum + point.known_subtotal, 0) || 0;
     charts.push({
       id: metricKey,
       label: displayName,
       unit: getUnitForMetric(metricKey),
       total,
+      ...(incomplete ? { totalLabel: monetaryCostLabel(null, {
+        status: known > 0 ? "partial" : "unknown", known_subtotal: subtotal,
+      }) } : {}),
       series: [
         {
           name: displayName,
-          data: metricData.map((item) => [
-            new Date(item.timestamp).getTime(),
-            item[metricKey],
-          ]),
+          data: metricData.map((item) => metricKey === "cost" ? {
+            x: new Date(item.timestamp).getTime(),
+            y: isIncompleteCost(byTimestamp.get(item.timestamp)) ? null : item[metricKey],
+            cost_coverage: byTimestamp.get(item.timestamp),
+          } : [new Date(item.timestamp).getTime(), item[metricKey]]),
         },
       ],
     });
@@ -162,7 +179,22 @@ export const userDefaultFilter = {
   },
 };
 
-export const getUsersColumnConfig = () => {
+// The Users API returns one row per user *within a project* (one EndUser
+// each), not one row per person. Outside a single project's Users tab the
+// page lists every project's rows, so the Project column names each row's
+// scope (TH-5037). Inside a project it would repeat one value, so it is
+// omitted there.
+// Coverage changes presentation only, never the numeric grid row.
+export const formatUsersCost = ({ value, data }) => {
+  const coverage = data?.cost_coverage;
+  if (coverage === undefined || coverage.status === "complete") return formatCost(value);
+  if (coverage?.status === "partial") {
+    return `Partial — Known subtotal ${formatCost(coverage.known_subtotal)}`;
+  }
+  return "Unknown";
+};
+
+export const getUsersColumnConfig = ({ includeProject = false } = {}) => {
   const columns = [
     {
       headerName: "User ID",
@@ -171,6 +203,19 @@ export const getUsersColumnConfig = () => {
       flex: 1,
       cellRenderer: UserIdCellRenderer,
     },
+    ...(includeProject
+      ? [
+          {
+            headerName: "Project",
+            field: "project_name",
+            headerTooltip:
+              "Users are listed per project: a user active in several projects has one row in each.",
+            minWidth: 200,
+            flex: 1,
+            cellRenderer: ProjectCellRenderer,
+          },
+        ]
+      : []),
     {
       headerName: "User ID Type",
       field: "user_id_type",
@@ -233,9 +278,10 @@ export const getUsersColumnConfig = () => {
       field: "total_cost",
       minWidth: 200,
       flex: 1,
-      cellRenderer: GeneralStatCellRenderer,
+      cellRenderer: formatUsersCost,
       cellRendererParams: { dataType: "cost" },
-      valueFormatter: (params) => params.value?.toFixed(2),
+      valueFormatter: formatUsersCost,
+      tooltipValueGetter: formatUsersCost,
     },
     {
       headerName: "Avg Latency / Trace (ms)",
@@ -450,8 +496,8 @@ export const getSummaryCards = (data) => [
     title: "Active Days",
     value: data?.active_days?.toLocaleString() ?? 0,
     icon: "user_active_days",
-    color: "blue.500",
-    bgColor: "blue.o5",
+    color: "status.info.fg",
+    bgColor: "status.info.bg",
   },
   {
     title: "Total Tokens used",
@@ -471,8 +517,8 @@ export const getSummaryCards = (data) => [
     title: "Avg Latency per trace",
     value: data?.avg_trace_latency ? formatMs(data.avg_trace_latency) : 0,
     icon: "user_avg_latency_per_trace",
-    color: "orange.500",
-    bgColor: "orange.o5",
+    color: "status.warning.fg",
+    bgColor: "status.warning.bg",
   },
   {
     title: "Avg Latency per session",
@@ -481,22 +527,22 @@ export const getSummaryCards = (data) => [
       ? formatMs(data.avg_session_duration * 1000)
       : 0,
     icon: "user_avg_latency_per_session",
-    color: "blue.500",
-    bgColor: "blue.o5",
+    color: "status.info.fg",
+    bgColor: "status.info.bg",
   },
   {
     title: "Traces with error",
     value: data?.num_traces_with_errors?.toLocaleString() ?? 0,
     icon: "user_trace_with_error",
-    color: "red.500",
-    bgColor: "red.o5",
+    color: "status.danger.fg",
+    bgColor: "status.danger.bg",
   },
   {
     title: "Traces with guardrails triggered",
     value: data?.num_guardrails_triggered?.toLocaleString() ?? 0,
     icon: "user_traces_with_guardrails_triggered",
-    color: "red.500",
-    bgColor: "red.o5",
+    color: "status.danger.fg",
+    bgColor: "status.danger.bg",
   },
 ];
 export const detectTimePeriod = (start, end) => {
@@ -555,7 +601,7 @@ export const detectTimePeriod = (start, end) => {
 
 export const userTraceRowHeightMapping = {
   Short: {
-    height: 40,
+    height: ROW_HEIGHT.default,
     autoHeight: false,
   },
   Medium: {
@@ -588,7 +634,7 @@ export const LAST_ACTIVE_STYLES = {
   fontFamily: "IBM Plex Sans",
   fontWeight: 400,
   fontStyle: "normal",
-  fontSize: "13px",
+  fontSize: "12px",
   lineHeight: "20px",
   letterSpacing: "0%",
   verticalAlign: "middle",

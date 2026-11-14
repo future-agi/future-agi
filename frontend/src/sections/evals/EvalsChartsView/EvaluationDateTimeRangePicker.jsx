@@ -1,4 +1,4 @@
-import { Box, Button, ButtonGroup, useTheme } from "@mui/material";
+import { Box, Button, ButtonGroup } from "@mui/material";
 import React, { useEffect, useRef, useState } from "react";
 import { DateRangeButtonOptions } from "src/utils/constants";
 import { formatDate } from "src/utils/report-utils";
@@ -124,7 +124,6 @@ const EvaluationDateTimeRangePicker = ({
       setParentDateFilter(dateFilter);
     }
   }, [dateOption, dateFilter]);
-  const theme = useTheme();
   return (
     <Box
       sx={{
@@ -149,11 +148,9 @@ const EvaluationDateTimeRangePicker = ({
               sx={{
                 // Adjust flex behavior
                 backgroundColor: selected ? "action.hover" : undefined,
-                fontWeight: selected ? 600 : 400,
 
                 borderColor: "divider",
                 borderWidth: "1px",
-                px: 1.5, // Slightly more padding
                 minWidth: 0,
                 whiteSpace: "nowrap",
                 overflow: "hidden",
@@ -163,10 +160,8 @@ const EvaluationDateTimeRangePicker = ({
                   bgcolor: selected ? "action.hover" : "transparent",
                   borderColor: "divider",
                   transition:
-                    "background-color 0.2s ease, font-weight 0.2s ease, color 0.2s ease, border-color 0.2s ease",
+                    "background-color 160ms ease, color 160ms ease, border-color 160ms ease",
                 },
-                height: "28px",
-                borderRadius: theme.spacing(0.5),
               }}
               ref={(ref) => {
                 if (option.title === "Custom")

@@ -4,6 +4,7 @@ from datetime import UTC, datetime
 from types import SimpleNamespace
 
 import pytest
+from clickhouse_connect.driver.binding import finalize_query
 
 from tracer.models.observability_provider import ProviderChoices
 from tracer.services.clickhouse.filter_value_reads import (
@@ -161,7 +162,7 @@ def test_system_ended_reason_value_sql_uses_the_same_canonical_expression():
 
 @pytest.mark.unit
 def test_raw_ended_reason_attribute_keeps_exact_attribute_semantics():
-    where, _ = ClickHouseFilterBuilder().translate(
+    where, params = ClickHouseFilterBuilder().translate(
         [
             {
                 "column_id": "ended_reason",
@@ -175,7 +176,12 @@ def test_raw_ended_reason_attribute_keeps_exact_attribute_semantics():
         ]
     )
 
-    assert "span_attr_str['ended_reason']" in where
-    assert "'endedReason'" not in where
-    assert "'disconnection_reason'" not in where
-    assert "observation_type = 'conversation'" not in where
+    # The attribute key is bound, not inlined. Every assertion here is about a
+    # key literal, so all four must be made against the rendered statement or
+    # the negative ones would pass vacuously.
+    assert params["attr_key_1"] == "ended_reason"
+    rendered = finalize_query(where, params)
+    assert "span_attr_str['ended_reason']" in rendered
+    assert "'endedReason'" not in rendered
+    assert "'disconnection_reason'" not in rendered
+    assert "observation_type = 'conversation'" not in rendered

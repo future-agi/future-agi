@@ -140,12 +140,14 @@ describe("Choose Scenarios step — paging", () => {
       return Promise.resolve({ data: {} });
     });
 
-    fireEvent.click(screen.getByTitle(/Go to next page/i));
+    fireEvent.click(screen.getByRole("button", { name: /next page/i }));
 
     // The in-flight fetch empties the list; the step must not read that as
     // "this workspace has no scenarios".
     await waitFor(() =>
-      expect(screen.getByRole("progressbar")).toBeInTheDocument(),
+      expect(
+        screen.getByRole("status", { name: "Loading" }),
+      ).toBeInTheDocument(),
     );
     expect(
       screen.queryByText("Add your first scenario"),

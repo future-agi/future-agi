@@ -3,6 +3,7 @@ import { useGraphStore } from "../store/graphStore";
 import { Drawer } from "@mui/material";
 import ConfigureEdgeForm from "./ConfigureEdgeForm";
 import ConfigureNodeForm from "./ConfigureNodeForm";
+import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
 
 const NodeEdgeConfigureForm = () => {
   const activeEdgeId = useGraphStore((state) => state.activeEdgeId);
@@ -11,6 +12,7 @@ const NodeEdgeConfigureForm = () => {
   const updateNode = useGraphStore((state) => state.updateNode);
   const edges = useGraphStore((state) => state.edges);
   const nodes = useGraphStore((state) => state.nodes);
+  const covered = useDrawerCovered(Boolean(activeEdgeId || activeNodeId));
 
   const onCloseHandler = () => {
     useGraphStore.getState().setActiveEdge(null);
@@ -52,9 +54,10 @@ const NodeEdgeConfigureForm = () => {
       variant="persistent"
       sx={{
         "& .MuiDrawer-paper": {
-          width: "483px",
+          width: "480px",
           boxSizing: "border-box",
         },
+        ...coveredDrawerSx(covered),
       }}
     >
       {renderForm()}

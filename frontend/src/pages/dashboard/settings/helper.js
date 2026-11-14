@@ -125,7 +125,7 @@ export const getModelFields = () => [
     placeholder: "Enter input token cost per million tokens",
     type: "number",
     fieldType: "number",
-    inputProps: { min: 0.00001, max: 100000, step: "any" },
+    inputProps: { min: 0, max: 100000, step: "any" },
     onChange: () => trackEvent(Events.inputTokenCostEntered),
   },
   {
@@ -134,7 +134,7 @@ export const getModelFields = () => [
     placeholder: "Enter output token cost per million tokens",
     type: "number",
     fieldType: "number",
-    inputProps: { min: 0.00001, max: 100000, step: "any" },
+    inputProps: { min: 0, max: 100000, step: "any" },
     onChange: () => trackEvent(Events.outputTokenCostEntered),
   },
 ];
@@ -153,7 +153,7 @@ export const getCustomModelFields = () => [
     placeholder: "Enter input token cost per million tokens",
     type: "number",
     fieldType: "number",
-    inputProps: { min: 0.00001, max: 100000, step: "any" },
+    inputProps: { min: 0, max: 100000, step: "any" },
     onChange: () => trackEvent(Events.inputTokenCostEntered),
     required: true,
   },
@@ -163,14 +163,16 @@ export const getCustomModelFields = () => [
     placeholder: "Enter output token cost per million tokens",
     type: "number",
     fieldType: "number",
-    inputProps: { min: 0.00001, max: 100000, step: "any" },
+    inputProps: { min: 0, max: 100000, step: "any" },
     onChange: () => trackEvent(Events.outputTokenCostEntered),
     required: true,
   },
   {
     fieldName: "apiBase",
     label: "API Base URL",
-    placeholder: "Enter API base URL",
+    placeholder: "e.g. https://your-host/v1/chat/completions",
+    // The check and every model call POST to this URL as given.
+    helperText: "The full chat-completions URL, not just the /v1 base",
     required: true,
   },
 ];

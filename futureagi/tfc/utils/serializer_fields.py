@@ -15,10 +15,12 @@ class JsonValueField(serializers.JSONField):
     """Arbitrary JSON value field — use ONLY for genuinely open-shape values.
 
     Emits ``x-json-value: true`` in the OpenAPI schema, detected by the
-    ``x-json-value`` branch in ``openapi-contract.js``, which maps to
-    ``z.any()``.  Because ``z.any()`` removes all contract knowledge of the
-    field shape, this field should only be used when the value is genuinely
-    open (e.g. provider-specific config dicts whose keys vary per provider).
+    ``x-json-value`` branch in ``openapi-contract.js``, which maps to its
+    recursive ``JSON_VALUE_SCHEMA`` (any valid JSON value, so ``undefined`` or
+    a class instance still fails).  Because that drops all contract knowledge
+    of the field shape, this field should only be used when the value is
+    genuinely open (e.g. provider-specific config dicts whose keys vary per
+    provider).
 
     For fields with a known shape use a typed serializer or ``StringOrObjectField``
     for ``string | object`` unions.

@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import PropTypes from "prop-types";
-import { useTheme } from "@mui/material";
+import { alpha, useTheme } from "@mui/material";
+import { chartAxisColors, seriesColor } from "src/theme/data-colors";
 import {
   VictoryAxis,
   VictoryChart,
@@ -12,7 +13,7 @@ import {
 
 export default function BrushLineChart({ data }) {
   const theme = useTheme();
-  const isDark = theme.palette.mode === "dark";
+  const lineColor = seriesColor(theme, 0);
   data = [
     { x: new Date(2022, 11, 26), y: 0.5 },
     { x: new Date(2022, 11, 27), y: 0.1 },
@@ -56,11 +57,11 @@ export default function BrushLineChart({ data }) {
                 centerOffset={{ x: 60, y: 5 }}
                 flyoutStyle={{
                   stroke: ({ active }) => (active ? "white" : "none"),
-                  fill: isDark ? "#18181b" : "black",
+                  fill: theme.palette.background.inverse,
                   strokeWidth: 2,
                 }}
                 style={{
-                  fill: isDark ? "#18181b" : "#ffffff",
+                  fill: theme.palette.background.paper,
                   fontSize: 6,
                 }}
                 pointerLength={0} // Adjust or remove pointer
@@ -69,8 +70,8 @@ export default function BrushLineChart({ data }) {
               />
             }
             brushStyle={{
-              fill: isDark ? "#18181b" : "#551a8b33",
-              stroke: isDark ? "#a1a1aa" : "black", // Color of the border
+              fill: alpha(lineColor, 0.2),
+              stroke: chartAxisColors(theme).foreColor, // Color of the border
               strokeWidth: 1, // Thickness of the border
               strokeDasharray: "4, 4", // Dotted border pattern
             }}
@@ -82,6 +83,7 @@ export default function BrushLineChart({ data }) {
           style={{
             axisLabel: {
               padding: 12,
+              // eslint-disable-next-line no-restricted-syntax -- ds: layout (svg units, scale with the chart)
               fontSize: 8,
               fontFamily: "Inter, sans-serif",
               margin: 0,
@@ -101,6 +103,7 @@ export default function BrushLineChart({ data }) {
           style={{
             axisLabel: {
               padding: 25,
+              // eslint-disable-next-line no-restricted-syntax -- ds: layout (svg units, scale with the chart)
               fontSize: 8,
               fontFamily: "Inter, sans-serif",
               margin: 0,
@@ -118,7 +121,7 @@ export default function BrushLineChart({ data }) {
           name="lineChart"
           interpolation="natural"
           style={{
-            data: { stroke: "#551a8b" },
+            data: { stroke: lineColor },
           }}
           data={data}
         />

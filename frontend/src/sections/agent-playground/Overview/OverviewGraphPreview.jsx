@@ -161,7 +161,6 @@ export default function OverviewGraphPreview({
               <Button
                 sx={{
                   color: "primary.main",
-                  px: 0.5,
                 }}
                 size="small"
                 variant="outlined"

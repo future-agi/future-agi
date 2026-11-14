@@ -22,7 +22,7 @@ const headerConfig = {
     label: "Status",
   },
   created_at: {
-    icon: <Iconify icon="material-symbols:schedule-outline" />,
+    icon: <Iconify icon="solar:clock-circle-linear" />,
     label: "Created At",
   },
   actions: {

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"math/rand"
+	"sync/atomic"
 	"time"
 
 	"github.com/futureagi/agentcc-gateway/internal/config"
@@ -41,11 +42,42 @@ type ProductionInfo struct {
 	StatusCode   int
 }
 
+// defaultMirrorConcurrency bounds in-flight mirror goroutines when the config
+// leaves MaxConcurrent unset.
+const defaultMirrorConcurrency = 64
+
+// MirrorSlots counts in-flight mirror requests. A config reload builds a new
+// Mirror while the old one's requests are still running, so the gateway shares
+// one MirrorSlots across every Mirror it builds; each Mirror admits a request
+// only while the shared count is below its own limit.
+type MirrorSlots struct {
+	inFlight atomic.Int64
+}
+
+func (s *MirrorSlots) tryAcquire(limit int64) bool {
+	for {
+		n := s.inFlight.Load()
+		if n >= limit {
+			return false
+		}
+		if s.inFlight.CompareAndSwap(n, n+1) {
+			return true
+		}
+	}
+}
+
+func (s *MirrorSlots) release() { s.inFlight.Add(-1) }
+
 // Mirror manages traffic mirroring for shadow testing.
 type Mirror struct {
 	rules  []MirrorRule
 	lookup MirrorProviderLookup
 	Store  *ShadowStore // nil when capture is disabled
+	// slots and limit bound concurrent in-flight mirror goroutines. Shadow
+	// traffic is best-effort, so at the limit a mirror is dropped rather than
+	// queued, preventing unbounded goroutine/connection growth under load.
+	slots *MirrorSlots
+	limit int64
 }
 
 // NewMirror creates a mirror from config rules.
@@ -72,9 +104,24 @@ func NewMirror(cfg config.MirrorConfig, lookup MirrorProviderLookup) *Mirror {
 		}
 	}
 
+	maxConcurrent := cfg.MaxConcurrent
+	if maxConcurrent <= 0 {
+		maxConcurrent = defaultMirrorConcurrency
+	}
+
 	return &Mirror{
 		rules:  rules,
 		lookup: lookup,
+		slots:  &MirrorSlots{},
+		limit:  int64(maxConcurrent),
+	}
+}
+
+// ShareSlots makes m count its in-flight requests in s, together with every
+// other Mirror sharing s. Call it before m handles any request.
+func (m *Mirror) ShareSlots(s *MirrorSlots) {
+	if m != nil && s != nil {
+		m.slots = s
 	}
 }
 
@@ -139,7 +186,24 @@ func (m *Mirror) ExecuteAsync(req *models.ChatCompletionRequest, sourceProvider,
 	experimentID := rule.ExperimentID
 	promptHash := hashPrompt(req)
 
+	// Bound concurrent mirror goroutines. At the in-flight budget, drop this
+	// shadow request rather than spawning an unbounded number of goroutines
+	// (and upstream connections) under load.
+	slots := m.slots
+	if slots != nil {
+		if !slots.tryAcquire(m.limit) {
+			slog.Debug("mirror dropped: concurrency limit reached",
+				"target_provider", rule.TargetProvider,
+				"source_model", sourceModel,
+			)
+			return
+		}
+	}
+
 	go func() {
+		if slots != nil {
+			defer slots.release()
+		}
 		defer func() {
 			if r := recover(); r != nil {
 				slog.Error("mirror goroutine panicked",

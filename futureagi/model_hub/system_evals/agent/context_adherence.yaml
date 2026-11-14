@@ -16,7 +16,8 @@ criteria: "You are evaluating how faithfully the output adheres to the informati
   \n<context>{{context}}</context>"
 eval_tags:
 - RAG
-- Hallucination
+- Grounding
+offered_in_environments: true
 visible_ui: true
 permissions:
   allow_edit: false

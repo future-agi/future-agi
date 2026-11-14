@@ -42,7 +42,14 @@ logger = structlog.get_logger(__name__)
 # Defaults
 DEFAULT_MAX_BODY_SIZE = 8192
 DEFAULT_MAX_ITEMS = 50
-SENSITIVE_BODY_PATH_PREFIXES = ("/telemetry/",)
+SENSITIVE_BODY_PATH_PREFIXES = (
+    "/telemetry/",
+    "/saml2_auth/",
+    "/simulate/api/harness-jobs/secret-values/",
+    "/simulate/api/harness-jobs/secret-files/",
+    # Signed over its raw bytes and may carry committer emails; never read early.
+    "/simulate/api/harness/github/webhook/",
+)
 
 
 def _safe_json(value: Any, max_size: int = DEFAULT_MAX_BODY_SIZE) -> str:
@@ -96,6 +103,8 @@ def _mask_sensitive(data: dict, depth: int = 0) -> dict:
         "api_key",
         "apikey",
         "authorization",
+        "environment_values",
+        "credential_values",
     }
     masked = {}
 
@@ -301,7 +310,11 @@ class OTelContextMiddleware:
                 is_error and self.capture_response_on_error
             )
 
-            if should_capture and hasattr(response, "content"):
+            if (
+                should_capture
+                and not request.path.startswith(SENSITIVE_BODY_PATH_PREFIXES)
+                and hasattr(response, "content")
+            ):
                 self._capture_response_body(span, response, is_error)
 
         except Exception as e:

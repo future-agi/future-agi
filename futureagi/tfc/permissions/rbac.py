@@ -8,6 +8,7 @@ Usage in views:
 """
 
 from rest_framework.permissions import BasePermission
+from rest_framework.serializers import UUIDField
 
 from tfc.constants.levels import Level
 from tfc.permissions.utils import (
@@ -101,6 +102,10 @@ class CanManageTargetUser(BasePermission):
         target_user_id = request.data.get("user_id") or view.kwargs.get("user_id")
         if not target_user_id:
             return False
+
+        # Permissions run before the view's serializer. Reject malformed IDs
+        # as DRF validation errors rather than letting the ORM raise a 500.
+        target_user_id = UUIDField().run_validation(target_user_id)
 
         from accounts.models.organization_membership import OrganizationMembership
 

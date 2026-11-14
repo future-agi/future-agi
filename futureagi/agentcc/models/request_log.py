@@ -1,10 +1,19 @@
 import uuid
+from enum import StrEnum
 
+from django.contrib.postgres.indexes import GinIndex
 from django.db import models
 
 from accounts.models import Organization
 from accounts.models.workspace import Workspace
 from tfc.utils.base_model import BaseModel
+
+
+class RequestLogTag(StrEnum):
+    """Metadata keys a caller sets to name the application and service behind a request."""
+
+    APPLICATION = "application"
+    SERVICE = "service"
 
 
 class AgentccRequestLog(BaseModel):
@@ -65,6 +74,19 @@ class AgentccRequestLog(BaseModel):
             models.Index(fields=["is_error"]),
             models.Index(fields=["session_id"]),
             models.Index(fields=["user_id"]),
+            GinIndex(
+                fields=["metadata"],
+                name="agentcc_req_metadata_gin",
+                opclasses=["jsonb_path_ops"],
+            ),
+        ]
+        constraints = [
+            # One row per request: the gateway resends a batch it timed out on.
+            models.UniqueConstraint(
+                fields=["organization", "request_id"],
+                condition=models.Q(deleted=False) & ~models.Q(request_id=""),
+                name="agentcc_req_log_live_request_uniq",
+            ),
         ]
 
     def __str__(self):

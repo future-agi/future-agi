@@ -115,9 +115,9 @@ const OrgConfigEditor = ({
     <Dialog
       open={open}
       onClose={onClose}
-      maxWidth="md"
+      maxWidth={false}
       fullWidth
-      PaperProps={{ sx: { minHeight: "70vh" } }}
+      PaperProps={{ sx: { maxWidth: 960, minHeight: "70vh" } }}
     >
       <DialogTitle>
         <Stack
@@ -134,7 +134,7 @@ const OrgConfigEditor = ({
           onChange={(_, v) => setTab(v)}
           variant="scrollable"
           scrollButtons="auto"
-          sx={{ mb: 2, borderBottom: 1, borderColor: "divider" }}
+          sx={{ boxShadow: "none", mb: 2, borderBottom: 1, borderColor: "divider" }}
         >
           <Tab label="Providers" />
           <Tab label="Guardrails" />

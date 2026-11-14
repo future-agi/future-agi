@@ -22,7 +22,6 @@ import numpy as np
 import pandas as pd
 import requests
 import structlog
-import weaviate
 from django.core.exceptions import ValidationError
 from django.db import DatabaseError, close_old_connections, connection, transaction
 from django.db.models import (
@@ -46,13 +45,8 @@ from django.forms import model_to_dict
 from django.http import FileResponse, Http404
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
-from docx import Document
 from drf_yasg import openapi
 from drf_yasg.utils import swagger_auto_schema
-from pinecone import Pinecone
-from pypdf import PdfReader
-from pypdf.errors import PdfReadError
-from qdrant_client import QdrantClient
 from rest_framework import serializers, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.generics import CreateAPIView
@@ -60,7 +54,6 @@ from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
-from weaviate import AuthApiKey
 
 from accounts.models.user import User
 from agentic_eval.core.embeddings.embedding_manager import (
@@ -127,6 +120,7 @@ from model_hub.models.experiments import ExperimentDatasetTable, ExperimentsTabl
 from model_hub.models.optimize_dataset import OptimizeDataset
 from model_hub.models.run_prompt import PromptVersion, RunPrompter
 from model_hub.selectors.feedback import resolve_feedback_template_data
+from model_hub.serializers.catalog_queries import DatasetEvaluationsQuerySerializer
 from model_hub.serializers.contracts import (
     MODEL_HUB_ERROR_RESPONSES,
     AddAsNewDatasetRequestSerializer,
@@ -293,6 +287,7 @@ from model_hub.utils.synthetic_task_manager import SyntheticTaskManager
 from model_hub.utils.utils import contains_sql, get_diff
 from model_hub.views.eval_runner import EvaluationRunner
 from model_hub.views.run_prompt import PROVIDERS_WITH_JSON
+from model_hub.views.utils.dataset_limit import dataset_add_refusal
 from model_hub.views.utils.evals import process_eval_for_single_row
 from model_hub.views.utils.utils import (
     get_recommendations,
@@ -310,6 +305,7 @@ from tfc.settings.settings import BASE_URL, HUGGINGFACE_API_TOKEN
 from tfc.telemetry import wrap_for_thread
 from tfc.temporal import temporal_activity
 from tfc.utils.api_contracts import validated_request
+from tfc.utils.api_serializers import DatasetLimitCheckFailedErrorSerializer
 from tfc.utils.error_codes import get_error_message
 from tfc.utils.functions import (
     calculate_column_average,
@@ -1021,7 +1017,11 @@ class CloneDatasetView(APIView):
 
     @validated_request(
         request_serializer=CloneDatasetRequestSerializer,
-        responses={200: DatasetCopyResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+        responses={
+            200: DatasetCopyResponseSerializer,
+            **MODEL_HUB_ERROR_RESPONSES,
+            503: DatasetLimitCheckFailedErrorSerializer,
+        },
     )
     def post(self, request, dataset_id, *args, **kwargs):
         try:
@@ -1037,14 +1037,9 @@ class CloneDatasetView(APIView):
                     api_call_type=APICallTypeChoices.DATASET_ADD.value,
                     workspace=request.workspace,
                 )
-                if (
-                    call_log_row_entry is None
-                    or call_log_row_entry.status
-                    == APICallStatusChoices.RESOURCE_LIMIT.value
-                ):
-                    return self._gm.too_many_requests(
-                        get_error_message("DATASET_CREATE_LIMIT_REACHED")
-                    )
+                refusal = dataset_add_refusal(call_log_row_entry)
+                if refusal is not None:
+                    return refusal
                 call_log_row_entry.status = APICallStatusChoices.SUCCESS.value
                 call_log_row_entry.save()
             new_dataset_name = request.data.get(
@@ -1196,7 +1191,11 @@ class AddAsNewDataset(APIView):
 
     @validated_request(
         request_serializer=AddAsNewDatasetRequestSerializer,
-        responses={200: DatasetCopyResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+        responses={
+            200: DatasetCopyResponseSerializer,
+            **MODEL_HUB_ERROR_RESPONSES,
+            503: DatasetLimitCheckFailedErrorSerializer,
+        },
     )
     def post(self, request, *args, **kwargs):
         try:
@@ -1273,14 +1272,9 @@ class AddAsNewDataset(APIView):
                     api_call_type=APICallTypeChoices.DATASET_ADD.value,
                     workspace=request.workspace,
                 )
-                if (
-                    call_log_row_entry is None
-                    or call_log_row_entry.status
-                    == APICallStatusChoices.RESOURCE_LIMIT.value
-                ):
-                    return self._gm.too_many_requests(
-                        get_error_message("DATASET_CREATE_LIMIT_REACHED")
-                    )
+                refusal = dataset_add_refusal(call_log_row_entry)
+                if refusal is not None:
+                    return refusal
                 call_log_row_entry.status = APICallStatusChoices.SUCCESS.value
                 call_log_row_entry.save()
 
@@ -5311,6 +5305,7 @@ class ManuallyCreateDatasetView(APIView):
         responses={
             200: ManualDatasetCreateResponseSerializer,
             **MODEL_HUB_ERROR_RESPONSES,
+            503: DatasetLimitCheckFailedErrorSerializer,
         },
     )
     def post(self, request, *args, **kwargs):
@@ -5355,14 +5350,9 @@ class ManuallyCreateDatasetView(APIView):
                     api_call_type=APICallTypeChoices.DATASET_ADD.value,
                     workspace=request.workspace,
                 )
-                if (
-                    call_log_row_entry is None
-                    or call_log_row_entry.status
-                    == APICallStatusChoices.RESOURCE_LIMIT.value
-                ):
-                    return self._gm.too_many_requests(
-                        get_error_message("DATASET_CREATE_LIMIT_REACHED")
-                    )
+                refusal = dataset_add_refusal(call_log_row_entry)
+                if refusal is not None:
+                    return refusal
                 call_log_row_entry.status = APICallStatusChoices.SUCCESS.value
                 call_log_row_entry.save()
 
@@ -5482,6 +5472,26 @@ class AddDataRowsView(APIView):
 
             dataset = get_object_or_404(Dataset, id=dataset_id)
 
+            columns = list(
+                Column.objects.filter(dataset=dataset, deleted=False).exclude(
+                    source__in=[
+                        SourceChoices.EXPERIMENT.value,
+                        SourceChoices.EXPERIMENT_EVALUATION.value,
+                        SourceChoices.EXPERIMENT_EVALUATION_TAGS.value,
+                    ]
+                )
+            )
+            writable_names = {column.name for column in columns}
+            for index, row_data in enumerate(rows):
+                unknown = sorted(
+                    {cell["column_name"] for cell in row_data["cells"]} - writable_names
+                )
+                if unknown:
+                    return self._gm.bad_request(
+                        f"Row {index + 1}: unknown or non-writable columns: "
+                        f"{', '.join(unknown)}. Create the columns before adding rows."
+                    )
+
             # Validate row limit
             organization = (
                 getattr(request, "organization", None) or request.user.organization
@@ -5507,15 +5517,6 @@ class AddDataRowsView(APIView):
                 call_log_row.status = APICallStatusChoices.SUCCESS.value
                 call_log_row.save()
 
-            # Get valid columns for this dataset
-            columns = Column.objects.filter(dataset=dataset, deleted=False).exclude(
-                source__in=[
-                    SourceChoices.EXPERIMENT.value,
-                    SourceChoices.EXPERIMENT_EVALUATION.value,
-                    SourceChoices.EXPERIMENT_EVALUATION_TAGS.value,
-                ]
-            )
-
             last_row = (
                 Row.all_objects.filter(dataset=dataset).order_by("-created_at").first()
             )
@@ -5523,91 +5524,96 @@ class AddDataRowsView(APIView):
                 max_order = last_row.order
             else:
                 max_order = -1
-
-            # Create rows and cells
-            for index, row_data in enumerate(rows):
-                new_row = Row.objects.create(
-                    id=row_data.get("id", str(uuid.uuid4())),
-                    dataset=dataset,
-                    order=max_order + 1 + index,
-                )
-
-                provided_columns = {
-                    cell["column_name"] for cell in row_data.get("cells", [])
-                }
-
-                # Process columns in a consistent order to ensure proper row alignment
-                cells_to_create = []
-
-                for column in columns:
-                    cell_value = ""
-                    cell_value_infos = None
-                    column_metadata = {}
-
-                    if column.name in provided_columns:
-                        cell_data = next(
-                            cell
-                            for cell in row_data["cells"]
-                            if cell["column_name"] == column.name
-                        )
-                        cell_value = cell_data.get("value", "")
-
-                        try:
-                            if (
-                                column.data_type == DataTypeChoices.IMAGE.value
-                                and cell_value
-                            ):
-                                cell_value = upload_image_to_s3(
-                                    cell_data.get("value", ""),
-                                    bucket_name="fi-customer-data-dev",
-                                    object_key=f"images/{dataset_id}/{uuid.uuid4()}",
-                                )
-
-                            if (
-                                column.data_type == DataTypeChoices.AUDIO.value
-                                and cell_value
-                            ):
-                                cell_value, duration = upload_audio_to_s3_duration(
-                                    cell_data.get("value", ""),
-                                    bucket_name="fi-customer-data-dev",
-                                    object_key=f"audio/{dataset_id}/{uuid.uuid4()}",
-                                )
-                                value_infos: dict[str, Any] = {}
-                                column_metadata = {"audio_duration_seconds": duration}
-                                cell_value_infos = json.dumps(value_infos)
-                            elif (
-                                column.data_type == DataTypeChoices.DOCUMENT.value
-                                and cell_value
-                            ):
-                                # Handle document processing similar to image/audio
-                                doc_key = f"documents/{dataset_id}/{uuid.uuid4()}"
-                                name = cell_value
-                                cell_value = upload_document_to_s3(
-                                    cell_value,
-                                    bucket_name="fi-customer-data-dev",
-                                    object_key=doc_key,
-                                )
-                                cell_value_infos = json.dumps({"document_name": name})
-                        except Exception as e:
-                            logger.error(
-                                f"Error processing {column.data_type} for column {column.name}: {str(e)}"
-                            )
-                            cell_value = ""  # Set to empty if upload fails
-
-                    cells_to_create.append(
-                        Cell(
-                            id=uuid.uuid4(),
-                            dataset=dataset,
-                            column=column,
-                            row=new_row,
-                            value=cell_value,
-                            value_infos=cell_value_infos,
-                            column_metadata=column_metadata,
-                        )
+            # A failed batch must not leave earlier rows behind for a retry.
+            with transaction.atomic():
+                # Create rows and cells
+                for index, row_data in enumerate(rows):
+                    new_row = Row.objects.create(
+                        id=row_data.get("id", str(uuid.uuid4())),
+                        dataset=dataset,
+                        order=max_order + 1 + index,
                     )
 
-                # Bulk create all cells for this row at once to maintain consistency
-                Cell.objects.bulk_create(cells_to_create)
+                    provided_columns = {
+                        cell["column_name"] for cell in row_data.get("cells", [])
+                    }
+
+                    # Process columns in a consistent order to ensure proper row alignment
+                    cells_to_create = []
+
+                    for column in columns:
+                        cell_value = ""
+                        cell_value_infos = None
+                        column_metadata = {}
+
+                        if column.name in provided_columns:
+                            cell_data = next(
+                                cell
+                                for cell in row_data["cells"]
+                                if cell["column_name"] == column.name
+                            )
+                            cell_value = cell_data.get("value", "")
+
+                            try:
+                                if (
+                                    column.data_type == DataTypeChoices.IMAGE.value
+                                    and cell_value
+                                ):
+                                    cell_value = upload_image_to_s3(
+                                        cell_data.get("value", ""),
+                                        bucket_name="fi-customer-data-dev",
+                                        object_key=f"images/{dataset_id}/{uuid.uuid4()}",
+                                    )
+
+                                if (
+                                    column.data_type == DataTypeChoices.AUDIO.value
+                                    and cell_value
+                                ):
+                                    cell_value, duration = upload_audio_to_s3_duration(
+                                        cell_data.get("value", ""),
+                                        bucket_name="fi-customer-data-dev",
+                                        object_key=f"audio/{dataset_id}/{uuid.uuid4()}",
+                                    )
+                                    value_infos: dict[str, Any] = {}
+                                    column_metadata = {
+                                        "audio_duration_seconds": duration
+                                    }
+                                    cell_value_infos = json.dumps(value_infos)
+                                elif (
+                                    column.data_type == DataTypeChoices.DOCUMENT.value
+                                    and cell_value
+                                ):
+                                    # Handle document processing similar to image/audio
+                                    doc_key = f"documents/{dataset_id}/{uuid.uuid4()}"
+                                    name = cell_value
+                                    cell_value = upload_document_to_s3(
+                                        cell_value,
+                                        bucket_name="fi-customer-data-dev",
+                                        object_key=doc_key,
+                                    )
+                                    cell_value_infos = json.dumps(
+                                        {"document_name": name}
+                                    )
+                            except Exception as e:
+                                logger.error(
+                                    f"Error processing {column.data_type} for column {column.name}: {str(e)}"
+                                )
+                                cell_value = ""  # Set to empty if upload fails
+
+                        cells_to_create.append(
+                            Cell(
+                                id=uuid.uuid4(),
+                                dataset=dataset,
+                                column=column,
+                                row=new_row,
+                                value=cell_value,
+                                value_infos=cell_value_infos,
+                                column_metadata=column_metadata,
+                            )
+                        )
+
+                    # Bulk create all cells for this row at once to maintain consistency
+                    Cell.objects.bulk_create(cells_to_create)
 
             return self._gm.success_response(f"Successfully added {len(rows)} row(s)")
 
@@ -5631,16 +5637,18 @@ class DeleteDatasetView(APIView):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
 
+    @validated_request(
+        request_serializer=DatasetDeleteSerializer,
+        responses={
+            200: DevelopDatasetMessageResponseSerializer,
+            **MODEL_HUB_ERROR_RESPONSES,
+        },
+    )
     def delete(self, request, dataset_id=None, *args, **kwargs):
         try:
-            # Handle bulk deletion
-            serializer = DatasetDeleteSerializer(data=request.data)
-            if not serializer.is_valid():
-                return self._gm.bad_request(parse_serialized_errors(serializer))
-
             # Get datasets and verify they exist and belong to user's organization
             datasets = Dataset.objects.filter(
-                id__in=serializer.validated_data["dataset_ids"],
+                id__in=request.validated_data["dataset_ids"],
                 deleted=False,
                 organization=getattr(request, "organization", None)
                 or request.user.organization,
@@ -5648,7 +5656,7 @@ class DeleteDatasetView(APIView):
 
             # Check if all requested datasets were found
             found_ids = {str(d.id) for d in datasets}
-            requested_ids = {str(d) for d in serializer.validated_data["dataset_ids"]}
+            requested_ids = {str(d) for d in request.validated_data["dataset_ids"]}
             missing_ids = requested_ids - found_ids
 
             if missing_ids:
@@ -6029,8 +6037,19 @@ class UpdateCellValueView(APIView):
             if not is_editable:
                 return self._gm.bad_request(edit_err)
 
-            # Check max value length
-            if isinstance(new_value, str) and len(new_value) > MAX_CELL_VALUE_LENGTH:
+            # Check max value length (skip for media types — their base64 data
+            # is uploaded to S3, not stored in the cell)
+            MEDIA_TYPES = {
+                DataTypeChoices.IMAGE.value,
+                DataTypeChoices.IMAGES.value,
+                DataTypeChoices.AUDIO.value,
+                DataTypeChoices.DOCUMENT.value,
+            }
+            if (
+                isinstance(new_value, str)
+                and len(new_value) > MAX_CELL_VALUE_LENGTH
+                and column_data_type not in MEDIA_TYPES
+            ):
                 return self._gm.bad_request(
                     f"Value exceeds maximum length of {MAX_CELL_VALUE_LENGTH} characters"
                 )
@@ -7341,8 +7360,9 @@ class GetEvalsListView(APIView):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
 
-    @swagger_auto_schema(
-        responses={200: EvalListResponseSerializer, **MODEL_HUB_ERROR_RESPONSES}
+    @validated_request(
+        query_serializer=DatasetEvaluationsQuerySerializer,
+        responses={200: EvalListResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
     )
     def get(
         self, request, dataset_id=None, *args, **kwargs
@@ -8594,10 +8614,10 @@ class EditAndRunUserEvalView(APIView):
         },
     )
     def post(self, request, dataset_id, eval_id, *args, **kwargs):
-        from tfc.ee_gates import turing_oss_gate_for_template
+        from tfc.ee_gates import ee_model_gate_for_template
 
         request_data = request.validated_data
-        gate = turing_oss_gate_for_template(
+        gate = ee_model_gate_for_template(
             request_data.get("model"),
             template_id=request_data.get("template_id"),
             eval_type=request_data.get("eval_type"),
@@ -8633,6 +8653,16 @@ class EditAndRunUserEvalView(APIView):
                     return self._gm.bad_request(
                         f"{get_error_message('COLUMN_DELETED')} {eval_metric.name}"
                     )
+
+                from model_hub.utils.jev_templates import validate_jev_binding
+
+                jev_error = validate_jev_binding(
+                    eval_metric.template,
+                    model=request_data.get("model") or eval_metric.model,
+                    runtime_config=request_data.get("config") or eval_metric.config,
+                )
+                if jev_error is not None:
+                    return jev_error
 
                 if save_as_template:
                     template = eval_metric.template
@@ -8966,10 +8996,10 @@ class AddUserEvalView(CreateAPIView):
         },
     )
     def post(self, request, dataset_id, *args, **kwargs):
-        from tfc.ee_gates import turing_oss_gate_for_template
+        from tfc.ee_gates import ee_model_gate_for_template
 
         request_data = request.validated_data
-        gate = turing_oss_gate_for_template(
+        gate = ee_model_gate_for_template(
             request_data.get("model"),
             template_id=request_data.get("template_id"),
             eval_type=request_data.get("eval_type"),
@@ -9077,6 +9107,16 @@ class AddUserEvalView(CreateAPIView):
             )
             if not template:
                 return self._gm.not_found("Eval template not found")
+            from model_hub.utils.jev_templates import validate_jev_binding
+
+            jev_error = validate_jev_binding(
+                template,
+                model=validated_data.get("model"),
+                runtime_config=validated_data.get("config"),
+            )
+            if jev_error is not None:
+                return jev_error
+
             # Inherit template-level enablement unless caller explicitly overrides.
             if "error_localizer" in request.data:
                 error_localizer = self._coerce_bool(
@@ -9288,8 +9328,20 @@ class PreviewRunEvalView(APIView):
         responses={200: EvalPreviewResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
     )
     def post(self, request, dataset_id, *args, **kwargs):
+        from tfc.ee_gates import ee_model_gate_for_template
+
+        request_data = request.validated_data
+        # Gated like the dataset run (AddUserEvalView): an unknown or
+        # unlicensed model is one 400/402, not an error on every previewed row.
+        gate = ee_model_gate_for_template(
+            request_data.get("model"),
+            template_id=request_data.get("template_id"),
+            eval_type=request_data.get("eval_type"),
+        )
+        if gate is not None:
+            return gate
+
         try:
-            request_data = request.validated_data
             config = request_data.get("config")
             if not config:
                 return self._gm.bad_request("config is required")
@@ -9327,6 +9379,13 @@ class PreviewRunEvalView(APIView):
             )
             if not eval_template:
                 return self._gm.not_found("Eval template not found")
+            from model_hub.utils.jev_templates import validate_jev_binding
+
+            jev_error = validate_jev_binding(
+                eval_template, model=model, runtime_config=config
+            )
+            if jev_error is not None:
+                return jev_error
 
             eval_class = globals().get(eval_template.config.get("eval_type_id"))
 
@@ -11267,6 +11326,10 @@ class AddVectorDBColumnView(APIView):
         }
 
         """
+        from tfc.utils.lazy_extras import load_extra
+
+        Pinecone = load_extra("pinecone", "vectordb").Pinecone
+
         pc = Pinecone(api_key=SecretModel.objects.get(id=config["api_key"]).actual_key)
         index = pc.Index(config["index_name"])
         query_object = {}
@@ -11349,6 +11412,10 @@ class AddVectorDBColumnView(APIView):
                 )
 
             # Initialize Qdrant client
+            from tfc.utils.lazy_extras import load_extra
+
+            QdrantClient = load_extra("qdrant_client", "vectordb").QdrantClient
+
             client = QdrantClient(
                 url=config["url"],
                 api_key=SecretModel.objects.get(id=config["api_key"]).actual_key,
@@ -11383,6 +11450,11 @@ class AddVectorDBColumnView(APIView):
             raise ValueError(f"Failed to query Qdrant: {str(e)}")  # noqa: B904
 
     def get_client(self, config, organization_id, workspace_id=None, use_hybrid=False):
+        from tfc.utils.lazy_extras import load_extra
+
+        weaviate = load_extra("weaviate", "vectordb")
+        AuthApiKey = weaviate.AuthApiKey
+
         embedding_config = config.get("embedding_config", {})
         embedding_type = embedding_config.get("type", "")
         key = None
@@ -12059,6 +12131,7 @@ class FeedbackViewSet(viewsets.ModelViewSet):
             # Add feedback information
             row_dict["feedback_comment"] = feedback.explanation
             row_dict["feedback_value"] = feedback.value
+            row_dict["feedback_id"] = str(feedback.id)
             futureagi_eval = (
                 True
                 if user_eval_metric.template.config.get("eval_type_id")
@@ -12752,6 +12825,7 @@ class DuplicateDatasetView(APIView):
         responses={
             200: DuplicateDatasetResponseSerializer,
             **MODEL_HUB_ERROR_RESPONSES,
+            503: DatasetLimitCheckFailedErrorSerializer,
         },
     )
     def post(self, request, dataset_id, *args, **kwargs):
@@ -12795,14 +12869,9 @@ class DuplicateDatasetView(APIView):
                     api_call_type=APICallTypeChoices.DATASET_ADD.value,
                     workspace=request.workspace,
                 )
-                if (
-                    call_log_row_entry is None
-                    or call_log_row_entry.status
-                    == APICallStatusChoices.RESOURCE_LIMIT.value
-                ):
-                    return self._gm.too_many_requests(
-                        get_error_message("DATASET_CREATE_LIMIT_REACHED")
-                    )
+                refusal = dataset_add_refusal(call_log_row_entry)
+                if refusal is not None:
+                    return refusal
                 call_log_row_entry.status = APICallStatusChoices.SUCCESS.value
                 call_log_row_entry.save()
 
@@ -15223,7 +15292,7 @@ class CompareDatasetsStartEvalsProcess(APIView):
                     metric.dataset.save()
 
                     # Create reason column
-                    reason_column, _ = Column.objects.create(
+                    reason_column = Column.objects.create(
                         name=f"{metric.name}-reason",
                         data_type=DataTypeChoices.TEXT.value,
                         source=SourceChoices.EVALUATION_REASON.value,
@@ -15661,6 +15730,10 @@ class CreateKnowledgeBaseView(APIView):
 
     # Check if file is valid
     def is_file_readable(self, file_obj):
+        from docx import Document  # lazy
+        from pypdf import PdfReader  # lazy
+        from pypdf.errors import PdfReadError  # lazy
+
         try:
             file_name = file_obj.name
             extension = file_name.split(".")[-1].lower()

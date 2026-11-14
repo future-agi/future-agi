@@ -50,6 +50,7 @@ class ObservationType(models.TextChoices):
     GUARDRAIL = "guardrail", "Guardrail"
     EVALUATOR = "evaluator", "Evaluator"
     CONVERSATION = "conversation", "Conversation"
+    INTERNAL = "internal", "Internal"
 
 
 class EndUser(BaseModel):
@@ -118,6 +119,7 @@ class ObservationSpan(BaseModel):
         ("guardrail", "Guardrail"),
         ("evaluator", "Evaluator"),
         ("conversation", "Conversation"),
+        ("internal", "Internal"),
     )
 
     OBSERVATION_SPAN_LOGGER_STATUS = (

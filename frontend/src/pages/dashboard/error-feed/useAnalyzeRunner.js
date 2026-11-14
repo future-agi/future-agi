@@ -24,7 +24,7 @@ function useRunnerContext(error) {
   };
 }
 
-export function useAnalyzeRunner(clusterId, error) {
+export function useAnalyzeRunner(clusterId, error, { enabled = true } = {}) {
   const { token, workspaceId, projectId } = useRunnerContext(error);
   const removeAnalyzePendingStart = useErrorFeedStore(
     (s) => s.removeAnalyzePendingStart,
@@ -38,10 +38,10 @@ export function useAnalyzeRunner(clusterId, error) {
 
   // Prewarm socket so first analyze doesn't pay 20-30s cold-start cost.
   useEffect(() => {
-    if (token) {
+    if (enabled && token) {
       prewarmSocket({ token, workspaceId });
     }
-  }, [token, workspaceId]);
+  }, [enabled, token, workspaceId]);
 
   // Seed from cached synthesis on fresh load (no live thread).
   useEffect(() => {
@@ -56,10 +56,10 @@ export function useAnalyzeRunner(clusterId, error) {
 
   // Auto-fire when pending-start flag flips on.
   useEffect(() => {
-    if (!clusterId || !pendingStart) return;
+    if (!enabled || !clusterId || !pendingStart) return;
     removeAnalyzePendingStart(clusterId);
     startRun();
-  }, [clusterId, pendingStart, removeAnalyzePendingStart, startRun]);
+  }, [enabled, clusterId, pendingStart, removeAnalyzePendingStart, startRun]);
 
   return { startRun };
 }

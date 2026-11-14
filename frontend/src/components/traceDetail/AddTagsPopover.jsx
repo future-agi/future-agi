@@ -120,7 +120,7 @@ const AddTagsPopover = ({
       onClose={onClose}
       anchorOrigin={{ vertical: "bottom", horizontal: "right" }}
       transformOrigin={{ vertical: "top", horizontal: "right" }}
-      slotProps={{ paper: { sx: { width: 300, p: 1.5, mt: 0.5 } } }}
+      slotProps={{ paper: { sx: { width: 320, p: 1.5, mt: 0.5 } } }}
     >
       <Typography sx={{ fontSize: 12, fontWeight: 600, mb: 1 }}>
         {isBulk ? `Add tags to ${items.length} items` : "Tags"}
@@ -147,7 +147,7 @@ const AddTagsPopover = ({
         disabled={isPending}
       />
 
-      <Typography sx={{ fontSize: 10, color: "text.disabled", mt: 0.75 }}>
+      <Typography sx={{ fontSize: 12, color: "text.disabled", mt: 0.75 }}>
         {isBulk
           ? "Tags will be added to every selected item"
           : "Double-click name to rename · Click dot to change color"}

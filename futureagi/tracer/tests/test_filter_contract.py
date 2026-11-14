@@ -1,4 +1,5 @@
 import pytest
+from clickhouse_connect.driver.binding import finalize_query
 from rest_framework import serializers
 
 from tracer.services.clickhouse.query_builders.filters import ClickHouseFilterBuilder
@@ -186,11 +187,17 @@ class TestFilterContract:
 
         assert where
         assert "span_attr_" in where
-        assert "contract_attr" in where
+        # The attribute key is bound, not inlined: assert it on the parameter
+        # and on the query the database actually receives.
+        assert params["attr_key_1"] == "contract_attr"
+        assert "contract_attr" in finalize_query(where, params)
         if filter_op in NO_VALUE_OPS:
-            assert params == {}
+            # A valueless op binds the key and nothing else.
+            assert params == {"attr_key_1": "contract_attr"}
         else:
-            assert params
+            # The key param is always present now, so `assert params` would be
+            # vacuous; a value must be bound on top of it.
+            assert len(params) > 1
 
     @pytest.mark.parametrize(
         "column_id,filter_type,filter_op",

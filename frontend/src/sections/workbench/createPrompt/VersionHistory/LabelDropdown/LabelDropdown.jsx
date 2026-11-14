@@ -1,4 +1,4 @@
-import { Box } from "@mui/material";
+import { Box, ButtonBase } from "@mui/material";
 import React, { useState } from "react";
 import SvgColor from "src/components/svg-color";
 import LabelSelectPopover from "./LabelSelectPopover";
@@ -18,13 +18,13 @@ const LabelDropdown = ({ version, haveTag }) => {
         size="small"
         arrow={true}
       >
-        <Box
+        <ButtonBase
+          component="div"
           sx={{
-            cursor: "pointer",
             padding: "5px 12px 5px 12px",
             border: "1px solid",
             borderColor: "divider",
-            borderRadius: 0.5,
+            borderRadius: "4px",
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
@@ -39,7 +39,7 @@ const LabelDropdown = ({ version, haveTag }) => {
             }}
             src="/assets/icons/ic_tag.svg"
           />
-        </Box>
+        </ButtonBase>
       </CustomTooltip>
 
       <LabelSelectPopover

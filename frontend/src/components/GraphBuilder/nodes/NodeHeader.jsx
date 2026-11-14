@@ -21,7 +21,7 @@ const NodeHeader = ({ type, title, badge }) => {
           sx={{
             backgroundColor,
             padding: 1,
-            borderRadius: "2px",
+            borderRadius: "4px",
             width: "24px",
             height: "24px",
             display: "flex",

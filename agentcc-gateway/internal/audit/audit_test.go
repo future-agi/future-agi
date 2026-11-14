@@ -2,8 +2,11 @@ package audit
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"log/slog"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -208,6 +211,68 @@ func TestLogger_ConcurrentEmit(t *testing.T) {
 
 	if sink.count() != n {
 		t.Errorf("expected %d events, got %d", n, sink.count())
+	}
+}
+
+// Shutdown does not wait for every request, so an event can be emitted while
+// Close runs, or after: it is dropped and counted, not sent on the closed channel.
+func TestLogger_EmitDuringAndAfterClose(t *testing.T) {
+	sink := &testSink{}
+	l := NewLoggerWithSinks([]Sink{sink}, nil, SeverityInfo, 8)
+
+	var wg sync.WaitGroup
+	for i := 0; i < 4; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := 0; j < 200; j++ {
+				l.Emit(&Event{Category: "auth", Action: "test", Severity: "info"})
+			}
+		}()
+	}
+	l.Close()
+	wg.Wait()
+	before := l.Dropped()
+	l.Emit(&Event{Category: "auth", Action: "late", Severity: "info"})
+
+	if got := l.Dropped() - before; got != 1 {
+		t.Errorf("Emit after Close dropped %d events, want 1", got)
+	}
+	l.Close() // a second Close returns
+}
+
+// warnCounter counts the WARN records logged through it.
+type warnCounter struct{ n atomic.Int64 }
+
+func (h *warnCounter) Enabled(context.Context, slog.Level) bool { return true }
+func (h *warnCounter) Handle(_ context.Context, r slog.Record) error {
+	if r.Level == slog.LevelWarn {
+		h.n.Add(1)
+	}
+	return nil
+}
+func (h *warnCounter) WithAttrs([]slog.Attr) slog.Handler { return h }
+func (h *warnCounter) WithGroup(string) slog.Handler      { return h }
+
+// Events dropped after Close are logged once, not silently counted, and not
+// once per event.
+func TestLogger_WarnsOnceOfEventsDroppedAfterClose(t *testing.T) {
+	warnings := &warnCounter{}
+	prev := slog.Default()
+	slog.SetDefault(slog.New(warnings))
+	defer slog.SetDefault(prev)
+	l := NewLoggerWithSinks([]Sink{&testSink{}}, nil, SeverityInfo, 8)
+	l.Close()
+
+	for i := 0; i < 3; i++ {
+		l.Emit(&Event{Category: "auth", Action: "late", Severity: "info"})
+	}
+
+	if got := l.Dropped(); got != 3 {
+		t.Errorf("dropped %d events emitted after Close, want 3", got)
+	}
+	if got := warnings.n.Load(); got != 1 {
+		t.Errorf("logged %d warnings for 3 events dropped after Close, want 1", got)
 	}
 }
 

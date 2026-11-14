@@ -25,7 +25,12 @@ const HelpCreateSyntheticData = ({ open, onClose }) => {
   };
 
   return (
-    <Dialog open={open} onClose={onClose} maxWidth="sm">
+    <Dialog
+      open={open}
+      onClose={onClose}
+      maxWidth={false}
+      PaperProps={{ sx: { maxWidth: 720 } }}
+    >
       <Box
         sx={{
           padding: 2,
@@ -52,7 +57,7 @@ const HelpCreateSyntheticData = ({ open, onClose }) => {
               Steps to create Synthetic Data
             </Typography>
             <IconButton onClick={onClose}>
-              <Iconify icon="mdi:close" color="text.primary" />
+              <Iconify icon="solar:close-linear" color="text.primary" />
             </IconButton>
           </Box>
         </DialogTitle>
@@ -70,7 +75,7 @@ const HelpCreateSyntheticData = ({ open, onClose }) => {
               flex: 1,
               border: "1px solid",
               borderColor: "text.primary",
-              borderRadius: "10px",
+              borderRadius: "8px",
               height: "100%",
               minHeight: "200px",
               minWidth: "400px",

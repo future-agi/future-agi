@@ -34,7 +34,7 @@ export default function PromptModalWrapper({
       onClose={onClose}
       PaperProps={{
         sx: {
-          width: "570px",
+          width: "560px",
           borderRadius: theme.spacing(1),
           padding: theme.spacing(2),
           display: "flex",
@@ -61,7 +61,7 @@ export default function PromptModalWrapper({
               color: "text.primary",
             }}
           >
-            <Iconify icon="akar-icons:cross" />
+            <Iconify icon="solar:close-linear" />
           </IconButton>
         </Stack>
         {subTitle && (
@@ -95,7 +95,6 @@ export default function PromptModalWrapper({
               type="button"
               sx={{
                 minWidth: "180px",
-                minHeight: "38px",
                 "&:hover": {
                   borderColor: "divider",
                 },
@@ -117,7 +116,6 @@ export default function PromptModalWrapper({
             onClick={onSubmit}
             sx={{
               minWidth: "180px",
-              minHeight: "38px",
               marginLeft: "0 !important",
             }}
             disabled={!isValid}

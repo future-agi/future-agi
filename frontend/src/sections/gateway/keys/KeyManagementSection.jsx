@@ -4,7 +4,6 @@ import {
   Typography,
   Button,
   Stack,
-  Chip,
   Table,
   TableBody,
   TableCell,
@@ -15,11 +14,13 @@ import {
   ToggleButton,
   ToggleButtonGroup,
   Skeleton,
-  Card,
   InputAdornment,
 } from "@mui/material";
+import Section from "src/components/section";
 import { enqueueSnackbar } from "notistack";
 import Iconify from "src/components/iconify";
+import StatusBadge from "src/components/status-badge/StatusBadge";
+import ListToolbar from "src/components/list-toolbar";
 import SectionHeader from "../components/SectionHeader";
 import PageErrorState from "../components/PageErrorState";
 import { GATEWAY_ICONS } from "../constants/gatewayIcons";
@@ -28,12 +29,7 @@ import { useGatewayContext } from "../context/useGatewayContext";
 import CreateKeyDialog from "./CreateKeyDialog";
 import KeyDetailDrawer from "./KeyDetailDrawer";
 import { formatDate } from "../utils/formatters";
-
-const STATUS_COLORS = {
-  active: "success",
-  revoked: "error",
-  expired: "warning",
-};
+import EmptyState from "src/components/empty-state";
 
 const STATUS_FILTERS = [
   { value: "", label: "All" },
@@ -95,7 +91,7 @@ const KeyManagementSection = () => {
           <Skeleton width={120} height={36} variant="rounded" />
         </Stack>
         <Skeleton width="100%" height={48} variant="rounded" sx={{ mb: 1 }} />
-        <Card>
+        <Section variant="panel">
           {[...Array(5)].map((_, i) => (
             <Stack
               key={i}
@@ -115,7 +111,7 @@ const KeyManagementSection = () => {
               <Skeleton width="15%" height={20} />
             </Stack>
           ))}
-        </Card>
+        </Section>
       </Box>
     );
   }
@@ -135,6 +131,7 @@ const KeyManagementSection = () => {
     <Box p={3}>
       {/* Header */}
       <SectionHeader
+        sx={{ mb: 1.5 }}
         icon={GATEWAY_ICONS.keys}
         title="API Keys"
         subtitle="Create and manage API keys for gateway access"
@@ -143,89 +140,85 @@ const KeyManagementSection = () => {
             label: syncMutation.isPending ? "Syncing..." : "Sync",
             variant: "outlined",
             size: "small",
-            icon: "mdi:sync",
+            icon: "solar:refresh-linear",
             onClick: handleSync,
             disabled: syncMutation.isPending,
           },
-          {
-            label: "Create Key",
-            variant: "contained",
-            size: "small",
-            icon: "mdi:plus",
-            onClick: () => setCreateDialogOpen(true),
-          },
+          ...(keys?.length === 0
+            ? []
+            : [
+                {
+                  label: "Create Key",
+                  variant: "contained",
+                  size: "small",
+                  icon: "solar:add-linear",
+                  onClick: () => setCreateDialogOpen(true),
+                },
+              ]),
         ]}
       />
 
       {/* Filters */}
-      <Stack direction="row" spacing={2} alignItems="center" mb={3}>
-        <ToggleButtonGroup
-          value={statusFilter}
-          exclusive
-          onChange={(_, val) => val !== null && setStatusFilter(val)}
-          size="small"
-        >
-          {STATUS_FILTERS.map((f) => (
-            <ToggleButton
-              key={f.value}
-              value={f.value}
-              sx={{
-                px: 1.5,
-                py: 0.25,
-                textTransform: "none",
-                fontSize: "0.8125rem",
-              }}
-            >
-              {f.label}
-            </ToggleButton>
-          ))}
-        </ToggleButtonGroup>
-
-        <TextField
-          placeholder="Search by name or owner..."
-          size="small"
-          value={searchQuery}
-          onChange={(e) => setSearchQuery(e.target.value)}
-          sx={{ width: 280 }}
-          InputProps={{
-            startAdornment: (
-              <InputAdornment position="start">
-                <Iconify icon="eva:search-outline" width={18} />
-              </InputAdornment>
-            ),
-          }}
-        />
-      </Stack>
+      {keys?.length !== 0 && (
+        <ListToolbar>
+          <TextField
+            placeholder="Search by name or owner..."
+            size="small"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            sx={{ width: 280 }}
+            InputProps={{
+              startAdornment: (
+                <InputAdornment position="start">
+                  <Iconify icon="solar:magnifier-linear" width={16} />
+                </InputAdornment>
+              ),
+            }}
+          />
+          <ToggleButtonGroup
+            value={statusFilter}
+            exclusive
+            onChange={(_, val) => val !== null && setStatusFilter(val)}
+            size="small"
+          >
+            {STATUS_FILTERS.map((f) => (
+              <ToggleButton key={f.value} value={f.value}>
+                {f.label}
+              </ToggleButton>
+            ))}
+          </ToggleButtonGroup>
+        </ListToolbar>
+      )}
 
       {/* Table */}
       {filteredKeys.length === 0 ? (
-        <Box
-          display="flex"
-          flexDirection="column"
-          alignItems="center"
-          justifyContent="center"
-          py={8}
-        >
-          <Iconify
-            icon="mdi:key-outline"
-            width={48}
-            sx={{ color: "text.disabled", mb: 2 }}
-          />
-          <Typography variant="h6" color="text.secondary" mb={1}>
-            {keys?.length === 0
+        <EmptyState
+          variant={keys?.length === 0 ? "first-run" : "no-results"}
+          icon="solar:key-linear"
+          title={
+            keys?.length === 0
               ? "No API keys yet"
-              : "No keys match your filters"}
-          </Typography>
-          {keys?.length === 0 && (
-            <Button
-              variant="outlined"
-              startIcon={<Iconify icon="mdi:plus" width={20} />}
-              onClick={() => setCreateDialogOpen(true)}
-            >
-              Create Your First Key
-            </Button>
-          )}
-        </Box>
+              : "No keys match your filters"
+          }
+          description={
+            keys?.length === 0
+              ? "Create a key to send requests through the gateway from your code."
+              : undefined
+          }
+          action={
+            keys?.length === 0 ? (
+              <Button
+                variant="contained"
+                color="primary"
+                size="small"
+                onClick={() => setCreateDialogOpen(true)}
+              >
+                Create key
+              </Button>
+            ) : undefined
+          }
+          sx={{ pt: 6, pb: 6 }}
+        />
       ) : (
         <>
           <TableContainer>
@@ -266,12 +259,7 @@ const KeyManagementSection = () => {
                       </Typography>
                     </TableCell>
                     <TableCell>
-                      <Chip
-                        label={key.status}
-                        color={STATUS_COLORS[key.status] || "default"}
-                        size="small"
-                        variant="outlined"
-                      />
+                      <StatusBadge status={key.status} />
                     </TableCell>
                     <TableCell>
                       <Typography variant="body2" color="text.secondary">

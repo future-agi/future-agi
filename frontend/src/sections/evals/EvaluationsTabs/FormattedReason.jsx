@@ -83,13 +83,11 @@ const FormattedValueReason = (valueReason) => {
         <Button
           onClick={() => setExpanded(!expanded)}
           sx={{
-            textTransform: "none",
             p: 0,
             mt: 0.5,
             minWidth: "auto",
             color: "text.primary",
             textDecoration: "underline",
-            fontSize: "14px",
             "&:hover": {
               backgroundColor: "transparent",
             },

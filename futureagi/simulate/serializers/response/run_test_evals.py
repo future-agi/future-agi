@@ -120,6 +120,9 @@ class RunNewEvalsResponseSerializer(serializers.Serializer):
     message = serializers.CharField()
     run_test_id = serializers.UUIDField()
     call_execution_count = serializers.IntegerField()
+    # False when the grading job could not be queued and the calls were put
+    # back as they were; the run can be graded again.
+    dispatched = serializers.BooleanField()
 
 
 class EvalErrorResponseSerializer(ApiTextErrorResponseSerializer):

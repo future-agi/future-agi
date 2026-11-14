@@ -1,0 +1,84 @@
+# Azure Kubernetes Service: Azure Database for PostgreSQL flexible server,
+# Azure Cache for Redis, S3-compatible object storage, Application Gateway for
+# Containers (Gateway API) and Premium SSD volumes. ClickHouse, Temporal and
+# a Redis for the LLM gateway run in the cluster from their own charts or
+# operators, installed separately:
+#   ClickHouse: the Altinity operator (or ClickHouse's own); the chart speaks
+#     plain HTTP (8123) and native (9000) to it, so keep it in the cluster.
+#   Temporal: the temporalio/temporal chart, on the flexible server or its own.
+#   Redis 6 or newer without TLS for the gateway's rate limits and budgets
+#     (below): Azure Cache for Redis is TLS-only.
+# Replace every example host and create the Secrets first:
+#
+#   kubectl create secret generic futureagi-postgres --from-literal=password='...'
+#   kubectl create secret generic futureagi-redis --from-literal=password='...'
+#   kubectl create secret generic futureagi-s3 \
+#     --from-literal=access-key='...' --from-literal=secret-key='...'
+#
+#   helm install futureagi oci://ghcr.io/future-agi/charts/futureagi --version X.Y.Z \
+#     -n futureagi --create-namespace -f aks.yaml --timeout 20m
+#
+# A size (-f sizes/medium.yaml or sizes/large.yaml after it) works as is.
+#
+# Not supported: Azure Blob Storage (it is not S3-compatible and the app has
+# no Azure backend: use AWS S3, Cloudflare R2, or a MinIO or SeaweedFS you run,
+# with backend minio as below), Microsoft Entra ID workload identity for the
+# bucket or the database (use keys and a password). Azure Cache for Redis
+# serves TLS on 6380 only: the app uses TLS (redis.external.tls), and the LLM
+# gateway, which has no Redis TLS, keeps its state in its own Redis.
+global:
+  storageClass: managed-csi-premium
+postgres:
+  mode: external
+  existingSecret: futureagi-postgres
+  external:
+    host: futureagi-example.postgres.database.azure.com
+    sslMode: require
+clickhouse:
+  mode: external
+  external:
+    host: clickhouse-futureagi.clickhouse.svc.cluster.local
+redis:
+  mode: external
+  existingSecret: futureagi-redis
+  external:
+    host: futureagi-example.redis.cache.windows.net
+    port: 6380
+    tls: true
+temporal:
+  mode: external
+  external:
+    address: temporal-frontend.temporal.svc.cluster.local:7233
+objectStorage:
+  mode: external
+  # Any S3-compatible service; here a MinIO you run in the cluster.
+  backend: minio
+  bucket: futureagi-uploads
+  existingSecret: futureagi-s3
+  external:
+    endpoint: http://minio.storage.svc.cluster.local:9000
+urls:
+  # Where browsers download files from: that storage's public URL.
+  objects: https://files.futureagi.example.com
+agentccGateway:
+  # Its replicas share rate limits and budgets in this Redis (the sizes
+  # autoscale the gateway); give its password, if any, as
+  # AGENTCC_REDIS_PASSWORD from a Secret in extraEnvFrom. Without such a
+  # Redis, leave extraEnv out and run one replica: after a size file,
+  # --set agentccGateway.autoscaling.enabled=false.
+  extraEnv:
+    AGENTCC_REDIS_ADDRESS: gateway-redis.futureagi.svc.cluster.local:6379
+# Application Gateway for Containers, with the Gateway created separately
+# (gatewayClassName azure-alb-external).
+gatewayApi:
+  enabled: true
+  parentRefs:
+    - name: futureagi-gateway
+      namespace: futureagi
+  app:
+    host: futureagi.example.com
+  api:
+    host: api.futureagi.example.com
+  timeouts:
+    request: 300s
+    websocket: 24h

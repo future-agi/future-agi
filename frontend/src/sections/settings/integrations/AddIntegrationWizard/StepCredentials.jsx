@@ -235,9 +235,9 @@ function LangfuseCredentials({ data, onUpdate, onNext, onBack }) {
           <AccordionSummary
             expandIcon={
               <Iconify
-                icon="akar-icons:chevron-down-small"
-                width={18}
-                height={18}
+                icon="solar:alt-arrow-down-linear"
+                width={20}
+                height={20}
                 sx={{ color: "text.disabled" }}
               />
             }
@@ -279,7 +279,9 @@ function LangfuseCredentials({ data, onUpdate, onNext, onBack }) {
             size="small"
             variant="outlined"
             onClick={onBack}
-            startIcon={<Iconify icon="formkit:left" width={16} height={16} />}
+            startIcon={
+              <Iconify icon="solar:arrow-left-linear" width={16} height={16} />
+            }
             sx={backButtonSx}
           >
             Back
@@ -290,7 +292,6 @@ function LangfuseCredentials({ data, onUpdate, onNext, onBack }) {
             color="primary"
             size="small"
             loading={isPending}
-            sx={{ fontWeight: 500 }}
           >
             Validate & Continue
           </LoadingButton>

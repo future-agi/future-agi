@@ -140,6 +140,7 @@ class TestGetRecordingsSwap:
             "stereo": "https://s3/stereo.mp3",
             "customer": "https://s3/customer.mp3",
             "assistant": "https://s3/assistant.mp3",
+            "stereo_channels": {"left": "customer", "right": "assistant"},
         }
 
     def test_livekit_passthrough(self):
@@ -164,6 +165,165 @@ class TestGetRecordingsSwap:
         rec = self._get_recordings(obj)
         # Simulator audio URL now lives under `customer`.
         assert rec.get("customer") == "https://cdn/only.mp3"
+
+
+class TestStereoChannelRoles:
+    """recordings.stereo_channels names the display role on each channel of
+    the stereo file, so the waveform colours never depend on a client guess."""
+
+    CUSTOMER_LEFT = {"left": "customer", "right": "assistant"}
+    ASSISTANT_LEFT = {"left": "assistant", "right": "customer"}
+
+    def _get_recordings(self, obj):
+        from simulate.serializers.test_execution import CallExecutionDetailSerializer
+
+        ser = CallExecutionDetailSerializer(context={"detail_mode": True})
+        return ser.get_recordings(obj)
+
+    def test_vapi_inbound_provider_stereo_has_assistant_on_the_left(self):
+        obj = _vapi_inbound_call(recordings={"stereo": "https://cdn/stereo.mp3"})
+        assert self._get_recordings(obj)["stereo_channels"] == self.ASSISTANT_LEFT
+
+    def test_vapi_outbound_provider_stereo_has_customer_on_the_left(self):
+        obj = _vapi_outbound_call(recordings={"stereo": "https://cdn/stereo.mp3"})
+        assert self._get_recordings(obj)["stereo_channels"] == self.CUSTOMER_LEFT
+
+    def test_livekit_inbound_stereo_has_customer_on_the_left(self):
+        obj = _livekit_inbound_call(recordings={"stereo": "https://cdn/stereo.mp3"})
+        assert self._get_recordings(obj)["stereo_channels"] == self.CUSTOMER_LEFT
+
+    def test_hosted_stereo_ignores_inbound_direction(self):
+        obj = _vapi_inbound_call()
+        obj.provider_call_data = {}
+        obj.call_metadata = {
+            "call_direction": "inbound",
+            "hosted_harness_artifacts": {
+                "recording_combined": {"url": "https://media/combined.mp4"},
+                "recording_stereo": {"url": "https://media/stereo.mp4"},
+            },
+        }
+        rec = self._get_recordings(obj)
+        assert rec["stereo"] == "https://media/stereo.mp4"
+        assert rec["stereo_channels"] == self.CUSTOMER_LEFT
+
+    def test_sdk_uploaded_stereo_ignores_inbound_vapi_payload(self):
+        obj = _vapi_inbound_call()
+        obj.stereo_recording_url = "https://media/alk-stereo.wav"
+        obj.call_metadata = {
+            "call_direction": "inbound",
+            "alk_recording_artifacts": {
+                "combined": {"recording_url": "https://media/alk-combined.wav"},
+                "stereo": {"recording_url": "https://media/alk-stereo.wav"},
+            },
+        }
+        assert self._get_recordings(obj)["stereo_channels"] == self.CUSTOMER_LEFT
+
+    def test_hosted_speaker_tracks_are_not_swapped_for_inbound(self):
+        obj = _vapi_inbound_call()
+        obj.provider_call_data = {}
+        obj.call_metadata = {
+            "call_direction": "inbound",
+            "hosted_harness_artifacts": {
+                "recording_customer": {"url": "https://media/simulator.mp4"},
+                "recording_assistant": {"url": "https://media/tested_agent.mp4"},
+            },
+        }
+        rec = self._get_recordings(obj)
+        assert rec["customer"] == "https://media/simulator.mp4"
+        assert rec["assistant"] == "https://media/tested_agent.mp4"
+
+    def test_lone_hosted_assistant_track_is_not_swapped_for_inbound(self):
+        obj = _vapi_inbound_call()
+        obj.provider_call_data = {}
+        obj.call_metadata = {
+            "call_direction": "inbound",
+            "hosted_harness_artifacts": {
+                "recording_assistant": {"url": "https://media/tested_agent.mp4"},
+            },
+        }
+        rec = self._get_recordings(obj)
+        assert rec["assistant"] == "https://media/tested_agent.mp4"
+        assert "customer" not in rec
+
+    def test_hosted_combined_track_does_not_stop_the_provider_swap(self):
+        obj = _vapi_inbound_call(
+            recordings={
+                "assistant": "https://cdn/simulator.mp3",
+                "customer": "https://cdn/tested_agent.mp3",
+            }
+        )
+        obj.call_metadata = {
+            "call_direction": "inbound",
+            "hosted_harness_artifacts": {
+                "recording_combined": {"url": "https://media/combined.mp4"},
+            },
+        }
+        rec = self._get_recordings(obj)
+        assert rec["assistant"] == "https://cdn/tested_agent.mp3"
+        assert rec["customer"] == "https://cdn/simulator.mp3"
+
+    def test_stale_own_artifact_beside_a_new_provider_stereo_is_ignored(self):
+        obj = _vapi_inbound_call(recordings={"stereo": "https://cdn/rerun.mp3"})
+        obj.call_metadata = {
+            "call_direction": "inbound",
+            "alk_recording_artifacts": {
+                "stereo": {"recording_url": "https://media/first-run.wav"}
+            },
+            "hosted_harness_artifacts": {
+                "recording_stereo": {"url": "https://media/first-run.mp4"}
+            },
+        }
+        rec = self._get_recordings(obj)
+        assert rec["stereo"] == "https://cdn/rerun.mp3"
+        assert rec["stereo_channels"] == self.ASSISTANT_LEFT
+
+    @pytest.mark.parametrize("provider_key", ["retell", "bland"])
+    def test_retell_and_bland_follow_direction_like_vapi(self, provider_key):
+        for direction, expected in (
+            ("inbound", self.ASSISTANT_LEFT),
+            ("outbound", self.CUSTOMER_LEFT),
+        ):
+            obj = _vapi_inbound_call()
+            obj.provider_call_data = {
+                provider_key: {"recording": {"stereo": "https://cdn/stereo.mp3"}}
+            }
+            obj.call_metadata = {"call_direction": direction}
+            assert self._get_recordings(obj)["stereo_channels"] == expected
+
+    @pytest.mark.parametrize("malformed", ["not-a-dict", ["x"], {"stereo": "url"}])
+    def test_malformed_artifact_note_reads_as_a_provider_recording(self, malformed):
+        roles = SpeakerRoleResolver.stereo_channel_roles(
+            "https://cdn/stereo.mp3",
+            {"alk_recording_artifacts": malformed},
+            provider=ProviderChoices.VAPI,
+            is_outbound=False,
+        )
+        assert roles == self.ASSISTANT_LEFT
+
+    def test_own_combined_artifact_alone_does_not_fix_the_layout(self):
+        obj = _vapi_inbound_call(recordings={"stereo": "https://cdn/stereo.mp3"})
+        obj.call_metadata = {
+            "call_direction": "inbound",
+            "alk_recording_artifacts": {
+                "combined": {"recording_url": "https://media/combined.wav"}
+            },
+        }
+        assert self._get_recordings(obj)["stereo_channels"] == self.ASSISTANT_LEFT
+
+    def test_no_stereo_recording_means_no_stereo_channels(self):
+        obj = _vapi_inbound_call(
+            recordings={
+                "assistant": "https://cdn/simulator.mp3",
+                "customer": "https://cdn/tested_agent.mp3",
+            }
+        )
+        assert "stereo_channels" not in self._get_recordings(obj)
+
+    def test_missing_direction_reads_as_customer_on_the_left(self):
+        obj = _vapi_inbound_call(recordings={"stereo": "https://cdn/stereo.mp3"})
+        obj.call_metadata = {}
+        obj.call_type = None
+        assert self._get_recordings(obj)["stereo_channels"] == self.CUSTOMER_LEFT
 
 
 class TestGetTranscriptSwap:

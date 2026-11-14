@@ -189,13 +189,10 @@ const ConversationCard = ({ value, column }) => {
                 onClick={() => setIsExpanded(!isExpanded)}
                 sx={{
                   ml: 0.5,
-                  p: 0,
                   minWidth: "auto",
-                  textTransform: "none",
                   textDecoration: "underline",
                   verticalAlign: "baseline",
                   display: "inline",
-                  fontWeight: "fontWeightRegular !important",
                   typography: "body2",
                   "&:hover": { textDecoration: "underline" },
                 }}
@@ -241,13 +238,10 @@ const ConversationCard = ({ value, column }) => {
                 onClick={() => setIsExpanded(!isExpanded)}
                 sx={{
                   ml: 0.5,
-                  p: 0,
                   minWidth: "auto",
-                  textTransform: "none",
                   textDecoration: "underline",
                   verticalAlign: "baseline",
                   display: "inline",
-                  fontWeight: "fontWeightRegular !important",
                   typography: "body2",
                   "&:hover": { textDecoration: "underline" },
                 }}

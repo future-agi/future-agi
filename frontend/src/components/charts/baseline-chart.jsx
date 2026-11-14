@@ -1,6 +1,7 @@
 import React from "react";
 import ReactApexChart from "react-apexcharts";
 import { useTheme } from "@mui/material";
+import { seriesColor } from "src/theme/data-colors";
 
 export default function BaselineChart() {
   const theme = useTheme();
@@ -32,7 +33,7 @@ export default function BaselineChart() {
     chart: {
       type: "line",
       background: "transparent",
-      foreColor: isDark ? "#a1a1aa" : undefined,
+      foreColor: theme.palette.text.secondary,
       zoom: {
         enabled: false,
       },
@@ -43,7 +44,7 @@ export default function BaselineChart() {
     theme: {
       mode: isDark ? "dark" : "light",
     },
-    colors: ["#77B6EA", "#545454"],
+    colors: [seriesColor(theme, 1), seriesColor(theme, 7)],
     dataLabels: {
       enabled: false,
     },
@@ -79,7 +80,7 @@ export default function BaselineChart() {
       },
     },
     grid: {
-      borderColor: isDark ? "#27272a" : undefined,
+      borderColor: theme.palette.divider,
     },
   };
 

@@ -3,9 +3,9 @@ import json
 import re
 import traceback
 import uuid
-from types import SimpleNamespace
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
+from types import SimpleNamespace
 
 import structlog
 
@@ -17,14 +17,10 @@ from rest_framework.generics import CreateAPIView
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 
+from accounts.utils import get_request_organization
 from agentic_eval.core.embeddings.embedding_manager import EmbeddingManager
 from agentic_eval.core.utils.functions import detect_input_type, is_uuid
 from agentic_eval.core.utils.model_config import ModelConfigs
-from tfc.telemetry import wrap_for_thread
-
-logger = structlog.get_logger(__name__)
-from accounts.models.organization import Organization
-from accounts.utils import get_request_organization
 from agentic_eval.core_evals.fi_evals import *  # noqa: F403
 from agentic_eval.core_evals.fi_evals.grounded.similarity import *  # noqa: F403
 from agentic_eval.core_evals.run_prompt.litellm_models import LiteLLMModelManager
@@ -76,9 +72,10 @@ from model_hub.utils.json_path_resolver import (  # noqa: E402
     parse_json_safely,
     resolve_json_path,
 )
-from sdk.utils.helpers import _get_api_call_type
-from tfc.constants.api_calls import APICallStatusChoices, APICallTypeChoices
+from sdk.utils.helpers import _emit_jev_usage, _get_api_call_type
+from tfc.constants.api_calls import APICallStatusChoices
 from tfc.middleware.workspace_context import get_current_workspace
+from tfc.telemetry import wrap_for_thread
 from tfc.utils.api_contracts import validated_request
 from tfc.utils.error_codes import (
     get_error_for_api_status,
@@ -88,7 +85,8 @@ from tfc.utils.error_codes import (
 )
 from tfc.utils.functions import get_eval_stats
 from tfc.utils.general_methods import GeneralMethods
-from tfc.utils.parse_errors import parse_serialized_errors
+
+logger = structlog.get_logger(__name__)
 
 try:
     from ee.usage.utils.usage_entries import (
@@ -271,7 +269,7 @@ def bulk_update_or_create_cells(
     return len(cells_to_update), len(cells_to_create)
 
 
-def _is_knowledge_base_uuid(uuid_value):
+def _is_knowledge_base_uuid(uuid_value, dataset):
     """
     Check if a UUID value belongs to a KnowledgeBaseFile.
 
@@ -290,7 +288,17 @@ def _is_knowledge_base_uuid(uuid_value):
 
     # Check if it exists in KnowledgeBaseFile
     try:
-        return KnowledgeBaseFile.objects.filter(id=str(uuid_value)).exists()
+        workspace_scope = models.Q(workspace_id=dataset.workspace_id)
+        if dataset.workspace_id is None or dataset.workspace.is_default:
+            workspace_scope |= models.Q(workspace__isnull=True) | models.Q(
+                workspace__is_default=True,
+                workspace__organization_id=dataset.organization_id,
+            )
+        return KnowledgeBaseFile.no_workspace_objects.filter(
+            workspace_scope,
+            id=str(uuid_value),
+            organization_id=dataset.organization_id,
+        ).exists()
     except Exception:
         return False
 
@@ -390,7 +398,7 @@ def _resolve_column_reference(column_ref, dataset_id):
     """
     # Try as UUID first
     try:
-        return Column.objects.get(id=column_ref)
+        return Column.objects.get(id=column_ref, dataset_id=dataset_id)
     except (Column.DoesNotExist, ValueError):
         pass
 
@@ -538,7 +546,13 @@ def _resolve_special_value(value, row, runner):
         if not output_col:
             return None
         try:
-            cell = Cell.objects.get(column=output_col, row=row, deleted=False)
+            cell = Cell.objects.get(
+                column=output_col,
+                row=row,
+                deleted=False,
+                dataset_id=row.dataset_id,
+                column__dataset_id=row.dataset_id,
+            )
             if cell.status == CellStatus.ERROR.value:
                 raise ValueError(get_error_message("EVALUATION_NOT_FOR_ERROR_CELL"))
             return cell.value
@@ -637,14 +651,14 @@ def process_mapping(
                 if _is_special_mapping_value(item):
                     continue
                 data = item if str(item) != str(replace_column_id) else column_id
-                if data and not _is_knowledge_base_uuid(data):
+                if data and not _is_knowledge_base_uuid(data, row.dataset):
                     base_col_id, _ = _extract_column_id_and_path(str(data))
                     column_ids_to_fetch.add(str(base_col_id))
         else:
             if _is_special_mapping_value(value):
                 continue
             data = value if str(value) != str(replace_column_id) else column_id
-            if data and not _is_knowledge_base_uuid(data):
+            if data and not _is_knowledge_base_uuid(data, row.dataset):
                 base_col_id, _ = _extract_column_id_and_path(str(data))
                 column_ids_to_fetch.add(str(base_col_id))
 
@@ -652,7 +666,10 @@ def process_mapping(
     cells_by_column = {}
     if column_ids_to_fetch:
         cells = Cell.objects.filter(
-            column__id__in=column_ids_to_fetch, row=row
+            column__id__in=column_ids_to_fetch,
+            row=row,
+            column__dataset_id=row.dataset_id,
+            dataset_id=row.dataset_id,
         ).select_related("column")
         cells_by_column = {str(cell.column_id): cell for cell in cells}
 
@@ -675,7 +692,7 @@ def process_mapping(
                 try:
                     if data:
                         # Check if it's a KnowledgeBaseFile UUID
-                        if _is_knowledge_base_uuid(data):
+                        if _is_knowledge_base_uuid(data, row.dataset):
                             # Pass through UUID unchanged
                             data_list.append(str(data))
                         else:
@@ -724,12 +741,16 @@ def process_mapping(
                 eval_template_name == "prompt_instruction_adherence"
                 and key == "prompt"
                 and data
-                and not _is_knowledge_base_uuid(data)
+                and not _is_knowledge_base_uuid(data, row.dataset)
             ):
                 try:
                     base_col_id, _ = _extract_column_id_and_path(str(data))
-                    prompt_column = Column.objects.get(id=base_col_id)
-                    run_prompter = RunPrompter.objects.get(id=prompt_column.source_id)
+                    prompt_column = Column.objects.get(
+                        id=base_col_id, dataset_id=row.dataset_id
+                    )
+                    run_prompter = RunPrompter.objects.get(
+                        id=prompt_column.source_id, dataset_id=row.dataset_id
+                    )
 
                     system_messages = [
                         msg
@@ -755,7 +776,7 @@ def process_mapping(
             try:
                 if data:
                     # Check if it's a KnowledgeBaseFile UUID
-                    if _is_knowledge_base_uuid(data):
+                    if _is_knowledge_base_uuid(data, row.dataset):
                         # Pass through UUID unchanged
                         mapping.append(str(data))
                         required_field.append(key)
@@ -783,18 +804,18 @@ def process_mapping(
             if run_prompt_column:
                 if key == "output" and not mappings.get("input"):
                     # Skip if value is a KnowledgeBaseFile UUID
-                    if not _is_knowledge_base_uuid(value):
+                    if not _is_knowledge_base_uuid(value, row.dataset):
                         try:
-                            output_column = Column.objects.get(id=value)
+                            output_column = Column.objects.get(
+                                id=value, dataset_id=row.dataset_id
+                            )
                             prompt_column = RunPrompter.objects.get(
-                                id=output_column.source_id
+                                id=output_column.source_id, dataset_id=row.dataset_id
                             )
                             # Get the user prompt from messages
                             prompt = "\n".join(
                                 [
-                                    runner._replace_dynamic_ids(
-                                        content["text"], row
-                                    )
+                                    runner._replace_dynamic_ids(content["text"], row)
                                     for message in prompt_column.messages
                                     if message["role"] == "user"
                                     for content in message["content"]
@@ -849,6 +870,8 @@ class EvaluationRunner:
         self.cancel_event = cancel_event
         self.futureagi_eval = futureagi_eval
         self.dataset_feedback_groups = {}
+        self._optimizer_feedback_scope: tuple | None = None
+        self._optimizer_feedback_ids: list[str] = []
         self.df = None
         self.protect = protect
         self.protect_flash = protect_flash
@@ -880,12 +903,48 @@ class EvaluationRunner:
         Returns:
             List of processed few-shot examples
         """
-        # get_fewshots = RAG()
+        if self.eval_template is None:
+            return []
+        feedback_ids: list[str] | None = None
+        organization_id = self.organization_id
+        workspace_id = None
+        if self.optimize is not None:
+            from model_hub.utils.optimization_scope import optimization_feedback_ids
+
+            dataset = self.optimize.dataset
+            scope = (
+                dataset.id,
+                dataset.organization_id,
+                dataset.workspace_id,
+                dataset.deleted,
+                self.eval_template.id,
+            )
+            # One eligibility snapshot per runner. Feedback recalculation creates
+            # a new runner, so submitted corrections are included immediately.
+            if self._optimizer_feedback_scope != scope:
+                self._optimizer_feedback_ids = optimization_feedback_ids(
+                    dataset, self.eval_template.id
+                )
+                self._optimizer_feedback_scope = scope
+            feedback_ids = self._optimizer_feedback_ids
+            if not feedback_ids:
+                return []
+            organization_id = dataset.organization_id
+            # Eligible IDs include legacy default-workspace records. Private
+            # workspaces also retain the exact vector workspace predicate.
+            if dataset.workspace_id and not dataset.workspace.is_default:
+                workspace_id = dataset.workspace_id
         embedding_manager = EmbeddingManager()
+        if feedback_ids is not None:
+            from model_hub.utils.optimization_feedback import DatasetFeedbackVectorDB
+
+            # Searches return only vectors of this dataset's eligible feedback.
+            embedding_manager.db_client.close()
+            embedding_manager.db_client = DatasetFeedbackVectorDB(feedback_ids)
 
         all_examples = []
         try:
-            if not self.organization_id:
+            if not organization_id:
                 logger.warning(
                     "No organization_id available for filtering in get_few_shot_examples - returning empty examples"
                 )
@@ -897,9 +956,8 @@ class EvaluationRunner:
                 eval_id=self.eval_template.id,
                 inputs=mapping,
                 input_cols=required_field,
-                organization_id=self.organization_id,
-                # Feedback retrieval is org-scoped; writes still tag workspace_id.
-                workspace_id=None,
+                organization_id=organization_id,
+                workspace_id=workspace_id,
             )
             end_time = datetime.now()
             elapsed_time = (end_time - start_time).total_seconds()
@@ -974,8 +1032,10 @@ class EvaluationRunner:
         invalidated automatically when `self.eval_template` or
         `self._resolved_version` identity changes.
         """
-        cache_key = (id(getattr(self, "eval_template", None)),
-                     id(getattr(self, "_resolved_version", None)))
+        cache_key = (
+            id(getattr(self, "eval_template", None)),
+            id(getattr(self, "_resolved_version", None)),
+        )
         cached = getattr(self, "_effective_config_cache", None)
         if (
             cached is not None
@@ -1169,6 +1229,127 @@ class EvaluationRunner:
             input_type[key] = detect_input_type(value)
         return input_type
 
+    def _emit_cell_usage(self, eval_instance, api_call_log_row, row):
+        """Bill one evaluated cell. Billing never fails the cell, but a lost
+        charge is logged."""
+        try:
+            try:
+                from ee.usage.schemas.events import UsageEvent
+            except ImportError:
+                UsageEvent = None
+            try:
+                from ee.usage.services.config import BillingConfig
+            except ImportError:
+                BillingConfig = None
+            try:
+                from ee.usage.services.emitter import emit
+            except ImportError:
+                emit = None
+            try:
+                from ee.usage.utils.event_properties import token_usage_properties
+            except ImportError:
+
+                def token_usage_properties(token_usage):
+                    return {}
+
+            billing_config = None
+            if BillingConfig is not None:
+                billing_config = BillingConfig.get()
+            eval_cost = getattr(eval_instance, "cost", {})
+            llm_cost = eval_cost.get("total_cost", 0)
+            per_run_fee = billing_config.get_eval_per_run_fee() if billing_config else 0
+            actual_cost = llm_cost + per_run_fee
+            _token_usage = getattr(eval_instance, "token_usage", {})
+
+            # Also compute fallback cost for comparison logging
+            _fallback_cost = 0
+            try:
+                from agentic_eval.core_evals.fi_utils.token_count_helper import (
+                    calculate_total_cost,
+                )
+
+                _model = self.user_eval_metric.model or "unknown"
+                _fallback = calculate_total_cost(_model, _token_usage)
+                _fallback_cost = _fallback.get("total_cost", 0)
+            except Exception:
+                pass
+
+            logger.info(
+                "eval_cost_breakdown",
+                eval_id=str(self.user_eval_metric.id),
+                model=self.user_eval_metric.model,
+                llm_cost=llm_cost,
+                per_run_fee=per_run_fee,
+                actual_cost=actual_cost,
+                fallback_calculated_cost=_fallback_cost,
+                token_usage=getattr(eval_instance, "token_usage", {}),
+            )
+
+            credits = (
+                billing_config.calculate_ai_credits(actual_cost)
+                if billing_config
+                else 0
+            )
+            emit_org_id = str(
+                self.organization_id
+                or (
+                    self.user_eval_metric.organization.id
+                    if self.user_eval_metric
+                    else ""
+                )
+            )
+
+            try:
+                from ee.usage.schemas.event_types import BillingEventType
+            except ImportError:
+                BillingEventType = None
+
+            _is_code_eval = getattr(self.eval_template, "eval_type", "") == "code"
+            eval_event_type = (
+                BillingEventType.CODE_EVALUATOR.value
+                if _is_code_eval and BillingEventType is not None
+                else _get_api_call_type(self.user_eval_metric.model)
+            )
+            if (
+                emit is not None
+                and UsageEvent is not None
+                and BillingEventType is not None
+            ):
+                # Jev is billed the one way every eval path bills it (the
+                # flat per-run fee, attempt-stable ids); anything else, or
+                # a build without the Jev module, is billed as before.
+                if not _emit_jev_usage(
+                    eval_instance,
+                    org_id=emit_org_id,
+                    run_id=(
+                        str(api_call_log_row.log_id)
+                        if api_call_log_row is not None
+                        else f"{self.replace_column_id}:{row.id}"
+                    ),
+                ):
+                    emit(
+                        UsageEvent(
+                            org_id=emit_org_id,
+                            event_type=eval_event_type,
+                            amount=credits,
+                            properties={
+                                "source": self.source,
+                                "source_id": str(
+                                    self.source_id
+                                    or (
+                                        str(self.user_eval_metric.template.id)
+                                        if self.user_eval_metric
+                                        else ""
+                                    )
+                                ),
+                                "raw_cost_usd": str(actual_cost),
+                                **token_usage_properties(_token_usage),
+                            },
+                        )
+                    )
+        except Exception:
+            logger.warning("eval_usage_emit_failed", exc_info=True)
+
     def _process_eval_result(self, row, mappings):
         """Process evaluation for a single row"""
         config = self.update_config_list_values(
@@ -1187,9 +1368,9 @@ class EvaluationRunner:
                     if base_col_id:
                         base_column_ids.append(base_col_id)
 
-            cols = Column.objects.filter(id__in=base_column_ids).values(
-                "id", "data_type"
-            )
+            cols = Column.objects.filter(
+                id__in=base_column_ids, dataset_id=row.dataset_id
+            ).values("id", "data_type")
             col_map = {str(col["id"]): col["data_type"] for col in cols}
             api_call_log_row = self._handle_api_call(row, mappings, config)
             (
@@ -1224,7 +1405,12 @@ class EvaluationRunner:
                         response.get("reason"),
                         CellStatus.PASS.value,
                     )
-            value = self.format_output(response, row)
+            formatter = getattr(eval_instance, "format_result", None)
+            value = (
+                formatter(response, self.eval_template)
+                if callable(formatter)
+                else self.format_output(response, row)
+            )
 
             if api_call_log_row is not None:
                 config_dict = json.loads(api_call_log_row.config)
@@ -1257,112 +1443,7 @@ class EvaluationRunner:
                 self._handle_api_call_status(api_call_log_row, CellStatus.PASS.value)
 
             # Post-eval cost-based usage emit
-            try:
-                try:
-                    from ee.usage.schemas.events import UsageEvent
-                except ImportError:
-                    UsageEvent = None
-                try:
-                    from ee.usage.services.config import BillingConfig
-                except ImportError:
-                    BillingConfig = None
-                try:
-                    from ee.usage.services.emitter import emit
-                except ImportError:
-                    emit = None
-                try:
-                    from ee.usage.utils.event_properties import token_usage_properties
-                except ImportError:
-                    token_usage_properties = lambda token_usage: {}
-
-                billing_config = None
-                if BillingConfig is not None:
-                    billing_config = BillingConfig.get()
-                eval_cost = getattr(eval_instance, "cost", {})
-                llm_cost = eval_cost.get("total_cost", 0)
-                per_run_fee = (
-                    billing_config.get_eval_per_run_fee() if billing_config else 0
-                )
-                actual_cost = llm_cost + per_run_fee
-                _token_usage = getattr(eval_instance, "token_usage", {})
-
-                # Also compute fallback cost for comparison logging
-                _fallback_cost = 0
-                try:
-                    from agentic_eval.core_evals.fi_utils.token_count_helper import (
-                        calculate_total_cost,
-                    )
-
-                    _model = self.user_eval_metric.model or "unknown"
-                    _fallback = calculate_total_cost(_model, _token_usage)
-                    _fallback_cost = _fallback.get("total_cost", 0)
-                except Exception:
-                    pass
-
-                logger.info(
-                    "eval_cost_breakdown",
-                    eval_id=str(self.user_eval_metric.id),
-                    model=self.user_eval_metric.model,
-                    llm_cost=llm_cost,
-                    per_run_fee=per_run_fee,
-                    actual_cost=actual_cost,
-                    fallback_calculated_cost=_fallback_cost,
-                    token_usage=getattr(eval_instance, "token_usage", {}),
-                )
-
-                credits = (
-                    billing_config.calculate_ai_credits(actual_cost)
-                    if billing_config
-                    else 0
-                )
-                emit_org_id = str(
-                    self.organization_id
-                    or (
-                        self.user_eval_metric.organization.id
-                        if self.user_eval_metric
-                        else ""
-                    )
-                )
-
-                try:
-                    from ee.usage.schemas.event_types import BillingEventType
-                except ImportError:
-                    BillingEventType = None
-
-                _is_code_eval = getattr(self.eval_template, "eval_type", "") == "code"
-                eval_event_type = (
-                    BillingEventType.CODE_EVALUATOR.value
-                    if _is_code_eval and BillingEventType is not None
-                    else _get_api_call_type(self.user_eval_metric.model)
-                )
-                if (
-                    emit is not None
-                    and UsageEvent is not None
-                    and BillingEventType is not None
-                ):
-
-                    emit(
-                        UsageEvent(
-                            org_id=emit_org_id,
-                            event_type=eval_event_type,
-                            amount=credits,
-                            properties={
-                                "source": self.source,
-                                "source_id": str(
-                                    self.source_id
-                                    or (
-                                        str(self.user_eval_metric.template.id)
-                                        if self.user_eval_metric
-                                        else ""
-                                    )
-                                ),
-                                "raw_cost_usd": str(actual_cost),
-                                **token_usage_properties(_token_usage),
-                            },
-                        )
-                    )
-            except Exception:
-                pass
+            self._emit_cell_usage(eval_instance, api_call_log_row, row)
 
             # Trigger error localization when enabled either on the dataset binding
             # (UserEvalMetric) or directly on the eval template.
@@ -1378,7 +1459,11 @@ class EvaluationRunner:
                 )
 
                 cell = Cell.objects.filter(
-                    column__id=self.replace_column_id, row=row, deleted=False
+                    column__id=self.replace_column_id,
+                    row=row,
+                    deleted=False,
+                    dataset_id=row.dataset_id,
+                    column__dataset_id=row.dataset_id,
                 ).first()
 
                 trigger_error_localization_for_column(
@@ -1391,9 +1476,7 @@ class EvaluationRunner:
                     cell=cell,
                     log_id=str(api_call_log_row.log_id) if api_call_log_row else None,
                     eval_config=(
-                        self.user_eval_metric.config
-                        if self.user_eval_metric
-                        else None
+                        self.user_eval_metric.config if self.user_eval_metric else None
                     ),
                 )
 
@@ -1415,7 +1498,7 @@ class EvaluationRunner:
             error_message = get_specific_error_message(e)
 
             response, status, value = self._handle_error(error_message)
-           
+
             usage_error_code = get_usage_error_code(e)
             if usage_error_code:
                 response["error_code"] = usage_error_code
@@ -1469,7 +1552,13 @@ class EvaluationRunner:
             if self.user_eval_metric
             else ModelChoices.TURING_LARGE.value
         )
-        api_call_type = _get_api_call_type(model)
+        api_call_type = _get_api_call_type(
+            model,
+            template=eval_template,
+            runtime_config=(
+                self.user_eval_metric.config if self.user_eval_metric else None
+            ),
+        )
 
         is_futureagi_eval = self.futureagi_eval
 
@@ -1633,8 +1722,12 @@ class EvaluationRunner:
         can_infer_prompt = False
         if run_prompt_column and col_ids:
             try:
-                output_col = Column.objects.get(id=col_ids[0])
-                RunPrompter.objects.get(id=output_col.source_id)
+                output_col = Column.objects.get(
+                    id=col_ids[0], dataset_id=self.user_eval_metric.dataset_id
+                )
+                RunPrompter.objects.get(
+                    id=output_col.source_id, dataset_id=self.user_eval_metric.dataset_id
+                )
                 can_infer_prompt = True
             except (Column.DoesNotExist, RunPrompter.DoesNotExist):
                 pass
@@ -1691,13 +1784,6 @@ class EvaluationRunner:
                 final_mapping, final_required_field
             )
 
-            shot_count = (
-                len(few_shot_examples)
-                if isinstance(few_shot_examples, list)
-                else (1 if few_shot_examples else 0)
-            )
-            # print(f"[FEEDBACK INJECT] map_fields injecting fewshots : {few_shot_examples} for AgentEvaluator/CustomPromptEvaluator eval",flush=True)
-            # print(f"[FEEDBACK INJECT] map_fields injecting {shot_count} few-shot examples for eval_template={self.eval_template.id if self.eval_template else None}", flush=True)
             required_field.append("few_shots")
             mapping.append(few_shot_examples)
 
@@ -1747,15 +1833,19 @@ class EvaluationRunner:
 
             if not self.futureagi_eval and "few_shots" not in required_field:
                 # Match the write side's column-id keying so retrieval hits.
-                (
-                    resolved_required_field,
-                    resolved_mapping,
-                ) = self._get_required_fields_and_mappings(
-                    user_eval_metric=self.user_eval_metric,
-                    mapping=mapping,
-                    config=config,
-                    required_field=required_field,
-                )
+                if self.user_eval_metric:
+                    (
+                        resolved_required_field,
+                        resolved_mapping,
+                    ) = self._get_required_fields_and_mappings(
+                        user_eval_metric=self.user_eval_metric,
+                        mapping=mapping,
+                        config=config,
+                        required_field=required_field,
+                    )
+                else:
+                    resolved_required_field = list(required_field)
+                    resolved_mapping = list(mapping)
                 few_shot_examples = self.get_few_shot_examples(
                     resolved_mapping, resolved_required_field
                 )
@@ -1877,11 +1967,7 @@ class EvaluationRunner:
             config = config.copy()
             for key, value in config.items():
                 # Check if the value is a comma-separated string
-                if (
-                    isinstance(value, str)
-                    and "," in value
-                    and key not in PROMPT_KEYS
-                ):
+                if isinstance(value, str) and "," in value and key not in PROMPT_KEYS:
                     # Split the string by commas and update the value as a list
                     config[key] = value.split(",")
                 # Check if the key is 'comparator' and if its value matches a known function
@@ -1943,7 +2029,12 @@ class EvaluationRunner:
                                     f"Column '{column_ref}' not found in dataset"
                                 )
 
-                            cell = Cell.objects.get(column=column, row=row)
+                            cell = Cell.objects.get(
+                                column=column,
+                                row=row,
+                                dataset_id=row.dataset_id,
+                                column__dataset_id=row.dataset_id,
+                            )
                             if cell.status == CellStatus.ERROR.value:
                                 raise ValueError(
                                     get_error_message("EVALUATION_NOT_FOR_ERROR_CELL")
@@ -2161,7 +2252,7 @@ class EvaluationRunner:
             for item in items:
                 if not item:
                     continue
-                if _is_knowledge_base_uuid(item):
+                if _is_knowledge_base_uuid(item, row.dataset):
                     return True
                 base_col_id, _ = _extract_column_id_and_path(str(item))
                 if _resolve_column_reference(base_col_id, dataset_id):
@@ -2311,7 +2402,9 @@ class EvaluationRunner:
         binding_config = (
             self.user_eval_metric.config
             if self.user_eval_metric
-            else config if isinstance(config, dict) else None
+            else config
+            if isinstance(config, dict)
+            else None
         )
         _mapped = merge_code_eval_kwargs(_mapped, self.eval_template, binding_config)
 
@@ -2471,7 +2564,10 @@ class EvaluationRunner:
         # Batch fetch all cells in a single query with select_related
         if column_ids:
             cells = Cell.objects.filter(
-                column__id__in=column_ids, row=row
+                column__id__in=column_ids,
+                row=row,
+                dataset_id=row.dataset_id,
+                column__dataset_id=row.dataset_id,
             ).select_related("column")
             cells_by_column = {str(cell.column_id): cell for cell in cells}
 
@@ -2534,6 +2630,13 @@ class EvaluationRunner:
         if runtime_config is None and self.user_eval_metric:
             runtime_config = self.user_eval_metric.config
 
+        organization_id = self.organization_id
+        workspace_id = self.workspace_id
+        dataset = self.optimize.dataset if self.optimize is not None else self.dataset
+        if dataset is not None:
+            organization_id = dataset.organization_id
+            workspace_id = dataset.workspace_id
+
         instance, criteria = create_eval_instance(
             eval_class=self.eval_class,
             eval_template=self.eval_template,
@@ -2541,8 +2644,8 @@ class EvaluationRunner:
             model=model,
             kb_id=kb_id,
             runtime_config=runtime_config,
-            organization_id=str(self.organization_id) if self.organization_id else None,
-            workspace_id=str(self.workspace_id) if self.workspace_id else None,
+            organization_id=str(organization_id) if organization_id else None,
+            workspace_id=str(workspace_id) if workspace_id else None,
             version_number=self.version_number,
             is_futureagi=self.futureagi_eval,
         )
@@ -2615,12 +2718,16 @@ class EvaluationRunner:
             config["organization_id"] = (
                 str(self.eval_template.organization.id)
                 if self.eval_template.organization
-                else str(self.organization_id) if self.organization_id else None
+                else str(self.organization_id)
+                if self.organization_id
+                else None
             )
             config["workspace_id"] = (
                 str(self.eval_template.workspace.id)
                 if getattr(self.eval_template, "workspace", None)
-                else str(self.workspace_id) if self.workspace_id else None
+                else str(self.workspace_id)
+                if self.workspace_id
+                else None
             )
 
         elif eval_type_id == "CustomPromptEvaluator":
@@ -2768,7 +2875,7 @@ class EvaluationRunner:
         if value == CellStatus.ERROR.value and api_call_log_row:
             try:
                 api_call_log_row.status = APICallStatusChoices.ERROR.value
-                api_call_log_row.save(update_fields=["status"])
+                api_call_log_row.save(update_fields=["status", "updated_at"])
 
                 refund_config = {"evaluation_id": str(self.user_eval_metric_id)}
                 if refund_cost_for_api_call is not None:
@@ -2778,7 +2885,7 @@ class EvaluationRunner:
         elif value == CellStatus.PASS.value and api_call_log_row:
             try:
                 api_call_log_row.status = APICallStatusChoices.SUCCESS.value
-                api_call_log_row.save(update_fields=["status"])
+                api_call_log_row.save(update_fields=["status", "updated_at"])
             except Exception as e:
                 logger.error(f"Error updating success api call status: {str(e)}")
 
@@ -3233,9 +3340,7 @@ class EvaluationRunner:
                         _mark_cells_usage_limit_error,
                     )
 
-                    _mark_cells_usage_limit_error(
-                        self.user_eval_metric, usage_check
-                    )
+                    _mark_cells_usage_limit_error(self.user_eval_metric, usage_check)
                     raise ValueError(usage_check.reason or "Usage limit exceeded")
 
             self.update_cell(row_ids=row_ids)
@@ -3544,7 +3649,7 @@ class DatasetEvalStatsView(APIView):
         columns = Column.objects.filter(
             id__in=column_ids, dataset__organization_id=organization_id
         ).select_related("dataset")
-        dataset_ids = set(col.dataset_id for col in columns)
+        dataset_ids = {col.dataset_id for col in columns}
 
         # If we found datasets, filter metrics by those datasets
         if dataset_ids:
@@ -3560,7 +3665,7 @@ class DatasetEvalStatsView(APIView):
             )
 
         # Create a set of column_ids for faster lookup
-        column_id_set = set(str(cid) for cid in column_ids)
+        column_id_set = {str(cid) for cid in column_ids}
 
         # Filter metrics in Python - check if any column_id is used
         return [

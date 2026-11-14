@@ -1,6 +1,8 @@
-import { Box, Button, Divider, Typography } from "@mui/material";
+import { Box, Button, Typography } from "@mui/material";
+import PageHeader from "src/components/page-header";
+import ListToolbar from "src/components/list-toolbar";
 import { AgGridReact } from "ag-grid-react";
-import { format } from "date-fns";
+import "src/utils/ag-grid-setup";
 import React, { useMemo, useRef, useState } from "react";
 import FormSearchField from "src/components/FormSearchField/FormSearchField";
 import { ShowComponent } from "src/components/show";
@@ -8,6 +10,8 @@ import { useDebounce } from "src/hooks/use-debounce";
 import { useAgThemeWith } from "src/hooks/use-ag-theme";
 import { AG_THEME_OVERRIDES } from "src/theme/ag-theme";
 import axios, { endpoints } from "src/utils/axios";
+import { fDateLocal } from "src/utils/format-time";
+import { LocalDateTime } from "src/components/date-time/LocalDateTime";
 import Iconify from "src/components/iconify";
 import Image from "src/components/image";
 import CreateApiKey from "./CreateApiKey";
@@ -95,11 +99,13 @@ const ApiKeysLandingPage = () => {
         headerName: "Created at",
         field: "created_at",
         flex: 1,
-        valueFormatter: (p) => {
-          if (!p.value) return "";
-          const date = new Date(p.value);
-          return isNaN(date.getTime()) ? "" : format(date, "MM-dd-yyyy");
-        },
+        valueFormatter: (params) => fDateLocal(params.value),
+        cellRenderer: (params) => (
+          <LocalDateTime
+            value={params.value}
+            emptyText="No creation date recorded"
+          />
+        ),
       },
       {
         headerName: "Actions",
@@ -123,66 +129,40 @@ const ApiKeysLandingPage = () => {
 
   return (
     <Box sx={{ height: "100%" }}>
-      <Box
-        sx={{
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
-        }}
-      >
-        <Typography
-          typography={"s3"}
-          fontWeight={"fontWeightRegular"}
-          color="text.primary"
+      <PageHeader
+        title="API Keys"
+        description="Create and manage API keys to send traces and call Future AGI from your code."
+        sx={{ mb: 0 }}
+      />
+      <ListToolbar>
+        <FormSearchField
+          size="small"
+          placeholder="Search"
+          sx={{ width: 280 }}
+          autoFocus
+          searchQuery={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+        />
+        <Box sx={{ flex: 1 }} />
+        <Button
+          onClick={handleCreateClick}
+          variant="contained"
+          color="primary"
+          startIcon={
+            <Iconify
+              width={16}
+              icon="solar:add-linear"
+              color="background.paper"
+            />
+          }
         >
-          Your secret API keys are listed below. These keys are encrypted
-        </Typography>
-        <Box
-          sx={{
-            display: "flex",
-            justifyContent: "space-between",
-            alignItems: "center",
-            gap: 1.5,
-          }}
-        >
-          <FormSearchField
-            size="small"
-            placeholder="Search"
-            sx={{
-              minWidth: "250px",
-              "& .MuiOutlinedInput-root": { height: "30px" },
-            }}
-            autoFocus
-            searchQuery={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-          />
-          <Divider orientation="vertical" variant="middle" flexItem />
-          <Box>
-            <Button
-              onClick={handleCreateClick}
-              variant="contained"
-              color="primary"
-              startIcon={
-                <Iconify
-                  icon="octicon:plus-24"
-                  color="background.paper"
-                  sx={{
-                    width: "20px",
-                    height: "20px",
-                  }}
-                />
-              }
-              sx={{ px: "24px", typography: "s1" }}
-            >
-              Add API Key
-            </Button>
-          </Box>
-        </Box>
-      </Box>
+          Add API Key
+        </Button>
+      </ListToolbar>
       <ShowComponent condition={hasData}>
         <Box
           className="ag-theme-quartz"
-          style={{ height: "calc(100% - 40px)", paddingTop: "12px" }}
+          style={{ height: "calc(100% - 96px)" }}
         >
           <AgGridReact
             ref={gridRef}

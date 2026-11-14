@@ -1,10 +1,10 @@
 import json
 import os
 import uuid
+from copy import deepcopy
 
 import structlog
-from django.core.exceptions import ObjectDoesNotExist, ValidationError
-from django.db import IntegrityError
+from django.db import IntegrityError, transaction
 from django.utils import timezone
 
 from accounts.base_data import (
@@ -31,8 +31,6 @@ from model_hub.models.develop_optimisation import OptimizationDataset
 from model_hub.models.evals_metric import EvalTemplate, UserEvalMetric
 from model_hub.models.experiments import ExperimentDatasetTable, ExperimentsTable
 from model_hub.models.run_prompt import (
-    PromptTemplate,
-    PromptVersion,
     RunPrompter,
     StatusType,
 )
@@ -80,6 +78,7 @@ def create_image_dataset(organization_id, user_id):
                 "source": DatasetSourceChoices.DEMO.value,
             }
         )
+        image_dataset_serializer.is_valid(raise_exception=True)
         if image_dataset_serializer.is_valid():
             image_dataset = image_dataset_serializer.save()
             img_col_map = {}
@@ -249,6 +248,7 @@ def create_image_dataset(organization_id, user_id):
         logger.exception(
             f"An unexpected error occurred during demo dataset creation for organization {organization_id}: {e}"
         )
+        raise
 
 
 def upload_demo_dataset(organization_id, user_id):
@@ -266,6 +266,7 @@ def upload_demo_dataset(organization_id, user_id):
             }
         )
 
+        dataset_serializer.is_valid(raise_exception=True)
         if dataset_serializer.is_valid():
             dataset = dataset_serializer.save()
             # image_dataset = image_dataset_serializer.save()
@@ -298,7 +299,7 @@ def upload_demo_dataset(organization_id, user_id):
             logger.info(f"REVCOLMAP after OTHERS: {rev_col_map}")
 
             # --- Update Run Prompt Config and Create RUN_PROMPT columns ---
-            rp_config = run_prompt_config["config"]
+            rp_config = deepcopy(run_prompt_config["config"])
             logger.info(f"rev_col_map before rp_config: {rev_col_map}")
             try:
                 if (
@@ -403,7 +404,8 @@ def upload_demo_dataset(organization_id, user_id):
                         "Failed to find a suitable target column for experiment creation"
                     )
 
-            exp_pr_config = prompt_config[0]
+            experiment_prompt_config = deepcopy(prompt_config)
+            exp_pr_config = experiment_prompt_config[0]
             logger.info(f"rev_col_map before exp_rp_config: {rev_col_map}")
             try:
                 if (
@@ -431,7 +433,7 @@ def upload_demo_dataset(organization_id, user_id):
                 name="Response Generation",
                 dataset=dataset,
                 column_id=rev_col_map[experiment_target_old_col_id],
-                prompt_config=prompt_config,
+                prompt_config=experiment_prompt_config,
                 status=StatusType.COMPLETED.value,
             )
             exp_dataset = ExperimentDatasetTable.objects.create(
@@ -1034,199 +1036,23 @@ Include a brief note explaining how your answer connects to the context.
             )
     except Organization.DoesNotExist:
         logger.error(f"Organization with ID {organization_id} not found.")
+        raise
     except EvalTemplate.DoesNotExist:
         logger.error("Required EvalTemplate 'Answer Similarity' not found.")
+        raise
     except KeyError as e:
         logger.error(
             f"KeyError during demo dataset creation: {e}. This might indicate missing data in JSON files or mapping issues."
         )
+        raise
     except Exception as e:
         logger.exception(
             f"An unexpected error occurred during demo dataset creation for organization {organization_id}: {e}"
         )
+        raise
 
 
-def create_demo_prompt_template(
-    organization_id: str, user_id: str
-) -> PromptTemplate | None:
-    logger.info(
-        f"Starting demo prompt template creation for organization ID: {organization_id}"
-    )
-
-    prompt_config = {
-        "name": "Demo Prompt",
-        "description": "A default prompt to help schedule meetings via email.",
-        "config": [
-            {
-                "messages": [
-                    {"role": "system", "content": [{"text": "", "type": "text"}]},
-                    {
-                        "role": "user",
-                        "content": [
-                            {"text": "write email to schedule meeting", "type": "text"}
-                        ],
-                    },
-                ],
-                "configuration": {
-                    "model": "gpt-4o",
-                    "tools": [],
-                    "top_p": 1,
-                    "max_tokens": 1000,
-                    "temperature": 0.7,
-                    "tool_choice": "",
-                    "model_detail": {
-                        "logo_url": "https://fi-image-assets.s3.ap-south-1.amazonaws.com/provider-logos/openai-icon.png",
-                        "providers": "openai",
-                        "model_name": "gpt-4o",
-                        "is_available": False,
-                    },
-                    "response_format": "text",
-                    "presence_penalty": 1,
-                    "frequency_penalty": 1,
-                },
-            }
-        ],
-        "variable_names": {},
-        "evaluation_configs": [],
-    }
-
-    try:
-        organization = Organization.objects.get(id=organization_id)
-        logger.info(f"Found organization: {organization.name}")
-    except ObjectDoesNotExist:
-        logger.error(f"Organization with ID {organization_id} not found.")
-        return None
-    except ValidationError as ve:
-        logger.error(f"Invalid organization ID format '{organization_id}': {ve}")
-        return None
-
-    try:
-        if not prompt_config or not isinstance(prompt_config, dict):
-            logger.error(
-                f"Hardcoded 'prompt_config' is invalid for org {organization.id}"
-            )
-            return None
-
-        template_name = prompt_config.get("name", "Demo Prompt")
-        template_description = prompt_config.get("description", "")
-        template_prompt_config_data = prompt_config.get("config")
-        template_variable_names = prompt_config.get("variable_names", {})
-        template_evaluation_configs = prompt_config.get("evaluation_configs", [])
-
-        if template_prompt_config_data is None:
-            logger.error(
-                f"Missing 'config' key within hardcoded 'prompt_config' for org {organization.id}"
-            )
-            return None
-
-        if not isinstance(template_prompt_config_data, list):
-            if isinstance(template_prompt_config_data, dict):
-                template_prompt_config_data = [template_prompt_config_data]
-            else:
-                logger.error(
-                    f"'config' key within hardcoded 'prompt_config' is not a list or dict for org {organization.id}"
-                )
-                return None
-
-        logger.info(
-            f"Extracted prompt config: Name='{template_name}', Description='{template_description}'"
-        )
-
-    except Exception as e:
-        logger.exception(f"Error processing hardcoded prompt_config: {e}")
-        return None
-
-    # template = PromptTemplate.objects.filter(
-    # 	name=template_name,
-    # 	organization=organization,
-    # 	is_default=True,
-    # 	deleted=False
-    # ).first()
-
-    # if template:
-    # 	logger.warning(f"Default prompt template named '{template_name}' already exists (ID: {template.id}) for organization {organization.id}. Skipping creation.")
-    # 	return template
-
-    try:
-        logger.info(
-            f"Attempting to create PromptTemplate '{template_name}' for org {organization.id}"
-        )
-        template = PromptTemplate.objects.create(
-            name=template_name,
-            description=template_description,
-            organization=organization,
-            prompt_config=template_prompt_config_data,
-            variable_names=template_variable_names,
-            evaluation_configs=template_evaluation_configs,
-            version="v1",
-            is_default=True,
-            is_draft=False,
-            status=StatusType.COMPLETED.value,
-            updated_at=timezone.now(),
-            created_at=timezone.now(),
-        )
-        template.collaborators.add(User.objects.get(id=user_id))
-        logger.info(
-            f"Successfully created prompt template '{template.name}' (ID: {template.id}) for organization {organization.id}"
-        )
-
-        # run_template_task.apply_async(
-        #     args=(template.id, template_evaluation_configs, organization.id, "prompt")
-        # )
-        # logger.info(f"Scheduled run_template_task for prompt template {template.id}")
-
-        # return template
-        execution_output = [
-            'Subject: Request to Schedule a Meeting\n\nHi [Recipient\'s Name],\n\nI hope this message finds you well. I am writing to see if we could schedule a meeting to discuss [briefly state the purpose, e.g., "the upcoming project deadline" or "our recent progress"]. \n\nCould you please let me know your available times over the next few days? I am flexible with timing and can adjust my schedule accordingly.\n\nThank you for your attention, and I look forward to our conversation.\n\nBest regards,\n\n[Your Name]  \n[Your Position]  \n[Your Contact Information]'
-        ]
-        prompt_config_snapshot = (
-            prompt_config.get("config", [{}])[0]
-            if isinstance(prompt_config.get("config"), list)
-            else {}
-        )
-        execution = PromptVersion.objects.create(
-            prompt_config_snapshot=prompt_config_snapshot,
-            template_version=template.version,
-            template_name=template.name,
-            variable_names=template_variable_names,
-            original_template=template.root_template or template,
-            evaluation_configs=template_evaluation_configs,
-            output=execution_output,
-        )
-        return execution
-
-    except ValidationError as ve:
-        logger.error(
-            f"Validation Error creating prompt template for organization {organization.id}: {ve}"
-        )
-        logger.error(
-            f"Data used: name='{template_name}', prompt_config='{template_prompt_config_data}', variable_names='{template_variable_names}', evaluation_configs='{template_evaluation_configs}'"
-        )
-        return None
-    except IntegrityError as ie:
-        logger.error(
-            f"Database Integrity Error creating prompt template for organization {organization.id}: {ie}"
-        )
-        logger.error(
-            f"Likely duplicate name/version/default combination for name: '{template_name}', version: 'v1'"
-        )
-        return None
-    except Exception as e:
-        logger.exception(
-            f"Unexpected Error creating prompt template for organization {organization.id}: {e}"
-        )
-        try:
-            logger.error(
-                f"Data used: name='{template_name}', prompt_config='{template_prompt_config_data}', variable_names='{template_variable_names}', evaluation_configs='{template_evaluation_configs}'"
-            )
-        except NameError:
-            logger.error(
-                "Could not log data used due to error during variable assignment."
-            )
-        return None
-
-
-def create_demo_traces_and_spans(organization_id, user_id=None):
+def create_demo_traces_and_spans(organization_id, user_id=None, *, publish=True):
     try:
         organization = Organization.objects.get(id=organization_id)
 
@@ -1374,8 +1200,9 @@ def create_demo_traces_and_spans(organization_id, user_id=None):
 
             trace = Trace.objects.create(**trace_kwargs)
 
-            create_observation_spans(project, trace, organization, project_version)
-
+            create_observation_spans(
+                project, trace, organization, project_version, publish=publish
+            )
 
     except Exception as e:
         logger.exception(f"Error creating demo traces and spans: {str(e)}")
@@ -1401,7 +1228,9 @@ def get_input_output_span(otel_span: dict, decoder):
     return input_val, output_val
 
 
-def create_observation_spans(project, trace, organization, project_version):
+def create_observation_spans(
+    project, trace, organization, project_version, *, publish=True
+):
     decoder = AttributeDecoder()
     main_span_id = str(os.urandom(8).hex())
     main_span_kwargs = {
@@ -4527,10 +4356,115 @@ def create_observation_spans(project, trace, organization, project_version):
         span_input, output = get_input_output_span(obs_span_kwarg, decoder)
         obs_span_kwarg.update({"input": span_input, "output": output})
 
-    # CH25-TODO: KEEP-PG. Onboarding-seed write path — bulk_create()
-    # is the dual-write source of truth (D-027). CH receives the rows
-    # via PeerDB CDC; there is no direct CH-write API.
     ObservationSpan.objects.bulk_create(
         ObservationSpan(**obs_span_kwarg) for obs_span_kwarg in spans_to_create
     )
     EvalLogger.objects.bulk_create(eval_loggers)
+    from accounts.models.demo_seed import DemoTracePublication
+
+    if publish:
+        DemoTracePublication.objects.get_or_create(trace=trace)
+        transaction.on_commit(
+            lambda trace_id=str(trace.id): _enqueue_demo_trace_publication(trace_id),
+            robust=True,
+        )
+
+
+def _enqueue_demo_trace_publication(trace_id):
+    # The pending row is committed with the trace. Recovery retries lost starts.
+    from temporalio.common import WorkflowIDConflictPolicy
+
+    import tfc.temporal.background_tasks.activities  # noqa: F401
+    from tfc.temporal.drop_in import start_activity
+    from tracer.services.clickhouse.v2.trace_writer import dual_write_enabled
+
+    if dual_write_enabled():
+        start_activity(
+            "publish_demo_trace_activity",
+            args=(trace_id,),
+            queue="default",
+            task_id=f"publish-demo-trace-{trace_id}",
+            id_conflict_policy=WorkflowIDConflictPolicy.USE_EXISTING,
+            dispatch_timeout_seconds=2,
+        )
+
+
+def _write_demo_trace_to_clickhouse(trace, spans):
+    """Publish demo telemetry after commit when the legacy span CDC is disabled."""
+    from clickhouse_connect import get_client
+
+    from tracer.services.clickhouse.v2 import get_v2_config
+    from tracer.services.clickhouse.v2.adapter import (
+        CH_INSERT_COLUMNS,
+        adapt,
+        row_to_tuple,
+    )
+    from tracer.services.clickhouse.v2.curated_writer import (
+        _TRACE_SESSION_COLUMNS,
+        trace_session_to_row,
+    )
+    from tracer.services.clickhouse.v2.trace_writer import (
+        _TRACE_COLUMNS,
+        _trace_to_row,
+        dual_write_enabled,
+    )
+
+    if not dual_write_enabled():
+        return
+
+    rows = [
+        row_to_tuple(adapt({**span.__dict__, "trace_session_id": trace.session_id}))
+        for span in spans
+    ]
+    config = get_v2_config()
+    with get_client(
+        host=config["host"],
+        port=config["http_port"],
+        username=config["user"],
+        password=config["password"] or "",
+        database=config["database"],
+    ) as client:
+        client.insert(
+            "traces",
+            [_trace_to_row(trace)],
+            column_names=list(_TRACE_COLUMNS),
+            settings={"async_insert": 0},
+        )
+        client.insert(
+            "trace_sessions",
+            [trace_session_to_row(trace.session)],
+            column_names=list(_TRACE_SESSION_COLUMNS),
+            settings={"async_insert": 0},
+        )
+        # Publication is serialized by its pending-row lock. Re-inserting saved
+        # spans after a lost acknowledgement would double additive MV metrics,
+        # even though ReplacingMergeTree deduplicates the source rows under FINAL.
+        published_ids = {
+            row[0]
+            for row in client.query(
+                "SELECT id FROM spans FINAL "
+                "WHERE project_id = {project:UUID} AND trace_id = {trace:String}",
+                parameters={"project": str(trace.project_id), "trace": str(trace.id)},
+            ).result_rows
+        }
+        id_column = CH_INSERT_COLUMNS.index("id")
+        rows = [row for row in rows if row[id_column] not in published_ids]
+        if not rows:
+            return
+        # trace_name normally uses a cached dictionary. A brand-new trace can
+        # miss that cache at insert time and permanently store a blank name.
+        # We already have the authoritative name; make every demo span agree.
+        span_columns = [*CH_INSERT_COLUMNS, "trace_name"]
+        # clickhouse-connect's automatic type lookup excludes materialized
+        # columns even with the setting enabled, so supply server-reported types.
+        span_types = {
+            column["name"]: column["type"]
+            for column in client.query("DESCRIBE TABLE spans").named_results()
+        }
+        client.insert(
+            "spans",
+            [(*row, trace.name or "") for row in rows],
+            column_names=span_columns,
+            column_type_names=[span_types[column] for column in span_columns],
+            settings={"insert_allow_materialized_columns": 1, "async_insert": 0},
+        )

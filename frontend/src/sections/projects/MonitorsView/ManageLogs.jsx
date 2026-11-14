@@ -1,3 +1,4 @@
+import ErrorState from "src/components/error-state";
 import React, { useEffect, useRef } from "react";
 import { useInfiniteQuery } from "@tanstack/react-query";
 import axiosInstance, { endpoints } from "src/utils/axios";
@@ -19,13 +20,13 @@ const LogSkeleton = ({ count = 5 }) => {
           sx={{
             display: "flex",
             alignItems: "flex-start",
-            gap: theme.spacing(2),
-            py: theme.spacing(2),
+            gap: theme.spacing(1.5),
+            py: theme.spacing(1),
             borderBottom: "1px solid",
-            borderColor: "divider",
+            borderColor: "border.subtle",
           }}
         >
-          <Skeleton variant="circular" width={32} height={32} />
+          <Skeleton variant="rounded" width={28} height={28} />
           <Box
             display="flex"
             flexDirection="column"
@@ -119,7 +120,7 @@ const ManageLogs = ({ alertId }) => {
     );
   }
   if (isError) {
-    return <Typography color="error">Failed to load logs.</Typography>;
+    return <ErrorState title="Failed to load logs" />;
   }
 
   return (
@@ -131,29 +132,39 @@ const ManageLogs = ({ alertId }) => {
             sx={{
               display: "flex",
               alignItems: "flex-start",
-              gap: theme.spacing(2),
-              py: theme.spacing(2),
+              gap: theme.spacing(1.5),
+              py: theme.spacing(1),
               borderBottom: "1px solid",
-              borderColor: "divider",
+              borderColor: "border.subtle",
             }}
           >
             <Box
               sx={{
-                width: 32,
-                height: 32,
-                borderRadius: "50%",
-                backgroundColor: log.type === "ALERT" ? "red.o10" : "blue.o10",
+                width: 28,
+                height: 28,
+                borderRadius: "6px",
+                backgroundColor:
+                  log.type === "ALERT" ? "status.danger.bg" : "status.info.bg",
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "center",
-                color: log.type === "ALERT" ? "red.500" : "blue.500",
+                color:
+                  log.type === "ALERT" ? "status.danger.fg" : "status.info.fg",
                 flexShrink: 0,
               }}
             >
               {log.type === "ALERT" ? (
-                <Iconify icon="bx:error" width={18} height={18} />
+                <Iconify
+                  icon="solar:danger-circle-linear"
+                  width={16}
+                  height={16}
+                />
               ) : (
-                <Iconify icon="quill:info" width={18} height={18} />
+                <Iconify
+                  icon="solar:info-circle-linear"
+                  width={16}
+                  height={16}
+                />
               )}
             </Box>
             <Box
@@ -163,7 +174,7 @@ const ManageLogs = ({ alertId }) => {
               flex={1}
             >
               <Typography
-                variant="s2"
+                variant="s2_1"
                 color="text.primary"
                 fontWeight={"fontWeightRegular"}
               >
@@ -171,7 +182,7 @@ const ManageLogs = ({ alertId }) => {
               </Typography>
               <Typography
                 variant="s3"
-                color="text.disabled"
+                color="text.tertiary"
                 fontWeight={"fontWeightRegular"}
               >
                 {log.timestamp

@@ -23,6 +23,10 @@ import CustomTooltip from "src/components/tooltip";
 import { useDebounce } from "src/hooks/use-debounce";
 import DateTimeRangePicker from "src/sections/projects/DateTimeRangePicker";
 import AddEvalsFeedbackDrawer from "src/sections/evals/EvalDetails/EvalsFeedback/AddEvalsFeedbackDrawer";
+import EvalLogSourceHost from "src/sections/evals/EvalDetails/EvalsLog/EvalLogSourceHost";
+import { sourceScopeKey } from "src/sections/evals/EvalDetails/EvalsLog/useEvalLogSourceNavigation";
+import { useOrganization } from "src/contexts/OrganizationContext";
+import { useWorkspace } from "src/contexts/WorkspaceContext";
 
 import PartialInputWarningDetails from "src/sections/common/EvalsTasks/PartialInputWarningDetails";
 
@@ -69,6 +73,11 @@ const EvalUsageTab = ({
   const [pageSize, setPageSize] = useState(25);
   const [searchQuery, setSearchQuery] = useState("");
   const [detailIndex, setDetailIndex] = useState(null); // index in filteredLogs
+  // The scope (org, workspace, log) whose trace or call the source host
+  // reported open; null once it closes.
+  const [openSourceScope, setOpenSourceScope] = useState(null);
+  const { currentOrganizationId } = useOrganization();
+  const { currentWorkspaceId } = useWorkspace();
   const debouncedSearch = useDebounce(searchQuery.trim(), 400);
   const columnConfigureRef = useRef(null);
 
@@ -289,6 +298,20 @@ const EvalUsageTab = ({
   );
 
   const detailRow = detailIndex !== null ? filteredLogs[detailIndex] : null;
+  const detailSourceScope = sourceScopeKey(
+    currentOrganizationId,
+    currentWorkspaceId,
+    detailRow?.id,
+  );
+  // Another log, org or workspace remounts the source host, so a reported
+  // scope that no longer matches belongs to a host that is gone. Forget it
+  // now, so the same log opened again later does not start out "open".
+  if (openSourceScope !== null && openSourceScope !== detailSourceScope) {
+    setOpenSourceScope(null);
+  }
+  // True while the opened log's trace or call covers the page.
+  const sourceOpen =
+    openSourceScope !== null && openSourceScope === detailSourceScope;
 
   const handleFeedbackSubmitted = useCallback(() => {
     queryClient.invalidateQueries({
@@ -301,7 +324,12 @@ const EvalUsageTab = ({
     if (detailIndex === null) return;
     const handler = (e) => {
       if (e.repeat) return;
+      // A key something on the page already handled, such as the open
+      // trace's own Escape (DrawerHeader's document listener), is not ours.
+      if (e.defaultPrevented) return;
       if (isEditableElement(e)) return;
+      // The open trace or call owns the keyboard; its own Escape closes it.
+      if (sourceOpen) return;
       if (e.key === "k") {
         e.preventDefault();
         setDetailIndex((i) => Math.max(0, (i ?? 0) - 1));
@@ -314,7 +342,7 @@ const EvalUsageTab = ({
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [detailIndex, filteredLogs.length]);
+  }, [detailIndex, filteredLogs.length, sourceOpen]);
 
   return (
     <Box
@@ -335,7 +363,7 @@ const EvalUsageTab = ({
           minHeight: 0,
           minWidth: 0,
           marginRight: detailIndex !== null ? "420px" : 0,
-          transition: "margin-right 0.25s",
+          transition: "margin-right 0.2s",
         }}
       >
         {/* Date picker + stats — single row */}
@@ -378,10 +406,9 @@ const EvalUsageTab = ({
             <Button
               size="small"
               variant="outlined"
-              startIcon={<Iconify icon="mdi:refresh" width={16} />}
+              startIcon={<Iconify icon="solar:refresh-linear" width={16} />}
               disabled={isRefreshing}
               onClick={handleRefresh}
-              sx={{ textTransform: "none" }}
             >
               {isRefreshing ? "Refreshing" : "Refresh"}
             </Button>
@@ -415,31 +442,8 @@ const EvalUsageTab = ({
                 py: 0.5,
               }}
             >
+              {/* Usage counts successful runs only; errors stay in the logs. */}
               <StatPill label="Runs" value={stats.runs_period ?? 0} />
-              <Box
-                sx={{ width: "1px", height: 14, backgroundColor: "divider" }}
-              />
-              <StatPill
-                label="Success"
-                value={stats.success_count ?? 0}
-                color="success.main"
-              />
-              <Box
-                sx={{ width: "1px", height: 14, backgroundColor: "divider" }}
-              />
-              <StatPill
-                label="Errors"
-                value={stats.error_count ?? 0}
-                color="error.main"
-              />
-              <Box
-                sx={{ width: "1px", height: 14, backgroundColor: "divider" }}
-              />
-              <StatPill
-                label="Task Completion Rate"
-                value={`${stats.pass_rate ?? 0}%`}
-                color="info.main"
-              />
             </Box>
           )}
         </Box>
@@ -454,10 +458,7 @@ const EvalUsageTab = ({
             borderColor: "divider",
             p: 1.5,
             mb: 1.5,
-            backgroundColor: (t) =>
-              t.palette.mode === "dark"
-                ? "rgba(255,255,255,0.01)"
-                : "background.default",
+            backgroundColor: "background.neutral",
           }}
         >
           {chartLoading ? (
@@ -671,7 +672,7 @@ const EvalUsageTab = ({
                       setDetailIndex((i) => Math.max(0, (i ?? 0) - 1))
                     }
                   >
-                    <Iconify icon="mingcute:arrow-up-line" width={16} />
+                    <Iconify icon="solar:arrow-up-linear" width={16} />
                   </IconButton>
                 </span>
               </Tooltip>
@@ -686,7 +687,7 @@ const EvalUsageTab = ({
                       )
                     }
                   >
-                    <Iconify icon="mingcute:arrow-down-line" width={16} />
+                    <Iconify icon="solar:arrow-down-linear" width={16} />
                   </IconButton>
                 </span>
               </Tooltip>
@@ -704,8 +705,8 @@ const EvalUsageTab = ({
                   sx={{
                     px: 0.5,
                     py: 0.125,
-                    borderRadius: "3px",
-                    fontSize: "9px",
+                    borderRadius: "4px",
+                    fontSize: "12px",
                     fontFamily: "monospace",
                     border: "1px solid",
                     borderColor: "divider",
@@ -719,8 +720,8 @@ const EvalUsageTab = ({
                   sx={{
                     px: 0.5,
                     py: 0.125,
-                    borderRadius: "3px",
-                    fontSize: "9px",
+                    borderRadius: "4px",
+                    fontSize: "12px",
                     fontFamily: "monospace",
                     border: "1px solid",
                     borderColor: "divider",
@@ -737,13 +738,17 @@ const EvalUsageTab = ({
                 <Typography
                   variant="caption"
                   color="text.disabled"
-                  sx={{ fontFamily: "monospace", fontSize: "10px" }}
+                  sx={{ fontFamily: "monospace", fontSize: "12px" }}
                 >
                   {detailRow.id?.slice(0, 12)}
                 </Typography>
               )}
-              <IconButton size="small" onClick={() => setDetailIndex(null)}>
-                <Iconify icon="mingcute:close-line" width={16} />
+              <IconButton
+                size="small"
+                aria-label="Close log"
+                onClick={() => setDetailIndex(null)}
+              >
+                <Iconify icon="solar:close-linear" width={16} />
               </IconButton>
             </Box>
           </Box>
@@ -755,6 +760,7 @@ const EvalUsageTab = ({
               templateId={templateId}
               evalType={evalType}
               onFeedbackSubmitted={handleFeedbackSubmitted}
+              onSourceOpenChange={setOpenSourceScope}
             />
           )}
         </Box>
@@ -772,6 +778,10 @@ const EvalUsageTab = ({
   );
 };
 
+// Observe evaluations store source "tracer"; only those can lead back to a
+// trace or call, and the server decides whether this one does.
+const isObserveLog = (row) => !row.composite && row.source === "tracer";
+
 // ── Detail panel content with Formatted/JSON tabs + feedback ──
 const DetailPanelContent = ({
   row,
@@ -779,6 +789,7 @@ const DetailPanelContent = ({
   templateId,
   evalType = "llm",
   onFeedbackSubmitted,
+  onSourceOpenChange,
 }) => {
   const { role } = useAuthContext();
   const canEditEvals = Boolean(
@@ -816,22 +827,14 @@ const DetailPanelContent = ({
             sx={{
               px: 1.5,
               py: 0.375,
-              borderRadius: "5px",
-              fontSize: "11px",
+              borderRadius: "6px",
+              fontSize: "12px",
               fontWeight: viewMode === m ? 600 : 400,
               color: viewMode === m ? "text.primary" : "text.secondary",
               backgroundColor:
-                viewMode === m
-                  ? (t) =>
-                      t.palette.mode === "dark"
-                        ? "rgba(255,255,255,0.08)"
-                        : "action.hover"
-                  : "transparent",
+                viewMode === m ? "action.selected" : "transparent",
               "&:hover": {
-                backgroundColor: (t) =>
-                  t.palette.mode === "dark"
-                    ? "rgba(255,255,255,0.04)"
-                    : "action.hover",
+                backgroundColor: "action.hover",
               },
             }}
           >
@@ -839,6 +842,24 @@ const DetailPanelContent = ({
           </ButtonBase>
         ))}
       </Box>
+
+      {/* View trace / View call for an Observe evaluation, in both views */}
+      {isObserveLog(row) && (
+        <Box
+          sx={{
+            px: 1.5,
+            py: 1,
+            borderBottom: "1px solid",
+            borderColor: "divider",
+            flexShrink: 0,
+          }}
+        >
+          <EvalLogSourceHost
+            logId={row.id}
+            onSourceOpenChange={onSourceOpenChange}
+          />
+        </Box>
+      )}
 
       {/* Scrollable content area */}
       <Box sx={{ flex: 1, minHeight: 0, overflow: "auto" }}>
@@ -885,10 +906,10 @@ const DetailPanelContent = ({
                 color={
                   typeof row.score === "number"
                     ? row.score >= 0.7
-                      ? "success.main"
+                      ? "status.success.fg"
                       : row.score >= 0.3
-                        ? "warning.main"
-                        : "error.main"
+                        ? "status.warning.fg"
+                        : "status.danger.fg"
                     : undefined
                 }
               />
@@ -1075,15 +1096,15 @@ const DetailPanelContent = ({
                         <Iconify
                           icon={
                             row.feedback.value === "passed"
-                              ? "mingcute:thumb-up-2-fill"
-                              : "mingcute:thumb-down-2-fill"
+                              ? "solar:like-bold"
+                              : "solar:dislike-bold"
                           }
                           width={16}
                           sx={{
                             color:
                               row.feedback.value === "passed"
-                                ? "success.main"
-                                : "error.main",
+                                ? "status.success.fg"
+                                : "status.danger.fg",
                           }}
                         />
                         <Chip
@@ -1101,7 +1122,6 @@ const DetailPanelContent = ({
                               : "error"
                           }
                           variant="outlined"
-                          sx={{ fontSize: "11px", height: 20 }}
                         />
                       </Box>
                       <Box
@@ -1115,7 +1135,7 @@ const DetailPanelContent = ({
                           <Typography
                             variant="caption"
                             color="text.disabled"
-                            sx={{ fontSize: "10px" }}
+                            sx={{ fontSize: "12px" }}
                           >
                             {row.feedback.user}
                           </Typography>
@@ -1126,7 +1146,7 @@ const DetailPanelContent = ({
                           onClick={() => setFeedbackOpen(true)}
                         >
                           <Iconify
-                            icon="mingcute:edit-line"
+                            icon="solar:pen-linear"
                             width={14}
                             sx={{ color: "text.secondary" }}
                           />
@@ -1156,54 +1176,31 @@ const DetailPanelContent = ({
                         }
                         size="small"
                         variant="outlined"
-                        sx={{ fontSize: "10px", height: 18, mt: 0.75 }}
+                        sx={{ mt: 0.75 }}
                       />
                     )}
                   </Box>
                 ) : null}
 
-                <Box
-                  component="button"
+                <Button
+                  variant="outlined"
+                  size="small"
+                  fullWidth
                   disabled={!canEditEvals}
                   onClick={() => setFeedbackOpen(true)}
-                  sx={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 1,
-                    px: 2,
-                    py: 0.75,
-                    border: "1px solid",
-                    borderColor: "divider",
-                    borderRadius: "8px",
-                    backgroundColor: "transparent",
-                    color: "text.primary",
-                    cursor: canEditEvals ? "pointer" : "not-allowed",
-                    opacity: canEditEvals ? 1 : 0.5,
-                    fontSize: "12px",
-                    fontWeight: 500,
-                    width: "100%",
-                    "&:hover": canEditEvals
-                      ? {
-                          borderColor: "primary.main",
-                          backgroundColor: (t) =>
-                            t.palette.mode === "dark"
-                              ? "rgba(124,77,255,0.06)"
-                              : "rgba(124,77,255,0.04)",
-                        }
-                      : {},
-                  }}
+                  sx={{ gap: 1, color: "text.primary" }}
                 >
                   <Iconify
                     icon={
                       row.feedback
-                        ? "mingcute:edit-line"
-                        : "mingcute:message-3-line"
+                        ? "solar:pen-linear"
+                        : "solar:chat-round-line-linear"
                     }
                     width={14}
                     sx={{ color: "primary.main" }}
                   />
                   {row.feedback ? "Edit Feedback" : "Add Feedback"}
-                </Box>
+                </Button>
               </Box>
             )}
 
@@ -1236,6 +1233,7 @@ DetailPanelContent.propTypes = {
   templateId: PropTypes.string.isRequired,
   evalType: PropTypes.string,
   onFeedbackSubmitted: PropTypes.func,
+  onSourceOpenChange: PropTypes.func,
 };
 
 // ── Composite children section in detail panel ──
@@ -1267,7 +1265,6 @@ const CompositeChildrenSection = ({ row }) => {
           label={aggFunction.replace("_", " ")}
           size="small"
           variant="outlined"
-          sx={{ fontSize: "10px", height: 18, textTransform: "capitalize" }}
         />
       </Box>
 
@@ -1313,7 +1310,6 @@ const CompositeChildrenSection = ({ row }) => {
                       size="small"
                       color="error"
                       variant="outlined"
-                      sx={{ fontSize: "10px", height: 18 }}
                     />
                   ) : (
                     <ScoreCell value={child.score} />
@@ -1325,7 +1321,7 @@ const CompositeChildrenSection = ({ row }) => {
                     variant="body2"
                     color="text.secondary"
                     sx={{
-                      fontSize: "11px",
+                      fontSize: "12px",
                       lineHeight: 1.4,
                       mb: 0.75,
                       display: "-webkit-box",
@@ -1348,7 +1344,7 @@ const CompositeChildrenSection = ({ row }) => {
                   <Typography
                     variant="caption"
                     color="text.disabled"
-                    sx={{ fontSize: "10px" }}
+                    sx={{ fontSize: "12px" }}
                   >
                     weight: {child.weight ?? 1}
                     {!isFailed && ` · score: ${scoreDisplay}`}
@@ -1362,10 +1358,9 @@ const CompositeChildrenSection = ({ row }) => {
                           "_blank",
                         )
                       }
-                      sx={{ p: 0.25 }}
                     >
                       <Iconify
-                        icon="mingcute:external-link-line"
+                        icon="solar:arrow-right-up-linear"
                         width={14}
                         sx={{ color: "primary.main" }}
                       />
@@ -1425,7 +1420,6 @@ const DetailRow = ({ label, value, color, chip, chipColor, mono }) => (
           size="small"
           color={chipColor || "default"}
           variant="outlined"
-          sx={{ fontSize: "11px", height: 20 }}
         />
       ) : (
         <Typography

@@ -7,6 +7,7 @@ import _ from "lodash";
 import ChatEvalDetails from "./ChatEvalDetails";
 import ContextEvalDetails from "./ContextEvalDetails";
 import PromptTemplateEvalDetails from "./PromptTemplateEvalDetails";
+import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
 
 const PerformanceDetailDrawer = ({
   evalType,
@@ -61,18 +62,21 @@ const PerformanceDetailDrawer = ({
     }
   };
 
+  const covered = useDrawerCovered(open);
+
   return (
     <Drawer
+      sx={coveredDrawerSx(covered)}
       anchor="right"
       open={open}
       onClose={onClose}
       PaperProps={{
         sx: {
           height: "100vh",
-          width: "550px",
+          width: "480px",
           position: "fixed",
           zIndex: 9999,
-          borderRadius: "10px",
+          borderRadius: "8px",
           backgroundColor: "background.paper",
         },
       }}
@@ -86,7 +90,7 @@ const PerformanceDetailDrawer = ({
         onClick={() => onClose()}
         sx={{ position: "absolute", top: "12px", right: "12px" }}
       >
-        <Iconify icon="mingcute:close-line" />
+        <Iconify icon="solar:close-linear" />
       </IconButton>
       {renderDetails()}
     </Drawer>

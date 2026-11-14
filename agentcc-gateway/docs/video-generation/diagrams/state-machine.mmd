@@ -1,0 +1,31 @@
+%% TH-8088 job state machine (Mermaid stateDiagram-v2)
+stateDiagram-v2
+  [*] --> submitting_prepared: Lua accept (idem NX + reserve)
+  submitting_prepared --> submitting_calling: worker claims lease, writes phase=calling
+  submitting_prepared --> cancelled: cancel before any call (pre_submit, release)
+  submitting_prepared --> failed: submit_by elapsed / provider disabled (release)
+  submitting_calling --> queued: provider ack persisted (phase=received)
+  submitting_calling --> running: provider ack already running
+  submitting_calling --> failed: synchronous rejection 4xx (release) / provider_access_denied
+  submitting_calling --> submission_unknown: lost response / owner died while calling
+  submission_unknown --> queued: reconciliation found provider job
+  submission_unknown --> submitting_prepared: proven absent (ByToken only)
+  submission_unknown --> failed: reconcile_by elapsed -> submission_unresolved (retry_safe=false, unsettled)
+  queued --> running
+  queued --> cancelled: provider-confirmed cancel (QueuedOnly / QueuedAndRunning)
+  queued --> completed: terminal success + artifact copied (or unavailable)
+  queued --> failed: provider failed / expired / run_by elapsed (provider_timeout)
+  running --> completed
+  running --> failed
+  running --> cancelled: provider-confirmed cancel (QueuedAndRunning only)
+  completed --> [*]
+  failed --> [*]
+  cancelled --> [*]
+  note right of completed
+    substates: artifacts[i].state pending|copying|available|unavailable|expired|deleted
+    settlement_state reserved|settled|released|unsettled
+  end note
+  note right of failed
+    provider_timeout keeps reconciliation.state=pending;
+    late success settles cost, never flips status (D11)
+  end note

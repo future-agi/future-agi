@@ -6,6 +6,7 @@ import {
   Divider,
   Typography,
   useTheme,
+  ButtonBase,
 } from "@mui/material";
 import PropTypes from "prop-types";
 import React, { useMemo, useState } from "react";
@@ -13,8 +14,10 @@ import Editor from "@monaco-editor/react";
 import ErrorLocalizeCard from "src/sections/common/ErrorLocalizeCard";
 import AudioErrorCard from "src/components/custom-audio/AudioErrorCard";
 import Iconify from "src/components/iconify";
+import StatusBadge from "src/components/status-badge/StatusBadge";
 import { InlineAudio } from "src/components/inline-audio/inline-row-audio";
 import SkippedLocalizationBanner from "src/sections/common/SkippedLocalizationBanner";
+import JevResultDisplay from "./JevResultDisplay";
 import CompositeResultView from "./CompositeResultView";
 import { canonicalEntries } from "src/utils/utils";
 import { normalizeEvalCellValue } from "src/sections/develop-detail/DataTab/common";
@@ -39,10 +42,21 @@ const EvalResultDisplay = ({ result }) => {
     return <CompositeResultView compositeResult={result.compositeResult} />;
   }
 
+  let metadata = result.metadata;
+  if (typeof metadata === "string") {
+    try {
+      metadata = JSON.parse(metadata);
+    } catch {
+      metadata = null;
+    }
+  }
+  const decision = metadata?.decision || result.decision;
+  const jev = decision || metadata?.jev || result.jev;
+
   const hasLegacyOutput = result.output != null;
   const hasCodeScore =
     typeof result.score === "number" || typeof result.score === "boolean";
-  if (!hasLegacyOutput && !hasCodeScore && !result.reason) return null;
+  if (!jev && !hasLegacyOutput && !hasCodeScore && !result.reason) return null;
 
   return (
     <Box sx={{ display: "flex", flexDirection: "column", gap: 1 }}>
@@ -55,42 +69,40 @@ const EvalResultDisplay = ({ result }) => {
             borderColor: "divider",
             borderRadius: "6px",
             overflow: "hidden",
-            bgcolor: (theme) =>
-              theme.palette.mode === "dark"
-                ? "rgba(255,255,255,0.04)"
-                : "background.neutral",
+            bgcolor: "background.neutral",
           }}
         >
           {["formatted", "json"].map((mode) => (
-            <Box
+            <ButtonBase
               key={mode}
               onClick={() => setViewMode(mode)}
               sx={{
                 px: 1.5,
                 py: 0.5,
                 cursor: "pointer",
-                fontSize: "11px",
+                fontSize: "12px",
                 fontWeight: viewMode === mode ? 600 : 400,
                 color: viewMode === mode ? "text.primary" : "text.disabled",
                 backgroundColor:
-                  viewMode === mode
-                    ? (t) =>
-                        t.palette.mode === "dark"
-                          ? "rgba(255,255,255,0.12)"
-                          : "background.paper"
-                    : "transparent",
+                  viewMode === mode ? "background.paper" : "transparent",
                 transition: "all 0.15s",
                 userSelect: "none",
               }}
             >
               {mode === "formatted" ? "Formatted" : "JSON"}
-            </Box>
+            </ButtonBase>
           ))}
         </Box>
       </Box>
 
       {viewMode === "json" ? (
         <JsonView data={result} />
+      ) : jev ? (
+        <JevResultDisplay
+          result={result}
+          jev={jev}
+          modelLabel={decision ? "This decision model" : "Jev"}
+        />
       ) : (
         <FormattedResult result={result} />
       )}
@@ -117,7 +129,8 @@ const FormattedResult = ({ result }) => {
   ) {
     if (normalizedRaw.choice != null || normalizedRaw.choices != null) {
       const choiceVal = normalizedRaw.choices ?? normalizedRaw.choice;
-      if (typeof normalizedRaw.score === "number") choiceScore = normalizedRaw.score;
+      if (typeof normalizedRaw.score === "number")
+        choiceScore = normalizedRaw.score;
       raw = Array.isArray(choiceVal)
         ? choiceVal.map((c) => ({ label: c }))
         : { label: choiceVal };
@@ -187,35 +200,21 @@ const FormattedResult = ({ result }) => {
                   key={i}
                   sx={{ display: "flex", alignItems: "center", gap: "8px" }}
                 >
-                  <Chip
-                    label={label}
-                    size="small"
-                    variant="outlined"
-                    sx={{
-                      borderRadius: "4px",
-                      borderColor: "purple.500",
-                      color: "purple.500",
-                      fontWeight: 400,
-                      typography: "s3",
-                    }}
-                  />
+                  <Chip label={label} size="small" variant="outlined" />
+                  {/* Same bands as before the design system: 0.7 and up passes, below 0.3 fails. */}
                   {itemScore != null && (
-                    <Chip
-                      label={itemScore.toFixed(1)}
-                      size="small"
-                      color={
+                    <StatusBadge
+                      role={
                         itemScore >= 0.7
                           ? "success"
                           : itemScore >= 0.3
                             ? "warning"
-                            : "error"
+                            : "danger"
                       }
-                      sx={{
-                        minWidth: 40,
-                        fontSize: "12px",
-                        fontWeight: 600,
-                        height: 24,
-                      }}
+                      label={itemScore.toFixed(1)}
+                      variant="badge"
+                      dot={false}
+                      size="sm"
                     />
                   )}
                 </Box>
@@ -256,7 +255,6 @@ const FormattedResult = ({ result }) => {
                   ? "success"
                   : "error"
               }
-              sx={{ fontSize: "12px", height: 22 }}
             />
           </Box>
         </Box>
@@ -298,10 +296,10 @@ const FormattedResult = ({ result }) => {
                   borderRadius: 3,
                   backgroundColor:
                     score >= 0.7
-                      ? "success.main"
+                      ? "status.success.solid"
                       : score >= 0.3
-                        ? "warning.main"
-                        : "error.main",
+                        ? "status.warning.solid"
+                        : "status.danger.solid",
                 }}
               />
             </Box>
@@ -374,10 +372,7 @@ const FormattedResult = ({ result }) => {
               borderRadius: "6px",
               border: "1px solid",
               borderColor: "divider",
-              backgroundColor: (theme) =>
-                theme.palette.mode === "dark"
-                  ? "rgba(255,255,255,0.03)"
-                  : "background.neutral",
+              backgroundColor: "background.neutral",
             }}
           >
             {typeof result.reason === "string"
@@ -482,10 +477,7 @@ const ErrorLocalizationSection = ({ result }) => {
           borderRadius: "6px",
           border: "1px solid",
           borderColor: "primary.main",
-          backgroundColor: (theme) =>
-            theme.palette.mode === "dark"
-              ? "rgba(124, 77, 255, 0.08)"
-              : "rgba(124, 77, 255, 0.04)",
+          backgroundColor: "status.discovery.bg",
         }}
       >
         <CircularProgress size={14} thickness={5} />
@@ -500,7 +492,7 @@ const ErrorLocalizationSection = ({ result }) => {
           <Typography
             variant="caption"
             color="text.secondary"
-            sx={{ display: "block", fontSize: "11px" }}
+            sx={{ display: "block", fontSize: "12px" }}
           >
             Pinpointing which parts of the input caused the failure. This
             usually takes 30–90 seconds after the eval finishes.
@@ -518,7 +510,6 @@ const ErrorLocalizationSection = ({ result }) => {
     );
   }
 
-
   // Surface a clear failed state so users don't assume the feature is
   // just silently broken.
   if (errorLocalizerStatus === "failed") {
@@ -531,17 +522,13 @@ const ErrorLocalizationSection = ({ result }) => {
           py: 1,
           borderRadius: "6px",
           border: "1px solid",
-          borderColor: "error.light",
-          backgroundColor: (theme) =>
-            theme.palette.mode === "dark"
-              ? "rgba(255, 86, 48, 0.08)"
-              : "rgba(255, 86, 48, 0.04)",
+          borderColor: "status.danger.border",
+          backgroundColor: "status.danger.bg",
         }}
       >
         <Typography
           typography="s3"
-     
-          color="error.main"
+          color="status.danger.fg"
           sx={{ display: "block" }}
         >
           Error localization failed
@@ -550,7 +537,7 @@ const ErrorLocalizationSection = ({ result }) => {
           <Typography
             variant="caption"
             color="text.secondary"
-            sx={{ display: "block", fontSize: "11px", mt: 0.25 }}
+            sx={{ display: "block", fontSize: "12px", mt: 0.25 }}
           >
             {errorLocalizerMessage}
           </Typography>
@@ -558,7 +545,6 @@ const ErrorLocalizationSection = ({ result }) => {
       </Box>
     );
   }
-
 
   if (!errorDetails) return null;
 
@@ -721,16 +707,17 @@ const GroundTruthExamplesPanel = ({ examples }) => {
     <Box
       sx={{
         border: 1,
-        borderColor: isEmpty ? "warning.light" : "divider",
+        borderColor: isEmpty ? "status.warning.border" : "divider",
         borderRadius: 1,
-        bgcolor: isEmpty ? "warning.lighter" : "background.neutral",
+        bgcolor: isEmpty ? "status.warning.bg" : "background.neutral",
         p: 1,
       }}
     >
-      <Box
+      <ButtonBase
         onClick={() => setOpen((s) => !s)}
         sx={{
           display: "flex",
+          justifyContent: "flex-start",
           alignItems: "center",
           gap: 0.75,
           cursor: "pointer",
@@ -739,14 +726,17 @@ const GroundTruthExamplesPanel = ({ examples }) => {
       >
         {isEmpty && (
           <Iconify
-            icon="mdi:information-outline"
+            icon="solar:info-circle-linear"
             width={14}
-            sx={{ color: "warning.dark" }}
+            sx={{ color: "status.warning.fg" }}
           />
         )}
         <Typography
           variant="caption"
-          sx={{ fontWeight: 600, color: isEmpty ? "warning.dark" : "text.primary" }}
+          sx={{
+            fontWeight: 600,
+            color: isEmpty ? "status.warning.fg" : "text.primary",
+          }}
         >
           {isEmpty
             ? "Ground truth enabled, but no matching examples were retrieved"
@@ -758,13 +748,13 @@ const GroundTruthExamplesPanel = ({ examples }) => {
         >
           {open ? "Hide" : "Show"}
         </Typography>
-      </Box>
+      </ButtonBase>
       {open && (
         <Box sx={{ display: "flex", flexDirection: "column", gap: 1, mt: 1 }}>
           {isEmpty ? (
             <Typography
               variant="caption"
-              sx={{ color: "text.secondary", fontSize: "11px" }}
+              sx={{ color: "text.secondary", fontSize: "12px" }}
             >
               None of the rows in your ground truth dataset were similar enough
               to this input to be retrieved. The eval ran without calibration
@@ -773,11 +763,7 @@ const GroundTruthExamplesPanel = ({ examples }) => {
             </Typography>
           ) : (
             examples.map((entry, idx) => (
-              <GroundTruthExampleCard
-                key={idx}
-                index={idx + 1}
-                entry={entry}
-              />
+              <GroundTruthExampleCard key={idx} index={idx + 1} entry={entry} />
             ))
           )}
         </Box>
@@ -801,7 +787,7 @@ const GroundTruthField = ({ label, value, modality }) => {
   if (modality === "image") {
     return (
       <Box sx={{ display: "flex", flexDirection: "column", gap: 0.25 }}>
-        <Typography variant="caption" component="div" sx={{ fontSize: "11px" }}>
+        <Typography variant="caption" component="div" sx={{ fontSize: "12px" }}>
           <GroundTruthFieldLabel>{label}</GroundTruthFieldLabel>
         </Typography>
         <Box
@@ -812,7 +798,7 @@ const GroundTruthField = ({ label, value, modality }) => {
           sx={{
             maxWidth: 240,
             maxHeight: 160,
-            borderRadius: 0.5,
+            borderRadius: "4px",
             border: 1,
             borderColor: "divider",
             objectFit: "contain",
@@ -825,7 +811,7 @@ const GroundTruthField = ({ label, value, modality }) => {
   if (modality === "audio") {
     return (
       <Box sx={{ display: "flex", flexDirection: "column", gap: 0.25 }}>
-        <Typography variant="caption" component="div" sx={{ fontSize: "11px" }}>
+        <Typography variant="caption" component="div" sx={{ fontSize: "12px" }}>
           <GroundTruthFieldLabel>{label}</GroundTruthFieldLabel>
         </Typography>
         <InlineAudio src={value} />
@@ -836,7 +822,7 @@ const GroundTruthField = ({ label, value, modality }) => {
     <Typography
       variant="caption"
       component="div"
-      sx={{ fontSize: "11px", wordBreak: "break-word", lineHeight: 1.5 }}
+      sx={{ fontSize: "12px", wordBreak: "break-word", lineHeight: 1.5 }}
     >
       <GroundTruthFieldLabel>{label}</GroundTruthFieldLabel>
       {String(value)}
@@ -850,8 +836,7 @@ const GroundTruthExampleCard = ({ index, entry }) => {
   const roleMapping = entry?.role_mapping || {};
   const columnTypes = entry?.column_types || {};
 
-  const outputCol =
-    roleMapping.output || roleMapping.expected_output || "";
+  const outputCol = roleMapping.output || roleMapping.expected_output || "";
   const explanationCol =
     roleMapping.explanation ||
     roleMapping.reasoning ||
@@ -881,8 +866,8 @@ const GroundTruthExampleCard = ({ index, entry }) => {
       <Typography
         variant="caption"
         sx={{
-          fontWeight: 700,
-          fontSize: "11px",
+          fontWeight: 600,
+          fontSize: "12px",
           color: "text.primary",
           mb: 0.25,
         }}

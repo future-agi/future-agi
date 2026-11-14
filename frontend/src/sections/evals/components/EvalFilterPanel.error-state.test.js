@@ -4,16 +4,17 @@ import process from "node:process";
 
 import { describe, expect, it } from "vitest";
 
-const SOURCE = readFileSync(
-  resolve(process.cwd(), "src/sections/evals/components/EvalFilterPanel.jsx"),
-  "utf8",
-);
+const read = (path) => readFileSync(resolve(process.cwd(), path), "utf8");
 
 describe("EvalFilterPanel AI failure state", () => {
-  it("offers retry or manual filtering without claiming a local fallback", () => {
-    expect(SOURCE).toContain(
-      "AI filter unavailable. Retry or build the filter manually.",
-    );
-    expect(SOURCE).not.toContain("using local parser");
+  it("uses the shared panel, which shows the failure and offers manual filtering", () => {
+    const wrapper = read("src/sections/evals/components/EvalFilterPanel.jsx");
+    const panel = read("src/sections/projects/LLMTracing/TraceFilterPanel.jsx");
+
+    expect(wrapper).toContain("showAi");
+    expect(panel).toContain("AI unavailable, use filters below");
+    // No local parser quietly standing in for a failed AI request.
+    expect(wrapper).not.toContain("parseNaturalLanguage");
+    expect(panel).not.toContain("using local parser");
   });
 });

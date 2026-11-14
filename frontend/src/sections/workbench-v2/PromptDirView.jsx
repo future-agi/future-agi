@@ -14,7 +14,7 @@ import { Events, PropertyName, trackEvent } from "src/utils/Mixpanel";
 export default function PromptDirView() {
   const theme = useTheme();
   const [openNewFOlderModal, setOpenNewFOlderModal] = useState(false);
-  const [sidebarWidth, setSidebarWidth] = useState(300);
+  const [sidebarWidth, setSidebarWidth] = useState(224);
   const [isResizing, setIsResizing] = useState(false);
   const containerRef = useRef(null);
 
@@ -115,7 +115,7 @@ export default function PromptDirView() {
           sx={{
             width: `${sidebarWidth}px`,
             height: "100vh",
-            padding: theme.spacing(2),
+            padding: theme.spacing(1.5),
             overflowY: "auto",
             minWidth: "200px",
             maxWidth: "60%",

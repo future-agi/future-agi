@@ -24,6 +24,14 @@ const (
 	defaultTokenURL    = "https://oauth2.googleapis.com/token"
 )
 
+// tokenClient bounds the exchange: Token holds the provider's lock while it
+// runs, so a hung exchange would stall every request that needs a token.
+var tokenClient = &http.Client{Timeout: 10 * time.Second}
+
+// failedExchangeBackoff is how long a failed exchange stands as the answer, so the requests that
+// queued behind it on the lock get its result instead of each repeating it.
+const failedExchangeBackoff = time.Second
+
 type serviceAccountKey struct {
 	ClientEmail string `json:"client_email"`
 	PrivateKey  string `json:"private_key"`
@@ -38,6 +46,7 @@ type TokenProvider struct {
 	scope       string
 	accessToken string
 	tokenExpiry time.Time
+	failedAt    time.Time // when the last exchange failed
 }
 
 func NewTokenProvider(credentialsFile, scope string) (*TokenProvider, error) {
@@ -52,10 +61,21 @@ func NewTokenProvider(credentialsFile, scope string) (*TokenProvider, error) {
 	if err != nil {
 		return nil, fmt.Errorf("gauth: read credentials file: %w", err)
 	}
+	return NewTokenProviderJSON(data, scope)
+}
 
+// NewTokenProviderJSON loads a service account without writing its private key to disk.
+// Managed providers receive this value from encrypted per-organization credentials.
+func NewTokenProviderJSON(data []byte, scope string) (*TokenProvider, error) {
 	var sa serviceAccountKey
 	if err := json.Unmarshal(data, &sa); err != nil {
-		return nil, fmt.Errorf("gauth: parse credentials file: %w", err)
+		return nil, fmt.Errorf("gauth: parse service account JSON: %w", err)
+	}
+	if sa.ClientEmail == "" || sa.PrivateKey == "" {
+		return nil, fmt.Errorf("gauth: service account JSON requires client_email and private_key")
+	}
+	if sa.TokenURI != "" && sa.TokenURI != defaultTokenURL {
+		return nil, fmt.Errorf("gauth: unsupported Google token URI")
 	}
 
 	block, _ := pem.Decode([]byte(sa.PrivateKey))
@@ -84,13 +104,21 @@ func NewTokenProvider(credentialsFile, scope string) (*TokenProvider, error) {
 	}, nil
 }
 
-func (t *TokenProvider) Token() string {
+func (t *TokenProvider) Token() (token string) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
 	if t.accessToken != "" && time.Now().Before(t.tokenExpiry) {
 		return t.accessToken
 	}
+	if time.Since(t.failedAt) < failedExchangeBackoff {
+		return ""
+	}
+	defer func() {
+		if token == "" {
+			t.failedAt = time.Now()
+		}
+	}()
 
 	now := time.Now()
 	header := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"RS256","typ":"JWT"}`))
@@ -111,12 +139,16 @@ func (t *TokenProvider) Token() string {
 	jwt := sigInput + "." + base64.RawURLEncoding.EncodeToString(sig)
 
 	form := "grant_type=" + url.QueryEscape("urn:ietf:params:oauth:grant-type:jwt-bearer") + "&assertion=" + jwt
-	resp, err := http.Post(t.tokenURL, "application/x-www-form-urlencoded", strings.NewReader(form)) //nolint:noctx
+	resp, err := tokenClient.Post(t.tokenURL, "application/x-www-form-urlencoded", strings.NewReader(form)) //nolint:noctx
 	if err != nil {
 		slog.Warn("gauth: token exchange error", "error", err)
 		return ""
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		slog.Warn("gauth: token exchange rejected", "status", resp.StatusCode)
+		return ""
+	}
 
 	var tokenResp struct {
 		AccessToken string `json:"access_token"`
@@ -130,4 +162,19 @@ func (t *TokenProvider) Token() string {
 	t.accessToken = tokenResp.AccessToken
 	t.tokenExpiry = now.Add(time.Duration(tokenResp.ExpiresIn-60) * time.Second)
 	return t.accessToken
+}
+
+// Invalidate discards the cached access token after Google rejected it. Google can revoke a token
+// before its advertised expiry; the next request should exchange a fresh service-account
+// assertion instead of replaying the rejected token until the clock wins. rejected is the token
+// the failed request carried: requests in flight with an older token get their own rejections,
+// which must not discard the token fetched after the first one.
+func (t *TokenProvider) Invalidate(rejected string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if rejected != t.accessToken {
+		return
+	}
+	t.accessToken = ""
+	t.tokenExpiry = time.Time{}
 }

@@ -232,8 +232,18 @@ const AttributeDetail = ({ projectId, attributeKey }) => {
                 <TableRow>
                   <TableCell>Value</TableCell>
                   {detail.types?.length > 1 && <TableCell>Type</TableCell>}
-                  <TableCell align="right">Count</TableCell>
-                  <TableCell align="right">%</TableCell>
+                  <TableCell
+                    sx={{ fontVariantNumeric: "tabular-nums" }}
+                    align="right"
+                  >
+                    Count
+                  </TableCell>
+                  <TableCell
+                    sx={{ fontVariantNumeric: "tabular-nums" }}
+                    align="right"
+                  >
+                    %
+                  </TableCell>
                   <TableCell sx={{ width: 120 }}></TableCell>
                 </TableRow>
               </TableHead>
@@ -255,10 +265,16 @@ const AttributeDetail = ({ projectId, attributeKey }) => {
                     {detail.types?.length > 1 && (
                       <TableCell>{row.type}</TableCell>
                     )}
-                    <TableCell align="right">
+                    <TableCell
+                      sx={{ fontVariantNumeric: "tabular-nums" }}
+                      align="right"
+                    >
                       {row.count?.toLocaleString()}
                     </TableCell>
-                    <TableCell align="right">
+                    <TableCell
+                      sx={{ fontVariantNumeric: "tabular-nums" }}
+                      align="right"
+                    >
                       {row.percentage?.toFixed(1)}%
                     </TableCell>
                     <TableCell>
@@ -297,7 +313,7 @@ const AttributeDetail = ({ projectId, attributeKey }) => {
                 <Typography
                   variant="caption"
                   color="text.secondary"
-                  sx={{ textTransform: "uppercase" }}
+                  sx={{ textTransform: "none" }}
                 >
                   {key}
                 </Typography>

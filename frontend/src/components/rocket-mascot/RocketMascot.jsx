@@ -177,7 +177,13 @@ const RocketMascot = ({
                 />
               </path>
               {/* Spark from the broken engine */}
-              <circle cx="120" cy="170" r="1.5" fill={strokeColor} opacity="0.7">
+              <circle
+                cx="120"
+                cy="170"
+                r="1.5"
+                fill={strokeColor}
+                opacity="0.7"
+              >
                 <animate
                   attributeName="cy"
                   values="170;178;170"
@@ -394,11 +400,11 @@ const RocketMascot = ({
               <text
                 x="162"
                 y="60"
-                fontSize="22"
+                fontSize="20"
                 fill={strokeColor}
                 opacity="0.5"
                 fontFamily="monospace"
-                fontWeight="bold"
+                fontWeight="600"
               >
                 !
               </text>

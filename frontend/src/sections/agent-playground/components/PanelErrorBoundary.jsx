@@ -1,5 +1,5 @@
+import ErrorState from "src/components/error-state";
 import React from "react";
-import { Box, Typography, Button } from "@mui/material";
 import PropTypes from "prop-types";
 import logger from "src/utils/logger";
 
@@ -34,24 +34,10 @@ class PanelErrorBoundary extends React.Component {
   render() {
     if (this.state.hasError) {
       return (
-        <Box
-          sx={{
-            display: "flex",
-            flexDirection: "column",
-            alignItems: "center",
-            justifyContent: "center",
-            gap: 1.5,
-            p: 3,
-            height: "100%",
-          }}
-        >
-          <Typography variant="body2" color="text.secondary">
-            Something went wrong while rendering this panel.
-          </Typography>
-          <Button variant="outlined" size="small" onClick={this.handleRetry}>
-            Retry
-          </Button>
-        </Box>
+        <ErrorState
+          title="Something went wrong while rendering this panel."
+          onRetry={this.handleRetry}
+        />
       );
     }
 

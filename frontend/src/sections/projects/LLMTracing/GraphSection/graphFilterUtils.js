@@ -1,10 +1,15 @@
 import { FILTER_FOR_HAS_EVAL } from "../common";
+import { isNativeColumnType } from "src/api/contracts/filter-contract";
 
 // Shared by PrimaryGraph.jsx and GraphSection.jsx so the "created_at"
 // literal and the default-date-entry construction exist in exactly one place.
 export const CREATED_AT = "created_at";
 
-export const isCreatedAtFilter = (f) => f?.column_id === CREATED_AT;
+const isNativeScopeFilter = (filter) =>
+  isNativeColumnType(filter?.filter_config?.col_type || filter?.col_type);
+
+export const isCreatedAtFilter = (f) =>
+  f?.column_id === CREATED_AT && isNativeScopeFilter(f);
 
 // Default created_at entry derived from the date picker, added only when the
 // combined filters don't already carry an explicit created_at filter.
@@ -84,7 +89,7 @@ export const selectPanelGraphFilters = (
  */
 export const singleProjectIdFromFilters = (filters) => {
   const projectFilters = (filters || []).filter(
-    (filter) => filter?.column_id === "project_id",
+    (filter) => filter?.column_id === "project_id" && isNativeScopeFilter(filter),
   );
   if (projectFilters.length !== 1) return null;
 

@@ -37,12 +37,13 @@ const ProjectFtux = () => {
           src="/favicon/logo.svg"
         />
         <Box sx={{ height: "10px" }} />
-        <Typography fontSize="20px" fontWeight={700} color="text.primary">
+        <Typography fontSize="20px" fontWeight={600} color="text.primary">
           Welcome to {isObserve ? `Observe` : `Prototype`}
         </Typography>
         <Box sx={{ height: "5px" }} />
-        <Typography fontSize="14px" color="text.secondary">
-          Create a project to experiment on your model
+        <Typography fontSize="12px" color="text.secondary">
+          Send traces from your agents to inspect every step, debug failures and
+          track cost and latency.
         </Typography>
         <Box sx={{ height: "20px" }} />
       </Box>

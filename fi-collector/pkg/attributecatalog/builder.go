@@ -45,9 +45,8 @@ var gapReasonOrder = [...]string{
 // Scope is the fixed catalog identity copied to every row produced for one
 // already-canonical span. The builder deliberately does not accept batches.
 type Scope struct {
-	ProjectID    string
-	SeenAt       time.Time
-	CatalogEpoch uint16
+	ProjectID string
+	SeenAt    time.Time
 }
 
 // SpanAttributeMaps is the typed output of adapter.Split plus its JSON
@@ -68,7 +67,8 @@ type BuildLimits struct {
 	MaxEncodedBytes int
 }
 
-// KeyRow mirrors span_attribute_key_catalog's insertable columns.
+// KeyRow is a typed observation. The delivery layer adds authenticated tenant
+// scope and converts timestamps to its storage representation.
 type KeyRow struct {
 	ProjectID     string
 	SourceKind    string
@@ -77,10 +77,10 @@ type KeyRow struct {
 	AttributeType string
 	FirstSeen     time.Time
 	LastSeen      time.Time
-	CatalogEpoch  uint16
 }
 
-// ValueRow mirrors span_attribute_value_catalog's insertable columns.
+// ValueRow is a selectable scalar observation, retaining the source attribute
+// type when its value came from an array.
 type ValueRow struct {
 	ProjectID        string
 	SourceKind       string
@@ -91,7 +91,6 @@ type ValueRow struct {
 	ValueSearchText  string
 	FirstSeen        time.Time
 	LastSeen         time.Time
-	CatalogEpoch     uint16
 }
 
 // BuildMetadata makes every incomplete row set explicit. GapReasons has a
@@ -161,6 +160,7 @@ type valueIdentity struct {
 	key           string
 	attributeType string
 	fingerprint   string
+	valueJSON     string
 }
 
 // BuildRows constructs catalog rows for exactly one span. Key selection is a
@@ -173,7 +173,7 @@ type valueIdentity struct {
 //   - key row: key + folded key + attribute type
 //   - value row: key + attribute type + fingerprint + value JSON + search text
 //
-// Fixed-width UUID/time/epoch columns are excluded. A row is atomic: if its
+// Fixed-width UUID/time columns are excluded. A row is atomic: if its
 // dynamic payload does not fit, it is not emitted and GapMaxEncodedBytes is
 // reported. Key/type discovery is completed before value retention, so an
 // oversized value cannot hide a later attribute key that still fits.
@@ -193,6 +193,21 @@ func BuildRowsForSource(
 	limits BuildLimits,
 	sourceKind string,
 ) (BuildResult, error) {
+	return buildRows(scope, attrs, limits, sourceKind, 0)
+}
+
+// BuildObservedRows shares key selection and scalar extraction with BuildRows,
+// but bounds each value row independently. Eligible values are subsequently
+// chunked by the transport; a cumulative byte budget cannot hide later values.
+func BuildObservedRows(scope Scope, attrs SpanAttributeMaps, limits BuildLimits, sourceKind string, maxValueRowBytes int) (BuildResult, error) {
+	if maxValueRowBytes <= 0 {
+		return BuildResult{}, fmt.Errorf("value row byte limit must be positive")
+	}
+	limits.MaxEncodedBytes = int(^uint(0) >> 1)
+	return buildRows(scope, attrs, limits, sourceKind, maxValueRowBytes)
+}
+
+func buildRows(scope Scope, attrs SpanAttributeMaps, limits BuildLimits, sourceKind string, maxValueRowBytes int) (BuildResult, error) {
 	if limits.MaxKeys < 0 || limits.MaxArrayMembers < 0 || limits.MaxEncodedBytes < 0 {
 		return BuildResult{}, fmt.Errorf("catalog build limits must be non-negative")
 	}
@@ -245,7 +260,6 @@ func BuildRowsForSource(
 			AttributeType: candidate.attributeType,
 			FirstSeen:     scope.SeenAt,
 			LastSeen:      scope.SeenAt,
-			CatalogEpoch:  scope.CatalogEpoch,
 		})
 		metadata.EncodedBytes += keyCost
 		valueCandidates = append(valueCandidates, candidate)
@@ -272,6 +286,7 @@ func BuildRowsForSource(
 				candidate,
 				encodedBoolean == 1,
 				limits.MaxEncodedBytes,
+				maxValueRowBytes,
 			)
 			switch status {
 			case scalarInvalid:
@@ -298,6 +313,7 @@ func BuildRowsForSource(
 					candidate,
 					member,
 					limits.MaxEncodedBytes,
+					maxValueRowBytes,
 				)
 				switch status {
 				case scalarInvalid:
@@ -317,6 +333,7 @@ func BuildRowsForSource(
 				candidate,
 				candidate.value,
 				limits.MaxEncodedBytes,
+				maxValueRowBytes,
 			)
 			switch status {
 			case scalarInvalid:
@@ -434,12 +451,17 @@ func appendScalarValue(
 	candidate attributeCandidate,
 	value any,
 	maxEncodedBytes int,
+	maxValueRowBytes int,
 ) scalarAppendStatus {
+	rowLimit := maxEncodedBytes
+	if maxValueRowBytes > 0 {
+		rowLimit = min(rowLimit, maxValueRowBytes)
+	}
 	encoded, cost, fits, err := encodeScalarForRow(
 		candidate.key,
 		candidate.attributeType,
 		value,
-		maxEncodedBytes,
+		rowLimit,
 	)
 	if err != nil {
 		return scalarInvalid
@@ -451,6 +473,7 @@ func appendScalarValue(
 		key:           candidate.key,
 		attributeType: candidate.attributeType,
 		fingerprint:   encoded.Fingerprint,
+		valueJSON:     encoded.ValueJSON,
 	}
 	if _, duplicate := seen[identity]; duplicate {
 		metadata.DuplicateValuesSkipped++
@@ -471,7 +494,6 @@ func appendScalarValue(
 		ValueSearchText:  encoded.SearchText,
 		FirstSeen:        scope.SeenAt,
 		LastSeen:         scope.SeenAt,
-		CatalogEpoch:     scope.CatalogEpoch,
 	})
 	metadata.EncodedBytes += cost
 	return scalarAppended

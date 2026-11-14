@@ -7,6 +7,8 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"slices"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -19,6 +21,8 @@ import (
 	"github.com/futureagi/agentcc-gateway/internal/providers/cohere"
 	"github.com/futureagi/agentcc-gateway/internal/providers/gemini"
 	"github.com/futureagi/agentcc-gateway/internal/providers/openai"
+	"github.com/futureagi/agentcc-gateway/internal/providers/speech"
+	"github.com/futureagi/agentcc-gateway/internal/providers/systemone"
 	"github.com/futureagi/agentcc-gateway/internal/routing"
 )
 
@@ -115,6 +119,9 @@ func (r *Registry) hasMultiProviderModels() bool {
 func createProvider(name string, cfg config.ProviderConfig) (Provider, error) {
 	switch cfg.APIFormat {
 	case "openai":
+		if cfg.DecisionProxy == nil && cfg.DecisionDialContext == nil && cfg.Proxy == nil && cfg.DialContext == nil {
+			cfg.DecisionProxy = decisionProxy
+		}
 		return openai.New(name, cfg)
 	case "anthropic":
 		return anthropic.New(name, cfg)
@@ -126,9 +133,31 @@ func createProvider(name string, cfg config.ProviderConfig) (Provider, error) {
 		return cohere.New(name, cfg)
 	case "azure":
 		return azure.New(name, cfg)
+	case APIFormatSystemOne, apiFormatTypeSafe:
+		// A decision provider takes the operator's proxy. One that comes with
+		// its own dialer (an org's base_url, checked) comes with the proxy
+		// that matches it, or connects directly.
+		if cfg.Proxy == nil && cfg.DialContext == nil {
+			cfg.Proxy = decisionProxy
+		}
+		return systemone.New(name, cfg)
+	case "deepgram", "cartesia":
+		return speech.New(name, cfg)
 	default:
-		return nil, fmt.Errorf("unsupported api_format %q (supported: openai, anthropic, gemini, bedrock, cohere, azure)", cfg.APIFormat)
+		return nil, fmt.Errorf("unsupported api_format %q (supported: openai, anthropic, gemini, bedrock, cohere, azure, systemone, deepgram, cartesia)", cfg.APIFormat)
 	}
+}
+
+// APIFormatSystemOne is the api_format of a structured-decision provider.
+// "typesafe" is accepted as its alias: TypeSafe defined the format.
+const (
+	APIFormatSystemOne = "systemone"
+	apiFormatTypeSafe  = "typesafe"
+)
+
+// IsSystemOneFormat reports whether an api_format names System One.
+func IsSystemOneFormat(apiFormat string) bool {
+	return apiFormat == APIFormatSystemOne || apiFormat == apiFormatTypeSafe
 }
 
 // RegisterProvider adds a provider at runtime (e.g., a2a provider for agent delegation).
@@ -184,8 +213,9 @@ func (r *Registry) ResolveWithRouting(model string) (*ResolveResult, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
-	// Try routing first if router is available and model has multiple targets.
-	if r.router != nil && r.router.HasTargets(model) {
+	// Try routing first if the model has routing targets. A single target
+	// routes too: it can name the provider and the model_override to send.
+	if r.router != nil && r.router.TargetCount(model) > 0 {
 		var (
 			routingResult *routing.RoutingResult
 			err           error
@@ -240,6 +270,20 @@ func (r *Registry) ResolveWithRouting(model string) (*ResolveResult, error) {
 		fmt.Sprintf("model %q not found in any configured provider. Configure model_map or use 'provider/model' format.", model))
 }
 
+// ProvidersFor returns, in ID order, the providers that list model exactly or
+// that config.yaml's model_map maps it to. Nothing is inferred: no routing
+// targets, no "provider/model" guess, no only-provider default.
+func (r *Registry) ProvidersFor(model string) []string {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	ids := append([]string(nil), r.modelProviders[model]...)
+	if id, ok := r.modelMap[model]; ok && !slices.Contains(ids, id) {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	return slices.Compact(ids)
+}
+
 // ResolveModelName extracts the actual model name (strips provider prefix if present).
 func ResolveModelName(model string) string {
 	if idx := strings.Index(model, "/"); idx > 0 {
@@ -267,11 +311,14 @@ func (r *Registry) ListAllModels() []models.ModelObject {
 	return all
 }
 
-// Close shuts down all providers.
+// Close shuts down the router's background tasks and all providers.
 func (r *Registry) Close() error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
+	if r.router != nil {
+		r.router.Close()
+	}
 	for name, p := range r.providers {
 		if err := p.Close(); err != nil {
 			slog.Warn("error closing provider", "name", name, "error", err)
@@ -343,6 +390,11 @@ func applyLocalDefaults(cfg *config.ProviderConfig) {
 // autoDiscoverModels calls GET /v1/models to discover available models from a provider.
 // Returns discovered model IDs, or nil if discovery is disabled or fails.
 func autoDiscoverModels(name string, cfg *config.ProviderConfig) []string {
+	// Decision vendors serve no model listing; their models are configured.
+	if IsSystemOneFormat(cfg.APIFormat) {
+		return nil
+	}
+
 	// Determine if auto-discover is enabled.
 	if cfg.AutoDiscover != nil {
 		if !*cfg.AutoDiscover {
@@ -413,27 +465,40 @@ func connectivityCheck(name, baseURL, pathPrefix string) {
 }
 
 // ReloadRouter rebuilds the load balancing router from new routing config.
-func (r *Registry) ReloadRouter(routingCfg config.RoutingConfig) error {
+func (r *Registry) ReloadRouter(routingCfg config.RoutingConfig, health ...*routing.HealthMonitor) error {
 	r.mu.RLock()
 	providerIDs := make(map[string]bool, len(r.providers))
 	for id := range r.providers {
 		providerIDs[id] = true
 	}
 	modelProviders := r.modelProviders
+	var sharedHealth *routing.HealthMonitor
+	if r.router != nil {
+		sharedHealth = r.router.GetHealthMonitor()
+	}
+	if len(health) > 0 && health[0] != nil {
+		sharedHealth = health[0]
+	}
 	r.mu.RUnlock()
 
-	// Build new router (may be nil if no routing config).
+	// Build a replacement before changing the active router. Keep the same
+	// health monitor across reloads so in-flight request results still count.
 	var newRouter *routing.Router
 	if routingCfg.DefaultStrategy != "" || len(routingCfg.Targets) > 0 {
 		var err error
-		newRouter, err = routing.NewRouter(routingCfg, providerIDs, modelProviders)
+		newRouter, err = routing.NewRouter(routingCfg, providerIDs, modelProviders, sharedHealth)
 		if err != nil {
 			return err
 		}
 	}
 
 	r.mu.Lock()
+	oldRouter := r.router
+	newRouter.InheritAdaptiveState(oldRouter, providerIDs)
 	r.router = newRouter
 	r.mu.Unlock()
+	if oldRouter != nil {
+		oldRouter.Close()
+	}
 	return nil
 }

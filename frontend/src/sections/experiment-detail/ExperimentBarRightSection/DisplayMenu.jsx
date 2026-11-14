@@ -44,7 +44,7 @@ const DisplayMenu = ({
           sx: {
             padding: theme.spacing(2),
             borderRadius: theme.spacing(1),
-            minWidth: "216px",
+            minWidth: "240px",
           },
         },
       }}
@@ -55,7 +55,7 @@ const DisplayMenu = ({
             typography="s3"
             sx={{
               fontWeight: "fontWeightRegular",
-              textTransform: "uppercase",
+              textTransform: "none",
               color: "text.disabled",
               letterSpacing: "0.5px",
               mb: 0.5,
@@ -116,8 +116,8 @@ const DisplayMenu = ({
               color: "text.disabled",
               fontWeight: "fontWeightRegular",
               display: "block",
-              textTransform: "uppercase",
-              fontSize: "11px",
+              textTransform: "none",
+              fontSize: "12px",
               letterSpacing: "0.5px",
               mb: 0.5,
             }}

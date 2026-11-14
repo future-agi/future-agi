@@ -1,18 +1,14 @@
+import ErrorState from "src/components/error-state";
 import React from "react";
 import PropTypes from "prop-types";
-import {
-  Box,
-  Chip,
-  CircularProgress,
-  Stack,
-  Typography,
-  useTheme,
-} from "@mui/material";
+import { Box, Stack, Typography, useTheme } from "@mui/material";
 import { useQuery } from "@tanstack/react-query";
 import { format, parseISO } from "date-fns";
 import axios, { endpoints } from "src/utils/axios";
 import EvalStatusIndicator from "src/components/eval/EvalStatusIndicator";
+import StatusBadge from "src/components/status-badge/StatusBadge";
 import { getEvalNonScoreStatus } from "src/utils/evalStatus";
+import ContentSkeleton from "src/components/content-skeleton";
 
 const ScoreChip = ({ value }) => {
   if (value == null) {
@@ -23,10 +19,22 @@ const ScoreChip = ({ value }) => {
     );
   }
   if (typeof value === "number") {
-    const color = value >= 0.7 ? "success" : value >= 0.3 ? "warning" : "error";
-    return <Chip label={value.toFixed(2)} size="small" color={color} />;
+    // Same bands as before the design system: 0.7 and up passes, below 0.3 fails.
+    return (
+      <StatusBadge
+        role={value >= 0.7 ? "success" : value >= 0.3 ? "warning" : "danger"}
+        label={value.toFixed(2)}
+        variant="badge"
+        dot={false}
+        size="sm"
+      />
+    );
   }
-  return <Chip label={String(value)} size="small" />;
+  return (
+    <Typography variant="body2" sx={{ fontVariantNumeric: "tabular-nums" }}>
+      {String(value)}
+    </Typography>
+  );
 };
 ScoreChip.propTypes = { value: PropTypes.any };
 
@@ -43,12 +51,20 @@ const StatusChip = ({ status, result, evalStatus, skippedReason }) => {
     return <EvalStatusIndicator status="errored" />;
   }
   if (result === "Passed") {
-    return <Chip label="Passed" size="small" color="success" />;
+    return <StatusBadge status="passed" label="Passed" />;
   }
   if (result === "Failed") {
-    return <Chip label="Failed" size="small" color="error" />;
+    return <StatusBadge status="failed" label="Failed" />;
   }
-  return <Chip label={result || "—"} size="small" />;
+  return result ? (
+    <Typography variant="body2" color="text.secondary">
+      {result}
+    </Typography>
+  ) : (
+    <Typography variant="body2" color="text.disabled">
+      —
+    </Typography>
+  );
 };
 StatusChip.propTypes = {
   status: PropTypes.string,
@@ -122,18 +138,18 @@ const SessionEvalsList = ({ sessionId }) => {
   if (isLoading) {
     return (
       <Box sx={{ display: "flex", justifyContent: "center", py: 4 }}>
-        <CircularProgress size={20} />
+        <ContentSkeleton variant="rows" />
       </Box>
     );
   }
 
   if (isError) {
     return (
-      <Box sx={{ p: 2 }}>
-        <Typography variant="body2" color="error.main">
-          Failed to load session evals: {error?.message || "unknown error"}
-        </Typography>
-      </Box>
+      <ErrorState
+        title="Failed to load session evals"
+        detail={error?.message || "unknown error"}
+        sx={{ height: "auto", flexGrow: 0 }}
+      />
     );
   }
 

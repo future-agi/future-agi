@@ -47,7 +47,8 @@ const CreateNewProperties = ({ open, onClose, data, setOptions, update }) => {
       onClose={onClose}
       aria-labelledby="confirm-dialog-title"
       aria-describedby="confirm-dialog-description"
-      maxWidth="xs"
+      maxWidth={false}
+      PaperProps={{ sx: { maxWidth: 560 } }}
       fullWidth
     >
       <DialogTitle
@@ -73,7 +74,7 @@ const CreateNewProperties = ({ open, onClose, data, setOptions, update }) => {
             Add New Property
           </Typography>
           <IconButton onClick={onClose}>
-            <Iconify icon="mdi:close" color="text.primary" />
+            <Iconify icon="solar:close-linear" color="text.primary" />
           </IconButton>
         </Box>
       </DialogTitle>

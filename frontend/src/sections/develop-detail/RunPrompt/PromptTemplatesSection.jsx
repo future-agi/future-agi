@@ -154,7 +154,9 @@ const PromptTemplatesSection = ({
               id={"invalid-variables-message"}
               typography="s2"
               color={
-                allInvalidVariables?.length > 0 ? "red.500" : "text.primary"
+                allInvalidVariables?.length > 0
+                  ? "status.danger.fg"
+                  : "text.primary"
               }
               fontWeight={"fontWeightRegular"}
               sx={{
@@ -177,7 +179,7 @@ const PromptTemplatesSection = ({
       >
         <Button
           size="small"
-          startIcon={<Iconify icon="material-symbols:add" />}
+          startIcon={<Iconify icon="solar:add-linear" />}
           onClick={() => {
             append({
               id: getRandomId(),
@@ -193,8 +195,6 @@ const PromptTemplatesSection = ({
           sx={{
             border: "1px solid",
             borderColor: "divider",
-            borderRadius: "8px",
-            padding: "6px 16px",
             color: "text.primary",
           }}
         >

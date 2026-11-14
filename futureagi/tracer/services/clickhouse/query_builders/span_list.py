@@ -16,14 +16,19 @@ span IDs, grouped by ``(observation_span_id, label_id)``.
 The three result sets are merged in Python to produce the final response.
 """
 
+import math
 import re
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+from django.conf import settings
+
 from tracer.services.clickhouse.eval_logger_table import (
+    count_mode_choice_array,
     eval_logger_live_state_columns,
     eval_logger_source,
     eval_logger_version_column,
+    latest_completed_eval_rows,
 )
 from tracer.services.clickhouse.query_builders.base import BaseQueryBuilder
 from tracer.services.clickhouse.query_builders.eval_status import (
@@ -85,6 +90,23 @@ def _unix_microseconds(value: datetime) -> int:
     return delta.days * 86_400_000_000 + delta.seconds * 1_000_000 + delta.microseconds
 
 
+# The latest-state aggregates every classifier statement carries, whatever the
+# filter shape: the published timestamp, the tombstone and the root test.
+_SPAN_MATCH_INVARIANT_AGGREGATES_SQL = (
+    "argMax(start_time, _peerdb_version) AS latest_start_time,\n"
+    "                    argMax(is_deleted, _peerdb_version) AS latest_is_deleted,\n"
+    "                    argMax(tuple(parent_span_id), _peerdb_version).1"
+    " AS latest_parent_span_id"
+)
+
+
+_NORMAL_SPAN_PRESENTATION_COLUMNS_SQL = (
+    "project_id, id, trace_id, name, observation_type, status, start_time, "
+    "end_time, latency_ms, cost, total_tokens, prompt_tokens, "
+    "completion_tokens, model, provider, end_user_id, created_at, is_deleted"
+)
+
+
 class SpanListQueryBuilder(BaseQueryBuilder):
     """Build queries for the paginated span list (observe) view.
 
@@ -116,6 +138,125 @@ class SpanListQueryBuilder(BaseQueryBuilder):
         "AND start_time >= %(start_date)s "
         "AND start_time < %(end_date)s"
     )
+
+    # Legacy defaults. CH25 overrides these boundaries rather than changing
+    # the historical four-part key for every caller of this builder.
+    _FILTER_SOURCE_SCOPE = "PREWHERE"
+    _FILTER_SEED_PREDICATE_SCOPE = "WHERE"
+    _FILTER_READ_SETTINGS = ""
+    _FILTER_ORDER_FIELDS = ("id", "trace_id", "project_id")
+
+    def _filter_keyset_sql(self, params, before_start_time, before_id, direction):
+        if not (
+            isinstance(before_id, tuple)
+            and len(before_id) == len(self._FILTER_ORDER_FIELDS)
+            and all(isinstance(value, str) for value in before_id)
+        ):
+            raise ValueError("span keyset identity must match the builder order tuple")
+        prefix = "filter_before" if direction == "older" else "filter_after"
+        comparator = "<" if direction == "older" else ">"
+        params[f"{prefix}_start_us"] = _unix_microseconds(before_start_time)
+        # Keep the legacy lexicographic expansion (and its parameter names).
+        tail = ""
+        for field, value in reversed(
+            list(zip(self._FILTER_ORDER_FIELDS, before_id, strict=True))
+        ):
+            params[f"{prefix}_{field}"] = value
+            column = f"toString({field})" if field == "project_id" else field
+            comparison = f"{column} {comparator} %({prefix}_{field})s"
+            tail = (
+                f"({comparison} OR ({column} = %({prefix}_{field})s AND {tail}))"
+                if tail
+                else comparison
+            )
+        return f"""
+              AND (
+                  toUnixTimestamp64Micro(start_time) {comparator} %({prefix}_start_us)s
+                  OR (toUnixTimestamp64Micro(start_time) = %({prefix}_start_us)s
+                      AND {tail})
+              )
+        """
+
+    def _filter_seed_source_sql(
+        self, *, raw_key_predicate: str = "", consumer_sql: str = ""
+    ) -> str:
+        """The acquisition source. ``consumer_sql`` is every variable fragment
+        of the consuming statement that may reference a span column, so a
+        latest-state source can project exactly what its caller reads."""
+
+        return self.TABLE
+
+    def _filter_seed_plan_predicate(self, plan: Any, *, ordinary_seed: bool) -> str:
+        """Legacy acquisition remains a raw-row necessary superset."""
+
+        return plan.raw_witness_predicate or plan.seed_predicate
+
+    def _filter_population_plan_predicate(
+        self, plan: Any, *, ordinary_seed: bool
+    ) -> str | None:
+        """Legacy/nonordinary population proofs retain their key-only policy."""
+
+        if plan.raw_witness_predicate == plan.raw_key_witness_predicate:
+            return plan.raw_key_witness_predicate
+        return None
+
+    def _filter_anchor_source_sql(self, *, consumer_sql: str = "") -> str:
+        return self.TABLE
+
+    def _normal_span_source_sql(self, *, consumer_sql: str = "") -> str:
+        return self.TABLE
+
+    def _normal_span_identity_extra_sql(self) -> str:
+        return ""
+
+    def _normal_span_order_sql(self, order: str) -> str:
+        return order
+
+    def _filter_identity_columns_sql(self) -> str:
+        return "project_id, trace_id, id, start_time"
+
+    def _filter_seed_extra_columns_sql(self) -> str:
+        return ""
+
+    def _filter_order_sql(self, direction: str = "older") -> str:
+        order = "DESC" if direction == "older" else "ASC"
+        return (
+            f"ORDER BY start_time {order}, id {order}, trace_id {order},\n"
+            f"            toString(project_id) {order}"
+        )
+
+    def _filter_match_source_sql(
+        self, candidate_scope: str, *, consumer_sql: str = ""
+    ) -> str:
+        return self.TABLE
+
+    def _filter_match_outer_scope_sql(self, candidate_scope: str) -> str:
+        return candidate_scope
+
+    def _filter_match_identity_fragments(self) -> tuple[str, str]:
+        return "", ""
+
+    def _filter_match_limit_sql(self, limit, identities, explicit_limit) -> str:
+        return f"LIMIT {limit}"
+
+    def _filter_candidate_scope_sql(self, identities, params) -> str:
+        params["candidate_span_dates"] = tuple(
+            dict.fromkeys(identity[3].date() for identity in identities)
+        )
+        params["candidate_span_identities"] = tuple(
+            (identity[0], identity[1], identity[2], _unix_microseconds(identity[3]))
+            for identity in identities
+        )
+        return """
+                  AND trace_id IN %(candidate_span_trace_ids)s
+                  AND project_id IN %(candidate_span_project_ids)s
+                WHERE toDate(start_time) IN %(candidate_span_dates)s
+                  AND (
+                      toString(project_id), trace_id, id,
+                      toUnixTimestamp64Micro(start_time)
+                  )
+                      IN %(candidate_span_identities)s
+            """
 
     @staticmethod
     def _normalize_span_entities(
@@ -185,6 +326,7 @@ class SpanListQueryBuilder(BaseQueryBuilder):
         bounded_anchor_probe: bool = False,
         bounded_sampling_salt: str | None = None,
         bounded_sampling_rate: float | None = None,
+        eval_count_mode: bool = False,
         **kwargs: Any,
     ) -> None:
         super().__init__(project_id=project_id, project_ids=project_ids, **kwargs)
@@ -207,6 +349,7 @@ class SpanListQueryBuilder(BaseQueryBuilder):
             else None
         )
         self.eval_filter_metadata = eval_filter_metadata
+        self.eval_count_mode = eval_count_mode
         self.end_user_id = end_user_id
         self.project_version_id = project_version_id
         self._bounded_internal_scan = bool(bounded_internal_scan)
@@ -261,9 +404,7 @@ class SpanListQueryBuilder(BaseQueryBuilder):
         return [
             item
             for item in self.filters
-            if isinstance(item, dict)
-            and (item.get("column_id") or item.get("columnId"))
-            not in {"created_at", "start_time"}
+            if isinstance(item, dict) and not BaseQueryBuilder.is_datetime_filter(item)
         ]
 
     def requires_cursor_for_long_filtered_read(self) -> bool:
@@ -346,6 +487,107 @@ class SpanListQueryBuilder(BaseQueryBuilder):
         if self._supports_time_only_cursor_sparse_probe():
             return _TIME_ONLY_CURSOR_SPARSE_PROBE_MAX_QUERIES
         return None
+
+    def _positive_annotation_seed_filter(self) -> dict[str, Any] | None:
+        """Choose a necessary live Score relation for exact span acquisition.
+
+        A label value (including negative value comparisons) requires a live
+        Score. Absence does not. The same span-scoped compiler resolves trace
+        Scores to roots only and span Scores to their own span, never siblings.
+        The finite classifier still repeats all filters against latest state.
+        """
+        if (
+            not self.project_id
+            or self.project_ids is not None
+            or self.sort_params
+            or self.end_user_id
+            or self._bounded_sampling_rate is not None
+            or self._bounded_anchor_probe
+        ):
+            return None
+        positive_ops = {
+            "equals",
+            "not_equals",
+            "in",
+            "not_in",
+            "contains",
+            "not_contains",
+            "starts_with",
+            "ends_with",
+            "greater_than",
+            "greater_than_or_equal",
+            "less_than",
+            "less_than_or_equal",
+            "between",
+            "not_between",
+            "is_not_null",
+        }
+        for item in self._active_non_time_filters():
+            cfg = item.get("filter_config") or item.get("filterConfig") or {}
+            if not isinstance(cfg, dict):
+                continue
+            key = item.get("column_id") or item.get("columnId")
+            if (
+                str(cfg.get("col_type") or cfg.get("colType") or "").upper()
+                == "ANNOTATION"
+                and isinstance(key, str)
+                and key
+                not in {"annotator", "has_annotation", "has_eval", "my_annotations"}
+                and normalize_filter_op(cfg.get("filter_op") or cfg.get("filterOp"))
+                in positive_ops
+                and str(cfg.get("filter_type") or cfg.get("filterType") or "").lower()
+                in {
+                    "text",
+                    "number",
+                    "boolean",
+                    "thumbs",
+                    "categorical",
+                    "array",
+                    "annotator",
+                }
+            ):
+                return item
+        return None
+
+    def supports_filter_candidate_seed_page(self) -> bool:
+        return self._positive_annotation_seed_filter() is not None
+
+    @staticmethod
+    def filter_candidate_seed_proves_result_order() -> bool:
+        # This retains the ordinary immutable span start/id/trace/project order.
+        return True
+
+    def recommended_filter_initial_slice_width(self) -> timedelta | None:
+        if self.supports_filter_candidate_seed_page():
+            start, end = self._bounded_request_window
+            width = end - start
+            # The selector clips its default five-minute slice to shorter
+            # requests; an explicit recommendation must satisfy that minimum.
+            return width if width >= timedelta(minutes=5) else None
+        return None
+
+    def recommended_filter_max_slice_width(self) -> timedelta | None:
+        return self.recommended_filter_initial_slice_width()
+
+    def recommended_filter_query_timeout_ms(self) -> int | None:
+        if not self.supports_filter_candidate_seed_page():
+            return None
+        # The request already owns its wall budget. A full-window Score
+        # relation should not fail at the tiny chronological-slice cutoff.
+        # The selector clips each call to the remaining request time and keeps
+        # its finite rows/bytes/memory/thread controls. This is not the SLO.
+        return min(
+            settings.INTERACTIVE_ANALYTICS_DEFAULT_WALL_MS,
+            settings.FILTER_SELECTOR_MAX_BUILDER_QUERY_TIMEOUT_MS,
+        )
+
+    def build_filter_candidate_seed_page(self, **kwargs) -> tuple[str, dict[str, Any]]:
+        if not self.supports_filter_candidate_seed_page():
+            raise ValueError("span annotation candidate seed is unavailable")
+        # The outer V2 build wrapper rewrites once, as for navigation seeds.
+        return SpanListQueryBuilder.build_filter_seed_page(
+            self, **kwargs, _annotation_candidate_first=True
+        )
 
     def _supports_time_only_cursor_sparse_probe(self) -> bool:
         """Whether a cheap full-window sentinel may close an initial cursor.
@@ -863,6 +1105,19 @@ class SpanListQueryBuilder(BaseQueryBuilder):
               ) < %(bounded_sampling_rate)s
             """
 
+        # Every variable fragment below that may name a span column. A
+        # latest-state source projects the union of these and its own
+        # invariant floor, so nothing it collapses is read needlessly.
+        anchor_consumer_sql = " ".join(
+            (
+                self._filter_seed_extra_columns_sql(),
+                project_version_fragment,
+                predicate,
+                datetime_fragment,
+                sampling_fragment,
+            )
+        )
+
         if self._supports_time_only_cursor_sparse_probe() and not _graph_key_witness:
             # Deliberately unordered and without LIMIT 1 BY. ClickHouse may stop
             # after reading the sentinel instead of sorting/deduplicating a
@@ -872,27 +1127,28 @@ class SpanListQueryBuilder(BaseQueryBuilder):
             # so their de-duplicated identities are a complete candidate
             # superset for the unchanged latest-state classifier.
             query = f"""
-            SELECT project_id, id, trace_id, start_time
-            FROM {self.TABLE}
-            PREWHERE {self.project_filter_sql()}
+            SELECT project_id, id, trace_id, start_time{self._filter_seed_extra_columns_sql()}
+            FROM {self._filter_anchor_source_sql(consumer_sql=anchor_consumer_sql)}
+            {self._FILTER_SOURCE_SCOPE} {self.project_filter_sql()}
               AND is_deleted = 0
               {project_version_fragment}
               AND start_time >= fromUnixTimestamp64Micro(%(filter_anchor_start_us)s)
               AND start_time < fromUnixTimestamp64Micro(%(filter_anchor_end_us)s)
-            WHERE 1 = 1{datetime_fragment}
+            {self._FILTER_SEED_PREDICATE_SCOPE} 1 = 1{datetime_fragment}
             LIMIT %(filter_anchor_limit)s
+            {self._FILTER_READ_SETTINGS}
             """
             return query, params
 
         query = f"""
-        SELECT project_id, id, trace_id, start_time
-        FROM {self.TABLE}
-        PREWHERE {self.project_filter_sql()}
+        SELECT project_id, id, trace_id, start_time{self._filter_seed_extra_columns_sql()}
+        FROM {self._filter_anchor_source_sql(consumer_sql=anchor_consumer_sql)}
+        {self._FILTER_SOURCE_SCOPE} {self.project_filter_sql()}
           AND is_deleted = 0
           {project_version_fragment}
           AND start_time >= fromUnixTimestamp64Micro(%(filter_anchor_start_us)s)
           AND start_time < fromUnixTimestamp64Micro(%(filter_anchor_end_us)s)
-        WHERE {predicate}{datetime_fragment}
+        {self._FILTER_SEED_PREDICATE_SCOPE} {predicate}{datetime_fragment}
           {sampling_fragment}
         ORDER BY
             observation_type DESC,
@@ -901,8 +1157,9 @@ class SpanListQueryBuilder(BaseQueryBuilder):
             trace_id DESC,
             id DESC,
             start_time DESC
-        LIMIT 1 BY project_id, trace_id, id, start_time
+        LIMIT 1 BY {self._filter_identity_columns_sql()}
         LIMIT %(filter_anchor_limit)s
+        {self._FILTER_READ_SETTINGS}
         """
         return query, params
 
@@ -937,6 +1194,8 @@ class SpanListQueryBuilder(BaseQueryBuilder):
         before_id: Any = None,
         direction: str = "older",
         _unindexed_positive_micro_seed: bool = False,
+        _annotation_candidate_first: bool = False,
+        _navigation_seed: bool = False,
     ) -> tuple[str, dict[str, Any]]:
         """Return bounded physical matches as a latest-state candidate superset."""
 
@@ -964,6 +1223,15 @@ class SpanListQueryBuilder(BaseQueryBuilder):
         # Unindexed JSON/call_type predicates follow the same classifier-only
         # rule because parsing them before ORDER BY would scan the entire slice
         # merely to discover a rare or absent value.
+        ordinary_seed = (
+            direction == "older"
+            and not _navigation_seed
+            and not _annotation_candidate_first
+            and not _unindexed_positive_micro_seed
+            and not self._bounded_anchor_probe
+            and self._bounded_sampling_rate is None
+            and not self.sort_params
+        )
         if _unindexed_positive_micro_seed:
             micro_seed_plan = self._unindexed_positive_micro_seed_plan()
             if micro_seed_plan is None:
@@ -993,7 +1261,11 @@ class SpanListQueryBuilder(BaseQueryBuilder):
                 else indexed_seed_plans
             )
             seed_predicates = [
-                plan.raw_witness_predicate or plan.seed_predicate for plan in seed_plans
+                self._filter_seed_plan_predicate(
+                    plan,
+                    ordinary_seed=ordinary_seed,
+                )
+                for plan in seed_plans
             ]
         params: dict[str, Any] = {
             **self.params,
@@ -1019,6 +1291,27 @@ class SpanListQueryBuilder(BaseQueryBuilder):
                 }
             )
         predicate = " AND ".join(seed_predicates) or "1 = 1"
+        if _annotation_candidate_first:
+            necessary_leaf = self._positive_annotation_seed_filter()
+            if necessary_leaf is None or _unindexed_positive_micro_seed:
+                raise ValueError("span annotation candidate seed is unavailable")
+            relation = self._FILTER_BUILDER_CLS(
+                eval_count_mode=self.eval_count_mode,
+                table=self.TABLE,
+                query_mode=self._FILTER_BUILDER_CLS.QUERY_MODE_SPAN,
+                project_id=self.project_id,
+                score_date_scope=False,
+                span_date_scope=False,
+                annotation_label_ids=self.annotation_label_ids,
+                annotation_label_set_known=self._annotation_label_set_known,
+            )
+            relation_sql, relation_params = relation.translate([necessary_leaf])
+            if not relation_sql:
+                raise ValueError("span annotation candidate relation is empty")
+            # Annotation placeholders use their own namespace; raw attribute
+            # plan parameters stay untouched for the other necessary leaves.
+            params.update(relation_params)
+            predicate = f"({predicate}) AND ({relation_sql})"
         datetime_predicate, datetime_params = (
             BaseQueryBuilder.bounded_datetime_exclusion_sql(
                 self.filters,
@@ -1050,63 +1343,61 @@ class SpanListQueryBuilder(BaseQueryBuilder):
         if before_start_time is not None:
             if not slice_start <= before_start_time < slice_end:
                 raise ValueError("span keyset must stay inside its slice")
-            if not (
-                isinstance(before_id, tuple)
-                and len(before_id) == 3
-                and all(isinstance(value, str) for value in before_id)
-            ):
-                raise ValueError(
-                    "span keyset identity must be an (id, trace_id, project_id) tuple"
-                )
-            cursor_prefix = "filter_before" if direction == "older" else "filter_after"
-            comparator = "<" if direction == "older" else ">"
-            params[f"{cursor_prefix}_start_us"] = _unix_microseconds(before_start_time)
-            params[f"{cursor_prefix}_id"] = before_id[0]
-            params[f"{cursor_prefix}_trace_id"] = before_id[1]
-            params[f"{cursor_prefix}_project_id"] = before_id[2]
-            keyset_fragment = f"""
-              AND (
-                  toUnixTimestamp64Micro(start_time) {comparator} %({cursor_prefix}_start_us)s
-                  OR (
-                      toUnixTimestamp64Micro(start_time) = %({cursor_prefix}_start_us)s
-                      AND (
-                          id {comparator} %({cursor_prefix}_id)s
-                          OR (
-                              id = %({cursor_prefix}_id)s
-                              AND (
-                                  trace_id {comparator} %({cursor_prefix}_trace_id)s
-                                  OR (
-                                      trace_id = %({cursor_prefix}_trace_id)s
-                                      AND toString(project_id) {comparator} %({cursor_prefix}_project_id)s
-                                  )
-                              )
-                          )
-                      )
-                  )
-              )
-            """
+            keyset_fragment = self._filter_keyset_sql(
+                params, before_start_time, before_id, direction
+            )
 
-        order_fragment = (
-            "ORDER BY start_time DESC, id DESC, trace_id DESC,\n"
-            "            toString(project_id) DESC"
-            if direction == "older"
-            else "ORDER BY start_time ASC, id ASC, trace_id ASC,\n"
-            "            toString(project_id) ASC"
+        order_fragment = self._filter_order_sql(direction)
+        # A separate compiler-proven raw witness selects immutable CH25
+        # prefixes, never mutable versions inside FINAL. Legacy/nonordinary
+        # modes retain the key-only policy through the shared population hook.
+        raw_key_predicate = (
+            " AND ".join(
+                f"({witness})"
+                for plan in seed_plans
+                if (
+                    witness := self._filter_population_plan_predicate(
+                        plan, ordinary_seed=ordinary_seed
+                    )
+                )
+            )
+            if not self._bounded_anchor_probe
+            else ""
+        )
+        for plan in seed_plans:
+            params.update(
+                {
+                    key: value
+                    for key, value in plan.params.items()
+                    if f"%({key})s" in raw_key_predicate
+                }
+            )
+        seed_consumer_sql = " ".join(
+            (
+                self._filter_seed_extra_columns_sql(),
+                project_version_fragment,
+                predicate,
+                datetime_fragment,
+                sampling_fragment,
+                keyset_fragment,
+                order_fragment,
+            )
         )
         query = f"""
-        SELECT project_id, id, trace_id, start_time
-        FROM {self.TABLE}
-        PREWHERE {self.project_filter_sql()}
+        SELECT project_id, id, trace_id, start_time{self._filter_seed_extra_columns_sql()}
+        FROM {self._filter_seed_source_sql(raw_key_predicate=raw_key_predicate, consumer_sql=seed_consumer_sql)}
+        {self._FILTER_SOURCE_SCOPE} {self.project_filter_sql()}
           AND is_deleted = 0
           {project_version_fragment}
           AND start_time >= fromUnixTimestamp64Micro(%(filter_slice_start_us)s)
           AND start_time < fromUnixTimestamp64Micro(%(filter_slice_end_us)s)
-        WHERE {predicate}{datetime_fragment}
+        {self._FILTER_SEED_PREDICATE_SCOPE} {predicate}{datetime_fragment}
           {sampling_fragment}
           {keyset_fragment}
         {order_fragment}
-        LIMIT 1 BY project_id, trace_id, id, start_time
+        LIMIT 1 BY {self._filter_identity_columns_sql()}
         LIMIT %(filter_seed_limit)s
+        {self._FILTER_READ_SETTINGS}
         """
         return query, params
 
@@ -1130,6 +1421,7 @@ class SpanListQueryBuilder(BaseQueryBuilder):
             before_start_time=cursor_start_time,
             before_id=cursor_order_token,
             direction=direction,
+            _navigation_seed=True,
         )
 
     def build_filter_match_query(
@@ -1201,9 +1493,7 @@ class SpanListQueryBuilder(BaseQueryBuilder):
         request_start, request_end = self.parse_time_range(self.filters)
         self.params.update({"start_date": request_start, "end_date": request_end})
         has_explicit_time_filter = any(
-            (item.get("column_id") or item.get("columnId"))
-            in {"created_at", "start_time"}
-            for item in self.filters
+            BaseQueryBuilder.is_datetime_filter(item) for item in self.filters
         )
         scope_to_request_window = not candidate_full_state or has_explicit_time_filter
         plans, residual_filters = partition_span_filter_plans(self.filters)
@@ -1233,34 +1523,15 @@ class SpanListQueryBuilder(BaseQueryBuilder):
             params["candidate_span_project_ids"] = tuple(
                 dict.fromkeys(identity[0] for identity in candidate_identities)
             )
-            params["candidate_span_dates"] = tuple(
-                dict.fromkeys(identity[3].date() for identity in candidate_identities)
-            )
-            params["candidate_span_identities"] = tuple(
-                (
-                    identity[0],
-                    identity[1],
-                    identity[2],
-                    _unix_microseconds(identity[3]),
-                )
-                for identity in candidate_identities
-            )
             params["candidate_span_entities"] = tuple(
                 dict.fromkeys(
                     (identity[1], identity[2]) for identity in candidate_identities
                 )
             )
             candidate_entities_param = "candidate_span_entities"
-            candidate_scope_fragment = """
-                  AND trace_id IN %(candidate_span_trace_ids)s
-                  AND project_id IN %(candidate_span_project_ids)s
-                WHERE toDate(start_time) IN %(candidate_span_dates)s
-                  AND (
-                      toString(project_id), trace_id, id,
-                      toUnixTimestamp64Micro(start_time)
-                  )
-                      IN %(candidate_span_identities)s
-            """
+            candidate_scope_fragment = self._filter_candidate_scope_sql(
+                candidate_identities, params
+            )
         for plan in plans:
             params.update(plan.params)
         datetime_predicate, datetime_params = (
@@ -1344,13 +1615,17 @@ class SpanListQueryBuilder(BaseQueryBuilder):
                         ]
                         branch_label_set_known = True
                     branch_builder = self._FILTER_BUILDER_CLS(
+                        eval_count_mode=self.eval_count_mode,
                         table=self.TABLE,
                         query_mode=self._FILTER_BUILDER_CLS.QUERY_MODE_SPAN,
                         annotation_label_ids=branch_label_ids,
                         project_id=candidate_project_id,
-                        score_date_scope=scope_to_request_window,
+                        # The finite entity batch bounds relation history;
+                        # the span window does not bound annotation/eval age.
+                        score_date_scope=False,
                         span_date_scope=scope_to_request_window,
                         candidate_ids_param="candidate_span_ids",
+                        resolved_candidate_spans_table="resolved_annotation_candidates",
                         candidate_entities_param=(
                             "candidate_span_entities" if branch_entities else None
                         ),
@@ -1404,14 +1679,16 @@ class SpanListQueryBuilder(BaseQueryBuilder):
                     for item in residual_filters
                 )
                 residual_builder = self._FILTER_BUILDER_CLS(
+                    eval_count_mode=self.eval_count_mode,
                     table=self.TABLE,
                     query_mode=self._FILTER_BUILDER_CLS.QUERY_MODE_SPAN,
                     annotation_label_ids=self.annotation_label_ids,
                     project_id=self.project_id,
                     project_ids=self.project_ids,
-                    score_date_scope=scope_to_request_window,
+                    score_date_scope=False,
                     span_date_scope=scope_to_request_window,
                     candidate_ids_param="candidate_span_ids",
+                    resolved_candidate_spans_table="resolved_annotation_candidates",
                     candidate_entities_param=candidate_entities_param,
                     strict_trace_project_correlation=has_eval_residual,
                     trace_project_eval_config_ids=(
@@ -1471,6 +1748,20 @@ class SpanListQueryBuilder(BaseQueryBuilder):
                 argMax(tuple(end_user_id), _peerdb_version).1 AS latest_end_user_id,
                 argMax(created_at, _peerdb_version) AS latest_created_at"""
 
+        identity_select, identity_aggregates = self._filter_match_identity_fragments()
+        match_consumer_sql = " ".join(
+            (
+                _SPAN_MATCH_INVARIANT_AGGREGATES_SQL,
+                identity_aggregates,
+                hydrate_aggregate_fragment,
+                aggregate_fragment,
+                project_version_fragment,
+                candidate_scope_fragment,
+                self._filter_match_outer_scope_sql(candidate_scope_fragment),
+            )
+        )
+        select_fragment += identity_select
+        hydrate_aggregate_fragment += identity_aggregates
         latest_time_fragment = (
             "\n              AND latest_start_time >= "
             "fromUnixTimestamp64Micro(%(candidate_start_date_us)s)"
@@ -1479,33 +1770,37 @@ class SpanListQueryBuilder(BaseQueryBuilder):
             if scope_to_request_window
             else ""
         )
+        # A page-scoped, latest-live relation is sufficient to resolve span
+        # Scores and trace Scores on their current root. Preserve the physical
+        # timestamp so root/child instances sharing textual IDs cannot mix.
         query = f"""
-        SELECT *
-        FROM (
+        WITH resolved_annotation_candidates AS (
             SELECT
-                {select_fragment}
+                {select_fragment},
+                latest_parent_span_id AS parent_span_id
             FROM (
                 SELECT
                     project_id AS grouped_project_id,
                     id AS grouped_id,
-                    argMax(start_time, _peerdb_version) AS latest_start_time,
-                    argMax(is_deleted, _peerdb_version) AS latest_is_deleted
+                    {_SPAN_MATCH_INVARIANT_AGGREGATES_SQL}
                     {hydrate_aggregate_fragment}
                     {aggregate_fragment}
-                FROM {self.TABLE}
-                PREWHERE {self.project_filter_sql()}
+                FROM {self._filter_match_source_sql(candidate_scope_fragment, consumer_sql=match_consumer_sql)}
+                {self._FILTER_SOURCE_SCOPE} {self.project_filter_sql()}
                   {project_version_fragment}
                   AND id IN %(candidate_span_ids)s
-                  {candidate_scope_fragment}
-                GROUP BY project_id, trace_id, id, start_time
+                  {self._filter_match_outer_scope_sql(candidate_scope_fragment)}
+                GROUP BY {self._filter_identity_columns_sql()}
             )
             WHERE latest_is_deleted = 0{latest_time_fragment}{datetime_fragment}
               AND {predicate}
-        ) AS latest_candidates
+        )
+        SELECT * EXCEPT (parent_span_id)
+        FROM resolved_annotation_candidates AS latest_candidates
         WHERE {residual_predicate}
-        ORDER BY start_time DESC, id DESC, trace_id DESC,
-            toString(project_id) DESC
-        LIMIT {output_limit}
+        {self._filter_order_sql()}
+        {self._filter_match_limit_sql(output_limit, candidate_identities, result_limit)}
+        {self._FILTER_READ_SETTINGS}
         """
         return query, params
 
@@ -1558,6 +1853,7 @@ class SpanListQueryBuilder(BaseQueryBuilder):
         self.params["end_date"] = end_date
 
         fb = self._FILTER_BUILDER_CLS(
+            eval_count_mode=self.eval_count_mode,
             table=self.TABLE,
             query_mode=self._FILTER_BUILDER_CLS.QUERY_MODE_SPAN,
             annotation_label_ids=self.annotation_label_ids,
@@ -1593,6 +1889,7 @@ class SpanListQueryBuilder(BaseQueryBuilder):
         if since is not None:
             self.params["slice_start"] = since
             slice_fragment = "AND start_time >= %(slice_start)s"
+        order_clause = self._normal_span_order_sql(order_clause)
 
         # Prefix-fetch pagination: read the sorted prefix [0, offset +
         # 2*page_size) in ONE bounded top-K pass and let the view dedup by
@@ -1637,6 +1934,20 @@ class SpanListQueryBuilder(BaseQueryBuilder):
         # bare-`spans` query verbatim (out of scope). Pre-flip even the user path
         # is byte-identical — NO span matches a `new_id`, so the resolved id ==
         # the span's own id (gate B).
+        list_consumer_sql = " ".join(
+            (
+                _NORMAL_SPAN_PRESENTATION_COLUMNS_SQL,
+                self._normal_span_identity_extra_sql(),
+                self._NORMAL_TIME_WHERE,
+                datetime_fragment,
+                slice_fragment,
+                end_user_fragment,
+                pv_fragment,
+                filter_fragment,
+                order_clause,
+            )
+        )
+
         if self.end_user_id:
             remap_join = remap_left_join("rs.end_user_id", "end_user_id_remap")
             resolved_eu = resolved_id_expr("rs.end_user_id")
@@ -1658,8 +1969,8 @@ class SpanListQueryBuilder(BaseQueryBuilder):
                 model,
                 provider,
                 end_user_id,
-                created_at
-            FROM {self.TABLE}
+                created_at{self._normal_span_identity_extra_sql()}
+            FROM {self._normal_span_source_sql(consumer_sql=list_consumer_sql)}
             {self.project_where()}
               {self._NORMAL_TIME_WHERE}
               {slice_fragment}
@@ -1684,7 +1995,7 @@ class SpanListQueryBuilder(BaseQueryBuilder):
                 model,
                 provider,
                 resolved_end_user_id AS end_user_id,
-                created_at
+                created_at{self._normal_span_identity_extra_sql()}
             FROM (
                 SELECT
                     rs.*,
@@ -1695,6 +2006,7 @@ class SpanListQueryBuilder(BaseQueryBuilder):
             WHERE resolved_end_user_id = %(end_user_id)s
             {order_clause}
             LIMIT %(limit)s
+            {self._FILTER_READ_SETTINGS}
             """
             return query, self.params
 
@@ -1728,8 +2040,8 @@ class SpanListQueryBuilder(BaseQueryBuilder):
             model,
             provider,
             end_user_id,
-            created_at
-        FROM {self.TABLE}
+            created_at{self._normal_span_identity_extra_sql()}
+        FROM {self._normal_span_source_sql(consumer_sql=list_consumer_sql)}
         {self.project_where()}
           {self._NORMAL_TIME_WHERE}{datetime_fragment}
           {slice_fragment}
@@ -1738,6 +2050,7 @@ class SpanListQueryBuilder(BaseQueryBuilder):
           {filter_fragment}
         {order_clause}
         LIMIT %(limit)s
+        {self._FILTER_READ_SETTINGS}
         """
         return query, self.params
 
@@ -1774,6 +2087,7 @@ class SpanListQueryBuilder(BaseQueryBuilder):
         self.params["end_date"] = end_date
 
         fb = self._FILTER_BUILDER_CLS(
+            eval_count_mode=self.eval_count_mode,
             table=self.TABLE,
             query_mode=self._FILTER_BUILDER_CLS.QUERY_MODE_SPAN,
             annotation_label_ids=self.annotation_label_ids,
@@ -1908,6 +2222,7 @@ class SpanListQueryBuilder(BaseQueryBuilder):
         if error_code := self.bounded_filter_degraded_error_code():
             raise ValueError(f"unsafe legacy filtered span count blocked: {error_code}")
         fb = self._FILTER_BUILDER_CLS(
+            eval_count_mode=self.eval_count_mode,
             table=self.TABLE,
             query_mode=self._FILTER_BUILDER_CLS.QUERY_MODE_SPAN,
             annotation_label_ids=self.annotation_label_ids,
@@ -1994,6 +2309,7 @@ class SpanListQueryBuilder(BaseQueryBuilder):
         created_after: Any = None,
         *,
         span_entities: list[tuple[str, str]] | None = None,
+        count_mode: bool = False,
     ) -> tuple[str, dict[str, Any]]:
         """Build the Phase-2 eval-scores query for a page of span IDs.
 
@@ -2083,40 +2399,26 @@ class SpanListQueryBuilder(BaseQueryBuilder):
         # ``output_str`` is Nullable(String); ClickHouse 3-valued logic makes
         # ``NULL != 'ERROR'`` NULL (not TRUE), so use ``ifNull(...)`` to keep
         # the comparison NULL-safe.
-        query = f"""
-        SELECT
-            {trace_select}
-            observation_span_id,
-            toString(custom_eval_config_id) AS eval_config_id,
-            -- ifNotFinite(, NULL): avgIf over an all-NULL group returns NaN, which
-            -- json.dumps(allow_nan=False) rejects. NULL serializes as null.
-            ifNotFinite(avgIf(
-                output_float,
-                error = 0 AND ifNull(output_str, '') != 'ERROR' AND status NOT IN ('pending', 'running', 'skipped', 'errored')
-            ), NULL) AS avg_score,
-            ifNotFinite(avgIf(
-                CASE WHEN output_bool = 1 THEN 100.0 ELSE 0.0 END,
-                error = 0 AND ifNull(output_str, '') != 'ERROR' AND status NOT IN ('pending', 'running', 'skipped', 'errored')
-            ), NULL) AS pass_rate,
-            countIf(
-                error = 0 AND ifNull(output_str, '') != 'ERROR' AND status NOT IN ('pending', 'running', 'skipped', 'errored')
-            ) AS success_count,
-            countIf(
-                error = 1 OR ifNull(output_str, '') = 'ERROR' OR status = 'errored'
-            ) AS error_count,
-            countIf(status = 'skipped') AS skipped_count,
-            countIf(status = 'running') AS running_count,
-            countIf(status = 'pending') AS pending_count,
-            anyIf(skipped_reason, status = 'skipped') AS skipped_reason,
-            count() AS eval_count,
-            groupArrayIf(
-                output_str_list,
-                error = 0 AND ifNull(output_str, '') != 'ERROR' AND status NOT IN ('pending', 'running', 'skipped', 'errored')
-            ) AS str_lists
-        -- Candidate-scoped latest replay. Live/tombstone predicates are
-        -- intentionally outside LIMIT 1 BY id so a newest deletion marker
-        -- cannot resurrect an older score.
-        FROM (
+        count_projection = ""
+        count_inner_projection = ""
+        if count_mode:
+            # Only the Observe span list opts into exact tile counts.  The
+            # non-Observe list continues to use its percentage pivot below.
+            count_projection = """
+            , countIf(
+                if(isNull(output_bool), output_float >= 0.5, output_bool = 1) AND error = 0 AND ifNull(output_str, '') != 'ERROR' AND ifNull(status, '') NOT IN ('pending', 'running', 'skipped', 'errored')
+            ) AS pass_count
+            , countIf(
+                if(isNull(output_bool), output_float < 0.5, output_bool = 0) AND error = 0 AND ifNull(output_str, '') != 'ERROR' AND ifNull(status, '') NOT IN ('pending', 'running', 'skipped', 'errored')
+            ) AS fail_count
+            , argMax(target_type, created_at) AS target_type
+            """
+            count_inner_projection = (
+                ",\n                id,\n                created_at,"
+                "\n                target_type"
+            )
+
+        collapsed = f"""(
             SELECT
                 {trace_inner_select}
                 observation_span_id,
@@ -2128,7 +2430,7 @@ class SpanListQueryBuilder(BaseQueryBuilder):
                 error,
                 {status_projection},
                 {skipped_reason_projection},
-                {live_projection}
+                {live_projection}{count_inner_projection}
             FROM {eval_table}
             WHERE observation_span_id IN %(span_ids)s
               {entity_fragment}
@@ -2136,8 +2438,54 @@ class SpanListQueryBuilder(BaseQueryBuilder):
               {created_fragment}
             ORDER BY {eval_version_col} DESC
             LIMIT 1 BY id
-        )
-        WHERE {live_predicate}
+        )"""
+        if count_mode:
+            # A tile shows the span's newest completed result, the row the
+            # trace-detail rollup shows for that span.
+            eval_source = latest_completed_eval_rows(
+                collapsed,
+                live_predicate,
+                f"{trace_group}observation_span_id, custom_eval_config_id",
+            )
+        else:
+            eval_source = f"""{collapsed}
+        WHERE {live_predicate}"""
+
+        query = f"""
+        SELECT
+            {trace_select}
+            observation_span_id,
+            toString(custom_eval_config_id) AS eval_config_id,
+            -- ifNotFinite(, NULL): avgIf over an all-NULL group returns NaN, which
+            -- json.dumps(allow_nan=False) rejects. NULL serializes as null.
+            ifNotFinite(avgIf(
+                output_float,
+                error = 0 AND ifNull(output_str, '') != 'ERROR' AND ifNull(status, '') NOT IN ('pending', 'running', 'skipped', 'errored')
+            ), NULL) AS avg_score,
+            ifNotFinite(avgIf(
+                CASE WHEN output_bool = 1 THEN 100.0 ELSE 0.0 END,
+                error = 0 AND ifNull(output_str, '') != 'ERROR' AND ifNull(status, '') NOT IN ('pending', 'running', 'skipped', 'errored')
+            ), NULL) AS pass_rate,
+            countIf(
+                error = 0 AND ifNull(output_str, '') != 'ERROR' AND ifNull(status, '') NOT IN ('pending', 'running', 'skipped', 'errored')
+            ) AS success_count,
+            countIf(
+                error = 1 OR ifNull(output_str, '') = 'ERROR' OR status = 'errored'
+            ) AS error_count,
+            countIf(status = 'skipped') AS skipped_count,
+            countIf(status = 'running') AS running_count,
+            countIf(status = 'pending') AS pending_count,
+            anyIf(skipped_reason, status = 'skipped') AS skipped_reason,
+            count() AS eval_count,
+            groupArrayIf(
+                {count_mode_choice_array() if count_mode else "output_str_list"},
+                error = 0 AND ifNull(output_str, '') != 'ERROR' AND ifNull(status, '') NOT IN ('pending', 'running', 'skipped', 'errored')
+            ) AS str_lists
+            {count_projection}
+        -- Candidate-scoped latest replay. Live/tombstone predicates are
+        -- intentionally outside LIMIT 1 BY id so a newest deletion marker
+        -- cannot resurrect an older score.
+        FROM {eval_source}
         GROUP BY {trace_group}observation_span_id, custom_eval_config_id
         SETTINGS max_bytes_before_external_group_by = 1073741824, max_bytes_before_external_sort = 1073741824
         """
@@ -2153,6 +2501,7 @@ class SpanListQueryBuilder(BaseQueryBuilder):
         created_after: Any = None,
         *,
         span_entities: list[tuple[str, str]] | None = None,
+        by_project: bool = False,
     ) -> tuple[str, dict[str, Any]]:
         """Build the Phase-3 annotation query for a page of span IDs.
 
@@ -2161,6 +2510,9 @@ class SpanListQueryBuilder(BaseQueryBuilder):
                 rationale as ``build_eval_query`` (``model_hub_score`` is also
                 ``PARTITION BY toYYYYMM(created_at)``; a score row cannot
                 pre-date its span row).
+            by_project: Also group by and return ``tracer_project_id`` so an
+                organization-scoped page can attribute each score to its own
+                project's copy of a trace/span id held by several projects.
         """
         entities = self._normalize_span_entities(span_entities)
         if entities is not None:
@@ -2196,17 +2548,22 @@ class SpanListQueryBuilder(BaseQueryBuilder):
               AND toString(trace_id) IN %(annotation_trace_ids)s
               AND (toString(trace_id), observation_span_id) IN %(annotation_span_entities)s
             """
+        project_select = project_inner_select = project_group = ""
+        if by_project:
+            project_select = "toString(tracer_project_id) AS tracer_project_id, "
+            project_inner_select = "tracer_project_id, "
+            project_group = "tracer_project_id, "
 
         # Candidate-scoped latest replay. Deletion predicates remain outside
         # LIMIT 1 BY id so an unmerged tombstone cannot resurrect an old score.
         query = f"""
         SELECT
-            {trace_select}
+            {project_select}{trace_select}
             observation_span_id,
             toString(label_id) AS label_id,
             anyLast(value) AS value
         FROM (
-            SELECT {trace_inner_select} observation_span_id, label_id, value,
+            SELECT {project_inner_select}{trace_inner_select} observation_span_id, label_id, value,
                    _peerdb_is_deleted AS latest_cdc_deleted,
                    deleted AS latest_soft_deleted
             FROM {self.ANNOTATION_TABLE}
@@ -2219,7 +2576,7 @@ class SpanListQueryBuilder(BaseQueryBuilder):
         )
         WHERE latest_cdc_deleted = 0
           AND latest_soft_deleted = false
-        GROUP BY {trace_group}observation_span_id, label_id
+        GROUP BY {project_group}{trace_group}observation_span_id, label_id
         """
         return query, params
 
@@ -2232,6 +2589,9 @@ class SpanListQueryBuilder(BaseQueryBuilder):
         eval_rows: list[dict],
         *,
         key_by_trace: bool = False,
+        count_mode: bool = False,
+        output_types: dict[str, str | None] | None = None,
+        declared_choices: dict[str, list[str]] | None = None,
     ) -> dict[Any, dict[str, Any]]:
         """Pivot eval query results into a nested dict keyed by span_id.
 
@@ -2247,6 +2607,8 @@ class SpanListQueryBuilder(BaseQueryBuilder):
         import json as _json
 
         result: dict[Any, dict[str, Any]] = {}
+        output_types = output_types or {}
+        declared_choices = declared_choices or {}
         for row in eval_rows:
             span_id = str(row.get("observation_span_id", ""))
             trace_id = str(row.get("trace_id") or "")
@@ -2266,6 +2628,59 @@ class SpanListQueryBuilder(BaseQueryBuilder):
             # UI can render an error state (distinct from "no eval run").
             if success_count == 0 and error_count > 0:
                 result.setdefault(span_key, {})[config_id] = {"error": True}
+                continue
+
+            if count_mode:
+                output_type = (
+                    (output_types.get(config_id) or "")
+                    .replace("/", "_")
+                    .replace(" ", "_")
+                    .upper()
+                )
+                if success_count == 0:
+                    marker = non_terminal_eval_marker(row)
+                    if marker is not None:
+                        result.setdefault(span_key, {})[config_id] = marker
+                    continue
+
+                if output_type == "PASS_FAIL":
+                    result.setdefault(span_key, {})[config_id] = {
+                        "pass": row.get("pass_count", 0) or 0,
+                        "fail": row.get("fail_count", 0) or 0,
+                    }
+                    continue
+
+                if output_type == "CHOICES":
+                    counts = {
+                        str(choice): 0
+                        for choice in declared_choices.get(config_id, [])
+                        if choice not in (None, "")
+                    }
+                    for sl in str_lists:
+                        if isinstance(sl, str) and sl.startswith("["):
+                            try:
+                                sl = _json.loads(sl)
+                            except _json.JSONDecodeError:
+                                sl = []
+                        if not isinstance(sl, list):
+                            continue
+                        for choice in {
+                            str(value) for value in sl if value not in (None, "")
+                        }:
+                            counts[choice] = counts.get(choice, 0) + 1
+                    result.setdefault(span_key, {})[config_id] = counts
+                    continue
+
+                if (
+                    isinstance(avg_score, (int, float))
+                    and not isinstance(avg_score, bool)
+                    and math.isfinite(avg_score)
+                ):
+                    result.setdefault(span_key, {})[config_id] = round(
+                        avg_score * 100, 2
+                    )
+                else:
+                    result.setdefault(span_key, {})[config_id] = None
                 continue
 
             # CHOICES eval: compute per-choice percentage across all

@@ -112,7 +112,7 @@ class FalconLLMClient:
         elif self.provider == "vertex_ai" or self.provider.startswith("turing"):
             self.api_url = os.environ.get(
                 "AGENTCC_INTERNAL_URL",
-                os.environ.get("AGENTCC_GATEWAY_URL", "http://agentcc-gateway:8090"),
+                os.environ.get("AGENTCC_GATEWAY_URL", "http://agentcc-gateway:8080"),
             )
             self.api_key = os.environ.get("AGENTCC_INTERNAL_API_KEY", "")
         else:

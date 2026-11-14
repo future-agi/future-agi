@@ -2,6 +2,7 @@ import React from "react";
 import { afterEach, describe, it, expect, vi, beforeEach } from "vitest";
 import { act, render, screen, waitFor } from "src/utils/test-utils";
 import WidgetChart from "../WidgetChart";
+import { TABLE_BUCKET_LIMIT } from "../widgetUtils";
 import {
   AGGREGATION_POLL_MAX_ATTEMPTS,
   AGGREGATION_POLLING_PAUSED_MESSAGE,
@@ -28,6 +29,7 @@ vi.mock("react-apexcharts", () => ({
         data-series={JSON.stringify(props.series)}
         data-labels={JSON.stringify(props.options?.labels ?? null)}
         data-colors={JSON.stringify(props.options?.colors ?? null)}
+        data-yaxis={JSON.stringify(props.options?.yaxis ?? null)}
       />
     );
   },
@@ -1433,5 +1435,436 @@ describe("WidgetChart — legend swatches match the plotted line colours", () =>
     // The names above hash away from the identity mapping, so a positional
     // legend would disagree here — that is exactly the bug being guarded.
     expect(new Set(legendColors).size).toBe(items.length);
+  });
+});
+
+// TH-7680: the y-axis left dead space above the data because ApexCharts rounded
+// the max onto its own coarse ladder. Auto-scaling fills only the sides the user
+// left empty in Threshold Bounds.
+describe("WidgetChart — auto-scaled y-axis (TH-7680)", () => {
+  const at = (hour, value) => ({
+    timestamp: `2026-07-09T${String(hour).padStart(2, "0")}:00:00Z`,
+    value,
+  });
+
+  const yaxisOf = (type = "line") =>
+    JSON.parse(screen.getByTestId(`apex-${type}`).getAttribute("data-yaxis"));
+
+  const renderWith = (axis_config) => {
+    h.query.data = queryResult([at(0, 219), at(1, 7043), at(2, 1500)]);
+    render(
+      <WidgetChart
+        widget={{
+          ...baseWidget,
+          chart_config: {
+            ...baseWidget.chart_config,
+            ...(axis_config ? { axis_config } : {}),
+          },
+        }}
+        globalDateRange={null}
+      />,
+    );
+  };
+
+  const renderTyped = (chart_type, values, axis_config) => {
+    h.query.data = queryResult(values.map((v, i) => at(i, v)));
+    render(
+      <WidgetChart
+        widget={{
+          ...baseWidget,
+          chart_config: {
+            ...baseWidget.chart_config,
+            chart_type,
+            ...(axis_config ? { axis_config } : {}),
+          },
+        }}
+        globalDateRange={null}
+      />,
+    );
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    h.query.isPending = false;
+    h.query.isError = false;
+    h.query.data = null;
+  });
+
+  it("tightens the max to fit the data when no bounds are set", () => {
+    renderWith(null);
+    expect(yaxisOf()).toMatchObject({ min: 0, max: 7500 });
+  });
+
+  it("lets a typed max win over auto-scaling", () => {
+    renderWith({ left_y: { max: "50000" } });
+    expect(yaxisOf().max).toBe(50000);
+  });
+
+  // 100 sits below the series floor (219), so it clips nothing and survives
+  // the Out of Bounds widening — this is the per-side mix, not the widening.
+  // The auto max is re-derived from the typed min, so the step stays round
+  // (100 / 1600 / 3100 ...) rather than 100 / 1580 / 3060 against a 7500 cap.
+  it("mixes a typed min with an auto max, per side", () => {
+    renderWith({ left_y: { min: "100" } });
+    expect(yaxisOf()).toMatchObject({ min: 100, max: 7600 });
+  });
+
+  it("ignores a non-numeric bound rather than passing NaN to the chart", () => {
+    renderWith({ left_y: { max: "abc" } });
+    expect(yaxisOf().max).toBe(7500);
+  });
+
+  // "Out of Bounds: Visible" has to mean what it says: a typed bound that would
+  // cut data off is widened so every point stays on the chart. Hidden keeps the
+  // bound as a hard cap and clips. Data peaks at 7043.
+  it("widens a typed max that would clip data when Out of Bounds is Visible", () => {
+    renderWith({ left_y: { max: "5000", out_of_bounds: "visible" } });
+    const { max } = yaxisOf();
+    expect(max === undefined || max >= 7043).toBe(true);
+  });
+
+  it("clips at the typed max when Out of Bounds is Hidden", () => {
+    renderWith({ left_y: { max: "5000", out_of_bounds: "hidden" } });
+    expect(yaxisOf().max).toBe(5000);
+  });
+
+  it("leaves a typed max alone when no data falls outside it", () => {
+    renderWith({ left_y: { max: "50000", out_of_bounds: "visible" } });
+    expect(yaxisOf().max).toBe(50000);
+  });
+
+  it("widens a typed min that would clip data when Out of Bounds is Visible", () => {
+    renderWith({ left_y: { min: "2000", out_of_bounds: "visible" } });
+    const { min } = yaxisOf();
+    expect(min === undefined || min <= 219).toBe(true);
+  });
+
+  // Nothing can be out of bounds when no bounds are typed, so the toggle has
+  // nothing to act on and auto-scaling applies either way.
+  it("auto-scales regardless of the toggle when no bounds are typed", () => {
+    renderWith({ left_y: { out_of_bounds: "hidden" } });
+    expect(yaxisOf().max).toBe(7500);
+  });
+
+  // A band sitting well above zero cannot be zero-anchored without wasting more
+  // space than it saves, and handing it to ApexCharts draws it on a 190-290
+  // axis off the coarse {1,2,5,10} ladder. Fit the band where it sits instead.
+  it("fits a band that sits well above zero, rather than leaving it to ApexCharts", () => {
+    h.query.data = queryResult([at(0, 190), at(1, 250), at(2, 210)]);
+    render(<WidgetChart widget={baseWidget} globalDateRange={null} />);
+    expect(yaxisOf()).toMatchObject({ min: 180, max: 255 });
+  });
+
+  // Bars lie about the data if their baseline isn't zero — a fitted 180-255
+  // axis draws a 250 bar as though it were 70. Column charts must stay
+  // anchored at zero even though lines on the same band get the fitted look.
+  it("anchors a column chart at zero instead of fitting the band", () => {
+    renderTyped("column", [190, 210, 250]);
+    expect(yaxisOf("bar")).toMatchObject({ min: 0, max: 250 });
+  });
+
+  it("still fits the same band on a line chart", () => {
+    renderTyped("line", [190, 210, 250]);
+    expect(yaxisOf("line")).toMatchObject({ min: 180, max: 255 });
+  });
+
+  // TH-7680 review: the warning used to read the typed bound directly,
+  // regardless of Out of Bounds — so a bound widened away by "Visible" still
+  // replaced the chart with "Adjust bounds to see your data" even though
+  // every point renders fine. It must judge from the same resolved axis
+  // driving the chart above.
+  it("renders the chart, not the warning, when a clipping bound is widened by Visible", () => {
+    renderWith({ left_y: { max: "100", out_of_bounds: "visible" } });
+    expect(screen.queryByText(/Adjust bounds/)).toBeNull();
+    expect(yaxisOf().max).toBe(7500);
+  });
+
+  it("replaces the chart with the warning when Hidden clips every point", () => {
+    renderWith({ left_y: { max: "100", out_of_bounds: "hidden" } });
+    expect(screen.getByText(/maximum \(100\)/)).toBeInTheDocument();
+  });
+});
+
+// TH-7680 follow-up: the dual-axis branch is chosen from the series that are
+// actually drawn. Hiding the only right-assigned series from the legend must
+// drop back to the single-axis branch, or the left axis quietly switches
+// scaling mode — same data, different axis, from a legend click.
+describe("WidgetChart — dual axis follows the visible series (TH-7680)", () => {
+  const at = (hour, value) => ({
+    timestamp: `2026-07-09T${String(hour).padStart(2, "0")}:00:00Z`,
+    value,
+  });
+
+  // The bounded-read contract landed after this suite was written: a metric
+  // without a complete read state is treated as non-renderable, so the widget
+  // shows "Loading results…" and never reaches the axis code under test.
+  const metric = (aggregation, values) => ({
+    name: "Latency",
+    aggregation,
+    query_complete: true,
+    query_status: "complete",
+    query_sampled: false,
+    series: [{ name: "total", data: values.map((v, i) => at(i, v)) }],
+  });
+
+  const dualWidget = (visibleSeries, chart_type = "line") => ({
+    id: "w-1",
+    query_config: {
+      metrics: [
+        { name: "Latency", aggregation: "avg" },
+        { name: "Latency", aggregation: "p95" },
+      ],
+    },
+    chart_config: {
+      chart_type,
+      axis_config: { right_y: { visible: true }, series_axis: { 1: "right" } },
+      ...(visibleSeries ? { visible_series: visibleSeries } : {}),
+    },
+  });
+
+  const yaxisOf = (type = "line") =>
+    JSON.parse(screen.getByTestId(`apex-${type}`).getAttribute("data-yaxis"));
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    h.query.isPending = false;
+    h.query.isError = false;
+    h.query.data = null;
+    // Left peaks at 7043, right is a narrow 41-51 band.
+    h.query.data = {
+      data: {
+        result: {
+          query_complete: true,
+          query_status: "complete",
+          query_sampled: false,
+          query_completed_at: "2026-08-03T02:00:00Z",
+          metrics: [
+            metric("avg", [219, 7043, 1500]),
+            metric("p95", [41, 45, 51]),
+          ],
+        },
+      },
+    };
+  });
+
+  it("gives each side its own scale while both are visible", () => {
+    render(<WidgetChart widget={dualWidget()} globalDateRange={null} />);
+    const yaxis = yaxisOf();
+    expect(Array.isArray(yaxis)).toBe(true);
+    expect(yaxis[0].max).not.toBe(yaxis[1].max);
+    // The narrow right band must still fit inside its own axis.
+    expect(yaxis[1].max).toBeGreaterThanOrEqual(51);
+  });
+
+  it("returns to single-axis scaling when the right series is hidden", () => {
+    render(
+      <WidgetChart
+        widget={dualWidget(["|avg|total"])}
+        globalDateRange={null}
+      />,
+    );
+    const yaxis = yaxisOf();
+    expect(Array.isArray(yaxis)).toBe(false);
+    // Identical to the plain single-axis widget on the same data.
+    expect(yaxis).toMatchObject({ min: 0, max: 7500 });
+  });
+
+  it("anchors every entry of a dual-axis column chart at zero", () => {
+    render(
+      <WidgetChart
+        widget={dualWidget(undefined, "column")}
+        globalDateRange={null}
+      />,
+    );
+    expect(yaxisOf("bar").every((y) => y.min === 0)).toBe(true);
+  });
+});
+
+describe("WidgetChart — dense-series budget (TH-7757)", () => {
+  const pointsAt = (count, { everyNthHasValue = 1 } = {}) =>
+    Array.from({ length: count }, (_, i) => ({
+      timestamp: new Date(Date.UTC(2026, 6, 9) + i * 60_000).toISOString(),
+      value: i % everyNthHasValue === 0 ? 1 : null,
+    }));
+
+  const lastChart = () => h.apex.mock.calls.at(-1)[0];
+
+  it("animates a chart that stays within the budget", () => {
+    h.query.data = queryResult(pointsAt(120));
+    render(<WidgetChart widget={baseWidget} globalDateRange={null} />);
+
+    expect(lastChart().options.chart.animations).toMatchObject({
+      enabled: true,
+      speed: 400,
+    });
+    // Sparse series get one resting marker per point.
+    expect(lastChart().options.markers.size).toBeGreaterThan(0);
+  });
+
+  it("draws a dense chart in one static pass", () => {
+    h.query.data = queryResult(pointsAt(1200));
+    render(<WidgetChart widget={baseWidget} globalDateRange={null} />);
+
+    expect(lastChart().options.chart.animations.enabled).toBe(false);
+  });
+
+  it("draws no resting markers on a dense series", () => {
+    // Apex draws a node per point for any series with a marker size, and any
+    // `discrete` entry makes it do so for every series, so only a zero size
+    // keeps those nodes out of the DOM.
+    h.query.data = queryResult(pointsAt(1200));
+    render(<WidgetChart widget={baseWidget} globalDateRange={null} />);
+
+    const { markers } = lastChart().options;
+    expect(markers.size).toEqual([0]);
+    expect(markers.discrete ?? []).toHaveLength(0);
+  });
+
+  it("keeps the markers of a sparse series that shares a chart with a dense one", () => {
+    const sparse = pointsAt(1200).map((point, i) => ({
+      ...point,
+      value: i % 100 === 0 ? 2 : null,
+    }));
+    h.query.data = queryResult(pointsAt(1200));
+    h.query.data.data.result.metrics[0].series.push({
+      name: "sparse",
+      data: sparse,
+    });
+    render(<WidgetChart widget={baseWidget} globalDateRange={null} />);
+
+    expect(lastChart().options.markers.size).toEqual([0, 5]);
+  });
+
+  it("finds the hovered point by position once dense series lose their markers", () => {
+    // An intersecting line tooltip only opens over a marker node, so a series
+    // without markers would have no tooltip at all.
+    h.query.data = queryResult(pointsAt(1200));
+    render(<WidgetChart widget={baseWidget} globalDateRange={null} />);
+    expect(lastChart().options.tooltip.intersect).toBe(false);
+  });
+
+  it("keeps the intersecting tooltip while every point has a marker", () => {
+    h.query.data = queryResult(pointsAt(120));
+    render(<WidgetChart widget={baseWidget} globalDateRange={null} />);
+    expect(lastChart().options.tooltip.intersect).toBe(true);
+  });
+
+  it("still marks the hovered point on a dense chart", () => {
+    h.query.data = queryResult(pointsAt(1200));
+    render(<WidgetChart widget={baseWidget} globalDateRange={null} />);
+
+    expect(lastChart().options.markers.hover.size).toBeGreaterThan(0);
+  });
+
+  it("plots every point it was given even when the animation is dropped", () => {
+    h.query.data = queryResult(pointsAt(1200));
+    render(<WidgetChart widget={baseWidget} globalDateRange={null} />);
+
+    expect(lastChart().series[0].data).toHaveLength(1200);
+  });
+
+  it("charges the budget after empty buckets are dropped, not before", () => {
+    // 2,000 minute buckets, 20 of them observed: the chart plots 20 points and
+    // stays well inside the budget.
+    h.query.data = queryResult(pointsAt(2000, { everyNthHasValue: 100 }));
+    render(<WidgetChart widget={baseWidget} globalDateRange={null} />);
+
+    expect(lastChart().series[0].data).toHaveLength(20);
+    expect(lastChart().options.chart.animations.enabled).toBe(true);
+    expect(lastChart().options.markers.size).toBeGreaterThan(0);
+  });
+});
+
+describe("WidgetChart — stacked tooltip (TH-7757)", () => {
+  const lastChart = () => h.apex.mock.calls.at(-1)[0];
+
+  it("prints a dash, not zero, for a series that did not report the bucket", () => {
+    h.query.data = queryResult([
+      { timestamp: "2026-07-09T00:00:00Z", value: 10 },
+      { timestamp: "2026-07-09T01:00:00Z", value: null },
+    ]);
+    h.query.data.data.result.metrics[0].series.push({
+      name: "other",
+      data: [
+        { timestamp: "2026-07-09T00:00:00Z", value: 0 },
+        { timestamp: "2026-07-09T01:00:00Z", value: 4 },
+      ],
+    });
+    render(
+      <WidgetChart
+        widget={{
+          ...baseWidget,
+          chart_config: { chart_type: "stacked_column" },
+        }}
+        globalDateRange={null}
+      />,
+    );
+
+    const { series, options } = lastChart();
+    const format = (seriesIndex, dataPointIndex) =>
+      options.tooltip.y.formatter(series[seriesIndex].data[dataPointIndex].y, {
+        seriesIndex,
+        dataPointIndex,
+        w: { config: { series } },
+      });
+    expect(format(0, 1)).toBe("-");
+    expect(format(1, 0)).not.toBe("-");
+    expect(format(0, 0)).not.toBe("-");
+  });
+});
+
+describe("WidgetChart — table bucket pruning (TH-7757)", () => {
+  const bucketsSpanning = (count, valueAt) =>
+    Array.from({ length: count }, (_, i) => ({
+      timestamp: new Date(Date.UTC(2026, 6, 9) + i * 60_000).toISOString(),
+      value: valueAt(i),
+    }));
+
+  const tableWidget = {
+    ...baseWidget,
+    chart_config: { chart_type: "table" },
+  };
+
+  const bodyRowCount = () => document.querySelectorAll("tbody tr").length;
+
+  it("renders one row per bucket while the table is short enough to read", () => {
+    h.query.data = queryResult(bucketsSpanning(30, (i) => (i % 3 ? null : i)));
+    render(<WidgetChart widget={tableWidget} globalDateRange={null} />);
+
+    expect(bodyRowCount()).toBe(30);
+  });
+
+  it("drops empty buckets from a minute-granularity range", () => {
+    // 2,000 buckets, 20 observed: the reader gets the 20 that carry data.
+    h.query.data = queryResult(
+      bucketsSpanning(2000, (i) => (i % 100 === 0 ? i : null)),
+    );
+    render(<WidgetChart widget={tableWidget} globalDateRange={null} />);
+
+    expect(bodyRowCount()).toBe(20);
+  });
+
+  it("caps a dense range instead of rendering every bucket", () => {
+    h.query.data = queryResult(bucketsSpanning(2000, (i) => i));
+    render(<WidgetChart widget={tableWidget} globalDateRange={null} />);
+
+    expect(bodyRowCount()).toBe(TABLE_BUCKET_LIMIT);
+  });
+});
+
+describe("WidgetChart — line interpolation", () => {
+  it("smooths without monotoneCubic, which doubles the line back on itself", () => {
+    // monotoneCubic sizes each control handle from the neighbouring gaps, so a
+    // tight cluster next to a long empty stretch produced a handle ~174px past
+    // a 10px segment: the line ran forward, then visibly reversed. Measured on
+    // dev with hand-written data, so it is the interpolation, not the payload.
+    h.query.data = queryResult([
+      { timestamp: "2026-07-09T00:00:00Z", value: 10 },
+      { timestamp: "2026-07-09T01:00:00Z", value: 120 },
+      { timestamp: "2026-08-30T00:00:00Z", value: 10 },
+    ]);
+    render(<WidgetChart widget={baseWidget} globalDateRange={null} />);
+
+    expect(h.apex.mock.calls.at(-1)[0].options.stroke.curve).toBe("smooth");
   });
 });

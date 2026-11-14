@@ -19,7 +19,7 @@ const ExperimentTokenCellRenderer = ({ value }) => {
       <Box sx={{ display: "flex", gap: 1, alignItems: "center" }}>
         {/* <SvgColor
           src={`/assets/icons/components/ic_coin-fill.svg`}
-          sx={{ width: "16px", height: "16px", color: "black.900" }}
+          sx={{ width: "16px", height: "16px", color: "text.primary" }}
         /> */}
         {value}
       </Box>

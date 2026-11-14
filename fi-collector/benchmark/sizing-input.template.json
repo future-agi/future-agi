@@ -1,0 +1,10 @@
+{
+  "spans_per_day": 1296000000,
+  "retention_days": 30,
+  "physical_bytes_per_span_per_replica": null,
+  "replicas": 2,
+  "disk_bytes_per_node": null,
+  "usable_disk_fraction": 0.7,
+  "measured_spans_per_second_per_shard": null,
+  "peak_spans_per_second": 60000
+}

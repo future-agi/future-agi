@@ -239,6 +239,41 @@ func TestPlugin_RequestCompletedWithErrors(t *testing.T) {
 	}
 }
 
+// A decision vendor's error text can quote the content being judged: the
+// audit reason records the code and status, as the request log and span do.
+func TestPlugin_DecisionErrorReasonLeavesOutTheVendorText(t *testing.T) {
+	sink := &testSink{}
+	p := New(testLogger(sink), true)
+
+	rc := makeRC("jev-latest", "typesafe", nil)
+	rc.EndpointType = "decision"
+	rc.Errors = append(rc.Errors, &models.APIError{
+		Status:  502,
+		Type:    "upstream_error",
+		Code:    "provider_error",
+		Message: "PRIVATE-CANARY the judged transcript",
+	})
+
+	p.ProcessResponse(context.Background(), rc)
+	p.Close()
+	if !waitFor(sink, 1) {
+		t.Fatal("expected 1 event")
+	}
+	e := sink.find("request", "request_completed")
+	if e == nil {
+		t.Fatal("request_completed event not found")
+	}
+	if e.Reason != "provider_error: Bad Gateway" {
+		t.Errorf("reason = %q", e.Reason)
+	}
+
+	// Any other endpoint keeps its error text.
+	chat := makeRC("gpt-4o", "openai", nil)
+	if got := models.LoggedError(chat.EndpointType, models.ErrInternal("provider timeout")); got == "" || got == "internal_error: Internal Server Error" {
+		t.Errorf("chat error text = %q", got)
+	}
+}
+
 func TestPlugin_GuardrailTriggeredEvent(t *testing.T) {
 	sink := &testSink{}
 	logger := testLogger(sink)

@@ -15,6 +15,7 @@ from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from accounts.permissions import RequiresIndependentAuth
 from mcp_server.constants import TOOL_GROUPS
 from mcp_server.oauth_provider import (
     APPROVE_PREFIX,
@@ -104,7 +105,7 @@ class MCPOAuthApproveView(APIView):
     Requires JWT auth (authenticated user).
     """
 
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, RequiresIndependentAuth]
 
     @validated_request(
         request_serializer=MCPOAuthApproveRequestSerializer,

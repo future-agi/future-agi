@@ -21,6 +21,7 @@ import { LoadingButton } from "@mui/lab";
 import EvaluationsSelectionGrid from "./EvaluationsSelectionGrid";
 import { useEvalsList, getUserEvalListKey } from "./getEvalsList";
 import SavedEvalsList from "./SavedEvalsList";
+import usePendingEvalSelections from "./usePendingEvalSelections";
 import SavedEvalsSkeleton from "./SavedEvalsSkeleton";
 import DeleteEval from "./DeleteEval";
 import RunEvals from "./RunEvals";
@@ -40,8 +41,10 @@ import CreateEvaluationGroupDrawer from "./CreateEvaluationGroupDrawer";
 import { useSearchParams } from "react-router-dom";
 import { resetEvalStore } from "src/sections/evals/store/useEvalStore";
 import { EvalPickerDrawer } from "src/sections/common/EvalPicker";
+import { getDecisionRunConfigOverrides } from "src/sections/common/EvalPicker/serializeEvalConfig";
 import { useRunEvaluationStore } from "src/sections/develop-detail/states";
 import { useWorkbenchEvaluationContext } from "src/sections/workbench/createPrompt/Evaluation/context/WorkbenchEvaluationContext";
+import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
 
 const EvaluationDrawerChild = ({
   onClose,
@@ -77,6 +80,8 @@ const EvaluationDrawerChild = ({
   const [confirmRunEvaluationsOpen, setConfirmRunEvaluationsOpen] =
     useState(false);
   const [evalPickerOpen, setEvalPickerOpen] = useState(false);
+  const { autoSelectRequests, requestAutoSelect, acknowledgeAutoSelect } =
+    usePendingEvalSelections();
   // When editing an existing eval, pre-select it so the picker opens at config step
   const [editingEval, setEditingEval] = useState(null);
 
@@ -122,6 +127,7 @@ const EvaluationDrawerChild = ({
             ? { error_localizer_enabled: evalItem.error_localizer }
             : {}),
         },
+        bindingConfig: evalItem.config?.config || {},
         mapping: evalItem.mapping || {},
         outputType: evalItem.output_type,
         // Existing UserEvalMetric id — handleAdd routes via editEval
@@ -298,14 +304,14 @@ const EvaluationDrawerChild = ({
                   onClick={onClose}
                   sx={{ p: 0, color: "text.primary" }}
                 >
-                  <Icon icon="mingcute:close-line" />
+                  <Icon icon="solar:close-linear" />
                 </IconButton>
               </Box>
               {isLoading ? (
                 <Box
                   border="1px solid"
                   borderColor={theme.palette.divider}
-                  borderRadius={0.5}
+                  borderRadius="4px"
                   p={theme.spacing(1.5)}
                   flexGrow={1}
                   display="flex"
@@ -326,7 +332,7 @@ const EvaluationDrawerChild = ({
                   alignItems="center"
                   sx={{ width: "100%", height: "calc(100% - 50px)" }}
                 >
-                  <Typography fontSize={16} fontWeight="bold">
+                  <Typography fontSize={16} fontWeight="600">
                     No evaluations added
                   </Typography>
                   <Typography
@@ -343,15 +349,13 @@ const EvaluationDrawerChild = ({
                     onClick={() => setVisibleSection("config")}
                     startIcon={
                       <SvgColor
+                        width={16}
                         src="/assets/icons/action_buttons/ic_add.svg"
                         sx={{
-                          width: 16,
-                          height: 16,
                           color: "inherit",
                         }}
                       />
                     }
-                    sx={{ px: theme.spacing(3), fontWeight: 500 }}
                   >
                     Add Evaluations
                   </Button>
@@ -367,6 +371,8 @@ const EvaluationDrawerChild = ({
                     evals={SavedEvals}
                     allColumns={allColumns}
                     onClose={onClose}
+                    autoSelectRequests={autoSelectRequests}
+                    onAutoSelectApplied={acknowledgeAutoSelect}
                     disableDelete={
                       module === "experiment" &&
                       Array.isArray(SavedEvals) &&
@@ -604,7 +610,9 @@ const EvaluationDrawerChild = ({
           // should be forwarded so eval_runner can apply it at run time.
           const isComposite = evalConfig.templateType === "composite";
 
-          const runConfig = {};
+          const runConfig = isComposite
+            ? {}
+            : getDecisionRunConfigOverrides(evalConfig);
           if (!isComposite) {
             // Single-eval runtime overrides. Composite children each
             // carry their own model/mode/tools — none of this applies
@@ -759,6 +767,7 @@ const EvaluationDrawerChild = ({
                 });
               }
               refreshGrid?.(null, true);
+              requestAutoSelect(evalConfig.name);
               setEvalPickerOpen(false);
               setVisibleSection("list");
             } catch (err) {
@@ -776,7 +785,9 @@ const EvaluationDrawerChild = ({
           }
           // await so errors propagate to EvalPickerDrawer's handleSaveEval
           // catch block — keeps the drawer open on failure.
+          const addedName = payload.name;
           await handleRun(payload, () => {
+            requestAutoSelect(addedName);
             setEvalPickerOpen(false);
             setVisibleSection("list");
           });
@@ -1001,6 +1012,7 @@ const EvaluationDrawer = ({
     };
   }, []);
 
+  const covered = useDrawerCovered(open);
   return (
     <EvaluationProvider>
       <EvaluationContext.Consumer>
@@ -1022,11 +1034,12 @@ const EvaluationDrawer = ({
       <Drawer
         anchor="right"
         open={open}
+        sx={coveredDrawerSx(covered)}
         variant={type}
         onClose={handleClose}
         PaperProps={{
           sx: (theme) => ({
-            width: 650,
+            width: 640,
             maxWidth: "100vw",
             height: "100vh",
             position: "fixed",
@@ -1073,9 +1086,6 @@ const EvaluationDrawer = ({
               variant="contained"
               size="small"
               color="error"
-              sx={{
-                paddingX: 3,
-              }}
               onClick={() => {
                 setOpenConfirmDialog(false);
                 onClose();

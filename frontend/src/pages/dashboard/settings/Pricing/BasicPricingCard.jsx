@@ -68,7 +68,7 @@ const BasicPricingCard = ({ currentPlan }) => {
               <SvgColor
                 // @ts-ignore
                 src="/icons/settings/pricing-list.svg"
-                sx={{ width: "20px", color: "green.500" }}
+                sx={{ width: "20px", color: "status.success.fg" }}
               />
               <Typography
                 color="text.primary"
@@ -85,7 +85,7 @@ const BasicPricingCard = ({ currentPlan }) => {
         <Typography
           color="text.primary"
           typography="l2"
-          fontWeight={"fontWeightBold"}
+          fontWeight={"fontWeightSemiBold"}
         >
           $0
         </Typography>

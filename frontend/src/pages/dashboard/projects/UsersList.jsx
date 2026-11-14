@@ -1,11 +1,13 @@
 import React, { useCallback, useMemo, useRef } from "react";
 import { Helmet } from "react-helmet-async";
-import { Box, Divider, Paper, Typography, useTheme } from "@mui/material";
-import Iconify from "src/components/iconify";
+import { Box, Divider, Paper, useTheme } from "@mui/material";
+import PageHeader from "src/components/page-header";
+import FormSearchField from "src/components/FormSearchField/FormSearchField";
 import UsersView from "src/sections/projects/UsersView/UsersView";
 import UsersPageTabBar from "src/sections/projects/UsersView/UsersPageTabBar";
 import { useUrlState } from "src/routes/hooks/use-url-state";
 import { useGetWorkspaceSavedViews } from "src/api/project/saved-views";
+import useUsersStore from "src/sections/projects/UsersView/Store/usersStore";
 
 const USERS_TAB_TYPE = "users";
 
@@ -26,6 +28,11 @@ const UserList = () => {
   // useUrlState-restored display state via UsersPageTabBar's applyConfig(null)
   // path).
   const [activeTab, setActiveTab] = useUrlState("usersTab", "all");
+
+  // Long user lists: search by user ID. UsersGrid already sends the store's
+  // searchQuery to the API (debounced), so this only needs the input.
+  const searchQuery = useUsersStore((s) => s.searchQuery);
+  const setSearchQuery = useUsersStore((s) => s.setSearchQuery);
 
   // Derive the active saved view's config so UsersView can compute
   // canSaveView (Save view button visibility) against the right baseline.
@@ -100,46 +107,13 @@ const UserList = () => {
         {/* === Header === */}
         <Paper sx={headerPaperStyles}>
           <Box display="flex" flexDirection="column" width="100%">
-            <Box
-              display="flex"
-              alignItems="center"
-              justifyContent="space-between"
-              sx={{ minHeight: 38 }}
-            >
-              <Box display="flex" alignItems="center" gap={1.5}>
-                <Box
-                  sx={{
-                    display: "inline-flex",
-                    alignItems: "center",
-                    gap: 0.75,
-                    height: 26,
-                    px: 1.5,
-                    border: "1px solid",
-                    borderColor: "divider",
-                    borderRadius: "4px",
-                    bgcolor: "background.paper",
-                  }}
-                >
-                  <Iconify
-                    icon="mdi:account-multiple-outline"
-                    width={16}
-                    sx={{ color: "text.secondary" }}
-                  />
-                  <Typography
-                    variant="body2"
-                    sx={{ fontWeight: 600, color: "text.primary" }}
-                  >
-                    Users
-                  </Typography>
-                </Box>
-                <Typography
-                  variant="caption"
-                  sx={{ color: "text.secondary", ml: 0.5 }}
-                >
-                  All users across your projects
-                </Typography>
-              </Box>
-            </Box>
+            {/* The API lists one row per user *within a project*; say so
+                rather than implying de-duplicated people (TH-5037). */}
+            <PageHeader
+              title="Users"
+              description="See each user's sessions, cost and eval pass rate, one row per user per project."
+              sx={{ mb: 0 }}
+            />
             <Divider sx={{ mt: 1.5, borderColor: "divider" }} />
           </Box>
         </Paper>
@@ -160,6 +134,13 @@ const UserList = () => {
               onTabChange={setActiveTab}
               getConfig={getSavedViewConfig}
               applyConfig={applySavedViewConfig}
+            />
+            <FormSearchField
+              placeholder="Search user ID"
+              searchQuery={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              inputProps={{ "aria-label": "Search user ID" }}
+              sx={{ width: 220, flexShrink: 0 }}
             />
             <Box
               id="observe-toolbar-slot"

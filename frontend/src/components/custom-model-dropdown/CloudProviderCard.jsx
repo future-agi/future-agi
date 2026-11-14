@@ -97,11 +97,7 @@ const CloudProviderCardComponent = ({
   const buttonStyles = useMemo(
     () => ({
       minWidth: "90px",
-      height: theme.spacing(4.75), // 38/8 = 4.75
-      borderRadius: "8px",
       whiteSpace: "nowrap",
-      fontSize: "12px",
-      fontWeight: 500,
     }),
     [theme],
   );

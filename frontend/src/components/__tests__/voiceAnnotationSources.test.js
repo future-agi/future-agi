@@ -121,3 +121,27 @@ describe("buildTraceAnnotationSources", () => {
     expect(buildTraceAnnotationSources({})).toEqual([]);
   });
 });
+
+describe("annotation source project pin", () => {
+  it("carries the drawer project on every trace source", () => {
+    expect(
+      buildTraceAnnotationSources({
+        traceId: "trace-1",
+        spanId: "span-1",
+        sessionId: "session-1",
+        projectId: "project-1",
+      }).map((source) => source.projectId),
+    ).toEqual(["project-1", "project-1", "project-1"]);
+  });
+
+  it("carries the drawer project on every voice-call source", () => {
+    expect(
+      buildVoiceCallAnnotationSources({
+        traceId: "trace-1",
+        rootSpanId: "span-1",
+        module: "project",
+        projectId: "project-1",
+      }).map((source) => source.projectId),
+    ).toEqual(["project-1", "project-1"]);
+  });
+});

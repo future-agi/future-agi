@@ -31,18 +31,22 @@ const ObservationLevelsCell = ({ data }) => {
       >
         {errorCount > 0 && (
           <LevelBadge
-            icon="mdi:alert-circle"
-            color="#EF4444"
+            icon="solar:danger-circle-linear"
+            color="status.danger.fg"
             count={errorCount}
           />
         )}
         {warningCount > 0 && (
-          <LevelBadge icon="mdi:alert" color="#F59E0B" count={warningCount} />
+          <LevelBadge
+            icon="solar:danger-triangle-linear"
+            color="status.warning.fg"
+            count={warningCount}
+          />
         )}
         {defaultCount > 0 && (
           <LevelBadge
-            icon="mdi:information"
-            color="#3B82F6"
+            icon="solar:info-circle-linear"
+            color="status.info.fg"
             count={defaultCount}
           />
         )}
@@ -66,11 +70,15 @@ const ObservationLevelsCell = ({ data }) => {
       }}
     >
       {isError && (
-        <LevelBadge icon="mdi:alert-circle" color="#EF4444" count={1} />
+        <LevelBadge
+          icon="solar:danger-circle-linear"
+          color="status.danger.fg"
+          count={1}
+        />
       )}
       <LevelBadge
-        icon="mdi:information"
-        color="#3B82F6"
+        icon="solar:info-circle-linear"
+        color="status.info.fg"
         count={isError ? Math.max(0, totalSpans - 1) : totalSpans}
       />
     </Box>
@@ -82,7 +90,7 @@ const LevelBadge = ({ icon, color, count }) => (
     <Iconify icon={icon} width={14} sx={{ color }} />
     <Typography
       sx={{
-        fontSize: 13,
+        fontSize: 12,
         fontWeight: 500,
         color: "text.primary",
         fontVariantNumeric: "tabular-nums",

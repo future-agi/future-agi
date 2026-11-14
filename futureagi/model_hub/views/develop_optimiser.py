@@ -10,6 +10,7 @@ from django.shortcuts import get_object_or_404
 from rest_framework.generics import RetrieveAPIView
 from rest_framework.permissions import IsAuthenticated
 
+from model_hub.utils.optimization_scope import optimization_metrics
 from tfc.ee_stub import _ee_stub
 
 try:
@@ -40,15 +41,17 @@ from model_hub.models.choices import (
 )
 from model_hub.models.develop_dataset import Cell, Column, Row
 from model_hub.models.develop_optimisation import OptimizationDataset
-from model_hub.models.evals_metric import UserEvalMetric
 from model_hub.models.run_prompt import RunPrompter
 from model_hub.serializers.develop_optimisation import OptimizationDetailSerializer
 from model_hub.utils.workspace_scope import scoped_optimization_queryset
 from model_hub.views.eval_runner import EvaluationRunner
-from model_hub.views.prompt_template import replace_ids_with_column_name
 from tfc.constants.api_calls import APICallTypeChoices
+
 try:
-    from ee.usage.utils.usage_entries import count_tiktoken_tokens, log_and_deduct_cost_for_api_request
+    from ee.usage.utils.usage_entries import (
+        count_tiktoken_tokens,
+        log_and_deduct_cost_for_api_request,
+    )
 except ImportError:
     count_tiktoken_tokens = None
     log_and_deduct_cost_for_api_request = None
@@ -60,12 +63,18 @@ class DevelopOptimizer:
         self.optimize_dataset = self._get_optimization_dataset()
         self.dataset = self.optimize_dataset.dataset
         self.messages = self.optimize_dataset.messages
+        if (
+            self.optimize_dataset.column_id
+            and self.optimize_dataset.column.dataset_id != self.dataset.id
+        ):
+            raise ValueError("Optimization column must belong to its dataset.")
+        self.api_call_log_row = None
         if not avoid_cost:
             self._calculate_tokens_and_deduct()
         self.column = self.optimize_dataset.column
         self.model_config = self.optimize_dataset.model_config
         if not self.model_config:
-            run_prompt = get_object_or_404(RunPrompter, id=self.column.source_id)
+            run_prompt = self._get_run_prompt()
             self.model_config = {
                 "frequency_penalty": run_prompt.frequency_penalty or 0.0,
                 "presence_penalty": run_prompt.presence_penalty or 0.0,
@@ -80,10 +89,17 @@ class DevelopOptimizer:
 
     def _calculate_tokens_and_deduct(self):
         try:
-            column = Column.objects.get(id=self.optimize_dataset.column.id)
+            column = Column.objects.get(
+                id=self.optimize_dataset.column_id, dataset=self.dataset
+            )
             column_id = str(column.id)
             opt_column_token_count = 0
-            cells = Cell.objects.filter(column=column, deleted=False)
+            cells = Cell.objects.filter(
+                column=column,
+                dataset=self.dataset,
+                row__dataset=self.dataset,
+                deleted=False,
+            )
             cell_values_strings = []
             cell_values_image_urls = []
             for cell in cells:
@@ -99,9 +115,13 @@ class DevelopOptimizer:
                     cell_values_strings.append("")
 
             input_words_string = " ".join(cell_values_strings)
-            opt_column_token_count = (count_tiktoken_tokens(
-                input_words_string, input_image_urls=cell_values_image_urls
-            ) if count_tiktoken_tokens else 0)
+            opt_column_token_count = (
+                count_tiktoken_tokens(
+                    input_words_string, input_image_urls=cell_values_image_urls
+                )
+                if count_tiktoken_tokens
+                else 0
+            )
 
             # print("optimisation token_count : ", opt_column_token_count)
             reference_id = str(self.optimize_dataset.id)
@@ -114,13 +134,13 @@ class DevelopOptimizer:
             organization = column.dataset.organization
             api_call_type = APICallTypeChoices.DATASET_OPTIMIZATION.value
             if log_and_deduct_cost_for_api_request is not None:
-                log_and_deduct_cost_for_api_request(
-                organization,
-                api_call_type,
-                config,
-                source="optimisation",
-                workspace=column.dataset.workspace,
-            )
+                self.api_call_log_row = log_and_deduct_cost_for_api_request(
+                    organization,
+                    api_call_type,
+                    config,
+                    source="optimisation",
+                    workspace=column.dataset.workspace,
+                )
 
             # Non-chargeable tracking event — optimisation uses user's own API keys.
             # Eval runs within optimisation emit ai_credits events via run_eval_func().
@@ -137,15 +157,15 @@ class DevelopOptimizer:
 
                 if emit is not None and UsageEvent is not None:
                     emit(
-                    UsageEvent(
-                        org_id=str(organization.id),
-                        event_type=api_call_type,
-                        properties={
-                            "source": "optimisation",
-                            "source_id": str(self.optimize_dataset.id),
-                        },
+                        UsageEvent(
+                            org_id=str(organization.id),
+                            event_type=api_call_type,
+                            properties={
+                                "source": "optimisation",
+                                "source_id": str(self.optimize_dataset.id),
+                            },
+                        )
                     )
-                )
             except Exception:
                 pass  # Metering failure must not break the action
 
@@ -158,22 +178,18 @@ class DevelopOptimizer:
         try:
             # get the optimisation object by id
             from tfc.constants.api_calls import APICallStatusChoices
-            try:
-                from ee.usage.models.usage import APICallLog
-            except ImportError:
-                APICallLog = None
+
             try:
                 from ee.usage.utils.usage_entries import refund_cost_for_api_call
             except ImportError:
                 refund_cost_for_api_call = None
 
-            optimizer_row = OptimizationDataset.objects.get(id=self.optimize_dataset.id)
-            optimisation_id = str(optimizer_row.id)
-            # get the api call log row by reference id
-            if APICallLog is not None:
-                api_call_log_row = APICallLog.objects.filter(
-                reference_id=optimisation_id, deleted=False
-            ).first()
+            optimizer_row = self.optimize_dataset
+            # Only mutate the exact log returned by this run's metering call.
+            # Reference/config strings can collide, even within one workspace.
+            api_call_log_row = self.api_call_log_row
+            if api_call_log_row is None:
+                return
             if optimizer_row.status == StatusType.FAILED.value:
                 # refund the cost
                 # update the api call log row
@@ -224,6 +240,15 @@ class DevelopOptimizer:
         self.optimize_dataset.save()
         raise ValueError(error_message)
 
+    def _get_run_prompt(self):
+        return get_object_or_404(
+            RunPrompter,
+            id=self.column.source_id,
+            dataset=self.dataset,
+            dataset__organization_id=self.dataset.organization_id,
+            dataset__workspace_id=self.dataset.workspace_id,
+        )
+
     def _get_messages(self):
         if not self.messages:
             if not self.column:
@@ -231,10 +256,10 @@ class DevelopOptimizer:
             elif self.column.source != SourceChoices.RUN_PROMPT.value:
                 self._handle_failure("Mentioned column is not a run prompt column.")
             else:
-                run_prompt = get_object_or_404(RunPrompter, id=self.column.source_id)
+                run_prompt = self._get_run_prompt()
                 self.messages = run_prompt.messages
         if not self.model_config:
-            run_prompt = get_object_or_404(RunPrompter, id=self.column.source_id)
+            run_prompt = self._get_run_prompt()
             self.model_config = {
                 "frequency_penalty": run_prompt.frequency_penalty or 0.0,
                 "presence_penalty": run_prompt.presence_penalty or 0.0,
@@ -272,7 +297,13 @@ class DevelopOptimizer:
             for match in matches:
                 try:
                     column_id = match.strip()
-                    cell = Cell.objects.get(column__id=column_id, row=row)
+                    cell = Cell.objects.get(
+                        column_id=column_id,
+                        column__dataset=self.dataset,
+                        row=row,
+                        row__dataset=self.dataset,
+                        dataset=self.dataset,
+                    )
                     row_variables[column_id] = str(cell.value)
                     value = value.replace(f"{{{match}}}", str(cell.value))
                 except Exception as e:
@@ -327,9 +358,7 @@ class DevelopOptimizer:
         return data
 
     def get_eval_template_descriptions(self) -> list[str]:
-        user_eval_metrics = UserEvalMetric.objects.filter(
-            id__in=self.optimize_dataset.user_eval_template_ids.all(), deleted=False
-        ).select_related("template")
+        user_eval_metrics = optimization_metrics(self.optimize_dataset)
 
         return [str(user_eval.template.description) for user_eval in user_eval_metrics]
 
@@ -508,9 +537,6 @@ class DevelopOptimizer:
                 },
             )
 
-            with open("optimize_data.txt", "w") as f:
-                f.write(f"""Prompt: {self.prompt},""")
-
             top_k_optimized_prompts = prompt_optim_agent.get_optimized_prompt(k=3)
             # best_template = max(top_k_optimized_prompts, key=lambda x: x['train_score'])
             # Store all prompts but keep them sorted by train_score
@@ -571,7 +597,7 @@ class DevelopOptimizer:
 
         # Create tasks for parallel execution
         tasks = []
-        for eval_template in self.optimize_dataset.user_eval_template_ids.all():
+        for eval_template in optimization_metrics(self.optimize_dataset):
             # both old and new column evaluations for each template
             tasks.append((eval_template, old_column))
             tasks.append((eval_template, new_column))
@@ -604,7 +630,14 @@ class DevelopOptimizer:
         """Run feedback evaluation for a specific user_eval_metric"""
         try:
             close_old_connections()
-            rows = Row.objects.filter(dataset=user_eval_metric.dataset, deleted=False)
+            user_eval_metric = optimization_metrics(self.optimize_dataset).get(
+                id=user_eval_metric.id
+            )
+            if column.dataset_id != self.dataset.id:
+                raise ValueError(
+                    "Feedback column must belong to the optimizer dataset."
+                )
+            rows = Row.objects.filter(dataset=self.dataset, deleted=False)
             properties = get_mixpanel_properties(
                 org=user_eval_metric.organization,
                 dataset=user_eval_metric.dataset,
@@ -639,16 +672,6 @@ class OptimizationDetailView(RetrieveAPIView):
 
     def get_queryset(self):
         return scoped_optimization_queryset(self.request)
-
-    def get_object(self):
-        obj = super().get_object()
-        # Replace column IDs with column names in the optimized prompts
-        if obj.optimized_k_prompts:
-            obj.optimized_k_prompts = [
-                replace_ids_with_column_name(prompt)
-                for prompt in obj.optimized_k_prompts
-            ]
-        return obj
 
 
 optimise_prompt = """

@@ -1,0 +1,566 @@
+"""Sign-up flow for Google Cloud Marketplace customers.
+
+Entry points converge on the same state:
+
+    verify-token/  Google posts a signed JWT. We create the Organization and
+                   mint an onboarding token.
+
+    signup/        The customer submits name and email. We create the User,
+                   approve the procurement account, and approve any entitlement
+                   that arrived before they got here.
+
+    OAuth callback The customer chose "Continue with Google" instead of the
+                   form. The onboarding token rides the OAuth state parameter
+                   there and back, and the callback calls process_signup with
+                   the identity Google returned.
+
+Pub/Sub can deliver ENTITLEMENT_CREATION_REQUESTED before or after sign-up
+completes, so whichever runs second performs the entitlement approval.
+"""
+
+import uuid as _uuid
+from urllib.parse import urlsplit
+
+import structlog
+from django.conf import settings
+from django.core.cache import cache
+from django.db import transaction
+
+from accounts.models.gcp_marketplace import (
+    GCPMarketplaceAccount,
+    GCPMarketplaceAccountState,
+    GCPMarketplaceEntitlement,
+    GCPMarketplaceEntitlementState,
+)
+from accounts.models.organization import Organization
+from accounts.models.organization_membership import OrganizationMembership
+from accounts.models.user import User
+from accounts.services.gcp_procurement import gcp_procurement
+from accounts.utils import (
+    generate_password,
+    is_disposable_email_domain,
+    process_post_registration,
+)
+from tfc.constants.levels import Level
+from tfc.constants.roles import OrganizationRoles
+
+logger = structlog.get_logger(__name__)
+
+GCP_ISSUER = (
+    "https://www.googleapis.com/robot/v1/metadata/x509/"
+    "cloud-commerce-partner@system.gserviceaccount.com"
+)
+
+ONBOARDING_CACHE_PREFIX = "gcp_onboard"
+# Has to outlast the sign-up, including a detour through Google's OAuth. The
+# token only names an organization with no members, which process_signup
+# re-checks, so the longer window costs nothing.
+ONBOARDING_TTL_SECONDS = 60 * 60
+
+OAUTH_STATE_PREFIX = "gcp_onboarding:"
+
+try:
+    from ee.usage.models.usage import BillingMethodChoices, OrganizationSubscription
+except ImportError:
+    BillingMethodChoices = None
+    OrganizationSubscription = None
+
+try:
+    from ee.usage.utils.usage_entries import (
+        create_organization_subscription_if_not_exists,
+    )
+except ImportError:
+    create_organization_subscription_if_not_exists = None
+
+
+def _unverified_audience(token: str):
+    """The aud claim without verifying anything, for an error message only.
+
+    Only ever reached after verification has already failed, so nothing is
+    trusted on the strength of it.
+    """
+    try:
+        from google.auth import jwt as google_jwt
+
+        return google_jwt.decode(token, verify=False).get("aud")
+    except Exception:
+        return "<unreadable>"
+
+
+def _host_of(value: str) -> str:
+    value = (value or "").strip()
+    if not value:
+        return ""
+    if "://" not in value:
+        value = f"https://{value}"
+    return urlsplit(value).hostname or ""
+
+
+def token_audiences() -> list[str]:
+    """Accepted `aud` values for the sign-up token.
+
+    Google documents the claim only as the partner's domain, without saying
+    whether that is the host of the Sign up URL or the apex. With no explicit
+    setting, accept every domain we own that Google could mean: the API host,
+    the app host and their apex. The token is still signature-checked, so a
+    wider list costs nothing; a too-narrow one fails every sign-up.
+    """
+    if settings.GCP_MARKETPLACE_TOKEN_AUDIENCES:
+        return settings.GCP_MARKETPLACE_TOKEN_AUDIENCES
+
+    candidates = []
+    for host in (_host_of(settings.BASE_URL), _host_of(settings.APP_URL)):
+        if not host:
+            continue
+        candidates.append(host)
+        apex = ".".join(host.split(".")[-2:])
+        candidates.append(apex)
+
+    seen = set()
+    return [c for c in candidates if not (c in seen or seen.add(c))]
+
+
+def verify_marketplace_token(token: str) -> tuple[str, str, str]:
+    """Verify the x-gcp-marketplace-token JWT and return its identifiers.
+
+    Returns the procurement account id, which names the subscription, the
+    obfuscated Google user id, which names the person, and the `aud` claim so
+    the caller can log which of the accepted domains Google actually sends.
+    The user id is optional on Google's side, so it can come back empty.
+
+    This endpoint is unauthenticated and provisions paid accounts, so every
+    check matters: an unverified `sub` is a free-subscription vulnerability.
+
+    Checks signature (RS256, against the certs Google publishes at the issuer
+    URL), expiry, audience and issuer. Tokens live five minutes.
+
+    Google documents aud as a single domain string, and a list-valued aud is
+    rejected: google.auth.jwt compares the whole claim against the accepted
+    values, so a list never matches.
+    """
+    from google.auth.transport import requests as google_requests
+    from google.oauth2 import id_token
+
+    accepted = token_audiences()
+    if not accepted:
+        raise ValueError(
+            "No accepted audience: set GCP_MARKETPLACE_TOKEN_AUDIENCES, or "
+            "BASE_URL and APP_URL so it can be derived."
+        )
+
+    # The list goes to the library, not a check here: audience=None is skipped
+    # by google.auth.jwt but raises under PyJWT, and which one runs depends on
+    # the cert format Google serves.
+    try:
+        payload = id_token.verify_token(
+            token,
+            google_requests.Request(),
+            audience=accepted,
+            certs_url=GCP_ISSUER,
+        )
+    except Exception as exc:
+        # aud is the likeliest misconfiguration and the library only says the
+        # token is bad. Name what arrived, so one failure gives the answer.
+        raise ValueError(
+            f"{exc} (token aud={_unverified_audience(token)!r}, "
+            f"accepted={accepted})"
+        ) from exc
+
+    # verify_token checks signature, exp and aud. Issuer is not among them.
+    if payload.get("iss") != GCP_ISSUER:
+        raise ValueError("Unexpected issuer on marketplace token")
+
+    account_id = payload.get("sub")
+    if not account_id:
+        raise ValueError("Marketplace token carries no subject")
+
+    user_identity = (payload.get("google") or {}).get("user_identity") or ""
+
+    return account_id, user_identity, str(payload.get("aud") or "")
+
+
+def _mark_billed_by_marketplace(organization) -> None:
+    """Set billing_method so the Stripe invoice run skips this organization.
+
+    Done at organization creation rather than entitlement activation: the gap
+    between sign-up and ENTITLEMENT_ACTIVE can be days if the customer abandons
+    the form, and a monthly invoice run inside that window would bill them twice.
+    """
+    if OrganizationSubscription is None or BillingMethodChoices is None:
+        return
+
+    OrganizationSubscription.objects.filter(organization=organization).update(
+        billing_method=BillingMethodChoices.GCP_MARKETPLACE
+    )
+
+
+def _create_organization(gcp_account: GCPMarketplaceAccount) -> Organization:
+    """Google supplies no customer identity, so the name is a placeholder.
+
+    The AWS path names the org after the customer's AWS account id. There is no
+    GCP equivalent: the procurement account id is opaque and carries no name,
+    email or company. Renamed from the sign-up form in process_signup.
+    """
+    placeholder = f"GCP Marketplace {gcp_account.procurement_account_id[:8]}"
+
+    organization = Organization.objects.create(
+        name=placeholder,
+        display_name=placeholder,
+        region=settings.REGION,
+    )
+
+    gcp_account.organization = organization
+    gcp_account.save(update_fields=["organization", "updated_at"])
+
+    if create_organization_subscription_if_not_exists is not None:
+        create_organization_subscription_if_not_exists(organization)
+
+    _mark_billed_by_marketplace(organization)
+
+    return organization
+
+
+def onboard_account(account_id: str, user_identity: str = "") -> tuple[str, bool]:
+    """Link a procurement account to an Organization.
+
+    Approval is not granted here. Google treats an account approval as an
+    assertion that the customer signed up with us, and at this point they have
+    only landed on the form, so _approve_signup makes the call once a User exists.
+
+    Returns the onboarding token and whether the organization already has users,
+    which decides between the sign-up form and the login page.
+    """
+    account = gcp_procurement.get_account(account_id)
+
+    gcp_account, _ = GCPMarketplaceAccount.objects.get_or_create(
+        procurement_account_id=account_id,
+        defaults={
+            "state": account.get("state", ""),
+            "google_user_identity": user_identity,
+            "raw_payload": account,
+        },
+    )
+
+    # First writer wins. A second person clicking through must not overwrite the
+    # identity that made the purchase.
+    if user_identity and not gcp_account.google_user_identity:
+        gcp_account.google_user_identity = user_identity
+        gcp_account.save(update_fields=["google_user_identity", "updated_at"])
+
+    if not gcp_account.organization:
+        # Locked and re-read: the sign-up URL is a form post, and a double
+        # submit would otherwise create two organizations.
+        with transaction.atomic():
+            locked = GCPMarketplaceAccount.objects.select_for_update().get(
+                pk=gcp_account.pk
+            )
+            if not locked.organization:
+                _create_organization(locked)
+            gcp_account = locked
+
+    has_user = bool(
+        gcp_account.organization and gcp_account.organization.members.exists()
+    )
+
+    return _mint_onboarding_token(gcp_account), has_user
+
+
+def _now():
+    from django.utils import timezone
+
+    return timezone.now()
+
+
+def _mint_onboarding_token(gcp_account: GCPMarketplaceAccount) -> str:
+    token = _uuid.uuid4().hex
+    cache.set(
+        f"{ONBOARDING_CACHE_PREFIX}:{token}",
+        {
+            "procurement_account_id": gcp_account.procurement_account_id,
+            "organization_id": (
+                str(gcp_account.organization.id) if gcp_account.organization else None
+            ),
+        },
+        timeout=ONBOARDING_TTL_SECONDS,
+    )
+    return token
+
+
+def read_onboarding_token(token: str) -> dict:
+    session = cache.get(f"{ONBOARDING_CACHE_PREFIX}:{token}") if token else None
+    if not session:
+        raise ValueError("Invalid or expired onboarding token")
+    return session
+
+
+def discard_onboarding_token(token: str) -> None:
+    cache.delete(f"{ONBOARDING_CACHE_PREFIX}:{token}")
+
+
+def encode_oauth_state(onboarding_token: str) -> str:
+    """Wrap an onboarding token for the OAuth state parameter.
+
+    "Continue with Google" leaves our origin, so a query param on the register
+    page does not survive the round trip. state is the only field Google hands
+    back untouched.
+    """
+    return f"{OAUTH_STATE_PREFIX}{onboarding_token}"
+
+
+def read_oauth_state(state: str | None) -> str | None:
+    """Return the onboarding token an OAuth state carries, or None.
+
+    The prefix is what distinguishes a marketplace sign-up from every other
+    OAuth login, which sends no state at all.
+    """
+    if not state or not state.startswith(OAUTH_STATE_PREFIX):
+        return None
+    return state[len(OAUTH_STATE_PREFIX) :] or None
+
+
+def _approve_signup(gcp_account: GCPMarketplaceAccount) -> None:
+    """Tell Google the customer completed sign-up with us.
+
+    Google documents the approval as following account creation on the provider
+    side, so it belongs here and not at verify-token time. An account left
+    pending is the correct outcome for a customer who never finishes the form.
+    """
+    account = gcp_procurement.get_account(gcp_account.procurement_account_id)
+    if gcp_procurement.pending_approval(account):
+        gcp_procurement.approve_account(gcp_account.procurement_account_id)
+    elif gcp_account.approved_at:
+        return
+    # Either just approved, or approved on a previous attempt whose response
+    # was lost. Both mean Google holds the approval, so record it: held
+    # entitlements are released on approved_at, and a null there would keep
+    # them waiting for an approval that already happened.
+    gcp_account.approved_at = _now()
+    gcp_account.state = GCPMarketplaceAccountState.ACTIVE
+    gcp_account.save(update_fields=["approved_at", "state", "updated_at"])
+
+
+def reconcile_unapproved_accounts() -> dict:
+    """Finish sign-ups whose Procurement approval never went through.
+
+    process_signup creates the User inside a transaction and calls Google
+    afterwards. If that call fails and the customer never resubmits, the
+    account stays unapproved on Google's side, the entitlement stays held,
+    and nothing retries. This is the retry, run hourly.
+    """
+    counts = {"checked": 0, "approved": 0, "failed": 0}
+    waiting = GCPMarketplaceAccount.objects.filter(
+        approved_at__isnull=True, organization__isnull=False
+    ).select_related("organization")
+
+    for gcp_account in waiting:
+        if not gcp_account.organization.members.exists():
+            continue
+        counts["checked"] += 1
+        try:
+            _approve_signup(gcp_account)
+            approve_pending_entitlements(gcp_account)
+            counts["approved"] += 1
+            logger.warning(
+                "gcp_marketplace_signup_approval_recovered",
+                account_id=gcp_account.procurement_account_id,
+            )
+        except Exception:
+            counts["failed"] += 1
+            logger.exception(
+                "gcp_marketplace_signup_approval_retry_failed",
+                account_id=gcp_account.procurement_account_id,
+            )
+    return counts
+
+
+def _link_orphan_entitlements(gcp_account: GCPMarketplaceAccount) -> int:
+    """Attach entitlements that arrived before this account row existed.
+
+    sync_entitlement leaves account null when it cannot find the account yet,
+    and nothing revisits those rows. Without this the customer has paid, the
+    entitlement is waiting, and no approval path can see it.
+    """
+    linked = 0
+    linked_rows: list[GCPMarketplaceEntitlement] = []
+    orphans = GCPMarketplaceEntitlement.objects.filter(account__isnull=True)
+    for entitlement in orphans:
+        account_ref = (entitlement.raw_payload or {}).get("account", "")
+        if gcp_procurement.bare_id(account_ref) != gcp_account.procurement_account_id:
+            continue
+        entitlement.account = gcp_account
+        entitlement.organization = gcp_account.organization
+        entitlement.save(update_fields=["account", "organization", "updated_at"])
+        linked_rows.append(entitlement)
+        linked += 1
+
+    # With automatic offer approval Google can activate before sign-up ends,
+    # and ENTITLEMENT_ACTIVE on an orphan row had no organization to put on
+    # the plan. Now it does: apply it here, or the customer who just paid
+    # sits on free until the hourly reconcile. Newest wins, as everywhere.
+    from accounts.models.gcp_marketplace import IN_SERVICE_STATES
+
+    live = [row for row in linked_rows if row.status in IN_SERVICE_STATES]
+    if live and gcp_account.organization_id:
+        from accounts.gcp_marketplace_events import _apply_plan
+
+        newest = max(live, key=lambda row: (row.effective_at or row.created_at, row.created_at))
+        _apply_plan(newest)
+
+    if linked:
+        logger.info(
+            "gcp_marketplace_orphan_entitlements_linked",
+            account_id=gcp_account.procurement_account_id,
+            count=linked,
+        )
+    return linked
+
+
+def _sync_pending_entitlements_from_google(gcp_account: GCPMarketplaceAccount) -> int:
+    """Mirror the account's unapproved entitlements straight from Google.
+
+    Approval must not depend on ENTITLEMENT_CREATION_REQUESTED having been
+    consumed: Pub/Sub is unordered and the events of one purchase share an
+    eventId, so the message can be delayed or lost. The Procurement API is the
+    source of truth; a failed listing falls back to whatever is held locally.
+    """
+    from accounts.gcp_marketplace_events import sync_entitlement
+
+    synced = 0
+    try:
+        for remote in gcp_procurement.iter_entitlements(
+            account_id=gcp_account.procurement_account_id
+        ):
+            if (
+                remote.get("state")
+                != GCPMarketplaceEntitlementState.ACTIVATION_REQUESTED
+            ):
+                continue
+            if sync_entitlement(gcp_procurement.bare_id(remote.get("name", ""))):
+                synced += 1
+    except Exception:
+        logger.exception(
+            "gcp_marketplace_entitlement_listing_failed",
+            account_id=gcp_account.procurement_account_id,
+        )
+        return synced
+
+    if synced:
+        logger.info(
+            "gcp_marketplace_pending_entitlements_synced",
+            account_id=gcp_account.procurement_account_id,
+            count=synced,
+        )
+    return synced
+
+
+def approve_pending_entitlements(gcp_account: GCPMarketplaceAccount) -> int:
+    """Approve entitlements that arrived before sign-up completed.
+
+    An entitlement cannot be approved until its account is approved, so the
+    Pub/Sub handler stores the row and skips. This is the other half: once the
+    account is approved, anything waiting is approved here.
+    """
+    _link_orphan_entitlements(gcp_account)
+    _sync_pending_entitlements_from_google(gcp_account)
+
+    from accounts.gcp_marketplace_events import reject_duplicate_entitlement
+
+    pending = GCPMarketplaceEntitlement.objects.filter(
+        account=gcp_account,
+        status=GCPMarketplaceEntitlementState.ACTIVATION_REQUESTED,
+    ).order_by("effective_at", "created_at")
+
+    approved = 0
+    for entitlement in pending:
+        try:
+            # Oldest first. Once one is approved the rest are duplicates of a
+            # subscription this organization already holds.
+            if approved and reject_duplicate_entitlement(entitlement):
+                continue
+            gcp_procurement.approve_entitlement(entitlement.entitlement_id)
+            approved += 1
+        except Exception:
+            logger.exception(
+                "gcp_marketplace_pending_entitlement_approve_failed",
+                entitlement_id=entitlement.entitlement_id,
+            )
+
+    return approved
+
+
+def process_signup(onboarding_token: str, email: str, full_name: str) -> User:
+    """Create the owner user for a marketplace organization.
+
+    Shared by the sign-up form and the Google OAuth callback, so the identity
+    may come from either a submitted form or a verified Google profile.
+    """
+    session = read_onboarding_token(onboarding_token)
+
+    # first_signup lowercases before anything else. Without it the duplicate
+    # check below misses case variants and two users differ only in casing.
+    email = (email or "").strip().lower()
+
+    if is_disposable_email_domain(email.split("@")[-1]):
+        raise ValueError("Disposable email addresses are not accepted")
+
+    gcp_account = GCPMarketplaceAccount.objects.filter(
+        procurement_account_id=session["procurement_account_id"]
+    ).first()
+    if not gcp_account or not gcp_account.organization:
+        raise ValueError("Marketplace account is not linked to an organization")
+
+    # A previous attempt can have created the User then failed on a Procurement
+    # call, which runs outside the transaction. Rejecting the retry would strand
+    # a paying customer, so the same email resumes at the approval step.
+    owner = gcp_account.organization.members.filter(email=email).first()
+    if owner is not None:
+        _finish_signup(gcp_account, onboarding_token)
+        return owner
+
+    if gcp_account.organization.members.exists():
+        raise ValueError("This Marketplace subscription already has an account")
+
+    if User.objects.filter(email=email).exists():
+        raise ValueError("An account with this email already exists")
+
+    with transaction.atomic():
+        generated_password = generate_password()
+        user = User.objects.create_user(
+            email=email,
+            name=full_name,
+            password=generated_password,
+            organization=gcp_account.organization,
+            organization_role=OrganizationRoles.OWNER,
+        )
+        organization = gcp_account.organization
+        # Without this row get_org_membership returns None and RBAC denies the
+        # owner everything. The FK on User alone is not enough.
+        OrganizationMembership.objects.get_or_create(
+            user=user,
+            organization=organization,
+            defaults={
+                "role": OrganizationRoles.OWNER,
+                "level": Level.OWNER,
+                "is_active": True,
+            },
+        )
+        organization.name = full_name or organization.name
+        organization.display_name = full_name or organization.display_name
+        organization.save(update_fields=["name", "display_name"])
+
+    process_post_registration(user.id, generated_password)
+    _finish_signup(gcp_account, onboarding_token)
+
+    return user
+
+
+def _finish_signup(gcp_account: GCPMarketplaceAccount, onboarding_token: str) -> None:
+    """Tell Google we have the customer, and release anything held for them.
+
+    Split out and idempotent so a retry after a failed Procurement call resumes
+    here. _approve_signup no-ops once the approval is no longer pending, and
+    approve_pending_entitlements only sees rows still awaiting activation.
+    """
+    _approve_signup(gcp_account)
+    approve_pending_entitlements(gcp_account)
+    discard_onboarding_token(onboarding_token)

@@ -19,6 +19,7 @@ import PropTypes from "prop-types";
 import { ShowComponent } from "../show";
 import { useTheme } from "@mui/material";
 import { useGraphStore } from "./store/graphStore";
+import { statusColors } from "src/utils/runStatus";
 
 const nodeTypes = {
   conversation: ConversationNode,
@@ -138,7 +139,7 @@ const GraphView = ({
         <ShowComponent condition={editMode || showMiniMap}>
           <MiniMap
             style={{
-              backgroundColor: isDark ? "#1f1f23" : "var(--bg-paper)",
+              backgroundColor: "var(--bg-paper)",
               border: "1px solid var(--border-default)",
               borderRadius: "8px",
             }}
@@ -150,15 +151,15 @@ const GraphView = ({
               if (isDark) {
                 switch (node.type) {
                   case "conversation":
-                    return "#3f3f46";
+                    return theme.palette.grey[700];
                   case "end":
                   case "endChat":
-                    return "#7F1A12";
+                    return statusColors(theme, "danger").solid;
                   case "transfer":
                   case "transferChat":
-                    return "#8C3F08";
+                    return statusColors(theme, "warning").solid;
                   default:
-                    return "#3f3f46";
+                    return theme.palette.grey[700];
                 }
               }
               switch (node.type) {
@@ -178,15 +179,15 @@ const GraphView = ({
               if (isDark) {
                 switch (node.type) {
                   case "conversation":
-                    return "#71717a";
+                    return theme.palette.grey[500];
                   case "end":
                   case "endChat":
-                    return "#D92D20";
+                    return statusColors(theme, "danger").solid;
                   case "transfer":
                   case "transferChat":
-                    return "#E9690C";
+                    return statusColors(theme, "warning").solid;
                   default:
-                    return "#52525b";
+                    return theme.palette.grey[600];
                 }
               }
               switch (node.type) {

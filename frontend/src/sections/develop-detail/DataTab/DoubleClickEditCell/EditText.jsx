@@ -85,7 +85,6 @@ const EditText = ({ params, onClose, onCellValueChanged }) => {
           sx={{
             width: "90px",
             fontsize: "14px",
-            fontWeight: 500,
             marginRight: "-5px",
           }}
         >
@@ -98,7 +97,7 @@ const EditText = ({ params, onClose, onCellValueChanged }) => {
           // fullWidth
           size="small"
           loading={false}
-          sx={{ width: "90px", fontSize: "14px", fontWeight: 700 }}
+          sx={{ width: "90px" }}
         >
           Save
         </LoadingButton>

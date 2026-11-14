@@ -92,7 +92,8 @@ const CustomMetric = () => {
             startAdornment: (
               <InputAdornment position="start">
                 <Iconify
-                  icon="eva:search-fill"
+                  icon="solar:magnifier-linear"
+                  width={16}
                   sx={{ color: "primary.main" }}
                 />
               </InputAdornment>

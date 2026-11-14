@@ -49,6 +49,8 @@ from tfc.utils.error_codes import get_error_message
 from tfc.utils.errors import format_validation_error
 from tfc.utils.general_methods import GeneralMethods
 from tfc.utils.pagination import ExtendedPageNumberPagination
+from tfc.utils.api_contracts import ExplicitQueryAutoSchema, validated_request
+from model_hub.serializers.catalog_queries import OptimizationListQuerySerializer
 
 logger = structlog.get_logger(__name__)
 
@@ -181,6 +183,10 @@ class DatasetOptimizationViewSet(BaseModelViewSetMixin, ModelViewSet):
             return DatasetOptimizationDetailSerializer
         return DatasetOptimizationSerializer
 
+    @validated_request(
+        query_serializer=OptimizationListQuerySerializer,
+        auto_schema=ExplicitQueryAutoSchema,
+    )
     def list(self, request, *args, **kwargs):
         """
         List all dataset optimization runs with table config for dynamic columns.

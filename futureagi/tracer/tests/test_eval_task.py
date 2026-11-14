@@ -534,6 +534,32 @@ class TestEvalTaskGetLogsAPI:
         data = get_result(response)
         assert "errors_count" in data or "success_count" in data
 
+    def test_get_logs_counts_targets_apart_from_eval_runs(
+        self, auth_client, eval_task, observation_span, custom_eval_config
+    ):
+        """One span run through two evals is two eval runs over one span."""
+        second_config = make_custom_eval_config_for_project(
+            eval_task.project, custom_eval_config, "Second Eval"
+        )
+        for config in (custom_eval_config, second_config):
+            EvalLogger.objects.create(
+                eval_task_id=str(eval_task.id),
+                observation_span=observation_span,
+                trace=observation_span.trace,
+                custom_eval_config=config,
+            )
+
+        response = auth_client.get(
+            "/tracer/eval-task/get_eval_task_logs/",
+            {"eval_task_id": str(eval_task.id)},
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        data = get_result(response)
+        assert data["total_count"] == 2
+        assert data["success_count"] == 2
+        assert data["target_count"] == 1
+
     def test_get_logs_rejects_other_workspace_task(
         self, auth_client, project, user, custom_eval_config
     ):
@@ -611,6 +637,38 @@ class TestEvalTaskUnpauseAPI:
 
         eval_task.refresh_from_db()
         assert eval_task.status == EvalTaskStatus.PENDING
+
+    def test_unpause_rejects_other_workspace_task(
+        self, auth_client, project, user, custom_eval_config
+    ):
+        """The endpoint's scope, now shared with the AI tool through
+        ``tracer.selectors.eval_tasks.scope``, still refuses a same-org task
+        in another workspace."""
+        other_task = make_other_workspace_eval_task(project, user, custom_eval_config)
+        EvalTask.objects.filter(id=other_task.id).update(status=EvalTaskStatus.PAUSED)
+
+        response = auth_client.post(
+            f"/tracer/eval-task/unpause_eval_task/?eval_task_id={other_task.id}",
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        other_task.refresh_from_db()
+        assert other_task.status == EvalTaskStatus.PAUSED
+
+    def test_unpause_rejects_task_in_deleted_project(
+        self, auth_client, project, eval_task
+    ):
+        eval_task.status = EvalTaskStatus.PAUSED
+        eval_task.save()
+        Project.all_objects.filter(id=project.id).update(deleted=True)
+
+        response = auth_client.post(
+            f"/tracer/eval-task/unpause_eval_task/?eval_task_id={eval_task.id}",
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        eval_task.refresh_from_db()
+        assert eval_task.status == EvalTaskStatus.PAUSED
 
 
 @pytest.mark.integration
@@ -954,6 +1012,23 @@ class TestEvalTaskGetDetailsAPI:
         )
         assert response.status_code in AUTH_REQUIRED_STATUS_CODES
 
+    def test_get_details_ignores_extra_query_parameters(
+        self, auth_client, eval_task, custom_eval_config
+    ):
+        """Cache-busting parameters must not turn a valid read into a 400."""
+        response = auth_client.get(
+            "/tracer/eval-task/get_eval_details/",
+            {"eval_id": str(eval_task.id), "_": "1731489000000", "v": "2"},
+        )
+        assert response.status_code == status.HTTP_200_OK
+        assert get_result(response)["name"] == eval_task.name
+
+    def test_get_details_still_rejects_a_non_uuid_eval_id(self, auth_client):
+        response = auth_client.get(
+            "/tracer/eval-task/get_eval_details/", {"eval_id": "not-a-uuid"}
+        )
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+
     def test_get_details_success(self, auth_client, eval_task, custom_eval_config):
         """Get details for an eval task."""
         # NOTE: API uses 'eval_id', not 'eval_task_id'
@@ -964,6 +1039,13 @@ class TestEvalTaskGetDetailsAPI:
         assert response.status_code == status.HTTP_200_OK
         data = get_result(response)
         assert data["name"] == eval_task.name
+
+        from tracer.serializers.eval_task import EvalTaskDetailsResponseSerializer
+
+        contract = EvalTaskDetailsResponseSerializer(data=response.json())
+        assert contract.is_valid(), contract.errors
+        assert "sampling_policy" in data
+        assert "count" not in response.json() and "results" not in response.json()
 
     def test_get_details_internal_error_is_sanitized(
         self, auth_client, eval_task, monkeypatch

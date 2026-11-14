@@ -6,10 +6,12 @@ import React, {
   useMemo,
   useRef,
 } from "react";
+import { SegmentedTabs } from "src/components/tabs/tabs";
 import PropTypes from "prop-types";
 import {
   Box,
   Button,
+  Chip,
   Collapse,
   IconButton,
   Stack,
@@ -46,6 +48,7 @@ import { normalizeTags } from "./tagUtils";
 import TagChip from "./TagChip";
 import TagInput from "./TagInput";
 import EvalsTabView, { collectAllEvalsFromEntry } from "./EvalsTabView";
+import EvalRollupBreakdown from "./EvalRollupSection/EvalRollupBreakdown";
 import { openFixWithFalcon } from "src/sections/falcon-ai/helpers/openFixWithFalcon";
 import ImageCard from "src/components/multimodal/ImageCard";
 import AudioCellRenderer from "src/sections/common/DevelopCellRenderer/CellRenderers/AudioCellRenderer";
@@ -79,76 +82,10 @@ function stringify(val) {
   return JSON.stringify(val, null, 2);
 }
 
-/* ── JsonSyntax — lightweight JSON syntax highlighting ── */
-
-const JsonSyntax = ({ json }) => {
-  if (!json) return null;
-  // Regex-based syntax coloring — matches keys, strings, numbers, booleans, null
-  const parts = json.split(/("(?:[^"\\]|\\.)*")\s*:/g);
-  const result = [];
-  for (let i = 0; i < parts.length; i++) {
-    if (i % 2 === 1) {
-      // This is a key
-      result.push(
-        <span key={i} style={{ color: "var(--text-primary)", fontWeight: 500 }}>
-          {parts[i]}
-        </span>,
-      );
-      result.push(
-        <span key={`${i}c`} style={{ color: "var(--text-disabled)" }}>
-          :{" "}
-        </span>,
-      );
-    } else {
-      // This is value content — colorize inline
-      const chunk = parts[i];
-      const colored = chunk.replace(
-        /("(?:[^"\\]|\\.)*")|(\b(?:true|false)\b)|(\bnull\b)|(-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)/g,
-        (match, str, bool, nul, num) => {
-          if (str)
-            return `<span style="color:var(--syntax-string)">${str}</span>`;
-          if (bool)
-            return `<span style="color:var(--syntax-boolean)">${match}</span>`;
-          if (nul)
-            return `<span style="color:var(--text-disabled)">${match}</span>`;
-          if (num)
-            return `<span style="color:var(--syntax-number)">${match}</span>`;
-          return match;
-        },
-      );
-      result.push(
-        <span key={i} dangerouslySetInnerHTML={{ __html: colored }} />,
-      );
-    }
-  }
-  return <>{result}</>;
-};
-
-JsonSyntax.propTypes = { json: PropTypes.string };
-
 /* ── MetricChip ───────────────────────────────────────── */
 
 const MetricChip = ({ label, value }) => (
-  <Box
-    sx={{
-      display: "inline-flex",
-      alignItems: "center",
-      gap: 0.5,
-      px: 1,
-      py: 0.25,
-      bgcolor: "background.neutral",
-      border: "1px solid",
-      borderColor: "divider",
-      borderRadius: "2px",
-      minWidth: 64,
-      fontSize: 11,
-      color: "text.primary",
-      lineHeight: "16px",
-      whiteSpace: "nowrap",
-    }}
-  >
-    {label} : {value}
-  </Box>
+  <Chip size="small" label={`${label} : ${value}`} />
 );
 
 MetricChip.propTypes = {
@@ -169,7 +106,7 @@ const Highlight = ({ text, query }) => {
         component="span"
         sx={{
           bgcolor: (theme) => alpha(theme.palette.warning.main, 0.25),
-          borderRadius: "2px",
+          borderRadius: "4px",
           px: "1px",
         }}
       >
@@ -251,7 +188,7 @@ const ContentCard = ({ title, content, viewMode = "markdown" }) => {
         <Typography
           variant="body2"
           sx={{
-            fontSize: 13,
+            fontSize: 12,
             fontWeight: 500,
             fontFamily: "'IBM Plex Sans', sans-serif",
             flex: 1,
@@ -269,7 +206,7 @@ const ContentCard = ({ title, content, viewMode = "markdown" }) => {
                 setLocalViewMode(mode);
               }}
               sx={{
-                fontSize: 10.5,
+                fontSize: 12,
                 px: 0.75,
                 py: 0.15,
                 cursor: "pointer",
@@ -285,16 +222,19 @@ const ContentCard = ({ title, content, viewMode = "markdown" }) => {
         </Box>
         <IconButton
           size="small"
-          sx={{ p: 0.25 }}
           onClick={(e) => {
             e.stopPropagation();
             copyText(displayText);
           }}
         >
-          <Iconify icon="tabler:copy" width={14} color="text.disabled" />
+          <Iconify icon="solar:copy-linear" width={14} color="text.disabled" />
         </IconButton>
         <Iconify
-          icon={expanded ? "mdi:chevron-up" : "mdi:chevron-down"}
+          icon={
+            expanded
+              ? "solar:alt-arrow-up-linear"
+              : "solar:alt-arrow-down-linear"
+          }
           width={16}
           sx={{ color: "text.disabled", ml: 0.25 }}
         />
@@ -330,7 +270,7 @@ const ContentCard = ({ title, content, viewMode = "markdown" }) => {
                 margin: 0,
                 padding: 0,
                 background: "transparent",
-                fontSize: "11.5px",
+                fontSize: "12px",
                 lineHeight: "18px",
                 fontFamily: "'IBM Plex Mono', 'Fira Code', monospace",
               }}
@@ -361,36 +301,15 @@ ContentCard.propTypes = {
 const MODE_LABELS = { markdown: "Markdown", json: "JSON", chat: "Chat" };
 
 const FormatToggle = ({ value, onChange, modes = ["markdown", "json"] }) => (
-  <Box
-    sx={{
-      display: "inline-flex",
-      bgcolor: "background.neutral",
-      borderRadius: "4px",
-      overflow: "hidden",
-      border: "1px solid",
-      borderColor: "divider",
-      flexShrink: 0,
-    }}
+  <SegmentedTabs
+    value={modes.includes(value) ? value : false}
+    onChange={(_, mode) => onChange(mode)}
+    sx={{ flexShrink: 0 }}
   >
     {modes.map((mode) => (
-      <Box
-        key={mode}
-        onClick={() => onChange(mode)}
-        sx={{
-          px: 1.25,
-          py: 0.25,
-          fontSize: 11,
-          cursor: "pointer",
-          fontWeight: value === mode ? 500 : 400,
-          bgcolor: value === mode ? "background.paper" : "transparent",
-          boxShadow: value === mode ? "0 1px 2px rgba(0,0,0,0.08)" : "none",
-          color: value === mode ? "text.primary" : "text.secondary",
-        }}
-      >
-        {MODE_LABELS[mode] || mode}
-      </Box>
+      <Tab key={mode} value={mode} label={MODE_LABELS[mode] || mode} />
     ))}
-  </Box>
+  </SegmentedTabs>
 );
 
 FormatToggle.propTypes = {
@@ -473,7 +392,11 @@ const JsonPreviewBlock = ({
           <Box sx={{ flex: 1 }} />
         ) : (
           <>
-            <Iconify icon="mdi:magnify" width={13} color="text.disabled" />
+            <Iconify
+              icon="solar:magnifier-linear"
+              width={14}
+              color="text.disabled"
+            />
             <Box
               component="input"
               placeholder="Search JSON..."
@@ -483,7 +406,7 @@ const JsonPreviewBlock = ({
                 border: "none",
                 outline: "none",
                 flex: 1,
-                fontSize: 11,
+                fontSize: 12,
                 color: "text.primary",
                 bgcolor: "transparent",
                 py: 0.15,
@@ -493,7 +416,7 @@ const JsonPreviewBlock = ({
             {activeSearch && (
               <Typography
                 variant="caption"
-                sx={{ fontSize: 10, color: "text.disabled", flexShrink: 0 }}
+                sx={{ fontSize: 12, color: "text.disabled", flexShrink: 0 }}
               >
                 {matchCount} match{matchCount !== 1 ? "es" : ""}
               </Typography>
@@ -502,12 +425,11 @@ const JsonPreviewBlock = ({
         )}
         <IconButton
           size="small"
-          sx={{ p: 0.25 }}
           onClick={() => {
             copyText(jsonString);
           }}
         >
-          <Iconify icon="tabler:copy" width={13} color="text.disabled" />
+          <Iconify icon="solar:copy-linear" width={14} color="text.disabled" />
         </IconButton>
       </Stack>
 
@@ -663,24 +585,24 @@ const LogViewRow = ({
           borderBottom: "1px solid",
           borderColor: "divider",
           opacity: isDimmed ? 0.4 : 1,
-          bgcolor: isExpanded ? "rgba(120, 87, 252, 0.04)" : "transparent",
+          bgcolor: isExpanded ? "action.hover" : "transparent",
           "&:hover": {
             opacity: 1,
-            bgcolor: isExpanded ? "rgba(120, 87, 252, 0.06)" : "action.hover",
+            bgcolor: isExpanded ? "action.selected" : "action.hover",
           },
           minHeight: 30,
         }}
       >
         {/* Expand chevron */}
         <Iconify
-          icon="mdi:chevron-right"
+          icon="solar:alt-arrow-right-linear"
           width={14}
           sx={{
             color: "text.disabled",
             mr: 0.5,
             flexShrink: 0,
             transform: isExpanded ? "rotate(90deg)" : "rotate(0deg)",
-            transition: "transform 100ms",
+            transition: "transform 120ms",
           }}
         />
 
@@ -702,7 +624,7 @@ const LogViewRow = ({
               gap: "3px",
               px: 0.5,
               py: "1px",
-              borderRadius: "3px",
+              borderRadius: "4px",
               bgcolor: `${cfg.color}12`,
               border: "1px solid",
               borderColor: `${cfg.color}30`,
@@ -711,10 +633,10 @@ const LogViewRow = ({
           >
             <Typography
               sx={{
-                fontSize: 9,
+                fontSize: 12,
                 fontWeight: 600,
                 color: cfg.color,
-                textTransform: "uppercase",
+                textTransform: "none",
                 letterSpacing: "0.02em",
                 lineHeight: 1.2,
               }}
@@ -725,7 +647,7 @@ const LogViewRow = ({
           <Typography
             noWrap
             sx={{
-              fontSize: 11.5,
+              fontSize: 12,
               fontWeight: 500,
               color: hasError ? "error.main" : "text.primary",
               lineHeight: 1.2,
@@ -737,7 +659,7 @@ const LogViewRow = ({
           </Typography>
           {childCount > 0 && (
             <Typography
-              sx={{ fontSize: 10, color: "text.disabled", flexShrink: 0 }}
+              sx={{ fontSize: 12, color: "text.disabled", flexShrink: 0 }}
             >
               {childCount} {childCount === 1 ? "item" : "items"}
             </Typography>
@@ -747,7 +669,7 @@ const LogViewRow = ({
         {/* Depth */}
         <Typography
           sx={{
-            fontSize: 10,
+            fontSize: 12,
             color: "text.disabled",
             width: 40,
             textAlign: "right",
@@ -760,7 +682,7 @@ const LogViewRow = ({
         {/* Start */}
         <Typography
           sx={{
-            fontSize: 10,
+            fontSize: 12,
             color: "text.disabled",
             fontFamily: "monospace",
             width: 56,
@@ -775,7 +697,7 @@ const LogViewRow = ({
         {/* Duration */}
         <Typography
           sx={{
-            fontSize: 10,
+            fontSize: 12,
             color: "text.secondary",
             fontWeight: 500,
             width: 56,
@@ -790,7 +712,7 @@ const LogViewRow = ({
         {/* Evals */}
         <Typography
           sx={{
-            fontSize: 10,
+            fontSize: 12,
             color: evalCount > 0 ? "text.primary" : "text.disabled",
             width: 36,
             textAlign: "right",
@@ -804,7 +726,7 @@ const LogViewRow = ({
         {/* Annotations */}
         <Typography
           sx={{
-            fontSize: 10,
+            fontSize: 12,
             color: annotationCount > 0 ? "text.primary" : "text.disabled",
             width: 36,
             textAlign: "right",
@@ -988,12 +910,16 @@ const LogViewTable = ({ allSpans, traceStartTime, drawerOpen = true }) => {
             flex: 1,
             border: "1px solid",
             borderColor: "divider",
-            borderRadius: "2px",
+            borderRadius: "4px",
             px: 1,
             py: 0.25,
           }}
         >
-          <Iconify icon="mdi:magnify" width={14} color="text.disabled" />
+          <Iconify
+            icon="solar:magnifier-linear"
+            width={14}
+            color="text.disabled"
+          />
           <Box
             component="input"
             placeholder="Search"
@@ -1003,7 +929,7 @@ const LogViewTable = ({ allSpans, traceStartTime, drawerOpen = true }) => {
               border: "none",
               outline: "none",
               flex: 1,
-              fontSize: 11,
+              fontSize: 12,
               color: "text.primary",
               bgcolor: "transparent",
               py: 0.15,
@@ -1030,15 +956,11 @@ const LogViewTable = ({ allSpans, traceStartTime, drawerOpen = true }) => {
               sx={{
                 px: 1,
                 py: 0.25,
-                fontSize: 11,
+                fontSize: 12,
                 cursor: "pointer",
                 fontWeight: logViewMode === mode ? 500 : 400,
                 bgcolor:
                   logViewMode === mode ? "background.paper" : "transparent",
-                boxShadow:
-                  logViewMode === mode
-                    ? "2px 2px 6px rgba(0,0,0,0.08)"
-                    : "none",
                 color: logViewMode === mode ? "text.primary" : "text.secondary",
                 fontFamily: "'IBM Plex Sans', sans-serif",
                 borderRadius: "4px",
@@ -1055,14 +977,16 @@ const LogViewTable = ({ allSpans, traceStartTime, drawerOpen = true }) => {
             size="small"
             sx={{
               width: 24,
-              height: 24,
               border: "1px solid",
               borderColor: "divider",
-              borderRadius: "4px",
               bgcolor: "background.neutral",
             }}
           >
-            <Iconify icon="tabler:align-left" width={14} color="text.primary" />
+            <Iconify
+              icon="solar:notes-linear"
+              width={14}
+              color="text.primary"
+            />
           </IconButton>
         </CustomTooltip>
 
@@ -1078,17 +1002,15 @@ const LogViewTable = ({ allSpans, traceStartTime, drawerOpen = true }) => {
             onClick={handleExpandAll}
             sx={{
               width: 24,
-              height: 24,
               border: "1px solid",
               borderColor: "divider",
-              borderRadius: "4px",
             }}
           >
             <Iconify
               icon={
                 allExpanded
-                  ? "mdi:unfold-less-horizontal"
-                  : "mdi:unfold-more-horizontal"
+                  ? "solar:chevrons-down-up-linear"
+                  : "solar:chevrons-up-down-linear"
               }
               width={14}
               color="text.primary"
@@ -1103,13 +1025,11 @@ const LogViewTable = ({ allSpans, traceStartTime, drawerOpen = true }) => {
             onClick={handleCopyAll}
             sx={{
               width: 24,
-              height: 24,
               border: "1px solid",
               borderColor: "divider",
-              borderRadius: "4px",
             }}
           >
-            <Iconify icon="tabler:copy" width={14} color="text.primary" />
+            <Iconify icon="solar:copy-linear" width={14} color="text.primary" />
           </IconButton>
         </CustomTooltip>
       </Stack>
@@ -1130,22 +1050,22 @@ const LogViewTable = ({ allSpans, traceStartTime, drawerOpen = true }) => {
         <Typography
           sx={{
             flex: 1,
-            fontSize: 10,
+            fontSize: 12,
             fontWeight: 600,
             color: "text.disabled",
-            textTransform: "uppercase",
-            letterSpacing: "0.04em",
+            textTransform: "none",
+            letterSpacing: 0,
           }}
         >
           Observation
         </Typography>
         <Typography
           sx={{
-            fontSize: 10,
+            fontSize: 12,
             fontWeight: 600,
             color: "text.disabled",
-            textTransform: "uppercase",
-            letterSpacing: "0.04em",
+            textTransform: "none",
+            letterSpacing: 0,
             width: 40,
             textAlign: "right",
           }}
@@ -1154,11 +1074,11 @@ const LogViewTable = ({ allSpans, traceStartTime, drawerOpen = true }) => {
         </Typography>
         <Typography
           sx={{
-            fontSize: 10,
+            fontSize: 12,
             fontWeight: 600,
             color: "text.disabled",
-            textTransform: "uppercase",
-            letterSpacing: "0.04em",
+            textTransform: "none",
+            letterSpacing: 0,
             width: 56,
             textAlign: "right",
             ml: 1,
@@ -1168,11 +1088,11 @@ const LogViewTable = ({ allSpans, traceStartTime, drawerOpen = true }) => {
         </Typography>
         <Typography
           sx={{
-            fontSize: 10,
+            fontSize: 12,
             fontWeight: 600,
             color: "text.disabled",
-            textTransform: "uppercase",
-            letterSpacing: "0.04em",
+            textTransform: "none",
+            letterSpacing: 0,
             width: 56,
             textAlign: "right",
             ml: 1,
@@ -1182,11 +1102,11 @@ const LogViewTable = ({ allSpans, traceStartTime, drawerOpen = true }) => {
         </Typography>
         <Typography
           sx={{
-            fontSize: 10,
+            fontSize: 12,
             fontWeight: 600,
             color: "text.disabled",
-            textTransform: "uppercase",
-            letterSpacing: "0.04em",
+            textTransform: "none",
+            letterSpacing: 0,
             width: 36,
             textAlign: "right",
             ml: 1,
@@ -1196,11 +1116,11 @@ const LogViewTable = ({ allSpans, traceStartTime, drawerOpen = true }) => {
         </Typography>
         <Typography
           sx={{
-            fontSize: 10,
+            fontSize: 12,
             fontWeight: 600,
             color: "text.disabled",
-            textTransform: "uppercase",
-            letterSpacing: "0.04em",
+            textTransform: "none",
+            letterSpacing: 0,
             width: 36,
             textAlign: "right",
             ml: 1,
@@ -1244,7 +1164,7 @@ LogViewTable.propTypes = {
 
 /* ── InlineTagsRow — always-visible tag chips with add/remove ── */
 
-const InlineTagsRow = ({ tags = [], traceId, spanId }) => {
+const InlineTagsRow = ({ tags = [], traceId, spanId, readOnly = false }) => {
   const [isAdding, setIsAdding] = useState(false);
   const queryClient = useQueryClient();
 
@@ -1278,8 +1198,8 @@ const InlineTagsRow = ({ tags = [], traceId, spanId }) => {
       sx={{ mt: 0.75, flexWrap: "wrap", gap: 0.5, alignItems: "center" }}
     >
       <Iconify
-        icon="mdi:tag-outline"
-        width={13}
+        icon="solar:tag-linear"
+        width={14}
         sx={{ color: "text.disabled" }}
       />
 
@@ -1289,6 +1209,7 @@ const InlineTagsRow = ({ tags = [], traceId, spanId }) => {
           name={tag.name}
           color={tag.color}
           size="small"
+          readOnly={readOnly}
           onRemove={() => persist(normalized.filter((_, i) => i !== idx))}
           onColorChange={(c) =>
             persist(
@@ -1304,47 +1225,36 @@ const InlineTagsRow = ({ tags = [], traceId, spanId }) => {
         />
       ))}
 
-      {isAdding ? (
-        <Box
-          sx={{ minWidth: 130 }}
-          onBlur={(e) => {
-            // Close if focus leaves the TagInput entirely
-            if (!e.currentTarget.contains(e.relatedTarget)) setIsAdding(false);
-          }}
-        >
-          <TagInput
-            onAdd={(newTag) => {
-              persist([...normalized, newTag]);
-              setIsAdding(false);
+      {!readOnly &&
+        (isAdding ? (
+          <Box
+            sx={{ minWidth: 130 }}
+            onBlur={(e) => {
+              // Close if focus leaves the TagInput entirely
+              if (!e.currentTarget.contains(e.relatedTarget))
+                setIsAdding(false);
             }}
-            existingNames={normalized.map((t) => t.name)}
-            disabled={isPending}
-            placeholder="tag name"
-          />
-        </Box>
-      ) : (
-        <Box
-          onClick={() => setIsAdding(true)}
-          sx={{
-            display: "inline-flex",
-            alignItems: "center",
-            gap: "2px",
-            px: 0.5,
-            py: "1px",
-            borderRadius: "3px",
-            border: "1px dashed",
-            borderColor: "divider",
-            fontSize: 11,
-            color: "text.disabled",
-            cursor: "pointer",
-            lineHeight: "16px",
-            "&:hover": { borderColor: "primary.main", color: "primary.main" },
-          }}
-        >
-          <Iconify icon="mdi:plus" width={12} />
-          tag
-        </Box>
-      )}
+          >
+            <TagInput
+              onAdd={(newTag) => {
+                persist([...normalized, newTag]);
+                setIsAdding(false);
+              }}
+              existingNames={normalized.map((t) => t.name)}
+              disabled={isPending}
+              placeholder="tag name"
+            />
+          </Box>
+        ) : (
+          <Button
+            size="small"
+            variant="text"
+            startIcon={<Iconify icon="solar:add-linear" width={12} />}
+            onClick={() => setIsAdding(true)}
+          >
+            tag
+          </Button>
+        ))}
     </Stack>
   );
 };
@@ -1353,6 +1263,7 @@ InlineTagsRow.propTypes = {
   tags: PropTypes.array,
   traceId: PropTypes.string,
   spanId: PropTypes.string,
+  readOnly: PropTypes.bool,
 };
 
 /* ── EvalCard — single eval score display ─────────────── */
@@ -1405,7 +1316,9 @@ const EvalCard = ({ ev, spanLabel }) => {
           }}
         >
           <Iconify
-            icon={isPassing ? "mdi:checkbox-marked-circle" : "mdi:close-circle"}
+            icon={
+              isPassing ? "solar:check-circle-bold" : "solar:close-circle-bold"
+            }
             width={14}
             sx={{
               color: isPassing ? "success.dark" : "error.main",
@@ -1417,7 +1330,7 @@ const EvalCard = ({ ev, spanLabel }) => {
               {evalName}
             </Typography>
             {spanLabel && (
-              <Typography noWrap sx={{ fontSize: 10, color: "text.disabled" }}>
+              <Typography noWrap sx={{ fontSize: 12, color: "text.disabled" }}>
                 on {spanLabel}
               </Typography>
             )}
@@ -1442,7 +1355,11 @@ const EvalCard = ({ ev, spanLabel }) => {
           </Typography>
           {explanation && (
             <Iconify
-              icon={showExplanation ? "mdi:chevron-up" : "mdi:chevron-down"}
+              icon={
+                showExplanation
+                  ? "solar:alt-arrow-up-linear"
+                  : "solar:alt-arrow-down-linear"
+              }
               width={14}
               color="text.disabled"
             />
@@ -1463,7 +1380,7 @@ const EvalCard = ({ ev, spanLabel }) => {
         >
           <Typography
             sx={{
-              fontSize: 11,
+              fontSize: 12,
               color: "text.secondary",
               lineHeight: 1.5,
               whiteSpace: "pre-wrap",
@@ -1481,7 +1398,7 @@ EvalCard.propTypes = { ev: PropTypes.object, spanLabel: PropTypes.string };
 
 /* ── AnnotationsTabContent — uses ScoresListSection ── */
 
-const AnnotationsTabContent = ({ spanId, traceId, onAction }) => (
+const AnnotationsTabContent = ({ spanId, traceId, projectId, onAction }) => (
   <Box sx={{ display: "flex", flexDirection: "column", height: "100%" }}>
     <Box sx={{ flex: 1, overflow: "auto", p: 2 }}>
       <ScoresListSection
@@ -1489,6 +1406,7 @@ const AnnotationsTabContent = ({ spanId, traceId, onAction }) => (
         sourceId={spanId}
         secondarySourceType="trace"
         secondarySourceId={traceId}
+        projectId={projectId}
         title=""
         openQueueItemOnRowClick
         renderActions={
@@ -1496,17 +1414,11 @@ const AnnotationsTabContent = ({ spanId, traceId, onAction }) => (
             <Button
               size="small"
               variant="outlined"
-              startIcon={<Iconify icon="mingcute:add-line" width={14} />}
+              startIcon={<Iconify icon="solar:add-linear" width={14} />}
               onClick={(e) => onAction("annotate", e.currentTarget)}
               sx={{
-                textTransform: "none",
-                fontSize: 12,
-                fontWeight: 500,
                 borderColor: "divider",
                 color: "text.primary",
-                borderRadius: "4px",
-                px: 1.5,
-                py: 0.25,
               }}
             >
               Add Label
@@ -1521,6 +1433,7 @@ const AnnotationsTabContent = ({ spanId, traceId, onAction }) => (
 AnnotationsTabContent.propTypes = {
   spanId: PropTypes.string,
   traceId: PropTypes.string,
+  projectId: PropTypes.string,
   onAction: PropTypes.func,
 };
 
@@ -1585,18 +1498,18 @@ const EventCard = ({ event }) => {
           }}
         >
           <Iconify
-            icon="mdi:alert-circle"
-            width={18}
+            icon="solar:danger-circle-linear"
+            width={20}
             sx={{ color: "error.main" }}
           />
           <Typography
-            sx={{ fontSize: 14, fontWeight: 600, color: "error.main", flex: 1 }}
+            sx={{ fontSize: 12, fontWeight: 600, color: "error.main", flex: 1 }}
           >
             {exType || "Exception"}
           </Typography>
           {formattedTime && (
             <Typography
-              sx={{ fontSize: 11, color: "error.main", opacity: 0.7 }}
+              sx={{ fontSize: 12, color: "error.main", opacity: 0.7 }}
             >
               {formattedTime}
             </Typography>
@@ -1614,7 +1527,7 @@ const EventCard = ({ event }) => {
             }}
           >
             <Typography
-              sx={{ fontSize: 13, color: "text.primary", lineHeight: 1.5 }}
+              sx={{ fontSize: 12, color: "text.primary", lineHeight: 1.5 }}
             >
               {exMessage}
             </Typography>
@@ -1639,7 +1552,11 @@ const EventCard = ({ event }) => {
               }}
             >
               <Iconify
-                icon={showTrace ? "mdi:chevron-down" : "mdi:chevron-right"}
+                icon={
+                  showTrace
+                    ? "solar:alt-arrow-down-linear"
+                    : "solar:alt-arrow-right-linear"
+                }
                 width={16}
                 sx={{ color: "error.main" }}
               />
@@ -1665,7 +1582,7 @@ const EventCard = ({ event }) => {
                         ? theme.palette.text.primary
                         : theme.palette.grey[300],
                     borderRadius: "6px",
-                    fontSize: 11,
+                    fontSize: 12,
                     fontFamily: "'IBM Plex Mono', monospace",
                     lineHeight: 1.6,
                     whiteSpace: "pre-wrap",
@@ -1706,17 +1623,17 @@ const EventCard = ({ event }) => {
         }}
       >
         <Iconify
-          icon="mdi:bell-outline"
+          icon="solar:bell-linear"
           width={16}
           sx={{ color: "text.disabled" }}
         />
         <Typography
-          sx={{ fontSize: 13, fontWeight: 600, color: "text.primary", flex: 1 }}
+          sx={{ fontSize: 12, fontWeight: 600, color: "text.primary", flex: 1 }}
         >
           {event?.name || "Event"}
         </Typography>
         {formattedTime && (
-          <Typography sx={{ fontSize: 11, color: "text.disabled" }}>
+          <Typography sx={{ fontSize: 12, color: "text.disabled" }}>
             {formattedTime}
           </Typography>
         )}
@@ -1767,9 +1684,29 @@ const SpanDetailPane = ({
   onClose,
   onAction,
   onSelectSpan,
+  initialEvalFocus = false,
   drawerOpen = true,
+  readOnly = false,
 }) => {
   const [activeTab, setActiveTab] = useState("preview");
+  const evalFocusSeededRef = useRef(false);
+  const lastEntryIdRef = useRef(null);
+  useEffect(() => {
+    if (!drawerOpen) {
+      evalFocusSeededRef.current = false;
+      return;
+    }
+    if (initialEvalFocus && !evalFocusSeededRef.current) {
+      evalFocusSeededRef.current = true;
+      setActiveTab("evals");
+    }
+  }, [drawerOpen, initialEvalFocus]);
+  useEffect(() => {
+    const entryId = entry?.observation_span?.id || entry?.observationSpan?.id;
+    if (entryId === lastEntryIdRef.current) return;
+    lastEntryIdRef.current = entryId;
+    if (!initialEvalFocus) setActiveTab("preview");
+  }, [entry, initialEvalFocus]);
   const [searchQuery, setSearchQuery] = useState("");
   const [viewMode, setViewMode] = useState("markdown"); // "markdown" | "json" | "chat"
 
@@ -1849,26 +1786,30 @@ const SpanDetailPane = ({
   const hasLogView = allSpans?.length > 0;
   const TAB_CONFIG = useMemo(() => {
     const tabs = [
-      { key: "preview", label: "Preview", icon: "mdi:file-document-outline" },
+      { key: "preview", label: "Preview", icon: "solar:document-text-linear" },
     ];
     if (hasLogView) {
       tabs.push({
         key: "log",
         label: "Log View",
-        icon: "mdi:format-list-bulleted",
+        icon: "solar:list-linear",
       });
     }
     tabs.push(
       {
         key: "evals",
         label: "Evals",
-        icon: "mdi:checkbox-marked-circle-outline",
+        icon: "solar:check-circle-linear",
       },
-      { key: "annotations", label: "Annotations", icon: "mdi:pencil-outline" },
-      { key: "events", label: "Events", icon: "mdi:bell-outline" },
+      !readOnly && {
+        key: "annotations",
+        label: "Annotations",
+        icon: "solar:pen-linear",
+      },
+      { key: "events", label: "Events", icon: "solar:bell-linear" },
     );
-    return tabs;
-  }, [hasLogView]);
+    return tabs.filter(Boolean);
+  }, [hasLogView, readOnly]);
 
   if (!span) return null;
 
@@ -1895,7 +1836,7 @@ const SpanDetailPane = ({
                 variant="body1"
                 noWrap
                 sx={{
-                  fontSize: 13,
+                  fontSize: 12,
                   fontWeight: 500,
                   fontFamily: "'IBM Plex Sans', sans-serif",
                 }}
@@ -1904,10 +1845,13 @@ const SpanDetailPane = ({
               </Typography>
               <IconButton
                 size="small"
-                sx={{ p: 0.25 }}
                 onClick={() => copyText(span.name || "")}
               >
-                <Iconify icon="tabler:copy" width={12} color="text.disabled" />
+                <Iconify
+                  icon="solar:copy-linear"
+                  width={12}
+                  color="text.disabled"
+                />
               </IconButton>
             </Stack>
             <Stack direction="row" alignItems="center" spacing={0.25}>
@@ -1916,17 +1860,17 @@ const SpanDetailPane = ({
                 sx={{
                   fontFamily: "monospace",
                   color: "text.secondary",
-                  fontSize: 11,
+                  fontSize: 12,
                 }}
               >
                 {span.id}
               </Typography>
-              <IconButton
-                size="small"
-                sx={{ p: 0.25 }}
-                onClick={() => copyText(span.id || "")}
-              >
-                <Iconify icon="tabler:copy" width={11} color="text.disabled" />
+              <IconButton size="small" onClick={() => copyText(span.id || "")}>
+                <Iconify
+                  icon="solar:copy-linear"
+                  width={12}
+                  color="text.disabled"
+                />
               </IconButton>
             </Stack>
           </Box>
@@ -1936,15 +1880,13 @@ const SpanDetailPane = ({
             <Button
               size="small"
               variant="outlined"
-              endIcon={<Iconify icon="mdi:chevron-down" width={14} />}
+              endIcon={
+                <Iconify icon="solar:alt-arrow-down-linear" width={14} />
+              }
               onClick={(e) => onAction("_open", e.currentTarget)}
               sx={{
-                fontSize: 12,
-                textTransform: "none",
                 borderColor: "divider",
                 color: "text.primary",
-                height: 28,
-                px: 1.5,
                 "&:hover": { borderColor: "border.hover" },
               }}
             >
@@ -1965,6 +1907,7 @@ const SpanDetailPane = ({
           tags={span?.tags || []}
           traceId={span?.trace}
           spanId={span?.id}
+          readOnly={readOnly}
         />
       </Box>
 
@@ -1975,29 +1918,16 @@ const SpanDetailPane = ({
         variant="scrollable"
         scrollButtons="auto"
         allowScrollButtonsMobile
-        sx={{
-          minHeight: 32,
-          px: 1,
+        sx={{ boxShadow: "none",
           borderBottom: "1px solid",
           borderColor: "divider",
           "& .MuiTabs-flexContainer": { gap: 0 },
           "& .MuiTab-root": {
-            minHeight: 32,
-            fontSize: 12,
-            fontWeight: 500,
-            textTransform: "none",
             minWidth: "unset !important",
-            padding: "0 10px !important",
             marginRight: "0 !important",
             gap: "4px",
-            color: "text.secondary",
             fontFamily: "'Inter', sans-serif",
             letterSpacing: 0,
-          },
-          "& .Mui-selected": { color: "primary.main", fontWeight: 600 },
-          "& .MuiTabs-indicator": {
-            backgroundColor: "primary.main",
-            height: 2,
           },
           "& .MuiTabs-scrollButtons": {
             width: 24,
@@ -2062,12 +1992,16 @@ const SpanDetailPane = ({
                   py: 0.5,
                   border: "1px solid",
                   borderColor: "divider",
-                  borderRadius: "2px",
+                  borderRadius: "4px",
                   bgcolor: "background.paper",
                   flex: 1,
                 }}
               >
-                <Iconify icon="mdi:magnify" width={14} color="text.disabled" />
+                <Iconify
+                  icon="solar:magnifier-linear"
+                  width={14}
+                  color="text.disabled"
+                />
                 <Box
                   component="input"
                   placeholder="Search"
@@ -2084,7 +2018,7 @@ const SpanDetailPane = ({
                     border: "none",
                     outline: "none",
                     flex: 1,
-                    fontSize: 11,
+                    fontSize: 12,
                     color: "text.primary",
                     bgcolor: "transparent",
                     "&::placeholder": { color: "text.disabled" },
@@ -2100,7 +2034,7 @@ const SpanDetailPane = ({
                     <Typography
                       variant="caption"
                       sx={{
-                        fontSize: 10,
+                        fontSize: 12,
                         color: matchCount ? "text.secondary" : "text.disabled",
                         minWidth: 42,
                         textAlign: "right",
@@ -2115,19 +2049,17 @@ const SpanDetailPane = ({
                       size="small"
                       disabled={!matchCount}
                       onClick={prev}
-                      sx={{ p: 0.25 }}
                       aria-label="Previous match"
                     >
-                      <Iconify icon="mdi:chevron-up" width={14} />
+                      <Iconify icon="solar:alt-arrow-up-linear" width={14} />
                     </IconButton>
                     <IconButton
                       size="small"
                       disabled={!matchCount}
                       onClick={next}
-                      sx={{ p: 0.25 }}
                       aria-label="Next match"
                     >
-                      <Iconify icon="mdi:chevron-down" width={14} />
+                      <Iconify icon="solar:alt-arrow-down-linear" width={14} />
                     </IconButton>
                   </Stack>
                 )}
@@ -2173,10 +2105,19 @@ const SpanDetailPane = ({
             shared EvalsTabView component so the trace drawer and the
             voice drawer use the same eval UI. */}
         {activeTab === "evals" && (
-          <EvalsTabView
+          <>
+            {entry?.eval_rollup && (
+              <EvalRollupBreakdown
+                rollup={entry.eval_rollup}
+                onSelectSpan={onSelectSpan}
+              />
+            )}
+            <EvalsTabView
             evals={collectAllEvalsFromEntry(entry)}
             onSelectSpan={onSelectSpan}
             emptyMessage="No evaluations for this span or its children"
+            showErrorLocalization={!readOnly}
+            showFixWithFalcon={!readOnly}
             onFixWithFalcon={({ level, ev, failingEvals, allEvals }) => {
               const traceId = span?.trace;
               if (level === "eval" && ev) {
@@ -2218,14 +2159,16 @@ const SpanDetailPane = ({
                 },
               });
             }}
-          />
+            />
+          </>
         )}
 
         {/* Annotations Tab */}
-        {activeTab === "annotations" && (
+        {activeTab === "annotations" && !readOnly && (
           <AnnotationsTabContent
             spanId={span?.id}
             traceId={span?.trace}
+            projectId={projectId}
             onAction={onAction}
           />
         )}
@@ -2242,7 +2185,7 @@ const SpanDetailPane = ({
             ) : (
               <Box sx={{ textAlign: "center", py: 4, color: "text.secondary" }}>
                 <Iconify
-                  icon="mdi:lightning-bolt-outline"
+                  icon="solar:bolt-linear"
                   width={32}
                   sx={{ mb: 1, opacity: 0.4 }}
                 />
@@ -2288,7 +2231,7 @@ const AttrValueCell = ({
 }) => {
   if (value === null || value === undefined) {
     return (
-      <Typography variant="caption" color="text.disabled" sx={{ fontSize: 11 }}>
+      <Typography variant="caption" color="text.disabled" sx={{ fontSize: 12 }}>
         null
       </Typography>
     );
@@ -2322,7 +2265,7 @@ const AttrValueCell = ({
         <Typography
           variant="caption"
           color="text.disabled"
-          sx={{ fontSize: 11 }}
+          sx={{ fontSize: 12 }}
         >
           empty {isArr ? "array" : "object"}
         </Typography>
@@ -2341,14 +2284,18 @@ const AttrValueCell = ({
           }}
         >
           <Iconify
-            icon={expanded ? "mdi:chevron-down" : "mdi:chevron-right"}
+            icon={
+              expanded
+                ? "solar:alt-arrow-down-linear"
+                : "solar:alt-arrow-right-linear"
+            }
             width={12}
             sx={{ color: "text.disabled" }}
           />
           <Typography
             variant="caption"
             color="text.secondary"
-            sx={{ fontSize: 11 }}
+            sx={{ fontSize: 12 }}
           >
             {count} items
           </Typography>
@@ -2391,7 +2338,7 @@ const AttrValueCell = ({
     <Typography
       variant="caption"
       sx={{
-        fontSize: 11,
+        fontSize: 12,
         color: typeof value === "string" ? "syntax.string" : "text.primary",
         wordBreak: "break-all",
       }}
@@ -2427,7 +2374,7 @@ const AttrNestedRow = ({ path, value, spanId, traceId, audioCache }) => {
           gap: 0.5,
           cursor: isComplex ? "pointer" : "default",
           "&:hover": isComplex
-            ? { bgcolor: "action.hover", borderRadius: "2px" }
+            ? { bgcolor: "action.hover", borderRadius: "4px" }
             : {},
           px: 0.25,
           py: 0.1,
@@ -2442,7 +2389,7 @@ const AttrNestedRow = ({ path, value, spanId, traceId, audioCache }) => {
           variant="caption"
           fontWeight={500}
           sx={{
-            fontSize: 11,
+            fontSize: 12,
             minWidth: 60,
             flexShrink: 0,
             color: "text.secondary",
@@ -2549,219 +2496,230 @@ const AttributesCard = ({
   return (
     <SingleImageViewerProvider>
       <AudioPlaybackProvider>
-    <Box
-      sx={{
-        border: "1px solid",
-        borderColor: "divider",
-        borderRadius: "4px",
-        bgcolor: "background.paper",
-        overflow: "hidden",
-      }}
-    >
-      {/* Header — excluded from find-in-page */}
-      <Stack
-        data-search-skip="true"
-        direction="row"
-        alignItems="center"
-        sx={{ px: 1.5, py: 0.75, cursor: "pointer" }}
-        onClick={() => setExpanded((p) => !p)}
-      >
-        <Typography
-          variant="body2"
-          sx={{
-            fontSize: 13,
-            fontWeight: 500,
-            fontFamily: "'IBM Plex Sans', sans-serif",
-            flex: 1,
-          }}
-        >
-          Attributes
-        </Typography>
-        <IconButton
-          size="small"
-          sx={{ p: 0.25 }}
-          onClick={(e) => {
-            e.stopPropagation();
-            copyText(JSON.stringify(parsed, null, 2));
-          }}
-        >
-          <Iconify icon="tabler:copy" width={14} color="text.disabled" />
-        </IconButton>
-        <Iconify
-          icon={expanded ? "mdi:chevron-up" : "mdi:chevron-down"}
-          width={16}
-          sx={{ color: "text.disabled", ml: 0.25 }}
-        />
-      </Stack>
-
-      <Collapse in={expanded}>
-        {/* Search within attributes — hidden when parent owns the query */}
-        {!hideInlineSearch && (
-          <Box sx={{ px: 1.5, pb: 0.75 }}>
-            <Box
-              sx={{
-                display: "flex",
-                alignItems: "center",
-                gap: 0.5,
-                px: 1,
-                py: 0.25,
-                border: "1px solid",
-                borderColor: "divider",
-                borderRadius: "2px",
-                bgcolor: "background.default",
-              }}
-            >
-              <Iconify icon="mdi:magnify" width={12} color="text.disabled" />
-              <Box
-                component="input"
-                placeholder="Search attributes..."
-                value={attrSearch}
-                onChange={(e) => setAttrSearch(e.target.value)}
-                sx={{
-                  border: "none",
-                  outline: "none",
-                  flex: 1,
-                  fontSize: 11,
-                  color: "text.primary",
-                  bgcolor: "transparent",
-                  py: 0.15,
-                  "&::placeholder": { color: "text.disabled" },
-                }}
-              />
-            </Box>
-          </Box>
-        )}
-
         <Box
           sx={{
-            mx: 1.5,
-            mb: 1.5,
             border: "1px solid",
             borderColor: "divider",
             borderRadius: "4px",
+            bgcolor: "background.paper",
             overflow: "hidden",
           }}
         >
-          {/* Table header — excluded from find-in-page */}
-          <Box
+          {/* Header — excluded from find-in-page */}
+          <Stack
             data-search-skip="true"
-            sx={{
-              display: "flex",
-              px: 1.5,
-              py: 0.5,
-              bgcolor: "background.default",
-              borderBottom: "1px solid",
-              borderColor: "divider",
-            }}
+            direction="row"
+            alignItems="center"
+            sx={{ px: 1.5, py: 0.75, cursor: "pointer" }}
+            onClick={() => setExpanded((p) => !p)}
           >
             <Typography
-              variant="caption"
+              variant="body2"
               sx={{
-                fontWeight: 600,
-                fontSize: 11,
-                width: "40%",
-                flexShrink: 0,
+                fontSize: 12,
+                fontWeight: 500,
+                fontFamily: "'IBM Plex Sans', sans-serif",
+                flex: 1,
               }}
             >
-              Path
+              Attributes
             </Typography>
-            <Typography
-              variant="caption"
-              sx={{ fontWeight: 600, fontSize: 11, flex: 1 }}
+            <IconButton
+              size="small"
+              onClick={(e) => {
+                e.stopPropagation();
+                copyText(JSON.stringify(parsed, null, 2));
+              }}
             >
-              Value
-            </Typography>
-          </Box>
-
-          {/* Rows */}
-          <Box sx={{ maxHeight: 350, overflowY: "auto" }}>
-            {filteredEntries.length === 0 ? (
-              <Typography
-                variant="caption"
+              <Iconify
+                icon="solar:copy-linear"
+                width={14}
                 color="text.disabled"
-                sx={{ p: 1.5, display: "block", textAlign: "center" }}
-              >
-                {query ? "No matching attributes" : "No attributes"}
-              </Typography>
-            ) : (
-              filteredEntries.map(([key, val]) => {
-                const isObj =
-                  val !== null &&
-                  val !== undefined &&
-                  typeof val === "object" &&
-                  !Array.isArray(val);
-                const isArr = Array.isArray(val);
-                const isEmpty =
-                  val === null ||
-                  val === undefined ||
-                  val === "" ||
-                  (isObj && Object.keys(val).length === 0) ||
-                  (isArr && val.length === 0);
+              />
+            </IconButton>
+            <Iconify
+              icon={
+                expanded
+                  ? "solar:alt-arrow-up-linear"
+                  : "solar:alt-arrow-down-linear"
+              }
+              width={16}
+              sx={{ color: "text.disabled", ml: 0.25 }}
+            />
+          </Stack>
 
-                return (
+          <Collapse in={expanded}>
+            {/* Search within attributes — hidden when parent owns the query */}
+            {!hideInlineSearch && (
+              <Box sx={{ px: 1.5, pb: 0.75 }}>
+                <Box
+                  sx={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 0.5,
+                    px: 1,
+                    py: 0.25,
+                    border: "1px solid",
+                    borderColor: "divider",
+                    borderRadius: "4px",
+                    bgcolor: "background.default",
+                  }}
+                >
+                  <Iconify
+                    icon="solar:magnifier-linear"
+                    width={12}
+                    color="text.disabled"
+                  />
                   <Box
-                    key={key}
+                    component="input"
+                    placeholder="Search attributes..."
+                    value={attrSearch}
+                    onChange={(e) => setAttrSearch(e.target.value)}
                     sx={{
-                      display: "flex",
-                      alignItems: "flex-start",
-                      px: 1.5,
-                      py: 0.5,
-                      borderBottom: "1px solid",
-                      borderColor: "divider",
-                      "&:last-child": { borderBottom: "none" },
-                      "&:hover": { bgcolor: "action.hover" },
+                      border: "none",
+                      outline: "none",
+                      flex: 1,
+                      fontSize: 12,
+                      color: "text.primary",
+                      bgcolor: "transparent",
+                      py: 0.15,
+                      "&::placeholder": { color: "text.disabled" },
                     }}
+                  />
+                </Box>
+              </Box>
+            )}
+
+            <Box
+              sx={{
+                mx: 1.5,
+                mb: 1.5,
+                border: "1px solid",
+                borderColor: "divider",
+                borderRadius: "4px",
+                overflow: "hidden",
+              }}
+            >
+              {/* Table header — excluded from find-in-page */}
+              <Box
+                data-search-skip="true"
+                sx={{
+                  display: "flex",
+                  px: 1.5,
+                  py: 0.5,
+                  bgcolor: "background.default",
+                  borderBottom: "1px solid",
+                  borderColor: "divider",
+                }}
+              >
+                <Typography
+                  variant="caption"
+                  sx={{
+                    fontWeight: 600,
+                    fontSize: 12,
+                    width: "40%",
+                    flexShrink: 0,
+                  }}
+                >
+                  Path
+                </Typography>
+                <Typography
+                  variant="caption"
+                  sx={{ fontWeight: 600, fontSize: 12, flex: 1 }}
+                >
+                  Value
+                </Typography>
+              </Box>
+
+              {/* Rows */}
+              <Box sx={{ maxHeight: 350, overflowY: "auto" }}>
+                {filteredEntries.length === 0 ? (
+                  <Typography
+                    variant="caption"
+                    color="text.disabled"
+                    sx={{ p: 1.5, display: "block", textAlign: "center" }}
                   >
-                    <Typography
-                      variant="caption"
-                      fontWeight={500}
-                      noWrap
-                      sx={{
-                        width: "40%",
-                        flexShrink: 0,
-                        pt: 0.15,
-                        fontSize: 11,
-                        color: "text.secondary",
-                      }}
-                    >
-                      {query && key.toLowerCase().includes(query) ? (
-                        <Highlight text={key} query={query} />
-                      ) : (
-                        key
-                      )}
-                    </Typography>
-                    <Box sx={{ flex: 1, minWidth: 0, overflow: "hidden" }}>
-                      {isEmpty ? (
+                    {query ? "No matching attributes" : "No attributes"}
+                  </Typography>
+                ) : (
+                  filteredEntries.map(([key, val]) => {
+                    const isObj =
+                      val !== null &&
+                      val !== undefined &&
+                      typeof val === "object" &&
+                      !Array.isArray(val);
+                    const isArr = Array.isArray(val);
+                    const isEmpty =
+                      val === null ||
+                      val === undefined ||
+                      val === "" ||
+                      (isObj && Object.keys(val).length === 0) ||
+                      (isArr && val.length === 0);
+
+                    return (
+                      <Box
+                        key={key}
+                        sx={{
+                          display: "flex",
+                          alignItems: "flex-start",
+                          px: 1.5,
+                          py: 0.5,
+                          borderBottom: "1px solid",
+                          borderColor: "divider",
+                          "&:last-child": { borderBottom: "none" },
+                          "&:hover": { bgcolor: "action.hover" },
+                        }}
+                      >
                         <Typography
                           variant="caption"
-                          color="text.disabled"
-                          sx={{ fontSize: 11 }}
+                          fontWeight={500}
+                          noWrap
+                          sx={{
+                            width: "40%",
+                            flexShrink: 0,
+                            pt: 0.15,
+                            fontSize: 12,
+                            color: "text.secondary",
+                          }}
                         >
-                          {isObj || isArr
-                            ? `empty ${isArr ? "array" : "object"}`
-                            : "—"}
+                          {query && key.toLowerCase().includes(query) ? (
+                            <Highlight text={key} query={query} />
+                          ) : (
+                            key
+                          )}
                         </Typography>
-                      ) : (
-                        <AttrValueCell
-                          value={val}
-                          expanded={expandedKeys[key]}
-                          onToggle={() => toggleKey(key)}
-                          searchQuery={query}
-                          path={key}
-                          spanId={spanId}
-                          traceId={traceId}
-                          audioCache={audioCache}
-                        />
-                      )}
-                    </Box>
-                  </Box>
-                );
-              })
-            )}
-          </Box>
+                        <Box sx={{ flex: 1, minWidth: 0, overflow: "hidden" }}>
+                          {isEmpty ? (
+                            <Typography
+                              variant="caption"
+                              color="text.disabled"
+                              sx={{ fontSize: 12 }}
+                            >
+                              {isObj || isArr
+                                ? `empty ${isArr ? "array" : "object"}`
+                                : "—"}
+                            </Typography>
+                          ) : (
+                            <AttrValueCell
+                              value={val}
+                              expanded={expandedKeys[key]}
+                              onToggle={() => toggleKey(key)}
+                              searchQuery={query}
+                              path={key}
+                              spanId={spanId}
+                              traceId={traceId}
+                              audioCache={audioCache}
+                            />
+                          )}
+                        </Box>
+                      </Box>
+                    );
+                  })
+                )}
+              </Box>
+            </Box>
+          </Collapse>
         </Box>
-      </Collapse>
-    </Box>
       </AudioPlaybackProvider>
     </SingleImageViewerProvider>
   );
@@ -2782,6 +2740,7 @@ SpanDetailPane.propTypes = {
     observationSpan: PropTypes.object,
     eval_scores: PropTypes.array,
     evalScores: PropTypes.array,
+    eval_rollup: PropTypes.object,
     annotations: PropTypes.array,
   }),
   allSpans: PropTypes.array,
@@ -2792,7 +2751,9 @@ SpanDetailPane.propTypes = {
   onClose: PropTypes.func.isRequired,
   onAction: PropTypes.func,
   onSelectSpan: PropTypes.func,
+  initialEvalFocus: PropTypes.bool,
   drawerOpen: PropTypes.bool,
+  readOnly: PropTypes.bool,
 };
 
 export default React.memo(SpanDetailPane);

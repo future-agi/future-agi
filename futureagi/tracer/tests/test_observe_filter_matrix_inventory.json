@@ -1,0 +1,2054 @@
+{
+  "attributes": [
+    {
+      "name": "agent.duration_s",
+      "observed_types": [
+        "number"
+      ],
+      "resolved_type": "number"
+    },
+    {
+      "name": "fixture.attribute_002",
+      "observed_types": [
+        "number"
+      ],
+      "resolved_type": "number"
+    },
+    {
+      "name": "fixture.attribute_003",
+      "observed_types": [
+        "number"
+      ],
+      "resolved_type": "number"
+    },
+    {
+      "name": "fixture.attribute_004",
+      "observed_types": [
+        "number"
+      ],
+      "resolved_type": "number"
+    },
+    {
+      "name": "fixture.attribute_005",
+      "observed_types": [
+        "number"
+      ],
+      "resolved_type": "number"
+    },
+    {
+      "name": "agent_name",
+      "observed_types": [
+        "string"
+      ],
+      "resolved_type": "string"
+    },
+    {
+      "name": "audio_duration_ms",
+      "observed_types": [
+        "number"
+      ],
+      "resolved_type": "number"
+    },
+    {
+      "name": "audio_duration_s",
+      "observed_types": [
+        "number"
+      ],
+      "resolved_type": "number"
+    },
+    {
+      "name": "fixture.attribute_009",
+      "observed_types": [
+        "string"
+      ],
+      "resolved_type": "string"
+    },
+    {
+      "name": "call.id",
+      "observed_types": [
+        "number",
+        "string"
+      ],
+      "resolved_type": "json"
+    },
+    {
+      "name": "call_id",
+      "observed_types": [
+        "number",
+        "string"
+      ],
+      "resolved_type": "json"
+    },
+    {
+      "name": "fixture.attribute_012",
+      "observed_types": [
+        "string"
+      ],
+      "resolved_type": "string"
+    },
+    {
+      "name": "fixture.attribute_013",
+      "observed_types": [
+        "number"
+      ],
+      "resolved_type": "number"
+    },
+    {
+      "name": "fixture.attribute_014",
+      "observed_types": [
+        "boolean"
+      ],
+      "resolved_type": "boolean"
+    },
+    {
+      "name": "fixture.attribute_015",
+      "observed_types": [
+        "number"
+      ],
+      "resolved_type": "number"
+    },
+    {
+      "name": "fixture.attribute_016",
+      "observed_types": [
+        "number"
+      ],
+      "resolved_type": "number"
+    },
+    {
+      "name": "fixture.attribute_017",
+      "observed_types": [
+        "number"
+      ],
+      "resolved_type": "number"
+    },
+    {
+      "name": "fixture.attribute_018",
+      "observed_types": [
+        "string"
+      ],
+      "resolved_type": "string"
+    },
+    {
+      "name": "fixture.attribute_019",
+      "observed_types": [
+        "string"
+      ],
+      "resolved_type": "string"
+    },
+    {
+      "name": "fixture.attribute_020",
+      "observed_types": [
+        "string"
+      ],
+      "resolved_type": "string"
+    },
+    {
+      "name": "fixture.attribute_021",
+      "observed_types": [
+        "string"
+      ],
+      "resolved_type": "string"
+    },
+    {
+      "name": "company_id",
+      "observed_types": [
+        "number",
+        "string"
+      ],
+      "resolved_type": "string"
+    },
+    {
+      "name": "completion_tokens",
+      "observed_types": [
+        "number"
+      ],
+      "resolved_type": "number"
+    },
+    {
+      "name": "fixture.attribute_024",
+      "observed_types": [
+        "string"
+      ],
+      "resolved_type": "string"
+    },
+    {
+      "name": "fixture.attribute_025",
+      "observed_types": [
+        "string"
+      ],
+      "resolved_type": "string"
+    },
+    {
+      "name": "fixture.attribute_026",
+      "observed_types": [
+        "string"
+      ],
+      "resolved_type": "string"
+    },
+    {
+      "name": "fixture.attribute_027",
+      "observed_types": [
+        "string"
+      ],
+      "resolved_type": "string"
+    },
+    {
+      "name": "fixture.attribute_028",
+      "observed_types": [
+        "string"
+      ],
+      "resolved_type": "string"
+    },
+    {
+      "name": "fixture.attribute_029",
+      "observed_types": [
+        "string"
+      ],
+      "resolved_type": "string"
+    },
+    {
+      "name": "fixture.attribute_030",
+      "observed_types": [
+        "string"
+      ],
+      "resolved_type": "string"
+    },
+    {
+      "name": "fixture.attribute_031",
+      "observed_types": [
+        "string"
+      ],
+      "resolved_type": "string"
+    },
+    {
+      "name": "fixture.attribute_032",
+      "observed_types": [
+        "string"
+      ],
+      "resolved_type": "string"
+    },
+    {
+      "name": "fixture.attribute_033",
+      "observed_types": [
+        "string"
+      ],
+      "resolved_type": "string"
+    },
+    {
+      "name": "fixture.attribute_034",
+      "observed_types": [
+        "string"
+      ],
+      "resolved_type": "string"
+    },
+    {
+      "name": "fixture.attribute_035",
+      "observed_types": [
+        "string"
+      ],
+      "resolved_type": "string"
+    },
+    {
+      "name": "fixture.attribute_036",
+      "observed_types": [
+        "string"
+      ],
+      "resolved_type": "string"
+    },
+    {
+      "name": "fixture.attribute_037",
+      "observed_types": [
+        "number"
+      ],
+      "resolved_type": "number"
+    },
+    {
+      "name": "cost",
+      "observed_types": [
+        "number"
+      ],
+      "resolved_type": "number"
+    },
+    {
+      "name": "customer_id",
+      "observed_types": [
+        "number",
+        "string"
+      ],
+      "resolved_type": "json"
+    },
+    {
+      "name": "fixture.attribute_040",
+      "observed_types": [
+        "string"
+      ],
+      "resolved_type": "string"
+    },
+    {
+      "name": "fixture.attribute_041",
+      "observed_types": [
+        "string"
+      ],
+      "resolved_type": "string"
+    },
+    {
+      "name": "fixture.attribute_042",
+      "observed_types": [
+        "string"
+      ],
+      "resolved_type": "string"
+    },
+    {
+      "name": "exception",
+      "observed_types": [
+        "string"
+      ],
+      "resolved_type": "string"
+    },
+    {
+      "name": "exception.message",
+      "observed_types": [
+        "string"
+      ],
+      "resolved_type": "string"
+    },
+    {
+      "name": "exception.stacktrace",
+      "observed_types": [
+        "string"
+      ],
+      "resolved_type": "string"
+    },
+    {
+      "name": "exception.type",
+      "observed_types": [
+        "string"
+      ],
+      "resolved_type": "string"
+    },
+    {
+      "name": "fixture.attribute_047",
+      "observed_types": [
+        "string"
+      ],
+      "resolved_type": "string"
+    },
+    {
+      "name": "fi.span.kind",
+      "observed_types": [
+        "string"
+      ],
+      "resolved_type": "string"
+    },
+    {
+      "name": "fi.trace.source",
+      "observed_types": [
+        "string"
+      ],
+      "resolved_type": "string"
+    },
+    {
+      "name": "filename",
+      "observed_types": [
+        "string"
+      ],
+      "resolved_type": "string"
+    },
+    {
+      "name": "final_status",
+      "observed_types": [
+        "string"
+      ],
+      "resolved_type": "string"
+    },
+    {
+      "name": "fixture.attribute_052",
+      "observed_types": [
+        "number"
+      ],
+      "resolved_type": "number"
+    },
+    {
+      "name": "fixture.attribute_053",
+      "observed_types": [
+        "string"
+      ],
+      "resolved_type": "string"
+    },
+    {
+      "name": "fixture.attribute_054",
+      "observed_types": [
+        "string"
+      ],
+      "resolved_type": "string"
+    },
+    {
+      "name": "fixture.attribute_055",
+      "observed_types": [
+        "string"
+      ],
+      "resolved_type": "string"
+    },
+    {
+      "name": "fixture.attribute_056",
+      "observed_types": [
+        "string"
+      ],
+      "resolved_type": "string"
+    },
+    {
+      "name": "fixture.attribute_057",
+      "observed_types": [
+        "string"
+      ],
+      "resolved_type": "string"
+    },
+    {
+      "name": "fixture.attribute_058",
+      "observed_types": [
+        "number"
+      ],
+      "resolved_type": "number"
+    },
+    {
+      "name": "function",
+      "observed_types": [
+        "string"
+      ],
+      "resolved_type": "string"
+    },
+    {
+      "name": "gen_ai.operation.name",
+      "observed_types": [
+        "string"
+      ],
+      "resolved_type": "string"
+    },
+    {
+      "name": "gen_ai.provider.name",
+      "observed_types": [
+        "string"
+      ],
+      "resolved_type": "string"
+    },
+    {
+      "name": "gen_ai.request.model",
+      "observed_types": [
+        "string"
+      ],
+      "resolved_type": "string"
+    },
+    {
+      "name": "gen_ai.span.kind",
+      "observed_types": [
+        "string"
+      ],
+      "resolved_type": "string"
+    },
+    {
+      "name": "gen_ai.system",
+      "observed_types": [
+        "string"
+      ],
+      "resolved_type": "string"
+    },
+    {
+      "name": "gen_ai.trace.source",
+      "observed_types": [
+        "string"
+      ],
+      "resolved_type": "string"
+    },
+    {
+      "name": "gen_ai.usage.input_tokens",
+      "observed_types": [
+        "number"
+      ],
+      "resolved_type": "number"
+    },
+    {
+      "name": "gen_ai.usage.output_tokens",
+      "observed_types": [
+        "number"
+      ],
+      "resolved_type": "number"
+    },
+    {
+      "name": "gen_ai.usage.total_tokens",
+      "observed_types": [
+        "number"
+      ],
+      "resolved_type": "number"
+    },
+    {
+      "name": "generation_type",
+      "observed_types": [
+        "string"
+      ],
+      "resolved_type": "string"
+    },
+    {
+      "name": "id",
+      "observed_types": [
+        "number",
+        "string"
+      ],
+      "resolved_type": "json"
+    },
+    {
+      "name": "fixture.attribute_071",
+      "observed_types": [
+        "string"
+      ],
+      "resolved_type": "string"
+    },
+    {
+      "name": "fixture.attribute_072",
+      "observed_types": [
+        "string"
+      ],
+      "resolved_type": "string"
+    },
+    {
+      "name": "input.mime_type",
+      "observed_types": [
+        "string"
+      ],
+      "resolved_type": "string"
+    },
+    {
+      "name": "fixture.attribute_074",
+      "observed_types": [
+        "string"
+      ],
+      "resolved_type": "string"
+    },
+    {
+      "name": "fixture.attribute_075",
+      "observed_types": [
+        "string"
+      ],
+      "resolved_type": "string"
+    },
+    {
+      "name": "fixture.attribute_076",
+      "observed_types": [
+        "string"
+      ],
+      "resolved_type": "string"
+    },
+    {
+      "name": "fixture.attribute_077",
+      "observed_types": [
+        "string"
+      ],
+      "resolved_type": "string"
+    },
+    {
+      "name": "fixture.attribute_078",
+      "observed_types": [
+        "string"
+      ],
+      "resolved_type": "string"
+    },
+    {
+      "name": "fixture.attribute_079",
+      "observed_types": [
+        "string"
+      ],
+      "resolved_type": "string"
+    },
+    {
+      "name": "fixture.attribute_080",
+      "observed_types": [
+        "string"
+      ],
+      "resolved_type": "string"
+    },
+    {
+      "name": "fixture.attribute_081",
+      "observed_types": [
+        "number"
+      ],
+      "resolved_type": "number"
+    },
+    {
+      "name": "interruption_latency_s",
+      "observed_types": [
+        "number"
+      ],
+      "resolved_type": "number"
+    },
+    {
+      "name": "fixture.attribute_083",
+      "observed_types": [
+        "string"
+      ],
+      "resolved_type": "string"
+    },
+    {
+      "name": "fixture.attribute_084",
+      "observed_types": [
+        "string"
+      ],
+      "resolved_type": "string"
+    },
+    {
+      "name": "fixture.attribute_085",
+      "observed_types": [
+        "string"
+      ],
+      "resolved_type": "string"
+    },
+    {
+      "name": "kind",
+      "observed_types": [
+        "string"
+      ],
+      "resolved_type": "string"
+    },
+    {
+      "name": "langfuse.environment",
+      "observed_types": [
+        "string"
+      ],
+      "resolved_type": "string"
+    },
+    {
+      "name": "langfuse.observation.completion_start_time",
+      "observed_types": [
+        "string"
+      ],
+      "resolved_type": "string"
+    },
+    {
+      "name": "langfuse.observation.name",
+      "observed_types": [
+        "string"
+      ],
+      "resolved_type": "string"
+    },
+    {
+      "name": "langfuse.observation.type",
+      "observed_types": [
+        "string"
+      ],
+      "resolved_type": "string"
+    },
+    {
+      "name": "fixture.attribute_091",
+      "observed_types": [
+        "string"
+      ],
+      "resolved_type": "string"
+    },
+    {
+      "name": "language",
+      "observed_types": [
+        "string"
+      ],
+      "resolved_type": "string"
+    },
+    {
+      "name": "latency_ms",
+      "observed_types": [
+        "number"
+      ],
+      "resolved_type": "number"
+    },
+    {
+      "name": "latency_s",
+      "observed_types": [
+        "number"
+      ],
+      "resolved_type": "number"
+    },
+    {
+      "name": "level",
+      "observed_types": [
+        "string"
+      ],
+      "resolved_type": "string"
+    },
+    {
+      "name": "level_number",
+      "observed_types": [
+        "number",
+        "string"
+      ],
+      "resolved_type": "json"
+    },
+    {
+      "name": "lineno",
+      "observed_types": [
+        "number",
+        "string"
+      ],
+      "resolved_type": "json"
+    },
+    {
+      "name": "lk.agent_label",
+      "observed_types": [
+        "string"
+      ],
+      "resolved_type": "string"
+    },
+    {
+      "name": "lk.agent_name",
+      "observed_types": [
+        "string"
+      ],
+      "resolved_type": "string"
+    },
+    {
+      "name": "lk.amd.category",
+      "observed_types": [
+        "string"
+      ],
+      "resolved_type": "string"
+    },
+    {
+      "name": "lk.amd.delay",
+      "observed_types": [
+        "number"
+      ],
+      "resolved_type": "number"
+    },
+    {
+      "name": "lk.amd.reason",
+      "observed_types": [
+        "string"
+      ],
+      "resolved_type": "string"
+    },
+    {
+      "name": "lk.amd.speech_duration",
+      "observed_types": [
+        "number"
+      ],
+      "resolved_type": "number"
+    },
+    {
+      "name": "lk.amd.transcript",
+      "observed_types": [
+        "string"
+      ],
+      "resolved_type": "string"
+    },
+    {
+      "name": "lk.chat_ctx",
+      "observed_types": [
+        "string"
+      ],
+      "resolved_type": "string"
+    },
+    {
+      "name": "lk.e2e_latency",
+      "observed_types": [
+        "number"
+      ],
+      "resolved_type": "number"
+    },
+    {
+      "name": "lk.end_of_turn_delay",
+      "observed_types": [
+        "number"
+      ],
+      "resolved_type": "number"
+    },
+    {
+      "name": "lk.function_tool.arguments",
+      "observed_types": [
+        "string"
+      ],
+      "resolved_type": "string"
+    },
+    {
+      "name": "lk.function_tool.id",
+      "observed_types": [
+        "string"
+      ],
+      "resolved_type": "string"
+    },
+    {
+      "name": "lk.function_tool.is_error",
+      "observed_types": [
+        "boolean"
+      ],
+      "resolved_type": "boolean"
+    },
+    {
+      "name": "lk.function_tool.name",
+      "observed_types": [
+        "string"
+      ],
+      "resolved_type": "string"
+    },
+    {
+      "name": "lk.function_tool.output",
+      "observed_types": [
+        "string"
+      ],
+      "resolved_type": "string"
+    },
+    {
+      "name": "lk.function_tools",
+      "observed_types": [
+        "array"
+      ],
+      "resolved_type": "array"
+    },
+    {
+      "name": "lk.generation_id",
+      "observed_types": [
+        "string"
+      ],
+      "resolved_type": "string"
+    },
+    {
+      "name": "lk.input_text",
+      "observed_types": [
+        "string"
+      ],
+      "resolved_type": "string"
+    },
+    {
+      "name": "lk.instructions",
+      "observed_types": [
+        "string"
+      ],
+      "resolved_type": "string"
+    },
+    {
+      "name": "lk.interrupted",
+      "observed_types": [
+        "boolean"
+      ],
+      "resolved_type": "boolean"
+    },
+    {
+      "name": "lk.job_id",
+      "observed_types": [
+        "string"
+      ],
+      "resolved_type": "string"
+    },
+    {
+      "name": "lk.llm_metrics",
+      "observed_types": [
+        "string"
+      ],
+      "resolved_type": "string"
+    },
+    {
+      "name": "lk.parent_generation_id",
+      "observed_types": [
+        "string"
+      ],
+      "resolved_type": "string"
+    },
+    {
+      "name": "lk.participant_id",
+      "observed_types": [
+        "string"
+      ],
+      "resolved_type": "string"
+    },
+    {
+      "name": "lk.participant_identity",
+      "observed_types": [
+        "string"
+      ],
+      "resolved_type": "string"
+    },
+    {
+      "name": "lk.participant_kind",
+      "observed_types": [
+        "string"
+      ],
+      "resolved_type": "string"
+    },
+    {
+      "name": "lk.provider_request_ids",
+      "observed_types": [
+        "array"
+      ],
+      "resolved_type": "array"
+    },
+    {
+      "name": "lk.response.function_calls",
+      "observed_types": [
+        "string"
+      ],
+      "resolved_type": "string"
+    },
+    {
+      "name": "lk.response.text",
+      "observed_types": [
+        "string"
+      ],
+      "resolved_type": "string"
+    },
+    {
+      "name": "lk.response.ttfb",
+      "observed_types": [
+        "number"
+      ],
+      "resolved_type": "number"
+    },
+    {
+      "name": "lk.response.ttft",
+      "observed_types": [
+        "number"
+      ],
+      "resolved_type": "number"
+    },
+    {
+      "name": "lk.retry_count",
+      "observed_types": [
+        "number"
+      ],
+      "resolved_type": "number"
+    },
+    {
+      "name": "lk.room_name",
+      "observed_types": [
+        "string"
+      ],
+      "resolved_type": "string"
+    },
+    {
+      "name": "lk.speech_id",
+      "observed_types": [
+        "string"
+      ],
+      "resolved_type": "string"
+    },
+    {
+      "name": "lk.transcript_confidence",
+      "observed_types": [
+        "number"
+      ],
+      "resolved_type": "number"
+    },
+    {
+      "name": "lk.transcription_delay",
+      "observed_types": [
+        "number"
+      ],
+      "resolved_type": "number"
+    },
+    {
+      "name": "lk.tts.label",
+      "observed_types": [
+        "string"
+      ],
+      "resolved_type": "string"
+    },
+    {
+      "name": "lk.tts.streaming",
+      "observed_types": [
+        "boolean"
+      ],
+      "resolved_type": "boolean"
+    },
+    {
+      "name": "lk.tts_metrics",
+      "observed_types": [
+        "string"
+      ],
+      "resolved_type": "string"
+    },
+    {
+      "name": "lk.user_input",
+      "observed_types": [
+        "string"
+      ],
+      "resolved_type": "string"
+    },
+    {
+      "name": "lk.user_transcript",
+      "observed_types": [
+        "string"
+      ],
+      "resolved_type": "string"
+    },
+    {
+      "name": "llm.cost.completion",
+      "observed_types": [
+        "number"
+      ],
+      "resolved_type": "number"
+    },
+    {
+      "name": "llm.cost.prompt",
+      "observed_types": [
+        "number"
+      ],
+      "resolved_type": "number"
+    },
+    {
+      "name": "llm.cost.total",
+      "observed_types": [
+        "number"
+      ],
+      "resolved_type": "number"
+    },
+    {
+      "name": "llm.model_name",
+      "observed_types": [
+        "string"
+      ],
+      "resolved_type": "string"
+    },
+    {
+      "name": "llm.token_count.completion",
+      "observed_types": [
+        "number"
+      ],
+      "resolved_type": "number"
+    },
+    {
+      "name": "llm.token_count.prompt",
+      "observed_types": [
+        "number"
+      ],
+      "resolved_type": "number"
+    },
+    {
+      "name": "llm.token_count.prompt_details.cache_read",
+      "observed_types": [
+        "number"
+      ],
+      "resolved_type": "number"
+    },
+    {
+      "name": "llm.token_count.total",
+      "observed_types": [
+        "number"
+      ],
+      "resolved_type": "number"
+    },
+    {
+      "name": "llm_cost",
+      "observed_types": [
+        "number"
+      ],
+      "resolved_type": "number"
+    },
+    {
+      "name": "fixture.attribute_148",
+      "observed_types": [
+        "number"
+      ],
+      "resolved_type": "number"
+    },
+    {
+      "name": "fixture.attribute_149",
+      "observed_types": [
+        "string"
+      ],
+      "resolved_type": "string"
+    },
+    {
+      "name": "fixture.attribute_150",
+      "observed_types": [
+        "number"
+      ],
+      "resolved_type": "number"
+    },
+    {
+      "name": "fixture.attribute_151",
+      "observed_types": [
+        "boolean"
+      ],
+      "resolved_type": "boolean"
+    },
+    {
+      "name": "fixture.attribute_152",
+      "observed_types": [
+        "number",
+        "string"
+      ],
+      "resolved_type": "json"
+    },
+    {
+      "name": "logger",
+      "observed_types": [
+        "string"
+      ],
+      "resolved_type": "string"
+    },
+    {
+      "name": "fixture.attribute_154",
+      "observed_types": [
+        "string"
+      ],
+      "resolved_type": "string"
+    },
+    {
+      "name": "fixture.attribute_155",
+      "observed_types": [
+        "string"
+      ],
+      "resolved_type": "string"
+    },
+    {
+      "name": "max_completion_tokens",
+      "observed_types": [
+        "number",
+        "string"
+      ],
+      "resolved_type": "json"
+    },
+    {
+      "name": "metadata",
+      "observed_types": [
+        "string"
+      ],
+      "resolved_type": "string"
+    },
+    {
+      "name": "model",
+      "observed_types": [
+        "string"
+      ],
+      "resolved_type": "string"
+    },
+    {
+      "name": "module",
+      "observed_types": [
+        "string"
+      ],
+      "resolved_type": "string"
+    },
+    {
+      "name": "fixture.attribute_160",
+      "observed_types": [
+        "string"
+      ],
+      "resolved_type": "string"
+    },
+    {
+      "name": "node_id",
+      "observed_types": [
+        "string"
+      ],
+      "resolved_type": "string"
+    },
+    {
+      "name": "fixture.attribute_162",
+      "observed_types": [
+        "string"
+      ],
+      "resolved_type": "string"
+    },
+    {
+      "name": "fixture.attribute_163",
+      "observed_types": [
+        "string"
+      ],
+      "resolved_type": "string"
+    },
+    {
+      "name": "fixture.attribute_164",
+      "observed_types": [
+        "string"
+      ],
+      "resolved_type": "string"
+    },
+    {
+      "name": "fixture.attribute_165",
+      "observed_types": [
+        "string"
+      ],
+      "resolved_type": "string"
+    },
+    {
+      "name": "fixture.attribute_166",
+      "observed_types": [
+        "string"
+      ],
+      "resolved_type": "string"
+    },
+    {
+      "name": "fixture.attribute_167",
+      "observed_types": [
+        "string"
+      ],
+      "resolved_type": "string"
+    },
+    {
+      "name": "fixture.attribute_168",
+      "observed_types": [
+        "string"
+      ],
+      "resolved_type": "string"
+    },
+    {
+      "name": "fixture.attribute_169",
+      "observed_types": [
+        "string"
+      ],
+      "resolved_type": "string"
+    },
+    {
+      "name": "fixture.attribute_170",
+      "observed_types": [
+        "string"
+      ],
+      "resolved_type": "string"
+    },
+    {
+      "name": "fixture.attribute_171",
+      "observed_types": [
+        "string"
+      ],
+      "resolved_type": "string"
+    },
+    {
+      "name": "fixture.attribute_172",
+      "observed_types": [
+        "string"
+      ],
+      "resolved_type": "string"
+    },
+    {
+      "name": "fixture.attribute_173",
+      "observed_types": [
+        "string"
+      ],
+      "resolved_type": "string"
+    },
+    {
+      "name": "fixture.attribute_174",
+      "observed_types": [
+        "string"
+      ],
+      "resolved_type": "string"
+    },
+    {
+      "name": "fixture.attribute_175",
+      "observed_types": [
+        "string"
+      ],
+      "resolved_type": "string"
+    },
+    {
+      "name": "fixture.attribute_176",
+      "observed_types": [
+        "string"
+      ],
+      "resolved_type": "string"
+    },
+    {
+      "name": "fixture.attribute_177",
+      "observed_types": [
+        "string"
+      ],
+      "resolved_type": "string"
+    },
+    {
+      "name": "fixture.attribute_178",
+      "observed_types": [
+        "string"
+      ],
+      "resolved_type": "string"
+    },
+    {
+      "name": "fixture.attribute_179",
+      "observed_types": [
+        "number"
+      ],
+      "resolved_type": "number"
+    },
+    {
+      "name": "output.mime_type",
+      "observed_types": [
+        "string"
+      ],
+      "resolved_type": "string"
+    },
+    {
+      "name": "pathname",
+      "observed_types": [
+        "string"
+      ],
+      "resolved_type": "string"
+    },
+    {
+      "name": "fixture.attribute_182",
+      "observed_types": [
+        "string"
+      ],
+      "resolved_type": "string"
+    },
+    {
+      "name": "fixture.attribute_183",
+      "observed_types": [
+        "string"
+      ],
+      "resolved_type": "string"
+    },
+    {
+      "name": "fixture.attribute_184",
+      "observed_types": [
+        "string"
+      ],
+      "resolved_type": "string"
+    },
+    {
+      "name": "fixture.attribute_185",
+      "observed_types": [
+        "string"
+      ],
+      "resolved_type": "string"
+    },
+    {
+      "name": "fixture.attribute_186",
+      "observed_types": [
+        "string"
+      ],
+      "resolved_type": "string"
+    },
+    {
+      "name": "fixture.attribute_187",
+      "observed_types": [
+        "string"
+      ],
+      "resolved_type": "string"
+    },
+    {
+      "name": "fixture.attribute_188",
+      "observed_types": [
+        "string"
+      ],
+      "resolved_type": "string"
+    },
+    {
+      "name": "fixture.attribute_189",
+      "observed_types": [
+        "number"
+      ],
+      "resolved_type": "number"
+    },
+    {
+      "name": "fixture.attribute_190",
+      "observed_types": [
+        "number"
+      ],
+      "resolved_type": "number"
+    },
+    {
+      "name": "fixture.attribute_191",
+      "observed_types": [
+        "number"
+      ],
+      "resolved_type": "number"
+    },
+    {
+      "name": "fixture.attribute_192",
+      "observed_types": [
+        "number"
+      ],
+      "resolved_type": "number"
+    },
+    {
+      "name": "fixture.attribute_193",
+      "observed_types": [
+        "string"
+      ],
+      "resolved_type": "string"
+    },
+    {
+      "name": "prompt_cached_tokens",
+      "observed_types": [
+        "number"
+      ],
+      "resolved_type": "number"
+    },
+    {
+      "name": "prompt_slug",
+      "observed_types": [
+        "string"
+      ],
+      "resolved_type": "string"
+    },
+    {
+      "name": "prompt_tokens",
+      "observed_types": [
+        "number"
+      ],
+      "resolved_type": "number"
+    },
+    {
+      "name": "provider",
+      "observed_types": [
+        "string"
+      ],
+      "resolved_type": "string"
+    },
+    {
+      "name": "session.id",
+      "observed_types": [
+        "string"
+      ],
+      "resolved_type": "string"
+    },
+    {
+      "name": "fixture.attribute_199",
+      "observed_types": [
+        "string"
+      ],
+      "resolved_type": "string"
+    },
+    {
+      "name": "fixture.attribute_200",
+      "observed_types": [
+        "number",
+        "string"
+      ],
+      "resolved_type": "json"
+    },
+    {
+      "name": "fixture.attribute_201",
+      "observed_types": [
+        "string"
+      ],
+      "resolved_type": "string"
+    },
+    {
+      "name": "span_id",
+      "observed_types": [
+        "number",
+        "string"
+      ],
+      "resolved_type": "json"
+    },
+    {
+      "name": "fixture.attribute_203",
+      "observed_types": [
+        "string"
+      ],
+      "resolved_type": "string"
+    },
+    {
+      "name": "fixture.attribute_204",
+      "observed_types": [
+        "string"
+      ],
+      "resolved_type": "string"
+    },
+    {
+      "name": "fixture.attribute_205",
+      "observed_types": [
+        "number"
+      ],
+      "resolved_type": "number"
+    },
+    {
+      "name": "fixture.attribute_206",
+      "observed_types": [
+        "number"
+      ],
+      "resolved_type": "number"
+    },
+    {
+      "name": "fixture.attribute_207",
+      "observed_types": [
+        "number"
+      ],
+      "resolved_type": "number"
+    },
+    {
+      "name": "tag.tags",
+      "observed_types": [
+        "array"
+      ],
+      "resolved_type": "array"
+    },
+    {
+      "name": "fixture.attribute_209",
+      "observed_types": [
+        "number"
+      ],
+      "resolved_type": "number"
+    },
+    {
+      "name": "fixture.attribute_210",
+      "observed_types": [
+        "boolean"
+      ],
+      "resolved_type": "boolean"
+    },
+    {
+      "name": "fixture.attribute_211",
+      "observed_types": [
+        "string"
+      ],
+      "resolved_type": "string"
+    },
+    {
+      "name": "fixture.attribute_212",
+      "observed_types": [
+        "string"
+      ],
+      "resolved_type": "string"
+    },
+    {
+      "name": "fixture.attribute_213",
+      "observed_types": [
+        "string"
+      ],
+      "resolved_type": "string"
+    },
+    {
+      "name": "total_cost",
+      "observed_types": [
+        "number"
+      ],
+      "resolved_type": "number"
+    },
+    {
+      "name": "fixture.attribute_215",
+      "observed_types": [
+        "number"
+      ],
+      "resolved_type": "number"
+    },
+    {
+      "name": "total_tokens",
+      "observed_types": [
+        "number"
+      ],
+      "resolved_type": "number"
+    },
+    {
+      "name": "trace_id",
+      "observed_types": [
+        "string"
+      ],
+      "resolved_type": "string"
+    },
+    {
+      "name": "transcript",
+      "observed_types": [
+        "string"
+      ],
+      "resolved_type": "string"
+    },
+    {
+      "name": "fixture.attribute_219",
+      "observed_types": [
+        "string"
+      ],
+      "resolved_type": "string"
+    },
+    {
+      "name": "fixture.attribute_220",
+      "observed_types": [
+        "string"
+      ],
+      "resolved_type": "string"
+    },
+    {
+      "name": "fixture.attribute_221",
+      "observed_types": [
+        "string"
+      ],
+      "resolved_type": "string"
+    },
+    {
+      "name": "transcription",
+      "observed_types": [
+        "string"
+      ],
+      "resolved_type": "string"
+    },
+    {
+      "name": "fixture.attribute_223",
+      "observed_types": [
+        "number"
+      ],
+      "resolved_type": "number"
+    },
+    {
+      "name": "ttfb_ms",
+      "observed_types": [
+        "number"
+      ],
+      "resolved_type": "number"
+    },
+    {
+      "name": "fixture.attribute_225",
+      "observed_types": [
+        "number"
+      ],
+      "resolved_type": "number"
+    },
+    {
+      "name": "fixture.attribute_226",
+      "observed_types": [
+        "number"
+      ],
+      "resolved_type": "number"
+    },
+    {
+      "name": "fixture.attribute_227",
+      "observed_types": [
+        "string"
+      ],
+      "resolved_type": "string"
+    },
+    {
+      "name": "fixture.attribute_228",
+      "observed_types": [
+        "number"
+      ],
+      "resolved_type": "number"
+    },
+    {
+      "name": "fixture.attribute_229",
+      "observed_types": [
+        "number",
+        "string"
+      ],
+      "resolved_type": "json"
+    },
+    {
+      "name": "fixture.attribute_230",
+      "observed_types": [
+        "string"
+      ],
+      "resolved_type": "string"
+    },
+    {
+      "name": "fixture.attribute_231",
+      "observed_types": [
+        "string"
+      ],
+      "resolved_type": "string"
+    },
+    {
+      "name": "fixture.attribute_232",
+      "observed_types": [
+        "number",
+        "string"
+      ],
+      "resolved_type": "json"
+    },
+    {
+      "name": "fixture.attribute_233",
+      "observed_types": [
+        "number",
+        "string"
+      ],
+      "resolved_type": "json"
+    },
+    {
+      "name": "fixture.attribute_234",
+      "observed_types": [
+        "number",
+        "string"
+      ],
+      "resolved_type": "json"
+    },
+    {
+      "name": "fixture.attribute_235",
+      "observed_types": [
+        "string"
+      ],
+      "resolved_type": "string"
+    },
+    {
+      "name": "fixture.attribute_236",
+      "observed_types": [
+        "string"
+      ],
+      "resolved_type": "string"
+    },
+    {
+      "name": "user.id",
+      "observed_types": [
+        "number",
+        "string"
+      ],
+      "resolved_type": "json"
+    },
+    {
+      "name": "fixture.attribute_238",
+      "observed_types": [
+        "string"
+      ],
+      "resolved_type": "string"
+    },
+    {
+      "name": "fixture.attribute_239",
+      "observed_types": [
+        "number",
+        "string"
+      ],
+      "resolved_type": "json"
+    },
+    {
+      "name": "user_id",
+      "observed_types": [
+        "number",
+        "string"
+      ],
+      "resolved_type": "json"
+    },
+    {
+      "name": "fixture.attribute_241",
+      "observed_types": [
+        "string"
+      ],
+      "resolved_type": "string"
+    },
+    {
+      "name": "voice_id",
+      "observed_types": [
+        "string"
+      ],
+      "resolved_type": "string"
+    }
+  ],
+  "system_attributes": {
+    "traces": [
+      {
+        "name": "dataset",
+        "value_type": "string"
+      },
+      {
+        "name": "eval_source",
+        "value_type": "string"
+      },
+      {
+        "name": "agent_talk_percentage",
+        "value_type": "number"
+      },
+      {
+        "name": "completion_tokens",
+        "value_type": "number"
+      },
+      {
+        "name": "cost",
+        "value_type": "number"
+      },
+      {
+        "name": "error_rate",
+        "value_type": "number"
+      },
+      {
+        "name": "has_annotation",
+        "value_type": "boolean"
+      },
+      {
+        "name": "has_eval",
+        "value_type": "boolean"
+      },
+      {
+        "name": "input",
+        "value_type": "string"
+      },
+      {
+        "name": "input_tokens",
+        "value_type": "number"
+      },
+      {
+        "name": "latency",
+        "value_type": "number"
+      },
+      {
+        "name": "model",
+        "value_type": "string"
+      },
+      {
+        "name": "output",
+        "value_type": "string"
+      },
+      {
+        "name": "output_tokens",
+        "value_type": "number"
+      },
+      {
+        "name": "project",
+        "value_type": "string"
+      },
+      {
+        "name": "prompt_label",
+        "value_type": "string"
+      },
+      {
+        "name": "prompt_name",
+        "value_type": "string"
+      },
+      {
+        "name": "prompt_tokens",
+        "value_type": "number"
+      },
+      {
+        "name": "prompt_version",
+        "value_type": "string"
+      },
+      {
+        "name": "provider",
+        "value_type": "string"
+      },
+      {
+        "name": "service_name",
+        "value_type": "string"
+      },
+      {
+        "name": "session",
+        "value_type": "string"
+      },
+      {
+        "name": "session_count",
+        "value_type": "number"
+      },
+      {
+        "name": "span_count",
+        "value_type": "number"
+      },
+      {
+        "name": "span_kind",
+        "value_type": "string"
+      },
+      {
+        "name": "start_time",
+        "value_type": "datetime"
+      },
+      {
+        "name": "status",
+        "value_type": "string"
+      },
+      {
+        "name": "tag",
+        "value_type": "string"
+      },
+      {
+        "name": "tags",
+        "value_type": "array"
+      },
+      {
+        "name": "time_to_first_token",
+        "value_type": "number"
+      },
+      {
+        "name": "tokens",
+        "value_type": "number"
+      },
+      {
+        "name": "total_tokens",
+        "value_type": "number"
+      },
+      {
+        "name": "trace_count",
+        "value_type": "number"
+      },
+      {
+        "name": "trace_id",
+        "value_type": "string"
+      },
+      {
+        "name": "trace_name",
+        "value_type": "string"
+      },
+      {
+        "name": "user",
+        "value_type": "string"
+      },
+      {
+        "name": "user_count",
+        "value_type": "number"
+      },
+      {
+        "name": "user_id_type",
+        "value_type": "string"
+      }
+    ],
+    "sessions": [
+      {
+        "name": "dataset",
+        "value_type": "string"
+      },
+      {
+        "name": "eval_source",
+        "value_type": "string"
+      },
+      {
+        "name": "duration",
+        "value_type": "number"
+      },
+      {
+        "name": "end_time",
+        "value_type": "datetime"
+      },
+      {
+        "name": "first_message",
+        "value_type": "string"
+      },
+      {
+        "name": "last_message",
+        "value_type": "string"
+      },
+      {
+        "name": "session",
+        "value_type": "string"
+      },
+      {
+        "name": "start_time",
+        "value_type": "datetime"
+      },
+      {
+        "name": "total_cost",
+        "value_type": "number"
+      },
+      {
+        "name": "total_tokens",
+        "value_type": "number"
+      },
+      {
+        "name": "total_traces_count",
+        "value_type": "number"
+      },
+      {
+        "name": "user",
+        "value_type": "string"
+      },
+      {
+        "name": "user_id_hash",
+        "value_type": "string"
+      },
+      {
+        "name": "user_id_type",
+        "value_type": "string"
+      }
+    ],
+    "users": [
+      {
+        "name": "dataset",
+        "value_type": "string"
+      },
+      {
+        "name": "eval_source",
+        "value_type": "string"
+      },
+      {
+        "name": "activated_at",
+        "value_type": "datetime"
+      },
+      {
+        "name": "active_users",
+        "value_type": "number"
+      },
+      {
+        "name": "avg_cost_per_user",
+        "value_type": "number"
+      },
+      {
+        "name": "avg_session_duration",
+        "value_type": "number"
+      },
+      {
+        "name": "avg_trace_latency",
+        "value_type": "number"
+      },
+      {
+        "name": "avg_traces_per_user",
+        "value_type": "number"
+      },
+      {
+        "name": "input_tokens",
+        "value_type": "number"
+      },
+      {
+        "name": "last_active",
+        "value_type": "datetime"
+      },
+      {
+        "name": "num_active_days",
+        "value_type": "number"
+      },
+      {
+        "name": "num_guardrails_triggered",
+        "value_type": "number"
+      },
+      {
+        "name": "num_llm_calls",
+        "value_type": "number"
+      },
+      {
+        "name": "num_sessions",
+        "value_type": "number"
+      },
+      {
+        "name": "num_traces",
+        "value_type": "number"
+      },
+      {
+        "name": "num_traces_with_errors",
+        "value_type": "number"
+      },
+      {
+        "name": "output_tokens",
+        "value_type": "number"
+      },
+      {
+        "name": "total_cost",
+        "value_type": "number"
+      },
+      {
+        "name": "total_tokens",
+        "value_type": "number"
+      },
+      {
+        "name": "user",
+        "value_type": "string"
+      },
+      {
+        "name": "user_id_hash",
+        "value_type": "string"
+      },
+      {
+        "name": "user_id_type",
+        "value_type": "string"
+      }
+    ]
+  },
+  "eval_configurations": [
+    {
+      "name": "00000000-0000-4000-8000-000000000001",
+      "value_type": "number"
+    },
+    {
+      "name": "00000000-0000-4000-8000-000000000002",
+      "value_type": "number"
+    },
+    {
+      "name": "00000000-0000-4000-8000-000000000003",
+      "value_type": "number"
+    },
+    {
+      "name": "00000000-0000-4000-8000-000000000004",
+      "value_type": "number"
+    },
+    {
+      "name": "00000000-0000-4000-8000-000000000005",
+      "value_type": "number"
+    },
+    {
+      "name": "00000000-0000-4000-8000-000000000006",
+      "value_type": "number"
+    },
+    {
+      "name": "00000000-0000-4000-8000-000000000007",
+      "value_type": "number"
+    },
+    {
+      "name": "00000000-0000-4000-8000-000000000008",
+      "value_type": "number"
+    }
+  ]
+}

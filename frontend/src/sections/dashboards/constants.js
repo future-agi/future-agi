@@ -12,10 +12,10 @@ export const DATE_PRESETS = [
 ];
 
 export const WIDTH_OPTIONS = [
-  { label: "1/4 width", value: 3, icon: "mdi:view-column-outline" },
-  { label: "1/3 width", value: 4, icon: "mdi:view-column-outline" },
-  { label: "1/2 width", value: 6, icon: "mdi:view-split-vertical" },
-  { label: "Full width", value: 12, icon: "mdi:view-sequential-outline" },
+  { label: "1/4 width", value: 3, icon: "solar:columns-3-linear" },
+  { label: "1/3 width", value: 4, icon: "solar:columns-3-linear" },
+  { label: "1/2 width", value: 6, icon: "solar:columns-2-linear" },
+  { label: "Full width", value: 12, icon: "solar:list-linear" },
 ];
 
 export const MIN_WIDGET_HEIGHT = 120;

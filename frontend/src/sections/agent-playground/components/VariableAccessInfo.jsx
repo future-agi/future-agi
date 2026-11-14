@@ -10,9 +10,8 @@ export default function VariableAccessInfo() {
       sx={{
         borderRadius: 1,
         border: "1px solid",
-        borderColor: "info.main",
-        bgcolor: (t) =>
-          t.palette.mode === "dark" ? "info.darker" : "info.lighter",
+        borderColor: "status.info.border",
+        bgcolor: "status.info.bg",
         overflow: "hidden",
       }}
     >
@@ -53,7 +52,7 @@ export default function VariableAccessInfo() {
             variant="caption"
             color="text.primary"
             component="div"
-            sx={{ lineHeight: 1.8, "& code": { fontSize: "0.7rem" } }}
+            sx={{ lineHeight: 1.8, "& code": { fontSize: "0.75rem" } }}
           >
             <Box component="ul" sx={{ m: 0, pl: 2 }}>
               <li>

@@ -269,7 +269,8 @@ const ImportDataset = (props) => {
                     startAdornment: (
                       <InputAdornment position="start">
                         <Iconify
-                          icon="eva:search-fill"
+                          icon="solar:magnifier-linear"
+                          width={16}
                           sx={{ color: "text.disabled" }}
                         />
                       </InputAdornment>
@@ -518,7 +519,6 @@ const ImportDataset = (props) => {
                 variant="outlined"
                 sx={{
                   minWidth: "150px",
-                  borderRadius: "10px",
                 }}
                 onClick={() => {
                   setConfirmationDialog(false);
@@ -529,7 +529,6 @@ const ImportDataset = (props) => {
               <Button
                 sx={{
                   minWidth: "150px",
-                  borderRadius: "10px",
                 }}
                 variant="contained"
                 color="primary"

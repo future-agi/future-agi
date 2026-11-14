@@ -5,12 +5,8 @@ import uuid
 
 import numpy as np
 import pandas as pd
+import requests
 import structlog
-from accounts.models import User
-from accounts.utils import get_request_organization
-from agentic_eval.core.embeddings.embedding_manager import (
-    EmbeddingManager,
-)
 from django.core.exceptions import ValidationError
 from django.db import transaction
 from django.db.models import Case, CharField, Q, Value, When
@@ -19,6 +15,21 @@ from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from drf_yasg import openapi
 from drf_yasg.utils import swagger_auto_schema
+from rest_framework import serializers, viewsets
+from rest_framework.decorators import action
+from rest_framework.exceptions import MethodNotAllowed, NotFound
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.views import APIView
+
+from accounts.models import User
+from accounts.utils import get_request_organization
+from agentic_eval.core.embeddings.embedding_manager import (
+    EmbeddingManager,
+)
+from agentic_eval.core.embeddings.serving_client import (
+    SERVING_UNAVAILABLE_MESSAGE,
+    require_serving,
+)
 
 # from ee.agenthub.feedback_agent_updated.utils import RAG
 from model_hub.models import AnnotationTask
@@ -51,11 +62,6 @@ from model_hub.serializers.develop_annotations import (
 )
 from model_hub.utils.auto_annotate import generate_annotations_task
 from model_hub.utils.utils import corpus_builder
-from rest_framework import serializers, viewsets
-from rest_framework.decorators import action
-from rest_framework.exceptions import MethodNotAllowed, NotFound
-from rest_framework.permissions import IsAuthenticated
-from rest_framework.views import APIView
 from tfc.constants.levels import Level
 from tfc.ee_gating import FeatureUnavailable
 from tfc.utils.api_contracts import validated_request
@@ -616,7 +622,10 @@ class AnnotationsViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet
                 logger.debug("emit_annotation_event_failed")
 
             return self._gm.success_response("Annotation created successfully")
-        except ValidationError:
+        except Http404:
+            transaction.set_rollback(True)
+            return self._gm.not_found("Dataset not found")
+        except (ValidationError, serializers.ValidationError):
             transaction.set_rollback(True)
             return self._gm.bad_request(get_error_message("ANNOTATION_CREATION_FAILED"))
         except FeatureUnavailable:
@@ -671,6 +680,20 @@ class AnnotationsViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet
             )
             serializer.is_valid(raise_exception=True)
 
+            # Validate all tenant references before serializer.save() mutates
+            # either the annotation or its label relations.
+            dataset = serializer.validated_data.get("dataset", instance.dataset)
+            if (
+                not dataset
+                or not self._scoped_datasets().filter(id=dataset.id).exists()
+            ):
+                return self._gm.not_found("Dataset not found")
+            labels = []
+            if labels_payload_present:
+                labels = list(self._scoped_labels().filter(id__in=label_ids))
+                if len(labels) != len(set(label_ids)):
+                    return self._gm.not_found("Annotation label not found")
+
             # Get the old labels before saving
             old_labels = set(instance.labels.all())
             old_users = set(instance.assigned_users.all())
@@ -709,9 +732,6 @@ class AnnotationsViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet
 
             # Set and validate labels.
             if labels_payload_present:
-                labels = list(self._scoped_labels().filter(id__in=label_ids))
-                if len(labels) != len(set(label_ids)):
-                    return self._gm.not_found("Annotation label not found")
                 annotation.labels.set(labels)
                 annotation.validate_labels()
                 new_labels = set(annotation.labels.all())
@@ -845,7 +865,7 @@ class AnnotationsViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet
                 self.process_new_annotaion(annotation, added_labels, label_requirements)
 
             return self._gm.success_response("Annotation updated successfully")
-        except ValidationError:
+        except (ValidationError, serializers.ValidationError):
             transaction.set_rollback(True)
             return self._gm.bad_request(
                 get_error_message("FAILED_TO_UPDATE_ANNOTATION")
@@ -987,6 +1007,31 @@ class AnnotationsViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet
                     get_error_message("NOT_AUTHORIZED_TO_UPDATE")
                 )
 
+            if not self._scoped_datasets().filter(id=annotation.dataset_id).exists():
+                return self._gm.not_found("Dataset not found")
+
+            # Validate the complete batch before the first feedback write or RAG
+            # request. Cell FKs alone do not enforce a common dataset.
+            labels_by_id = {
+                str(label.id): label
+                for label in self._scoped_labels().filter(annotation_label=annotation)
+            }
+            for update in [*label_updates, *response_fields_updates]:
+                if not Row.objects.filter(
+                    id=update["row_id"],
+                    dataset=annotation.dataset,
+                ).exists():
+                    return self._gm.not_found("Row not found")
+                columns = Column.objects.filter(dataset=annotation.dataset)
+                if "label_id" in update:
+                    if str(update["label_id"]) not in labels_by_id:
+                        return self._gm.not_found("Annotation label not found")
+                    columns = columns.filter(
+                        source_id=f"{annotation.id}-sourceid-{update['label_id']}",
+                    )
+                if not columns.filter(id=update["column_id"]).exists():
+                    return self._gm.not_found("Column not found")
+
             # Handle label updates
             for update in label_updates:
                 row_id = update.get("row_id")
@@ -996,7 +1041,7 @@ class AnnotationsViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet
                 column_id = update.get("column_id")
                 time_taken = update.get("time_taken")
 
-                label = AnnotationsLabels.objects.get(id=label_id)
+                label = labels_by_id[str(label_id)]
                 auto_annotate = label.settings.get("auto_annotate", False)
 
                 if label.type == AnnotationTypeChoices.CATEGORICAL.value:
@@ -1009,6 +1054,7 @@ class AnnotationsViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet
                 self.validate_label_value(label, value)
 
                 if Cell.objects.filter(
+                    dataset=annotation.dataset,
                     row_id=row_id,
                     column_id=column_id,
                     deleted=False,
@@ -1025,7 +1071,9 @@ class AnnotationsViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet
                         )
 
                 try:
-                    column = Column.objects.get(id=column_id)
+                    column = Column.objects.get(
+                        id=column_id, dataset=annotation.dataset
+                    )
                 except Column.DoesNotExist:
                     return self._gm.not_found("Column not found")
 
@@ -1123,9 +1171,12 @@ class AnnotationsViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet
 
                         # Get all cells for the current row
                         if label_updates:
-                            row_id = label_updates[0].get("row_id")
                             row_cells = Cell.objects.filter(
-                                dataset=annotation.dataset, row_id=row_id, deleted=False
+                                dataset=annotation.dataset,
+                                row_id=row_id,
+                                deleted=False,
+                                column__dataset=annotation.dataset,
+                                column__deleted=False,
                             ).select_related("column")
 
                             # Add cell values to row_dict
@@ -1134,12 +1185,14 @@ class AnnotationsViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet
                                 row_dict[column_id] = cell.value
 
                             # Get input fields from label settings
-                            for label in annotation.labels.all():
+                            for existing_label in labels_by_id.values():
                                 if (
-                                    label.type
+                                    existing_label.type
                                     == AnnotationTypeChoices.CATEGORICAL.value
                                 ):
-                                    input_columns = label.settings.get("inputs", [])
+                                    input_columns = existing_label.settings.get(
+                                        "inputs", []
+                                    )
                                     inputs.extend(input_columns)
 
                         # Call RAG data formatter with the collected data
@@ -1158,7 +1211,12 @@ class AnnotationsViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet
                         )
                         embedding_manager.close()
                         generate_annotations_task.apply_async(
-                            args=(label.id, annotation.id, row_id)
+                            args=(
+                                label.id,
+                                annotation.id,
+                                self._request_organization().id,
+                            ),
+                            kwargs={"row_id": str(row_id)},
                         )
 
             # Handle response fields updates
@@ -1168,7 +1226,9 @@ class AnnotationsViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet
                 value = update.get("value")
 
                 try:
-                    column = Column.objects.get(id=column_id)
+                    column = Column.objects.get(
+                        id=column_id, dataset=annotation.dataset
+                    )
                 except Column.DoesNotExist:
                     return self._gm.not_found(
                         f"{get_error_message('COLUMN_NOT_FOUND')} {column_id}"
@@ -1379,7 +1439,9 @@ class AnnotationsViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet
                 cell_value = None
                 cell = None
                 if can_annotate:
-                    column = Column.objects.get(id=column_id)
+                    column = Column.objects.get(
+                        id=column_id, dataset=annotation.dataset
+                    )
                     cell, created = Cell.objects.get_or_create(
                         dataset=annotation.dataset, column=column, row=row
                     )
@@ -1488,9 +1550,9 @@ class AnnotationsViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet
             - If no columns available: (False, None)
         """
 
-        annotation = Annotations.objects.get(id=annotation_id, deleted=False)
-        row = Row.objects.get(id=row_id)
-        label = AnnotationsLabels.objects.get(id=label_id)
+        annotation = self.get_queryset().get(id=annotation_id)
+        row = Row.objects.get(id=row_id, dataset=annotation.dataset)
+        label = self._scoped_labels().get(id=label_id, annotation_label=annotation)
 
         if not annotation.assigned_users.filter(id=user_id).exists():
             return False, None
@@ -1500,6 +1562,7 @@ class AnnotationsViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet
         cells = Cell.objects.filter(
             dataset=annotation.dataset,
             row=row,
+            column__dataset=annotation.dataset,
             column__source_id=source_id,
             deleted=False,
         ).select_related("column")
@@ -1508,7 +1571,7 @@ class AnnotationsViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet
         responses = annotation.responses
         if not cells:
             col = (
-                Column.objects.filter(source_id=source_id)
+                Column.objects.filter(source_id=source_id, dataset=annotation.dataset)
                 .order_by("created_at")
                 .first()
             )
@@ -1517,7 +1580,9 @@ class AnnotationsViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet
             return True, col.id
         if len(cells) != responses:
             cols = list(
-                Column.objects.filter(source_id=source_id).order_by("created_at")
+                Column.objects.filter(
+                    source_id=source_id, dataset=annotation.dataset
+                ).order_by("created_at")
             )
             if len(cells) < len(cols):
                 col = cols[len(cells)]
@@ -1628,10 +1693,13 @@ class AnnotationsViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet
                 input_columns = label.settings.get("inputs", [])
                 if input_columns:
                     for col_id in input_columns:
-                        column = Column.objects.get(id=col_id, deleted=False)
-                        if column.dataset != annotation.dataset:
+                        if not Column.objects.filter(
+                            id=col_id,
+                            dataset=annotation.dataset,
+                            deleted=False,
+                        ).exists():
                             raise ValidationError(
-                                f"Input column '{column.name}' does not belong to the same dataset as the annotation"
+                                "Input column does not belong to the annotation dataset"
                             )
 
             auto_annotate = label.settings.get("auto_annotate", False)
@@ -1655,13 +1723,8 @@ class AnnotationsViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet
                 annotation.dataset.save()
 
             if auto_annotate:
-                # --write code here--
-                org = (
-                    getattr(self.request, "organization", None)
-                    or self.request.user.organization.id
-                )
                 generate_annotations_task.apply_async(
-                    args=(label.id, annotation.id, org)
+                    args=(label.id, annotation.id, self._request_organization().id)
                 )
 
         if not isinstance(annotation.summary, dict):
@@ -2001,12 +2064,28 @@ class AnnotationSummaryView(APIView):
             if len(texts) < 2:
                 continue  # need at least 2 texts for similarity
 
+            # Cached probe: fails fast instead of timing out per row.
+            require_serving()
+
             # ✅ Use SimilarityCalculator
             sim_result = self.calculate_similarity(texts, texts)
 
             row_sims.append(sim_result)
 
         return round(np.mean(row_sims), 2) if row_sims else None
+
+    def text_agreement(self, df):
+        """``(cosine_similarity, note)`` for a text label.
+
+        The similarity needs embeddings from model serving, which the default
+        install runs only with the ``ml`` profile. Without it the metric is
+        left out with a note, and the rest of the summary is still returned.
+        """
+        try:
+            return self.avg_semantic_similarity(df), None
+        except (ConnectionError, requests.exceptions.ConnectionError) as e:
+            logger.info("annotation_similarity_skipped", error=str(e))
+            return None, SERVING_UNAVAILABLE_MESSAGE
 
     def build_counts_matrix(self, df, categories):
         """
@@ -2245,12 +2324,16 @@ class AnnotationSummaryView(APIView):
                             max_len = corpus.get("max_len")
                             avg_len = corpus.get("avg_len")
 
-                        cosine_similarity = self.avg_semantic_similarity(text_metrics)
+                        cosine_similarity, similarity_note = self.text_agreement(
+                            text_metrics
+                        )
                         if cosine_similarity is not None and pd.notna(
                             cosine_similarity
                         ):
                             agreements.append(cosine_similarity)
                         r["cosine_similarity"] = cosine_similarity
+                        if similarity_note:
+                            r["cosine_similarity_note"] = similarity_note
                         r["len_range"] = f"{min_len}-{max_len}"
                         r["avg_len"] = avg_len
                         r["vocab_size"] = len(vocab)

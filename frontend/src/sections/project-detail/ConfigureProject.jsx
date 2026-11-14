@@ -2,6 +2,7 @@ import { LoadingButton } from "@mui/lab";
 import {
   Box,
   Button,
+  ButtonBase,
   Dialog,
   DialogActions,
   DialogContent,
@@ -57,6 +58,7 @@ const ConfigureProject = ({ open, onClose, id, refreshGrid, module }) => {
     defaultValues: {
       projectName: projectDetail?.name || "",
       samplingRate: getSamplingRatePercent(projectDetail, module),
+      samplingContactAttribute: projectDetail?.sampling_contact_attribute || "",
     },
     resolver: zodResolver(projectSchema),
     mode: "onChange",
@@ -97,6 +99,7 @@ const ConfigureProject = ({ open, onClose, id, refreshGrid, module }) => {
     };
     if (module === "observe") {
       payload["sampling_rate"] = data.samplingRate / 100;
+      payload.sampling_contact_attribute = data.samplingContactAttribute || "";
     }
     updateProject(payload);
   };
@@ -106,6 +109,7 @@ const ConfigureProject = ({ open, onClose, id, refreshGrid, module }) => {
       reset({
         projectName: projectDetail.name || "",
         samplingRate: getSamplingRatePercent(projectDetail, module),
+      samplingContactAttribute: projectDetail?.sampling_contact_attribute || "",
       });
     }
   }, [module, projectDetail, reset]);
@@ -130,8 +134,8 @@ const ConfigureProject = ({ open, onClose, id, refreshGrid, module }) => {
         aria-labelledby="configure-dialog-title"
         PaperProps={{
           sx: {
-            width: 550,
-            maxWidth: 590,
+            width: 560,
+            maxWidth: 720,
             maxHeight: 450,
             display: "flex",
             flexDirection: "column",
@@ -155,13 +159,11 @@ const ConfigureProject = ({ open, onClose, id, refreshGrid, module }) => {
               Configure Project
             </Box>
             <IconButton
+              size="small"
               aria-label="close-configure-project"
               onClick={handleClose}
-              sx={{
-                p: 0,
-              }}
             >
-              <Iconify icon="line-md:close" color="text.primary" />
+              <Iconify icon="solar:close-linear" color="text.primary" />
             </IconButton>
           </Box>
         </DialogTitle>
@@ -191,6 +193,7 @@ const ConfigureProject = ({ open, onClose, id, refreshGrid, module }) => {
               fieldType="text"
             />
             <ShowComponent condition={module === "observe"}>
+              <FormTextFieldV2 control={control} fieldName="samplingContactAttribute" label="Contact attribute for eval sampling" size="small" fullWidth helperText="Optional span attribute, such as contact_id. New custom-contact policies use this mapping; saved policies keep their original mapping." />
               <Box
                 sx={{
                   width: "100%",
@@ -200,7 +203,7 @@ const ConfigureProject = ({ open, onClose, id, refreshGrid, module }) => {
                   padding: 1.5,
                   border: "1px solid",
                   borderColor: "divider",
-                  borderRadius: 0.5,
+                  borderRadius: "4px",
                 }}
               >
                 <Box
@@ -247,9 +250,9 @@ const ConfigureProject = ({ open, onClose, id, refreshGrid, module }) => {
                           fontWeight={"fontWeightMedium"}
                           sx={{
                             textDecoration: "underline",
-                            textDecorationColor: "blue.500",
+                            textDecorationColor: "status.info.fg",
                           }}
-                          color={"blue.500"}
+                          color={"status.info.fg"}
                         >
                           Docs
                         </Typography>
@@ -260,7 +263,7 @@ const ConfigureProject = ({ open, onClose, id, refreshGrid, module }) => {
                     sx={{
                       border: "1px solid",
                       borderColor: "divider",
-                      borderRadius: 0.25,
+                      borderRadius: "4px",
                       display: "flex",
                       flexDirection: "row",
                       gap: 0.5,
@@ -294,9 +297,6 @@ const ConfigureProject = ({ open, onClose, id, refreshGrid, module }) => {
                     "& .MuiSlider-thumb": {
                       width: 8,
                       height: 8,
-                      "&::before": {
-                        boxShadow: "0 2px 12px 0 rgba(0,0,0,0.4)",
-                      },
                       "&:hover, &.Mui-focusVisible": {
                         boxShadow: `0px 0px 0px 8px ${"rgb(0 0 0 / 16%)"}`,
                         ...t.applyStyles("dark", {
@@ -323,22 +323,16 @@ const ConfigureProject = ({ open, onClose, id, refreshGrid, module }) => {
                     mt: -1.5,
                   }}
                 >
-                  <Typography
-                    typography="s2"
-                    fontWeight="fontWeightMedium"
-                    onClick={() => setValue("samplingRate", 0)}
-                    sx={{ cursor: "pointer" }}
-                  >
-                    0%
-                  </Typography>
-                  <Typography
-                    typography="s2"
-                    fontWeight="fontWeightMedium"
-                    onClick={() => setValue("samplingRate", 100)}
-                    sx={{ cursor: "pointer" }}
-                  >
-                    100%
-                  </Typography>
+                  <ButtonBase onClick={() => setValue("samplingRate", 0)}>
+                    <Typography typography="s2" fontWeight="fontWeightMedium">
+                      0%
+                    </Typography>
+                  </ButtonBase>
+                  <ButtonBase onClick={() => setValue("samplingRate", 100)}>
+                    <Typography typography="s2" fontWeight="fontWeightMedium">
+                      100%
+                    </Typography>
+                  </ButtonBase>
                 </Box>
               </Box>
             </ShowComponent>
@@ -357,7 +351,6 @@ const ConfigureProject = ({ open, onClose, id, refreshGrid, module }) => {
               onClick={handleClose}
               sx={{
                 width: "90px",
-                textTransform: "none",
               }}
             >
               Cancel
@@ -370,7 +363,6 @@ const ConfigureProject = ({ open, onClose, id, refreshGrid, module }) => {
               onClick={handleDeleteClick}
               sx={{
                 minWidth: "90px",
-                textTransform: "none",
               }}
             >
               Delete
@@ -383,7 +375,6 @@ const ConfigureProject = ({ open, onClose, id, refreshGrid, module }) => {
               disabled={!isValid}
               sx={{
                 minWidth: "90px",
-                textTransform: "none",
               }}
               variant="contained"
               color="primary"

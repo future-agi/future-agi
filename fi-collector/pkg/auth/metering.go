@@ -21,6 +21,10 @@ if (current + amount) > limit then return -1 end
 return current
 `
 
+// checkQuota runs checkQuotaLua by its SHA and sends the script again when
+// Redis answers NOSCRIPT: a restarted Redis has lost every loaded script.
+var checkQuota = redis.NewScript(checkQuotaLua)
+
 var freeTierAllowances = map[string]int64{
 	"tracing_events": 50_000,
 	"storage":        50 * 1024 * 1024 * 1024,
@@ -45,10 +49,9 @@ type CheckResult struct {
 
 // Metering enforces pre-check quota limits before ingestion.
 type Metering struct {
-	rdb    *redis.Client
-	pg     *pgxpool.Pool
-	log    *slog.Logger
-	luaSHA string
+	rdb *redis.Client
+	pg  *pgxpool.Pool
+	log *slog.Logger
 }
 
 // NewMetering creates a metering instance. Returns nil if rdb is nil.
@@ -57,15 +60,15 @@ func NewMetering(rdb *redis.Client, pgRead *pgxpool.Pool, log *slog.Logger) *Met
 		return nil
 	}
 
+	// Loaded up front so the first check takes one round trip; a check loads
+	// it itself when Redis does not have it (down now, or restarted later).
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	sha, err := rdb.ScriptLoad(ctx, checkQuotaLua).Result()
-	if err != nil {
-		log.Warn("metering lua script load failed, quota checks disabled", "err", err)
-		return &Metering{rdb: rdb, pg: pgRead, log: log}
+	if err := checkQuota.Load(ctx, rdb).Err(); err != nil {
+		log.Warn("metering lua script load failed, the first quota check loads it", "err", err)
 	}
 
-	return &Metering{rdb: rdb, pg: pgRead, log: log, luaSHA: sha}
+	return &Metering{rdb: rdb, pg: pgRead, log: log}
 }
 
 // CheckUsage checks if an org can perform a billable action.
@@ -85,11 +88,11 @@ func (m *Metering) CheckUsage(ctx context.Context, orgID, eventType string, amou
 
 	if hardCapPlans[plan] {
 		allowance, hasAllowance := freeTierAllowances[dimension]
-		if hasAllowance && allowance > 0 && m.luaSHA != "" {
+		if hasAllowance && allowance > 0 {
 			period := time.Now().UTC().Format("2006-01")
 			usageKey := fmt.Sprintf("usage:%s:%s:%s", orgID, dimension, period)
 
-			result, err := m.rdb.EvalSha(ctx, m.luaSHA, []string{usageKey},
+			result, err := checkQuota.Run(ctx, m.rdb, []string{usageKey},
 				fmt.Sprintf("%d", allowance),
 				fmt.Sprintf("%d", amount),
 			).Int64()

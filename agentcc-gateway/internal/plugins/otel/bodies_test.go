@@ -3,6 +3,7 @@ package otel
 import (
 	"context"
 	"encoding/json"
+	"net/http"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -527,5 +528,82 @@ func TestMessageAttributesAbsentUnlessEnabled(t *testing.T) {
 		if strings.HasPrefix(k, "llm.input_messages") || strings.HasPrefix(k, "llm.output_messages") {
 			t.Errorf("message attribute %q emitted with include_bodies off", k)
 		}
+	}
+}
+
+// A decision span says what was asked — the format, how many questions, their
+// types — and, with bodies on, the answers. Never the state or the questions'
+// instructions: those are the customer's evaluation content.
+func TestDecisionSpanCarriesShapeNotContent(t *testing.T) {
+	for _, includeBodies := range []bool{false, true} {
+		p, _ := bodyPlugin(t, includeBodies)
+		rc := newTestRC()
+		rc.Request, rc.Response = nil, nil
+		rc.EndpointType = "decision"
+		req, apiErr := models.ParseDecisionRequest([]byte(`{"model":"typesafe/jev-1.13.0","state":{"ticket":"private-state"},"questions":{"resolved":{"type":"noul","instructions":"private-instructions"},"intent":{"type":"choice","criteria":{"private-label":null}}}}`))
+		if apiErr != nil {
+			t.Fatal(apiErr)
+		}
+		rc.DecisionRequest = req
+		rc.DecisionResponse = &models.DecisionResponse{
+			Body:    []byte(`{"model":"jev-1.13.0","answers":{"resolved":{"type":"noul","noul":0.9}},"usage":{"input_tokens":12,"output_tokens":0}}`),
+			Model:   "jev-1.13.0",
+			Answers: json.RawMessage(`{"resolved":{"type":"noul","noul":0.9}}`),
+			Usage:   models.DecisionUsage{InputTokens: 12},
+		}
+		rc.Response = &models.ChatCompletionResponse{Model: "jev-1.13.0", Usage: &models.Usage{PromptTokens: 12, TotalTokens: 12}}
+
+		attrs := runOnce(p, rc)
+		if attrs["gen_ai.span.kind"] != "evaluator" || attrs["gen_ai.operation.name"] != "decision" {
+			t.Errorf("kind = %v op = %v", attrs["gen_ai.span.kind"], attrs["gen_ai.operation.name"])
+		}
+		if attrs["gen_ai.decision.format"] != "systemone" || attrs["gen_ai.decision.question_count"] != 2 || attrs["gen_ai.decision.question_types"] != "noul,choice" {
+			t.Errorf("decision attributes = %v %v %v", attrs["gen_ai.decision.format"], attrs["gen_ai.decision.question_count"], attrs["gen_ai.decision.question_types"])
+		}
+		for k, v := range attrs {
+			s, _ := v.(string)
+			for _, secret := range []string{"private-state", "private-instructions", "private-label"} {
+				if strings.Contains(s, secret) {
+					t.Errorf("include_bodies=%v: %s carries request content: %s", includeBodies, k, s)
+				}
+			}
+		}
+		if out, _ := attrs["output.value"].(string); includeBodies && !strings.Contains(out, `"noul":0.9`) {
+			t.Errorf("answers missing from output.value: %q", out)
+		}
+
+		// A vendor's 422 can quote part of the state back. A fragment is no
+		// whole field value, so it passes SafeUpstreamMessage to the caller;
+		// the span keeps only the code and status, as the request log does.
+		vendorMessage := req.SafeUpstreamMessage([]byte(`{"error":{"message":"state exceeds limit: 'private-sta…'"}}`), "", "fallback")
+		if !strings.Contains(vendorMessage, "private-sta") {
+			t.Fatalf("the fragment no longer passes SafeUpstreamMessage: %q", vendorMessage)
+		}
+		p, exp := bodyPlugin(t, includeBodies)
+		rc = newTestRC()
+		rc.Request, rc.Response = nil, nil
+		rc.EndpointType = "decision"
+		rc.DecisionRequest = req
+		rc.AddError(models.DecisionUpstreamError("TypeSafe", http.StatusUnprocessableEntity, nil, vendorMessage))
+		runOnce(p, rc)
+		span := exp.Spans()[0]
+		if span.Status != "ERROR" || span.Attributes["error.message"] != "upstream_rejected: Unprocessable Entity" {
+			t.Errorf("include_bodies=%v: status %q error %v", includeBodies, span.Status, span.Attributes["error.message"])
+		}
+		for k, v := range span.Attributes {
+			if s, _ := v.(string); strings.Contains(s, "private-sta") {
+				t.Errorf("include_bodies=%v: %s carries the vendor's quote of the state: %s", includeBodies, k, s)
+			}
+		}
+	}
+}
+
+func TestProviderKeyHeaderIsNeverExported(t *testing.T) {
+	m := newHeaderMatcher([]string{"x-agentcc-*", "x-agentcc-provider-key"})
+	if m.match("x-agentcc-provider-key") {
+		t.Fatal("x-agentcc-provider-key would be exported")
+	}
+	if !m.match("x-agentcc-metadata") {
+		t.Fatal("the wildcard should still match other x-agentcc headers")
 	}
 }

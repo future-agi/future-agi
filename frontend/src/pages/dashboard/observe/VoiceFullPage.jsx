@@ -31,7 +31,7 @@ export default function VoiceFullPage() {
     data: voiceDetail,
     isLoading: isLoadingVoice,
     isError: isVoiceError,
-  } = useVoiceCallDetail(callId, true);
+  } = useVoiceCallDetail(callId, { enabled: true, projectId: observeId });
 
   // Enable the simulate fallback only after the observe fetch has
   // resolved without data. `enabled` flips asynchronously, so React Query
@@ -112,7 +112,7 @@ export default function VoiceFullPage() {
           sx={{ height: "100vh", px: 2, textAlign: "center" }}
           gap={1.5}
         >
-          <Typography sx={{ fontSize: 14, fontWeight: 600 }}>
+          <Typography sx={{ fontSize: 12, fontWeight: 600 }}>
             We couldn&apos;t load this voice call.
           </Typography>
           <Typography sx={{ fontSize: 12, color: "text.secondary" }}>

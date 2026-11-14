@@ -11,6 +11,14 @@ Django app for managing simulation scenarios with organization-based multi-tenan
 - ✅ **Soft Deletion**: Uses BaseModel's soft deletion functionality
 - ✅ **Authentication Required**: All endpoints require valid authentication
 
+### Hosted harness result metrics
+
+Hosted Vapi and Retell result receipts may include provider-reported metrics for the agent under
+test. Ingestion stores the provider call ID and native end reason, target cost in
+`customer_cost_cents`, stage and per-turn latency in `customer_latency_metrics`, and target LLM
+tokens in `conversation_metrics_data`. These fields do not include the simulator's usage or
+platform cost. Missing provider data remains unset rather than being estimated.
+
 ## API Endpoints
 
 ### List & Create Scenarios

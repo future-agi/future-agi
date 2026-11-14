@@ -90,7 +90,7 @@ const CreateOrganizationForm = () => {
         >
           Create new organization
           <IconButton size="small" onClick={() => setOpen(false)}>
-            <Iconify icon="akar-icons:cross" sx={{ color: "text.primary" }} />
+            <Iconify icon="solar:close-linear" sx={{ color: "text.primary" }} />
           </IconButton>
         </Box>
       </DialogTitle>
@@ -143,7 +143,13 @@ const CreateOrganizationForm = () => {
 const CreateOrganizationModal = () => {
   const { open, setOpen } = useCreateOrganizationModal();
   return (
-    <Dialog open={open} onClose={() => setOpen(false)} fullWidth maxWidth="sm">
+    <Dialog
+      open={open}
+      onClose={() => setOpen(false)}
+      fullWidth
+      maxWidth={false}
+      PaperProps={{ sx: { maxWidth: 720 } }}
+    >
       <CreateOrganizationForm />
     </Dialog>
   );

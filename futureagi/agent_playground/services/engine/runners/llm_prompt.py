@@ -104,12 +104,18 @@ class LLMPromptRunner(BaseNodeRunner):
 
         # Extract tool configs
         tools = configuration.get("tools", [])
+        from model_hub.models.openai_tools import openai_tool_envelope
+
         tools_to_send = []
         for tool in tools:
             if isinstance(tool, dict):
                 tool_config = tool.get("config")
                 if tool_config:
-                    tools_to_send.append(tool_config)
+                    tools_to_send.append(
+                        openai_tool_envelope(
+                            tool.get("name"), tool.get("description"), tool_config
+                        )
+                    )
 
         rp = RunPrompt(
             model=model,

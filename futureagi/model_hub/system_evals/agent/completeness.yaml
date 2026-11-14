@@ -14,8 +14,9 @@ criteria: "You are evaluating whether the output fully addresses all parts of th
   \ or misses most parts. Score 0.5 if it addresses the main question but skips significant sub-parts or lacks depth. Score\
   \ 1.0 if every part is addressed with appropriate depth.\n\n## Inputs\n\n<input>{{input}}</input>\n\n<output>{{output}}</output>"
 eval_tags:
-- NLP Metrics
-- Chatbot behaviors
+- Quality
+- Completeness
+offered_in_environments: true
 visible_ui: true
 permissions:
   allow_edit: false
