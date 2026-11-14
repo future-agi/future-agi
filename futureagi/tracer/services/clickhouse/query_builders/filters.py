@@ -66,8 +66,8 @@ def resolve_eval_filter_metadata(
     """
 
     from django.core.exceptions import ValidationError
-    from model_hub.models.evals_metric import EvalTemplate
 
+    from model_hub.models.evals_metric import EvalTemplate
     from tracer.models.custom_eval_config import CustomEvalConfig
 
     config_ids: tuple[str, ...] = ()
@@ -124,6 +124,7 @@ def resolve_annotation_label_output_type(
     """
 
     from django.core.exceptions import ValidationError
+
     from model_hub.models.develop_annotations import AnnotationsLabels
 
     try:
