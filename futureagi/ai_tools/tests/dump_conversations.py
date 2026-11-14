@@ -61,9 +61,9 @@ for i, a in enumerate(analyses, 1):
     details = list(TraceErrorDetail.objects.filter(analysis=a))
     ch = ch_logs.get(tid, {})
 
-    print(f"{'='*80}")
+    print(f"{'=' * 80}")
     print(f"  TRACE {i}/29: {tid}")
-    print(f"{'='*80}")
+    print(f"{'=' * 80}")
     print(
         f"  Score: {a.overall_score}  Errors: {a.total_errors}  Priority: {a.recommended_priority}"
     )

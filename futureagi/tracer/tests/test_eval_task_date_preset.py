@@ -14,9 +14,7 @@ class TestEvalTaskDatePreset:
     """
 
     def test_accepts_a_preset_token(self):
-        out = eval_task_filters_field().run_validation(
-            {**BASE, "date_preset": "12m"}
-        )
+        out = eval_task_filters_field().run_validation({**BASE, "date_preset": "12m"})
         assert out["date_preset"] == "12m"
 
     def test_accepts_filters_without_a_preset(self):

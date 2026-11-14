@@ -76,12 +76,18 @@ def graph_cost_flags_sql(*, prefix: str = "") -> str:
     )
 
 
-def graph_cost_coverage(*, subtotal: float, known: int, unknown: int) -> GraphCostCoverage:
+def graph_cost_coverage(
+    *, subtotal: float, known: int, unknown: int
+) -> GraphCostCoverage:
     """Money coverage is independent of query exactness and traffic counts."""
     if not math.isfinite(subtotal) or subtotal < 0 or known < 0 or unknown < 0:
         raise ValueError("Invalid monetary coverage counters")
     return {
-        "status": "partial" if unknown and known else "unknown" if unknown else "complete",
+        "status": "partial"
+        if unknown and known
+        else "unknown"
+        if unknown
+        else "complete",
         "known_subtotal": float(subtotal),
         "known_fact_count": int(known),
         "unknown_fact_count": int(unknown),
@@ -89,8 +95,13 @@ def graph_cost_coverage(*, subtotal: float, known: int, unknown: int) -> GraphCo
 
 
 def graph_cost_coverage_series(
-    *, builder: BaseQueryBuilder, rows: list, columns: list[str], interval: str,
-    start_date: datetime, end_date: datetime,
+    *,
+    builder: BaseQueryBuilder,
+    rows: list,
+    columns: list[str],
+    interval: str,
+    start_date: datetime,
+    end_date: datetime,
 ) -> list[GraphCostCoverageBucket]:
     """Zero-fill bounded bucket counters using the metric's own bucket alignment."""
     names = ("cost_known_subtotal", "known_cost_fact_count", "unknown_cost_fact_count")
@@ -104,15 +115,25 @@ def graph_cost_coverage_series(
         return row[name] if isinstance(row, dict) else row[columns.index(name)]
 
     buckets = builder.format_time_series(
-        rows=[(value(row, "time_bucket"), *(value(row, name) for name in names)) for row in rows],
-        columns=["time_bucket", *names], interval=interval,
-        start_date=start_date, end_date=end_date, value_keys=list(names),
+        rows=[
+            (value(row, "time_bucket"), *(value(row, name) for name in names))
+            for row in rows
+        ],
+        columns=["time_bucket", *names],
+        interval=interval,
+        start_date=start_date,
+        end_date=end_date,
+        value_keys=list(names),
     )
     return [
-        {"timestamp": bucket["timestamp"], **graph_cost_coverage(
-            subtotal=bucket["cost_known_subtotal"], known=bucket["known_cost_fact_count"],
-            unknown=bucket["unknown_cost_fact_count"],
-        )}
+        {
+            "timestamp": bucket["timestamp"],
+            **graph_cost_coverage(
+                subtotal=bucket["cost_known_subtotal"],
+                known=bucket["known_cost_fact_count"],
+                unknown=bucket["unknown_cost_fact_count"],
+            ),
+        }
         for bucket in buckets
     ]
 
@@ -400,8 +421,12 @@ class TimeSeriesQueryBuilder(BaseQueryBuilder):
         )
 
         coverage = graph_cost_coverage_series(
-            builder=self, rows=rows, columns=columns, interval=self.interval,
-            start_date=self.start_date, end_date=self.end_date,
+            builder=self,
+            rows=rows,
+            columns=columns,
+            interval=self.interval,
+            start_date=self.start_date,
+            end_date=self.end_date,
         )
         if coverage:
             for point, companion in zip(cost_data, coverage, strict=True):
@@ -456,10 +481,12 @@ class TimeSeriesQueryBuilder(BaseQueryBuilder):
             sumMerge(prompt_tokens_sum) AS prompt_tokens,
             sumMerge(completion_tokens_sum) AS completion_tokens,
             {ERROR_RATE_MERGE_EXPRESSION} AS error_rate
-        FROM {hourly_aggregate_state_source(
-            self.project_filter_sql(),
-            table=self.RAW_TABLE,
-        )}
+        FROM {
+            hourly_aggregate_state_source(
+                self.project_filter_sql(),
+                table=self.RAW_TABLE,
+            )
+        }
         GROUP BY time_bucket
         ORDER BY time_bucket
         """
@@ -493,7 +520,8 @@ class TimeSeriesQueryBuilder(BaseQueryBuilder):
     def _exact_span_candidate_plan(self) -> Any | None:
         """One necessary typed-Map leaf; never replace graph membership truth."""
         if not (
-            self.exact_snapshot and self.observe_type == "span"
+            self.exact_snapshot
+            and self.observe_type == "span"
             and self.resolve_span_versions
         ):
             return None
@@ -505,25 +533,38 @@ class TimeSeriesQueryBuilder(BaseQueryBuilder):
             attributes = []
             for item in self.filters:
                 config = item.get("filter_config") or item.get("filterConfig") or {}
-                if str(config.get("col_type") or config.get("colType") or "").upper() == "SPAN_ATTRIBUTE":
+                if (
+                    str(config.get("col_type") or config.get("colType") or "").upper()
+                    == "SPAN_ATTRIBUTE"
+                ):
                     attributes.append(item)
             plans, _ = partition_span_filter_plans(attributes)
         except (TypeError, ValueError):
             return None  # A graph-only shape retains its existing exact route.
         candidates = [
-            plan for plan in plans
+            plan
+            for plan in plans
             if plan.raw_graph_value_witness_predicate
-            and plan.scope == "span" and not plan.exclude_group_matches
-            and plan.aggregates and all(
-                any(column in aggregate for column in ("span_attr_num", "span_attr_str", "span_attr_bool"))
+            and plan.scope == "span"
+            and not plan.exclude_group_matches
+            and plan.aggregates
+            and all(
+                any(
+                    column in aggregate
+                    for column in ("span_attr_num", "span_attr_str", "span_attr_bool")
+                )
                 for aggregate in plan.aggregates
             )
         ]
         # Cost order only: numeric value proofs before wider string maps.
-        return min(candidates, key=lambda plan: (
-            "span_attr_num[" not in plan.raw_graph_value_witness_predicate,
-            plan.raw_witness_rank if plan.raw_witness_rank is not None else 100,
-        ), default=None)
+        return min(
+            candidates,
+            key=lambda plan: (
+                "span_attr_num[" not in plan.raw_graph_value_witness_predicate,
+                plan.raw_witness_rank if plan.raw_witness_rank is not None else 100,
+            ),
+            default=None,
+        )
 
     def _exact_latest_scalar_source(
         self,
@@ -568,8 +609,12 @@ class TimeSeriesQueryBuilder(BaseQueryBuilder):
             "status",
             "is_deleted",
         ]
-        scalar_expressions.extend(("id", "parent_span_id", "name", "observation_type", graph_cost_flags_sql()))
-        scalar_aliases.extend(("id", "parent_span_id", "name", "observation_type", "graph_cost_flags"))
+        scalar_expressions.extend(
+            ("id", "parent_span_id", "name", "observation_type", graph_cost_flags_sql())
+        )
+        scalar_aliases.extend(
+            ("id", "parent_span_id", "name", "observation_type", "graph_cost_flags")
+        )
         if with_version:
             scalar_expressions.append("_version")
             scalar_aliases.append("_version")
@@ -607,7 +652,9 @@ class TimeSeriesQueryBuilder(BaseQueryBuilder):
                   )"""
         candidate_span_fragment = ""
         if candidate_span_predicate or candidate_partition:
-            seed_start = "graph_partition_start" if candidate_partition else scan_start_param
+            seed_start = (
+                "graph_partition_start" if candidate_partition else scan_start_param
+            )
             seed_end = "graph_partition_end" if candidate_partition else scan_end_param
             # Keep the whole candidate trace: an unselected child can prove
             # that a selected Pydantic wrapper repeats usage. Filters still run
@@ -619,7 +666,7 @@ class TimeSeriesQueryBuilder(BaseQueryBuilder):
                       PREWHERE {self.project_filter_sql()}
                         AND start_time >= %({seed_start})s
                         AND start_time < %({seed_end})s
-                      WHERE ({candidate_span_predicate or '1 = 1'})
+                      WHERE ({candidate_span_predicate or "1 = 1"})
                   )"""
         latest_source = f"""(
             SELECT
@@ -651,7 +698,8 @@ class TimeSeriesQueryBuilder(BaseQueryBuilder):
             WHERE tupleElement(graph_latest_row, {tombstone_index}) = 0
         ) AS graph_latest_spans"""
         monetary_rows = graph_monetary_rows_sql(
-            source=latest_source, columns=tuple(scalar_aliases),
+            source=latest_source,
+            columns=tuple(scalar_aliases),
             child_condition="start_time >= %(start_date)s AND start_time < %(end_date)s",
         )
         return f"({monetary_rows}) AS graph_monetary_spans"
@@ -771,7 +819,11 @@ class TimeSeriesQueryBuilder(BaseQueryBuilder):
             ):
                 boundary = self.params[source]
                 rounded = boundary.replace(minute=0, second=0, microsecond=0)
-                self.params[target] = rounded + timedelta(hours=1) if upper and rounded < boundary else rounded
+                self.params[target] = (
+                    rounded + timedelta(hours=1)
+                    if upper and rounded < boundary
+                    else rounded
+                )
             return self._exact_latest_scalar_source(
                 row_predicates=row_predicates,
                 contribution_predicates=contribution_predicates,
@@ -1008,7 +1060,8 @@ class TimeSeriesQueryBuilder(BaseQueryBuilder):
 
             candidate_predicate, candidate_params = _namespace_params(
                 rewrite_v1_sql_to_v2(candidate_plan.raw_graph_value_witness_predicate),
-                candidate_plan.params, filter_index="span_seed",
+                candidate_plan.params,
+                filter_index="span_seed",
             )
             self.params.update(candidate_params)
         # A summary and its child can occupy different partitions. Seed only

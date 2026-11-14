@@ -164,7 +164,9 @@ def test_sidebar_eval_score_uses_the_issue_eval(trace_eval_issue, no_clickhouse)
 def test_overview_scores_the_issue_by_its_own_eval(trace_eval_issue, no_clickhouse):
     with (
         patch.object(feed, "_fetch_events_over_time", return_value=[]),
-        patch.object(feed, "_fetch_pattern_summary", return_value=feed.PatternSummary()),
+        patch.object(
+            feed, "_fetch_pattern_summary", return_value=feed.PatternSummary()
+        ),
         patch.object(feed, "_fetch_success_trace_pass_reel", return_value=[]),
         patch.object(feed, "_cluster_highlight_terms", return_value=[]),
     ):

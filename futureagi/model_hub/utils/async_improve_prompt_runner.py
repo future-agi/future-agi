@@ -15,7 +15,10 @@ logger = structlog.get_logger(__name__)
 from tfc.constants.api_calls import APICallStatusChoices, APICallTypeChoices
 
 try:
-    from ee.usage.utils.usage_entries import count_text_tokens, log_and_deduct_cost_for_api_request
+    from ee.usage.utils.usage_entries import (
+        count_text_tokens,
+        log_and_deduct_cost_for_api_request,
+    )
 except ImportError:
     count_text_tokens = None
     log_and_deduct_cost_for_api_request = None
@@ -68,8 +71,10 @@ async def improve_prompt_async(
         # Create a call_log_row for tracking
         call_log_row = None
         config = {
-            "input_tokens": (count_text_tokens(
-                original_prompt + (improvement_suggestions or "")) if count_text_tokens else 0
+            "input_tokens": (
+                count_text_tokens(original_prompt + (improvement_suggestions or ""))
+                if count_text_tokens
+                else 0
             )
         }
         if log_and_deduct_cost_for_api_request is not None:
@@ -136,25 +141,26 @@ async def improve_prompt_async(
                     "total_cost", 0
                 )
             if BillingConfig is not None:
-
                 credits = BillingConfig.get().calculate_ai_credits(actual_cost)
 
-            if emit is not None and UsageEvent is not None and BillingEventType is not None:
-
-
+            if (
+                emit is not None
+                and UsageEvent is not None
+                and BillingEventType is not None
+            ):
                 emit(
-                UsageEvent(
-                    org_id=str(organization_id),
-                    event_type=BillingEventType.AI_PROMPT_IMPROVEMENT,
-                    amount=credits,
-                    properties={
-                        "source": "run_prompt_improve",
-                        "source_id": str(improve_id),
-                        "raw_cost_usd": str(actual_cost),
-                        **llm_usage_properties(prompt_generator),
-                    },
+                    UsageEvent(
+                        org_id=str(organization_id),
+                        event_type=BillingEventType.AI_PROMPT_IMPROVEMENT,
+                        amount=credits,
+                        properties={
+                            "source": "run_prompt_improve",
+                            "source_id": str(improve_id),
+                            "raw_cost_usd": str(actual_cost),
+                            **llm_usage_properties(prompt_generator),
+                        },
+                    )
                 )
-            )
         except Exception:
             pass
 

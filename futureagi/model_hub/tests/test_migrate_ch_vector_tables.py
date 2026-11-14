@@ -80,7 +80,10 @@ def _build_mock_db_client(
         ):
             return [(max(0, source_distinct - target_count_state["value"]),)]
         # Dry-run target row count: plain count() FROM {target_qualified}
-        if sql_lc.lstrip().startswith("select count()") and "clusterallreplicas" not in sql_lc:
+        if (
+            sql_lc.lstrip().startswith("select count()")
+            and "clusterallreplicas" not in sql_lc
+        ):
             return [(target_count_state["value"],)]
         if sql_lc.lstrip().startswith("insert into"):
             target_count_state["value"] = max(
@@ -113,10 +116,14 @@ def _run(
     ]
     if dry_run:
         args.append("--dry-run")
-    cm = patch(
-        "model_hub.management.commands.migrate_ch_vector_tables.ClickHouseVectorDB",
-        return_value=db_client,
-    ) if db_client is not None else patch("builtins.print")  # no-op patch
+    cm = (
+        patch(
+            "model_hub.management.commands.migrate_ch_vector_tables.ClickHouseVectorDB",
+            return_value=db_client,
+        )
+        if db_client is not None
+        else patch("builtins.print")
+    )  # no-op patch
     with cm:
         call_command(*args, stdout=out)
     return out.getvalue()
@@ -125,6 +132,7 @@ def _run(
 # ---------------------------------------------------------------------------
 # Refusal cases
 # ---------------------------------------------------------------------------
+
 
 def test_refuses_when_source_equals_target():
     with pytest.raises(CommandError) as excinfo:
@@ -173,15 +181,16 @@ def test_refuses_unknown_table_name():
 # Dry-run vs real run
 # ---------------------------------------------------------------------------
 
+
 def test_dry_run_does_not_create_table_or_insert():
     db_client, _ = _build_mock_db_client(source_distinct=14)
     stdout = _run("feedbacks", db_client=db_client, dry_run=True)
 
     db_client.create_table.assert_not_called()
     executed_sqls = [c.args[0] for c in db_client.client.execute.call_args_list]
-    assert not any(s.lower().lstrip().startswith("insert into") for s in executed_sqls), (
-        "dry-run must not emit any INSERT statement"
-    )
+    assert not any(
+        s.lower().lstrip().startswith("insert into") for s in executed_sqls
+    ), "dry-run must not emit any INSERT statement"
     assert "would_insert" in stdout.lower()
 
 
@@ -211,9 +220,12 @@ def test_target_database_is_created_on_cluster_before_any_table_work():
 
     executed_sqls = [c.args[0] for c in db_client.client.execute.call_args_list]
     create_db_idx = next(
-        (i for i, s in enumerate(executed_sqls)
-         if "create database if not exists futureagi" in s.lower()
-         and "on cluster 'cluster'" in s.lower()),
+        (
+            i
+            for i, s in enumerate(executed_sqls)
+            if "create database if not exists futureagi" in s.lower()
+            and "on cluster 'cluster'" in s.lower()
+        ),
         None,
     )
     assert create_db_idx is not None, (
@@ -222,7 +234,8 @@ def test_target_database_is_created_on_cluster_before_any_table_work():
     # First per-table probe is the source_exists check against system.tables
     # (without clusterAllReplicas). Confirm the CREATE DATABASE ran first.
     first_per_table_idx = next(
-        i for i, s in enumerate(executed_sqls)
+        i
+        for i, s in enumerate(executed_sqls)
         if "from system.tables" in s.lower() and "clusterallreplicas" not in s.lower()
     )
     assert create_db_idx < first_per_table_idx
@@ -234,9 +247,9 @@ def test_dry_run_does_not_create_target_database():
     _run("feedbacks", db_client=db_client, dry_run=True)
 
     executed_sqls = [c.args[0] for c in db_client.client.execute.call_args_list]
-    assert not any(
-        "create database" in s.lower() for s in executed_sqls
-    ), "dry-run must not issue CREATE DATABASE"
+    assert not any("create database" in s.lower() for s in executed_sqls), (
+        "dry-run must not issue CREATE DATABASE"
+    )
 
 
 def test_real_run_emits_insert_with_explicit_column_list_and_id_anti_join():
@@ -254,7 +267,9 @@ def test_real_run_emits_insert_with_explicit_column_list_and_id_anti_join():
         "feedbacks", cluster="cluster", database="futureagi"
     )
     executed_sqls = [c.args[0] for c in db_client.client.execute.call_args_list]
-    insert_stmts = [s for s in executed_sqls if s.lower().lstrip().startswith("insert into")]
+    insert_stmts = [
+        s for s in executed_sqls if s.lower().lstrip().startswith("insert into")
+    ]
     assert len(insert_stmts) == 1
     insert_sql = insert_stmts[0]
     assert "INSERT INTO futureagi.feedbacks" in insert_sql
@@ -266,9 +281,7 @@ def test_real_run_emits_insert_with_explicit_column_list_and_id_anti_join():
         "INSERT must use an explicit column list, not SELECT *"
     )
     for col in _VECTOR_COLUMNS:
-        assert f"`{col}`" in insert_sql, (
-            f"column `{col}` missing from explicit list"
-        )
+        assert f"`{col}`" in insert_sql, f"column `{col}` missing from explicit list"
     assert target_state["value"] == 14
     assert "copied 14 rows" in stdout
 
@@ -291,18 +304,14 @@ def test_parity_check_reads_system_tables_total_rows_not_leader_only_count():
 
     executed_sqls = [c.args[0] for c in db_client.client.execute.call_args_list]
     system_tables_reads = [
-        s for s in executed_sqls
-        if "clusterAllReplicas" in s
-        and "system.tables" in s
-        and "total_rows" in s
+        s
+        for s in executed_sqls
+        if "clusterAllReplicas" in s and "system.tables" in s and "total_rows" in s
     ]
     assert system_tables_reads, (
         "post-INSERT parity must read through system.tables.total_rows"
     )
-    legacy_group_by_reads = [
-        s for s in executed_sqls
-        if "GROUP BY hostName()" in s
-    ]
+    legacy_group_by_reads = [s for s in executed_sqls if "GROUP BY hostName()" in s]
     assert not legacy_group_by_reads, (
         "must not fall back to the empty-replica-hiding "
         "'count() GROUP BY hostName()' idiom"
@@ -321,12 +330,15 @@ def test_raises_command_error_when_a_replica_is_missing_from_parity():
         replicas_present=2,  # one follower still registering
     )
     # Shrink the polling window so the test doesn't spend 30s waiting.
-    with patch(
-        "model_hub.services.ch_migration.time.sleep",
-        return_value=None,
-    ), patch(
-        "model_hub.services.ch_migration.time.monotonic",
-        side_effect=[0.0, 0.0, 0.0, 999.0, 999.0],
+    with (
+        patch(
+            "model_hub.services.ch_migration.time.sleep",
+            return_value=None,
+        ),
+        patch(
+            "model_hub.services.ch_migration.time.monotonic",
+            side_effect=[0.0, 0.0, 0.0, 999.0, 999.0],
+        ),
     ):
         with pytest.raises(CommandError) as excinfo:
             _run("feedbacks", db_client=db_client)
@@ -367,9 +379,7 @@ def test_second_run_is_a_no_op_when_target_already_at_parity():
     """The id-anti-join filter means a re-run on already-migrated data
     inserts nothing. The command must report 0 rows copied without erroring.
     """
-    db_client, _ = _build_mock_db_client(
-        source_distinct=14, target_count_before=14
-    )
+    db_client, _ = _build_mock_db_client(source_distinct=14, target_count_before=14)
     stdout = _run("feedbacks", db_client=db_client)
     assert "copied 0 rows" in stdout
 

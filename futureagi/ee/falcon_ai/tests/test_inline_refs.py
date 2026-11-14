@@ -73,7 +73,9 @@ class TestBasicFlatten:
         schema = {
             "type": "object",
             "properties": {"cfg": {"$ref": "#/$defs/Cfg"}},
-            "$defs": {"Cfg": {"type": "object", "properties": {"name": {"type": "string"}}}},
+            "$defs": {
+                "Cfg": {"type": "object", "properties": {"name": {"type": "string"}}}
+            },
         }
         flat = _inline_refs(schema)
         _assert_no_refs(flat)
@@ -83,7 +85,9 @@ class TestBasicFlatten:
     def test_ref_inside_array_items(self):
         schema = {
             "type": "object",
-            "properties": {"items": {"type": "array", "items": {"$ref": "#/$defs/Item"}}},
+            "properties": {
+                "items": {"type": "array", "items": {"$ref": "#/$defs/Item"}}
+            },
             "$defs": {"Item": {"type": "integer"}},
         }
         flat = _inline_refs(schema)
@@ -98,7 +102,9 @@ class TestBasicFlatten:
                 "b": {"$ref": "#/$defs/Shared"},
                 "c": {"$ref": "#/$defs/Shared"},
             },
-            "$defs": {"Shared": {"type": "object", "properties": {"x": {"type": "string"}}}},
+            "$defs": {
+                "Shared": {"type": "object", "properties": {"x": {"type": "string"}}}
+            },
         }
         flat = _inline_refs(schema)
         _assert_no_refs(flat)
@@ -118,10 +124,9 @@ class TestBasicFlatten:
         }
         flat = _inline_refs(schema)
         _assert_no_refs(flat)
-        assert (
-            flat["properties"]["top"]["properties"]["b"]["properties"]["c"]
-            == {"type": "integer"}
-        )
+        assert flat["properties"]["top"]["properties"]["b"]["properties"]["c"] == {
+            "type": "integer"
+        }
 
 
 # ---------------------------------------------------------------------------
@@ -139,7 +144,9 @@ class TestSiblingPreservation:
                     "description": "Per-slot description",
                 }
             },
-            "$defs": {"Cfg": {"type": "object", "properties": {"x": {"type": "string"}}}},
+            "$defs": {
+                "Cfg": {"type": "object", "properties": {"x": {"type": "string"}}}
+            },
         }
         flat = _inline_refs(schema)
         _assert_no_refs(flat)
@@ -154,7 +161,9 @@ class TestSiblingPreservation:
                     "default": {"name": "fallback"},
                 }
             },
-            "$defs": {"Cfg": {"type": "object", "properties": {"name": {"type": "string"}}}},
+            "$defs": {
+                "Cfg": {"type": "object", "properties": {"name": {"type": "string"}}}
+            },
         }
         flat = _inline_refs(schema)
         _assert_no_refs(flat)
@@ -170,7 +179,9 @@ class TestSiblingPreservation:
                     "examples": [{"name": "a"}, {"name": "b"}],
                 }
             },
-            "$defs": {"Cfg": {"type": "object", "properties": {"name": {"type": "string"}}}},
+            "$defs": {
+                "Cfg": {"type": "object", "properties": {"name": {"type": "string"}}}
+            },
         }
         flat = _inline_refs(schema)
         assert flat["properties"]["cfg"]["title"] == "Pinned title"
@@ -281,7 +292,9 @@ class TestSafety:
         schema = {
             "type": "object",
             "properties": {"cfg": {"$ref": "#/$defs/Cfg"}},
-            "$defs": {"Cfg": {"type": "object", "properties": {"x": {"type": "string"}}}},
+            "$defs": {
+                "Cfg": {"type": "object", "properties": {"x": {"type": "string"}}}
+            },
         }
         snapshot = copy.deepcopy(schema)
         _inline_refs(schema)
@@ -291,7 +304,9 @@ class TestSafety:
         schema = {
             "type": "object",
             "properties": {"cfg": {"$ref": "#/$defs/Cfg", "description": "x"}},
-            "$defs": {"Cfg": {"type": "object", "properties": {"v": {"type": "integer"}}}},
+            "$defs": {
+                "Cfg": {"type": "object", "properties": {"v": {"type": "integer"}}}
+            },
         }
         json.dumps(_inline_refs(schema))  # must not raise
 
@@ -349,7 +364,10 @@ class TestRealPydanticSchemas:
         flat = _inline_refs(schema)
         _assert_no_refs(flat)
         # Walk all the way down to the leaf
-        assert flat["properties"]["mid"]["properties"]["leaf"]["properties"]["v"]["type"] == "integer"
+        assert (
+            flat["properties"]["mid"]["properties"]["leaf"]["properties"]["v"]["type"]
+            == "integer"
+        )
 
     def test_property_count_is_preserved(self):
         """Inlining must not silently drop any property name."""
@@ -405,7 +423,7 @@ class TestMCPToolSchemas:
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "primary_filter":  {"$ref": "#/$defs/Filter"},
+                    "primary_filter": {"$ref": "#/$defs/Filter"},
                     "fallback_filter": {"$ref": "#/$defs/Filter"},
                 },
                 "required": ["primary_filter"],
@@ -433,7 +451,10 @@ class TestMCPToolSchemas:
             assert flat["properties"][slot]["type"] == "object"
             assert "field" in flat["properties"][slot]["properties"]
             assert flat["properties"][slot]["properties"]["op"]["enum"] == [
-                "eq", "neq", "gt", "lt"
+                "eq",
+                "neq",
+                "gt",
+                "lt",
             ]
 
     def test_mcp_schema_with_per_slot_description_preserved(self):
@@ -455,7 +476,10 @@ class TestMCPToolSchemas:
                     },
                 },
                 "$defs": {
-                    "Filter": {"type": "object", "properties": {"field": {"type": "string"}}}
+                    "Filter": {
+                        "type": "object",
+                        "properties": {"field": {"type": "string"}},
+                    }
                 },
             },
         }
@@ -512,5 +536,7 @@ class TestMCPToolSchemas:
         wrapper = self._build_mcp_wrapper(tool_schema)
         flat = _inline_refs(wrapper.input_schema)
         _assert_no_refs(flat)
-        leaf = flat["properties"]["record"]["properties"]["metadata"]["properties"]["owner"]
+        leaf = flat["properties"]["record"]["properties"]["metadata"]["properties"][
+            "owner"
+        ]
         assert leaf == {"type": "object", "properties": {"email": {"type": "string"}}}
