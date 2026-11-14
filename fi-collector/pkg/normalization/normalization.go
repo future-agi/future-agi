@@ -5,6 +5,7 @@ package normalization
 
 import (
 	"encoding/json"
+	"path"
 	"slices"
 	"strings"
 
@@ -13,12 +14,15 @@ import (
 )
 
 type Profile struct {
-	ID                string            `json:"id"`
-	ScopeName         string            `json:"scope_name"`
-	ScopeVersions     []string          `json:"scope_versions"`
-	Operations        map[string]string `json:"operations"`
-	SessionFallback   string            `json:"session_fallback"`
-	SummaryOperations []string          `json:"summary_operations"`
+	ID                 string            `json:"id"`
+	ScopeName          string            `json:"scope_name"`
+	ScopeVersions      []string          `json:"scope_versions"`
+	Operations         map[string]string `json:"operations"`
+	SessionFallback    string            `json:"session_fallback"`
+	SummaryOperations  []string          `json:"summary_operations"`
+	TimingNames        []string          `json:"timing_names"`
+	TimingPrefixes     []string          `json:"timing_prefixes"`
+	TimingNamePatterns []string          `json:"timing_name_patterns"`
 }
 
 type contract struct {
@@ -62,7 +66,7 @@ func NonAdditive(attrs pcommon.Map) bool { return String(attrs, "fi.usage.contri
 
 // Normalize preserves native trace/span/parent IDs and original operation and
 // conversation attributes. It is idempotent, including across adapter passes.
-func Normalize(attrs pcommon.Map, profile *Profile) {
+func Normalize(attrs pcommon.Map, profile *Profile, names ...string) {
 	op := String(attrs, "gen_ai.operation.name")
 	if profile != nil {
 		attrs.PutStr("fi.normalization.profile", profile.ID)
@@ -76,6 +80,10 @@ func Normalize(attrs pcommon.Map, profile *Profile) {
 		if kind := profile.Operations[op]; !explicitKind && kind != "" {
 			attrs.PutStr("fi.span.kind", strings.ToUpper(kind))
 			attrs.PutStr("fi.source.operation", op)
+		}
+		if !explicitKind && op == "" && len(names) > 0 && timingOnly(attrs, profile, names[0]) {
+			attrs.PutStr("fi.span.kind", "INTERNAL")
+			attrs.PutStr("fi.observation.category", "timing")
 		}
 		if session := String(attrs, profile.SessionFallback); String(attrs, "session.id") == "" && len(session) > 0 && len(session) <= 4096 {
 			attrs.PutStr("session.id", session)
@@ -161,9 +169,38 @@ func Prepare(td ptrace.Traces) {
 			profile := ProfileFor(ss.Scope())
 			for k := 0; k < ss.Spans().Len(); k++ {
 				span := ss.Spans().At(k)
-				Normalize(span.Attributes(), profile)
+				Normalize(span.Attributes(), profile, span.Name())
 				StoreDetails(span)
 			}
 		}
 	}
+}
+
+// timingOnly never classifies usage-bearing work by a coincidentally matching name.
+func timingOnly(attrs pcommon.Map, profile *Profile, name string) bool {
+	usage := false
+	attrs.Range(func(key string, _ pcommon.Value) bool {
+		usage = slices.Contains(registry.UsageKeys, key)
+		for _, prefix := range registry.UsagePrefixes {
+			usage = usage || strings.HasPrefix(key, prefix)
+		}
+		return !usage
+	})
+	if usage {
+		return false
+	}
+	if slices.Contains(profile.TimingNames, name) {
+		return true
+	}
+	for _, prefix := range profile.TimingPrefixes {
+		if strings.HasPrefix(name, prefix) {
+			return true
+		}
+	}
+	for _, pattern := range profile.TimingNamePatterns {
+		if matches, _ := path.Match(pattern, name); matches {
+			return true
+		}
+	}
+	return false
 }

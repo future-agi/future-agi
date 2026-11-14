@@ -12,7 +12,7 @@
 #     docker-entrypoint.sh below needs only busybox sh/printenv/sed, so none of
 #     the modules alpine-slim leaves out (njs, geoip, image-filter, xslt, acme)
 #     nor nginx:alpine's curl are used.
-ARG NODE_IMAGE=futureagi/frontend-base:v1.0.0@sha256:09f8b135ddb30b5312ddca993c21e1678da0f9bbaa36d677697542ab8a2dfc43
+ARG NODE_IMAGE=futureagi/frontend-base:v1.1.0-dev@sha256:bc90d2229b7155ed6ba69c47f3e5a634a0cd85fafab1e8f6c6609f0c1762e2ad
 ARG NGINX_IMAGE=nginx:1.31.6-alpine-slim@sha256:f761b94f2cb9e8e05e2943d5f773609596113ef69b54e2433a996d109a8f78b7
 
 # Stage 1: Build the React app.
@@ -46,7 +46,8 @@ ARG PRUNE_PUBLIC_ASSETS="assets/readme assets/login_signup assets/images/home as
 
 # vite.config.js already sets build.sourcemap=false; deleting *.map is a guard
 # so a config change cannot ship source maps.
-RUN yarn build \
+RUN yarn install --frozen-lockfile --non-interactive \
+    && yarn build \
     && find dist -name '*.map' -delete \
     && for dir in $PRUNE_PUBLIC_ASSETS; do rm -rf "dist/$dir"; done \
     && if [ -n "$PRUNE_PUBLIC_ASSETS" ]; then \
@@ -63,6 +64,10 @@ RUN yarn build \
 # a host-side `yarn install`.
 FROM ${NODE_IMAGE} AS dev
 WORKDIR /app
+# Refresh the dependency snapshot for fresh dev node_modules volumes as well.
+# Keep this target native to its requested platform; only dist builds are portable.
+COPY package.json yarn.lock ./
+RUN yarn install --frozen-lockfile --non-interactive
 EXPOSE 3000
 CMD ["yarn", "dev", "--host", "--port", "3000"]
 

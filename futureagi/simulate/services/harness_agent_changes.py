@@ -42,6 +42,7 @@ from simulate.services.harness_agent_versions import (
     create_agent_version,
     environment_owned,
     next_version_number,
+    queue_check,
     requested_here,
 )
 from simulate.services.harness_github import (
@@ -815,10 +816,13 @@ def change_agent_source(
     archive_artifact_id: UUID | None = None,
     prompt: str | None = None,
     agent_payload: Mapping[str, Any] | None = None,
+    make_default: bool = True,
     user: Any = None,
 ) -> AgentVersion:
     """The environment's next agent version from a new upload, prompt or settings;
-    checked next, then made this environment's default."""
+    checked next, then made this environment's default. Without ``make_default`` it
+    is only checked: a run can pick it once it passes, and a move makes it the
+    default."""
     from simulate.services.harness_versioning.archives import archive_exists
     from simulate.services.harness_versioning.assembly import certify_enabled
     from simulate.services.harness_versioning.versions import versioning_enabled
@@ -892,6 +896,7 @@ def change_agent_source(
             parent,
             environment,
             user,
+            make_default=make_default,
             source={"kind": "archive", "archive_artifact_id": str(archive_artifact_id)},
             trigger=Trigger.UPLOAD,
         )
@@ -935,20 +940,34 @@ def change_agent_source(
         parent,
         environment,
         user,
+        make_default=make_default,
         trigger=Trigger.PROMPT if prompt_changed else Trigger.AGENT_PAYLOAD,
         **changes,
     )
 
 
 def _made(
-    parent: AgentVersion, environment: HostedHarnessJob, user: Any, **changes: Any
+    parent: AgentVersion,
+    environment: HostedHarnessJob,
+    user: Any,
+    *,
+    make_default: bool,
+    **changes: Any,
 ) -> AgentVersion:
     version = create_agent_version(
-        parent.agent_definition, parent=parent, env=environment, user=user, **changes
+        parent.agent_definition,
+        parent=parent,
+        env=environment,
+        user=user,
+        activate=make_default,
+        **changes,
     )
     if version.id == parent.id:
         # The same facts as the default: nothing to make.
         raise _unchanged()
+    if not make_default:
+        # Made without asking to be the default, so nothing queued its check.
+        queue_check(version)
     return version
 
 

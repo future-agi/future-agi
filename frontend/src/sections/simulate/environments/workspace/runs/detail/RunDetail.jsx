@@ -3,10 +3,19 @@ import { useEffect, useRef, useState } from "react";
 import { enqueueSnackbar } from "notistack";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
-import { Box, Stack, Typography, Button, IconButton, Tab } from "@mui/material";
+import {
+  Box,
+  Stack,
+  Typography,
+  Button,
+  IconButton,
+  Link,
+  Tab,
+} from "@mui/material";
 
 import Iconify from "src/components/iconify";
 import { CustomTabs } from "src/components/tabs/tabs";
+import { RouterLink } from "src/routes/components";
 import { paths } from "src/routes/paths";
 import { fToNow } from "src/utils/format-time";
 import { CAPABILITY, useFeatureAllowed } from "src/hooks/useCapabilities";
@@ -20,7 +29,10 @@ import {
   compareRunsKeyPrefix,
   runAnalyticsKey,
 } from "src/api/simulate-environments/runEvals";
-import { useRerunCallsInRun } from "src/api/simulate-environments/rerunScenarios";
+import {
+  useRerunCallsInRun,
+  useResumeRun,
+} from "src/api/simulate-environments/rerunScenarios";
 
 import SectionCard from "../../../components/SectionCard";
 import StatusChip from "../StatusChip";
@@ -146,6 +158,9 @@ export default function RunDetail({
     );
 
   const status = identity?.runState;
+  // A fix's check run is not one of the user's runs: it has no run number, and
+  // only the fix acts on it, so it offers no Stop, Re-run or Debug failures.
+  const fixRun = identity?.fixRun ?? null;
   // A live run has no final results yet, so its header actions wait for it to
   // finish. Stop simulation is the exception and stays in its own control.
   const live =
@@ -165,6 +180,10 @@ export default function RunDetail({
     .filter(Boolean)
     .map((label) => ` · ${label}`)
     .join("");
+  // An interrupted run says how far it got and can resume the calls it left.
+  const resumeState = identity?.resume;
+  const resume = useResumeRun(executionId);
+  const lastResume = resumeState?.history?.at(-1);
   // A re-run starts from the versions this run used.
   const rerunOptions = {
     initialPicks: {
@@ -227,7 +246,7 @@ export default function RunDetail({
 
         <Box flex={1} minWidth={0}>
           <Stack direction="row" alignItems="center" spacing={1}>
-            {identity && (
+            {identity && !fixRun && (
               <Box
                 sx={{
                   width: 24,
@@ -246,9 +265,27 @@ export default function RunDetail({
               </Box>
             )}
             <Typography noWrap sx={{ typography: "s1_2", fontWeight: 600 }}>
-              {identity
-                ? `Run ${identity.ordinal} · agent ${agentLabel}${pinnedLabels}`
-                : "Run complete"}
+              {fixRun ? (
+                <>
+                  {`Check run ${fixRun.label} for `}
+                  <Link
+                    component={RouterLink}
+                    href={paths.dashboard.simulate.environments.improvement(
+                      env.id,
+                      fixRun.id,
+                    )}
+                    color="inherit"
+                    underline="always"
+                  >
+                    this fix
+                  </Link>
+                  {` · agent ${agentLabel}${pinnedLabels}`}
+                </>
+              ) : identity ? (
+                `Run ${identity.ordinal} · agent ${agentLabel}${pinnedLabels}`
+              ) : (
+                "Run complete"
+              )}
             </Typography>
             {identity?.agentDiffers && (
               <AgentDiffersTag
@@ -257,15 +294,22 @@ export default function RunDetail({
               />
             )}
             {status && <StatusChip status={status} />}
-            <StopRunControl
-              executionId={executionId}
-              stoppable={!!identity?.stoppable}
-              label="Stop simulation"
-            />
+            {!fixRun && (
+              <StopRunControl
+                executionId={executionId}
+                stoppable={!!identity?.stoppable}
+                label="Stop simulation"
+              />
+            )}
           </Stack>
           <Typography noWrap sx={{ typography: "s2", color: "text.subtitle" }}>
             {env.name} · {stats.total} tasks
+            {/* Before "started", so a narrow header cuts the date, not this. */}
+            {resumeState?.resumable
+              ? ` · ${resumeState.unfinished} not finished`
+              : ""}
             {startedLabel ? ` · started ${startedLabel}` : ""}
+            {lastResume ? ` · resumed ${fToNow(lastResume.at)}` : ""}
           </Typography>
         </Box>
 
@@ -307,7 +351,18 @@ export default function RunDetail({
         >
           {exporting ? "Exporting…" : "Export"}
         </Button>
-        {hasTickableCalls === false && (
+        {resumeState?.resumable && (
+          <Button
+            variant="outlined"
+            size="small"
+            disabled={live || resume.isPending}
+            startIcon={<Iconify icon="solar:play-linear" width={15} />}
+            onClick={() => resume.mutate()}
+          >
+            {resume.isPending ? "Resuming…" : "Resume"}
+          </Button>
+        )}
+        {hasTickableCalls === false && !fixRun && (
           <Button
             variant="outlined"
             size="small"
@@ -324,16 +379,18 @@ export default function RunDetail({
             Run again
           </Button>
         )}
-        <Button
-          variant="contained"
-          color="primary"
-          size="small"
-          onClick={() => setDebugging(true)}
-          disabled={live}
-          startIcon={<Iconify icon="solar:magnifer-linear" width={15} />}
-        >
-          Debug failures
-        </Button>
+        {!fixRun && (
+          <Button
+            variant="contained"
+            color="primary"
+            size="small"
+            onClick={() => setDebugging(true)}
+            disabled={live}
+            startIcon={<Iconify icon="solar:magnifer-linear" width={15} />}
+          >
+            Debug failures
+          </Button>
+        )}
       </Stack>
       {creditBanner}
 
@@ -342,7 +399,12 @@ export default function RunDetail({
           <CustomTabs
             value={tab}
             onChange={(_, v) => setTab(v)}
-            sx={{ boxShadow: "none", borderBottom: "1px solid", borderColor: "divider", mb: 2 }}
+            sx={{
+              boxShadow: "none",
+              borderBottom: "1px solid",
+              borderColor: "divider",
+              mb: 2,
+            }}
           >
             <Tab value="tasks" label={`Test runs (${stats.total})`} />
             {hasTrials && (
@@ -389,11 +451,11 @@ export default function RunDetail({
               // refilled in place) or as a new simulation, through the same
               // start as any run: that one opens the new run.
               onRerunScenarios={
-                onStartRun
+                onStartRun && !fixRun
                   ? (keys, trials) => onStartRun(keys, trials, rerunOptions)
                   : null
               }
-              onRerunInRun={rerunInRun.mutate}
+              onRerunInRun={fixRun ? null : rerunInRun.mutate}
               onTickableChange={setHasTickableCalls}
               runTrials={identity?.trials || 1}
               rerunDisabledReason={

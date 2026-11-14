@@ -39,11 +39,14 @@ from simulate.models import (
     HostedHarnessConversation,
     HostedHarnessConversationLease,
     HostedHarnessConversationMessage,
+    HostedHarnessExecution,
     HostedHarnessJob,
+    HostedHarnessReceipt,
     HostedHarnessSecret,
 )
 from simulate.models.hosted_harness import MAX_SCENARIOS_PER_JOB
 from simulate.services.hosted_harness import (
+    RERUN_EXECUTION_KEYS,
     HostedHarnessError,
     activate_attempt_capability,
     finish_deferred_delete,
@@ -853,6 +856,13 @@ _GUEST_CAUSE_LINE = re.compile(r"(?:ProcessRuntimeError|RuntimeValidationError):
 _GUEST_INNER_EXCEPTION = re.compile(
     r"(?:^|\\n)([A-Za-z_.]+(?:Error|Exception)): ([^\\\"\n]+)"
 )
+
+
+# The labels of a guest's typed failures; the stored message adds the cause it printed.
+RUNTIME_VALIDATION_FAILED = (
+    "Generated environment failed real-runtime validation after bounded repair"
+)
+AUTHORING_FAILED = "Environment authoring failed before a runnable world was saved"
 
 
 def guest_failure_cause(tail: str) -> str:
@@ -4365,8 +4375,8 @@ class HostedHarnessGateway:
     def _should_retry(self, attempt: HostedHarnessAttempt, domain: str) -> bool:
         # An infrastructure/connectivity failure is worth a fresh attempt while
         # the domain is retryable and the whole-job attempt budget remains
-        # (spine §0.6 + §1 `retry`). Exit 0 (verdict delivered) and exit 3
-        # (superseded) never reach here.
+        # (spine §0.6 + §1 `retry`). Exit 3 (superseded) never reaches here; exit 0
+        # does only when the platform lost results the guest produced.
         retry = attempt.job.payload.get("retry", {})
         cycle_start = int(
             (attempt.job.payload.get("metadata") or {}).get("attempt_cycle_start") or 1
@@ -4375,6 +4385,48 @@ class HostedHarnessGateway:
         return domain in retry.get(
             "retryable_domains", []
         ) and attempts_in_cycle < retry.get("max_infrastructure_attempts", 1)
+
+    def _results_missing(self, attempt: HostedHarnessAttempt) -> list[str] | None:
+        """The keys of the executions this attempt was sent and delivered no result for.
+
+        None when it was sent none: a build's product is its bundle, not call results. A
+        result an earlier attempt delivered is not this attempt's.
+        """
+        job = attempt.job
+        if job.environment_id is None:
+            return None
+        executions = HostedHarnessExecution.no_workspace_objects.filter(job=job)
+        rerun_keys = (job.payload.get("metadata") or {}).get(RERUN_EXECUTION_KEYS)
+        if rerun_keys:
+            executions = executions.filter(execution_key__in=rerun_keys)
+        if not executions.exists():
+            return None
+        received = HostedHarnessReceipt.no_workspace_objects.filter(
+            job=job, attempt_number=attempt.attempt_number, execution__isnull=False
+        ).values("execution_id")
+        return sorted(
+            executions.exclude(id__in=received).values_list("execution_key", flat=True)
+        )
+
+    def _relaunch_only_missing_results(self, attempt: HostedHarnessAttempt) -> None:
+        """Scope the relaunch to the calls this attempt left without a result, as an in-run
+        re-run is scoped to its chosen calls. The results that arrived stay the Run's.
+
+        With no result in, that scope is every call. A build relaunches whole.
+        """
+        missing = self._results_missing(attempt)
+        if not missing:
+            return
+        with transaction.atomic():
+            job = HostedHarnessJob.no_workspace_objects.select_for_update().get(
+                id=attempt.job_id
+            )
+            metadata = {
+                **(job.payload.get("metadata") or {}),
+                RERUN_EXECUTION_KEYS: missing,
+            }
+            job.payload = {**job.payload, "metadata": metadata}
+            job.save(update_fields=["payload", "updated_at"])
 
     def reconcile_completed(
         self, attempt: HostedHarnessAttempt
@@ -4583,9 +4635,9 @@ class HostedHarnessGateway:
             )
             authoring_invalid = exit_code == 78 or authoring_failed
             label = (
-                "Generated environment failed real-runtime validation after bounded repair"
+                RUNTIME_VALIDATION_FAILED
                 if exit_code == 78
-                else "Environment authoring failed before a runnable world was saved"
+                else AUTHORING_FAILED
                 if authoring_failed
                 else f"guest entrypoint exited {exit_code}"
             )
@@ -4630,9 +4682,51 @@ class HostedHarnessGateway:
                     logger.exception(
                         "could not mark the bundle cache failed attempt=%s", attempt.id
                     )
+        elif (
+            exit_code == 0
+            and attempt.terminal_event_received
+            and not attempt.manifest_acked
+            and attempt.terminal_stage == "completed"
+            and self._results_missing(attempt) == []
+        ):
+            # Every call's result is in, and the results are what the run page and a check
+            # run read; only the manifest listing the artifacts was lost. Keep the scored
+            # Run: manifest_acked stays False as the record of what never arrived.
+            logger.warning(
+                "hosted run kept without its manifest attempt=%s provider_ref=%s",
+                attempt.id,
+                attempt.provider_ref,
+            )
+        elif (
+            exit_code == 0
+            and not attempt.terminal_event_received
+            and self._results_missing(attempt) == []
+        ):
+            # Every call's result is in and only the guest's terminal event was lost. The
+            # platform records its own ending, as it does for a cancel: a reason no guest
+            # sends, and terminal_event_received stays False.
+            attempt.terminal_stage = "completed"
+            attempt.terminal_reason = "terminal_event_lost"
+            attempt.save(
+                update_fields=["terminal_stage", "terminal_reason", "updated_at"]
+            )
+            structlog_logger.warning(
+                "hosted_run_completed_by_platform",
+                job_id=str(attempt.job_id),
+                attempt_id=str(attempt.id),
+                reason="terminal_event_lost",
+            )
         elif exit_code == 0 and (
             not attempt.terminal_event_received or not attempt.manifest_acked
         ):
+            # Retry only results the guest produced and the platform lost: an ending the
+            # guest reported as failed or canceled is its own.
+            retry_pending = (
+                not attempt.terminal_event_received
+                or attempt.terminal_stage == "completed"
+            ) and self._should_retry(attempt, "infrastructure")
+            if retry_pending:
+                self._relaunch_only_missing_results(attempt)
             attempt.terminal_stage = "failed"
             attempt.terminal_failure = {
                 "domain": "platform_sync",

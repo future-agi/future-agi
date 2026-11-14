@@ -14,6 +14,10 @@
 #     In Standalone the gateway listens on 127.0.0.1:8080 in the same container.
 services:
   app:
+    networks: [default, link-public]
+    depends_on:
+      mock-google:
+        condition: service_healthy
     # Never read the checkout's own .env: it belongs to the developer's
     # install and may hold real provider keys. The harness env file is the
     # only source of interpolated values (bin/e2e passes --env-file).
@@ -21,11 +25,23 @@ services:
     # The public API URL, as docker-compose.e2e.yml sets it for Distributed:
     # SAML checks the response Destination against BASE_URL/saml2_auth/acs/.
     environment:
+      # Use the dedicated internal-only sandbox, not the in-app loopback alias.
+      CODE_EXECUTOR_URL: http://code-executor-nsjail:8060
+      REQUESTS_CA_BUNDLE: /run/google-fixture-tls/ca.pem
       BASE_URL: http://localhost:${BACKEND_PORT:-8100}
       DJANGO_SETTINGS_MODULE: tfc.settings.e2e
+      # Literal values: a value exported in the caller's shell would otherwise
+      # replace the env file's loopback telemetry address.
+      FUTURE_AGI_TELEMETRY_DISABLED: "true"
+      FUTURE_AGI_TELEMETRY_URL: http://127.0.0.1:9
+      # Shared by the API and embedded SQL worker; bin/e2e up provisions it.
+      SQL_WORKBENCH_CH_USER: e2e_sql_service
+      SQL_WORKBENCH_CH_PASSWORD: e2e-sql-workbench-password-for-tests
       # Simulate cutoff (#3502): every org a run signs up is after it; lib/existing-customer.ts dates one before it.
       RESTRICT_SIMULATE_TO_ENVIRONMENTS_CUTOFF: "2026-10-01T00:00:00Z"
     volumes:
+      - google-fixture-tls:/run/google-fixture-tls:ro
+      - ./e2e/stack/backend/e2e_google.py:/app/backend/tfc/views/e2e_google.py:ro
       - ./e2e/stack/backend/settings_e2e.py:/app/backend/tfc/settings/e2e.py:ro
       - ./e2e/stack/backend/urls_e2e.py:/app/backend/tfc/urls_e2e.py:ro
       - ./e2e/stack/backend/e2e_clean_signup.py:/app/backend/accounts/views/e2e_clean_signup.py:ro
@@ -34,6 +50,12 @@ services:
       - "agentcc-gateway:127.0.0.1"
     # A crash should fail the run loudly instead of restarting quietly.
     restart: "no"
+  # Not started by bin/e2e (--profile ml); if it is, it reads the checkout's
+  # .env, so keep its telemetry settings on loopback as well.
+  serving:
+    environment:
+      FUTURE_AGI_TELEMETRY_DISABLED: "true"
+      FUTURE_AGI_TELEMETRY_URL: http://127.0.0.1:9
   postgres:
     ports:
       - "127.0.0.1:${PG_PORT:-25432}:5432"
@@ -50,3 +72,83 @@ services:
       # Paths resolve against the project directory (repo root).
       - ./e2e/stack/mock-llm/server.mjs:/srv/server.mjs:ro
     restart: "no"
+
+  # Dedicated executor selection/fallback policy reuses the executor harness.
+  # Its only networks are internal: no default route to real destinations.
+  code-executor:
+    # Mandatory for this suite: include it in ordinary ps/down, not just explicit up.
+    profiles: !reset []
+    networks: !override
+      link-public:
+        aliases: [code-executor-nsjail]
+      link-private: {}
+    extra_hosts:
+      - "allowed.example:11.23.0.10"
+      - "worker-allowed.example:11.23.0.11"
+      - "denied.example:11.23.0.10"
+      - "private.example:172.30.91.10"
+    restart: "no"
+  link-canary:
+    image: node:22-alpine
+    command: ["node", "/srv/server.mjs"]
+    volumes:
+      - ./e2e/stack/link-canary/server.mjs:/srv/server.mjs:ro
+    ports:
+      - "127.0.0.1:28082:80"
+    networks:
+      # Host-only readout port needs a non-internal bridge. This listener never
+      # makes outbound requests; the executor stays on internal networks only.
+      default: {}
+      link-public:
+        ipv4_address: 11.23.0.10
+      link-private:
+        ipv4_address: 172.30.91.10
+    restart: "no"
+
+  # A separate journal keeps asynchronous harness traffic out of the browser
+  # flow's full-journal assertion when Playwright runs the files in parallel.
+  link-worker-canary:
+    image: node:22-alpine
+    command: ["node", "/srv/server.mjs"]
+    volumes:
+      - ./e2e/stack/link-canary/server.mjs:/srv/server.mjs:ro
+    ports:
+      - "127.0.0.1:28083:80"
+    networks:
+      default: {}
+      link-public:
+        ipv4_address: 11.23.0.11
+    restart: "no"
+
+  mock-google:
+    image: futureagi/future-agi:${E2E_GOOGLE_IMAGE_TAG:-latest}
+    entrypoint: ["python"]
+    command: ["/srv/server.py"]
+    environment:
+      FUTURE_AGI_TELEMETRY_DISABLED: "true"
+      FUTURE_AGI_TELEMETRY_URL: http://127.0.0.1:9
+    volumes:
+      - ./e2e/stack/mock-google/server.py:/srv/server.py:ro
+      - google-fixture-tls:/tls
+    ports:
+      - "127.0.0.1:28443:28443"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; import ssl; urllib.request.urlopen('https://localhost:28443/health', context=ssl.create_default_context(cafile='/tls/ca.pem'))"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+    restart: "no"
+
+networks:
+  link-public:
+    internal: true
+    ipam:
+      config:
+        - subnet: 11.23.0.0/24
+  link-private:
+    internal: true
+    ipam:
+      config:
+        - subnet: 172.30.91.0/24
+volumes:
+  google-fixture-tls:

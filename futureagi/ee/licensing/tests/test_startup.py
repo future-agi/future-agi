@@ -36,7 +36,9 @@ def test_startup_with_invalid_license_sets_invalid_snapshot(settings, monkeypatc
         validated_at=datetime.now(UTC),
     )
     monkeypatch.setattr("ee.licensing.keyring.load_keyring_from_settings", lambda: None)
-    monkeypatch.setattr("ee.licensing.validator.validate", lambda license_key: invalid_snapshot)
+    monkeypatch.setattr(
+        "ee.licensing.validator.validate", lambda license_key: invalid_snapshot
+    )
 
     validate_on_startup()
 
