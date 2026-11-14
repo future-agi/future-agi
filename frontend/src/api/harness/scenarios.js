@@ -10,6 +10,7 @@ import {
   archiveHarnessScenario,
   getHarnessScenarioCoverage,
   getHarnessScenarioValidation,
+  getHarnessSourceChanges,
   listHarnessScenarioRevisions,
   listHarnessScenarios,
   restoreHarnessScenario,
@@ -185,5 +186,14 @@ export function useScenarioRevisions(jobId, key) {
     queryKey: [...scenariosListKey(jobId), "revisions", key],
     queryFn: () => listHarnessScenarioRevisions(jobId, key),
     enabled: Boolean(jobId && key),
+  });
+}
+
+/** How the rules and files a version changed compare with its parent's, and who cites them. */
+export function useSourceChanges(jobId, versionId, { enabled = true } = {}) {
+  return useQuery({
+    queryKey: [...scenariosListKey(jobId), "source-changes", versionId],
+    queryFn: () => getHarnessSourceChanges(jobId, versionId),
+    enabled: Boolean(enabled && jobId && versionId),
   });
 }
