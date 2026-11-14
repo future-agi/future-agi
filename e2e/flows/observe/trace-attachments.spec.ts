@@ -517,9 +517,10 @@ test('OBS-E2E-066: a recorded voice call and a traced image play and render on t
           .toStrictEqual([[item.occurrenceId, 'ready']]);
         const player = recording.locator('audio');
         await expect(player).toHaveCount(1, { timeout: UI_READY });
+        // StreamingPlayback deliberately does not fetch media until Play.
+        await recording.getByRole('button', { name: 'Play recording', exact: true }).click({ timeout: UI_READY });
         await expect.poll(() => player.evaluate((node: HTMLAudioElement) => node.readyState >= 1),
           { timeout: UI_READY }).toBe(true);
-        await recording.getByRole('button', { name: 'Play recording', exact: true }).click({ timeout: UI_READY });
         await expect.poll(() => player.evaluate((node: HTMLAudioElement) =>
           [node.ended, node.played.length > 0 ? Math.round(node.played.end(node.played.length - 1) * 1000) >= 150 : false]),
         { timeout: UI_READY }).toStrictEqual([true, true]);
@@ -559,6 +560,11 @@ test('OBS-E2E-066: a recorded voice call and a traced image play and render on t
       // playback.py grants live for 60 s. Denial must precede their expiry;
       // only the independent PG cleanup poll may use the full ASYNC_JOB budget.
       expect(grantExpiry - Date.now()).toBeGreaterThan(5_000);
+      // playback.py COOKIE_NAME. Never attach or print the credential value.
+      const sessionCookie = async () => (await page.context().cookies(gateway(path)))
+        .find(cookie => cookie.name === 'fi_media_session')?.value;
+      const cookieBefore = await sessionCookie();
+      expect(Boolean(cookieBefore)).toBe(true);
       if (!SKIP_DELETE) {
         const deleted = await viewer.delete(gateway(SESSION(livekitSessionId)), { headers: viewerHeaders });
         expect(deleted.status(), await deleted.text()).toBe(204);
@@ -571,6 +577,7 @@ test('OBS-E2E-066: a recorded voice call and a traced image play and render on t
       expect((await viewer.get(gateway(path), { headers: { Range: 'bytes=0-3' } })).status()).toBe(404);
       expect((await viewer.head(gateway(path))).status()).toBe(404);
       expect(Date.now()).toBeLessThan(grantExpiry);
+      expect((await sessionCookie()) === cookieBefore, 'Deletion must not exchange the media session').toBe(true);
       await expect.poll(async () => (await readyOccurrences(probe, voiceProject, [livekitRecording]))
         .map(row => [row.occurrence, row.deleted]), POLL.ASYNC_JOB)
         .toStrictEqual([[livekitRecording.occurrenceId, true]]);
