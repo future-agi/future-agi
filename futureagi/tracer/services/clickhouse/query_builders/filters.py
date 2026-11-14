@@ -21,6 +21,8 @@ from tracer.services.clickhouse.trace_name_sql import (
     TRACE_NAME_ROOT_TRACES_MARKER,
     TRACE_NAME_SQL,
     TRACE_ROOT_LOOKBACK,
+    trace_name_root_leaf_key,
+    trace_name_root_lookup_tag,
 )
 from tracer.utils.constants import (
     LIST_OPS,
@@ -2070,6 +2072,12 @@ class ClickHouseFilterBuilder:
                 # FINAL collapses the physical root versions before deciding
                 # its live name. A deleted or renamed old root cannot witness
                 # membership just because a newer tombstone is still unmerged.
+                # The tag names this leaf's lookup, so a reader that resolved
+                # the leaf's roots once per request binds that set in place of
+                # this subquery (``trace_name_roots.bind_trace_name_root_sets``).
+                tag = trace_name_root_lookup_tag(
+                    trace_name_root_leaf_key(filter_type, filter_op, filter_value)
+                )
                 return (
                     f"(project_id, trace_id) IN ("
                     f"SELECT project_id, trace_id FROM spans FINAL "
@@ -2078,7 +2086,7 @@ class ClickHouseFilterBuilder:
                     f"WHERE is_deleted = 0"
                     f"{self._trace_name_root_exact_window_sql()} "
                     f"AND (parent_span_id IS NULL OR parent_span_id = '') "
-                    f"AND ({inner}))"
+                    f"AND ({inner}) {tag})"
                 )
             # Trace-list callers historically use the trace_id membership
             # form below; their root lookup is independently window-bounded.

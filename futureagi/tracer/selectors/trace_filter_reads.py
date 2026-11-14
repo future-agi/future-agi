@@ -19,6 +19,7 @@ from tracer.selectors.filter_seed_width import (
 from tracer.services.clickhouse.query_builders.base import BaseQueryBuilder
 from tracer.services.clickhouse.query_service import QueryResult
 from tracer.services.clickhouse.read_budget import is_read_budget_error
+from tracer.services.clickhouse.trace_name_sql import TRACE_NAME_ROOT_SET_MAX_ROOTS
 
 _INITIAL_SLICE = timedelta(minutes=5)
 _MAX_SLICE = timedelta(days=2)
@@ -2116,7 +2117,7 @@ def read_bounded_filter_page(
             and pending_identity_candidates
             and not continuation_progressed
             and not use_reserved_query_budget
-            and kind not in {"classify", "prefilter"}
+            and kind not in {"classify", "prefilter", "trace_name_roots"}
         )
         if classifier_reserve_is_active:
             active_deadline -= _BOUNDED_CONTINUATION_MIN_QUERY_HEADROOM_MS / 1000
@@ -2161,7 +2162,7 @@ def read_bounded_filter_page(
                 **(read_settings or {}),
                 "max_result_rows": result_limit,
             }
-            if kind in {"classify", "prefilter"}:
+            if kind in {"classify", "prefilter", "trace_name_roots"}:
                 for (
                     setting_name,
                     setting_cap,
@@ -2840,6 +2841,22 @@ def read_bounded_filter_page(
                     None,
                 )
             )
+            prepare_trace_name_roots = getattr(
+                builder, "prepare_trace_name_root_sets", None
+            )
+            if identity_batch and callable(prepare_trace_name_roots):
+                # Once per request, before the first batch: every batch binds
+                # the resolved set instead of looking its roots up again.
+                prepare_trace_name_roots(
+                    lambda root_query, root_params: execute(
+                        kind="trace_name_roots",
+                        query=root_query,
+                        params=root_params,
+                        active_start=active_start,
+                        active_end=active_end,
+                        result_limit=TRACE_NAME_ROOT_SET_MAX_ROOTS + 1,
+                    ).data
+                )
             if not identity_batch:
                 match_result = None
             elif callable(seeded_match_builder):

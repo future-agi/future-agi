@@ -19,6 +19,7 @@ The three result sets are merged in Python to produce the final response.
 import math
 import re
 from datetime import UTC, datetime, timedelta
+from collections.abc import Callable
 from typing import Any
 
 from django.conf import settings
@@ -42,6 +43,12 @@ from tracer.services.clickhouse.query_builders.latest_filter_predicates import (
     partition_span_filter_plans,
     supports_span_filters,
     targets_span_filter_domain,
+)
+from tracer.services.clickhouse.trace_name_roots import (
+    TraceNameRootSets,
+    bind_trace_name_root_sets,
+    has_trace_name_leaf,
+    resolve_trace_name_root_sets,
 )
 from tracer.services.clickhouse.v2.id_remap_sql import (
     remap_left_join,
@@ -1439,6 +1446,41 @@ class SpanListQueryBuilder(BaseQueryBuilder):
             candidate_full_state=candidate_full_state,
         )
 
+    # The request's trace-name roots, resolved once for every classifier
+    # batch (``prepare_trace_name_root_sets``), and the window they cover.
+    _trace_name_root_sets: TraceNameRootSets | None = None
+    _trace_name_root_sets_window: tuple[datetime, datetime] | None = None
+
+    def prepare_trace_name_root_sets(
+        self, execute: Callable[[str, dict[str, Any]], Any]
+    ) -> None:
+        """Resolve each trace_name leaf's matching roots once per request.
+
+        A bounded walk classifies its candidates in many batches. Each batch
+        statement used to look up the window's matching roots again under
+        FINAL; with the set resolved here, every request-window batch binds
+        it instead (``_build_filter_match_query``). Idempotent: the walk calls
+        it before its first batch. ``execute(sql, params)`` runs the lookup
+        with the walk's own executor, budget and settings. Raises
+        ``TraceNameFilterTooBroad`` above the root-set cap.
+        """
+
+        if self._trace_name_root_sets is not None:
+            return
+        if not has_trace_name_leaf(self.filters):
+            self._trace_name_root_sets = {}
+            return
+        window = self.parse_time_range(self.filters)
+        self._trace_name_root_sets = resolve_trace_name_root_sets(
+            self.filters,
+            start=window[0],
+            end=window[1],
+            execute=execute,
+            project_id=self.project_id,
+            project_ids=self.project_ids,
+        )
+        self._trace_name_root_sets_window = window
+
     def build_filter_match_query_from_seed_rows(
         self,
         candidate_rows: list[dict[str, Any]],
@@ -1811,6 +1853,17 @@ class SpanListQueryBuilder(BaseQueryBuilder):
         {self._filter_match_limit_sql(output_limit, candidate_identities, result_limit)}
         {self._FILTER_READ_SETTINGS}
         """
+        if (
+            trace_name_root_window is not None
+            and self._trace_name_root_sets
+            and self._trace_name_root_sets_window == (request_start, request_end)
+        ):
+            # The request resolved its roots once over this same window: bind
+            # them instead of looking them up again in every batch.
+            query, root_params = bind_trace_name_root_sets(
+                query, self._trace_name_root_sets
+            )
+            params.update(root_params)
         return query, params
 
     def build_filter_navigation_target_query(
