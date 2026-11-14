@@ -6,7 +6,8 @@ export const ADD_COPY = {
   title: "Add scenarios",
   subtitle:
     "Your agent's scenarios are already here. These routes ask the builder to write more; each new case starts as Draft.",
-  writing: "The builder is writing these cases. They appear as Draft on the Scenarios tab.",
+  writing:
+    "The builder is writing these cases. They appear as Draft on the Scenarios tab.",
   cancel: "Cancel",
   submit: "Write scenarios",
   count: "How many",
@@ -19,15 +20,37 @@ export const ADD_COPY = {
   transcriptLink: "Add a transcript on the Scenarios tab",
   productionLink: "Open Observe and use Create environment test",
   routes: {
-    generate: { label: "Generate more", blurb: "More cases from this environment's rules, tools and data." },
-    describe: { label: "Describe a case", blurb: "Say what the agent should face; the builder writes and proves it." },
-    file: { label: "From a policy file", blurb: "Upload a policy; each requirement is cited with its exact words." },
-    records: { label: "From records (CSV/JSON)", blurb: "Upload rows; each case cites the row it came from." },
-    elsewhere: { label: "From a transcript or production", blurb: "Start from a real conversation." },
+    generate: {
+      label: "Generate more",
+      blurb: "More cases from this environment's rules, tools and data.",
+    },
+    describe: {
+      label: "Describe a case",
+      blurb:
+        "Say what the agent should face; the builder writes and proves it.",
+    },
+    file: {
+      label: "From a policy file",
+      blurb: "Upload a policy; each requirement is cited with its exact words.",
+    },
+    records: {
+      label: "From records (CSV/JSON)",
+      blurb: "Upload rows; each case cites the row it came from.",
+    },
+    elsewhere: {
+      label: "From a transcript or production",
+      blurb: "Start from a real conversation.",
+    },
   },
 };
 
-export const ADD_ROUTES = ["generate", "describe", "file", "records", "elsewhere"];
+export const ADD_ROUTES = [
+  "generate",
+  "describe",
+  "file",
+  "records",
+  "elsewhere",
+];
 export const MAX_COUNT = 20;
 export const UPLOAD_MAX_BYTES = 1024 * 1024;
 export const POLICY_TYPES = ".md,.txt";
@@ -37,15 +60,18 @@ export const DESCRIBE_PREFIX =
   "Add one scenario from this description, cite it as a requirement in the person's words, and add a negative control:";
 
 // Until the builder reads uploaded files itself, the message carries the file's text.
+// "Add ... new" and "keep the existing ones": asked only to "write" scenarios, the builder answered by
+// describing the cases it already had.
 export const fileMessage = (count, path, text) =>
-  `Write ${count} scenarios grounded in this file (${path}); cite each requirement as a file source with the exact quote:\n\n${text}`;
+  `Add ${count} new ${count === 1 ? "scenario" : "scenarios"} to the suite, grounded in this file (${path}); keep the existing ones as they are. Cite each requirement as a file source with the exact quote, and add a negative control to each:\n\n${text}`;
 
 export const recordsMessage = (count, path, text) =>
-  `Write ${count} scenarios from the rows in ${path}; cite each as a file source quoting the row.\n\n${text}`;
+  `Add ${count} new ${count === 1 ? "scenario" : "scenarios"} to the suite, one per row in ${path}; keep the existing ones as they are. Cite each as a file source quoting its row, and add a negative control to each:\n\n${text}`;
 
 export const missingCasesGuidance = (uncovered) =>
   `Write scenarios for these planned levels that no scenario covers yet: ${uncovered
     .map((one) => `${one.axis}: ${one.level}`)
     .join("; ")}`;
 
-export const clampCount = (value) => Math.max(1, Math.min(MAX_COUNT, Number(value) || 1));
+export const clampCount = (value) =>
+  Math.max(1, Math.min(MAX_COUNT, Number(value) || 1));
