@@ -1921,13 +1921,12 @@ def _resolve_walk_trace_name_roots(state: _WalkState) -> None:
     statements = trace_name_leaf_count(manager.filters)
     if not statements or not state.budget.take(statements):
         return
-    try:
-        timeout_ms = state.budget.deadline.remaining_ms()
-    except ReadDeadlineExceeded:
-        state.budget.exhausted_by = "wall"
-        return
 
     def execute(query: str, params: dict[str, Any]) -> Any:
+        # Admission only, not a server abort: a successful leaf may finish
+        # after the wall. Do not admit another optional full-window lookup.
+        # The outer handler discards all partially resolved sets on expiry.
+        timeout_ms = state.budget.deadline.remaining_ms()
         return (
             ulm.V2AnalyticsQueryService()
             .execute_ch_query(

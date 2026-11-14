@@ -35,6 +35,7 @@ from tracer.services.clickhouse.trace_name_sql import (
     TRACE_NAME_ROOT_SET_MAX_BYTES,
     TRACE_NAME_ROOT_SET_MAX_ROOTS,
     trace_name_root_leaf_key,
+    trace_name_root_set_rendered_bytes,
 )
 from tracer.services.clickhouse.v2.query_builders.filters import (
     ClickHouseFilterBuilderV2,
@@ -601,3 +602,155 @@ def test_the_users_walk_charges_one_statement_per_trace_name_leaf(monkeypatch):
     walk._resolve_walk_trace_name_roots(state)
     assert taken == [2]
     assert builder.trace_name_root_sets == {"k": ()}
+
+
+@pytest.mark.parametrize("projects", [(PROJECT,), (PROJECT, OTHER)])
+def test_repeated_leaves_at_root_cap_are_refused_before_classifier_dispatch(projects):
+    sets = _full_set(_leaf(), projects=projects)
+    rows = [
+        (project, trace) for project, traces in sets[_key(_leaf())] for trace in traces
+    ]
+    execute = Recorder(rows)
+    builder = SpanListQueryBuilderV2(
+        project_ids=list(projects),
+        filters=[_date(), *[_leaf() for _ in range(4)]],
+        bounded_identity_only=True,
+    )
+    # Deduplicate reads, not the bytes of the four rendered occurrences.
+    with pytest.raises(TraceNameFilterTooBroad) as refused:
+        builder.prepare_trace_name_root_sets(execute)
+    assert refused.value.code == "trace_name_filter_too_broad"
+    assert len(execute.calls) == 1
+
+    # Readers may duplicate a predicate independently of the request leaves.
+    # Binding itself must refuse that expansion, even with pre-resolved sets.
+    predicate, _ = ClickHouseFilterBuilderV2(
+        project_ids=list(projects), query_mode="span"
+    ).translate([_leaf()])
+    sql = f"SELECT 1 WHERE ({predicate} AND {predicate}) OR NOT ({predicate} OR {predicate})"
+    with pytest.raises(TraceNameFilterTooBroad):
+        bind_trace_name_root_sets(sql, sets)
+
+
+@pytest.mark.parametrize("projects", [(PROJECT,), (PROJECT, OTHER)])
+def test_repeated_nested_predicates_preserve_boolean_and_project_correlation(projects):
+    roots = tuple((project, ("same-trace", "quote'\\\\trace")) for project in projects)
+    sets = {_key(_leaf()): roots}
+    predicate, params = ClickHouseFilterBuilderV2(
+        project_ids=list(projects), query_mode="span"
+    ).translate([_leaf()])
+    single, single_params = bind_trace_name_root_sets(predicate, sets)
+    sql = f"SELECT 1 WHERE ({predicate} AND NOT ({predicate})) OR ({predicate} OR NOT ({predicate}))"
+    bound, root_params = bind_trace_name_root_sets(sql, sets)
+    expected = (
+        f"SELECT 1 WHERE ({single} AND NOT ({single})) OR ({single} OR NOT ({single}))"
+    )
+    assert _render(bound, {**params, **root_params}) == _render(
+        expected, {**params, **single_params}
+    )
+    assert trace_name_root_set_rendered_bytes(roots) == len(
+        _render(single, single_params).encode("utf-8")
+    )
+    assert (
+        len(_render(bound, {**params, **root_params}).encode("utf-8")) < MAX_QUERY_SIZE
+    )
+
+
+@pytest.mark.parametrize("escaped", ["'", "\\", "\n", "\0", "é", "🔥"])
+@pytest.mark.parametrize("projects", [(PROJECT,), (PROJECT, OTHER)])
+def test_byte_cap_uses_driver_escaping_and_utf8_at_exact_boundary(escaped, projects):
+    predicate, params = ClickHouseFilterBuilderV2(
+        project_ids=list(projects), query_mode="span"
+    ).translate([_leaf()])
+    # Measure with the actual driver, not the placeholder SQL or raw ID length.
+    empty_roots = tuple((project, ("",)) for project in projects)
+    empty, empty_params = bind_trace_name_root_sets(
+        predicate, {_key(_leaf()): empty_roots}
+    )
+    overhead = len(_render(empty, {**params, **empty_params}).encode("utf-8"))
+    unit_bytes = len(_render("%(value)s", {"value": escaped}).encode("utf-8")) - 2
+    count, padding = divmod(TRACE_NAME_ROOT_SET_MAX_BYTES - overhead, unit_bytes)
+    trace = escaped * count + "x" * padding
+    roots = ((projects[0], (trace,)), *empty_roots[1:])
+    bound, root_params = bind_trace_name_root_sets(predicate, {_key(_leaf()): roots})
+    rendered_bytes = len(_render(bound, {**params, **root_params}).encode("utf-8"))
+    assert rendered_bytes == TRACE_NAME_ROOT_SET_MAX_BYTES
+    assert trace_name_root_set_rendered_bytes(roots) == rendered_bytes
+    rows = [(project, value) for project, values in roots for value in values]
+    assert resolve_trace_name_root_sets(
+        [_leaf()], start=START, end=END, execute=Recorder(rows), project_ids=projects
+    ) == {_key(_leaf()): roots}
+
+    over = ((projects[0], (trace + "x",)), *empty_roots[1:])
+    with pytest.raises(TraceNameFilterTooBroad):
+        bind_trace_name_root_sets(predicate, {_key(_leaf()): over})
+    with pytest.raises(TraceNameFilterTooBroad):
+        resolve_trace_name_root_sets(
+            [_leaf()],
+            start=START,
+            end=END,
+            execute=Recorder(
+                [(project, value) for project, values in over for value in values]
+            ),
+            project_ids=projects,
+        )
+
+
+@pytest.mark.parametrize(
+    ("initial", "durations", "timeouts", "published"),
+    [
+        (0, [6], [5000], False),
+        (0, [1, 5], [5000, 4000], False),
+        (6, [], [], False),
+        (0, [1, 1, 1], [5000, 4000, 3000], True),
+    ],
+)
+def test_users_root_resolution_checks_shared_wall_before_every_statement(
+    monkeypatch, initial, durations, timeouts, published
+):
+    from tracer.services import users_list_manager as ulm
+    from tracer.services import users_matching_walk as walk
+    from tracer.services.clickhouse import read_budget
+
+    clock = [0.0]
+    monkeypatch.setattr(read_budget.time, "monotonic", lambda: clock[0])
+    deadline = read_budget.ReadDeadline.start(5000)
+    clock[0] = initial
+    calls = []
+    bindings = []
+
+    class Analytics:
+        def execute_ch_query(self, query, params, *, timeout_ms, settings):
+            calls.append(timeout_ms)
+            clock[0] += durations[len(calls) - 1]
+            # A successful lookup, not a timeout/error: only admission of the
+            # NEXT optional lookup is denied. No server-kill policy is added.
+            assert not deadline.enforce_on_server
+            return SimpleNamespace(data=[(PROJECT, f"t{len(calls)}")])
+
+    monkeypatch.setattr(ulm, "V2AnalyticsQueryService", Analytics)
+    builder = SimpleNamespace(
+        project_ids=[PROJECT], project_id=None, trace_name_root_sets=None
+    )
+    manager = SimpleNamespace(
+        filters=[_leaf("checkout"), _leaf("browse"), _leaf("pay")],
+        use_trace_name_root_sets=lambda *args, **kwargs: bindings.append(args[0]),
+    )
+    budget = SimpleNamespace(deadline=deadline, take=lambda n: True, exhausted_by=None)
+    state = SimpleNamespace(
+        manager=manager,
+        builder=builder,
+        budget=budget,
+        window_start=START,
+        window_end=END,
+    )
+    walk._resolve_walk_trace_name_roots(state)
+    assert calls == timeouts
+    if published:
+        assert budget.exhausted_by is None
+        assert len(builder.trace_name_root_sets) == 3
+        assert bindings == [builder.trace_name_root_sets]
+    else:
+        assert budget.exhausted_by == "wall"
+        assert builder.trace_name_root_sets is None
+        assert bindings == []  # All partial sets discarded; no mixed modes.

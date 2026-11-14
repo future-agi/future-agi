@@ -263,3 +263,130 @@ def test_root_resolution_never_takes_a_statement_from_the_page_budget(ch):
     assert sorted(str(r["id"]) for r in page.rows) == sorted(
         str(r["id"]) for r in old_page.rows
     )
+
+
+@pytest.mark.parametrize("project_count", [1, 2])
+def test_cap_sized_repeated_leaves_refuse_before_parser_overflow(ch, project_count):
+    from tracer.services.clickhouse.trace_name_roots import TraceNameFilterTooBroad
+
+    projects = [str(uuid.uuid4()) for _ in range(project_count)]
+    rows = []
+    candidates = []
+    for n in range(2048):
+        project = projects[n % project_count]
+        trace = f"{n:032x}"
+        span = uuid.uuid4().hex
+        rows.append((uuid.UUID(project), "span", "svc", START, trace, span, "", NAME))
+        if n < 200:
+            candidates.append(
+                {
+                    "project_id": project,
+                    "id": span,
+                    "trace_id": trace,
+                    "start_time": START,
+                    "observation_type": "span",
+                    "service_name": "svc",
+                }
+            )
+    ch.execute(
+        "INSERT INTO spans (project_id, observation_type, service_name, start_time, "
+        "trace_id, id, parent_span_id, name) VALUES",
+        rows,
+    )
+    executor = LiveExecutor(ch)
+    single = SpanListQueryBuilderV2(
+        project_ids=projects, filters=[_date(), _leaf()], bounded_identity_only=True
+    )
+    single.prepare_trace_name_root_sets(
+        lambda sql, params: executor.execute_ch_query(sql, params).data
+    )
+    sql, params = single.build_filter_match_query_from_seed_rows(candidates)
+    # Actual client rendering and execution at the existing cap: no placeholders
+    # or raised max_query_size can hide an oversized classifier.
+    rendered = ch.substitute_params(sql, params, ch.connection.context)
+    assert len(rendered.encode("utf-8")) < 262144
+    result, columns = ch.execute(
+        sql, params, settings={"max_query_size": 262144}, with_column_types=True
+    )
+    names = [name for name, _type in columns]
+    matched = [dict(zip(names, row, strict=True)) for row in result]
+    assert len(matched) == 200
+    assert {
+        (str(row["project_id"]), row["id"], row["trace_id"]) for row in matched
+    } == {(row["project_id"], row["id"], row["trace_id"]) for row in candidates}
+
+    repeated = SpanListQueryBuilderV2(
+        project_ids=projects,
+        filters=[_date(), *[_leaf() for _ in range(4)]],
+        bounded_identity_only=True,
+    )
+    before = len(executor.statements)
+    with pytest.raises(TraceNameFilterTooBroad) as refused:
+        repeated.prepare_trace_name_root_sets(
+            lambda sql, params: executor.execute_ch_query(sql, params).data
+        )
+    assert refused.value.code == "trace_name_filter_too_broad"
+    assert len(executor.statements) == before + 1
+    assert executor.statements[-1].startswith(RESOLUTION)
+
+
+def test_repeated_nested_boolean_binding_keeps_org_project_pairs(ch):
+    from tracer.services.clickhouse.trace_name_roots import (
+        bind_trace_name_root_sets,
+        resolve_trace_name_root_sets,
+    )
+    from tracer.services.clickhouse.v2.query_builders.filters import (
+        ClickHouseFilterBuilderV2,
+    )
+
+    projects = [str(uuid.uuid4()), str(uuid.uuid4())]
+    shared_traces = [uuid.uuid4().hex, uuid.uuid4().hex]
+    rows = [
+        (
+            uuid.UUID(project),
+            "span",
+            "svc",
+            START,
+            trace,
+            uuid.uuid4().hex,
+            "",
+            NAME if p == t else "browse",
+        )
+        for p, project in enumerate(projects)
+        for t, trace in enumerate(shared_traces)
+    ]
+    ch.execute(
+        "INSERT INTO spans (project_id, observation_type, service_name, start_time, "
+        "trace_id, id, parent_span_id, name) VALUES",
+        rows,
+    )
+    predicates = []
+    params = {"project_ids": projects, "start_date": START, "end_date": END}
+    for index, leaf in enumerate([_leaf(), _leaf("browse")]):
+        predicate, leaf_params = ClickHouseFilterBuilderV2(
+            project_ids=projects, query_mode="span"
+        ).translate([leaf])
+        # Each independent compiler starts its parameter counter at zero.
+        for key, value in leaf_params.items():
+            renamed = f"leaf{index}_{key}"
+            predicate = predicate.replace(f"%({key})s", f"%({renamed})s")
+            params[renamed] = value
+        predicates.append(predicate)
+    first, second = predicates
+    sql = (
+        "SELECT project_id, trace_id FROM spans FINAL "
+        "WHERE project_id IN %(project_ids)s AND "
+        f"(({first} AND NOT ({second})) OR ({second} AND NOT ({first})))"
+    )
+    expected = set(ch.execute(sql, params))
+    assert len(expected) == 4
+    sets = resolve_trace_name_root_sets(
+        [_leaf(), _leaf("browse")],
+        start=START,
+        end=END,
+        project_ids=projects,
+        execute=lambda query, values: ch.execute(query, values),
+    )
+    bound, root_params = bind_trace_name_root_sets(sql, sets)
+    assert ROOT_LOOKUP not in bound
+    assert set(ch.execute(bound, {**params, **root_params})) == expected

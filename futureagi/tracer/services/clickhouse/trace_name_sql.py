@@ -20,6 +20,8 @@ import re
 from collections.abc import Mapping
 from typing import Any
 
+from clickhouse_driver.util.escape import escape_params
+
 # Trace name of a spans row: an explicit stored name wins (demo onboarding,
 # history named by the old dictionary); otherwise a root span is named by its own name.
 TRACE_NAME_SQL = "if(trace_name != '', trace_name, if(empty(parent_span_id), name, ''))"
@@ -177,6 +179,22 @@ def trace_name_root_set_params(key: str, roots: TraceNameRootSet) -> dict[str, A
     return params
 
 
+def trace_name_root_set_rendered_bytes(roots: TraceNameRootSet) -> int:
+    """Bytes of one bound predicate, including the driver's literal escaping.
+
+    These parameters contain only strings and tuples of strings, so driver
+    rendering needs no timezone context. Count project literals, separators
+    and predicate syntax too, not just the unescaped trace ids. Parameter
+    names disappear during rendering, so the leaf key does not affect size.
+    """
+
+    key = "budget"
+    rendered = _root_set_predicate(key, roots) % escape_params(
+        trace_name_root_set_params(key, roots), context=None
+    )
+    return len(rendered.encode("utf-8"))
+
+
 def bind_trace_name_root_sets(
     sql: str, root_sets: TraceNameRootSets | None
 ) -> tuple[str, dict[str, Any]]:
@@ -184,17 +202,33 @@ def bind_trace_name_root_sets(
 
     Returns the statement and the parameters its bound sets add. A lookup
     whose leaf was not resolved is left as it is (still correct, just read
-    per statement), and ``None`` binds nothing.
+    per statement), and ``None`` binds nothing. Every replaced occurrence is
+    charged to the 96 KiB rendered-root budget, preserving parser headroom
+    for the reader's candidate ids and surrounding statement.
     """
 
     if not root_sets:
         return sql, {}
     params: dict[str, Any] = {}
-    # Right to left, so earlier offsets stay valid.
+    rendered_bytes = 0
+    sizes: dict[str, int] = {}
+    # Right to left, so earlier offsets stay valid. Resolution deduplicates
+    # reads, not SQL occurrences: nested AND/OR/NOT terms must stay intact,
+    # and the driver expands the same parameter again at every occurrence.
     for key, start, end, _subquery in reversed(tagged_trace_name_root_lookups(sql)):
         roots = root_sets.get(key)
         if roots is None:
             continue
+        if key not in sizes:
+            sizes[key] = trace_name_root_set_rendered_bytes(roots)
+        rendered_bytes += sizes[key]
+        if rendered_bytes > TRACE_NAME_ROOT_SET_MAX_BYTES:
+            # Lazy import: the resolver imports this binding module.
+            from tracer.services.clickhouse.trace_name_roots import (
+                TraceNameFilterTooBroad,
+            )
+
+            raise TraceNameFilterTooBroad()
         sql = sql[:start] + _root_set_predicate(key, roots) + sql[end:]
         params.update(trace_name_root_set_params(key, roots))
     return sql, params

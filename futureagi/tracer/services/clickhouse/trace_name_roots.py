@@ -14,7 +14,8 @@ trace_id)`` set ONCE per request, over the same window and project scope
 (``resolve_trace_name_root_sets``), and binds it into every statement in
 place of the lookup (``bind_trace_name_root_sets``). The set is capped
 (``TRACE_NAME_ROOT_SET_MAX_ROOTS`` roots, ``TRACE_NAME_ROOT_SET_MAX_BYTES``
-of trace ids): above that the request is refused as too broad
+of rendered predicates, counting repeated occurrences and escaped literals):
+above that the request is refused as too broad
 (``TraceNameFilterTooBroad``, HTTP 400) instead of building an unbounded set.
 
 Semantics are unchanged: a statement's lookup returned the same window's
@@ -25,6 +26,7 @@ the start of the request instead of one per statement.
 
 from __future__ import annotations
 
+from collections import Counter
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from datetime import datetime
 from typing import Any
@@ -40,6 +42,7 @@ from tracer.services.clickhouse.trace_name_sql import (
     bind_trace_name_root_sets,
     tagged_trace_name_root_lookups,
     trace_name_root_set_params,
+    trace_name_root_set_rendered_bytes,
 )
 
 __all__ = [
@@ -63,8 +66,6 @@ TRACE_NAME_FILTER_TOO_BROAD_MESSAGE = (
     "traces in the selected time range. Narrow the time range or the trace "
     "name and retry."
 )
-
-_PER_PROJECT_OVERHEAD_BYTES = 64
 
 
 class TraceNameFilterTooBroad(UnsupportedFilterShapeError):
@@ -114,16 +115,6 @@ def _group_roots(rows: Iterable[Any]) -> TraceNameRootSet:
     )
 
 
-def _rendered_bytes(roots: TraceNameRootSet) -> int:
-    # Each trace id renders as a quoted literal plus a separator; each project
-    # adds its own comparison and the IN.
-    return sum(
-        _PER_PROJECT_OVERHEAD_BYTES
-        + sum(len(trace_id.encode("utf-8")) + 4 for trace_id in trace_ids)
-        for _project_id, trace_ids in roots
-    )
-
-
 def resolve_trace_name_root_sets(
     filters: Iterable[dict[str, Any]] | None,
     *,
@@ -164,6 +155,7 @@ def resolve_trace_name_root_sets(
         else {"project_id": str(project_id)}
     )
     lookups: dict[str, tuple[str, dict[str, Any]]] = {}
+    occurrences: Counter[str] = Counter()
     for item in leaves:
         builder = ClickHouseFilterBuilderV2(
             table="spans",
@@ -181,9 +173,12 @@ def resolve_trace_name_root_sets(
             predicate or ""
         ):
             lookups.setdefault(key, (subquery, params))
+            occurrences[key] += 1
 
-    # The cap holds for the request's sets together: a statement carrying
-    # several leaves binds all of them, and it must still parse.
+    # The root cap counts distinct resolved sets, as before. The byte cap
+    # counts every occurrence, even of the same leaf: the driver repeats its
+    # escaped literals in the SQL. Binding checks again because a reader may
+    # repeat a predicate in its own statement beyond the request's leaves.
     resolved: dict[str, TraceNameRootSet] = {}
     total_roots = 0
     total_bytes = 0
@@ -196,7 +191,7 @@ def resolve_trace_name_root_sets(
         )
         roots = _group_roots(list(rows or ()))
         total_roots += sum(len(trace_ids) for _project, trace_ids in roots)
-        total_bytes += _rendered_bytes(roots)
+        total_bytes += occurrences[key] * trace_name_root_set_rendered_bytes(roots)
         if (
             total_roots > TRACE_NAME_ROOT_SET_MAX_ROOTS
             or total_bytes > TRACE_NAME_ROOT_SET_MAX_BYTES
