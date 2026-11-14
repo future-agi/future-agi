@@ -48,6 +48,7 @@ from simulate.pydantic_schemas.agent_fix import (
 )
 from simulate.selectors.agent_fix import (
     TRANSCRIPT_CHARS,
+    VERDICT_TIERS,
     _record,
     check_failure,
     check_run_status,
@@ -58,8 +59,10 @@ from simulate.selectors.agent_fix import (
     launch_options,
     limited_validation,
     ran_at,
+    verdict_tiers,
 )
 from simulate.services import agent_fix_engine as engine
+from simulate.services import agent_fix_github
 from simulate.services.agent_fix_runs import (
     HELD_BACK_MIN_CASES,
     close_fix_run,
@@ -3002,7 +3005,7 @@ class TestPullRequestEvals:
         )
         candidate.refresh_from_db()
         with patch.object(agent_fix_github, "eval_review", return_value=review):
-            return agent_fix_github._description(candidate)[1]
+            return agent_fix_github._description(candidate, b"")[1]
 
     def test_the_body_names_each_eval_the_winner_does_worse_on(self, source_run):
         warning = EvalWarning(
@@ -3017,6 +3020,7 @@ class TestPullRequestEvals:
             EvalReview(grading=EvalGrading.DONE, warnings=[warning], compared=1),
         )
         assert "**Platform evals this change does worse on.**" in body
+        assert "They do not pick the winner" in body
         assert (
             "- Politeness: 25% passed (12 trials), 100% on the current version (12 trials)"
             in body
@@ -3042,6 +3046,588 @@ class TestPullRequestEvals:
             (EvalReview(grading=EvalGrading.NONE), Outcome.FINALIST),
         ):
             assert "Platform evals" not in self._body(source_run, review, outcome)
+
+
+def _diff(*files: tuple[str, int, int]) -> bytes:
+    """A unified diff changing each (path, added, removed) file."""
+    lines = []
+    for path, added, removed in files:
+        lines += [
+            f"diff --git a/{path} b/{path}",
+            f"--- a/{path}",
+            f"+++ b/{path}",
+            f"@@ -1,{removed} +1,{added} @@",
+            # A removed line that itself starts with dashes is still a removed line.
+            *(f"--- old line {n}" for n in range(removed)),
+            *(f"+new line {n}" for n in range(added)),
+        ]
+    return ("\n".join(lines) + "\n").encode()
+
+
+_TIERS = [
+    {"name": "static", "status": "passed", "detail": "Lint and types pass."},
+    {"name": "target", "status": "passed", "detail": "0/8 → 5/8 | 2 repeats"},
+    {"name": "held-back", "status": "passed", "detail": "1/4 → 3/4"},
+    {"name": "must-pass", "status": "passed", "detail": "All 6 held."},
+    {"name": "repeats", "status": "passed", "detail": "3 of 3 repeats agree."},
+    {"name": "ceilings", "status": "passed", "detail": "Within the limits."},
+]
+_CAUSES = [
+    "The agent books the date the caller first said, not the one they corrected to.",
+    "It never reads the booking back before it confirms.",
+]
+_PATCH = _diff(
+    ("concierge/agents.py", 12, 3), ("prompts/booking.md", 4, 1), ("config.yaml", 1, 1)
+)
+
+
+class TestVerdictTiers:
+    """An older engine's cost and latency check, for an agent whose cost is not metered,
+    judged the reply time alone: it reads as that reply time and a cost unknown."""
+
+    _LATENCY = {"name": "reply latency", "detail": ""}
+    _COST = {"name": "agent cost", "status": "skipped", "detail": ""}
+
+    @pytest.mark.parametrize(
+        ("status", "reads", "parts"),
+        [
+            ("passed", "skipped", [{**_LATENCY, "status": "passed"}, _COST]),
+            ("failed", "failed", [{**_LATENCY, "status": "failed"}, _COST]),
+            # A skipped one may not have measured the reply time either.
+            ("skipped", "skipped", [_COST]),
+        ],
+    )
+    def test_an_unmetered_agents_older_ceilings_read_as_reply_time_and_cost_unknown(
+        self, status, reads, parts
+    ):
+        old = {"name": "ceilings", "status": status, "detail": "latency 3.2s"}
+        static = {"name": "static", "status": "passed"}
+
+        tiers = verdict_tiers({"tiers": [static, old]}, {})
+
+        assert tiers == [
+            static,
+            {
+                "name": "ceilings",
+                "status": reads,
+                "detail": "latency 3.2s",
+                "parts": parts,
+            },
+        ]
+
+    def test_a_metered_agents_check_and_a_newer_engines_parts_stay_as_sent(self):
+        old = {"name": "ceilings", "status": "passed", "detail": "cost within"}
+        newer = {
+            **old,
+            "status": "skipped",
+            "parts": [
+                {"name": "agent cost", "status": "skipped", "detail": "untraced"}
+            ],
+        }
+
+        assert verdict_tiers({"tiers": [old]}, {"meters_agent_cost": True}) == [old]
+        assert verdict_tiers({"tiers": [newer]}, {}) == [newer]
+        assert verdict_tiers(None, None) == []
+
+
+class TestPullRequestDescription:
+    """The pull request's title says what the whole change does, and its body lays out
+    the verdict, the files, why, what could still go wrong, and where it came from."""
+
+    @pytest.fixture(autouse=True)
+    def _frontend(self, settings):
+        settings.FRONTEND_BASE_URL = "https://app.example"
+
+    def _described(
+        self,
+        source_run,
+        *,
+        held_back=4,
+        diagnosis=None,
+        verdict=None,
+        outcome=Outcome.WINNER,
+        override_reason="",
+        report=None,
+        plan=None,
+        evidence=None,
+        patch_body=_PATCH,
+        request_fields=None,
+    ):
+        fix_run = _fix_run(source_run, diagnosis=diagnosis, report=report, plan=plan)
+        request = {
+            **fix_run.request,
+            "held_back_scenario_keys": [f"held-{n}" for n in range(held_back)],
+            **(request_fields or {}),
+        }
+        if evidence is not None:
+            request["evidence"] = evidence
+        candidate = _candidate(fix_run)
+        # A pull request comes from a finished fix.
+        AgentFixRun.no_workspace_objects.filter(id=fix_run.id).update(
+            state=State.READY, request=request
+        )
+        AgentFixCandidate.no_workspace_objects.filter(id=candidate.id).update(
+            outcome=outcome,
+            verdict=verdict
+            or {
+                "accepted": True,
+                "reason": "passed every tier",
+                "target_pass_rate": [0, 0.625],
+                "held_back_pass_rate": [0.25, 0.75],
+                "tiers": _TIERS,
+            },
+            override_reason=override_reason,
+            summary="Changed only prompts (booking.md).",
+        )
+        candidate = AgentFixCandidate.no_workspace_objects.select_related(
+            "fix_run"
+        ).get(id=candidate.id)
+        none_graded = EvalReview(grading=EvalGrading.NONE)
+        with patch.object(agent_fix_github, "eval_review", return_value=none_graded):
+            return candidate, *agent_fix_github._description(candidate, patch_body)
+
+    def test_a_verified_fix_reads_each_check_as_the_fix_page_says_it(self, source_run):
+        candidate, title, body = self._described(
+            source_run,
+            diagnosis={"causes": _CAUSES},
+            plan={"must_pass": 6, "protected": 2},
+            request_fields={"meters_agent_cost": True},
+        )
+
+        assert title == "Epoch: fix 2 diagnosed causes in 3 files"
+        # The fix page's headline: the pass rates and the must-pass cases it broke.
+        assert (
+            "Verified by Epoch: held-back pass rate 25% → 75%, target pass rate"
+            " 0% → 63%, broke none\n\n### Verdict" in body
+        )
+        # The engine's own reason is not product text: the checks say it in words.
+        assert "passed every tier" not in body
+        assert "### Verdict: Verified" in body
+        # The fix page's words for each check, from the verdict's own numbers.
+        table, decided = body.split("<details><summary>How it was decided</summary>")
+        for row in (
+            "| Change is valid | Passed | Applies cleanly and edits only allowed files. |",
+            "| Target scenarios | Passed | 0% → 63%, a clear gain. |",
+            "| Held-back scenarios | Passed | 25% → 75% on scenarios the epoch never"
+            " saw, a clear gain. |",
+            "| Must-pass scenarios | Passed | None of the 6 must-pass scenarios broke,"
+            " including the 2 you protected. |",
+            "| Holds over repeats | Passed | Held up over the repeat runs. |",
+            # A metered agent's older check judged its cost too, so it stays whole.
+            "| Reply time and cost | Passed | Within the reply-time and cost limits. |",
+        ):
+            assert row in table
+        assert "| target |" not in body and "| passed |" not in body
+        # The engine's statistics are folded below, never in the table.
+        assert "0/8 → 5/8" not in table
+        assert "- Target scenarios: 0/8 → 5/8 | 2 repeats" in decided
+        assert "The held-back pass rate above comes from the repeat runs." in decided
+        # The platform did not measure the calls itself, so nothing says how it does.
+        assert "Measured automatically" not in body
+        # The feature is Epoch wherever the user reads it.
+        assert "Fix my agent" not in title + body
+        assert "### What changed" in body
+        assert "| `concierge/agents.py` | +12 | −3 |" in body
+        assert "| `prompts/booking.md` | +4 | −1 |" in body
+        assert "### Why" in body and f"- {_CAUSES[1]}" in body
+        assert "### What could still go wrong\n\nNothing the checks flagged." in body
+        assert "### Evidence" not in body
+        # The engine's summary is labelled as its own, on the trial the page names.
+        assert (
+            "<details><summary>Notes from Epoch on the last change of Candidate 1"
+            "</summary>" in body
+        )
+        run = candidate.fix_run
+        assert (
+            "[Open this epoch on Future AGI](https://app.example/dashboard/simulate/"
+            f"environments/{run.environment_id}/improvements/{run.id})" in body
+        )
+
+    @pytest.mark.parametrize(
+        ("causes", "paths", "marks", "title"),
+        [
+            pytest.param(
+                6,
+                ["instructions.md"],
+                "",
+                "Epoch: fix 6 diagnosed causes in instructions.md",
+                id="one-file",
+            ),
+            pytest.param(
+                2,
+                ["agent.py", "prompts/booking.md", "config.yaml"],
+                "",
+                "Epoch: fix 2 diagnosed causes in 3 files",
+                id="many-files",
+            ),
+            pytest.param(
+                2,
+                [f"agents/{'scheduling_' * 6}instructions.md"],
+                "",
+                "Epoch: fix 2 diagnosed causes in 1 file",
+                id="long-file-name",
+            ),
+            pytest.param(
+                1,
+                ["prompts/booking.md"],
+                "",
+                "Epoch: fix 1 diagnosed cause in booking.md",
+                id="one-cause",
+            ),
+            pytest.param(
+                0, ["prompts/booking.md"], "", "Epoch: change booking.md", id="no-cause"
+            ),
+            pytest.param(
+                0,
+                ["agent.py", "config.yaml"],
+                "",
+                "Epoch: change 2 files",
+                id="no-cause-files",
+            ),
+            pytest.param(
+                2,
+                ["agent.py", "config.yaml", "prompts/booking.md"],
+                "limited validation, known regression",
+                "Epoch (limited validation, known regression): fix 2 causes in 3 files",
+                id="both-marks",
+            ),
+        ],
+    )
+    def test_a_title_says_how_many_diagnosed_causes_it_fixes_and_where(
+        self, causes, paths, marks, title
+    ):
+        diagnosis = {"causes": [f"Cause {n}." for n in range(causes)]}
+        candidate = SimpleNamespace(fix_run=SimpleNamespace(diagnosis=diagnosis))
+        files = [(path, 1, 0) for path in paths]
+
+        made = agent_fix_github._title(candidate, files, marks)
+
+        # Counts and a file name only: never a cause's words, never a cut sentence.
+        assert (made, len(made) <= 72) == (title, True)
+
+    def test_the_e2e_winner_reads_one_held_back_rate_and_an_unknown_cost(
+        self, source_run
+    ):
+        # The verdict of the winner behind the real pull request, as the engine sent it:
+        # an older engine, so its cost and latency check has no parts.
+        verdict = {
+            "accepted": True,
+            "reason": "passed every tier; protected cases: 5 of 5 held",
+            "target_pass_rate": [0.0278, 0.5833],
+            "held_back_pass_rate": [0.0, 0.5556],
+            "must_pass_regressions": [],
+            "must_pass_within_noise": [],
+            "tiers": [
+                {
+                    "name": "static",
+                    "status": "passed",
+                    "detail": "6 checks passed, no model call",
+                },
+                {
+                    "name": "target",
+                    "status": "passed",
+                    "detail": "58% pass vs baseline 3%; noise allows up to 29%"
+                    " (p < 0.001, bar 0.3)",
+                },
+                {
+                    "name": "held-back",
+                    "status": "passed",
+                    "detail": "50% pass vs baseline 0%; noise allows up to 17%"
+                    " (p = 0.016, bar 0.3)",
+                },
+                {
+                    "name": "must-pass",
+                    "status": "passed",
+                    "detail": "always passed: 0 of 28 down; chance predicts 0.4, noise"
+                    " allows up to 3; sometimes passed: 0 of 7 failed every run; chance"
+                    " predicts 1.0, noise allows up to 4; protected cases: 5 of 5 held",
+                },
+                {
+                    "name": "repeats",
+                    "status": "passed",
+                    "detail": "56% pass vs baseline 0%; noise allows up to 39%"
+                    " (p < 0.001, bar 0.05); finalist repeats 50%, 67%, 50%, baseline"
+                    " repeats 0%, 0%, 0%",
+                },
+                {
+                    "name": "ceilings",
+                    "status": "passed",
+                    "detail": "cost not measurable: the environment does not meter the"
+                    " agent's own model calls; latency 32.6s (baseline 55.4s, ceiling"
+                    " 3600s)",
+                },
+            ],
+        }
+
+        _, title, body = self._described(
+            source_run,
+            held_back=6,
+            diagnosis={"causes": [f"Cause {n}." for n in range(6)]},
+            plan={"must_pass": 6, "protected": 5, "held_back": 6, "repeats": 3},
+            verdict=verdict,
+            patch_body=_diff(("instructions.md", 28, 14)),
+        )
+
+        assert title == "Epoch: fix 6 diagnosed causes in instructions.md"
+        table, decided = body.split("<details><summary>How it was decided</summary>")
+        # The headline and its row quote the verdict's one held-back rate.
+        assert "held-back pass rate 0% → 56%" in table
+        assert (
+            "| Held-back scenarios | Passed | 0% → 56% on scenarios the epoch never saw,"
+            " a clear gain. |" in table
+        )
+        assert "50%" not in table
+        # An unmetered agent's cost was never measured: it never reads passed.
+        assert (
+            "| Reply time and cost | Couldn't measure |  |\n"
+            "| ↳ Reply time | Passed | Within the limit. |\n"
+            "| ↳ Agent's cost | Cost unknown | This agent's model calls weren't"
+            " measured. Epoch measures calls made through the OpenAI or Anthropic"
+            " Python SDK on its own. For other agents, add traceAI tracing. |" in table
+        )
+        assert "Measured automatically" not in body
+        # The statistics stay folded, with the engine's numbers as it sent them.
+        assert "p < 0.001" not in table and "chance predicts" not in table
+        assert "- Held-back scenarios: 50% pass vs baseline 0%" in decided
+        assert "The held-back pass rate above comes from the repeat runs." in decided
+
+    def test_the_measured_line_shows_only_when_the_platform_measured_the_calls(
+        self, source_run
+    ):
+        ceilings = {
+            "name": "ceilings",
+            "status": "passed",
+            "detail": "latency within; cost within",
+            "parts": [
+                {"name": "reply latency", "status": "passed", "detail": "1.2 s"},
+                {"name": "agent cost", "status": "passed", "detail": "$0.002"},
+            ],
+        }
+        verdict = {
+            "accepted": True,
+            "reason": "passed every tier",
+            "target_pass_rate": [0, 0.625],
+            "held_back_pass_rate": [0.25, 0.75],
+            "tiers": [*_TIERS[:-1], ceilings],
+        }
+
+        def body(**fields):
+            AgentFixRun.no_workspace_objects.all().delete()
+            return self._described(
+                source_run,
+                verdict=verdict,
+                request_fields={"meters_agent_cost": True, **fields},
+            )[2]
+
+        measured = body(measured_automatically=True)
+        traced = body()
+
+        assert (
+            "| ↳ Agent's cost | Passed | Within the limit. |\n\nMeasured automatically:"
+            " model, tokens and timing only. Prompts and replies are never recorded."
+            in measured
+        )
+        # A cost from the agent's own traces is measured, but not by the platform.
+        assert "| ↳ Agent's cost | Passed | Within the limit. |" in traced
+        assert "Measured automatically" not in traced
+
+    def test_a_body_lists_the_first_50_files_and_counts_the_rest(self, source_run):
+        many = _diff(*((f"agent/module_{n}.py", 1, 0) for n in range(120)))
+
+        _, _, body = self._described(
+            source_run, diagnosis={"causes": _CAUSES}, patch_body=many
+        )
+
+        assert "| `agent/module_49.py` | +1 | −0 |" in body
+        assert "module_50.py" not in body
+        assert "\n\nand 70 more files" in body
+
+    def test_a_body_too_long_for_github_is_cut_at_a_line_and_keeps_the_link(
+        self, source_run
+    ):
+        # GitHub refuses a body over 65,536 characters, after the branch is pushed.
+        causes = [f"Cause {n}: " + "the agent repeats itself " * 400 for n in range(20)]
+
+        candidate, _, body = self._described(source_run, diagnosis={"causes": causes})
+
+        assert len(body) <= 60_000
+        assert (
+            "*Cut to fit GitHub's size limit. The epoch's page has all of it.*" in body
+        )
+        run = candidate.fix_run
+        assert f"/improvements/{run.id})" in body
+        assert body.endswith("Opened by Epoch on Future AGI.")
+        assert body.count("<details>") == body.count("</details>")
+
+    def test_a_limited_fix_without_a_diagnosis_is_titled_by_the_files_it_changes(
+        self, source_run
+    ):
+        flaky = [
+            {"key": "case-2", "sub_goal": "refunded", "passed": 2, "runs": 3},
+            {"key": "case-2", "sub_goal": "polite", "passed": 1, "runs": 3},
+            {
+                "key": "case-4",
+                "name": "Refund a late order",
+                "sub_goal": "apologised",
+                "passed": 1,
+                "runs": 3,
+            },
+        ]
+        ceilings = {
+            "name": "ceilings",
+            "status": "skipped",
+            "detail": "Cost not measured.",
+            "parts": [
+                {
+                    "name": "reply latency",
+                    "status": "passed",
+                    "detail": "1.2 s of 1.5 s",
+                },
+                {"name": "agent cost", "status": "skipped"},
+            ],
+        }
+        verdict = {
+            "accepted": True,
+            "reason": "passed every tier",
+            "target_pass_rate": [0, 0.625],
+            "tiers": [
+                *_TIERS[:-1],
+                ceilings,
+                {"name": "model-lock", "status": "skipped"},
+            ],
+        }
+        _, title, body = self._described(
+            source_run,
+            held_back=2,
+            report={"flaky_protected": flaky},
+            verdict=verdict,
+        )
+
+        assert title == "Epoch (limited validation): change 3 files"
+        # How many were held back, and how many it takes.
+        assert body.startswith(
+            "**Limited validation.** Only 2 failing cases were held back from the epoch to"
+            " verify it; it takes 4 or more."
+        )
+        assert "Checked by Epoch" in body and "Verified by" not in body
+        assert "### Verdict: Limited validation" in body
+        assert "### Why" not in body
+        # A check that could not measure says so, and an untraced agent's cost says why.
+        assert "| Reply time and cost | Couldn't measure |  |" in body
+        assert "| ↳ Reply time | Passed | Within the limit. |" in body
+        assert (
+            "| ↳ Agent's cost | Cost unknown | This agent's model calls weren't"
+            " measured. Epoch measures calls made through the OpenAI or Anthropic"
+            " Python SDK on its own. For other agents, add traceAI tracing. |" in body
+        )
+        assert (
+            "| Model unchanged | Couldn't measure | This agent sends no traces. The"
+            " change names no new model. |" in body
+        )
+        # The engine's own words for each part stay folded below.
+        assert (
+            "- Reply time and cost: Cost not measured.\n  - Reply time: 1.2 s of 1.5 s"
+            in body
+        )
+        # No cost was measured, so nothing says how one is.
+        assert "Measured automatically" not in body
+        # A protected case reads once, by its name, and by its key only without one.
+        assert (
+            "- Protected case “case-2” is flaky on the current version, so this epoch"
+            " wasn't held to it: its “refunded” check passed 2 of 3 runs, its “polite”"
+            " check passed 1 of 3 runs." in body
+        )
+        assert body.count("Protected case “case-2”") == 1
+        assert "- Protected case “Refund a late order” is flaky" in body
+        assert "case-4" not in body
+
+    def test_every_check_the_engine_records_reads_as_the_fix_page_names_it(self):
+        _check_label = agent_fix_github._check_label
+
+        assert set(VERDICT_TIERS) - {"model-lock"} == set(
+            agent_fix_github._CHECK_LABELS
+        )
+        assert _check_label("model-lock", {"allowed_models": ["a"]}) == (
+            "Model unchanged"
+        )
+        assert _check_label("model-lock", {"allowed_models": ["a", "b"]}) == (
+            "Approved models"
+        )
+        # A check a newer engine adds still reads as words.
+        assert _check_label("tool_budget", {}) == "Tool budget"
+
+    def test_an_overridden_fix_names_its_regression_and_the_users_reason(
+        self, source_run
+    ):
+        tiers = [
+            {**tier, "status": "failed", "detail": "1 of 6 regressed."}
+            if tier["name"] == "must-pass"
+            else tier
+            for tier in _TIERS
+        ]
+        _, title, body = self._described(
+            source_run,
+            diagnosis={"causes": _CAUSES[:1]},
+            outcome=Outcome.REJECTED,
+            override_reason="The regression is a test we are retiring.",
+            plan={"held_back": 4},
+            verdict={
+                "accepted": False,
+                "reason": "a must-pass check regressed",
+                "target_pass_rate": [0, 0.625],
+                "must_pass_regressions": ["case-1: refunded"],
+                "must_pass_within_noise": ["case-3: polite"],
+                "tiers": tiers,
+            },
+        )
+
+        assert title == "Epoch (known regression): fix 1 diagnosed cause in 3 files"
+        assert body.startswith("**Known regression.**")
+        # The case and its check apart, and who chose to open it anyway.
+        assert "- Must-pass case “case-1”: its “refunded” check" in body
+        assert "It was opened anyway, for this reason:" in body
+        assert "> The regression is a test we are retiring." in body
+        assert "Checked by Epoch: target pass rate 0% → 63%, broke 1" in body
+        assert "### Verdict: Known regression" in body
+        assert "| Must-pass scenarios | Failed | 1 must-pass scenario broke. |" in body
+        assert "- Must-pass scenarios: 1 of 6 regressed." in body
+        assert (
+            "- Must-pass case “case-3”: its “polite” check passed less often, within"
+            " normal noise, so it was not counted." in body
+        )
+
+    def test_a_fix_from_evidence_counts_each_imports_sources_and_never_names_them(
+        self, source_run
+    ):
+        evidence = [
+            {
+                "import_id": "6d1f0b52-0b7a-4c4e-9a43-2b1a8f0c1d11",
+                "source_kind": "session",
+                "source_ids": ["session-with-a-customer-name", "another-session"],
+                "scenario_keys": ["evidence-0a1b2c3d4e5f", "evidence-0a1b2c3d4e60"],
+            },
+            {
+                "import_id": "7e2f0b52-0b7a-4c4e-9a43-2b1a8f0c1d12",
+                "source_kind": "dataset",
+                "source_ids": ["row-1", "row-2", "row-3"],
+                "scenario_keys": ["evidence-1", "evidence-2", "evidence-3"],
+            },
+            {"source_kind": "a-kind-from-later", "scenario_keys": ["evidence-4"]},
+        ]
+        _, _, body = self._described(
+            source_run, diagnosis={"causes": _CAUSES}, evidence=evidence
+        )
+
+        # The import page's words for each kind of source.
+        assert (
+            "### Evidence\n\nThis epoch started from imported evidence:\n\n"
+            "- 2 sessions from Observe\n"
+            "- 3 dataset rows\n"
+            "- 1 imported case"
+        ) in body
+        # Never an import's id, nor its sources.
+        assert "6d1f0b52" not in body and "row-1" not in body
+        assert "session-with-a-customer-name" not in body
 
 
 class TestCheckRunReceipts:

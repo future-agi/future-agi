@@ -1616,7 +1616,7 @@ class TestUserApi:
         assert sent["json"]["draft"] is True
         assert "limited validation" in sent["json"]["title"]
         assert sent["json"]["body"].startswith("**Limited validation.**")
-        assert "Proven by" not in sent["json"]["body"]
+        assert "Verified by" not in sent["json"]["body"]
 
     def test_a_verified_fix_ships_as_a_normal_pull_request(
         self, auth_client, source_run, github
@@ -1646,13 +1646,11 @@ class TestUserApi:
         assert "limited validation" not in sent["json"]["title"].lower()
         assert "limited validation" not in sent["json"]["body"].lower()
         assert (
-            "Proven by Epoch: held-back cases 0% → 61%, target cases 0% → 63%; "
-            "passed every tier" in sent["json"]["body"]
+            "Verified by Epoch: held-back pass rate 0% → 61%, target pass rate"
+            " 0% → 63%, broke none\n" in sent["json"]["body"]
         )
-        title = sent["json"]["title"]
-        # Named for Epoch, cut on a word at 120 characters.
-        assert title.startswith("Epoch: Keep the date the caller asked for ")
-        assert len(title) <= 120 and title.endswith(" Keep…")
+        # Not the last revision's summary: with no diagnosis, the files the whole diff changes.
+        assert sent["json"]["title"] == "Epoch: change agent.py"
 
     def test_a_repository_without_drafts_gets_a_pull_request_that_still_says_so(
         self, auth_client, source_run, github
@@ -1885,9 +1883,10 @@ class TestUserApi:
         assert pull["draft"] is True
         assert pull["title"].startswith("Epoch (known regression): ")
         assert pull["body"].startswith("**Known regression.**")
-        assert f"- `{self.REGRESSED}`" in pull["body"]
+        key, check = self.REGRESSED.split(": ")
+        assert f"- Must-pass case “{key}”: its “{check}” check" in pull["body"]
         assert f"> {self.REASON}" in pull["body"]
-        assert "Proven by" not in pull["body"]
+        assert "Verified by" not in pull["body"]
         after = self._override(auth_client, fix_run)
         assert (after["allowed"], after["reason"], after["by"]["id"]) == (
             True,
@@ -1998,10 +1997,55 @@ class TestUserApi:
             [*old[:5], {"name": "ceilings", "status": "skipped", "detail": ""}]
         )
 
+        # Its ceilings judged an unmetered agent's reply time alone: the cost reads unknown.
         assert [(one["name"], one["status"]) for one in shown] == [
-            (one["name"], one["status"]) for one in old
+            (one["name"], "skipped" if one["name"] == "ceilings" else one["status"])
+            for one in old
         ]
         assert (allowed, unrun) == (True, False)
+
+    @pytest.mark.parametrize(
+        ("metered", "status", "parts"),
+        [
+            (
+                False,
+                "skipped",
+                [
+                    {"name": "reply latency", "status": "passed", "detail": ""},
+                    {"name": "agent cost", "status": "skipped", "detail": ""},
+                ],
+            ),
+            (True, "passed", []),
+        ],
+        ids=["unmetered", "metered"],
+    )
+    def test_an_older_engines_ceilings_read_its_cost_as_unknown_unless_metered(
+        self, auth_client, source_run, github, metered, status, parts
+    ):
+        detail = "cost not measurable; latency 32.6s (baseline 55.4s, ceiling 3600s)"
+        tiers = [
+            *self._final(failed="", skip=("ceilings",)),
+            {"name": "ceilings", "status": "passed", "detail": detail},
+        ]
+        fix_run, candidate = self._vetoed(source_run, "github", tiers=tiers)
+        AgentFixRun.no_workspace_objects.filter(id=fix_run.id).update(
+            request={**fix_run.request, "meters_agent_cost": metered}
+        )
+        stored = AgentFixCandidate.no_workspace_objects.get(id=candidate.id).verdict
+
+        [shown] = auth_client.get(f"{BASE}/{fix_run.id}/").json()["candidates"]
+
+        assert shown["verdict"]["tiers"][-1] == {
+            "name": "ceilings",
+            "status": status,
+            "detail": detail,
+            "parts": parts,
+        }
+        # Only the read changes: the stored verdict, which decides, is as the engine sent it.
+        assert (
+            AgentFixCandidate.no_workspace_objects.get(id=candidate.id).verdict
+            == stored
+        )
 
     def _final(self, failed="must-pass", skip=()):
         return [

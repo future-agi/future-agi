@@ -23,6 +23,7 @@ from simulate.selectors.agent_fix import (
     is_retryable,
     limited_validation,
     overridable_regressions,
+    verdict_tiers,
 )
 from simulate.serializers.harness_environment import HarnessVersionPersonSerializer
 from simulate.services.harness_environment import environment_name
@@ -267,6 +268,16 @@ class AgentFixCandidateSerializer(serializers.ModelSerializer):
                 "at": candidate.override_at,
             }
         ).data
+
+    def to_representation(self, candidate: AgentFixCandidate) -> dict:
+        data = super().to_representation(candidate)
+        # The checks as the pull request reads them; the stored verdict is unchanged.
+        if data["verdict"] is not None:
+            tiers = verdict_tiers(candidate.verdict, candidate.fix_run.request)
+            data["verdict"]["tiers"] = AgentFixVerdictTierSerializer(
+                tiers, many=True
+            ).data
+        return data
 
     class Meta:
         model = AgentFixCandidate
