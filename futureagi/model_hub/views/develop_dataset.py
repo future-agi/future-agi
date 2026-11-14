@@ -3499,6 +3499,7 @@ class GetRowDataView(APIView):
             with transaction.atomic():
                 request_data = request.validated_data
                 filters = request_data.get("filters", [])
+                search = request_data.get("search", {})
                 sort_configs = request_data.get("sort", [])
                 row_id = request_data.get("row_id")
 
@@ -3560,6 +3561,15 @@ class GetRowDataView(APIView):
                 if filters:
                     rows = GetDatasetTableView()._apply_filters(
                         cells, rows, filters, error_messages, columns_map
+                    )
+                if search:
+                    deadline.before_query()
+                    rows, _search_results = GetDatasetTableView()._apply_search(
+                        cells.filter(column_id__in=columns_map),
+                        rows,
+                        search,
+                        dataset.id,
+                        error_messages,
                     )
                 if sort_configs:
                     rows = GetDatasetTableView()._apply_sorting(

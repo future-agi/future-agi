@@ -33,6 +33,41 @@ const isNonEmptyString = (value) =>
 const hasUniqueIds = (ids) =>
   ids.every(isNonEmptyString) && new Set(ids).size === ids.length;
 
+/**
+ * The grid's active sort in sort-priority order, shaped like the `sort`
+ * the dataset table request sends.
+ */
+export function getDatasetGridSort(gridApi) {
+  return (gridApi?.getColumnState?.() ?? [])
+    .filter(({ sort }) => sort)
+    .sort((a, b) => (a.sortIndex ?? 0) - (b.sortIndex ?? 0))
+    .map(({ colId, sort }) => ({
+      column_id: colId,
+      type: sort === "asc" ? "ascending" : "descending",
+    }));
+}
+
+/**
+ * Next-row reads must walk the rows the table shows, so they carry the
+ * table's filters, search and sort. The row endpoint takes one sort key,
+ * so only the primary sort is sent.
+ */
+export function buildDatasetRowAdjacencyPayload({
+  rowId,
+  filters,
+  searchQuery,
+  sort,
+}) {
+  return {
+    row_id: rowId,
+    filters: filters ?? [],
+    sort: (sort ?? []).slice(0, 1),
+    ...(searchQuery && {
+      search: { key: searchQuery, type: ["text", "image", "audio"] },
+    }),
+  };
+}
+
 /** One navigation click owns this wall even when it needs two point reads. */
 export function runDatasetPointReadAction(action, upstreamSignal) {
   return awaitAggregationRequestWithDeadline(action, {
