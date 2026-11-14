@@ -337,8 +337,8 @@ VARIANT_ARGS = (
     "NLTK_DATA_PROFILE",
 )
 # The groups that were base dependencies before the image-size split, so the
-# default variant ships what earlier releases did.
-STANDARD_EXTRAS = "sandbox,billing,ops,gcp,langchain,rabbitmq,localizer"
+# default variant ships what earlier releases did, and pii (Presidio).
+STANDARD_EXTRAS = "sandbox,billing,ops,gcp,langchain,rabbitmq,localizer,pii"
 
 
 def resolve_variant(**env: str) -> subprocess.CompletedProcess:

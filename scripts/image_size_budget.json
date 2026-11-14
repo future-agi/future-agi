@@ -4,19 +4,18 @@
     "Checked before any tag moves (build-image-multiarch.yml, on release and on the per-image dispatch builds) and on pull requests (standalone-ci.yml). An image without an entry fails the check.",
     "budget_mb = max(measured, projected) + 10% where measured_mb is present (the arm64 measurement can undercount amd64, e.g. Go binaries) (measured 2026-09-25 on a linux/arm64 from-source build of this branch, `docker save | gzip -6`, which tracks the registry's gzip layer sizes); otherwise the docker-size plan's projection (projected_mb) plus ~15% headroom. Lower budgets as further slimming lands. Raise one only in a reviewed pull request that says why.",
     "TH-8685 (PR #3577): add 50 MB only to the slim backend and the standalone image/install that inherit it, for core PyArrow Parquet export and SQLGlot compilation. This preserves existing headroom instead of resetting it to 10%. CI run 39617644021 (2026-10-21, ebba647f0ce709d1806c0f506d6f347371ed35e0) measured +49.9 MB amd64 / +47.5 MB arm64 over :latest-slim after the existing test/stub/debug pruning. Updated measured_mb values below are the larger architecture; per-architecture measurements are in each note. All other budgets and the standalone 10% growth gate are unchanged.",
+    "TH-10230 (PR #4040): the standard image adds the `pii` extra so evidence imports and PII redaction run on Presidio. Measured on a linux/amd64 dev-box build of one commit, with and without the extra (`docker save | gzip -6`): 1004.3 -> 1078.7 MB, +74.3 MB, over the old 1015 budget. The budget becomes 1078.7 + 10% = 1187. The simulation runner, built FROM this image, grows by the same amount and stays within its report-only budget.",
     "Before the patches (v1.41, amd64, measured): future-agi 770.5, frontend 89.0, serving 3613 (arm64 650), code-executor 331 (arm64 319), fi-collector 22.6, agentcc-gateway 7.2; postgres:16 160.3, clickhouse-server:25.3-alpine 175.3.",
     "enforce=false: measured and reported, never fails."
   ],
-  "arches": [
-    "amd64",
-    "arm64"
-  ],
+  "arches": ["amd64", "arm64"],
   "images": [
     {
       "image": "futureagi/future-agi",
-      "budget_mb": 1015,
+      "budget_mb": 1187,
       "projected_mb": 882,
-      "note": "The default, feature-complete variant (IMAGE_VARIANT=standard): the dependency set, uv, git, Debian ffmpeg, full NLTK data and untrimmed site-packages of the releases before the variants, so projected at v1.42.0's 881.8 (amd64, from the registry: v1.41.3's 782.0 plus claude-agent-sdk, ~100 MB, now the `localizer` extra) until a release measures it. Distributed, Helm, the simulation runner and the EE and cloud builds use it."
+      "measured_mb": 1078.7,
+      "note": "The default, feature-complete variant (IMAGE_VARIANT=standard): the dependency set, uv, git, Debian ffmpeg, full NLTK data and untrimmed site-packages of the releases before the variants, projected at v1.42.0's 881.8 (amd64, from the registry: v1.41.3's 782.0 plus claude-agent-sdk, ~100 MB, now the `localizer` extra). TH-10230 adds the `pii` extra (Presidio, spaCy and the en_core_web_sm model): measured on a linux/amd64 build of one commit, with and without it, 1004.3 -> 1078.7 MB (+74.3; unpacked 3101.3 -> 3348.0 MB). Budget: 1078.7 + 10%. Distributed, Helm, the simulation runner and the EE and cloud builds use it."
     },
     {
       "image": "futureagi/future-agi",
@@ -66,9 +65,7 @@
     {
       "image": "futureagi/serving",
       "tag_suffix": "-gpu",
-      "arches": [
-        "amd64"
-      ],
+      "arches": ["amd64"],
       "budget_mb": 3800,
       "projected_mb": 3340
     },
@@ -79,9 +76,7 @@
     },
     {
       "image": "futureagi/future-agi-simulation-runner",
-      "arches": [
-        "amd64"
-      ],
+      "arches": ["amd64"],
       "budget_mb": 1525,
       "projected_mb": 1325,
       "enforce": false,
@@ -90,10 +85,7 @@
   ],
   "standalone_install": {
     "app": "futureagi/standalone",
-    "with": [
-      "postgres:16",
-      "clickhouse/clickhouse-server:25.3-alpine"
-    ],
+    "with": ["postgres:16", "clickhouse/clickhouse-server:25.3-alpine"],
     "budget_mb": 934,
     "projected_mb": 909,
     "measured_mb": 908.6,
