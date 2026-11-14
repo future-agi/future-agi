@@ -121,8 +121,15 @@ export function validateEnvironmentEntries(service: string, env: Record<string, 
     const webhookThreshold = service === 'worker' && (
       (key === 'AGENTCC_WEBHOOK_DISABLE_AFTER_FAILURES' && value === '3') ||
       (key === 'AGENTCC_WEBHOOK_DISABLE_AFTER_MINUTES' && value === '0'));
+    // GW-E2E-008's purge runs in these exact app/worker topologies. The separate
+    // gateway source attestation rejects every budgets section, even disabled.
+    const noYamlBudgets = key === 'AGENTCC_GATEWAY_YAML_HAS_NO_BUDGETS' && value === 'true' && (
+      (['backend', 'worker', 'worker-default'].includes(service) &&
+        topology.gateway === DISTRIBUTED.gateway && topology.controlPlane === DISTRIBUTED.controlPlane) ||
+      (service === 'app' && topology.gateway === 'http://127.0.0.1:8080' &&
+        topology.controlPlane === 'http://127.0.0.1:8000'));
     if (key.startsWith('AGENTCC_')) requireSafe(allowed[key] === value || wiring[key] === value ||
-      webhookThreshold || (key === 'AGENTCC_WEBHOOK_SECRET' && value === 'e2e-agentcc-webhook-secret'),
+      webhookThreshold || noYamlBudgets || (key === 'AGENTCC_WEBHOOK_SECRET' && value === 'e2e-agentcc-webhook-secret'),
     `${service} has an unsupported gateway override (${key})`);
     if (/_API_KEY$/.test(key) || ['AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY'].includes(key)) {
       requireSafe(value === MOCK_KEY || value === 'e2e-mock', `${service} has a non-mock provider key (${key})`);

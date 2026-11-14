@@ -270,6 +270,72 @@ for (const evalBackground of [false, true]) {
   });
 }
 
+// The retention command/activity runs only on these Compose services. Allowing
+// its exact flag is safe only with the separately attested budget-free YAML.
+const noYamlBudgets = 'AGENTCC_GATEWAY_YAML_HAS_NO_BUDGETS';
+for (const evalBackground of [false, true]) {
+  for (const service of ['backend', 'worker', 'worker-default', 'app']) {
+    const environment = () => service === 'app' ? composedStandaloneEnvironment() : { ...backgroundEnvironment };
+    const validate = (env: Record<string, string>) => service === 'app'
+      ? validateStandaloneAppEnvironment(env, evalBackground)
+      : validateMockEnvironment(service, env, evalBackground);
+
+    test(`managed mock accepts only the exact no-budgets value on ${service} (background=${evalBackground})`, () => {
+      const overlayFile = service === 'app' ? 'docker-compose.standalone-e2e.yml' : 'docker-compose.e2e.yml';
+      const overlay = parse(readFileSync(new URL(`../stack/${overlayFile}`, import.meta.url), 'utf8'));
+      expect(overlay.services[service].environment[noYamlBudgets]).toBe('true');
+      validate({ ...environment(), [noYamlBudgets]: 'true' });
+      for (const value of ['false', 'True', 'TRUE', '1', 'yes', ' true', 'true ', '${NO_BUDGETS}']) {
+        expect(() => validate({ ...environment(), [noYamlBudgets]: value }))
+          .toThrow(`${service} has an unsupported gateway override (${noYamlBudgets})`);
+      }
+    });
+
+    test(`managed mock no-budgets allowance retains refusal controls on ${service} (background=${evalBackground})`, () => {
+      const env = { ...environment(), [noYamlBudgets]: 'true' };
+      validate(env);
+      for (const [override, reason] of [
+        [{ AGENTCC_GATEWAY_YAML_HAS_NO_BUDGETS_EXTRA: 'true' }, 'unsupported gateway override'],
+        [{ AGENTCC_ALLOW_PRIVATE_PROVIDER_URLS: 'true' }, 'unsupported gateway override'],
+        [{ OPENAI_API_KEY: 'private-provider-key' }, 'non-mock provider key'],
+        [{ HTTPS_PROXY: 'http://proxy.invalid' }, 'proxy/preload override'],
+      ] as [Record<string, string>, string][]) {
+        expect(() => validate({ ...env, ...override })).toThrow(reason);
+      }
+      if (service !== 'worker-default') {
+        expect(() => validate({ ...env, FUTURE_AGI_TELEMETRY_URL: 'https://telemetry.invalid' }))
+          .toThrow('FUTURE_AGI_TELEMETRY_URL mismatch');
+      }
+      if (evalBackground || service === 'app') {
+        expect(() => validate({ ...env, EE_LICENSE_KEY: 'private-license' }))
+          .toThrow('license, notification or credential override');
+      }
+    });
+  }
+
+  test(`managed mock rejects no-budgets on non-retention services (background=${evalBackground})`, () => {
+    for (const service of ['app', 'agentcc-gateway', 'mock-llm', 'worker-exact-aggregation', 'worker-sql-workbench', 'serving']) {
+      expect(() => validateMockEnvironment(service, { ...backgroundEnvironment, [noYamlBudgets]: 'true' }, evalBackground))
+        .toThrow(`${service} has an unsupported gateway override (${noYamlBudgets})`);
+    }
+  });
+
+  test(`managed mock no-budgets claim cannot permit gateway budgets (background=${evalBackground})`, async () => {
+    expect(parse(source)).not.toHaveProperty('budgets');
+    validateMockRouting(source, evalBackground);
+    for (const budgets of [{}, { enabled: false }, { enabled: true, org_limit: 10, org_period: 'total' }]) {
+      const fake = registrationDouble();
+      await expect(registerMockModel(fake.actor, fake.probe, () => {
+        // The routing attestation remains independent of the app's environment.
+        validateMockRouting(stringify({ ...parse(source), budgets }), evalBackground);
+        validateMockEnvironment('backend', { ...backgroundEnvironment, [noYamlBudgets]: 'true' }, evalBackground);
+      })).rejects.toThrow('unexpected gateway sections');
+      expect(fake.calls).toEqual([]);
+      expect(fake.readCount()).toBe(0);
+    }
+  });
+}
+
 for (const stack of ['distributed', 'standalone']) {
   test(`managed mock runner keeps unset status-directory behavior for ${stack}`, ({}, testInfo) => {
     const home = testInfo.outputPath('home');
