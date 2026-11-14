@@ -15,6 +15,7 @@ import json
 import os
 import re
 import runpy
+import shlex
 import shutil
 import socket
 import subprocess
@@ -583,6 +584,19 @@ def locked_versions() -> dict[str, str]:
     return {_normalized(p["name"]): p["version"] for p in lock["package"]}
 
 
+def pip_requirements(command: str) -> list[str]:
+    """The requirements of a `pip install` command, however each is quoted."""
+    words = shlex.split(command)
+    if words[:2] != ["pip", "install"]:
+        raise ValueError(f"not a pip install: {command!r}")
+    options = [w for w in words[2:] if w.startswith("-")]
+    if set(options) - {"--no-cache-dir"}:
+        # An option may take a value (-r FILE, --index-url URL) that would
+        # otherwise be read as a requirement.
+        raise ValueError(f"unexpected pip options: {options}")
+    return [w for w in words[2:] if not w.startswith("-")]
+
+
 class FutureAgiBaseDockerfiles(unittest.TestCase):
     """The packages these Dockerfiles install over future-agi-base
     until a base rebuilt from requirements.txt replaces it."""
@@ -609,8 +623,15 @@ class FutureAgiBaseDockerfiles(unittest.TestCase):
     def test_the_pins_match_the_project(self):
         pins = project_pins()
         for name in FUTURE_AGI_BASE_DOCKERFILES:
-            _, rest = self.pip_install(name)
-            mirrored = re.findall(r'"([A-Za-z0-9_.-]+)(?:\[[^\]]*\])?==([^"]+)"', rest)
+            mirrored = [
+                match.groups()
+                for requirement in self.requirements(name)
+                if (
+                    match := re.fullmatch(
+                        r"([A-Za-z0-9_.-]+)(?:\[[^\]]*\])?==(.+)", requirement
+                    )
+                )
+            ]
             self.assertTrue(mirrored)
             for package, version in mirrored:
                 with self.subTest(dockerfile=name, package=package):
@@ -618,7 +639,16 @@ class FutureAgiBaseDockerfiles(unittest.TestCase):
 
     def requirements(self, name: str) -> list[str]:
         _, rest = self.pip_install(name)
-        return re.findall(r'"([^"]+)"', rest)
+        return pip_requirements(rest)
+
+    def test_every_argument_of_the_install_is_read_whatever_its_quoting(self):
+        self.assertEqual(
+            pip_requirements("""pip install --no-cache-dir "a==1" 'b>=2' c[x]==3"""),
+            ["a==1", "b>=2", "c[x]==3"],
+        )
+        for unknown in ("-r requirements.txt", "--index-url https://example.org"):
+            with self.subTest(option=unknown), self.assertRaises(ValueError):
+                pip_requirements(f'pip install {unknown} "a==1"')
 
     def test_every_requirement_is_pinned_exactly(self):
         # A floor lets pip pick whatever is newest at build time, so two
