@@ -1029,6 +1029,24 @@ class CHSpanReader:
         ).result_rows
         return [_row_to_chspan(r) for r in rows]
 
+    def recent_tool_spans(
+        self, trace_id: str, *, project_id: str, limit: int
+    ) -> list[CHSpan]:
+        """Latest tool spans for a bounded trace eval, in chronological order."""
+        rows = self._client.query(
+            f"SELECT {_SELECT_SQL} FROM spans FINAL "
+            "WHERE trace_id = %(trace_id)s AND project_id = %(pid)s "
+            "AND lower(observation_type) = 'tool' "
+            "ORDER BY start_time DESC, id DESC LIMIT %(limit)s",
+            parameters={
+                "trace_id": str(trace_id),
+                "pid": str(project_id),
+                "limit": limit,
+            },
+            settings=_FINAL_SKIP_INDEX_SETTINGS,
+        ).result_rows
+        return [_row_to_chspan(r) for r in reversed(rows)]
+
     def first_span_by_type(
         self, trace_id: str, observation_type: str, *, project_id: str | None = None
     ) -> CHSpan | None:

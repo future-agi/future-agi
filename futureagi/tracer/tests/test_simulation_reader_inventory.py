@@ -1828,6 +1828,10 @@ _FILED_BY_MODULE: dict[str, dict[str, Filing]] = {
         "CHSpanReader.prev_next_span_by_start_time": _DEAD_SPAN_READER,
         "CHSpanReader.prev_next_trace_by_start_time": _DEAD_SPAN_READER,
         "CHSpanReader.recent_root_trace_ids_by_project": _PROJECT_WIDE_READ,
+        "CHSpanReader.recent_tool_spans": filed(
+            BY_ID_ALONE,
+            why="latest tool spans of the trace id it is given; the project only narrows the read",
+        ),
         "CHSpanReader.root_ids_by_project": _PROJECT_WIDE_READ,
         "CHSpanReader.root_ids_by_trace_ids": _READS_THE_IDS_IT_IS_GIVEN,
         "CHSpanReader.root_trace_candidates": filed(

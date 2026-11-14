@@ -286,6 +286,14 @@ const EvalPickerConfigFull = ({
   const evalType =
     normalizedFullEval?.evalType || normalizedEvalData?.evalType || "llm";
   const isSystemEval = normalizedFullEval?.owner === "system";
+  // Registered functions run in the backend, not in the custom-code sandbox.
+  // Their schema parameters are editable, but they have no user-authored code.
+  const functionTypeId = fullEval?.config?.eval_type_id;
+  const isRegisteredFunction =
+    isSystemEval &&
+    evalType === "code" &&
+    !!functionTypeId &&
+    functionTypeId !== "CustomCodeEval";
   const isComposite =
     (normalizedFullEval?.templateType || normalizedEvalData?.templateType) ===
     "composite";
@@ -1856,7 +1864,13 @@ const EvalPickerConfigFull = ({
               )}
 
               {/* Code type */}
-              {!isComposite && evalType === "code" && dataReady && (
+              {isRegisteredFunction && (
+                <Typography variant="body2" color="text.secondary">
+                  Built-in function evaluator. Configure its parameters below;
+                  no custom code or model is required.
+                </Typography>
+              )}
+              {!isComposite && evalType === "code" && !isRegisteredFunction && dataReady && (
                 <CodeEvalEditor
                   key={`code-${templateId}`}
                   code={code}
@@ -2386,7 +2400,7 @@ const EvalPickerConfigFull = ({
               // own — they're driven by child evaluations + required_keys.
               // Skip the content checks; sourceReady below still applies.
             } else if (evalType === "code") {
-              if (!(code || "").trim()) {
+              if (!isRegisteredFunction && !(code || "").trim()) {
                 testDisabled = true;
                 testDisabledReason = "Write some code before running a test.";
               } else {
@@ -2483,7 +2497,7 @@ const EvalPickerConfigFull = ({
             // own — they're driven by child evaluations + required_keys.
             // Skip the content checks; sourceReady below still applies.
           } else if (evalType === "code") {
-            if (!(code || "").trim()) {
+            if (!isRegisteredFunction && !(code || "").trim()) {
               addDisabled = true;
               addDisabledReason = `Write some code before ${actionLabel}.`;
             } else {

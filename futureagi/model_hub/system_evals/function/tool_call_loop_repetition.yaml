@@ -1,0 +1,25 @@
+eval_id: 220
+name: tool_call_loop_repetition
+description: Run on an Observe trace to detect repeated tool calls without progress. Reads recorded tool inputs and outputs automatically; configure minimum repeats and the latest-call window. Changed results count as progress. Reports a score and repeated arguments, without stopping execution.
+eval_tags:
+- Agents
+- Tools
+visible_ui: true
+permissions:
+  allow_edit: false
+  allow_copy: true
+output_type_normalized: percentage
+pass_threshold: 0.5
+config:
+  required_keys: []
+  output: score
+  eval_type_id: ToolCallLoopRepetition
+  config: {}
+  function_params_schema:
+    min_repeats: {type: integer, default: 3, minimum: 2, maximum: 1000}
+    window_size: {type: integer, default: 100, minimum: 2, maximum: 1000}
+    max_cycle_length: {type: integer, default: 4, minimum: 1}
+    near_duplicate_threshold: {type: number, default: 0.92, minimum: 0, maximum: 1}
+    also_compare_results: {type: boolean, default: true}
+  config_params_desc:
+    output: Completed tool calls as a list or JSON string. Accepts flat name/arguments/result objects or Gateway function envelopes with JSON arguments and optional result/output.
