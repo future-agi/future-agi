@@ -1491,6 +1491,28 @@
 - the previous entry is retired (deleted = true), not left live beside the new one
 - the CDC mirror carries both to CH tracer_eval_logger: the new entry completed, the previous one deleted
 
+### EVAL-E2E-016 — shipped link evaluators accept approved links and refuse other destinations
+
+**Goal:** Run the shipped link evaluators on approved reachable links and ordinary prose while refusing unapproved, private and redirected destinations without contacting them
+
+**Spec:** `flows/evals/link-destinations.spec.ts:16`
+
+**Tags:** —
+
+**User steps:**
+
+1. resolve the two shipped system template IDs without rewriting their code
+2. open each system evaluator in the browser
+3. submit approved links, link-free prose and refused destinations in the Custom playground
+4. read exact verdicts and explanations
+5. inspect the exact request set on the owned canary
+
+**Backend state verified:**
+
+- both shipped templates retain their system identity and text input contract
+- browser-submitted playground responses match the exact verdict and explanation matrix
+- the owned canary records only approved HEAD requests and never receives refused destinations
+
 ### EVAL-E2E-020 — sample whole contacts, retain late spans, and explicitly rerun an edited quota
 
 **Goal:** Preview and run a contact quota without splitting contacts, including late spans, then edit the quota with clear new-run provenance

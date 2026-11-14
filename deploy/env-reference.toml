@@ -1913,6 +1913,12 @@ database, override `PG_HOST`, `PGBOUNCER_HOST` or `CH_HOST` in a
     text = "TCP ports code evals in the built-in sandbox may connect to, comma-separated; they can listen on none. Landlock enforces it where the Docker host runs Linux 6.7 or later; on older kernels evals reach every port, and the app's log says so at start. A malformed list stops the sandbox. The nsjail sandbox (`sandbox` profile) does not apply it. See [INSTALLATION.md](repo:INSTALLATION.md#code-evals-and-the-sandbox)."
 
     [[part.section.row]]
+    keys = ["LINK_EVAL_ALLOWED_HOSTS"]
+    default = "empty (deny all)"
+    setups = ["S", "D"]
+    text = "Exact comma-separated hostnames that contains_valid_link and no_invalid_links may validate with HEAD. No schemes, ports, paths, credentials or wildcards. Private, internal, metadata and non-global addresses remain forbidden even when listed, and redirects are not followed. Only HTTP 200 passes. Link-free text makes no DNS or HTTP requests. Common filename extensions are ignored unless the link has an explicit http(s) scheme or www prefix. The checks share a five-second budget and accept at most 20 http(s) links. Links with any other scheme, and scheme-relative //host links, are never requested and are not resolved as https: no_invalid_links fails them and contains_valid_link does not count them. This is evaluator policy, not a general code-executor firewall. Applies to the executor service, not the worker-local fallback; that fallback cannot enable network checks. Recreate the executor after changes. Existing installations receive the YAML change through seed_system_evals version 31; independently copied custom evals and legacy Python evaluators are not rewritten."
+
+    [[part.section.row]]
     keys = ["CODE_EXECUTOR_LOCAL_FALLBACK"]
     default = "`false` (Standalone: fixed `false`)"
     setups = ["D", "H"]
