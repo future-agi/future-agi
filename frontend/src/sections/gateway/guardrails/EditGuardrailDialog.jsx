@@ -17,6 +17,11 @@ import { useUpdateGuardrail } from "../providers/hooks/useGatewayConfig";
 const ACTIONS = ["block", "warn", "log"];
 const STAGES = ["pre", "post", "both"];
 
+const storedThreshold = (guardrail) =>
+  guardrail?.threshold ?? guardrail?.confidence_threshold;
+const isThreshold = (value) =>
+  typeof value === "number" && value >= 0 && value <= 1;
+
 function resolveExecutionMode(guardrail) {
   return guardrail?.mode === "async" ? "async" : "sync";
 }
@@ -34,7 +39,7 @@ const EditGuardrailDialog = ({ open, onClose, guardrail, gatewayId }) => {
       setStage(guardrail.stage || guardrail.phase || "pre");
       // Checks saved from the Rules tab or the API keep the threshold as
       // confidence_threshold.
-      setThreshold(guardrail.threshold ?? guardrail.confidence_threshold ?? "");
+      setThreshold(storedThreshold(guardrail) ?? "");
     }
   }, [guardrail, open]);
 
@@ -50,12 +55,16 @@ const EditGuardrailDialog = ({ open, onClose, guardrail, gatewayId }) => {
       stage,
       mode: resolveExecutionMode(guardrail),
     };
-    // Send the threshold only from the field, in one spelling. A stored value
-    // the spread carries in must not ride along: the API refuses one outside
-    // 0 to 1, and an empty (optional) field leaves the stored value as it is.
+    // Send one spelling. An empty (optional) field keeps a valid stored
+    // value: rules-array configs are replaced, not merged, on update. A
+    // stored value outside 0 to 1 is not resent, since the API refuses it.
     delete config.confidence_threshold;
     delete config.threshold;
-    if (threshold !== "") config.threshold = Number(threshold);
+    if (threshold !== "") {
+      config.threshold = Number(threshold);
+    } else if (isThreshold(storedThreshold(guardrail))) {
+      config.threshold = storedThreshold(guardrail);
+    }
 
     updateGuardrail.mutate(
       { gatewayId, name: guardrail.name, config },

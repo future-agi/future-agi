@@ -268,9 +268,9 @@ export default function PolicyDialog({ open, onClose, policy, gatewayId }) {
               >
                 On speech-to-text and text-to-speech streams, Monitor policies
                 don&apos;t run, and Enforce checks run only where there is text
-                to read: text sent for speech, or transcripts. A check that runs
-                before the model is skipped on speech-to-text streams instead of
-                stopping them.
+                to read: text sent for speech, or transcripts (not on Cartesia
+                turn-based transcription). A check that runs before the model is
+                skipped on speech-to-text streams instead of stopping them.
               </Typography>
               {errors.mode && (
                 <Typography variant="s3" color="error">
