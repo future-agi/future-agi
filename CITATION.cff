@@ -20,8 +20,6 @@ keywords:
   - "guardrails"
   - "LLM gateway"
 abstract: >-
-  Future AGI is open-source infrastructure for self-improving AI agents. It traces
-  and evaluates agent runs, tests agents against simulated users and scenarios,
-  and uses the results to optimize prompts, so each round of runs is used to
-  improve the agent. It also includes guardrails and an OpenAI-compatible model
-  gateway, and can be self-hosted.
+  The infrastructure for self-improving AI agents. Future AGI turns an agent's
+  traces, evaluations and simulations into improvements to the agent, and is open
+  source and self-hostable.
