@@ -11,6 +11,7 @@ Pattern:
 """
 
 # Config (no temporalio)
+from tfc.temporal.schedules.agentcc_request_logs import AGENTCC_REQUEST_LOG_SCHEDULES
 from tfc.temporal.schedules.agentcc_webhooks import AGENTCC_WEBHOOK_SCHEDULES
 from tfc.temporal.schedules.billing import BILLING_SCHEDULES
 from tfc.temporal.schedules.config import ScheduleConfig
@@ -48,6 +49,7 @@ ALL_SCHEDULES = [
     *SAML_SCHEDULES,
     *SQL_WORKBENCH_SCHEDULES,
     *AGENTCC_WEBHOOK_SCHEDULES,
+    *AGENTCC_REQUEST_LOG_SCHEDULES,
 ]
 
 # Manager functions
@@ -93,6 +95,7 @@ __all__ = [
     "SAML_SCHEDULES",
     "SQL_WORKBENCH_SCHEDULES",
     "AGENTCC_WEBHOOK_SCHEDULES",
+    "AGENTCC_REQUEST_LOG_SCHEDULES",
     # Async functions (a_ prefix)
     "a_schedule_exists",
     "a_create_schedule",

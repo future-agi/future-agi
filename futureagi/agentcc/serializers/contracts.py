@@ -1,12 +1,11 @@
 from rest_framework import serializers
 
-from tfc.utils.serializer_fields import JsonValueField
-
 from tfc.utils.api_serializers import (
     ApiErrorResponseSerializer,
     EmptyRequestSerializer,
     StrictInputSerializer,
 )
+from tfc.utils.serializer_fields import JsonValueField
 
 API_FORMAT_HELP_TEXT = (
     "Gateway protocol adapter name. This intentionally remains a string because "
@@ -546,3 +545,40 @@ class SpendSummaryResultSerializer(serializers.Serializer):
 class SpendSummaryResponseSerializer(serializers.Serializer):
     status = serializers.BooleanField()
     result = SpendSummaryResultSerializer()
+
+
+class RequestLogRetentionQuerySerializer(serializers.Serializer):
+    # Preview the next run's estimate for a value not saved yet.
+    retention_days = serializers.IntegerField(
+        required=False, min_value=1, max_value=36500
+    )
+
+
+class RequestLogRetentionUpdateSerializer(serializers.Serializer):
+    # null keeps Request Logs forever.
+    retention_days = serializers.IntegerField(
+        allow_null=True, min_value=1, max_value=36500
+    )
+
+
+class RequestLogRetentionLastRunSerializer(serializers.Serializer):
+    started_at = serializers.DateTimeField(allow_null=True)
+    finished_at = serializers.DateTimeField(allow_null=True)
+    deleted_rows = serializers.IntegerField()
+    error = serializers.CharField(allow_blank=True)
+
+
+class RequestLogRetentionSerializer(serializers.Serializer):
+    retention_days = serializers.IntegerField(allow_null=True)
+    min_retention_days = serializers.IntegerField(allow_null=True)
+    keep_forever_required = serializers.BooleanField()
+    effective_cutoff = serializers.DateTimeField(allow_null=True)
+    next_run_at = serializers.DateTimeField()
+    estimated_rows = serializers.IntegerField()
+    estimate_capped = serializers.BooleanField()
+    last_run = RequestLogRetentionLastRunSerializer()
+
+
+class RequestLogRetentionResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField()
+    result = RequestLogRetentionSerializer()

@@ -8,6 +8,7 @@ from agentcc.models.org_config import AgentccOrgConfig
 from agentcc.models.project import AgentccProject
 from agentcc.models.provider_credential import AgentccProviderCredential
 from agentcc.models.request_log import AgentccRequestLog
+from agentcc.models.request_log_retention import AgentccRequestLogRetention
 from agentcc.models.routing_policy import AgentccRoutingPolicy
 from agentcc.models.session import AgentccSession
 from agentcc.models.shadow_experiment import AgentccShadowExperiment
@@ -18,6 +19,7 @@ __all__ = [
     "AgentccProject",
     "AgentccAPIKey",
     "AgentccRequestLog",
+    "AgentccRequestLogRetention",
     "AgentccOrgConfig",
     "AgentccGuardrailPolicy",
     "AgentccBlocklist",
