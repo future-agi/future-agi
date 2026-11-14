@@ -13,8 +13,9 @@ that makes a stranded task visible at all.
 
 Per tick, bounded and idempotent:
 
-* take tasks in a sweepable status that still have undrained entries, oldest
-  activity first, capped at ``EVAL_TASK_SWEEP_MAX_TASKS``
+* take tasks in a sweepable status that still have undrained entries, and
+  continuous tasks whose cursor stopped advancing, oldest activity first,
+  capped at ``EVAL_TASK_SWEEP_MAX_TASKS``
   (``tracer.selectors.eval_tasks.stranded``);
 * ask Temporal whether a workflow is progressing, and leave that task alone if
   one is — a healthy task costs one describe and nothing else;
