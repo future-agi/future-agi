@@ -55,13 +55,20 @@ SENSITIVE_BODY_PATH_PREFIXES = (
     # A transcript import carries the raw transcript, before redaction.
     "/simulate/api/harness-environments/*/evidence-imports/",
 )
-# The prefixes as patterns: ``match`` a path, ``search`` a full URL. Each ends at
-# a segment boundary rather than at its trailing slash, so every routed form of
-# the resource is covered: with no trailing slash (the body is read before Django
-# redirects it), with a format suffix such as ".json", or before a query.
+
+
+def sensitive_path_pattern(prefix: str) -> re.Pattern[str]:
+    """``prefix`` as a pattern, ``*`` standing for one path segment. It ends at a
+    segment boundary rather than at the trailing slash, so every routed form of
+    the resource is covered: with no trailing slash (the body is read before
+    Django redirects it), with a format suffix such as ".json", or before a query."""
+    stem = re.escape(prefix.rstrip("/")).replace(r"\*", "[^/]+")
+    return re.compile(stem + r"(?:[/.?#]|$)")
+
+
+# The prefixes as patterns: ``match`` a path, ``search`` a full URL.
 SENSITIVE_BODY_PATHS = tuple(
-    re.compile(re.escape(prefix.rstrip("/")).replace(r"\*", "[^/]+") + r"(?:[/.?#]|$)")
-    for prefix in SENSITIVE_BODY_PATH_PREFIXES
+    sensitive_path_pattern(prefix) for prefix in SENSITIVE_BODY_PATH_PREFIXES
 )
 
 
