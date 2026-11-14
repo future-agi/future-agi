@@ -819,7 +819,7 @@ def compile_exact_graph_row_predicates(
             ):
                 # Trace graphs already fold per-root row predicates into
                 # trace membership. Avoid a second spans read in that mode.
-                predicate = builder._build_column_condition(  # noqa: SLF001
+                column_predicate = builder._build_column_condition(  # noqa: SLF001
                     builder.SYSTEM_METRIC_MAP[column_id],
                     str(filter_type),
                     normalize_filter_op(
@@ -827,6 +827,11 @@ def compile_exact_graph_row_predicates(
                     ),
                     raw_value,
                 )
+                if column_predicate is None:
+                    raise UnsupportedFilterShapeError(
+                        f"graph filter {column_id!r} did not produce a predicate"
+                    )
+                predicate = column_predicate
                 predicate_params = dict(builder._params)  # noqa: SLF001
             else:
                 predicate, predicate_params = builder.translate([item])

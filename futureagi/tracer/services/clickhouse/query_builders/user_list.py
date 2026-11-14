@@ -2177,6 +2177,11 @@ class UserListQueryBuilder(BaseQueryBuilder):
         flags, condition, params, terms = compile_user_membership_leaf(
             item, project_id=str(project_id), namespace=f"native_leaf_{index}"
         )
+        if self.native_span_dimension(item) != "trace_name":
+            # Ordinary native columns are row predicates, not root lookups.
+            # Preserve the graph compiler's exact parameter contract and avoid
+            # deriving an unrelated (potentially clock-dependent) window.
+            return flags, condition, params, self._native_witness_flag(terms)
         # A trace-name leaf resolves a child from its root through a semi-join
         # bounded by the list's own window; every caller of these flags binds
         # the same values under these names.
