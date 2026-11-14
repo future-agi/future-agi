@@ -206,6 +206,9 @@ def _worker_kwargs(client, plan: _QueuePlan, interceptor) -> dict:
     from temporalio.worker import PollerBehaviorSimpleMaximum, UnsandboxedWorkflowRunner
 
     from tfc.management.commands.start_temporal_worker import _workflow_cache_kwargs
+    from tfc.temporal.common.media_tool_interceptor import (
+        MediaToolActivityInterceptor,
+    )
 
     # More pollers than slots cannot take more work; the exact queue has one.
     polls = env_int("TEMPORAL_MAX_CONCURRENT_TASK_POLLS", 2)
@@ -220,7 +223,8 @@ def _worker_kwargs(client, plan: _QueuePlan, interceptor) -> dict:
         # No workflow_task_executor: each Worker builds its own pool sized to
         # its workflow-task slots. A smaller shared pool makes activations
         # queue, and queueing counts toward the SDK's 2 s deadlock timeout.
-        "interceptors": [interceptor],
+        # A missing ffmpeg fails the activity once instead of on every retry.
+        "interceptors": [MediaToolActivityInterceptor(), interceptor],
         "graceful_shutdown_timeout": timedelta(
             seconds=env_int("TEMPORAL_GRACEFUL_SHUTDOWN_TIMEOUT", 30)
         ),

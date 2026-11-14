@@ -202,7 +202,9 @@ def test_worker_kwargs_size_each_worker_to_its_own_slots():
     assert generic_kwargs["max_concurrent_activities"] == 8
     assert generic_kwargs["max_concurrent_workflow_tasks"] == 8
     assert generic_kwargs["max_cached_workflows"] == 100
-    assert generic_kwargs["interceptors"] == [interceptor]
+    media, own = generic_kwargs["interceptors"]
+    assert type(media).__name__ == "MediaToolActivityInterceptor"
+    assert own is interceptor
     assert exact_kwargs["max_concurrent_activities"] == 1
     assert exact_kwargs["max_concurrent_workflow_tasks"] == 1
     assert exact_kwargs["max_cached_workflows"] == 0

@@ -27,6 +27,7 @@ from model_hub.services.localization_errors import (
     LocalizationFailure,
     LocalizationFailureCode,
 )
+from tfc.utils.media_tools import MediaToolUnavailable
 
 if TYPE_CHECKING:
     from claude_agent_sdk import ResultMessage
@@ -123,6 +124,10 @@ def _text(value: Any) -> dict:
 class LocalizationCase:
     """Owns immutable source locations and the record of inspected evidence."""
 
+    # Set when a tool needed ffmpeg and the image has none; reported instead
+    # of "missing findings" if the agent cannot finish without it.
+    media_tool_error: MediaToolUnavailable | None = None
+
     def __init__(self, localizer: ErrorLocalizer, media: MediaRegistry):
         self.localizer = localizer
         self.media = media
@@ -130,6 +135,38 @@ class LocalizationCase:
         self._locks: dict[str, asyncio.Lock] = {}
         self.inspected: dict[str, set[str]] = {}
         self.result: LocalizerResult | None = None
+        # Inputs a tool could not open because ffmpeg is missing.
+        self.media_tool_failed_keys: set[str] = set()
+
+    def missing_media_tool(self) -> MediaToolUnavailable | None:
+        """The stored ffmpeg error, unless the agent answered without it.
+
+        Findings are the agent's own result, and so is "unlocalizable" about
+        an input that opened, or about a non-audio input. "Unlocalizable"
+        about the input ffmpeg could not open, or about an audio input never
+        opened (it would fail the same way), is the missing tool, not the
+        agent's free-text reason. So is any "unlocalizable" in simulation
+        localization while no recording has opened: findings there can only
+        be on the tested agent's recorded utterances.
+        """
+        if self.result is None or self.media_tool_error is None:
+            return self.media_tool_error
+        if self.result.analysis:
+            return None
+        key = self.result.selected_key
+        if not self.media_tool_failed_keys or key in self.media_tool_failed_keys:
+            return self.media_tool_error
+        if (
+            key not in self.inputs
+            and (self.localizer.input_type or {}).get(key) == "audio"
+        ):
+            return self.media_tool_error
+        input_type = self.localizer.input_type or {}
+        if self.localizer.simulation_audio is not None and not any(
+            input_type.get(opened) == "audio" for opened in self.inputs
+        ):
+            return self.media_tool_error
+        return None
 
     def _source(self, key):
         if key not in (self.localizer.input_type or {}) or key not in (
@@ -372,6 +409,13 @@ class LocalizationCase:
             async def guarded(args):
                 try:
                     return await handler(args)
+                except MediaToolUnavailable as exc:
+                    # Names a missing binary and the image to use, never case
+                    # contents, so the agent may see it.
+                    self.media_tool_error = exc
+                    if isinstance(args, dict) and isinstance(args.get("key"), str):
+                        self.media_tool_failed_keys.add(args["key"])
+                    return {"is_error": True, "content": [_text({"error": str(exc)})]}
                 except (ValueError, KeyError, TypeError, ValidationError):
                     # Validation errors may contain input/media values. Keep the
                     # feedback bounded and never echo arbitrary case contents.
@@ -492,6 +536,11 @@ class ClaudeAgentLocalizer(ErrorLocalizer):
                             async for message in client.receive_response():
                                 if isinstance(message, ResultMessage):
                                     terminal = message
+                        # Without findings, a missing ffmpeg is the cause to
+                        # report, whatever the agent did after hitting it
+                        # (including giving up as "unlocalizable").
+                        if (missing := case.missing_media_tool()) is not None:
+                            raise missing
                         failure_code = _terminal_failure_code(terminal)
                         if failure_code is not None:
                             raise LocalizationFailure(failure_code)
@@ -500,6 +549,8 @@ class ClaudeAgentLocalizer(ErrorLocalizer):
                                 LocalizationFailureCode.MISSING_FINDINGS
                             )
         except TimeoutError:
+            if (missing := case.missing_media_tool()) is not None:
+                raise missing from None
             raise LocalizationFailure(LocalizationFailureCode.TIMEOUT) from None
         finally:
             # CLI prices the wire alias as Claude. Bill the actual Gemini token
