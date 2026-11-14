@@ -42,6 +42,12 @@ var reportedCostReaders = map[string]func(extra map[string]json.RawMessage) (usd
 	"xai":        readXAICost,
 }
 
+// MaxReportedCostUSD is the most a vendor's stated cost may be for one request.
+// Above it the request is priced from the catalogue: no single chat request
+// costs more than $1,000, and a value like 1e13 would overflow the int64
+// micro-dollar ledgers (credits, budgets, metrics).
+const MaxReportedCostUSD = 1000.0
+
 // readReportedCost reads vendor's stated cost from a response's usage extras.
 func readReportedCost(vendor string, extra map[string]json.RawMessage) (usd float64, unit string, byok, ok bool) {
 	read, known := reportedCostReaders[vendor]

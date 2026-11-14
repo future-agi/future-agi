@@ -3,6 +3,7 @@ package redisstate
 import (
 	"context"
 	"fmt"
+	"github.com/futureagi/agentcc-gateway/internal/models"
 	"log/slog"
 	"math"
 	"strconv"
@@ -186,7 +187,7 @@ func (s *BudgetStore) RecordSpend(org, level, key, period, model string, cost fl
 	}
 
 	redisKey := s.budgetKey(org, level, key, period)
-	costMicros := usdToMicros(cost)
+	costMicros := models.SpendMicros(cost)
 	modelField := ""
 	if model != "" {
 		modelField = "model:" + model
@@ -334,7 +335,7 @@ func (s *BudgetStore) CheckAndRecordSpend(org, level, key, period, model string,
 	}
 	err := s.client.Do(func(rdb redis.UniversalClient) error {
 		var err error
-		result, err = checkAndRecordScript.Run(ctx, rdb, keys, usdToMicros(cost), usdToMicros(limit), modelField, usdToMicros(modelLimit), int64(budgetTTL(period).Seconds()), receiptSec, s.guardToken).Int64()
+		result, err = checkAndRecordScript.Run(ctx, rdb, keys, models.SpendMicros(cost), usdToMicros(limit), modelField, usdToMicros(modelLimit), int64(budgetTTL(period).Seconds()), receiptSec, s.guardToken).Int64()
 		return err
 	})
 	if err != nil {

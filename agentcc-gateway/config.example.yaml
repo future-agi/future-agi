@@ -258,9 +258,11 @@ providers:
   # cost that is missing, null, non-numeric or negative falls back to the
   # catalogue; a stated 0 is recorded as 0. A non-zero stated cost that six
   # decimal places would print as 0.000000 (up to $0.0000005) is recorded
-  # unrounded (e.g. 0.0000004). The Request Logs cost column keeps six places,
-  # and credits, budgets and the Prometheus counter count whole micro-dollars
-  # per request, so such a request still moves them by 0.
+  # unrounded (e.g. 0.0000004). The Request Logs cost column keeps six places.
+  # Credits, budgets and the Prometheus counter count whole micro-dollars per
+  # request: a non-zero cost moves them by at least 1 micro-dollar, a stated 0
+  # by nothing. A stated cost above $1,000 for one request is ignored (the
+  # catalogue prices it) and logged once per provider and model.
   #
   # A cache hit never takes a stated cost: no vendor served it, even though
   # the cached response still carries the original call's usage. An exact

@@ -129,7 +129,7 @@ func (p *Plugin) ProcessResponse(_ context.Context, rc *models.RequestContext) p
 		return pipeline.ResultContinue()
 	}
 
-	micros := auth.USDToMicros(costUSD)
+	micros := models.SpendMicros(costUSD)
 
 	// Write-through: unconditionally deduct from Redis (shared), then sync local.
 	// ForceDeductMicros is used because the request already completed — spend

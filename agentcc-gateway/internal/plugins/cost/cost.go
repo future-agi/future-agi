@@ -278,6 +278,12 @@ func (p *Plugin) ProcessResponse(_ context.Context, rc *models.RequestContext) p
 		// already won over both.
 		if vendor := p.reportedVendor(rc); vendor != "" {
 			reported, unit, byok, reportedOK := readReportedCost(vendor, usage.Extra)
+			if reportedOK && reported > MaxReportedCostUSD {
+				// Implausible for one request, and past what the micro-dollar
+				// ledgers can hold: price it from the catalogue instead.
+				p.warnReportedCeiling(rc, model, vendor, reported)
+				reportedOK = false
+			}
 			if byok {
 				rc.Metadata[MetadataIsBYOK] = "true"
 			}
@@ -369,6 +375,28 @@ func (p *Plugin) warnReportedZero(rc *models.RequestContext, model, vendor strin
 		"stream", rc.IsStream,
 		"request_id", rc.RequestID,
 		"hint", "if this provider should not be trusted for cost, set ignore_provider_cost: true on it in config.yaml",
+	)
+}
+
+// warnReportedCeiling logs, once per provider, model and stream mode, that a
+// stated cost above MaxReportedCostUSD was ignored. It shares the bounded
+// warn-once set with warnReportedZero.
+func (p *Plugin) warnReportedCeiling(rc *models.RequestContext, model, vendor string, reported float64) {
+	if p.reportedZeroWarnedCount.Load() >= maxReportedZeroWarnings {
+		return
+	}
+	key := "ceiling\x00" + rc.Provider + "\x00" + model + "\x00" + strconv.FormatBool(rc.IsStream)
+	if _, seen := p.reportedZeroWarned.LoadOrStore(key, struct{}{}); seen {
+		return
+	}
+	p.reportedZeroWarnedCount.Add(1)
+	slog.Warn("cost: provider reported a cost above the per-request ceiling; using the catalogue",
+		"provider", rc.Provider,
+		"vendor", vendor,
+		"model", model,
+		"reported_usd", reported,
+		"ceiling_usd", MaxReportedCostUSD,
+		"request_id", rc.RequestID,
 	)
 }
 

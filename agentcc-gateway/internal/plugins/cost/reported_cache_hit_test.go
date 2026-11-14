@@ -108,3 +108,22 @@ func TestReportedCost_HalfMicroIsNotRoundedToZero(t *testing.T) {
 		t.Errorf("cost = %q, want %q", got, "0.0000005")
 	}
 }
+
+// A stated cost above the per-request ceiling is implausible and would
+// overflow the micro-dollar ledgers: it is priced from the catalogue. The
+// ceiling itself is accepted.
+func TestReportedCost_CeilingFallsBackToTheCatalogue(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		cost, wantCost, wantSource string
+	}{
+		{"1e13", catalogueCost(1000, 100), CostSourceCatalogue},
+		{"1000", "1000.000000", CostSourceProviderReported},
+	} {
+		rc := reportedRC(t, "openrouter", "openai/gpt-x", `{"prompt_tokens":1000,"completion_tokens":100,"cost":`+tc.cost+`}`)
+		reportedPlugin(reportedTestDB(nil), nil, nil, "openrouter").ProcessResponse(context.Background(), rc)
+		if rc.Metadata["cost"] != tc.wantCost || rc.Metadata["cost_source"] != tc.wantSource {
+			t.Errorf("cost %s: got cost %q source %q, want %q %q", tc.cost, rc.Metadata["cost"], rc.Metadata["cost_source"], tc.wantCost, tc.wantSource)
+		}
+	}
+}
