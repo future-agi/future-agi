@@ -450,10 +450,12 @@ def process_spans_chunk_task(
         if needs_eval_metrics:
             from tracer.models.observation_span import EvalLogger
 
-            for log in EvalLogger.objects.filter(
-                observation_span_id__in=span_ids
-            ).order_by(
-                "created_at"
+            # Primary: the copy is permanent, and a result the user sees (from
+            # ClickHouse) may not have reached a lagging replica yet.
+            for log in (
+                EvalLogger.objects.using("default")
+                .filter(observation_span_id__in=span_ids)
+                .order_by("created_at")
             ):  # ascending → most recent wins per key
                 key = log.eval_type_id or str(log.id)
                 if log.output_float is not None:

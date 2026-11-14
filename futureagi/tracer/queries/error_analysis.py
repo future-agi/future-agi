@@ -1106,7 +1106,13 @@ class TraceErrorAnalysisDB:
         Get or create a TraceErrorAnalysisTask for a project
         """
         try:
-            task = TraceErrorAnalysisTask.all_objects.filter(project=project).first()
+            # Primary: a task created or restored by the previous request
+            # must be found, not created again or restored over.
+            task = (
+                TraceErrorAnalysisTask.all_objects.using("default")
+                .filter(project=project)
+                .first()
+            )
             if task:
                 if task.deleted:
                     task.deleted = False
