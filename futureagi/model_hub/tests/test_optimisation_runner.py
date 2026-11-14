@@ -63,9 +63,7 @@ def test_process_optimization_applies_optional_model_settings(
         ),
         patch("model_hub.views.develop_optimiser.LiteLLMModelManager") as model_manager,
         patch("model_hub.views.develop_optimiser.PromptOptimizer") as prompt_optimizer,
-        patch(
-            "model_hub.views.develop_optimiser.DevelopOptimizer.create_column_develop_optimizer"
-        ),
+        patch("model_hub.views.develop_optimiser.LLM") as llm,
     ):
         model_manager.return_value.get_provider.return_value = "openai"
         prompt_optimizer.return_value.get_optimized_prompt.return_value = [
@@ -75,7 +73,15 @@ def test_process_optimization_applies_optional_model_settings(
 
     assert prompt_optimizer.call_args.kwargs["temperature"] == expected_temperature
     assert prompt_optimizer.call_args.kwargs["max_tokens"] == expected_max_tokens
-    assert _stored_status(optimization) != StatusType.FAILED.value
+    assert llm.call_args.kwargs["temperature"] == (
+        0.7 if settings.get("temperature") is None else settings["temperature"]
+    )
+    assert llm.call_args.kwargs["max_tokens"] == (
+        1000 if settings.get("max_tokens") is None else settings["max_tokens"]
+    )
+    assert _stored_status(optimization) == StatusType.COMPLETED.value
+    optimization.refresh_from_db()
+    assert optimization.model_config == {"model_name": "gpt-4o-mini", **settings}
 
 
 @pytest.mark.django_db

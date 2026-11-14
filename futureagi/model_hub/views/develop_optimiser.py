@@ -363,16 +363,18 @@ class DevelopOptimizer:
         return [str(user_eval.template.description) for user_eval in user_eval_metrics]
 
     def _create_llm_client(self, config: dict | None = None) -> LLM:
-        config = config or self.model_config
+        resolved_config: dict = config or self.model_config or {}
+        temperature = resolved_config.get("temperature")
+        max_tokens = resolved_config.get("max_tokens")
         return LLM(
-            model_name=config.get("model_name", ""),
-            temperature=float(config.get("temperature", 0.7)),
-            max_tokens=int(config.get("max_tokens", 1000)),
+            model_name=resolved_config.get("model_name", ""),
+            temperature=float(0.7 if temperature is None else temperature),
+            max_tokens=int(1000 if max_tokens is None else max_tokens),
             provider="openai",
             config={
-                "frequency_penalty": config.get("frequency_penalty", 0),
-                "presence_penalty": config.get("presence_penalty", 0),
-                "top_p": config.get("top_p", 0),
+                "frequency_penalty": resolved_config.get("frequency_penalty", 0),
+                "presence_penalty": resolved_config.get("presence_penalty", 0),
+                "top_p": resolved_config.get("top_p", 0),
             },
         )
 
