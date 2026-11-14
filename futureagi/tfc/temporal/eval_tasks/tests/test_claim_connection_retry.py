@@ -207,7 +207,7 @@ async def test_historical_lost_claim_reply_completes_with_each_entry_evaluated_o
     The writer's connection drops after the claim SQL was submitted, so the
     activity cannot know whether the claim committed and raises the
     non-retryable ``EvalTaskClaimOutcomeUnknown``. A historical task must not
-    fail on it, and no entry may be claimed or billed twice:
+    fail on it, and no entry may be evaluated or billed twice:
 
     * ``rolled_back``: the server connection is terminated between the claim's
       UPDATE and its COMMIT, so the commit fails on a real dropped connection
@@ -379,8 +379,8 @@ async def test_committed_lost_reply_before_the_reaper_can_reclaim_it(
     to a few seconds and the finalize wait to one; the batch is not aged. The
     drain must not fail, must go on claiming the task's other pending work
     while the lost batch is still RUNNING, and once the reaper requeues that
-    batch it is claimed and evaluated once. No entry is claimed or billed
-    twice, and the task ends COMPLETED.
+    batch it is claimed again and evaluated once. No entry is evaluated or
+    billed twice, and the task ends COMPLETED.
     """
     from datetime import timedelta
 
