@@ -453,6 +453,10 @@ const EvalDetailPage = () => {
       const config =
         versionToLoad.config_snapshot || versionToLoad.configSnapshot || {};
       const promptText = versionToLoad.criteria || config.rule_prompt || "";
+      // Tags are saved on the eval, not in config_snapshot, so load them
+      // from the eval for every version (including the default version
+      // opened on first load).
+      setTags(evalData?.tags || evalData?.eval_tags || []);
 
       // Composite versions: load aggregation + children from snapshot
       if (isComposite) {
