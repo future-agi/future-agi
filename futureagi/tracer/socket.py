@@ -430,16 +430,27 @@ class GraphDataConsumer(DataConsumer):
 
                 evaluations[config_id_str]["data"][0]["value"].append(value_entry)
             else:
-                data_entries = []
+                data_entries = evaluations[config_id_str]["data"]
                 for choice_name, value in metric_score.items():
                     value_entry = {
                         "timestamp": timestamp.strftime("%Y-%m-%dT%H:%M:%S"),
                         "value": value.get("score"),
                     }
 
-                    data_entries.append({"name": choice_name, "value": [value_entry]})
-
-                evaluations[config_id_str]["data"] = data_entries
+                    choice_entry = next(
+                        (
+                            entry
+                            for entry in data_entries
+                            if entry["name"] == choice_name
+                        ),
+                        None,
+                    )
+                    if choice_entry is None:
+                        data_entries.append(
+                            {"name": choice_name, "value": [value_entry]}
+                        )
+                    else:
+                        choice_entry["value"].append(value_entry)
 
         if self.property:
             for _config_id, eval_data in evaluations.items():
