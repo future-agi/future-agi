@@ -194,6 +194,8 @@ describe("observed adoption", () => {
         screen.getByText("Observed fetches after production moved to v1"),
       ).toBeInTheDocument();
       expect(screen.getByText("Both fetched")).toBeInTheDocument();
+      // The limits of fetch evidence sit in a labelled disclosure; open it to read them.
+      fireEvent.click(screen.getByRole("button", { name: "What this activity can tell you" }));
       expect(
         screen.getByText(
           /Fetches show retrieval, not installation or successful use/,

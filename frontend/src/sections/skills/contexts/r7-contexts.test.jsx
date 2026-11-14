@@ -110,10 +110,11 @@ it('removes inaccessible library actions and filters, and offers a way back from
   expect(screen.getByRole('link', { name: 'Back to agent contexts' })).toHaveAttribute('href', '/dashboard/skills/contexts');
 });
 
-it('keeps release selection named and moves the digest to version details', () => {
+it('keeps release selection named and never prints the full digest in the identity row', () => {
   render(<MemoryRouter><ContextDetailView {...detail} /></MemoryRouter>);
   expect(screen.getByRole('combobox', { name: 'Viewed release' })).toBeVisible();
-  expect(screen.queryByText('Digest')).not.toBeInTheDocument();
+  // The shared identity row shows a short digest chip (UX-R7 §2.3); the full value stays in its tooltip and details.
+  expect(screen.queryByText(version.digest)).not.toBeInTheDocument();
 });
 it('omits release-only tabs before publishing and offers review from the empty state', () => {
   const review = vi.fn();

@@ -411,12 +411,14 @@ describe("independent consumer observations", () => {
     );
     expect(screen.getByText("Pinned as intended")).toBeVisible();
     expect(screen.getByText("Runtime loading not observed")).toBeVisible();
-    expect(screen.getByRole("alert")).toHaveTextContent("1 of 1 consumers still need delivery verification.");
-    expect(screen.getAllByText("Not observed")).toHaveLength(1);
+    // A calm summary, not a warning: connected consumers that have not reported delivery are named and counted.
+    expect(screen.getByText("1 of 1 connected consumer needs a delivery report to confirm the version received.")).toBeVisible();
+    // The queue names one missing report (no report yet); it never fills the absent delivery in.
+    expect(screen.getAllByText("Waiting for first report")).toHaveLength(1);
     click("Pilot application");
     expect(screen.getByText("Delivery receipts")).toBeVisible();
-    // The drawer retains all five independent stages; the queue shows delivery only.
-    expect(screen.getAllByText("Not observed").filter((node) => node.closest('[role="dialog"]'))).toHaveLength(3);
+    // The drawer retains all five independent stages; the three unreported ones stay unknown.
+    expect(screen.getAllByText("Waiting for first report").filter((node) => node.closest('[role="dialog"]'))).toHaveLength(3);
     expect(
       screen.getByText(/Delivered means the release was sent to this runtime/),
     ).toBeVisible();

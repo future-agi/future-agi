@@ -11,6 +11,9 @@ import ContextDetailPage from "src/pages/dashboard/skills/contexts/ContextDetail
 import ContextEditorPage from "src/pages/dashboard/skills/contexts/ContextEditorPage";
 import ArchivedSkillsPage from "src/pages/dashboard/skills/ArchivedSkillsPage";
 
+// Presentation-only role signal: an author in the Skills scope (the server stays the authority).
+vi.mock("../../utils/access", () => ({ useSkillsAccess: () => ({ ready: true, sameScope: true, isViewer: false, canWrite: true, canAdmin: false }) }));
+
 const scopeKey = "org:workspace:author:context";
 const query = { scopeKey, data: { results: [{ id: "context", name: "support-agent", description: "Policy", latestVersion: 6, labels: [{ name: "production", version: 3 }], hasDraft: true }], count: 1, page: 1, pageSize: 25 } };
 const detail = { scopeKey, query: { scopeKey, data: { context: query.data.results[0] } }, versionQuery: { scopeKey, data: { version: { id: "version-four", number: 4, digest: "sha256:four" }, descriptor: { description: "Purpose from viewed v4", links: [{ skillId: "child", mount: "skills/refunds/", version: 8, requested: { label: "production" }, digest: "sha256:child" }] }, files: [{ path: "AGENTS.md", origin: { kind: "owned" } }, { path: "skills/refunds/SKILL.md", origin: { kind: "linked", versionId: "child-version" } }, { path: ".futureagi/context.json", origin: { kind: "generated" } }] } }, fileQuery: { scopeKey, data: { path: "AGENTS.md", versionId: "version-four", text: "---\nnot: frontmatter\n---\n# Standing policy" } }, versions: [{ id: "version-four", number: 4 }], onEditViewed: vi.fn(), onSelectPath: vi.fn() };
@@ -23,7 +26,7 @@ const renderDetail = (ui) => {
 describe("scope-safe context library", () => {
   it("shows independent production/latest/draft and leaves unobserved delivery unknown", () => {
     render(<ContextLibraryView scopeKey={scopeKey} query={query} />);
-    expect(screen.getByText("v3")).toBeVisible(); expect(screen.getByText("v6")).toBeVisible(); expect(screen.getByText("Your draft")).toBeVisible(); expect(screen.queryByText(/Delivered/)).not.toBeInTheDocument();
+    expect(screen.getByText("Production v3")).toBeVisible(); expect(screen.getByText("Latest v6")).toBeVisible(); expect(screen.getByText("Your draft")).toBeVisible(); expect(screen.queryByText(/Delivered/)).not.toBeInTheDocument();
   });
   it("does not expose old-scope rows or counts while the scoped query changes", () => {
     render(<ContextLibraryView scopeKey="other-scope" query={query} />);
@@ -85,7 +88,7 @@ describe("immutable detail and recovery", () => {
   });
   it("does not present recovery on an unauthorized archive list error", () => {
     render(<ArchivedSkillsView scopeKey={scopeKey} query={{ scopeKey, error: { status: 403 } }} />);
-    expect(screen.getByText("Archived skills unavailable")).toBeVisible();
+    expect(screen.getByText("Couldn't load archived skills.")).toBeVisible();
     expect(screen.queryByRole("button", { name: "Review recovery" })).not.toBeInTheDocument();
   });
 });

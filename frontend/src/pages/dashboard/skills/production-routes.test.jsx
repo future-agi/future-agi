@@ -20,7 +20,8 @@ import ContextTraceCaptureAction from 'src/sections/skills/contexts/ContextTrace
 
 const identity = vi.hoisted(() => ({ workspace: '00000000-0000-4000-8000-000000000001', campaigns: false }));
 vi.mock('src/auth/hooks', () => ({ useAuthContext: () => ({ authenticated: true, user: { id: 'author' } }) }));
-vi.mock('src/contexts/OrganizationContext', () => ({ useOrganization: () => ({ isReady: true, currentOrganizationId: '00000000-0000-4000-8000-000000000002' }) }));
+// The signed-in author is a workspace member (role level 3), so Skills shows write actions; the server stays the authority.
+vi.mock('src/contexts/OrganizationContext', () => ({ useOrganization: () => ({ isReady: true, currentOrganizationId: '00000000-0000-4000-8000-000000000002', orgLevel: 3 }) }));
 vi.mock('src/contexts/WorkspaceContext', () => ({ useWorkspace: () => ({ isReady: true, currentWorkspaceId: identity.workspace }) }));
 // Only the HTTP boundary is replaced; route/provider/controllers/hooks stay real.
 vi.mock('src/utils/axios', () => ({ default: { get: vi.fn(), post: vi.fn(), put: vi.fn(), delete: vi.fn() } }));

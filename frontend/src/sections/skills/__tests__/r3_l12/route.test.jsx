@@ -39,14 +39,14 @@ it('reopens an uncertain create with the original body and key', async () => {
   state.create.mockRejectedValue(new Error('lost response'));
   renderRoute();
   fireEvent.click(screen.getByRole('button', { name: 'New rollout' }));
-  fireEvent.change(screen.getByLabelText('Campaign name'), { target: { value: 'Synthetic fixed inventory' } });
-  fireEvent.click(screen.getByRole('button', { name: 'Create draft campaign' }));
+  fireEvent.change(screen.getByLabelText('Rollout name'), { target: { value: 'Synthetic fixed inventory' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Create draft rollout' }));
   await waitFor(() => expect(state.create).toHaveBeenCalledTimes(1));
   const first = state.create.mock.calls[0][0];
   fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
   await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
   fireEvent.click(screen.getByRole('button', { name: 'New rollout' }));
-  expect(screen.getByLabelText('Campaign name')).toBeDisabled();
+  expect(screen.getByLabelText('Rollout name')).toBeDisabled();
   fireEvent.click(screen.getByRole('button', { name: 'Recover original submission' }));
   await waitFor(() => expect(state.create).toHaveBeenCalledTimes(2));
   expect(state.create.mock.calls[1][0]).toEqual(first);

@@ -85,7 +85,7 @@ describe("one canonical skill document", () => {
     expect(description()).toHaveValue(
       "Use when a customer asks about a refund.",
     );
-    expect(screen.getByText("Skill identity · read-only")).toBeVisible();
+    expect(screen.getByText("Name (set at creation)")).toBeVisible();
     expect(
       screen.queryByRole("textbox", { name: /name/i }),
     ).not.toBeInTheDocument();
