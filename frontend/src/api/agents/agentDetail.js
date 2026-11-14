@@ -33,6 +33,8 @@ export const toRun = (raw) => ({
   errored: raw.outcome_errored ?? null,
   noScore: raw.outcome_no_score ?? null,
   skipped: raw.outcome_skipped ?? null,
+  // Stopped by the user: neither errored nor failed.
+  cancelled: raw.outcome_cancelled ?? null,
   passRate: passRateOf({
     passed: raw.outcome_passed ?? null,
     failed: raw.outcome_failed,

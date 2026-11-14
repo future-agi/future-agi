@@ -20,6 +20,7 @@ from typing import Any
 
 import structlog
 from django.db.models import (
+    Case,
     CharField,
     Count,
     F,
@@ -28,6 +29,8 @@ from django.db.models import (
     Q,
     QuerySet,
     Subquery,
+    Value,
+    When,
 )
 from django.db.models.fields.json import KeyTextTransform
 from django.db.models.functions import Coalesce
@@ -43,6 +46,10 @@ from simulate.selectors.runs import user_environment_runs, user_executions, user
 from simulate.services.harness_scenarios import (
     call_actor_choice_labels,
     call_actor_entries,
+)
+from simulate.services.run_results_v3_scoring import (
+    CANCELLED_CALL_STATUSES,
+    SKIPPED_HARNESS_STATUSES,
 )
 from simulate.types import ContractCallActor
 from simulate.utils.ended_reason import canonical_ended_reasons
@@ -230,6 +237,9 @@ def run_summaries(executions: list[TestExecution]) -> dict[Any, dict[str, Any]]:
             "outcome_skipped": (
                 outcomes.get("skipped", 0) if outcomes is not None else None
             ),
+            "outcome_cancelled": (
+                outcomes.get("cancelled", 0) if outcomes is not None else None
+            ),
             # Calls that ran with no pass or fail; a pass rate leaves them out.
             "outcome_no_score": (
                 outcomes.get("no_score", 0) if outcomes is not None else None
@@ -259,11 +269,27 @@ def receipt_outcome_counts(job_ids: Iterable[uuid.UUID]) -> dict[Any, dict[str, 
         HostedHarnessReceipt.no_workspace_objects.filter(job_id__in=job_ids)
         .exclude(receipt_of_deleted_call)
         .annotate(
-            outcome=Coalesce(
-                KeyTextTransform(
-                    "harness_outcome_status", "execution__call_execution__call_metadata"
+            outcome=Case(
+                # A call the user stopped is its own count, never an error (run_results_v3_scoring).
+                When(
+                    (
+                        Q(execution__call_execution__status__in=CANCELLED_CALL_STATUSES)
+                        | Q(
+                            execution__isnull=True,
+                            scenario__call_execution__status__in=CANCELLED_CALL_STATUSES,
+                        )
+                    )
+                    & ~Q(status__in=SKIPPED_HARNESS_STATUSES),
+                    then=Value("cancelled"),
                 ),
-                F("status"),
+                default=Coalesce(
+                    KeyTextTransform(
+                        "harness_outcome_status",
+                        "execution__call_execution__call_metadata",
+                    ),
+                    F("status"),
+                    output_field=CharField(),
+                ),
                 output_field=CharField(),
             )
         )

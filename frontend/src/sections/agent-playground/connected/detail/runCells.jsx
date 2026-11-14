@@ -24,6 +24,7 @@ export const unratedOf = (run) => {
   const parts = [
     run.errored ? `${run.errored} errored` : null,
     run.noScore ? `${run.noScore} no score` : null,
+    run.cancelled ? `${run.cancelled} cancelled` : null,
   ].filter(Boolean);
   return parts.join(", ");
 };

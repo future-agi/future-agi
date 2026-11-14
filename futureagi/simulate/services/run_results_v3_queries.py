@@ -84,6 +84,7 @@ from simulate.services.run_results_v3_expressions import (
     project_annotation,
 )
 from simulate.services.run_results_v3_scoring import (
+    CANCELLED_CALL_STATUSES,
     ERRORED_CALL_STATUSES,
     ERRORED_EVAL_STATUSES,
     HARNESS_ERROR,
@@ -95,6 +96,7 @@ from simulate.services.run_results_v3_scoring import (
     NATIVE_FAILED,
     NATIVE_PASSED,
     QUEUED_CALL_STATUSES,
+    SKIPPED_HARNESS_STATUSES,
     UNMEASURED_EVAL_STATUSES,
     EvalScoringSpec,
     LiveEvals,
@@ -914,6 +916,15 @@ def run_calls_queryset(
         result_outcome=Case(
             When(status__in=list(QUEUED_CALL_STATUSES), then=Value("queued")),
             When(status__in=list(IN_PROGRESS_CALL_STATUSES), then=Value("in_progress")),
+            # A skipped scenario is stored cancelled but nobody stopped it: an error.
+            When(
+                status__in=list(CANCELLED_CALL_STATUSES),
+                call_metadata__harness_outcome_status__in=list(
+                    SKIPPED_HARNESS_STATUSES
+                ),
+                then=Value("error"),
+            ),
+            When(status__in=list(CANCELLED_CALL_STATUSES), then=Value("cancelled")),
             When(
                 call_metadata__harness_outcome_status__in=list(HARNESS_ERROR),
                 then=Value("error"),

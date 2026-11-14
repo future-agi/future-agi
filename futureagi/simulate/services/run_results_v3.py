@@ -40,6 +40,7 @@ from simulate.services.hosted_harness_ingestion import (
 )
 from simulate.services.run_results_v3_expressions import NUMERIC_JSON_PATTERN
 from simulate.services.run_results_v3_scoring import (
+    CANCELLED_CALL_STATUSES,
     ERRORED_EVAL_STATUSES,
     HARNESS_ERROR,
     HARNESS_FAILED,
@@ -48,6 +49,7 @@ from simulate.services.run_results_v3_scoring import (
     HARNESS_PASSED,
     NATIVE_FAILED,
     NATIVE_PASSED,
+    SKIPPED_HARNESS_STATUSES,
     EvalScoringSpec,
     LiveEvals,
     judge_stored_eval,
@@ -70,6 +72,8 @@ OUTCOME_LABELS = {
     "inconclusive": "Inconclusive",
     "no_score": "No score",
     "error": "Error",
+    # Stopped by the user: neither an error nor a failure.
+    "cancelled": "Cancelled",
 }
 
 # The call fields and call_metadata keys build_call_rows reads; a page loads only these.
@@ -201,6 +205,11 @@ def call_outcome(
         CallExecution.CallStatus.ANALYZING,
     }:
         return "in_progress"
+    if (
+        call.status in CANCELLED_CALL_STATUSES
+        and harness_outcome not in SKIPPED_HARNESS_STATUSES
+    ):
+        return "cancelled"
     if harness_outcome in HARNESS_ERROR:
         return "error"
     if call.status in {

@@ -62,6 +62,8 @@ export function executionToRun(raw) {
     ? raw.outcome_failed ?? 0
     : raw?.failed_calls ?? Math.max(total - passed, 0);
   const noScore = hasOutcomes ? raw.outcome_no_score ?? 0 : 0;
+  // Calls the user stopped: neither errored nor failed.
+  const cancelled = hasOutcomes ? raw.outcome_cancelled ?? 0 : 0;
   // A run passes only when no call failed, errored or was skipped.
   const notPassed = failed + errored + skipped;
 
@@ -106,6 +108,7 @@ export function executionToRun(raw) {
     scored: hasOutcomes ? passed + failed : total,
     errored,
     skipped,
+    cancelled,
     hasOutcomes,
     scenarioCount: raw?.selected_scenarios ?? null,
     scenarioIds: raw?.scenario_keys ?? [],
