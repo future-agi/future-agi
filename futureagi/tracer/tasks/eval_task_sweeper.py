@@ -132,11 +132,15 @@ def sweep_stale_recalculations():
     ``EVAL_TASK_SWEEP_MAX_TASKS``; pausing its schedule stops it.
     ``max_retries=0``: the next tick retries what this one could not finish.
     """
-    result = recover_stale_recalculations()
+    # One part failing must not cost the other its tick, either way round.
+    try:
+        result = recover_stale_recalculations()
+    except Exception:
+        logger.exception("recalculate_recovery_failed")
+        result = {"recovery_failed": True}
     try:
         result["put_back_recheck"] = recheck_put_backs()
     except Exception:
-        # One part failing must not cost the other its tick.
         logger.exception("recalculate_put_back_recheck_failed")
         result["put_back_recheck"] = None
     logger.info("recalculate_sweep_completed", **result)

@@ -575,8 +575,10 @@ class EvalPutBack(models.Model):
     once it commits, which catches a delete committed by then. This row,
     written in the put-back's own transaction, lets the eval-task sweep
     (``tracer.services.eval_tasks.recalculate.recheck_put_backs``) read them
-    again on every tick for ``PUT_BACK_RECHECK_SECONDS`` after the put-back,
-    so a delete that commits later still retires the result.
+    again for ``PUT_BACK_RECHECK_SECONDS`` after the put-back, at every tick
+    that reaches the row (each tick reads a batch, least recently read first,
+    so the batch rotates through the watched rows), so a delete that commits
+    later still retires the result.
 
     Kept apart from ``tracer_eval_logger`` so the sweep reads a table that only
     holds recent put-backs, not every result.

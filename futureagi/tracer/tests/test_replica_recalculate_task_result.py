@@ -3173,3 +3173,25 @@ def test_untasked_put_back_is_decided_by_the_update_itself(
         landed["other"].pk
     ]
     assert _stored(previous.pk).deleted is True
+
+
+def test_a_failed_recovery_does_not_cost_the_put_back_recheck_its_tick():
+    from unittest import mock
+
+    from tracer.tasks import eval_task_sweeper
+
+    with (
+        mock.patch.object(
+            eval_task_sweeper,
+            "recover_stale_recalculations",
+            side_effect=RuntimeError("synthetic recovery failure"),
+        ),
+        mock.patch.object(
+            eval_task_sweeper, "recheck_put_backs", return_value={"rechecked": 2}
+        ) as recheck,
+    ):
+        result = eval_task_sweeper.sweep_stale_recalculations._original_func()
+
+    recheck.assert_called_once()
+    assert result["recovery_failed"] is True
+    assert result["put_back_recheck"] == {"rechecked": 2}

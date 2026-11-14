@@ -124,7 +124,8 @@ RECOVER_BATCH = 200
 # transaction still open after that is not caught.
 PUT_BACK_RECHECK_SECONDS = 3600
 
-# How many put-backs one sweep tick re-reads at most, oldest first.
+# How many put-backs one sweep tick re-reads at most: the least recently read
+# first (never-read ones before all others), so the batch rotates through them.
 RECHECK_BATCH = 500
 
 ALREADY_RUNNING = "A recalculation is already running for this result."
