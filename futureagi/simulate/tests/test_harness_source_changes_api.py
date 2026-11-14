@@ -117,3 +117,41 @@ def test_unknown_version_404(user, workspace, storage, auth_client):
             404,
             "version_not_found",
         )
+
+
+def test_missing_digests_compare_by_text(user, workspace, storage):
+    from simulate.services import harness_scenario_sources
+    from simulate.services.harness_scenario_lifecycle import changed_refs
+
+    environment = _environment(user, workspace, storage, "sc-no-digests")
+    _suite(environment, _ten())
+    parent = environment.environment_version
+    child = _copy(parent, HarnessEnvironmentVersion, parent=parent)
+    for version in (parent, child):
+        documents = dict(version.documents or {})
+        documents.pop("file_digests", None)
+        HarnessEnvironmentVersion._base_manager.filter(id=version.id).update(
+            documents=documents
+        )
+        version.refresh_from_db()
+    contents = {
+        REFUND_KEYS[0]: {"sources": [{"kind": "file", "ref": "file:same.md"}]},
+        REFUND_KEYS[1]: {"sources": [{"kind": "file", "ref": "file:edited.md"}]},
+        REFUND_KEYS[2]: {"sources": [{"kind": "file", "ref": "file:gone.md"}]},
+    }
+    bodies = {
+        parent.id: {"same.md": b"14 days", "edited.md": b"14 days", "gone.md": b"x"},
+        child.id: {"same.md": b"14 days", "edited.md": b"30 days"},
+    }
+    with patch.object(
+        harness_scenario_sources,
+        "file_bodies",
+        lambda version, paths: {
+            p: b for p, b in bodies[version.id].items() if p in paths
+        },
+    ):
+        changed = changed_refs(child, contents)
+
+    assert REFUND_KEYS[0] not in changed
+    assert changed[REFUND_KEYS[1]] == ["file:edited.md"]
+    assert changed[REFUND_KEYS[2]] == ["file:gone.md"]

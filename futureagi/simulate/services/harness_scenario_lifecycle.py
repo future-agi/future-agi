@@ -582,7 +582,8 @@ def changed_refs(
 
     A rule changed when no rule of this version holds its quote, or the rule holding it now reads
     differently; a rule that only moved index is not a change. A file changed when its digest
-    differs, or when either version did not record digests, which errs toward revalidating.
+    differs; when either version recorded no digests, both texts are read and compared, and a file
+    either side cannot read counts as changed, which errs toward revalidating.
     """
     parent = (
         parent_documents
@@ -595,6 +596,9 @@ def changed_refs(
     new_rules, old_rules = _rules_of(documents), _rules_of(parent)
     new_files = documents.get("file_digests")
     old_files = parent.get("file_digests")
+    by_text: dict[str, bool] = {}
+    if not isinstance(new_files, Mapping) or not isinstance(old_files, Mapping):
+        by_text = _files_differ_by_text(environment_version, contents)
     changed: dict[str, list[str]] = {}
     for key, content in contents.items():
         refs: list[str] = []
@@ -615,12 +619,42 @@ def changed_refs(
                 if not isinstance(new_files, Mapping) or not isinstance(
                     old_files, Mapping
                 ):
-                    refs.append(ref)
+                    if by_text.get(path, True):
+                        refs.append(ref)
                 elif _file_digest(path, new_files) != _file_digest(path, old_files):
                     refs.append(ref)
         if refs:
             changed[key] = refs
     return changed
+
+
+def _files_differ_by_text(
+    environment_version: HarnessEnvironmentVersion, contents: Mapping[str, Any]
+) -> dict[str, bool]:
+    """For each cited file, whether its text differs from the parent version's, read from both
+    archives when a version recorded no digests. A file either side cannot read reads changed."""
+    import hashlib
+
+    from simulate.services.harness_scenario_sources import file_bodies
+
+    paths = {
+        str(source.get("ref") or "").removeprefix("file:").strip().lstrip("/")
+        for content in contents.values()
+        for source in (content or {}).get("sources") or []
+        if isinstance(source, Mapping) and source.get("kind") == "file"
+    } - {""}
+    if not paths or environment_version.parent_id is None:
+        return {}
+    parent = HarnessEnvironmentVersion._base_manager.filter(
+        id=environment_version.parent_id
+    ).first()
+    now, before = file_bodies(environment_version, paths), file_bodies(parent, paths)
+    return {
+        path: path not in now
+        or path not in before
+        or hashlib.sha256(now[path]).digest() != hashlib.sha256(before[path]).digest()
+        for path in paths
+    }
 
 
 def source_changed(
