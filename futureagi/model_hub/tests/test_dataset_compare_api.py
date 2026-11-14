@@ -904,7 +904,6 @@ def test_compare_download_resolves_repeated_dataset_once(auth_client, compare_da
         for query in queries
         if f'FROM "{Dataset._meta.db_table}"' in query["sql"]
         and compared.id.hex in query["sql"]
-        and "LIMIT 1" in query["sql"]
     ]
     assert len(compared_lookups) == 1
 
