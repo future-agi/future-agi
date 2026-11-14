@@ -457,9 +457,7 @@ class TestScenarioGraphModel:
         field_names = {f.name for f in ScenarioGraph._meta.get_fields()}
         assert "workspace" not in field_names
 
-    def test_scenario_graph_rejects_workspace_kwarg(
-        self, db, organization, scenario
-    ):
+    def test_scenario_graph_rejects_workspace_kwarg(self, db, organization, scenario):
         """Passing workspace= to create raises so callers stay on the transitive path."""
         with pytest.raises(TypeError, match="workspace"):
             ScenarioGraph.objects.create(

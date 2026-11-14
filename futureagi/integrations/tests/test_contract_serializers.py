@@ -17,9 +17,7 @@ def test_integration_error_serializer_accepts_common_error_envelope():
     assert serializer.is_valid(), serializer.errors
     assert serializer.validated_data["status"] is False
     assert serializer.validated_data["attr"] == "display_name"
-    assert serializer.validated_data["details"] == {
-        "display_name": ["Unknown field."]
-    }
+    assert serializer.validated_data["details"] == {"display_name": ["Unknown field."]}
 
 
 def test_integration_empty_request_serializer_rejects_non_empty_body():

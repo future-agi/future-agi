@@ -80,7 +80,9 @@ def test_self_hosted_routes_expose_status_not_control_plane():
         ):
             urls = reload(tfc.urls)
             clear_url_caches()
-            assert resolve("/api/capabilities/", urlconf=urls).view_name == "capabilities"
+            assert (
+                resolve("/api/capabilities/", urlconf=urls).view_name == "capabilities"
+            )
             for path in (
                 "/usage/ee/licenses/",
                 "/v1/self-hosted/activations",

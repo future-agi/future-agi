@@ -91,9 +91,7 @@ class TestRetitleFromMembers:
 
     @pytest.fixture(autouse=True)
     def _no_generated_title(self):
-        with patch(
-            "tracer.ee_boundary.generate_scan_cluster_title", return_value=None
-        ):
+        with patch("tracer.ee_boundary.generate_scan_cluster_title", return_value=None):
             yield
 
     def test_a_generated_title_wins_over_the_medoid(self, project):
@@ -103,14 +101,19 @@ class TestRetitleFromMembers:
         covers the path that actually executes when EE is present.
         """
         medoid = "Queried past month instead of requested quarterly performance"
-        cluster = _cluster_with(project, [medoid, "Queried past month, not the quarter"])
+        cluster = _cluster_with(
+            project, [medoid, "Queried past month, not the quarter"]
+        )
         generated = "Agent used the wrong period when answering performance questions"
 
-        with patch(
-            "tracer.queries.scan_clustering.embed_texts",
-            side_effect=lambda briefs: [[1.0, 0.0] for _ in briefs],
-        ), patch(
-            "tracer.ee_boundary.generate_scan_cluster_title", return_value=generated
+        with (
+            patch(
+                "tracer.queries.scan_clustering.embed_texts",
+                side_effect=lambda briefs: [[1.0, 0.0] for _ in briefs],
+            ),
+            patch(
+                "tracer.ee_boundary.generate_scan_cluster_title", return_value=generated
+            ),
         ):
             _retitle_from_members(cluster)
 
