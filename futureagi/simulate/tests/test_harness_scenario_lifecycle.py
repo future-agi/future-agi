@@ -426,7 +426,9 @@ def test_judged_only_reads_kept_as_written_with_its_text(user, workspace, storag
     view = _views(environment)[REFUND_KEYS[0]]
 
     assert (view["state"], view["warning"]) == ("kept_as_written", "judged_only")
-    assert view["warning_text"].startswith("Kept as written: only a judge grades this case")
+    assert view["warning_text"].startswith(
+        "Kept as written: only a judge grades this case"
+    )
 
 
 def test_policy_conflict_reads_draft_with_the_why(user, workspace, storage):
@@ -445,7 +447,9 @@ def test_policy_conflict_reads_draft_with_the_why(user, workspace, storage):
     view = _views(environment)[REFUND_KEYS[0]]
 
     assert (view["state"], view["reason"]) == ("draft", "policy_conflict")
-    assert view["reason_text"].startswith("Its expected outcome contradicts a cited rule")
+    assert view["reason_text"].startswith(
+        "Its expected outcome contradicts a cited rule"
+    )
 
 
 def test_uncaptured_evidence_warns(user, workspace, storage, monkeypatch):
@@ -458,12 +462,16 @@ def test_uncaptured_evidence_warns(user, workspace, storage, monkeypatch):
     proofs[REFUND_KEYS[1]] = {**PROVED, "evidence": {"stock_left": ["world_state"]}}
     _proofs(environment, proofs)
     monkeypatch.setattr(
-        "simulate.services.harness_readiness.report.resolve_pairing", lambda *args, **kwargs: None
+        "simulate.services.harness_readiness.report.resolve_pairing",
+        lambda *args, **kwargs: None,
     )
     monkeypatch.setattr(
         "simulate.services.harness_readiness.report.readiness_report",
         lambda pairing, **kwargs: {
-            "rows": [{"id": "tool_routing", "status": "blocked"}, {"id": "state", "status": "supported"}]
+            "rows": [
+                {"id": "tool_routing", "status": "blocked"},
+                {"id": "state", "status": "supported"},
+            ]
         },
     )
 
@@ -492,7 +500,10 @@ def test_list_shows_validated_on_a_named_candidate_pair(user, workspace, storage
     default = _lifecycle_for_list(environment, {})
     candidate = _lifecycle_for_list(
         environment,
-        {"suite_version_id": str(environment.suite_version_id), "environment_version_id": str(other.id)},
+        {
+            "suite_version_id": str(environment.suite_version_id),
+            "environment_version_id": str(other.id),
+        },
     )
 
     assert default["views"][REFUND_KEYS[0]]["state"] == "active"
