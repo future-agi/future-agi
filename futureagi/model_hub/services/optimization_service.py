@@ -23,6 +23,27 @@ VALID_ALGORITHMS = {
 }
 
 
+def start_optimization_run(opt_run):
+    """Create run steps and start the existing dataset optimization workflow."""
+    from model_hub.utils.dataset_optimization import create_dataset_optimization_steps
+    from tfc.temporal.dataset_optimization.client import (
+        start_dataset_optimization_workflow,
+    )
+
+    create_dataset_optimization_steps(str(opt_run.id))
+    try:
+        workflow_id = start_dataset_optimization_workflow(str(opt_run.id))
+    except Exception as exc:
+        logger.exception(
+            "Failed to start dataset optimization workflow",
+            optimization_id=str(opt_run.id),
+        )
+        opt_run.mark_as_failed(error_message=str(exc))
+        return ServiceError(str(exc), "WORKFLOW_START_FAILED")
+
+    return workflow_id
+
+
 def create_optimization_run(
     *,
     name,
@@ -39,6 +60,7 @@ def create_optimization_run(
         dict with optimization info or ServiceError
     """
     from model_hub.models.develop_dataset import Column
+    from model_hub.models.evals_metric import UserEvalMetric
     from model_hub.models.optimize_dataset import OptimizeDataset
 
     if algorithm not in VALID_ALGORITHMS:
@@ -61,20 +83,26 @@ def create_optimization_run(
         optimize_type="PromptTemplate",
         environment="Training",
         version="v1",
-        status="running",
+        status=OptimizeDataset.StatusType.PENDING,
         optimizer_algorithm=algorithm,
         optimizer_config=algorithm_config,
+        column=column,
+        organization=organization,
+        workspace=workspace,
     )
 
+    if eval_template_ids:
+        opt_run.user_eval_template_ids.set(
+            UserEvalMetric.objects.filter(
+                dataset=dataset,
+                id__in=eval_template_ids,
+                deleted=False,
+            )
+        )
+
     # Start workflow
-    workflow_started = False
-    try:
-        # Try to start the optimization workflow
-        workflow_started = True
-    except Exception as e:
-        logger.warning(f"Failed to start optimization workflow: {e}")
-        opt_run.status = "failed"
-        opt_run.save(update_fields=["status"])
+    workflow_result = start_optimization_run(opt_run)
+    workflow_started = not isinstance(workflow_result, ServiceError)
 
     return {
         "optimization_id": str(opt_run.id),
