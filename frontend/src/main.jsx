@@ -30,9 +30,6 @@ import {
 import logger from "./utils/logger";
 import { GoogleReCaptchaProvider } from "react-google-recaptcha-v3";
 import { initPostHog } from "./utils/PostHog";
-import { initGoogleAds } from "./utils/googleAds";
-import { initReddit } from "./utils/redditAds";
-import { initTwitter } from "./utils/twitterAds";
 import { applyTranslationDomGuard } from "./utils/translationDomGuard";
 
 applyTranslationDomGuard();
@@ -151,15 +148,6 @@ Sentry.init({
 
 // Initialize PostHog (autocapture, session replay, web vitals)
 initPostHog();
-
-// Initialize Google Ads + GA4 (no-op if env vars are unset)
-initGoogleAds();
-
-// Initialize Reddit pixel (no-op if env vars are unset)
-initReddit();
-
-// Initialize Twitter (X) pixel (no-op if env vars are unset)
-initTwitter();
 
 if (
   CURRENT_ENVIRONMENT === "local" &&

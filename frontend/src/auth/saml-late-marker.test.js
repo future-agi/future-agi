@@ -140,9 +140,9 @@ describe("late SAML URL marker handling", () => {
 
   it("installs before analytics and shares the initial URL sanitizer", () => {
     const env = environment();
-    expect(html.indexOf('id="saml-late-marker-guard"')).toBeLessThan(
-      html.indexOf("var GTM_ID"),
-    );
+    const appEntry = html.indexOf('src="/src/entry.js"');
+    expect(appEntry).toBeGreaterThan(0);
+    expect(html.indexOf('id="saml-late-marker-guard"')).toBeLessThan(appEntry);
     expect(env.window.__takeSamlUrlSanitizer).toBeUndefined();
     expect(env.listeners.hashchange.capture).toBe(true);
     expect(env.listeners.popstate.capture).toBe(true);
