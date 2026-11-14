@@ -583,7 +583,7 @@ def test_gcs_uses_a_compare_bucket_only_from_the_credentials_project(
         lambda event, **fields: logged.append((event, fields)),
     )
     if case == "in-another-project":
-        # A bucket of that name exists, but belongs to someone else.
+        # A bucket of that name exists, but is not listed among this project's buckets.
         client.project_buckets = ["test-upload", "unrelated-bucket"]
     elif case == "listing-fails":
         client.list_error = _storage_error("AccessDenied")

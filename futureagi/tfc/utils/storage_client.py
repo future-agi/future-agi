@@ -495,8 +495,9 @@ def _check_private_bucket(client: Minio, bucket_name: str) -> None:
         raise error
     if STORAGE_BACKEND == "gcs":
         # GCS bucket access is IAM, not a bucket policy the S3 API can read.
-        # A bucket of this name may still belong to another project, so it is
-        # used only if it is one of the credentials' own project's buckets.
+        # Existence alone does not show which project a GCS bucket is in, so
+        # it is used only if it is listed among the credentials' project's
+        # buckets.
         _require_project_bucket(client, bucket_name)
         return
     if not exists:
