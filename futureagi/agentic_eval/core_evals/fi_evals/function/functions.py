@@ -27,6 +27,7 @@ from agentic_eval.core_evals.llm_services.openai_api import OpenAiService
 
 def tool_call_loop_repetition(
     output,
+    window_size=100,
     min_repeats=3,
     max_cycle_length=4,
     near_duplicate_threshold=0.92,
@@ -40,6 +41,7 @@ def tool_call_loop_repetition(
 
     result = evaluate_tool_call_loop_repetition(
         output,
+        window_size=window_size,
         min_repeats=min_repeats,
         max_cycle_length=max_cycle_length,
         near_duplicate_threshold=near_duplicate_threshold,

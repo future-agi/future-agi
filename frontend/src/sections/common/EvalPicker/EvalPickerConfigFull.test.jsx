@@ -69,7 +69,7 @@ vi.mock("src/sections/evals/components/LLMPromptEditor", () => ({
 }));
 
 vi.mock("src/sections/evals/components/CodeEvalEditor", () => ({
-  default: () => <div />,
+  default: () => <div data-testid="custom-code-editor" />,
 }));
 
 vi.mock("src/sections/evals/components/OutputTypeConfig", () => ({
@@ -226,6 +226,33 @@ const configFullTree = ({
 );
 
 const renderConfigFull = (options = {}) => render(configFullTree(options));
+
+it("attaches a registered function without requiring or editing sandbox code", async () => {
+  const previous = stableEvalDetail.data;
+  stableEvalDetail.data = {
+    id: "tpl-loop", templateId: "tpl-loop", name: "tool_call_loop_repetition", owner: "system",
+    eval_type: "code", output_type: "pass_fail", required_keys: [],
+    function_params_schema: { window_size: { type: "integer", default: 100 } },
+    config: { eval_type_id: "ToolCallLoopRepetition", required_keys: [],
+      config: { window_size: { type: "integer", default: 100 } } },
+  };
+  try {
+    const onSave = vi.fn();
+    renderConfigFull({ evalData: stableEvalDetail.data, onSave });
+    await act(async () => capturedProps.tracing.onReadyChange(true, {}));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Add Evaluation" })).toBeEnabled());
+    expect(screen.queryByTestId("custom-code-editor")).not.toBeInTheDocument();
+    expect(screen.getByText(/Built-in function evaluator/)).toBeInTheDocument();
+    await userEvent.clear(screen.getByLabelText("window_size"));
+    await userEvent.type(screen.getByLabelText("window_size"), "8");
+    await userEvent.click(screen.getByRole("button", { name: "Add Evaluation" }));
+    expect(onSave).toHaveBeenCalledWith(expect.objectContaining({
+      templateId: "tpl-loop", params: { window_size: 8 },
+    }));
+  } finally {
+    stableEvalDetail.data = previous;
+  }
+});
 
 it("authors a decision rubric in the attach drawer and forwards the exact route and mapping to preview and binding", async () => {
   const previous = stableEvalDetail.data;

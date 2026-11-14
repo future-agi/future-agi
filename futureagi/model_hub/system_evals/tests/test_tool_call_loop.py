@@ -20,12 +20,12 @@ def test_previous_catalog_cache_does_not_skip_new_diagnostic():
     from model_hub.management.commands.seed_system_evals import seed_evals
 
     EvalTemplate.no_workspace_objects.filter(eval_id=220).delete()
-    cache.set("system_evals_version", 30)
+    cache.set("system_evals_version", 32)
     try:
         seed_evals()
         template = EvalTemplate.no_workspace_objects.get(eval_id=220)
         assert template.name == "tool_call_loop_repetition"
-        assert template.visible_ui is False
+        assert template.visible_ui is True
     finally:
         cache.delete("system_evals_version")
 
@@ -39,8 +39,8 @@ def definition():
 def test_diagnostic_template_loads_and_registered_evaluator_scores_gateway_calls():
     template = definition()
     assert template["eval_id"] == 220
-    assert template["visible_ui"] is False
-    assert template["config"]["required_keys"] == ["output"]
+    assert template["visible_ui"] is True
+    assert template["config"]["required_keys"] == []
     assert is_function_eval(template["config"]["eval_type_id"])
     evaluator = get_eval_class(template["config"]["eval_type_id"])()
     calls = [
@@ -69,6 +69,7 @@ def test_registered_evaluator_uses_configured_threshold_and_progress():
 
 def test_configured_loop_parameters_are_exported_without_aliasing():
     parameters = {
+        "window_size": 8,
         "min_repeats": 4,
         "max_cycle_length": 2,
         "near_duplicate_threshold": 0.85,

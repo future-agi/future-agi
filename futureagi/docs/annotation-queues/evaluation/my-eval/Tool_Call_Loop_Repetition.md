@@ -73,18 +73,41 @@ even for `0`, `False`, `""`, empty containers, or `None`. Invalid names and
 non-object arguments raise `ValueError` instead of receiving a healthy score.
 The adapter consumes exported call data; it does not collect Gateway runs.
 
-## Registered backend evaluator
+## Run it on an Observe trace
 
-The catalog contains the hidden diagnostic template `tool_call_loop_repetition`
-with type `ToolCallLoopRepetition`, required input `output`, and score output.
-It is registered with the backend function-evaluation engine and can be invoked
-through existing evaluation APIs with an explicit template/type selection.
-It is not added to the UI picker while product behavior is being settled.
+1. Record completed tool spans with the tracer: span kind `tool`, tool name
+   (`tool.name`, `gen_ai.tool.name`, or the span name), input, output, and start/end
+   timestamps. LLM tool-call proposals are not completed tool executions.
+2. Open an evaluation task for the Observe project and choose **Traces** as its
+   target. Add `tool_call_loop_repetition` from the evaluation picker.
+3. Set **min_repeats** and **window_size** in the function parameters. No input
+   mapping or model credentials are needed: the evaluator reads the selected
+   trace's recorded tool calls automatically.
+4. Run the live preview. Inspect the score and explanation, including the tool,
+   repeated arguments, evaluated call count and configured window. Submit the
+   task to evaluate the selected traces and retain the results.
 
-The standard backend evaluator result contains the score and reason. Use the
-standalone helper above for structured cycle diagnostics. Scores range from
-0 to 1, where higher is healthier; the diagnostic pass threshold is 0.5.
-A low score is **not** an instruction to interrupt an agent.
+Preview and the trace-task engine use the same input adapter and ClickHouse
+recordings, including traces without a PostgreSQL copy. The legacy runner uses
+its configured PostgreSQL read source. Reads are scoped to the trace's project
+and ordered by start time then span ID, independently of arrival order. Only the
+most recent `window_size` tool calls are inspected; older loops outside the
+window are not reported. Missing calls, missing inputs/outputs, unfinished spans,
+and failed reads produce an error rather than a healthy empty score.
+
+This is a **built-in deterministic function eval**, rather than a custom-code
+example: the picker, parameter controls, trace tasks and result display already
+provide the needed lifecycle, without duplicating code in a sandbox or adding a
+model call. It does not change Gateway execution. Use a trace target, not a span,
+session or dataset target; an individual span does not contain the call sequence.
+
+The registered type is `ToolCallLoopRepetition`. Existing backend callers can
+still supply an explicit `output` list of completed calls. Stored-trace execution
+always reads recorded spans instead of trusting a supplied output summary.
+Scores range from 0 to 1 (higher is healthier), with a 0.5 pass threshold. A
+recorded loop falls below that threshold; progress-sensitive calls score 1.
+Use the standalone helper above for structured cycle diagnostics. A low score is
+**not** an instruction to interrupt an agent.
 
 ## Incremental diagnostic observation
 
@@ -103,15 +126,16 @@ Create one observer per sequential run; it is not a shared concurrent collector.
 The window bounds retained calls. Indices remain full-stream positions after
 trimming; explicit `ToolCall.index` values take precedence. `reset()` clears the
 buffer and restarts implicit indices at zero. Once an earlier loop leaves the
-window, it is no longer reported by that observer; full-trace evaluation can
-still find it. A window must hold at least `min_repeats` calls, and must be large
+window, it is no longer reported by that observer; evaluation with a larger
+window can still find it. A window must hold at least `min_repeats` calls, and must be large
 enough for any longer cycle you want to diagnose.
 
 ## Configuration and limits
 
 | Parameter | Default | Meaning |
 |---|---|---|
-| `min_repeats` | `3` | Minimum complete repetitions, integer at least 2 |
+| `min_repeats` | `3` | Minimum complete repetitions, integer from 2 to 1000 |
+| `window_size` | `100` | Most recent calls to inspect, at least `min_repeats` and at most 1000 |
 | `max_cycle_length` | `4` | Maximum cycle length, positive integer |
 | `near_duplicate_threshold` | `0.92` | String similarity threshold between 0 and 1; 1 requires exact strings |
 | `also_compare_results` | `True` | Changed results are progress; disabling this diagnoses call shape only |

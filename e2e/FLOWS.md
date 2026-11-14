@@ -1540,6 +1540,28 @@
 - historical append rerun admits late rows only for the frozen contact without reranking
 - edited quota is persisted and visible results have one new cohort with probability one, while old provenance remains archived
 
+### EVAL-E2E-021 — pick the tool loop evaluator and compare repeated calls with progress
+
+**Goal:** Run the built-in tool loop evaluator on stored Observe traces and retain the result
+
+**Spec:** `flows/evals/tool-call-loop.spec.ts:20`
+
+**Tags:** —
+
+**User steps:**
+
+1. seed repeated and progressing completed tool spans
+2. choose Traces and the built-in evaluator
+3. configure repeats and window without input mapping
+4. preview both traces and inspect scores and reasons
+5. submit a historical task and inspect persisted results
+
+**Backend state verified:**
+
+- ClickHouse contains exactly the seeded tool span identities
+- browser preview reads each trace and returns its expected score and window reason
+- Postgres and ClickHouse retain exactly the two trace-target results
+
 ## gateway
 
 ### GW-E2E-001 — gateway traffic is filtered by the application that sent it

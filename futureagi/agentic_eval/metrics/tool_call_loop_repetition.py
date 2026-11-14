@@ -36,6 +36,8 @@ class LoopEvalResult:
     repeat_count: int | None = None
     first_loop_start_index: int | None = None
     involved_tools: list[str] = field(default_factory=list)
+    window_size: int | None = None
+    evaluated_calls: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -48,6 +50,8 @@ class LoopEvalResult:
             "repeat_count": self.repeat_count,
             "first_loop_start_index": self.first_loop_start_index,
             "involved_tools": self.involved_tools,
+            "window_size": self.window_size,
+            "evaluated_calls": self.evaluated_calls,
         }
 
 
@@ -193,12 +197,21 @@ class ToolCallLoopDetector:
         severity = self._severity(repeats, length)
         if loop_type == "near_duplicate":
             severity *= 0.85
-        score = round(max(0.0, 1.0 - severity), 4)
+        # Once the configured minimum is met, even a short/fuzzy cycle must
+        # fall below the template's 0.5 pass threshold.
+        score = round(min(0.49, max(0.0, 1.0 - severity)), 4)
         position = calls[start].index if calls[start].index is not None else start
         return LoopEvalResult(
             score=score,
             passed=score >= 0.5,
-            reason=self._describe(loop_type, length, repeats, involved, position),
+            reason=(
+                self._describe(loop_type, length, repeats, involved, position)
+                + " Repeated arguments: "
+                + "; ".join(
+                    f"{call.name}: {_normalize_arguments(call.arguments, self.ignored_argument_keys)[:240]}"
+                    for call in calls[start : start + length]
+                )
+            ),
             loop_detected=True,
             loop_type=loop_type,
             cycle_length=length,
@@ -299,8 +312,22 @@ class ToolCallLoopGuardrail:
         self._next_index = 0
 
 
+def validate_loop_window(window_size: int, min_repeats: int = 3) -> int:
+    """Bound both stored-span reads and deterministic evaluation work."""
+    if (
+        isinstance(window_size, bool)
+        or not isinstance(window_size, int)
+        or not min_repeats <= window_size <= 1000
+    ):
+        raise ValueError("window_size must be an integer >= min_repeats and <= 1000")
+    return window_size
+
+
 def evaluate_tool_call_loop_repetition(
-    tool_calls: str | Sequence[dict[str, Any] | ToolCall], **detector_kwargs: Any
+    tool_calls: str | Sequence[dict[str, Any] | ToolCall],
+    *,
+    window_size: int = 100,
+    **detector_kwargs: Any,
 ) -> dict[str, Any]:
     """Accept flat completed calls or Gateway/OpenAI function-call envelopes.
 
@@ -312,10 +339,14 @@ def evaluate_tool_call_loop_repetition(
         tool_calls = json.loads(tool_calls)
     if not isinstance(tool_calls, (list, tuple)):
         raise ValueError("tool_calls must be a list of completed tool calls")
+    validate_loop_window(window_size, detector_kwargs.get("min_repeats", 3))
     normalized = []
-    for call in tool_calls:
+    offset = max(0, len(tool_calls) - window_size)
+    for index, call in enumerate(tool_calls[offset:], start=offset):
         if isinstance(call, ToolCall):
-            normalized.append(call)
+            normalized.append(
+                replace(call, index=index) if call.index is None else call
+            )
             continue
         if not isinstance(call, dict):
             raise ValueError("Each tool call must be an object")
@@ -335,7 +366,14 @@ def evaluate_tool_call_loop_repetition(
                 name=name,
                 arguments=arguments,
                 result=call["result"] if "result" in call else call.get("output"),
-                index=call.get("index"),
+                index=call.get("index", index),
             )
         )
-    return ToolCallLoopDetector(**detector_kwargs).evaluate(normalized).to_dict()
+    result = ToolCallLoopDetector(**detector_kwargs).evaluate(normalized)
+    result.window_size = window_size
+    result.evaluated_calls = len(normalized)
+    result.reason += (
+        f" Evaluated {len(normalized)} most recent tool calls "
+        f"(window_size={window_size})."
+    )
+    return result.to_dict()

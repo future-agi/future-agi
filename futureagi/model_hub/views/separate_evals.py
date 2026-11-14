@@ -7495,6 +7495,41 @@ class EvalPlayGroundAPIView(APIView):
             except ValueError as ve:
                 return self._gm.bad_request(str(ve))
 
+            from tracer.services.tool_call_loop_input import (
+                is_tool_call_loop_eval,
+                trace_tool_call_input,
+            )
+
+            if is_tool_call_loop_eval(eval_template) and _trace_id:
+                from tracer.models.project import Project
+                from tracer.services.clickhouse.v2.eval_loader import (
+                    eval_read_source,
+                    get_trace,
+                )
+
+                # Observe preview uses the same authoritative store as the
+                # trace-task engine, including traces that have no PG row.
+                try:
+                    with eval_read_source("clickhouse"):
+                        loop_trace = get_trace(str(_trace_id))
+                        if not Project.objects.filter(
+                            id=loop_trace.project_id, organization=org
+                        ).exists():
+                            return self._gm.bad_request("The selected trace is unavailable.")
+                        mapping = trace_tool_call_input(
+                            loop_trace, eval_template, runtime_config
+                        )
+                except ValueError as exc:
+                    return self._gm.bad_request(str(exc))
+                except Exception:
+                    return self._gm.bad_request(
+                        "Tool-call telemetry could not be loaded. Please retry."
+                    )
+            elif is_tool_call_loop_eval(eval_template) and "output" not in mapping:
+                return self._gm.bad_request(
+                    "Select a trace with recorded tool calls to run this evaluation."
+                )
+
             try:
                 # Run the evaluation with the provided config
                 response = run_eval_func(

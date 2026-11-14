@@ -3776,6 +3776,14 @@ def _execute_evaluation_for_trace(
     eval_type_id = eval_template.config.get("eval_type_id")
     futureagi_eval = eval_type_id in FUTUREAGI_EVAL_TYPES
 
+    from tracer.services.tool_call_loop_input import (
+        is_tool_call_loop_eval,
+        trace_tool_call_input,
+    )
+
+    if is_tool_call_loop_eval(eval_template):
+        run_params = trace_tool_call_input(trace, eval_template, custom_eval_config.config)
+
     # Apply the shared empty-input rules — see _execute_evaluation for
     # the rationale. Same partial_input warning gets attached to the
     # EvalLogger output_metadata so the trace-target row gets the badge.

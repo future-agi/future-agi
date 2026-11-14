@@ -736,8 +736,10 @@ class ToolCallLoopRepetition(FunctionEvaluator):
         near_duplicate_threshold: float = 0.92,
         also_compare_results: bool = True,
         display_name: str | None = None,
+        window_size: int = 100,
     ):
         self._loop_parameters = {
+            "window_size": window_size,
             "min_repeats": min_repeats,
             "max_cycle_length": max_cycle_length,
             "near_duplicate_threshold": near_duplicate_threshold,

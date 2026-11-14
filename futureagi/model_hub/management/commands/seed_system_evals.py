@@ -35,7 +35,8 @@ logger = structlog.get_logger(__name__)
 # 30: spearman_correlation uses Pearson over midranks and scores constant input as undefined.
 # 31: link checks ignore prose and require operator-approved public destinations.
 # 32: register the hidden completed-tool-call repetition diagnostic.
-SYSTEM_EVALS_VERSION = 32
+# 33: make the trace-backed tool-call loop evaluator selectable with a bounded window.
+SYSTEM_EVALS_VERSION = 33
 
 # Postgres advisory-lock key. Serialises concurrent seed_evals() calls
 # across pods so the bulk_create path can't race on new eval_ids. Any
