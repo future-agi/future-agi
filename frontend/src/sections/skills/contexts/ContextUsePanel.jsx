@@ -63,6 +63,8 @@ function UseContent({ snapshot, origin, originError, organizationId, workspaceId
   };
   const environment = command.split('\n').filter((line) => /^export FI_CONTEXT_(ORGANIZATION|WORKSPACE)_ID=/.test(line)).join('\n');
   const visibleCommand = command.split('\n').filter((line) => !/^export FI_CONTEXT_(ORGANIZATION|WORKSPACE)_ID=/.test(line)).join('\n');
+  // Only someone who can create keys is told to create one; a member without that permission sees the admin guidance instead.
+  const canCreateKey = !isViewer && !(isValidElement(runtimeAccess) && runtimeAccess.props.canIssue === false);
   const adminRequest = `Please create a read-only key for ${snapshot.name} v${snapshot.version} in Future AGI.`;
   // Viewers can read the commands but cannot create the key they need, so copying is held back with a reason.
   const viewerReason = isViewer ? 'Ask a workspace admin for a read-only key, then come back to copy the commands.' : '';
@@ -87,7 +89,7 @@ function UseContent({ snapshot, origin, originError, organizationId, workspaceId
           <Typography variant="m3" component="h3">2. Create a read-only key</Typography>
           <Box id="context-runtime-access" sx={{ minWidth: 0 }}>{isValidElement(runtimeAccess) ? cloneElement(runtimeAccess, { onAvailabilityChange: setHasKey, showHeading: false }) : runtimeAccess}</Box>
         </Stack>
-        <Stack direction="row" spacing={1} alignItems="center" useFlexGap sx={{ flexWrap: 'wrap' }}><Typography variant="m3" component="h3">3. Preview the changes</Typography>{!hasKey && !isViewer && <StatusBadge status="unknown" label="Create a key first" />}</Stack>
+        <Stack direction="row" spacing={1} alignItems="center" useFlexGap sx={{ flexWrap: 'wrap' }}><Typography variant="m3" component="h3">3. Preview the changes</Typography>{!hasKey && canCreateKey && <StatusBadge status="unknown" label="Create a key first" />}</Stack>
         {problem ? <Alert severity="warning">{problem}</Alert> : <>
           <Typography variant="s3" color="text.secondary">API: {new URL(origin).host}</Typography>
           {isViewer && <Stack direction="row" spacing={1} alignItems="center" useFlexGap sx={{ flexWrap: 'wrap' }}>

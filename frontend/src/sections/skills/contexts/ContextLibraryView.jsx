@@ -36,7 +36,7 @@ const libraryTableSx = (theme) => {
       '& tbody tr': { ...base[phone]['& tbody tr'], position: 'relative', borderBottom: `1px solid ${theme.palette.divider}` },
       '& tbody tr:last-of-type': { borderBottom: 0 },
       '& tbody tr > td:first-of-type': { pr: 5 },
-      '& tbody td[data-cell="actions"]': { position: 'absolute', top: 8, right: 0, display: 'block', m: 0, p: 0 },
+      '& tbody td[data-cell="actions"]': { ...base[phone]['& tbody td[data-cell="actions"]'], position: 'absolute', top: 8, right: 0, mt: 0, p: 0 },
     },
   };
 };

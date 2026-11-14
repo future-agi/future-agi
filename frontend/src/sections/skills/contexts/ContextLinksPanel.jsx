@@ -124,7 +124,7 @@ function Links({ scopeKey, session, availableSkills = [], upstream = {}, onPrevi
         </Stack> : [<TableRow hover key={link.skillId} sx={{ height: ROW_HEIGHT.default, ...(open ? { '& > td': { borderBottom: 0 } } : {}) }}>
           <TableCell>{identity}</TableCell>
           <TableCell>{selectorLabel(link.selector)}</TableCell>
-          <TableCell>{included ? <VersionLabel number={included.version} digest={included.digest} label="Version" /> : 'Not yet accepted'}</TableCell>
+          <TableCell>{included ? <VersionLabel number={included.version} digest={included.digest} /> : 'Not yet accepted'}</TableCell>
           <TableCell>{status}</TableCell>
           <TableCell><Stack direction="row" useFlexGap spacing={1} alignItems="center" sx={{ flexWrap: 'wrap' }}>{actions}</Stack></TableCell>
           <TableCell padding="checkbox" align="right">{toggle}</TableCell>

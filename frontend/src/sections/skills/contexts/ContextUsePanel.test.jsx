@@ -59,3 +59,10 @@ it('holds back Copy for a viewer with the reason, and offers a request for an ad
   expect(writeText).toHaveBeenCalledWith('Please create a read-only key for support-agent v1 in Future AGI.');
   expect(writeText.mock.calls[0][0]).not.toMatch(/FI_CONTEXT|secret/i);
 });
+const Access = () => null;
+it('tells only people who can create keys to create one first', () => {
+  const view = render(<ContextUsePanel {...props} runtimeAccess={<Access canIssue={false} />} />);
+  expect(screen.queryByText('Create a key first')).not.toBeInTheDocument();
+  view.rerender(<ContextUsePanel {...props} runtimeAccess={<Access canIssue />} />);
+  expect(screen.getByText('Create a key first')).toBeVisible();
+});

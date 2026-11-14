@@ -78,7 +78,7 @@ it('shows the pinned row with a disabled checkbox, a lock mark and Production as
   const pin = screen.getByRole('checkbox', { name: 'Select c v1 for update' });
   expect(pin).toBeDisabled();
   const rowOf = (name) => screen.getByRole('checkbox', { name }).closest('tr');
-  expect(rowOf('Select c v1 for update').querySelector('svg, .component-iconify')).not.toBeNull();
+  expect(rowOf('Select c v1 for update').querySelector('.component-iconify')).not.toBeNull();
   expect(rowOf('Select a v1 for update').querySelector('.component-iconify')).toBeNull();
   expect(within(rowOf('Select a v1 for update')).getByText('Production')).toBeVisible();
   expect(within(rowOf('Select c v1 for update')).getByText('Pinned on purpose')).toBeVisible();

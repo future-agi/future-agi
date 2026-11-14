@@ -21,7 +21,7 @@ import ContextLinksPanel from './ContextLinksPanel';
 
 // URL owns section identity; version/file loading never replaces the object shell.
 // Below sm the header actions share the title row (they wrap under it only when they cannot fit), so Edit adds no row.
-const PHONE_TITLE_ROW = { '@media (max-width:599.95px)': { '& > .MuiStack-root:has(h1)': { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', columnGap: 1 } } };
+const PHONE_TITLE_ROW = { '@media (max-width:599.95px)': { '& > .MuiStack-root:has(h1)': { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', columnGap: 1 }, '& > .MuiStack-root:last-of-type': { flex: '1 1 0', minWidth: 'min-content', justifyContent: 'flex-end' } } };
 const TABS = [['context', 'Instructions'], ['links', 'Linked skills'], ['tests', 'Tests'], ['versions', 'Versions'], ['consumers', 'Consumers'], ['recovery', 'Rollback'], ['use', 'Use']];
 function Detail({ scopeKey, query, versionQuery, fileQuery, selectedPath = 'AGENTS.md', onSelectPath, onSelectVersion, versions = [], onEditViewed, onResumeDraft, onReviewDraft, onPreserveDraft, onStartDraft, sections = {}, state, initialTab }) {
   const [params, setParams] = useSearchParams();
@@ -62,7 +62,7 @@ function Detail({ scopeKey, query, versionQuery, fileQuery, selectedPath = 'AGEN
   const originNote = !noRelease && viewed && context.latestVersion != null && viewed.number !== context.latestVersion ? `Editing starts from v${viewed.number}, the version you're viewing. Latest is v${context.latestVersion}.` : '';
   return <Stack spacing={{ xs: 0.5, sm: 1.5 }} sx={{ minWidth: 0 }}>
     <ObjectHeader sx={PHONE_TITLE_ROW} crumbs={[{ label: 'Agent contexts', to: paths.dashboard.skills.contexts }, { label: context.name }]} title={context.name} purpose={phone ? undefined : (descriptor?.description || context.description)}
-      actions={<Stack direction="row" useFlexGap spacing={1} sx={{ flexWrap: 'wrap' }}>
+      actions={<Stack direction="row" useFlexGap spacing={1} sx={{ flexWrap: 'wrap', justifyContent: { xs: 'flex-end', sm: 'flex-start' } }}>
         {query.data.ownDraft && <Button color="primary" variant={editPrimary && !newerPublished ? 'contained' : 'outlined'} disabled={cannotEdit || !onResumeDraft} onClick={onResumeDraft}>Resume your draft</Button>}
         {query.data.ownDraft && onReviewDraft && <Button variant="outlined" onClick={onReviewDraft}>Review saved draft</Button>}
         {noRelease && !query.data.ownDraft && <Button color="primary" variant="contained" disabled={cannotEdit || !onStartDraft} onClick={onStartDraft}>Start draft</Button>}

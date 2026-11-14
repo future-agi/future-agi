@@ -33,7 +33,7 @@ const states = {
 // Labels read as names ("Production"), never as the raw lowercase label.
 function LabelChips({ labels }) {
   if (!labels?.length) return <Typography variant="s3" color="text.secondary">No labels</Typography>;
-  return <Stack direction="row" useFlexGap spacing={0.5} sx={{ flexWrap: 'wrap' }}>{labels.map((name) => (name === 'production' ? <StatusBadge key={name} status="released" label="Production" /> : <StatusBadge key={name} status="unknown" label={`${name.charAt(0).toUpperCase()}${name.slice(1)}`} />))}</Stack>;
+  return <Stack direction="row" useFlexGap spacing={0.5} sx={{ flexWrap: 'wrap' }}>{labels.map((name) => (name === 'production' ? <StatusBadge key={name} status="released" label="Production" /> : <Typography key={name} component="span" variant="s3">{`${name.charAt(0).toUpperCase()}${name.slice(1)}`}</Typography>))}</Stack>;
 }
 LabelChips.propTypes = { labels: PropTypes.array };
 // One reference table per view. Active references carry the follower selection; history is read-only.
