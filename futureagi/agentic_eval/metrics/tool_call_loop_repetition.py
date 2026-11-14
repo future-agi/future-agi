@@ -193,7 +193,15 @@ class ToolCallLoopDetector:
             loop_detected=False,
         )
 
-    def _result(self, calls, start, repeats, length, loop_type, involved):
+    def _result(
+        self,
+        calls: Sequence[ToolCall],
+        start: int,
+        repeats: int,
+        length: int,
+        loop_type: str,
+        involved: list[str],
+    ) -> LoopEvalResult:
         severity = self._severity(repeats, length)
         if loop_type == "near_duplicate":
             severity *= 0.85

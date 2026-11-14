@@ -1,3 +1,5 @@
+from typing import cast
+
 from agentic_eval.core_evals.fi_evals import FunctionEvaluator
 from agentic_eval.core_evals.fi_evals.eval_type import FunctionEvalTypeId
 
@@ -793,7 +795,7 @@ class ToolCallLoopRepetition(FunctionEvaluator):
         return super()._evaluate(**{**self._loop_parameters, **kwargs})
 
     def is_failure(self, eval_response) -> bool:
-        return eval_response["result"] < 0.5
+        return cast(float, eval_response["result"]) < 0.5
 
 
 class Ssim(FunctionEvaluator):
