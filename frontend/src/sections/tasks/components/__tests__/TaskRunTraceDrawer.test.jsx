@@ -56,6 +56,8 @@ describe("TaskRunTraceDrawer", () => {
       traceId: "trace-1",
       projectId: "project-1",
       initialSpanId: "span-1",
+      // The evaluated span stays visible under the user's saved span filters.
+      keepInitialSpanVisible: true,
       initialEvalFocus: true,
       hasPrev: false,
       hasNext: true,
