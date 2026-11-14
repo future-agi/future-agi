@@ -514,7 +514,6 @@ def create_selected_harness_run(
             "default_pair_sealed",
             "conversation_checkpoints",
             "draft_saves",
-            "builder_turn_usage",
             "observability_refusal",
             # The run's payload never names which cases are held back; its sandbox
             # still holds every case of the suite.

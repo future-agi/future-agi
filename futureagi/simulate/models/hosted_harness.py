@@ -643,6 +643,41 @@ class HostedHarnessConversationMessage(BaseModel):
         ]
 
 
+class HostedHarnessBuilderTurnUsage(BaseModel):
+    """What a builder chat turn after a build spent, and what it billed.
+
+    Such a turn runs in a chat sandbox of its own, outside any attempt, so no attempt's
+    ledger covers it. One row per command: a replayed ending finds the row and bills nothing
+    new. ``report`` is frozen once written, and None when the turn could not be priced.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    job = models.ForeignKey(
+        HostedHarnessJob,
+        on_delete=models.CASCADE,
+        related_name="builder_turn_usages",
+    )
+    organization = models.ForeignKey(
+        Organization, on_delete=models.CASCADE, related_name="+"
+    )
+    workspace = models.ForeignKey(
+        Workspace, on_delete=models.SET_NULL, null=True, blank=True, related_name="+"
+    )
+    command_message = models.OneToOneField(
+        HostedHarnessConversationMessage,
+        on_delete=models.CASCADE,
+        related_name="builder_turn_usage",
+    )
+    outcome = models.CharField(max_length=16, default="")
+    # The turn's usage as the guest reported it: tokens, USD, unpriced turns and its models.
+    usage = models.JSONField(default=dict)
+    report = models.JSONField(null=True, blank=True)
+
+    class Meta:
+        db_table = "simulate_hosted_harness_builder_turn_usage"
+        indexes = [models.Index(fields=["job"], name="idx_hbturn_job")]
+
+
 class HostedHarnessConversationEvent(BaseModel):
     event_id = models.CharField(primary_key=True, max_length=128)
     conversation = models.ForeignKey(

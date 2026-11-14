@@ -1104,13 +1104,11 @@ def _ingest_event(
             )
         )
     if chat_only and event["kind"] == "turn_completed":
-        from simulate.services.harness_usage import meter_builder_turn
+        from simulate.services.harness_usage import bill_builder_turn
 
         # A turn in a chat sandbox of its own: no attempt's ledger covers its spend.
         transaction.on_commit(
-            partial(
-                meter_builder_turn, str(conversation.id), event.get("payload") or {}
-            )
+            partial(bill_builder_turn, str(conversation.id), event.get("payload") or {})
         )
     _project_event(conversation, event)
 
