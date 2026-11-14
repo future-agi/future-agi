@@ -144,6 +144,7 @@ func (p *Provider) StreamChatCompletionViaResponses(ctx context.Context, req *mo
 
 		conv := responsesStreamConverter{model: req.Model, created: time.Now().Unix()}
 		send := func(chunk models.StreamChunk) bool {
+			chunk.ReceivedAt = time.Now()
 			select {
 			case chunks <- chunk:
 				return true
@@ -379,7 +380,7 @@ func toResponsesRequest(req *models.ChatCompletionRequest, stream bool) (_ *resp
 
 // chatOnlyParams names the chat parameters set on req that the Responses API
 // cannot carry. A value that changes nothing (a zero penalty, logprobs false,
-// an empty stop or logit_bias) is not counted.
+// an empty stop, a logit_bias of zeros) is not counted.
 func chatOnlyParams(req *models.ChatCompletionRequest) []string {
 	var params []string
 	if stopSet(req.Stop) {
@@ -400,8 +401,11 @@ func chatOnlyParams(req *models.ChatCompletionRequest) []string {
 	if req.PresencePenalty != nil && *req.PresencePenalty != 0 {
 		params = append(params, "presence_penalty")
 	}
-	if len(req.LogitBias) > 0 {
-		params = append(params, "logit_bias")
+	for _, bias := range req.LogitBias {
+		if bias != 0 {
+			params = append(params, "logit_bias")
+			break
+		}
 	}
 	return params
 }

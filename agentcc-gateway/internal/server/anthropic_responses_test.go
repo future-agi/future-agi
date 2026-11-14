@@ -39,6 +39,9 @@ type openAIUpstream struct {
 	// responsesThinks holds a /v1/responses stream this long after
 	// response.created, as a model reasoning before its first output.
 	responsesThinks time.Duration
+	// responsesFailAfterThinking ends that stream with response.failed right
+	// after the thinking pause, before any output.
+	responsesFailAfterThinking bool
 }
 
 func (u *openAIUpstream) count(path string) int {
@@ -63,6 +66,7 @@ func (u *openAIUpstream) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	u.bodies[r.URL.Path] = raw
 	failResponses := u.failResponses
 	thinks := u.responsesThinks
+	failAfterThinking := u.responsesFailAfterThinking
 	u.mu.Unlock()
 
 	var req struct {
@@ -138,6 +142,10 @@ func (u *openAIUpstream) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			if ev.Type == "response.created" && thinks > 0 {
 				w.(http.Flusher).Flush()
 				time.Sleep(thinks)
+				if failAfterThinking {
+					fmt.Fprint(w, "event: response.failed\ndata: {\"type\":\"response.failed\",\"response\":{\"id\":\"resp_1\",\"status\":\"failed\",\"error\":{\"code\":\"server_error\",\"message\":\"synthetic failure\"}}}\n\n")
+					return
+				}
 			}
 		}
 	default:

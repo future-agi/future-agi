@@ -1603,6 +1603,14 @@ func (h *Handlers) handleStream(ctx context.Context, w http.ResponseWriter, rc *
 	// routing latency is taken at the next chunk, counted from servingStart.
 	var servingStart time.Time
 	var awaitingOutput bool
+	// routingLatency is the latency an outcome is recorded with: to the first
+	// output, or, for a stream that ends before any, the time it ran.
+	routingLatency := func() time.Duration {
+		if awaitingOutput {
+			return time.Since(servingStart)
+		}
+		return firstChunkLatency
+	}
 	defer func() {
 		if upstreamStreamCancel != nil {
 			upstreamStreamCancel()
@@ -1849,14 +1857,14 @@ func (h *Handlers) handleStream(ctx context.Context, w http.ResponseWriter, rc *
 			if !ok {
 				if apiErr, finished := closedStreamError(ctx, errCh); !finished {
 					if apiErr != nil {
-						h.recordProviderOutcome(ctx, servingProvider, firstChunkLatency, apiErr)
+						h.recordProviderOutcome(ctx, servingProvider, routingLatency(), apiErr)
 						rc.AddError(apiErr)
 						sseWriter.WriteError(apiErr)
 					}
 					finalizeStream(ctx.Err() != nil)
 					return
 				}
-				h.recordProviderOutcome(ctx, servingProvider, firstChunkLatency, nil)
+				h.recordProviderOutcome(ctx, servingProvider, routingLatency(), nil)
 				// Stream complete — run final guardrail check.
 				if streamChecker != nil {
 					if res := streamChecker.Finish(streamCtx); res.Blocked {
@@ -1884,7 +1892,11 @@ func (h *Handlers) handleStream(ctx context.Context, w http.ResponseWriter, rc *
 				return
 			}
 			if awaitingOutput && !chunk.Acknowledgement {
-				firstChunkLatency = time.Since(servingStart)
+				if chunk.ReceivedAt.IsZero() {
+					firstChunkLatency = time.Since(servingStart)
+				} else {
+					firstChunkLatency = chunk.ReceivedAt.Sub(servingStart)
+				}
 				awaitingOutput = false
 			}
 			if streamID == "" && chunk.ID != "" {
@@ -1923,7 +1935,7 @@ func (h *Handlers) handleStream(ctx context.Context, w http.ResponseWriter, rc *
 
 		case err, ok := <-errCh:
 			if ok && err != nil {
-				h.recordProviderOutcome(ctx, servingProvider, firstChunkLatency, err)
+				h.recordProviderOutcome(ctx, servingProvider, routingLatency(), err)
 				apiErr, isAPI := err.(*models.APIError)
 				if !isAPI {
 					apiErr = models.ErrInternal(err.Error())
@@ -1940,7 +1952,7 @@ func (h *Handlers) handleStream(ctx context.Context, w http.ResponseWriter, rc *
 			// guardrail goroutines. Drain remaining chunks to unblock the
 			// provider goroutine.
 			if apiErr := streamEndError(ctx, ctx.Err()); apiErr != nil {
-				h.recordProviderOutcome(ctx, servingProvider, firstChunkLatency, ctx.Err())
+				h.recordProviderOutcome(ctx, servingProvider, routingLatency(), ctx.Err())
 				rc.AddError(apiErr)
 				sseWriter.WriteError(apiErr)
 			}

@@ -63,7 +63,7 @@ func TestChatOnlyParametersThatChangeNothingAreNotRefused(t *testing.T) {
 	req.Stop = json.RawMessage(`[]`)
 	req.FrequencyPenalty, req.PresencePenalty = &zero, &zero
 	req.Logprobs, req.TopLogprobs = &off, &none
-	req.LogitBias = map[string]int{}
+	req.LogitBias = map[string]int{"50256": 0}
 	if _, err := toResponsesRequest(req, false); err != nil {
 		t.Fatalf("got %v", err)
 	}
