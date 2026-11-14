@@ -37,12 +37,16 @@ from ee.agenthub.scenario_graph.persona_configurator import (
     PersonaConfigurator,
 )
 from agentic_eval.core.llm.llm import LLM
+
 try:
     from ee.usage.models.usage import APICallTypeChoices
 except ImportError:
     APICallTypeChoices = None
 try:
-    from ee.usage.utils.usage_entries import count_text_tokens, log_and_deduct_cost_for_api_request
+    from ee.usage.utils.usage_entries import (
+        count_text_tokens,
+        log_and_deduct_cost_for_api_request,
+    )
 except ImportError:
     count_text_tokens = None
     log_and_deduct_cost_for_api_request = None

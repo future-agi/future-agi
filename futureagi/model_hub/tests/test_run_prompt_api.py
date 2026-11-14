@@ -377,9 +377,7 @@ class TestAddRunPromptColumnView:
             "config": config,
         }
 
-        with patch(
-            "model_hub.tasks.run_prompt.process_prompts_single.apply_async"
-        ):
+        with patch("model_hub.tasks.run_prompt.process_prompts_single.apply_async"):
             response = auth_client.post(
                 "/model-hub/develops/add_run_prompt_column/",
                 payload,
@@ -1645,7 +1643,10 @@ class TestAddRunPromptColumnConfigVariations:
             {
                 "model": "gpt-4",
                 "messages": [
-                    {"role": "user", "content": [{"type": "text", "text": "List items"}]}
+                    {
+                        "role": "user",
+                        "content": [{"type": "text", "text": "List items"}],
+                    }
                 ],
                 "output_format": "array",
             },
@@ -1657,11 +1658,16 @@ class TestAddRunPromptColumnConfigVariations:
             {
                 "model": "gpt-4",
                 "messages": [
-                    {"role": "user", "content": [{"type": "text", "text": "Calculate total"}]}
+                    {
+                        "role": "user",
+                        "content": [{"type": "text", "text": "Calculate total"}],
+                    }
                 ],
                 "output_format": "number",
             },
-            lambda self, ds: self._assert_column_data_type(ds, "Number Output", "integer"),
+            lambda self, ds: self._assert_column_data_type(
+                ds, "Number Output", "integer"
+            ),
         ),
         (
             "output_format_object",
@@ -1669,7 +1675,10 @@ class TestAddRunPromptColumnConfigVariations:
             {
                 "model": "gpt-4",
                 "messages": [
-                    {"role": "user", "content": [{"type": "text", "text": "Return JSON"}]}
+                    {
+                        "role": "user",
+                        "content": [{"type": "text", "text": "Return JSON"}],
+                    }
                 ],
                 "output_format": "object",
             },
@@ -1692,7 +1701,10 @@ class TestAddRunPromptColumnConfigVariations:
             {
                 "model": "gpt-4",
                 "messages": [
-                    {"role": "user", "content": [{"type": "text", "text": "Generate text"}]}
+                    {
+                        "role": "user",
+                        "content": [{"type": "text", "text": "Generate text"}],
+                    }
                 ],
                 "output_format": "string",
                 "run_prompt_config": {"temperature": 0.2, "max_tokens": 500},
@@ -1712,7 +1724,9 @@ class TestAddRunPromptColumnConfigVariations:
                 "output_format": "string",
                 "concurrency": 10,
             },
-            lambda self, ds: self._assert_run_prompter_attrs("Concurrent Run", concurrency=10),
+            lambda self, ds: self._assert_run_prompter_attrs(
+                "Concurrent Run", concurrency=10
+            ),
         ),
         (
             "response_format",
@@ -1720,7 +1734,10 @@ class TestAddRunPromptColumnConfigVariations:
             {
                 "model": "gpt-4",
                 "messages": [
-                    {"role": "user", "content": [{"type": "text", "text": "Analyze this"}]}
+                    {
+                        "role": "user",
+                        "content": [{"type": "text", "text": "Analyze this"}],
+                    }
                 ],
                 "output_format": "object",
                 "response_format": _RESPONSE_FORMAT_SCHEMA,
@@ -1751,7 +1768,10 @@ class TestAddRunPromptColumnConfigVariations:
             {
                 "model": "gpt-4",
                 "messages": [
-                    {"role": "user", "content": [{"type": "text", "text": "Creative text"}]}
+                    {
+                        "role": "user",
+                        "content": [{"type": "text", "text": "Creative text"}],
+                    }
                 ],
                 "output_format": "string",
                 "run_prompt_config": {
@@ -1793,10 +1813,22 @@ class TestAddRunPromptColumnConfigVariations:
             {
                 "model": "gpt-4",
                 "messages": [
-                    {"role": "system", "content": [{"type": "text", "text": "Assistant"}]},
-                    {"role": "user", "content": [{"type": "text", "text": "First question"}]},
-                    {"role": "assistant", "content": [{"type": "text", "text": "First answer"}]},
-                    {"role": "user", "content": [{"type": "text", "text": "Follow up"}]},
+                    {
+                        "role": "system",
+                        "content": [{"type": "text", "text": "Assistant"}],
+                    },
+                    {
+                        "role": "user",
+                        "content": [{"type": "text", "text": "First question"}],
+                    },
+                    {
+                        "role": "assistant",
+                        "content": [{"type": "text", "text": "First answer"}],
+                    },
+                    {
+                        "role": "user",
+                        "content": [{"type": "text", "text": "Follow up"}],
+                    },
                 ],
                 "output_format": "string",
             },
@@ -1819,9 +1851,7 @@ class TestAddRunPromptColumnConfigVariations:
             "name": column_name,
             "config": config,
         }
-        with patch(
-            "model_hub.tasks.run_prompt.process_prompts_single.apply_async"
-        ):
+        with patch("model_hub.tasks.run_prompt.process_prompts_single.apply_async"):
             response = auth_client.post(
                 "/model-hub/develops/add_run_prompt_column/",
                 payload,
@@ -2287,7 +2317,10 @@ class TestRunPromptSerializerValidation:
             {
                 "model": "gpt-4",
                 "messages": [
-                    {"role": "invalid_role", "content": [{"type": "text", "text": "Test"}]}
+                    {
+                        "role": "invalid_role",
+                        "content": [{"type": "text", "text": "Test"}],
+                    }
                 ],
                 "output_format": "string",
             },

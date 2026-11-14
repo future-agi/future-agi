@@ -1,7 +1,11 @@
 import pytest
 from pydantic import BaseModel, ValidationError as PydanticValidationError
 from rest_framework import serializers, status
-from rest_framework.exceptions import AuthenticationFailed, ErrorDetail, PermissionDenied
+from rest_framework.exceptions import (
+    AuthenticationFailed,
+    ErrorDetail,
+    PermissionDenied,
+)
 
 from accounts.authentication import custom_exception_handler
 
