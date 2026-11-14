@@ -2,6 +2,7 @@ import json
 import uuid
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
+from typing import Any
 
 import structlog
 from django.db import DataError, IntegrityError, transaction
@@ -215,14 +216,16 @@ def _strip_nul(value):
     except (RecursionError, TypeError, ValueError):
         pass
     root: dict | list = {} if isinstance(value, dict) else []
-    stack = [(value, root)]
+    stack: list[tuple[dict | list, dict | list]] = [(value, root)]
     while stack:
         source, target = stack.pop()
         items = source.items() if isinstance(source, dict) else enumerate(source)
         for key, item in items:
+            child: Any
             if isinstance(item, (dict, list)):
-                child = {} if isinstance(item, dict) else []
-                stack.append((item, child))
+                container: dict | list = {} if isinstance(item, dict) else []
+                stack.append((item, container))
+                child = container
             elif isinstance(item, str) and "\x00" in item:
                 child = item.replace("\x00", "")
             else:
