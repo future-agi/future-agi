@@ -299,7 +299,7 @@ describe('responsive tables', () => {
     expect(sx[query]['& thead'].display).toBeUndefined();
     expect(sx[query]['& tbody tr']).toMatchObject({ display: 'block', borderBottom: `1px solid ${theme.palette.divider}` });
     const title = Object.entries(sx[query]).find(([selector]) => selector.endsWith('.MuiTableCell-paddingCheckbox + td'))?.[1];
-    expect(title).toMatchObject({ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' });
+    expect(title).toMatchObject({ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', '& > *': { whiteSpace: 'normal' } });
     expect(sx[query]['& tbody td:not(:first-of-type)::before']).toEqual({ content: '" · "', whiteSpace: 'pre' });
     expect(sx[query]['& tbody td[data-cell="actions"]']).toMatchObject({ display: 'block' });
   });

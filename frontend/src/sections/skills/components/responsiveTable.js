@@ -17,7 +17,8 @@ const FIRST_DETAIL = `& tbody td:first-of-type:not(${CHECKBOX}) + td, & tbody td
  * `sx` for a Table that becomes a stacked list below `sm`:
  * each row is a block with a hairline divider; the first cell (after an
  * optional checkbox) is the s1 title on one line with an ellipsis; the other
- * cells are s3 secondary text joined with " · "; cells marked
+ * cells are s3 secondary text joined with " · " (a rich first cell keeps all
+ * its lines; only plain text truncates); cells marked
  * `data-cell="actions"` get their own line. The header stays in the
  * accessibility tree but is visually hidden. Desktop layout is untouched.
  */
@@ -37,10 +38,13 @@ export const stackedTableSx = (theme) => ({
     '& tbody td:not(:first-of-type)::before': { content: '" · "', whiteSpace: 'pre' },
     [`& tbody td${CHECKBOX}`]: { float: 'left', mr: 1, mt: -0.5, width: 'auto' },
     [`${FIRST_DETAIL}`]: { '&::before': { content: 'none' } },
+    // Plain-text titles stay on one line with an ellipsis. Rich title cells
+    // (a Stack with notes or controls) keep every line: their children wrap.
     [TITLE]: {
       display: 'block', mb: 0.5, ...theme.typography.s1, color: 'text.primary',
       whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
       '&::before': { content: 'none' },
+      '& > *': { whiteSpace: 'normal' },
     },
     [`& tbody td${ACTIONS}`]: { display: 'block', mt: 1, '&::before': { content: 'none' } },
   },
