@@ -402,6 +402,76 @@ def test_evaluation_without_reason_column_is_skipped_at_info(
     assert skips[0]["user_eval_metric_id"] == str(metric.id)
 
 
+@pytest.mark.parametrize("finished_rows", [0, 4, 5, GATE_ROWS])
+@pytest.mark.parametrize("remaining_status", [CellStatus.RUNNING, CellStatus.ERROR])
+def test_configured_missing_reason_column_uses_actual_graded_samples(
+    finished_rows, remaining_status, user, workspace, isolated_models, monkeypatch
+):
+    from ee.agenthub.explanation_agent import exp_agent
+
+    dataset, rows = _dataset_with_rows(user, workspace)
+    metric, eval_col, reason_col = _dataset_eval(
+        user, workspace, dataset, name="synthetic-missing-column", reason_column=False
+    )
+    assert reason_col is None
+    # The evaluation is configured to write reasons, but its reason column has
+    # not been created. Exercise the real ORM collector and summary activity.
+    metric.config["reason_column"] = True
+    metric.save(update_fields=["config"])
+    for row in rows[:finished_rows]:
+        _grade(dataset, row, eval_col)
+    for row in rows[finished_rows:]:
+        Cell.objects.create(
+            dataset=dataset,
+            row=row,
+            column=eval_col,
+            # Both queued stale grades and failure messages are nonempty, but
+            # neither is a finished grade that must have produced a reason.
+            value=("1.0" if remaining_status == CellStatus.RUNNING else CRASH_MARKER),
+            status=remaining_status.value,
+        )
+
+    collected = eval_reasons.get_eval_reasons(dataset_id=str(dataset.pk))[
+        "synthetic-missing-column"
+    ]
+    assert collected["writes_reasons"] is True
+    assert "eval_reasons" not in collected
+    assert len(collected["eval_values"]) == GATE_ROWS
+    assert collected["graded_values"] == ["1.0"] * finished_rows
+
+    # Spy on, rather than replace, evaluate: its existing ERROR/INFO decision
+    # must run with the collected PASS grades, not all stored cell values.
+    evaluate_calls = []
+    original_evaluate = exp_agent.ExplanationAgent.evaluate
+
+    def evaluate(self, **kwargs):
+        evaluate_calls.append(kwargs)
+        return original_evaluate(self, **kwargs)
+
+    monkeypatch.setattr(exp_agent.ExplanationAgent, "evaluate", evaluate)
+    records = _run_summary(dataset)
+
+    assert len(evaluate_calls) == 1
+    assert evaluate_calls[0]["explanation"] == []
+    assert evaluate_calls[0]["eval_values"] == ["1.0"] * finished_rows
+    assert dataset.eval_reason_status == EvalExplanationSummaryStatus.COMPLETED
+    assert dataset.eval_reasons == {}
+    assert not [r for r in records if r.get("reason") == "no_reason_column"]
+    if finished_rows >= 5:
+        errors = _error_records(records)
+        assert len(errors) == 1, records
+        assert errors[0]["event"] == "explanation_summary_missing_reasons"
+        assert errors[0]["log_level"] == "error"
+        assert errors[0]["input_count"] == finished_rows
+        assert errors[0]["usable_count"] == 0
+        assert not [r for r in records if r.get("reason") == "insufficient_samples"]
+    else:
+        _assert_insufficient_samples(records, finished_rows)
+    llm, embed = isolated_models
+    embed.assert_not_called()
+    llm._get_completion_content.assert_not_called()
+
+
 def test_reason_column_pairs_with_evaluation_whose_name_contains_reason(
     user, workspace, stub_clustering
 ):

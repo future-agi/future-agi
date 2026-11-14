@@ -99,8 +99,23 @@ def test_keeps_disconnects_and_security_failures():
 
 
 def test_keeps_http_errors_without_explicit_outcome_classification():
-    for code in (400, 401, 403, 404, 422, 429, 500, 503):
+    for code in (400, 401, 402, 403, 404, 422, 429, 500, 503):
         assert before_send({}, _hint(_Exc(code))) is not None
+
+
+def test_feature_denial_requires_the_actual_exception_type():
+    class FeatureUnavailable(Exception):
+        status_code = 402
+
+    assert before_send({}, _hint(FeatureUnavailable("synthetic"))) is not None
+    event = {
+        "exception": {
+            "values": [{"type": "FeatureUnavailable", "value": "synthetic"}]
+        }
+    }
+    # No live exception in the hint: serialized names are not a type check.
+    for hint in ({}, {"exc_info": (None,)}, {"exc_info": "FeatureUnavailable"}):
+        assert before_send(event, hint) is event
 
 
 def test_keeps_messages_that_only_resemble_expected_outcomes():

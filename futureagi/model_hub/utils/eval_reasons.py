@@ -199,15 +199,11 @@ def get_explanation_summary(dataset_id: str) -> None:
         for reason_name, reason_data in reasons.items():
             # Without a metric to say otherwise, assume reasons were expected.
             writes_reasons = reason_data.get("writes_reasons", True)
-            if "eval_reasons" not in reason_data or (
-                not writes_reasons and not reason_data["eval_reasons"]
-            ):
-                # Dataset evaluations only write reasons when configured to
-                # (config.reason_column), and a running evaluation creates its
-                # reason column with the first finished row. With no reason
-                # column there is nothing to summarise and nothing was lost.
-                # StartEvalsProcess creates the reason column even when
-                # reasons are off; an empty one of those counts as none.
+            if not writes_reasons and not reason_data.get("eval_reasons"):
+                # Reasons explicitly disabled cannot be lost. StartEvalsProcess
+                # can still create an empty reason column in this case.
+                # Otherwise let evaluate distinguish an unfinished run from
+                # finished grades whose required reasons (or column) are missing.
                 logger.info(
                     "explanation_summary_skipped",
                     reason="no_reason_column",
@@ -217,7 +213,7 @@ def get_explanation_summary(dataset_id: str) -> None:
                 )
                 continue
 
-            reason = reason_data.get("eval_reasons")
+            reason = reason_data.get("eval_reasons", [])
             uem = reason_data.get("user_eval_metric_id")
 
             explanation_summary = agent.evaluate(

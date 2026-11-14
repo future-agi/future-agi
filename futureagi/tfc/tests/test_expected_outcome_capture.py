@@ -3,7 +3,7 @@
 import json
 import logging
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 import requests
@@ -69,7 +69,7 @@ def test_expected_event_name_does_not_suppress_another_logger_or_exception():
     assert _get_before_send()(event, {}) is event
 
 
-@pytest.mark.parametrize("status", [400, 401, 403, 404, 422, 429, 500, 503])
+@pytest.mark.parametrize("status", [400, 401, 402, 403, 404, 422, 429, 500, 503])
 def test_downstream_http_errors_are_actionable(status):
     response = requests.Response()
     response.status_code = status
@@ -261,6 +261,11 @@ async def test_expected_activity_denial_is_not_an_issue(transport, monkeypatch):
         RuntimeError("synthetic activity fault"),
         ApplicationError("retryable", type="EvaluationDenied", non_retryable=False),
         ApplicationError(
+            "retryable capability", type="CapabilityDenied", non_retryable=False
+        ),
+        ApplicationError("lookup unavailable", type="CapabilityUnavailable"),
+        ApplicationError("untyped refusal", non_retryable=True),
+        ApplicationError(
             "other refusal", type="ProviderMisconfigured", non_retryable=True
         ),
     ]
@@ -269,4 +274,148 @@ async def test_expected_activity_denial_is_not_an_issue(transport, monkeypatch):
             await interceptor_raising(error).execute_activity(activity_input)
     assert [
         event["exception"]["values"][-1]["value"] for event in transport.events
-    ] == ["synthetic activity fault", "retryable", "other refusal"]
+    ] == [
+        "synthetic activity fault",
+        "retryable",
+        "retryable capability",
+        "lookup unavailable",
+        "untyped refusal",
+        "other refusal",
+    ]
+
+
+@pytest.fixture
+def denied_capability(monkeypatch):
+    from tfc.capabilities import service
+
+    decision = service.CapabilityDecision(
+        allowed=False, feature_id="insights", reason_code="PLAN_FEATURE_MISSING"
+    )
+    monkeypatch.setattr(service, "is_configured", lambda: True)
+    monkeypatch.setattr(service, "check", lambda *args, **kwargs: decision)
+
+
+@pytest.mark.asyncio
+async def test_capability_gate_activity_denial_is_not_an_issue(
+    transport, denied_capability, monkeypatch
+):
+    from temporalio.exceptions import ApplicationError
+
+    from tfc.ee_gating import check_ee_feature
+    from tfc.temporal.common import sentry_interceptor
+
+    monkeypatch.setattr(sentry_interceptor, "_get_sentry_sdk", lambda: sentry_sdk)
+    capture = MagicMock(wraps=sentry_sdk.capture_exception)
+    monkeypatch.setattr(sentry_sdk, "capture_exception", capture)
+
+    async def denied_activity(_):
+        # Use the gate and its real Temporal denial emitter, not a fabricated type.
+        check_ee_feature("insights", activity=True)
+
+    interceptor = sentry_interceptor.SentryActivityInboundInterceptor(
+        SimpleNamespace(execute_activity=denied_activity)
+    )
+    with pytest.raises(ApplicationError) as raised:
+        await interceptor.execute_activity(
+            SimpleNamespace(fn=denied_activity, args=[])
+        )
+    assert raised.value.type == "CapabilityDenied"
+    assert raised.value.non_retryable is True
+    capture.assert_not_called()
+    assert transport.events == []
+
+    # The failure is still context for a later, unrelated fault.
+    sentry_sdk.capture_exception(RuntimeError("synthetic subsequent fault"))
+    [event] = transport.events
+    assert any(
+        crumb.get("message") == "Activity failed: denied_activity"
+        for crumb in event["breadcrumbs"]["values"]
+    )
+
+
+@pytest.mark.parametrize("source", ["ee_stub", "capability_gate"])
+@pytest.mark.parametrize("capture_method", ["exception", "log"])
+def test_feature_denial_sources_do_not_create_issues(
+    source, capture_method, transport, denied_capability
+):
+    from tfc.ee_gating import FeatureUnavailable, check_ee_feature
+    from tfc.ee_stub import _ee_stub
+
+    try:
+        if source == "ee_stub":
+            _ee_stub("synthetic_feature")()
+        else:
+            check_ee_feature("insights")
+    except FeatureUnavailable as error:
+        assert error.status_code == 402
+        if capture_method == "exception":
+            sentry_sdk.capture_exception(error)
+        else:
+            logging.getLogger("test.feature_gate").exception("synthetic denial")
+    else:
+        pytest.fail("The real gate must refuse the feature")
+    assert transport.events == []
+
+    sentry_sdk.capture_exception(RuntimeError("synthetic subsequent fault"))
+    [event] = transport.events
+    assert event["exception"]["values"][-1]["type"] == "RuntimeError"
+    if capture_method == "log":
+        assert any(
+            crumb.get("category") == "test.feature_gate"
+            for crumb in event["breadcrumbs"]["values"]
+        )
+
+
+@pytest.mark.parametrize("source", ["resolver", "legacy_service"])
+def test_entitlement_lookup_outages_remain_issues(source, transport, monkeypatch):
+    from tfc.capabilities import service
+    from tfc.ee_gating import FeatureUnavailable, check_ee_feature
+
+    monkeypatch.setattr(service, "is_configured", lambda: True)
+
+    def unavailable(*args, **kwargs):
+        if source == "resolver":
+            return service.CapabilityDecision(
+                allowed=False, feature_id="insights", reason_code="RESOLVER_UNAVAILABLE"
+            )
+        raise RuntimeError("synthetic lookup failure")
+
+    monkeypatch.setattr(service, "check", unavailable)
+    with pytest.raises(FeatureUnavailable) as raised:
+        check_ee_feature("insights")
+    sentry_sdk.capture_exception(raised.value)
+    # The legacy path also logs the original lookup failure. In both cases the
+    # denial-shaped exception itself must remain actionable.
+    assert transport.events[-1]["exception"]["values"][-1]["type"] == (
+        "CapabilityDenied" if source == "resolver" else "FeatureUnavailable"
+    )
+
+
+@pytest.mark.parametrize("status", [400, 402, 404])
+@pytest.mark.parametrize("source", ["drf", "requests"])
+def test_sdk_keeps_generic_http_errors(status, source, transport):
+    from rest_framework.exceptions import APIException
+
+    if source == "drf":
+        error = APIException("synthetic refusal", code="ENTITLEMENT_DENIED")
+        error.status_code = status
+    else:
+        response = requests.Response()
+        response.status_code = status
+        error = requests.HTTPError("synthetic refusal", response=response)
+    sentry_sdk.capture_exception(error)
+    assert len(transport.events) == 1
+
+
+def test_fault_caused_by_feature_denial_is_still_an_issue(transport):
+    from tfc.ee_gating import FeatureUnavailable
+
+    try:
+        try:
+            raise FeatureUnavailable("synthetic_feature")
+        except FeatureUnavailable as denial:
+            raise RuntimeError("synthetic denial handler failed") from denial
+    except RuntimeError as error:
+        sentry_sdk.capture_exception(error)
+    [event] = transport.events
+    assert event["exception"]["values"][-1]["type"] == "RuntimeError"

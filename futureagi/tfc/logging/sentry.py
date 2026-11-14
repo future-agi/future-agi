@@ -238,6 +238,24 @@ def _event_scrubber() -> Any:
     return EventScrubber(denylist=denylist, recursive=True)
 
 
+def _expected_feature_denial(hint: dict) -> bool:
+    """Only our typed feature refusals qualify, never generic HTTP errors.
+
+    CapabilityDenied inherits FeatureUnavailable. A failed entitlement lookup
+    uses the same base type, but is a fault rather than an expected refusal.
+    """
+    exc_info = hint.get("exc_info")
+    if not isinstance(exc_info, (tuple, list)) or len(exc_info) != 3:
+        return False
+    # Keep Sentry initialization independent of Django/DRF module loading.
+    try:
+        from tfc.ee_gating import FeatureUnavailable, entitlements_unavailable
+    except ImportError:
+        return False
+    error = exc_info[1]
+    return isinstance(error, FeatureUnavailable) and not entitlements_unavailable(error)
+
+
 def _expected_log_outcome(event: dict, hint: dict) -> bool:
     """Normalize structlog dicts and Temporal JSON without interpreting text.
 
@@ -332,7 +350,7 @@ def _get_before_send() -> Callable:
     Responsibilities, in order:
     1. Drop pure-infrastructure logger noise (OTel exporter, etc.) and records
        of the third-party loggers in EXPECTED_OUTCOME_LOGGERS.
-    2. Drop explicitly classified, expected log-only outcomes.
+    2. Drop typed feature refusals and explicitly classified log-only outcomes.
     3. Scrub secrets/PII from whatever remains.
     """
 
@@ -356,9 +374,10 @@ def _get_before_send() -> Callable:
         if getattr(record, "name", None) in EXPECTED_OUTCOME_LOGGERS:
             return None
 
-        # 2. A handled exception is not necessarily harmless. Do not suppress
-        # generic HTTP errors, disconnects, or text that merely resembles a skip.
-        if _expected_log_outcome(event, hint):
+        # 2. A handled exception is not necessarily harmless. Only typed feature
+        # refusals qualify; generic HTTP errors, lookup outages, disconnects and
+        # text that merely resembles a skip remain actionable.
+        if _expected_feature_denial(hint) or _expected_log_outcome(event, hint):
             return None
 
         # 3. Scrub secrets/PII from the surviving event.

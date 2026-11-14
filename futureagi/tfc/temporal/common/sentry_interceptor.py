@@ -27,7 +27,7 @@ from temporalio.worker import (
 # expected refusal rather than a fault. An evaluation usage or entitlement
 # denial is the activity's answer: the workflow records it and stops, so it is
 # not a Sentry issue. Any other type, or a retryable one, is still captured.
-EXPECTED_ACTIVITY_FAILURE_TYPES = frozenset({"EvaluationDenied"})
+EXPECTED_ACTIVITY_FAILURE_TYPES = frozenset({"EvaluationDenied", "CapabilityDenied"})
 
 
 def _is_expected_activity_failure(error: BaseException) -> bool:
