@@ -9,11 +9,19 @@ from django.db import close_old_connections
 
 from accounts.models.organization import Organization
 from agentic_eval.core_evals.fi_evals import *  # noqa: F403
+from agentic_eval.core_evals.run_prompt.litellm_models import (
+    MissingProviderKeyError,
+    UnavailableModelError,
+)
 from evaluations.constants import FUTUREAGI_EVAL_TYPES
 from model_hub.models.choices import ModelChoices
 from model_hub.models.develop_dataset import Column
 from model_hub.models.evals_metric import EvalTemplate, EvalTemplateVersion
 from model_hub.services.ground_truth_service import GroundTruthService
+from model_hub.utils.eval_input_validation import (
+    EvalConfigError,
+    validate_eval_configuration,
+)
 from model_hub.views.eval_runner import (
     EvaluationRunner,
     _extract_column_id_and_path,
@@ -28,6 +36,7 @@ from tfc.constants.api_calls import APICallStatusChoices
 from tfc.middleware.workspace_context import get_current_organization
 from tfc.temporal import temporal_activity
 from tfc.utils.error_codes import get_specific_error_message
+from tfc.utils.evaluation_denials import EvaluationDenied, raise_if_rate_limited
 
 logger = structlog.get_logger(__name__)
 
@@ -324,6 +333,8 @@ def run_eval_func(
                     "API call not allowed : Error validating the api call."
                 )
 
+            raise_if_rate_limited(api_call_log_row)
+
             if api_call_log_row.status != APICallStatusChoices.PROCESSING.value:
                 raise ValueError("API call not allowed : ", api_call_log_row.status)
         else:
@@ -375,6 +386,7 @@ def run_eval_func(
         from model_hub.utils.eval_input_validation import validate_eval_inputs
 
         partial_input_warning, _run_kwargs = validate_eval_inputs(template, _run_kwargs)
+        validate_eval_configuration(eval_id, eval_instance)
 
         eval_result = eval_instance.run(**_run_kwargs)
         end_time = time.time()
@@ -582,6 +594,9 @@ def run_eval_func(
 
         return output
 
+    except EvaluationDenied:
+        # The ledger already records RATE_LIMITED with no charge.
+        raise
     except Exception as e:
         try:
             if api_call_log_row:
@@ -605,7 +620,20 @@ def run_eval_func(
             logger.exception(f"Error updating api call log row status: {str(exc)}")
             pass
 
-        logger.exception(f"Error running evaluation: {str(e)}")
+        if isinstance(e, UnavailableModelError):
+            # A saved model retired from the catalog is the user's to replace,
+            # not a fault; name it, since nothing else in the log does.
+            logger.warning(
+                "evaluation_configuration_invalid",
+                error_type=type(e).__name__,
+                model=e.model_name,
+            )
+        elif isinstance(e, (EvalConfigError, MissingProviderKeyError)):
+            logger.warning(
+                "evaluation_configuration_invalid", error_type=type(e).__name__
+            )
+        else:
+            logger.exception(f"Error running evaluation: {str(e)}")
         raise e
 
 
@@ -816,5 +844,8 @@ def run_eval_func_task(
         )
 
         logger.info(f"Evaluation for feedback completed for {log_id}")
+    except EvaluationDenied as denial:
+        logger.warning("feedback_evaluation_denied", code=denial.code)
+        return {"status": "denied", "denial": denial.as_dict(), "output": None}
     except Exception as e:
         logger.exception(f"Error running evaluation for feedback: {str(e)}")

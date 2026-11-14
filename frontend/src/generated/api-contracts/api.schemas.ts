@@ -11301,6 +11301,33 @@ export interface EvalExecutionResponseApi {
   result: EvalExecutionResponseResultApi;
 }
 
+export type SDKEvaluationDenialResponseApiErrors = { [key: string]: string[] };
+
+export type SDKEvaluationDenialResponseApiUpgradeCta = {
+  [key: string]: unknown;
+};
+
+export type SDKEvaluationDenialResponseApiCompletedResultsItem = {
+  [key: string]: unknown;
+};
+
+export interface SDKEvaluationDenialResponseApi {
+  status: boolean;
+  result?: string;
+  message?: string;
+  errors?: SDKEvaluationDenialResponseApiErrors;
+  /** @minLength 1 */
+  code: string;
+  error_code?: string;
+  dimension?: string;
+  current_usage?: number;
+  limit?: number;
+  upgrade_cta?: SDKEvaluationDenialResponseApiUpgradeCta;
+  completed_results?: SDKEvaluationDenialResponseApiCompletedResultsItem[];
+  /** @minimum 0 */
+  failed_index?: number;
+}
+
 export interface EvalPlayGroundFeedbackApi {
   log_id: string;
   /** @minLength 1 */

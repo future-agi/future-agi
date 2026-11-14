@@ -15,6 +15,7 @@ from django.db import close_old_connections
 
 from tfc.temporal.common.client import get_workflow_result_sync
 from tfc.temporal.drop_in.decorator import temporal_activity
+from tfc.utils.evaluation_denials import EvaluationDenied, raise_if_evaluation_denied
 
 logger = structlog.get_logger(__name__)
 
@@ -251,6 +252,14 @@ def evaluate_scenario_task(
             "component_evals": result.metadata.get("component_evals", {}),
         }
 
+    except EvaluationDenied as denial:
+        # Return a serializable refusal, never a numeric failed grading. The
+        # parent terminates optimization before aggregating/persisting trials.
+        return {
+            "call_execution_id": scenario.get("call_execution_id", ""),
+            "agent_prompt": scenario.get("agent_prompt", ""),
+            "denial": denial.as_dict(),
+        }
     except Exception as e:
         logger.exception(f"[EVAL_TASK] Scenario evaluation failed: {e}")
         return {
@@ -377,6 +386,11 @@ def evaluate_scenarios_parallel(
                     f"[EVAL_PARALLEL] Scenario {i} score: {actual_result.get('score', 'N/A')}"
                 )
                 results.append(actual_result)
+                raise_if_evaluation_denied(actual_result)
+            except EvaluationDenied:
+                # Keep the denial out of the generic zero-score fallback. The
+                # finally block cancels any uncollected scenario workflows.
+                raise
             except Exception as e:
                 logger.error(
                     f"[EVAL_PARALLEL] Failed to get result for scenario {i}: {e}"
