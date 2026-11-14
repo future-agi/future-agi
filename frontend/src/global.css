@@ -550,7 +550,9 @@ body {
   pointer-events: auto !important;
 }
 
-.no-min-height-grid .ag-center-cols-viewport {
+/* AG Grid's autoHeight layout puts a 150px floor on both of these. */
+.no-min-height-grid .ag-center-cols-viewport,
+.no-min-height-grid .ag-center-cols-container {
   min-height: unset !important;
 }
 
