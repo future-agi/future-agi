@@ -435,10 +435,12 @@ class TestVersionsList:
             or "simulate_harness_suite_version" in query["sql"]
         ]
         assert version_selects
-        # Only the two documents the release checks read, never the whole column.
+        # Only the two documents the release checks read and the saved-without-check
+        # flag, never the whole column.
         version_selects = [
             re.sub(
-                r"\"documents\" -> '(stage_outputs|release_checks)'",
+                r"\"documents\" -> '(stage_outputs|release_checks)'"
+                r"|\"documents\" ->> 'uncertified'",
                 "",
                 re.sub(r"\"simulate_harness_environment_version\"\.", "", sql),
             )
