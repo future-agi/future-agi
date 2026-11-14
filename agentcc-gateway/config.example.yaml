@@ -256,9 +256,11 @@ providers:
   # proxy, a custom-named provider) is priced from the catalogue. Org custom
   # pricing (cost_tracking.custom_pricing on the org) always wins. A stated
   # cost that is missing, null, non-numeric or negative falls back to the
-  # catalogue; a stated 0 is recorded as 0. A stated cost below $0.0000005 is
-  # recorded unrounded (e.g. 0.0000004) rather than as 0.000000; the Request
-  # Logs cost column itself keeps six decimal places.
+  # catalogue; a stated 0 is recorded as 0. A non-zero stated cost that six
+  # decimal places would print as 0.000000 (up to $0.0000005) is recorded
+  # unrounded (e.g. 0.0000004). The Request Logs cost column keeps six places,
+  # and credits, budgets and the Prometheus counter count whole micro-dollars
+  # per request, so such a request still moves them by 0.
   #
   # A cache hit never takes a stated cost: no vendor served it, even though
   # the cached response still carries the original call's usage. An exact

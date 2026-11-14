@@ -92,3 +92,19 @@ func TestReportedCost_TinyCostIsNotRoundedToZero(t *testing.T) {
 		t.Errorf("%s = %q for a non-zero vendor cost", MetadataReportedZero, v)
 	}
 }
+
+// At exactly half a micro-dollar six places still print "0.000000", so the
+// boundary is kept unrounded too (xAI: 5,000 ticks).
+func TestReportedCost_HalfMicroIsNotRoundedToZero(t *testing.T) {
+	t.Parallel()
+	rc := reportedRC(t, "xai", "grok-x", `{"prompt_tokens":10,"completion_tokens":1,"cost_in_usd_ticks":5000}`)
+
+	reportedPlugin(reportedTestDB(nil), nil, nil, "xai").ProcessResponse(context.Background(), rc)
+
+	if got := rc.Metadata["cost"]; got == "0.000000" || got == "" {
+		t.Fatalf("cost = %q, want the unrounded half micro-dollar", got)
+	}
+	if got := rc.Metadata["cost"]; got != "0.0000005" {
+		t.Errorf("cost = %q, want %q", got, "0.0000005")
+	}
+}

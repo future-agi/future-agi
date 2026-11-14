@@ -302,7 +302,7 @@ func (p *Plugin) ProcessResponse(_ context.Context, rc *models.RequestContext) p
 		factor := p.aliasCostFactor(rc)
 		cost *= factor
 		rc.Metadata["cost"] = fmt.Sprintf("%.6f", cost)
-		if source == CostSourceProviderReported && cost > 0 && cost < 0.0000005 {
+		if source == CostSourceProviderReported && cost > 0 && rc.Metadata["cost"] == "0.000000" {
 			// Six places would round the vendor's non-zero cost to "0.000000",
 			// which every reader of "cost" takes for a vendor-stated $0.
 			rc.Metadata["cost"] = strconv.FormatFloat(cost, 'f', -1, 64)
