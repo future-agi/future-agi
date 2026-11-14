@@ -2042,9 +2042,11 @@ class HostedHarnessProvider:
         child.refresh_from_db()
         return serialize_job(child)
 
-    # Editable fields; all but `tests` are refused when the caller declines a re-proof.
-    _DESCRIPTIVE_FIELDS = frozenset({"tests", "sources"})
+    # Editable fields; behavioural and re-proof ones are refused when the caller declines a re-proof.
+    _DESCRIPTIVE_FIELDS = frozenset({"tests", "sources", "must_pass"})
     _BEHAVIOURAL_FIELDS = frozenset({"max_turns", "background_noise", "keywords"})
+    # What the checks are proved against: an edit leaves the case Draft until it is validated again.
+    _REPROOF_FIELDS = frozenset({"negative_controls"})
     _PERSONA_FIELDS = frozenset(
         {
             "personality",
@@ -2076,7 +2078,9 @@ class HostedHarnessProvider:
             "location": Persona.LocationChoices,
         }
         return {
-            "editable_fields": sorted(self._DESCRIPTIVE_FIELDS | behavioural),
+            "editable_fields": sorted(
+                self._DESCRIPTIVE_FIELDS | behavioural | self._REPROOF_FIELDS
+            ),
             "persona_fields": sorted(persona),
             "persona_choices": {
                 field: (
@@ -2089,7 +2093,7 @@ class HostedHarnessProvider:
             "noise_choices": (
                 [bed for bed in NOISE_LABELS if bed != "present"] if spoken else []
             ),
-            "rework_fields": sorted(behavioural | persona),
+            "rework_fields": sorted(behavioural | persona | self._REPROOF_FIELDS),
         }
 
     def list_scenarios(self, request, pk) -> Response:
@@ -2391,6 +2395,16 @@ class HostedHarnessProvider:
                     field = str(change.get("field") or "")
                     if field in self._DESCRIPTIVE_FIELDS:
                         pass
+                    elif field in self._REPROOF_FIELDS:
+                        if not rework:
+                            receipts.append(
+                                {
+                                    "scenario": name,
+                                    "outcome": "refused",
+                                    "why": f"{field} are what the checks are proved against, so they need a re-proof",
+                                }
+                            )
+                            continue
                     elif field in self._BEHAVIOURAL_FIELDS:
                         if not rework:
                             receipts.append(
@@ -2415,7 +2429,9 @@ class HostedHarnessProvider:
                             source_problems,
                         )
 
-                        problems = source_problems(change.get("value"))
+                        problems = source_problems(
+                            change.get("value"), require_one=True
+                        )
                         if problems:
                             receipts.append(
                                 {
@@ -2426,6 +2442,34 @@ class HostedHarnessProvider:
                             )
                             continue
                         _store_edited_sources(job, target, change.get("value"))
+                    if field == "must_pass" and not isinstance(
+                        change.get("value"), bool
+                    ):
+                        receipts.append(
+                            {
+                                "scenario": name,
+                                "outcome": "refused",
+                                "why": "must_pass must be true or false",
+                            }
+                        )
+                        continue
+                    if field == "negative_controls":
+                        from simulate.services.harness_scenario_sources import (
+                            negative_control_problems,
+                        )
+
+                        problems = negative_control_problems(
+                            change.get("value"), target.get("sub_goals") or []
+                        )
+                        if problems:
+                            receipts.append(
+                                {
+                                    "scenario": name,
+                                    "outcome": "refused",
+                                    "why": problems[0],
+                                }
+                            )
+                            continue
                     target[field] = change.get("value")
                     touched = True
                     changed.add(name)

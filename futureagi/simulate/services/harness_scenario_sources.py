@@ -54,10 +54,17 @@ def bare_digest(value: object) -> str:
     return str(value or "").removeprefix("sha256:")
 
 
-def source_problems(value: object) -> list[str]:
-    """Why a `sources` value is not a list of sources, one sentence per bad entry: `sources[i]: ...`."""
+NO_SOURCES = "Cite where this case comes from, or add an assumption source that says what you assumed."
+_CONTROL_NAME = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
+
+
+def source_problems(value: object, *, require_one: bool = False) -> list[str]:
+    """Why a `sources` value is not a list of sources, one sentence per bad entry: `sources[i]: ...`.
+    ``require_one`` refuses an empty list: an edit must cite something or label an assumption."""
     if not isinstance(value, list):
         return ["sources: must be a list"]
+    if require_one and not value:
+        return [NO_SOURCES]
     problems = []
     for at, one in enumerate(value):
         if not isinstance(one, Mapping):
@@ -81,6 +88,64 @@ def source_problems(value: object) -> list[str]:
             problems.append(
                 f"sources[{at}]: a {kind} source needs the exact quote it cites"
             )
+    return problems
+
+
+def _sub_goal_names(sub_goals: object) -> set[str]:
+    return {
+        str(one.get("name") if isinstance(one, Mapping) else one)
+        for one in sub_goals or []
+        if (one.get("name") if isinstance(one, Mapping) else one)
+    }
+
+
+def negative_control_problems(value: object, sub_goals: object) -> list[str]:
+    """Why a `negative_controls` value is not a list of controls this case's checks can fail,
+    one sentence per problem: `negative_controls[i]: ...`."""
+    if not isinstance(value, list):
+        return ["negative_controls: must be a list"]
+    names = _sub_goal_names(sub_goals)
+    problems: list[str] = []
+    seen: set[str] = set()
+    for at, one in enumerate(value):
+        where = f"negative_controls[{at}]"
+        if not isinstance(one, Mapping):
+            problems.append(f"{where}: must be an object")
+            continue
+        name = one.get("name")
+        if not isinstance(name, str) or not _CONTROL_NAME.match(name):
+            problems.append(f"{where}: name must be a lowercase slug")
+        elif name in seen:
+            problems.append(f"{where}: another control is already named {name}")
+        else:
+            seen.add(name)
+        if not isinstance(one.get("why"), str) or not one["why"].strip():
+            problems.append(f"{where}: why must say what the wrong behaviour is")
+        steps = one.get("steps")
+        if not isinstance(steps, list) or not steps:
+            problems.append(f"{where}: steps must be a list of tool calls")
+        else:
+            for number, step in enumerate(steps):
+                if (
+                    not isinstance(step, Mapping)
+                    or not isinstance(step.get("tool"), str)
+                    or not step["tool"].strip()
+                    or not isinstance(
+                        step.get("args", step.get("arguments", {})), Mapping
+                    )
+                ):
+                    problems.append(
+                        f"{where}: steps[{number}] must be {{tool, args}} with a tool name"
+                    )
+        must_fail = one.get("must_fail") or []
+        if not isinstance(must_fail, list):
+            problems.append(f"{where}: must_fail must be a list of sub-goal names")
+        else:
+            unknown = [str(goal) for goal in must_fail if str(goal) not in names]
+            if unknown:
+                problems.append(
+                    f"{where}: must_fail names {', '.join(unknown)}, which this case does not check"
+                )
     return problems
 
 

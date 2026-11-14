@@ -15,6 +15,31 @@ export const EDITOR_COPY = {
   personaSection: "Persona",
   callerSection: "Caller",
   constraintsSection: "Call constraints",
+  mustPass: "Must pass: a failure here blocks the release",
+  controlsHint: "A wrong behaviour this case's checks must fail. Saving asks for a re-validation.",
+  stepsInvalid: "Steps must be a JSON list of {tool, arguments}.",
+};
+
+// Negative controls as the editor holds them: steps as editable JSON text.
+export const controlsToDraft = (controls = []) =>
+  controls.map((one) => ({
+    name: one.name ?? "",
+    why: one.why ?? "",
+    stepsText: JSON.stringify(one.steps ?? [], null, 2),
+    mustFail: Array.isArray(one.must_fail) ? one.must_fail : [],
+  }));
+
+// The controls to send, or null while any steps text is not a JSON list.
+export const controlsFromDraft = (controls = []) => {
+  try {
+    return controls.map((one) => {
+      const steps = JSON.parse(one.stepsText || "[]");
+      if (!Array.isArray(steps)) throw new Error("steps");
+      return { name: one.name.trim(), why: one.why.trim(), steps, must_fail: one.mustFail };
+    });
+  } catch {
+    return null;
+  }
 };
 
 // Which surfaces have a human on the other end (a caller to shape) and which of

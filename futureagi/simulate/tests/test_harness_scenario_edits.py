@@ -153,3 +153,102 @@ def test_coverage_lists_unused_planned_levels(user, workspace, storage, auth_cli
     assert response.status_code == 200, response.content
     assert response.json()["uncovered"] == [{"axis": "task", "level": "cancel"}]
     assert response.json()["coverage_recorded"] is True
+
+
+def _amend_with(auth_client, environment, name, field, value, *, rework=True):
+    response = auth_client.post(
+        f"/simulate/api/harness-jobs/{environment.id}/scenarios/amend/",
+        {
+            "rework": rework,
+            "changes": [
+                {"op": "set_field", "scenario": name, "field": field, "value": value}
+            ],
+        },
+        format="json",
+    )
+    assert response.status_code == 200, response.content
+    environment.refresh_from_db()
+    return response.json()
+
+
+def _edited(environment, name):
+    from simulate.services.harness_versioning import drafts
+
+    suite = drafts.suite_documents(drafts.edit_sides(environment)["suite"])
+    return next(one for one in suite if one.get("scenario_key") == _key(name))
+
+
+def _a_sub_goal(environment, name):
+    goals = _edited(environment, name).get("sub_goals") or []
+    first = goals[0]
+    return first.get("name") if isinstance(first, dict) else first
+
+
+def test_control_edit_needs_reproof(user, workspace, storage, auth_client):
+    environment = _built(user, workspace, "ed-control")
+    control = {
+        "name": "refunds_twice",
+        "why": "refunds the order twice",
+        "steps": [{"tool": "refund", "arguments": {"order_id": "O-10"}}],
+        "must_fail": [_a_sub_goal(environment, NAMES[0])],
+    }
+
+    declined = _amend_with(
+        auth_client, environment, NAMES[0], "negative_controls", [control], rework=False
+    )
+    applied = _amend_with(
+        auth_client, environment, NAMES[0], "negative_controls", [control]
+    )
+
+    assert declined["receipts"][0]["outcome"] == "refused"
+    assert "re-proof" in declined["receipts"][0]["why"]
+    assert applied["receipts"][0]["outcome"] == "applied", applied
+    assert (
+        _edited(environment, NAMES[0])["negative_controls"][0]["name"]
+        == "refunds_twice"
+    )
+
+
+def test_control_with_unknown_must_fail_is_refused(
+    user, workspace, storage, auth_client
+):
+    environment = _built(user, workspace, "ed-control-unknown")
+    control = {
+        "name": "refunds_twice",
+        "why": "refunds the order twice",
+        "steps": [{"tool": "refund", "arguments": {}}],
+        "must_fail": ["no_such_check"],
+    }
+
+    refused = _amend_with(
+        auth_client, environment, NAMES[0], "negative_controls", [control]
+    )
+
+    assert refused["receipts"][0]["outcome"] == "refused"
+    assert refused["receipts"][0]["why"] == (
+        "negative_controls[0]: must_fail names no_such_check, which this case does not check"
+    )
+
+
+def test_must_pass_is_descriptive(user, workspace, storage, auth_client):
+    environment = _built(user, workspace, "ed-must-pass")
+
+    applied = _amend_with(
+        auth_client, environment, NAMES[0], "must_pass", True, rework=False
+    )
+    refused = _amend_with(auth_client, environment, NAMES[0], "must_pass", "yes")
+
+    assert applied["receipts"][0]["outcome"] == "applied", applied
+    assert _edited(environment, NAMES[0])["must_pass"] is True
+    assert refused["receipts"][0]["why"] == "must_pass must be true or false"
+
+
+def test_amend_to_empty_sources_is_refused(user, workspace, storage, auth_client):
+    from simulate.services.harness_scenario_sources import NO_SOURCES
+
+    environment = _built(user, workspace, "ed-empty-sources")
+
+    refused = _amend_with(auth_client, environment, NAMES[0], "sources", [])
+
+    assert refused["receipts"][0]["outcome"] == "refused"
+    assert refused["receipts"][0]["why"] == NO_SOURCES

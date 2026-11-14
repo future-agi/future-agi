@@ -170,3 +170,70 @@ describe("ScenarioEditor persona choices", () => {
     ]);
   });
 });
+
+describe("ScenarioEditor negative controls and must pass", () => {
+  const editing = {
+    editable_fields: ["tests", "must_pass", "negative_controls"],
+    persona_fields: [],
+    rework_fields: ["negative_controls"],
+  };
+
+  it("adds a control and sends it as a re-proof edit", async () => {
+    const { default: ScenarioEditor } = await import("../ScenarioEditor");
+    const onSave = vi.fn();
+    render(
+      <ScenarioEditor
+        open
+        onClose={() => {}}
+        onSave={onSave}
+        row={{ id: "r1", name: "s1", subTasks: ["refund_once"], _raw: {}, lifecycle: { negative_controls: [] } }}
+        scenarioEditing={editing}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Add a negative control" }));
+    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "refunds_twice" } });
+    fireEvent.change(screen.getByLabelText("Why it is wrong"), { target: { value: "refunds the order twice" } });
+    fireEvent.change(screen.getByLabelText("Steps (JSON)"), {
+      target: { value: '[{"tool": "refund", "arguments": {"order_id": "O-10"}}]' },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /save/i }));
+
+    const sent = onSave.mock.calls[0][0];
+    expect(sent.rework).toBe(true);
+    expect(sent.changes).toEqual([
+      {
+        op: "set_field",
+        scenario: "s1",
+        field: "negative_controls",
+        value: [
+          {
+            name: "refunds_twice",
+            why: "refunds the order twice",
+            steps: [{ tool: "refund", arguments: { order_id: "O-10" } }],
+            must_fail: [],
+          },
+        ],
+      },
+    ]);
+  });
+
+  it("sends must_pass without a re-proof", async () => {
+    const { default: ScenarioEditor } = await import("../ScenarioEditor");
+    const onSave = vi.fn();
+    render(
+      <ScenarioEditor
+        open
+        onClose={() => {}}
+        onSave={onSave}
+        row={{ id: "r1", name: "s1", _raw: {}, lifecycle: { must_pass: false } }}
+        scenarioEditing={editing}
+      />,
+    );
+    fireEvent.click(screen.getByTestId("must-pass-toggle"));
+    fireEvent.click(screen.getByRole("button", { name: /save/i }));
+    expect(onSave.mock.calls[0][0]).toEqual({
+      changes: [{ op: "set_field", scenario: "s1", field: "must_pass", value: true }],
+      rework: false,
+    });
+  });
+});

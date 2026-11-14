@@ -121,7 +121,7 @@ describe("ScenarioDetail lifecycle", () => {
 
   it("says a case with no sources was assumed by the builder", () => {
     render(<ScenarioDetailBody row={{ id: "r1", name: "Refund", lifecycle: { ...lifecycle, sources: [] } }} />);
-    expect(screen.getByText("No source: assumed by the builder.")).toBeInTheDocument();
+    expect(screen.getByText("No source recorded (written before sources were required).")).toBeInTheDocument();
   });
 });
 
