@@ -467,6 +467,11 @@ class AgentFixLaunchScenarioSerializer(serializers.Serializer):
     name = serializers.CharField()
     passed = serializers.BooleanField(allow_null=True)
     failing_sub_goals = serializers.ListField(child=serializers.CharField())
+    evidence_import_id = serializers.UUIDField(
+        allow_null=True,
+        help_text="The evidence import that added this scenario to the suite; null for "
+        "any other scenario. A failing one offers Run Epoch from that evidence.",
+    )
 
 
 class AgentFixLaunchSuggestedSerializer(serializers.Serializer):

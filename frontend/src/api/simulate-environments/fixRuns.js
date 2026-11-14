@@ -20,14 +20,19 @@ export const FIX_RUNS_PAGE_SIZE = 25;
 // The page and size sit after the env id, so invalidating fixRunsKey(envId)
 // refreshes every page of that environment.
 export const fixRunsKey = (envId, page, pageSize) =>
-  page == null ? ["agent-fix-runs", envId] : ["agent-fix-runs", envId, page, pageSize];
+  page == null
+    ? ["agent-fix-runs", envId]
+    : ["agent-fix-runs", envId, page, pageSize];
 export const fixRunKey = (fixId) => ["agent-fix-run", fixId];
 
 export const fixPollInterval = (fix) =>
   fix && FIX_LIVE_STATES.has(fix.state) ? FIX_POLL_MS : false;
 
 // One server page, 1-based, as { results, count }.
-export async function listFixRuns(envId, { page = 1, limit = FIX_RUNS_PAGE_SIZE } = {}) {
+export async function listFixRuns(
+  envId,
+  { page = 1, limit = FIX_RUNS_PAGE_SIZE } = {},
+) {
   const res = await axios.get(endpoints.agentFixRuns.list(), {
     params: { environment_id: envId, page, limit },
   });
@@ -256,6 +261,34 @@ export async function getLaunchOptions(sourceRunId) {
 }
 
 // Everything the launch dialog shows and prefills, for one finished run.
+// The failing scenarios of a run that an evidence import added: Run Epoch starts a fix on
+// them, from the evidence they came from.
+export const importedFailingKeys = (options) =>
+  (options?.scenarios ?? [])
+    .filter((one) => one.evidence_import_id && one.failing_sub_goals?.length)
+    .map((one) => one.key);
+
+// Run Epoch's starting cases: the imported failing ones first, then the run's
+// other failing cases, only as many as reach the launch minimum. The person can
+// still deselect any of them, or add more.
+export const epochTargets = (options) => {
+  const imported = importedFailingKeys(options);
+  const others = (options?.scenarios ?? [])
+    .filter((one) => !one.evidence_import_id && one.failing_sub_goals?.length)
+    .map((one) => one.key);
+  const short = (options?.limits?.scenarios_min ?? 0) - imported.length;
+  const added = others.slice(0, Math.max(short, 0));
+  return { imported, added, keys: [...imported, ...added] };
+};
+
+// What Run Epoch put in the form, so nothing is added silently.
+export const epochTargetsNote = ({ imported, added }) => {
+  const plural = (n) => (n === 1 ? "" : "s");
+  return added.length
+    ? `${imported.length} from imported evidence, ${added.length} more failing scenario${plural(added.length)} from this run to reach the minimum`
+    : `${imported.length} failing scenario${plural(imported.length)} from imported evidence`;
+};
+
 export function useFixLaunchOptions(sourceRunId, { enabled = true } = {}) {
   const { data, isLoading, error } = useQuery({
     queryKey: fixLaunchOptionsKey(sourceRunId),

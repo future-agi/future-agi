@@ -29,6 +29,7 @@ from simulate.selectors.agent_fix import (
     recent_lost_models,
     scenario_results,
 )
+from simulate.selectors.evidence_import import evidence_origins
 from simulate.services.agent_fix_agents import agent_kind
 from simulate.services.harness_agent_versions import discard_agent_version
 from simulate.services.harness_usage import require_agent_fix_usage
@@ -150,6 +151,7 @@ def launch_fix_run(
         locked_paths=locked_paths,
         budget_usd=budget_usd,
         max_minutes=max_minutes,
+        evidence=evidence_origins(environment, target_scenario_keys),
     )
     # The engine's model calls bill AI credits. Each check run checks its call rail when it starts.
     require_agent_fix_usage(str(environment.organization_id))

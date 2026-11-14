@@ -115,7 +115,8 @@ test(
         const row = page.locator('.ag-center-cols-container .ag-row').filter({ hasText: ask });
         await expect(row).toHaveCount(1, { timeout: UI_READY });
         const index = await row.getAttribute('row-index');
-        await page.locator(`.ag-row[row-index="${index}"] .ag-checkbox-input`).first().check({ force: true });
+        // Clicked, not check(): AG Grid redraws the cell as it selects the row.
+        await page.locator(`.ag-row[row-index="${index}"] .ag-checkbox-input`).first().click({ force: true });
         await expect(page.locator(`.ag-row.ag-row-selected[row-index="${index}"]`).first()).toBeVisible({ timeout: UI_READY });
       }
     });

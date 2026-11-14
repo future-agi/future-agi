@@ -9,8 +9,10 @@ in ``tracer/tests/test_observe_evidence.py``.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import uuid
-from dataclasses import replace
+from dataclasses import asdict, replace
 from datetime import UTC, datetime, timedelta
 from unittest.mock import patch
 
@@ -420,6 +422,25 @@ class TestBudget:
         )
 
 
+def test_an_observe_sources_fingerprint_is_the_one_it_was_imported_with():
+    """Dataset rows added an expected outcome to the evidence. An Observe source,
+    which has none, keeps the fingerprint its import stored before that, so an
+    unchanged session never reads as changed after the upgrade."""
+    evidence = _evidence()
+    before = {
+        field: value
+        for field, value in asdict(evidence).items()
+        if field not in ("expected", "expected_truncated")
+    }
+    stored = hashlib.sha256(
+        json.dumps(before, sort_keys=True, default=str).encode()
+    ).hexdigest()
+
+    assert evidence_digest(evidence) == stored
+    # An expected outcome is part of what a row holds: changing it is a change.
+    assert evidence_digest(replace(evidence, expected="Refuse.")) != stored
+
+
 class TestReread:
     def test_a_source_deleted_since_reads_as_unavailable(
         self, client, environment, project
@@ -661,7 +682,11 @@ class TestEvidenceDocument:
         self, client, environment, project
     ):
         other = str(uuid.uuid4())
-        found = {SESSION: _evidence(), other: _evidence(other)}
+        # Another conversation: the same one would be proposed once, as one case.
+        found = {
+            SESSION: _evidence(),
+            other: _evidence(other, turns=_evidence().turns[:1]),
+        }
         evidence_import, made = self._import(
             client, environment, project, found, ids=(SESSION, other, MISSING)
         )

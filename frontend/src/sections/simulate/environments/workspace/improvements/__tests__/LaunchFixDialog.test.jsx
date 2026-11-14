@@ -39,7 +39,7 @@ const { default: LaunchFixDialog } = await import("../LaunchFixDialog");
 
 const onClose = vi.fn();
 let lastClient;
-function renderDialog() {
+function renderDialog(props = {}) {
   lastClient = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
@@ -52,6 +52,7 @@ function renderDialog() {
             envId="env-1"
             sourceRunId="te-run-6"
             onClose={onClose}
+            {...props}
           />
         </MemoryRouter>
       </SnackbarProvider>
@@ -205,7 +206,10 @@ describe("LaunchFixDialog", () => {
       "add a locked file",
       "locked",
       (user) =>
-        user.type(screen.getByLabelText("Add a locked file"), "spec.json{Enter}"),
+        user.type(
+          screen.getByLabelText("Add a locked file"),
+          "spec.json{Enter}",
+        ),
     ],
     [
       "change the budget",
@@ -279,7 +283,11 @@ describe("LaunchFixDialog", () => {
       ...base,
       surfaces: base.surfaces.map((s) =>
         s.id === "settings"
-          ? { ...s, allowed: false, reason: "Settings live on the hosting platform." }
+          ? {
+              ...s,
+              allowed: false,
+              reason: "Settings live on the hosting platform.",
+            }
           : s,
       ),
     });
@@ -308,6 +316,18 @@ describe("LaunchFixDialog", () => {
       .setup()
       .click(screen.getByRole("button", { name: "Close" }));
     expect(onClose).toHaveBeenCalled();
+  });
+
+  it("starts from the cases Run Epoch picked, not the suggestion", async () => {
+    const user = userEvent.setup();
+    renderDialog({ initialTargets: ["identity-phone"] });
+    await user.click(
+      await screen.findByRole("button", { name: "Start improvement" }),
+    );
+    await waitFor(() => expect(axios.post).toHaveBeenCalled());
+
+    const [, body] = axios.post.mock.calls.at(-1);
+    expect(body.target_scenario_keys).toEqual(["identity-phone"]);
   });
 
   it("starts the fix with the contract's fields only and opens its page", async () => {

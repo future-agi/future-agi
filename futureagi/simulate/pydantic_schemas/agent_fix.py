@@ -6,6 +6,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field
 
+from simulate.pydantic_schemas.evidence_import import ImportKind
+
 # What one fix may ask for; the launch form shows the same limits.
 SCENARIOS_MAX = 200
 BUDGET_CREDITS_MAX = 50_000
@@ -46,6 +48,18 @@ class CandidateOutcome(StrEnum):
     WINNER = "winner"
 
 
+class FixEvidence(BaseModel):
+    """An evidence import that added some of a fix's targets to the suite: the evidence the
+    fix came from. Ids only, never a source's name or content."""
+
+    import_id: str
+    source_kind: ImportKind
+    # The added cases among the targets, in import order: each one's source and the scenario
+    # it became.
+    source_ids: list[str]
+    scenario_keys: list[str]
+
+
 class FixRequest(BaseModel):
     """What the user asked for. Stored on the run as it was asked."""
 
@@ -64,6 +78,9 @@ class FixRequest(BaseModel):
     locked_paths: list[str] = Field(default_factory=list)
     budget_usd: float = Field(gt=0, le=BUDGET_CREDITS_MAX / 100)
     max_minutes: int = Field(gt=0, le=MAX_MINUTES_MAX)
+    # Derived at launch, never asked: the evidence imports that added any target to the suite.
+    # Empty when the fix did not start from evidence.
+    evidence: list[FixEvidence] = Field(default_factory=list)
 
 
 class InventoryScenario(BaseModel):
@@ -279,6 +296,8 @@ class LaunchScenario(BaseModel):
     # True when every judged sub-goal held in every trial; None when nothing was judged.
     passed: bool | None
     failing_sub_goals: list[str]
+    # The evidence import that added this scenario to the suite; None for any other scenario.
+    evidence_import_id: str | None = None
 
 
 class LaunchSuggested(BaseModel):

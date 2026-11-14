@@ -493,6 +493,7 @@ import type {
   EvidenceImportApi,
   EvidenceImportCreateApi,
   EvidenceImportDraftApi,
+  EvidenceImportListItemApi,
   ExecutePromptSimulationRequestApi,
   ExecutePromptSimulationResponseApi,
   ExecuteRequestApi,
@@ -60558,6 +60559,52 @@ export const simulateApiHarnessEnvironmentsRemoveEvaluation = async (
   );
 };
 
+export type simulateApiHarnessEnvironmentsListEvidenceImportsResponse200 = {
+  data: EvidenceImportListItemApi[];
+  status: 200;
+};
+
+export type simulateApiHarnessEnvironmentsListEvidenceImportsResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type simulateApiHarnessEnvironmentsListEvidenceImportsResponseSuccess =
+  simulateApiHarnessEnvironmentsListEvidenceImportsResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type simulateApiHarnessEnvironmentsListEvidenceImportsResponseError =
+  simulateApiHarnessEnvironmentsListEvidenceImportsResponseDefault & {
+    headers: ApiResponseHeaders;
+  };
+
+export type simulateApiHarnessEnvironmentsListEvidenceImportsResponse =
+  | simulateApiHarnessEnvironmentsListEvidenceImportsResponseSuccess
+  | simulateApiHarnessEnvironmentsListEvidenceImportsResponseError;
+
+export const getSimulateApiHarnessEnvironmentsListEvidenceImportsUrl = (
+  id: string,
+) => {
+  return `/simulate/api/harness-environments/${id}/evidence-imports/`;
+};
+
+/**
+ * This environment's imports a person can still finish, newest first.
+Read from what each import stores: no source is read again.
+ */
+export const simulateApiHarnessEnvironmentsListEvidenceImports = async (
+  id: string,
+  options?: RequestInit,
+): Promise<simulateApiHarnessEnvironmentsListEvidenceImportsResponse> => {
+  return apiMutator<simulateApiHarnessEnvironmentsListEvidenceImportsResponse>(
+    getSimulateApiHarnessEnvironmentsListEvidenceImportsUrl(id),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
 export type simulateApiHarnessEnvironmentsEvidenceImportsResponse201 = {
   data: EvidenceImportApi;
   status: 201;
@@ -60588,9 +60635,10 @@ export const getSimulateApiHarnessEnvironmentsEvidenceImportsUrl = (
 };
 
 /**
- * Freeze Observe sessions or calls as evidence for this environment's
-tests; returns what each holds and lacks, and what redaction would
-replace. Nothing is drafted or run.
+ * Freeze Observe sessions or calls or dataset rows, or store transcripts
+a person added, as evidence for this environment's tests; returns what
+each holds and lacks, and what redaction replaces. Nothing is drafted or
+run.
  */
 export const simulateApiHarnessEnvironmentsEvidenceImports = async (
   id: string,
@@ -60652,6 +60700,55 @@ export const simulateApiHarnessEnvironmentsEvidenceImport = async (
     {
       ...options,
       method: "GET",
+    },
+  );
+};
+
+export type simulateApiHarnessEnvironmentsDiscardEvidenceImportResponse204 = {
+  data: void;
+  status: 204;
+};
+
+export type simulateApiHarnessEnvironmentsDiscardEvidenceImportResponseDefault =
+  {
+    data: ManagementAPIErrorResponseApi;
+    status: Exclude<HTTPStatusCodes, 204>;
+  };
+
+export type simulateApiHarnessEnvironmentsDiscardEvidenceImportResponseSuccess =
+  simulateApiHarnessEnvironmentsDiscardEvidenceImportResponse204 & {
+    headers: ApiResponseHeaders;
+  };
+export type simulateApiHarnessEnvironmentsDiscardEvidenceImportResponseError =
+  simulateApiHarnessEnvironmentsDiscardEvidenceImportResponseDefault & {
+    headers: ApiResponseHeaders;
+  };
+
+export type simulateApiHarnessEnvironmentsDiscardEvidenceImportResponse =
+  | simulateApiHarnessEnvironmentsDiscardEvidenceImportResponseSuccess
+  | simulateApiHarnessEnvironmentsDiscardEvidenceImportResponseError;
+
+export const getSimulateApiHarnessEnvironmentsDiscardEvidenceImportUrl = (
+  id: string,
+  importId: string,
+) => {
+  return `/simulate/api/harness-environments/${id}/evidence-imports/${importId}/`;
+};
+
+/**
+ * Discard an import never added, and a transcript's stored text with it.
+Of an import with added cases, only the cases not added are discarded.
+ */
+export const simulateApiHarnessEnvironmentsDiscardEvidenceImport = async (
+  id: string,
+  importId: string,
+  options?: RequestInit,
+): Promise<simulateApiHarnessEnvironmentsDiscardEvidenceImportResponse> => {
+  return apiMutator<simulateApiHarnessEnvironmentsDiscardEvidenceImportResponse>(
+    getSimulateApiHarnessEnvironmentsDiscardEvidenceImportUrl(id, importId),
+    {
+      ...options,
+      method: "DELETE",
     },
   );
 };

@@ -30,7 +30,8 @@ logger = structlog.get_logger(__name__)
 
 SourceKind = Literal["session", "call"]
 # What a label was given to: the whole session, one trace, or one span.
-LabelTarget = Literal["session", "trace", "span"]
+# "row": a dataset row's label column.
+LabelTarget = Literal["session", "trace", "span", "row"]
 
 # A turn's text and a tool call's input and output are each cut to these
 # characters. A source keeps MAX_TURNS turns, its first and last half, and
@@ -84,17 +85,20 @@ class Label:
 
 @dataclass(frozen=True)
 class SourceEvidence:
-    """One session or call as Observe recorded it.
+    """One session or call as Observe recorded it, a dataset row, or a
+    transcript a person added.
 
     ``tool_calls`` is None when the calls could not be read, and
     ``transcript_unreadable`` says a recorded transcript could not be parsed;
     the ``*_truncated`` flags say a cap cut a part (``labels_truncated`` is set
-    only by a reader that cuts the labels' text)."""
+    only by a reader that cuts the labels' text). ``expected`` is a dataset
+    row's expected outcome; None when nothing records one."""
 
     source_id: str
     trace_ids: tuple[str, ...]
-    started_at: datetime
-    ended_at: datetime
+    # None for a transcript a person added, which records no time.
+    started_at: datetime | None
+    ended_at: datetime | None
     turns: tuple[Turn, ...]
     turns_truncated: bool
     # Middle turns left out to fit; the first and last are kept.
@@ -104,6 +108,8 @@ class SourceEvidence:
     tool_calls_truncated: bool
     labels: tuple[Label, ...]
     labels_truncated: bool = False
+    expected: str | None = None
+    expected_truncated: bool = False
 
 
 def observe_evidence(
@@ -200,7 +206,7 @@ def _evidence(
         trace_ids=tuple(str(root.trace_id) for root in roots),
         started_at=roots[0].start_time,
         ended_at=max(root.end_time or root.start_time for root in roots),
-        turns=_head_and_tail(turns, MAX_TURNS),
+        turns=head_and_tail(turns, MAX_TURNS),
         turns_truncated=len(turns) > MAX_TURNS,
         turns_omitted=max(0, len(turns) - MAX_TURNS),
         transcript_unreadable=unreadable,
@@ -210,7 +216,8 @@ def _evidence(
     )
 
 
-def _head_and_tail(turns: list[Turn], keep: int) -> tuple[Turn, ...]:
+def head_and_tail(turns: list[Turn], keep: int) -> tuple[Turn, ...]:
+    """At most ``keep`` turns: the first and last halves."""
     if len(turns) <= keep:
         return tuple(turns)
     return tuple(turns[: keep - keep // 2] + turns[len(turns) - keep // 2 :])
@@ -226,7 +233,7 @@ def _session_turns(roots: list[CHSpan]) -> list[Turn]:
             ("user", message_text(attrs.get("input.value") or root.input)),
             ("agent", _agent_text(attrs.get("output.value") or root.output)),
         ):
-            turn = _turn(role, value, str(root.trace_id), root.start_time)
+            turn = recorded_turn(role, value, str(root.trace_id), root.start_time)
             if turn is not None:
                 turns.append(turn)
     return turns
@@ -259,7 +266,7 @@ def _call_turns(roots: list[CHSpan]) -> tuple[list[Turn], bool]:
             turn
             for entry in parse_voice_span_transcripts(attrs)
             if (
-                turn := _turn(
+                turn := recorded_turn(
                     "user" if entry["role"] == "user" else "agent",
                     " ".join(str(m) for m in entry.get("messages") or [] if m),
                     str(root.trace_id),
@@ -273,7 +280,9 @@ def _call_turns(roots: list[CHSpan]) -> tuple[list[Turn], bool]:
     return turns, unreadable
 
 
-def _turn(role, value: str, trace_id: str, at: datetime | None) -> Turn | None:
+def recorded_turn(role, value: str, trace_id: str, at: datetime | None) -> Turn | None:
+    """A turn's text without media or binary runs, cut to TURN_CHARS; None
+    when nothing is left."""
     text = _BASE64_RUN.sub("[binary data]", _DATA_URI.sub("[media]", value or ""))
     text = text.strip()
     if not text:

@@ -2972,3 +2972,76 @@
 - simulate_evidence_import has one row for the actor org, the seeded environment and the minted project, with two pending cases whose source ids are the seeded sessions
 - the import's bundle re-reads Observe: each case's transcript holds its minted ask, and redaction reports the minted email as an EMAIL_ADDRESS finding
 - the review shows both cases waiting, the transcript present, the starting state missing, and that the test is not an exact replay
+
+### SIM-E2E-004 — a person pastes a transcript into an environment and sees its personal data replaced and marked as their transcript
+
+**Goal:** A person pastes a transcript, imports it into an environment, and sees its personal data replaced and marked as their transcript
+
+**Spec:** `flows/simulate/evidence-import-transcript.spec.ts:44`
+
+**Tags:** —
+
+**User steps:**
+
+1. seed a built, versioned environment in the actor workspace (lib/environment-seed.ts)
+2. open the environment's Scenarios tab, choose Import evidence, then Add a transcript
+3. paste a transcript whose second line has an unknown speaker, import it and read the refusal
+4. fix the line, name the transcript and import it
+5. land on the Scenarios tab with the import's review open
+
+**Backend state verified:**
+
+- the first import is answered 400 transcript_unreadable naming transcript 1 and line 2, the dialog shows that message, and no simulate_evidence_import row is made
+- from the fixed import on, the only mutating /simulate/ request is one POST to the environment evidence-imports route, answered 201
+- simulate_evidence_import has one row for the actor org and the seeded environment: source_kind transcript, no project, not declared production, with one pending case transcript-1
+- neither the import's stored redaction nor its case's stored transcript holds the minted email, and the stored transcript holds the minted ask
+- the bundle read again holds the minted ask, shows the email as <EMAIL_ADDRESS>, counts at least one replaced value, lists no finding and is not production
+- the review shows the case under its given name, marked "Your transcript", says "1 transcript you added" and that it is not marked production, shows tool calls missing, and that the test is not an exact replay
+
+### SIM-E2E-005 — a person picks dataset rows and their columns and reviews them in an environment as evidence read live from the dataset
+
+**Goal:** A person picks rows in a dataset, says which column is the conversation, the labels and the expected outcome, and reviews them in an environment as evidence read live from the dataset
+
+**Spec:** `flows/simulate/evidence-import-from-dataset.spec.ts:63`
+
+**Tags:** —
+
+**User steps:**
+
+1. seed a built, versioned environment (lib/environment-seed.ts) and a dataset with text columns chat, intent and expected, and three rows
+2. open the dataset and tick the two rows whose chat holds a minted ask
+3. choose Create environment test, pick the environment, chat as the conversation, intent as a label and expected as the expected outcome, leave production off and import
+4. land on the environment's Scenarios tab with the import's review open
+5. edit one picked row's expected cell through the dataset API and reload the review
+
+**Backend state verified:**
+
+- from the Import click on, the only mutating /simulate/ request is one POST to the environment evidence-imports route, answered 201, naming the dataset, the two ticked rows, the three picked columns and production false
+- simulate_evidence_import has one row for the actor org and the seeded environment: source_kind dataset, no project, the seeded dataset, not declared production, with the picked column ids; its two cases are pending, store no transcript and carry a 64-character digest
+- no simulate_evidence_import or simulate_evidence_import_case row holds the minted asks, email or expected text
+- the bundle read again shows the first row as the dataset holds it now, a transcript finding that replaces the minted email with <EMAIL_ADDRESS>, the intent label on the row, the minted expected text as the expected outcome, and is not production
+- after the cell edit the bundle says only the edited row changed since import, and shows its new expected text
+- the review shows two cards marked "Dataset row", each with its expected outcome, "2 rows from a dataset" and that they are not marked production; after the reload only the edited card says the source changed
+
+### SIM-E2E-006 — a person finds two imports they never drafted under Draft imports, resumes one and discards the other
+
+**Goal:** A person finds two imports they never drafted under Draft imports on an environment's Scenarios tab, resumes one, and discards the other
+
+**Spec:** `flows/simulate/evidence-import-resume.spec.ts:32`
+
+**Tags:** —
+
+**User steps:**
+
+1. seed a built, versioned environment (lib/environment-seed.ts) and two transcript imports, A then B, through the create route
+2. open the environment's Scenarios tab and read the Draft imports strip
+3. resume A: its review opens
+4. close the review
+5. discard B and confirm
+
+**Backend state verified:**
+
+- the strip rows are exactly B then A, newest first, each "1 transcript · waiting to be drafted", and equal the list route's answer
+- Resume sends no mutating /simulate/ request, puts import=<A> in the URL, and the review shows A's name
+- from the confirm on, the only mutating /simulate/ request is DELETE on B, answered 204; B is deleted with its redaction and its case's stored transcript cleared, and A is untouched
+- afterwards the list route answers exactly [A] and the strip shows only A

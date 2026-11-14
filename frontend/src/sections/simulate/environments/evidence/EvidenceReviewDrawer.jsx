@@ -1,5 +1,5 @@
 import PropTypes from "prop-types";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Alert,
   Box,
@@ -19,6 +19,8 @@ import SideDrawer from "../components/SideDrawer";
 import EvidenceCaseCard from "./EvidenceCaseCard";
 import {
   EVIDENCE_COPY,
+  IMPORT_PARAM,
+  OBSERVE_KINDS,
   caseShowsDefault,
   errorText,
 } from "./evidence.constants";
@@ -30,29 +32,47 @@ import {
   useEvidenceImport,
 } from "src/api/simulate-environments/evidenceImports";
 import { useDrafts } from "src/api/simulate-environments/versions";
+import { paths } from "src/routes/paths";
 
-// One step of the review, as the design system's section.
-function Section({ title, children }) {
+// One step of the review, as the design system's section; the ref lets a
+// resumed review scroll to the step it reached.
+function Section({ title, children, sectionRef }) {
   return (
-    <SharedSection title={title} sx={{ mt: 3 }}>
-      <Stack spacing={1.25}>{children}</Stack>
-    </SharedSection>
+    <Box ref={sectionRef} sx={{ mt: 3 }}>
+      <SharedSection title={title}>
+        <Stack spacing={1.25}>{children}</Stack>
+      </SharedSection>
+    </Box>
   );
 }
 
-Section.propTypes = { title: PropTypes.string, children: PropTypes.node };
+Section.propTypes = {
+  title: PropTypes.string,
+  children: PropTypes.node,
+  sectionRef: PropTypes.object,
+};
+
+// Where a person picks up an import: drafting shows its progress, drafted
+// cases wait to be added, and an import with some cases added has the rest to
+// draft. A waiting import starts at the top.
+const reachedStep = (data, cases) => {
+  if (data.drafting) return "draft";
+  if (cases.some(isEvidenceCaseDrafted)) return "add";
+  if (cases.some((one) => one.status === "added")) return "draft";
+  return null;
+};
 
 // Where Observe shows a case's source: a session's traces around when it ran, or
 // the call's trace. None for evidence from outside Observe.
 const observeHref = (projectId, kind, one) => {
-  if (!projectId || !one.source_id) return null;
+  if (!OBSERVE_KINDS.has(kind) || !projectId || !one.source_id) return null;
   return kind === "call"
     ? `/dashboard/observe/${projectId}/trace/${encodeURIComponent(one.source_id)}`
     : sessionTracesLink(projectId, one.source_id, one.started_at);
 };
 
 // The import review: what each case's source holds and lacks and what
-// redaction replaces; the starting state Observe never records; the builder's
+// redaction replaces; the starting state no source records; the builder's
 // drafts; and adding them to the suite. Nothing runs from here.
 export default function EvidenceReviewDrawer({
   envId,
@@ -72,15 +92,30 @@ export default function EvidenceReviewDrawer({
   // Cases this review added beside other unsaved edits: nothing is live until the
   // draft bar's Save, so the notice stays after the add.
   const [addedBeside, setAddedBeside] = useState(0);
+  const draftRef = useRef(null);
+  const addRef = useRef(null);
+  // Scrolled once per import, when its bundle first arrives.
+  const scrolledFor = useRef(null);
 
   const cases = useMemo(() => data?.cases ?? [], [data]);
   const waiting = cases.filter(isEvidenceCaseWaiting);
   const drafted = cases.filter(isEvidenceCaseDrafted);
   const beside = Boolean(drafts?.any);
   const kind = data?.source_kind ?? "session";
-  const choices = data?.simulated
-    ? EVIDENCE_COPY.showsOptionsSimulated
-    : EVIDENCE_COPY.showsOptions;
+  const transcript = kind === "transcript";
+  const dataset = kind === "dataset";
+
+  useEffect(() => {
+    if (!data || scrolledFor.current === data.id) return;
+    scrolledFor.current = data.id;
+    const step = reachedStep(data, data.cases ?? []);
+    const target = { draft: draftRef, add: addRef }[step]?.current;
+    target?.scrollIntoView?.({ block: "start" });
+  }, [data]);
+
+  const choices = data?.production
+    ? EVIDENCE_COPY.showsOptions
+    : EVIDENCE_COPY.showsOptionsNotProduction;
   // One primary button per view: drafting comes first, then saving.
   const draftNext = Boolean(waiting.length && !data?.drafting);
   const setEvery = (value) =>
@@ -95,7 +130,7 @@ export default function EvidenceReviewDrawer({
       caseIds: waiting.map((one) => one.id),
       shows: Object.fromEntries(
         waiting
-          .map((one) => [one.id, shows[one.id] ?? caseShowsDefault(one)])
+          .map((one) => [one.id, shows[one.id] ?? caseShowsDefault(one, kind)])
           .filter(([, value]) => value),
       ),
     });
@@ -156,12 +191,24 @@ export default function EvidenceReviewDrawer({
                 <Alert severity="warning">{data.redaction.reason}</Alert>
               ) : (
                 <Alert severity="info">
-                  {EVIDENCE_COPY.redactionReady(data.redaction?.total ?? 0)}
+                  {(transcript
+                    ? EVIDENCE_COPY.redactionStored
+                    : EVIDENCE_COPY.redactionReady)(data.redaction?.total ?? 0)}
                 </Alert>
               )}
               {data.simulated ? (
                 <Alert severity="info" data-testid="evidence-simulated">
                   {EVIDENCE_COPY.simulatedNotice(kind)}
+                </Alert>
+              ) : null}
+              {transcript ? (
+                <Alert severity="info" data-testid="evidence-transcript">
+                  {EVIDENCE_COPY.transcriptNotice(Boolean(data.production))}
+                </Alert>
+              ) : null}
+              {dataset ? (
+                <Alert severity="info" data-testid="evidence-dataset">
+                  {EVIDENCE_COPY.datasetNotice(Boolean(data.production))}
                 </Alert>
               ) : null}
               {waiting.length > 1 && !data.drafting ? (
@@ -193,7 +240,19 @@ export default function EvidenceReviewDrawer({
                   item={one}
                   kind={kind}
                   simulated={Boolean(data.simulated)}
+                  production={Boolean(data.production)}
                   observeHref={observeHref(data.project_id, kind, one)}
+                  datasetHref={
+                    dataset && data.dataset_id
+                      ? `${paths.dashboard.develop}/${data.dataset_id}?tab=data`
+                      : null
+                  }
+                  // A case already imported opens the import proposing it.
+                  existingHref={
+                    one.duplicate_of
+                      ? `${paths.dashboard.simulate.environments.workspaceTab(envId, "scenarios")}&${IMPORT_PARAM}=${one.duplicate_of.import_id}`
+                      : null
+                  }
                   shows={shows[one.id]}
                   onShowsChange={
                     data.drafting
@@ -209,10 +268,16 @@ export default function EvidenceReviewDrawer({
             </Section>
 
             <Section title={EVIDENCE_COPY.stepState}>
-              <Alert severity="info">{EVIDENCE_COPY.startingState}</Alert>
+              <Alert severity="info">
+                {transcript
+                  ? EVIDENCE_COPY.startingStateTranscript
+                  : dataset
+                    ? EVIDENCE_COPY.startingStateDataset
+                    : EVIDENCE_COPY.startingState}
+              </Alert>
             </Section>
 
-            <Section title={EVIDENCE_COPY.stepDraft}>
+            <Section title={EVIDENCE_COPY.stepDraft} sectionRef={draftRef}>
               {data.drafting ? (
                 <Alert severity="info" data-testid="evidence-drafting">
                   <Box component="span" sx={{ fontWeight: 500 }}>
@@ -235,7 +300,7 @@ export default function EvidenceReviewDrawer({
               ) : null}
             </Section>
 
-            <Section title={EVIDENCE_COPY.stepAdd}>
+            <Section title={EVIDENCE_COPY.stepAdd} sectionRef={addRef}>
               {beside && (drafted.length || addedBeside) ? (
                 <Alert
                   severity="warning"

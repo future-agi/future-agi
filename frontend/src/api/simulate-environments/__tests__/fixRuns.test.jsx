@@ -27,7 +27,75 @@ const {
   fixErrorOf,
   collectAllCalls,
   checkRunsForScenarios,
+  epochTargets,
+  epochTargetsNote,
 } = await import("../fixRuns");
+
+describe("Run Epoch's starting cases", () => {
+  const scenario = (key, evidence, failing = true) => ({
+    key,
+    evidence_import_id: evidence,
+    failing_sub_goals: failing ? ["booked"] : [],
+  });
+  const options = (min, scenarios) => ({
+    limits: { scenarios_min: min },
+    scenarios,
+  });
+
+  it("takes only the imported failing cases when they reach the minimum", () => {
+    const got = epochTargets(
+      options(2, [
+        scenario("a", "i1"),
+        scenario("x", null),
+        scenario("b", "i1"),
+      ]),
+    );
+    expect(got).toEqual({ imported: ["a", "b"], added: [], keys: ["a", "b"] });
+    expect(epochTargetsNote(got)).toBe(
+      "2 failing scenarios from imported evidence",
+    );
+  });
+
+  it("tops up with the run's other failing cases when short, imported first", () => {
+    const got = epochTargets(
+      options(3, [
+        scenario("x", null),
+        scenario("y", null, false),
+        scenario("a", "i1"),
+        scenario("z", null),
+      ]),
+    );
+    expect(got.keys).toEqual(["a", "x", "z"]);
+    expect(got.added).toEqual(["x", "z"]);
+    expect(epochTargetsNote(got)).toBe(
+      "1 from imported evidence, 2 more failing scenarios from this run to reach the minimum",
+    );
+  });
+
+  it("never adds past the minimum", () => {
+    const got = epochTargets(
+      options(2, [
+        scenario("a", "i1"),
+        ...["p", "q", "r"].map((k) => scenario(k, null)),
+      ]),
+    );
+    expect(got.keys).toEqual(["a", "p"]);
+  });
+
+  it("adds what there is when the run has too few failing cases; the form says why", () => {
+    const got = epochTargets(
+      options(5, [scenario("a", "i1"), scenario("x", null)]),
+    );
+    expect(got.keys).toEqual(["a", "x"]);
+  });
+
+  it("adds nothing without a minimum (before the launch limits exist)", () => {
+    const got = epochTargets({
+      scenarios: [scenario("a", "i1"), scenario("x", null)],
+    });
+    expect(got.keys).toEqual(["a"]);
+  });
+});
 
 const makeWrapper = () => {
   const queryClient = new QueryClient({

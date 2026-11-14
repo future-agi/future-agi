@@ -11,6 +11,7 @@ import {
   IconButton,
   Link,
   Tab,
+  Tooltip,
 } from "@mui/material";
 
 import Iconify from "src/components/iconify";
@@ -49,6 +50,11 @@ import FixMyAgentDrawer from "./fixmyagent/FixMyAgentDrawer";
 import OptimizationRunsList from "./fixmyagent/OptimizationRunsList";
 import LaunchOptimizationDrawer from "./fixmyagent/LaunchOptimizationDrawer";
 import LaunchFixDialog from "../../improvements/LaunchFixDialog";
+import {
+  epochTargets,
+  epochTargetsNote,
+  useFixLaunchOptions,
+} from "src/api/simulate-environments/fixRuns";
 import BetaChip from "./fixmyagent/BetaChip";
 import { useSelfImprovementOpen } from "./fixmyagent/selfImprovement";
 import RunAnalytics from "./RunAnalytics";
@@ -103,6 +109,8 @@ export default function RunDetail({
   const [debugging, setDebugging] = useState(false);
   const [launching, setLaunching] = useState(false);
   const [fixLaunching, setFixLaunching] = useState(false);
+  // Set by Run Epoch: the imported failing cases the fix starts from.
+  const [fixTargets, setFixTargets] = useState(null);
   const [exporting, setExporting] = useState(false);
   const { identity, stats } = useRunDetail(testId, executionId, {
     envName: env?.name,
@@ -165,6 +173,13 @@ export default function RunDetail({
   // finish. Stop simulation is the exception and stays in its own control.
   const live =
     identity?.status === "running" || identity?.status === "cancelling";
+  // A finished run whose failures include cases an evidence import added offers
+  // Run Epoch on them; the launch form reads the same cached options.
+  const { options: fixOptions } = useFixLaunchOptions(executionId, {
+    enabled: fixAllowed && !!identity && !live && !fixRun,
+  });
+  const epoch = epochTargets(fixOptions);
+  const improvable = epoch.imported;
   // finishedAt is a known gap (the executions row carries no end time), so the
   // sub-line reports when the run STARTED rather than inventing a finish.
   const startedLabel = identity?.startedAt ? fToNow(identity.startedAt) : "";
@@ -379,6 +394,26 @@ export default function RunDetail({
             Run again
           </Button>
         )}
+        {improvable.length > 0 && (
+          <Tooltip
+            describeChild
+            title={`Starts an epoch from the ${improvable.length} failing scenario${improvable.length === 1 ? "" : "s"} that came from imported evidence.`}
+          >
+            <Button
+              variant="outlined"
+              size="small"
+              onClick={() => {
+                setFixTargets(epoch);
+                setFixLaunching(true);
+              }}
+              startIcon={
+                <Iconify icon="solar:magic-stick-3-linear" width={15} />
+              }
+            >
+              Run Epoch
+            </Button>
+          </Tooltip>
+        )}
         {!fixRun && (
           <Button
             variant="contained"
@@ -575,6 +610,7 @@ export default function RunDetail({
         stats={stats}
         onLaunch={() => {
           setDebugging(false);
+          setFixTargets(null);
           setFixLaunching(true);
         }}
         onViewCalls={(callExecutionIds) => {
@@ -589,6 +625,8 @@ export default function RunDetail({
           onClose={() => setFixLaunching(false)}
           envId={env.id}
           sourceRunId={executionId}
+          initialTargets={fixTargets?.keys}
+          initialNote={fixTargets ? epochTargetsNote(fixTargets) : ""}
         />
       )}
 

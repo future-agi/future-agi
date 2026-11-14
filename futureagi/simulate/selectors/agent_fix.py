@@ -66,6 +66,7 @@ from simulate.pydantic_schemas.agent_fix import (
     LaunchSurface,
     Surface,
 )
+from simulate.selectors.evidence_import import evidence_origins
 from simulate.selectors.runs import user_executions
 from simulate.services.agent_fix_agents import AgentKind, agent_kind
 from simulate.services.harness_environment import environment_name
@@ -843,6 +844,19 @@ def launch_options(source_run: HostedHarnessJob) -> LaunchOptions:
         "agent_definition", "harness_runtime"
     ).get(id=version_id)
     scenarios = scenario_results(source_run)
+    # A scenario an evidence import added offers Run Epoch from that evidence.
+    origins = (
+        evidence_origins(environment, [one.key for one in scenarios])
+        if environment is not None
+        else []
+    )
+    imported = {
+        key: origin.import_id for origin in origins for key in origin.scenario_keys
+    }
+    scenarios = [
+        one.model_copy(update={"evidence_import_id": imported.get(one.key)})
+        for one in scenarios
+    ]
     offered = kind.surfaces if kind else frozenset()
     number = (
         HostedHarnessJob.no_workspace_objects.filter(id=source_run.id)

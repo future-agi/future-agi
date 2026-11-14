@@ -30,7 +30,11 @@ from simulate.models import (
     HostedHarnessConversationMessage,
 )
 from simulate.services import evidence_drafts
-from simulate.services.evidence_import import add_to_suite
+from simulate.services.evidence_import import (
+    TranscriptInput,
+    add_to_suite,
+    create_transcript_import,
+)
 from simulate.services.harness_versioning import archives, drafts
 from simulate.services.hosted_harness import HostedHarnessError
 from simulate.services.hosted_harness_conversation import (
@@ -643,3 +647,182 @@ def test_a_blocked_reason_is_redacted_before_it_is_kept(environment, cases, stor
     assert "jane.doe@example.com" not in reason
     assert "<EMAIL_ADDRESS>" in reason
     assert len(reason) <= 255
+
+
+def test_a_transcript_case_lands_and_is_added_like_an_observe_one(
+    environment, storage, user
+):
+    from simulate.services.evidence_import import (
+        TranscriptInput,
+        create_transcript_import,
+    )
+
+    made = create_transcript_import(
+        environment=environment,
+        transcripts=[
+            TranscriptInput("chat", "text", "User: Refund me\nAgent: Done twice.")
+        ],
+        production=True,
+        user=user,
+    )
+    transcript_cases = list(made.cases.all())
+    conversation, command = _command(environment, transcript_cases, 70)
+    scenario_key = evidence_drafts.scenario_key_for(transcript_cases[0])
+    key, digest = _save(conversation, command, storage, [scenario_key])
+    _end_turn(conversation, command)
+    _promote(conversation, command, key, digest, 70)
+    [drafted] = _refreshed(transcript_cases)
+    assert (drafted.status, drafted.scenario_key) == ("drafted", scenario_key)
+
+    with _certifies():
+        saved = add_to_suite(
+            made, [str(drafted.id)], expected={}, idempotency_key="add-t", user=user
+        )
+
+    assert saved is True
+    environment.refresh_from_db()
+    keys = set(
+        HarnessSuiteMember.no_workspace_objects.filter(
+            suite_version=environment.suite_version
+        ).values_list("scenario_key", flat=True)
+    )
+    assert scenario_key in keys
+    assert EvidenceImportCase.objects.get(id=drafted.id).status == "added"
+
+
+def test_discarding_a_partly_added_import_keeps_its_added_scenario(
+    environment, storage, user
+):
+    from simulate.selectors.evidence_import import open_evidence_imports
+    from simulate.services.evidence_import import (
+        TranscriptInput,
+        create_transcript_import,
+        discard_evidence_import,
+    )
+
+    made = create_transcript_import(
+        environment=environment,
+        transcripts=[
+            TranscriptInput("kept", "text", "User: Refund me\nAgent: Done twice."),
+            TranscriptInput("dropped", "text", "User: Where is it?\nAgent: Lost."),
+        ],
+        production=True,
+        user=user,
+    )
+    kept, dropped = list(made.cases.order_by("position"))
+    conversation, command = _command(environment, [kept], 71)
+    scenario_key = evidence_drafts.scenario_key_for(kept)
+    key, digest = _save(conversation, command, storage, [scenario_key])
+    _end_turn(conversation, command)
+    _promote(conversation, command, key, digest, 71)
+    with _certifies():
+        add_to_suite(
+            made, [str(kept.id)], expected={}, idempotency_key="add-k", user=user
+        )
+    assert [one.status for one in open_evidence_imports(environment)] == [
+        "partly_added"
+    ]
+
+    assert discard_evidence_import(made) is False
+
+    environment.refresh_from_db()
+    keys = set(
+        HarnessSuiteMember.no_workspace_objects.filter(
+            suite_version=environment.suite_version
+        ).values_list("scenario_key", flat=True)
+    )
+    assert scenario_key in keys
+    kept.refresh_from_db()
+    dropped.refresh_from_db()
+    assert (kept.status, dropped.status) == ("added", "discarded")
+    # Its provenance stays: the import and the added case's stored text.
+    made.refresh_from_db()
+    assert made.deleted is False
+    assert kept.transcript is not None
+    assert open_evidence_imports(environment) == []
+
+
+def test_a_repeated_case_keeps_every_source_once_added(environment, storage, user):
+    """The same transcript twice in one import, then once more in a later one:
+    one case is drafted and added, and the scenario it became names all three
+    sources as where it came from."""
+    from simulate.selectors.evidence_import import evidence_origins
+    from simulate.services.evidence_import import (
+        TranscriptInput,
+        create_transcript_import,
+    )
+
+    chat = "User: Refund me\nAgent: Done twice."
+    made = create_transcript_import(
+        environment=environment,
+        transcripts=[
+            TranscriptInput("first", "text", chat),
+            TranscriptInput("second", "text", chat),
+        ],
+        production=True,
+        user=user,
+    )
+    kept, repeated = list(made.cases.order_by("position"))
+    assert (repeated.status, repeated.duplicate_of_id) == ("duplicate", kept.id)
+    conversation, command = _command(environment, [kept], 72)
+    scenario_key = evidence_drafts.scenario_key_for(kept)
+    key, digest = _save(conversation, command, storage, [scenario_key])
+    _end_turn(conversation, command)
+    _promote(conversation, command, key, digest, 72)
+    with _certifies():
+        add_to_suite(
+            made, [str(kept.id)], expected={}, idempotency_key="add-r", user=user
+        )
+    later = create_transcript_import(
+        environment=environment,
+        transcripts=[TranscriptInput("later", "text", chat)],
+        production=True,
+        user=user,
+    )
+
+    origins = evidence_origins(environment, [scenario_key])
+
+    assert [(one.import_id, one.source_ids, one.scenario_keys) for one in origins] == [
+        (str(made.id), ["transcript-1", "transcript-2"], [scenario_key] * 2),
+        (str(later.id), ["transcript-1"], [scenario_key]),
+    ]
+
+
+def _imported(environment, user, name):
+    return create_transcript_import(
+        environment=environment,
+        transcripts=[TranscriptInput(name, "text", "User: Refund me\nAgent: Done.")],
+        production=True,
+        user=user,
+    )
+
+
+def test_a_case_drafted_on_an_older_environment_is_imported_again_as_new(
+    environment, user
+):
+    """Add refuses such a case ("draft them again") and drafting takes only
+    waiting cases, so importing its source again is the way back: it is no
+    duplicate of the stale draft."""
+    first = _imported(environment, user, "first")
+    first.cases.update(
+        status=EvidenceImportCase.Status.DRAFTED, environment_hash="an-older-one"
+    )
+
+    [case] = _imported(environment, user, "again").cases.all()
+
+    assert (case.status, case.duplicate_of_id) == ("pending", None)
+
+
+def test_a_case_drafted_on_the_current_environment_is_still_already_imported(
+    environment, user
+):
+    first = _imported(environment, user, "first")
+    first.cases.update(
+        status=EvidenceImportCase.Status.DRAFTED,
+        environment_hash=environment.environment_version.hash,
+    )
+    [drafted] = first.cases.all()
+
+    [case] = _imported(environment, user, "again").cases.all()
+
+    assert (case.status, case.duplicate_of_id) == ("duplicate", drafted.id)

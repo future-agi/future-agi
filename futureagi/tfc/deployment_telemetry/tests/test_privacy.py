@@ -1,7 +1,9 @@
+from datetime import UTC
 from unittest.mock import MagicMock
 from uuid import uuid4
 
 import pytest
+from django.http import JsonResponse
 from django.test import RequestFactory
 
 from tfc.deployment_telemetry.payloads import (
@@ -12,8 +14,12 @@ from tfc.deployment_telemetry.schema import (
     HEARTBEAT_FIELDS,
     REGISTRATION_FIELDS,
 )
-from tfc.logging.sentry import _scrub_deployment_telemetry_event
-from tfc.telemetry.middleware import OTelContextMiddleware
+from tfc.logging.sentry import _is_telemetry_url, _scrub_deployment_telemetry_event
+from tfc.telemetry.middleware import (
+    OTelContextMiddleware,
+    is_sensitive_body_path,
+    sensitive_path_pattern,
+)
 
 
 def test_otel_does_not_capture_deployment_telemetry_request_body():
@@ -65,6 +71,116 @@ def test_staged_credential_files_are_treated_as_sensitive_bodies():
             "values": [
                 {"stacktrace": {"frames": [{"vars": {"content": "PRIVATE KEY"}}]}}
             ]
+        },
+    }
+
+    scrubbed = _scrub_deployment_telemetry_event(event)
+
+    assert "data" not in scrubbed["request"]
+    assert "vars" not in scrubbed["exception"]["values"][0]["stacktrace"]["frames"][0]
+
+
+# A transcript import's create body is the raw transcript, before redaction.
+ENVIRONMENT = "/simulate/api/harness-environments/3f2b0c1e-5d6a-4b7c-8d9e-0f1a2b3c4d5e"
+RAW_TRANSCRIPT = (
+    '{"source_kind": "transcript", "transcripts": [{"name": "chat", '
+    '"format": "text", "text": "User: write to jane.doe@example.com"}]}'
+)
+
+
+def _captured(path, *, status=None):
+    """The span attributes the middleware sets for a JSON POST to ``path``, and
+    for its JSON answer with ``status`` when given."""
+    request = RequestFactory().post(
+        path, data=RAW_TRANSCRIPT, content_type="application/json"
+    )
+    span = MagicMock()
+    middleware = OTelContextMiddleware(lambda request: None)
+    middleware._capture_request(span, request)
+    if status is not None:
+        answer = JsonResponse({"message": "Transcript 1 (jane.doe@example.com)"})
+        answer.status_code = status
+        middleware._capture_response(span, request, answer, 1.0)
+    return [call.args[0] for call in span.set_attribute.call_args_list]
+
+
+def test_otel_never_records_a_transcript_import_or_its_refusal():
+    captured = _captured(f"{ENVIRONMENT}/evidence-imports/", status=400)
+
+    assert "http.request.body" not in captured
+    assert "http.response.body" not in captured
+
+
+# Every routed form of a sensitive path: DRF's format suffix, and no trailing
+# slash (the body is read before Django redirects it), for every entry.
+SLIPPED = [
+    f"{ENVIRONMENT}/evidence-imports.json/",
+    f"{ENVIRONMENT}/evidence-imports.json",
+    f"{ENVIRONMENT}/evidence-imports",
+    "/simulate/api/harness-jobs/secret-values.json",
+    "/simulate/api/harness-jobs/secret-files",
+    "/simulate/api/harness/github/webhook.json/",
+]
+
+
+@pytest.mark.parametrize("path", SLIPPED)
+def test_otel_never_records_a_sensitive_path_in_any_routed_form(path):
+    captured = _captured(path, status=400)
+
+    assert "http.request.body" not in captured
+    assert "http.response.body" not in captured
+
+
+@pytest.mark.parametrize("path", SLIPPED)
+def test_sentry_treats_every_routed_form_as_sensitive(path):
+    assert _is_telemetry_url(f"https://api.futureagi.com{path}?page=2")
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        f"{ENVIRONMENT}/evidence-imports-archive/",
+        "/simulate/api/harness-jobs/secret-values-history/",
+        "/telemetry-settings/",
+    ],
+)
+def test_a_path_that_only_starts_like_a_sensitive_one_is_not(path):
+    """The match ends at a segment: another resource sharing the stem is recorded."""
+    assert not is_sensitive_body_path(path)
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/simulate/api/harness/conversations.json",
+        "/simulate/api/harness/conversations",
+        "/simulate/api/harness/conversations/c1/messages/",
+    ],
+)
+def test_an_entry_added_later_covers_every_routed_form(path):
+    """An entry needs no pattern of its own: each is built the same way."""
+    pattern = sensitive_path_pattern("/simulate/api/harness/conversations/")
+
+    assert pattern.match(path)
+    assert not pattern.match("/simulate/api/harness/conversations-archive/")
+
+
+def test_otel_still_records_an_environments_other_bodies():
+    """The id stands for one path segment, not everything below the environment."""
+    captured = _captured(f"{ENVIRONMENT}/runs/", status=400)
+
+    assert "http.request.body" in captured
+    assert "http.response.body" in captured
+
+
+def test_sentry_scrubs_a_transcript_import_request_and_frame_variables():
+    event = {
+        "request": {
+            "url": f"https://api.futureagi.com{ENVIRONMENT}/evidence-imports/",
+            "data": {"transcripts": [{"text": "User: jane.doe@example.com"}]},
+        },
+        "exception": {
+            "values": [{"stacktrace": {"frames": [{"vars": {"body": "jane.doe"}}]}}]
         },
     }
 
@@ -190,10 +306,10 @@ def test_heartbeat_payload_shape_matches_contract(counts):
     """Any field added to the heartbeat payload that isn't on the documented
     HEARTBEAT_FIELDS contract is a wire leak — fail loudly instead of letting
     it ship to PostHog/HubSpot."""
-    from datetime import datetime, timezone
+    from datetime import datetime
 
-    start = datetime(2026, 1, 1, tzinfo=timezone.utc)
-    end = datetime(2026, 1, 1, 6, tzinfo=timezone.utc)
+    start = datetime(2026, 1, 1, tzinfo=UTC)
+    end = datetime(2026, 1, 1, 6, tzinfo=UTC)
 
     payload = build_heartbeat_payload(uuid4(), start, end, counts)
 

@@ -27,6 +27,7 @@ Configuration in settings.py:
 """
 
 import json
+import re
 import time
 import uuid
 from collections.abc import Callable
@@ -42,6 +43,8 @@ logger = structlog.get_logger(__name__)
 # Defaults
 DEFAULT_MAX_BODY_SIZE = 8192
 DEFAULT_MAX_ITEMS = 50
+# Paths whose bodies are never recorded. A "*" stands for one path segment,
+# such as an id.
 SENSITIVE_BODY_PATH_PREFIXES = (
     "/telemetry/",
     "/saml2_auth/",
@@ -49,7 +52,29 @@ SENSITIVE_BODY_PATH_PREFIXES = (
     "/simulate/api/harness-jobs/secret-files/",
     # Signed over its raw bytes and may carry committer emails; never read early.
     "/simulate/api/harness/github/webhook/",
+    # A transcript import carries the raw transcript, before redaction.
+    "/simulate/api/harness-environments/*/evidence-imports/",
 )
+
+
+def sensitive_path_pattern(prefix: str) -> re.Pattern[str]:
+    """``prefix`` as a pattern, ``*`` standing for one path segment. It ends at a
+    segment boundary rather than at the trailing slash, so every routed form of
+    the resource is covered: with no trailing slash (the body is read before
+    Django redirects it), with a format suffix such as ".json", or before a query."""
+    stem = re.escape(prefix.rstrip("/")).replace(r"\*", "[^/]+")
+    return re.compile(stem + r"(?:[/.?#]|$)")
+
+
+# The prefixes as patterns: ``match`` a path, ``search`` a full URL.
+SENSITIVE_BODY_PATHS = tuple(
+    sensitive_path_pattern(prefix) for prefix in SENSITIVE_BODY_PATH_PREFIXES
+)
+
+
+def is_sensitive_body_path(path: str) -> bool:
+    """Whether a request to ``path`` must never have its body recorded."""
+    return any(pattern.match(path) for pattern in SENSITIVE_BODY_PATHS)
 
 
 def _safe_json(value: Any, max_size: int = DEFAULT_MAX_BODY_SIZE) -> str:
@@ -243,7 +268,7 @@ class OTelContextMiddleware:
             # Request body
             if (
                 self.capture_request_body
-                and not request.path.startswith(SENSITIVE_BODY_PATH_PREFIXES)
+                and not is_sensitive_body_path(request.path)
                 and request.body
             ):
                 self._capture_request_body(span, request)
@@ -304,11 +329,12 @@ class OTelContextMiddleware:
             # User context (captured here after auth middleware ran)
             self._capture_user_context(span, request)
 
-            # Response body
+            # Response body; a sensitive path's error can echo its request.
             is_error = response.status_code >= 400
-            should_capture = self.capture_response_body or (
-                is_error and self.capture_response_on_error
-            )
+            should_capture = (
+                self.capture_response_body
+                or (is_error and self.capture_response_on_error)
+            ) and not is_sensitive_body_path(request.path)
 
             if (
                 should_capture

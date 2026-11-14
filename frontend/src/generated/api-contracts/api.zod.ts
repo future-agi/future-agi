@@ -36476,6 +36476,12 @@ export const SimulateApiAgentFixRunsLaunchOptionsResponse = zod.object({
       name: zod.string().min(1),
       passed: zod.boolean(),
       failing_sub_goals: zod.array(zod.string().min(1)),
+      evidence_import_id: zod
+        .string()
+        .uuid()
+        .describe(
+          "The evidence import that added this scenario to the suite; null for any other scenario. A failing one offers Run Epoch from that evidence.",
+        ),
     }),
   ),
   suggested: zod.object({
@@ -40132,9 +40138,62 @@ export const SimulateApiHarnessEnvironmentsRemoveEvaluationParams = zod.object({
 });
 
 /**
- * Freeze Observe sessions or calls as evidence for this environment's
-tests; returns what each holds and lacks, and what redaction would
-replace. Nothing is drafted or run.
+ * This environment's imports a person can still finish, newest first.
+Read from what each import stores: no source is read again.
+ */
+export const SimulateApiHarnessEnvironmentsListEvidenceImportsParams =
+  zod.object({
+    id: zod.string(),
+  });
+
+export const simulateApiHarnessEnvironmentsListEvidenceImportsResponseCaseCountMin = 0;
+
+export const simulateApiHarnessEnvironmentsListEvidenceImportsResponseAddedCountMin = 0;
+
+export const SimulateApiHarnessEnvironmentsListEvidenceImportsResponseItem =
+  zod.object({
+    id: zod.string().uuid(),
+    source_kind: zod.enum(["session", "call", "transcript", "dataset"]),
+    source_name: zod
+      .string()
+      .min(1)
+      .describe(
+        "The Observe project's or dataset's name; a transcript import's first transcript name, or null when it has none.",
+      ),
+    source_available: zod
+      .boolean()
+      .describe("False once the Observe project or dataset was deleted."),
+    case_count: zod
+      .number()
+      .min(
+        simulateApiHarnessEnvironmentsListEvidenceImportsResponseCaseCountMin,
+      ),
+    added_count: zod
+      .number()
+      .min(
+        simulateApiHarnessEnvironmentsListEvidenceImportsResponseAddedCountMin,
+      )
+      .describe("Cases already added to the suite."),
+    status: zod
+      .enum(["waiting", "drafting", "drafted", "partly_added", "blocked"])
+      .describe(
+        "drafting: the builder is drafting its cases now. partly_added: some cases were added and some can still be. blocked: only blocked cases are left, to retry by importing again or to discard.",
+      ),
+    created_at: zod.string().datetime({ offset: true }),
+    can_discard: zod
+      .boolean()
+      .describe(
+        "False while the builder drafts its cases. Discarding an import with added cases discards only the cases not added.",
+      ),
+  });
+export const SimulateApiHarnessEnvironmentsListEvidenceImportsResponse =
+  zod.array(SimulateApiHarnessEnvironmentsListEvidenceImportsResponseItem);
+
+/**
+ * Freeze Observe sessions or calls or dataset rows, or store transcripts
+a person added, as evidence for this environment's tests; returns what
+each holds and lacks, and what redaction replaces. Nothing is drafted or
+run.
  */
 export const SimulateApiHarnessEnvironmentsEvidenceImportsParams = zod.object({
   id: zod.string(),
@@ -40142,14 +40201,95 @@ export const SimulateApiHarnessEnvironmentsEvidenceImportsParams = zod.object({
 
 export const simulateApiHarnessEnvironmentsEvidenceImportsBodyIdsMax = 20;
 
+export const simulateApiHarnessEnvironmentsEvidenceImportsBodyColumnsLabelsDefault =
+  [];
+export const simulateApiHarnessEnvironmentsEvidenceImportsBodyColumnsLabelsMax = 10;
+
+export const simulateApiHarnessEnvironmentsEvidenceImportsBodyTranscriptsItemNameMax = 120;
+
+export const simulateApiHarnessEnvironmentsEvidenceImportsBodyTranscriptsItemTextMax = 500000;
+
+export const simulateApiHarnessEnvironmentsEvidenceImportsBodyTranscriptsMax = 20;
+
 export const SimulateApiHarnessEnvironmentsEvidenceImportsBody = zod.object({
-  project_id: zod.string().uuid(),
-  source_kind: zod.enum(["session", "call"]),
+  source_kind: zod.enum(["session", "call", "transcript", "dataset"]),
+  project_id: zod
+    .string()
+    .uuid()
+    .optional()
+    .describe("Session and call imports: the Observe project."),
   ids: zod
     .array(zod.string().uuid())
     .min(1)
     .max(simulateApiHarnessEnvironmentsEvidenceImportsBodyIdsMax)
-    .describe("Session ids, or the trace ids of calls, in the order picked."),
+    .optional()
+    .describe(
+      "Session, call and dataset imports: session ids, the trace ids of calls, or row ids, in the order picked.",
+    ),
+  dataset_id: zod
+    .string()
+    .uuid()
+    .optional()
+    .describe("Dataset imports: the dataset."),
+  columns: zod
+    .object({
+      conversation: zod
+        .string()
+        .uuid()
+        .describe(
+          'The conversation: chat messages as JSON, or lines that start "User:" or "Agent:".',
+        ),
+      labels: zod
+        .array(zod.string().uuid())
+        .max(simulateApiHarnessEnvironmentsEvidenceImportsBodyColumnsLabelsMax)
+        .default(
+          simulateApiHarnessEnvironmentsEvidenceImportsBodyColumnsLabelsDefault,
+        )
+        .describe("Columns read as the row's labels."),
+      expected: zod
+        .string()
+        .uuid()
+        .optional()
+        .describe("The column that says what should happen."),
+    })
+    .optional()
+    .describe("Dataset imports: the columns to read."),
+  transcripts: zod
+    .array(
+      zod.object({
+        name: zod
+          .string()
+          .min(1)
+          .max(
+            simulateApiHarnessEnvironmentsEvidenceImportsBodyTranscriptsItemNameMax,
+          )
+          .describe(
+            "What the person calls it, such as the file's name; redacted before it is stored.",
+          ),
+        format: zod
+          .enum(["json", "text", "csv"])
+          .describe(
+            'json: a list of {role, content} messages, or {"messages": [...]}. text: lines that start "User:" or "Agent:". csv: a header with a role column and a text column.',
+          ),
+        text: zod
+          .string()
+          .min(1)
+          .max(
+            simulateApiHarnessEnvironmentsEvidenceImportsBodyTranscriptsItemTextMax,
+          )
+          .describe("The transcript as pasted or uploaded."),
+      }),
+    )
+    .min(1)
+    .max(simulateApiHarnessEnvironmentsEvidenceImportsBodyTranscriptsMax)
+    .optional()
+    .describe("Transcript imports: one case each, in this order."),
+  production: zod
+    .boolean()
+    .optional()
+    .describe(
+      "Transcript and dataset imports: the person says they come from production. Unsaid, they are not called production evidence.",
+    ),
 });
 
 /**
@@ -40160,6 +40300,8 @@ export const SimulateApiHarnessEnvironmentsEvidenceImportParams = zod.object({
   id: zod.string(),
   import_id: zod.string(),
 });
+
+export const simulateApiHarnessEnvironmentsEvidenceImportResponseCasesItemAlsoFromMin = 0;
 
 export const simulateApiHarnessEnvironmentsEvidenceImportResponseRedactionFindingsItemIndexMin = 0;
 
@@ -40176,13 +40318,22 @@ export const SimulateApiHarnessEnvironmentsEvidenceImportResponse = zod.object({
     .string()
     .uuid()
     .describe("The Observe project; null for evidence from outside Observe."),
+  dataset_id: zod
+    .string()
+    .uuid()
+    .describe("A dataset import's dataset; null otherwise."),
   agent_version_id: zod.string().uuid(),
-  source_kind: zod.enum(["session", "call"]),
+  source_kind: zod.enum(["session", "call", "transcript", "dataset"]),
   created_at: zod.string().datetime({ offset: true }),
   simulated: zod
     .boolean()
     .describe(
       "True when the sources come from a Simulator project: simulated conversations, not production evidence.",
+    ),
+  production: zod
+    .boolean()
+    .describe(
+      "True for production evidence: an Observe project that is not a Simulator project, or transcripts or dataset rows the person said come from production.",
     ),
   drafting: zod
     .boolean()
@@ -40191,18 +40342,25 @@ export const SimulateApiHarnessEnvironmentsEvidenceImportResponse = zod.object({
     zod.object({
       id: zod.string().uuid(),
       source_id: zod.string().min(1),
+      name: zod
+        .string()
+        .describe(
+          "A transcript's name as the person gave it, redacted; a dataset row's place in the import and its dataset ('Row 2 · Support evals'); blank for an Observe source.",
+        ),
       status: zod.enum([
         "pending",
         "unavailable",
         "drafted",
         "blocked",
         "added",
+        "discarded",
+        "duplicate",
       ]),
       reason: zod.string(),
       source_available: zod
         .boolean()
         .describe(
-          "False once Observe no longer holds the source: its provenance is unavailable, though what became of the case stands.",
+          "False once Observe or the dataset no longer holds the source: its provenance is unavailable, though what became of the case stands. Always true for a transcript, whose text is stored.",
         ),
       scenario_key: zod
         .string()
@@ -40229,7 +40387,29 @@ export const SimulateApiHarnessEnvironmentsEvidenceImportResponse = zod.object({
       changed_since_import: zod
         .boolean()
         .describe(
-          "Null when unknown: the source is gone, or part of it could not be read now or when the import was made.",
+          "Null when unknown: the source is gone, or part of it could not be read now or when the import was made. Always null for a transcript, which has no source to read again.",
+        ),
+      also_from: zod
+        .number()
+        .min(
+          simulateApiHarnessEnvironmentsEvidenceImportResponseCasesItemAlsoFromMin,
+        )
+        .describe(
+          "How many more sources hold this case: the same source or the same conversation imported again, in this import or a later one.",
+        ),
+      duplicate_of: zod
+        .object({
+          import_id: zod
+            .string()
+            .uuid()
+            .describe("The import holding the case."),
+          case_id: zod.string().uuid(),
+          scenario_name: zod
+            .string()
+            .describe("Its drafted scenario's title; blank until drafted."),
+        })
+        .describe(
+          "For a case already imported (status duplicate): the case of another import it repeats, proposed there. Null otherwise, or once that case is gone.",
         ),
       trace_ids: zod.array(zod.string().min(1)),
       started_at: zod.string().datetime({ offset: true }),
@@ -40331,14 +40511,29 @@ export const SimulateApiHarnessEnvironmentsEvidenceImportResponse = zod.object({
             value: zod
               .object({})
               .passthrough()
-              .describe(
-                "As the annotator recorded it: input evidence, not a verdict.",
-              ),
+              .describe("Any valid JSON value."),
             notes: zod.string(),
-            target: zod.enum(["session", "trace", "span"]),
+            target: zod
+              .enum(["session", "trace", "span", "row"])
+              .describe("row: a dataset row's label column."),
           }),
         ),
       }),
+      expected_outcome: zod
+        .object({
+          status: zod.enum([
+            "present",
+            "partial",
+            "truncated",
+            "missing",
+            "unreadable",
+          ]),
+          reason: zod.string(),
+          text: zod.string(),
+        })
+        .describe(
+          "What a dataset row's expected outcome column says should happen.",
+        ),
     }),
   ),
   redaction: zod.object({
@@ -40351,7 +40546,12 @@ export const SimulateApiHarnessEnvironmentsEvidenceImportResponse = zod.object({
     findings: zod.array(
       zod.object({
         case_id: zod.string().uuid(),
-        part: zod.enum(["transcript", "tool_calls", "labels"]),
+        part: zod.enum([
+          "transcript",
+          "tool_calls",
+          "labels",
+          "expected_outcome",
+        ]),
         index: zod
           .number()
           .min(
@@ -40381,6 +40581,16 @@ export const SimulateApiHarnessEnvironmentsEvidenceImportResponse = zod.object({
       .describe("Every finding, including those past the listed ones."),
   }),
 });
+
+/**
+ * Discard an import never added, and a transcript's stored text with it.
+Of an import with added cases, only the cases not added are discarded.
+ */
+export const SimulateApiHarnessEnvironmentsDiscardEvidenceImportParams =
+  zod.object({
+    id: zod.string(),
+    import_id: zod.string(),
+  });
 
 /**
  * Add an import's drafted cases to the suite: saved with them when the
@@ -40438,6 +40648,8 @@ export const SimulateApiHarnessEnvironmentsEvidenceImportsAddEvidenceCasesBody =
       ),
   });
 
+export const simulateApiHarnessEnvironmentsEvidenceImportsAddEvidenceCasesResponseEvidenceImportCasesItemAlsoFromMin = 0;
+
 export const simulateApiHarnessEnvironmentsEvidenceImportsAddEvidenceCasesResponseEvidenceImportRedactionFindingsItemIndexMin = 0;
 
 export const simulateApiHarnessEnvironmentsEvidenceImportsAddEvidenceCasesResponseEvidenceImportRedactionFindingsItemStartMin = 0;
@@ -40462,13 +40674,22 @@ export const SimulateApiHarnessEnvironmentsEvidenceImportsAddEvidenceCasesRespon
         .describe(
           "The Observe project; null for evidence from outside Observe.",
         ),
+      dataset_id: zod
+        .string()
+        .uuid()
+        .describe("A dataset import's dataset; null otherwise."),
       agent_version_id: zod.string().uuid(),
-      source_kind: zod.enum(["session", "call"]),
+      source_kind: zod.enum(["session", "call", "transcript", "dataset"]),
       created_at: zod.string().datetime({ offset: true }),
       simulated: zod
         .boolean()
         .describe(
           "True when the sources come from a Simulator project: simulated conversations, not production evidence.",
+        ),
+      production: zod
+        .boolean()
+        .describe(
+          "True for production evidence: an Observe project that is not a Simulator project, or transcripts or dataset rows the person said come from production.",
         ),
       drafting: zod
         .boolean()
@@ -40477,18 +40698,25 @@ export const SimulateApiHarnessEnvironmentsEvidenceImportsAddEvidenceCasesRespon
         zod.object({
           id: zod.string().uuid(),
           source_id: zod.string().min(1),
+          name: zod
+            .string()
+            .describe(
+              "A transcript's name as the person gave it, redacted; a dataset row's place in the import and its dataset ('Row 2 · Support evals'); blank for an Observe source.",
+            ),
           status: zod.enum([
             "pending",
             "unavailable",
             "drafted",
             "blocked",
             "added",
+            "discarded",
+            "duplicate",
           ]),
           reason: zod.string(),
           source_available: zod
             .boolean()
             .describe(
-              "False once Observe no longer holds the source: its provenance is unavailable, though what became of the case stands.",
+              "False once Observe or the dataset no longer holds the source: its provenance is unavailable, though what became of the case stands. Always true for a transcript, whose text is stored.",
             ),
           scenario_key: zod
             .string()
@@ -40515,7 +40743,29 @@ export const SimulateApiHarnessEnvironmentsEvidenceImportsAddEvidenceCasesRespon
           changed_since_import: zod
             .boolean()
             .describe(
-              "Null when unknown: the source is gone, or part of it could not be read now or when the import was made.",
+              "Null when unknown: the source is gone, or part of it could not be read now or when the import was made. Always null for a transcript, which has no source to read again.",
+            ),
+          also_from: zod
+            .number()
+            .min(
+              simulateApiHarnessEnvironmentsEvidenceImportsAddEvidenceCasesResponseEvidenceImportCasesItemAlsoFromMin,
+            )
+            .describe(
+              "How many more sources hold this case: the same source or the same conversation imported again, in this import or a later one.",
+            ),
+          duplicate_of: zod
+            .object({
+              import_id: zod
+                .string()
+                .uuid()
+                .describe("The import holding the case."),
+              case_id: zod.string().uuid(),
+              scenario_name: zod
+                .string()
+                .describe("Its drafted scenario's title; blank until drafted."),
+            })
+            .describe(
+              "For a case already imported (status duplicate): the case of another import it repeats, proposed there. Null otherwise, or once that case is gone.",
             ),
           trace_ids: zod.array(zod.string().min(1)),
           started_at: zod.string().datetime({ offset: true }),
@@ -40617,14 +40867,29 @@ export const SimulateApiHarnessEnvironmentsEvidenceImportsAddEvidenceCasesRespon
                 value: zod
                   .object({})
                   .passthrough()
-                  .describe(
-                    "As the annotator recorded it: input evidence, not a verdict.",
-                  ),
+                  .describe("Any valid JSON value."),
                 notes: zod.string(),
-                target: zod.enum(["session", "trace", "span"]),
+                target: zod
+                  .enum(["session", "trace", "span", "row"])
+                  .describe("row: a dataset row's label column."),
               }),
             ),
           }),
+          expected_outcome: zod
+            .object({
+              status: zod.enum([
+                "present",
+                "partial",
+                "truncated",
+                "missing",
+                "unreadable",
+              ]),
+              reason: zod.string(),
+              text: zod.string(),
+            })
+            .describe(
+              "What a dataset row's expected outcome column says should happen.",
+            ),
         }),
       ),
       redaction: zod.object({
@@ -40637,7 +40902,12 @@ export const SimulateApiHarnessEnvironmentsEvidenceImportsAddEvidenceCasesRespon
         findings: zod.array(
           zod.object({
             case_id: zod.string().uuid(),
-            part: zod.enum(["transcript", "tool_calls", "labels"]),
+            part: zod.enum([
+              "transcript",
+              "tool_calls",
+              "labels",
+              "expected_outcome",
+            ]),
             index: zod
               .number()
               .min(
