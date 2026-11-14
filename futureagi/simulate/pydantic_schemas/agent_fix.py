@@ -225,6 +225,17 @@ class VerdictTierPart(BaseModel):
     detail: str = ""
 
 
+class CeilingNumbers(BaseModel):
+    """A ceiling's medians on the finalist's repeats, in seconds or US dollars per
+    conversation: the candidate's, the base version's, the most the margin allows, and
+    the limit set at launch. A number nothing measured is None."""
+
+    baseline: float | None = None
+    candidate: float | None = None
+    allowed: float | None = None
+    limit: float | None = None
+
+
 class VerdictTier(BaseModel):
     """One check of the verdict, in the order the engine runs them."""
 
@@ -235,6 +246,9 @@ class VerdictTier(BaseModel):
     # The checks inside the tier: the ceilings tier holds reply latency and agent cost,
     # so one measured and one not show apart.
     parts: list[VerdictTierPart] = Field(default_factory=list)
+    # The ceilings tier's numbers, so a verdict shows what it was decided on.
+    latency: CeilingNumbers | None = None
+    cost: CeilingNumbers | None = None
 
 
 class CandidateVerdict(BaseModel):

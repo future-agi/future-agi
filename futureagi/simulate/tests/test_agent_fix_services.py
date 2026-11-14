@@ -12,7 +12,7 @@ from unittest.mock import patch
 
 import pytest
 from django.conf import settings as django_settings
-from django.db import transaction
+from django.db import connection, transaction
 from django.test import TestCase
 from django.utils import timezone
 
@@ -54,6 +54,7 @@ from simulate.selectors.agent_fix import (
     committed_usd,
     engine_brief,
     eval_review,
+    graded_check_runs,
     is_retryable,
     launch_options,
     limited_validation,
@@ -2762,13 +2763,51 @@ class TestWinnerGrading:
             )
         return dispatched
 
+    def test_a_repeat_asked_for_again_is_graded_in_place_of_the_one_that_failed(
+        self, source_run, settings
+    ):
+        settings.AGENT_FIX_WORST_CASE_USD_PER_EXECUTION = "0.5"
+        settings.AGENT_FIX_WORST_CASE_USD_PER_EVAL = "0.25"
+        fix_run, candidate, runs, _config = self._fix(source_run)
+        lost = _check(fix_run, label="baseline-r2")
+        HostedHarnessJob.no_workspace_objects.filter(id=lost.id).update(state="failed")
+        before = committed_usd(fix_run)
+        again = _check(fix_run, label="baseline-r2-again")
+
+        # The replacement holds a graded run's reserve, its eval included.
+        assert committed_usd(fix_run) - before == Decimal("0.75")
+        _finished_and_sealed(again)
+        winner = AgentFixCandidate.no_workspace_objects.get(id=candidate.id)
+        base, final = graded_check_runs(
+            AgentFixRun.no_workspace_objects.get(id=fix_run.id), winner
+        )
+        assert [run.id for run in base] == [runs["base"].id, again.id]
+        assert [run.id for run in final] == [runs["final"].id]
+
+    def test_grading_whose_final_check_has_no_graded_call_is_not_done(self, source_run):
+        fix_run, candidate, runs, config = self._fix(source_run)
+        self._won(fix_run, candidate)
+        # Every baseline verdict landed; no call of the final check finished to be graded.
+        CallExecution.objects.filter(
+            id__in=[one.call_execution_id for one in _executions(runs["base"])]
+        ).update(eval_outputs={str(config.id): {"status": "completed", "output": True}})
+        CallExecution.objects.filter(
+            id__in=[one.call_execution_id for one in _executions(runs["final"])]
+        ).update(status=CallExecution.CallStatus.FAILED)
+        SimTestExecution.objects.filter(
+            id__in=[runs["base"].test_execution_id, runs["final"].test_execution_id]
+        ).update(status=SimTestExecution.ExecutionStatus.COMPLETED)
+
+        assert eval_review(fix_run).grading == EvalGrading.INCOMPLETE
+
     def test_a_winner_grades_the_baseline_and_its_final_check_and_holds_them(
         self, source_run, settings
     ):
         settings.AGENT_FIX_WORST_CASE_USD_PER_EXECUTION = "0.5"
         settings.AGENT_FIX_WORST_CASE_USD_PER_EVAL = "0.25"
         fix_run, candidate, runs, config = self._fix(source_run)
-        assert committed_usd(fix_run) == Decimal("0.03")
+        # Before a winner, the baseline and the final check still hold their eval.
+        assert committed_usd(fix_run) == Decimal("0.03") + 2 * Decimal("0.25")
 
         dispatched = self._won(fix_run, candidate)
 
@@ -2904,6 +2943,19 @@ class TestWinnerGrading:
 
 
 class TestCheckRunEvalCost:
+    def test_a_job_written_without_the_eval_cost_column_starts_at_zero(self):
+        # A build from before the column inserts jobs without it, during a rollout.
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT column_default FROM information_schema.columns"
+                " WHERE table_name = %s AND column_name = %s",
+                ["simulate_hosted_harness_job", "fix_eval_cost_usd"],
+            )
+            (default,) = cursor.fetchone()
+
+        assert default is not None
+        assert Decimal(default.split("::")[0].strip("'()")) == 0
+
     def test_an_eval_s_bill_is_counted_on_its_check_run_only(self, source_run):
         fix_run = _fix_run(source_run)
         run = _check(fix_run)
@@ -2951,6 +3003,30 @@ class TestCheckRunEvalCost:
             brief.worst_case_usd_per_execution,
             brief.worst_case_usd_per_graded_execution,
         ) == (1.0, 1.25)
+
+    def test_a_settled_graded_run_holds_its_evals_until_the_fix_ends(
+        self, source_run, settings
+    ):
+        settings.AGENT_FIX_WORST_CASE_USD_PER_EXECUTION = "0.5"
+        settings.AGENT_FIX_WORST_CASE_USD_PER_EVAL = "0.25"
+        fix_run = _fix_run(source_run)
+        _mapped_eval(source_run)
+        run = _check(fix_run, label="baseline-r1")
+        # The baseline ends and its usage seals: a winner's grading may still run its eval.
+        HostedHarnessJob.no_workspace_objects.filter(id=run.id).update(
+            fix_cost_usd=Decimal("0.1")
+        )
+        SimTestExecution.objects.filter(id=run.test_execution_id).update(
+            status=SimTestExecution.ExecutionStatus.COMPLETED
+        )
+
+        assert committed_usd(fix_run) == Decimal("0.35")
+
+        # It ended with no winner, so nothing will grade the baseline.
+        AgentFixRun.no_workspace_objects.filter(id=fix_run.id).update(
+            state=State.NO_IMPROVEMENT
+        )
+        assert committed_usd(fix_run) == Decimal("0.1")
 
     def test_a_screen_holds_its_simulation_only_and_a_graded_run_its_evals_too(
         self, source_run, settings

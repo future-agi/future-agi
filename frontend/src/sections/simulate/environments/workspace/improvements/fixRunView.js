@@ -280,22 +280,51 @@ function unknownWhy(part, request) {
   return `${conversationsOf(text, "exported no model call")} returned no model-call record. Run again to measure them.`;
 }
 
-// A ceiling's verdict in words: within, over, or unknown with why. The fix never fails on an
-// unknown number. The engine's own text names the cause only for a candidate it failed.
-function partDetail(part, request) {
-  if (part.status === "passed") return "Within the limit.";
+// A ceiling's medians, as the verdict was decided on them: the candidate's against the
+// current version's, and what the margin and the launch limit allowed.
+const CEILING_FORMAT = {
+  "reply latency": (n) => `${n.toFixed(2)} s`,
+  "agent cost": (n) => `$${Number(n.toFixed(5))}`,
+};
+
+function ceilingNumbers(name, numbers) {
+  const format = CEILING_FORMAT[name];
+  if (!format || numbers?.candidate == null) return "";
+  const said = [format(numbers.candidate)];
+  if (numbers.baseline != null)
+    said.push(`against ${format(numbers.baseline)} on the current version`);
+  const bounds = [
+    numbers.allowed != null && `allowed up to ${format(numbers.allowed)}`,
+    numbers.limit != null && `limit ${format(numbers.limit)}`,
+  ].filter(Boolean);
+  return `${said.join(" ")}${bounds.length ? `, ${bounds.join(", ")}` : ""}`;
+}
+
+// A ceiling's verdict in words: within, over, or unknown with why, with the numbers it was
+// decided on. The fix never fails on an unknown number. The engine's own text names the
+// cause only for a candidate it failed.
+function partDetail(part, request, numbers) {
+  const measured = ceilingNumbers(part.name, numbers);
+  if (part.status === "passed")
+    return measured ? `Within the limit: ${measured}.` : "Within the limit.";
   if (part.status === "failed") {
     if (/^the change removes|^called /.test(part.detail || ""))
       return sentence(part.detail);
-    return "Over the limit.";
+    return measured ? `Over the limit: ${measured}.` : "Over the limit.";
   }
   return unknownWhy(part, request);
 }
 
-function describePart(part, request) {
+const PART_NUMBERS = { "reply latency": "latency", "agent cost": "cost" };
+
+function describePart(part, request, tier) {
   const label = PART_LABELS[part.name] || part.name;
   if (part.status !== "skipped")
-    return { ...part, label, detail: partDetail(part, request) };
+    return {
+      ...part,
+      label,
+      detail: partDetail(part, request, tier?.[PART_NUMBERS[part.name]]),
+    };
   return {
     ...part,
     label,
@@ -399,7 +428,9 @@ export function describeChecks(
       ...(notRun && {
         notRunBecause: checkLabel(tiers[failed].name, request),
       }),
-      ...(t.parts && { parts: t.parts.map((p) => describePart(p, request)) }),
+      ...(t.parts && {
+        parts: t.parts.map((p) => describePart(p, request, t)),
+      }),
     };
   });
 }

@@ -407,7 +407,7 @@ class AgentFixEngineViewSet(viewsets.ViewSet):
         )
         if run is None:
             return _not_found()
-        return Response(check_run_status(run).model_dump(mode="json"))
+        return Response(check_run_status(run, self._fix_run).model_dump(mode="json"))
 
     @validated_request(
         request_serializer=AgentFixEngineReportSerializer,

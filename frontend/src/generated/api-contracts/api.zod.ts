@@ -36072,6 +36072,22 @@ export const SimulateApiAgentFixEngineReportBody = zod.object({
                     .default(
                       simulateApiAgentFixEngineReportBodyCandidatesItemVerdictTiersItemPartsDefault,
                     ),
+                  latency: zod
+                    .object({
+                      baseline: zod.number().optional(),
+                      candidate: zod.number().optional(),
+                      allowed: zod.number().optional(),
+                      limit: zod.number().optional(),
+                    })
+                    .optional(),
+                  cost: zod
+                    .object({
+                      baseline: zod.number().optional(),
+                      candidate: zod.number().optional(),
+                      allowed: zod.number().optional(),
+                      limit: zod.number().optional(),
+                    })
+                    .optional(),
                 }),
               )
               .default(
@@ -36478,6 +36494,22 @@ export const SimulateApiAgentFixRunsListResponse = zod.object({
                     .default(
                       simulateApiAgentFixRunsListResponseResultsItemCandidatesItemVerdictTiersItemPartsDefault,
                     ),
+                  latency: zod
+                    .object({
+                      baseline: zod.number().optional(),
+                      candidate: zod.number().optional(),
+                      allowed: zod.number().optional(),
+                      limit: zod.number().optional(),
+                    })
+                    .optional(),
+                  cost: zod
+                    .object({
+                      baseline: zod.number().optional(),
+                      candidate: zod.number().optional(),
+                      allowed: zod.number().optional(),
+                      limit: zod.number().optional(),
+                    })
+                    .optional(),
                 }),
               )
               .default(
@@ -36969,6 +37001,22 @@ export const SimulateApiAgentFixRunsReadResponse = zod.object({
                 .default(
                   simulateApiAgentFixRunsReadResponseCandidatesItemVerdictTiersItemPartsDefault,
                 ),
+              latency: zod
+                .object({
+                  baseline: zod.number().optional(),
+                  candidate: zod.number().optional(),
+                  allowed: zod.number().optional(),
+                  limit: zod.number().optional(),
+                })
+                .optional(),
+              cost: zod
+                .object({
+                  baseline: zod.number().optional(),
+                  candidate: zod.number().optional(),
+                  allowed: zod.number().optional(),
+                  limit: zod.number().optional(),
+                })
+                .optional(),
             }),
           )
           .default(
@@ -37377,6 +37425,22 @@ export const SimulateApiAgentFixRunsStopResponse = zod.object({
                 .default(
                   simulateApiAgentFixRunsStopResponseCandidatesItemVerdictTiersItemPartsDefault,
                 ),
+              latency: zod
+                .object({
+                  baseline: zod.number().optional(),
+                  candidate: zod.number().optional(),
+                  allowed: zod.number().optional(),
+                  limit: zod.number().optional(),
+                })
+                .optional(),
+              cost: zod
+                .object({
+                  baseline: zod.number().optional(),
+                  candidate: zod.number().optional(),
+                  allowed: zod.number().optional(),
+                  limit: zod.number().optional(),
+                })
+                .optional(),
             }),
           )
           .default(

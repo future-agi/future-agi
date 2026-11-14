@@ -10,6 +10,8 @@ class Migration(migrations.Migration):
         migrations.AddField(
             model_name="hostedharnessjob",
             name="fix_eval_cost_usd",
-            field=models.DecimalField(decimal_places=4, default=0, max_digits=10),
+            field=models.DecimalField(
+                db_default=0, decimal_places=4, default=0, max_digits=10
+            ),
         ),
     ]

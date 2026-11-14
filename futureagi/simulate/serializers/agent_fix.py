@@ -130,6 +130,13 @@ class AgentFixVerdictTierPartSerializer(serializers.Serializer):
     detail = serializers.CharField(required=False, allow_blank=True, default="")
 
 
+class AgentFixCeilingNumbersSerializer(serializers.Serializer):
+    baseline = serializers.FloatField(allow_null=True, required=False, default=None)
+    candidate = serializers.FloatField(allow_null=True, required=False, default=None)
+    allowed = serializers.FloatField(allow_null=True, required=False, default=None)
+    limit = serializers.FloatField(allow_null=True, required=False, default=None)
+
+
 class AgentFixVerdictTierSerializer(serializers.Serializer):
     name = serializers.CharField()
     status = serializers.ChoiceField(choices=["passed", "failed", "pending", "skipped"])
@@ -137,6 +144,14 @@ class AgentFixVerdictTierSerializer(serializers.Serializer):
     # The checks inside a tier that holds several, each with its own status; a tier
     # from an older engine has none.
     parts = AgentFixVerdictTierPartSerializer(many=True, required=False, default=list)
+    # The ceilings tier's medians and limits; null on every other tier and from an
+    # engine that does not send them.
+    latency = AgentFixCeilingNumbersSerializer(
+        required=False, allow_null=True, default=None
+    )
+    cost = AgentFixCeilingNumbersSerializer(
+        required=False, allow_null=True, default=None
+    )
 
 
 class AgentFixPlanSerializer(serializers.Serializer):
