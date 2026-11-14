@@ -33,7 +33,9 @@ def test_embedding_cost_is_persisted(organization, model, tokens, metadata, expe
     assert ingest_request_logs([entry]) == 1
     stored = AgentccRequestLog.no_workspace_objects.get(request_id=entry["request_id"])
     assert stored.cost == Decimal(expected)
-    assert stored.metadata == metadata
+    source = "default" if model == "azure_ai/mistral-large" else "available_models"
+    assert stored.metadata == {**metadata, "pricing_source": source}
+    assert "pricing_source" not in metadata  # The caller's payload stays unchanged.
 
 
 def test_input_image_count_does_not_replace_explicit_gateway_cost():
