@@ -10,13 +10,20 @@ holds up another webhook's.
 
 Runs share the worker's ``default`` queue with evals, experiments and alert
 emails, so at most AGENTCC_WEBHOOK_MAX_CONCURRENT_DELIVERIES are in flight at
-once. The dispatcher records each run it starts as a lease on the webhook row
-(``delivery_lease_until``), counts the leases, and starts no more than the
-free slots allow: webhooks that are not failing first, then the one whose
-oldest due event has waited longest.
+once, and at most AGENTCC_WEBHOOK_MAX_CONCURRENT_DELIVERIES_PER_ORG of one
+organization's, so one tenant's slow or backlogged receivers cannot hold
+every slot. The dispatcher records each run it starts as a lease on the
+webhook row (``delivery_lease_until``, with ``last_run_started_at`` naming
+the run), counts the leases, and hands the free slots out in turn: round
+robin over organizations, the least recently served first, then over each
+organization's webhooks the same way. A failing webhook is not sorted last;
+its pause (``next_delivery_at``) alone throttles it, and once that ends it
+takes its turn. A run that ends dispatches again at once, so a freed slot
+does not wait for the next tick.
 
 A run delivers its webhook's due events oldest first, page after page, until
-none is due or its time budget is spent. A failed attempt backs that event
+none is due or its time budget (AGENTCC_WEBHOOK_RUN_BUDGET_SECONDS, 60 s by
+default) is spent; then it yields its slot. A failed attempt backs that event
 off (30 s, doubling, dead-lettered after ``max_attempts``) and the run goes
 on with the next event, so a receiver that fails now and then still gets its
 events at full speed. The run stops early when the receiver looks down: an
@@ -36,12 +43,14 @@ import hashlib
 import hmac
 import json
 import time
-from datetime import timedelta
+from collections import defaultdict
+from datetime import UTC, datetime, timedelta
 
 import requests as http_requests
 import structlog
 from django.conf import settings
-from django.db.models import Min, Q
+from django.db import connection, transaction
+from django.db.models import Count, Max, Min, Q
 from django.utils import timezone
 
 from agentcc.models.webhook import AgentccWebhook, AgentccWebhookEvent
@@ -63,8 +72,6 @@ logger = structlog.get_logger(__name__)
 DELIVERY_TIMEOUT = (3, 10)
 # Events read per page of a run.
 DELIVERY_PAGE_SIZE = 100
-# A run starts no new POST after this long.
-DELIVERY_TIME_BUDGET_SECONDS = 60
 # How long a claimed event stays out of other runs. Longer than one POST.
 DELIVERY_LEASE_SECONDS = 120
 # Bounds the per-webhook activity; above the budget plus one POST.
@@ -75,6 +82,11 @@ DELIVERY_ACTIVITY_TIME_LIMIT = 120
 DELIVERY_SCHEDULE_TO_START_TIMEOUT = 90
 DELIVERY_WORKFLOW_RUN_TIMEOUT = 300
 DISPATCH_ACTIVITY_TIME_LIMIT = 60
+# Serializes dispatchers (the schedule's tick and the runs that just ended),
+# so the install-wide and per-org caps are counted against the same leases.
+DISPATCH_LOCK_KEY = 0x41474357  # "AGCW"
+# Sorts a webhook or org never served before every one that was.
+NEVER = datetime.min.replace(tzinfo=UTC)
 # A run stops after this many failed attempts in a row.
 RUN_MAX_CONSECUTIVE_FAILURES = 3
 # The pause before the next run of a webhook whose run stopped on failures:
@@ -207,48 +219,58 @@ def _usable_webhook(webhook_id):
     return webhook
 
 
-def _end_run(webhook_id, paused, release_lease):
+def _end_run(webhook_id, paused, release_lease, run_token=None):
     """End a run: a run that stopped on failures pauses the next. A scheduled
     run also releases its lease; a direct call holds none, so it must not free
-    the slot of a scheduled run that may be going at the same time."""
-    values = {"next_delivery_at": None}
-    if release_lease:
-        values["delivery_lease_until"] = None
+    the slot of a scheduled run that may be going at the same time.
+
+    ``run_token`` is the ``last_run_started_at`` the dispatcher stamped for
+    this run. A run that outlived its lease (its thread keeps going past the
+    activity's timeout) and was dispatched again meanwhile holds a stale one:
+    it then leaves the newer run's lease alone. A run started without one (a
+    run dispatched before this rule existed) releases unconditionally."""
+    rows = AgentccWebhook.all_objects.filter(pk=webhook_id)
+    next_at = None
     if paused:
-        streak = (
-            AgentccWebhook.all_objects.filter(pk=webhook_id)
-            .values_list("consecutive_failures", flat=True)
-            .first()
+        streak = rows.values_list("consecutive_failures", flat=True).first()
+        next_at = timezone.now() + _pause(streak or 1)
+    rows.update(next_delivery_at=next_at)
+    if release_lease:
+        owned = (
+            rows if run_token is None else rows.filter(last_run_started_at=run_token)
         )
-        values["next_delivery_at"] = timezone.now() + _pause(streak or 1)
-    AgentccWebhook.all_objects.filter(pk=webhook_id).update(**values)
-    return values["next_delivery_at"]
+        owned.update(delivery_lease_until=None)
+    return next_at
 
 
 def deliver_webhook(
     webhook_id,
     event_ids=None,
-    time_budget_seconds=DELIVERY_TIME_BUDGET_SECONDS,
+    time_budget_seconds=None,
     page_size=DELIVERY_PAGE_SIZE,
     release_lease=False,
+    run_token=None,
 ):
     """Deliver one webhook's due events, oldest first.
 
-    Stops when none is due, the budget is spent, the receiver looks down (see
-    the module docstring), or the webhook was disabled. ``event_ids`` limits
-    the run to those events. ``release_lease`` is for the scheduled run,
-    which holds the dispatcher's lease. Returns counts.
+    Stops when none is due, the budget (AGENTCC_WEBHOOK_RUN_BUDGET_SECONDS
+    unless given) is spent, the receiver looks down (see the module
+    docstring), or the webhook was disabled. ``event_ids`` limits the run to
+    those events. ``release_lease`` and ``run_token`` are for the scheduled
+    run, which holds the dispatcher's lease. Returns counts.
     """
+    if time_budget_seconds is None:
+        time_budget_seconds = settings.AGENTCC_WEBHOOK_RUN_BUDGET_SECONDS
     result = {"delivered": 0, "failed": 0, "retired": 0}
     webhook = AgentccWebhook.all_objects.filter(pk=webhook_id).first()
     if webhook is None or webhook.deleted:
         result["retired"] = cancel_events_for_webhook(webhook_id)
-        _end_run(webhook_id, paused=False, release_lease=release_lease)
+        _end_run(webhook_id, False, release_lease, run_token)
         return result
     if not webhook.is_active:
         # Kept pending: re-enabling it resumes delivery, and the age limit
         # expires what waits too long.
-        _end_run(webhook_id, paused=False, release_lease=release_lease)
+        _end_run(webhook_id, False, release_lease, run_token)
         return result
 
     events = AgentccWebhookEvent.all_objects.filter(webhook_id=webhook_id)
@@ -307,7 +329,7 @@ def deliver_webhook(
         if http is not None:
             http.close()
         paused_until = _end_run(
-            webhook_id, paused=stopped_on_failure, release_lease=release_lease
+            webhook_id, stopped_on_failure, release_lease, run_token
         )
         logger.info(
             "webhook_events_processed",
@@ -329,12 +351,10 @@ def webhooks_with_due_events(org_id=None, event_ids=None):
     return list(events.order_by().values_list("webhook_id", flat=True).distinct())
 
 
-def webhooks_ready_for_delivery(now=None):
-    """Active webhooks with due events, no run in flight and no pause, in the
-    order the dispatcher serves them: webhooks that are not failing first,
-    then the one whose oldest due event has waited longest."""
-    now = now or timezone.now()
-    rows = (
+def _ready_rows(now):
+    """One row per active webhook with due events, no run in flight and no
+    pause: its id, org, last run start and oldest due event."""
+    return list(
         _due(AgentccWebhookEvent.all_objects.all(), now)
         .filter(webhook__deleted=False, webhook__is_active=True)
         .filter(
@@ -346,14 +366,53 @@ def webhooks_ready_for_delivery(now=None):
             | Q(webhook__next_delivery_at__lte=now)
         )
         .order_by()
-        .values("webhook_id", "webhook__consecutive_failures")
+        .values(
+            "webhook_id",
+            "webhook__organization_id",
+            "webhook__last_run_started_at",
+        )
         .annotate(oldest=Min("created_at"))
     )
-    rows = sorted(
+
+
+def _fair_order(rows):
+    """``rows`` in the order the dispatcher serves them: round robin over
+    organizations, the one served least recently (by any of its webhooks)
+    first, then over each organization's webhooks, least recently served
+    first. Ties go to the oldest due event. A failure streak does not count:
+    a failing webhook's pause already throttles it."""
+    by_org = defaultdict(list)
+    for row in sorted(
         rows,
-        key=lambda r: (r["webhook__consecutive_failures"] > 0, r["oldest"]),
+        key=lambda r: (
+            r["webhook__last_run_started_at"] or NEVER,
+            r["oldest"],
+            str(r["webhook_id"]),
+        ),
+    ):
+        by_org[row["webhook__organization_id"]].append(row)
+    served = dict(
+        AgentccWebhook.all_objects.filter(organization_id__in=list(by_org))
+        .order_by()
+        .values("organization_id")
+        .annotate(last=Max("last_run_started_at"))
+        .values_list("organization_id", "last")
     )
-    return [row["webhook_id"] for row in rows]
+    orgs = sorted(
+        by_org,
+        key=lambda org: (served.get(org) or NEVER, by_org[org][0]["oldest"], str(org)),
+    )
+    order = []
+    for turn in range(max((len(hooks) for hooks in by_org.values()), default=0)):
+        order.extend(by_org[org][turn] for org in orgs if turn < len(by_org[org]))
+    return order
+
+
+def webhooks_ready_for_delivery(now=None):
+    """Active webhooks with due events, no run in flight and no pause, in the
+    order the dispatcher serves them (``_fair_order``)."""
+    now = now or timezone.now()
+    return [row["webhook_id"] for row in _fair_order(_ready_rows(now))]
 
 
 def deliveries_in_flight(now=None):
@@ -362,17 +421,28 @@ def deliveries_in_flight(now=None):
     return AgentccWebhook.all_objects.filter(delivery_lease_until__gt=now).count()
 
 
+def _runs_in_flight_by_org(now):
+    return dict(
+        AgentccWebhook.all_objects.filter(delivery_lease_until__gt=now)
+        .order_by()
+        .values("organization_id")
+        .annotate(runs=Count("id"))
+        .values_list("organization_id", "runs")
+    )
+
+
 def _take_delivery_lease(webhook_id, now):
-    """Lease the webhook for a run, unless something changed since it was
-    listed: a run took it, a run that just ended paused it, or it was turned
-    off or deleted."""
+    """Lease the webhook for a run started at ``now``, unless something
+    changed since it was listed: a run took it, a run that just ended paused
+    it, or it was turned off or deleted. ``now`` becomes the run's token."""
     free = Q(delivery_lease_until__isnull=True) | Q(delivery_lease_until__lte=now)
     not_paused = Q(next_delivery_at__isnull=True) | Q(next_delivery_at__lte=now)
     return bool(
         AgentccWebhook.all_objects.filter(
             free, not_paused, pk=webhook_id, is_active=True, deleted=False
         ).update(
-            delivery_lease_until=now + timedelta(seconds=DELIVERY_ACTIVITY_TIME_LIMIT)
+            delivery_lease_until=now + timedelta(seconds=DELIVERY_ACTIVITY_TIME_LIMIT),
+            last_run_started_at=now,
         )
     )
 
@@ -395,6 +465,15 @@ def delivery_task_id(webhook_id):
     return f"agentcc-webhook-delivery-{webhook_id}"
 
 
+def _run_token(value):
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(value)
+    except (TypeError, ValueError):
+        return None
+
+
 @temporal_activity(
     max_retries=0,
     time_limit=DELIVERY_ACTIVITY_TIME_LIMIT,
@@ -402,60 +481,106 @@ def delivery_task_id(webhook_id):
     schedule_to_start_timeout=DELIVERY_SCHEDULE_TO_START_TIMEOUT,
     workflow_run_timeout=DELIVERY_WORKFLOW_RUN_TIMEOUT,
 )
-def deliver_webhook_activity(webhook_id):
-    """One webhook's delivery run. A failed run leaves its events due."""
-    # The run may have waited in the queue; its lease counts from now.
-    AgentccWebhook.all_objects.filter(pk=webhook_id).update(
+def deliver_webhook_activity(webhook_id, run_started_at=None):
+    """One webhook's delivery run. A failed run leaves its events due.
+
+    ``run_started_at`` is the dispatcher's token for this run (see
+    ``_end_run``). Once the run ends it dispatches again, so its freed slot
+    goes to the next waiting webhook at once."""
+    token = _run_token(run_started_at)
+    # The run may have waited in the queue; its lease counts from now, unless
+    # a newer run of this webhook was dispatched meanwhile.
+    rows = AgentccWebhook.all_objects.filter(pk=webhook_id)
+    if token is not None:
+        rows = rows.filter(last_run_started_at=token)
+    rows.update(
         delivery_lease_until=timezone.now()
         + timedelta(seconds=DELIVERY_ACTIVITY_TIME_LIMIT)
     )
-    return deliver_webhook(webhook_id, release_lease=True)
+    try:
+        return deliver_webhook(webhook_id, release_lease=True, run_token=token)
+    finally:
+        try:
+            dispatch_deliveries()
+        except Exception:
+            # The schedule's next tick dispatches instead.
+            logger.exception("webhook_delivery_redispatch_failed")
 
 
-@temporal_activity(
-    max_retries=0, time_limit=DISPATCH_ACTIVITY_TIME_LIMIT, queue="default"
-)
-def dispatch_webhook_deliveries_activity():
-    """Start delivery runs for webhooks with due events, within the cap.
+def _lease_free_slots(now):
+    """Under the dispatch lock: lease runs for the webhooks next in turn,
+    within the install-wide and per-org caps. Returns (leased ids, listed,
+    in flight)."""
+    cap = settings.AGENTCC_WEBHOOK_MAX_CONCURRENT_DELIVERIES
+    per_org = settings.AGENTCC_WEBHOOK_MAX_CONCURRENT_DELIVERIES_PER_ORG
+    with transaction.atomic():
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT pg_advisory_xact_lock(%s)", [DISPATCH_LOCK_KEY])
+        by_org = _runs_in_flight_by_org(now)
+        running = sum(by_org.values())
+        order = _fair_order(_ready_rows(now))
+        free = max(cap - running, 0) if cap > 0 else len(order)
+        leased = []
+        for row in order:
+            if len(leased) >= free:
+                break
+            org = row["webhook__organization_id"]
+            if per_org > 0 and by_org.get(org, 0) >= per_org:
+                continue
+            if not _take_delivery_lease(row["webhook_id"], now):
+                continue
+            by_org[org] = by_org.get(org, 0) + 1
+            leased.append(row["webhook_id"])
+    return leased, len(order), running
+
+
+def dispatch_deliveries(now=None):
+    """Start delivery runs for the webhooks next in turn, within the caps.
 
     A webhook whose run is still going keeps it: its lease keeps it out of
-    this list, and the fixed workflow id means a run that outlived its lease
+    the list, and the fixed workflow id means a run that outlived its lease
     is reused, so the webhook is never sent to twice at once.
     """
     from temporalio.common import WorkflowIDConflictPolicy
 
-    now = timezone.now()
-    cap = settings.AGENTCC_WEBHOOK_MAX_CONCURRENT_DELIVERIES
-    running = deliveries_in_flight(now)
-    webhook_ids = webhooks_ready_for_delivery(now)
-    free = max(cap - running, 0) if cap > 0 else len(webhook_ids)
+    now = now or timezone.now()
+    leased, listed, running = _lease_free_slots(now)
     started = 0
-    for webhook_id in webhook_ids:
-        if started >= free:
-            break
-        if not _take_delivery_lease(webhook_id, now):
-            continue
+    for webhook_id in leased:
         try:
             deliver_webhook_activity.apply_async(
-                args=(str(webhook_id),),
+                args=(str(webhook_id), now.isoformat()),
                 task_id=delivery_task_id(webhook_id),
                 id_conflict_policy=WorkflowIDConflictPolicy.USE_EXISTING,
             )
             started += 1
         except Exception:
             # The next tick tries again; one webhook must not stop the others.
-            AgentccWebhook.all_objects.filter(pk=webhook_id).update(
-                delivery_lease_until=None
-            )
+            AgentccWebhook.all_objects.filter(
+                pk=webhook_id, last_run_started_at=now
+            ).update(delivery_lease_until=None)
             logger.exception(
                 "webhook_delivery_dispatch_failed", webhook_id=str(webhook_id)
             )
     result = {
-        "webhooks": len(webhook_ids),
+        "webhooks": listed,
         "started": started,
         "running": running,
-        "waiting": len(webhook_ids) - started,
+        "waiting": listed - started,
     }
     if result["waiting"]:
-        logger.info("webhook_delivery_dispatch_capped", cap=cap, **result)
+        logger.info(
+            "webhook_delivery_dispatch_capped",
+            cap=settings.AGENTCC_WEBHOOK_MAX_CONCURRENT_DELIVERIES,
+            per_org_cap=settings.AGENTCC_WEBHOOK_MAX_CONCURRENT_DELIVERIES_PER_ORG,
+            **result,
+        )
     return result
+
+
+@temporal_activity(
+    max_retries=0, time_limit=DISPATCH_ACTIVITY_TIME_LIMIT, queue="default"
+)
+def dispatch_webhook_deliveries_activity():
+    """The schedule's tick: ``dispatch_deliveries``."""
+    return dispatch_deliveries()

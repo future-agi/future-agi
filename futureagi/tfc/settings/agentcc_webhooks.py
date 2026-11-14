@@ -8,7 +8,7 @@ import os
 from django.core.exceptions import ImproperlyConfigured
 
 
-def _integer(name: str, default: int, minimum: int) -> int:
+def _integer(name: str, default: int, minimum: int, maximum: int | None = None) -> int:
     raw = os.getenv(name, "").strip()
     if not raw:
         return default
@@ -16,7 +16,7 @@ def _integer(name: str, default: int, minimum: int) -> int:
         value = int(raw)
     except ValueError:
         raise ImproperlyConfigured(f"{name} must be an integer.") from None
-    if value < minimum:
+    if value < minimum or (maximum is not None and value > maximum):
         raise ImproperlyConfigured(f"{name} is outside its supported range.")
     return value
 
@@ -43,4 +43,15 @@ AGENTCC_WEBHOOK_DISABLE_AFTER_MINUTES = _integer(
 # slow receivers must not take all of its slots. 0: no limit.
 AGENTCC_WEBHOOK_MAX_CONCURRENT_DELIVERIES = _integer(
     "AGENTCC_WEBHOOK_MAX_CONCURRENT_DELIVERIES", 3, 0
+)
+# ...and of one organization's webhooks, so one tenant's slow or backlogged
+# receivers cannot hold every slot of the install. 0: no per-org limit.
+AGENTCC_WEBHOOK_MAX_CONCURRENT_DELIVERIES_PER_ORG = _integer(
+    "AGENTCC_WEBHOOK_MAX_CONCURRENT_DELIVERIES_PER_ORG", 1, 0
+)
+# Seconds one delivery run may keep starting POSTs before it yields its slot
+# (a POST takes at most 13 s more). At most 90, so a run always ends inside
+# its 120 s activity limit and lease.
+AGENTCC_WEBHOOK_RUN_BUDGET_SECONDS = _integer(
+    "AGENTCC_WEBHOOK_RUN_BUDGET_SECONDS", 60, 1, 90
 )

@@ -44,6 +44,10 @@ class AgentccWebhook(BaseModel):
     delivery_lease_until = models.DateTimeField(null=True, blank=True)
     # A run that stopped on failures pauses the webhook's next run until then.
     next_delivery_at = models.DateTimeField(null=True, blank=True)
+    # When the dispatcher last started a delivery run for it. Slots rotate by
+    # it (least recently served first), and a run releases its lease only
+    # while this still names its own start.
+    last_run_started_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         db_table = "agentcc_webhook"

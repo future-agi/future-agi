@@ -463,8 +463,10 @@ the pending-age and per-webhook cap settings handle those. See the
 for `AGENTCC_WEBHOOK_PENDING_MAX_AGE_HOURS` (24 hours),
 `AGENTCC_WEBHOOK_MAX_PENDING_PER_WEBHOOK` (10000),
 `AGENTCC_WEBHOOK_DISABLE_AFTER_FAILURES` (100),
-`AGENTCC_WEBHOOK_DISABLE_AFTER_MINUTES` (60) and
-`AGENTCC_WEBHOOK_MAX_CONCURRENT_DELIVERIES` (3).
+`AGENTCC_WEBHOOK_DISABLE_AFTER_MINUTES` (60),
+`AGENTCC_WEBHOOK_MAX_CONCURRENT_DELIVERIES` (3),
+`AGENTCC_WEBHOOK_MAX_CONCURRENT_DELIVERIES_PER_ORG` (1) and
+`AGENTCC_WEBHOOK_RUN_BUDGET_SECONDS` (60).
 
 A webhook is auto-disabled only after 100 failed deliveries in a row that
 span at least 60 minutes, so a short receiver outage never disables it. Its
