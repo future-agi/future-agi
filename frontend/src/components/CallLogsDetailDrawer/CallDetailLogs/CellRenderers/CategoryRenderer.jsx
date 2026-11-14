@@ -6,36 +6,36 @@ import _ from "lodash";
 
 const categoryColor = {
   system: {
-    color: "green.700",
-    backgroundColor: "green.o10",
+    color: "status.success.fg",
+    backgroundColor: "status.success.bg",
   },
   voice: {
-    color: "pink.700",
-    backgroundColor: "pink.o10",
+    color: "text.secondary",
+    backgroundColor: "action.hover",
   },
   transcriber: {
-    color: "blue.700",
-    backgroundColor: "blue.o10",
+    color: "status.info.fg",
+    backgroundColor: "status.info.bg",
   },
   endpointing: {
-    color: "orange.700",
-    backgroundColor: "orange.o10",
+    color: "status.warning.fg",
+    backgroundColor: "status.warning.bg",
   },
   model: {
     color: "primary.main",
     backgroundColor: "action.hover",
   },
   latency: {
-    color: "red.700",
-    backgroundColor: "red.o10",
+    color: "status.danger.fg",
+    backgroundColor: "status.danger.bg",
   },
   transport: {
-    color: "orange.500",
-    backgroundColor: "orange.o5",
+    color: "status.warning.fg",
+    backgroundColor: "status.warning.bg",
   },
   webhook: {
-    color: "green.400",
-    backgroundColor: "green.o5",
+    color: "status.success.fg",
+    backgroundColor: "status.success.bg",
   },
 };
 
@@ -46,9 +46,6 @@ const CategoryRenderer = ({ value }) => {
         label={_.capitalize(value)}
         sx={{
           ...categoryColor[value],
-          paddingX: "12px",
-          paddingY: "2px",
-          borderRadius: "2px",
 
           "&:hover": {
             ...categoryColor[value],
@@ -56,7 +53,6 @@ const CategoryRenderer = ({ value }) => {
           "& .MuiChip-label": {
             padding: 0,
             ...typography.s3,
-            fontWeight: "fontWeightMedium",
           },
         }}
       />

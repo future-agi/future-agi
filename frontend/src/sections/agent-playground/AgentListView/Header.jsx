@@ -26,10 +26,7 @@ export default function Header() {
         variant="outlined"
         size="small"
         sx={{
-          borderRadius: "4px",
-          height: "30px",
-          px: "4px",
-          width: "105px",
+          flexShrink: 0,
         }}
         onClick={() => {
           window.open(

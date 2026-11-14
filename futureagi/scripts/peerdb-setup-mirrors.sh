@@ -32,7 +32,7 @@ DST_CH_DB="${DST_CH_DB:-futureagi}"
 
 echo "==> Waiting for PeerDB server at ${PEERDB_HOST}:${PEERDB_PORT}..."
 for i in $(seq 1 60); do
-    if psql "host=${PEERDB_HOST} port=${PEERDB_PORT} user=peerdb password=peerdb dbname=peerdb" -c "SELECT 1" &>/dev/null; then
+    if psql -X -v ON_ERROR_STOP=1 "host=${PEERDB_HOST} port=${PEERDB_PORT} user=peerdb password=peerdb dbname=peerdb" -c "SELECT 1" &>/dev/null; then
         echo "==> PeerDB is ready"
         break
     fi
@@ -45,7 +45,7 @@ for i in $(seq 1 60); do
 done
 
 run_sql() {
-    psql "host=${PEERDB_HOST} port=${PEERDB_PORT} user=peerdb password=peerdb dbname=peerdb" -c "$1"
+    psql -X -v ON_ERROR_STOP=1 "host=${PEERDB_HOST} port=${PEERDB_PORT} user=peerdb password=peerdb dbname=peerdb" -c "$1"
 }
 
 echo ""
@@ -58,7 +58,7 @@ CREATE PEER IF NOT EXISTS pg_source FROM POSTGRES WITH (
     password = '${SRC_PG_PASSWORD}',
     database = '${SRC_PG_DB}'
 );
-" || echo "    (peer may already exist)"
+"
 
 echo ""
 echo "==> Creating ClickHouse destination peer..."
@@ -71,7 +71,7 @@ CREATE PEER IF NOT EXISTS ch_dest FROM CLICKHOUSE WITH (
     database = '${DST_CH_DB}',
     disable_tls = true
 );
-" || echo "    (peer may already exist)"
+"
 
 echo ""
 echo "==> Creating CDC mirrors..."
@@ -81,8 +81,8 @@ echo "==> Creating CDC mirrors..."
 # opt-in for prod via env var). fi-collector is the canonical writer
 # for `spans` post-cutover. See docs/CH25_MIGRATION.md.
 DROP_LEGACY_CDC_CHAIN="${CH25_DROP_LEGACY_CDC_CHAIN:-false}"
-case "${DROP_LEGACY_CDC_CHAIN,,}" in
-    1|true|yes|on) SKIP_OBS_SPAN_MIRROR=1 ;;
+case "${DROP_LEGACY_CDC_CHAIN}" in
+    1|[Tt][Rr][Uu][Ee]|[Yy][Ee][Ss]|[Oo][Nn]) SKIP_OBS_SPAN_MIRROR=1 ;;
     *)             SKIP_OBS_SPAN_MIRROR=0 ;;
 esac
 
@@ -134,7 +134,7 @@ create_mirror() {
     local mirror_name="mirror_${dst_table}"
 
     echo "    Creating mirror: ${src_table} -> ${dst_table} (sync=${sync_interval}s, CDC-only)"
-    if ! run_sql "
+    run_sql "
     CREATE MIRROR IF NOT EXISTS ${mirror_name}
     FROM pg_source TO ch_dest
     WITH TABLE MAPPING (
@@ -147,9 +147,7 @@ create_mirror() {
         synced_at_col_name = '_peerdb_synced_at',
         sync_interval = ${sync_interval}
     );
-    " 2>&1; then
-        echo "    WARNING: Failed to create mirror ${mirror_name} (may already exist)"
-    fi
+    "
 }
 
 # Create mirrors for fact tables (10s sync interval)
@@ -167,5 +165,6 @@ for mapping in "${DIMENSION_TABLES[@]}"; do
 done
 
 echo ""
-echo "==> Done! All CDC mirrors configured (CDC-only, no initial snapshot)."
+echo "==> Done! All CDC setup statements accepted (CDC-only, no initial snapshot)."
+echo "    Existing mirror configuration and replication health still require verification."
 echo "    Run peerdb-bulk-copy.sh to copy existing data, then CDC handles changes."

@@ -1,13 +1,7 @@
 import PropTypes from "prop-types";
+import { SegmentedTabs } from "src/components/tabs/tabs";
 import React, { useMemo, useState } from "react";
-import {
-  Box,
-  IconButton,
-  Tab,
-  Tabs,
-  Typography,
-  useTheme,
-} from "@mui/material";
+import { Box, IconButton, Tab, Typography } from "@mui/material";
 import { ShowComponent } from "src/components/show";
 import { JsonView } from "react-json-view-lite";
 import "react-json-view-lite/dist/index.css";
@@ -26,7 +20,6 @@ const RunDetailsCard = ({ value, column, allowCopy = false }) => {
   const [tabValue, setTabValue] = useState("markdown");
 
   const dataType = column?.dataType;
-  const theme = useTheme();
 
   const handleTabChange = (event, newValue) => {
     setTabValue(newValue);
@@ -84,33 +77,10 @@ const RunDetailsCard = ({ value, column, allowCopy = false }) => {
                   alignItems: "center",
                 }}
               >
-                <Tabs
-                  textColor="primary"
-                  value={tabValue}
-                  onChange={handleTabChange}
-                  TabIndicatorProps={{
-                    style: { display: "none" },
-                  }}
-                  sx={{
-                    minHeight: 32,
-                    "& .MuiTab-root": {
-                      minHeight: 32,
-                      padding: "12px",
-                      color: "divider",
-                      fontWeight: theme.typography["fontWeightMedium"],
-                      typography: "s1",
-                      "&:not(:last-of-type)": {
-                        marginRight: "4px",
-                      },
-                      "&.Mui-selected": {
-                        color: theme.palette.primary.main,
-                      },
-                    },
-                  }}
-                >
+                <SegmentedTabs value={tabValue} onChange={handleTabChange}>
                   <Tab value="markdown" label="Markdown" />
                   <Tab value="raw" label="Raw" />
-                </Tabs>
+                </SegmentedTabs>
                 {allowCopy ? (
                   <Box>
                     <IconButton
@@ -122,7 +92,7 @@ const RunDetailsCard = ({ value, column, allowCopy = false }) => {
                       }}
                     >
                       <Iconify
-                        icon="basil:copy-outline"
+                        icon="solar:copy-linear"
                         sx={{ color: "text.disabled" }}
                       />
                     </IconButton>

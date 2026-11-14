@@ -72,7 +72,7 @@ const EditPromptChild = ({ prompts, onClose, variables }) => {
             color: "text.primary",
           }}
         >
-          <Iconify icon="akar-icons:cross" />
+          <Iconify icon="solar:close-linear" />
         </IconButton>
       </DialogTitle>
       <DialogContent sx={{ padding: 2, overflowY: "unset", mb: 2 }}>
@@ -148,8 +148,8 @@ const EditPrompt = ({ open, onClose, prompts, variables }) => {
       maxWidth="sm"
       PaperProps={{
         sx: {
-          minWidth: "556px",
-          maxWidth: "556px",
+          minWidth: "560px",
+          maxWidth: "560px",
           minHeight: "300px",
           overflow: "visible",
         },

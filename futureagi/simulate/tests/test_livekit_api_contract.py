@@ -2,10 +2,12 @@ import inspect
 import json
 import uuid
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 from asgiref.sync import async_to_sync
 from django.test import RequestFactory, override_settings
+from rest_framework.response import Response
 from rest_framework.test import APIRequestFactory
 
 from simulate.views.livekit_api import (
@@ -364,6 +366,61 @@ def test_livekit_webhook_rejects_missing_authorization_before_verification():
     assert response.status_code == 401
     assert response.data["code"] == "not_authenticated"
     assert response.data["message"] == "Missing Authorization header"
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    ("method", "path", "body"),
+    [
+        (
+            "get",
+            f"/simulate/api/livekit/listener-token/{ANONYMOUS_LIVEKIT_CALL_ID}/",
+            None,
+        ),
+        (
+            "post",
+            "/simulate/api/livekit/validate-credentials/",
+            {
+                "livekit_url": "wss://example.livekit.cloud",
+                "api_key": "key",
+                "api_secret": "secret",
+            },
+        ),
+    ],
+)
+def test_livekit_user_routes_return_voice_gate_response(
+    auth_client, method, path, body
+):
+    denial = Response(
+        {"message": "Voice simulation is unavailable", "feature": "voice_sim"},
+        status=402,
+    )
+    with patch("tfc.ee_gates.voice_sim_gate_response", return_value=denial):
+        request = getattr(auth_client, method)
+        response = request(path, body, format="json") if body else request(path)
+
+    assert response.status_code == 402
+    assert response.json()["feature"] == "voice_sim"
+
+
+def test_livekit_webhook_returns_voice_gate_response_before_sdk_import():
+    denial = Response(
+        {"message": "Voice simulation is unavailable", "feature": "voice_sim"},
+        status=402,
+    )
+    factory = APIRequestFactory()
+    request = factory.post(
+        "/simulate/api/livekit/webhook/",
+        {},
+        format="json",
+        HTTP_AUTHORIZATION="signed-livekit-token",
+    )
+
+    with patch("tfc.ee_gates.voice_sim_oss_gate_response", return_value=denial):
+        response = _dispatch_view(LiveKitWebhookView, request)
+
+    assert response.status_code == 402
+    assert response.data["feature"] == "voice_sim"
 
 
 @pytest.mark.django_db

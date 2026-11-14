@@ -6,9 +6,9 @@ import uuid
 from datetime import UTC, datetime, timedelta
 
 import pytest
-from clickhouse_driver import Client
 from clickhouse_driver.errors import NetworkError, ServerException
 
+from conftest import _ch_test_native_client, _ch_test_native_port
 from model_hub.selectors import eval_usage
 from model_hub.selectors.eval_usage import read_eval_usage
 from tracer.services.clickhouse import trace_project_scope
@@ -44,8 +44,6 @@ class _FakeClient:
                         3,
                         self.avg_score * 3,
                         3,
-                        2,
-                        1,
                         2,
                         1,
                     )
@@ -94,8 +92,6 @@ class _HeavyFullWindowClient:
                         self.total_rows,
                         self.total_rows * 0.5,
                         self.total_rows,
-                        self.total_rows,
-                        0,
                         self.total_rows,
                         0,
                     )
@@ -157,8 +153,6 @@ class _DenseSeekClient:
                         self.total_rows,
                         float(self.total_rows),
                         self.total_rows,
-                        self.total_rows,
-                        0,
                         self.total_rows,
                         0,
                     )
@@ -237,6 +231,7 @@ def test_eval_usage_queries_are_project_scoped_bounded_and_page_only(monkeypatch
         organization_id=str(uuid.uuid4()),
         workspace_id=str(uuid.uuid4()),
         project_ids=[str(uuid.uuid4())],
+        configured_project_ids=(),
         template_id=str(uuid.uuid4()),
         start_date=now - timedelta(days=30),
         end_date=now,
@@ -278,18 +273,29 @@ def test_eval_usage_queries_are_project_scoped_bounded_and_page_only(monkeypatch
     assert all(
         "trace_dict" not in query
         and "FROM traces" in query
-        and "INNER JOIN (" in query
-        and "AS bounded_trace_candidates" in query
+        and "INNER JOIN (" not in query
+        # One scan of the readable projects only.
         and "PREWHERE trace_project_scan.project_id IN %(project_ids)s" in query
+        and "outside_project_ids" not in query
+        and "trace_scan_project_ids" not in query
+        # The candidates prune the (project_id, id) key, not a join.
+        and "AND trace_project_scan.id IN (" in query
         and "SELECT DISTINCT toUUIDOrZero(eval_trace_id) AS trace_id" in query
-        and "GROUP BY trace_project_scan.id" in query
+        and "GROUP BY trace_project_scan.id, trace_project_scan.project_id" in query
         and "LEFT JOIN (" in query
-        and "allowed_trace_projects.trace_id" in query
+        and "readable_trace_projects.trace_id" in query
         and "toUUIDOrZero(current_usage.eval_trace_id)" in query
-        and "allowed_trace_projects.project_id IN %(project_ids)s" in query
+        # A log that recorded its project is listed by that project only;
+        # an older log by the rule Usage had before sources were recorded
+        # (the trace held by exactly one configured readable project).
+        and "AS eval_source_project_id" in query
+        and "has(\n                    readable_trace_projects.live_project_ids,"
+        in query
+        and "countIf(project_id IN %(configured_project_ids)s) = 1" in query
+        and "readable_trace_projects.configured_live = 1" in query
         and query.count("FROM usage_apicalllog") == 2
         and query.index("LIMIT 1 BY id")
-        < query.index("allowed_trace_projects.project_id IN")
+        < query.index("readable_trace_projects.live_project_ids")
         for query in period_queries
     )
     chart_query = next(
@@ -316,6 +322,7 @@ def test_eval_usage_heavy_12m_uses_three_full_window_statements(monkeypatch):
         organization_id=str(uuid.uuid4()),
         workspace_id=str(uuid.uuid4()),
         project_ids=[str(uuid.uuid4())],
+        configured_project_ids=(),
         template_id=str(uuid.uuid4()),
         start_date=start,
         end_date=end,
@@ -365,6 +372,7 @@ def test_eval_usage_page_n_uses_bounded_seek_without_offset(monkeypatch):
         organization_id=str(uuid.uuid4()),
         workspace_id=str(uuid.uuid4()),
         project_ids=[str(uuid.uuid4())],
+        configured_project_ids=(),
         template_id=str(uuid.uuid4()),
         start_date=start,
         end_date=end - timedelta(microseconds=1),
@@ -396,6 +404,7 @@ def test_eval_usage_deep_page_seeks_to_small_time_leaf(monkeypatch):
         organization_id=str(uuid.uuid4()),
         workspace_id=str(uuid.uuid4()),
         project_ids=[str(uuid.uuid4())],
+        configured_project_ids=(),
         template_id=str(uuid.uuid4()),
         start_date=start,
         end_date=end - timedelta(microseconds=1),
@@ -422,7 +431,7 @@ def test_eval_usage_deep_page_seeks_to_small_time_leaf(monkeypatch):
     )
     assert all(
         "FROM traces" in query
-        and "AS bounded_trace_candidates" in query
+        and "AND trace_project_scan.id IN (" in query
         and query.count("FROM usage_apicalllog") == 2
         for query, *_ in seek_calls + page_calls
     )
@@ -440,6 +449,7 @@ def test_eval_usage_same_microsecond_deep_page_seeks_by_id(monkeypatch):
         organization_id=str(uuid.uuid4()),
         workspace_id=None,
         project_ids=[str(uuid.uuid4())],
+        configured_project_ids=(),
         template_id=str(uuid.uuid4()),
         start_date=start,
         end_date=start,
@@ -472,6 +482,7 @@ def test_eval_usage_page_fills_exactly_across_seek_leaf_boundary(monkeypatch):
         organization_id=str(uuid.uuid4()),
         workspace_id=None,
         project_ids=[str(uuid.uuid4())],
+        configured_project_ids=(),
         template_id=str(uuid.uuid4()),
         start_date=start,
         end_date=end - timedelta(microseconds=1),
@@ -512,8 +523,6 @@ def test_eval_usage_maps_one_exact_chart_aggregate(monkeypatch):
                             5,
                             3,
                             2,
-                            3,
-                            2,
                         )
                     ],
                     [],
@@ -533,6 +542,7 @@ def test_eval_usage_maps_one_exact_chart_aggregate(monkeypatch):
         organization_id=str(uuid.uuid4()),
         workspace_id=None,
         project_ids=[str(uuid.uuid4())],
+        configured_project_ids=(),
         template_id=str(uuid.uuid4()),
         start_date=start,
         end_date=end - timedelta(microseconds=1),
@@ -542,8 +552,6 @@ def test_eval_usage_maps_one_exact_chart_aggregate(monkeypatch):
     )
 
     assert result.runs_period == 5
-    assert result.success_count == 3
-    assert result.error_count == 2
     assert len(result.chart) == 1
     assert result.chart[0].calls == 5
     assert result.chart[0].avg_duration == pytest.approx(13.0 / 5.0)
@@ -579,6 +587,7 @@ def test_eval_usage_full_window_budget_failure_is_not_split_or_published(monkeyp
             organization_id=str(uuid.uuid4()),
             workspace_id=None,
             project_ids=[str(uuid.uuid4())],
+            configured_project_ids=(),
             template_id=str(uuid.uuid4()),
             start_date=start,
             end_date=end - timedelta(microseconds=1),
@@ -597,6 +606,8 @@ def test_eval_usage_full_window_budget_failure_is_not_split_or_published(monkeyp
 def test_latest_trace_project_relation_requires_finite_candidates():
     with pytest.raises(ValueError, match="bounded trace-ID candidate"):
         trace_project_scope.latest_live_trace_projects_sql(candidate_trace_ids_sql="")
+    with pytest.raises(ValueError, match="bounded trace-ID candidate"):
+        trace_project_scope.live_trace_project_sets_sql(candidate_trace_ids_sql="")
 
 
 @pytest.mark.unit
@@ -609,6 +620,7 @@ def test_eval_usage_exact_total_can_be_zero(monkeypatch):
         organization_id=str(uuid.uuid4()),
         workspace_id=str(uuid.uuid4()),
         project_ids=[str(uuid.uuid4())],
+        configured_project_ids=(),
         template_id=str(uuid.uuid4()),
         start_date=now - timedelta(days=1),
         end_date=now,
@@ -634,6 +646,7 @@ def test_eval_usage_normalizes_non_finite_empty_averages(monkeypatch):
         organization_id=str(uuid.uuid4()),
         workspace_id=str(uuid.uuid4()),
         project_ids=[str(uuid.uuid4())],
+        configured_project_ids=(),
         template_id=str(uuid.uuid4()),
         start_date=now - timedelta(days=1),
         end_date=now,
@@ -665,6 +678,7 @@ def test_eval_usage_checks_admission_after_client_acquisition(monkeypatch):
             organization_id=str(uuid.uuid4()),
             workspace_id=str(uuid.uuid4()),
             project_ids=[str(uuid.uuid4())],
+            configured_project_ids=(),
             template_id=str(uuid.uuid4()),
             start_date=now - timedelta(days=1),
             end_date=now,
@@ -704,6 +718,7 @@ def test_eval_usage_clickhouse_failures_are_typed(monkeypatch, failure, expected
             organization_id=str(uuid.uuid4()),
             workspace_id=str(uuid.uuid4()),
             project_ids=[str(uuid.uuid4())],
+            configured_project_ids=(),
             template_id=str(uuid.uuid4()),
             start_date=now - timedelta(days=1),
             end_date=now,
@@ -730,6 +745,7 @@ def test_eval_usage_programming_defect_re_raises_original_type(monkeypatch):
             organization_id=str(uuid.uuid4()),
             workspace_id=str(uuid.uuid4()),
             project_ids=[str(uuid.uuid4())],
+            configured_project_ids=(),
             template_id=str(uuid.uuid4()),
             start_date=now - timedelta(days=1),
             end_date=now,
@@ -749,6 +765,7 @@ def test_eval_usage_empty_project_set_fails_closed_for_trace_rows(monkeypatch):
         organization_id=str(uuid.uuid4()),
         workspace_id=None,
         project_ids=[],
+        configured_project_ids=(),
         template_id=str(uuid.uuid4()),
         start_date=now - timedelta(days=1),
         end_date=now,
@@ -765,17 +782,8 @@ def test_eval_usage_empty_project_set_fails_closed_for_trace_rows(monkeypatch):
 
 @pytest.fixture(scope="module")
 def ch_client():
-    host = os.environ.get("CH25_HOST", "127.0.0.1")
-    port = int(os.environ.get("CH25_NATIVE_PORT", "19000"))
-    client = Client(host=host, port=port, connect_timeout=3)
-    try:
-        client.execute("SELECT 1")
-    except Exception as exc:
-        pytest.skip(f"CH25 unavailable on {host}:{port}: {exc!r}")
-    try:
+    with _ch_test_native_client() as client:
         yield client
-    finally:
-        client.disconnect_connection()
 
 
 @pytest.mark.integration
@@ -891,7 +899,7 @@ def test_eval_usage_real_ch25_latest_tombstone_and_project_scope(
                 organization_id,
                 workspace_id,
                 template_id,
-                "error",
+                "success",
                 '{"output":{"output":"Failed"}}',
                 str(other_trace_id),
                 0,
@@ -922,7 +930,7 @@ def test_eval_usage_real_ch25_latest_tombstone_and_project_scope(
         monkeypatch.setattr(trace_project_scope, "_TRACE_TABLE", trace_source)
         read_client = ClickHouseClient(
             host=os.environ.get("CH25_HOST", "127.0.0.1"),
-            port=int(os.environ.get("CH25_NATIVE_PORT", "19000")),
+            port=_ch_test_native_port().port,
             database="default",
         )
         monkeypatch.setattr(
@@ -935,6 +943,9 @@ def test_eval_usage_real_ch25_latest_tombstone_and_project_scope(
             organization_id=str(organization_id),
             workspace_id=str(workspace_id),
             project_ids=[str(project_id)],
+            # These rows recorded no project (older logs): dev's rule decides,
+            # over the readable projects that run the eval.
+            configured_project_ids=[str(project_id)],
             template_id=template_id,
             start_date=now - timedelta(days=1),
             end_date=now,
@@ -950,10 +961,140 @@ def test_eval_usage_real_ch25_latest_tombstone_and_project_scope(
         assert result.completeness == eval_usage.EvalUsageReadCompleteness.COMPLETE
         assert result.unavailable_fields == ()
         assert result.runs_period == 2
-        assert result.success_count == 2
-        assert result.error_count == 0
         assert len(result.logs) == 2
         assert sum(bucket.calls for bucket in result.chart) == 2
+    finally:
+        if "read_client" in locals():
+            read_client.close()
+        ch_client.execute(f"DROP TABLE IF EXISTS {trace_source}")
+        ch_client.execute(f"DROP TABLE IF EXISTS {usage_table}")
+
+
+@pytest.mark.integration
+def test_eval_usage_real_ch25_counts_only_successful_runs(ch_client, monkeypatch):
+    """Usage is successful runs only, decided on each run's newest version.
+
+    An error that was a success in an older CDC version must not resurrect,
+    and an in-flight run that later succeeded must count.
+    """
+
+    suffix = uuid.uuid4().hex[:10]
+    usage_table = f"_test_eval_usage_success_{suffix}"
+    trace_source = f"_test_eval_usage_success_trace_{suffix}"
+    organization_id = uuid.uuid4()
+    workspace_id = uuid.uuid4()
+    template_id = str(uuid.uuid4())
+    now = datetime.now(UTC).replace(microsecond=0)
+    log_ids = {name: uuid.uuid4() for name in ("old", "retried", "recent")}
+
+    def row(row_id, log_id, status, minutes_ago, version, config="{}"):
+        created_at = now - timedelta(minutes=minutes_ago)
+        return (
+            row_id,
+            log_id,
+            organization_id,
+            workspace_id,
+            template_id,
+            status,
+            config,
+            "",
+            0,
+            created_at,
+            created_at + timedelta(seconds=version),
+            0,
+            version,
+        )
+
+    ch_client.execute(
+        f"""
+        CREATE TABLE {usage_table} (
+            id Int64,
+            log_id UUID,
+            organization_id UUID,
+            workspace_id Nullable(UUID),
+            source_id String,
+            status String,
+            config String,
+            eval_trace_id String,
+            deleted UInt8,
+            created_at DateTime64(6, 'UTC'),
+            _peerdb_synced_at DateTime64(6, 'UTC'),
+            _peerdb_is_deleted UInt8,
+            _peerdb_version Int64
+        ) ENGINE = MergeTree
+        ORDER BY id
+        """
+    )
+    ch_client.execute(
+        f"""
+        CREATE TABLE {trace_source} (
+            id UUID,
+            project_id UUID,
+            is_deleted UInt8,
+            _version UInt64
+        ) ENGINE = ReplacingMergeTree(_version, is_deleted)
+        ORDER BY (project_id, id)
+        """
+    )
+    try:
+        passed = '{"output":{"output":"Passed"}}'
+        ch_client.execute(
+            f"INSERT INTO {usage_table} VALUES",
+            [
+                row(1, log_ids["old"], "success", 180, 1, passed),
+                # Evaluator failure and a validation rejection.
+                row(2, uuid.uuid4(), "error", 120, 1),
+                row(3, uuid.uuid4(), "error", 110, 1),
+                # Still running.
+                row(4, uuid.uuid4(), "processing", 100, 1),
+                # Newest version is an error: the older success must not count.
+                row(5, uuid.uuid4(), "success", 90, 1, passed),
+                row(5, uuid.uuid4(), "error", 90, 2),
+                # Newest version settled as a success.
+                row(6, log_ids["retried"], "processing", 60, 1),
+                row(6, log_ids["retried"], "success", 60, 2, passed),
+                row(7, log_ids["recent"], "success", 30, 1, passed),
+            ],
+        )
+        monkeypatch.setattr(eval_usage, "_USAGE_TABLE", usage_table)
+        monkeypatch.setattr(trace_project_scope, "_TRACE_TABLE", trace_source)
+        read_client = ClickHouseClient(
+            host=os.environ.get("CH25_HOST", "127.0.0.1"),
+            port=_ch_test_native_port().port,
+            database="default",
+        )
+        monkeypatch.setattr(eval_usage, "get_clickhouse_client", lambda: read_client)
+
+        def read(page, page_size):
+            return read_eval_usage(
+                organization_id=str(organization_id),
+                workspace_id=str(workspace_id),
+                project_ids=[],
+                configured_project_ids=(),
+                template_id=template_id,
+                start_date=now - timedelta(days=1),
+                end_date=now,
+                bucket_minutes=60,
+                page=page,
+                page_size=page_size,
+            )
+
+        result = read(page=0, page_size=25)
+
+        assert result.total_runs == 3
+        assert result.runs_period == 3
+        assert sum(bucket.calls for bucket in result.chart) == 3
+        assert sum(bucket.pass_count for bucket in result.chart) == 3
+        assert [log.log_id for log in result.logs] == [
+            str(log_ids["recent"]),
+            str(log_ids["retried"]),
+            str(log_ids["old"]),
+        ]
+        assert {log.status for log in result.logs} == {"success"}
+
+        # A deep page seeks through the same successful rows only.
+        second = read(page=1, page_size=1)
+        assert [log.log_id for log in second.logs] == [str(log_ids["retried"])]
     finally:
         if "read_client" in locals():
             read_client.close()

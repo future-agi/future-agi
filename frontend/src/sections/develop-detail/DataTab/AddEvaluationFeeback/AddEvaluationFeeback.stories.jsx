@@ -22,7 +22,11 @@ const Harness = ({ feedbackData, data }) => {
     outputType === OUTPUT.CHOICES && Boolean(feedbackData?.multi_choice);
 
   const { control, handleSubmit } = useForm({
-    defaultValues: { value: isMulti ? [] : "", explanation: "", actionType: "" },
+    defaultValues: {
+      value: isMulti ? [] : "",
+      explanation: "",
+      actionType: "",
+    },
     resolver: zodResolver(feedbackFormSchema),
   });
 
@@ -41,10 +45,10 @@ const Harness = ({ feedbackData, data }) => {
         flexDirection: "column",
         gap: 2,
         border: "1px solid var(--border-default)",
-        borderRadius: "10px",
+        borderRadius: "8px",
       }}
     >
-      <Typography fontWeight={700} color="text.primary">
+      <Typography fontWeight={600} color="text.primary">
         Add feedback
       </Typography>
       <div style={{ borderBottom: "1px solid var(--border-light)" }} />

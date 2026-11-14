@@ -30,6 +30,7 @@ type ProviderConfig struct {
 	APIKey         string   `json:"api_key"`
 	BaseURL        string   `json:"base_url,omitempty"`
 	APIFormat      string   `json:"api_format,omitempty"`
+	APIPathPrefix  *string  `json:"api_path_prefix,omitempty"`
 	Models         []string `json:"models,omitempty"`
 	Timeout        int      `json:"timeout,omitempty"` // seconds
 	Weight         float64  `json:"weight,omitempty"`
@@ -42,11 +43,12 @@ type ProviderConfig struct {
 	AWSSecretAccessKey string `json:"aws_secret_access_key,omitempty"`
 	AWSRegion          string `json:"aws_region,omitempty"`
 	AWSSessionToken    string `json:"aws_session_token,omitempty"`
+	ServiceAccountJSON string `json:"service_account_json,omitempty"`
 }
 
 // HasCredentials returns true if the provider has any form of authentication configured.
 func (p *ProviderConfig) HasCredentials() bool {
-	return p.APIKey != "" || (p.AWSAccessKeyID != "" && p.AWSSecretAccessKey != "")
+	return p.APIKey != "" || p.ServiceAccountJSON != "" || (p.AWSAccessKeyID != "" && p.AWSSecretAccessKey != "")
 }
 
 // GuardrailConfig holds per-org guardrail pipeline settings.

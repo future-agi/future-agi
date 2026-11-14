@@ -106,8 +106,6 @@ const TestRunsSelection = () => {
         variant="outlined"
         sx={{
           ...theme.typography.s2_1,
-          fontWeight: 500,
-          paddingX: 2,
         }}
         startIcon={<SvgColor src="/assets/icons/ic_completed.svg" />}
         onClick={() => setOpenTestEvaluation(true)}
@@ -122,8 +120,6 @@ const TestRunsSelection = () => {
         variant="outlined"
         sx={{
           ...theme.typography.s2_1,
-          fontWeight: 500,
-          paddingX: 2,
         }}
         startIcon={<SvgColor src="/assets/icons/ic_delete.svg" />}
         onClick={() => setActionType(ACTION_TYPES.DELETE)}
@@ -136,7 +132,7 @@ const TestRunsSelection = () => {
       <Button
         size="small"
         variant="outlined"
-        sx={{ ...theme.typography.s1, fontWeight: 400 }}
+        sx={{ ...theme.typography.s1 }}
         onClick={() => {
           clearSelection();
         }}
@@ -159,16 +155,16 @@ const TestRunsSelection = () => {
             : `Deleting these runs will remove all simulation results and call details permanently. Are you sure you want to proceed?`
         }
         isValid={true}
-        modalWidth="480px"
+        modalWidth="560px"
         onSubmit={handleSubmit}
         onCancelBtn={() => setActionType(null)}
         actionBtnTitle={actionType === ACTION_TYPES.RERUN ? "Re-Run" : "Delete"}
         actionBtnSx={
           actionType === ACTION_TYPES.DELETE
             ? {
-                bgcolor: "red.500",
+                bgcolor: "status.danger.solid",
                 color: "common.white",
-                "&:hover": { bgcolor: "red.600" },
+                "&:hover": { bgcolor: "status.danger.solid" },
               }
             : {}
         }

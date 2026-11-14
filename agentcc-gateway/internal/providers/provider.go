@@ -5,8 +5,10 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"time"
 
 	"github.com/futureagi/agentcc-gateway/internal/models"
+	"github.com/futureagi/agentcc-gateway/internal/providers/speech"
 )
 
 // Provider is the interface for calling LLM providers.
@@ -26,6 +28,31 @@ type Provider interface {
 
 	// Close releases resources held by this provider.
 	Close() error
+}
+
+// ClientTimeoutReporter is implemented by providers that state the client
+// timeout they enforce. That timeout bounds the whole exchange, the streamed
+// body included, so it caps the request's own deadline: the gateway reports
+// whichever of the two is shorter as x-agentcc-timeout-ms.
+type ClientTimeoutReporter interface {
+	ClientTimeout() time.Duration
+}
+
+// PriceTableNamer is implemented by providers whose models the price table
+// keys under a name the provider's ID need not match: the table lists new
+// Gemini models only as "vertex_ai/gemini-4-argon" and "gemini/gemini-4-argon",
+// so a Gemini provider named "vertex_ai_global" states "vertex_ai".
+type PriceTableNamer interface {
+	PriceTableName() string
+}
+
+// PriceTableName returns the name the price table keys p's models under, or
+// "" when p states none.
+func PriceTableName(p Provider) string {
+	if n, ok := p.(PriceTableNamer); ok {
+		return n.PriceTableName()
+	}
+	return ""
 }
 
 // EmbeddingProvider is implemented by providers that support embedding generation.
@@ -139,9 +166,30 @@ type RealtimeProvider interface {
 	RealtimeSubprotocols() []string
 }
 
+// SpeechRelayProvider is implemented by speech vendors reached over their own streaming
+// WebSocket APIs, which the gateway relays with the platform's credential.
+type SpeechRelayProvider interface {
+	// Vendor names the vendor whose API is served, at /{vendor}/...
+	Vendor() string
+	// Open prepares the upstream connection and meter for one vendor path, query and headers.
+	Open(path string, query url.Values, header http.Header) (*speech.Session, error)
+}
+
 // VectorStoresProvider is implemented by providers that support the OpenAI Vector Stores API.
 type VectorStoresProvider interface {
 	// ProxyVectorStoresRequest forwards a Vector Stores API request.
 	// No streaming, no OpenAI-Beta header needed (GA API).
 	ProxyVectorStoresRequest(ctx context.Context, method string, path string, body []byte, queryParams url.Values) (respBody []byte, statusCode int, respHeaders http.Header, err error)
+}
+
+// SystemOneProvider is implemented by providers that serve structured
+// decisions in the System One format. The request body is forwarded as is.
+type SystemOneProvider interface {
+	SystemOne(ctx context.Context, req *models.DecisionRequest) (*models.DecisionResponse, error)
+}
+
+// DecisionsProvider is implemented by providers that serve OpenAI's
+// Decisions API. The request body is forwarded as is.
+type DecisionsProvider interface {
+	CreateDecision(ctx context.Context, req *models.DecisionRequest) (*models.DecisionResponse, error)
 }

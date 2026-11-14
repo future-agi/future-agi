@@ -169,19 +169,14 @@ def gold_metrics(rows):
     expected = []
     for bucket, user_groups in sorted(buckets.items()):
         spans = [r for user in user_groups for trace in user for r in trace]
-        user_latencies = []
-        for user in user_groups:
-            latencies = [
-                [r["latency_ms"] for r in trace if r["latency_ms"] is not None]
-                for trace in user
-            ]
-            user_latencies.append(mean([mean(v) for v in latencies if v]))
+        # Pooled: every non-NULL span latency of the bucket's user traces.
+        span_latencies = [r["latency_ms"] for r in spans if r["latency_ms"] is not None]
         total_cost = sum(r["cost"] for r in spans)
         total_tokens = sum(r["total_tokens"] for r in spans)
         expected.append(
             {
                 "time_bucket": bucket.strftime("%Y-%m-%d %H:%M:%S"),
-                "avg_latency": mean(user_latencies),
+                "avg_latency": mean(span_latencies),
                 "total_tokens": total_tokens,
                 "avg_cost": total_cost / len(user_groups),
                 "traffic_count": len(user_groups),
@@ -198,6 +193,11 @@ def gold_metrics(rows):
                 "avg_cost_per_user": total_cost / len(user_groups),
                 "avg_traces_per_user": mean([len(user) for user in user_groups]),
                 "total_tokens_sum": total_tokens,
+                # This fixture has only positive, known costs and no summary
+                # wrappers. Coverage is derived from independent FINAL rows.
+                "cost_known_subtotal": total_cost,
+                "known_cost_fact_count": len(spans),
+                "unknown_cost_fact_count": 0,
             }
         )
     return expected

@@ -1,5 +1,6 @@
 import React from "react";
-import { Card, CardHeader, Collapse, Grid, IconButton } from "@mui/material";
+import { Collapse, Grid, IconButton } from "@mui/material";
+import Section from "src/components/section";
 import PropTypes from "prop-types";
 import { useGetDatasetDetails } from "src/api/model/dataset";
 import { DatasetMetricChart } from "src/components/charts";
@@ -16,43 +17,31 @@ export default function ModelOverview({ model }) {
 
   const modelSummary = (
     <>
-      <Card
-        sx={{
-          p: 0,
-          // minWidth: 300,
-          // border: "1px solid rgba(211,211,211,0.6)",
-        }}
+      <Section
+        variant="panel"
+        title="Model Overview"
+        actions={
+          <IconButton
+            size="small"
+            color={collapsible.value ? "inherit" : "default"}
+            onClick={collapsible.onToggle}
+          >
+            <Iconify
+              icon={
+                collapsible.value
+                  ? "solar:alt-arrow-up-linear"
+                  : "solar:alt-arrow-down-linear"
+              }
+            />
+          </IconButton>
+        }
       >
-        <CardHeader
-          sx={{
-            p: 2,
-            // minWidth: 300,
-            // border: "1px solid rgba(211,211,211,0.6)",
-          }}
-          title="Model Overview"
-          action={
-            <IconButton
-              size="small"
-              color={collapsible.value ? "inherit" : "default"}
-              onClick={collapsible.onToggle}
-            >
-              <Iconify
-                icon={
-                  collapsible.value
-                    ? "eva:arrow-ios-upward-fill"
-                    : "eva:arrow-ios-downward-fill"
-                }
-              />
-            </IconButton>
-          }
-        />
-
         <Collapse in={collapsible.value} unmountOnExit>
           <Grid container>
             <Grid item xs={3} />
           </Grid>
         </Collapse>
-      </Card>
+      </Section>
     </>
   );
 
@@ -65,13 +54,13 @@ export default function ModelOverview({ model }) {
         isBaseline={true}
       />
 
-      <Card>
+      <Section variant="panel">
         <DatasetMetricChart isBrush={false} />
-      </Card>
+      </Section>
 
-      <Card sx={{ mt: 2 }}>
+      <Section variant="panel" sx={{ mt: 2 }}>
         <DatasetSummary dataset={{}} model={model} />
-      </Card>
+      </Section>
     </>
   );
 }

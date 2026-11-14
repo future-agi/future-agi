@@ -68,7 +68,7 @@ export default function SavePromptModal() {
       open={true}
       PaperProps={{
         sx: {
-          minWidth: "570px",
+          minWidth: "560px",
           borderRadius: "8px",
           padding: "16px",
           display: "flex",
@@ -94,7 +94,7 @@ export default function SavePromptModal() {
             color: "text.primary",
           }}
         >
-          <Iconify icon="akar-icons:cross" />
+          <Iconify icon="solar:close-linear" />
         </IconButton>
       </DialogTitle>
 
@@ -222,7 +222,6 @@ export default function SavePromptModal() {
           variant="outlined"
           sx={{
             minWidth: "180px",
-            minHeight: "38px",
             "&:hover": {
               borderColor: "divider",
             },
@@ -242,7 +241,6 @@ export default function SavePromptModal() {
           type="submit"
           sx={{
             minWidth: "180px",
-            minHeight: "38px",
           }}
           disabled={!isValid}
         >

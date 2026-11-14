@@ -1,3 +1,4 @@
+/* eslint-disable no-restricted-syntax -- ds: data colours (editor theme) */
 import { Box, IconButton, Typography } from "@mui/material";
 import PropTypes from "prop-types";
 import React from "react";
@@ -35,7 +36,7 @@ const buttonList = [
   {
     id: 3,
     title: "cURL",
-    icon: "icon-park-outline:code",
+    icon: "solar:code-linear",
     iconType: "iconify",
   },
 ];
@@ -117,12 +118,10 @@ const BottomEvaluationSection = ({
                 setInitialLeftWidth(30);
               }}
               sx={{
-                borderRadius: "4px",
                 backgroundColor: active ? "action.hover" : "background.paper",
                 border: "1px solid",
                 borderColor: "divider",
                 gap: (theme) => theme.spacing(0.5),
-                height: "30px",
               }}
             >
               <Iconify

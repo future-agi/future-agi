@@ -406,7 +406,6 @@ function DatasetRuleFilters({
           borderColor: filters.some((filter) => filter.column_id)
             ? "primary.main"
             : "divider",
-          borderRadius: 0.5,
           p: 0.75,
           mb: 1,
           bgcolor: (theme) =>
@@ -544,7 +543,6 @@ function TraceRuleFilters({
           borderColor: filters.some((filter) => filter.column_id)
             ? "primary.main"
             : "divider",
-          borderRadius: 0.5,
           p: 0.75,
           mb: 1,
           bgcolor: (theme) =>
@@ -757,7 +755,6 @@ function SimulationRuleFilters({
           borderColor: filters.some((filter) => filter.column_id)
             ? "primary.main"
             : "divider",
-          borderRadius: 0.5,
           p: 0.75,
           mb: 1,
           bgcolor: (theme) =>
@@ -950,7 +947,13 @@ export default function CreateRuleDialog({ open, onClose, queueId, queue }) {
   );
 
   return (
-    <Dialog open={open} onClose={onClose} maxWidth="md" fullWidth>
+    <Dialog
+      open={open}
+      onClose={onClose}
+      maxWidth={false}
+      PaperProps={{ sx: { maxWidth: 960 } }}
+      fullWidth
+    >
       <DialogTitle>Create Automation Rule</DialogTitle>
       <DialogContent sx={{ overflowX: "hidden" }}>
         <Stack spacing={2.5} sx={{ mt: 1, minWidth: 0 }}>

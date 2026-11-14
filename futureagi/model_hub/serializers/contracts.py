@@ -13,8 +13,9 @@ from model_hub.serializers.optimize_dataset import (
 from model_hub.serializers.performance_report import PerformanceReportSerializer
 from model_hub.services.ai_eval_writer_service import OUTPUT_FORMAT_PROMPTS
 from model_hub.services.dataset_validators import MAX_PAGE_SIZE as DATASET_MAX_PAGE_SIZE
+from model_hub.utils.SQL_queries import EVAL_TEMPLATE_SORT_COLUMNS
 from tfc.utils.api_errors import API_ERROR_TYPE_CHOICES
-from tfc.utils.serializer_fields import StringOrObjectField
+from tfc.utils.serializer_fields import JsonValueField, StringOrObjectField
 from tracer.serializers.filters import (
     SortParamField,
     StrictInputSerializer,
@@ -1796,6 +1797,8 @@ class EvalTemplateBulkDeleteResponseSerializer(serializers.Serializer):
 
 
 class EvalTemplateListItemSerializer(serializers.Serializer):
+    jev_mapping = serializers.JSONField(required=False, allow_null=True)
+    model = serializers.CharField(required=False, allow_null=True, allow_blank=True)
     id = serializers.UUIDField()
     name = serializers.CharField()
     template_type = serializers.CharField()
@@ -1836,6 +1839,7 @@ class EvalTemplateCreateResponseSerializer(serializers.Serializer):
 
 
 class EvalTemplateDetailResponseResultSerializer(serializers.Serializer):
+    jev_mapping = serializers.JSONField(required=False, allow_null=True)
     id = serializers.UUIDField()
     name = serializers.CharField()
     description = serializers.CharField(
@@ -1940,9 +1944,24 @@ class EvalUsageQuerySerializer(serializers.Serializer):
 class EvalUsageStatsSerializer(serializers.Serializer):
     total_runs = serializers.IntegerField()
     runs_period = serializers.IntegerField()
-    success_count = serializers.IntegerField()
-    error_count = serializers.IntegerField()
-    pass_rate = serializers.FloatField()
+    success_count = serializers.IntegerField(
+        help_text=(
+            "Deprecated compatibility field. Usage counts only successful "
+            "runs, so this always equals runs_period."
+        ),
+    )
+    error_count = serializers.IntegerField(
+        help_text=(
+            "Deprecated compatibility field. Usage counts only successful "
+            "runs, so this is always 0; failed runs stay in the eval logs."
+        ),
+    )
+    pass_rate = serializers.FloatField(
+        help_text=(
+            "Deprecated compatibility field. Usage counts only successful "
+            "runs, so this is 100 when runs_period is above 0, otherwise 0."
+        ),
+    )
 
 
 class EvalUsageFeedbackSerializer(serializers.Serializer):
@@ -2144,6 +2163,53 @@ class FeedbackDetailsResponseSerializer(serializers.Serializer):
     result = FeedbackDetailsResultSerializer()
 
 
+class EvalApiLogRowQuerySerializer(serializers.Serializer):
+    log_id = serializers.UUIDField(required=True)
+    order = serializers.CharField(required=False, allow_blank=True)
+    include_source_navigation = serializers.ChoiceField(
+        choices=("true", "false"), required=False
+    )
+
+    def get_fields(self):
+        # The ``source`` query parameter is added here: as a class attribute it
+        # would shadow DRF's ``Field.source`` (a str), which mypy rejects.
+        fields = {}
+        for name, field in super().get_fields().items():
+            fields[name] = field
+            if name == "order":
+                fields["source"] = serializers.CharField(
+                    required=False, allow_blank=True
+                )
+        return fields
+
+    def validate_include_source_navigation(self, value):
+        return value == "true"
+
+
+class EvalLogSourceNavigationSerializer(serializers.Serializer):
+    status = serializers.ChoiceField(
+        choices=(
+            "ready",
+            "no_reference",
+            "unsupported_source",
+            "unsupported_target",
+            "incomplete_reference",
+            "invalid_reference",
+            "ambiguous_reference",
+            "unavailable",
+            "source_not_recorded",
+            "temporarily_unavailable",
+        )
+    )
+    kind = serializers.ChoiceField(choices=("trace", "voice_call"), allow_null=True)
+    project_id = serializers.UUIDField(allow_null=True)
+    trace_id = serializers.UUIDField(allow_null=True)
+    span_id = serializers.CharField(
+        max_length=255, trim_whitespace=False, allow_null=True
+    )
+    retryable = serializers.BooleanField()
+
+
 class EvalApiLogRowResponseResultSerializer(serializers.Serializer):
     log_id = serializers.UUIDField()
     created_at = serializers.DateTimeField()
@@ -2157,11 +2223,13 @@ class EvalApiLogRowResponseResultSerializer(serializers.Serializer):
     error_localizer_status = serializers.CharField(required=False, allow_blank=True)
     error_localizer_message = serializers.CharField(required=False, allow_blank=True)
     dataset_id = serializers.UUIDField(required=False, allow_null=True)
-    span_id = serializers.UUIDField(required=False, allow_null=True)
+    # The evaluated span's id as stored, e.g. a 16-hex OTel id for Observe.
+    span_id = serializers.CharField(required=False, allow_null=True)
     trace_id = serializers.UUIDField(required=False, allow_null=True)
     prompt_id = serializers.UUIDField(required=False, allow_null=True)
     optimization_id = serializers.UUIDField(required=False, allow_null=True)
     experiment_id = serializers.UUIDField(required=False, allow_null=True)
+    source_navigation = EvalLogSourceNavigationSerializer(required=False)
 
 
 class EvalApiLogRowResponseSerializer(serializers.Serializer):
@@ -2376,6 +2444,9 @@ class SingleRowEvaluationResponseSerializer(serializers.Serializer):
 
 
 class EvalTemplateCreateV2RequestSerializer(serializers.Serializer):
+    jev_mapping = serializers.JSONField(required=False, allow_null=True)
+    multi_choice = serializers.BooleanField(required=False, default=False)
+    input_data_types = serializers.JSONField(required=False, allow_null=True)
     name = serializers.CharField(required=False, allow_blank=True, max_length=255)
     is_draft = serializers.BooleanField(required=False, default=False)
     eval_type = serializers.ChoiceField(
@@ -2450,6 +2521,8 @@ class EvalTemplateCreateV2RequestSerializer(serializers.Serializer):
 
 
 class EvalTemplateUpdateV2RequestSerializer(serializers.Serializer):
+    jev_mapping = serializers.JSONField(required=False, allow_null=True)
+    input_data_types = serializers.JSONField(required=False, allow_null=True)
     name = serializers.CharField(required=False, allow_null=True, max_length=255)
     eval_type = serializers.ChoiceField(
         choices=["llm", "code", "agent"],
@@ -2531,6 +2604,7 @@ class EvalTemplateUpdateV2RequestSerializer(serializers.Serializer):
 
 
 class EvalTemplateVersionCreateRequestSerializer(serializers.Serializer):
+    jev_mapping = serializers.JSONField(required=False, allow_null=True)
     criteria = serializers.CharField(
         required=False,
         allow_null=True,
@@ -2542,6 +2616,7 @@ class EvalTemplateVersionCreateRequestSerializer(serializers.Serializer):
 
 
 class EvalTemplateVersionItemSerializer(serializers.Serializer):
+    jev_mapping = serializers.JSONField(required=False, allow_null=True)
     id = serializers.UUIDField()
     version_number = serializers.IntegerField()
     is_default = serializers.BooleanField()
@@ -3022,6 +3097,20 @@ class LegacyEvalTemplatesRequestSerializer(serializers.Serializer):
         default=list,
     )
 
+    def validate_sort(self, value):
+        """Accept only the columns the Evaluations > Usage grid sorts by."""
+        for item in value:
+            column_id = item.get("column_id") if isinstance(item, dict) else None
+            if (
+                not isinstance(column_id, str)
+                or column_id not in EVAL_TEMPLATE_SORT_COLUMNS
+            ):
+                raise serializers.ValidationError(
+                    "Sort column_id must be one of: "
+                    f"{', '.join(EVAL_TEMPLATE_SORT_COLUMNS)}."
+                )
+        return value
+
 
 class HuggingFaceDatasetConfigRequestSerializer(serializers.Serializer):
     dataset_path = serializers.CharField()
@@ -3164,7 +3253,9 @@ class CreateDatasetFromExperimentRequestSerializer(serializers.Serializer):
 
 class CreateEmptyDatasetRequestSerializer(serializers.Serializer):
     new_dataset_name = serializers.CharField()
-    model_type = serializers.CharField(required=False, allow_blank=True)
+    model_type = serializers.CharField(
+        required=False, allow_blank=True, default=ModelTypes.GENERATIVE_LLM.value
+    )
     is_sdk = serializers.BooleanField(required=False, default=False)
     row = serializers.IntegerField(
         required=False, min_value=0, max_value=MAX_EMPTY_DATASET_ROWS
@@ -3219,8 +3310,41 @@ class DatasetSdkRowsRequestSerializer(serializers.Serializer):
     dataset_id = serializers.UUIDField(required=False, allow_null=True)
 
 
-class DatasetAddRowsRequestSerializer(serializers.Serializer):
-    rows = serializers.ListField(child=serializers.JSONField())
+class DatasetRowCellRequestSerializer(StrictInputSerializer):
+    column_name = serializers.CharField()
+    value = JsonValueField(required=False, allow_null=True)
+
+    class Meta:
+        swagger_schema_fields = {"additionalProperties": False}
+
+
+class DatasetRowRequestSerializer(StrictInputSerializer):
+    id = serializers.UUIDField(required=False)
+    order = serializers.IntegerField(
+        required=False,
+        help_text="Legacy input accepted for compatibility; rows are appended in request order.",
+    )
+    # A row without cells is valid and creates an empty row; the endpoint has
+    # always accepted ``{"rows": [{}]}`` so the contract must keep it optional.
+    cells = DatasetRowCellRequestSerializer(many=True, required=False, default=list)
+
+    class Meta:
+        swagger_schema_fields = {"additionalProperties": False}
+
+    def validate_cells(self, cells):
+        names = [cell["column_name"] for cell in cells]
+        if len(names) != len(set(names)):
+            raise serializers.ValidationError(
+                "Each column may appear only once per row."
+            )
+        return cells
+
+
+class DatasetAddRowsRequestSerializer(StrictInputSerializer):
+    rows = DatasetRowRequestSerializer(many=True, allow_empty=False)
+
+    class Meta:
+        swagger_schema_fields = {"additionalProperties": False}
 
 
 class DatasetAddRowsFromExistingRequestSerializer(serializers.Serializer):

@@ -3,15 +3,11 @@ import {
   // Button,
   Stack,
   Typography,
-  useTheme,
+  Tab,
 } from "@mui/material";
+import { SegmentedTabs } from "src/components/tabs/tabs";
 import PropTypes from "prop-types";
 import React, { useMemo, useState } from "react";
-import {
-  CustomTab,
-  CustomTabs,
-  TabWrapper,
-} from "src/sections/develop/AddDatasetDrawer/AddDatasetStyle";
 import { tabOptions } from "./common";
 // import SvgColor from "src/components/svg-color";
 import BreakDownDrawer from "./BreakDownDrawer";
@@ -25,7 +21,6 @@ export default function TableView({
   selectedWorkspaceId,
 }) {
   const [currentTab, setCurrentTab] = useState("cost");
-  const theme = useTheme();
   const [openBreakDownDrawer, setOpenBreakDownDrawer] = useState(false);
   const [selectedWorkspace, setSelectedWorkspace] = useState(null);
 
@@ -87,33 +82,21 @@ export default function TableView({
               gap: 1,
             }}
           >
-            <TabWrapper
-              sx={{
-                marginBottom: "0",
-              }}
-            >
-              <CustomTabs
+            <Box sx={{ mb: 1.5 }}>
+              <SegmentedTabs
                 value={currentTab}
                 onChange={(e, value) => setCurrentTab(value)}
-                TabIndicatorProps={{
-                  style: {
-                    backgroundColor: theme.palette.primary.main,
-                    opacity: 0.08,
-                    height: "100%",
-                    borderRadius: "8px",
-                  },
-                }}
               >
                 {tabOptions.map((tab) => (
-                  <CustomTab
+                  <Tab
                     key={tab.value}
                     label={tab.label}
                     value={tab.value}
                     disabled={tab.disabled}
                   />
                 ))}
-              </CustomTabs>
-            </TabWrapper>
+              </SegmentedTabs>
+            </Box>
             {/* <Button
               variant="outlined"
               size="small"

@@ -1,5 +1,6 @@
 """Tests for `_process_mapping`: literal lookup → dotted-path walk fallback."""
 
+import json
 import uuid
 
 import pytest
@@ -345,6 +346,224 @@ def test_voice_fallback_not_reached_when_literal_resolves(
         {"v": "call.duration"}, span, eval_template_id=missing_eval_template_id
     )
     assert out == {"v": "42"}
+
+
+# ── Voice calls read from ClickHouse ──────────────────────────────────────
+#
+# Eval tasks load spans from ClickHouse, where ``raw_log`` is a JSON string
+# in ``attrs_string``, not a dict. Mapped call fields must still resolve the
+# way the voice call list derives them (``process_raw_logs``).
+
+
+@pytest.fixture
+def ch_voice_span(_span_with_attrs):
+    """A conversation root span shaped like the ClickHouse eval loader's."""
+
+    def _make(raw_log, provider=None, **attrs):
+        span = _span_with_attrs({"raw_log": json.dumps(raw_log), **attrs})
+        span.observation_type = ObservationType.CONVERSATION
+        span.provider = provider
+        span.save(update_fields=["observation_type", "provider"])
+        return span
+
+    return _make
+
+
+def test_voice_fallback_walks_a_json_string_raw_log(
+    ch_voice_span, missing_eval_template_id
+):
+    span = ch_voice_span(_VAPI_RAW_LOG)
+    out = _process_mapping(
+        {"v": "messages.1.end_time"},
+        span,
+        eval_template_id=missing_eval_template_id,
+    )
+    assert out == {"v": "1.629"}
+
+
+def test_vapi_call_summary_resolves_like_the_call_list(
+    ch_voice_span, missing_eval_template_id
+):
+    # Vapi keeps the summary at raw_log["summary"]; the call list shows it as
+    # ``call_summary``. The hot provider column can carry the LLM provider.
+    span = ch_voice_span(
+        {**_VAPI_RAW_LOG, "summary": "Caller declined help."},
+        provider="openai",
+        **{"gen_ai.system": "vapi"},
+    )
+    out = _process_mapping(
+        {"text": "call_summary"},
+        span,
+        eval_template_id=missing_eval_template_id,
+    )
+    assert out == {"text": "Caller declined help."}
+
+
+def test_retell_call_summary_resolves_like_the_call_list(
+    ch_voice_span, missing_eval_template_id
+):
+    from tracer.tests.fixtures.retell_calls import list_item
+
+    span = ch_voice_span(list_item("call-1", 1_000, 61_000), provider="retell")
+    out = _process_mapping(
+        {"text": "call_summary", "why": "ended_reason"},
+        span,
+        eval_template_id=missing_eval_template_id,
+    )
+    assert out == {
+        "text": "Caller asked about opening hours.",
+        "why": "user_hangup",
+    }
+
+
+def test_call_log_fallback_leaves_the_stored_raw_log_untouched(
+    _span_with_attrs, missing_eval_template_id
+):
+    # The call-log builder rewrites raw_log["messages"] in place; a later key
+    # in the same mapping must still read the stored payload.
+    raw_log = json.loads(json.dumps({**_VAPI_RAW_LOG, "summary": "S"}))
+    span = _span_with_attrs({"raw_log": raw_log})
+    span.observation_type = ObservationType.CONVERSATION
+    span.save(update_fields=["observation_type"])
+
+    out = _process_mapping(
+        {"s": "call_summary", "t": "messages.1.end_time"},
+        span,
+        eval_template_id=missing_eval_template_id,
+    )
+
+    assert out == {"s": "S", "t": "1.629"}
+    assert span.span_attributes["raw_log"]["messages"] == _VAPI_RAW_LOG["messages"]
+
+
+def test_call_summary_absent_everywhere_still_skips(
+    ch_voice_span, missing_eval_template_id
+):
+    span = ch_voice_span(_VAPI_RAW_LOG)
+    with pytest.raises(EvalSkippedMissingAttribute) as exc_info:
+        _process_mapping(
+            {"text": "call_summary"},
+            span,
+            eval_template_id=missing_eval_template_id,
+        )
+    assert exc_info.value.skipped_reason == "missing_required_attribute: call_summary"
+
+
+def _retell_list_item(**overrides):
+    from tracer.tests.fixtures.retell_calls import list_item
+
+    return list_item("call-1", 1_000, 61_000, **overrides)
+
+
+@pytest.mark.parametrize(
+    "raw_log,provider,attribute",
+    [
+        # Dev: vapi calls that ended ``call-deleted`` store ``summary: ""``.
+        ({**_VAPI_RAW_LOG, "summary": ""}, "vapi", "call_summary"),
+        # Retell's builder defaults ``call_metadata`` to {}.
+        (_retell_list_item(), "retell", "call_metadata"),
+        # No recording: the builder emits {"mono": None, "stereo_url": None}.
+        (_VAPI_RAW_LOG, "vapi", "recording"),
+    ],
+)
+def test_call_log_empty_default_skips_like_a_miss(
+    ch_voice_span, missing_eval_template_id, raw_log, provider, attribute
+):
+    # The builder fills fields the call has no data for with empty
+    # defaults; resolving those turns a skipped call into an eval error
+    # ("No input received"), so an empty call-log value is a miss.
+    span = ch_voice_span(raw_log, provider=provider)
+    with pytest.raises(EvalSkippedMissingAttribute) as exc_info:
+        _process_mapping(
+            {"text": attribute},
+            span,
+            eval_template_id=missing_eval_template_id,
+        )
+    assert exc_info.value.skipped_reason == f"missing_required_attribute: {attribute}"
+
+
+def test_call_log_falsy_value_still_resolves(ch_voice_span, missing_eval_template_id):
+    # Empty, not falsy: a zero count is a value the eval can use.
+    span = ch_voice_span({**_VAPI_RAW_LOG, "messages": []})
+    out = _process_mapping(
+        {"n": "message_count"},
+        span,
+        eval_template_id=missing_eval_template_id,
+    )
+    assert out == {"n": "0"}
+
+
+# The call-log fallback reads a payload the builder may not understand. That is
+# a logged miss; a builder bug is not, and must fail the eval where it is logged.
+
+from types import SimpleNamespace  # noqa: E402
+
+from structlog.testing import capture_logs  # noqa: E402
+
+from tracer.services.observability_providers import (  # noqa: E402
+    ObservabilityService,
+)
+from tracer.utils.eval import _voice_call_log  # noqa: E402
+
+_CALLER = "+15551234567"
+
+
+@pytest.mark.parametrize(
+    "provider,raw_log,error_type",
+    [
+        ("vapi", {"startedAt": _CALLER, "endedAt": "2026-01-01"}, "ValueError"),
+        ("vapi", {"startedAt": 1, "endedAt": 2}, "TypeError"),
+        ("vapi", {"messages": [{}, _CALLER]}, "AttributeError"),
+        ("retell", {"transcript_with_tool_calls": [{"words": {"w": 1}}]}, "KeyError"),
+        # A message time (ms) past any datetime, and past what gmtime handles.
+        ("vapi", {"messages": [{}, {"role": "user", "time": 1e25}]}, "OverflowError"),
+        ("vapi", {"messages": [{}, {"role": "user", "time": 1e20}]}, "OSError"),
+    ],
+)
+def test_call_log_payload_error_is_a_logged_miss(provider, raw_log, error_type):
+    span = SimpleNamespace(id="span-1", provider=provider)
+
+    with capture_logs() as logs:
+        assert _voice_call_log(span, raw_log, {}) == {}
+
+    [warning] = logs
+    assert warning["event"] == "voice_call_log_unavailable"
+    assert warning["log_level"] == "warning"
+    assert warning["span_id"] == "span-1"
+    assert warning["error_type"] == error_type
+    assert warning["exc_info"] is True
+    # The payload carries phone numbers; the message can echo them.
+    assert "error" not in warning
+
+
+def test_call_log_builder_bug_fails_the_eval(mocker):
+    mocker.patch.object(
+        ObservabilityService, "process_raw_logs", side_effect=RuntimeError("bug")
+    )
+
+    with pytest.raises(RuntimeError, match="bug"):
+        _voice_call_log(
+            SimpleNamespace(id="span-1", provider="vapi"), {"id": "call-1"}, {}
+        )
+
+
+def test_unparseable_raw_log_is_a_miss_logged_with_the_span(
+    ch_voice_span, missing_eval_template_id
+):
+    span = ch_voice_span(_VAPI_RAW_LOG)
+    span.span_attributes["raw_log"] = '{"id": "call-abc", "messages": ['
+    span.save(update_fields=["span_attributes"])
+
+    with capture_logs() as logs:
+        with pytest.raises(EvalSkippedMissingAttribute):
+            _process_mapping(
+                {"role": "messages.0.role"},
+                span,
+                eval_template_id=missing_eval_template_id,
+            )
+
+    unparseable = [log for log in logs if log["event"] == "raw_log_unparseable"]
+    assert [log["span_id"] for log in unparseable] == [str(span.id)]
 
 
 # ───────────────────────────────────────────────────────────────────────────

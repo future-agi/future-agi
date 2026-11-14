@@ -93,7 +93,7 @@ const ImageOutputRenderer = ({ src, alt = "Generated image" }) => {
         }}
       >
         <Iconify
-          icon="material-symbols:broken-image-outline"
+          icon="solar:gallery-linear"
           width={48}
           height={48}
           sx={{ color: "text.disabled" }}
@@ -140,10 +140,6 @@ const ImageOutputRenderer = ({ src, alt = "Generated image" }) => {
             maxHeight: 400,
             borderRadius: 1,
             cursor: "pointer",
-            transition: "transform 0.2s ease-in-out",
-            "&:hover": {
-              transform: "scale(1.02)",
-            },
           }}
         />
 
@@ -172,11 +168,7 @@ const ImageOutputRenderer = ({ src, alt = "Generated image" }) => {
               }}
               sx={{ color: "common.white" }}
             >
-              <Iconify
-                icon="material-symbols:fullscreen"
-                width={18}
-                height={18}
-              />
+              <Iconify icon="solar:full-screen-linear" width={20} height={20} />
             </IconButton>
           </CustomTooltip>
 
@@ -189,7 +181,11 @@ const ImageOutputRenderer = ({ src, alt = "Generated image" }) => {
               }}
               sx={{ color: "common.white" }}
             >
-              <Iconify icon="eva:download-outline" width={18} height={18} />
+              <Iconify
+                icon="solar:download-minimalistic-linear"
+                width={20}
+                height={20}
+              />
             </IconButton>
           </CustomTooltip>
 
@@ -202,7 +198,7 @@ const ImageOutputRenderer = ({ src, alt = "Generated image" }) => {
               }}
               sx={{ color: "common.white" }}
             >
-              <Iconify icon="eva:copy-outline" width={18} height={18} />
+              <Iconify icon="solar:copy-linear" width={20} height={20} />
             </IconButton>
           </CustomTooltip>
         </Box>
@@ -252,7 +248,7 @@ const ImageOutputRenderer = ({ src, alt = "Generated image" }) => {
               },
             }}
           >
-            <Iconify icon="mingcute:close-line" width={24} height={24} />
+            <Iconify icon="solar:close-linear" width={24} height={24} />
           </IconButton>
 
           {/* Action buttons in fullscreen */}
@@ -275,7 +271,11 @@ const ImageOutputRenderer = ({ src, alt = "Generated image" }) => {
                 onClick={handleDownload}
                 sx={{ color: "common.white" }}
               >
-                <Iconify icon="eva:download-outline" width={20} height={20} />
+                <Iconify
+                  icon="solar:download-minimalistic-linear"
+                  width={20}
+                  height={20}
+                />
               </IconButton>
             </CustomTooltip>
 
@@ -285,7 +285,7 @@ const ImageOutputRenderer = ({ src, alt = "Generated image" }) => {
                 onClick={handleCopyUrl}
                 sx={{ color: "common.white" }}
               >
-                <Iconify icon="eva:copy-outline" width={20} height={20} />
+                <Iconify icon="solar:copy-linear" width={20} height={20} />
               </IconButton>
             </CustomTooltip>
           </Box>

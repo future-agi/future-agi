@@ -51,7 +51,7 @@ TASK_QUEUES = {
     "trace_ingestion": "trace_ingestion",
     "tasks_xl": "tasks_xl",
     "exact_aggregation": "exact_aggregation",
-    "property_catalog_dev_sidecar": "property_catalog_dev_sidecar",
+    "sql_workbench": "sql_workbench",
     "tasks_l": "tasks_l",
     "tasks_s": "tasks_s",
     "agent_compass": "agent_compass",
@@ -114,7 +114,6 @@ from tfc.temporal.drop_in import (  # noqa: E402
 from tfc.temporal.schedules import (  # noqa: E402
     ALL_SCHEDULES,
     MODEL_HUB_SCHEDULES,
-    PROPERTY_CATALOG_SCHEDULES,
     TRACER_SCHEDULES,
     ScheduleConfig,
     register_schedules,
@@ -211,7 +210,6 @@ __all__ = [
     # Schedules
     "ScheduleConfig",
     "MODEL_HUB_SCHEDULES",
-    "PROPERTY_CATALOG_SCHEDULES",
     "TRACER_SCHEDULES",
     "ALL_SCHEDULES",
     "register_schedules",

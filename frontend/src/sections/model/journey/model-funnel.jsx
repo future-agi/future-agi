@@ -1,7 +1,6 @@
 import {
   Box,
   Button,
-  Card,
   FormControl,
   Grid,
   IconButton,
@@ -13,6 +12,7 @@ import {
   Tabs,
   Typography,
 } from "@mui/material";
+import Section from "src/components/section";
 import PropTypes from "prop-types";
 import React, { useState } from "react";
 import { Panel, PanelGroup } from "react-resizable-panels";
@@ -87,12 +87,12 @@ export default function ModelFunnel() {
               </Panel>
               <VerticalResizeHandle />
               <Panel defaultSize={80} minSize={15}>
-                <Card>
+                <Section variant="panel" sx={{ p: 0, overflow: "hidden" }}>
                   <Tabs>
                     <Tab label="Chart Data" />
                     <Tab label="Dataset" />
                   </Tabs>
-                </Card>
+                </Section>
               </Panel>
             </PanelGroup>
           </Box>
@@ -110,13 +110,14 @@ export default function ModelFunnel() {
                 // textTransform: "none", // Keeps the text as-is, without uppercase
                 // borderRadius: 1, // Border radius of the button
               }}
-              endIcon={<Iconify icon="mingcute:add-line" />}
+              endIcon={<Iconify icon="solar:add-linear" />}
             >
               Metrics
             </Button>
           </h3>
           {currentInsights.metrics.map((item, index) => (
-            <Card
+            <Section
+              variant="panel"
               key={index}
               sx={{
                 border: "1px solid",
@@ -157,11 +158,11 @@ export default function ModelFunnel() {
                       <IconButton
                       // onClick={(e) => onAddEventFilter(eventIndex)}
                       >
-                        <Iconify icon={"carbon:filter"} />
+                        <Iconify icon={"solar:filter-linear"} />
                       </IconButton>
 
                       <IconButton>
-                        <Iconify icon={"material-symbols:delete"} />
+                        <Iconify icon={"solar:trash-bin-trash-linear"} />
                       </IconButton>
                     </div>
 
@@ -247,7 +248,7 @@ export default function ModelFunnel() {
                           </FormControl>
 
                           <IconButton>
-                            <Iconify icon={"material-symbols:delete"} />
+                            <Iconify icon={"solar:trash-bin-trash-linear"} />
                           </IconButton>
                         </Stack>
                       </>
@@ -273,9 +274,9 @@ export default function ModelFunnel() {
                   handleRemoveInsight(index, "metrics", event)
                 }
               >
-                <Iconify icon="material-symbols:close" width={16} />
+                <Iconify icon="solar:close-linear" width={16} />
               </IconButton> */}
-            </Card>
+            </Section>
           ))}
         </Grid>
       </Grid>

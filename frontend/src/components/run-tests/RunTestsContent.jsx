@@ -1,9 +1,8 @@
 /* eslint-disable react/prop-types */
+import { ROW_HEIGHT } from "src/theme/sizes";
 import {
-  alpha,
   Box,
   Button,
-  Chip,
   ListItemIcon,
   ListItemText,
   Menu,
@@ -59,34 +58,15 @@ function HoverChipList({ items, label, emptyText, getLabel, getTooltip }) {
   const firstItem = resolveLabel(items[0]);
   const remaining = items.length - 1;
 
-  const chipStyles = {
-    backgroundColor: (theme) =>
-      alpha(
-        theme.palette.primary.main,
-        theme.palette.mode === "dark" ? 0.24 : 0.1,
-      ),
-    "&:hover": {
-      backgroundColor: (theme) =>
-        alpha(
-          theme.palette.primary.main,
-          theme.palette.mode === "dark" ? 0.32 : 0.16,
-        ),
-    },
-    color: (theme) =>
-      theme.palette.mode === "dark"
-        ? theme.palette.primary.light
-        : theme.palette.primary.main,
-    border: "1px solid",
-    borderColor: (theme) =>
-      alpha(
-        theme.palette.primary.main,
-        theme.palette.mode === "dark" ? 0.4 : 0.2,
-      ),
-    borderRadius: "4px",
-    fontWeight: 500,
+  // Plain text, not a bordered tag — these sit inside table cells.
+  const itemStyles = {
+    color: "text.primary",
+    fontWeight: 400,
     fontSize: "12px",
-    height: 22,
-    "& .MuiChip-label": { px: 0.75 },
+    lineHeight: "18px",
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap",
   };
 
   return (
@@ -102,15 +82,13 @@ function HoverChipList({ items, label, emptyText, getLabel, getTooltip }) {
           minWidth: 0,
         }}
       >
-        <Chip
-          label={firstItem}
-          size="small"
-          sx={{ ...chipStyles, maxWidth: 180 }}
-        />
+        <Typography sx={{ ...itemStyles, maxWidth: 180 }}>
+          {firstItem}
+        </Typography>
         {remaining > 0 && (
           <Typography
             variant="caption"
-            sx={{ color: "text.secondary", fontSize: "12px", pl: 0.5 }}
+            sx={{ color: "text.subtitle", fontSize: "11px", pl: 0.5 }}
           >
             +{remaining} other{remaining > 1 ? "s" : ""}
           </Typography>
@@ -134,8 +112,6 @@ function HoverChipList({ items, label, emptyText, getLabel, getTooltip }) {
             bgcolor: "background.paper",
             boxShadow: (theme) =>
               theme.customShadows?.dropdown || theme.shadows[8],
-            border: "1px solid",
-            borderColor: "divider",
             borderRadius: "8px",
           },
         }}
@@ -152,15 +128,15 @@ function HoverChipList({ items, label, emptyText, getLabel, getTooltip }) {
             const labelText = resolveLabel(item);
             const tooltip = getTooltip ? getTooltip(item) : "";
             const chip = (
-              <Chip
-                label={labelText}
-                size="small"
+              <Typography
                 sx={{
-                  ...chipStyles,
+                  ...itemStyles,
                   alignSelf: "flex-start",
                   maxWidth: "100%",
                 }}
-              />
+              >
+                {labelText}
+              </Typography>
             );
             return (
               <Box key={idx}>
@@ -204,11 +180,8 @@ function RunTestActionMenu({ test, onView, onDelete }) {
         sx={{
           display: "flex",
           gap: 1,
-          borderRadius: theme.spacing(1),
           borderColor: `${theme.palette.divider} !important`,
           minWidth: 71,
-          px: 1,
-          py: 0.25,
         }}
       >
         <SvgColor
@@ -229,7 +202,7 @@ function RunTestActionMenu({ test, onView, onDelete }) {
         anchorEl={anchorEl}
         open={open}
         onClose={handleClose}
-        PaperProps={{ sx: { mt: 1, minWidth: 100, p: 0.5 } }}
+        PaperProps={{ sx: { mt: 1, minWidth: 200, p: 0.5 } }}
         transformOrigin={{ horizontal: "right", vertical: "top" }}
         anchorOrigin={{ horizontal: "right", vertical: "bottom" }}
       >
@@ -244,7 +217,7 @@ function RunTestActionMenu({ test, onView, onDelete }) {
           <ListItemIcon sx={{ minWidth: "unset", mr: 1 }}>
             <SvgColor
               src="/assets/icons/ic_hide.svg"
-              sx={{ width: 20, height: 20 }}
+              sx={{ width: 16, height: 16 }}
             />
           </ListItemIcon>
           <ListItemText
@@ -258,7 +231,7 @@ function RunTestActionMenu({ test, onView, onDelete }) {
             onDelete?.(test);
             handleClose();
           }}
-          sx={{ color: "error.main", px: 1.25, py: 0.75 }}
+          sx={{ px: 1.25, py: 0.75 }}
         >
           <ListItemIcon sx={{ minWidth: "unset", mr: 1 }}>
             <SvgColor
@@ -442,7 +415,7 @@ const RunTestsContent = ({
               <Typography
                 variant="body2"
                 noWrap
-                sx={{ fontSize: 13, color: "text.primary" }}
+                sx={{ fontSize: 12, color: "text.primary" }}
               >
                 {agent.agent_name}
               </Typography>
@@ -518,7 +491,7 @@ const RunTestsContent = ({
             <Typography
               variant="body2"
               color="text.secondary"
-              sx={{ fontSize: 13 }}
+              sx={{ fontSize: 12 }}
             >
               {v ? formatDistanceToNow(new Date(v), { addSuffix: true }) : "-"}
             </Typography>
@@ -576,8 +549,8 @@ const RunTestsContent = ({
                 Run Simulation
               </Typography>
               <Typography typography="s1" color="text.secondary">
-                Create and manage comprehensive tests for your AI agents with
-                scenarios, evaluations, and automated runs.
+                Run your agent through scenarios at scale and score every
+                conversation with your evals.
               </Typography>
             </Box>
           </Box>
@@ -590,7 +563,7 @@ const RunTestsContent = ({
             action={
               <Button
                 variant="contained"
-                startIcon={<Iconify icon="eva:plus-fill" />}
+                startIcon={<Iconify icon="solar:add-linear" />}
                 onClick={handleAddRunTest}
                 sx={{
                   bgcolor: "primary.main",
@@ -643,8 +616,6 @@ const RunTestsContent = ({
                       sx={{
                         color: "text.primary",
                         borderColor: "divider",
-                        px: 1.5,
-                        height: 38,
                       }}
                       startIcon={
                         <SvgColor src="/assets/icons/ic_docs_single.svg" />
@@ -658,7 +629,7 @@ const RunTestsContent = ({
                   </ShowComponent>
                   <Button
                     variant="contained"
-                    startIcon={<Iconify icon="eva:plus-fill" />}
+                    startIcon={<Iconify icon="solar:add-linear" />}
                     onClick={handleAddRunTest}
                     sx={{
                       bgcolor: "primary.main",
@@ -683,7 +654,7 @@ const RunTestsContent = ({
               rowCount={total}
               onRowClick={handleRowClick}
               getRowId={(row) => row.id}
-              rowHeight={44}
+              rowHeight={ROW_HEIGHT.default}
               emptyMessage="No tests found"
             />
 

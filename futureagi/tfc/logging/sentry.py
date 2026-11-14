@@ -48,6 +48,8 @@ SENTRY_DSN = os.getenv("SENTRY_DSN")
 # check are the only reliable levers.
 NOISY_LOGGER_PREFIXES = (
     "opentelemetry",  # OTLP exporter/instrumentation export failures
+    "saml2",
+    "xmlschema",
 )
 
 # Exact logger names handed to sentry_sdk.integrations.logging.ignore_logger.
@@ -60,6 +62,10 @@ IGNORED_LOGGERS = (
     "opentelemetry.exporter.otlp.proto.http.metric_exporter",
     "opentelemetry.exporter.otlp.proto.http.trace_exporter",
     "opentelemetry.exporter.otlp.proto.http._log_exporter",
+    "saml2",
+    "saml2.*",
+    "xmlschema",
+    "xmlschema.*",
 )
 
 # Exception class names that are expected/handled and not actionable as issues.
@@ -99,6 +105,20 @@ SENSITIVE_KEY_SUBSTRINGS = (
     "access_key",
     "private_key",
     "csrf",
+    # Form fields (SAMLResponse, RelayState) and the ACS view's locals for them.
+    "samlresponse",
+    "saml_response",
+    "relaystate",
+    "relay_state",
+    "fai_saml_b",
+    "candidate",
+    # The AgentCC gateway header that carries an org's own provider key, such
+    # as its TypeSafe key on a Jev eval (ee/jev/client.py). The scrubber below
+    # matches whole names only, so it is listed in full.
+    "x-agentcc-provider-key",
+    # A rerun's changed credential values, and an agent version check's.
+    "environment_values",
+    "credential_values",
 )
 _REDACTED = "[Filtered]"
 
@@ -122,10 +142,17 @@ def _is_sensitive_key(key: Any) -> bool:
     return any(s in lowered for s in SENSITIVE_KEY_SUBSTRINGS)
 
 
+_SAML_VALUE_MARKERS = ("<saml:", "<samlp:", "SAMLResponse=", "fai_saml_b_")
+
+
 def _scrub(value: Any, depth: int = 0) -> Any:
     """Recursively redact values under sensitive keys (defensive, bounded)."""
     if depth > 6:
         return value
+    if isinstance(value, str) and any(
+        marker in value for marker in _SAML_VALUE_MARKERS
+    ):
+        return _REDACTED
     if isinstance(value, dict):
         return {
             k: (_REDACTED if _is_sensitive_key(k) else _scrub(v, depth + 1))
@@ -162,6 +189,37 @@ def _scrub_event(event: dict) -> None:
     contexts = event.get("contexts")
     if isinstance(contexts, dict):
         event["contexts"] = _scrub(contexts)
+
+    # Sentry captures local variables (include_local_variables=True). An
+    # uncaught error in the ACS candidate-store path leaves the raw assertion
+    # in the view's stack frame; redact those vars the same way as request data
+    # so the assertion body never leaves the process (review finding 1, B7).
+    exception = event.get("exception")
+    if isinstance(exception, dict):
+        for value in exception.get("values") or []:
+            if not isinstance(value, dict):
+                continue
+            stacktrace = value.get("stacktrace")
+            if not isinstance(stacktrace, dict):
+                continue
+            for frame in stacktrace.get("frames") or []:
+                if isinstance(frame, dict) and isinstance(frame.get("vars"), dict):
+                    frame["vars"] = _scrub(frame["vars"])
+
+
+def _event_scrubber() -> Any:
+    """The denylist scrubber installed by init_sentry.
+
+    It redacts values under denylisted names in the request, extras,
+    breadcrumbs, spans and stack-frame local variables, but it matches whole
+    names only (case-insensitively), not the substrings `_scrub` matches.
+    """
+    from sentry_sdk.scrubber import DEFAULT_DENYLIST, EventScrubber
+
+    denylist = list(DEFAULT_DENYLIST) + [
+        k for k in SENSITIVE_KEY_SUBSTRINGS if k not in DEFAULT_DENYLIST
+    ]
+    return EventScrubber(denylist=denylist, recursive=True)
 
 
 def _event_message(event: dict) -> str:
@@ -247,8 +305,10 @@ def _get_before_send() -> Callable:
 
         # 1. Infrastructure logger noise - never actionable as an issue.
         logger_name = event.get("logger") or ""
+        # Match on a dot boundary: "saml2" must not swallow "saml2_auth".
         if isinstance(logger_name, str) and any(
-            logger_name.startswith(p) for p in NOISY_LOGGER_PREFIXES
+            logger_name == p or logger_name.startswith(f"{p}.")
+            for p in NOISY_LOGGER_PREFIXES
         ):
             return None
 
@@ -355,14 +415,6 @@ def init_sentry(
             ignore_logger,
         )
 
-        # Keep a generous-but-bounded string length so stack frames and request
-        # bodies stay readable without bloating every event (the old 10MB cap
-        # multiplied payload size across millions of events).
-        try:
-            sentry_sdk.utils.MAX_STRING_LENGTH = 8192
-        except AttributeError:
-            pass  # Newer SDK versions may not have this
-
         # Suppress pure-infrastructure loggers at the source. This is the
         # single most important noise lever: it stops the OTel exporter's
         # transient "failed to reach collector" ERRORs from becoming issues.
@@ -425,11 +477,7 @@ def init_sentry(
 
         # Defence-in-depth scrubbing: even with send_default_pii on, redact a
         # broad denylist of secret-bearing keys recursively before send.
-        from sentry_sdk.scrubber import DEFAULT_DENYLIST, EventScrubber
-
-        scrubber_denylist = list(DEFAULT_DENYLIST) + [
-            k for k in SENSITIVE_KEY_SUBSTRINGS if k not in DEFAULT_DENYLIST
-        ]
+        event_scrubber = _event_scrubber()
 
         sentry_sdk.init(
             dsn=SENTRY_DSN,
@@ -445,7 +493,9 @@ def init_sentry(
             # Error capture configuration. PII is captured for debugging but
             # passed through the scrubber + before_send redaction below.
             send_default_pii=True,
-            event_scrubber=EventScrubber(denylist=scrubber_denylist, recursive=True),
+            event_scrubber=event_scrubber,
+            # Keep stack frames and request values readable without bloating events.
+            max_value_length=8192,
             # "medium" caps bodies at ~10KB: enough to debug, small enough that
             # large uploads/payloads don't dominate the event volume or leak.
             max_request_body_size="medium",

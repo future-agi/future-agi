@@ -17,7 +17,8 @@ criteria: "You are evaluating the accuracy of an automatic speech recognition tr
   \ every word correct, fillers included, proper formatting.\n\n## Inputs\n\n<audio>{{audio}}</audio>\n\n<generated_transcript>{{generated_transcript}}</generated_transcript>"
 eval_tags:
 - Audio
-- NLP Metrics
+- Transcription
+offered_in_environments: true
 visible_ui: true
 permissions:
   allow_edit: false

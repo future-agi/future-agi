@@ -15,21 +15,21 @@ const TranscriptTooltip = ({ transcript }) => {
         <Box key={i} sx={{ mb: 0.5 }}>
           <Typography
             sx={{
-              fontSize: 10,
+              fontSize: 12,
               fontWeight: 600,
               color: t.role === "user" ? "info.main" : "secondary.main",
-              textTransform: "uppercase",
+              textTransform: "none",
             }}
           >
             {t.role}
           </Typography>
-          <Typography sx={{ fontSize: 11, color: "inherit", lineHeight: 1.3 }}>
+          <Typography sx={{ fontSize: 12, color: "inherit", lineHeight: 1.3 }}>
             {t.content}
           </Typography>
         </Box>
       ))}
       {transcript.length > 10 && (
-        <Typography sx={{ fontSize: 10, color: "text.disabled", mt: 0.5 }}>
+        <Typography sx={{ fontSize: 12, color: "text.disabled", mt: 0.5 }}>
           +{transcript.length - 10} more messages
         </Typography>
       )}
@@ -48,7 +48,7 @@ const TranscriptPreviewCell = (params) => {
     return (
       <Typography
         variant="body2"
-        sx={{ fontSize: 13, color: "text.disabled", px: 2 }}
+        sx={{ fontSize: 12, color: "text.disabled", px: 2 }}
       >
         -
       </Typography>
@@ -63,11 +63,12 @@ const TranscriptPreviewCell = (params) => {
 
   return (
     <Tooltip
+      classes={{ tooltip: "ds-hovercard" }}
       title={<TranscriptTooltip transcript={transcript} />}
       arrow
       placement="bottom-start"
       slotProps={{
-        tooltip: { sx: { maxWidth: 400, bgcolor: "grey.900", p: 1 } },
+        tooltip: { sx: { maxWidth: 400 } },
       }}
     >
       <Box
@@ -81,14 +82,14 @@ const TranscriptPreviewCell = (params) => {
         }}
       >
         <Iconify
-          icon="mdi:message-text-outline"
+          icon="solar:chat-round-line-linear"
           width={14}
           color="text.disabled"
         />
         <Typography
           variant="body2"
           noWrap
-          sx={{ fontSize: 13, color: "text.secondary" }}
+          sx={{ fontSize: 12, color: "text.secondary" }}
         >
           {truncated}
         </Typography>

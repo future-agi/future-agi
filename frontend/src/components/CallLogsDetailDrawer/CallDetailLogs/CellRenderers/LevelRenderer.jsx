@@ -9,16 +9,16 @@ const levelColor = {
     backgroundColor: "action.hover",
   },
   INFO: {
-    color: "blue.700",
-    backgroundColor: "blue.o10",
+    color: "status.info.fg",
+    backgroundColor: "status.info.bg",
   },
   WARN: {
-    color: "orange.700",
-    backgroundColor: "orange.o10",
+    color: "status.warning.fg",
+    backgroundColor: "status.warning.bg",
   },
   ERROR: {
-    color: "red.700",
-    backgroundColor: "red.o10",
+    color: "status.danger.fg",
+    backgroundColor: "status.danger.bg",
   },
 };
 
@@ -29,9 +29,6 @@ const LevelRenderer = ({ value }) => {
         label={value}
         sx={{
           ...levelColor[value],
-          paddingX: "12px",
-          paddingY: "2px",
-          borderRadius: "2px",
 
           "&:hover": {
             ...levelColor[value],
@@ -39,7 +36,6 @@ const LevelRenderer = ({ value }) => {
           "& .MuiChip-label": {
             padding: 0,
             ...typography.s3,
-            fontWeight: "fontWeightMedium",
           },
         }}
       />

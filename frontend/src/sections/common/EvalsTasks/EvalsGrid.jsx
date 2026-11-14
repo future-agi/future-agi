@@ -1,5 +1,6 @@
 import { Box, Button } from "@mui/material";
 import { AgGridReact } from "ag-grid-react";
+import "src/utils/ag-grid-setup";
 import React, {
   forwardRef,
   useMemo,
@@ -68,7 +69,7 @@ const EvalsGrid = forwardRef(
         suppressHeaderContextMenu: true,
         cellStyle: {
           padding: "0px 20px",
-          fontSize: "14px",
+          fontSize: "12px",
           height: "100%",
         },
       }),

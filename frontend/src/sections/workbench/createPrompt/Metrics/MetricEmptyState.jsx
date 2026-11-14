@@ -1,7 +1,7 @@
 import { Box, IconButton, Skeleton } from "@mui/material";
 import React, { useState } from "react";
 import CustomAgentTabs from "src/sections/agents/CustomAgentTabs";
-import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
+import SyntaxHighlighter from "src/utils/snippet-syntax-highlighter";
 import EmptyLayout from "src/components/EmptyLayout/EmptyLayout";
 import SvgColor from "src/components/svg-color";
 import { primaryFont } from "src/theme/typography";
@@ -64,7 +64,6 @@ const MetricEmptyState = () => {
             <IconButton
               sx={{
                 p: 0.5,
-                borderRadius: "50%",
                 zIndex: 1,
                 mb: 1,
               }}
@@ -97,7 +96,7 @@ const MetricEmptyState = () => {
                 },
                 "&::-webkit-scrollbar-thumb": {
                   backgroundColor: "var(--scrollbar-thumb)",
-                  borderRadius: "10px",
+                  borderRadius: "8px",
                 },
                 "&::-webkit-scrollbar-thumb:hover": {
                   backgroundColor: "var(--scrollbar-thumb)",

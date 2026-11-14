@@ -1,10 +1,11 @@
 import { Box, useTheme } from "@mui/material";
+import { chartAxisColors } from "src/theme/data-colors";
 import React, { useMemo } from "react";
 import ReactApexChart from "react-apexcharts";
 import PropTypes from "prop-types";
 import { green } from "src/theme/palette";
 
-const getDefaultOptions = (isDark) => ({
+const getDefaultOptions = (isDark, axis) => ({
   chart: {
     height: 350,
     type: "heatmap",
@@ -17,14 +18,14 @@ const getDefaultOptions = (isDark) => ({
     toolbar: {
       show: false,
     },
-    foreColor: isDark ? "#a1a1aa" : undefined,
+    foreColor: axis.foreColor,
   },
   theme: { mode: isDark ? "dark" : "light" },
   tooltip: { theme: isDark ? "dark" : "light" },
   grid: {
     show: true,
     strokeDashArray: 12,
-    borderColor: isDark ? "#27272a" : undefined,
+    borderColor: axis.gridColor,
   },
   dataLabels: {
     enabled: false,
@@ -56,14 +57,17 @@ const getDefaultOptions = (isDark) => ({
   },
   stroke: {
     width: 8, // thickness of the "gap"
-    colors: ["#fff"], // gap color (white or match chart background)
+    colors: [axis.surface], // gap colour matches the chart background
   },
 });
 
 const HeatChart = ({ data, graphLabels, height = 250 }) => {
   const theme = useTheme();
   const isDark = theme.palette.mode === "dark";
-  const options = useMemo(() => getDefaultOptions(isDark), [isDark]);
+  const options = useMemo(
+    () => getDefaultOptions(isDark, chartAxisColors(theme)),
+    [isDark, theme],
+  );
   // const graphData = useMemo(() => {
   //   const newData = data?.map((item) => ({
   //     ...item,

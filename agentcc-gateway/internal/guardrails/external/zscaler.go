@@ -23,7 +23,7 @@ type zscalerRequest struct {
 }
 
 type zscalerResponse struct {
-	Matched    bool                `json:"matched"`
+	Matched    bool               `json:"matched"`
 	Violations []zscalerViolation `json:"violations"`
 }
 
@@ -55,9 +55,12 @@ func (a *zscalerAdapter) buildRequest(ctx context.Context, text string) (*http.R
 }
 
 func (a *zscalerAdapter) parseResponse(body []byte) *guardrails.CheckResult {
+	if err := validateEnvelope(a, body); err != nil {
+		return guardrails.ExecutionFailure(err.Error())
+	}
 	var resp zscalerResponse
 	if err := json.Unmarshal(body, &resp); err != nil {
-		return &guardrails.CheckResult{Pass: false, Score: 1.0, Message: fmt.Sprintf("failed to parse zscaler response: %v", err)}
+		return guardrails.ExecutionFailure(fmt.Sprintf("failed to parse zscaler response: %v", err))
 	}
 
 	if !resp.Matched {

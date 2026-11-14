@@ -582,6 +582,45 @@ class TestTraceGraphMethodsAPI:
         assert dispatched_filters[0]["column_id"] == "created_at"
         assert sum(item["column_id"] == "latency" for item in dispatched_filters) == 1
 
+    def test_get_graph_methods_latency_response_names_the_mean(
+        self, auth_client, observe_project, monkeypatch
+    ):
+        from tracer.services.clickhouse import graph_dispatch
+
+        # Below the stamped public entry point, so the real stamp runs. An
+        # unfiltered latency graph takes the exact path, not the rollup.
+        monkeypatch.setattr(
+            graph_dispatch, "_affordable_raw_graph_seed", lambda **_: None
+        )
+        monkeypatch.setattr(
+            graph_dispatch,
+            "_fetch_direct_raw_system_metric_graph",
+            lambda **kwargs: {
+                "metric_name": kwargs["metric_id"],
+                "data": [{"timestamp": "2026-06-18T00:00:00", "value": 120.0}],
+                "query_complete": True,
+                "query_status": "complete",
+                "query_sampled": False,
+            },
+        )
+
+        response = auth_client.post(
+            "/tracer/trace/get_graph_methods/",
+            {
+                "project_id": str(observe_project.id),
+                "interval": "day",
+                "property": "average",
+                "req_data_config": {"id": "latency", "type": "SYSTEM_METRIC"},
+                "filters": [],
+            },
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        result = response.json()["result"]
+        assert result["metric_statistic"] == "mean"
+        assert result["data"][0]["value"] == 120.0
+
     def test_get_graph_methods_rejects_foreign_eval_config_before_ch_read(
         self,
         auth_client,

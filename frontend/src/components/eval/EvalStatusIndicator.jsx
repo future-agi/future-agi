@@ -1,5 +1,4 @@
 import { Box, Chip, Skeleton, Tooltip } from "@mui/material";
-import { alpha } from "@mui/material/styles";
 import PropTypes from "prop-types";
 import React from "react";
 import { EVAL_STATUS, getEvalStatusLabel } from "src/utils/evalStatus";
@@ -11,6 +10,7 @@ import { EVAL_STATUS, getEvalStatusLabel } from "src/utils/evalStatus";
 //   - pending  -> "Queued" blue pill (design system)
 //   - skipped  -> muted chip + reason tooltip
 //   - errored  -> muted red "Error" chip
+//   - timed_out -> amber "Timed out" chip (simulate scoring past its limit)
 // Returns null for a terminal score state (the caller renders the score).
 
 // Centered, full-height wrapper so the pill/chip states sit in the cell the
@@ -60,18 +60,9 @@ const EvalStatusIndicator = ({ status, skippedReason }) => {
             px: 1.25,
             py: 0.5,
             borderRadius: "8px",
-            // Theme-aware "Queued" pill: keep the approved light-mode blues,
-            // fall back to a translucent info pill on dark so it doesn't render
-            // a bright light-blue chip on a dark surface.
-            bgcolor: (theme) =>
-              theme.palette.mode === "dark"
-                ? alpha(theme.palette.info.main, 0.24)
-                : "#E9F0FD",
-            color: (theme) =>
-              theme.palette.mode === "dark"
-                ? theme.palette.info.light
-                : "#3A66C2",
-            fontSize: 13,
+            bgcolor: "status.info.bg",
+            color: "status.info.fg",
+            fontSize: 12,
             fontWeight: 500,
             lineHeight: 1.4,
             whiteSpace: "nowrap",
@@ -89,8 +80,6 @@ const EvalStatusIndicator = ({ status, skippedReason }) => {
         size="small"
         label={getEvalStatusLabel(status)}
         sx={{
-          height: 20,
-          fontSize: 11,
           color: "text.disabled",
           bgcolor: "action.hover",
         }}
@@ -103,6 +92,21 @@ const EvalStatusIndicator = ({ status, skippedReason }) => {
     );
   }
 
+  if (status === EVAL_STATUS.TIMED_OUT) {
+    return (
+      <CellWrap>
+        <Chip
+          size="small"
+          label={getEvalStatusLabel(status)}
+          sx={{
+            color: "status.warning.fg",
+            bgcolor: "status.warning.bg",
+          }}
+        />
+      </CellWrap>
+    );
+  }
+
   if (status === EVAL_STATUS.ERRORED || status === "error") {
     return (
       <CellWrap>
@@ -110,10 +114,8 @@ const EvalStatusIndicator = ({ status, skippedReason }) => {
           size="small"
           label="Error"
           sx={{
-            height: 20,
-            fontSize: 11,
-            color: "error.main",
-            bgcolor: (theme) => alpha(theme.palette.error.main, 0.1),
+            color: "status.danger.fg",
+            bgcolor: "status.danger.bg",
           }}
         />
       </CellWrap>

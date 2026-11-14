@@ -4,6 +4,7 @@ This deliberately reads the complete tiny synthetic fixture, not an application
 candidate query or production population. Production acquisition evidence lives
 in the separately frozen QA artifacts.
 """
+
 # Reusable pytest fixtures are injected by name.
 # ruff: noqa: F811
 from collections import defaultdict
@@ -55,11 +56,20 @@ def _fixture_reference(run, project_id, attribute_key, start, end):
         {"project": project_id, "key": attribute_key},
     )
     identity_fields = (
-        "project_id", "observation_type", "service_name", "hour_us", "trace_id", "id"
+        "project_id",
+        "observation_type",
+        "service_name",
+        "hour_us",
+        "trace_id",
+        "id",
     )
     state_fields = (
-        "start_us", "parent_span_id", "is_deleted", "latency_ms",
-        "number_present", "number_value",
+        "start_us",
+        "parent_span_id",
+        "is_deleted",
+        "latency_ms",
+        "number_present",
+        "number_value",
     )
     winners = {}
     for row in rows:
@@ -83,11 +93,13 @@ def _fixture_reference(run, project_id, attribute_key, start, end):
     end_us = (end - epoch) // timedelta(microseconds=1)
     live = [row for row in winners.values() if not row["is_deleted"]]
     roots = {
-        row["trace_id"] for row in live
+        row["trace_id"]
+        for row in live
         if not row["parent_span_id"] and start_us <= row["start_us"] < end_us
     }
     positives = {
-        row["trace_id"] for row in live
+        row["trace_id"]
+        for row in live
         if row["number_present"] and row["number_value"] > 1
     }
     states = defaultdict(lambda: [0, 0])
@@ -108,11 +120,13 @@ def _fixture_reference(run, project_id, attribute_key, start, end):
     data = []
     while bucket <= end:
         numerator, count = states[bucket]
-        data.append({
-            "timestamp": bucket.isoformat(),
-            "value": round(float(Fraction(numerator, count)), 9) if count else 0,
-            "primary_traffic": count,
-        })
+        data.append(
+            {
+                "timestamp": bucket.isoformat(),
+                "value": round(float(Fraction(numerator, count)), 9) if count else 0,
+                "primary_traffic": count,
+            }
+        )
         bucket += timedelta(days=7)
     return {"metric_name": "latency", "data": data}
 
@@ -129,7 +143,8 @@ def test_independent_full_span_graph(trace_engine, change):
         {
             "column_id": "created_at",
             "filter_config": {
-                "col_type": "SYSTEM_METRIC", "filter_type": "datetime",
+                "col_type": "SYSTEM_METRIC",
+                "filter_type": "datetime",
                 "filter_op": "between",
                 "filter_value": [start.isoformat(), end.isoformat()],
             },
@@ -137,8 +152,10 @@ def test_independent_full_span_graph(trace_engine, change):
         {
             "column_id": key,
             "filter_config": {
-                "col_type": "SPAN_ATTRIBUTE", "filter_type": "number",
-                "filter_op": "greater_than", "filter_value": 1,
+                "col_type": "SPAN_ATTRIBUTE",
+                "filter_type": "number",
+                "filter_op": "greater_than",
+                "filter_value": 1,
             },
         },
     ]
@@ -156,14 +173,22 @@ def test_independent_full_span_graph(trace_engine, change):
     # The only positive child is OUTSIDE the output window. Membership still
     # succeeds; all166 in-window spans contribute, not only that child/root.
     witness = {
-        **common, "id": "outside-child", "start_time": datetime(2026, 9, 6, 12),
-        "parent_span_id": "root", "latency_ms": 99999, "attrs_number": {key: 2},
+        **common,
+        "id": "outside-child",
+        "start_time": datetime(2026, 9, 6, 12),
+        "parent_span_id": "root",
+        "latency_ms": 99999,
+        "attrs_number": {key: 2},
     }
     insert(**witness)
     if change == "deleted-contributor":
         insert(
-            **common, id="c0", parent_span_id="root", latency_ms=4000,
-            is_deleted=1, _version=2,
+            **common,
+            id="c0",
+            parent_span_id="root",
+            latency_ms=4000,
+            is_deleted=1,
+            _version=2,
         )
     if change == "stale-witness":
         insert(**{**witness, "attrs_number": {key: 0}, "_version": 2})
@@ -174,29 +199,51 @@ def test_independent_full_span_graph(trace_engine, change):
         return
 
     expected = _fixture_reference(run, PROJECT, key, start, end)
-    count = 0 if change == "stale-witness" else 165 if change == "deleted-contributor" else 166
+    count = (
+        0
+        if change == "stale-witness"
+        else 165
+        if change == "deleted-contributor"
+        else 166
+    )
     numerator = 0 if not count else 707835 if count == 165 else 711835
     assert sum(point["primary_traffic"] for point in expected["data"]) == count
     assert len(expected["data"]) == 53
     assert [point for point in expected["data"] if point["primary_traffic"]] == (
-        [{
-            "timestamp": "2026-03-16T00:00:00",
-            "value": round(numerator / count, 9), "primary_traffic": count,
-        }] if count else []
+        [
+            {
+                "timestamp": "2026-03-16T00:00:00",
+                "value": round(numerator / count, 9),
+                "primary_traffic": count,
+            }
+        ]
+        if count
+        else []
     )
 
     class Reader:
         def execute_ch_query(self, sql, params, **kwargs):
             return SimpleNamespace(
-                data=run(sql, params), query_time_ms=0,
+                data=run(sql, params),
+                query_time_ms=0,
                 columns=[
-                    "time_bucket", "latency_sum", "total_tokens", "cost_sum",
-                    "traffic_count", "prompt_tokens", "completion_tokens", "error_count",
+                    "time_bucket",
+                    "latency_sum",
+                    "total_tokens",
+                    "cost_sum",
+                    "traffic_count",
+                    "prompt_tokens",
+                    "completion_tokens",
+                    "error_count",
                 ],
             )
 
     actual = graphs.read_exact_system_graph(
-        analytics=Reader(), project_id=PROJECT, filters=filters,
-        interval="day", metric_id="latency", observe_type="trace",
+        analytics=Reader(),
+        project_id=PROJECT,
+        filters=filters,
+        interval="day",
+        metric_id="latency",
+        observe_type="trace",
     )
     assert {name: actual[name] for name in ("metric_name", "data")} == expected

@@ -1,0 +1,306 @@
+{
+  "schema_version": 1,
+  "image_backend_root": "/app/backend",
+  "library_root": "sysconfig.purelib",
+  "supported_settings": "tfc.settings.settings",
+  "oss_environment": {
+    "ENV_TYPE": "local",
+    "EE_LICENSE_KEY": "",
+    "NO_STARTUP_DB_MUTATIONS": "true",
+    "FI_SKIP_CH25_MIGRATION": "1"
+  },
+  "unsupported_conditionals": [
+    "ee.falcon_ai: ee_feature_enabled; EE mode is not the base OSS automatic layout",
+    "ee.cloud.control_plane: has_ee AND is_cloud_env; Cloud is unsupported"
+  ],
+  "apps": [
+    {
+      "label": "accounts",
+      "module": "accounts",
+      "source_root": "accounts",
+      "location": "backend",
+      "condition": "always",
+      "migrations": true
+    },
+    {
+      "label": "admin",
+      "module": "django.contrib.admin",
+      "source_root": "django/contrib/admin",
+      "location": "python_purelib",
+      "condition": "always",
+      "migrations": true
+    },
+    {
+      "label": "agent_playground",
+      "module": "agent_playground",
+      "source_root": "agent_playground",
+      "location": "backend",
+      "condition": "always",
+      "migrations": true
+    },
+    {
+      "label": "ai_tools",
+      "module": "ai_tools",
+      "source_root": "ai_tools",
+      "location": "backend",
+      "condition": "always",
+      "migrations": false
+    },
+    {
+      "label": "anymail",
+      "module": "anymail",
+      "source_root": "anymail",
+      "location": "python_purelib",
+      "condition": "always",
+      "migrations": false
+    },
+    {
+      "label": "auth",
+      "module": "django.contrib.auth",
+      "source_root": "django/contrib/auth",
+      "location": "python_purelib",
+      "condition": "always",
+      "migrations": true
+    },
+    {
+      "label": "capabilities",
+      "module": "tfc.capabilities",
+      "source_root": "tfc/capabilities",
+      "location": "backend",
+      "condition": "always",
+      "migrations": false
+    },
+    {
+      "label": "channels",
+      "module": "channels",
+      "source_root": "channels",
+      "location": "python_purelib",
+      "condition": "always",
+      "migrations": false
+    },
+    {
+      "label": "contenttypes",
+      "module": "django.contrib.contenttypes",
+      "source_root": "django/contrib/contenttypes",
+      "location": "python_purelib",
+      "condition": "always",
+      "migrations": true
+    },
+    {
+      "label": "corsheaders",
+      "module": "corsheaders",
+      "source_root": "corsheaders",
+      "location": "python_purelib",
+      "condition": "always",
+      "migrations": false
+    },
+    {
+      "label": "deployment_telemetry",
+      "module": "tfc.deployment_telemetry",
+      "source_root": "tfc/deployment_telemetry",
+      "location": "backend",
+      "condition": "always",
+      "migrations": true
+    },
+    {
+      "label": "django_celery_beat",
+      "module": "django_celery_beat",
+      "source_root": "django_celery_beat",
+      "location": "python_purelib",
+      "condition": "always",
+      "migrations": true
+    },
+    {
+      "label": "django_celery_results",
+      "module": "django_celery_results",
+      "source_root": "django_celery_results",
+      "location": "python_purelib",
+      "condition": "always",
+      "migrations": true
+    },
+    {
+      "label": "django_filters",
+      "module": "django_filters",
+      "source_root": "django_filters",
+      "location": "python_purelib",
+      "condition": "always",
+      "migrations": false
+    },
+    {
+      "label": "django_socio_grpc",
+      "module": "django_socio_grpc",
+      "source_root": "django_socio_grpc",
+      "location": "python_purelib",
+      "condition": "always",
+      "migrations": false
+    },
+    {
+      "label": "django_structlog",
+      "module": "django_structlog",
+      "source_root": "django_structlog",
+      "location": "python_purelib",
+      "condition": "always",
+      "migrations": false
+    },
+    {
+      "label": "drf_yasg",
+      "module": "drf_yasg",
+      "source_root": "drf_yasg",
+      "location": "python_purelib",
+      "condition": "always",
+      "migrations": false
+    },
+    {
+      "label": "ee_licensing",
+      "module": "ee.licensing",
+      "source_root": "ee/licensing",
+      "location": "backend",
+      "condition": "if_present",
+      "migrations": true
+    },
+    {
+      "label": "falcon_ai",
+      "module": "ee.falcon_ai",
+      "source_root": "ee/falcon_ai",
+      "location": "backend",
+      "condition": "unsupported_ee",
+      "migrations": true
+    },
+    {
+      "label": "integrations",
+      "module": "integrations",
+      "source_root": "integrations",
+      "location": "backend",
+      "condition": "always",
+      "migrations": true
+    },
+    {
+      "label": "licensing",
+      "module": "tfc.licensing",
+      "source_root": "tfc/licensing",
+      "location": "backend",
+      "condition": "always",
+      "migrations": false
+    },
+    {
+      "label": "mcp_server",
+      "module": "mcp_server",
+      "source_root": "mcp_server",
+      "location": "backend",
+      "condition": "always",
+      "migrations": true
+    },
+    {
+      "label": "messages",
+      "module": "django.contrib.messages",
+      "source_root": "django/contrib/messages",
+      "location": "python_purelib",
+      "condition": "always",
+      "migrations": false
+    },
+    {
+      "label": "model_hub",
+      "module": "model_hub",
+      "source_root": "model_hub",
+      "location": "backend",
+      "condition": "always",
+      "migrations": true
+    },
+    {
+      "label": "prism",
+      "module": "agentcc",
+      "source_root": "agentcc",
+      "location": "backend",
+      "condition": "always",
+      "migrations": true
+    },
+    {
+      "label": "rest_framework",
+      "module": "rest_framework",
+      "source_root": "rest_framework",
+      "location": "python_purelib",
+      "condition": "always",
+      "migrations": false
+    },
+    {
+      "label": "rest_framework_simplejwt",
+      "module": "rest_framework_simplejwt",
+      "source_root": "rest_framework_simplejwt",
+      "location": "python_purelib",
+      "condition": "always",
+      "migrations": false
+    },
+    {
+      "label": "saml2_auth",
+      "module": "saml2_auth",
+      "source_root": "saml2_auth",
+      "location": "backend",
+      "condition": "always",
+      "migrations": true
+    },
+    {
+      "label": "sessions",
+      "module": "django.contrib.sessions",
+      "source_root": "django/contrib/sessions",
+      "location": "python_purelib",
+      "condition": "always",
+      "migrations": true
+    },
+    {
+      "label": "simulate",
+      "module": "simulate",
+      "source_root": "simulate",
+      "location": "backend",
+      "condition": "always",
+      "migrations": true
+    },
+    {
+      "label": "sites",
+      "module": "django.contrib.sites",
+      "source_root": "django/contrib/sites",
+      "location": "python_purelib",
+      "condition": "always",
+      "migrations": true
+    },
+    {
+      "label": "sockets",
+      "module": "sockets",
+      "source_root": "sockets",
+      "location": "backend",
+      "condition": "always",
+      "migrations": true
+    },
+    {
+      "label": "staticfiles",
+      "module": "django.contrib.staticfiles",
+      "source_root": "django/contrib/staticfiles",
+      "location": "python_purelib",
+      "condition": "always",
+      "migrations": false
+    },
+    {
+      "label": "tfc",
+      "module": "tfc",
+      "source_root": "tfc",
+      "location": "backend",
+      "condition": "always",
+      "migrations": false
+    },
+    {
+      "label": "tracer",
+      "module": "tracer",
+      "source_root": "tracer",
+      "location": "backend",
+      "condition": "always",
+      "migrations": true
+    },
+    {
+      "label": "usage",
+      "module": "ee.usage",
+      "source_root": "ee/usage",
+      "location": "backend",
+      "condition": "if_present",
+      "migrations": true
+    }
+  ]
+}

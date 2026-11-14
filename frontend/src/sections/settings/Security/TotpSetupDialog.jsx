@@ -124,7 +124,8 @@ const TotpSetupDialog = ({ open, onClose, onStatusChange }) => {
       <Dialog
         open={open && !recoveryDialogOpen}
         onClose={handleDialogClose}
-        maxWidth="sm"
+        maxWidth={false}
+        PaperProps={{ sx: { maxWidth: 720 } }}
         fullWidth
       >
         <DialogTitle>
@@ -213,7 +214,11 @@ const TotpSetupDialog = ({ open, onClose, onStatusChange }) => {
                   <Tooltip title={secretCopied ? "Copied!" : "Copy secret"}>
                     <IconButton size="small" onClick={handleCopySecret}>
                       <Iconify
-                        icon={secretCopied ? "mdi:check" : "mdi:content-copy"}
+                        icon={
+                          secretCopied
+                            ? "solar:check-linear"
+                            : "solar:copy-linear"
+                        }
                         sx={{ width: "18px", height: "18px" }}
                       />
                     </IconButton>

@@ -13,8 +13,8 @@ criteria: "You are evaluating whether the output maintains a polite, respectful,
   \n## Scoring\n\nReturn 'Passed' if the output is respectful and free from aggressive, dismissive, or condescending elements.\
   \ Return 'Failed' if it contains rude, hostile, or disrespectful language.\n\n## Inputs\n\n<output>{{output}}</output>"
 eval_tags:
-- NLP Metrics
-- Chatbot behaviors
+- Tone
+offered_in_environments: true
 visible_ui: true
 permissions:
   allow_edit: false

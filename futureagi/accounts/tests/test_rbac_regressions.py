@@ -15,6 +15,8 @@ from accounts.authentication import (
 from tfc.constants.levels import Level
 
 READ_POST_PATHS = (
+    "/tracer/dashboard/metrics/",
+    "/tracer/dashboard/filter_values/",
     "/tracer/trace/list_traces_of_session/",
     "/tracer/observation-span/list_spans_observe/",
     "/tracer/trace-session/list_sessions/",
@@ -50,7 +52,7 @@ def reader_auth(monkeypatch):
     monkeypatch.setattr(auth, "_resolve_organization", lambda *_: organization)
     monkeypatch.setattr(auth, "_get_requested_workspace", lambda *_: workspace)
     monkeypatch.setattr(
-        "accounts.authentication.decode_token", lambda _: (user, "fixture-token")
+        "accounts.authentication.decode_token", lambda _: (user, "fixture-token", None)
     )
     clear_workspace_context()
     yield auth, user, workspace, access
@@ -265,7 +267,6 @@ def test_mutating_eval_views_are_not_write_exempt():
         EvalTemplateBulkDeleteView,
     ):
         assert getattr(view, "workspace_write_exempt", False) is False, view.__name__
-
 
 
 EVAL_READ_ENDPOINTS = (

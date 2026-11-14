@@ -1,4 +1,10 @@
-import React, { useState, useEffect, useCallback, useRef } from "react";
+import React, {
+  useState,
+  useEffect,
+  useCallback,
+  useMemo,
+  useRef,
+} from "react";
 import PropTypes from "prop-types";
 import {
   Dialog,
@@ -19,11 +25,35 @@ import {
   Box,
 } from "@mui/material";
 import { enqueueSnackbar } from "notistack";
+import { useQueryClient } from "@tanstack/react-query";
+import { getSafeActionErrorMessage } from "src/utils/errorUtils";
 import {
+  gatewayConfigRefreshFailed,
   useUpdateProvider,
   useFetchProviderModels,
 } from "./hooks/useGatewayConfig";
-import { parseTimeoutSeconds } from "./utils";
+import {
+  DEFAULT_API_PATH_PREFIX,
+  SYSTEMONE_API_FORMAT,
+  apiFormatLabel,
+  getApiPathPrefix,
+  isSystemOneFormat,
+  normalizeApiFormat,
+  parseTimeoutSeconds,
+  withApiPathPrefix,
+} from "./utils";
+import {
+  DECISIONS_ONLY_HELP,
+  DECISIONS_ONLY_TAG,
+  MODEL_LIST_SOURCE_HELP,
+  RESPONSES_ONLY_HELP,
+  RESPONSES_ONLY_TAG,
+  SYSTEM_ONE_MODELS_HELP,
+  decisionModelsFor,
+  defaultSelectableModels,
+  responsesOnlyModelSet,
+  withDecisionModels,
+} from "./modelCompatibility";
 
 const PROVIDER_PRESETS = {
   openai: {
@@ -46,6 +76,13 @@ const PROVIDER_PRESETS = {
     apiFormat: "google",
     keyPlaceholder: "AIza...",
     supportedFormats: ["openai", "google"],
+  },
+  vertex: {
+    label: "Google Vertex AI",
+    baseUrl: "",
+    apiFormat: "gemini",
+    authType: "gcp",
+    supportedFormats: ["gemini"],
   },
   azure: {
     label: "Azure OpenAI",
@@ -96,6 +133,16 @@ const PROVIDER_PRESETS = {
     keyPlaceholder: "Enter your Mistral API key",
     supportedFormats: ["openai"],
   },
+  // Perplexity's Agent API (/v1/responses). Its Sonar chat completions are
+  // served without the version segment: add them as a custom provider with an
+  // empty API Path Prefix.
+  perplexity: {
+    label: "Perplexity",
+    baseUrl: "https://api.perplexity.ai/v1",
+    apiFormat: "openai",
+    keyPlaceholder: "pplx-...",
+    supportedFormats: ["openai"],
+  },
   custom: {
     label: "Custom / Self-hosted",
     baseUrl: "",
@@ -103,6 +150,64 @@ const PROVIDER_PRESETS = {
     keyPlaceholder: "Enter API key",
     supportedFormats: ["openai", "anthropic", "google"],
   },
+  // Decision-model providers. They speak System One and carry a static model
+  // list, because they are never probed for models. Each key is the provider
+  // ID, so the Decider must not take "perplexity": that names the chat API.
+  typesafe: {
+    label: "TypeSafe",
+    baseUrl: "https://api.typesafe.ai",
+    apiFormat: SYSTEMONE_API_FORMAT,
+    keyPlaceholder: "Enter your TypeSafe API key",
+    supportedFormats: [SYSTEMONE_API_FORMAT],
+    models: ["jev-1.13.0", "jev-latest"],
+  },
+  "perplexity-decider": {
+    label: "Perplexity Decider",
+    baseUrl: "https://api.perplexity.ai",
+    apiFormat: SYSTEMONE_API_FORMAT,
+    keyPlaceholder: "pplx-...",
+    supportedFormats: [SYSTEMONE_API_FORMAT],
+    models: ["pplx-decider-v1.1-27b", "pplx-decider-v1-27b"],
+  },
+  "custom-systemone": {
+    label: "Custom System One endpoint",
+    baseUrl: "",
+    apiFormat: SYSTEMONE_API_FORMAT,
+    keyPlaceholder: "Enter API key",
+    supportedFormats: [SYSTEMONE_API_FORMAT],
+    baseUrlHelp: "Required — the gateway posts to this URL plus /v1/systemone",
+    models: [],
+  },
+};
+
+// The built-in models of a System One preset, or none for any other provider.
+// A copy, so state never aliases the preset.
+const systemOneModelsFor = (providerName) => {
+  const preset = PROVIDER_PRESETS[providerName];
+  return isSystemOneFormat(preset?.apiFormat) ? [...preset.models] : [];
+};
+
+const parseProviderBaseUrl = (value) => {
+  const url = value.trim();
+  if (!/^https?:\/\//i.test(url) || /\s/.test(url)) return null;
+  try {
+    const parsed = new URL(url);
+    return parsed.hostname ? parsed : null;
+  } catch {
+    return null;
+  }
+};
+
+// Mirror the gateway's vendor recognition: a custom label cannot turn a
+// TypeSafe, Perplexity or OpenAI endpoint into a keyless self-hosted provider.
+const allowsKeylessSystemOne = (name, apiFormat, baseUrl) => {
+  if (!isSystemOneFormat(apiFormat)) return false;
+  const url = parseProviderBaseUrl(baseUrl);
+  if (!url || /^(typesafe|perplexity|openai)/i.test(name)) return false;
+  const host = url.hostname.toLowerCase().replace(/\.$/, "");
+  return !["typesafe.ai", "perplexity.ai", "openai.com"].some(
+    (vendor) => host === vendor || host.endsWith(`.${vendor}`),
+  );
 };
 
 const AWS_REGIONS = [
@@ -117,6 +222,22 @@ const AWS_REGIONS = [
   { value: "sa-east-1", label: "South America (São Paulo)" },
 ];
 
+// A custom provider's name is its ID: model IDs are prefixed with it, keys
+// allow it by name, and saving under a name that exists replaces that provider.
+const customNameError = (value, existingNames) => {
+  if (!value) return "Name is required";
+  if (!/^[a-z0-9][a-z0-9_-]{0,62}$/.test(value)) {
+    return "Use lowercase letters, digits, - and _, starting with a letter or digit";
+  }
+  if (value !== "custom" && Object.hasOwn(PROVIDER_PRESETS, value)) {
+    return `"${value}" is a built-in provider. Choose it from the Provider list, or use another name`;
+  }
+  if (existingNames.includes(value)) {
+    return `A provider named "${value}" already exists. Use another name, or edit that provider`;
+  }
+  return "";
+};
+
 const PROVIDER_OPTIONS = Object.entries(PROVIDER_PRESETS).map(
   ([key, preset]) => ({
     value: key,
@@ -129,9 +250,18 @@ const API_FORMATS = [
   "anthropic",
   "cohere",
   "google",
+  "gemini",
   "azure",
   "bedrock",
+  SYSTEMONE_API_FORMAT,
 ];
+
+const vertexSettingsFromUrl = (url) => {
+  const match = String(url || "").match(
+    /^https:\/\/(?:[a-z0-9-]+-)?aiplatform\.googleapis\.com\/v1beta1\/projects\/([^/]+)\/locations\/([^/]+)\/?$/,
+  );
+  return { project: match?.[1] || "", location: match?.[2] || "us-central1" };
+};
 
 // The API types a provider's models as free-form JSON, so an entry need not be
 // a string — and a non-string one takes the dialog down when it reaches state.
@@ -157,6 +287,7 @@ const STORED_KEY_UNVERIFIED =
 // Summary labels, in form order so the summary reads like the dialog.
 const FIELD_LABELS = {
   name: "Provider Name",
+  customName: "Name",
   awsAccessKeyId: "AWS Access Key ID",
   awsSecretAccessKey: "AWS Secret Access Key",
   baseUrl: "Base URL",
@@ -164,13 +295,45 @@ const FIELD_LABELS = {
   timeout: "Timeout",
 };
 
-const AddProviderDialog = ({ open, onClose, gatewayId, provider }) => {
+// Names the endpoint a model is served on. It rides with the ID so the warning
+// follows the model from the dropdown into the selected chip.
+const EndpointTag = ({ label }) => (
+  <Typography
+    component="span"
+    variant="caption"
+    sx={{
+      ml: 0.75,
+      px: 0.5,
+      borderRadius: 0.5,
+      bgcolor: "warning.lighter",
+      color: "warning.darker",
+      whiteSpace: "nowrap",
+    }}
+  >
+    {label}
+  </Typography>
+);
+
+EndpointTag.propTypes = {
+  label: PropTypes.string.isRequired,
+};
+
+const AddProviderDialog = ({
+  open,
+  onClose,
+  gatewayId,
+  provider,
+  existingNames = [],
+}) => {
   const isEditMode = Boolean(provider);
 
   const [name, setName] = useState("openai");
+  // The saved name of a custom provider; `name` holds the preset key.
+  const [customName, setCustomName] = useState("custom");
   const [baseUrl, setBaseUrl] = useState(PROVIDER_PRESETS.openai.baseUrl);
   const [apiKey, setApiKey] = useState("");
   const [apiFormat, setApiFormat] = useState("openai");
+  const [apiPathPrefix, setApiPathPrefix] = useState(DEFAULT_API_PATH_PREFIX);
   const [models, setModels] = useState([]);
   const [timeoutVal, setTimeoutVal] = useState("");
   const [maxConcurrent, setMaxConcurrent] = useState("");
@@ -180,6 +343,9 @@ const AddProviderDialog = ({ open, onClose, gatewayId, provider }) => {
   const [awsSecretAccessKey, setAwsSecretAccessKey] = useState("");
   const [awsRegion, setAwsRegion] = useState("us-east-1");
   const [awsSessionToken, setAwsSessionToken] = useState("");
+  const [gcpProject, setGcpProject] = useState("");
+  const [gcpLocation, setGcpLocation] = useState("us-central1");
+  const [serviceAccountJSON, setServiceAccountJSON] = useState("");
 
   // Validation state
   const [errors, setErrors] = useState({});
@@ -190,6 +356,7 @@ const AddProviderDialog = ({ open, onClose, gatewayId, provider }) => {
   // The body scrolls, so a failed Save has to bring the summary back into view.
   const contentRef = useRef(null);
 
+  const queryClient = useQueryClient();
   const updateProvider = useUpdateProvider();
   const fetchModels = useFetchProviderModels();
   const [modelOptions, setModelOptions] = useState([]);
@@ -207,11 +374,16 @@ const AddProviderDialog = ({ open, onClose, gatewayId, provider }) => {
   // The last fetch made with a key typed into the form.
   const typedFetchSeqRef = useRef(0);
 
+  // The prefix the stored-credential listing was fetched with, so editing the
+  // field is told apart from the dialog hydrating it.
+  const byNameFetchPrefix = useRef(null);
+
   const doFetchModels = useCallback(
-    ({ providerName, url, key, format }) => {
+    ({ providerName, url, key, format, prefix }) => {
       const seq = fetchSeqRef.current + 1;
       fetchSeqRef.current = seq;
       if (!providerName) typedFetchSeqRef.current = seq;
+      else byNameFetchPrefix.current = prefix;
       const isStale = () => fetchSeqRef.current !== seq;
       setFetchError("");
       setKeyFetchError("");
@@ -220,8 +392,13 @@ const AddProviderDialog = ({ open, onClose, gatewayId, provider }) => {
       const blameKey = !providerName;
       fetchModels.mutate(
         providerName
-          ? { providerName }
-          : { baseUrl: url, apiKey: key, apiFormat: format },
+          ? { providerName, apiFormat: format, apiPathPrefix: prefix }
+          : {
+              baseUrl: url,
+              apiKey: key,
+              apiFormat: format,
+              apiPathPrefix: prefix,
+            },
         {
           onSuccess: (result) => {
             if (isStale()) return;
@@ -272,7 +449,19 @@ const AddProviderDialog = ({ open, onClose, gatewayId, provider }) => {
       setName(provider.name || "");
       setBaseUrl(c.base_url ?? c.baseUrl ?? "");
       setApiKey("");
-      setApiFormat(c.api_format ?? c.apiFormat ?? "openai");
+      // "typesafe" is the gateway's alias for System One; the select only
+      // offers the canonical name. A decision preset's name only ever means
+      // System One, so a credential pushed under it with another format (the
+      // admin API defaults to openai) is shown, and saved, as System One rather
+      // than with a blank, locked format.
+      const storedFormat = isSystemOneFormat(
+        PROVIDER_PRESETS[provider.name]?.apiFormat,
+      )
+        ? SYSTEMONE_API_FORMAT
+        : normalizeApiFormat(c.api_format ?? c.apiFormat ?? "openai");
+      setApiFormat(storedFormat);
+      const storedPrefix = getApiPathPrefix(c);
+      setApiPathPrefix(storedPrefix);
       setModels(normalizeModels(c.models));
       const timeoutRaw = c.default_timeout ?? c.defaultTimeout;
       setTimeoutVal(timeoutRaw != null ? String(timeoutRaw) : "");
@@ -281,11 +470,30 @@ const AddProviderDialog = ({ open, onClose, gatewayId, provider }) => {
           ? String(c.max_concurrent ?? c.maxConcurrent ?? "")
           : "",
       );
+      const vertexSettings = vertexSettingsFromUrl(c.base_url ?? c.baseUrl);
+      setGcpProject(vertexSettings.project);
+      setGcpLocation(vertexSettings.location);
+      setServiceAccountJSON("");
       setErrors({});
       setSummaryDismissed(false);
       offeredModels.current = new Set(normalizeModels(c.models));
       storedKeyResult.current = null;
-      doFetchModels({ providerName: provider.name });
+      byNameFetchPrefix.current = null;
+      if (isSystemOneFormat(storedFormat)) {
+        // Never probed; the preset's list stands in for a listing.
+        const builtIn = systemOneModelsFor(provider.name);
+        builtIn.forEach((m) => offeredModels.current.add(m));
+        setModelOptions(builtIn);
+        setFetchError("");
+        setKeyFetchError("");
+        setHasFetched(false);
+      } else if (provider.name !== "vertex") {
+        doFetchModels({
+          providerName: provider.name,
+          format: storedFormat,
+          prefix: storedPrefix,
+        });
+      }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, isEditMode, provider]);
@@ -299,13 +507,27 @@ const AddProviderDialog = ({ open, onClose, gatewayId, provider }) => {
   }, [open, isEditMode]);
 
   const isAwsAuth = PROVIDER_PRESETS[name]?.authType === "aws";
+  const isVertexAuth = PROVIDER_PRESETS[name]?.authType === "gcp";
+  const isSystemOne = isSystemOneFormat(apiFormat);
+  const keyIsOptional = allowsKeylessSystemOne(name, apiFormat, baseUrl);
 
   // Auto-fetch when an API key is entered (debounced). Edit mode included: a
   // typed key replaces the stored one, so it has to list models before Save.
   // Skip auto-fetch for AWS providers (Bedrock models must be entered manually)
   useEffect(() => {
-    if (isAwsAuth) {
+    if (isAwsAuth || isVertexAuth) {
       setFetchScheduled(false);
+      return;
+    }
+    // System One providers are never probed, so a key cannot start a billed
+    // call from this dialog. Their model list is the preset's, set when the
+    // preset is picked or the dialog opens on a saved one.
+    if (isSystemOne) {
+      fetchSeqRef.current += 1;
+      setFetchScheduled(false);
+      setFetchError("");
+      setKeyFetchError("");
+      setHasFetched(false);
       return;
     }
     if (!apiKey.trim()) {
@@ -345,18 +567,56 @@ const AddProviderDialog = ({ open, onClose, gatewayId, provider }) => {
     setFetchScheduled(true);
     const timer = setTimeout(() => {
       setFetchScheduled(false);
-      doFetchModels({ url: baseUrl, key: apiKey, format: apiFormat });
+      doFetchModels({
+        url: baseUrl,
+        key: apiKey,
+        format: apiFormat,
+        prefix: apiPathPrefix,
+      });
     }, 600);
     return () => clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [apiKey, baseUrl, apiFormat, isEditMode, isAwsAuth]);
+  }, [
+    apiKey,
+    baseUrl,
+    apiFormat,
+    apiPathPrefix,
+    isEditMode,
+    isAwsAuth,
+    isVertexAuth,
+  ]);
+
+  // Editing the prefix moves the discovery URL, so the stored-credential
+  // listing has to be fetched again. The effect above cannot do it: a blank key
+  // in edit mode means "keep the stored one", which returns before any fetch.
+  useEffect(() => {
+    if (!open || !isEditMode || !provider) return;
+    if (apiKey.trim()) return;
+    if (isAwsAuth || isVertexAuth || provider.name === "vertex") return;
+    // null until the hydrating fetch records one, so opening the dialog is not
+    // mistaken for a change.
+    if (byNameFetchPrefix.current === null) return;
+    if (byNameFetchPrefix.current === apiPathPrefix) return;
+
+    const timer = setTimeout(() => {
+      doFetchModels({
+        providerName: provider.name,
+        format: apiFormat,
+        prefix: apiPathPrefix,
+      });
+    }, 600);
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [apiPathPrefix, apiKey, open, isEditMode, isAwsAuth, isVertexAuth]);
 
   const resetForm = () => {
     const defaultPreset = PROVIDER_PRESETS.openai;
     setName("openai");
+    setCustomName("custom");
     setBaseUrl(defaultPreset.baseUrl);
     setApiKey("");
     setApiFormat(defaultPreset.apiFormat);
+    setApiPathPrefix(DEFAULT_API_PATH_PREFIX);
     setModels([]);
     setModelOptions([]);
     setFetchError("");
@@ -369,6 +629,9 @@ const AddProviderDialog = ({ open, onClose, gatewayId, provider }) => {
     setAwsSecretAccessKey("");
     setAwsRegion("us-east-1");
     setAwsSessionToken("");
+    setGcpProject("");
+    setGcpLocation("us-central1");
+    setServiceAccountJSON("");
     setErrors({});
     setSummaryDismissed(false);
     offeredModels.current = new Set();
@@ -381,6 +644,7 @@ const AddProviderDialog = ({ open, onClose, gatewayId, provider }) => {
   };
 
   const handleProviderChange = (newName) => {
+    fetchSeqRef.current += 1;
     setName(newName);
     const preset = PROVIDER_PRESETS[newName];
     if (preset) {
@@ -396,15 +660,22 @@ const AddProviderDialog = ({ open, onClose, gatewayId, provider }) => {
           : prev,
       );
     }
-    // Clear models since provider changed
-    setModels([]);
-    setModelOptions([]);
+    setApiKey("");
+    setGcpProject("");
+    setGcpLocation("us-central1");
+    setServiceAccountJSON("");
+    setApiPathPrefix(DEFAULT_API_PATH_PREFIX);
+    // Clear models since provider changed. A System One preset brings its own
+    // list, offered and selected, since nothing will fetch one.
+    const builtIn = systemOneModelsFor(newName);
+    setModels(builtIn);
+    setModelOptions(builtIn);
     setFetchError("");
     setKeyFetchError("");
     setHasFetched(false);
     setErrors({});
     setSummaryDismissed(false);
-    offeredModels.current = new Set();
+    offeredModels.current = new Set(builtIn);
     storedKeyResult.current = null;
   };
 
@@ -413,11 +684,59 @@ const AddProviderDialog = ({ open, onClose, gatewayId, provider }) => {
     setBaseUrl(`https://bedrock-runtime.${region}.amazonaws.com`);
   };
 
+  // What the model rules below match on. The format rides along so the
+  // Perplexity Decider, on Perplexity's host, is not read as its chat API.
+  const modelContext = useMemo(
+    () => ({ providerName: name, baseUrl, apiFormat }),
+    [name, baseUrl, apiFormat],
+  );
+
+  // Which listed models this provider serves on /v1/responses rather than chat
+  // completions. Built from the live catalogue only: `models` can hold an ID
+  // the user typed by hand (e.g. Perplexity's `sonar`, which chat completions
+  // serves and the catalogue never lists), and that must never be tagged.
+  const responsesOnly = useMemo(
+    () => responsesOnlyModelSet(modelOptions, modelContext),
+    [modelOptions, modelContext],
+  );
+
+  // Decision models this chat provider also serves (OpenAI's gpt-6-luna). The
+  // ID means the same model however it got here, so a typed one is tagged too.
+  const decisionsOnly = useMemo(
+    () => new Set(decisionModelsFor(modelContext)),
+    [modelContext],
+  );
+
+  // The live listing plus any of those it left out.
+  const pickerOptions = useMemo(
+    () => withDecisionModels(modelOptions, modelContext),
+    [modelOptions, modelContext],
+  );
+
+  // A built-in option counts as offered, like a listed one: picking it is not
+  // a hand-typed override of a listing that later comes back empty.
+  useEffect(() => {
+    pickerOptions.forEach((m) => offeredModels.current.add(m));
+  }, [pickerOptions]);
+
+  // What "Select All" covers. Tagged models stay out, which is what keeps them
+  // unselected by default; they remain individually selectable.
+  const bulkSelectable = useMemo(
+    () => defaultSelectableModels(pickerOptions, modelContext),
+    [pickerOptions, modelContext],
+  );
+
+  const allSelected =
+    bulkSelectable.length > 0 &&
+    bulkSelectable.every((m) => models.includes(m));
+
   const handleSelectAll = () => {
-    if (models.length === modelOptions.length) {
+    if (allSelected) {
       setModels([]);
     } else {
-      setModels([...modelOptions]);
+      // Union, not replacement: a tagged model the user picked on purpose, or
+      // one restored from the saved config, must survive this.
+      setModels((prev) => Array.from(new Set([...prev, ...bulkSelectable])));
     }
   };
 
@@ -434,8 +753,38 @@ const AddProviderDialog = ({ open, onClose, gatewayId, provider }) => {
     if (!name.trim()) {
       newErrors.name = "Provider name is required";
     }
+    if (!isEditMode && name === "custom") {
+      const nameError = customNameError(customName.trim(), existingNames);
+      if (nameError) newErrors.customName = nameError;
+    }
 
-    if (isAwsAuth) {
+    if (isVertexAuth) {
+      if (!/^[a-z][a-z0-9-]{4,62}$/.test(gcpProject.trim())) {
+        newErrors.gcpProject = "Enter a valid Google Cloud project ID";
+      }
+      if (!/^[a-z][a-z0-9-]{1,62}$/.test(gcpLocation.trim())) {
+        newErrors.gcpLocation = "Enter a valid Vertex AI location";
+      }
+      if (!isEditMode && !serviceAccountJSON) {
+        newErrors.serviceAccountJSON = "Paste the Google service-account JSON";
+      } else if (serviceAccountJSON) {
+        try {
+          const parsed = JSON.parse(serviceAccountJSON);
+          if (
+            parsed?.type !== "service_account" ||
+            !parsed.client_email ||
+            !parsed.private_key ||
+            !parsed.project_id ||
+            parsed.token_uri !== "https://oauth2.googleapis.com/token"
+          ) {
+            newErrors.serviceAccountJSON =
+              "Paste a complete Google service-account JSON key";
+          }
+        } catch {
+          newErrors.serviceAccountJSON = "Paste valid JSON";
+        }
+      }
+    } else if (isAwsAuth) {
       // AWS-specific validation
       if (!isEditMode && !awsAccessKeyId.trim()) {
         newErrors.awsAccessKeyId = "AWS Access Key ID is required";
@@ -453,16 +802,21 @@ const AddProviderDialog = ({ open, onClose, gatewayId, provider }) => {
       }
       if (baseUrl.trim() && !/^https?:\/\//i.test(baseUrl.trim())) {
         newErrors.baseUrl = `Base URL must start with http:// or https:// (got "${baseUrl.trim()}")`;
+      } else if (baseUrl.trim() && !parseProviderBaseUrl(baseUrl)) {
+        newErrors.baseUrl =
+          "Enter a valid http(s) base URL with a host and valid port";
       }
 
-      // API key required for new providers
-      if (!isEditMode && !apiKey.trim()) {
+      // Only Generic System One with an explicit valid endpoint may be keyless.
+      if (!isEditMode && !keyIsOptional && !apiKey.trim()) {
         newErrors.apiKey = "API key is required";
       }
 
       // Only a listing that came back empty counts, and only until models are
-      // entered by hand.
+      // entered by hand. System One providers are never listed, so their key
+      // has no verdict to fail.
       if (
+        !isSystemOne &&
         apiKey.trim() &&
         hasFetched &&
         modelOptions.length === 0 &&
@@ -489,34 +843,56 @@ const AddProviderDialog = ({ open, onClose, gatewayId, provider }) => {
       return;
     }
 
-    const config = { base_url: baseUrl, api_format: apiFormat };
-    if (isAwsAuth) {
+    const config = withApiPathPrefix(
+      { base_url: baseUrl.trim(), api_format: apiFormat },
+      apiFormat,
+      apiPathPrefix,
+    );
+    if (isVertexAuth) {
+      config.gcp_project = gcpProject.trim();
+      config.gcp_location = gcpLocation.trim();
+      if (serviceAccountJSON) config.service_account_json = serviceAccountJSON;
+    } else if (isAwsAuth) {
       if (awsAccessKeyId) config.aws_access_key_id = awsAccessKeyId;
       if (awsSecretAccessKey) config.aws_secret_access_key = awsSecretAccessKey;
       if (awsRegion) config.aws_region = awsRegion;
       if (awsSessionToken) config.aws_session_token = awsSessionToken;
-    } else if (apiKey) {
-      config.api_key = apiKey;
+    } else if (apiKey.trim()) {
+      config.api_key = apiKey.trim();
     }
     if (models.length > 0) config.models = models;
     if (timeoutSeconds !== null) config.default_timeout = timeoutSeconds;
     if (maxConcurrent) config.max_concurrent = Number(maxConcurrent);
 
+    const providerName =
+      !isEditMode && name === "custom" ? customName.trim() : name;
     updateProvider.mutate(
-      { gatewayId, name, config },
+      { gatewayId, name: providerName, config },
       {
         onSuccess: () => {
-          enqueueSnackbar(
-            isEditMode
-              ? `Provider "${name}" updated`
-              : `Provider "${name}" added`,
-            { variant: "success" },
-          );
+          // The write landed. Only the re-read that follows it can still have
+          // failed, and that is a stale screen, not a lost save — say which.
+          const saved = isEditMode
+            ? `Provider "${providerName}" updated`
+            : `Provider "${providerName}" added`;
+          if (gatewayConfigRefreshFailed(queryClient)) {
+            enqueueSnackbar(
+              `${saved}, but the provider list could not be reloaded — refresh the page to see it.`,
+              { variant: "warning" },
+            );
+          } else {
+            enqueueSnackbar(saved, { variant: "success" });
+          }
           handleClose();
         },
-        onError: () => {
+        onError: (err) => {
           enqueueSnackbar(
-            isEditMode ? "Failed to update provider" : "Failed to add provider",
+            getSafeActionErrorMessage(
+              err,
+              isEditMode
+                ? "Failed to update provider"
+                : "Failed to add provider",
+            ),
             { variant: "error" },
           );
         },
@@ -532,16 +908,16 @@ const AddProviderDialog = ({ open, onClose, gatewayId, provider }) => {
   // The stored credential listed nothing and no replacement key has been typed.
   // AWS is exempt: Bedrock has no list endpoint and no API Key field to explain
   // a block on, so gating there would lock those providers out of editing.
+  // System One is exempt the same way: it is never listed at all.
   const savedKeyUnverified =
     isEditMode &&
     !isAwsAuth &&
+    !isVertexAuth &&
+    !isSystemOne &&
     hasFetched &&
     modelOptions.length === 0 &&
     !apiKey.trim() &&
     !manualModels;
-
-  const allSelected =
-    modelOptions.length > 0 && models.length === modelOptions.length;
 
   const preset = PROVIDER_PRESETS[name] || PROVIDER_PRESETS.custom;
 
@@ -557,7 +933,13 @@ const AddProviderDialog = ({ open, onClose, gatewayId, provider }) => {
   }));
 
   return (
-    <Dialog open={open} onClose={handleClose} maxWidth="sm" fullWidth>
+    <Dialog
+      open={open}
+      onClose={handleClose}
+      maxWidth={false}
+      PaperProps={{ sx: { maxWidth: 720 } }}
+      fullWidth
+    >
       <DialogTitle>{isEditMode ? "Edit Provider" : "Add Provider"}</DialogTitle>
       <DialogContent ref={contentRef}>
         <Stack spacing={2} mt={1}>
@@ -610,7 +992,77 @@ const AddProviderDialog = ({ open, onClose, gatewayId, provider }) => {
             </TextField>
           )}
 
-          {isAwsAuth ? (
+          {!isEditMode && name === "custom" && (
+            <TextField
+              label="Name"
+              fullWidth
+              required
+              value={customName}
+              onChange={(e) => {
+                setCustomName(e.target.value);
+                setErrors((prev) => ({ ...prev, customName: undefined }));
+              }}
+              error={!!errors.customName}
+              helperText={
+                errors.customName ||
+                "Model IDs and key permissions use this name. It cannot be changed later."
+              }
+            />
+          )}
+
+          {isVertexAuth ? (
+            <>
+              <TextField
+                label="Google Cloud project ID"
+                fullWidth
+                required
+                value={gcpProject}
+                onChange={(e) => {
+                  setGcpProject(e.target.value);
+                  setErrors((prev) => ({ ...prev, gcpProject: undefined }));
+                }}
+                error={!!errors.gcpProject}
+                helperText={errors.gcpProject}
+              />
+              <TextField
+                label="Vertex AI location"
+                fullWidth
+                required
+                value={gcpLocation}
+                onChange={(e) => {
+                  setGcpLocation(e.target.value);
+                  setErrors((prev) => ({ ...prev, gcpLocation: undefined }));
+                }}
+                error={!!errors.gcpLocation}
+                helperText={errors.gcpLocation || "For example, us-central1"}
+              />
+              <TextField
+                label="Service-account JSON"
+                fullWidth
+                required={!isEditMode}
+                type="password"
+                autoComplete="off"
+                value={serviceAccountJSON}
+                onChange={(e) => {
+                  setServiceAccountJSON(e.target.value);
+                  setErrors((prev) => ({
+                    ...prev,
+                    serviceAccountJSON: undefined,
+                  }));
+                }}
+                placeholder={
+                  isEditMode
+                    ? "Leave blank to keep current key"
+                    : "Paste the entire JSON key"
+                }
+                error={!!errors.serviceAccountJSON}
+                helperText={
+                  errors.serviceAccountJSON ||
+                  "Encrypted at rest. Never returned to the browser after saving."
+                }
+              />
+            </>
+          ) : isAwsAuth ? (
             <>
               <TextField
                 label="AWS Region"
@@ -692,6 +1144,7 @@ const AddProviderDialog = ({ open, onClose, gatewayId, provider }) => {
                 error={!!errors.baseUrl}
                 helperText={
                   errors.baseUrl ||
+                  preset.baseUrlHelp ||
                   (preset.baseUrl
                     ? "Auto-filled from provider preset"
                     : "Required — enter your endpoint URL")
@@ -701,7 +1154,7 @@ const AddProviderDialog = ({ open, onClose, gatewayId, provider }) => {
               <TextField
                 label="API Key"
                 fullWidth
-                required={!isEditMode}
+                required={!isEditMode && !keyIsOptional}
                 type="password"
                 value={apiKey}
                 onChange={(e) => {
@@ -721,7 +1174,10 @@ const AddProviderDialog = ({ open, onClose, gatewayId, provider }) => {
                 helperText={
                   errors.apiKey ||
                   keyFetchError ||
-                  (savedKeyUnverified ? STORED_KEY_UNVERIFIED : undefined)
+                  (savedKeyUnverified ? STORED_KEY_UNVERIFIED : undefined) ||
+                  (keyIsOptional
+                    ? "Optional for a self-hosted System One endpoint that does not require authentication. Known vendors still require an API key."
+                    : undefined)
                 }
               />
             </>
@@ -752,12 +1208,22 @@ const AddProviderDialog = ({ open, onClose, gatewayId, provider }) => {
               >
                 {visibleFormats.map((f) => (
                   <MenuItem key={f} value={f}>
-                    {f}
+                    {apiFormatLabel(f)}
                   </MenuItem>
                 ))}
               </TextField>
             );
           })()}
+
+          {apiFormat === "openai" && (
+            <TextField
+              label="API Path Prefix"
+              fullWidth
+              value={apiPathPrefix}
+              onChange={(e) => setApiPathPrefix(e.target.value)}
+              helperText="Leave blank when the provider endpoint is not versioned, such as Perplexity Sonar."
+            />
+          )}
 
           <Box>
             <Stack
@@ -797,7 +1263,7 @@ const AddProviderDialog = ({ open, onClose, gatewayId, provider }) => {
                 "&:hover .MuiAutocomplete-input, &.Mui-focused .MuiAutocomplete-input":
                   { minWidth: 30 },
               }}
-              options={modelOptions}
+              options={pickerOptions}
               value={models}
               onChange={(_, val) => {
                 setModels(normalizeModels(val));
@@ -805,13 +1271,29 @@ const AddProviderDialog = ({ open, onClose, gatewayId, provider }) => {
               renderOption={(props, option, { selected }) => (
                 <li {...props} key={option}>
                   <Checkbox size="small" checked={selected} sx={{ mr: 1 }} />
-                  {option}
+                  <span>{option}</span>
+                  {responsesOnly.has(option) && (
+                    <EndpointTag label={RESPONSES_ONLY_TAG} />
+                  )}
+                  {decisionsOnly.has(option) && (
+                    <EndpointTag label={DECISIONS_ONLY_TAG} />
+                  )}
                 </li>
               )}
               renderTags={(value, getTagProps) =>
                 value.map((option, index) => (
                   <Chip
-                    label={option}
+                    label={
+                      <>
+                        <span>{option}</span>
+                        {responsesOnly.has(option) && (
+                          <EndpointTag label={RESPONSES_ONLY_TAG} />
+                        )}
+                        {decisionsOnly.has(option) && (
+                          <EndpointTag label={DECISIONS_ONLY_TAG} />
+                        )}
+                      </>
+                    }
                     size="small"
                     {...getTagProps({ index })}
                     key={option}
@@ -826,7 +1308,7 @@ const AddProviderDialog = ({ open, onClose, gatewayId, provider }) => {
                       ? "Fetching models..."
                       : modelOptions.length > 0
                         ? "Select models..."
-                        : isAwsAuth
+                        : isAwsAuth || isVertexAuth || isSystemOne
                           ? "Type or paste comma-separated model IDs"
                           : "Enter API key to load models, or type manually"
                   }
@@ -847,13 +1329,26 @@ const AddProviderDialog = ({ open, onClose, gatewayId, provider }) => {
               )}
             />
             {fetchError && (
-              <Alert
-                severity="warning"
-                variant="outlined"
-                sx={{ mt: 1, py: 0 }}
-              >
+              <Alert severity="warning" variant="outlined" sx={{ mt: 1 }}>
                 {fetchError}
               </Alert>
+            )}
+            {!isAwsAuth && !isVertexAuth && (
+              // Where the options come from — and, when any are tagged, which
+              // endpoint they are served on. AWS and Vertex are left out:
+              // neither is listed live. System One is never listed either, so
+              // it says where its list comes from instead.
+              <Typography
+                variant="caption"
+                color="text.secondary"
+                sx={{ mt: 0.5, display: "block" }}
+              >
+                {isSystemOne ? SYSTEM_ONE_MODELS_HELP : MODEL_LIST_SOURCE_HELP}
+                {responsesOnly.size > 0 ? ` ${RESPONSES_ONLY_HELP}` : ""}
+                {pickerOptions.some((m) => decisionsOnly.has(m))
+                  ? ` ${DECISIONS_ONLY_HELP}`
+                  : ""}
+              </Typography>
             )}
             {models.length === 0 && (
               // Save is held until a model is picked, so say so here.
@@ -943,6 +1438,7 @@ AddProviderDialog.propTypes = {
     name: PropTypes.string.isRequired,
     config: PropTypes.object,
   }),
+  existingNames: PropTypes.arrayOf(PropTypes.string),
 };
 
 export default AddProviderDialog;

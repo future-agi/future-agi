@@ -1,34 +1,13 @@
-import { Box, Typography } from "@mui/material";
 import PropTypes from "prop-types";
 import React from "react";
+import EmptyContent from "src/components/empty-content";
 
 const NoRowsOverlay = ({ title }) => {
-  return (
-    <Box
-      sx={{
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        height: "100%",
-        color: "text.primary",
-        fontWeight: "400",
-        fontSize: "14px",
-        lineHeight: "22px",
-      }}
-    >
-      <Typography
-        typography="m3"
-        color="text.primary"
-        fontWeight="fontWeightMedium"
-      >
-        {title}
-      </Typography>
-    </Box>
-  );
+  return <EmptyContent title={title} />;
 };
 
 NoRowsOverlay.propTypes = {
-  title: PropTypes.string || PropTypes.node,
+  title: PropTypes.node,
 };
 
 export default NoRowsOverlay;

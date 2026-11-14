@@ -240,7 +240,7 @@ const DrawerRight = ({
           width: (theme) => theme.spacing(0.75),
         },
         "&::-webkit-scrollbar-thumb": {
-          backgroundColor: "rgba(0, 0, 0, 0.3)",
+          backgroundColor: "border.strong",
           borderRadius: (theme) => theme.spacing(0.25),
         },
         "&::-webkit-scrollbar-track": {
@@ -425,7 +425,11 @@ const DrawerRight = ({
               gap: (theme) => theme.spacing(1),
             }}
           >
-            <Iconify icon="stash:clock" color="text.secondary" width={15} />
+            <Iconify
+              icon="solar:clock-circle-linear"
+              color="text.secondary"
+              width={16}
+            />
             <Typography
               typography="s3"
               fontWeight="fontWeightRegular"
@@ -450,7 +454,7 @@ const DrawerRight = ({
           variant="outlined"
         >
           <Iconify
-            icon="ic:outline-plus"
+            icon="solar:add-linear"
             sx={{
               mr: (theme) => theme.spacing(0.5),
               width: "16px",
@@ -464,7 +468,7 @@ const DrawerRight = ({
           color="primary"
           onClick={() => onAnnotate?.()}
           size="small"
-          startIcon={<Iconify icon="basil:edit-alt-outline" />}
+          startIcon={<Iconify icon="solar:pen-linear" />}
         >
           Annotate
         </Button>
@@ -475,7 +479,7 @@ const DrawerRight = ({
             onClick={handleIterateInWorkbench}
             size="small"
             disabled={isCreatingDraft}
-            startIcon={<Iconify icon="mdi:pencil-box-outline" />}
+            startIcon={<Iconify icon="solar:pen-new-square-linear" />}
           >
             {isCreatingDraft ? "Creating..." : "Iterate in Workbench"}
           </Button>

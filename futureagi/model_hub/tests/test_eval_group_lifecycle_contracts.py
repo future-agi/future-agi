@@ -133,6 +133,34 @@ def test_eval_group_delete_sets_deleted_at_and_clears_relationships(
     deleted_group = EvalGroup.all_objects.get(id=group_id)
     assert deleted_group.deleted is True
     assert deleted_group.deleted_at is not None
-    assert deleted_group.eval_templates.through.objects.filter(
-        evalgroup_id=group_id
-    ).count() == 0
+    assert (
+        deleted_group.eval_templates.through.objects.filter(
+            evalgroup_id=group_id
+        ).count()
+        == 0
+    )
+
+
+@pytest.mark.django_db
+def test_eval_group_list_keeps_accepting_large_page_sizes(auth_client, user, workspace):
+    """Documenting the list query must not tighten it: page_size=200 worked
+    before the contract existed and callers depend on it."""
+    template = _create_eval_template(user.organization, workspace)
+    created = _create_eval_group(auth_client, "large-page-group", [template.id])
+    assert created.status_code == status.HTTP_200_OK, created.content
+
+    response = auth_client.get(
+        "/model-hub/eval-groups/", {"page_size": 200, "page_number": 0}
+    )
+
+    assert response.status_code == status.HTTP_200_OK, response.content
+    payload = response.json()["result"]
+    assert any(group["name"] == "large-page-group" for group in payload["data"])
+    assert payload["total_pages"] == 1
+
+
+@pytest.mark.django_db
+def test_eval_group_list_still_rejects_non_positive_page_size(auth_client):
+    response = auth_client.get("/model-hub/eval-groups/", {"page_size": 0})
+
+    assert response.status_code == status.HTTP_400_BAD_REQUEST

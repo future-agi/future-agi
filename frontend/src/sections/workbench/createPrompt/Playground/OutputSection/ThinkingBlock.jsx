@@ -1,6 +1,12 @@
 import React, { useState } from "react";
 import PropTypes from "prop-types";
-import { Box, Collapse, Typography, keyframes } from "@mui/material";
+import {
+  Box,
+  Collapse,
+  Typography,
+  keyframes,
+  ButtonBase,
+} from "@mui/material";
 import Iconify from "src/components/iconify";
 import MarkdownWithVariableHighlight from "src/components/ReactMarkdownWithHighlight";
 import { PROMPT_RESULT_TYPES } from "../common";
@@ -24,20 +30,22 @@ const ThinkingBlock = ({ content, isThinking, outputType, sx = {} }) => {
         ...sx,
       }}
     >
-      <Box
+      <ButtonBase
+        component="div"
         onClick={() => setExpanded((prev) => !prev)}
         sx={{
           display: "flex",
+          justifyContent: "flex-start",
+          textAlign: "left",
           alignItems: "center",
           gap: 0.5,
-          cursor: "pointer",
           userSelect: "none",
           color: "text.secondary",
           py: 0.5,
         }}
       >
         <Iconify
-          icon="material-symbols:arrow-forward-ios-rounded"
+          icon="solar:alt-arrow-right-linear"
           width={14}
           sx={{
             transform: expanded ? "rotate(90deg)" : "rotate(0deg)",
@@ -56,7 +64,7 @@ const ThinkingBlock = ({ content, isThinking, outputType, sx = {} }) => {
         >
           {isThinking ? "Thinking..." : "Thoughts"}
         </Typography>
-      </Box>
+      </ButtonBase>
       <Collapse in={expanded}>
         <Box
           sx={{

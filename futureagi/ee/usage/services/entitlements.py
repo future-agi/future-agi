@@ -16,12 +16,13 @@ from __future__ import annotations
 from typing import Any
 
 import structlog
+from redis.exceptions import RedisError
+
 from ee.usage.deployment import DeploymentMode
 from ee.usage.schemas.events import CheckResult, UpgradeCTA
 from ee.usage.services.config import BillingConfig
 from ee.usage.services.emitter import get_redis
 from ee.usage.services.metering import _get_cached_plan
-from redis.exceptions import RedisError
 
 logger = structlog.get_logger(__name__)
 
@@ -69,7 +70,9 @@ class Entitlements:
     """Static methods for entitlement checks. All cached in Redis."""
 
     @staticmethod
-    def get_entitlement(org_id: str, feature: str) -> int | bool | None:
+    def get_entitlement(
+        org_id: str, feature: str, *, use_cache: bool = True
+    ) -> int | bool | None:
         """Get entitlement value for an org+feature. Three-level resolution.
 
         Returns int (for numeric), bool (for boolean), or None (not configured).
@@ -77,7 +80,7 @@ class Entitlements:
         cache_key = f"ent:{org_id}:{feature}"
 
         # 1. Redis cache
-        cached = _cache_get(cache_key)
+        cached = _cache_get(cache_key) if use_cache else CACHE_MISS
         if cached is not CACHE_MISS and cached is not None:
             cached_str = cached if isinstance(cached, str) else cached.decode()
             if cached_str == "True":
@@ -94,10 +97,14 @@ class Entitlements:
         # 2. DB org override
         from ee.usage.models.usage import PlanEntitlement
 
+        # Privacy-sensitive uncached lookups must not observe replica lag.
+        rows = (
+            PlanEntitlement.objects
+            if use_cache
+            else PlanEntitlement.objects.using("default")
+        )
         override = (
-            PlanEntitlement.objects.filter(
-                feature=feature, organization_id=org_id, deleted=False
-            )
+            rows.filter(feature=feature, organization_id=org_id, deleted=False)
             .values("value_int", "value_bool")
             .first()
         )
@@ -107,15 +114,20 @@ class Entitlements:
                 if override["value_int"] is not None
                 else override["value_bool"]
             )
-            _cache_setex(
-                cache_key, CACHE_TTL, str(val) if val is not None else "__none__"
-            )
+            if use_cache:
+                _cache_setex(
+                    cache_key, CACHE_TTL, str(val) if val is not None else "__none__"
+                )
             return val
 
         # 3. DB plan default
-        plan = _get_cached_plan(org_id)
+        plan = (
+            _get_cached_plan(org_id)
+            if use_cache
+            else _get_cached_plan(org_id, use_cache=False)
+        )
         default = (
-            PlanEntitlement.objects.filter(
+            rows.filter(
                 feature=feature,
                 plan=plan,
                 organization__isnull=True,
@@ -130,21 +142,29 @@ class Entitlements:
                 if default["value_int"] is not None
                 else default["value_bool"]
             )
-            _cache_setex(
-                cache_key, CACHE_TTL, str(val) if val is not None else "__none__"
-            )
+            if use_cache:
+                _cache_setex(
+                    cache_key, CACHE_TTL, str(val) if val is not None else "__none__"
+                )
             return val
 
         # 4. billing.yaml fallback
         config = BillingConfig.get()
         val = config.get_entitlement_default(feature, plan)
-        _cache_setex(cache_key, CACHE_TTL, str(val) if val is not None else "__none__")
+        if use_cache:
+            _cache_setex(
+                cache_key, CACHE_TTL, str(val) if val is not None else "__none__"
+            )
         return val
 
     @staticmethod
-    def get_limit(org_id: str, feature: str) -> int:
+    def get_limit(org_id: str, feature: str, *, use_cache: bool = True) -> int:
         """Get numeric limit. Returns -1 for unlimited, 0 if not configured."""
-        val = Entitlements.get_entitlement(org_id, feature)
+        val = (
+            Entitlements.get_entitlement(org_id, feature)
+            if use_cache
+            else Entitlements.get_entitlement(org_id, feature, use_cache=False)
+        )
         if isinstance(val, int):
             return val
         return 0
@@ -185,8 +205,7 @@ class Entitlements:
                 allowed=False,
                 error_code="ENTITLEMENT_DENIED",
                 reason=(
-                    f"{_display_name(resource).title()} is not configured "
-                    "for your plan"
+                    f"{_display_name(resource).title()} is not configured for your plan"
                 ),
                 upgrade_cta=_find_upgrade_cta(org_id, resource),
             )
@@ -245,14 +264,20 @@ class Entitlements:
         )
 
     @staticmethod
-    def get_retention_days(org_id: str, data_type: str) -> int:
+    def get_retention_days(
+        org_id: str, data_type: str, *, use_cache: bool = True
+    ) -> int:
         """Get retention period in days for a data type.
 
         data_type: 'traces', 'gateway_logs', 'eval_results', 'sim_recordings'
         Returns -1 for unlimited retention.
         """
         feature_key = f"retention_{data_type}_days"
-        days = Entitlements.get_limit(org_id, feature_key)
+        days = (
+            Entitlements.get_limit(org_id, feature_key)
+            if use_cache
+            else Entitlements.get_limit(org_id, feature_key, use_cache=False)
+        )
         return days if days != 0 else 30  # Default 30 days if not configured
 
     @staticmethod

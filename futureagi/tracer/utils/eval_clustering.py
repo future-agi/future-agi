@@ -9,6 +9,7 @@ from typing import List
 
 import structlog
 
+from agentic_eval.core.embeddings.serving_client import serving_available
 from tracer.queries.eval_clustering import (
     assign_to_cluster,
     create_cluster,
@@ -44,6 +45,17 @@ def cluster_eval_results(project_id: str) -> EvalClusteringSummary:
         logger.info("no_unclustered_eval_results", project_id=project_id)
         return EvalClusteringSummary()
 
+    # Without model serving nothing can be embedded. Returning an empty
+    # summary (fetched=0) ends the drain loop; the rows stay unclustered and
+    # the next failing eval after serving is back picks them up.
+    if not serving_available():
+        logger.info(
+            "cluster_eval_results_skipped_serving_unavailable",
+            project_id=project_id,
+            unclustered=len(results),
+        )
+        return EvalClusteringSummary()
+
     # Distill each explanation to a canonical failure phrase before
     # embedding — raw explanations carry trace-specific noise (names,
     # numbers, quotes) that fragments clusters. Best-effort: a failed
@@ -72,8 +84,8 @@ def cluster_eval_results(project_id: str) -> EvalClusteringSummary:
                     distance=round(distance, 4),
                 )
             else:
-                create_cluster(project_id, result, embedding)
-                summary.new_clusters += 1
+                if create_cluster(project_id, result, embedding) is not None:
+                    summary.new_clusters += 1
         except Exception:
             logger.exception(
                 "cluster_eval_result_failed",

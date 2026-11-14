@@ -106,6 +106,12 @@ def test_selector_is_all_or_none(missing):
     assert not serializer.is_valid() and missing in serializer.errors
 
 
+def test_project_id_alone_pins_the_bare_lookup():
+    serializer = SpanReferenceQuerySerializer(data={"project_id": PROJECT})
+    assert serializer.is_valid(), serializer.errors
+    assert serializer.validated_data == {"project_id": UUID(PROJECT)}
+
+
 @pytest.mark.parametrize("repeated", selector())
 def test_repeated_selector_never_chooses_first_or_last(repeated):
     query = QueryDict(mutable=True)
@@ -319,7 +325,7 @@ def test_unauthorized_project_cannot_construct_ch_service(monkeypatch):
 def test_incomplete_public_selector_fails_before_any_authority_or_ch_read(monkeypatch):
     reader = MagicMock()
     response, manager, service = public_get(
-        monkeypatch, {"project_id": PROJECT}, reader
+        monkeypatch, {"project_id": PROJECT, "trace_id": "trace"}, reader
     )
     assert response.status_code == 400
     manager.filter.assert_not_called()

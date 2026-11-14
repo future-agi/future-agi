@@ -21,7 +21,7 @@ const ThumbsRatingSelectField = ({
         render: (
           <Box display="flex" alignItems="center" gap={1}>
             <Iconify
-              icon="octicon:thumbsup-24"
+              icon="solar:like-linear"
               width={24}
               sx={{ color: "success.main" }}
             />
@@ -33,7 +33,7 @@ const ThumbsRatingSelectField = ({
         render: (
           <Box display="flex" alignItems="center" gap={1}>
             <Iconify
-              icon="octicon:thumbsdown-24"
+              icon="solar:dislike-linear"
               width={24}
               sx={{ color: "error.main" }}
             />
@@ -107,7 +107,6 @@ const ThumbsRatingSelectField = ({
                   borderColor: "divider",
                   borderTop: "none",
                   borderRadius: "0 0 4px 4px !important",
-                  boxShadow: "0px 4px 8px rgba(0, 0, 0, 0.1)",
                 },
               },
             }}
@@ -123,7 +122,7 @@ const ThumbsRatingSelectField = ({
                 <Box display="flex" alignItems="center" gap={1}>
                   <Iconify
                     icon={
-                      selected ? "octicon:thumbsup-24" : "octicon:thumbsdown-24"
+                      selected ? "solar:like-linear" : "solar:dislike-linear"
                     }
                     width={24}
                     sx={{

@@ -1,0 +1,362 @@
+import { readable } from "src/pages/dashboard/harness/harnessShared";
+
+// Project a hosted-conversation document (messages[] + events[]) into the
+// BuilderConsole turn/step model. Pure and side-effect free: the hook that owns
+// the react-query poll calls this, memoises the result, and attaches the
+// onSubmit/onSkip callbacks to `ask` steps afterwards.
+//
+// Two streams arrive together: `messages` are the chat bubbles (role/kind/state)
+// and `events` are the lower-level activity (tool calls, stage moves, turn
+// lifecycle). A tool_started is paired with its tool_result by function_call_id;
+// consecutive activity events fold into one "Run activity · N updates" group.
+
+// Conversation-level states that mean the agent is actively working.
+export const ACTIVE_CONVERSATION_STATES = new Set([
+  "starting",
+  "hydrating",
+  "responding",
+]);
+// A message still in flight (drives the composer's brief busy state upstream).
+export const IN_FLIGHT_MESSAGE_STATES = new Set([
+  "queued",
+  "delivered",
+  "streaming",
+]);
+
+const nudgeLine = (payload = {}) => {
+  const label = payload.trigger_label || "an unnumbered version";
+  return payload.stage === "suite"
+    ? `Updating the scenarios for environment ${label}…`
+    : `Updating the environment for agent ${label}…`;
+};
+
+function normalizeQuestion(message, blocking) {
+  const p = message.payload || {};
+  // The open question also carries prompt/options on blocking_input; prefer the
+  // message payload and fall back to blocking for the row that is still open.
+  const source =
+    blocking && blocking.message_id === message.message_id ? { ...p, ...blocking } : p;
+  const rawOptions = Array.isArray(source.options) ? source.options : [];
+  const options = rawOptions.map((opt) =>
+    typeof opt === "string"
+      ? { label: opt }
+      : { label: opt?.label ?? String(opt), description: opt?.description },
+  );
+  return {
+    prompt: source.prompt || message.content || "",
+    options,
+    multiSelect: Boolean(source.multiSelect ?? source.multi_select),
+    step: source.step || 1,
+    total: source.total || 1,
+  };
+}
+
+// Demote any tool step still marked "running" to a terminal "interrupted" state,
+// so its dot stops pulsing. Used when a turn ends or the run is no longer
+// working: a tool left "running" never received its result (the run moved on).
+function finalizeRunningSteps(steps) {
+  for (const step of steps || []) {
+    if (step.kind === "tool" && step.state === "running") {
+      step.state = "interrupted";
+      if (!step.result) step.result = "Didn't finish";
+    }
+  }
+}
+
+export function projectConversation(conversation) {
+  if (!conversation) return [];
+  const messages = Array.isArray(conversation.messages) ? conversation.messages : [];
+  const events = Array.isArray(conversation.events) ? conversation.events : [];
+  const blocking = conversation.blocking_input || null;
+
+  // A question is resolved once a user message replies to it; capture the answer
+  // text so a refreshed conversation renders the resolved summary.
+  const answerFor = {};
+  for (const m of messages) {
+    if (m.reply_to && m.role === "user") answerFor[m.reply_to] = m.content;
+  }
+
+  const timeline = [
+    ...messages.map((m) => ({ src: "msg", t: m.created_at, seq: m.sequence, data: m })),
+    ...events.map((e) => ({ src: "evt", t: e.emitted_at, seq: e.sequence, data: e })),
+  ].sort((a, b) => {
+    const ta = Date.parse(a.t) || 0;
+    const tb = Date.parse(b.t) || 0;
+    if (ta !== tb) return ta - tb;
+    // At the same wall-clock a message sorts just before its own events.
+    if (a.src !== b.src) return a.src === "msg" ? -1 : 1;
+    return (a.seq || 0) - (b.seq || 0);
+  });
+
+  const turns = [];
+  let builder = null;
+  const toolByCall = new Map();
+
+  const startBuilder = () => {
+    if (builder?.title) builder = null;
+    if (!builder) {
+      builder = { id: null, role: "builder", steps: [] };
+      turns.push(builder);
+    }
+    return builder;
+  };
+  const endBuilder = () => {
+    // A turn that ends with a tool still "running" never received its result —
+    // the run moved on (a new turn, an interrupt, a stop). Demote it so its dot
+    // stops pulsing, rather than leaving a permanently in-flight indicator.
+    finalizeRunningSteps(builder?.steps);
+    builder = null;
+  };
+
+  const pushActivity = (line, seedId) => {
+    if (!builder?.title) {
+      builder = { id: null, role: "builder", title: "Background run activity", steps: [] };
+      turns.push(builder);
+    }
+    const b = builder;
+    const last = b.steps[b.steps.length - 1];
+    if (last && last.kind === "group") {
+      last.lines.push(line);
+      last.count = last.lines.length;
+    } else {
+      b.steps.push({ id: `grp-${seedId}`, kind: "group", count: 1, lines: [line] });
+    }
+  };
+
+  for (const item of timeline) {
+    if (item.src === "msg") {
+      const m = item.data;
+      if (m.role === "user") {
+        // Control commands (Stop / cancel) are stored as user messages with a
+        // command_kind — they are not chat turns, so keep them out of the transcript.
+        const cmd = m.payload?.command_kind;
+        if (cmd === "interrupt" || cmd === "cancel_operation") continue;
+        // A Rebuild's builder message has no text on polls: the builder's
+        // turn opens with a line naming what it updates.
+        if (cmd === "nudge") {
+          endBuilder();
+          startBuilder().steps.push({
+            id: m.message_id,
+            kind: "nudge-line",
+            text: nudgeLine(m.payload),
+          });
+          continue;
+        }
+        // A reply to a blocking question is already surfaced in that question's
+        // resolved ask card (answerText) — don't also render it as a bubble.
+        if (m.reply_to) continue;
+        endBuilder();
+        turns.push({ id: m.message_id, role: "user", text: m.content });
+        continue;
+      }
+      // A nudge card is its own system turn: never inside a builder turn or the
+      // background activity, and the next event starts a fresh builder turn.
+      if (m.role === "system" && m.payload?.nudge_id) {
+        builder = null;
+        turns.push({
+          id: m.message_id,
+          role: "system",
+          kind: "nudge",
+          nudgeId: m.payload.nudge_id,
+          target: m.payload.nudge_target,
+          text: m.content,
+        });
+        continue;
+      }
+      // A roll-back's re-apply offer never reaches the builder, so it is a
+      // plain note of its own, not a question in the builder's turn.
+      // TODO: a re-apply card that prefills the composer with the edits.
+      if (m.role === "system" && m.payload?.reapply) {
+        builder = null;
+        const label = m.payload.reapply.label || "an unnumbered version";
+        turns.push({
+          id: m.message_id,
+          role: "system",
+          kind: "reapply",
+          text: `The edits that went live with ${label} were rolled back.`,
+        });
+        continue;
+      }
+      if (m.kind === "question" || m.kind === "confirmation") {
+        const b = startBuilder();
+        const answered = Object.prototype.hasOwnProperty.call(answerFor, m.message_id);
+        b.steps.push({
+          id: m.message_id,
+          kind: "ask",
+          question: normalizeQuestion(m, blocking),
+          replyTo: m.message_id,
+          confirmation: m.kind === "confirmation",
+          resolved: answered,
+          answerText: answered ? answerFor[m.message_id] : undefined,
+        });
+        continue;
+      }
+      const b = startBuilder();
+      if (m.state === "failed") {
+        b.steps.push({
+          id: m.message_id,
+          kind: "error",
+          text: m.content || "The builder hit an error.",
+        });
+      } else if (m.content) {
+        b.steps.push({ id: m.message_id, kind: "note", text: m.content, markdown: true });
+      }
+      continue;
+    }
+
+    const e = item.data;
+    switch (e.kind) {
+      case "tool_started": {
+        const b = startBuilder();
+        const step = {
+          id: `tool-${e.function_call_id || e.event_id}`,
+          kind: "tool",
+          label: e.payload?.label || e.payload?.tool || "Tool",
+          state: "running",
+        };
+        if (e.function_call_id) toolByCall.set(e.function_call_id, step);
+        b.steps.push(step);
+        break;
+      }
+      case "tool_result": {
+        const existing = e.function_call_id ? toolByCall.get(e.function_call_id) : null;
+        const isError = Boolean(e.payload?.is_error);
+        const result =
+          e.payload?.text ||
+          (e.payload?.artifact ? `wrote ${e.payload.artifact}` : "");
+        if (existing) {
+          existing.state = isError ? "failed" : "completed";
+          existing.result = result;
+        } else {
+          const b = startBuilder();
+          b.steps.push({
+            id: `tool-${e.function_call_id || e.event_id}`,
+            kind: "tool",
+            label: e.payload?.tool || "Tool",
+            state: isError ? "failed" : "completed",
+            result,
+          });
+        }
+        break;
+      }
+      case "authoring_activity": {
+        const p = e.payload || {};
+        const line = p.event?.text || readable(p.event?.tool || p.event_type || "activity");
+        pushActivity(line, e.event_id);
+        break;
+      }
+      case "stage_changed": {
+        pushActivity(`ALK moved to ${readable(e.payload?.to || "")}`.trim(), e.event_id);
+        break;
+      }
+      case "turn_interrupted": {
+        const b = startBuilder();
+        b.steps.push({ id: `int-${e.event_id}`, kind: "cancelled", text: "Stopped." });
+        break;
+      }
+      case "turn_completed": {
+        if (e.payload?.outcome === "failed") {
+          const b = startBuilder();
+          b.steps.push({ id: `fail-${e.event_id}`, kind: "error", text: "The turn failed." });
+        }
+        break;
+      }
+      default:
+        // turn_started / assistant_delta / checkpoint_committed / capability_changed:
+        // not user-facing on the poll-parity path.
+        break;
+    }
+  }
+
+  const active = ACTIVE_CONVERSATION_STATES.has(conversation.state);
+  const waiting = conversation.state === "waiting_for_user" || Boolean(blocking);
+  if (!active || waiting) {
+    // Not actively working (stopped, failed, or waiting on the user): nothing is
+    // in flight, so no tool dot should keep pulsing. Finalize any lingering
+    // "running" step across every turn (the last one is never ended otherwise).
+    turns.forEach((t) => finalizeRunningSteps(t.steps));
+  }
+
+  turns.forEach((t, ti) => {
+    if (!t.id) t.id = `turn-${ti}`;
+    (t.steps || []).forEach((s, si) => {
+      if (!s.id) s.id = `${t.id}-s${si}`;
+    });
+  });
+
+  return turns;
+}
+
+// Whether the agent has a turn in flight — used to derive the composer's brief
+// busy state and the adaptive poll cadence.
+export function conversationInFlight(conversation) {
+  if (!conversation) return false;
+  if (ACTIVE_CONVERSATION_STATES.has(conversation.state)) return true;
+  const messages = Array.isArray(conversation.messages) ? conversation.messages : [];
+  return messages.some((m) => IN_FLIGHT_MESSAGE_STATES.has(m.state));
+}
+
+// A Stop the builder has not acted on yet. The server settles it when the turn
+// ends, or fails it when the runtime died.
+export function conversationStopping(conversation) {
+  const messages = Array.isArray(conversation?.messages) ? conversation.messages : [];
+  return messages.some(
+    (m) => m.payload?.command_kind === "interrupt" && IN_FLIGHT_MESSAGE_STATES.has(m.state),
+  );
+}
+
+// Whether the builder is waiting on the user — a question or confirmation that
+// no message answers yet. Not "in flight", so callers that signal activity
+// (the collapsed chat's rail dot) need this too, or they go quiet exactly when
+// the user has to act.
+export function conversationWaiting(conversation) {
+  if (!conversation) return false;
+  const blocking = conversation.blocking_input || null;
+  if (!blocking) return conversation.state === "waiting_for_user";
+  const messages = Array.isArray(conversation.messages) ? conversation.messages : [];
+  return !messages.some((m) => m.reply_to === blocking.message_id);
+}
+
+// A turn paused on its unanswered blocking question, mirroring the server's
+// `_awaiting_answer`. Its command stays "delivered" while it waits.
+export function turnAwaitingAnswer(conversation) {
+  if (!conversation) return false;
+  const messages = Array.isArray(conversation.messages)
+    ? conversation.messages
+    : [];
+  const asked = conversation.blocking_input?.message_id;
+  return (
+    conversation.state === "waiting_for_user" &&
+    Boolean(asked) &&
+    !messages.some((m) => m.role === "user" && m.reply_to === asked)
+  );
+}
+
+/**
+ * Whether this chat holds Save, mirroring the server's `_busy_conversation`:
+ * - a turn paused on an unanswered blocking question (`_awaiting_answer`) is idle,
+ *   though its command stays "delivered"; only a queued command still counts;
+ * - once a reply to that question is queued or delivered, the turn is busy again;
+ * - otherwise `_in_flight` (an open turn or an unacked command): an active state,
+ *   a streaming reply, a queued user message, or a delivered one while the turn
+ *   is still open; an acked message left "delivered" after the turn ends is idle;
+ * - `_publish_pending` is the SAVE_GRACE_MS window after a turn completes, even
+ *   with its question unanswered (`chatSaving` from useEnvironment); callers add it.
+ */
+export function draftsBlocked(conversation) {
+  if (!conversation) return false;
+  const messages = Array.isArray(conversation.messages)
+    ? conversation.messages
+    : [];
+  if (turnAwaitingAnswer(conversation)) {
+    return messages.some((m) => m.role === "user" && m.state === "queued");
+  }
+  if (ACTIVE_CONVERSATION_STATES.has(conversation.state)) return true;
+  const paused = conversation.state === "waiting_for_user";
+  return messages.some(
+    (m) =>
+      m.state === "streaming" ||
+      (m.role === "user" &&
+        (m.state === "queued" || (paused && m.state === "delivered"))),
+  );
+}

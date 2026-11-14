@@ -12,7 +12,7 @@ export const ModalBoxConatiner = styled(Box)(({ theme }) => ({
   // height: "300px",
   width: "250px",
   // transform: "translateY(calc(50% - 20px))",
-  borderRadius: "10px",
+  borderRadius: "8px",
 }));
 
 export const StyledBox = styled(Box)(({ theme }) => ({
@@ -20,7 +20,7 @@ export const StyledBox = styled(Box)(({ theme }) => ({
   alignItems: "center",
   border: ".2px solid gray",
   borderColor: theme.palette.text.disabled,
-  borderRadius: "10px",
+  borderRadius: "8px",
   height: "35px",
   "&:hover": {
     backgroundColor: theme.palette.action.hover,
@@ -30,38 +30,12 @@ export const StyledBox = styled(Box)(({ theme }) => ({
 export const WrapperBox = styled(Box)(({ theme }) => ({
   width: "100%",
   borderRadius: "12px",
-  backgroundColor:
-    theme.palette.mode === "light"
-      ? theme.palette.background.paper
-      : alpha(theme.palette.background.default, 0.9),
-  backdropFilter: "blur(4px)",
+  backgroundColor: theme.palette.background.paper,
   position: "absolute",
   zIndex: 2,
   overflow: "hidden",
   boxShadow: `-20px 20px 40px -4px ${alpha(theme.palette.grey[500], 0.24)}`,
   padding: "4px",
-  "&:before": {
-    content: '""',
-    position: "absolute",
-    top: "-16px",
-    right: "-16px",
-    width: "80px",
-    height: "80px",
-    backgroundColor: theme.palette.info.lighter,
-    filter: "blur(44px)",
-    opacity: theme.palette.mode === "light" ? 1 : 0.2,
-  },
-  "&:after": {
-    content: '""',
-    position: "absolute",
-    bottom: "-16px",
-    left: "-16px",
-    width: "80px",
-    height: "80px",
-    opacity: theme.palette.mode === "light" ? 1 : 0.2,
-    backgroundColor: theme.palette.primary.lighter,
-    filter: "blur(44px)",
-  },
 }));
 
 export const AntSwitch = styled(Switch)(({ theme }) => ({
@@ -85,10 +59,7 @@ export const AntSwitch = styled(Switch)(({ theme }) => ({
       color: theme.palette.common.white,
       "& + .MuiSwitch-track": {
         opacity: 1,
-        backgroundColor:
-          theme.palette.mode === "dark"
-            ? theme.palette.info.dark
-            : theme.palette.info.main,
+        backgroundColor: theme.palette.info.main,
         ...theme.applyStyles("dark", {
           backgroundColor: theme.palette.info.dark,
         }),
@@ -107,13 +78,7 @@ export const AntSwitch = styled(Switch)(({ theme }) => ({
   "& .MuiSwitch-track": {
     borderRadius: 16 / 2,
     opacity: 1,
-    backgroundColor:
-      theme.palette.mode === "dark"
-        ? alpha(theme.palette.common.white, 0.35)
-        : alpha(theme.palette.common.black, 0.25),
+    backgroundColor: theme.palette.text.disabled,
     boxSizing: "border-box",
-    ...theme.applyStyles("dark", {
-      backgroundColor: alpha(theme.palette.common.white, 0.35),
-    }),
   },
 }));

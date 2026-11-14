@@ -1,12 +1,10 @@
 import {
   Box,
   Button,
-  Card,
   Collapse,
   Container,
   Grid,
   IconButton,
-  Paper,
   Select,
   Stack,
   Tab,
@@ -26,6 +24,7 @@ import { useSettingsContext } from "src/components/settings";
 import WorstSlices from "./worst-slices";
 import { m } from "framer-motion";
 import { varHover } from "src/components/animate";
+import Section from "src/components/section";
 import Iconify from "src/components/iconify";
 import { usePopover } from "src/components/custom-popover";
 import OneDHeatmap from "src/components/charts/one-d-heatmap";
@@ -60,7 +59,7 @@ export default function DataSlices() {
         whileTap="tap"
         whileHover="hover"
         variants={varHover(1.05)}
-        // startIcon={<Iconify icon="material-symbols:edit" />}
+        // startIcon={<Iconify icon="solar:pen-linear" />}
         onClick={histogramPopover.onOpen}
       >
         Sort Histogram
@@ -70,18 +69,18 @@ export default function DataSlices() {
 
   const tabs = (
     <Box>
-      <Tabs
-        value={currentTab}
-        onChange={handleTab}
+      <Box
         sx={{
           px: 2.5,
           boxShadow: (theme) =>
             `inset 0 -2px 0 0 ${alpha(theme.palette.text.disabled, 0.08)}`,
         }}
       >
-        <Tab value="features" label="Features" />
-        <Tab value="tags" label="Tags" />
-      </Tabs>
+        <Tabs value={currentTab} onChange={handleTab}>
+          <Tab value="features" label="Features" />
+          <Tab value="tags" label="Tags" />
+        </Tabs>
+      </Box>
     </Box>
   );
   const quantileInfo = (
@@ -126,7 +125,7 @@ export default function DataSlices() {
 
   return (
     <Container maxWidth={settings.themeStretch ? false : "xl"}>
-      <Stack component={Card} direction="row" sx={{ height: "85vh" }}>
+      <Section variant="panel" sx={{ display: "flex", height: "85vh", p: 0 }}>
         <WorstSlices></WorstSlices>
 
         <Stack
@@ -144,7 +143,7 @@ export default function DataSlices() {
 
           {detailsTable}
         </Stack>
-      </Stack>
+      </Section>
     </Container>
   );
 }
@@ -176,8 +175,8 @@ function CollapsibleTableRow() {
             <Iconify
               icon={
                 collapsible.value
-                  ? "eva:arrow-ios-upward-fill"
-                  : "eva:arrow-ios-downward-fill"
+                  ? "solar:alt-arrow-up-linear"
+                  : "solar:alt-arrow-down-linear"
               }
             />
           </IconButton>
@@ -197,31 +196,22 @@ function CollapsibleTableRow() {
       <TableRow>
         <TableCell sx={{ py: 0 }} colSpan={6}>
           <Collapse in={collapsible.value} unmountOnExit>
-            <Paper
-              variant="outlined"
-              sx={{
-                py: 2,
-                borderRadius: 1.5,
-                ...(collapsible.value && {
-                  boxShadow: (theme) => theme.customShadows.z20,
-                }),
-              }}
-            >
-              <Tabs
-                value={currentTab}
-                onChange={handleTab}
+            <Section variant="panel" sx={{ px: 0 }}>
+              <Box
                 sx={{
                   px: 2.5,
                   boxShadow: (theme) =>
                     `inset 0 -2px 0 0 ${alpha(theme.palette.text.disabled, 0.08)}`,
                 }}
               >
-                <Tab value="sliceDistribution" label="Slice Distribution" />
-                <Tab
-                  value="performanceOverTime"
-                  label="Slice Performance Over Time"
-                />
-              </Tabs>
+                <Tabs value={currentTab} onChange={handleTab}>
+                  <Tab value="sliceDistribution" label="Slice Distribution" />
+                  <Tab
+                    value="performanceOverTime"
+                    label="Slice Performance Over Time"
+                  />
+                </Tabs>
+              </Box>
 
               {currentTab === "sliceDistribution" && (
                 <ColumnChart></ColumnChart>
@@ -243,7 +233,7 @@ function CollapsibleTableRow() {
                       whileTap="tap"
                       whileHover="hover"
                       variants={varHover(1.05)}
-                      // startIcon={<Iconify icon="material-symbols:edit" />}
+                      // startIcon={<Iconify icon="solar:pen-linear" />}
                       // onClick={histogramPopover.onOpen}
                     >
                       Slices
@@ -252,7 +242,7 @@ function CollapsibleTableRow() {
                   <MultiLineChart></MultiLineChart>
                 </>
               )}
-            </Paper>
+            </Section>
           </Collapse>
         </TableCell>
       </TableRow>

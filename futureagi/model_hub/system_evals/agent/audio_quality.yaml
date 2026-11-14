@@ -16,7 +16,8 @@ criteria: "You are evaluating the overall technical quality of the audio recordi
   \ Inputs\n\n<input_audio>{{input_audio}}</input_audio>"
 eval_tags:
 - Audio
-- NLP Metrics
+- Quality
+offered_in_environments: true
 visible_ui: true
 permissions:
   allow_edit: false

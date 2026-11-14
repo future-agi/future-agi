@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen, userEvent, waitFor } from "src/utils/test-utils";
+import { useQueueItemsForSource } from "src/api/annotation-queues/annotation-queues";
 import AnnotationSidebarContent from "../AnnotationSidebarContent";
 
 const { mockBulkCreate, mockRefetch } = vi.hoisted(() => ({
@@ -119,5 +120,95 @@ describe("AnnotationSidebarContent", () => {
       }),
       expect.objectContaining({ onSuccess: expect.any(Function) }),
     );
+  });
+
+  it("forwards the drawer project with the save", async () => {
+    const user = userEvent.setup();
+
+    render(
+      <AnnotationSidebarContent
+        sources={[
+          {
+            sourceType: "trace",
+            sourceId: "trace-1",
+            spanNotesSourceId: "span-1",
+            projectId: "project-1",
+          },
+        ]}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /update/i })).toBeEnabled();
+    });
+    await user.click(screen.getByRole("button", { name: /update/i }));
+
+    expect(mockBulkCreate).toHaveBeenCalledWith(
+      expect.objectContaining({ sourceId: "trace-1", projectId: "project-1" }),
+      expect.anything(),
+    );
+  });
+
+  it("lists only the drawer project's queues", () => {
+    const sources = [
+      {
+        sourceType: "trace",
+        sourceId: "trace-1",
+        spanNotesSourceId: "span-1",
+        projectId: "project-1",
+      },
+      {
+        sourceType: "observation_span",
+        sourceId: "span-1",
+        projectId: "project-1",
+      },
+    ];
+
+    render(<AnnotationSidebarContent sources={sources} />);
+
+    expect(useQueueItemsForSource).toHaveBeenCalledWith(sources, {
+      projectId: "project-1",
+    });
+  });
+
+  it.each([
+    [
+      "a timeout",
+      { transportCode: "ECONNABORTED", message: "timeout of 15000ms exceeded" },
+      "The server took too long to answer. Try again in a moment.",
+    ],
+    [
+      "a server error",
+      { statusCode: 503, message: "Service unavailable" },
+      "The server ran into a problem. Try again in a moment.",
+    ],
+    [
+      "any other failure",
+      { statusCode: 404, message: "Not found" },
+      "Something went wrong. Try again.",
+    ],
+  ])("words the load error for %s and offers Retry", async (_, error, copy) => {
+    const user = userEvent.setup();
+    const defaultImpl = useQueueItemsForSource.getMockImplementation();
+    useQueueItemsForSource.mockImplementation(() => ({
+      data: undefined,
+      isLoading: false,
+      isError: true,
+      isFetching: false,
+      error,
+      refetch: mockRefetch,
+    }));
+    try {
+      render(
+        <AnnotationSidebarContent
+          sources={[{ sourceType: "trace", sourceId: "trace-1" }]}
+        />,
+      );
+      expect(screen.getByText(copy)).toBeInTheDocument();
+      await user.click(screen.getByRole("button", { name: "Retry" }));
+      expect(mockRefetch).toHaveBeenCalled();
+    } finally {
+      useQueueItemsForSource.mockImplementation(defaultImpl);
+    }
   });
 });

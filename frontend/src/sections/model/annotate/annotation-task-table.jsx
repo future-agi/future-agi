@@ -114,7 +114,7 @@ export default function AnnotationTaskTable({ table, tableData }) {
                 notFound={notFound}
                 sx={{
                   m: -2,
-                  borderRadius: 1.5,
+                  borderRadius: "8px",
                   border: `dashed 1px ${theme.palette.divider}`,
                 }}
               /> */}

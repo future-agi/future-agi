@@ -43,9 +43,7 @@ def test_key_returns_callable_and_forwards_key(optimizer, monkeypatch):
     assert result == "improved"
     assert calls[-1]["api_key"] == "sk-org-key"
     assert calls[-1]["drop_params"] is True
-    assert calls[-1]["messages"] == [
-        {"role": "user", "content": "rewrite this prompt"}
-    ]
+    assert calls[-1]["messages"] == [{"role": "user", "content": "rewrite this prompt"}]
 
 
 def test_callable_passes_message_list_through(optimizer, monkeypatch):

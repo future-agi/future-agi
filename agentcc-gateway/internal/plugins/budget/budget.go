@@ -2,11 +2,13 @@ package budget
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	budgetpkg "github.com/futureagi/agentcc-gateway/internal/budget"
@@ -28,17 +30,42 @@ type RedisBudgetBackend interface {
 // Plugin enforces hierarchical spend budgets as a pipeline plugin.
 // Priority 90: runs after auth (100) and RBAC (95).
 type Plugin struct {
-	tracker      *budgetpkg.Tracker
-	pricing      *PricingLookup
-	enabled      bool
-	tenantStore  *tenant.Store
-	redisBudget  RedisBudgetBackend // nil = local-only
-	orgCounters  sync.Map           // orgID -> *orgHierarchyCounters
+	tracker     *budgetpkg.Tracker
+	pricing     *PricingLookup
+	enabled     bool
+	tenantStore *tenant.Store
+	redisBudget RedisBudgetBackend // nil = local-only
+	orgCounters sync.Map           // orgID -> *orgHierarchyCounters
+
+	unpricedWarned      sync.Map     // model -> struct{}: models already warned about
+	unpricedWarnedCount atomic.Int32 // size of unpricedWarned, for the cap
 }
 
-// SetRedisBudget attaches a Redis-backed budget store for multi-replica support.
+// maxUnpricedWarnings bounds the warn-once set so a caller cycling through
+// model names cannot grow it without limit.
+const maxUnpricedWarnings = 1024
+
+// SetRedisBudget attaches a Redis-backed store for per-org (tenant) budgets
+// across replicas. Config-file global levels stay pod-local unless
+// ShareGlobalBudgets is also called.
 func (p *Plugin) SetRedisBudget(rb RedisBudgetBackend) {
 	p.redisBudget = rb
+}
+
+// ShareGlobalBudgets makes the config-file global levels read and write the
+// Redis ledger that durable video reservations and settlements use, so
+// ordinary and video spend count against one ceiling across replicas. If a
+// ledger read fails, ordinary requests are checked against this replica's
+// local counters; video creation fails closed with 503. Startup-only, after
+// SetRedisBudget. The gateway calls it only when video generation is enabled.
+func (p *Plugin) ShareGlobalBudgets() {
+	if p.tracker != nil && p.redisBudget != nil {
+		p.tracker.SetGlobalBudgetBackend(p.redisBudget)
+	}
+}
+
+func budgetStoreUnavailable() pipeline.PluginResult {
+	return pipeline.ResultError(&models.APIError{Status: http.StatusServiceUnavailable, Type: models.ErrTypeServer, Code: "budget_store_unavailable", Message: "Durable video budget accounting required"})
 }
 
 // PricingLookup provides model pricing for independent cost calculation.
@@ -92,6 +119,11 @@ func New(tracker *budgetpkg.Tracker, pricing *PricingLookup, enabled bool, tenan
 
 func (p *Plugin) Name() string  { return "budget" }
 func (p *Plugin) Priority() int { return 40 } // After auth (20) + RBAC (30), before guardrails.
+
+// PostPriority records spend after the cost plugin (500) has priced the
+// request, so a budget counts the price the Request Log shows. Before it,
+// spend came from the budget's own price table, which has no current model.
+func (p *Plugin) PostPriority() int { return 505 }
 
 // orgBudgetCounter tracks spend within a period for a single budget level.
 type orgBudgetCounter struct {
@@ -156,6 +188,10 @@ func (h *orgHierarchyCounters) getOrCreateCounter(level, key string) *orgBudgetC
 
 // ProcessRequest checks all applicable budgets before the provider call.
 func (p *Plugin) ProcessRequest(_ context.Context, rc *models.RequestContext) pipeline.PluginResult {
+	if rc.Flags.NoSpend {
+		return pipeline.ResultContinue()
+	}
+
 	// Global budget check.
 	if p.enabled && p.tracker != nil {
 		team, user, keyName, model := extractIdentity(rc)
@@ -169,6 +205,11 @@ func (p *Plugin) ProcessRequest(_ context.Context, rc *models.RequestContext) pi
 		if len(result.Warnings) > 0 {
 			rc.Metadata["budget_warning"] = "true"
 		}
+		// A store outage is never reported as an exhausted budget. Ordinary
+		// requests were checked against local counters; video needs the ledger.
+		if result.StoreUnavailable && rc.EndpointType == "video" {
+			return budgetStoreUnavailable()
+		}
 
 		if !result.Allowed {
 			rc.Metadata["budget_blocked_by"] = result.BlockedBy
@@ -181,6 +222,14 @@ func (p *Plugin) ProcessRequest(_ context.Context, rc *models.RequestContext) pi
 		}
 	}
 
+	if rc.EndpointType == "video" && p.enabled && p.tracker != nil {
+		scopes := p.videoScopes(rc)
+		if len(scopes) > 0 && (p.redisBudget == nil || !p.redisBudget.Available()) {
+			return budgetStoreUnavailable()
+		}
+		data, _ := json.Marshal(scopes)
+		rc.Metadata["video_global_scopes"] = string(data)
+	}
 	// Per-org hierarchical budget check.
 	if p.tenantStore != nil {
 		orgID := rc.Metadata[tenant.MetadataKeyOrgID]
@@ -377,6 +426,10 @@ func (p *Plugin) getCounterSpend(bc *orgBudgetCounter, period string, now time.T
 
 // ProcessResponse records actual spend against all applicable budgets.
 func (p *Plugin) ProcessResponse(_ context.Context, rc *models.RequestContext) pipeline.PluginResult {
+	// Durable video settlement reconciles both global and tenant reservations.
+	if rc.Metadata["video_settlement"] == "direct" {
+		return pipeline.ResultContinue()
+	}
 	cost := p.calculateCost(rc)
 
 	// Global budget tracking.
@@ -414,78 +467,21 @@ func (p *Plugin) ProcessResponse(_ context.Context, rc *models.RequestContext) p
 // recordOrgHierarchicalSpend records cost against all applicable per-org hierarchy levels.
 func (p *Plugin) recordOrgHierarchicalSpend(budgets *tenant.BudgetsConfig, orgID string, rc *models.RequestContext, cost float64) {
 	hc := p.getOrgHierarchy(orgID)
-	team, user, keyName, model := extractIdentity(rc)
-	tags := extractTags(rc)
 	now := time.Now().UTC()
-
-	defaultPeriod := budgets.DefaultPeriod
-	if defaultPeriod == "" {
-		defaultPeriod = "monthly"
-	}
-
-	// Record against org level.
-	if budgets.OrgLimit > 0 {
-		orgPeriod := budgets.OrgPeriod
-		if orgPeriod == "" {
-			orgPeriod = defaultPeriod
-		}
-		p.recordToCounterWithRedis(hc.getOrCreateCounter("org", ""), orgID, "org", "", model, cost, orgPeriod, now)
-		bc := hc.getOrCreateCounter("org", "")
-		bc.mu.Lock()
-		remaining := budgets.OrgLimit - bc.totalSpend
-		bc.mu.Unlock()
-		if remaining < 0 {
-			remaining = 0
-		}
-		rc.Metadata["org_budget_remaining"] = fmt.Sprintf("%.2f", remaining)
-	}
-
-	// Record against team level.
-	if team != "" && budgets.Teams != nil {
-		if lc, ok := budgets.Teams[team]; ok && lc != nil {
-			period := lc.Period
-			if period == "" {
-				period = defaultPeriod
+	for _, scope := range HierarchyScopes(budgets, rc) {
+		p.recordToCounterWithRedis(hc.getOrCreateCounter(scope.Level, scope.Key), orgID, scope.Level, scope.Key, rc.Model, cost, scope.Period, now)
+		if scope.Level == "org" {
+			bc := hc.getOrCreateCounter("org", "")
+			bc.mu.Lock()
+			remaining := budgets.OrgLimit - bc.totalSpend
+			bc.mu.Unlock()
+			if remaining < 0 {
+				remaining = 0
 			}
-			p.recordToCounterWithRedis(hc.getOrCreateCounter("team", team), orgID, "team", team, model, cost, period, now)
+			rc.Metadata["org_budget_remaining"] = fmt.Sprintf("%.2f", remaining)
 		}
 	}
 
-	// Record against user level.
-	if user != "" && budgets.Users != nil {
-		if lc, ok := budgets.Users[user]; ok && lc != nil {
-			period := lc.Period
-			if period == "" {
-				period = defaultPeriod
-			}
-			p.recordToCounterWithRedis(hc.getOrCreateCounter("user", user), orgID, "user", user, model, cost, period, now)
-		}
-	}
-
-	// Record against key level.
-	if keyName != "" && budgets.Keys != nil {
-		if lc, ok := budgets.Keys[keyName]; ok && lc != nil {
-			period := lc.Period
-			if period == "" {
-				period = defaultPeriod
-			}
-			p.recordToCounterWithRedis(hc.getOrCreateCounter("key", keyName), orgID, "key", keyName, model, cost, period, now)
-		}
-	}
-
-	// Record against tag levels.
-	if budgets.Tags != nil {
-		for k, v := range tags {
-			tagKey := k + ":" + v
-			if lc, ok := budgets.Tags[tagKey]; ok && lc != nil {
-				period := lc.Period
-				if period == "" {
-					period = defaultPeriod
-				}
-				p.recordToCounterWithRedis(hc.getOrCreateCounter("tag", tagKey), orgID, "tag", tagKey, model, cost, period, now)
-			}
-		}
-	}
 }
 
 // recordToCounter adds cost to a counter, resetting if period expired.
@@ -578,9 +574,34 @@ func (p *Plugin) calculateCost(rc *models.RequestContext) float64 {
 		}
 	}
 	if !ok {
+		if rc.Response.Usage.PromptTokens+rc.Response.Usage.CompletionTokens > 0 {
+			p.warnUnpriced(rc, model)
+		}
 		return 0
 	}
 	return cost
+}
+
+// warnUnpriced logs, once per model, that spend for the model cannot be
+// metered. Returning a silent zero here is what let budgets pass unpriced
+// traffic without any sign that they were not counting it. Budgets price from
+// their own table, not the model database the cost plugin reads, so the hint
+// names both keys: setting only one leaves the other gap open.
+func (p *Plugin) warnUnpriced(rc *models.RequestContext, model string) {
+	if !p.enabled || p.unpricedWarnedCount.Load() >= maxUnpricedWarnings {
+		return
+	}
+	if _, seen := p.unpricedWarned.LoadOrStore(model, struct{}{}); seen {
+		return
+	}
+	p.unpricedWarnedCount.Add(1)
+	slog.Warn("budget: no pricing for model; its requests are not counted against any budget",
+		"model", model,
+		"provider", rc.Provider,
+		"request_id", rc.RequestID,
+		"hint", "set cost_tracking.custom_pricing.<model> (input_per_mtok / output_per_mtok, USD per million tokens); "+
+			"the request log's cost is priced separately, from model_database.overrides.<model>.pricing (input_per_token / output_per_token, USD per token)",
+	)
 }
 
 func extractIdentity(rc *models.RequestContext) (team, user, keyName, model string) {
@@ -607,22 +628,22 @@ func extractTags(rc *models.RequestContext) map[string]string {
 
 func defaultPricing() map[string]modelPricing {
 	return map[string]modelPricing{
-		"gpt-4o":                 {inputPerMTok: 2.50, outputPerMTok: 10.00},
-		"gpt-4o-mini":            {inputPerMTok: 0.15, outputPerMTok: 0.60},
-		"gpt-4-turbo":            {inputPerMTok: 10.00, outputPerMTok: 30.00},
-		"gpt-4":                  {inputPerMTok: 30.00, outputPerMTok: 60.00},
-		"gpt-3.5-turbo":          {inputPerMTok: 0.50, outputPerMTok: 1.50},
-		"o1":                     {inputPerMTok: 15.00, outputPerMTok: 60.00},
-		"o1-mini":                {inputPerMTok: 3.00, outputPerMTok: 12.00},
-		"o3-mini":                {inputPerMTok: 1.10, outputPerMTok: 4.40},
-		"claude-3-opus":          {inputPerMTok: 15.00, outputPerMTok: 75.00},
-		"claude-3-sonnet":        {inputPerMTok: 3.00, outputPerMTok: 15.00},
-		"claude-3-haiku":         {inputPerMTok: 0.25, outputPerMTok: 1.25},
-		"claude-3.5-sonnet":      {inputPerMTok: 3.00, outputPerMTok: 15.00},
-		"gemini-1.5-pro":         {inputPerMTok: 1.25, outputPerMTok: 5.00},
-		"gemini-1.5-flash":       {inputPerMTok: 0.075, outputPerMTok: 0.30},
-		"gemini-2.0-flash":       {inputPerMTok: 0.10, outputPerMTok: 0.40},
-		"command-r-plus":         {inputPerMTok: 2.50, outputPerMTok: 10.00},
-		"command-r":              {inputPerMTok: 0.15, outputPerMTok: 0.60},
+		"gpt-4o":            {inputPerMTok: 2.50, outputPerMTok: 10.00},
+		"gpt-4o-mini":       {inputPerMTok: 0.15, outputPerMTok: 0.60},
+		"gpt-4-turbo":       {inputPerMTok: 10.00, outputPerMTok: 30.00},
+		"gpt-4":             {inputPerMTok: 30.00, outputPerMTok: 60.00},
+		"gpt-3.5-turbo":     {inputPerMTok: 0.50, outputPerMTok: 1.50},
+		"o1":                {inputPerMTok: 15.00, outputPerMTok: 60.00},
+		"o1-mini":           {inputPerMTok: 3.00, outputPerMTok: 12.00},
+		"o3-mini":           {inputPerMTok: 1.10, outputPerMTok: 4.40},
+		"claude-3-opus":     {inputPerMTok: 15.00, outputPerMTok: 75.00},
+		"claude-3-sonnet":   {inputPerMTok: 3.00, outputPerMTok: 15.00},
+		"claude-3-haiku":    {inputPerMTok: 0.25, outputPerMTok: 1.25},
+		"claude-3.5-sonnet": {inputPerMTok: 3.00, outputPerMTok: 15.00},
+		"gemini-1.5-pro":    {inputPerMTok: 1.25, outputPerMTok: 5.00},
+		"gemini-1.5-flash":  {inputPerMTok: 0.075, outputPerMTok: 0.30},
+		"gemini-2.0-flash":  {inputPerMTok: 0.10, outputPerMTok: 0.40},
+		"command-r-plus":    {inputPerMTok: 2.50, outputPerMTok: 10.00},
+		"command-r":         {inputPerMTok: 0.15, outputPerMTok: 0.60},
 	}
 }

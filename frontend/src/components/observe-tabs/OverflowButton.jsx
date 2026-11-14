@@ -34,8 +34,8 @@ const OverflowButton = ({
         sx={{
           px: 1,
           py: 0.75,
-          borderRadius: 0.5,
-          fontSize: 13,
+          borderRadius: "4px",
+          fontSize: 12,
           fontWeight: "fontWeightMedium",
           color: activeTabInOverflow ? "primary.main" : "text.secondary",
           "&:hover": {
@@ -46,7 +46,7 @@ const OverflowButton = ({
       >
         <Typography
           variant="body2"
-          sx={{ fontSize: 13, fontWeight: "inherit" }}
+          sx={{ fontSize: 12, fontWeight: "inherit" }}
         >
           {label}
         </Typography>
@@ -60,7 +60,7 @@ const OverflowButton = ({
         transformOrigin={{ vertical: "top", horizontal: "left" }}
         slotProps={{
           paper: {
-            sx: { minWidth: 180, maxHeight: 300 },
+            sx: { minWidth: 200, maxHeight: 300 },
           },
         }}
       >
@@ -77,7 +77,7 @@ const OverflowButton = ({
             >
               <ListItemText
                 primary={tab.name}
-                primaryTypographyProps={{ variant: "body2", fontSize: 13 }}
+                primaryTypographyProps={{ variant: "body2", fontSize: 12 }}
               />
             </ListItemButton>
           ))}

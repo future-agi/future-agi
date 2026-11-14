@@ -51,6 +51,29 @@ except ImportError:
 
 model_name = "anthropic"
 _MEDIA_DOWNLOAD_TIMEOUT_SECONDS = 30
+# Leading bytes fetched to sniff a URL's media type in ``detect_input_type``.
+_URL_SNIFF_BYTES = 8192
+
+
+def _read_sniff_prefix(response, limit: int = _URL_SNIFF_BYTES) -> bytes:
+    """Return the first ``limit`` bytes of a streamed response.
+
+    ``iter_content`` yields transport chunks of *at most* ``chunk_size``: a
+    chunked or content-encoded body can hand back a few bytes at a time, so
+    reading a single yield would leave ``filetype`` sniffing a fragmented
+    magic header (and silently falling through to ``Content-Type``, which is
+    generic or absent on plenty of buckets). Accumulate through the budget,
+    stopping at ``limit`` bytes or EOF — whichever comes first — so this still
+    never pulls the whole object.
+    """
+    buffer = bytearray()
+    for chunk in response.iter_content(chunk_size=limit):
+        if not chunk:
+            continue
+        buffer.extend(chunk)
+        if len(buffer) >= limit:
+            break
+    return bytes(buffer[:limit])
 
 
 def encode_image(image_path):
@@ -62,29 +85,37 @@ def get_summary_judgement(client, judgements, images=None):
     chat_conversation = ""
     for idx, judgement in enumerate(judgements):
         chat_conversation += f"""
-        <criteria_{idx+1}> {judgement['criteria']} </criteria_{idx+1}> \n <judgement_{idx+1}>{judgement['judgment']}</judgement_{idx+1}>\n\n
+        <criteria_{idx + 1}> {judgement["criteria"]} </criteria_{idx + 1}> \n <judgement_{idx + 1}>{judgement["judgment"]}</judgement_{idx + 1}>\n\n
     """
 
     prompt = summary_judgement_prompt.format(chat_conversation=chat_conversation)
     messages = [{"role": "user", "content": prompt}]
     return client._get_completion_content(messages)
 
-def get_summary_judgement_ragrank(client, judgements ,images=None):
+
+def get_summary_judgement_ragrank(client, judgements, images=None):
     query_doc_info = ""
     for idx, judgement in enumerate(judgements):
-        query_prefix = f"<subquery_{idx+1}>"
-        query_suffix = f"<subquery_{idx+1}>"
+        query_prefix = f"<subquery_{idx + 1}>"
+        query_suffix = f"<subquery_{idx + 1}>"
         doc_info = ""
-        for doc_idx,docs in enumerate(judgement):
-            doc_info = doc_info + "\n" + f"<doc_{doc_idx}>"+ docs["relevancy_explanation"] + f"<doc_{doc_idx}>" + "\n"
+        for doc_idx, docs in enumerate(judgement):
+            doc_info = (
+                doc_info
+                + "\n"
+                + f"<doc_{doc_idx}>"
+                + docs["relevancy_explanation"]
+                + f"<doc_{doc_idx}>"
+                + "\n"
+            )
         query_doc_info = query_doc_info + query_prefix + doc_info + query_suffix + "\n"
-
 
     prompt = summary_judgement_prompt_ragrank.format(query_doc_info=query_doc_info)
     messages = [{"role": "user", "content": prompt}]
     return client._get_completion_content(messages)
 
-def format_output(idx,subquery, documents):
+
+def format_output(idx, subquery, documents):
     output = ""
     output += f"SUBQUERY_{idx} : {subquery}\n"
     output += f"SUBQUERY_{idx}-DOCUMENT RELEVANCY :\n\n"
@@ -99,18 +130,32 @@ def format_output(idx,subquery, documents):
 
     return output
 
-def get_summary_judgement_ragrank_v2(client, judgements, question , context , subqueries, images=None):
+
+def get_summary_judgement_ragrank_v2(
+    client, judgements, question, context, subqueries, images=None
+):
     subquery_relevance_info = ""
-    for idx, (subquery,judgement) in enumerate(zip(subqueries,judgements, strict=False)):
+    for idx, (subquery, judgement) in enumerate(
+        zip(subqueries, judgements, strict=False)
+    ):
         try:
-            subquery_relevance_info = subquery_relevance_info +format_output(idx,subquery["subquery"],judgement)
+            subquery_relevance_info = subquery_relevance_info + format_output(
+                idx, subquery["subquery"], judgement
+            )
         except Exception:
             pass
 
-    ranked_context =[f"Document{idx+1}: {doc} , Rank: {idx+1}" for idx,doc in enumerate(context)]
-    prompt = summary_judgement_prompt_ragrank_v2.format(query = question , context = "\n".join(ranked_context) , subquery_relevance_info = subquery_relevance_info )
+    ranked_context = [
+        f"Document{idx + 1}: {doc} , Rank: {idx + 1}" for idx, doc in enumerate(context)
+    ]
+    prompt = summary_judgement_prompt_ragrank_v2.format(
+        query=question,
+        context="\n".join(ranked_context),
+        subquery_relevance_info=subquery_relevance_info,
+    )
     messages = [{"role": "user", "content": prompt}]
     return client._get_completion_content(messages)
+
 
 def expand_eval_instructions(client, eval_instructions, prompt=None):
     messages = [
@@ -276,12 +321,10 @@ def get_criteria_judegement_score(eval_instructions, results):
 
     return total_score, judgments
 
+
 def get_criteria_judegement_score_ragrank(results):
     total_score = sum(result["score"] for result in results)
-    judgments = [
-        { "judgment": result["judgment"]}
-        for result in results
-    ]
+    judgments = [{"judgment": result["judgment"]} for result in results]
 
     return total_score, judgments
 
@@ -382,7 +425,7 @@ def apply_fixes_to_answer(client, answer, fixes, chat_history, evaluation):
 def generate_combined_criteria(client, user_defined_criterias):
     # convert the criterias into a bulleted list string using numbers
     user_defined_criterias = "\n".join(
-        [f"{i+1}. {criteria}" for i, criteria in enumerate(user_defined_criterias)]
+        [f"{i + 1}. {criteria}" for i, criteria in enumerate(user_defined_criterias)]
     )
     messages = [
         {
@@ -445,13 +488,16 @@ def download_image_to_base64(url):
             f"Failed to download image. Status code: {response.status_code}"
         )
 
+
 def download_audio_to_base64(url):
     response = requests.get(url, timeout=_MEDIA_DOWNLOAD_TIMEOUT_SECONDS)
     if response.status_code == 200:
         audio_base64 = base64.b64encode(response.content).decode("utf-8")
         return audio_base64
     else:
-        raise Exception(f"Failed to download audio. Status code: {response.status_code}")
+        raise Exception(
+            f"Failed to download audio. Status code: {response.status_code}"
+        )
 
 
 def parse_llm_str_response(
@@ -472,6 +518,7 @@ def parse_llm_str_response(
     # return empty if no json found
     return {} if as_dict else output_schema()
 
+
 def is_uuid(v) -> bool:
     if not isinstance(v, str):
         return False
@@ -480,6 +527,7 @@ def is_uuid(v) -> bool:
         return True
     except (ValueError, AttributeError, TypeError):
         return False
+
 
 def detect_input_type(input_item: Any) -> dict:
     """
@@ -495,6 +543,7 @@ def detect_input_type(input_item: Any) -> dict:
               Values will be replaced with detected types: 'text', 'image', 'images', 'audio', or 'file'
               Returns 'images' for lists of image URLs.
     """
+
     # Helper function to detect a single item's type
     def detect_single_item(item):
         if isinstance(item, str) and item.startswith('"') and item.endswith('"'):
@@ -502,211 +551,271 @@ def detect_input_type(input_item: Any) -> dict:
         # logger.info(f' ----- DETECTING TYPE OF: {item} type: {type(item)} ----- ')
         try:
             # check for URLs first
-            if isinstance(item, str) and (item.startswith(('http://', 'https://')) or (urlparse(item).scheme and urlparse(item).netloc)):
-                logger.info(' ----- HANDLING URL First Condition----- ')
-                with requests.get(item, timeout=100) as response:
+            if isinstance(item, str) and (
+                item.startswith(("http://", "https://"))
+                or (urlparse(item).scheme and urlparse(item).netloc)
+            ):
+                logger.info(" ----- HANDLING URL First Condition----- ")
+                # Sniff from the leading bytes only. ``filetype`` needs a few
+                # hundred bytes of header; pulling the whole object here made
+                # every eval entry download its full media just to learn the
+                # type (the actual media fetch happens later, once).
+                with requests.get(item, timeout=100, stream=True) as response:
                     if response.status_code == 200:
-                        content = response.content
+                        content = _read_sniff_prefix(response)
                         kind = filetype.guess(content)
-                        header_type = response.headers.get('Content-Type', '').lower()
+                        header_type = response.headers.get("Content-Type", "").lower()
 
                         if kind is not None:
-                            if kind.mime.startswith('audio/'):
-                                return 'audio'
-                            elif kind.mime.startswith('image/'):
-                                return 'image'
-                            elif kind.mime.startswith('application/pdf'):
-                                return 'pdf'
+                            if kind.mime.startswith("audio/"):
+                                return "audio"
+                            elif kind.mime.startswith("image/"):
+                                return "image"
+                            elif kind.mime.startswith("application/pdf"):
+                                return "pdf"
                             else:
-                                return 'file'
+                                return "file"
                         elif header_type:
-                            if header_type.startswith('audio/'):
-                                return 'audio'
-                            elif header_type.startswith('image/'):
-                                return 'image'
-                            elif header_type.startswith('application/pdf'):
-                                return 'pdf'
+                            if header_type.startswith("audio/"):
+                                return "audio"
+                            elif header_type.startswith("image/"):
+                                return "image"
+                            elif header_type.startswith("application/pdf"):
+                                return "pdf"
                             else:
-                                return 'file'
-                        logger.info(' ----- KIND IS NONE ----- ')
+                                return "file"
+                        logger.info(" ----- KIND IS NONE ----- ")
                         return None
                     else:
-                        return 'file'
+                        return "file"
                 # Handle string representation of dictionary
 
-            if isinstance(item, str) and item.strip().startswith('{') and item.strip().endswith('}'):
-                logger.info(' ----- HANDLING STRING REPRESENTATION OF DICTIONARY Second Condition ----- ')
+            if (
+                isinstance(item, str)
+                and item.strip().startswith("{")
+                and item.strip().endswith("}")
+            ):
+                logger.info(
+                    " ----- HANDLING STRING REPRESENTATION OF DICTIONARY Second Condition ----- "
+                )
                 try:
                     # Try to parse as JSON
                     dict_data = json.loads(item)
-                    if isinstance(dict_data, dict) and 'bytes' in dict_data:
+                    if isinstance(dict_data, dict) and "bytes" in dict_data:
                         # If bytes is stored as a string representation of bytes
-                        bytes_str = dict_data['bytes']
-                        if isinstance(bytes_str, str) and bytes_str.startswith("b'") and "RIFF" in bytes_str and "WAVE" in bytes_str:
-                            return 'audio'
+                        bytes_str = dict_data["bytes"]
+                        if (
+                            isinstance(bytes_str, str)
+                            and bytes_str.startswith("b'")
+                            and "RIFF" in bytes_str
+                            and "WAVE" in bytes_str
+                        ):
+                            return "audio"
                         # Return result of recursive call with the extracted dictionary
                         return detect_single_item(dict_data)
                 except json.JSONDecodeError:
                     try:
                         # Try to parse as Python literal
                         dict_data = ast.literal_eval(item)
-                        if isinstance(dict_data, dict) and 'bytes' in dict_data:
+                        if isinstance(dict_data, dict) and "bytes" in dict_data:
                             return detect_single_item(dict_data)
                     except (ValueError, SyntaxError):
                         pass
 
             # Direct bytes handling
             if isinstance(item, bytes):
-                logger.info(' ----- HANDLING BYTES 3rd Condition ----- ')
+                logger.info(" ----- HANDLING BYTES 3rd Condition ----- ")
                 kind = filetype.guess(item)
                 if kind is not None:
-                    if kind.mime.startswith('audio/'):
-                        return 'audio'
-                    elif kind.mime.startswith('image/'):
-                        return 'image'
-                    elif kind.mime.startswith('application/pdf'):
-                        return 'pdf'
+                    if kind.mime.startswith("audio/"):
+                        return "audio"
+                    elif kind.mime.startswith("image/"):
+                        return "image"
+                    elif kind.mime.startswith("application/pdf"):
+                        return "pdf"
                     else:
-                        return 'file'
+                        return "file"
 
                 # If no specific format detected, default to file
-                return 'file'
+                return "file"
 
             # Special case for dictionary with bytes and path
-            elif isinstance(item, dict) and 'bytes' in item:
-                logger.info(' ----- HANDLING DICTIONARY WITH BYTES AND PATH 4th Condition ----- ')
-                bytes_data = item['bytes']
+            elif isinstance(item, dict) and "bytes" in item:
+                logger.info(
+                    " ----- HANDLING DICTIONARY WITH BYTES AND PATH 4th Condition ----- "
+                )
+                bytes_data = item["bytes"]
                 if isinstance(bytes_data, bytes):
                     kind = filetype.guess(bytes_data)
                     if kind is not None:
-                        if kind.mime.startswith('audio/'):
-                            return 'audio'
-                        elif kind.mime.startswith('image/'):
-                            return 'image'
-                        elif kind.mime.startswith('application/pdf'):
-                            return 'pdf'
+                        if kind.mime.startswith("audio/"):
+                            return "audio"
+                        elif kind.mime.startswith("image/"):
+                            return "image"
+                        elif kind.mime.startswith("application/pdf"):
+                            return "pdf"
                         else:
-                            return 'file'
-                    return 'file'
+                            return "file"
+                    return "file"
 
             # Handle data URIs
-            
-            elif isinstance(item, str) and item.startswith('data:'):
-                logger.info(' ----- HANDLING DATA URIS 5th Condition ----- ')
-                mime_type = item.split(';')[0].split(':')[1].lower()
-                if mime_type.startswith('audio/'):
-                    return 'audio'
-                elif mime_type.startswith('image/'):
-                    return 'image'
-                return 'text'
+
+            elif isinstance(item, str) and item.startswith("data:"):
+                logger.info(" ----- HANDLING DATA URIS 5th Condition ----- ")
+                mime_type = item.split(";")[0].split(":")[1].lower()
+                if mime_type.startswith("audio/"):
+                    return "audio"
+                elif mime_type.startswith("image/"):
+                    return "image"
+                return "text"
 
             elif isinstance(item, str) and is_uuid(item):
-                logger.info(' ----- HANDLING UUID STRING Condition ----- ')
+                logger.info(" ----- HANDLING UUID STRING Condition ----- ")
                 return "knowledge_base"
-
 
             # Handle plain strings: now try to detect if the string is Base64-encoded audio.
             elif isinstance(item, str):
                 try:
-                    logger.info(' ----- HANDLING PLAIN STRINGS AS BASE64 6th Condition ----- ')
+                    logger.info(
+                        " ----- HANDLING PLAIN STRINGS AS BASE64 6th Condition ----- "
+                    )
                     # First try to handle as URL
                     with requests.get(item, timeout=100) as response:
-                        logger.info(f' ----- RESPONSE downloaded :{response.status_code} {response.content[:100]}----- ')
+                        logger.info(
+                            f" ----- RESPONSE downloaded :{response.status_code} {response.content[:100]}----- "
+                        )
                         if response.status_code == 200:
-                                content = response.content
-                                kind = filetype.guess(content)
-                                if kind is not None:
-                                    if kind.mime.startswith('audio/'):
-                                        return 'audio'
-                                    elif kind.mime.startswith('image/'):
-                                        return 'image'
-                                    elif kind.mime.startswith('application/pdf'):
-                                        return 'pdf'
-                                    else:
-                                        return 'file'
-                                # FIX: If filetype detection fails but URL looks like audio/image/file, infer from URL
-                                elif '/audio' in item.lower() or item.lower().endswith(('.mp3', '.wav', '.ogg', '.flac', '.m4a', '.aac')):
-                                    logger.info(' ----- URL INFERRED AS AUDIO FROM PATH ----- ')
-                                    return 'audio'
-                                elif '/image' in item.lower() or item.lower().endswith(('.png', '.jpg', '.jpeg', '.gif', '.webp')):
-                                    logger.info(' ----- URL INFERRED AS IMAGE FROM PATH ----- ')
-                                    return 'image'
-                        logger.info(' ----- DID NOT WORK AS URL ----- ')
+                            content = response.content
+                            kind = filetype.guess(content)
+                            if kind is not None:
+                                if kind.mime.startswith("audio/"):
+                                    return "audio"
+                                elif kind.mime.startswith("image/"):
+                                    return "image"
+                                elif kind.mime.startswith("application/pdf"):
+                                    return "pdf"
+                                else:
+                                    return "file"
+                            # FIX: If filetype detection fails but URL looks like audio/image/file, infer from URL
+                            elif "/audio" in item.lower() or item.lower().endswith(
+                                (".mp3", ".wav", ".ogg", ".flac", ".m4a", ".aac")
+                            ):
+                                logger.info(
+                                    " ----- URL INFERRED AS AUDIO FROM PATH ----- "
+                                )
+                                return "audio"
+                            elif "/image" in item.lower() or item.lower().endswith(
+                                (".png", ".jpg", ".jpeg", ".gif", ".webp")
+                            ):
+                                logger.info(
+                                    " ----- URL INFERRED AS IMAGE FROM PATH ----- "
+                                )
+                                return "image"
+                        logger.info(" ----- DID NOT WORK AS URL ----- ")
                         # Try to handle as base64 encoded data
                         candidate_bytes = base64.b64decode(item, validate=True)
                         kind = filetype.guess(candidate_bytes)
                         if kind is not None:
-                            if kind.mime.startswith('audio/'):
-                                return 'audio'
-                            elif kind.mime.startswith('image/'):
-                                return 'image'
-                            elif kind.mime.startswith('application/pdf'):
-                                return 'pdf'
-                            return 'file'
+                            if kind.mime.startswith("audio/"):
+                                return "audio"
+                            elif kind.mime.startswith("image/"):
+                                return "image"
+                            elif kind.mime.startswith("application/pdf"):
+                                return "pdf"
+                            return "file"
                         else:
-                            return 'text'
+                            return "text"
                 except Exception:
                     pass
 
-                logger.info(' ----- HANDLING PLAIN STRINGS AS TEXT 7th Condition ----- ')
-                return 'text'
+                logger.info(
+                    " ----- HANDLING PLAIN STRINGS AS TEXT 7th Condition ----- "
+                )
+                return "text"
 
             # Default fallback
-            logger.info(' ----- DEFAULT FOR OTHER TYPES 8th Condition ----- ')
-            return 'text'
+            logger.info(" ----- DEFAULT FOR OTHER TYPES 8th Condition ----- ")
+            return "text"
 
         except ImportError:
             # Fallback if required libraries are not available
             bytes_data = None
-            if isinstance(item, dict) and 'bytes' in item:
-                bytes_data = item['bytes']
+            if isinstance(item, dict) and "bytes" in item:
+                bytes_data = item["bytes"]
             elif isinstance(item, bytes):
                 bytes_data = item
 
             if bytes_data is not None and isinstance(bytes_data, bytes):
-                if bytes_data.startswith(b'RIFF') and b'WAVE' in bytes_data[0:12]:
-                    return 'audio'
-                elif bytes_data.startswith(b'ID3'):
-                    return 'audio'
-                elif any(bytes_data.startswith(bytes([0xFF, header])) for header in range(0xE0, 0xF0)):
-                    return 'audio'
-                elif bytes_data.startswith(b'OggS'):
-                    return 'audio'
-                elif bytes_data.startswith(b'fLaC'):
-                    return 'audio'
-                elif bytes_data.startswith(b'\xFF\xF1') or bytes_data.startswith(b'\xFF\xF9'):
-                    return 'audio'
-                elif b'ftypM4A' in bytes_data[0:32] or b'ftypaac' in bytes_data[0:32]:
-                    return 'audio'
-                return 'image'
+                if bytes_data.startswith(b"RIFF") and b"WAVE" in bytes_data[0:12]:
+                    return "audio"
+                elif bytes_data.startswith(b"ID3"):
+                    return "audio"
+                elif any(
+                    bytes_data.startswith(bytes([0xFF, header]))
+                    for header in range(0xE0, 0xF0)
+                ):
+                    return "audio"
+                elif bytes_data.startswith(b"OggS"):
+                    return "audio"
+                elif bytes_data.startswith(b"fLaC"):
+                    return "audio"
+                elif bytes_data.startswith(b"\xff\xf1") or bytes_data.startswith(
+                    b"\xff\xf9"
+                ):
+                    return "audio"
+                elif b"ftypM4A" in bytes_data[0:32] or b"ftypaac" in bytes_data[0:32]:
+                    return "audio"
+                return "image"
 
             elif isinstance(item, str):
-                if item.startswith(('http://', 'https://')):
+                if item.startswith(("http://", "https://")):
                     url_path = urlparse(item).path.lower()
-                    if any(url_path.endswith(ext) for ext in ['.mp3', '.wav', '.ogg', '.m4a', '.aac', '.flac', '.wma']):
-                        return 'audio'
-                    elif any(url_path.endswith(ext) for ext in ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp']):
-                        return 'image'
-                    return 'text'
-                elif item.startswith('data:'):
-                    mime_type = item.split(';')[0].split(':')[1].lower()
-                    if mime_type.startswith('audio/'):
-                        return 'audio'
-                    elif mime_type.startswith('image/'):
-                        return 'image'
-                    return 'text'
-                elif '.' in item:
+                    if any(
+                        url_path.endswith(ext)
+                        for ext in [
+                            ".mp3",
+                            ".wav",
+                            ".ogg",
+                            ".m4a",
+                            ".aac",
+                            ".flac",
+                            ".wma",
+                        ]
+                    ):
+                        return "audio"
+                    elif any(
+                        url_path.endswith(ext)
+                        for ext in [".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp"]
+                    ):
+                        return "image"
+                    return "text"
+                elif item.startswith("data:"):
+                    mime_type = item.split(";")[0].split(":")[1].lower()
+                    if mime_type.startswith("audio/"):
+                        return "audio"
+                    elif mime_type.startswith("image/"):
+                        return "image"
+                    return "text"
+                elif "." in item:
                     file_ext = os.path.splitext(item)[1].lower()
-                    if file_ext in ['.mp3', '.wav', '.ogg', '.m4a', '.aac', '.flac', '.wma']:
-                        return 'audio'
-                    elif file_ext in ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp']:
-                        return 'image'
-                return 'text'
-            return 'text'
+                    if file_ext in [
+                        ".mp3",
+                        ".wav",
+                        ".ogg",
+                        ".m4a",
+                        ".aac",
+                        ".flac",
+                        ".wma",
+                    ]:
+                        return "audio"
+                    elif file_ext in [".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp"]:
+                        return "image"
+                return "text"
+            return "text"
         except Exception as e:
             # If any error occurs during detection, default to text
             logger.error(f"Error detecting input type: {e}\n{traceback.format_exc()}")
-            return 'text'
+            return "text"
 
     try:
         # If input_item is a dictionary, process each value
@@ -741,7 +850,7 @@ def detect_input_type(input_item: Any) -> dict:
             logger.warning(
                 "detect_input_type_mixed_list",
                 detected_types=detected_types,
-                message="List contains mixed types, defaulting to text"
+                message="List contains mixed types, defaulting to text",
             )
             return {"type": "text"}
         # Handle JSON array string (e.g., '["url1", "url2"]')

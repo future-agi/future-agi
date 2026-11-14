@@ -1,5 +1,6 @@
 import { Box } from "@mui/material";
 import { AgGridReact } from "ag-grid-react";
+import "src/utils/ag-grid-setup";
 import PropTypes from "prop-types";
 import React, { useMemo } from "react";
 import { useAgThemeWith } from "src/hooks/use-ag-theme";
@@ -48,8 +49,8 @@ const CompareEvalGrid = ({ rowData }) => {
           height: "6px",
         },
         "& ::-webkit-scrollbar-thumb": {
-          backgroundColor: "rgba(0, 0, 0, 0.3)",
-          borderRadius: "3px",
+          backgroundColor: "border.strong",
+          borderRadius: "4px",
         },
         "& ::-webkit-scrollbar-track": {
           background: "transparent",

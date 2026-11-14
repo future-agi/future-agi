@@ -1,6 +1,6 @@
 import { useState } from "react";
 import PropTypes from "prop-types";
-import { Box } from "@mui/material";
+import { Box, ButtonBase } from "@mui/material";
 
 const TruncateText = ({ defaultTruncated = true, children, showLines = 2 }) => {
   const [isTruncated, setTruncated] = useState(defaultTruncated);
@@ -24,7 +24,7 @@ const TruncateText = ({ defaultTruncated = true, children, showLines = 2 }) => {
         {displayText}
       </Box>
       {shouldTruncate && (
-        <Box
+        <ButtonBase
           onClick={(e) => {
             e.stopPropagation();
             setTruncated((s) => !s);
@@ -32,14 +32,14 @@ const TruncateText = ({ defaultTruncated = true, children, showLines = 2 }) => {
           component="span"
           sx={{
             color: "primary.main",
-            cursor: "pointer",
+            font: "inherit",
             display: "inline",
             whiteSpace: "nowrap",
             ml: 0.5,
           }}
         >
           see {isTruncated ? "more" : "less"}
-        </Box>
+        </ButtonBase>
       )}
     </Box>
   );

@@ -417,13 +417,15 @@ async def prepare_call(input: PrepareCallInput) -> PrepareCallOutput:
 
         # Fail fast on SIP outbound to a customer provider we can't drive. Under a
         # VAPI system simulator the customer's account is the data plane for the
-        # dial trigger, status poll and result fetch, and only VAPI and Bland have
-        # that wiring. Erroring here aborts before phone acquisition (the workflow
-        # fail-fasts on prepare_result.error), so we never burn a phone slot — or,
-        # worse, dial and bill the customer for a call we couldn't observe.
+        # dial trigger, status poll and result fetch, and only VAPI, Bland and
+        # Retell have that wiring. Erroring here aborts before phone acquisition
+        # (the workflow fail-fasts on prepare_result.error), so we never burn a
+        # phone slot — or, worse, dial and bill the customer for a call we
+        # couldn't observe.
         outbound_sip_providers = {
             ProviderChoices.VAPI.value,
             ProviderChoices.BLAND.value,
+            ProviderChoices.RETELL.value,
         }
         if (
             is_outbound

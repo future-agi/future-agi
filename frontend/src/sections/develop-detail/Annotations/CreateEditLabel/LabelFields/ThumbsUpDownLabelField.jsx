@@ -12,20 +12,20 @@ const ThumbsUpDown = ({ value, setValue }) => {
     >
       <IconButton onClick={() => setValue("up")} sx={{ p: theme.spacing(0) }}>
         <Iconify
-          icon="octicon:thumbsup-24"
+          icon="solar:like-linear"
           color={
             value === "up"
-              ? theme.palette.green[500]
+              ? theme.palette.status.success.fg
               : theme.palette.text.secondary
           }
         />
       </IconButton>
       <IconButton onClick={() => setValue("down")} sx={{ p: theme.spacing(0) }}>
         <Iconify
-          icon="octicon:thumbsdown-24"
+          icon="solar:dislike-linear"
           color={
             value === "down"
-              ? theme.palette.red[500]
+              ? theme.palette.status.danger.fg
               : theme.palette.text.secondary
           }
         />

@@ -1,5 +1,4 @@
 import {
-  Badge,
   Box,
   Divider,
   IconButton,
@@ -14,6 +13,7 @@ import Iconify from "src/components/iconify/iconify";
 import SvgColor from "src/components/svg-color/svg-color";
 import CustomTooltip from "src/components/tooltip/CustomTooltip";
 import { useDebounce } from "src/hooks/use-debounce";
+import { FilterTrigger } from "src/components/filter";
 import { defaultRowHeightMapping } from "src/utils/constants";
 import { Events } from "src/utils/Mixpanel/EventNames";
 import { trackEvent } from "src/utils/Mixpanel/mixpanel";
@@ -30,7 +30,8 @@ const TableFilterOptions = ({
   hideColumnView = false,
   hideSearch = false,
   hideRowHeight = false,
-  isFilterApplied,
+  filterCount = 0,
+  filterOpen = false,
   isData,
 }) => {
   const theme = useTheme();
@@ -53,12 +54,6 @@ const TableFilterOptions = ({
       action: () => setOpenColumnConfigure(true),
       ref: columnConfigureRef,
       tooltip: "View Column",
-    },
-    {
-      icon: "ic_filter",
-      action: () => setDevelopFilterOpen((b) => !b),
-      event: Events.datasetFilterSelected,
-      tooltip: "Filter",
     },
   ];
   const iconStyles = {
@@ -111,7 +106,7 @@ const TableFilterOptions = ({
               endAdornment: searchKey && (
                 <InputAdornment position="end">
                   <Iconify
-                    icon="mingcute:close-line"
+                    icon="solar:close-linear"
                     onClick={() => setSearchKey("")}
                     sx={{ color: "text.disabled", cursor: "pointer" }}
                   />
@@ -134,7 +129,6 @@ const TableFilterOptions = ({
       {iconActionButtons
         .filter(
           (button) =>
-            !(hideFilter && button.icon === "ic_filter") &&
             !(hideColumnView && button.icon === "ic_column") &&
             !(hideRowHeight && button.icon === "ic_height"),
         )
@@ -157,33 +151,24 @@ const TableFilterOptions = ({
               disabled={!isData}
               ref={button.ref}
             >
-              {isFilterApplied && button?.icon === "ic_filter" ? (
-                <Badge
-                  variant="dot"
-                  color="error"
-                  overlap="circular"
-                  anchorOrigin={{ vertical: "top", horizontal: "right" }}
-                  sx={{
-                    "& .MuiBadge-badge": {
-                      top: 1,
-                      right: 1,
-                    },
-                  }}
-                >
-                  <SvgColor
-                    src={`/assets/icons/action_buttons/${button.icon}.svg`}
-                    sx={iconStyles}
-                  />
-                </Badge>
-              ) : (
-                <SvgColor
-                  src={`/assets/icons/action_buttons/${button.icon}.svg`}
-                  sx={iconStyles}
-                />
-              )}
+              <SvgColor
+                src={`/assets/icons/action_buttons/${button.icon}.svg`}
+                sx={iconStyles}
+              />
             </IconButton>
           </CustomTooltip>
         ))}
+      {!hideFilter && (
+        <FilterTrigger
+          count={filterCount}
+          open={Boolean(filterOpen)}
+          disabled={!isData}
+          onClick={() => {
+            trackEvent(Events.datasetFilterSelected);
+            setDevelopFilterOpen((b) => !b);
+          }}
+        />
+      )}
       <ColumnResizer
         open={openResizer}
         anchorEl={resizerRef?.current}
@@ -210,6 +195,7 @@ TableFilterOptions.propTypes = {
   hideColumnView: PropTypes.bool,
   hideSearch: PropTypes.bool,
   hideRowHeight: PropTypes.bool,
-  isFilterApplied: PropTypes.bool,
+  filterCount: PropTypes.number,
+  filterOpen: PropTypes.bool,
   isData: PropTypes.bool,
 };

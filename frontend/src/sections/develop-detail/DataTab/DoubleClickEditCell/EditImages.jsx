@@ -1,10 +1,4 @@
-import {
-  Box,
-  CircularProgress,
-  DialogActions,
-  Typography,
-  IconButton,
-} from "@mui/material";
+import { Box, DialogActions, Typography, IconButton } from "@mui/material";
 import PropTypes from "prop-types";
 import React, { useEffect, useRef, useState } from "react";
 import ErrorMessage from "./ErrorMessage";
@@ -29,6 +23,7 @@ import {
   arrayMove,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
+import ContentSkeleton from "src/components/content-skeleton";
 
 // Sortable Image Item Component
 const SortableImageItem = ({ url, index, onDelete }) => {
@@ -346,7 +341,7 @@ const EditImages = ({ params, onClose, onCellValueChanged }) => {
                 alignItems: "center",
               }}
             >
-              <CircularProgress />
+              <ContentSkeleton variant="panel" />
             </Box>
           </ShowComponent>
 
@@ -443,15 +438,14 @@ const EditImages = ({ params, onClose, onCellValueChanged }) => {
                 size="small"
                 startIcon={
                   <SvgColor
+                    width={24}
                     src="/assets/icons/components/ic_replace.svg"
-                    sx={{ width: 24, height: 24, color: "text.primary" }}
+                    sx={{ color: "text.primary" }}
                   />
                 }
                 onClick={handleButtonClick}
                 sx={{
                   color: "text.primary",
-                  fontSize: "14px",
-                  fontWeight: 400,
                 }}
               >
                 Add More
@@ -469,8 +463,9 @@ const EditImages = ({ params, onClose, onCellValueChanged }) => {
                   size="small"
                   startIcon={
                     <SvgColor
+                      width={24}
                       src="/assets/icons/components/ic_delete.svg"
-                      sx={{ width: 24, height: 24, color: "text.primary" }}
+                      sx={{ color: "text.primary" }}
                     />
                   }
                   onClick={() => {
@@ -479,8 +474,6 @@ const EditImages = ({ params, onClose, onCellValueChanged }) => {
                   }}
                   sx={{
                     color: "text.primary",
-                    fontSize: "14px",
-                    fontWeight: 400,
                   }}
                 >
                   Delete All
@@ -498,9 +491,6 @@ const EditImages = ({ params, onClose, onCellValueChanged }) => {
             sx={{
               backgroundColor: "primary.main",
               "&:hover": { backgroundColor: "primary.main" },
-              borderRadius: "10px",
-              fontSize: "14px",
-              fontWeight: 600,
               width: "205px",
             }}
           >

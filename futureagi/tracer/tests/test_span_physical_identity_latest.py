@@ -118,7 +118,8 @@ def test_legacy_and_v2_identity_and_keyset_are_separate():
             before_start_time=sample["start_time"],
             before_id=target.bounded_filter_row_order_token(sample),
         )
-        assert ("FROM spans FINAL" in sql) is not legacy
+        assert ("argMax(tuple(" in sql) is not legacy
+        assert "FINAL" not in sql
         assert ("filter_before_service_name" in sql) is not legacy
 
 
@@ -201,6 +202,9 @@ def engine(tmp_path):
         service_name LowCardinality(String), start_time DateTime64(6, 'UTC'),
         trace_id String, id String, parent_span_id Nullable(String),
         name String DEFAULT '', status Nullable(String),
+        -- Deployed by v2 schema 012/015; explicitly projected after SELECT *.
+        -- These identity fixtures do not exercise the trace-dictionary lookup.
+        trace_name String MATERIALIZED '',
         end_time Nullable(DateTime64(6, 'UTC')), latency_ms Nullable(Int64),
         cost Float64 DEFAULT 0, total_tokens Int64 DEFAULT 0,
         prompt_tokens Int64 DEFAULT 0, completion_tokens Int64 DEFAULT 0,

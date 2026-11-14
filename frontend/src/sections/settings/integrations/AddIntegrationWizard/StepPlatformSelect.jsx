@@ -1,25 +1,23 @@
 import PropTypes from "prop-types";
-import {
-  Box,
-  Card,
-  CardActionArea,
-  Chip,
-  Typography,
-  useTheme,
-} from "@mui/material";
+import { Box, Chip, Typography, useTheme } from "@mui/material";
+import Section from "src/components/section";
 import PlatformLogo from "../PlatformLogo";
 import { PLATFORMS } from "../constants";
 
-export default function StepPlatformSelect({ data, onUpdate, onNext }) {
+export default function StepPlatformSelect({ data, onUpdate, onNext, onSelectSlack }) {
   const theme = useTheme();
 
   const handleSelect = (platformId) => {
+    if (platformId === "slack") {
+      onSelectSlack();
+      return;
+    }
     onUpdate({ platform: platformId });
     onNext();
   };
 
   return (
-    <Box display="flex" flexDirection="column" gap={theme.spacing(2)}>
+    <Box display="flex" flexDirection="column" gap={theme.spacing(1.5)}>
       <Typography
         sx={{
           typography: "s1",
@@ -31,48 +29,41 @@ export default function StepPlatformSelect({ data, onUpdate, onNext }) {
       </Typography>
 
       {PLATFORMS.map((platform) => (
-        <Card
+        <Section
           key={platform.id}
-          variant="outlined"
+          variant="panel"
+          disabled={!platform.available}
+          onClick={() => handleSelect(platform.id)}
           sx={{
             opacity: platform.available ? 1 : 0.5,
-            border: data.platform === platform.id ? 2 : 1,
             borderColor:
-              data.platform === platform.id ? "primary.main" : "divider",
+              data.platform === platform.id ? "text.primary" : "divider",
+            display: "flex",
+            alignItems: "center",
+            gap: theme.spacing(1.5),
           }}
         >
-          <CardActionArea
-            disabled={!platform.available}
-            onClick={() => handleSelect(platform.id)}
-            sx={{
-              p: theme.spacing(2),
-              display: "flex",
-              alignItems: "center",
-              gap: theme.spacing(2),
-            }}
-          >
-            <PlatformLogo platform={platform.id} size={40} />
-            <Box flex={1}>
-              <Box display="flex" alignItems="center" gap={theme.spacing(1)}>
-                <Typography
-                  sx={{
-                    typography: "s1",
-                    fontWeight: "fontWeightMedium",
-                    color: "text.primary",
-                  }}
-                >
-                  {platform.name}
-                </Typography>
-                {!platform.available && (
-                  <Chip label="Coming Soon" size="small" variant="outlined" />
-                )}
-              </Box>
-              <Typography sx={{ typography: "s2", color: "text.disabled" }}>
-                {platform.wizardDescription || platform.description}
+          <PlatformLogo platform={platform.id} size={28} />
+          <Box flex={1}>
+            <Box display="flex" alignItems="center" gap={theme.spacing(1)}>
+              <Typography
+                sx={{
+                  typography: "s2_1",
+                  fontWeight: "fontWeightSemiBold",
+                  color: "text.primary",
+                }}
+              >
+                {platform.name}
               </Typography>
+              {!platform.available && (
+                <Chip label="Coming Soon" size="small" variant="outlined" />
+              )}
             </Box>
-          </CardActionArea>
-        </Card>
+            <Typography sx={{ typography: "s2", color: "text.tertiary" }}>
+              {platform.wizardDescription || platform.description}
+            </Typography>
+          </Box>
+        </Section>
       ))}
     </Box>
   );
@@ -82,4 +73,5 @@ StepPlatformSelect.propTypes = {
   data: PropTypes.object.isRequired,
   onUpdate: PropTypes.func.isRequired,
   onNext: PropTypes.func.isRequired,
+  onSelectSlack: PropTypes.func.isRequired,
 };

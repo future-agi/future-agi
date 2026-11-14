@@ -9,6 +9,8 @@ to avoid sandbox validation issues.
 from collections.abc import Callable
 from importlib import import_module
 
+from tfc.ee_loader import USAGE_TEMPORAL_MODULES
+
 # =============================================================================
 # Registry Storage
 # =============================================================================
@@ -28,13 +30,16 @@ TEMPORAL_ACTIVITY_MODULES = [
     "tfc.temporal.agent_prompt_optimiser.eval_activities",
     # Background tasks (post-registration, huggingface, etc.)
     "tfc.temporal.background_tasks.activities",
+    # agentcc gateway alert emails
+    "agentcc.services.email_sender",
+    # agentcc gateway config re-sync after a health check on a cold sync cache
+    "agentcc.services.config_push",
     # model_hub tasks
     "model_hub.tasks.run_prompt",
     "model_hub.tasks.experiment_runner",
     "model_hub.tasks.user_evaluation",
     "model_hub.tasks.insights",
     "model_hub.tasks.agent",
-    "model_hub.tasks.model_log",
     "model_hub.tasks.dataset_embeddings",
     "model_hub.tasks.optimisation_runner",
     "model_hub.tasks.prompt_template_optimizer",
@@ -54,6 +59,11 @@ TEMPORAL_ACTIVITY_MODULES = [
     # tracer tasks
     "tracer.tasks",
     "tracer.tasks.trace_scanner",
+    "tracer.tasks.eval_task_sweeper",
+    # The sweep-lost-insight-runs schedule's activity
+    "tfc.temporal.insights.activities",
+    "tracer.tasks.outbox_cdc",
+    "tracer.sql_workbench.tasks",
     "tracer.utils.span",
     "tracer.utils.eval",
     "tracer.utils.observability_provider",
@@ -62,12 +72,14 @@ TEMPORAL_ACTIVITY_MODULES = [
     "tracer.utils.external_eval",
     "tracer.utils.eval_tasks",
     "tracer.utils.monitor",
+    "tracer.services.feed_alerts.events",
     # simulate tasks
     "simulate.tasks.eval_summary_tasks",
     "simulate.tasks.scenario_tasks",
     "simulate.services.test_executor",
     "simulate.tasks.chat_sim",
     "simulate.tasks.alk_sim",
+    "simulate.tasks.hosted_harness_usage",
     # voice tasks
     "ee.voice.tasks.call_log_tasks",
     # integration tasks
@@ -80,8 +92,8 @@ TEMPORAL_ACTIVITY_MODULES = [
     "tfc.temporal.schedules.deployment_telemetry",
     # Deployment telemetry receiver-side integrations (PostHog, HubSpot, Slack)
     "ee.cloud.telemetry.deployment_telemetry_integrations",
-    # Default-off isolated DEV unified property catalog reconciliation
-    "tfc.temporal.schedules.property_catalog",
+    # Bounded SAML login-state retention.
+    "saml2_auth.tasks",
 ]
 
 
@@ -130,7 +142,7 @@ def register_for_queues(
 
 def _load_usage_temporal_registry(name: str) -> Callable[[], list] | None:
     """Load cloud usage Temporal hooks, with legacy EE compatibility."""
-    for module_name in ("ee.cloud.temporal", "ee.usage.temporal"):
+    for module_name in USAGE_TEMPORAL_MODULES:
         try:
             temporal_module = import_module(module_name)
         except ModuleNotFoundError as exc:
@@ -297,10 +309,39 @@ def _ensure_workflows_registered() -> None:
 
         get_logger(__name__).warning("could_not_load_imagine_workflows", error=str(e))
 
+    # Register Insight report workflows for tasks_xl queue
+    try:
+        from tfc.temporal.insights.activities import (
+            insight_extract,
+            insight_fail,
+            insight_finish,
+            insight_organise,
+            insight_prepare,
+            insight_retry_failed,
+        )
+        from tfc.temporal.insights.workflows import InsightReportWorkflow
+
+        register_for_queues(
+            queues=["tasks_xl"],
+            workflows=[InsightReportWorkflow],
+            activities=[
+                insight_prepare,
+                insight_extract,
+                insight_retry_failed,
+                insight_organise,
+                insight_finish,
+                insight_fail,
+            ],
+        )
+    except ImportError as e:
+        from tfc.logging.temporal import get_logger
+
+        get_logger(__name__).warning("could_not_load_insight_workflows", error=str(e))
+
     # Register drop-in TaskRunnerWorkflow for all queues
     try:
+        from simulate.temporal.constants import QUEUE_RUNNER
         from tfc.temporal.drop_in import TaskRunnerWorkflow
-        from tfc.temporal.property_catalog_queue import PROPERTY_CATALOG_TASK_QUEUE
 
         register_for_queues(
             queues=[
@@ -309,9 +350,9 @@ def _ensure_workflows_registered() -> None:
                 "tasks_l",
                 "tasks_xl",
                 "exact_aggregation",
-                PROPERTY_CATALOG_TASK_QUEUE,
                 "trace_ingestion",
                 "agent_compass",
+                QUEUE_RUNNER,
             ],
             workflows=[TaskRunnerWorkflow],
         )
@@ -319,6 +360,13 @@ def _ensure_workflows_registered() -> None:
         from tfc.logging.temporal import get_logger
 
         get_logger(__name__).warning("could_not_load_dropin_workflow", error=str(e))
+
+    from tfc.temporal.sql_workbench import SQLExecutionWorkflow, SQLRetentionWorkflow
+
+    register_for_queues(
+        queues=["exact_aggregation", "tasks_xl"],
+        workflows=[SQLExecutionWorkflow, SQLRetentionWorkflow],
+    )
 
     # Register simulate workflows for tasks_xl queue
     # Note: Test execution workflows have been removed - using Celery tasks instead
@@ -363,21 +411,16 @@ def _ensure_workflows_registered() -> None:
             "could_not_load_agent_playground_workflows", error=str(e)
         )
 
-    # Register call execution workflows for tasks_l queue
+    # Register simulation orchestration workflows for tasks_l queue.
     # TestExecutionWorkflow: Parent orchestrator for test executions
-    # CallExecutionWorkflow: Individual call lifecycle (outbound/inbound)
-    # CallDispatcherWorkflow: Singleton rate limiter for call slots
     # RerunCoordinatorWorkflow: Parent orchestrator for call execution reruns
+    # Registered separately from the ee.voice workflows below: their imports
+    # of CallExecutionWorkflow are function-scoped (inside _launch_batch), so
+    # this block has no IMPORT-TIME dependency on ee.voice and registration
+    # succeeds on builds without the `voice` extra. At runtime, launching a
+    # voice batch on such a build fails visibly with a non-retryable
+    # ApplicationError (see _launch_batch in both workflows).
     try:
-        from ee.voice.temporal.workflows.call_dispatcher_workflow import (
-            CallDispatcherWorkflow,
-        )
-        from ee.voice.temporal.workflows.call_execution_workflow import (
-            CallExecutionWorkflow,
-        )
-        from ee.voice.temporal.workflows.phone_number_dispatcher_workflow import (
-            PhoneNumberDispatcherWorkflow,
-        )
         from simulate.temporal.workflows.rerun_coordinator_workflow import (
             RerunCoordinatorWorkflow,
         )
@@ -389,10 +432,41 @@ def _ensure_workflows_registered() -> None:
             queues=["tasks_l"],
             workflows=[
                 TestExecutionWorkflow,
+                RerunCoordinatorWorkflow,
+            ],
+        )
+    except ImportError as e:
+        from tfc.logging.temporal import get_logger
+
+        get_logger(__name__).warning(
+            "could_not_load_simulation_orchestration_workflows", error=str(e)
+        )
+
+    # Register voice call execution workflows for tasks_l queue.
+    # CallExecutionWorkflow: Individual call lifecycle (outbound/inbound)
+    # CallDispatcherWorkflow: Singleton rate limiter for call slots
+    # These live under ee/, so this block is skipped on builds where the ee
+    # code tree is stripped. Note: the workflow modules themselves import only
+    # temporalio + simulate types at module level, so on a deps-stripped build
+    # that still ships ee/ code they DO register — there, voice dispatch is
+    # blocked up front by the shared voice simulation gate at every entry point.
+    try:
+        from ee.voice.temporal.workflows.call_dispatcher_workflow import (
+            CallDispatcherWorkflow,
+        )
+        from ee.voice.temporal.workflows.call_execution_workflow import (
+            CallExecutionWorkflow,
+        )
+        from ee.voice.temporal.workflows.phone_number_dispatcher_workflow import (
+            PhoneNumberDispatcherWorkflow,
+        )
+
+        register_for_queues(
+            queues=["tasks_l"],
+            workflows=[
                 CallExecutionWorkflow,
                 CallDispatcherWorkflow,
                 PhoneNumberDispatcherWorkflow,
-                RerunCoordinatorWorkflow,
             ],
         )
     except ImportError as e:
@@ -407,13 +481,21 @@ def _ensure_workflows_registered() -> None:
     # (plan §9); it runs on `simulation_runner`, not the native call queues.
     try:
         from simulate.temporal.constants import QUEUE_RUNNER
+        from simulate.temporal.workflows.agent_fix_workflow import AgentFixWorkflow
+        from simulate.temporal.workflows.hosted_harness_gateway_workflow import (
+            HostedHarnessGatewayWorkflow,
+        )
         from simulate.temporal.workflows.simulation_runner_workflow import (
             SimulationRunnerWorkflow,
         )
 
         register_for_queues(
             queues=[QUEUE_RUNNER],
-            workflows=[SimulationRunnerWorkflow],
+            workflows=[
+                SimulationRunnerWorkflow,
+                HostedHarnessGatewayWorkflow,
+                AgentFixWorkflow,
+            ],
         )
     except ImportError as e:
         from tfc.logging.temporal import get_logger
@@ -569,19 +651,19 @@ def _ensure_activities_registered() -> None:
         # the production single-slot admission boundary. Keep only tasks_xl as
         # the explicit compatibility route for deployments not yet running the
         # dedicated worker.
+        from simulate.temporal.constants import QUEUE_RUNNER
         from tfc.temporal.drop_in.decorator import get_temporal_activities
-        from tfc.temporal.property_catalog_queue import PROPERTY_CATALOG_TASK_QUEUE
 
         drop_in_activities = get_temporal_activities()
         exact_aggregation_activities = get_temporal_activities(
             queue="exact_aggregation"
         )
-        property_catalog_activities = get_temporal_activities(
-            queue=PROPERTY_CATALOG_TASK_QUEUE
-        )
+        sql_activities = get_temporal_activities(queue="sql_workbench")
+        runner_activities = get_temporal_activities(queue=QUEUE_RUNNER)
         dedicated_activities = {
             *exact_aggregation_activities,
-            *property_catalog_activities,
+            *runner_activities,
+            *sql_activities,
         }
         generic_drop_in_activities = [
             registered_activity
@@ -591,13 +673,11 @@ def _ensure_activities_registered() -> None:
         tasks_xl_drop_in_activities = [
             registered_activity
             for registered_activity in drop_in_activities
-            if registered_activity not in property_catalog_activities
+            if registered_activity not in {*runner_activities, *sql_activities}
         ]
         log.info("registering_dropin_activities", count=len(drop_in_activities))
 
-        # Generic queues historically register the complete decorator registry.
-        # The exact reader is the sole exception because concurrent execution is
-        # deliberately bounded at the worker queue.
+        # Keep exact reads and hosted-runner activities on their dedicated queues.
         register_for_queues(
             queues=[
                 "default",
@@ -620,9 +700,10 @@ def _ensure_activities_registered() -> None:
             queues=["exact_aggregation"],
             activities=exact_aggregation_activities,
         )
+        register_for_queues(queues=["sql_workbench"], activities=sql_activities)
         register_for_queues(
-            queues=[PROPERTY_CATALOG_TASK_QUEUE],
-            activities=property_catalog_activities,
+            queues=[QUEUE_RUNNER],
+            activities=runner_activities,
         )
     except Exception as e:
         log.exception("could_not_load_dropin_activities", error=str(e))
@@ -699,6 +780,18 @@ def _ensure_activities_registered() -> None:
     # runner spawns the released SDK as a child process; these do not run on the
     # native voice queues.
     try:
+        from simulate.temporal.activities.agent_fix import (
+            close_agent_fix_run,
+            launch_agent_fix_sandbox,
+            release_agent_fix_sandbox,
+            watch_agent_fix_engine,
+        )
+        from simulate.temporal.activities.hosted_harness_gateway import (
+            cancel_hosted_harness_attempt,
+            launch_hosted_harness_job,
+            poll_hosted_harness_attempt,
+            record_hosted_harness_launch_failure,
+        )
         from simulate.temporal.activities.hosted_runner import (
             build_runner_job,
             finalize_hosted_execution,
@@ -712,9 +805,17 @@ def _ensure_activities_registered() -> None:
                 build_runner_job,
                 run_hosted_sdk_job,
                 finalize_hosted_execution,
+                launch_hosted_harness_job,
+                record_hosted_harness_launch_failure,
+                poll_hosted_harness_attempt,
+                cancel_hosted_harness_attempt,
+                launch_agent_fix_sandbox,
+                watch_agent_fix_engine,
+                release_agent_fix_sandbox,
+                close_agent_fix_run,
             ],
         )
-        log.info("registered_hosted_runner_activities", count=3)
+        log.info("registered_hosted_runner_activities", count=11)
     except ImportError as e:
         log.warning("could_not_load_hosted_runner_activities", error=str(e))
 

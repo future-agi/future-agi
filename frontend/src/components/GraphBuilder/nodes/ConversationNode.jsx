@@ -43,7 +43,7 @@ const ConversationNode = ({ data, isConnectable, id }) => {
       <Box
         sx={{
           width: 400,
-          borderRadius: 0.5,
+          borderRadius: "4px",
           borderStyle: "solid",
           borderWidth: activeNodeId === id ? "2px" : "1px",
           borderColor: borderColor,
@@ -94,7 +94,7 @@ const ConversationNode = ({ data, isConnectable, id }) => {
         />
         <ShowComponent condition={data?.isGlobal}>
           <Chip
-            icon={<Iconify icon="mdi:earth" width={14} />}
+            icon={<Iconify icon="solar:global-linear" width={14} />}
             label="Global"
             size="small"
             sx={{
@@ -118,7 +118,7 @@ const ConversationNode = ({ data, isConnectable, id }) => {
             gap: 1,
             border: "1px solid",
             borderColor: "divider",
-            borderRadius: 0.5,
+            borderRadius: "4px",
             backgroundColor: "background.default",
           }}
         >
@@ -129,7 +129,7 @@ const ConversationNode = ({ data, isConnectable, id }) => {
             <Typography typography="s1">{data?.prompt}</Typography>
           </ShowComponent>
           <ShowComponent condition={!data?.prompt}>
-            <Typography typography="s1" color="red.500">
+            <Typography typography="s1" color="status.danger.fg">
               No Prompt Specified
             </Typography>
           </ShowComponent>

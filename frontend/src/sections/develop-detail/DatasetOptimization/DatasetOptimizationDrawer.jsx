@@ -1,11 +1,4 @@
-import {
-  Box,
-  IconButton,
-  Button,
-  useTheme,
-  Typography,
-  Stack,
-} from "@mui/material";
+import { Box, IconButton, Button, Typography, Stack } from "@mui/material";
 import PropTypes from "prop-types";
 import React, { useState, useEffect, useMemo } from "react";
 import { useForm } from "react-hook-form";
@@ -298,7 +291,7 @@ const DatasetOptimizationForm = ({
               alignItems={"center"}
               justifyContent={"space-between"}
             >
-              <Typography fontWeight={700} color="text.primary">
+              <Typography fontWeight={600} color="text.primary">
                 {defaultValues ? "Re-run Optimization" : "Run Optimization"}
               </Typography>
               <Stack direction={"row"} alignItems={"center"} gap={1.5}>
@@ -307,17 +300,8 @@ const DatasetOptimizationForm = ({
                   variant="outlined"
                   onClick={handleViewDocs}
                   startIcon={
-                    <SvgColor
-                      sx={{
-                        height: "16px",
-                        width: "16px",
-                      }}
-                      src="/assets/icons/ic_paper.svg"
-                    />
+                    <SvgColor width={16} src="/assets/icons/ic_paper.svg" />
                   }
-                  sx={{
-                    px: 1.5,
-                  }}
                 >
                   View Docs
                 </Button>
@@ -328,7 +312,7 @@ const DatasetOptimizationForm = ({
                     color: "text.primary",
                   }}
                 >
-                  <Iconify icon="mingcute:close-line" />
+                  <Iconify icon="solar:close-linear" />
                 </IconButton>
               </Stack>
             </Stack>
@@ -501,7 +485,6 @@ const DatasetOptimizationDrawer = ({
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [isFormDirty, setFormIsDirty] = useState(false);
   const [selectedColumnId, setSelectedColumnId] = useState("");
-  const theme = useTheme();
 
   const {
     isCreateDrawerOpen: open,
@@ -534,7 +517,7 @@ const DatasetOptimizationDrawer = ({
         height: "100vh",
         position: "fixed",
         zIndex: 2,
-        borderRadius: "10px",
+        borderRadius: "8px",
         backgroundColor: "background.paper",
       }}
     >
@@ -575,7 +558,6 @@ const DatasetOptimizationDrawer = ({
               setIsDialogOpen(false);
             }}
             size="small"
-            sx={{ paddingX: theme.spacing(2) }}
           >
             Confirm
           </Button>

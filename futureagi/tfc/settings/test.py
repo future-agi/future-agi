@@ -22,6 +22,7 @@ os.environ.setdefault("EE_LICENSE_KEY", "test-license-key")
 # "Redis is not available" mid-test.
 os.environ.setdefault("REDIS_URL", "redis://localhost:16379/0")
 os.environ.setdefault("REDIS_LOCK_URL", "redis://localhost:16379/2")
+os.environ.setdefault("FUTURE_AGI_TELEMETRY_URL", "http://127.0.0.1:9")
 
 from .settings import *  # noqa: F403,E402
 from .settings import INSTALLED_APPS  # noqa: E402
@@ -29,6 +30,7 @@ from .settings import INSTALLED_APPS  # noqa: E402
 # Test mode indicator
 TESTING = True
 DEBUG = False
+MCP_RATE_LIMIT_ALLOW_LOCAL_FALLBACK = True
 
 # EE usage endpoint contract fixtures create APICallLog rows directly in the
 # test database. ClickHouse selector behavior has dedicated tests; endpoint
@@ -92,24 +94,7 @@ CLICKHOUSE_V2 = {
     "QUERY_TYPES_DISABLED": os.environ.get("CH25_QUERY_TYPES_DISABLED", ""),
 }
 
-# Tests exercise shadow routing only through explicit ``override_settings``.
-# Keep the process default identical to production and leave epoch 0 unusable.
-SPAN_ATTRIBUTE_CATALOG_READ_MODE = "off"
-SPAN_ATTRIBUTE_CATALOG_EPOCH = 0
-SPAN_ATTRIBUTE_CATALOG_DATABASE = ""
-SPAN_ATTRIBUTE_CATALOG_DEV_READ_ACK = ""
-SPAN_ATTRIBUTE_CATALOG_DEV_SNAPSHOT_ENABLED = False
-SPAN_ATTRIBUTE_CATALOG_HANDOFF_START = None
-SPAN_ATTRIBUTE_CATALOG_HANDOFF_END = None
-SPAN_ATTRIBUTE_CATALOG_CH_HOST = ""
-SPAN_ATTRIBUTE_CATALOG_CH_PORT = 0
-SPAN_ATTRIBUTE_CATALOG_CH_DATABASE = ""
-SPAN_ATTRIBUTE_CATALOG_CH_USER = ""
-SPAN_ATTRIBUTE_CATALOG_CH_PASSWORD = ""
-
-CH25_EVAL_LOGGER_TABLE = os.environ.get(
-    "CH25_EVAL_LOGGER_TABLE", "tracer_eval_logger"
-)
+CH25_EVAL_LOGGER_TABLE = os.environ.get("CH25_EVAL_LOGGER_TABLE", "tracer_eval_logger")
 
 # Test cache configuration
 CACHES = {
@@ -239,6 +224,7 @@ MODEL_SERVING_URL = os.environ.get(
 # Disable analytics and tracking in tests
 MIXPANEL_TOKEN = None
 SENTRY_DSN = None
+SAML_LOGIN_ENABLED = True
 
 # Test-specific feature flags
 FEATURE_FLAGS = {

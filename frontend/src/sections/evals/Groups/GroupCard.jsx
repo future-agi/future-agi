@@ -76,11 +76,11 @@ export default function GroupCard({
       sx={{
         padding: theme.spacing(1.5),
         border: "1px solid",
-        borderColor: "divider",
-        borderRadius: theme.spacing(0.5),
+        borderColor: "border.default",
+        borderRadius: "8px",
         display: "flex",
         flexDirection: "column",
-        gap: theme.spacing(2),
+        gap: theme.spacing(1.5),
         alignItems: "flex-start",
         position: "relative",
         ":hover": {
@@ -99,8 +99,8 @@ export default function GroupCard({
     >
       <Stack gap={0.25}>
         <Typography
-          typography={"s1"}
-          fontWeight={"fontWeightMedium"}
+          typography={"s2_1"}
+          fontWeight={"fontWeightSemiBold"}
           color={"text.primary"}
         >
           {name}
@@ -108,7 +108,7 @@ export default function GroupCard({
         <Typography
           typography={"s2"}
           fontWeight={"fontWeightRegular"}
-          color={"text.primary"}
+          color={"text.secondary"}
           sx={{
             textOverflow: "ellipsis",
             whiteSpace: "normal",
@@ -242,13 +242,7 @@ export default function GroupCard({
             right: "5px",
           }}
         >
-          <IconButton
-            disabled={isSample}
-            onClick={handleClick}
-            sx={{
-              padding: 1, // Add padding since position is now on span
-            }}
-          >
+          <IconButton disabled={isSample} onClick={handleClick} size="small">
             <SvgColor
               sx={{
                 rotate: "90deg",
@@ -267,7 +261,7 @@ export default function GroupCard({
         PaperProps={{
           sx: {
             mt: 1,
-            minWidth: 100,
+            minWidth: 200,
             p: 0.5,
           },
         }}
@@ -288,15 +282,12 @@ export default function GroupCard({
           <ListItemText
             primary="Edit"
             primaryTypographyProps={{
-              fontSize: 13,
+              fontSize: 12,
               fontWeight: 400,
             }}
           />
         </MenuItem>
-        <MenuItem
-          onClick={handleDelete}
-          sx={{ color: "error.main", px: 1.25, py: 0.75 }}
-        >
+        <MenuItem onClick={handleDelete} sx={{ px: 1.25, py: 0.75 }}>
           <ListItemIcon sx={{ minWidth: "unset", mr: 1 }}>
             <SvgColor
               src="/assets/icons/ic_delete.svg"
@@ -309,7 +300,7 @@ export default function GroupCard({
           <ListItemText
             primary="Delete"
             primaryTypographyProps={{
-              fontSize: 13,
+              fontSize: 12,
               fontWeight: 400,
             }}
           />

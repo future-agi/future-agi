@@ -3,6 +3,8 @@ package gemini
 import (
 	"encoding/json"
 	"fmt"
+	"net/http"
+	"strings"
 	"time"
 
 	"github.com/futureagi/agentcc-gateway/internal/models"
@@ -28,6 +30,12 @@ func newStreamState(model string) *streamState {
 
 // parseStreamData parses a Gemini SSE data payload and returns a StreamChunk.
 func (s *streamState) parseStreamData(data string) (*models.StreamChunk, error) {
+	// A failing upstream sends an error object in place of a chunk. Returned
+	// as an APIError so the read loop ends the stream with it.
+	if strings.HasPrefix(strings.TrimSpace(data), `{"error"`) {
+		return nil, parseGeminiError(http.StatusBadGateway, []byte(data))
+	}
+
 	var resp geminiResponse
 	if err := json.Unmarshal([]byte(data), &resp); err != nil {
 		return nil, err
@@ -75,8 +83,11 @@ func (s *streamState) parseStreamData(data string) (*models.StreamChunk, error) 
 				// Smuggle the thoughtSignature through the id like the
 				// non-streaming path (translateResponse) — without it,
 				// thinking-enabled Gemini 3+ rejects the next turn with
-				// "Function call is missing a thought_signature".
-				toolCallID := fmt.Sprintf("call_%d", s.toolCallIdx)
+				// "Function call is missing a thought_signature". The id is
+				// random for the same reason as there; Index stays the
+				// per-stream position clients key chunks by. A part holds one
+				// whole call, so each call gets exactly one id.
+				toolCallID := models.NewToolCallID()
 				if part.ThoughtSignature != "" {
 					toolCallID = toolCallID + toolCallIDDelim + part.ThoughtSignature
 				}
@@ -84,7 +95,7 @@ func (s *streamState) parseStreamData(data string) (*models.StreamChunk, error) 
 					Index: s.toolCallIdx,
 					ID:    toolCallID,
 					Type:  "function",
-					Function: &models.FunctionCall{
+					Function: &models.FunctionCallDelta{
 						Name:      part.FunctionCall.Name,
 						Arguments: string(part.FunctionCall.Args),
 					},

@@ -22,11 +22,11 @@ const SidebarOption = ({ title, onAddClick, children }) => {
           justifyContent: "space-between",
         }}
       >
-        <Typography color="text.disabled" fontWeight={700} fontSize="16px">
+        <Typography color="text.disabled" fontWeight={600} fontSize="16px">
           {title}
         </Typography>
         <IconButton color="primary" onClick={() => onAddClick()}>
-          <Iconify icon="mingcute:add-line" />
+          <Iconify icon="solar:add-linear" />
         </IconButton>
       </Box>
       <Box sx={{ display: "flex", flexDirection: "column", gap: "12px" }}>

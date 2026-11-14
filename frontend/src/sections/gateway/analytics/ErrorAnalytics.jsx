@@ -3,7 +3,6 @@ import React, { useState, useMemo } from "react";
 import PropTypes from "prop-types";
 import {
   Box,
-  Card,
   Grid,
   Typography,
   Skeleton,
@@ -16,11 +15,14 @@ import {
   TableContainer,
   TableHead,
   TableRow,
-  Chip,
 } from "@mui/material";
+import Section from "src/components/section";
+import MetricStrip from "src/components/metric-strip";
 import { useTheme } from "@mui/material/styles";
 import Chart from "react-apexcharts";
+import { seriesColor } from "src/theme/data-colors";
 import { useAnalyticsErrors } from "./hooks/useAnalyticsErrors";
+import { REQUEST_DIMENSION_OPTIONS } from "../constants/requestTags";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -28,8 +30,7 @@ import { useAnalyticsErrors } from "./hooks/useAnalyticsErrors";
 
 const GROUP_BY_OPTIONS = [
   { value: "status_code", label: "Status Code" },
-  { value: "model", label: "Model" },
-  { value: "provider", label: "Provider" },
+  ...REQUEST_DIMENSION_OPTIONS,
 ];
 
 const TOP_N = 10;
@@ -56,11 +57,11 @@ function getChartColors(theme) {
     theme.palette.primary.main,
     theme.palette.secondary.main,
     theme.palette.info.main,
-    "#7C4DFF",
-    "#FF6D00",
-    "#00BFA5",
-    "#D500F9",
-    "#64DD17",
+    seriesColor(theme, 0),
+    seriesColor(theme, 5),
+    seriesColor(theme, 2),
+    seriesColor(theme, 4),
+    seriesColor(theme, 6),
   ];
 }
 
@@ -91,12 +92,12 @@ function buildErrorTrendOptions(theme) {
     xaxis: {
       type: "datetime",
       labels: {
-        style: { colors: theme.palette.text.secondary, fontSize: "11px" },
+        style: { colors: theme.palette.text.secondary, fontSize: "12px" },
       },
     },
     yaxis: {
       labels: {
-        style: { colors: theme.palette.text.secondary, fontSize: "11px" },
+        style: { colors: theme.palette.text.secondary, fontSize: "12px" },
         formatter: (val) => `${Number(val)?.toFixed(1) ?? 0}%`,
       },
       title: {
@@ -146,13 +147,13 @@ function buildBreakdownBarOptions(theme, categories) {
     dataLabels: {
       enabled: true,
       formatter: (val) => val?.toLocaleString() ?? "0",
-      style: { fontSize: "11px", fontWeight: 600 },
+      style: { fontSize: "12px", fontWeight: 600 },
       offsetX: 5,
     },
     xaxis: {
       categories,
       labels: {
-        style: { colors: theme.palette.text.secondary, fontSize: "11px" },
+        style: { colors: theme.palette.text.secondary, fontSize: "12px" },
         formatter: (val) => {
           if (val >= 1000) return `${(val / 1000).toFixed(1)}K`;
           return val?.toString() ?? "0";
@@ -261,27 +262,24 @@ const ErrorAnalytics = ({ start, end, gatewayId }) => {
 
   return (
     <Box>
-      {/* Summary header */}
-      <Stack direction="row" spacing={3} alignItems="center" mb={2}>
-        <Stack direction="row" alignItems="baseline" spacing={1}>
-          <Typography variant="subtitle1" fontWeight={600}>
-            Total Errors:
-          </Typography>
-          <Typography variant="h5" fontWeight={700} color="error.main">
-            {data?.total_errors?.toLocaleString() ?? "--"}
-          </Typography>
-        </Stack>
-        <Stack direction="row" alignItems="baseline" spacing={1}>
-          <Typography variant="subtitle1" fontWeight={600}>
-            Error Rate:
-          </Typography>
-          <Typography variant="h5" fontWeight={700} color="error.main">
-            {data?.overall_error_rate != null
-              ? `${Number(data.overall_error_rate).toFixed(2)}%`
-              : "--"}
-          </Typography>
-        </Stack>
+      <MetricStrip
+        sx={{ mb: 2 }}
+        items={[
+          {
+            label: "Total errors",
+            value: data?.total_errors?.toLocaleString() ?? "--",
+          },
+          {
+            label: "Error rate",
+            value:
+              data?.overall_error_rate != null
+                ? `${Number(data.overall_error_rate).toFixed(2)}%`
+                : "--",
+          },
+        ]}
+      />
 
+      <Stack direction="row" spacing={3} alignItems="center" mb={2}>
         {/* Group-by toggle */}
         <Box sx={{ ml: "auto !important" }}>
           <Stack direction="row" alignItems="center" spacing={2}>
@@ -295,16 +293,7 @@ const ErrorAnalytics = ({ start, end, gatewayId }) => {
               size="small"
             >
               {GROUP_BY_OPTIONS.map((opt) => (
-                <ToggleButton
-                  key={opt.value}
-                  value={opt.value}
-                  sx={{
-                    px: 1.5,
-                    py: 0.25,
-                    textTransform: "none",
-                    fontSize: "0.8125rem",
-                  }}
-                >
+                <ToggleButton key={opt.value} value={opt.value}>
                   {opt.label}
                 </ToggleButton>
               ))}
@@ -316,7 +305,7 @@ const ErrorAnalytics = ({ start, end, gatewayId }) => {
       <Grid container spacing={3}>
         {/* Error rate trend */}
         <Grid item xs={12} md={7}>
-          <Card sx={{ p: 3 }}>
+          <Section variant="panel" sx={{ p: 3 }}>
             <Typography variant="subtitle1" fontWeight={600} mb={2}>
               Error Rate Over Time
             </Typography>
@@ -345,12 +334,12 @@ const ErrorAnalytics = ({ start, end, gatewayId }) => {
                 </Typography>
               </Box>
             )}
-          </Card>
+          </Section>
         </Grid>
 
         {/* Error breakdown bar */}
         <Grid item xs={12} md={5}>
-          <Card sx={{ p: 3 }}>
+          <Section variant="panel" sx={{ p: 3 }}>
             <Typography variant="subtitle1" fontWeight={600} mb={2}>
               Error Breakdown
             </Typography>
@@ -379,12 +368,12 @@ const ErrorAnalytics = ({ start, end, gatewayId }) => {
                 </Typography>
               </Box>
             )}
-          </Card>
+          </Section>
         </Grid>
 
         {/* Top errors table */}
         <Grid item xs={12}>
-          <Card sx={{ p: 3 }}>
+          <Section variant="panel" sx={{ p: 3 }}>
             <Typography variant="subtitle1" fontWeight={600} mb={2}>
               Top Errors
             </Typography>
@@ -405,10 +394,22 @@ const ErrorAnalytics = ({ start, end, gatewayId }) => {
                   <TableHead>
                     <TableRow>
                       <TableCell sx={{ fontWeight: 600 }}>Name</TableCell>
-                      <TableCell align="right" sx={{ fontWeight: 600 }}>
+                      <TableCell
+                        align="right"
+                        sx={{
+                          fontVariantNumeric: "tabular-nums",
+                          fontWeight: 600,
+                        }}
+                      >
                         Error Count
                       </TableCell>
-                      <TableCell align="right" sx={{ fontWeight: 600 }}>
+                      <TableCell
+                        align="right"
+                        sx={{
+                          fontVariantNumeric: "tabular-nums",
+                          fontWeight: 600,
+                        }}
+                      >
                         Error Rate
                       </TableCell>
                     </TableRow>
@@ -417,17 +418,20 @@ const ErrorAnalytics = ({ start, end, gatewayId }) => {
                     {breakdown.map((row, index) => (
                       <TableRow key={index} hover>
                         <TableCell>
-                          <Chip
-                            label={row.name || "Unknown"}
-                            size="small"
-                            variant="outlined"
-                            color={index === 0 ? "error" : "default"}
-                          />
+                          <Typography variant="body2" color="text.primary">
+                            {row.name || "Unknown"}
+                          </Typography>
                         </TableCell>
-                        <TableCell align="right">
+                        <TableCell
+                          sx={{ fontVariantNumeric: "tabular-nums" }}
+                          align="right"
+                        >
                           {row.error_count?.toLocaleString() ?? 0}
                         </TableCell>
-                        <TableCell align="right">
+                        <TableCell
+                          sx={{ fontVariantNumeric: "tabular-nums" }}
+                          align="right"
+                        >
                           <Typography
                             variant="body2"
                             color={
@@ -461,7 +465,7 @@ const ErrorAnalytics = ({ start, end, gatewayId }) => {
                 </Typography>
               </Box>
             )}
-          </Card>
+          </Section>
         </Grid>
       </Grid>
     </Box>

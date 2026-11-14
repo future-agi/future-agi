@@ -32,7 +32,7 @@ const GrowthPricingCard = ({ currentPlan, redirect }) => {
         <Box>
           <Iconify
             // @ts-ignore
-            icon="carbon:growth"
+            icon="solar:graph-up-linear"
             sx={{
               width: 24,
               height: 24,
@@ -51,13 +51,13 @@ const GrowthPricingCard = ({ currentPlan, redirect }) => {
               <Typography
                 sx={{
                   borderRadius: "4px",
-                  backgroundColor: "green.o10",
+                  backgroundColor: "status.success.bg",
                   fontSize: "12px",
                   padding: 0.4,
                   paddingX: 1.5,
                   alignItems: "center",
                   fontWeight: 600,
-                  color: "green.500",
+                  color: "status.success.fg",
                 }}
               >
                 Most Popular Choice
@@ -87,7 +87,7 @@ const GrowthPricingCard = ({ currentPlan, redirect }) => {
                 <SvgColor
                   // @ts-ignore
                   src="/icons/settings/pricing-list.svg"
-                  sx={{ width: "20px", color: "green.500" }}
+                  sx={{ width: "20px", color: "status.success.fg" }}
                 />
                 <Typography
                   color="text.primary"
@@ -110,7 +110,7 @@ const GrowthPricingCard = ({ currentPlan, redirect }) => {
           <Typography
             color="text.primary"
             typography="l2"
-            fontWeight={"fontWeightBold"}
+            fontWeight={"fontWeightSemiBold"}
           >
             Pay as you scale
           </Typography>

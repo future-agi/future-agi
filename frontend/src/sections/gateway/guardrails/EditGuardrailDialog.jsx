@@ -62,7 +62,13 @@ const EditGuardrailDialog = ({ open, onClose, guardrail, gatewayId }) => {
   };
 
   return (
-    <Dialog open={open} onClose={onClose} maxWidth="sm" fullWidth>
+    <Dialog
+      open={open}
+      onClose={onClose}
+      maxWidth={false}
+      PaperProps={{ sx: { maxWidth: 720 } }}
+      fullWidth
+    >
       <DialogTitle>Edit Guardrail: {guardrail?.name}</DialogTitle>
       <DialogContent>
         <Stack spacing={2} mt={1}>

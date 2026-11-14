@@ -59,7 +59,6 @@ function DeleteDialogContent({ onClose, onDeleted, connection }) {
           loading={isPending}
           onClick={handleDelete}
           disabled={confirmText !== "DELETE"}
-          sx={{ fontWeight: 500 }}
         >
           Delete
         </LoadingButton>
@@ -81,7 +80,13 @@ export default function DeleteIntegrationDialog({
   connection,
 }) {
   return (
-    <Dialog open={open} onClose={onClose} maxWidth="xs" fullWidth>
+    <Dialog
+      open={open}
+      onClose={onClose}
+      maxWidth={false}
+      PaperProps={{ sx: { maxWidth: 400 } }}
+      fullWidth
+    >
       <DialogTitle>Delete Integration</DialogTitle>
       {open && (
         <DeleteDialogContent

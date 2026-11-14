@@ -119,7 +119,7 @@ const EachCustomVoiceModel = forwardRef((props, ref) => {
         height: "185px",
         overflowY: "auto",
         border: "1px solid",
-        borderColor: "black.200",
+        borderColor: "divider",
         p: 1,
       }}
     >
@@ -151,10 +151,10 @@ const EachCustomVoiceModel = forwardRef((props, ref) => {
             marginTop: "5px",
             borderRadius: "6px",
             height: "34px",
-            backgroundColor: "whiteScale.50",
+            backgroundColor: "background.neutral",
             paddingLeft: "8px",
             "&:hover": {
-              backgroundColor: "whiteScale.300",
+              backgroundColor: "action.hover",
             },
           }}
         >

@@ -6,14 +6,13 @@ usage recording, connections, and tool listing through the
 actual HTTP endpoints.
 """
 
-import time
 from unittest.mock import patch
 
 import pytest
-from django.conf import settings
 from rest_framework.test import APIClient
 
-from mcp_server.constants import DEFAULT_TOOL_GROUPS, TOOL_GROUPS
+from mcp_server.api_executor import APIExecutionError
+from mcp_server.constants import DEFAULT_TOOL_GROUPS
 from mcp_server.exceptions import RateLimitExceededError
 from mcp_server.models.connection import MCPConnection
 from mcp_server.models.session import MCPSession
@@ -125,29 +124,15 @@ class TestSessionManagementE2E:
 
     def test_error_counter_increments(self, auth_client):
         """error_count should increment when a tool call produces an error."""
-        # Call a tool that does not exist -> 404 from the view, no session counter update.
-        # Instead, call whoami first to get a session, then call a nonexistent tool
-        # with the session_id. The view returns 404 before session handling, so we
-        # need a tool that exists but returns an error result.
-        # We mock the tool's run() to return an error result.
-        from ai_tools.base import ToolResult
-        from ai_tools.registry import registry
-
-        tool = registry.get("whoami")
-        original_run = tool.run
-
-        def _error_run(raw_params, context):
-            return ToolResult.error("forced error for testing")
-
         resp = _call_tool(auth_client, "whoami")
         session_id = resp.json()["session_id"]
 
-        try:
-            tool.run = _error_run
+        with patch(
+            "mcp_server.views.transport.executor.execute_sync",
+            side_effect=APIExecutionError("forced error for testing"),
+        ):
             _call_tool(auth_client, "whoami", session_id=session_id)
             _call_tool(auth_client, "whoami", session_id=session_id)
-        finally:
-            tool.run = original_run
 
         session = MCPSession.objects.get(id=session_id)
         # 1 success + 2 errors = 3 total calls, 2 errors
@@ -198,20 +183,11 @@ class TestUsageRecordingE2E:
 
     def test_error_call_records_usage(self, auth_client):
         """A tool call that returns an error result should record status='error'."""
-        from ai_tools.base import ToolResult
-        from ai_tools.registry import registry
-
-        tool = registry.get("whoami")
-        original_run = tool.run
-
-        def _error_run(raw_params, context):
-            return ToolResult.error("forced error for testing")
-
-        try:
-            tool.run = _error_run
+        with patch(
+            "mcp_server.views.transport.executor.execute_sync",
+            side_effect=APIExecutionError("forced error for testing"),
+        ):
             _call_tool(auth_client, "whoami")
-        finally:
-            tool.run = original_run
 
         record = MCPUsageRecord.objects.first()
         assert record is not None
@@ -422,23 +398,16 @@ class TestToolListE2E:
             assert "category" in tool
 
     def test_tool_count_matches_registry(self, auth_client):
-        from ai_tools.registry import registry
+        from mcp_server.generated_registry import registry
 
         response = auth_client.get(TOOL_LIST_URL)
         data = response.json()
 
         returned_count = data["result"]["total"]
-        # The returned count should match the number of tools whose groups
-        # are all enabled (which is all of them by default).
-        all_tools = registry.list_all()
-        # Some tools may belong to categories not in CATEGORY_TO_GROUP;
-        # the endpoint only returns tools with a valid enabled group.
-        from mcp_server.constants import CATEGORY_TO_GROUP
-
         expected = sum(
             1
-            for t in all_tools
-            if CATEGORY_TO_GROUP.get(t.category) in DEFAULT_TOOL_GROUPS
+            for tool in registry.list_all()
+            if tool.group in DEFAULT_TOOL_GROUPS and tool.is_available()
         )
         assert returned_count == expected
 

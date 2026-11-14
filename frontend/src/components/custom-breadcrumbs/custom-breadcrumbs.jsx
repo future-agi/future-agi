@@ -40,7 +40,7 @@ export default function CustomBreadcrumbs({
         <Box sx={{ flexGrow: 1 }}>
           {/* HEADING */}
           {heading && (
-            <Typography variant="h4" gutterBottom>
+            <Typography variant="m1" fontWeight={600} gutterBottom>
               {heading}
             </Typography>
           )}
@@ -99,7 +99,7 @@ CustomBreadcrumbs.propTypes = {
 function Separator() {
   return (
     <Iconify
-      icon="eva:arrow-ios-forward-fill"
+      icon="solar:alt-arrow-right-linear"
       sx={{ color: "text.disabled" }}
     />
   );

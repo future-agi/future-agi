@@ -1,4 +1,4 @@
-import { Button, LinearProgress } from "@mui/material";
+import { Button } from "@mui/material";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   useInfiniteQuery,
@@ -29,6 +29,7 @@ import AddDatasetModel from "./AddDatasetModel";
 import DataMergeSelection from "./DataMergeSelection";
 import { DatasetCreateValidation } from "./validation";
 import DatasetSort from "./DatasetSort";
+import { LoadingScreen } from "src/components/loading-screen";
 
 const filterProperties = [
   { value: "environment", label: "Environment", dataType: "string" },
@@ -292,8 +293,8 @@ const Datasets = () => {
             Create dataset
           </Button>
           <Button
-            variant="contained"
-            color="error"
+            variant="outlined"
+            color="inherit"
             size="small"
             onClick={() => resetSelectionState()}
           >
@@ -306,8 +307,8 @@ const Datasets = () => {
       if (!selectedDataset.length) {
         return (
           <Button
-            variant="contained"
-            color="error"
+            variant="outlined"
+            color="inherit"
             size="small"
             onClick={() => resetSelectionState()}
           >
@@ -465,7 +466,7 @@ const Datasets = () => {
         open={isDefineMetricOpen}
         onClose={() => setIsDefineMetricOpen(false)}
       />
-      {isLoading ? <LinearProgress /> : null}
+      {isLoading ? <LoadingScreen /> : null}
       {noData ? <DatasetNoData /> : null}
       {!isLoading && Boolean(datasetData?.length) && (
         <DatasetTable

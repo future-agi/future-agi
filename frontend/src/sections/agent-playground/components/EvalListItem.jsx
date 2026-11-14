@@ -1,30 +1,15 @@
 /* eslint-disable react/prop-types */
 import React from "react";
 import PropTypes from "prop-types";
-import {
-  Box,
-  Chip,
-  IconButton,
-  Paper,
-  Typography,
-  useTheme,
-} from "@mui/material";
+import { Box, IconButton, Typography } from "@mui/material";
+import Section from "src/components/section";
 import SvgColor from "src/components/svg-color";
 import { ShowComponent } from "src/components/show";
 import { format } from "date-fns";
 
 export default function EvalListItem({ evalItem, onEdit, onRemove }) {
-  const theme = useTheme();
-
   return (
-    <Paper
-      sx={{
-        p: 2,
-        border: "1px solid",
-        borderColor: "divider",
-        borderRadius: 1,
-      }}
-    >
+    <Section variant="panel" sx={{ p: 2 }}>
       <Box
         sx={{
           display: "flex",
@@ -48,76 +33,22 @@ export default function EvalListItem({ evalItem, onEdit, onRemove }) {
             sx={{
               mt: 1,
               display: "flex",
-              gap: 1,
-              flexWrap: "wrap",
+              flexDirection: "column",
+              gap: 0.5,
             }}
           >
             <ShowComponent condition={!!evalItem?.groupName}>
-              <Chip
-                label={`Group name - ${evalItem?.groupName}.`}
-                size="small"
-                sx={{
-                  height: "24px",
-                  backgroundColor: "whiteScale.200",
-                  borderColor: "whiteScale.500",
-                  fontSize: "11px",
-                  borderRadius: "2px",
-                  paddingX: "12px",
-                  lineHeight: "16px",
-                  fontWeight: 400,
-                  color: "text.primary",
-                  "& .MuiChip-label": {
-                    padding: 0,
-                  },
-                  ".MuiChip-icon ": {
-                    marginRight: "6px",
-                  },
-                  "&:hover": {
-                    backgroundColor: "whiteScale.200",
-                    borderColor: "whiteScale.500",
-                  },
-                }}
-                icon={
-                  <SvgColor
-                    src="/assets/icons/ic_dashed_square.svg"
-                    sx={{ width: 16, height: 16, mr: 1 }}
-                    style={{
-                      color: "var(--text-primary)",
-                    }}
-                  />
-                }
-              />
+              <Typography color="text.secondary" fontWeight={400} fontSize={12}>
+                {`Group name - ${evalItem?.groupName}.`}
+              </Typography>
             </ShowComponent>
-            <Chip
-              label={`Required Columns - ${
+            <Typography color="text.secondary" fontWeight={400} fontSize={12}>
+              {`Required Columns - ${
                 Array.isArray(evalItem.evalRequiredKeys)
                   ? evalItem.evalRequiredKeys.join(", ")
                   : String(evalItem.evalRequiredKeys)
               }`}
-              size="small"
-              icon={
-                <SvgColor
-                  src="/assets/icons/custom/eval_columns.svg"
-                  sx={{ width: 16, height: 16 }}
-                  style={{ color: theme.palette.black[1000] }}
-                />
-              }
-              sx={{
-                height: "24px",
-                backgroundColor: "whiteScale.200",
-                border: "1px solid",
-                borderColor: "whiteScale.400",
-                fontSize: "11px",
-                borderRadius: "2px",
-                paddingX: 1,
-                paddingY: 0.5,
-                color: "text.primary",
-                "&:hover": {
-                  backgroundColor: "whiteScale.200",
-                  borderColor: "whiteScale.500",
-                },
-              }}
-            />
+            </Typography>
           </Box>
         </Box>
         <IconButton
@@ -126,8 +57,7 @@ export default function EvalListItem({ evalItem, onEdit, onRemove }) {
           sx={{
             ml: 1,
             border: "1px solid",
-            borderColor: "whiteScale.500",
-            borderRadius: 0.25,
+            borderColor: "divider",
             color: "text.primary",
           }}
         >
@@ -145,9 +75,8 @@ export default function EvalListItem({ evalItem, onEdit, onRemove }) {
           sx={{
             ml: 1,
             border: "1px solid",
-            borderColor: "whiteScale.500",
-            borderRadius: 0.25,
-            color: "red.500",
+            borderColor: "divider",
+            color: "status.danger.fg",
           }}
         >
           <SvgColor
@@ -159,7 +88,7 @@ export default function EvalListItem({ evalItem, onEdit, onRemove }) {
           />
         </IconButton>
       </Box>
-    </Paper>
+    </Section>
   );
 }
 

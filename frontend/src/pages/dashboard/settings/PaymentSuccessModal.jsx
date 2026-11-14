@@ -38,7 +38,7 @@ const PaymentSuccessModal = ({ open, onClose }) => {
             Your payment has been successful!
           </Typography>
           <IconButton onClick={onClose}>
-            <Iconify icon="mdi:close" />
+            <Iconify icon="solar:close-linear" />
           </IconButton>
         </Box>
       </DialogTitle>

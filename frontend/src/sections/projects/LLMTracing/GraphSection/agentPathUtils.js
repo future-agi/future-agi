@@ -1,66 +1,72 @@
+/* eslint-disable no-restricted-syntax -- ds: data colours (span-type and path encodings) */
 // Layout math + constants for the AgentPath Sankey view.
 
 const TYPE_COLORS = {
   agent: {
     bar: "#c4b5fd",
     band: "#c4b5fd",
-    text: "#7c3aed",
-    icon: "mdi:robot-outline",
+    text: "#7857FC",
+    icon: "solar:bot-linear",
   },
-  llm: { bar: "#93c5fd", band: "#93c5fd", text: "#2563eb", icon: "mdi:brain" },
+  llm: {
+    bar: "#93c5fd",
+    band: "#93c5fd",
+    text: "#2563eb",
+    icon: "solar:brain-linear",
+  },
   generation: {
     bar: "#93c5fd",
     band: "#93c5fd",
     text: "#2563eb",
-    icon: "mdi:brain",
+    icon: "solar:brain-linear",
   },
   tool: {
     bar: "#86efac",
     band: "#86efac",
     text: "#16a34a",
-    icon: "mdi:wrench-outline",
+    icon: "solar:toolbox-linear",
   },
   retriever: {
     bar: "#5eead4",
     band: "#5eead4",
     text: "#0d9488",
-    icon: "mdi:magnify",
+    icon: "solar:magnifier-linear",
   },
   chain: {
     bar: "#f0abfc",
     band: "#f0abfc",
     text: "#c026d3",
-    icon: "mdi:link-variant",
+    icon: "solar:link-linear",
   },
   embedding: {
     bar: "#fdba74",
     band: "#fdba74",
     text: "#ea580c",
-    icon: "mdi:vector-square",
+    icon: "solar:graph-linear",
   },
   guardrail: {
     bar: "#fca5a5",
     band: "#fca5a5",
     text: "#dc2626",
-    icon: "mdi:shield-check-outline",
+    icon: "solar:shield-check-linear",
   },
   reranker: {
     bar: "#fca5a5",
     band: "#fca5a5",
     text: "#dc2626",
-    icon: "mdi:sort-variant",
+    icon: "solar:sort-from-top-to-bottom-linear",
   },
   aggregate: {
     bar: "#a1a1aa",
     band: "#a1a1aa",
     text: "#71717a",
-    icon: "mdi:dots-horizontal-circle-outline",
+    icon: "solar:menu-dots-linear",
   },
   unknown: {
     bar: "#d1d5db",
     band: "#d1d5db",
     text: "#6b7280",
-    icon: "mdi:help-circle-outline",
+    icon: "solar:question-circle-linear",
   },
 };
 

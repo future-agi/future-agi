@@ -1,0 +1,226 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1400 980" width="1400" height="980" font-family="JetBrains Mono, Menlo, monospace">
+  <defs>
+    <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
+      <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#1e293b" stroke-width="0.5"/>
+    </pattern>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#94a3b8"/>
+    </marker>
+    <marker id="arrowRose" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#fb7185"/>
+    </marker>
+  </defs>
+  <rect width="1400" height="980" fill="#020617"/>
+  <rect width="1400" height="980" fill="url(#grid)"/>
+
+  <text x="40" y="40" fill="#e2e8f0" font-size="16">TH-8088 video generation lifecycle in agentcc-gateway (proposed, dev ce6af27)</text>
+  <text x="40" y="58" fill="#64748b" font-size="9">Solid = existing component reused. [new] = proposed. Dashed rose = security boundary (netguard egress). Dashed amber = external paid providers, explicitly selected, no fallback.</text>
+
+  <!-- arrows first (behind boxes) -->
+  <g stroke="#94a3b8" stroke-width="1.2" fill="none" marker-end="url(#arrow)">
+    <!-- client -> middleware/handlers -->
+    <path d="M 260 415 L 300 415 L 300 145 L 330 145"/>
+    <!-- handlers -> engine -->
+    <path d="M 630 145 L 660 145"/>
+    <!-- engine -> service -->
+    <path d="M 810 200 L 810 215 L 480 215 L 480 330"/>
+    <!-- service -> capability / tariff / media -->
+    <path d="M 420 330 L 420 290"/>
+    <path d="M 560 330 L 560 300 L 635 300 L 635 290"/>
+    <path d="M 600 365 L 640 365 L 640 310 L 855 310 L 855 290"/>
+    <!-- service -> redis job hash (Lua accept) -->
+    <path d="M 630 350 L 1000 350 L 1000 140 L 1045 140"/>
+    <!-- handlers -> redis job (status/list) -->
+    <path d="M 480 110 L 480 95 L 1010 95 L 1010 220 L 1045 220"/>
+    <!-- worker -> lease -->
+    <path d="M 960 375 L 1000 375 L 1000 310 L 1045 310"/>
+    <!-- worker -> budget settle -->
+    <path d="M 960 400 L 1010 400 L 1010 395 L 1045 395"/>
+    <!-- worker -> adapters -->
+    <path d="M 810 420 L 810 460"/>
+    <!-- worker -> blob (copy) -->
+    <path d="M 700 420 L 700 440 L 480 440 L 480 600"/>
+    <!-- worker -> settlement -->
+    <path d="M 900 420 L 900 440 L 980 440 L 980 580 L 900 580 L 900 600"/>
+    <!-- handlers -> blob (content stream) -->
+    <path d="M 330 160 L 315 160 L 315 635 L 330 635"/>
+    <!-- media -> blob temp assets -->
+    <path d="M 760 290 L 760 305 L 645 305 L 645 580 L 560 580 L 560 600"/>
+  </g>
+  <g stroke="#fb7185" stroke-width="1.4" fill="none" stroke-dasharray="5,4" marker-end="url(#arrowRose)">
+    <!-- adapters -> providers (egress through netguard) -->
+    <path d="M 960 505 L 1000 505 L 1000 615 L 1045 615"/>
+    <path d="M 960 520 L 990 520 L 990 725 L 1045 725"/>
+  </g>
+
+  <!-- gateway boundary -->
+  <rect x="300" y="70" width="690" height="800" rx="12" fill="none" stroke="#34d399" stroke-dasharray="8,4" stroke-width="1"/>
+  <text x="312" y="86" fill="#34d399" font-size="9">agentcc-gateway replica (N interchangeable replicas; every box runs in each replica)</text>
+
+  <!-- Redis boundary -->
+  <rect x="1020" y="70" width="350" height="420" rx="12" fill="none" stroke="#a78bfa" stroke-dasharray="8,4" stroke-width="1"/>
+  <text x="1032" y="86" fill="#a78bfa" font-size="9">Redis (existing redisstate.Client; AOF/noeviction required)</text>
+
+  <!-- Providers boundary -->
+  <rect x="1020" y="540" width="350" height="330" rx="12" fill="none" stroke="#fbbf24" stroke-dasharray="8,4" stroke-width="1"/>
+  <text x="1032" y="556" fill="#fbbf24" font-size="9">Upstream providers (operator / BYOK keys, D06)</text>
+
+  <!-- Client -->
+  <rect x="40" y="380" width="220" height="70" rx="6" fill="#0f172a"/>
+  <rect x="40" y="380" width="220" height="70" rx="6" fill="rgba(30,41,59,0.5)" stroke="#94a3b8" stroke-width="1.5"/>
+  <text x="52" y="402" fill="#e2e8f0" font-size="12">Developer app</text>
+  <text x="52" y="418" fill="#94a3b8" font-size="9">POST /v1/videos + Idempotency-Key</text>
+  <text x="52" y="432" fill="#94a3b8" font-size="9">status/list/content/cancel/delete</text>
+
+  <!-- Middleware + handlers -->
+  <rect x="330" y="110" width="300" height="70" rx="6" fill="#0f172a"/>
+  <rect x="330" y="110" width="300" height="70" rx="6" fill="rgba(8,51,68,0.4)" stroke="#22d3ee" stroke-width="1.5"/>
+  <text x="342" y="132" fill="#e2e8f0" font-size="12">KeyAuth + handlers_video.go</text>
+  <text x="342" y="148" fill="#94a3b8" font-size="9">org from API key metadata only (key_org_id)</text>
+  <text x="342" y="162" fill="#94a3b8" font-size="9">+cancel +content routes; reads Redis only</text>
+
+  <!-- Engine -->
+  <rect x="660" y="110" width="300" height="90" rx="6" fill="#0f172a"/>
+  <rect x="660" y="110" width="300" height="90" rx="6" fill="rgba(6,78,59,0.4)" stroke="#34d399" stroke-width="1.5"/>
+  <text x="672" y="132" fill="#e2e8f0" font-size="12">pipeline.Engine (existing)</text>
+  <text x="672" y="148" fill="#94a3b8" font-size="9">pre: auth 20 . rbac 30 . quota 35 . budget 40</text>
+  <text x="672" y="162" fill="#94a3b8" font-size="9">     validation 70 . ratelimit 80</text>
+  <text x="672" y="176" fill="#94a3b8" font-size="9">post: cost 500 . credits 510 . logging/otel/audit</text>
+  <text x="672" y="190" fill="#94a3b8" font-size="9">video settlement re-runs post plugins once</text>
+
+  <!-- Capability -->
+  <rect x="330" y="230" width="190" height="60" rx="6" fill="#0f172a"/>
+  <rect x="330" y="230" width="190" height="60" rx="6" fill="rgba(6,78,59,0.4)" stroke="#34d399" stroke-width="1.5"/>
+  <text x="342" y="252" fill="#e2e8f0" font-size="12">capabilities [new]</text>
+  <text x="342" y="268" fill="#94a3b8" font-size="9">service+model+version+region+op</text>
+  <text x="342" y="282" fill="#94a3b8" font-size="9">unknown combos fail closed</text>
+
+  <!-- Tariff -->
+  <rect x="540" y="230" width="190" height="60" rx="6" fill="#0f172a"/>
+  <rect x="540" y="230" width="190" height="60" rx="6" fill="rgba(6,78,59,0.4)" stroke="#34d399" stroke-width="1.5"/>
+  <text x="552" y="252" fill="#e2e8f0" font-size="12">tariff + estimator [new]</text>
+  <text x="552" y="268" fill="#94a3b8" font-size="9">typed units, upper bound</text>
+  <text x="552" y="282" fill="#94a3b8" font-size="9">unknown price is not zero</text>
+
+  <!-- Media ingress -->
+  <rect x="750" y="230" width="210" height="60" rx="6" fill="#0f172a"/>
+  <rect x="750" y="230" width="210" height="60" rx="6" fill="rgba(136,19,55,0.4)" stroke="#fb7185" stroke-width="1.5"/>
+  <text x="762" y="252" fill="#e2e8f0" font-size="12">media ingress [new]</text>
+  <text x="762" y="268" fill="#94a3b8" font-size="9">netguard dialer, https only, caps</text>
+  <text x="762" y="282" fill="#94a3b8" font-size="9">sniff + decoded checks</text>
+
+  <!-- Lifecycle service -->
+  <rect x="330" y="330" width="300" height="70" rx="6" fill="#0f172a"/>
+  <rect x="330" y="330" width="300" height="70" rx="6" fill="rgba(6,78,59,0.4)" stroke="#34d399" stroke-width="1.5"/>
+  <text x="342" y="352" fill="#e2e8f0" font-size="12">lifecycle.Service [new]</text>
+  <text x="342" y="368" fill="#94a3b8" font-size="9">accept: Lua idem NX + budget reserve + job hash</text>
+  <text x="342" y="382" fill="#94a3b8" font-size="9">status / list / cancel / local delete (org-scoped)</text>
+
+  <!-- Worker -->
+  <rect x="660" y="330" width="300" height="90" rx="6" fill="#0f172a"/>
+  <rect x="660" y="330" width="300" height="90" rx="6" fill="rgba(6,78,59,0.4)" stroke="#34d399" stroke-width="1.5"/>
+  <text x="672" y="352" fill="#e2e8f0" font-size="12">lifecycle.Worker [new]</text>
+  <text x="672" y="368" fill="#94a3b8" font-size="9">submit (phase prepared/calling/received)</text>
+  <text x="672" y="382" fill="#94a3b8" font-size="9">bounded poll, copy, settle, reconcile, GC</text>
+  <text x="672" y="396" fill="#94a3b8" font-size="9">lease per job + fencing token; kill switch</text>
+  <text x="672" y="410" fill="#94a3b8" font-size="9">deadlines persisted: submit_by run_by reconcile_by</text>
+
+  <!-- Adapters -->
+  <rect x="330" y="460" width="630" height="110" rx="6" fill="#0f172a"/>
+  <rect x="330" y="460" width="630" height="110" rx="6" fill="rgba(6,78,59,0.4)" stroke="#34d399" stroke-width="1.5"/>
+  <text x="342" y="482" fill="#e2e8f0" font-size="12">providers/video adapters [new]</text>
+  <text x="342" y="498" fill="#94a3b8" font-size="9">Capabilities . Prepare . Submit . Poll . Fetch . Cancel . Reconcile</text>
+  <text x="342" y="512" fill="#94a3b8" font-size="9">Phase 1: byteplus. Cohorts: gemini, vertex, runway, luma, kling,</text>
+  <text x="342" y="526" fill="#94a3b8" font-size="9">minimax, dashscope, xai, nova, fal (each gated by evidence)</text>
+  <text x="342" y="540" fill="#94a3b8" font-size="9">flags: idempotency, correlation lookup, cancel, URL expiry, ACL, billing</text>
+  <text x="342" y="554" fill="#94a3b8" font-size="9">unknown status = SchemaError; no cross-provider fallback (D02)</text>
+
+  <!-- Blob store -->
+  <rect x="330" y="600" width="300" height="70" rx="6" fill="#0f172a"/>
+  <rect x="330" y="600" width="300" height="70" rx="6" fill="rgba(76,29,149,0.4)" stroke="#a78bfa" stroke-width="1.5"/>
+  <text x="342" y="622" fill="#e2e8f0" font-size="12">artifacts blob store [new]</text>
+  <text x="342" y="638" fill="#94a3b8" font-size="9">disk | S3 (SigV4 reuse from cache/backend_s3.go)</text>
+  <text x="342" y="652" fill="#94a3b8" font-size="9">private copies, 24h TTL, range reads</text>
+
+  <!-- Settlement -->
+  <rect x="660" y="600" width="300" height="70" rx="6" fill="#0f172a"/>
+  <rect x="660" y="600" width="300" height="70" rx="6" fill="rgba(6,78,59,0.4)" stroke="#34d399" stroke-width="1.5"/>
+  <text x="672" y="622" fill="#e2e8f0" font-size="12">settlement [new]</text>
+  <text x="672" y="638" fill="#94a3b8" font-size="9">RecordSpend(actual - estimate) per budget level</text>
+  <text x="672" y="652" fill="#94a3b8" font-size="9">RunPostPlugins once; managed keys blocked (D06)</text>
+
+  <!-- Observability note -->
+  <rect x="330" y="700" width="630" height="150" rx="6" fill="#0f172a"/>
+  <rect x="330" y="700" width="630" height="150" rx="6" fill="rgba(30,41,59,0.5)" stroke="#94a3b8" stroke-width="1.5"/>
+  <text x="342" y="722" fill="#e2e8f0" font-size="12">cross-cutting (existing packages)</text>
+  <text x="342" y="740" fill="#94a3b8" font-size="9">otel spans video.submit / provider.submit / provider.poll / result.copy / settle (same trace id)</text>
+  <text x="342" y="754" fill="#94a3b8" font-size="9">metrics: jobs, state duration, polls, unknown/unresolved, copy failures, unsettled</text>
+  <text x="342" y="768" fill="#94a3b8" font-size="9">privacy.Redactor on provider errors and URLs; prompts / media / keys never logged</text>
+  <text x="342" y="782" fill="#94a3b8" font-size="9">secrets: ${ENV} or scheme:// via internal/secrets; credential_ref reuses providers[] entries (gemini, bedrock)</text>
+  <text x="342" y="796" fill="#94a3b8" font-size="9">config: video.enabled=false, provider enabled=false; store=redis; memory refused</text>
+  <text x="342" y="810" fill="#94a3b8" font-size="9">Redis outage: fail closed (503 video_store_unavailable), no memory fallback; leases expire, any replica resumes</text>
+  <text x="342" y="824" fill="#94a3b8" font-size="9">rollback: kill switch (no new spend) -> provider enabled=false -> video.enabled=false; records never purged</text>
+  <text x="342" y="838" fill="#94a3b8" font-size="9">OSS: everything above ships in CE; no license_auth / EE import under internal/video (import-graph test)</text>
+
+  <!-- Redis boxes -->
+  <rect x="1045" y="110" width="300" height="60" rx="6" fill="#0f172a"/>
+  <rect x="1045" y="110" width="300" height="60" rx="6" fill="rgba(76,29,149,0.4)" stroke="#a78bfa" stroke-width="1.5"/>
+  <text x="1057" y="132" fill="#e2e8f0" font-size="12">video:v1:job:{id} hash</text>
+  <text x="1057" y="148" fill="#94a3b8" font-size="9">status, phase, provider ids, deadlines, ledger,</text>
+  <text x="1057" y="162" fill="#94a3b8" font-size="9">artifacts, tombstone; Lua transition checks</text>
+
+  <rect x="1045" y="190" width="300" height="70" rx="6" fill="#0f172a"/>
+  <rect x="1045" y="190" width="300" height="70" rx="6" fill="rgba(76,29,149,0.4)" stroke="#a78bfa" stroke-width="1.5"/>
+  <text x="1057" y="212" fill="#e2e8f0" font-size="12">indexes</text>
+  <text x="1057" y="228" fill="#94a3b8" font-size="9">org:{org}:jobs zset . idem:{org}:{op}:{digest} NX</text>
+  <text x="1057" y="242" fill="#94a3b8" font-size="9">submit / due / reconcile / expire zsets</text>
+  <text x="1057" y="256" fill="#94a3b8" font-size="9">active counters per org and per upstream account</text>
+
+  <rect x="1045" y="280" width="300" height="60" rx="6" fill="#0f172a"/>
+  <rect x="1045" y="280" width="300" height="60" rx="6" fill="rgba(76,29,149,0.4)" stroke="#a78bfa" stroke-width="1.5"/>
+  <text x="1057" y="302" fill="#e2e8f0" font-size="12">lease:{id} (SET NX PX) + fence</text>
+  <text x="1057" y="318" fill="#94a3b8" font-size="9">one owner per job; stale owners rejected by fence</text>
+  <text x="1057" y="332" fill="#94a3b8" font-size="9">takeover only after TTL expiry</text>
+
+  <rect x="1045" y="360" width="300" height="110" rx="6" fill="#0f172a"/>
+  <rect x="1045" y="360" width="300" height="110" rx="6" fill="rgba(76,29,149,0.4)" stroke="#a78bfa" stroke-width="1.5"/>
+  <text x="1057" y="382" fill="#e2e8f0" font-size="12">existing shared state (reused)</text>
+  <text x="1057" y="398" fill="#94a3b8" font-size="9">BudgetStore Lua: atomic check + HINCRBY micros</text>
+  <text x="1057" y="412" fill="#94a3b8" font-size="9">  -> reservation at accept, delta at settlement</text>
+  <text x="1057" y="426" fill="#94a3b8" font-size="9">RateLimiter per account (submit RPM, poll QPS)</text>
+  <text x="1057" y="440" fill="#94a3b8" font-size="9">CreditStore (managed keys; blocked until tariff)</text>
+  <text x="1057" y="454" fill="#94a3b8" font-size="9">ClusterStore heartbeat (replica identity)</text>
+
+  <!-- Providers -->
+  <rect x="1045" y="580" width="300" height="70" rx="6" fill="#0f172a"/>
+  <rect x="1045" y="580" width="300" height="70" rx="6" fill="rgba(120,53,15,0.3)" stroke="#fbbf24" stroke-width="1.5"/>
+  <text x="1057" y="602" fill="#e2e8f0" font-size="12">BytePlus ModelArk (Phase 1)</text>
+  <text x="1057" y="618" fill="#94a3b8" font-size="9">ark.ap-southeast.bytepluses.com/api/v3</text>
+  <text x="1057" y="632" fill="#94a3b8" font-size="9">POST/GET/LIST/DELETE contents/generations/tasks</text>
+
+  <rect x="1045" y="670" width="300" height="180" rx="6" fill="#0f172a"/>
+  <rect x="1045" y="670" width="300" height="180" rx="6" fill="rgba(30,41,59,0.5)" stroke="#94a3b8" stroke-width="1.5"/>
+  <text x="1057" y="692" fill="#e2e8f0" font-size="12">cohorts L06-L10</text>
+  <text x="1057" y="708" fill="#94a3b8" font-size="9">Gemini Veo 3.1 (LRO), Omni (interactions)</text>
+  <text x="1057" y="722" fill="#94a3b8" font-size="9">Vertex Veo (binding unverified, gated)</text>
+  <text x="1057" y="736" fill="#94a3b8" font-size="9">Runway gen4.5 / gen4_turbo (tasks, DELETE=cancel)</text>
+  <text x="1057" y="750" fill="#94a3b8" font-size="9">Luma ray-3.2 (HDR+10s fail closed)</text>
+  <text x="1057" y="764" fill="#94a3b8" font-size="9">Kling 3.0 (external_task_id lookup)</text>
+  <text x="1057" y="778" fill="#94a3b8" font-size="9">MiniMax H3 (DELETE queued-only)</text>
+  <text x="1057" y="792" fill="#94a3b8" font-size="9">DashScope Wan3 / HappyHorse (no file refs)</text>
+  <text x="1057" y="806" fill="#94a3b8" font-size="9">xAI grok-imagine-video-1.5</text>
+  <text x="1057" y="820" fill="#94a3b8" font-size="9">Bedrock Nova Reel (token, S3; hard stop)</text>
+  <text x="1057" y="834" fill="#94a3b8" font-size="9">fal Pika (public-default output; hard stop)</text>
+
+  <!-- Legend (below all boundaries: lowest boundary bottom = 870) -->
+  <g font-size="9">
+    <rect x="40" y="900" width="14" height="10" fill="rgba(8,51,68,0.4)" stroke="#22d3ee"/><text x="60" y="909" fill="#94a3b8">HTTP edge</text>
+    <rect x="150" y="900" width="14" height="10" fill="rgba(6,78,59,0.4)" stroke="#34d399"/><text x="170" y="909" fill="#94a3b8">gateway logic</text>
+    <rect x="280" y="900" width="14" height="10" fill="rgba(76,29,149,0.4)" stroke="#a78bfa"/><text x="300" y="909" fill="#94a3b8">state / storage</text>
+    <rect x="420" y="900" width="14" height="10" fill="rgba(136,19,55,0.4)" stroke="#fb7185"/><text x="440" y="909" fill="#94a3b8">security control</text>
+    <rect x="570" y="900" width="14" height="10" fill="rgba(120,53,15,0.3)" stroke="#fbbf24"/><text x="590" y="909" fill="#94a3b8">paid upstream</text>
+    <rect x="700" y="900" width="14" height="10" fill="rgba(30,41,59,0.5)" stroke="#94a3b8"/><text x="720" y="909" fill="#94a3b8">external / note</text>
+    <line x1="840" y1="905" x2="880" y2="905" stroke="#fb7185" stroke-dasharray="5,4"/><text x="890" y="909" fill="#94a3b8">egress via netguard</text>
+    <text x="40" y="935" fill="#64748b">Sources: PRD r2 5b41783 (company-brain), gateway dev ce6af27, BytePlus docs checked 2026-10-02. Proposed design; not implemented or tested.</text>
+  </g>
+</svg>

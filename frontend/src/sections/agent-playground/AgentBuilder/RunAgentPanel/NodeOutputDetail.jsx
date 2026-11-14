@@ -1,3 +1,4 @@
+import ErrorState from "src/components/error-state";
 import {
   Box,
   Divider,
@@ -10,6 +11,7 @@ import {
 import PropTypes from "prop-types";
 import React, { useMemo, useState, useCallback, useRef } from "react";
 import { AgGridReact } from "ag-grid-react";
+import "src/utils/ag-grid-setup";
 import { useAgThemeWith } from "src/hooks/use-ag-theme";
 import { useGetNodeExecutionDetail } from "src/api/agent-playground/agent-playground";
 import CustomJsonViewer from "src/components/custom-json-viewer/CustomJsonViewer";
@@ -457,20 +459,7 @@ export default function NodeOutputDetail({ executionId, nodeExecutionId }) {
   }
 
   if (isError) {
-    return (
-      <Box
-        sx={{
-          flex: 1,
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-        }}
-      >
-        <Typography typography="s2" color="error.main">
-          Failed to load node details
-        </Typography>
-      </Box>
-    );
+    return <ErrorState title="Failed to load node details" sx={{ flex: 1 }} />;
   }
 
   if (!nodeDetail) {

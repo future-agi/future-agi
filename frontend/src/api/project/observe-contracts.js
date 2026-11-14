@@ -12,14 +12,19 @@ import { z } from "zod";
 // Zod generator drops `x-nullable`. Extend the generated envelope/result so we
 // keep all generated metadata validation while accepting the null gaps that
 // the backend and chart renderers explicitly support.
-const nullableGraphPoint = z.object({
+const nullableGraphPoint = TracerTraceGetGraphMethodsResponse.shape.result.shape.data.element.extend({
   timestamp: z.string().min(1),
   value: z.number().nullable(),
   primary_traffic: z.number().nullable().optional(),
 });
+// The generated schema closes `metric_statistic` to today's enum. A newer
+// server may name a statistic this tab predates (for example p95); rejecting
+// it would fail the whole graph until a reload. Accept any string: the label
+// logic keys on "mean" for latency and falls back to the plain name otherwise.
 const traceGraphResponse = TracerTraceGetGraphMethodsResponse.extend({
   result: TracerTraceGetGraphMethodsResponse.shape.result.extend({
     data: z.array(nullableGraphPoint),
+    metric_statistic: z.string().optional(),
   }),
 });
 
@@ -36,12 +41,22 @@ export const parseTraceGraphResponse = (payload) =>
   successfulResult(traceGraphResponse, payload, "Trace graph");
 
 /** Parse one Observe trace-list HTTP body into the generated result shape. */
-export const parseTraceObserveListResponse = (payload) =>
-  successfulResult(
+export const parseTraceObserveListResponse = (payload) => {
+  const result = successfulResult(
     TracerTraceListTracesOfSessionResponse,
     payload,
     "Trace list",
   );
+  // Read only the generated, typed sidecar, never an arbitrary dynamic cell.
+  // Nesting by project protects org-scoped pages with reused trace IDs.
+  return {
+    ...result,
+    table: result.table.map((row) => ({
+      ...row,
+      _captureCoverage: result.trace_capture_coverage?.[row.project_id]?.[row.trace_id],
+    })),
+  };
+};
 
 /** Parse one Observe span-list HTTP body into the generated result shape. */
 export const parseSpanObserveListResponse = (payload) =>

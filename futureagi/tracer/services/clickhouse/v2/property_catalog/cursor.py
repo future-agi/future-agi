@@ -1,38 +1,34 @@
-"""Opaque cursors for the immutable unified property-definition catalog.
-
-The cursor is intentionally independent from the trace/span list cursor.  A
-property page is pinned to an activated ClickHouse catalog revision rather
-than to a telemetry time window.  Every token binds the authenticated tenant,
-the complete authorization/filter shape, the page size, the activation
-fingerprint, and the last six-column ordering tuple.
-"""
+"""Signed, authorization-bound keysets for the current property inventory."""
 
 from __future__ import annotations
 
 import hashlib
 import json
-import re
 from dataclasses import dataclass
 from typing import Any
+from uuid import UUID
 
 from django.conf import settings
 from django.core import signing
 
+from .codec import (
+    CUSTOM_ATTRIBUTE_PREFIX,
+    MAX_CUSTOM_PROPERTY_ID_BYTES,
+    MAX_FOLDED_ATTRIBUTE_KEY_BYTES,
+    MAX_IDENTITY_COMPONENT_BYTES,
+    validate_text,
+)
 from .runtime_limits import RUNTIME_LIMITS
 
-PROPERTY_CATALOG_CURSOR_VERSION = 1
-PROPERTY_CATALOG_CURSOR_SALT = "tracer.property-catalog-cursor.v1"
+PROPERTY_CATALOG_CURSOR_VERSION = 2
+PROPERTY_CATALOG_CURSOR_SALT = "tracer.property-catalog-cursor.v2"
 PROPERTY_CATALOG_CURSOR_MAX_AGE_SECONDS = RUNTIME_LIMITS.cursor_max_age_seconds
 PROPERTY_CATALOG_CURSOR_MAX_BYTES = RUNTIME_LIMITS.cursor_max_bytes
 PROPERTY_CATALOG_CURSOR_MAX_PAGE_SIZE = RUNTIME_LIMITS.max_page_size
 PROPERTY_CATALOG_ORDER_WIDTH = 6
 
-_SHA256_RE = re.compile(r"\A[0-9a-f]{64}\Z")
-
 
 class PropertyCatalogCursorError(ValueError):
-    """A sanitized cursor error that is safe to expose at the API edge."""
-
     def __init__(self, code: str, message: str) -> None:
         self.code = code
         super().__init__(message)
@@ -40,24 +36,19 @@ class PropertyCatalogCursorError(ValueError):
 
 @dataclass(frozen=True, slots=True)
 class PropertyCatalogCursor:
-    catalog_epoch: int
-    catalog_revision: int
-    activation_fingerprint: str
     order: tuple[int, int, str, str, str, str]
 
 
-def _canonical_json(value: Any) -> str:
-    return json.dumps(
-        value,
-        ensure_ascii=False,
-        allow_nan=False,
-        separators=(",", ":"),
-        sort_keys=True,
-    )
-
-
 def _digest(value: Any) -> str:
-    return hashlib.sha256(_canonical_json(value).encode("utf-8")).hexdigest()
+    return hashlib.sha256(
+        json.dumps(
+            value,
+            ensure_ascii=False,
+            allow_nan=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode()
+    ).hexdigest()
 
 
 def normalize_property_catalog_scope(scope: dict[str, Any]) -> dict[str, Any]:
@@ -74,9 +65,7 @@ def normalize_property_catalog_scope(scope: dict[str, Any]) -> dict[str, Any]:
         "agent_definition_id": str(scope.get("agent_definition_id") or ""),
         "dataset_id": str(scope.get("dataset_id") or ""),
     }
-    # Preserve existing explicit-project cursor digests. Workspace-wide reads
-    # opt into a stronger contract: ``project_ids`` is the complete eligible
-    # Observe-project PG snapshot and the activation must prove exactly that set.
+    # Bind the complete currently authorized project set for workspace reads.
     if scope.get("workspace_scope") is True:
         normalized["workspace_scope"] = True
     return normalized
@@ -101,15 +90,25 @@ def normalize_property_catalog_query(query: dict[str, Any]) -> dict[str, Any]:
     return normalized
 
 
-def _max_age_seconds() -> int:
-    configured = int(
-        getattr(
-            settings,
-            "PROPERTY_CATALOG_CURSOR_MAX_AGE_SECONDS",
-            PROPERTY_CATALOG_CURSOR_MAX_AGE_SECONDS,
-        )
+def validate_scope(scope: dict[str, Any]) -> dict[str, Any]:
+    normalized = normalize_property_catalog_scope(scope)
+    for field in ("organization_id", "workspace_id"):
+        normalized[field] = str(UUID(normalized[field]))
+    normalized["project_ids"] = tuple(
+        sorted({str(UUID(value)) for value in normalized["project_ids"]})
     )
-    return max(1, configured)
+    for field in ("agent_definition_id", "dataset_id"):
+        if normalized[field]:
+            normalized[field] = str(UUID(normalized[field]))
+    return normalized
+
+
+def validate_page_size(page_size: int) -> None:
+    if (
+        type(page_size) is not int
+        or not 1 <= page_size <= PROPERTY_CATALOG_CURSOR_MAX_PAGE_SIZE
+    ):
+        raise ValueError("page_size is outside the property catalog limit")
 
 
 def _validate_order(order: Any) -> tuple[int, int, str, str, str, str]:
@@ -131,14 +130,36 @@ def _validate_order(order: Any) -> tuple[int, int, str, str, str, str]:
             for item in (primary_source, sort_name, name, property_id)
         )
         or not property_id
-        or any(
-            len(item.encode("utf-8")) > 4_096
-            for item in (primary_source, sort_name, name, property_id)
-        )
     ):
         raise PropertyCatalogCursorError(
             "invalid_cursor", "The property continuation cursor is invalid."
         )
+    custom = property_id.startswith(CUSTOM_ATTRIBUTE_PREFIX)
+    limits = (
+        MAX_IDENTITY_COMPONENT_BYTES,
+        MAX_FOLDED_ATTRIBUTE_KEY_BYTES if custom else MAX_IDENTITY_COMPONENT_BYTES,
+        MAX_IDENTITY_COMPONENT_BYTES,
+        MAX_CUSTOM_PROPERTY_ID_BYTES if custom else MAX_IDENTITY_COMPONENT_BYTES,
+    )
+    try:
+        for index, (item, limit) in enumerate(
+            zip((primary_source, sort_name, name, property_id), limits, strict=True)
+        ):
+            validate_text(
+                item,
+                field="cursor order",
+                max_bytes=limit,
+                allow_controls=custom and index > 0,
+            )
+        if custom and (
+            property_id != CUSTOM_ATTRIBUTE_PREFIX + name
+            or sort_name != name.casefold()
+        ):
+            raise ValueError("inconsistent custom attribute keyset")
+    except (TypeError, ValueError) as exc:
+        raise PropertyCatalogCursorError(
+            "invalid_cursor", "The property continuation cursor is invalid."
+        ) from exc
     return (
         category_rank,
         source_rank,
@@ -149,124 +170,123 @@ def _validate_order(order: Any) -> tuple[int, int, str, str, str, str]:
     )
 
 
-def encode_property_catalog_cursor(
-    *,
-    scope: dict[str, Any],
-    query: dict[str, Any],
-    page_size: int,
-    catalog_epoch: int,
-    catalog_revision: int,
-    activation_fingerprint: str,
-    order: tuple[int, int, str, str, str, str] | list[Any],
-) -> str:
-    if (
-        type(page_size) is not int
-        or not 1 <= page_size <= PROPERTY_CATALOG_CURSOR_MAX_PAGE_SIZE
-        or type(catalog_epoch) is not int
-        or not 1 <= catalog_epoch <= 65_535
-        or type(catalog_revision) is not int
-        or catalog_revision < 1
-        or not isinstance(activation_fingerprint, str)
-        or _SHA256_RE.fullmatch(activation_fingerprint) is None
-    ):
-        raise ValueError("invalid property catalog cursor state")
-    checked_order = _validate_order(order)
-    payload = {
-        "v": PROPERTY_CATALOG_CURSOR_VERSION,
-        "scope": _digest(normalize_property_catalog_scope(scope)),
-        "query": _digest(normalize_property_catalog_query(query)),
-        "page_size": page_size,
-        "catalog_epoch": catalog_epoch,
-        "catalog_revision": catalog_revision,
-        "activation_fingerprint": activation_fingerprint,
-        "order": list(checked_order),
-    }
+def encode_current_cursor(*, salt, scope, query, page_size, order):
+    validate_page_size(page_size)
     token = signing.dumps(
-        payload,
-        key=settings.SECRET_KEY,
-        salt=PROPERTY_CATALOG_CURSOR_SALT,
+        {
+            "v": 2,
+            "scope": _digest(normalize_property_catalog_scope(scope)),
+            "query": _digest(query),
+            "page_size": page_size,
+            "order": list(order),
+        },
+        salt=salt,
         compress=True,
     )
-    if len(token.encode("utf-8")) > PROPERTY_CATALOG_CURSOR_MAX_BYTES:
-        raise ValueError("property catalog cursor exceeds its transport bound")
+    if len(token.encode()) > PROPERTY_CATALOG_CURSOR_MAX_BYTES:
+        raise ValueError("property cursor exceeds its transport bound")
     return token
 
 
-def decode_property_catalog_cursor(
-    token: str,
-    *,
-    scope: dict[str, Any],
-    query: dict[str, Any],
-    page_size: int,
-) -> PropertyCatalogCursor:
+def decode_current_cursor(
+    *, token, salt, scope, query, page_size, error_type=PropertyCatalogCursorError
+):
+    def fail(code):
+        messages = {
+            "invalid_cursor": "The property continuation cursor is invalid.",
+            "cursor_mismatch": "The property continuation cursor does not match this request.",
+            "cursor_expired": "The property continuation cursor has expired. Restart from the first page.",
+        }
+        raise error_type(code, messages[code])
+
     if (
         not isinstance(token, str)
         or not token
-        or len(token.encode("utf-8")) > PROPERTY_CATALOG_CURSOR_MAX_BYTES
+        or len(token.encode()) > PROPERTY_CATALOG_CURSOR_MAX_BYTES
     ):
-        raise PropertyCatalogCursorError(
-            "invalid_cursor", "The property continuation cursor is invalid."
-        )
+        fail("invalid_cursor")
+    max_age = max(
+        1,
+        int(
+            getattr(
+                settings,
+                "PROPERTY_CATALOG_CURSOR_MAX_AGE_SECONDS",
+                PROPERTY_CATALOG_CURSOR_MAX_AGE_SECONDS,
+            )
+        ),
+    )
+    legacy = False
     try:
-        payload = signing.loads(
-            token,
-            key=settings.SECRET_KEY,
-            salt=PROPERTY_CATALOG_CURSOR_SALT,
-            max_age=_max_age_seconds(),
-        )
-    except signing.SignatureExpired as exc:
-        raise PropertyCatalogCursorError(
-            "cursor_expired", "The property continuation cursor has expired."
-        ) from exc
-    except (signing.BadSignature, TypeError, ValueError) as exc:
-        raise PropertyCatalogCursorError(
-            "invalid_cursor", "The property continuation cursor is invalid."
-        ) from exc
-
-    if (
-        not isinstance(payload, dict)
-        or payload.get("v") != PROPERTY_CATALOG_CURSOR_VERSION
-    ):
-        raise PropertyCatalogCursorError(
-            "invalid_cursor", "The property continuation cursor is invalid."
-        )
+        payload = signing.loads(token, salt=salt, max_age=max_age)
+    except signing.SignatureExpired:
+        fail("cursor_expired")
+    except (signing.BadSignature, TypeError, ValueError):
+        try:
+            payload = signing.loads(
+                token, salt=salt.replace(".v2", ".v1"), max_age=max_age
+            )
+            legacy = True
+        except signing.SignatureExpired:
+            fail("cursor_expired")
+        except (signing.BadSignature, TypeError, ValueError):
+            fail("invalid_cursor")
+    if not isinstance(payload, dict) or payload.get("v") != (1 if legacy else 2):
+        fail("invalid_cursor")
     if (
         payload.get("scope") != _digest(normalize_property_catalog_scope(scope))
-        or payload.get("query") != _digest(normalize_property_catalog_query(query))
+        or payload.get("query") != _digest(query)
         or payload.get("page_size") != page_size
     ):
-        raise PropertyCatalogCursorError(
-            "cursor_mismatch",
-            "The property continuation cursor does not match this request.",
-        )
+        fail("cursor_mismatch")
+    if legacy:
+        fail("cursor_expired")
+    return payload.get("order")
 
-    epoch = payload.get("catalog_epoch")
-    revision = payload.get("catalog_revision")
-    activation_fingerprint = payload.get("activation_fingerprint")
-    if (
-        type(epoch) is not int
-        or not 1 <= epoch <= 65_535
-        or type(revision) is not int
-        or revision < 1
-        or not isinstance(activation_fingerprint, str)
-        or _SHA256_RE.fullmatch(activation_fingerprint) is None
-    ):
-        raise PropertyCatalogCursorError(
-            "invalid_cursor", "The property continuation cursor is invalid."
-        )
-    return PropertyCatalogCursor(
-        catalog_epoch=epoch,
-        catalog_revision=revision,
-        activation_fingerprint=activation_fingerprint,
-        order=_validate_order(payload.get("order")),
+
+def encode_property_catalog_cursor(*, scope, query, page_size, order):
+    return encode_current_cursor(
+        salt=PROPERTY_CATALOG_CURSOR_SALT,
+        scope=scope,
+        query=normalize_property_catalog_query(query),
+        page_size=page_size,
+        order=_validate_order(order),
     )
 
 
-__all__ = [
-    "PropertyCatalogCursor",
-    "PropertyCatalogCursorError",
-    "decode_property_catalog_cursor",
-    "encode_property_catalog_cursor",
-    "normalize_property_catalog_query",
-    "normalize_property_catalog_scope",
-]
+def decode_property_catalog_cursor(token, *, scope, query, page_size):
+    order = decode_current_cursor(
+        token=token,
+        salt=PROPERTY_CATALOG_CURSOR_SALT,
+        scope=scope,
+        query=normalize_property_catalog_query(query),
+        page_size=page_size,
+    )
+    return PropertyCatalogCursor(order=_validate_order(order))
+
+
+def decode_native_list_cursor(token, *, resource, scope, query, page_size):
+    """Retain native fact keysets, but require retired snapshot walks to restart."""
+    from tracer.services.clickhouse.list_cursor import (
+        ListCursorError,
+        decode_list_cursor,
+    )
+
+    baseline = dict(query)
+    baseline.pop("query_window_mode", None)
+    try:
+        state = decode_list_cursor(
+            token, resource=resource, scope=scope, query=baseline, page_size=page_size
+        )
+        return state, None
+    except ListCursorError as exc:
+        if exc.code != "cursor_mismatch":
+            raise
+        # Only a verified legacy signature receives a restart response.
+        decode_list_cursor(
+            token,
+            resource=resource,
+            scope=scope,
+            query={**baseline, "query_window_mode": "frozen_snapshot"},
+            page_size=page_size,
+        )
+        raise ListCursorError("cursor_expired", "Restart from the first page.") from exc

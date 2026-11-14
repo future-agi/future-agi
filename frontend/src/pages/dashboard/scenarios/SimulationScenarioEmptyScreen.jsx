@@ -82,7 +82,7 @@ const SimulationScenarioEmptyScreen = () => {
                   colorScheme: "light",
                   borderRadius: "8px",
                   opacity: isLoading ? 0 : 1,
-                  transition: "opacity 0.3s ease-in-out",
+                  transition: "opacity 0.2s ease-in-out",
                 }}
               />
             </div>
@@ -163,20 +163,14 @@ const SimulationScenarioEmptyScreen = () => {
                 variant="contained"
                 color="primary"
                 sx={{
-                  px: "24px",
-                  borderRadius: "4px",
-                  height: "38px",
                   maxWidth: "348px",
                   width: "100%",
                 }}
                 startIcon={
                   <Iconify
-                    icon="octicon:plus-24"
+                    width={20}
+                    icon="solar:add-linear"
                     color="background.paper"
-                    sx={{
-                      width: "20px",
-                      height: "20px",
-                    }}
                   />
                 }
                 disabled={
@@ -200,7 +194,7 @@ const SimulationScenarioEmptyScreen = () => {
                   variant="s1"
                   fontWeight={"fontWeightSemiBold"}
                   href="https://docs.futureagi.com/docs/simulation/concepts/scenarios"
-                  sx={{ textDecoration: "underline", color: "blue.500" }}
+                  sx={{ textDecoration: "underline", color: "status.info.fg" }}
                 >
                   Docs
                 </Link>

@@ -319,7 +319,7 @@ describe("QueueItemsTable", () => {
     expect(
       screen
         .queryAllByTestId("iconify")
-        .some((el) => el.getAttribute("data-icon") === "mingcute:close-line"),
+        .some((el) => el.getAttribute("data-icon") === "solar:close-linear"),
     ).toBe(false);
   });
 
@@ -339,7 +339,7 @@ describe("QueueItemsTable", () => {
     expect(
       screen
         .queryAllByTestId("iconify")
-        .some((el) => el.getAttribute("data-icon") === "mingcute:close-line"),
+        .some((el) => el.getAttribute("data-icon") === "solar:close-linear"),
     ).toBe(false);
 
     await user.click(screen.getByLabelText("select-item-1"));
@@ -470,7 +470,7 @@ describe("QueueItemsTable", () => {
     // Click the close/remove icon – opens confirmation dialog
     const removeIcons = screen
       .getAllByTestId("iconify")
-      .filter((el) => el.getAttribute("data-icon") === "mingcute:close-line");
+      .filter((el) => el.getAttribute("data-icon") === "solar:close-linear");
     await user.click(removeIcons[0].closest("button"));
 
     // Confirm removal in the dialog

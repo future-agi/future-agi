@@ -1,0 +1,94 @@
+{
+  "description": "Which org provider base URLs the gateway calls (validateBaseURL, agentcc-gateway/internal/providers/override_test.go) and the backend's model discovery calls (url_safety, futureagi/agentcc/tests/test_url_safety.py), and how both read AGENTCC_ALLOW_PRIVATE_PROVIDER_URLS (agentcc-gateway/internal/config/config_test.go). Both tests read this file, so the two policies cannot drift apart unnoticed. Host names resolve through the dns table; IP literals resolve to themselves; any other name does not resolve. The cloud metadata host names resolve to a public address, so only the check by name refuses them. A public URL always passes; a private one passes only with the opt-in; loopback, forbidden (link-local, cloud metadata, multicast, broadcast, unspecified), invalid and unresolvable ones never pass. backend_class is a known exception: what the backend decides instead.",
+  "dns": {
+    "api.openai.com": ["104.18.6.192"],
+    "mock-llm": ["172.20.0.5"],
+    "host.docker.internal": ["192.168.65.254"],
+    "ollama.lan": ["10.0.0.12"],
+    "tailnet-box": ["100.101.102.103"],
+    "ula-box": ["fd12:3456::1"],
+    "localhost": ["127.0.0.1", "::1"],
+    "split-horizon": ["104.18.6.192", "10.0.0.12"],
+    "rebind-to-metadata": ["169.254.169.254"],
+    "metadata": ["104.18.6.192"],
+    "metadata.google.internal": ["104.18.6.192"],
+    "metadata.goog": ["104.18.6.192"],
+    "instance-data": ["104.18.6.192"],
+    "instance-data.ec2.internal": ["104.18.6.192"]
+  },
+  "urls": [
+    { "url": "https://api.openai.com/v1", "class": "public" },
+    { "url": "http://8.8.8.8:8080", "class": "public" },
+
+    { "url": "http://mock-llm:8080", "class": "private" },
+    { "url": "http://host.docker.internal:11434", "class": "private" },
+    { "url": "http://ollama.lan:11434", "class": "private" },
+    { "url": "http://10.1.2.3", "class": "private" },
+    { "url": "http://172.31.255.254", "class": "private" },
+    { "url": "http://192.168.1.10:8000", "class": "private" },
+    { "url": "http://100.64.0.1", "class": "private" },
+    { "url": "http://tailnet-box", "class": "private" },
+    { "url": "http://[fd12:3456::1]:8000", "class": "private" },
+    { "url": "http://ula-box", "class": "private" },
+    { "url": "http://split-horizon", "class": "private" },
+
+    { "url": "http://127.0.0.1:8080", "class": "loopback" },
+    { "url": "http://127.9.9.9", "class": "loopback" },
+    { "url": "http://[::1]:8080", "class": "loopback" },
+    { "url": "http://localhost:11434", "class": "loopback" },
+    { "url": "http://[::ffff:127.0.0.1]", "class": "loopback" },
+
+    { "url": "http://169.254.169.254/latest/meta-data", "class": "forbidden" },
+    { "url": "http://169.254.170.2", "class": "forbidden" },
+    { "url": "http://[::ffff:169.254.169.254]", "class": "forbidden" },
+    { "url": "http://[fe80::1]", "class": "forbidden" },
+    {
+      "url": "http://metadata.google.internal/computeMetadata/v1",
+      "class": "forbidden"
+    },
+    { "url": "http://METADATA.google.internal.", "class": "forbidden" },
+    { "url": "http://metadata", "class": "forbidden" },
+    { "url": "http://metadata.goog", "class": "forbidden" },
+    { "url": "http://instance-data", "class": "forbidden" },
+    { "url": "http://instance-data.ec2.internal", "class": "forbidden" },
+    { "url": "http://rebind-to-metadata", "class": "forbidden" },
+    { "url": "http://100.100.100.200", "class": "forbidden" },
+    { "url": "http://[fd00:ec2::254]", "class": "forbidden" },
+    { "url": "http://168.63.129.16", "class": "forbidden" },
+    { "url": "http://0.0.0.0:8080", "class": "forbidden" },
+    { "url": "http://[::]:8080", "class": "forbidden" },
+    { "url": "http://224.0.0.1", "class": "forbidden" },
+    { "url": "http://255.255.255.255", "class": "forbidden" },
+
+    { "url": "ftp://api.openai.com", "class": "invalid" },
+    { "url": "http://", "class": "invalid" },
+    { "url": "http://no-such-host.invalid", "class": "unresolvable" },
+
+    {
+      "url": "http://mock-llm:6379",
+      "class": "private",
+      "backend_class": "forbidden",
+      "note": "the backend also refuses the ports in url_safety.BLOCKED_PORTS"
+    },
+    {
+      "url": "http://240.0.0.1",
+      "class": "public",
+      "backend_class": "private",
+      "note": "the backend counts reserved and documentation ranges as private"
+    }
+  ],
+  "opt_in_env": [
+    { "value": "", "allowed": false },
+    { "value": "true", "allowed": true },
+    { "value": "TRUE", "allowed": true },
+    { "value": "tRuE", "allowed": true },
+    { "value": "t", "allowed": true },
+    { "value": "1", "allowed": true },
+    { "value": " true", "allowed": true },
+    { "value": "true\n", "allowed": true },
+    { "value": "false", "allowed": false },
+    { "value": "0", "allowed": false },
+    { "value": " 0 ", "allowed": false },
+    { "value": "yes-please", "allowed": false }
+  ]
+}

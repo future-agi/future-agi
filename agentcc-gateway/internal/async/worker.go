@@ -26,11 +26,11 @@ type ProviderFunc func(ctx context.Context, req *models.ChatCompletionRequest, m
 
 // Worker processes async jobs from a queue.
 type Worker struct {
-	store       *Store
-	queue       chan string
-	providerFn  ProviderFunc
-	maxWorkers  int
-	stopCh      chan struct{}
+	store      *Store
+	queue      chan string
+	providerFn ProviderFunc
+	maxWorkers int
+	stopCh     chan struct{}
 }
 
 // NewWorker creates a new async worker.
@@ -106,15 +106,6 @@ func (w *Worker) processJob(jobID string) {
 		return
 	}
 
-	// Mark as processing via store (mutates the real pointer).
-	w.store.Update(jobID, func(job *Job) {
-		now := time.Now()
-		job.Status = StatusProcessing
-		job.StartedAt = &now
-	})
-
-	slog.Debug("processing async job", "job_id", jobID, "model", snap.Request.Model)
-
 	// Create context with timeout from metadata.
 	timeoutMs := 120000 // default 2 minutes
 	if v, ok := snap.Metadata["timeout_ms"]; ok {
@@ -125,9 +116,11 @@ func (w *Worker) processJob(jobID string) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeoutMs)*time.Millisecond)
 	defer cancel()
 
-	w.store.Update(jobID, func(job *Job) {
-		job.CancelFn = cancel
-	})
+	if !w.store.start(jobID, cancel) {
+		return
+	}
+
+	slog.Debug("processing async job", "job_id", jobID, "model", snap.Request.Model)
 
 	// Call the provider function.
 	resp, respMeta, err := w.providerFn(ctx, snap.Request, snap.Metadata)

@@ -64,52 +64,6 @@ import (
 	"github.com/futureagi/agentcc-gateway/internal/tenant"
 )
 
-// syncWithRetry retries control plane sync (org configs + API keys) with
-// fixed 2s interval until both succeed. Called as a background goroutine
-// so the gateway serves immediately while sync completes.
-func syncWithRetry(cfg *config.Config, tenantStore *tenant.Store, keyStore *auth.KeyStore) {
-	const retryInterval = 2 * time.Second
-	const maxAttempts = 60 // 2 minutes max
-
-	tenantSynced := false
-	keySynced := keyStore == nil
-
-	for attempt := 1; attempt <= maxAttempts; attempt++ {
-		slog.Info("retrying control plane sync",
-			"attempt", attempt, "need_tenants", !tenantSynced, "need_keys", !keySynced)
-
-		if !tenantSynced {
-			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-			if err := tenant.SyncFromControlPlane(ctx, cfg.ControlPlane.URL, cfg.ControlPlane.AdminToken, tenantStore); err == nil {
-				tenantSynced = true
-			}
-			cancel()
-		}
-		if !keySynced {
-			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-			if err := auth.SyncKeysFromControlPlane(ctx, cfg.ControlPlane.URL, cfg.ControlPlane.AdminToken, keyStore); err == nil {
-				keySynced = true
-			}
-			cancel()
-		}
-
-		if tenantSynced && keySynced {
-			keyCount := 0
-			if keyStore != nil {
-				keyCount = keyStore.Count()
-			}
-			slog.Info("background sync succeeded",
-				"attempt", attempt, "orgs", tenantStore.Count(), "keys", keyCount)
-			return
-		}
-
-		time.Sleep(retryInterval)
-	}
-
-	slog.Error("control plane sync failed after all retries — gateway running with empty config",
-		"max_attempts", maxAttempts)
-}
-
 func main() {
 	configPath := flag.String("config", "", "Path to config file (YAML/JSON)")
 	flag.Parse()
@@ -184,11 +138,12 @@ func main() {
 	keyStore := auth.NewKeyStore(cfg.Auth)
 	var plugins []pipeline.Plugin
 
-	// Create IP ACL plugin (priority 50: runs before auth).
-	var ipaclPlugin *ipaclplugin.Plugin
+	// Create IP ACL plugin (priority 10: runs before auth). It is always
+	// registered: an org's own ip_acl applies whether or not the global list
+	// is enabled, and the plugin checks the global list only when it is.
+	ipaclPlugin := ipaclplugin.New(cfg.IPACL, tenantStore)
+	plugins = append(plugins, ipaclPlugin)
 	if cfg.IPACL.Enabled {
-		ipaclPlugin = ipaclplugin.New(cfg.IPACL, tenantStore)
-		plugins = append(plugins, ipaclPlugin)
 		slog.Info("ip acl enabled", "allow_rules", ipaclPlugin.AllowCount(), "deny_rules", ipaclPlugin.DenyCount())
 	}
 
@@ -197,16 +152,11 @@ func main() {
 		slog.Info("auth enabled", "config_keys", keyStore.Count())
 	}
 
-	// Start control plane sync in background — never blocks startup.
-	// The gateway serves immediately with config.yaml keys, then picks up
-	// Django-managed keys and org configs as soon as the backend is reachable.
+	// Control plane sync runs in the background (started below, next to the
+	// periodic sync) and never blocks startup. The gateway serves immediately
+	// with config.yaml keys, then picks up Django-managed keys and org configs
+	// as soon as the backend is reachable.
 	if cfg.ControlPlane.URL != "" {
-		// Initial sync: retry every 2s until both succeed (non-blocking).
-		if cfg.ControlPlane.SyncOnStartup {
-			go syncWithRetry(cfg, tenantStore, keyStore)
-		}
-		// Periodic sync is handled by StartPeriodicSync below (line ~583).
-		// Do NOT add a second periodic ticker here — it doubles the load.
 		slog.Info("control plane sync enabled",
 			"interval", cfg.ControlPlane.SyncInterval.String(),
 			"startup_sync", cfg.ControlPlane.SyncOnStartup,
@@ -230,11 +180,19 @@ func main() {
 		tracker := budgetpkg.NewTracker(cfg.Budgets)
 		pricing := budgetplugin.NewPricingLookup(cfg.CostTracking.CustomPricing)
 		budgetPlugin = budgetplugin.New(tracker, pricing, true, tenantStore)
+		sharedGlobal := false
 		if redisBudgetStore != nil {
 			budgetPlugin.SetRedisBudget(redisBudgetStore)
+			// Global levels join the shared ledger only when video is on, so
+			// video reservations and ordinary spend count against one ceiling.
+			// Without video, global levels stay pod-local as before.
+			if cfg.Video.Enabled {
+				budgetPlugin.ShareGlobalBudgets()
+				sharedGlobal = true
+			}
 		}
 		plugins = append(plugins, budgetPlugin)
-		slog.Info("budgets enabled", "default_period", cfg.Budgets.DefaultPeriod, "redis", redisBudgetStore != nil)
+		slog.Info("budgets enabled", "default_period", cfg.Budgets.DefaultPeriod, "redis", redisBudgetStore != nil, "shared_global_levels", sharedGlobal)
 
 		// Seed budget counters from historical spend in Postgres (with retry).
 		if cfg.ControlPlane.URL != "" {
@@ -413,9 +371,6 @@ func main() {
 			if budgetPlugin != nil {
 				budgetPlugin.InvalidateOrg(orgID)
 			}
-			if ipaclPlugin != nil {
-				ipaclPlugin.InvalidateOrg(orgID)
-			}
 		}
 		slog.Info("guardrails enabled",
 			"pre_guardrails", grEngine.PreCount(),
@@ -502,7 +457,8 @@ func main() {
 	}
 
 	// Create cost tracking plugin.
-	plugins = append(plugins, costplugin.New(cfg.CostTracking.Enabled, modelDBGetter, tenantStore, cfg.CostTracking.AliasCostFactors))
+	costPlugin := costplugin.New(cfg.CostTracking.Enabled, modelDBGetter, tenantStore, cfg.CostTracking.AliasCostFactors)
+	plugins = append(plugins, costPlugin)
 
 	// Create credits plugin for managed keys with optional Redis backend.
 	if keyStore != nil {
@@ -585,23 +541,17 @@ func main() {
 	}
 
 	// The logging plugin is deliberately absent here: its redactor cache moved
-	// onto tenantStore, which invalidates itself on every config change.
-	if onOrgConfigChange != nil {
-		prev := onOrgConfigChange
-		onOrgConfigChange = func(orgID string) {
-			prev(orgID)
-			if alertingPlugin != nil {
-				alertingPlugin.InvalidateOrg(orgID)
-			}
+	// onto tenantStore, which invalidates itself on every config change. The
+	// ip_acl plugin is always registered, so its cached org lists are dropped
+	// whichever of guardrails, budgets and alerting are enabled.
+	prevOnOrgConfigChange := onOrgConfigChange
+	onOrgConfigChange = func(orgID string) {
+		if prevOnOrgConfigChange != nil {
+			prevOnOrgConfigChange(orgID)
 		}
-	} else if alertingPlugin != nil || ipaclPlugin != nil {
-		onOrgConfigChange = func(orgID string) {
-			if alertingPlugin != nil {
-				alertingPlugin.InvalidateOrg(orgID)
-			}
-			if ipaclPlugin != nil {
-				ipaclPlugin.InvalidateOrg(orgID)
-			}
+		ipaclPlugin.InvalidateOrg(orgID)
+		if alertingPlugin != nil {
+			alertingPlugin.InvalidateOrg(orgID)
 		}
 	}
 
@@ -628,6 +578,7 @@ func main() {
 
 	// Create and start server (shares the same ModelDB pointer for hot-reload).
 	srv := server.New(cfg, *configPath, registry, engine, keyStore, grEngine, policyStore, metricsRegistry, &sharedModelDB, tenantStore, onOrgConfigChange, redisClient)
+	costPlugin.SetPriceTables(srv.PriceTableName)
 
 	// Register onChange callback on tenantStore so that periodic sync (MergeBulk)
 	// evicts the OrgProviderCache for any org whose config changed. Without this,
@@ -656,31 +607,39 @@ func main() {
 		slog.Info("key revocation pub/sub enabled")
 	}
 
-	// Start periodic config sync if configured.
-	if cfg.ControlPlane.SyncInterval > 0 && cfg.ControlPlane.URL != "" {
-		go tenant.StartPeriodicSync(syncCtxBg, cfg.ControlPlane.SyncInterval, cfg.ControlPlane.URL, cfg.ControlPlane.AdminToken, tenantStore, keyStore)
+	// Control plane sync: the startup sync retries until the backend answers
+	// (it can take minutes on a first boot), next to the periodic re-sync if
+	// an interval is set. Do NOT add another ticker.
+	if cfg.ControlPlane.URL != "" {
+		go tenant.RunControlPlaneSync(syncCtxBg, cfg.ControlPlane.SyncOnStartup, cfg.ControlPlane.SyncInterval,
+			cfg.ControlPlane.URL, cfg.ControlPlane.AdminToken, tenantStore, keyStore)
 	}
 
 	// Handle shutdown signals.
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT)
 
+	shutdownDone := make(chan struct{})
 	go func() {
+		defer close(shutdownDone)
 		sig := <-sigCh
+		signal.Stop(sigCh) // a second signal stops the process at once
 		slog.Info("received signal", "signal", sig)
 
-		// Stop periodic sync.
+		// Stop control plane sync.
 		syncCancelBg()
 
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), cfg.Server.ShutdownTimeout)
 		defer cancel()
 
-		if err := srv.Shutdown(shutdownCtx); err != nil {
-			slog.Error("shutdown error", "error", err)
-			os.Exit(1)
+		// When requests outlast shutdown_timeout, still deliver what is
+		// buffered below, then exit 1.
+		shutdownErr := srv.Shutdown(shutdownCtx)
+		if shutdownErr != nil {
+			slog.Error("shutdown error", "error", shutdownErr)
 		}
 
-		// Drain buffered trace records.
+		// Drain buffered trace records and deliver the buffered request logs.
 		loggingPlugin.Close()
 		if auditPlugin != nil {
 			auditPlugin.Close()
@@ -691,12 +650,18 @@ func main() {
 		if redisClient != nil {
 			redisClient.Close()
 		}
+		if shutdownErr != nil {
+			os.Exit(1)
+		}
 	}()
 
 	if err := srv.Start(); err != nil {
 		slog.Error("server error", "error", err)
 		os.Exit(1)
 	}
+	// Start returns as soon as the shutdown begins. Wait for the rest of it
+	// (in-flight requests, the last request-log flush) before exiting.
+	<-shutdownDone
 }
 
 // findRuleConfig extracts the Config map for a named guardrail rule.

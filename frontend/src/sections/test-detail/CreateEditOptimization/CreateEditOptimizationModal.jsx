@@ -33,7 +33,7 @@ const CreateEditOptimizationModal = () => {
     <Dialog
       open={createEditOptimizationOpen}
       onClose={onClose}
-      width="480px"
+      width="560px"
       fullWidth
     >
       <DialogTitle
@@ -54,7 +54,7 @@ const CreateEditOptimizationModal = () => {
             color: "text.primary",
           }}
         >
-          <Iconify icon="akar-icons:cross" />
+          <Iconify icon="solar:close-linear" />
         </IconButton>
       </DialogTitle>
       <DialogContent sx={{ padding: 2 }}>

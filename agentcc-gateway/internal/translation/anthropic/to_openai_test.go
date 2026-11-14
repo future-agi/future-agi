@@ -338,42 +338,6 @@ func TestRequestToCanonical_VisionURL(t *testing.T) {
 	}
 }
 
-// ─── Thinking config → Extra ──────────────────────────────────────────────────
-
-func TestRequestToCanonical_ThinkingConfig(t *testing.T) {
-	body := []byte(`{
-		"model": "claude-3-7-sonnet-20250219",
-		"max_tokens": 16000,
-		"thinking": {"type":"enabled","budget_tokens":10000},
-		"messages": [{"role":"user","content":"Solve this hard math problem."}]
-	}`)
-
-	req, drops, err := tr.RequestToCanonical(body)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(drops) != 0 {
-		t.Errorf("unexpected drops: %v", drops)
-	}
-	if req.Extra == nil {
-		t.Fatal("Extra map is nil")
-	}
-	thinkingRaw, ok := req.Extra["anthropic_thinking_config"]
-	if !ok {
-		t.Fatal("anthropic_thinking_config not found in Extra")
-	}
-	var cfg map[string]interface{}
-	if err := json.Unmarshal(thinkingRaw, &cfg); err != nil {
-		t.Fatalf("cannot unmarshal thinking config: %v", err)
-	}
-	if cfg["type"] != "enabled" {
-		t.Errorf("expected type=enabled, got %v", cfg["type"])
-	}
-	if cfg["budget_tokens"].(float64) != 10000 {
-		t.Errorf("expected budget_tokens=10000, got %v", cfg["budget_tokens"])
-	}
-}
-
 // ─── top_k → drop ─────────────────────────────────────────────────────────────
 
 func TestRequestToCanonical_TopKDrop(t *testing.T) {

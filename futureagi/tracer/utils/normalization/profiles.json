@@ -1,0 +1,124 @@
+{
+  "version": 1,
+  "profiles": [
+    {
+      "id": "github-copilot-cli-1.0.98",
+      "scope_name": "github.copilot",
+      "scope_versions": [
+        "1.0.98"
+      ],
+      "operations": {
+        "invoke_agent": "agent",
+        "execute_hook": "chain"
+      },
+      "session_fallback": "gen_ai.conversation.id",
+      "summary_operations": [
+        "invoke_agent"
+      ],
+      "evidence": "CLI 1.0.98 native fixture: invoke_agent summarizes chat usage; github.copilot.cost is a multiplier, not USD. No VS Code or other CLI version qualification.",
+      "timing_names": [
+        "session.provisioning",
+        "session.mcp_startup_wait"
+      ],
+      "timing_prefixes": [
+        "session.timing."
+      ]
+    },
+    {
+      "id": "github-copilot-native-1.0.100-1-and-1.0.106",
+      "scope_name": "github.copilot",
+      "scope_versions": [
+        "1.0.100-1",
+        "1.0.106"
+      ],
+      "operations": {
+        "invoke_agent": "agent",
+        "execute_hook": "chain"
+      },
+      "session_fallback": "gen_ai.conversation.id",
+      "summary_operations": [
+        "invoke_agent"
+      ],
+      "evidence": "VS Code 1.143.1 capture (2026-11-06), embedded github.copilot 1.0.100-1: invoke_agent 87533 input + 540 output equals five chat spans; CLI 1.0.106 independently qualified. Only these exact scope versions are covered, not all 1.0.x releases.",
+      "timing_names": [
+        "session.provisioning",
+        "session.mcp_startup_wait"
+      ],
+      "timing_prefixes": [
+        "session.timing."
+      ]
+    },
+    {
+      "id": "vscode-agent-host-unversioned",
+      "scope_name": "vscode.agent-host",
+      "scope_versions": [
+        ""
+      ],
+      "operations": {
+        "invoke_agent": "agent"
+      },
+      "session_fallback": "gen_ai.conversation.id",
+      "summary_operations": [],
+      "timing_names": [
+        "vscode.agent_host.first_response",
+        "vscode.chat.user_perceived_time_to_first_progress"
+      ],
+      "timing_prefixes": [],
+      "timing_name_patterns": [
+        "vscode.agent_host.*timing*"
+      ],
+      "evidence": "VS Code 1.143.1 native OTLP capture (2026-11-06): vscode.agent-host exports an empty scope version. Only unversioned scope matches; timing classification requires no operation, usage or explicit kind."
+    },
+    {
+      "id": "gemini-cli-tracer-v1",
+      "scope_name": "gemini-cli",
+      "scope_versions": [
+        "v1"
+      ],
+      "operations": {
+        "llm_call": "llm",
+        "tool_call": "tool",
+        "agent_call": "agent",
+        "schedule_tool_calls": "chain"
+      },
+      "session_fallback": "gen_ai.conversation.id",
+      "summary_operations": [],
+      "evidence": "google-gemini/gemini-cli 6814e00d6b148c3a1d57244d5d7040f7c541009d: trace.ts TRACER_NAME=gemini-cli/TRACER_VERSION=v1. Scope version is the schema version, NOT a released CLI support claim."
+    }
+  ],
+  "usage_prefixes": [
+    "gen_ai.usage.",
+    "gen_ai.cost.",
+    "llm.token_count.",
+    "llm.usage.",
+    "llm.cost."
+  ],
+  "usage_keys": [
+    "prompt_tokens",
+    "completion_tokens",
+    "total_tokens",
+    "input_tokens",
+    "output_tokens"
+  ],
+  "event_attribute_keys": [
+    "exception.type",
+    "exception.escaped",
+    "error.type",
+    "error.code",
+    "fi.agent.outcome",
+    "fi.capture.missing_reason"
+  ],
+  "link_attribute_keys": [
+    "fi.agent.caused_by.work_id",
+    "fi.capture.source_work.id",
+    "fi.agent.turn.id"
+  ],
+  "reserved_admission_keys": [
+    "fi.capture.source_work.id",
+    "fi.capture.identity.profile",
+    "fi.usage.plan.id",
+    "fi.usage.fact.id",
+    "fi.usage.revision"
+  ],
+  "admission_error": "FI_IMMUTABLE_ADMISSION_UNAVAILABLE"
+}

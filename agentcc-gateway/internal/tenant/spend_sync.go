@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"sync/atomic"
 	"time"
 
 	"github.com/futureagi/agentcc-gateway/internal/auth"
@@ -17,9 +18,9 @@ var httpClient = &http.Client{Timeout: 30 * time.Second}
 
 // SpendSummary mirrors the Django spend-summary endpoint response.
 type SpendSummary struct {
-	Period      string                      `json:"period"`
-	PeriodStart string                      `json:"period_start"`
-	Orgs        map[string]OrgSpendSummary  `json:"orgs"`
+	Period      string                     `json:"period"`
+	PeriodStart string                     `json:"period_start"`
+	Orgs        map[string]OrgSpendSummary `json:"orgs"`
 }
 
 // OrgSpendSummary holds aggregated spend for a single org.
@@ -76,9 +77,28 @@ func SyncSpendFromControlPlane(ctx context.Context, baseURL, adminToken, period 
 // StartPeriodicSync runs SyncFromControlPlane (and optionally key sync)
 // on a timer. It blocks until ctx is cancelled — call it in a goroutine.
 func StartPeriodicSync(ctx context.Context, interval time.Duration, baseURL, adminToken string, store *Store, keyStore *auth.KeyStore) {
+	runPeriodicSync(ctx, interval, baseURL, adminToken, store, keyStore, nil)
+}
+
+// runPeriodicSync is StartPeriodicSync. The org and key syncs each log a
+// failure at INFO unless it is the second or later in a row, when it is WARN:
+// one missed tick is a backend restart (Standalone stops the API before the
+// gateway; a Distributed or Helm rollout), two are an outage. With loaded
+// (shared with the startup sync), a half's failures are all INFO until that
+// half has loaded, here or in the startup sync; without it, both halves count
+// as loaded from the start. A sync cut off by ctx ending (shutdown) did not
+// fail and is not logged.
+func runPeriodicSync(ctx context.Context, interval time.Duration, baseURL, adminToken string, store *Store, keyStore *auth.KeyStore, loaded *syncLoaded) {
 	if interval <= 0 || baseURL == "" {
 		return
 	}
+	if loaded == nil {
+		loaded = &syncLoaded{}
+		loaded.orgs.Store(true)
+		loaded.keys.Store(true)
+	}
+	orgs := periodicFailures{loaded: &loaded.orgs}
+	keys := periodicFailures{loaded: &loaded.keys}
 
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
@@ -93,16 +113,51 @@ func StartPeriodicSync(ctx context.Context, interval time.Duration, baseURL, adm
 		case <-ticker.C:
 			syncCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 			if err := SyncFromControlPlane(syncCtx, baseURL, adminToken, store); err != nil {
-				slog.Warn("periodic sync failed", "error", err)
+				orgs.failed(ctx, "periodic sync failed", err)
 			} else {
+				orgs.succeeded()
 				slog.Debug("periodic sync completed", "orgs", store.Count())
 			}
 			if keyStore != nil {
 				if err := auth.SyncKeysFromControlPlane(syncCtx, baseURL, adminToken, keyStore); err != nil {
-					slog.Warn("periodic key sync failed", "error", err)
+					keys.failed(ctx, "periodic key sync failed", err)
+				} else {
+					keys.succeeded()
 				}
 			}
 			cancel()
 		}
 	}
+}
+
+// syncLoaded records which halves of the control plane sync have loaded. The
+// startup and periodic syncs share one, so a half the startup sync loaded
+// counts as loaded for the periodic sync too.
+type syncLoaded struct {
+	orgs, keys atomic.Bool
+}
+
+// periodicFailures tracks one half of the periodic sync: whether it has
+// loaded, and how many times in a row it has failed.
+type periodicFailures struct {
+	loaded *atomic.Bool
+	inARow int
+}
+
+// failed counts a failure and logs it as msg, unless ctx has ended.
+func (f *periodicFailures) failed(ctx context.Context, msg string, err error) {
+	if ctx.Err() != nil {
+		return
+	}
+	f.inARow++
+	level := slog.LevelInfo
+	if f.loaded.Load() && f.inARow >= 2 {
+		level = slog.LevelWarn
+	}
+	slog.Log(ctx, level, msg, "error", err, "failures_in_a_row", f.inARow)
+}
+
+func (f *periodicFailures) succeeded() {
+	f.loaded.Store(true)
+	f.inARow = 0
 }

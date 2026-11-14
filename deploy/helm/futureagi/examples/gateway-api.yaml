@@ -1,0 +1,48 @@
+# Public UI, API and OTLP endpoints through the Kubernetes Gateway API: the
+# recommended way to expose the chart (ingress-nginx is retired). Layer it
+# over external.yaml (or bundled.yaml):
+#
+#   helm install futureagi oci://ghcr.io/future-agi/charts/futureagi --version X.Y.Z \
+#     -n futureagi --create-namespace \
+#     -f external.yaml -f gateway-api.yaml --timeout 20m
+#
+# Needs the Gateway API CRDs, v1.2 or newer (the routes' `timeouts` are in the
+# Standard channel from v1.2), and a Gateway with an HTTPS listener for these
+# hosts, e.g. with Envoy Gateway and cert-manager:
+#
+#   apiVersion: gateway.networking.k8s.io/v1
+#   kind: Gateway
+#   metadata: {name: public, namespace: gateway-system}
+#   spec:
+#     gatewayClassName: eg
+#     listeners:
+#       - name: https
+#         protocol: HTTPS
+#         port: 443
+#         # A certificate for futureagi.example.com, api.futureagi.example.com
+#         # and otlp.futureagi.example.com.
+#         tls: {certificateRefs: [{name: futureagi-tls}]}
+#         allowedRoutes: {namespaces: {from: All}}
+#
+# urls.* are derived from these hosts (https, because gatewayApi.tls).
+gatewayApi:
+  enabled: true
+  parentRefs:
+    - name: public
+      namespace: gateway-system
+      sectionName: https
+  app:
+    host: futureagi.example.com
+  api:
+    host: api.futureagi.example.com
+  otlp:
+    enabled: true
+  # OTLP/gRPC for SDKs and collectors that export over gRPC (port 443).
+  otlpGrpc:
+    enabled: true
+    host: otlp.futureagi.example.com
+  timeouts:
+    request: 300s
+    # Envoy Gateway also closes idle streams after 1 h by default: raise it
+    # with a ClientTrafficPolicy/BackendTrafficPolicy for long sessions.
+    websocket: 24h

@@ -37,11 +37,11 @@ const DescriptionSummary = ({ showTitle }) => {
         display: "flex",
         flexDirection: "column",
         gap: "12px",
-        backgroundColor: "#FFAE000D",
+        backgroundColor: "status.warning.bg",
         border: "1px solid",
-        borderColor: "#FFAE0033",
+        borderColor: "status.warning.border",
         padding: "12px",
-        borderRadius: "4px",
+        borderRadius: "8px",
       }}
     >
       {showTitle && (

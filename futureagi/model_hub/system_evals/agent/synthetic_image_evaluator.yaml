@@ -17,6 +17,8 @@ criteria: "You are evaluating whether a given image is AI-generated or synthetic
   \ present.\n\n## Inputs\n\n<image>{{image}}</image>"
 eval_tags:
 - Image
+- Synthetic
+offered_in_environments: true
 visible_ui: true
 permissions:
   allow_edit: false

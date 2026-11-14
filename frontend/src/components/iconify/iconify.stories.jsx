@@ -9,7 +9,7 @@ export default meta;
 
 export const Default = {
   args: {
-    icon: "material-symbols:info-outline",
+    icon: "solar:info-circle-linear",
     width: 40,
     sx: {},
   },
@@ -17,7 +17,7 @@ export const Default = {
 
 export const CustomColorIcon = {
   args: {
-    icon: "material-symbols:info-outline",
+    icon: "solar:info-circle-linear",
     width: 40,
     sx: {
       color: "primary.main",

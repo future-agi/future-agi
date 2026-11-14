@@ -17,10 +17,10 @@ describe("AnnotationQueueEmpty", () => {
     render(<AnnotationQueueEmpty onCreateClick={() => {}} />);
 
     expect(
-      screen.getByText("No Active annotation queues yet"),
+      screen.getByText("No annotation queues yet"),
     ).toBeInTheDocument();
     expect(
-      screen.getByText(/Create your first annotation queue/),
+      screen.getByText(/A queue sends traces/),
     ).toBeInTheDocument();
   });
 

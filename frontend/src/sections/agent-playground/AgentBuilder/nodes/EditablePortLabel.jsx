@@ -106,7 +106,7 @@ export default function EditablePortLabel({ nodeId, port, preview, sx = {} }) {
           maxWidth: 160,
           border: "1px solid",
           borderColor: "primary.main",
-          borderRadius: 0.5,
+          borderRadius: "4px",
           "& .MuiInputBase-input": {
             padding: "2px 4px",
             typography: "s1",

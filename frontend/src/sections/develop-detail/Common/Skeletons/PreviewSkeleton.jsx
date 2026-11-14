@@ -7,7 +7,6 @@ export default function PreviewSkeleton() {
       sx={{
         width: "100%",
         bgcolor: "background.paper",
-        boxShadow: 24,
         height: "100%",
         overflow: "auto",
         marginTop: "10px",
@@ -36,7 +35,7 @@ export default function PreviewSkeleton() {
                     padding: 2,
                     border: "1px solid",
                     borderColor: "divider",
-                    borderRadius: "5px",
+                    borderRadius: "6px",
                   }}
                 >
                   <Skeleton
@@ -95,7 +94,7 @@ export default function PreviewSkeleton() {
                     padding: 2,
                     border: "1px solid",
                     borderColor: "divider",
-                    borderRadius: "5px",
+                    borderRadius: "6px",
                   }}
                 >
                   <Skeleton

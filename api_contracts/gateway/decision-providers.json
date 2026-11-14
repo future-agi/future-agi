@@ -1,0 +1,85 @@
+{
+  "description": "A decision provider from save to gateway. saves: what the Gateway > Providers presets in frontend/src/sections/gateway/providers/AddProviderDialog.jsx post to /agentcc/gateways/<id>/update-provider/. pushed: the org config the backend's config_push sends the gateway for them, through the admin contract (agentcc-admin.schema.json). gateway: the provider the gateway builds from each, the System One dialect it speaks and the URL it posts decisions to. Read by futureagi/agentcc/tests/test_gateway_decision_providers.py and agentcc-gateway/internal/providers/decision_test.go. Hand-written, not generated; the keys are synthetic.",
+  "saves": [
+    {
+      "name": "typesafe",
+      "config": {
+        "base_url": "https://api.typesafe.ai",
+        "api_format": "systemone",
+        "api_key": "synthetic-typesafe-key",
+        "models": ["jev-1.13.0", "jev-latest"]
+      }
+    },
+    {
+      "name": "perplexity-decider",
+      "config": {
+        "base_url": "https://api.perplexity.ai",
+        "api_format": "systemone",
+        "api_key": "synthetic-perplexity-key",
+        "models": ["pplx-decider-v1.1-27b", "pplx-decider-v1-27b"]
+      }
+    },
+    {
+      "name": "custom-systemone",
+      "config": {
+        "base_url": "https://decider.example.com",
+        "api_format": "systemone",
+        "api_key": "synthetic-custom-key",
+        "models": ["strands-decider"]
+      }
+    }
+  ],
+  "dns": {
+    "api.typesafe.ai": ["104.18.32.7"],
+    "api.perplexity.ai": ["104.18.26.48"],
+    "decider.example.com": ["93.184.215.14"]
+  },
+  "pushed": {
+    "providers": {
+      "typesafe": {
+        "api_key": "synthetic-typesafe-key",
+        "base_url": "https://api.typesafe.ai",
+        "api_format": "systemone",
+        "models": ["jev-1.13.0", "jev-latest"],
+        "timeout": 60,
+        "enabled": true,
+        "max_concurrent": 100,
+        "conn_pool_size": 100
+      },
+      "perplexity-decider": {
+        "api_key": "synthetic-perplexity-key",
+        "base_url": "https://api.perplexity.ai",
+        "api_format": "systemone",
+        "models": ["pplx-decider-v1.1-27b", "pplx-decider-v1-27b"],
+        "timeout": 60,
+        "enabled": true,
+        "max_concurrent": 100,
+        "conn_pool_size": 100
+      },
+      "custom-systemone": {
+        "api_key": "synthetic-custom-key",
+        "base_url": "https://decider.example.com",
+        "api_format": "systemone",
+        "models": ["strands-decider"],
+        "timeout": 60,
+        "enabled": true,
+        "max_concurrent": 100,
+        "conn_pool_size": 100
+      }
+    }
+  },
+  "gateway": {
+    "typesafe": {
+      "dialect": "typesafe",
+      "endpoint": "https://api.typesafe.ai/v1/systemone"
+    },
+    "perplexity-decider": {
+      "dialect": "perplexity",
+      "endpoint": "https://api.perplexity.ai/v1/decisions"
+    },
+    "custom-systemone": {
+      "dialect": "generic",
+      "endpoint": "https://decider.example.com/v1/systemone"
+    }
+  }
+}
