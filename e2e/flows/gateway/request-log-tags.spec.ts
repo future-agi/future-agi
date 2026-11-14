@@ -158,7 +158,12 @@ test(
           points.reduce((sum, point) => sum + point.request_count, 0),
         ]),
       );
-      expect(totals).toEqual({ [checkout]: 2, [search]: 1 });
+      // The org is shared with the worker's other flows, so other rows (and
+      // their "unknown" application) may be there too. Check this test's two
+      // applications, and that no other application of this run appears.
+      expect(totals[checkout]).toBe(2);
+      expect(totals[search]).toBe(1);
+      expect(Object.keys(totals).filter((name) => name.endsWith(suffix)).sort()).toEqual([checkout, search].sort());
     });
 
     const applicationCells = page.locator(APPLICATION_CELL);

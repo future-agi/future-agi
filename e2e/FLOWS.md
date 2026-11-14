@@ -1608,19 +1608,19 @@
 
 **Goal:** A self-hosted team calls an OpenRouter Jev decision model through the gateway with its own OpenRouter key and a gateway key, sees the call in Request Logs with its cost, and is held to its rate limit
 
-**Spec:** `flows/gateway/openrouter-decisions.spec.ts:57`
+**Spec:** `flows/gateway/openrouter-decisions.spec.ts:56`
 
 **Tags:** —
 
 **User steps:**
 
-1. save the OpenRouter provider key and Jev models for the organization, as the dashboard preset does (OpenAI format)
-2. mint a gateway API key
-3. send a System One decision to openrouter/~typesafe/jev-latest with that key
-4. open Gateway Request Logs and find the decision
-5. limit each key to one request per minute
-6. send the same decision again
-7. put the organization's previous config back and remove the provider
+1. sign in as a freshly provisioned organization of its own
+2. save the OpenRouter provider key and Jev models for the organization, as the dashboard preset does (OpenAI format)
+3. mint a gateway API key
+4. send a System One decision to openrouter/~typesafe/jev-latest with that key
+5. open Gateway Request Logs and find the decision
+6. limit each key to one request per minute
+7. send the same decision again
 
 **Backend state verified:**
 
@@ -1628,7 +1628,6 @@
 - exactly one PG agentcc_request_log row for the key records the decision: endpoint_type decision, provider openrouter, the vendor token counts and a cost above zero
 - the Request Logs list endpoint the UI calls returns that row
 - the second decision is refused with 429 before the vendor is called: no tokens and no cost are recorded for it
-- afterwards the org's active rate limiting is what it was before the flow
 
 ## knowledge-base
 
