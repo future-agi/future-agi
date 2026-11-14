@@ -72,7 +72,8 @@ config:
             if s1[i] != s2[k]:
                 trans += 1
             k += 1
-        jaro = (matches/len1 + matches/len2 + (matches - trans/2)/matches) / 3
+        trans = trans // 2
+        jaro = (matches/len1 + matches/len2 + (matches - trans)/matches) / 3
         prefix = 0
         for i in range(min(4, len1, len2)):
             if s1[i] == s2[i]:
