@@ -327,4 +327,67 @@ def test_eval_chart_too_broad_tag_returns_400_without_scheduling(monkeypatch):
         )
     assert response.status_code == 400, response.data
     assert response.data["code"] == "tag_filter_too_broad", response.data
-    assert not calls
+    # Only the cache-only probe ran; nothing was scheduled.
+    assert [call.get("schedule_on_miss", True) for call in calls] == [False]
+
+
+def _eval_series(refresh, monkeypatch, cached):
+    calls = []
+    preflights = []
+
+    def read(**kwargs):
+        calls.append(kwargs)
+        return cached if kwargs.get("schedule_on_miss") is False else ["scheduled"]
+
+    def preflight(identity):
+        preflights.append(identity)
+        raise graph_dispatch.BoundedGraphReadError(
+            "tag_source_unavailable", retryable=True
+        )
+
+    monkeypatch.setattr(graph_dispatch, "_read_or_refresh_exact_graph", read)
+    monkeypatch.setattr(graph_dispatch, "_preflight_scheduled_graph_tags", preflight)
+    try:
+        result = graph_dispatch.fetch_eval_chart_series_ch(
+            analytics=None,
+            project_id=PROJECT_ID,
+            filters=[WINDOW_FILTER],
+            interval="day",
+            req_data_config={"type": "EVAL", "id": EVAL_CONFIG_ID},
+            eval_name="Outcome",
+            refresh=refresh,
+            organization_id=PROJECT_ID,
+        )
+    except graph_dispatch.BoundedGraphReadError:
+        result = "preflight-failed"
+    return result, calls, preflights
+
+
+def _series(**state):
+    return [{"query_status": "complete", "data": [{"value": 1}], **state}]
+
+
+def test_eval_chart_cached_series_is_served_without_tag_preflight(monkeypatch):
+    """A tag-source outage must not hide a complete cached series on a poll."""
+    for cached in (
+        _series(query_refreshing=False, query_refresh_failed=False),
+        [{"query_status": "pending", "query_refreshing": True}],
+        [{"query_status": "pending", "query_refresh_failed": True}],
+    ):
+        result, calls, preflights = _eval_series(False, monkeypatch, cached)
+        assert result == cached
+        assert preflights == []
+        assert [call["schedule_on_miss"] for call in calls] == [False]
+
+
+def test_eval_chart_cold_miss_and_refresh_preflight_before_scheduling(monkeypatch):
+    miss = [{"query_status": "pending", "query_refreshing": False}]
+    result, calls, preflights = _eval_series(False, monkeypatch, miss)
+    assert result == "preflight-failed"
+    assert len(preflights) == 1
+    assert [call.get("schedule_on_miss", True) for call in calls] == [False]
+    # An explicit refresh always schedules, so it always preflights first.
+    result, calls, preflights = _eval_series(True, monkeypatch, _series())
+    assert result == "preflight-failed"
+    assert len(preflights) == 1
+    assert calls == []

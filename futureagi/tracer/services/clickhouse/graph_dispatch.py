@@ -2973,18 +2973,43 @@ def fetch_eval_chart_series_ch(
         "req_data_config": req_data_config,
         "eval_name": eval_name,
     }
+    pending_payload = [
+        _pending_graph_payload(
+            str(req_data_config.get("id") or ""),
+            id=str(req_data_config.get("id") or ""),
+            name=str(eval_name or ""),
+        )
+    ]
+    if not refresh:
+        # Polls of a served, running or failed snapshot schedule nothing, so
+        # they need no tag preflight (and must not fail on a tag-source outage).
+        cached = _read_or_refresh_exact_graph(
+            namespace="observe-eval-chart-series",
+            identity=dict(identity),
+            refresh=False,
+            pending_payload=pending_payload,
+            organization_id=organization_id,
+            workspace_id=workspace_id,
+            schedule_on_miss=False,
+        )
+        if isinstance(cached, list) and any(
+            isinstance(item, dict)
+            and (
+                item.get("query_status") != "pending"
+                or item.get("query_refreshing") is True
+                or item.get("query_refresh_failed") is True
+            )
+            for item in cached
+        ):
+            return cached
+    # This read schedules the worker: a too-broad Tag filter is a 400 now, not
+    # a failed refresh that every later poll reports as retryable.
     _preflight_scheduled_graph_tags(identity)
     return _read_or_refresh_exact_graph(
         namespace="observe-eval-chart-series",
         identity=identity,
         refresh=bool(refresh),
-        pending_payload=[
-            _pending_graph_payload(
-                str(req_data_config.get("id") or ""),
-                id=str(req_data_config.get("id") or ""),
-                name=str(eval_name or ""),
-            )
-        ],
+        pending_payload=pending_payload,
         organization_id=organization_id,
         workspace_id=workspace_id,
     )
