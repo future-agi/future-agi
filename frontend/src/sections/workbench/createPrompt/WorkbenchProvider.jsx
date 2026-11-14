@@ -32,6 +32,8 @@ import { usePromptStreamUrl } from "src/sections/workbench/createPrompt/hooks/us
 
 const PROMPT_RUN_SOCKET_FALLBACK_MS = 10000;
 const PROMPT_RUN_STATUS_TIMEOUT_MS = 120000;
+import { modelCostMetadata } from "src/utils/model-cost";
+
 const PROMPT_RUN_STATUS_INTERVAL_MS = 2500;
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -64,7 +66,7 @@ const buildPromptRunOutput = (runStatus) => {
         id: getRandomId(),
         text: typeof output === "string" ? output : JSON.stringify(output),
         metadata: {
-          cost: metadata?.cost?.total_cost,
+          ...modelCostMetadata(metadata?.cost),
           tokens: metadata?.usage?.total_tokens,
           responseTime: metadata?.response_time,
         },
@@ -525,7 +527,7 @@ const WorkbenchProvider = ({ children }) => {
                   return {
                     ...opt,
                     metadata: {
-                      cost: wsData.metadata?.cost?.total_cost,
+                      ...modelCostMetadata(wsData.metadata?.cost),
                       tokens: wsData.metadata?.usage?.total_tokens,
                       responseTime: wsData.metadata?.response_time,
                     },
@@ -668,7 +670,7 @@ const WorkbenchProvider = ({ children }) => {
           id: getRandomId(),
           text: opt,
           metadata: {
-            cost: data?.metadata?.[outputIdx]?.cost?.total_cost,
+            ...modelCostMetadata(data?.metadata?.[outputIdx]?.cost),
             tokens: data?.metadata?.[outputIdx]?.usage?.total_tokens,
             responseTime: data?.metadata?.[outputIdx]?.response_time,
           },
@@ -824,7 +826,7 @@ const WorkbenchProvider = ({ children }) => {
             id: getRandomId(),
             text: opt,
             metadata: {
-              cost: version?.metadata?.[outputIdx]?.cost?.total_cost,
+              ...modelCostMetadata(version?.metadata?.[outputIdx]?.cost),
               tokens: version?.metadata?.[outputIdx]?.usage?.total_tokens,
               responseTime: version?.metadata?.[outputIdx]?.response_time,
             },
@@ -1374,7 +1376,7 @@ const WorkbenchProvider = ({ children }) => {
           id: getRandomId(),
           text: opt,
           metadata: {
-            cost: version?.metadata?.[index]?.cost?.total_cost,
+            ...modelCostMetadata(version?.metadata?.[index]?.cost),
             tokens: version?.metadata?.[index]?.usage?.total_tokens,
             responseTime: version?.metadata?.[index]?.response_time,
           },
@@ -1522,9 +1524,14 @@ const WorkbenchProvider = ({ children }) => {
       });
 
       newResults.push({
-        output: eachCompareVersions.output?.map((opt) => ({
+        output: eachCompareVersions.output?.map((opt, index) => ({
           id: getRandomId(),
           text: opt,
+          metadata: {
+            ...modelCostMetadata(eachCompareVersions.metadata?.[index]?.cost),
+            tokens: eachCompareVersions.metadata?.[index]?.usage?.total_tokens,
+            responseTime: eachCompareVersions.metadata?.[index]?.response_time,
+          },
           // audio:
           //   "https://fi-content-dev.s3.ap-south-1.amazonaws.com/tempcust/bbcb733d-5209-4710-8981-21d12bc1260a",
         })),

@@ -65,7 +65,7 @@ function Capture() {
   navigate = useNavigate();
   return null;
 }
-async function mount(isDraft = true) {
+async function mount(isDraft = true, metadata = undefined) {
   axios.get.mockResolvedValue({
     data: {
       name: "Prompt",
@@ -73,6 +73,7 @@ async function mount(isDraft = true) {
       is_draft: isDraft,
       prompt_config: [config],
       output: ["previous output"],
+      metadata,
     },
   });
   const client = new QueryClient({
@@ -143,6 +144,33 @@ describe("Unit: Workbench save-before-run", () => {
     vi.clearAllTimers();
     vi.useRealTimers();
     vi.unstubAllGlobals();
+  });
+
+  it.each(["default", "fallback", "available_models"])(
+    "retains %s pricing source when loading saved output",
+    async (source) => {
+      await mount(true, [{ cost: { total_cost: 0, pricing_source: source } }]);
+      expect(context.results[0].output[0].metadata).toMatchObject({
+        cost: 0,
+        pricingSource: source,
+      });
+    },
+  );
+
+  it("retains estimated costs when adding a saved comparison", async () => {
+    await mount();
+    act(() =>
+      context.applyCompare([
+        {
+          ...savedVersion("v2", false),
+          metadata: [{ cost: { total_cost: 0.2, pricing_source: "fallback" } }],
+        },
+      ]),
+    );
+    expect(context.results[1].output[0].metadata).toMatchObject({
+      cost: 0.2,
+      pricingSource: "fallback",
+    });
   });
 
   it.each([0, undefined])(

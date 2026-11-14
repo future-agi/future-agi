@@ -1,4 +1,5 @@
-import { Box, Typography } from "@mui/material";
+import { Box, Tooltip, Typography } from "@mui/material";
+import { formatModelCost, modelCostSourceLabel } from "src/utils/model-cost";
 import { enqueueSnackbar } from "notistack";
 import PropTypes from "prop-types";
 import React from "react";
@@ -17,6 +18,7 @@ const RenderMeta = ({ meta, originType, showToken = true, valuesInfo }) => {
   }
 
   logger.debug({ originType, a: meta });
+  const cost = originType === "text" ? meta?.cost : valuesInfo?.metadata?.cost;
 
   return (
     <Box
@@ -62,13 +64,11 @@ const RenderMeta = ({ meta, originType, showToken = true, valuesInfo }) => {
             height="15px"
             color="text.secondary"
           />
-          <Typography typography="s3" color="text.secondary">
-            {originType == "text"
-              ? meta?.cost?.total_cost
-              : valuesInfo?.metadata
-                ? `${valuesInfo?.metadata?.cost?.total_cost}`
-                : "-"}
-          </Typography>
+          <Tooltip title={modelCostSourceLabel(cost?.pricing_source)}>
+            <Typography typography="s3" color="text.secondary">
+              {formatModelCost(cost?.total_cost, cost?.pricing_source)}
+            </Typography>
+          </Tooltip>
         </Box>
       </Box>
 
