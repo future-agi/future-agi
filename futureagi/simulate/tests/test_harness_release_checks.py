@@ -110,6 +110,23 @@ def test_reference_and_wrong_answer_written(user, workspace, storage):
         "pending",
     )
 
+    # Every case has a format-2 proof, but one solution never ran: the reference is not
+    # shown to pass (LC-4).
+    assumed = _record(
+        environment,
+        {
+            first: _entry(
+                assumed=["place_order"],
+                proved=False,
+                kept_as_written=True,
+                outcome="change",
+                controls=[FAILED_CONTROL],
+            ),
+            second: _entry(outcome="no_change", controls=[FAILED_CONTROL]),
+        },
+    )
+    assert assumed["reference_passes"] == "pending"
+
 
 def test_record_release_check_keeps_other_keys(user, workspace, storage):
     environment = _environment(user, workspace, storage, "rc-keys")
