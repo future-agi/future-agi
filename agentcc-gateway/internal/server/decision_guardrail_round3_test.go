@@ -177,3 +177,35 @@ func TestOrgDecisionRoutingJudgesTheEffectiveBaseURL(t *testing.T) {
 	}
 	expectNoCalls(t, g)
 }
+
+// Empty strings and empty keys are parts too: every part after the first is
+// on its own line, as the old tree walk wrote them.
+func TestDecisionGuardrailEmptyPartsKeepTheirLines(t *testing.T) {
+	content, apiErr := decisionGuardrailContent([]byte(`{"model":"m","state":["","secret",{"":"v"}],"questions":{}}`), 0)
+	if apiErr != nil {
+		t.Fatal(apiErr)
+	}
+	if string(content) != `"\nsecret\n\nv"` {
+		t.Fatalf("content = %s, want \"\\nsecret\\n\\nv\"", content)
+	}
+}
+
+// Raw invalid UTF-8 is decoded as encoding/json decodes it (each bad byte
+// becomes U+FFFD), and the size cap counts that decoded text.
+func TestDecisionGuardrailInvalidUTF8CountsDecodedText(t *testing.T) {
+	body := []byte(`{"model":"m","state":"` + strings.Repeat("\xff", 160) + `","questions":{}}`)
+	content, apiErr := decisionGuardrailContent(body, 0)
+	if apiErr != nil {
+		t.Fatal(apiErr)
+	}
+	var text string
+	if err := json.Unmarshal(content, &text); err != nil {
+		t.Fatal(err)
+	}
+	if text != strings.Repeat("�", 160) {
+		t.Fatalf("text = %q", text)
+	}
+	if _, apiErr := decisionGuardrailContent(body, 256); apiErr == nil || apiErr.Code != "decision_text_too_large" {
+		t.Fatalf("480 bytes of decoded text under a 256-byte cap: %+v", apiErr)
+	}
+}

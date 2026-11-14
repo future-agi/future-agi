@@ -13,6 +13,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/futureagi/agentcc-gateway/internal/middleware"
 	"github.com/futureagi/agentcc-gateway/internal/modeldb"
@@ -311,6 +312,7 @@ type decisionTextScan struct {
 	b       []byte
 	i       int
 	text    strings.Builder
+	wrote   bool // a part, possibly empty, has been written
 	maxText int64
 }
 
@@ -357,11 +359,12 @@ func (s *decisionTextScan) open() bool {
 }
 
 // str consumes a string and returns its decoded text as bytes: a sub-slice
-// of the body when it holds no escape, else the decoded copy.
+// of the body when it holds no escape and is valid UTF-8, else the copy
+// encoding/json decodes (escapes resolved, each invalid byte as U+FFFD).
 func (s *decisionTextScan) str() []byte {
 	start, escaped := s.pass()
-	if !escaped {
-		return s.b[start+1 : s.i-1]
+	if raw := s.b[start+1 : s.i-1]; !escaped && utf8.Valid(raw) {
+		return raw
 	}
 	var decoded string
 	_ = json.Unmarshal(s.b[start:s.i], &decoded) // valid JSON: cannot fail
@@ -529,7 +532,7 @@ func (s *decisionTextScan) skip() {
 
 func (s *decisionTextScan) write(part []byte) error {
 	sep := 0
-	if s.text.Len() > 0 {
+	if s.wrote {
 		sep = 1
 	}
 	if s.maxText > 0 && int64(s.text.Len()+sep+len(part)) > s.maxText {
@@ -539,6 +542,7 @@ func (s *decisionTextScan) write(part []byte) error {
 		s.text.WriteByte('\n')
 	}
 	s.text.Write(part)
+	s.wrote = true
 	return nil
 }
 
