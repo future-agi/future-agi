@@ -42,7 +42,7 @@ function ChooseContext({ traceRef, contextHint, onClose }) {
         <Button disabled={!contexts.data || page >= contexts.data.totalPages || contexts.isFetching} onClick={() => { setContextId(''); setPage((value) => value + 1); }}>More contexts</Button>
       </Stack>
       {detail.isError && <ErrorState title="Context access unavailable" onRetry={detail.refetch} />}
-      {contextId && detail.data && !detail.isFetching && !canCapture && <Alert severity="info">Only a workspace author can save test cases to this context.</Alert>}
+      {contextId && detail.data && !detail.isFetching && !canCapture && <Alert severity="info">Only a workspace author can capture cases into this context.</Alert>}
     </Stack></DialogContent>
     <DialogActions><Button onClick={onClose}>Cancel</Button><Button color="primary" variant="contained" disabled={!contextId || !canCapture || contexts.isError} onClick={() => setReview(true)}>Review selected span</Button></DialogActions>
   </ClosableDialog>;
