@@ -86,6 +86,8 @@ class Evidence:
     covers_suite: bool | None = None
     # The certification archive could not be read, so its rows read as unmeasured.
     unreadable: bool = False
+    # The certificate itself: what made it (harness and framework versions) included.
+    certificate: Mapping[str, Any] = field(default_factory=dict)
 
 
 def pair_bundle(pairing: Pairing) -> HarnessAssembledBundle | None:
@@ -234,6 +236,7 @@ def read_evidence(pairing: Pairing, bundle: HarnessAssembledBundle | None) -> Ev
             routed=kept.get("tools") or files.get("routed", []),
             unobserved=kept.get("unobserved") or files.get("unobserved", []),
             unreadable=bool(files.get("unreadable")),
+            certificate=bundle.certificate or {},
         )
     version = _certified_version(pairing.environment_version)
     data = _build_certification(version) if version is not None else None
@@ -259,6 +262,7 @@ def read_evidence(pairing: Pairing, bundle: HarnessAssembledBundle | None) -> Ev
         made_for=None if version.id == pairing.environment_version.id else version,
         covers_suite=_covers_suite(version, pairing.suite_version),
         unreadable=bool(files.get("unreadable")),
+        certificate=certificate if isinstance(certificate, Mapping) else {},
     )
 
 
