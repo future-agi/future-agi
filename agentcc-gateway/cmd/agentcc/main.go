@@ -404,6 +404,8 @@ func main() {
 			os.Exit(1)
 		}
 		cachePlugin := cacheplugin.New(cacheBackend, cfg.Cache.DefaultTTL)
+		// Requests on keys with guardrail key policies get their own entries.
+		cachePlugin.SetTenantStore(tenantStore)
 
 		if cfg.Cache.Semantic.Enabled {
 			semBackend, err := cache.NewSemanticBackend(cfg.Cache.Semantic)

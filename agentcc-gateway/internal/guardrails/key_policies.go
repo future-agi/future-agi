@@ -23,18 +23,7 @@ func (p *GuardrailPlugin) runKeyPolicies(ctx context.Context, rc *models.Request
 	if keyID == "" {
 		return pipeline.ResultContinue()
 	}
-	policies := make([]*tenant.KeyGuardrailPolicy, 0, len(cfg.KeyPolicies))
-	for _, pol := range cfg.KeyPolicies {
-		if pol == nil {
-			continue
-		}
-		for _, id := range pol.KeyIDs {
-			if id == keyID {
-				policies = append(policies, pol)
-				break
-			}
-		}
-	}
+	policies := cfg.KeyPoliciesFor(keyID)
 	sort.Slice(policies, func(i, j int) bool {
 		a, b := policies[i], policies[j]
 		if a.Priority != b.Priority {
