@@ -11,6 +11,15 @@ registerHooks({ load(url, context, nextLoad) {
 } });
 const lib = await import(libModule);
 
+// Model the runner's two independent phases. Timeout behavior is exercised by
+// typesafe-live-timeout.test.mjs with installed Playwright and the real fixture.
+async function runLifecycle({ failed, ...options }, lifecycle = new lib.TypeSafeLifecycle()) {
+  let original, threw = false;
+  try { await lifecycle.run(options); } catch (error) { original = error; threw = true; }
+  await lifecycle.finish(threw || !!failed?.());
+  if (threw) throw original;
+}
+
 function fixture() {
   const existingProvider = { id: 'p-old', provider_name: 'unrelated' };
   const existingKey = { id: 'k-old', name: 'pre-existing', status: 'active', gateway_key_id: 'g-old' };
@@ -97,10 +106,10 @@ test('gateway absence rejects malformed responses and any remaining provider, ev
 });
 
 for (const fails of [false, true]) {
-  test(`finally path after ${fails ? 'injected failure' : 'success'} records independent cleanup`, async () => {
+  test(`runner teardown after ${fails ? 'injected failure' : 'success'} records independent cleanup`, async () => {
     const f = fixture(), original = new Error('injected body failure');
     let recorded;
-    const running = lib.withTypeSafeTeardown({
+    const running = runLifecycle({
       run: async () => { if (fails) throw original; },
       teardown: () => lib.teardownTypeSafe(f.resources, f.io),
       record: result => { recorded = result; },
@@ -116,7 +125,7 @@ for (const fails of [false, true]) {
 test('teardown and report failures cannot replace the original test exception', async () => {
   const original = new Error('original');
   let recorded;
-  await assert.rejects(lib.withTypeSafeTeardown({ run: async () => { throw original; },
+  await assert.rejects(runLifecycle({ run: async () => { throw original; },
     teardown: async () => { throw new Error('secret cleanup error'); },
     record: result => { recorded = result; throw new Error('write failed'); },
   }), e => e === original);
@@ -127,7 +136,7 @@ test('teardown and report failures cannot replace the original test exception', 
 
 test('cleanup failure fails an otherwise successful run without relabeling the test body', async () => {
   let recorded;
-  await assert.rejects(lib.withTypeSafeTeardown({ run: async () => {},
+  await assert.rejects(runLifecycle({ run: async () => {},
     teardown: async () => ({ verdict: 'FAIL', checks: [] }), record: result => { recorded = result; },
   }), /teardown failed/);
   assert.equal(recorded.testVerdict, 'PASS');
@@ -136,11 +145,85 @@ test('cleanup failure fails an otherwise successful run without relabeling the t
 
 test('soft test failures retain a FAIL test result independently of successful cleanup', async () => {
   let recorded;
-  await lib.withTypeSafeTeardown({ run: async () => {}, failed: () => true,
+  await runLifecycle({ run: async () => {}, failed: () => true,
     teardown: async () => ({ verdict: 'PASS', checks: [] }), record: result => { recorded = result; },
   });
   assert.equal(recorded.testVerdict, 'FAIL');
   assert.equal(recorded.teardown.verdict, 'PASS');
+});
+
+const shortBudgets = { drain: 30, close: 30, cleanup: 30, record: 30 };
+
+test('report failure alone fails CI with a data-free error, including falsey rejection', async () => {
+  for (const error of [new Error('private-report-detail'), undefined]) {
+    await assert.rejects(runLifecycle({ run: async () => {},
+      teardown: async () => ({ verdict: 'PASS', checks: [] }), record: () => { throw error; },
+    }), { message: 'TypeSafe report could not be written' });
+  }
+});
+
+test('bounded cleanup aborts its IO and still records without masking the body failure', async () => {
+  const original = new Error('body failure');
+  let recorded, cleanupSignal;
+  await assert.rejects(runLifecycle({ run: async () => { throw original; },
+    teardown: signal => { cleanupSignal = signal; return new Promise(() => {}); },
+    record: result => { recorded = result; },
+  }, new lib.TypeSafeLifecycle(shortBudgets)), error => error === original);
+  assert.equal(cleanupSignal.aborted, true);
+  assert.equal(recorded.testVerdict, 'FAIL');
+  assert.equal(recorded.teardown.verdict, 'FAIL');
+  assert.match(recorded.teardown.checks[0].detail, /timed out/);
+});
+
+test('bounded report IO fails an otherwise passing run without leaking error details', async () => {
+  await assert.rejects(runLifecycle({ run: async () => {},
+    teardown: async () => ({ verdict: 'PASS', checks: [] }), record: () => new Promise(() => {}),
+  }, new lib.TypeSafeLifecycle(shortBudgets)), { message: 'TypeSafe report could not be written' });
+});
+
+test('uncooperative body cannot race a cleanup inventory; bounded failure still records', async () => {
+  const lifecycle = new lib.TypeSafeLifecycle(shortBudgets);
+  let recorded, cleanupRan = false;
+  void lifecycle.run({ run: () => new Promise(() => {}),
+    teardown: async () => { cleanupRan = true; return { verdict: 'PASS', checks: [] }; },
+    record: result => { recorded = result; },
+  });
+  await lifecycle.finish(true);
+  assert.equal(cleanupRan, false);
+  assert.equal(recorded.testVerdict, 'FAIL');
+  assert.equal(recorded.teardown.verdict, 'FAIL');
+  assert.match(recorded.teardown.checks[0].detail, /cleanup skipped/);
+});
+
+test('API guard drains an accepted write, preserves method binding, and blocks later writes', async () => {
+  const lifecycle = new lib.TypeSafeLifecycle(shortBudgets);
+  const api = lifecycle.guardApi({ writes: 0, async post(value) { this.writes += value; return this.writes; } });
+  assert.equal(await api.post(2), 2);
+  await lifecycle.run({ run: async () => {}, teardown: async () => ({ verdict: 'PASS', checks: [] }), record: () => {} });
+  await lifecycle.finish(false);
+  await assert.rejects(api.post(3), /body cancelled/);
+  assert.equal(api.writes, 2);
+});
+
+test('browser close failure does not skip credential cleanup and has no sensitive error text', async () => {
+  let cleanupRan = false, recorded;
+  await assert.rejects(runLifecycle({ run: async () => {},
+    close: async () => { throw new Error('private-close-detail'); },
+    teardown: async () => { cleanupRan = true; return { verdict: 'PASS', checks: [] }; },
+    record: result => { recorded = result; },
+  }), /teardown failed/);
+  assert.equal(cleanupRan, true);
+  assert.equal(recorded.testVerdict, 'PASS');
+  assert.equal(recorded.teardown.verdict, 'FAIL');
+  assert.doesNotMatch(JSON.stringify(recorded), /private-close-detail/);
+});
+
+test('unregistered fixture is a no-op and duplicate bodies are rejected', async () => {
+  const lifecycle = new lib.TypeSafeLifecycle();
+  await lifecycle.finish(false);
+  await lifecycle.run({ run: async () => {}, teardown: async () => ({ verdict: 'PASS', checks: [] }), record: () => {} });
+  await assert.rejects(lifecycle.run({}), /already registered/);
+  await lifecycle.finish(false);
 });
 
 test('preset report names the missing jev-1.14.0 cause, not an upstream failure', () => {

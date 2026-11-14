@@ -4,14 +4,15 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { isDeepStrictEqual } from 'node:util';
-import { test, expect } from '../lib/scope-actors';
+import { test as base, expect } from '../lib/scope-actors';
+import { typeSafeLifecycleFixture } from '../lib/typesafe-lifecycle';
 import type { ScopeActor } from '../lib/scope-actors';
 import { ApiError } from '../lib/api-client';
 import { E2E } from '../lib/env';
 import {
   MOCK_REFUSAL_TEXT, TICKET, answerShape, countUpstream, expectedCost, largeCallIssues, largeState, refusalVerdict, rowIssues,
   semanticVerdict, unknownModelVerdict, rotateOutcome, gatewayHoldsKey,
-  createTypeSafeResources, teardownTypeSafe, withTypeSafeTeardown, gatewayProvidersAbsent, presetGap,
+  createTypeSafeResources, teardownTypeSafe, TypeSafeLifecycle, TYPE_SAFE_FIXTURE_TIMEOUT, gatewayProvidersAbsent, presetGap,
 } from '../lib/typesafe-live';
 import type { CallRecord, Verdict, CleanupProvider, CleanupKey, TypeSafeResources, TypeSafeCleanupIO, LifecycleResult } from '../lib/typesafe-live';
 
@@ -34,7 +35,7 @@ import type { CallRecord, Verdict, CleanupProvider, CleanupKey, TypeSafeResource
 // The TypeSafe key never reaches Playwright, so it cannot reach its reports
 // either. (The synthetic gateway keys do: they come back in the bodies of
 // owner.api.post('/agentcc/api-keys/'), which runs through Playwright's request
-// context. They are local to this stack and revoked in finally; with trace off
+// context. They are local to this stack and revoked by fixture teardown; with trace off
 // they are not recorded.) Playwright titles an input step with
 // the value typed (`Fill "<value>"`), snapshots a failing page's inputs
 // (password fields included) into error-context.md, and stores an API call's
@@ -100,6 +101,14 @@ const report = {
   outcome: undefined as LifecycleResult | undefined,
 };
 
+const test = base.extend<{ typeSafeLifecycle: TypeSafeLifecycle }>({
+  typeSafeLifecycle: [async ({ browser, scopeActors }, use, testInfo) => {
+    // Explicit dependencies keep browser/actors alive until cleanup completes.
+    void browser; void scopeActors;
+    await typeSafeLifecycleFixture(use, testInfo);
+  }, { timeout: TYPE_SAFE_FIXTURE_TIMEOUT }],
+});
+let bodySignal: AbortSignal | undefined;
 const secrets: string[] = [];
 function redact(text: string): string {
   let out = text;
@@ -138,15 +147,16 @@ test.describe('TypeSafe Jev live decision route (opt-in)', () => {
     'Opt-in: set E2E_TYPESAFE_LIVE=1 and TYPESAFE_API_KEY (a TypeSafe test key) to call TypeSafe live.');
 
   test('typesafe/jev-latest through dashboard provider, gateway key, /v1/systemone, Request Logs and cost',
-    async ({ browser, scopeActors }, testInfo) => {
-      test.setTimeout(1_380_000); // full matrix plus a bounded, independent 120s cleanup budget
-      const owner = scopeActors.ownerA;
+    async ({ browser, scopeActors, typeSafeLifecycle }) => {
+      test.setTimeout(1_380_000); // body only; the fixture owns an independent teardown slot
+      bodySignal = typeSafeLifecycle.signal;
+      const owner = { ...scopeActors.ownerA, api: typeSafeLifecycle.guardApi(scopeActors.ownerA.api) };
       secrets.push(TYPESAFE_KEY, owner.tokens.access, owner.tokens.refresh);
       const suffix = randomUUID();
       let context: BrowserContext | undefined;
       let resources: TypeSafeResources | undefined;
       try {
-        await withTypeSafeTeardown({
+        await typeSafeLifecycle.run({
           run: async () => {
             fs.mkdirSync(OUT_DIR, { recursive: true });
             const io = cleanupIO(owner);
@@ -159,18 +169,12 @@ test.describe('TypeSafe Jev live decision route (opt-in)', () => {
             }
             resources = createTypeSafeResources(providers, keys);
             context = await scopeActors.openContext(browser, owner);
+            typeSafeLifecycle.signal.throwIfAborted();
             const page = await context.newPage();
             await run(page, owner, suffix, resources);
           },
-          failed: () => testInfo.errors.length > 0,
-          teardown: async () => {
-            const result = await teardownTypeSafe(resources, cleanupIO(owner));
-            try { await context?.close(); } catch {
-              result.verdict = 'FAIL';
-              result.checks.push({ label: 'browser close', verdict: 'FAIL', detail: 'Browser close failed; details withheld.' });
-            }
-            return result;
-          },
+          close: async () => { await context?.close(); },
+          teardown: signal => teardownTypeSafe(resources, cleanupIO(owner, signal)),
           record: result => { report.outcome = result; writeReport(); },
         });
       } catch (e) {
@@ -198,6 +202,7 @@ function sanitized(e: unknown): Error {
   return clean;
 }
 function step<T>(name: string, body: () => Promise<T>): Promise<T> {
+  bodySignal?.throwIfAborted();
   return test.step(name, async () => {
     try {
       return await body();
@@ -213,19 +218,24 @@ interface HttpResponse { status: number; headers: Record<string, string>; text: 
 // every request header (a gateway or TypeSafe key) as that step's error. An
 // empty header value means "send no such header".
 async function http(base: string, method: string, route: string,
-  opts: { headers?: Record<string, string>; body?: string; timeoutMs?: number } = {}): Promise<HttpResponse> {
+  opts: { headers?: Record<string, string>; body?: string; timeoutMs?: number; signal?: AbortSignal; drain?: boolean } = {}): Promise<HttpResponse> {
   const headers = Object.fromEntries(Object.entries(opts.headers ?? {}).filter(([, v]) => v !== ''));
-  let res: Response;
+  const signal = opts.signal ?? bodySignal;
   try {
+    signal?.throwIfAborted();
+    const timeout = AbortSignal.timeout(opts.timeoutMs ?? 120_000);
     // Concatenated as ApiClient does, so a path-prefixed base (attach mode)
-    // keeps its prefix; new URL(route, base) would drop it.
-    res = await fetch(`${base.replace(/\/+$/, '')}${route}`, { method, headers, body: opts.body,
-      signal: AbortSignal.timeout(opts.timeoutMs ?? 120_000) });
+    // keeps its prefix; new URL(route, base) would drop it. Credential writes
+    // drain instead of aborting: cancelling a client does not undo a server write.
+    const res = await fetch(`${base.replace(/\/+$/, '')}${route}`, { method, headers, body: opts.body,
+      signal: signal && !opts.drain ? AbortSignal.any([signal, timeout]) : timeout });
+    const text = await res.text();
+    signal?.throwIfAborted();
+    return { status: res.status, headers: Object.fromEntries(res.headers), text };
   } catch (e) {
     const err = e as Error & { cause?: { message?: string; code?: string } };
     throw new Error(redact(`${method} ${route}: ${err.message}${err.cause ? ` (${err.cause.code ?? err.cause.message ?? ''})` : ''}`));
   }
-  return { status: res.status, headers: Object.fromEntries(res.headers), text: await res.text() };
 }
 const gateway = (method: string, route: string, headers: Record<string, string>, body?: string) =>
   http(E2E.gatewayUrl, method, route, { headers, body });
@@ -237,10 +247,10 @@ const json = (res: HttpResponse) => { try { return JSON.parse(res.text); } catch
 // Contracts: agentcc/views/{provider_credential,api_key}.py list => {result:[]},
 // DELETE credential => result.deleted; POST key/revoke => result.status.
 // Gateway admin_keys.go GET /-/keys/{id} => {status}, admin_orgs.go => {data}.
-function cleanupIO(owner: ScopeActor): TypeSafeCleanupIO {
+function cleanupIO(owner: ScopeActor, signal = bodySignal): TypeSafeCleanupIO {
   const deadline = Date.now() + 120_000;
   const request = (base: string, method: string, route: string, headers: Record<string, string>) =>
-    http(base, method, route, { headers, timeoutMs: Math.max(1, Math.min(10_000, deadline - Date.now())) });
+    http(base, method, route, { headers, signal, timeoutMs: Math.max(1, Math.min(10_000, deadline - Date.now())) });
   const headers = { Authorization: `Bearer ${owner.tokens.access}`, 'X-Organization-Id': owner.organizationId,
     'X-Workspace-Id': owner.workspaceId };
   const list = async <T>(route: string, fields: string[]): Promise<T[]> => {
@@ -307,6 +317,9 @@ async function run(page: Page, owner: ScopeActor, suffix: string, resources: Typ
     // A placeholder, never the real key (see the header). System One
     // providers are never probed from the dialog, so it calls nothing.
     await dialog.getByLabel('API Key').fill(`ts-placeholder-${suffix}`);
+    // Once sent, wait for this write before inventory; do not close the page
+    // merely because the runner timed out. No new save starts after cancellation.
+    bodySignal?.throwIfAborted();
     const saved = page.waitForResponse(r => r.url().includes('/agentcc/gateways/') && r.request().method() === 'POST',
       { timeout: UI_READY });
     await dialog.getByRole('button', { name: 'Add Provider' }).click();
@@ -320,7 +333,7 @@ async function run(page: Page, owner: ScopeActor, suffix: string, resources: Typ
     // The real key goes in through the rotate API, outside Playwright.
     const rotated = typesafe
       ? await http(E2E.apiUrl, 'POST', `/agentcc/provider-credentials/${String(typesafe.id)}/rotate/`,
-        { headers: ownerHeaders, body: JSON.stringify({ credentials: { api_key: TYPESAFE_KEY } }) })
+        { headers: ownerHeaders, body: JSON.stringify({ credentials: { api_key: TYPESAFE_KEY } }), drain: true })
       : undefined;
     const rotate = rotateOutcome(rotated?.status, rotated ? json(rotated) : undefined);
     addCase({ id: '1a', title: 'Dashboard TypeSafe preset saves a provider; the key is set by rotate', ticket: 'Add a TypeSafe provider with a TypeSafe key',
@@ -388,7 +401,7 @@ async function run(page: Page, owner: ScopeActor, suffix: string, resources: Typ
   };
   if (LIFECYCLE) {
     const decision = await call('mock lifecycle decision', { model: 'typesafe/jev-latest', state: `${TICKET} e2e-decision:pass`, questions: Q.noul });
-    addCase({ id: 'lifecycle', title: 'Mock decision before finally teardown', ticket: 'Prove cleanup after pass and injected failure',
+    addCase({ id: 'lifecycle', title: 'Mock decision before runner teardown', ticket: 'Prove cleanup after pass and injected failure',
       verdict: decision.status === 200 && answerShape([decision], { dryRun: true, provider: PROVIDER }).fails.length === 0 ? 'PASS' : 'FAIL',
       actual: `mock decision status ${decision.status}; lifecycle=${LIFECYCLE}; full preset/pricing matrix not run`, calls: [decision] });
     if (LIFECYCLE === 'fail') throw new Error('Injected TypeSafe lifecycle failure after provider/key creation');

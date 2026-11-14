@@ -39,14 +39,26 @@ test("a run stops when the real key did not reach the gateway", () => {
 });
 
 test('the browser spec wires cleanup, ownership tracking and independent reporting', () => {
-  assert.match(code, /await withTypeSafeTeardown\(/);
-  assert.match(code, /await teardownTypeSafe\(resources, cleanupIO\(owner\)\)/);
+  assert.match(code, /await typeSafeLifecycle\.run\(/);
+  assert.match(code, /await typeSafeLifecycleFixture\(use, testInfo\)/);
+  assert.match(code, /timeout: TYPE_SAFE_FIXTURE_TIMEOUT/);
+  assert.match(code, /teardownTypeSafe\(resources, cleanupIO\(owner, signal\)\)/);
   assert.match(code, /report\.outcome = result; writeReport\(\)/);
   assert.match(code, /resources = createTypeSafeResources\(providers, keys\)/);
   assert.equal([...code.matchAll(/resources\.providerNames\.add\(/g)].length, 3);
   assert.equal([...code.matchAll(/resources\.keyNames\.add\(/g)].length, 4);
   assert.match(code, /## Independent results/);
   assert.match(code, /## Preset coverage gap/);
+});
+
+test('body cancellation gates API writes and Node fetch without cancelling cleanup', () => {
+  assert.match(code, /api: typeSafeLifecycle\.guardApi\(scopeActors\.ownerA\.api\)/);
+  assert.match(code, /bodySignal = typeSafeLifecycle\.signal/);
+  assert.match(code, /const signal = opts\.signal \?\? bodySignal/);
+  assert.match(code, /AbortSignal\.any\(\[signal, timeout\]\)/);
+  assert.match(code, /credentials: \{ api_key: TYPESAFE_KEY \} \}\), drain: true/);
+  const save = code.indexOf("const saved = page.waitForResponse");
+  assert.ok(code.slice(0, save).trimEnd().endsWith('bodySignal?.throwIfAborted();'));
 });
 
 test('injected lifecycle failure is mock-only and occurs after a decision', () => {

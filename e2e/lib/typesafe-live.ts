@@ -88,31 +88,108 @@ export async function teardownTypeSafe(resources: TypeSafeResources | undefined,
   return { verdict: checks.some(c => c.verdict === 'FAIL') ? 'FAIL' : 'PASS', checks };
 }
 
-// Used by the browser spec as well as the browserless failure-injection tests.
-// Record independent results before rethrowing the original exception. Cleanup
-// (or report I/O) must never replace a test failure; cleanup alone still fails CI.
-export async function withTypeSafeTeardown(opts: {
-  run(): Promise<void>; teardown(): Promise<TeardownResult>;
-  record(result: LifecycleResult): void | Promise<void>; failed?(): boolean;
-}): Promise<void> {
-  let original: unknown, threw = false, recordError: unknown;
-  let teardown: TeardownResult;
-  try {
-    await opts.run();
-  } catch (error) {
-    original = error;
-    threw = true;
-  } finally {
-    try { teardown = await opts.teardown(); } catch {
-      teardown = { verdict: 'FAIL', checks: [{ label: 'teardown', verdict: 'FAIL', detail: 'Unexpected cleanup failure; details withheld.' }] };
+interface LifecycleOptions {
+  run(): Promise<void>;
+  close?(): Promise<void>;
+  teardown(signal: AbortSignal): Promise<TeardownResult>;
+  record(result: LifecycleResult): void | Promise<void>;
+}
+
+// A runner timeout does not settle the body promise. The Playwright fixture
+// calls finish() in its own timeout slot, not in the body's finally block.
+// Budget: drain body (130s), close browser (10s), cleanup (125s), report (5s).
+export const TYPE_SAFE_FIXTURE_TIMEOUT = 280_000;
+const phaseBudgets = { drain: 130_000, close: 10_000, cleanup: 125_000, record: 5_000 };
+
+async function bounded<T>(ms: number, action: (signal: AbortSignal) => Promise<T>): Promise<T> {
+  const controller = new AbortController();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      controller.abort();
+      reject(new Error('TypeSafe lifecycle phase timed out'));
+    }, ms);
+  });
+  try { return await Promise.race([Promise.resolve().then(() => action(controller.signal)), timeout]); }
+  finally { clearTimeout(timer); controller.abort(); }
+}
+
+export class TypeSafeLifecycle {
+  private readonly controller = new AbortController();
+  readonly signal = this.controller.signal;
+  private options?: LifecycleOptions;
+  private body?: Promise<void>;
+  private settled = false;
+  private bodyFailed = false;
+
+  constructor(private readonly budgets = phaseBudgets) {}
+
+  // Gate both sides of API awaits. In-flight writes are drained, not abandoned;
+  // no continuation can start another write once runner teardown has begun.
+  async guard<T>(action: () => Promise<T>): Promise<T> {
+    this.signal.throwIfAborted();
+    const result = await action();
+    this.signal.throwIfAborted();
+    return result;
+  }
+
+  guardApi<T extends object>(api: T): T {
+    return new Proxy(api, { get: (target, property) => {
+      const value = Reflect.get(target, property);
+      return typeof value === 'function'
+        ? (...args: unknown[]) => this.guard(() => Reflect.apply(value, target, args)) : value;
+    } });
+  }
+
+  async run(options: LifecycleOptions): Promise<void> {
+    if (this.options) throw new Error('TypeSafe lifecycle body already registered');
+    this.options = options; // Register cleanup/report before any resource creation.
+    this.body = Promise.resolve().then(options.run);
+    try { await this.body; }
+    catch (error) {
+      this.bodyFailed = true;
+      // Once finish() starts, the runner already owns the timeout/interruption.
+      // Do not append its cancellation fallout as a second test failure.
+      if (!this.signal.aborted) throw error;
     }
-    const testFailed = threw || !!opts.failed?.();
-    try { await opts.record({ testVerdict: testFailed ? 'FAIL' : 'PASS', teardown }); } catch (error) { recordError = error; }
-    if (threw) throw original;
-    // Playwright already holds a soft assertion's error. Do not append a
-    // cleanup error that could be mistaken for the body failure's cause.
+    finally { this.settled = true; }
+  }
+
+  async finish(runnerFailed: boolean): Promise<void> {
+    if (!this.options) return;
+    const options = this.options;
+    const testFailed = runnerFailed || this.bodyFailed || !this.settled;
+    this.controller.abort(new Error('TypeSafe body cancelled for teardown'));
+    const checks: TeardownResult['checks'] = [];
+    let drained = false;
+    try {
+      // Body reads consume signal. Writes already sent (including dashboard
+      // saves) must settle before closing their transports or taking inventory.
+      // Polls can swallow aborts until their 120s deadline, hence a 130s drain.
+      await bounded(this.budgets.drain, async () => { await this.body?.catch(() => undefined); });
+      drained = true;
+    } catch {
+      checks.push({ label: 'body cancellation', verdict: 'FAIL',
+        detail: 'Body did not settle; cleanup skipped to avoid racing pending writes.' });
+    }
+    if (options.close) {
+      try { await bounded(this.budgets.close, options.close); }
+      catch { checks.push({ label: 'browser close', verdict: 'FAIL', detail: 'Browser close failed; details withheld.' }); }
+    }
+    let teardown: TeardownResult = { verdict: 'FAIL', checks: [] };
+    if (drained) {
+      try { teardown = await bounded(this.budgets.cleanup, options.teardown); }
+      catch { checks.push({ label: 'teardown', verdict: 'FAIL', detail: 'Cleanup failed or timed out; details withheld.' }); }
+    }
+    teardown = { verdict: checks.length ? 'FAIL' : teardown.verdict, checks: [...checks, ...teardown.checks] };
+    let recordFailed = false;
+    try {
+      await bounded(this.budgets.record, async () => { await options.record({ testVerdict: testFailed ? 'FAIL' : 'PASS', teardown }); });
+    } catch { recordFailed = true; }
+    // The runner already owns hard/soft/timeout errors. Finalization must never
+    // replace them or relabel a passing body when only cleanup/reporting failed.
     if (!testFailed && teardown.verdict === 'FAIL') throw new Error('TypeSafe teardown failed; see the independent teardown result');
-    if (!testFailed && recordError) throw new Error('TypeSafe report could not be written');
+    if (!testFailed && recordFailed) throw new Error('TypeSafe report could not be written');
   }
 }
 
