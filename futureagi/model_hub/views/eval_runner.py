@@ -65,6 +65,11 @@ from model_hub.serializers.eval_runner import (
     EvalTemplateSerializer,
     EvalUserTemplateSerializer,
 )
+from model_hub.utils.eval_metadata import (
+    EvaluationMetadataUnavailable,
+    read_evaluation_column_types,
+    read_evaluation_workspace,
+)
 from model_hub.utils.eval_prompt_variables import sync_required_keys_from_prompt
 from model_hub.utils.eval_result_columns import infer_eval_result_column_data_type
 from model_hub.utils.evals import prepare_user_eval_config  # noqa: E402
@@ -849,6 +854,7 @@ class EvaluationRunner:
         organization_id=None,
         workspace_id=None,
         version_number=None,
+        update_metric_status=True,
     ):
         self.user_eval_metric_id = user_eval_metric_id
         self.column = column
@@ -891,7 +897,7 @@ class EvaluationRunner:
         self._effective_config_cache: dict | None = None
         self._effective_config_cache_key: tuple | None = None
         if not format_output:
-            self._initialize_eval_metric()
+            self._initialize_eval_metric(update_status=update_metric_status)
 
     def get_few_shot_examples(self, mapping, required_field=None):
         """
@@ -987,8 +993,8 @@ class EvaluationRunner:
         embedding_manager.close()
         return all_examples
 
-    def _initialize_eval_metric(self):
-        """Initialize and set status of user eval metric"""
+    def _initialize_eval_metric(self, *, update_status=True):
+        """Load metric metadata; batch row runners leave status to their task."""
         self.user_eval_metric = UserEvalMetric.objects.select_related(
             "pinned_version",
         ).get(id=self.user_eval_metric_id)
@@ -1017,8 +1023,9 @@ class EvaluationRunner:
             if self._resolved_version:
                 self.version_number = self._resolved_version.version_number
 
-        self.user_eval_metric.status = StatusType.RUNNING.value
-        self.user_eval_metric.save(update_fields=["status"])
+        if update_status:
+            self.user_eval_metric.status = StatusType.RUNNING.value
+            self.user_eval_metric.save(update_fields=["status"])
 
     def _get_effective_eval_config(self):
         """Return template config with the resolved version snapshot applied.
@@ -1368,10 +1375,9 @@ class EvaluationRunner:
                     if base_col_id:
                         base_column_ids.append(base_col_id)
 
-            cols = Column.objects.filter(
-                id__in=base_column_ids, dataset_id=row.dataset_id
-            ).values("id", "data_type")
-            col_map = {str(col["id"]): col["data_type"] for col in cols}
+            col_map = read_evaluation_column_types(
+                base_column_ids, dataset_id=row.dataset_id
+            )
             api_call_log_row = self._handle_api_call(row, mappings, config)
             (
                 eval_result,
@@ -1480,6 +1486,29 @@ class EvaluationRunner:
                     ),
                 )
 
+        except EvaluationMetadataUnavailable as error:
+            # No provider or usage call started. Terminalize the paired reason
+            # cell too, so reruns cannot retain stale reasoning or stay RUNNING.
+            # These writes are outside the metadata retry boundary.
+            logger.warning("evaluation_metadata_unavailable", error_code=error.code)
+            response = {"reason": str(error), "error_code": error.code}
+            status = value = CellStatus.ERROR.value
+            wants_reason = bool(
+                self.experiment_dataset
+            ) or self.user_eval_metric.config.get("reason_column")
+            if wants_reason and not self.optimize:
+                reason_column = self._create_reason_column(
+                    self.dataset, f"{self.user_eval_metric.name}-reason"
+                )
+                if reason_column is not None:
+                    self._create_reason_cell(
+                        self.dataset,
+                        reason_column,
+                        row,
+                        response,
+                        response["reason"],
+                        status,
+                    )
         except Exception as e:
             # Expected, handled validation failures (a required input was not
             # mapped/provided, or the eval targets a cell that already errored)
@@ -1562,6 +1591,11 @@ class EvaluationRunner:
 
         is_futureagi_eval = self.futureagi_eval
 
+        # Resolve the lazy relations before mapping checks read them and before
+        # logging/billing. Only this read is replayable; the logger and provider
+        # must run at most once.
+        workspace = read_evaluation_workspace(row)
+
         if not config.get("preview", False):
             input_token_count = self._get_input_token_count(row, mappings, config)
         else:
@@ -1621,7 +1655,7 @@ class EvaluationRunner:
                     else None
                 )
             ),
-            workspace=row.dataset.workspace,
+            workspace=workspace,
         )
 
         if not api_call_log_row:
@@ -1689,6 +1723,10 @@ class EvaluationRunner:
             )
         except Exception as e:
             logger.exception(f"Error updating or creating cell: {str(e)}")
+            # The result was not stored, so the cell keeps its RUNNING state.
+            # Fail the row so the caller finishes it instead of counting it as
+            # a success.
+            raise
 
     def _get_required_fields_and_mappings(
         self, user_eval_metric=None, mapping=None, config=None, required_field=None
