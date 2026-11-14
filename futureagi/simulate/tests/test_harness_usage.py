@@ -18,6 +18,7 @@ from simulate.services.hosted_harness import (
     register_attempt,
 )
 from simulate.services.hosted_harness_gateway import _read_harness_spend
+from simulate.services.hosted_sandbox import SandboxFileNotFoundError
 from simulate.tests.test_hosted_harness_channels import BASE, _headers, _payload
 from tfc.ee_loader import has_ee
 
@@ -330,7 +331,7 @@ def test_a_build_run_as_a_chat_turn_bills_the_chats_ledger_at_cleanup(
 
     def download_file(path, timeout=None):
         if path not in files:
-            raise FileNotFoundError(path)
+            raise SandboxFileNotFoundError(path)
         return files[path]
 
     # A build runs as a chat turn: its sandbox holds the chat's ledger and no cost.json.

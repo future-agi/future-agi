@@ -78,6 +78,7 @@ from simulate.services.hosted_harness_gateway import (
 )
 from simulate.services.hosted_sandbox import (
     SandboxConflictError,
+    SandboxFileNotFoundError,
     SandboxNotFoundError,
     SandboxProviderError,
 )
@@ -5071,7 +5072,7 @@ def test_a_stale_progress_save_keeps_the_observability_refusal(
         observability_refusal=newer,
         harness_spend={"total_usd": 0.5, "unpriced_turns": 0, "attempts": {"2": other}},
     )
-    _record_harness_spend(stale, {"total_usd": 0.1, "stages": []}, 1)
+    _record_harness_spend(stale, 1, cli={"total_usd": 0.1, "stages": []})
 
     metadata = _stored_metadata(job.id)
     assert metadata["observability_refusal"] == newer
@@ -5138,7 +5139,7 @@ def _ledger(stage: str, usd: float) -> bytes:
 def _sandbox_holding(files: dict[str, bytes]) -> SimpleNamespace:
     def download_file(path, timeout=None):
         if path not in files:
-            raise FileNotFoundError(path)
+            raise SandboxFileNotFoundError(path)
         return files[path]
 
     return SimpleNamespace(fs=SimpleNamespace(download_file=download_file))
