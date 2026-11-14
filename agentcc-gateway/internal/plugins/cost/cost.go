@@ -375,15 +375,17 @@ func (p *Plugin) warnUnpriced(rc *models.RequestContext, model, priceHint string
 // tryOrgPricing checks per-org custom pricing for the model.
 // Returns (cost, true) if org pricing was found and applied; (0, false) to fall through to global.
 func (p *Plugin) tryOrgPricing(rc *models.RequestContext, model string, ct *tenant.CostTrackingConfig) (float64, bool) {
-	pricing := ct.CustomPricing[model]
-	if pricing == nil && model == rc.ResolvedModel && rc.Model != "" {
-		pricing = ct.CustomPricing[rc.Model]
-	}
-	if pricing == nil && rc.EndpointType == "decision" {
-		for _, m := range decisionModelNames(rc) {
+	var pricing *tenant.CustomPricing
+	if rc.EndpointType == "decision" {
+		for _, m := range decisionOrgPriceNames(rc) {
 			if pricing = ct.CustomPricing[m]; pricing != nil {
 				break
 			}
+		}
+	} else {
+		pricing = ct.CustomPricing[model]
+		if pricing == nil && model == rc.ResolvedModel && rc.Model != "" {
+			pricing = ct.CustomPricing[rc.Model]
 		}
 	}
 	if pricing == nil {
@@ -414,6 +416,44 @@ func (p *Plugin) tryOrgPricing(rc *models.RequestContext, model string, ct *tena
 // and the provider-qualified id GET /v1/decisions/models lists and prices
 // ("typesafe/jev-latest"), so a bare "jev-latest" is charged the price the
 // listing shows.
+// decisionOrgPriceNames is the order an org's custom decision prices are
+// looked up in. It does not depend on the form of the vendor's answer: a
+// resolved name counts first only when it is a name of its own (a dated
+// release such as "typesafe/jev-1.13-20260917"), not when the answer left the
+// model out (ResolvedModel is then the upstream name) or echoed a name the
+// call was sent as. Then the names the call was sent as, in the order
+// GET /v1/decisions/models lists an entry's price (newDecisionModel): the
+// caller's name, the provider-qualified upstream name, the upstream name.
+//
+// A caller that sends the bare configured name of an unprefixed entry is
+// charged that name's price first, while the listing shows the
+// provider-qualified id's price first; with both names priced, one listed
+// price cannot match both kinds of caller.
+func decisionOrgPriceNames(rc *models.RequestContext) []string {
+	names := make([]string, 0, 6)
+	add := func(name string) {
+		if name != "" && !slices.Contains(names, name) {
+			names = append(names, name)
+		}
+	}
+	upstream := ""
+	if rc.DecisionRequest != nil {
+		upstream = rc.DecisionRequest.UpstreamModel
+	}
+	if rc.ResolvedModel != upstream && rc.ResolvedModel != rc.Model {
+		add(rc.ResolvedModel)
+	}
+	add(rc.Model)
+	if rc.Provider != "" && upstream != "" && !strings.HasPrefix(upstream, rc.Provider+"/") {
+		add(rc.Provider + "/" + upstream)
+	}
+	add(upstream)
+	for _, name := range decisionModelNames(rc) {
+		add(name)
+	}
+	return names
+}
+
 func decisionModelNames(rc *models.RequestContext) []string {
 	names := make([]string, 0, 5)
 	add := func(name string) {
