@@ -135,14 +135,24 @@ class LocalizationCase:
         self._locks: dict[str, asyncio.Lock] = {}
         self.inspected: dict[str, set[str]] = {}
         self.result: LocalizerResult | None = None
+        # Inputs a tool could not open because ffmpeg is missing.
+        self.media_tool_failed_keys: set[str] = set()
 
     def missing_media_tool(self) -> MediaToolUnavailable | None:
-        """The stored ffmpeg error, unless the agent localized findings anyway.
+        """The stored ffmpeg error, unless the agent answered without it.
 
-        An "unlocalizable" submission has no findings: after a tool reported a
-        missing ffmpeg, that is the cause, not the agent's free-text reason.
+        Findings, or an "unlocalizable" answer about an input that opened, are
+        the agent's own result. "Unlocalizable" about the input ffmpeg could
+        not open is the missing tool, not the agent's free-text reason.
         """
-        if self.result is not None and self.result.analysis:
+        if self.result is None:
+            return self.media_tool_error
+        if self.result.analysis:
+            return None
+        if (
+            self.media_tool_failed_keys
+            and self.result.selected_key not in self.media_tool_failed_keys
+        ):
             return None
         return self.media_tool_error
 
@@ -391,6 +401,8 @@ class LocalizationCase:
                     # Names a missing binary and the image to use, never case
                     # contents, so the agent may see it.
                     self.media_tool_error = exc
+                    if isinstance(args, dict) and isinstance(args.get("key"), str):
+                        self.media_tool_failed_keys.add(args["key"])
                     return {"is_error": True, "content": [_text({"error": str(exc)})]}
                 except (ValueError, KeyError, TypeError, ValidationError):
                     # Validation errors may contain input/media values. Keep the
