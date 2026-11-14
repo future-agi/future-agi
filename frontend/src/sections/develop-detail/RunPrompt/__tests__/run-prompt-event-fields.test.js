@@ -48,6 +48,33 @@ describe("runPromptEventFields", () => {
     expect(JSON.stringify(fields)).not.toContain(PROMPT_TEXT);
   });
 
+  it("reads the model options from the request's snake_case config", () => {
+    const fields = runPromptEventFields("dataset-3", {
+      config: {
+        model: "synthetic-model",
+        max_tokens: 512,
+        presence_penalty: 0.5,
+        top_p: 0.9,
+        temperature: 0.1,
+        response_format: "json_object",
+        tool_choice: "auto",
+        tools: [{ id: "tool-9" }],
+      },
+    });
+
+    expect(fields.model_options).toEqual({
+      maxTokens: 512,
+      presencePenalty: 0.5,
+      temperature: 0.1,
+      topP: 0.9,
+      responseFormat: "json_object",
+    });
+    expect(fields.tools_config).toEqual({
+      toolChoice: "auto",
+      tools: ["tool-9"],
+    });
+  });
+
   it("handles a run without messages or tools", () => {
     expect(runPromptEventFields("dataset-2", { config: {} })).toEqual({
       id: "dataset-2",

@@ -35,12 +35,28 @@ const ONE_TIME_PARAMS = new Set([
 const BASE = "https://analytics-url.invalid";
 const ABSOLUTE = /^[a-z][a-z0-9+.-]*:/i;
 
+// The router matches decoded paths, so "/%73hared/x" opens /shared/:token.
+const decodedPath = (pathname) => {
+  try {
+    return decodeURIComponent(pathname);
+  } catch {
+    return pathname;
+  }
+};
+
 export const pageViewPath = (pathname = "") => {
-  const pattern = TOKEN_PAGE_PATTERNS.find((candidate) =>
-    matchPath({ path: candidate, end: false }, pathname),
+  const decoded = decodedPath(pathname);
+  const pattern = TOKEN_PAGE_PATTERNS.find(
+    (candidate) =>
+      matchPath({ path: candidate, end: false }, pathname) ||
+      matchPath({ path: candidate, end: false }, decoded),
   );
   return pattern || pathname;
 };
+
+// How many levels of URLs inside parameter values (e.g. returnTo=...) and
+// hash routes are cleaned.
+const MAX_DEPTH = 4;
 
 const isOneTimeParam = (name) => ONE_TIME_PARAMS.has(name.toLowerCase());
 
@@ -58,7 +74,9 @@ const cleanSearch = (search, depth) => {
       return;
     }
     const cleaned =
-      depth < 1 && looksLikeUrl(value) ? cleanUrl(value, depth + 1) : value;
+      depth < MAX_DEPTH && looksLikeUrl(value)
+        ? cleanUrl(value, depth + 1)
+        : value;
     if (cleaned !== value) changed = true;
     kept.append(name, cleaned);
   });
@@ -79,8 +97,18 @@ const cleanUrl = (href, depth) => {
 
   const pathname = pageViewPath(url.pathname);
   const search = cleanSearch(url.search, depth);
-  const fragment = new URLSearchParams(url.hash.slice(1));
-  const hash = Array.from(fragment.keys()).some(isOneTimeParam) ? "" : url.hash;
+  let hash = url.hash;
+  if (url.hash.startsWith("#/")) {
+    // A hash route: clean it as a path with its own query.
+    hash =
+      depth < MAX_DEPTH ? `#${cleanUrl(url.hash.slice(1), depth + 1)}` : "";
+  } else if (
+    Array.from(new URLSearchParams(url.hash.slice(1)).keys()).some(
+      isOneTimeParam,
+    )
+  ) {
+    hash = "";
+  }
 
   if (pathname === url.pathname && search === url.search && hash === url.hash) {
     return href;

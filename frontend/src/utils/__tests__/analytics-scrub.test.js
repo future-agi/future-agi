@@ -184,6 +184,17 @@ describe("scrubAnalyticsProperties", () => {
     "desc",
     "prop_desc",
     "notes",
+    "query",
+    "search_term",
+    "searchTerm",
+    "pattern",
+    "patterns",
+    "use_case",
+    "useCase",
+    "objective",
+    "Property_Value",
+    "filter_value",
+    "filterValue",
   ])("drops the free-text key %s", (key) => {
     expect(isFreeTextKey(key)).toBe(true);
     expect(

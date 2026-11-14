@@ -265,6 +265,23 @@ describe("properties sent by mixpanel-browser", () => {
     expect(JSON.stringify(requests)).not.toContain(CODE);
   });
 
+  it("cleans link codes from campaign values the library adds to events and the profile", async () => {
+    const campaign = encodeURIComponent(`${ORIGIN}/shared/${CODE}`);
+    visit(`/auth/jwt/login?utm_campaign=${campaign}`);
+
+    trackEvent("Synthetic campaign event", { count: 5 });
+
+    const requests = await flushSentRequests();
+    const { properties } = sentEvent(
+      requests
+        .filter((request) => request.url.includes("/track"))
+        .flatMap((request) => request.items),
+      "Synthetic campaign event",
+    );
+    expect(properties.utm_campaign).toBe(`${ORIGIN}/shared/:token`);
+    expect(JSON.stringify(requests)).not.toContain(CODE);
+  });
+
   it.each([
     "userPromptEntered",
     "GeneratePromptClicked",

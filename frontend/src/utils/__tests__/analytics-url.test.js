@@ -67,6 +67,40 @@ describe("analyticsUrl", () => {
     );
   });
 
+  it("matches link paths written with percent-encoded letters", () => {
+    expect(analyticsUrl(`https://app.example.test/%73hared/${CODE}`)).toBe(
+      "https://app.example.test/shared/:token",
+    );
+    expect(analyticsUrl(`/auth/jwt/%76erify/${USER}/${CODE}`)).toBe(
+      "/auth/jwt/verify/:uuid/:token",
+    );
+  });
+
+  it("cleans a hash route's path and query", () => {
+    expect(
+      analyticsUrl(
+        `https://app.example.test/#/dashboard?sso_token=${CODE}&tab=1`,
+      ),
+    ).toBe("https://app.example.test/#/dashboard?tab=1");
+    expect(analyticsUrl(`https://app.example.test/#/shared/${CODE}`)).toBe(
+      "https://app.example.test/#/shared/:token",
+    );
+  });
+
+  it("cleans links nested in parameter values more than one level deep", () => {
+    const inner = encodeURIComponent(`/shared/${CODE}`);
+    const middle = encodeURIComponent(`/auth/jwt/login?returnTo=${inner}`);
+    const sso = encodeURIComponent(`/dashboard?sso_token=${CODE}`);
+    const middleSso = encodeURIComponent(`/auth/jwt/login?returnTo=${sso}`);
+
+    expect(analyticsUrl(`/auth/jwt/login?returnTo=${middle}`)).not.toContain(
+      CODE,
+    );
+    expect(
+      analyticsUrl(`https://app.example.test/x?returnTo=${middleSso}`),
+    ).not.toContain(CODE);
+  });
+
   it.each([
     "https://app.example.test/dashboard/develop/dataset-1?tab=data&page=2",
     "https://docs.example.test/guide?step=3&q=a+b%20c",

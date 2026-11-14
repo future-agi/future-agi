@@ -12,7 +12,7 @@ const messageTextLength = (content) => {
 
 /**
  * Properties for the dataset run-prompt event: the dataset id, the model and
- * its options, the selected tool ids, and the number and total text length of
+ * its options (the request config uses snake_case names), the selected tool ids, and the number and total text length of
  * the prompt messages (not the messages themselves).
  */
 export const runPromptEventFields = (datasetId, submitObject) => {
@@ -27,16 +27,16 @@ export const runPromptEventFields = (datasetId, submitObject) => {
       0,
     ),
     tools_config: {
-      toolChoice: config.toolChoice,
+      toolChoice: config.tool_choice ?? config.toolChoice,
       tools: config.tools?.map((tool) => tool.id) || [],
     },
     model_name: config.model,
     model_options: {
-      maxTokens: config.maxTokens,
-      presencePenalty: config.presencePenalty,
+      maxTokens: config.max_tokens ?? config.maxTokens,
+      presencePenalty: config.presence_penalty ?? config.presencePenalty,
       temperature: config.temperature,
-      topP: config.topP,
-      responseFormat: config.responseFormat,
+      topP: config.top_p ?? config.topP,
+      responseFormat: config.response_format ?? config.responseFormat,
     },
   };
 };

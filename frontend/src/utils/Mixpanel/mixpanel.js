@@ -46,9 +46,12 @@ let mixpanelReplayStopScript = null;
 // the route pattern, one-time query parameters removed.
 const URL_PROPERTIES = ["$current_url", "$referrer", "$initial_referrer"];
 
+// Cleans every top-level text value as a URL just before sending: the URL
+// properties above and values the library collects itself, such as campaign
+// (utm_*) parameters. Text that is not a link URL is left as it is.
 const cleanUrlProperties = (properties) => {
   if (!properties || typeof properties !== "object") return;
-  URL_PROPERTIES.forEach((name) => {
+  Object.keys(properties).forEach((name) => {
     if (typeof properties[name] === "string") {
       properties[name] = analyticsUrl(properties[name]);
     }

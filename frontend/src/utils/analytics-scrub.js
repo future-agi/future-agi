@@ -97,7 +97,17 @@ const FREE_TEXT_LAST_WORDS = new Set([
   "description",
   "desc",
   "notes",
+  "query",
+  "search",
+  "term",
+  "pattern",
+  "patterns",
+  "objective",
 ]);
+
+// Whole keys that hold free text although their last word does not say so:
+// synthetic data instructions and trace filter values.
+const FREE_TEXT_KEYS = new Set(["use_case", "property_value", "filter_value"]);
 
 const keyWords = (key) =>
   String(key)
@@ -139,7 +149,11 @@ export const isCredentialLikeKey = (key) => {
 
 export const isFreeTextKey = (key) => {
   const words = keyWords(key);
-  return words.length > 0 && FREE_TEXT_LAST_WORDS.has(words[words.length - 1]);
+  return (
+    words.length > 0 &&
+    (FREE_TEXT_LAST_WORDS.has(words[words.length - 1]) ||
+      FREE_TEXT_KEYS.has(words.join("_")))
+  );
 };
 
 // Numbers and true/false flags under these names say nothing about the text
