@@ -17,9 +17,9 @@ from tracer.models.trace import Trace
 from tracer.models.trace_session import TraceSession, TraceSessionOverlay
 from tracer.services.attachments import playback, session_deletion
 from tracer.tests.test_attachment_session_deletion import (
-    collector_recording,
-    parser_probe,
-    setup,
+    collector_recording as collector_recording,
+    parser_probe as parser_probe,
+    setup as setup,
 )
 from tracer.views.trace_session import _soft_delete_trace_session_tree
 
@@ -116,7 +116,7 @@ def test_late_failure_rolls_back_marker_and_attachment_tombstone(collector_recor
 
 def test_ch_overlay_owner_race_never_erases_media(collector_recording, auth_client, project):
     r = collector_recording
-    TraceSessionOverlay._base_manager.create(trace_session_id=r.session_id, project=project)
+    TraceSessionOverlay._base_manager.create(trace_session_id=r.session_id, project_id=project.id)
     assert auth_client.delete(f"/tracer/trace-session/{r.session_id}/").status_code == 400
     assert not TraceSessionOverlay._base_manager.get(trace_session_id=r.session_id).deleted
     assert not AttachmentOutbox.objects.filter(event="erase").exists()
