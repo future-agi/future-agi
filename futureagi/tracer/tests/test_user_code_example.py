@@ -6,8 +6,8 @@ import pytest
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
-from traceai_openai import OpenAIInstrumentor
 from rest_framework import status
+from traceai_openai import OpenAIInstrumentor
 
 from accounts.models.organization import Organization
 from accounts.models.user import User
@@ -15,7 +15,6 @@ from accounts.models.workspace import Workspace
 from model_hub.models.ai_model import AIModel
 from tfc.constants.roles import OrganizationRoles
 from tracer.models.project import Project
-
 
 USER_CODE_EXAMPLE_PATH = "/tracer/users/get_code_example/"
 
