@@ -58,7 +58,10 @@ def test_judged_only_counts_as_kept(user, workspace, storage):
 
     environment = _environment(user, workspace, storage, "proof-counts-judged")
     _suite(environment, _ten())
-    proofs = {key: {"format": 2, "holds": True, "proved": True} for key in REFUND_KEYS + LOOKUP_KEYS}
+    proofs = {
+        key: {"format": 2, "holds": True, "proved": True}
+        for key in REFUND_KEYS + LOOKUP_KEYS
+    }
     proofs[LOOKUP_KEYS[0]] = {
         "format": 2,
         "holds": True,

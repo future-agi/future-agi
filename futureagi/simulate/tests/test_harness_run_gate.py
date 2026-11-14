@@ -157,7 +157,10 @@ def test_default_pair_runs_only_active():
     assert runnable(_lifecycle("active"), default_pair=True) is True
     assert runnable(_lifecycle("validated"), default_pair=True) is False
     assert runnable(_lifecycle("draft", "not_validated"), default_pair=True) is False
-    assert runnable(_lifecycle("draft", "validation_unavailable"), default_pair=True) is True
+    assert (
+        runnable(_lifecycle("draft", "validation_unavailable"), default_pair=True)
+        is True
+    )
 
 
 def test_candidate_pair_runs_validated():
