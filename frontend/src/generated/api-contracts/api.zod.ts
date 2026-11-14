@@ -40298,6 +40298,12 @@ export const SimulateApiHarnessEnvironmentsCompareResponse = zod.object({
           label: zod.string().min(1).nullish(),
         })
         .nullable(),
+      changed_test: zod
+        .boolean()
+        .optional()
+        .describe(
+          "The case changed between the two runs (its content, or a source it cites).",
+        ),
     }),
   ),
   summary: zod.object({
@@ -42948,6 +42954,9 @@ export const SimulateApiHarnessEnvironmentsValidateScenariosParams = zod.object(
 
 export const simulateApiHarnessEnvironmentsValidateScenariosBodyIfFreshDefault =
   false;
+export const simulateApiHarnessEnvironmentsValidateScenariosBodyKeysItemMax = 255;
+
+export const simulateApiHarnessEnvironmentsValidateScenariosBodyKeysMax = 50;
 
 export const SimulateApiHarnessEnvironmentsValidateScenariosBody = zod.object({
   agent_version_id: zod.string().uuid().optional(),
@@ -42958,6 +42967,18 @@ export const SimulateApiHarnessEnvironmentsValidateScenariosBody = zod.object({
     .default(simulateApiHarnessEnvironmentsValidateScenariosBodyIfFreshDefault)
     .describe(
       "Answer ready without a new job when the newest proving finished after the pair's last change.",
+    ),
+  keys: zod
+    .array(
+      zod
+        .string()
+        .min(1)
+        .max(simulateApiHarnessEnvironmentsValidateScenariosBodyKeysItemMax),
+    )
+    .max(simulateApiHarnessEnvironmentsValidateScenariosBodyKeysMax)
+    .optional()
+    .describe(
+      "Prove only these scenario keys; the other cases keep their proofs.",
     ),
 });
 
@@ -42992,11 +43013,42 @@ export const SimulateApiHarnessEnvironmentsArchiveScenarioResponse = zod.object(
   {
     scenario_key: zod.string().min(1),
     lifecycle: zod.record(zod.string(), zod.string()),
+    live: zod.boolean().optional(),
   },
 );
 
 /**
- * Put an archived scenario back as a draft under its own key.
+ * Seeded rows of one table, to pick a real record for a case whose record is missing. No writes.
+ */
+export const SimulateApiHarnessEnvironmentsScenarioRecordsParams = zod.object({
+  id: zod.string(),
+  key: zod.string(),
+});
+
+export const simulateApiHarnessEnvironmentsScenarioRecordsQueryTableMax = 255;
+
+export const SimulateApiHarnessEnvironmentsScenarioRecordsQueryParams =
+  zod.object({
+    table: zod
+      .string()
+      .min(1)
+      .max(simulateApiHarnessEnvironmentsScenarioRecordsQueryTableMax),
+  });
+
+export const SimulateApiHarnessEnvironmentsScenarioRecordsResponse = zod.object(
+  {
+    table: zod.string().min(1),
+    rows: zod.array(zod.record(zod.string(), zod.string())),
+    available: zod
+      .boolean()
+      .describe(
+        "False when the world's records live only in the agent's own service.",
+      ),
+  },
+);
+
+/**
+ * Bring an archived scenario back: at once when the saved suite still holds it, else as a draft.
  */
 export const SimulateApiHarnessEnvironmentsRestoreScenarioParams = zod.object({
   id: zod.string(),
@@ -43011,6 +43063,7 @@ export const SimulateApiHarnessEnvironmentsRestoreScenarioResponse = zod.object(
   {
     scenario_key: zod.string().min(1),
     lifecycle: zod.record(zod.string(), zod.string()),
+    live: zod.boolean().optional(),
   },
 );
 
@@ -56981,6 +57034,7 @@ export const SimulateV3TestExecutionCallsResponse = zod.object({
         label: zod.string(),
       })
       .optional(),
+    must_pass_failed: zod.array(zod.string().min(1)).optional(),
   }),
   summary: zod.object({
     total: zod.number(),
