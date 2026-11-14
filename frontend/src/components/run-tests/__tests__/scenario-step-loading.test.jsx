@@ -204,7 +204,7 @@ describe("Choose Scenarios step — paging", () => {
     renderPage();
     await goToScenarioStep();
     expect(await screen.findByText("Scenario 1-0")).toBeInTheDocument();
-    fireEvent.click(screen.getByTitle(/Go to next page/i));
+    fireEvent.click(screen.getByRole("button", { name: /next page/i }));
     expect(await screen.findByText("Scenario 2-0")).toBeInTheDocument();
 
     fireEvent.change(screen.getByPlaceholderText("Search scenarios..."), {
