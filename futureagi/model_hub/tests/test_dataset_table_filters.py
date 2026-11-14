@@ -356,9 +356,10 @@ def test_get_cell_data_api_returns_requested_cell(auth_client, dataset_filter_se
     )
 
     assert response.status_code == status.HTTP_200_OK
-    assert response.data["result"][str(rows[0].id)][str(text_col.id)][
-        "cell_value"
-    ] == "Alpha"
+    assert (
+        response.data["result"][str(rows[0].id)][str(text_col.id)]["cell_value"]
+        == "Alpha"
+    )
 
 
 def test_dataset_row_data_api_rejects_legacy_filter_shape(
