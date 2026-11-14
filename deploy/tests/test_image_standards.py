@@ -1430,6 +1430,82 @@ def nginx_blocks(text: str, keyword: str) -> list[str]:
     return bodies
 
 
+class FrontendEntrypoint(unittest.TestCase):
+    """Validate listener selection without requiring Docker or real certificates."""
+
+    def run_entrypoint(self, **settings):
+        with tempfile.TemporaryDirectory() as directory:
+            env = {
+                key: value
+                for key, value in os.environ.items()
+                if not key.startswith("FRONTEND_")
+            }
+            env["CONFIG_PATH"] = str(Path(directory) / "config.js")
+            env.update(settings)
+            result = subprocess.run(
+                ["sh", str(ROOT / "frontend/docker-entrypoint.sh"), "true"],
+                env=env,
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            listen = Path("/tmp/futureagi-nginx/listen.conf")
+            content = listen.read_text() if result.returncode == 0 else ""
+            return result, content
+
+    def test_default_listener_is_http_only(self):
+        result, listen = self.run_entrypoint()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(listen, "listen 80;\nlisten [::]:80;\n")
+
+    def test_requires_at_least_one_listener_and_tls_files(self):
+        result, _ = self.run_entrypoint(
+            FRONTEND_HTTP_ENABLED="false", FRONTEND_TLS_ENABLED="false"
+        )
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("[entrypoint] HTTP and TLS cannot both be disabled", result.stderr)
+        result, _ = self.run_entrypoint(
+            FRONTEND_TLS_ENABLED="true", FRONTEND_TLS_CERT_FILE="/missing/cert"
+        )
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("[entrypoint] TLS file missing", result.stderr)
+        with tempfile.TemporaryDirectory() as directory:
+            cert = Path(directory) / "empty.crt"
+            key = Path(directory) / "key.pem"
+            cert.touch()
+            key.write_text("synthetic placeholder key")
+            result, _ = self.run_entrypoint(
+                FRONTEND_TLS_ENABLED="true",
+                FRONTEND_TLS_CERT_FILE=str(cert),
+                FRONTEND_TLS_KEY_FILE=str(key),
+            )
+            self.assertEqual(result.returncode, 1)
+            self.assertIn(
+                "[entrypoint] TLS file missing, empty or unreadable", result.stderr
+            )
+
+    def test_tls_only_generates_expected_nginx_directives(self):
+        with tempfile.TemporaryDirectory() as directory:
+            cert = Path(directory) / "cert.pem"
+            key = Path(directory) / "key.pem"
+            cert.write_text("synthetic placeholder cert")
+            key.write_text("synthetic placeholder key")
+            result, listen = self.run_entrypoint(
+                FRONTEND_HTTP_ENABLED="false",
+                FRONTEND_TLS_ENABLED="true",
+                FRONTEND_TLS_PORT="8443",
+                FRONTEND_TLS_CERT_FILE=str(cert),
+                FRONTEND_TLS_KEY_FILE=str(key),
+                FRONTEND_TLS_RELOAD_INTERVAL="1",
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertNotIn("listen 80;", listen)
+            self.assertIn("listen 8443 ssl;", listen)
+            self.assertIn("listen [::]:8443 ssl;", listen)
+            self.assertIn("ssl_protocols TLSv1.2 TLSv1.3;", listen)
+            self.assertIn("ssl_session_tickets off;", listen)
+
+
 class NginxSecurityHeaders(unittest.TestCase):
     """nginx drops the server-level add_header directives in a location that
     sets a header of its own, so each such location includes them again."""
