@@ -3,6 +3,7 @@ package logging
 import (
 	"context"
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"strings"
 	"testing"
@@ -124,5 +125,34 @@ func TestLogFlusherPartialRequeueAndLateMetrics(t *testing.T) {
 	f.SetMetrics(reg) // attaching the same registry again must not double counts
 	if got := reg.Render(); !strings.Contains(got, `agentcc_request_log_records_dropped_total{reason="requeue_overflow"} 2`) {
 		t.Fatalf("late attachment: %s", got)
+	}
+}
+
+// A full buffer refuses records one request at a time. Every one is counted,
+// but it is logged at most once per overflowWarnInterval, not once a record.
+func TestLogFlusherBufferFullLogsAtMostOncePerInterval(t *testing.T) {
+	var logs strings.Builder
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+
+	cfg := flushTestConfig()
+	f := NewLogFlusher("http://127.0.0.1:1/unused", "", cfg.Interval, cfg.MaxBatch, cfg)
+	enqueue(f, "a", "b", "c", "d") // the buffer holds 2*MaxBatch
+	for i := 0; i < 50; i++ {
+		enqueue(f, "over")
+	}
+
+	if got := f.Dropped()["buffer_full"]; got != 50 {
+		t.Fatalf("buffer_full = %d, want 50", got)
+	}
+	if got := strings.Count(logs.String(), "buffer full"); got != 1 {
+		t.Fatalf("buffer-full lines = %d, want 1:\n%s", got, logs.String())
+	}
+	if !strings.Contains(logs.String(), "dropped_total=1") {
+		t.Fatalf("the warning does not carry the total:\n%s", logs.String())
+	}
+	if strings.Contains(logs.String(), "records dropped") {
+		t.Fatalf("a buffer-full drop was logged one record at a time:\n%s", logs.String())
 	}
 }

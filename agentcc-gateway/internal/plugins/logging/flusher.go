@@ -169,8 +169,19 @@ func (f *LogFlusher) SetMetrics(reg *metrics.Registry) {
 	}
 }
 
-// recordDrop increments the always-on counter before logging each discard.
+// recordDrop counts a discard, always, and logs it at ERROR.
 func (f *LogFlusher) recordDrop(reason string, n int) int64 {
+	total := f.countDrop(reason, n)
+	if n > 0 {
+		slog.Error("log flusher: records dropped", "reason", reason, "count", n, "dropped_total", total)
+	}
+	return total
+}
+
+// countDrop counts a discard without logging it, for a caller that logs it
+// itself: a full buffer refuses records one request at a time, so it logs
+// at most once per overflowWarnInterval.
+func (f *LogFlusher) countDrop(reason string, n int) int64 {
 	if n <= 0 {
 		return 0
 	}
@@ -186,7 +197,6 @@ func (f *LogFlusher) recordDrop(reason string, n int) int64 {
 		f.registry.CounterAdd(droppedMetric, droppedHelp, map[string]string{"reason": reason}, int64(n))
 	}
 	f.metricsMu.Unlock()
-	slog.Error("log flusher: records dropped", "reason", reason, "count", n, "dropped_total", total)
 	return total
 }
 
@@ -232,7 +242,7 @@ func (f *LogFlusher) Enqueue(rec TraceRecord) {
 			f.overflowWarned = time.Now()
 		}
 		f.mu.Unlock()
-		total := f.recordDrop("buffer_full", 1)
+		total := f.countDrop("buffer_full", 1)
 		if warn {
 			slog.Warn("log flusher: buffer full, dropping new records",
 				"reason", "buffer_full", "count", 1, "dropped_total", total,
