@@ -110,3 +110,17 @@ it('lists only credentials granting the viewed version', () => {
   expect(screen.getAllByRole('row')).toHaveLength(2);
   expect(screen.queryByText('22222222')).not.toBeInTheDocument();
 });
+
+it('makes key creation primary only when no active key exists for this exact version', () => {
+  const available = vi.fn();
+  const view = render(<ContextPilotCredentials contextId={CONTEXT} snapshot={snapshot} canIssue onAvailabilityChange={available} />);
+  expect(screen.getByRole('button', { name: 'Create credential' })).toHaveClass('MuiButton-contained');
+  expect(available).toHaveBeenLastCalledWith(false);
+  hooks.list.data.results = [credential(CONTEXT, CONTEXT)];
+  view.rerender(<ContextPilotCredentials contextId={CONTEXT} snapshot={snapshot} canIssue onAvailabilityChange={available} />);
+  expect(screen.getByRole('button', { name: 'Create credential' })).toHaveClass('MuiButton-outlined');
+  expect(available).toHaveBeenLastCalledWith(true);
+  expect(screen.getByRole('columnheader', { name: 'Key' })).toBeVisible();
+  expect(screen.getByRole('columnheader', { name: 'Version' })).toBeVisible();
+  expect(screen.getByRole('button', { name: 'Copy full Key' })).toBeVisible();
+});

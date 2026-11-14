@@ -114,7 +114,7 @@ test('SKILLS-E2E-030: retain accepted child versions while upstream advances dur
     await leaf(`${prefix}-leaf-0`, 8);
     await page.goto(`/dashboard/skills/${childId}?tab=dependents`);
     await expect(page.getByRole('table', { name: 'Published context dependents' })).toBeVisible();
-    await expect(page.getByRole('table', { name: 'Published context dependents' }).getByText('Pinned as intended', { exact: true })).toBeVisible();
+    await expect(page.getByRole('table', { name: 'Published context dependents' }).getByText('Pinned on purpose', { exact: true })).toBeVisible();
     const inventory = await req(author, 'GET', `${childId}/context-dependents/`);
     expect(inventory.count).toBe(wrong === 'dependents' ? 99 : 3);
     expect(inventory.results.map((row: any) => row.context_id).sort()).toEqual(parents.map(row => row.id).sort());
@@ -131,13 +131,13 @@ test('SKILLS-E2E-030: retain accepted child versions while upstream advances dur
       await page.getByRole('checkbox', { name: `Review update for ${prefix}-leaf-0`, exact: true }).check();
       const before = await req(author, 'GET', `contexts/${parent.id}/draft/`);
       await page.getByRole('button', { name: 'Preview dependency changes', exact: true }).click();
-      await page.getByRole('checkbox', { name: 'Accept these exact resolved versions and selector policies.', exact: true }).check();
+      await page.getByRole('checkbox', { name: 'Accept these linked-skill versions and update rules for 1 context.', exact: true }).check();
       await page.getByRole('button', { name: 'Apply selected updates to draft', exact: true }).click();
       await expect.poll(async () => (await req(author, 'GET', `contexts/${parent.id}/draft/`)).resolved_lock.links.find((l: any) => l.skill_id === childId).version, { timeout: UI_READY }).toBe(8);
       parent.before = await req(author, 'GET', `contexts/${parent.id}/draft/`);
       expect(parent.before.revision).toBeGreaterThan(before.revision);
       expect(parent.before.resolved_lock.links.find((l: any) => l.skill_id === childId).version).toBe(wrong === 'accepted' ? 99 : 8);
-      await page.getByText(`skills/${prefix}-leaf-0/`, { exact: true }).scrollIntoViewIfNeeded();
+      await page.getByText(`${prefix}-leaf-0`, { exact: true }).scrollIntoViewIfNeeded();
       await shot(`accepted-${parent.name}`);
     }
     for (const [index, parent] of parents.slice(0, 2).entries()) {

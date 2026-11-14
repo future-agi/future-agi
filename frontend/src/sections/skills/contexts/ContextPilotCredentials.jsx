@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import PropTypes from "prop-types";
 import {
   Alert,
@@ -19,6 +19,7 @@ import {
 } from "@mui/material";
 import StatusBadge from "src/components/status-badge";
 import Iconify from "src/components/iconify";
+import IdentityChip from "../components/IdentityChip";
 import { ConfirmDialog } from "src/components/custom-dialog";
 import { ROW_HEIGHT } from "src/theme/sizes";
 import {
@@ -76,14 +77,14 @@ function CredentialRow({ credential, versionLabel, onRevoke }) {
   return (
     <TableRow hover sx={{ height: ROW_HEIGHT.default }}>
       <TableCell>
-        <Typography variant="s1">{credential.id.slice(0, 8)}</Typography>
+        <IdentityChip value={credential.id} kind="id" label="Key" />
       </TableCell>
       <TableCell>
         <Typography variant="s1">{versionLabel(credential)}</Typography>
       </TableCell>
       <TableCell>
         <Typography variant="s1">
-          {new Date(credential.expiresAt).toLocaleString()}
+          {new Date(credential.expiresAt).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })}
         </Typography>
       </TableCell>
       <TableCell>
@@ -131,6 +132,7 @@ export default function ContextPilotCredentials({
   contextId,
   snapshot,
   canIssue,
+  onAvailabilityChange,
 }) {
   const [days, setDays] = useState(7);
   const [issueKey, setIssueKey] = useState(newKey);
@@ -146,6 +148,8 @@ export default function ContextPilotCredentials({
   const rows = (list.data?.results ?? []).filter((row) =>
     grantsContext(row, contextId) && row.grants.some((grant) => grant.kind === "agent_context" && grant.resourceId === contextId && grant.versionIds?.includes(snapshot.versionId)),
   );
+  const hasKey = !list.isError && rows.some((row) => credentialStatus(row) === 'active');
+  useEffect(() => { onAvailabilityChange?.(hasKey); }, [hasKey, onAvailabilityChange]);
   const versionLabel = (credential) => {
     const ids = credential.grants.flatMap((grant) => grant.versionIds);
     return ids.length === 1 && ids[0] === snapshot.versionId
@@ -155,23 +159,24 @@ export default function ContextPilotCredentials({
   if (!canIssue)
     return (
       <Stack spacing={1} alignItems="flex-start">
-        <Typography variant="s3">A workspace admin can issue a consume credential for this version.</Typography>
+        <Typography variant="s3">A workspace admin can create a read-only key for this version.</Typography>
         <Button variant="outlined" onClick={async () => {
           try {
             if (!navigator.clipboard?.writeText) throw new Error('Unavailable');
-            await navigator.clipboard.writeText(`Please issue a consume-only credential for ${snapshot.name || 'this agent context'} v${snapshot.version}. Send the secret through our approved secret manager, not chat. Context: ${window.location.href}`);
+            await navigator.clipboard.writeText(`Please issue a read-only key for ${snapshot.name || 'this agent context'} v${snapshot.version}. Send the secret through our approved secret manager, not chat. Context: ${window.location.href}`);
             setCopyState('request-copied');
           } catch { setCopyState('request-failed'); }
         }}>Ask a workspace admin</Button>
         {copyState === 'request-copied' && <Typography variant="s3" role="status">Request copied. Send it to your workspace admin.</Typography>}
-        {copyState === 'request-failed' && <Typography variant="s3" role="status">Copy this request: Please issue a consume-only credential for {snapshot.name || 'this context'} v{snapshot.version}, and share it through our approved secret manager.</Typography>}
+        {copyState === 'request-failed' && <Typography variant="s3" role="status">Copy this request: Please issue a read-only key for {snapshot.name || 'this context'} v{snapshot.version}, and share it through our approved secret manager.</Typography>}
       </Stack>
     );
   return (
     <>
       <Stack spacing={1.5}>
+        <Typography variant="m3">Create a read-only key for v{snapshot.version}</Typography>
         <Typography variant="s3">
-          Consume only, bound to v{snapshot.version} of this context. It cannot
+          Read-only, bound to v{snapshot.version} of this context. It cannot
           read drafts, other versions or moving labels. The secret is shown
           once and is never placed in a command.
         </Typography>
@@ -191,7 +196,8 @@ export default function ContextPilotCredentials({
             ))}
           </TextField>
           <Button
-            variant="outlined"
+            color="primary"
+            variant={hasKey ? "outlined" : "contained"}
             disabled={issue.isPending}
             onClick={() => {
               setCopyState("");
@@ -220,12 +226,12 @@ export default function ContextPilotCredentials({
           <Alert severity={issued.secretAvailable ? "success" : "warning"}>
             <Stack spacing={1}>
               <Typography variant="s1">
-                Credential {issued.id.slice(0, 8)} issued for v
-                {snapshot.version}.
+                Read-only key created for v{snapshot.version}.
                 {issued.secretAvailable
                   ? " Copy it now into FI_CONTEXT_CREDENTIAL; it is not shown again."
                   : " This was a replay; the secret is no longer available. Issue a new credential."}
               </Typography>
+              <IdentityChip value={issued.id} kind="id" label="Key" />
               {issued.secretAvailable && (
                 <Stack direction={{ xs: "column", sm: "row" }} spacing={1} alignItems={{ xs: "flex-start", sm: "center" }}>
                   <Button
@@ -271,8 +277,8 @@ export default function ContextPilotCredentials({
           <TableContainer><Table size="small" aria-label="Pilot credentials for this context">
             <TableHead>
               <TableRow>
-                <TableCell>Credential</TableCell>
-                <TableCell>Grants</TableCell>
+                <TableCell>Key</TableCell>
+                <TableCell>Version</TableCell>
                 <TableCell>Expires</TableCell>
                 <TableCell>Status</TableCell>
                 <TableCell align="right" />
@@ -292,7 +298,7 @@ export default function ContextPilotCredentials({
         ) : (
           !list.isLoading && (
             <Typography variant="s3">
-              No credentials grant this version yet.
+              No read-only key for this version yet.
             </Typography>
           )
         )}
@@ -334,4 +340,5 @@ ContextPilotCredentials.propTypes = {
   contextId: PropTypes.string.isRequired,
   snapshot: PropTypes.object.isRequired,
   canIssue: PropTypes.bool,
+  onAvailabilityChange: PropTypes.func,
 };

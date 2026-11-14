@@ -5,8 +5,10 @@ import ContextTestsPanel from './ContextTestsPanel';
 import ContextDependentsPanel from './ContextDependentsPanel';
 import ContextConsumersView from './ContextConsumersView';
 import ContextDetailView from './ContextDetailView';
+import ContextLibraryView from './ContextLibraryView';
 
-const state = vi.hoisted(() => ({ identity: 'org:workspace:author', prepare: vi.fn(), create: vi.fn(), previewLabel: vi.fn(), submitLabel: vi.fn(), dependents: null, history: { data: { count: 0, as_of: 'now', total_pages: 1, results: [] }, refetch: () => {} } }));
+const state = vi.hoisted(() => ({ isViewer: false, identity: 'org:workspace:author', prepare: vi.fn(), create: vi.fn(), previewLabel: vi.fn(), submitLabel: vi.fn(), dependents: null, history: { data: { count: 0, as_of: 'now', total_pages: 1, results: [] }, refetch: () => {} } }));
+vi.mock('../utils/access', () => ({ useSkillsAccess: () => ({ isViewer: state.isViewer, canWrite: !state.isViewer }) }));
 vi.mock('src/api/skills/r3-spend', () => ({ useSkillsSpendPolicy: () => ({}) }));
 vi.mock('src/api/skills/testing', () => ({
   useSkillV11Scope: () => ({ identity: state.identity, scope: { userId: '00000000-0000-4000-8000-000000000001' } }),
@@ -34,7 +36,7 @@ const digest = `sha256:${'a'.repeat(64)}`;
 const version = { id: 'parent-v2', number: 2, digest };
 const preview = { fingerprint: 'preview', attemptCount: 2, estimate: { upperBoundUsd: '0.01' }, providerDisclosure: { taskProvider: 'openai' }, inventory: [], outboundFindings: [] };
 const labelPreview = { fingerprint: 'packet', packet: { candidate_version_id: version.id, candidate_digest: digest, transition: { label: 'production', version: 2, expected_version: 1, expected_release_revision: 4, expected_security_revision: 0 } } };
-beforeEach(() => { vi.clearAllMocks(); window.localStorage.clear(); state.identity = 'org:workspace:author'; state.prepare.mockResolvedValue(preview); state.create.mockResolvedValue({ id: 'run' }); state.previewLabel.mockResolvedValue(labelPreview); state.submitLabel.mockResolvedValue({ id: 'request' }); });
+beforeEach(() => { state.isViewer = false; vi.clearAllMocks(); window.localStorage.clear(); state.identity = 'org:workspace:author'; state.prepare.mockResolvedValue(preview); state.create.mockResolvedValue({ id: 'run' }); state.previewLabel.mockResolvedValue(labelPreview); state.submitLabel.mockResolvedValue({ id: 'request' }); });
 afterEach(cleanup);
 const mount = (element) => render(<MemoryRouter>{element}</MemoryRouter>);
 async function prepare() {
@@ -114,4 +116,25 @@ it.each([['versions', 'Label request'], ['consumers', 'Consumer rows'], ['unknow
   mount(<ContextDetailView {...detail} initialTab={tab} sections={{ versions: <p>Label request</p>, consumers: <p>Consumer rows</p> }} />);
   if (body) expect(screen.getByText(body)).toBeVisible();
   else expect(screen.getByRole('heading', { name: 'Root', exact: true })).toBeVisible();
+});
+
+it('hides viewer creation and import actions in both empty and populated libraries', () => {
+  state.isViewer = true;
+  const props = { scopeKey: 'scope', query: { scopeKey: 'scope', data: { results: [], count: 0, page: 1, pageSize: 25 } }, importActions: { onCreate: vi.fn() } };
+  const view = mount(<ContextLibraryView {...props} />);
+  expect(screen.queryByRole('button', { name: /Create agent context|New agent context|Import AGENTS.md/ })).not.toBeInTheDocument();
+  view.rerender(<MemoryRouter><ContextLibraryView {...props} query={{ ...props.query, data: { ...props.query.data, results: [{ id: 'c', name: 'support-agent', labels: [] }], count: 1 } }} /></MemoryRouter>);
+  expect(screen.queryByRole('button', { name: /New agent context|Import AGENTS.md/ })).not.toBeInTheDocument();
+});
+it.each([true, false])('disables editing for viewer or denied server permission (viewer=%s)', (viewer) => {
+  state.isViewer = viewer;
+  mount(<ContextDetailView scopeKey="scope" query={{ scopeKey: 'scope', data: { context: { id: 'c', name: 'support-agent', latestVersion: 2 }, releaseState: { permissions: { canPublish: viewer } } } }} versionQuery={{ scopeKey: 'scope', data: { version } }} fileQuery={{ scopeKey: 'scope' }} versions={[version]} onEditViewed={vi.fn()} />);
+  expect(screen.getByRole('button', { name: 'Edit viewed v2' })).toBeDisabled();
+  if (viewer) expect(screen.getByText("Viewers can't edit. Ask a workspace admin for edit access.")).toBeVisible();
+});
+it('keeps breadcrumbs and a return link for a missing context', () => {
+  mount(<ContextDetailView scopeKey="scope" query={{ scopeKey: 'scope', error: { status: 404 } }} versionQuery={{ scopeKey: 'scope' }} fileQuery={{ scopeKey: 'scope' }} />);
+  expect(screen.getByText('Agent context not found. It may have been archived or belong to another workspace.')).toBeVisible();
+  expect(screen.getByRole('link', { name: 'Back to agent contexts' })).toHaveAttribute('href', '/dashboard/skills/contexts');
+  expect(screen.getByRole('navigation', { name: 'Breadcrumb' })).toBeVisible();
 });
