@@ -280,6 +280,25 @@ export default function QueueDetailView() {
     setBulkAssignOpen(true);
   }, []);
 
+  const allAssigneesSelected = useMemo(
+    () =>
+      queueAnnotators.length > 0 &&
+      queueAnnotators.every((annotator) =>
+        bulkAssignUserIds.has(String(annotator.user_id)),
+      ),
+    [queueAnnotators, bulkAssignUserIds],
+  );
+
+  const handleToggleAllAssignees = useCallback(() => {
+    setBulkAssignUserIds(
+      allAssigneesSelected
+        ? new Set()
+        : new Set(
+            queueAnnotators.map((annotator) => String(annotator.user_id)),
+          ),
+    );
+  }, [allAssigneesSelected, queueAnnotators]);
+
   const handleAddedSortChange = useCallback((direction) => {
     setItemOrdering(direction === "asc" ? "created_at" : "-created_at");
   }, []);
@@ -811,6 +830,24 @@ export default function QueueDetailView() {
         <DialogTitle>Assign Selected Items</DialogTitle>
         <DialogContent>
           <Stack spacing={0.5} sx={{ mt: 1 }}>
+            {queueAnnotators.length > 1 && (
+              <Stack direction="row" spacing={1}>
+                <Button
+                  size="small"
+                  onClick={handleToggleAllAssignees}
+                  disabled={isAssigningItems}
+                >
+                  {allAssigneesSelected ? "Deselect All" : "Select All"}
+                </Button>
+                <Button
+                  size="small"
+                  onClick={() => setBulkAssignUserIds(new Set())}
+                  disabled={isAssigningItems}
+                >
+                  Select None
+                </Button>
+              </Stack>
+            )}
             {queueAnnotators.map((annotator) => {
               const uid = String(annotator.user_id);
               return (
