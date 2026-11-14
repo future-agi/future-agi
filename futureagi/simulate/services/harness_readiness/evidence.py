@@ -815,6 +815,9 @@ def _cost(runs: list[Any]) -> Reading:
 
 
 _CHILD_CALLS_READ = 20
+# The call metadata key the workers record is stored under (`harness_workers.WORKERS_KEY`); named here so readiness
+# does not need that module to read it.
+WORKERS_KEY = "harness_workers"
 _CUT_SHORT = frozenset(
     {"deadline_passed", "no_return", "cancel_requested", "cancelled"}
 )
@@ -824,7 +827,6 @@ def _children(pairing: Pairing, runs: list[Any]) -> Reading:
     """Sub-agent evidence from this agent's own runs: one evidence line per checklist item, seen or not. Absence is
     unmeasured, never a failure."""
     from simulate.models import CallExecution
-    from simulate.services.harness_workers import WORKERS_KEY
     from simulate.services.hosted_harness_ingestion import TRIAL_STATE_KEY
 
     declared = [
