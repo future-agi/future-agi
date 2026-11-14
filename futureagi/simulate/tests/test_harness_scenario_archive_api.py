@@ -1,8 +1,10 @@
 """Archive takes a case out of future runs and keeps its identity; restore brings it back as a draft."""
 
+import json
 from unittest.mock import patch
 
 import pytest
+from django.test import override_settings
 
 from simulate.models import HostedHarnessScenario
 from simulate.services.harness_versioning import drafts
@@ -34,6 +36,17 @@ def _restore(client, environment, key):
     return client.post(
         f"{BASE}/{environment.id}/scenarios/{key}/restore/", {}, format="json"
     )
+
+
+def _save(environment, user, key="save"):
+    """Save, as `_amend_drop` does: a Scenarios-tab edit is left for its first run to certify."""
+    versions = "simulate.services.harness_versioning.versions"
+    with (
+        override_settings(HARNESS_BUNDLE_CERTIFY_ENABLED=True),
+        patch(f"{versions}._default_runtime", return_value=object()),
+        patch(f"{versions}._cached_sealed", return_value=(None, "")),
+    ):
+        return _save_drafts(environment, user=user, key=key)
 
 
 def _draft_keys(environment):
@@ -86,7 +99,7 @@ def test_a_new_scenario_with_an_archived_key_is_refused(
     environment = _built(user, workspace, "ar-key")
     key = _key(NAMES[1])
     _archive(auth_client, environment, key)
-    _save_drafts(environment, user=user)
+    _save(environment, user)
 
     with pytest.raises(HostedHarnessError) as refused:
         _refuse_retired_keys(environment, [{"scenario_key": key, "name": "again"}])
@@ -124,13 +137,36 @@ def test_restore_not_archived_409(user, workspace, storage, auth_client):
     )
 
 
+def _copied_folder(files, document, name):
+    """The first scenario's folder copied under ``name``, its scenario.json renamed."""
+    source = next(
+        path.split("/")[1]
+        for path, body in files.items()
+        if path.startswith("scenarios/")
+        and path.endswith("/scenario.json")
+        and json.loads(body).get("name") == document["name"]
+    )
+    copied = {}
+    for path, body in files.items():
+        if path.startswith(f"scenarios/{source}/"):
+            target = f"scenarios/{name}/" + path.split("/", 2)[2]
+            if target.endswith("/scenario.json"):
+                body = json.dumps(
+                    {**json.loads(body), "name": name, "scenario_key": "brand-new"}
+                ).encode()
+            copied[target] = body
+    return copied
+
+
 def test_archive_unsaved_added_row_409(user, workspace, storage, auth_client):
     environment = _built(user, workspace, "ar-unsaved")
-    suite = drafts.suite_documents(drafts.edit_sides(environment)["suite"])
+    files = drafts.edit_sides(environment)["suite"]
+    suite = drafts.suite_documents(files)
     drafts.write_suite_edit(
         environment,
         [*suite, {**suite[0], "name": "brand_new", "scenario_key": "brand-new"}],
         user=user,
+        restored_files=_copied_folder(files, suite[0], "brand_new"),
     )
     assert _draft(environment) is not None
 
@@ -140,12 +176,19 @@ def test_archive_unsaved_added_row_409(user, workspace, storage, auth_client):
 
 
 def test_prune_keeps_archived_rows(user, workspace, storage, auth_client):
-    environment = _built(user, workspace, "ar-prune")
+    from simulate.services.harness_versioning.versions import record_authoring
+    from simulate.tests import test_harness_versioning_record as record_tests
+    from simulate.tests.test_harness_versioning_rollback import _rows
+
+    # Three scenarios, so one archived and one dropped still leave a suite.
+    environment = record_tests._environment(user, workspace, "ar-prune")
+    record_authoring(environment, record_tests._authoring(NAMES), origin="authoring")
+    environment.refresh_from_db()
+    _rows(environment)
     archived, dropped = _key(NAMES[1]), _key(NAMES[2])
     _archive(auth_client, environment, archived)
+    # The drop's own Save makes both changes live.
     _amend_drop(auth_client, environment, NAMES[2])
-
-    _save_drafts(environment, user=user)
 
     rows = {
         row.scenario_key: row
