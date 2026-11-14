@@ -4,6 +4,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from model_hub.models.annotation_queues import AnnotationQueueLabel
 from model_hub.models.score import Score
 from model_hub.tests.test_judge_human_agreement_integration import (
     _make_custom_eval_config,
@@ -129,3 +130,75 @@ def test_unavailable_evaluator_links_rejected(organization, workspace, user, sta
     )
     assert not serializer.is_valid()
     assert "custom_eval_config" in serializer.errors
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("through_api", [False, True], ids=["helper", "api"])
+@pytest.mark.parametrize(
+    "choices,multi_choice,expected",
+    [
+        (["blue", "red"], False, 1.0),
+        ([], False, None),
+        (["green", "red"], False, None),
+        (["blue", "red"], True, None),
+    ],
+    ids=["matching", "missing-choices", "different-vocabulary", "different-mode"],
+)
+def test_nullable_config_uses_declared_template_metadata(
+    organization,
+    workspace,
+    user,
+    auth_client,
+    through_api,
+    choices,
+    multi_choice,
+    expected,
+):
+    project = _make_project(organization, workspace)
+    trace = _make_trace(project)
+    span = _make_span(project, trace)
+    template = _make_eval_template(
+        organization,
+        workspace,
+        output_type_normalized="deterministic",
+        choices=choices,
+        multi_choice=multi_choice,
+    )
+    config = _make_custom_eval_config(project, template, config=None)
+    config.refresh_from_db()
+    assert config.config is None
+    queue = _make_queue(
+        organization, workspace, project, custom_eval_config=config, created_by=user
+    )
+    item = _make_queue_item(queue, span, organization)
+    label = _make_label(
+        organization,
+        workspace,
+        settings={
+            "options": [{"label": "blue"}, {"label": "red"}],
+            "multi_choice": False,
+            "rule_prompt": "",
+            "auto_annotate": False,
+            "strategy": None,
+        },
+    )
+    AnnotationQueueLabel.objects.create(queue=queue, label=label)
+    _make_eval_row(span, trace, config, output_str_list=["blue"])
+    Score.objects.create(
+        queue_item=item,
+        label=label,
+        organization=organization,
+        annotator=user,
+        value={"selected": ["blue"]},
+    )
+    if through_api:
+        response = auth_client.get(
+            f"/model-hub/annotation-queues/{queue.id}/agreement/"
+        )
+        assert response.status_code == 200, response.data
+        result = response.data["result"]["judge_vs_human"]
+    else:
+        result = _calculate_judge_human_agreement(queue)
+    assert result["overall_agreement"] == expected
+    assert result["total_comparisons"] == (1 if expected is not None else 0)
+    assert result["labels"][str(label.id)]["comparable"] is (expected is not None)

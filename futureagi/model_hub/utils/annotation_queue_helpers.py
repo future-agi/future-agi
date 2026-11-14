@@ -2539,7 +2539,7 @@ def _matching_label_scale(settings, output_type, config):
         return not settings.get("multi_choice") and vocabulary == {"pass", "fail"}
     if output_type != "deterministic":
         return False
-    choices = config.config.get("choices") or config.eval_template.choices
+    choices = (config.config or {}).get("choices") or config.eval_template.choices
     if not isinstance(choices, list) or not choices:
         return False
     if not all(isinstance(value, str) and value for value in choices):
