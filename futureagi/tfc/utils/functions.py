@@ -686,6 +686,20 @@ def calculate_eval_average(eval_template, api_logs):
                                 valid_logs += 1
                             case _:
                                 valid_logs += 1
+                    elif choices_map:
+                        selected_choices = output.get("output")
+                        if (
+                            not isinstance(selected_choices, list)
+                            or not selected_choices
+                        ):
+                            continue
+                        choice_weights = {"pass": 1, "neutral": 0.5}
+                        # Average within each log so every log has equal weight.
+                        success_count += sum(
+                            choice_weights.get(choices_map.get(choice), 0)
+                            for choice in selected_choices
+                        ) / len(selected_choices)
+                        valid_logs += 1
                     else:
                         success_count += 1
                         valid_logs += 1
