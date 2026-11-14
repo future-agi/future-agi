@@ -105,10 +105,10 @@ from tfc.utils.api_contracts import validated_request
 from tfc.utils.functions import get_prompt_stats
 from tfc.utils.ssrf_guard import safe_fetch
 from tfc.utils.general_methods import GeneralMethods
-from tfc.utils.media_tools import MediaToolUnavailable
 from tfc.utils.pagination import ExtendedPageNumberPagination
 from tfc.utils.parse_errors import parse_serialized_errors
 from tfc.utils.storage import (
+    MediaToolUnavailable,
     convert_image_from_url_to_base64,
     detect_audio_format,
 )
