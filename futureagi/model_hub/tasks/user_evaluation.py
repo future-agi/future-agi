@@ -108,6 +108,8 @@ def _mark_cells_usage_limit_error(user_eval_metric, usage_check):
                 source=SourceChoices.EXPERIMENT_EVALUATION.value,
                 source_id__endswith=f"-sourceid-{user_eval_metric.id}",
             ),
+            dataset_id=user_eval_metric.dataset_id,
+            dataset__organization_id=user_eval_metric.organization_id,
             deleted=False,
         )
         eval_column_ids = list(eval_columns.values_list("id", flat=True))
@@ -121,6 +123,8 @@ def _mark_cells_usage_limit_error(user_eval_metric, usage_check):
             Column.objects.filter(
                 source=SourceChoices.EVALUATION_REASON.value,
                 source_id__endswith=f"-sourceid-{user_eval_metric.id}",
+                dataset_id=user_eval_metric.dataset_id,
+                dataset__organization_id=user_eval_metric.organization_id,
                 deleted=False,
             ).values_list("id", flat=True)
         )

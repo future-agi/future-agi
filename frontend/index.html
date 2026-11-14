@@ -2,6 +2,114 @@
 <html lang="en" style="max-height: 100vh;">
   <head>
     <meta charset="utf-8" />
+    <!-- Normalize sign-in callback URLs before other resources or analytics load.
+         Only the address changes; nothing is captured or stored here.
+         Callbacks without a saml_code parameter keep their existing flow. -->
+    <meta name="referrer" content="no-referrer" />
+    <script id="saml-initial-marker-guard">
+      (function () {
+        var reserved = ["saml_code", "oauth_code", "oauth_provider", "sso_token", "access_token", "refresh_token", "auth"];
+        function scrubCodeUrl(url) {
+          var fragment = new URL("https://saml.invalid/?" + url.hash.slice(1)).searchParams;
+          if (!url.searchParams.has("saml_code") && !fragment.has("saml_code")) return false;
+          reserved.forEach(function (key) { url.searchParams.delete(key); });
+          url.hash = "";
+          return true;
+        }
+        Object.defineProperty(window, "__takeSamlUrlSanitizer", {
+          configurable: true,
+          value: function () { delete window.__takeSamlUrlSanitizer; return scrubCodeUrl; }
+        });
+        var url = new URL(window.location.href);
+        if (!scrubCodeUrl(url)) return;
+        try { window.history.replaceState(window.history.state, "", url.href); }
+        catch (error) {
+          // Record the failed update; entry.js then does not load the app.
+          window.__authHandoffScrubFailed = true;
+          window.__authLateMarkerScrubFailed = true;
+          try { window.location.replace(url.href); } catch (navigationError) { /* Leave the address as it is. */ }
+        }
+      })();
+    </script>
+    <!-- Normalize callback parameters added after start-up. Installed before other listeners. -->
+    <script id="saml-late-marker-guard">
+      (function () {
+        var history = window.history;
+        var nativePush = history.pushState;
+        var nativeReplace = history.replaceState;
+        var scrubCodeUrl = window.__takeSamlUrlSanitizer();
+
+        function scrubbed(value) {
+          var url = new URL(value, document.baseURI);
+          return scrubCodeUrl(url) ? url : null;
+        }
+
+        function safelyReplace(clean) {
+          // Use the captured native method, not a later analytics/router wrapper.
+          // This runs only after a successful native call or event suppression.
+          try { nativeReplace.call(history, history.state, "", clean.href); }
+          catch (error) {
+            window.__authLateMarkerScrubFailed = true;
+            // A same-origin navigation keeps the stored session. If it also
+            // fails, the address stays as it is and the error is not sent to
+            // monitoring.
+            try { window.location.replace(clean.href); } catch (navigationError) { /* The failure flag above stays set. */ }
+          }
+        }
+
+        function discardLateMarker() {
+          var clean = scrubbed(window.location.href);
+          if (!clean) return false;
+          safelyReplace(clean);
+          return true;
+        }
+
+        function guard(nativeMethod, receiver, args) {
+          // Let native conversion/argument/structured-clone errors occur once,
+          // before changing any state. Ordinary calls keep their exact values.
+          if (receiver === history && args.length >= 3 && typeof args[2] === "string") {
+            var target;
+            try { target = new URL(args[2], document.baseURI); } catch (error) { /* Native call below owns errors. */ }
+            var current = new URL(window.location.href);
+            if (target && target.origin === current.origin && target.username === current.username && target.password === current.password) {
+              var clean = scrubbed(target.href);
+              if (clean) {
+                args = Array.prototype.slice.call(args);
+                args[2] = clean.href;
+              }
+            }
+          }
+          var result = Reflect.apply(nativeMethod, receiver, args);
+          if (receiver === history) discardLateMarker();
+          return result;
+        }
+
+        history.pushState = function pushState() { return guard(nativePush, this, arguments); };
+        history.replaceState = function replaceState() { return guard(nativeReplace, this, arguments); };
+        function onNavigation(event) {
+          // HashChangeEvent.newURL retains the original marker even after the
+          // address is scrubbed. Stop only these rejected protocol events before
+          // later analytics/router listeners; ordinary anchors keep native flow.
+          var clean = scrubbed(window.location.href);
+          var rejected = Boolean(clean);
+          if (event.type === "hashchange") {
+            // Rapid hash updates can queue events after the current URL has
+            // already been scrubbed. Their captured old/new URLs still count.
+            rejected = Boolean(scrubbed(event.oldURL) || scrubbed(event.newURL)) || rejected;
+          }
+          if (!rejected) return;
+          // Stop the event first, so later listeners do not receive its URLs
+          // even if the address update below fails.
+          event.stopImmediatePropagation();
+          if (clean) safelyReplace(clean);
+        }
+        window.addEventListener("hashchange", onNavigation, true);
+        window.addEventListener("popstate", onNavigation, true);
+      })();
+    </script>
+    <!-- Load global styles outside the guarded application import. A blocked
+         optional font must not reject main's CSS preload and loop on reload. -->
+    <link rel="stylesheet" href="/src/global.css" />
     <!-- Google Tag Manager (gated on VITE_GTM_ID at build time so OSS
          builds don't load third-party tracking) -->
     <script>(function(){
@@ -66,8 +174,6 @@
          VITE_GTM_ID the way the script above is, and the app needs
          JavaScript anyway. -->
 
-    <!-- Appcues removed — no longer used -->
-    
     <!-- FOUC prevention: set data-theme before first paint so CSS variables match -->
     <script>
       (function() {
@@ -124,6 +230,6 @@
         window.location.reload();
       });
     </script>
-    <script type="module" src="/src/main.jsx"></script>
+    <script type="module" src="/src/entry.js"></script>
   </body>
 </html>

@@ -2,14 +2,11 @@ import { Box, Drawer, Typography, IconButton, Stack } from "@mui/material";
 import Section from "src/components/section";
 import { LoadingScreen } from "src/components/loading-screen";
 import React, { useState, useEffect, useRef } from "react";
-import { Viewer, Worker } from "@react-pdf-viewer/core";
-import { defaultLayoutPlugin } from "@react-pdf-viewer/default-layout";
+import PdfDocumentPreview from "./PdfDocumentPreview";
 import { usePdfPreviewStoreShallow } from "src/utils/CommonStores/pdfPreviewStore";
 import Iconify from "./iconify";
 import SvgColor from "./svg-color";
 
-import "@react-pdf-viewer/core/lib/styles/index.css";
-import "@react-pdf-viewer/default-layout/lib/styles/index.css";
 import logger from "src/utils/logger";
 import {
   COVERED_DRAWER_SX,
@@ -29,7 +26,8 @@ const PdfPreviewDrawer = () => {
     }),
   );
 
-  const covered = useDrawerCovered(Boolean(openPdfPreviewDrawer));
+  const isOpen = Boolean(openPdfPreviewDrawer);
+  const covered = useDrawerCovered(isOpen);
   const fileUrl = openPdfPreviewDrawer?.url;
   const name = openPdfPreviewDrawer?.name;
   const type = openPdfPreviewDrawer?.type;
@@ -55,13 +53,12 @@ const PdfPreviewDrawer = () => {
     }
   };
 
-  const defaultLayoutPluginInstance = defaultLayoutPlugin({
-    renderToolbar: () => null,
-    sidebarTabs: () => [],
-  });
-
   useEffect(() => {
-    if (!fileUrl) return;
+    if (!fileUrl) {
+      setLoading(false);
+      if (isOpen) setError(errorMessages.notAccessible);
+      return;
+    }
 
     if (fetchedUrlsRef.current === fileUrl) {
       setLoading(false);
@@ -77,7 +74,7 @@ const PdfPreviewDrawer = () => {
     } else {
       setLoading(false);
     }
-  }, [fileUrl, type]);
+  }, [fileUrl, type, isOpen]);
 
   useEffect(() => {
     return () => {
@@ -113,17 +110,15 @@ const PdfPreviewDrawer = () => {
       case "pdf":
         return (
           <Box sx={{ height: "100%", backgroundColor: "background.paper" }}>
-            <Worker workerUrl="https://unpkg.com/pdfjs-dist@3.11.174/build/pdf.worker.min.js">
-              <Viewer
-                fileUrl={fileUrl}
-                plugins={[defaultLayoutPluginInstance]}
-                theme="light"
-                onDocumentLoad={() => setLoading(false)}
-                renderError={() => {
-                  setError("Failed to load Resource");
-                }}
-              />
-            </Worker>
+            <PdfDocumentPreview
+              key={fileUrl}
+              fileUrl={fileUrl}
+              onLoad={() => setLoading(false)}
+              onError={() => {
+                setLoading(false);
+                setError("Failed to load Resource");
+              }}
+            />
           </Box>
         );
 
