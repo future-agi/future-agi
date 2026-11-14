@@ -498,6 +498,7 @@ export const DRAFTS_COPY = {
   busy: "Chat is working; save when it finishes",
   saveError: "Couldn't save the changes. Try again in a moment.",
   validate: "Validate",
+  versionName: "Name this version",
   validating: "Validating changes",
   validateError: "Couldn't start validating. Try again in a moment.",
   validation: {
