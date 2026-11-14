@@ -88,7 +88,9 @@ func (t *Translator) RequestToCanonical(body []byte) (*models.ChatCompletionRequ
 		if cfg.ResponseMimeType == "application/json" {
 			if len(cfg.ResponseSchema) > 0 {
 				// json_schema variant: wrap schema into OpenAI's json_schema format
+				// OpenAI requires a json_schema name; Gemini has none to give.
 				schemaWrapper, _ := json.Marshal(map[string]json.RawMessage{
+					"name":   json.RawMessage(`"response"`),
 					"schema": cfg.ResponseSchema,
 				})
 				out.ResponseFormat = &models.ResponseFormat{

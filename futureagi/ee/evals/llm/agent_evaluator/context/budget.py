@@ -31,8 +31,8 @@ CHARS_PER_TOKEN = ContextManager.CHARS_PER_TOKEN  # 3.5
 #   Soft = matches falcon_ai's COMPACTION_TOKEN_THRESHOLD (80K).
 #   Hard = matches falcon_ai's MAX_HISTORY_TOKENS (120K).
 #   Guard = soft-fail ceiling; L4 stashes a marker and lets the call through.
-BUDGET_DEFAULT_SOFT = ContextManager.COMPACTION_TOKEN_THRESHOLD   # 80_000
-BUDGET_DEFAULT_HARD = ContextManager.MAX_HISTORY_TOKENS           # 120_000
+BUDGET_DEFAULT_SOFT = ContextManager.COMPACTION_TOKEN_THRESHOLD  # 80_000
+BUDGET_DEFAULT_HARD = ContextManager.MAX_HISTORY_TOKENS  # 120_000
 BUDGET_DEFAULT_GUARD = 180_000
 
 # Higher-capacity internal variant for audio / PDF evals.
@@ -77,6 +77,7 @@ def budgets_for_model(model_name: str) -> Tuple[int, int, int]:
 
 # ── Token estimation (multimodal-aware) ──────────────────────────────────
 
+
 def content_tokens(content) -> int:
     """Estimate tokens for any content shape: None / str / list of parts /
     other. Uses conservative caps on media parts so base64 doesn't trip
@@ -103,7 +104,9 @@ def content_tokens(content) -> int:
                 total += EST_TOKENS_PER_FILE_PART
             else:
                 try:
-                    total += max(0, int(len(json.dumps(part, default=str)) / CHARS_PER_TOKEN))
+                    total += max(
+                        0, int(len(json.dumps(part, default=str)) / CHARS_PER_TOKEN)
+                    )
                 except (TypeError, ValueError):
                     total += max(0, int(len(str(part)) / CHARS_PER_TOKEN))
         return total
@@ -166,7 +169,7 @@ def has_media(msg) -> bool:
 
 # ── Anchor / middle / recent partition ───────────────────────────────────
 
-KEEP_RECENT_PAIRS = 4   # last N assistant→tool pairs preserved verbatim
+KEEP_RECENT_PAIRS = 4  # last N assistant→tool pairs preserved verbatim
 
 
 def split_messages(

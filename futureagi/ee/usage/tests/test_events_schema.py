@@ -85,9 +85,7 @@ class TestUsageEvent:
 
 class TestUsageEventTokenProperties:
     def test_token_usage_properties_normalizes_input_output_tokens(self):
-        assert token_usage_properties(
-            {"input_tokens": "10", "output_tokens": 5}
-        ) == {
+        assert token_usage_properties({"input_tokens": "10", "output_tokens": 5}) == {
             "prompt_tokens": 10,
             "completion_tokens": 5,
             "total_tokens": 15,

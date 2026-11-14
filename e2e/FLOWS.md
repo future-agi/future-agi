@@ -1491,6 +1491,28 @@
 - the previous entry is retired (deleted = true), not left live beside the new one
 - the CDC mirror carries both to CH tracer_eval_logger: the new entry completed, the previous one deleted
 
+### EVAL-E2E-016 — shipped link evaluators accept approved links and refuse other destinations
+
+**Goal:** Run the shipped link evaluators on approved reachable links and ordinary prose while refusing unapproved, private and redirected destinations without contacting them
+
+**Spec:** `flows/evals/link-destinations.spec.ts:16`
+
+**Tags:** —
+
+**User steps:**
+
+1. resolve the two shipped system template IDs without rewriting their code
+2. open each system evaluator in the browser
+3. submit approved links, link-free prose and refused destinations in the Custom playground
+4. read exact verdicts and explanations
+5. inspect the exact request set on the owned canary
+
+**Backend state verified:**
+
+- both shipped templates retain their system identity and text input contract
+- browser-submitted playground responses match the exact verdict and explanation matrix
+- the owned canary records only approved HEAD requests and never receives refused destinations
+
 ### EVAL-E2E-020 — sample whole contacts, retain late spans, and explicitly rerun an edited quota
 
 **Goal:** Preview and run a contact quota without splitting contacts, including late spans, then edit the quota with clear new-run provenance
@@ -1629,6 +1651,30 @@
 - the active organization config and pushed gateway config store false before opt-in, true after opt-in, and false after revocation
 - the gateway refuses the local webhook outage before opt-in and after revocation, and returns the unique mock echo only while opted in
 - an invalid boolean is refused without creating a configuration version
+
+## knowledge-base
+
+### KB-E2E-001 — a workspace reader downloads an owned knowledge-base file
+
+**Goal:** A workspace reader downloads an uploaded file with its original filename and exact bytes, while other scopes cannot download it
+
+**Spec:** `flows/knowledge-base/file-download.spec.ts:12`
+
+**Tags:** —
+
+**User steps:**
+
+1. upload a synthetic text document
+2. open its knowledge-base file table
+3. click Download on the file row
+4. save the browser download
+5. check foreign-organization, sibling-workspace and anonymous refusals
+
+**Backend state verified:**
+
+- the file list API returns the uploaded file identity and name
+- authorized download returns exactly the uploaded bytes as an attachment with no storage URL
+- foreign-org, sibling-workspace and anonymous requests return refusal without file bytes
 
 ## observe
 

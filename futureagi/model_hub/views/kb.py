@@ -4,7 +4,15 @@ import structlog
 from django.db.models import Q
 from django.http import Http404
 from django.utils import timezone
+from drf_yasg import openapi
 from drf_yasg.utils import swagger_auto_schema
+from rest_framework import filters, viewsets
+from rest_framework.decorators import action
+from rest_framework.exceptions import ValidationError as DRFValidationError
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.request import Request
+from rest_framework.response import Response
+
 from model_hub.models.kb import KnowledgeBase
 from model_hub.serializers.contracts import (
     MODEL_HUB_ERROR_RESPONSES,
@@ -14,14 +22,9 @@ from model_hub.serializers.contracts import (
 )
 from model_hub.serializers.kb import (
     KnowledgeBaseCreateSerializer,
+    KnowledgeBaseDownloadQuerySerializer,
     KnowledgeBaseSerializer,
 )
-from rest_framework import filters, viewsets
-from rest_framework.decorators import action
-from rest_framework.exceptions import ValidationError as DRFValidationError
-from rest_framework.permissions import IsAuthenticated
-from rest_framework.request import Request
-from rest_framework.response import Response
 from tfc.utils.api_contracts import validated_request
 from tfc.utils.base_viewset import BaseModelViewSetMixinWithUserOrg
 from tfc.utils.error_codes import get_error_message
@@ -76,7 +79,6 @@ class KnowledgeBaseViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewS
         check_ee_feature("knowledge_base", org_id=str(org.id))
 
         try:
-
             serializer = request.validated_serializer
             self.perform_create(serializer)
             return self._gm.success_response(serializer.data, status=201)
@@ -218,3 +220,29 @@ class KnowledgeBaseViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewS
             return self._gm.internal_server_error_response(
                 f"Failed to retrieve supported embedding models: {get_error_message('FAILED_TO_GET_EMBEDDINGS_MODEL')}"
             )
+
+    @validated_request(
+        query_serializer=KnowledgeBaseDownloadQuerySerializer,
+        reject_unknown_fields=True,
+        operation_description=(
+            "Download an active file from the knowledge-base file collection. "
+            "Requires current organization and workspace read access. Returns "
+            "an attachment, never a public storage URL. Unauthorized scope is "
+            "403; a missing or deleted file is 404."
+        ),
+        operation_summary="Download a KB file.",
+        responses={
+            200: openapi.Response(
+                "File attachment",
+                schema=openapi.Schema(type=openapi.TYPE_FILE),
+            ),
+            **MODEL_HUB_ERROR_RESPONSES,
+        },
+    )
+    @action(detail=True, methods=["get"], url_path="download-file")
+    def download_file(self, request: Request, pk: str = None):
+        from model_hub.utils.kb_download import download_knowledge_base_file
+
+        return download_knowledge_base_file(
+            request, pk, request.validated_query_data["file_id"]
+        )

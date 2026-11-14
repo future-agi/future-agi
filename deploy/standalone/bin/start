@@ -45,6 +45,7 @@ export GRANIAN_THREADS="${GRANIAN_THREADS:-2}"
 export GOOGLE_API_KEY="${GOOGLE_API_KEY:-}"
 # Empty: code-executor/server.py's default, 80,443.
 export CODE_EXECUTOR_EGRESS_PORTS="${CODE_EXECUTOR_EGRESS_PORTS:-}"
+export LINK_EVAL_ALLOWED_HOSTS="${LINK_EVAL_ALLOWED_HOSTS:-}"
 
 # Development (docker-compose.dev.yml, ./bin/dev): reload the API, and the
 # Temporal worker embedded in it, when code under /app/backend changes.

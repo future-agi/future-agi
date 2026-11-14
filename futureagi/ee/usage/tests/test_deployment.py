@@ -16,7 +16,6 @@ _TEST_SECRET = os.environ.get("CLOUD_DEPLOYMENT_SECRET", "")
 
 @pytest.mark.unit
 class TestDeploymentMode:
-
     def setup_method(self):
         _detect_mode.cache_clear()
 
@@ -149,7 +148,6 @@ class TestCloudSecretValidation:
 
 @pytest.mark.unit
 class TestEEFeatures:
-
     def test_ee_features_set_exists(self):
         assert len(EE_FEATURES) > 0
 

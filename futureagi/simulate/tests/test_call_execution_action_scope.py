@@ -422,9 +422,7 @@ class TestCallExecutionCrossWorkspaceReadWrite:
 
         assert response.status_code == status.HTTP_404_NOT_FOUND
         assert other_workspace_text_call_execution.status == original_status
-        assert (
-            other_workspace_text_call_execution.ended_reason == original_ended_reason
-        )
+        assert other_workspace_text_call_execution.ended_reason == original_ended_reason
 
     def test_detail_get_rejects_other_workspace_call_execution(
         self, auth_client, other_workspace_text_call_execution
@@ -593,7 +591,10 @@ class TestCallExecutionDetailBody:
         text_call_execution.phone_number = "+15555550101"
         text_call_execution.customer_number = "+15555550101"
         text_call_execution.provider_call_data = {
-            "vapi": {"call_id": "vapi-123", "recording": {"combined": "https://example.com/rec.wav"}}
+            "vapi": {
+                "call_id": "vapi-123",
+                "recording": {"combined": "https://example.com/rec.wav"},
+            }
         }
         text_call_execution.call_metadata = {"channel": "text"}
         text_call_execution.eval_outputs = {str(uuid.uuid4()): {"score": 0.9}}
