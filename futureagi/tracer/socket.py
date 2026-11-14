@@ -389,7 +389,7 @@ class GraphDataConsumer(DataConsumer):
             name_q = """SELECT tcec.name
                         FROM tracer_custom_eval_config tcec
                         WHERE tcec.id = %s;"""
-            name = await self.fetch_raw_data(name_q, [self.eval_id])
+            selected_name = await self.fetch_raw_data(name_q, [self.eval_id])
 
         evaluations = {}
 
@@ -452,7 +452,7 @@ class GraphDataConsumer(DataConsumer):
         if self.eval_id and self.eval_id not in evaluations:
             evaluations[self.eval_id] = {
                 "name": "",
-                "data": [{"name": name[0], "value": []}],
+                "data": [{"name": selected_name[0], "value": []}],
             }
 
         if self.property:

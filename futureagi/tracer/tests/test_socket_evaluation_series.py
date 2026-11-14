@@ -149,3 +149,31 @@ async def test_selected_evaluation_without_rows_keeps_empty_series():
     assert consumer.send_json.await_args.args[0]["data"] == {
         "config-1": {"name": "", "data": [{"name": ("Quality",), "value": []}]}
     }
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_selected_evaluation_with_only_other_rows_keeps_empty_series():
+    consumer = GraphDataConsumer()
+    consumer.project_id = "project-1"
+    consumer.interval = "hour"
+    consumer.graph = "charts"
+    consumer.eval_id = "config-1"
+    consumer.property = ""
+    consumer.filters = []
+    other_rows = [
+        (
+            datetime(2026, 1, 1, 10),
+            "config-2",
+            json.dumps({"metric_config-2": {"score": 50}}),
+            "Other",
+        )
+    ]
+    consumer.fetch_raw_data = AsyncMock(side_effect=[other_rows, [("Quality",)]])
+    consumer.send_json = AsyncMock()
+
+    await consumer.send_evaluation_data()
+
+    assert consumer.send_json.await_args.args[0]["data"] == {
+        "config-1": {"name": "", "data": [{"name": ("Quality",), "value": []}]}
+    }
