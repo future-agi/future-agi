@@ -2091,9 +2091,12 @@ def evaluate_observation_span(
         return False
 
     except Exception as e:
+        # Keep unexpected failures visible, just like validation failures.
+        # Recording the result does not schedule an automatic retry.
         logger.exception(
             f"Exception during evaluation in evaluate_observation_span: {e}"
         )
+        _create_error_eval_logger(observation_span, custom_eval_config, None, str(e))
         return False
 
 
@@ -2258,9 +2261,12 @@ def evaluate_observation_span_observe(
 
         return False
     except Exception as e:
+        # Same gap as evaluate_observation_span (#2334): the sibling
+        # ValueError branch above records a failed-eval row, this one didn't.
         logger.exception(
             f"Exception during evaluation in evaluate_observation_span_observe: {e}"
         )
+        _create_error_eval_logger(observation_span, custom_eval_config, eval_task_id, e)
         return False
 
 
