@@ -4,7 +4,7 @@ import queue
 import socket
 import threading
 from contextlib import contextmanager, suppress
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from time import monotonic, sleep
 from types import SimpleNamespace
 from unittest.mock import Mock
@@ -438,6 +438,8 @@ def test_every_health_query_has_a_short_transport_timeout(
 
 
 PART_COLUMNS = {"database", "table", "name", "rows", "active", "modification_time"}
+PART_NOW = datetime(2026, 1, 1, 12, 0, 30)
+PART_EARLIER = datetime(2026, 1, 1, 12, 0, 0)
 SAMPLED_INVENTORY = {
     **dict.fromkeys(health_tests.CDC_TABLES, health_tests.CDC_COLUMNS),
     "system.parts": PART_COLUMNS,
@@ -1149,3 +1151,118 @@ def test_lag_sample_prefix_fits_what_the_current_parts_leave(
         # The current part is always read in full.
         assert ("202611", 1, 1) in full[0].ranges
     assert _planned_cost(checker, reads) <= budget
+
+
+def _merge_inventory(part, age):
+    return [(table, part, 5_000, PART_NOW, age) for table in health_tests.CDC_TABLES]
+
+
+def _sources(*rows):
+    return [
+        (table, name, age) for table in health_tests.CDC_TABLES for name, age in rows
+    ]
+
+
+def _health_after(configure, monkeypatch, part, age, inactive):
+    from tracer.services.clickhouse import consistency
+
+    monkeypatch.setattr(consistency.ConsistencyChecker, "LAG_SAMPLE_MAX_ROWS", 1_000)
+    client = health_tests.fake_client(
+        SAMPLED_INVENTORY,
+        sample=(100, datetime.now(UTC) - timedelta(minutes=10)),
+        parts=_merge_inventory(part, age),
+        inactive=inactive,
+    )
+    return client, configure(client).get_health_status()
+
+
+def _source_reads(client):
+    return [
+        call.args[0]
+        for call in client.execute_read.call_args_list
+        if "NOT active" in call.args[0]
+    ]
+
+
+@pytest.mark.unit
+def test_current_mirror_after_a_large_merge_is_not_reported_lagging(
+    configure, monkeypatch
+):
+    """A merge rewrites old rows into a part newer than any sync it holds, and
+    its first rows in sort-key order need not hold the newest sync. When an
+    insert it absorbed was written within the threshold, the stale prefix is
+    no evidence of lag."""
+    client, health = _health_after(
+        configure,
+        monkeypatch,
+        "202611_1_9_2",
+        5,
+        _sources(("202611_9_9_1", 4), ("202611_1_8_1", 3_000)),
+    )
+    assert health.status == "healthy", health
+    assert set(health.details["checks"].values()) == {"recent_merge"}, health
+    assert set(health.cdc_lag.values()) == {-1.0}, health
+    assert all("_part_offset" in sql for sql, _ in _lag_statements(client))
+    assert len(_source_reads(client)) == 1
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "inactive",
+    [
+        # A stalled mirror keeps merging old parts: every insert is old.
+        _sources(("202611_9_9_1", 600), ("202611_1_8_1", 900)),
+        # A recent intermediate merge of old rows proves nothing.
+        _sources(("202611_1_8_2", 3), ("202611_9_9_1", 600)),
+        # The recent insert belongs to another merge's range.
+        _sources(("202611_12_12_1", 4)),
+        # The sources were already cleaned up.
+        [],
+    ],
+)
+def test_merge_of_only_old_inserts_still_lags(configure, monkeypatch, inactive):
+    _, health = _health_after(configure, monkeypatch, "202611_1_9_2", 5, inactive)
+    assert health.status == "degraded", health
+    assert set(health.details["checks"].values()) == {"lagging"}, health
+    assert all(lag >= 590 for lag in health.cdc_lag.values()), health
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("part", "age"),
+    [
+        ("202611_9_9_1", 5),  # one inserted batch: its prefix stands for it
+        ("202611_9_9_0", 5),
+        ("202611_1_9_2", 600),  # merged, but nothing written for ten minutes
+    ],
+)
+def test_stale_sample_lags_without_checking_sources(configure, monkeypatch, part, age):
+    client, health = _health_after(
+        configure, monkeypatch, part, age, _sources(("202611_9_9_1", 4))
+    )
+    assert health.status == "degraded", health
+    assert set(health.details["checks"].values()) == {"lagging"}, health
+    assert not _source_reads(client)
+
+
+@pytest.mark.unit
+def test_unreadable_merge_sources_keep_the_lagging_verdict(configure, monkeypatch):
+    from tracer.services.clickhouse import consistency
+
+    monkeypatch.setattr(consistency.ConsistencyChecker, "LAG_SAMPLE_MAX_ROWS", 1_000)
+    client = health_tests.fake_client(
+        SAMPLED_INVENTORY,
+        sample=(100, datetime.now(UTC) - timedelta(minutes=10)),
+        parts=_merge_inventory("202611_1_9_2", 5),
+    )
+    read = client.execute_read.side_effect
+
+    def denied_sources(sql, params=None, **kwargs):
+        if "NOT active" in sql:
+            raise TimeoutError("synthetic socket timeout")
+        return read(sql, params, **kwargs)
+
+    client.execute_read.side_effect = denied_sources
+    health = configure(client).get_health_status()
+    assert health.status == "degraded", health
+    assert set(health.details["checks"].values()) == {"lagging"}, health

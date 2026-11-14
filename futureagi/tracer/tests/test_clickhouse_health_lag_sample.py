@@ -631,3 +631,94 @@ def test_merge_between_inventory_and_sample_keeps_current_mirror_healthy(
     assert health.status == "healthy", detail
     assert health.details["checks"]["legacy.tracer_trace"] == "ready", detail
     assert 0 <= health.cdc_lag["tracer_trace"] < 60, detail
+
+
+# Sort-key order puts every row of the first project before the second's.
+EARLY_PROJECT = "00000000-0000-0000-0000-000000000001"
+LATE_PROJECT = "ffffffff-ffff-ffff-ffff-fffffffffff1"
+
+
+def _insert_project_rows(admin, rows, *, project, synced_age_seconds=0):
+    """One INSERT into tracer_trace for one project: one new part."""
+    admin.execute(
+        "INSERT INTO tracer_trace (id, project_id, created_at, updated_at, "
+        "_peerdb_synced_at, _peerdb_is_deleted, _peerdb_version) "
+        f"SELECT generateUUIDv4(number), toUUID('{project}'), now64(3), now64(3), "
+        f"toDateTime64(now64(6) - toIntervalSecond({int(synced_age_seconds)}), 6), "
+        f"0, toInt64(number) + 1 FROM numbers({int(rows)})"
+    )
+
+
+def _probe_health(configure, admin, database):
+    client = _probe_client(admin, database)
+    try:
+        return configure(client).get_health_status()
+    finally:
+        client.close()
+
+
+@pytest.mark.integration
+def test_current_mirror_after_a_large_merge_reads_healthy(
+    configure, statements, small_budget
+):
+    """A merge rewrites old rows into a part newer than any sync it holds.
+
+    The fresh batch sorts after the old rows, so the bounded prefix of the
+    merged part sees only old syncs. That is no evidence of lag: the check
+    must not read degraded after every large merge of a current mirror.
+    """
+    from conftest import _ch_test_native_client, _ch_test_owned_database
+
+    with (
+        _ch_test_owned_database("test_health_merge_") as database,
+        _ch_test_native_client(database=database) as admin,
+    ):
+        _create_mirrors(admin)
+        _insert_project_rows(
+            admin, 3 * small_budget, project=EARLY_PROJECT, synced_age_seconds=600
+        )
+        _insert_project_rows(admin, 10, project=LATE_PROJECT)
+        admin.execute("OPTIMIZE TABLE tracer_trace FINAL")
+        for table in ("trace_session", "tracer_eval_logger"):
+            _insert_part(admin, table, 1)
+        parts = _active_parts(admin)
+        assert len(parts) == 1, parts
+        assert int(parts[0][0].split("_")[3]) > 0, parts  # a merged part
+        assert parts[0][2] > small_budget, parts
+        assert _newest_sync_age(admin) < 60
+        health = _probe_health(configure, admin, database)
+    detail = (health, statements)
+    assert health.status == "healthy", detail
+    assert health.details["checks"]["legacy.tracer_trace"] == "recent_merge", detail
+    assert health.cdc_lag["tracer_trace"] == -1, detail
+    reads = _trace_lag_reads(statements)
+    assert reads and all(entry["rows"] <= small_budget for entry in reads), detail
+
+
+@pytest.mark.integration
+def test_stale_oversized_insert_still_reads_lagging(
+    configure, statements, small_budget
+):
+    """One inserted part (a CDC batch) holds rows synced when it was written,
+    so its prefix stands for it: old syncs in a fresh insert are real lag."""
+    from conftest import _ch_test_native_client, _ch_test_owned_database
+
+    with (
+        _ch_test_owned_database("test_health_stale_insert_") as database,
+        _ch_test_native_client(database=database) as admin,
+    ):
+        _create_mirrors(admin)
+        _insert_project_rows(
+            admin, 3 * small_budget, project=EARLY_PROJECT, synced_age_seconds=600
+        )
+        for table in ("trace_session", "tracer_eval_logger"):
+            _insert_part(admin, table, 1)
+        parts = _active_parts(admin)
+        assert len(parts) == 1, parts
+        _partition, low, high, *_level = parts[0][0].split("_")
+        assert low == high, parts  # one insert: one block number, whatever its level
+        health = _probe_health(configure, admin, database)
+    detail = (health, statements)
+    assert health.status == "degraded", detail
+    assert health.details["checks"]["legacy.tracer_trace"] == "lagging", detail
+    assert health.cdc_lag["tracer_trace"] >= 590, detail

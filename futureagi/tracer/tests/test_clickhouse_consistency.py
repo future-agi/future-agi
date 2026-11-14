@@ -62,6 +62,7 @@ def configure(monkeypatch, settings):
 
 
 PART_WRITTEN = datetime(2026, 1, 1, 12, 0, 0)
+PART_AGE = 3600
 
 
 def sampled_tables(params):
@@ -73,12 +74,14 @@ def sampled_tables(params):
     ]
 
 
-def fake_client(columns, *, sample=None, parts=(), table_rows=None):
+def fake_client(columns, *, sample=None, parts=(), table_rows=None, inactive=()):
     """Schema-only double; ``columns["system.parts"]`` opts into the part sample.
 
-    ``parts`` are the ``(table, part, rows[, modification_time])`` rows the
-    system.parts read returns, already newest first as the real ORDER BY
-    delivers them. Without a time, every part was written in the same second.
+    ``parts`` are the ``(table, part, rows[, modification_time[, age]])`` rows
+    the system.parts read returns, already newest first as the real ORDER BY
+    delivers them. Without a time, every part was written in the same second;
+    without an age (seconds since that write), long enough ago to prove nothing.
+    ``inactive`` are the replaced parts' ``(table, part, age)`` rows.
     ``table_rows`` are the ``system.tables`` sizes; unlisted tables hold one row.
     """
     if sample is None:
@@ -92,11 +95,16 @@ def fake_client(columns, *, sample=None, parts=(), table_rows=None):
             return [
                 (table, column) for table, names in columns.items() for column in names
             ]
+        if "FROM system.parts" in sql and "NOT active" in sql:
+            return [row for row in inactive if row[0] in params["tables"]]
         if "FROM system.parts" in sql:
             rows = [row for row in parts if row[0] in params["tables"]]
-            if "modification_time FROM" not in sql:
+            if "modification_time" not in sql:
                 return [row[:3] for row in rows]
-            return [row if len(row) == 4 else (*row, PART_WRITTEN) for row in rows]
+            rows = [row if len(row) >= 4 else (*row, PART_WRITTEN) for row in rows]
+            if "dateDiff" not in sql:
+                return [row[:4] for row in rows]
+            return [row if len(row) == 5 else (*row[:4], PART_AGE) for row in rows]
         if "FROM system.tables" in sql:
             return [(table, table_rows.get(table, 1)) for table in params["tables"]]
         if "max(_peerdb_synced_at)" in sql:

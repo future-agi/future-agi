@@ -111,6 +111,12 @@ def _block_range(part_name: str) -> tuple[str, int, int] | None:
         return None
 
 
+def _is_insert(part_name: str) -> bool:
+    """One insert writes one block number; a merge of several parts spans more."""
+    blocks = _block_range(part_name)
+    return blocks is not None and blocks[1] == blocks[2]
+
+
 class ConsistencyChecker:
     """Check declared requirements, never infer optionality from missing metadata.
 
@@ -154,6 +160,10 @@ class ConsistencyChecker:
     # table's lag as unknown (degraded) until it is granted
     # SELECT(<PART_COLUMNS>) ON system.parts.
     PART_COLUMNS = ("database", "table", "name", "rows", "active", "modification_time")
+    # Seconds since the latest sync above which a CDC mirror reads lagging.
+    LAG_THRESHOLD_SECONDS = 60
+    # Recently replaced parts read per table when a merge must be explained.
+    LAG_SOURCE_PARTS = 200
 
     def __init__(self):
         self._ch_client = get_clickhouse_client()
@@ -411,6 +421,7 @@ class ConsistencyChecker:
         part_metadata: set[str],
         *,
         deadline: float,
+        merges: dict[str, list[tuple[str, int, int]]] | None = None,
     ) -> tuple[dict[str, list[_SampleRead]], set[str]]:
         """Plan each ready CDC table's bounded lag sample from its newest parts.
 
@@ -419,6 +430,9 @@ class ConsistencyChecker:
         ready table without a plan has no active row. A destination whose role
         cannot read ``system.parts`` (columns hidden, or the read denied) is
         not listed, so its tables are sized from ``system.tables`` instead.
+
+        ``merges`` collects, per table, the block ranges of recent merged
+        parts the sample reads only in part: see ``_unread_recent_merges``.
         """
         selected: dict[str, list[_Table]] = {}
         for table in tables:
@@ -434,7 +448,8 @@ class ConsistencyChecker:
             try:
                 rows = self._read(
                     probes[role],
-                    "SELECT table, name, rows, modification_time FROM system.parts "
+                    "SELECT table, name, rows, modification_time, "
+                    "dateDiff('second', modification_time, now()) FROM system.parts "
                     "WHERE database = currentDatabase() AND active AND rows > 0 "
                     "AND table IN %(tables)s "
                     "ORDER BY table, modification_time DESC, rows "
@@ -458,13 +473,102 @@ class ConsistencyChecker:
                 continue
             listed.add(role)
             parts: dict[str, list[tuple]] = {table.name: [] for table in ready}
-            for table_name, *part in rows:
+            ages: dict[str, dict[str, int]] = {table.name: {} for table in ready}
+            for table_name, name, part_rows, modified, age in rows:
                 if table_name in parts:
-                    parts[table_name].append(tuple(part))
+                    parts[table_name].append((name, part_rows, modified))
+                    ages[table_name][name] = age
             for table in ready:
                 if reads := self._plan(parts[table.name]):
                     plans[table.key] = reads
+                    if merges is not None and (
+                        unread := self._unread_recent_merges(
+                            parts[table.name], reads, ages[table.name]
+                        )
+                    ):
+                        merges[table.key] = unread
         return plans, listed
+
+    def _unread_recent_merges(
+        self, parts: list[tuple], reads: list[_SampleRead], ages: dict[str, int]
+    ) -> list[tuple[str, int, int]]:
+        """Block ranges of recent merged parts of the newest second read in part.
+
+        Such a part is read only as a prefix in sort-key order, which need not
+        hold its newest sync, so a stale prefix proves nothing until the
+        merge's sources are checked (``_merge_sources_current``). An inserted
+        part holds one CDC batch, synced as it was written: its prefix stands
+        for it. A newest part older than the threshold means nothing was
+        written since, so the mirror lags whatever the sample says.
+        """
+        if not parts:
+            return []
+        newest = parts[0][2]
+        full = {blocks for read in reads if not read.prefix for blocks in read.ranges}
+        unread = []
+        for name, _rows, modified in parts:
+            if modified != newest:
+                break
+            blocks = _block_range(name)
+            if (
+                blocks is not None
+                and blocks not in full
+                and not _is_insert(name)
+                and ages.get(name, self.LAG_THRESHOLD_SECONDS + 1)
+                <= self.LAG_THRESHOLD_SECONDS
+            ):
+                unread.append(blocks)
+        return unread
+
+    def _merge_sources_current(
+        self,
+        probe: _Probe,
+        merges: dict[str, tuple[str, list[tuple[str, int, int]]]],
+        *,
+        deadline: float,
+    ) -> set[str]:
+        """Tables whose unread recent merge absorbed an insert written within
+        the threshold.
+
+        A merge replaces its source parts, but ClickHouse lists them, inactive,
+        for some minutes. An inserted source written within the threshold
+        holds a recent sync, so the mirror was current when it merged: its lag
+        is unknown, not shown. When every inserted source is older, CDC wrote
+        nothing new and the mirror lags; intermediate merges are ignored, as
+        merging old rows again proves nothing. Any failure returns no table,
+        which keeps the lagging verdict.
+        """
+        names = {name: key for key, (name, _) in merges.items()}
+        try:
+            rows = self._read(
+                probe,
+                "SELECT table, name, dateDiff('second', modification_time, now()) "
+                "FROM system.parts WHERE database = currentDatabase() AND NOT active "
+                "AND table IN %(tables)s ORDER BY table, modification_time DESC "
+                "LIMIT %(source_parts)s BY table",
+                {"tables": tuple(names), "source_parts": int(self.LAG_SOURCE_PARTS)},
+                deadline=deadline,
+            )
+        except Exception:
+            logger.warning(
+                "CDC lag merge sources unavailable", tables=sorted(names), exc_info=True
+            )
+            return set()
+        current = set()
+        for table_name, name, age in rows:
+            key = names.get(table_name)
+            blocks = _block_range(name)
+            if key is None or blocks is None or not _is_insert(name):
+                continue
+            if age > self.LAG_THRESHOLD_SECONDS:
+                continue
+            partition, block, _ = blocks
+            if any(
+                partition == merged[0] and merged[1] <= block <= merged[2]
+                for merged in merges[key][1]
+            ):
+                current.add(key)
+        return current
 
     def _within_budget(
         self,
@@ -720,8 +824,9 @@ class ConsistencyChecker:
         deadline: float,
     ) -> dict[str, float]:
         cdc = [table for table in tables if table.cdc]
+        merges: dict[str, list[tuple[str, int, int]]] = {}
         plans, listed = self._sample_plans(
-            cdc, probes, checks, part_metadata, deadline=deadline
+            cdc, probes, checks, part_metadata, deadline=deadline, merges=merges
         )
         by_role: dict[str, list[_Table]] = {}
         for table in cdc:
@@ -741,21 +846,46 @@ class ConsistencyChecker:
                 )
             )
         lag = {}
+        values: dict[str, float] = {}
         for table in cdc:
-            value = -1.0
-            if checks[table.key] == "ready":
-                row = samples.get(table.key)
-                if row and row[0] == 0:
-                    checks[table.key] = "empty"
-                elif row and isinstance(row[1], datetime):
-                    last_sync = row[1]
-                    if last_sync.tzinfo is None:
-                        last_sync = last_sync.replace(tzinfo=UTC)
-                    value = max(0.0, (datetime.now(UTC) - last_sync).total_seconds())
-                    if value > 60:
-                        checks[table.key] = "lagging"
-                else:
-                    checks[table.key] = "unavailable"
+            if checks[table.key] != "ready":
+                continue
+            row = samples.get(table.key)
+            if row and row[0] == 0:
+                checks[table.key] = "empty"
+            elif row and isinstance(row[1], datetime):
+                last_sync = row[1]
+                if last_sync.tzinfo is None:
+                    last_sync = last_sync.replace(tzinfo=UTC)
+                value = max(0.0, (datetime.now(UTC) - last_sync).total_seconds())
+                values[table.key] = value
+                if value > self.LAG_THRESHOLD_SECONDS:
+                    checks[table.key] = "lagging"
+            else:
+                checks[table.key] = "unavailable"
+        # A stale sample of a merge that absorbed a recent insert is no
+        # evidence of lag: report the lag unknown instead of lagging.
+        explain: dict[str, dict[str, tuple[str, list]]] = {}
+        for table in cdc:
+            if checks[table.key] == "lagging" and table.key in merges:
+                explain.setdefault(table.connection, {})[table.key] = (
+                    table.name,
+                    merges[table.key],
+                )
+        for role, pending in explain.items():
+            for key in self._merge_sources_current(
+                probes[role], pending, deadline=deadline
+            ):
+                checks[key] = "recent_merge"
+                logger.info(
+                    "CDC lag sample inconclusive after a merge",
+                    table=pending[key][0],
+                    sampled_lag_seconds=round(values[key]),
+                )
+        for table in cdc:
+            value = values.get(table.key, -1.0)
+            if checks[table.key] not in ("ready", "lagging"):
+                value = -1.0
             # In mixed deployments the public per-table value represents both
             # destinations: an unavailable sample wins over a successful one.
             previous = lag.get(table.name, value)
@@ -794,8 +924,19 @@ class ConsistencyChecker:
         states = set(checks.values())
         # Unknown lag (slow, or a table too large to read without part
         # metadata) is degraded; a missing or unreadable required table is not.
+        # A recent merge leaves the lag unknown without evidence of lag.
         degraded = {"lagging", "timeout", "unsampled"}
-        if not connected or not tables or states - {"ready", "empty", *degraded}:
+        if (
+            not connected
+            or not tables
+            or states
+            - {
+                "ready",
+                "empty",
+                "recent_merge",
+                *degraded,
+            }
+        ):
             status = "unhealthy"
         elif states & degraded:
             status = "degraded"
