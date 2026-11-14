@@ -21,6 +21,19 @@ import numpy as np
 import pandas as pd
 import requests
 import structlog
+from accounts.models.user import User
+from agentic_eval.core.embeddings.embedding_manager import (
+    EmbeddingManager,
+    model_manager,
+)
+from agentic_eval.core_evals.fi_evals import *  # noqa: F403
+from agentic_eval.core_evals.fi_utils.token_count_helper import calculate_total_cost
+from agentic_eval.core_evals.run_prompt.litellm_response import RunPrompt
+from analytics.utils import (
+    MixpanelEvents,
+    get_mixpanel_properties,
+    track_mixpanel_event,
+)
 from django.core.exceptions import ValidationError
 from django.db import DatabaseError, close_old_connections, connection, transaction
 from django.db.models import (
@@ -46,6 +59,7 @@ from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from drf_yasg import openapi
 from drf_yasg.utils import swagger_auto_schema
+from evaluations.constants import AGENT_EVALUATOR_TYPE_ID, FUTUREAGI_EVAL_TYPES
 from rest_framework import serializers, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.generics import CreateAPIView
@@ -53,21 +67,42 @@ from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
+from sdk.utils.helpers import _get_api_call_type
+from tfc.constants.api_calls import APICallStatusChoices, APICallTypeChoices
 
-from accounts.models.user import User
-from agentic_eval.core.embeddings.embedding_manager import (
-    EmbeddingManager,
-    model_manager,
+# Define a Temporal activity for running the evaluation
+from tfc.ee_gates import strip_turing_from_config_options
+from tfc.middleware.workspace_context import get_current_workspace
+from tfc.routers import uses_db
+from tfc.settings.settings import BASE_URL, HUGGINGFACE_API_TOKEN
+from tfc.telemetry import wrap_for_thread
+from tfc.temporal import temporal_activity
+from tfc.utils.api_contracts import validated_request
+from tfc.utils.api_serializers import DatasetLimitCheckFailedErrorSerializer
+from tfc.utils.error_codes import get_error_message
+from tfc.utils.functions import (
+    calculate_column_average,
+    get_eval_stats,
+    get_prompt_stats,
 )
-from agentic_eval.core_evals.fi_evals import *  # noqa: F403
-from agentic_eval.core_evals.fi_utils.token_count_helper import calculate_total_cost
-from agentic_eval.core_evals.run_prompt.litellm_response import RunPrompt
-from analytics.utils import (
-    MixpanelEvents,
-    get_mixpanel_properties,
-    track_mixpanel_event,
+from tfc.utils.general_methods import GeneralMethods
+from tfc.utils.lazy_extras import extra_install_hint
+from tfc.utils.media_tools import find_media_tool_unavailable, media_tool_error_code
+from tfc.utils.parse_errors import parse_serialized_errors
+from tfc.utils.storage import (
+    download_json_from_s3,
+    get_compare_local_dir,
+    get_compare_metadata_path,
+    get_storage_error_message,
+    is_own_storage_url,
+    upload_audio_to_s3,
+    upload_audio_to_s3_duration,
+    upload_compare_json_to_s3,
+    upload_document_to_s3,
+    upload_file_to_s3,
+    upload_image_to_s3,
 )
-from evaluations.constants import AGENT_EVALUATOR_TYPE_ID, FUTUREAGI_EVAL_TYPES
+
 from model_hub.constants import (
     CREATE_KB_SDK_CODE,
     MAX_KB_SIZE,
@@ -297,39 +332,6 @@ from model_hub.views.utils.utils import (
     update_column_id,
     validate_file_url,
 )
-from sdk.utils.helpers import _get_api_call_type
-from tfc.constants.api_calls import APICallStatusChoices, APICallTypeChoices
-
-# Define a Temporal activity for running the evaluation
-from tfc.ee_gates import strip_turing_from_config_options
-from tfc.middleware.workspace_context import get_current_workspace
-from tfc.routers import uses_db
-from tfc.settings.settings import BASE_URL, HUGGINGFACE_API_TOKEN
-from tfc.telemetry import wrap_for_thread
-from tfc.temporal import temporal_activity
-from tfc.utils.api_contracts import validated_request
-from tfc.utils.api_serializers import DatasetLimitCheckFailedErrorSerializer
-from tfc.utils.error_codes import get_error_message
-from tfc.utils.functions import (
-    calculate_column_average,
-    get_eval_stats,
-    get_prompt_stats,
-)
-from tfc.utils.general_methods import GeneralMethods
-from tfc.utils.media_tools import media_tool_error_code
-from tfc.utils.parse_errors import parse_serialized_errors
-from tfc.utils.storage import (
-    download_json_from_s3,
-    get_compare_local_dir,
-    get_compare_metadata_path,
-    is_own_storage_url,
-    upload_audio_to_s3,
-    upload_audio_to_s3_duration,
-    upload_compare_json_to_s3,
-    upload_document_to_s3,
-    upload_file_to_s3,
-    upload_image_to_s3,
-)
 
 try:
     from ee.usage.utils.usage_entries import (
@@ -343,22 +345,47 @@ except ImportError:
 logger = structlog.get_logger(__name__)
 
 
-def _cell_upload_error(exc: Exception, data_type: str) -> dict:
-    """value_infos for a cell whose media value could not be stored.
+# Only fixed validation messages belong in persisted cell errors. Upload helpers
+# also wrap storage/network diagnostics in ValueError, so the exception type (or
+# a matching prefix) alone is not a promise that its text is user-facing.
+_CELL_UPLOAD_VALIDATION_REASONS = frozenset(
+    [
+        get_error_message(code)
+        for code in (
+            "EMPTY_DATA",
+            "INVALID_URL",
+            "INVALID_BASE64_STRING",
+            "INVALID_IMAGE",
+            "UNSUPPORTED_IMAGE_FORMAT",
+            "UNSUPPORTED_AUDIO_FORMAT",
+        )
+    ]
+    + [
+        get_storage_error_message(code)
+        for code in (
+            "INVALID_URL",
+            "INVALID_FILE_TYPE",
+            "CORRUPTED_AUDIO",
+            "INVALID_BASE64_AUDIO",
+            "EMPTY_AUDIO_DATA",
+            "INACCESSIBLE_LINK",
+        )
+    ]
+    + [extra_install_hint(module, "audio") for module in ("av", "soundfile")]
+)
 
-    The storage helpers raise ValueError with a message meant for the user
-    (a missing ffmpeg or ``audio`` extra, an unsupported format); other
-    errors can carry storage details, so they get a fixed reason. ``code`` is
-    set when a missing ffmpeg caused it."""
-    if isinstance(exc, ValueError):
-        reason = str(exc)
-    else:
+
+def _cell_upload_error(exc: Exception, data_type: str) -> dict:
+    """Return a stable cell reason, preserving recognized validation guidance."""
+    missing = find_media_tool_unavailable(exc)
+    if missing is not None:
+        # The outer wrapper can contain storage details even when its cause is
+        # a named missing-tool error. Return only the identified cause's text.
+        return {"reason": str(missing), "code": missing.code}
+    reason = str(exc)
+    if not isinstance(exc, ValueError) or reason not in _CELL_UPLOAD_VALIDATION_REASONS:
         reason = f"Could not store this {data_type} value."
-    infos = {"reason": reason}
-    code = media_tool_error_code(exc)
-    if code:
-        infos["code"] = code
-    return infos
+    return {"reason": reason}
 
 
 def _request_organization(request):
@@ -969,6 +996,10 @@ class AddRowsFromFile(CreateAPIView):
                         value = row[column.name]
                     except KeyError:
                         value = None
+                    # Spreadsheet readers use NaN/NA for blank cells. Normalize
+                    # scalars before truth testing, without erasing 0 or False.
+                    if pd.api.types.is_scalar(value) and pd.isna(value):
+                        value = ""
                     cell_error = None
 
                     if column.data_type == DataTypeChoices.IMAGE.value and value:
@@ -15858,7 +15889,6 @@ class CreateKnowledgeBaseView(APIView):
         self, file_bytes, file_name, kb_id, file_id, org_id=None
     ):
         from django.db import close_old_connections, connection
-
         from tfc.utils.storage import upload_file_to_s3
 
         try:
