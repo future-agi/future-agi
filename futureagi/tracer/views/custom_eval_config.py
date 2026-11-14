@@ -28,6 +28,7 @@ from tracer.serializers.custom_eval_config import (
 )
 from tracer.services.eval_tasks.entries import soft_delete_eval_results
 from tracer.utils.eval import evaluate_observation_span
+from tracer.views.observation_span import _project_workspace_scope_q
 
 
 class CustomEvalConfigView(BaseModelViewSetMixin, ModelViewSet):
@@ -285,18 +286,15 @@ class CustomEvalConfigView(BaseModelViewSetMixin, ModelViewSet):
                     DATABASE_FOR_CUSTOM_EVAL_CONFIG_LIST
                 )
             )
+            # Only the request's workspace, fresh or not. CustomEvalConfig has
+            # no workspace of its own, so its manager adds no workspace
+            # filter and the organization alone spans sibling workspaces.
+            # A join on the project's workspace works on either alias, and,
+            # unlike Project's manager, keeps configs on simulation and
+            # soft-deleted projects.
             queryset = manager.filter(
-                deleted=False,
-                project__organization=getattr(request, "organization", None)
-                or request.user.organization,
+                _project_workspace_scope_q(request), deleted=False
             ).all()
-            if query_data.get("fresh"):
-                # Only the request's workspace: Project's manager applies the
-                # workspace the request runs in (the org-wide filter above
-                # alone spans sibling workspaces).
-                queryset = queryset.filter(
-                    project__in=Project.objects.using("default").values("id")
-                )
             project_id = query_data.get("project_id")
             if project_id:
                 queryset = queryset.filter(project_id=project_id)
