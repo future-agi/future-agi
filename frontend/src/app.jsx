@@ -30,12 +30,7 @@ import {
   QueryClientProvider,
 } from "@tanstack/react-query";
 import { ReactQueryDevtools } from "@tanstack/react-query-devtools";
-import { BrowserAgent } from "@newrelic/browser-agent/loaders/browser-agent";
-import { newRelicTracing } from "./newrelic";
-import {
-  CURRENT_ENVIRONMENT,
-  REACT_QUERY_DEVTOOLS_ENABLED,
-} from "./config-global";
+import { REACT_QUERY_DEVTOOLS_ENABLED } from "./config-global";
 import { ErrorBoundary } from "react-error-boundary";
 import ErrorFallback from "./pages/ErrorFallback";
 import UploadLimitNotification from "./components/rate-limit-modal/RateLimitModal";
@@ -73,10 +68,6 @@ const queryClient = new QueryClient({
     },
   },
 });
-
-// Initialize the BrowserAgent, only in a build with New Relic keys.
-const newRelic = newRelicTracing(CURRENT_ENVIRONMENT);
-if (newRelic) new BrowserAgent(newRelic);
 
 export default function App() {
   useScrollToTop();
