@@ -468,6 +468,24 @@ def put_back_dropped_replacements(dropped_ids) -> int:
     return retired
 
 
+def drop_pending_entries(entries) -> int:
+    """Retire ``entries``, the reconciler's drop of pending work, putting back
+    the result each dropped Recalculate replacement stood in for.
+
+    Every reconciler drop path goes through here — the delta reconcile's
+    out-of-scope drop and the sampling reconcile's policy-version, removed
+    config and revalidation drops — so a requeued replacement dropped by any
+    of them gets the same put-back rule (``put_back_dropped_replacements``)
+    rather than finalizing the previous result's retirement. Runs in the
+    caller's transaction. Returns how many entries it retired."""
+    # Primary: a lagging replica may not show a just-requeued replacement.
+    ids = list(entries.using("default").values_list("pk", flat=True))
+    if not ids:
+        return 0
+    retired = put_back_dropped_replacements(ids)
+    return retired + soft_delete_eval_results(_rows().filter(pk__in=ids, deleted=False))
+
+
 # -- results with no eval task ------------------------------------------------
 
 

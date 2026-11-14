@@ -1682,6 +1682,59 @@ def test_reconcile_dropping_a_replacement_of_a_deleted_config_keeps_it_retired(
     assert not _recalculation_rows().exists()
 
 
+def test_sampling_revalidation_dropping_a_requeued_replacement_puts_the_previous_back(
+    replica,
+    auth_client,
+    user,
+    observation_span,
+    custom_eval_config,
+    eval_task,
+    monkeypatch,
+):
+    """The cohort sampling reconcile drops a pending entry whose row left the
+    sampled cohort. When that entry is a requeued Recalculate replacement,
+    the previous result comes back, as on the delta reconcile's drop path."""
+    from django.utils import timezone
+
+    from tracer.models.eval_task import EvalTask
+    from tracer.services.eval_tasks.sampling import pending, witnesses
+
+    previous, replacement_id, issue, member = _crashed_recalculation(
+        monkeypatch,
+        auth_client,
+        user,
+        replica,
+        eval_task,
+        observation_span,
+        custom_eval_config,
+    )
+    EvalLogger.objects.using("default").filter(pk=replacement_id).update(
+        status=EvalEntryStatus.PENDING, attempts=1
+    )
+
+    class NoWitnesses:
+        def __init__(self, task):
+            pass
+
+        def read(self, ids):
+            return {}
+
+    # The row's current-state proof finds it in no selected unit any more.
+    monkeypatch.setattr(pending, "read_current_rows", lambda *a, **k: {})
+    monkeypatch.setattr(witnesses, "TraceWitnessReader", NoWitnesses)
+
+    task = EvalTask.objects.get(pk=eval_task.pk)
+    dropped = pending.revalidate_pending(task, {}, "v1", None, timezone.now())
+
+    assert dropped == 1
+    assert _stored(replacement_id).deleted is True
+    assert [row.pk for row in _live(observation_span, custom_eval_config)] == [
+        previous.pk
+    ]
+    assert _membership(member).deleted is False
+    assert not _recalculation_rows().exists()
+
+
 # -- round 9: Recalculate on a result with no eval task -------------------------
 
 
