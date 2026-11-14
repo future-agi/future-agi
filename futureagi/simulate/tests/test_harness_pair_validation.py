@@ -2269,3 +2269,195 @@ class TestToolRoutingKept:
         gateway.reconcile_completed(attempt)
 
         assert "tool_routing" not in (_row(environment).certificate or {})
+
+
+def _proved_entry(**fields):
+    return {"format": 2, "holds": True, "proved": True, "assumed": [], **fields}
+
+
+def _member_keys(environment):
+    from simulate.models import HarnessSuiteMember
+
+    return list(
+        HarnessSuiteMember.no_workspace_objects.filter(
+            suite_version=environment.suite_version
+        ).values_list("scenario_key", flat=True)
+    )
+
+
+def _validation_proofs(environment):
+    from simulate.models import HarnessSuiteValidation
+
+    found = HarnessSuiteValidation.no_workspace_objects.filter(
+        suite_version=environment.suite_version,
+        environment_version=environment.environment_version,
+    ).first()
+    return dict(found.proofs) if found is not None else {}
+
+
+class TestScenarioProving:
+    def test_prove_only_job_on_certified_pair(self, user, workspace, storage, gateway):
+        environment = _pending(user, workspace, storage, "pv-prove-only")
+        _ready(_row(environment))
+
+        started = _start(environment, purpose="prove")
+        attempt = _launch(gateway, started.job)
+
+        assert started.state == "validating"
+        assert _job_metadata(started.job)["scenario_proving"] == "only"
+        command = gateway.client.sandbox.process.session_request.command
+        deadline = int(validation.check_deadline(attempt.job).timestamp())
+        assert assembly.prove_suite_command(deadline_at=deadline) + "true" in command
+
+    def test_scenario_proofs_kept_after_certify(
+        self,
+        user,
+        workspace,
+        storage,
+        gateway,
+        monkeypatch,
+        django_capture_on_commit_callbacks,
+    ):
+        environment = _pending(user, workspace, storage, "pv-proofs-kept")
+        job = _start(environment).job
+        attempt = _launch(gateway, job)
+        _ready(_row(environment))
+        keys = _member_keys(environment)
+        proofs = {key: _proved_entry() for key in keys}
+        _exit(
+            gateway,
+            monkeypatch,
+            0,
+            {assembly.SCENARIO_PROOFS_PATH: json.dumps(proofs).encode()},
+        )
+
+        with django_capture_on_commit_callbacks(execute=True):
+            gateway.reconcile_completed(attempt)
+
+        assert set(_validation_proofs(environment)) == set(keys)
+        assert _job_metadata(job)["scenario_proofs_recorded"] is True
+
+    def test_missing_proofs_file_changes_nothing(
+        self,
+        user,
+        workspace,
+        storage,
+        gateway,
+        monkeypatch,
+        django_capture_on_commit_callbacks,
+    ):
+        environment = _pending(user, workspace, storage, "pv-proofs-missing")
+        before = _validation_proofs(environment)
+        job = _start(environment).job
+        attempt = _launch(gateway, job)
+        _ready(_row(environment))
+        _exit(gateway, monkeypatch, 0)
+
+        with django_capture_on_commit_callbacks(execute=True):
+            done = gateway.reconcile_completed(attempt)
+
+        assert done.state == "completed"
+        assert _validation_proofs(environment) == before
+        assert _job_metadata(job)["scenario_proofs_recorded"] is False
+
+    def test_prove_only_job_does_not_block_runs(self, user, workspace, storage):
+        from simulate.services.hosted_harness import resolve_run_pins
+
+        environment = _pending(user, workspace, storage, "pv-prove-runs")
+        _ready(_row(environment))
+        _start(environment, purpose="prove")
+        resolved = resolve_run_pins(environment, rerun_of=None, picks=None)
+
+        validation.require_pair_runnable(environment, resolved)
+
+        HarnessAssembledBundle._base_manager.filter(id=_row(environment).id).update(
+            state="pending", object_key=None
+        )
+        _start(environment)
+        with pytest.raises(HostedHarnessError) as refused:
+            validation.require_pair_runnable(environment, resolved)
+        assert refused.value.code == "pair_validating"
+
+    def test_prove_only_settles_ready_without_proofs(
+        self,
+        user,
+        workspace,
+        storage,
+        gateway,
+        monkeypatch,
+        django_capture_on_commit_callbacks,
+    ):
+        from simulate.services.harness_scenario_actions import validation_status
+
+        environment = _pending(user, workspace, storage, "pv-prove-empty")
+        _ready(_row(environment))
+        job = _start(environment, purpose="prove").job
+        attempt = _launch(gateway, job)
+        _exit(gateway, monkeypatch, 0)
+
+        with django_capture_on_commit_callbacks(execute=True):
+            gateway.reconcile_completed(attempt)
+
+        assert _row(environment).state == "ready"
+        assert _job_metadata(job)["scenario_proofs_recorded"] is False
+        status = validation_status(environment, job.id)
+        assert (status["state"], status["message"]) == (
+            "finished",
+            "Validation finished but recorded no results; try again.",
+        )
+
+    def test_run_cache_miss_certify_does_not_prove(self):
+        assert "--prove-scenarios" not in assembly.certify_command()
+        assert "--prove-scenarios --deadline-at 100" in assembly.certify_command(
+            prove=True, deadline_at=100
+        )
+
+
+@pytest.mark.django_db(transaction=True)
+def test_record_proofs_interleaved_keep_both(user, workspace, storage):
+    import threading
+
+    from django.db import connection
+
+    from simulate.services.harness_versioning.versions import record_proofs
+
+    environment = _pending(user, workspace, storage, "pv-interleaved")
+    first, second = _member_keys(environment)[:2]
+    started = threading.Barrier(2)
+    errors = []
+
+    def record(proofs):
+        try:
+            started.wait(timeout=10)
+            record_proofs(
+                environment.suite_version, environment.environment_version, proofs, None
+            )
+        except Exception as exc:  # noqa: BLE001 - surfaced by the assertion below
+            errors.append(exc)
+        finally:
+            connection.close()
+
+    threads = [
+        threading.Thread(target=record, args=({first: _proved_entry()},)),
+        threading.Thread(target=record, args=({second: _proved_entry()},)),
+    ]
+    for one in threads:
+        one.start()
+    for one in threads:
+        one.join()
+
+    assert not errors
+    assert {first, second} <= set(_validation_proofs(environment))
+    incomplete = {
+        "format": 2,
+        "holds": False,
+        "proved": False,
+        "blocked_reason": "validation_incomplete",
+    }
+    record_proofs(
+        environment.suite_version,
+        environment.environment_version,
+        {first: incomplete},
+        None,
+    )
+    assert _validation_proofs(environment)[first]["proved"] is True
