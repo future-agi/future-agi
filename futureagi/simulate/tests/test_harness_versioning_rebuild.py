@@ -749,6 +749,56 @@ class TestLanding:
         )
         assert suite.base_environment_version_id == e2.id
 
+    def test_a_recorded_draft_cites_the_files_and_rows_it_read(
+        self,
+        user,
+        workspace,
+        storage,
+        scheduled,
+        started,
+        settings,
+        auth_client,
+        django_capture_on_commit_callbacks,
+    ):
+        settings.HARNESS_BUNDLE_CERTIFY_ENABLED = True
+        environment, _nudge, _a1, _a2 = _queued(
+            user,
+            workspace,
+            storage,
+            "r-file-rows",
+            auth_client,
+            django_capture_on_commit_callbacks,
+        )
+        from simulate.services.hosted_harness_gateway import (
+            with_authoring_basis,
+            with_draft_basis,
+        )
+
+        token = drafts.compose_workspace(
+            environment, ensure_conversation(environment)
+        ).token
+        mine = {"agent": "support", "tools": [{"name": "lookup_order"}]}
+        drafts.record_draft(
+            environment,
+            with_draft_basis(
+                with_authoring_basis(_authoring(contract=mine), ""), token
+            ),
+            origin="import",
+            user=user,
+            used_files=[{"file_id": "f-1", "row": 4}],
+        )
+
+        draft = drafts.open_draft(environment, "environment")
+        used = [
+            one
+            for sources in draft.documents["provenance"].values()
+            for source in sources
+            for one in source["used"]
+        ]
+        assert used and all(
+            one == {"kind": "file", "id": "f-1", "row": 4} for one in used
+        )
+
     def test_the_rebuild_lands_on_top_of_the_unsaved_edits(
         self,
         user,
