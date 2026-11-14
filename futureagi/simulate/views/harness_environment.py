@@ -65,6 +65,14 @@ from simulate.serializers.harness_environment import (
     HarnessReviewDecisionsSerializer,
     HarnessRunPlanQuerySerializer,
     HarnessRunPlanSerializer,
+    HarnessScenarioArchiveSerializer,
+    HarnessScenarioLifecycleResponseSerializer,
+    HarnessScenarioRestoreSerializer,
+    HarnessScenarioRevisionsSerializer,
+    HarnessScenarioValidateResponseSerializer,
+    HarnessScenarioValidateSerializer,
+    HarnessScenarioValidationQuerySerializer,
+    HarnessScenarioValidationStatusSerializer,
     HarnessSuiteMemberSerializer,
     HarnessVerifyCreateResponseSerializer,
     HarnessVerifyCreateSerializer,
@@ -720,6 +728,112 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
         )
 
     @validated_request(
+        request_serializer=HarnessScenarioValidateSerializer,
+        responses={
+            200: HarnessScenarioValidateResponseSerializer,
+            202: HarnessScenarioValidateResponseSerializer,
+        },
+        reject_unknown_fields=True,
+        operation_id="simulate_api_harness-environments_validate_scenarios",
+    )
+    @action(detail=True, methods=["post"], url_path="scenarios/validate")
+    def validate_scenarios(self, request, pk=None):
+        """Prove every scenario of the pair again; 202 while it runs, never refused while one is live."""
+        from simulate.services.harness_scenario_actions import validate_scenarios
+
+        version_reads.require_versioning()
+        job = self._job(request, pk)
+        if job is None:
+            return self._not_found()
+        body, code = validate_scenarios(job, request.validated_data)
+        return Response(body, status=code)
+
+    @validated_request(
+        query_serializer=HarnessScenarioValidationQuerySerializer,
+        responses={200: HarnessScenarioValidationStatusSerializer},
+        reject_unknown_fields=True,
+        operation_id="simulate_api_harness-environments_validation_status",
+    )
+    @validate_scenarios.mapping.get
+    def validation_status(self, request, pk=None):
+        """Where one scenario validation got to, and whether it recorded its proofs."""
+        from simulate.services.harness_scenario_actions import validation_status
+
+        version_reads.require_versioning()
+        job = self._job(request, pk)
+        if job is None:
+            return self._not_found()
+        return Response(validation_status(job, request.validated_query_data["job_id"]))
+
+    @validated_request(
+        request_serializer=HarnessScenarioArchiveSerializer,
+        responses={200: HarnessScenarioLifecycleResponseSerializer},
+        reject_unknown_fields=True,
+        operation_id="simulate_api_harness-environments_archive_scenario",
+    )
+    @action(
+        detail=True,
+        methods=["post"],
+        url_path=r"scenarios/(?P<key>[^/]{1,255})/archive",
+    )
+    def archive_scenario(self, request, pk=None, key=None):
+        """Take a scenario out of future runs, keeping its identity, runs and evidence."""
+        from simulate.services.harness_scenario_actions import archive_scenario
+
+        version_reads.require_versioning()
+        job = self._job(request, pk)
+        if job is None:
+            return self._not_found()
+        return Response(
+            archive_scenario(
+                job,
+                key,
+                reason=request.validated_data.get("reason") or "",
+                user=request.user,
+            )
+        )
+
+    @validated_request(
+        request_serializer=HarnessScenarioRestoreSerializer,
+        responses={200: HarnessScenarioLifecycleResponseSerializer},
+        reject_unknown_fields=True,
+        operation_id="simulate_api_harness-environments_restore_scenario",
+    )
+    @action(
+        detail=True,
+        methods=["post"],
+        url_path=r"scenarios/(?P<key>[^/]{1,255})/restore",
+    )
+    def restore_scenario(self, request, pk=None, key=None):
+        """Put an archived scenario back as a draft under its own key."""
+        from simulate.services.harness_scenario_actions import restore_scenario
+
+        version_reads.require_versioning()
+        job = self._job(request, pk)
+        if job is None:
+            return self._not_found()
+        return Response(restore_scenario(job, key, user=request.user))
+
+    @validated_request(
+        responses={200: HarnessScenarioRevisionsSerializer},
+        operation_id="simulate_api_harness-environments_scenario_revisions",
+    )
+    @action(
+        detail=True,
+        methods=["get"],
+        url_path=r"scenarios/(?P<key>[^/]{1,255})/revisions",
+    )
+    def scenario_revisions(self, request, pk=None, key=None):
+        """Each distinct content of a scenario across saved suite versions, newest first."""
+        from simulate.services.harness_scenario_actions import scenario_revisions
+
+        version_reads.require_versioning()
+        job = self._job(request, pk)
+        if job is None:
+            return self._not_found()
+        return Response(scenario_revisions(job, key))
+
+    @validated_request(
         request_serializer=HarnessDraftSaveSerializer,
         responses={200: HarnessDraftSaveResponseSerializer},
         reject_unknown_fields=True,
@@ -738,33 +852,34 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
         if job is None:
             return self._not_found()
         body = request.validated_data
+        from simulate.services.harness_scenario_actions import not_active
+
         if "candidates" in body:
-            return Response(
-                promote_candidates(
-                    job,
-                    {name: str(value) for name, value in body["candidates"].items()},
-                    expected_review_digest=body.get("expected_review_digest"),
-                    name=body.get("name") or "",
-                    idempotency_key=body["idempotency_key"],
-                    user=request.user,
-                )
-            )
-        return Response(
-            save_drafts(
+            saved = promote_candidates(
                 job,
-                {
-                    one["piece"]: SaveRequest(
-                        expected_parent_id=one["expected_parent_id"],
-                        expected_revision=one.get("expected_revision"),
-                        expected_review_digest=body.get("expected_review_digest"),
-                        name=body.get("name") or "",
-                    )
-                    for one in body["drafts"]
-                },
+                {name: str(value) for name, value in body["candidates"].items()},
+                expected_review_digest=body.get("expected_review_digest"),
+                name=body.get("name") or "",
                 idempotency_key=body["idempotency_key"],
                 user=request.user,
             )
+            return Response({**saved, "not_active": not_active(job)})
+        saved = save_drafts(
+            job,
+            {
+                one["piece"]: SaveRequest(
+                    expected_parent_id=one["expected_parent_id"],
+                    expected_revision=one.get("expected_revision"),
+                    expected_review_digest=body.get("expected_review_digest"),
+                    name=body.get("name") or "",
+                )
+                for one in body["drafts"]
+            },
+            idempotency_key=body["idempotency_key"],
+            user=request.user,
         )
+        # The cases saved as Draft: they do not run until validated.
+        return Response({**saved, "not_active": not_active(job)})
 
     @swagger_auto_schema(
         responses={204: "Discarded"},

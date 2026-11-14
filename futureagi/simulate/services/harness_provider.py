@@ -14,6 +14,7 @@ import re
 from typing import Any
 
 from django.conf import settings
+from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import transaction
 from django.utils import timezone
 from rest_framework import status
@@ -2042,7 +2043,7 @@ class HostedHarnessProvider:
         return serialize_job(child)
 
     # Editable fields; all but `tests` are refused when the caller declines a re-proof.
-    _DESCRIPTIVE_FIELDS = frozenset({"tests"})
+    _DESCRIPTIVE_FIELDS = frozenset({"tests", "sources"})
     _BEHAVIOURAL_FIELDS = frozenset({"max_turns", "background_noise", "keywords"})
     _PERSONA_FIELDS = frozenset(
         {
@@ -2141,6 +2142,12 @@ class HostedHarnessProvider:
                 queryset = HostedHarnessScenario.no_workspace_objects.filter(
                     job=job
                 ).select_related("scenario", "call_execution")
+        lifecycle = _lifecycle_for_list(job, request.query_params)
+        if isinstance(lifecycle, Response):
+            return lifecycle
+        queryset, drafted = _narrow_by_lifecycle(
+            job, queryset, drafted, lifecycle, request.query_params
+        )
         # Filter choices are counted before filtering, or picking one value would hide the others.
         queryset = apply_search(queryset, request.query_params.get("search", ""))
         offerable = queryset
@@ -2155,10 +2162,13 @@ class HostedHarnessProvider:
         group_by = DEFAULT_GROUP_BY if asked is None else asked
         rows = grouped(
             [
-                (
-                    {**scenario_row(one), "draft_change": one.draft_change}
-                    if drafted is not None
-                    else scenario_row(one)
+                _with_lifecycle(
+                    (
+                        {**scenario_row(one), "draft_change": one.draft_change}
+                        if drafted is not None
+                        else scenario_row(one)
+                    ),
+                    lifecycle,
                 )
                 for one in page or []
             ],
@@ -2189,6 +2199,12 @@ class HostedHarnessProvider:
         from simulate.services.harness_versioning.versions import proof_counts
 
         response.data["proof_counts"] = proof_counts(job)
+        if lifecycle is not None:
+            from simulate.services.harness_scenario_lifecycle import lifecycle_counts
+
+            response.data["lifecycle_counts"] = lifecycle_counts(
+                list(lifecycle["views"].values()) + lifecycle["archived"]
+            )
         return response
 
     def scenario_coverage(self, request, pk) -> Response:
@@ -2394,6 +2410,22 @@ class HostedHarnessProvider:
                             }
                         )
                         continue
+                    if field == "sources":
+                        from simulate.services.harness_scenario_sources import (
+                            source_problems,
+                        )
+
+                        problems = source_problems(change.get("value"))
+                        if problems:
+                            receipts.append(
+                                {
+                                    "scenario": name,
+                                    "outcome": "refused",
+                                    "why": problems[0],
+                                }
+                            )
+                            continue
+                        _store_edited_sources(job, target, change.get("value"))
                     target[field] = change.get("value")
                     touched = True
                     changed.add(name)
@@ -3155,3 +3187,192 @@ class SandboxHarnessProvider:
 
 class _SandboxMappingError(RuntimeError):
     pass
+
+
+LIFECYCLE_FILTERS = frozenset(
+    {"draft", "validated", "active", "archived", "source_changed", "kept_as_written"}
+)
+
+
+def _version_of(
+    model: Any, job: HostedHarnessJob, value: str | None, default_id: Any
+) -> Any:
+    if not value:
+        return (
+            model._base_manager.filter(id=default_id, job_id=job.id).first()
+            if default_id
+            else None
+        )
+    try:
+        return model._base_manager.filter(
+            id=value, job_id=job.id, deleted=False
+        ).first()
+    except (ValueError, DjangoValidationError):
+        return None
+
+
+def _lifecycle_for_list(
+    job: HostedHarnessJob, params: Any
+) -> dict[str, Any] | Response | None:
+    """The lifecycle of every case on the pair in view (the defaults unless the query names
+    versions), or ``None`` for an environment that is not versioned."""
+    from simulate.models import HarnessEnvironmentVersion, HarnessSuiteVersion
+    from simulate.services.harness_scenario_lifecycle import scenario_lifecycle
+
+    if not job.suite_version_id or not job.environment_version_id:
+        return None
+    wanted = params.get("lifecycle") or ""
+    if wanted and wanted not in LIFECYCLE_FILTERS:
+        return Response(
+            {
+                "error": "lifecycle_invalid",
+                "message": f"lifecycle must be one of {', '.join(sorted(LIFECYCLE_FILTERS))}",
+            },
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    suite = _version_of(
+        HarnessSuiteVersion, job, params.get("suite_version_id"), job.suite_version_id
+    )
+    environment_version = _version_of(
+        HarnessEnvironmentVersion,
+        job,
+        params.get("environment_version_id"),
+        job.environment_version_id,
+    )
+    if suite is None or environment_version is None:
+        return Response(
+            {
+                "error": "versions_invalid",
+                "message": "those versions are not this environment's",
+            },
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    views = scenario_lifecycle(
+        job, suite_version=suite, environment_version=environment_version
+    )
+    archived_rows = list(
+        HostedHarnessScenario.no_workspace_objects.filter(
+            job=job, archived_at__isnull=False, deleted=False
+        ).order_by("-archived_at")
+    )
+    from simulate.services.harness_scenario_lifecycle import _view, reason_text
+
+    archived = []
+    for row in archived_rows:
+        view = _view("archived", reason="archived")
+        view["reason_text"] = reason_text(
+            "archived",
+            None,
+            date=f"{row.archived_at:%d %b %Y}",
+            archive_reason=row.archive_reason or "no reason given",
+        )
+        archived.append(view)
+    archived_keys = {row.scenario_key for row in archived_rows}
+    return {
+        "wanted": wanted,
+        "views": {key: view for key, view in views.items() if key not in archived_keys},
+        "archived": archived,
+        "archived_rows": archived_rows,
+        "archived_views": dict(
+            zip([row.scenario_key for row in archived_rows], archived, strict=True)
+        ),
+    }
+
+
+def _matches(view: Any, wanted: str) -> bool:
+    if wanted == "source_changed":
+        return bool(view["source_changed"])
+    if wanted == "kept_as_written":
+        from simulate.services.harness_scenario_lifecycle import LANE_CODES
+
+        return view["warning"] in LANE_CODES
+    return view["state"] == wanted
+
+
+def _narrow_by_lifecycle(job, queryset, drafted, lifecycle, params):
+    """Narrow the list's source before paging: archived rows only on request, else by state."""
+    from simulate.services.harness_scenario_lifecycle import (
+        DRAFT_CHANGES,
+        in_draft_view,
+    )
+    from simulate.services.harness_scenarios import ScenarioRows, as_member
+
+    if lifecycle is None:
+        return queryset, drafted
+    wanted = lifecycle["wanted"]
+    archived_keys = set(lifecycle["archived_views"])
+    if wanted == "archived":
+        rows = ScenarioRows()
+        for row in lifecycle["archived_rows"]:
+            content = (
+                row.archived_content if isinstance(row.archived_content, dict) else {}
+            )
+            rows.append(as_member(row, content) if content else row)
+        return rows, None
+    if drafted is not None:
+        kept = ScenarioRows(
+            one
+            for one in drafted
+            if one.scenario_key not in archived_keys
+            and (
+                not wanted
+                or _matches(
+                    in_draft_view()
+                    if one.draft_change in DRAFT_CHANGES
+                    else lifecycle["views"].get(one.scenario_key) or in_draft_view(),
+                    wanted,
+                )
+            )
+        )
+        kept.draft = drafted.draft
+        return kept, kept
+    queryset = queryset.exclude(archived_at__isnull=False)
+    if wanted:
+        matching = [
+            key for key, view in lifecycle["views"].items() if _matches(view, wanted)
+        ]
+        queryset = queryset.filter(scenario_key__in=matching)
+    return queryset, drafted
+
+
+def _with_lifecycle(
+    row: dict[str, Any], lifecycle: dict[str, Any] | None
+) -> dict[str, Any]:
+    from simulate.services.harness_scenario_lifecycle import (
+        DRAFT_CHANGES,
+        in_draft_view,
+    )
+
+    if lifecycle is None:
+        return {**row, "lifecycle": None}
+    key = row["scenario_key"]
+    if key in lifecycle["archived_views"]:
+        view = lifecycle["archived_views"][key]
+    elif row.get("draft_change") in DRAFT_CHANGES:
+        view = in_draft_view()
+    else:
+        view = lifecycle["views"].get(key) or in_draft_view()
+    return {**row, "lifecycle": view}
+
+
+def _store_edited_sources(
+    job: HostedHarnessJob, document: dict[str, Any], sources: list[Any]
+) -> None:
+    """Resolve an edited case's file sources once, against the default environment version."""
+    from simulate.models import HarnessEnvironmentVersion
+    from simulate.services.harness_scenario_sources import stored_file_results
+
+    key = str(document.get("scenario_key") or "")
+    version = (
+        HarnessEnvironmentVersion._base_manager.filter(
+            id=job.environment_version_id
+        ).first()
+        if job.environment_version_id
+        else None
+    )
+    results = stored_file_results(
+        sources, archive_key=getattr(version, "archive_object_key", None)
+    )
+    HostedHarnessScenario.no_workspace_objects.filter(job=job, scenario_key=key).update(
+        sources=[dict(one) for one in sources if one.get("kind") != "file"] + results
+    )

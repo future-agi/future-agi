@@ -12,13 +12,12 @@ from __future__ import annotations
 from collections import Counter
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Literal, TypedDict, cast
+from typing import Any, Literal, TypedDict, cast
 from uuid import UUID
 
 from simulate.models import (
     HarnessAssembledBundle,
     HarnessSuiteMember,
-    HarnessSuiteValidation,
     HostedHarnessJob,
 )
 from simulate.services.canonical_json import canonical_digest
@@ -34,7 +33,6 @@ from simulate.services.harness_readiness.catalogue import (
     VersionRef,
 )
 from simulate.services.harness_readiness.evidence import (
-    certified,
     pair_bundle,
     read_evidence,
 )
@@ -55,6 +53,10 @@ PAGE_SIZE = 50
 DROPPED_REASON = "dropped when the pair was certified"
 # Held-back key for a selected case certifying the pair dropped.
 DROPPED_ROW = "scenario_dropped"
+# Held-back keys for a case not validated on the run's pair, and an archived case.
+NOT_VALIDATED_ROW = "not_validated"
+ARCHIVED_ROW = "scenario_archived"
+LIFECYCLE_LABELS = {NOT_VALIDATED_ROW: "Validation", ARCHIVED_ROW: "Archived"}
 UNGRADABLE_REASON = "grades no sub-goal of this environment version"
 _HOLDING = frozenset({"blocked", "unavailable", "stale", "untested"})
 _EVIDENCE_ROWS = frozenset(one.id for one in CATALOGUE if one.area == "evidence")
@@ -160,7 +162,7 @@ class CasePage(TypedDict):
 @dataclass(frozen=True)
 class Placed:
     """A requested case, its bucket and what put it there (row ids, or
-    ``pair_validating`` / ``pair_failed`` / ``not_proved_here`` / ``unknown_need``),
+    ``pair_validating`` / ``pair_failed`` / ``not_validated`` / ``scenario_archived`` / ``unknown_need``),
     and the rows holding it."""
 
     case: CaseNeeds
@@ -169,6 +171,8 @@ class Placed:
     held_by: frozenset[str]
     needed: frozenset[str]
     gradable: NotGradable | None
+    # The case's lifecycle reason, when its lifecycle holds it back.
+    lifecycle_reason: str | None = None
 
 
 @dataclass(frozen=True)
@@ -319,6 +323,20 @@ def select_for_run(pairing: Pairing, *, keys: list[str], trials: int) -> RunPlan
         for row in report["rows"]
         if row["id"] in by
     }
+    for row in (NOT_VALIDATED_ROW, ARCHIVED_ROW):
+        texts = [
+            one.lifecycle_reason
+            for one in placed
+            if one.bucket == "blocked" and row in one.by and one.lifecycle_reason
+        ]
+        if len(texts) == 1:
+            reasons[row] = texts[0]
+        elif texts:
+            reasons[row] = (
+                f"{len(texts)} cases are not validated on these versions"
+                if row == NOT_VALIDATED_ROW
+                else f"{len(texts)} cases are archived"
+            )
     if dropped:
         by[DROPPED_ROW] = len(dropped)
         reasons[DROPPED_ROW] = DROPPED_REASON
@@ -480,8 +498,14 @@ def _place_all(
             )
         else:
             kept.append(one)
-    proved = _proved_tokens(pairing)
-    ready = certified(bundle)
+    from simulate.services.harness_scenario_lifecycle import scenario_lifecycle
+
+    lifecycle = scenario_lifecycle(
+        pairing.environment,
+        suite_version=pairing.suite_version,
+        environment_version=pairing.environment_version,
+        keys=[one.key for one in kept],
+    )
     # A run of a pairing being validated, or a validation failed, is refused, whatever
     # its rows say.
     pair_validating = (
@@ -495,7 +519,7 @@ def _place_all(
         _place(
             case,
             by_id,
-            proved=ready or _scenario_token(case.key) in proved,
+            view=lifecycle.get(case.key),
             voice=voice,
             many=many,
             pair_validating=pair_validating,
@@ -550,26 +574,6 @@ def _dropped_tokens(bundle: HarnessAssembledBundle | None) -> frozenset[str]:
     )
 
 
-def _proved_tokens(pairing: Pairing) -> frozenset[str]:
-    """Scenarios proved for this suite and environment version; an assumed solution is not proved."""
-    from simulate.services.harness_versioning.versions import _proof_passes
-    from simulate.services.hosted_harness_gateway import _scenario_token
-
-    proofs = (
-        HarnessSuiteValidation.no_workspace_objects.filter(
-            suite_version=pairing.suite_version,
-            environment_version=pairing.environment_version,
-        )
-        .values_list("proofs", flat=True)
-        .first()
-    )
-    return frozenset(
-        _scenario_token(key)
-        for key, proof in (proofs or {}).items()
-        if _proof_passes(proof)
-    )
-
-
 def _voice(pairing: Pairing) -> bool:
     contract = (pairing.environment_version.documents or {}).get("contract")
     modality = contract.get("modality") if isinstance(contract, Mapping) else None
@@ -598,12 +602,14 @@ def _place(
     case: CaseNeeds,
     rows: Mapping[str, RowView],
     *,
-    proved: bool,
+    view: Any,
     voice: bool,
     many: bool,
     pair_validating: bool,
     pair_failed: bool,
 ) -> Placed:
+    from simulate.services.harness_scenario_lifecycle import runnable
+
     needed = set(case.rows)
     if voice:
         # A voice case reaches the agent by audio, not by a test chat message.
@@ -629,9 +635,15 @@ def _place(
     blocked = [one for one, status in statuses.items() if status == "blocked"]
     if pair_failed:
         blocked.append("pair_failed")
+    # A kept-as-written case is runnable: it is placed by its other rows and carries its warning.
+    lifecycle_reason = None
+    if view is not None and view["state"] == "archived":
+        blocked.append(ARCHIVED_ROW)
+        lifecycle_reason = view["reason_text"]
+    elif not runnable(view):
+        blocked.append(NOT_VALIDATED_ROW)
+        lifecycle_reason = view["reason_text"]
     stale = [one for one, status in statuses.items() if status == "stale"]
-    if not proved:
-        stale.append("not_proved_here")
     untested = [one for one, status in statuses.items() if status == "untested"]
     if case.unknown:
         untested.append("unknown_need")
@@ -650,6 +662,7 @@ def _place(
         held_by=held,
         needed=frozenset(needed),
         gradable=_grading(case, statuses),
+        lifecycle_reason=lifecycle_reason,
     )
 
 

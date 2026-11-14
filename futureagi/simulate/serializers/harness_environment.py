@@ -1097,6 +1097,11 @@ class HarnessDraftSaveResponseSerializer(serializers.Serializer):
         help_text="Each saved piece's new default version, by piece.",
     )
     versions = HarnessVersionsSerializer()
+    not_active = serializers.ListField(
+        child=serializers.DictField(),
+        required=False,
+        help_text="Cases of the new suite version not Active on the new defaults: {scenario_key, reason, reason_text}.",
+    )
 
 
 class HarnessDefaultMoveSerializer(serializers.Serializer):
@@ -1875,3 +1880,67 @@ class HarnessActorViewSerializer(serializers.Serializer):
     # Whether a run plays the actor from what it sees; when not, why.
     played_from_view = serializers.BooleanField()
     unused_reason = serializers.CharField(allow_null=True)
+
+
+class HarnessScenarioValidateSerializer(serializers.Serializer):
+    agent_version_id = serializers.UUIDField(required=False, allow_null=True)
+    environment_version_id = serializers.UUIDField(required=False, allow_null=True)
+    suite_version_id = serializers.UUIDField(required=False, allow_null=True)
+    if_fresh = serializers.BooleanField(
+        required=False,
+        default=False,
+        help_text="Answer ready without a new job when the newest proving finished after the pair's last change.",
+    )
+
+
+class HarnessScenarioValidateResponseSerializer(serializers.Serializer):
+    state = serializers.ChoiceField(choices=["validating", "ready", "unavailable"])
+    job_id = serializers.CharField(required=False, allow_null=True)
+    deadline_at = serializers.CharField(required=False, allow_null=True)
+    finished_at = serializers.CharField(required=False, allow_null=True)
+    message = serializers.CharField(required=False, allow_null=True)
+
+
+class HarnessScenarioValidationQuerySerializer(serializers.Serializer):
+    job_id = serializers.UUIDField()
+
+
+class HarnessScenarioValidationStatusSerializer(serializers.Serializer):
+    state = serializers.ChoiceField(choices=["validating", "finished", "failed"])
+    job_id = serializers.CharField()
+    deadline_at = serializers.CharField(allow_null=True)
+    finished_at = serializers.CharField(allow_null=True)
+    proofs_recorded = serializers.BooleanField()
+    message = serializers.CharField(allow_null=True)
+
+
+class HarnessScenarioArchiveSerializer(serializers.Serializer):
+    reason = serializers.CharField(
+        required=False, allow_blank=True, default="", max_length=255
+    )
+
+
+class HarnessScenarioRestoreSerializer(serializers.Serializer):
+    pass
+
+
+class HarnessScenarioLifecycleResponseSerializer(serializers.Serializer):
+    scenario_key = serializers.CharField()
+    lifecycle = serializers.DictField(allow_null=True)
+
+
+class HarnessScenarioRevisionSerializer(serializers.Serializer):
+    revision = serializers.IntegerField()
+    digest = serializers.CharField()
+    suite_versions = serializers.ListField(
+        child=serializers.IntegerField(allow_null=True)
+    )
+    first_suite_version = serializers.IntegerField(allow_null=True)
+    changed_fields = serializers.ListField(child=serializers.CharField())
+    lifecycle_on_default_environment = serializers.DictField(allow_null=True)
+
+
+class HarnessScenarioRevisionsSerializer(serializers.Serializer):
+    scenario_key = serializers.CharField()
+    revisions = HarnessScenarioRevisionSerializer(many=True)
+    truncated = serializers.BooleanField()
