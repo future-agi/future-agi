@@ -65,6 +65,11 @@ from model_hub.serializers.eval_runner import (
     EvalTemplateSerializer,
     EvalUserTemplateSerializer,
 )
+from model_hub.utils.eval_metadata import (
+    EvaluationMetadataUnavailable,
+    read_evaluation_column_types,
+    read_evaluation_workspace,
+)
 from model_hub.utils.eval_prompt_variables import sync_required_keys_from_prompt
 from model_hub.utils.eval_result_columns import infer_eval_result_column_data_type
 from model_hub.utils.evals import prepare_user_eval_config  # noqa: E402
@@ -1368,10 +1373,9 @@ class EvaluationRunner:
                     if base_col_id:
                         base_column_ids.append(base_col_id)
 
-            cols = Column.objects.filter(
-                id__in=base_column_ids, dataset_id=row.dataset_id
-            ).values("id", "data_type")
-            col_map = {str(col["id"]): col["data_type"] for col in cols}
+            col_map = read_evaluation_column_types(
+                base_column_ids, dataset_id=row.dataset_id
+            )
             api_call_log_row = self._handle_api_call(row, mappings, config)
             (
                 eval_result,
@@ -1480,6 +1484,29 @@ class EvaluationRunner:
                     ),
                 )
 
+        except EvaluationMetadataUnavailable as error:
+            # No provider or usage call started. Terminalize the paired reason
+            # cell too, so reruns cannot retain stale reasoning or stay RUNNING.
+            # These writes are outside the metadata retry boundary.
+            logger.warning("evaluation_metadata_unavailable", error_code=error.code)
+            response = {"reason": str(error), "error_code": error.code}
+            status = value = CellStatus.ERROR.value
+            wants_reason = bool(
+                self.experiment_dataset
+            ) or self.user_eval_metric.config.get("reason_column")
+            if wants_reason and not self.optimize:
+                reason_column = self._create_reason_column(
+                    self.dataset, f"{self.user_eval_metric.name}-reason"
+                )
+                if reason_column is not None:
+                    self._create_reason_cell(
+                        self.dataset,
+                        reason_column,
+                        row,
+                        response,
+                        response["reason"],
+                        status,
+                    )
         except Exception as e:
             # Expected, handled validation failures (a required input was not
             # mapped/provided, or the eval targets a cell that already errored)
@@ -1562,6 +1589,11 @@ class EvaluationRunner:
 
         is_futureagi_eval = self.futureagi_eval
 
+        # Resolve the lazy relations before mapping checks read them and before
+        # logging/billing. Only this read is replayable; the logger and provider
+        # must run at most once.
+        workspace = read_evaluation_workspace(row)
+
         if not config.get("preview", False):
             input_token_count = self._get_input_token_count(row, mappings, config)
         else:
@@ -1621,7 +1653,7 @@ class EvaluationRunner:
                     else None
                 )
             ),
-            workspace=row.dataset.workspace,
+            workspace=workspace,
         )
 
         if not api_call_log_row:
