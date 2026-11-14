@@ -1,12 +1,16 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
+	"net"
 	"net/http"
+	"net/url"
 	"runtime"
 	"strings"
 	"testing"
 
+	"github.com/futureagi/agentcc-gateway/internal/config"
 	"github.com/futureagi/agentcc-gateway/internal/guardrails"
 	"github.com/futureagi/agentcc-gateway/internal/guardrails/pii"
 	"github.com/futureagi/agentcc-gateway/internal/pipeline"
@@ -139,4 +143,37 @@ func TestDecisionGuardrailContentRefusesInvalidJSON(t *testing.T) {
 			t.Errorf("%q: %+v, want invalid_json", body, apiErr)
 		}
 	}
+}
+
+// An org entry with no base_url of its own is layered onto config.yaml's
+// provider of the same ID. Routing judges its decision format by that
+// effective base_url, as the listing does: an OpenAI-format entry on a System
+// One vendor's host is not an OpenAI Decisions provider.
+func TestOrgDecisionRoutingJudgesTheEffectiveBaseURL(t *testing.T) {
+	org := defaultOrgA()
+	org.Providers["team-ts"] = &tenant.ProviderConfig{APIKey: orgOpenAIKey, APIFormat: "openai", Models: []string{"gpt-6-luna"}, Enabled: true}
+	g := newDecisionGateway(t, decisionGatewayOptions{
+		orgs: map[string]*tenant.OrgConfig{"org-a": org},
+		config: func(cfg *config.Config, upstreamURL string) {
+			u, _ := url.Parse(upstreamURL)
+			// Every dial, chat or decision, reaches the test upstream.
+			dial := func(ctx context.Context, network, _ string) (net.Conn, error) {
+				var d net.Dialer
+				return d.DialContext(ctx, network, u.Host)
+			}
+			cfg.Providers["team-ts"] = config.ProviderConfig{
+				APIFormat: "openai", BaseURL: "http://api.typesafe.ai/v1", APIKey: fagiHeldKey,
+				DialContext: dial, DecisionDialContext: dial,
+			}
+		},
+	})
+	listing := g.do(t, http.MethodGet, "/v1/decisions/models", keyByok, "")
+	if strings.Contains(listing.Body.String(), `"id":"team-ts/gpt-6-luna","object":"model","provider":"team-ts","format":"openai"`) {
+		t.Fatalf("the listing offers it as OpenAI Decisions: %s", listing.Body.String())
+	}
+	body := strings.Replace(decisionOAIBody, "openai/gpt-6-luna", "team-ts/gpt-6-luna", 1)
+	if rr := g.post(t, keyByok, body); rr.Code < 400 || rr.Code >= 500 {
+		t.Fatalf("routed as OpenAI Decisions to a System One vendor's host: %d %s", rr.Code, rr.Body.String())
+	}
+	expectNoCalls(t, g)
 }

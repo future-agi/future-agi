@@ -181,9 +181,11 @@ func (h *Handlers) orgDecisionTarget(rc *models.RequestContext, header http.Head
 		if apiFormat == "" {
 			apiFormat = "unset"
 		}
+		// The effective base_url, as the listing judges it: an entry with
+		// none of its own is built on config.yaml's provider of that ID.
 		candidates = append(candidates, decisionCandidate{
 			id: id, provider: p, apiFormat: apiFormat,
-			format:         decisionFormatOf(p, id, pcfg.BaseURL),
+			format:         decisionFormatOf(p, id, h.orgProviderCache.BaseURL(id, pcfg)),
 			openRouterChat: h.isOrgOpenRouterChat(id, pcfg),
 		})
 	}
