@@ -307,7 +307,7 @@ export default function InviteAcceptedPage() {
       <Typography
         fontWeight="fontWeightMedium"
         sx={{
-          fontSize: "13px",
+          fontSize: "12px",
           color: "text.secondary",
           fontFamily: "Inter",
         }}

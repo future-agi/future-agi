@@ -412,7 +412,9 @@ class TestAddUserEvalView:
             choice_scores=choice_scores,
             pass_threshold=pass_threshold,
             config={
-                "output": "Pass/Fail" if output_type_normalized == "pass_fail" else "choices",
+                "output": "Pass/Fail"
+                if output_type_normalized == "pass_fail"
+                else "choices",
                 "required_keys": ["output"],
                 "eval_type_id": "AgentEvaluator",
             },
@@ -682,9 +684,7 @@ class TestEvalConfigContracts:
             multi_choice=True,
         )
 
-        response = auth_client.get(
-            f"/model-hub/get-eval-config?eval_id={template.id}"
-        )
+        response = auth_client.get(f"/model-hub/get-eval-config?eval_id={template.id}")
 
         assert response.status_code == status.HTTP_200_OK, response.json()
         payload = response.json()["result"]["eval"]
@@ -702,9 +702,7 @@ class TestEvalConfigContracts:
             choices=["A", "B"],
         )
 
-        response = auth_client.get(
-            f"/model-hub/get-eval-config?eval_id={template.id}"
-        )
+        response = auth_client.get(f"/model-hub/get-eval-config?eval_id={template.id}")
 
         assert response.status_code == status.HTTP_200_OK, response.json()
         payload = response.json()["result"]["eval"]
@@ -812,11 +810,12 @@ class TestDeleteEvalsView:
         user_eval_metric.status = StatusType.RUNNING.value
         user_eval_metric.save(update_fields=["status"])
 
-        with patch(
-            "tfc.utils.distributed_state.evaluation_tracker"
-        ) as mock_tracker, patch(
-            "model_hub.utils.eval_cell_status.mark_eval_cells_stopped"
-        ) as mock_mark_stopped:
+        with (
+            patch("tfc.utils.distributed_state.evaluation_tracker") as mock_tracker,
+            patch(
+                "model_hub.utils.eval_cell_status.mark_eval_cells_stopped"
+            ) as mock_mark_stopped,
+        ):
             response = auth_client.delete(
                 f"/model-hub/develops/{dataset.id}/delete_user_eval/{user_eval_metric.id}/",
                 {"delete_column": True},
@@ -950,11 +949,12 @@ class TestDeleteEvalsView:
         dataset.column_order.append(str(eval_col.id))
         dataset.save()
 
-        with patch(
-            "tfc.utils.distributed_state.evaluation_tracker"
-        ) as mock_tracker, patch(
-            "model_hub.utils.eval_cell_status.mark_eval_cells_stopped"
-        ) as mock_mark_stopped:
+        with (
+            patch("tfc.utils.distributed_state.evaluation_tracker") as mock_tracker,
+            patch(
+                "model_hub.utils.eval_cell_status.mark_eval_cells_stopped"
+            ) as mock_mark_stopped,
+        ):
             response = auth_client.delete(
                 f"/model-hub/develops/{dataset.id}/delete_column/{eval_col.id}/",
             )
@@ -1044,16 +1044,28 @@ class TestDeleteEvalsView:
         # Create rows + cells
         row = Row.objects.create(dataset=dataset, order=0)
         eval_cell = Cell.objects.create(
-            dataset=dataset, row=row, column=eval_col, value="Pass",
+            dataset=dataset,
+            row=row,
+            column=eval_col,
+            value="Pass",
         )
         reason_cell = Cell.objects.create(
-            dataset=dataset, row=row, column=reason_col, value="Looks good",
+            dataset=dataset,
+            row=row,
+            column=reason_col,
+            value="Looks good",
         )
         input_cell = Cell.objects.create(
-            dataset=dataset, row=row, column=input_col, value="Hello world",
+            dataset=dataset,
+            row=row,
+            column=input_col,
+            value="Hello world",
         )
         other_eval_cell = Cell.objects.create(
-            dataset=dataset, row=row, column=other_eval_col, value="Fail",
+            dataset=dataset,
+            row=row,
+            column=other_eval_col,
+            value="Fail",
         )
 
         # ── Act ──
@@ -1253,7 +1265,8 @@ class TestDeleteEvalsView:
         # filter against a non-existent table would always yield an empty
         # list and the loop below would silently pass.
         cell_sql = [
-            q["sql"] for q in ctx.captured_queries
+            q["sql"]
+            for q in ctx.captured_queries
             if "model_hub_cell" in q["sql"].lower()
         ]
         # Positive assert: the cell delete must have actually run. Absence-only
@@ -1520,7 +1533,9 @@ class TestDeleteEvalsView:
         assert cell.deleted is False, "Cell must not be soft-deleted after rollback"
 
         eval_col.refresh_from_db()
-        assert eval_col.deleted is False, "Column must not be soft-deleted after rollback"
+        assert eval_col.deleted is False, (
+            "Column must not be soft-deleted after rollback"
+        )
 
         dataset.refresh_from_db()
         assert str(eval_col.id) in dataset.column_order, (
@@ -2174,16 +2189,19 @@ class TestSingleRowEvaluationView:
 
         usage_check = SimpleNamespace(allowed=True)
 
-        with patch(
-            "ee.usage.services.metering.check_usage", return_value=usage_check
-        ) as mock_check_usage, patch(
-            "model_hub.views.develop_dataset.get_mixpanel_properties",
-            return_value={},
-        ), patch(
-            "model_hub.views.develop_dataset.track_mixpanel_event"
-        ), patch(
-            "model_hub.views.develop_dataset.EvaluationRunner"
-        ) as mock_runner_class:
+        with (
+            patch(
+                "ee.usage.services.metering.check_usage", return_value=usage_check
+            ) as mock_check_usage,
+            patch(
+                "model_hub.views.develop_dataset.get_mixpanel_properties",
+                return_value={},
+            ),
+            patch("model_hub.views.develop_dataset.track_mixpanel_event"),
+            patch(
+                "model_hub.views.develop_dataset.EvaluationRunner"
+            ) as mock_runner_class,
+        ):
             mock_runner = MagicMock()
             mock_runner_class.return_value = mock_runner
 
@@ -2199,7 +2217,9 @@ class TestSingleRowEvaluationView:
         _, kwargs = mock_runner_class.call_args
         assert kwargs["source"] == "dataset_evaluation"
         assert kwargs["source_id"] == user_eval_metric.template.id
-        assert kwargs["source_configs"]["dataset_id"] == str(user_eval_metric.dataset_id)
+        assert kwargs["source_configs"]["dataset_id"] == str(
+            user_eval_metric.dataset_id
+        )
         assert kwargs["source_configs"]["source"] == "dataset"
         mock_runner.run_evaluation_for_row.assert_called_once_with(str(row.id))
 
@@ -2220,13 +2240,15 @@ class TestSingleRowEvaluationView:
             upgrade_cta=None,
         )
 
-        with patch(
-            "ee.usage.services.metering.check_usage", return_value=usage_check
-        ), patch(
-            "model_hub.tasks.user_evaluation._mark_cells_usage_limit_error"
-        ) as mock_mark_limit, patch(
-            "model_hub.views.develop_dataset.EvaluationRunner"
-        ) as mock_runner_class:
+        with (
+            patch("ee.usage.services.metering.check_usage", return_value=usage_check),
+            patch(
+                "model_hub.tasks.user_evaluation._mark_cells_usage_limit_error"
+            ) as mock_mark_limit,
+            patch(
+                "model_hub.views.develop_dataset.EvaluationRunner"
+            ) as mock_runner_class,
+        ):
             run_evaluation_task._original_func(
                 {
                     "metric_ids": [str(user_eval_metric.id)],

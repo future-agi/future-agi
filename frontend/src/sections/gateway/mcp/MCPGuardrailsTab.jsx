@@ -297,7 +297,7 @@ const MCPGuardrailsTab = ({ config, mcpStatus, gatewayId }) => {
                   <Typography
                     variant="body2"
                     fontWeight={600}
-                    sx={{ fontFamily: "monospace", fontSize: 13, flex: 1 }}
+                    sx={{ fontFamily: "monospace", fontSize: 12, flex: 1 }}
                   >
                     {tool}
                   </Typography>

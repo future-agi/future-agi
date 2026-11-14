@@ -1391,7 +1391,10 @@ class TestAsk:
             "chat_json",
             lambda *a, **k: {"answer": [{"text": "Most end unresolved."}]},
         )
-        result = {"totals": {"count": 40, "users": 30, "sessions": 40}, "categories": []}
+        result = {
+            "totals": {"count": 40, "users": 30, "sessions": 40},
+            "categories": [],
+        }
         run = SimpleNamespace(
             settings={
                 "question": "Where?",

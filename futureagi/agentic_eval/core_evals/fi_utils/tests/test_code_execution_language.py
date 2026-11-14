@@ -21,7 +21,9 @@ from agentic_eval.core_evals.fi_utils.fi_code_execution import CodeExecution
 
 class TestDetectLanguageEntryPoint:
     def test_python_def_evaluate(self):
-        code = "def evaluate(output, expected, **kwargs):\n    return output == expected\n"
+        code = (
+            "def evaluate(output, expected, **kwargs):\n    return output == expected\n"
+        )
         assert CodeExecution(code=code).detect_language(code) == "python"
 
     def test_js_function_evaluate(self):

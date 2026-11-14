@@ -211,7 +211,7 @@ describe("CallDrawer — chat branch", () => {
     // The call's own status, then each of its two evals.
     expect(screen.getAllByText("Failed")).toHaveLength(3);
     expect(screen.queryByText("0%")).not.toBeInTheDocument();
-    expect(screen.queryByText("Fix with Falcon")).not.toBeInTheDocument();
+    expect(screen.queryByText("Fix with AI")).not.toBeInTheDocument();
     expect(screen.queryByText("Add Evals")).not.toBeInTheDocument();
     await user.click(screen.getByText("Refund correctness"));
     // The expanded eval adds its explanation — banner + drawer = two.
@@ -677,7 +677,7 @@ describe("CallDrawer — voice branch", () => {
       "data-hide-path-tabs",
       "true",
     );
-    // Fix with Falcon isn't wired into the environment flow yet.
+    // Fix with AI isn't wired into the environment flow yet.
     expect(screen.getByTestId("voice-drawer")).toHaveAttribute(
       "data-show-fix-with-falcon",
       "false",

@@ -11,7 +11,7 @@ const EvalColumnChip = ({ text }) => {
         sx={{ color: "text.secondary" }}
         width={20}
       />
-      <Typography color="text.secondary" fontWeight={600} fontSize="13px">
+      <Typography color="text.secondary" fontWeight={600} fontSize="12px">
         {text}
       </Typography>
     </Box>

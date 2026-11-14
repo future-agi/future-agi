@@ -19,19 +19,33 @@ import (
 // Some OpenAI models take function tools on chat completions only with
 // reasoning off: gpt-5.6 answers 400 "Function tools with reasoning_effort are
 // not supported ... use /v1/responses or set reasoning_effort to 'none'".
-// Gateway routes that translate their own dialect into a chat request, such as
-// /v1/messages, send such a request to /v1/responses instead and translate the
-// answer back, so the model keeps its tools and its reasoning.
+// The provider's own ChatCompletion and StreamChatCompletion send such a request
+// to /v1/responses instead and translate the answer back, so the model keeps
+// its tools and its reasoning. Deciding there, rather than in each caller,
+// covers every path that sends a chat request upstream: /v1/chat/completions
+// (with failover, model fallbacks and async jobs), /v1/messages and the GenAI
+// routes that translate into a chat request, scheduled completions, batches and
+// the traffic mirror.
 
 // responsesToolModels are the model families that take function tools on chat
 // completions only with reasoning off.
 var responsesToolModels = []string{"gpt-5.6"}
 
-// ChatNeedsResponses reports whether req must go to the Responses API: it
-// carries tools, for a model that takes them on chat completions only without
-// reasoning. Only the official API serves both endpoints.
+// ChatNeedsResponses reports whether req must go to the Responses API: the
+// official API is the only upstream that serves both endpoints, and req is one
+// that NeedsResponses refuses on chat completions.
 func (p *Provider) ChatNeedsResponses(req *models.ChatCompletionRequest) bool {
-	if !p.openAIAPI || len(req.Tools) == 0 {
+	return p.openAIAPI && NeedsResponses(req)
+}
+
+// NeedsResponses reports whether chat completions refuse req, whatever the
+// host: it carries function tools, for a model that takes them on chat
+// completions only without reasoning, and the caller has not turned reasoning
+// off. A caller who sends reasoning_effort "none" gets tools on chat completions
+// as asked, and a request whose tools are all of another type (custom tools,
+// say) is left on chat completions for the upstream to answer.
+func NeedsResponses(req *models.ChatCompletionRequest) bool {
+	if req == nil || !hasFunctionTool(req.Tools) || reasoningOff(req) {
 		return false
 	}
 	model := resolveModelName(req.Model)
@@ -43,9 +57,40 @@ func (p *Provider) ChatNeedsResponses(req *models.ChatCompletionRequest) bool {
 	return false
 }
 
+// hasFunctionTool reports whether tools has a plain function tool, the kind
+// the Responses route carries.
+func hasFunctionTool(tools []models.Tool) bool {
+	for _, t := range tools {
+		if isFunctionTool(t) {
+			return true
+		}
+	}
+	return false
+}
+
+// isFunctionTool reports whether t is a plain function tool. Any other entry
+// keeps the caller's bytes in Raw (see models.Tool).
+func isFunctionTool(t models.Tool) bool {
+	return len(t.Raw) == 0 && (t.Type == "" || t.Type == "function")
+}
+
+// reasoningOff reports whether the caller set reasoning_effort to "none".
+func reasoningOff(req *models.ChatCompletionRequest) bool {
+	raw, ok := req.Extra["reasoning_effort"]
+	if !ok {
+		return false
+	}
+	var effort string
+	return json.Unmarshal(raw, &effort) == nil && effort == "none"
+}
+
 // ChatCompletionViaResponses serves a chat request on the Responses API.
 func (p *Provider) ChatCompletionViaResponses(ctx context.Context, req *models.ChatCompletionRequest) (*models.ChatCompletionResponse, error) {
-	body, err := json.Marshal(toResponsesRequest(req, false))
+	rr, apiErr := toResponsesRequest(req, false)
+	if apiErr != nil {
+		return nil, apiErr
+	}
+	body, err := json.Marshal(rr)
 	if err != nil {
 		return nil, models.ErrInternal(fmt.Sprintf("marshaling responses request: %v", err))
 	}
@@ -57,7 +102,16 @@ func (p *Provider) ChatCompletionViaResponses(ctx context.Context, req *models.C
 	if err := json.Unmarshal(respBody, &resp); err != nil {
 		return nil, models.ErrUpstreamProvider(http.StatusBadGateway, fmt.Sprintf("parsing responses response: %v", err))
 	}
-	return resp.toChat(), nil
+	// A failed response can come back as a 200; fail it as the stream's
+	// response.failed does, rather than answer an empty completion.
+	if resp.Status == "failed" {
+		msg := "response failed"
+		if resp.Error != nil && resp.Error.Message != "" {
+			msg = resp.Error.Message
+		}
+		return nil, models.ErrUpstreamProvider(http.StatusBadGateway, msg)
+	}
+	return resp.toChat()
 }
 
 // StreamChatCompletionViaResponses streams a chat request on the Responses
@@ -71,7 +125,12 @@ func (p *Provider) StreamChatCompletionViaResponses(ctx context.Context, req *mo
 		defer close(chunks)
 		defer close(errs)
 
-		body, err := json.Marshal(toResponsesRequest(req, true))
+		rr, apiErr := toResponsesRequest(req, true)
+		if apiErr != nil {
+			errs <- apiErr
+			return
+		}
+		body, err := json.Marshal(rr)
 		if err != nil {
 			errs <- models.ErrInternal(fmt.Sprintf("marshaling responses request: %v", err))
 			return
@@ -147,16 +206,40 @@ type responsesRequest struct {
 	Temperature       *float64            `json:"temperature,omitempty"`
 	TopP              *float64            `json:"top_p,omitempty"`
 	Reasoning         *responsesReasoning `json:"reasoning,omitempty"`
+	Text              *responsesText      `json:"text,omitempty"`
 	User              string              `json:"user,omitempty"`
 	ServiceTier       string              `json:"service_tier,omitempty"`
-	// Store is sent as false: chat completions store nothing by default, and
-	// the Responses API stores unless told not to.
+	// Carried from chat fields of the same name.
+	PromptCacheKey   json.RawMessage `json:"prompt_cache_key,omitempty"`
+	SafetyIdentifier json.RawMessage `json:"safety_identifier,omitempty"`
+	Metadata         json.RawMessage `json:"metadata,omitempty"`
+	// Store is the caller's store, false when not set: chat completions store
+	// nothing by default, and the Responses API stores unless told not to.
 	Store  bool `json:"store"`
 	Stream bool `json:"stream,omitempty"`
 }
 
 type responsesReasoning struct {
 	Effort string `json:"effort"`
+}
+
+// responsesText carries the output format, chat's response_format, and chat's
+// verbosity.
+type responsesText struct {
+	Format    json.RawMessage `json:"format,omitempty"`
+	Verbosity json.RawMessage `json:"verbosity,omitempty"`
+}
+
+// responsesJSONSchemaFormat is a json_schema text format. The Responses API
+// takes chat's json_schema fields one level up.
+type responsesJSONSchemaFormat struct {
+	Type        string          `json:"type"`
+	Name        string          `json:"name"`
+	Description string          `json:"description,omitempty"`
+	Schema      json.RawMessage `json:"schema,omitempty"`
+	// Strict is always sent, as on function tools: chat completions default it
+	// to false, and the Responses API makes json_schema strict by default.
+	Strict bool `json:"strict"`
 }
 
 type responsesMessage struct {
@@ -170,6 +253,10 @@ type responsesContent struct {
 	Text     string `json:"text,omitempty"`
 	ImageURL string `json:"image_url,omitempty"`
 	Detail   string `json:"detail,omitempty"`
+	FileData string `json:"file_data,omitempty"`
+	FileID   string `json:"file_id,omitempty"`
+	Filename string `json:"filename,omitempty"`
+	Refusal  string `json:"refusal,omitempty"`
 }
 
 type responsesFunctionCall struct {
@@ -196,8 +283,19 @@ type responsesFunctionTool struct {
 }
 
 // toResponsesRequest translates a chat request into a Responses API request.
-// stop has no Responses equivalent and is not sent.
-func toResponsesRequest(req *models.ChatCompletionRequest, stream bool) *responsesRequest {
+// stop has no Responses equivalent and is not sent; neither are n, seed,
+// presence/frequency penalties, logit_bias, logprobs, modalities, audio or
+// other unknown fields. A tool, tool choice, tool call or content part the
+// Responses API cannot be sent in chat shape is refused with a 400 rather than
+// forwarded or dropped.
+func toResponsesRequest(req *models.ChatCompletionRequest, stream bool) (_ *responsesRequest, apiErr *models.APIError) {
+	// Word the remedy for the route the caller used: only a caller's own chat
+	// request can set reasoning_effort.
+	defer func() {
+		if apiErr != nil && apiErr.Code == unsupportedCode {
+			apiErr.Message += overResponsesRemedy(req)
+		}
+	}()
 	out := &responsesRequest{
 		Model:       resolveModelName(req.Model),
 		Temperature: req.Temperature,
@@ -222,36 +320,157 @@ func toResponsesRequest(req *models.ChatCompletionRequest, stream bool) *respons
 			out.Reasoning = &responsesReasoning{Effort: effort}
 		}
 	}
+	if raw, ok := req.Extra["store"]; ok {
+		var store bool
+		if json.Unmarshal(raw, &store) == nil {
+			out.Store = store
+		}
+	}
+	// A response has one output; more choices cannot be asked for. A caller's
+	// own chat request asked for them and is told so. A translated request
+	// (GenAI candidateCount) gets one, as before this route existed.
+	if req.N != nil && *req.N > 1 {
+		if req.TranslatedFrom == "" {
+			return nil, unsupportedOverResponses(fmt.Sprintf("n=%d (more than one choice)", *req.N))
+		}
+		slog.Info("responses route answers one choice; extra candidates dropped",
+			"requested", *req.N, "translated_from", req.TranslatedFrom, "model", req.Model)
+	}
+
+	out.PromptCacheKey = req.Extra["prompt_cache_key"]
+	out.SafetyIdentifier = req.Extra["safety_identifier"]
+	out.Metadata = req.Extra["metadata"]
 
 	for _, m := range req.Messages {
-		out.Input = append(out.Input, responsesInput(m)...)
+		items, err := responsesInput(m)
+		if err != nil {
+			return nil, err
+		}
+		out.Input = append(out.Input, items...)
 	}
 	for _, t := range req.Tools {
+		if !isFunctionTool(t) {
+			return nil, unsupportedOverResponses(fmt.Sprintf("a %q tool", toolType(t)))
+		}
 		out.Tools = append(out.Tools, responsesTool(t))
 	}
-	out.ToolChoice = responsesToolChoice(req.ToolChoice)
-	return out
+	choice, err := responsesToolChoice(req.ToolChoice)
+	if err != nil {
+		return nil, err
+	}
+	out.ToolChoice = choice
+	format := responsesTextFormat(req.ResponseFormat)
+	verbosity := req.Extra["verbosity"]
+	if format != nil || verbosity != nil {
+		out.Text = &responsesText{Format: format, Verbosity: verbosity}
+	}
+	return out, nil
+}
+
+// unsupportedOverResponses is the 400 for a request that must go over the
+// Responses API but carries something only chat completions can take. With
+// reasoning_effort "none" the request stays on chat completions as sent.
+func unsupportedOverResponses(what string) *models.APIError {
+	return models.ErrBadRequest(unsupportedCode, fmt.Sprintf(
+		"This request has function tools for a model that takes them only over the Responses API, which cannot carry %s.", what))
+}
+
+const unsupportedCode = "unsupported_over_responses"
+
+// overResponsesRemedy is the advice for a request the Responses route cannot
+// carry, for the route the caller used.
+func overResponsesRemedy(req *models.ChatCompletionRequest) string {
+	if req.TranslatedFrom != "" {
+		return " Remove it from the request, or send it without function tools."
+	}
+	return ` Remove it, or set reasoning_effort to "none" to keep the request on chat completions.`
+}
+
+// toolType names a tool's type for an error message.
+func toolType(t models.Tool) string {
+	if t.Type != "" {
+		return t.Type
+	}
+	var named map[string]json.RawMessage
+	if json.Unmarshal(t.Raw, &named) == nil {
+		for key := range named {
+			return key
+		}
+	}
+	return "non-function"
+}
+
+// defaultJSONSchemaName names a json_schema format that came without a name.
+const defaultJSONSchemaName = "response"
+
+// responsesTextFormat translates a chat response_format into a Responses text
+// format. A type the Responses API does not take is not sent.
+func responsesTextFormat(rf *models.ResponseFormat) json.RawMessage {
+	if rf == nil {
+		return nil
+	}
+	switch rf.Type {
+	case "text", "json_object":
+		b, _ := json.Marshal(struct {
+			Type string `json:"type"`
+		}{rf.Type})
+		return b
+	case "json_schema":
+		var js struct {
+			Name        string          `json:"name"`
+			Description string          `json:"description"`
+			Schema      json.RawMessage `json:"schema"`
+			Strict      *bool           `json:"strict"`
+		}
+		if len(rf.JSONSchema) > 0 {
+			_ = json.Unmarshal(rf.JSONSchema, &js)
+		}
+		if string(js.Schema) == "null" {
+			js.Schema = nil
+		}
+		// The Responses API requires a name. Chat clients that build the
+		// schema themselves (the GenAI translator, for one) may leave it out.
+		if js.Name == "" {
+			js.Name = defaultJSONSchemaName
+		}
+		b, _ := json.Marshal(responsesJSONSchemaFormat{
+			Type:        "json_schema",
+			Name:        js.Name,
+			Description: js.Description,
+			Schema:      js.Schema,
+			Strict:      js.Strict != nil && *js.Strict,
+		})
+		return b
+	}
+	return nil
 }
 
 // responsesInput translates one chat message into Responses input items.
-func responsesInput(m models.Message) []any {
+func responsesInput(m models.Message) ([]any, *models.APIError) {
 	switch m.Role {
 	case "tool":
+		text, err := toolOutputText(m.Content)
+		if err != nil {
+			return nil, err
+		}
 		return []any{responsesFunctionCallOutput{
 			Type:   "function_call_output",
 			CallID: m.ToolCallID,
-			Output: contentText(m.Content),
-		}}
+			Output: text,
+		}}, nil
 	case "assistant":
+		content, err := assistantContent(m.Content)
+		if err != nil {
+			return nil, err
+		}
 		var items []any
-		if text := contentText(m.Content); text != "" {
-			items = append(items, responsesMessage{
-				Type:    "message",
-				Role:    "assistant",
-				Content: []responsesContent{{Type: "output_text", Text: text}},
-			})
+		if len(content) > 0 {
+			items = append(items, responsesMessage{Type: "message", Role: "assistant", Content: content})
 		}
 		for _, tc := range m.ToolCalls {
+			if tc.Type != "" && tc.Type != "function" {
+				return nil, unsupportedOverResponses(fmt.Sprintf("a %q tool call", tc.Type))
+			}
 			items = append(items, responsesFunctionCall{
 				Type:      "function_call",
 				CallID:    tc.ID,
@@ -259,13 +478,13 @@ func responsesInput(m models.Message) []any {
 				Arguments: tc.Function.Arguments,
 			})
 		}
-		return items
+		return items, nil
 	default:
-		return []any{responsesMessage{
-			Type:    "message",
-			Role:    m.Role,
-			Content: inputContent(m.Content),
-		}}
+		content, err := inputContent(m.Content)
+		if err != nil {
+			return nil, err
+		}
+		return []any{responsesMessage{Type: "message", Role: m.Role, Content: content}}, nil
 	}
 }
 
@@ -273,65 +492,134 @@ func responsesInput(m models.Message) []any {
 type chatContentPart struct {
 	Type     string `json:"type"`
 	Text     string `json:"text"`
+	Refusal  string `json:"refusal"`
 	ImageURL *struct {
 		URL    string `json:"url"`
 		Detail string `json:"detail"`
 	} `json:"image_url"`
+	File *struct {
+		FileData string `json:"file_data"`
+		FileID   string `json:"file_id"`
+		Filename string `json:"filename"`
+	} `json:"file"`
 }
 
-// inputContent translates chat content, a string or an array of parts, into
-// Responses input content.
-func inputContent(raw json.RawMessage) []responsesContent {
+// contentParts reads chat content: a string is one text part. ok is false for
+// content that is neither a string nor an array of parts.
+func contentParts(raw json.RawMessage) (parts []chatContentPart, ok bool) {
+	if len(raw) == 0 || string(raw) == "null" {
+		return nil, true
+	}
 	var text string
 	if json.Unmarshal(raw, &text) == nil {
-		return []responsesContent{{Type: "input_text", Text: text}}
+		return []chatContentPart{{Type: "text", Text: text}}, true
 	}
-	var parts []chatContentPart
 	if json.Unmarshal(raw, &parts) != nil {
-		return []responsesContent{{Type: "input_text", Text: string(raw)}}
+		return nil, false
+	}
+	return parts, true
+}
+
+// badContent is the 400 for content that is neither a string nor an array of
+// well-formed parts, naming the first part that does not decode, as chat
+// completions refuses it. Its raw JSON is never sent on as text.
+func badContent(raw json.RawMessage) *models.APIError {
+	var items []json.RawMessage
+	if json.Unmarshal(raw, &items) == nil {
+		for i, item := range items {
+			var part chatContentPart
+			if json.Unmarshal(item, &part) != nil {
+				var typed struct {
+					Type string `json:"type"`
+				}
+				_ = json.Unmarshal(item, &typed)
+				return models.ErrBadRequest("invalid_content", fmt.Sprintf("content part %d (type %q) has the wrong shape", i, typed.Type))
+			}
+		}
+	}
+	return models.ErrBadRequest("invalid_content", "message content must be a string or an array of content parts")
+}
+
+// inputContent translates the content of a user, system or developer message
+// into Responses input content: text, images and files. Any other part (audio,
+// say) is refused rather than dropped.
+func inputContent(raw json.RawMessage) ([]responsesContent, *models.APIError) {
+	parts, ok := contentParts(raw)
+	if !ok {
+		return nil, badContent(raw)
 	}
 	out := make([]responsesContent, 0, len(parts))
 	for _, part := range parts {
 		switch {
+		case part.Type == "text":
+			if part.Text != "" {
+				out = append(out, responsesContent{Type: "input_text", Text: part.Text})
+			}
 		case part.Type == "image_url" && part.ImageURL != nil:
 			detail := part.ImageURL.Detail
 			if detail == "" {
 				detail = "auto"
 			}
 			out = append(out, responsesContent{Type: "input_image", ImageURL: part.ImageURL.URL, Detail: detail})
-		case part.Text != "":
-			out = append(out, responsesContent{Type: "input_text", Text: part.Text})
+		case part.Type == "file" && part.File != nil && (part.File.FileData != "" || part.File.FileID != ""):
+			out = append(out, responsesContent{
+				Type:     "input_file",
+				FileData: part.File.FileData,
+				FileID:   part.File.FileID,
+				Filename: part.File.Filename,
+			})
+		default:
+			return nil, unsupportedOverResponses(fmt.Sprintf("a %q content part", part.Type))
 		}
 	}
-	return out
+	return out, nil
 }
 
-// contentText joins the text of chat content, a string or an array of parts.
-func contentText(raw json.RawMessage) string {
-	if len(raw) == 0 || string(raw) == "null" {
-		return ""
+// assistantContent translates an assistant message's content into Responses
+// output content: text and refusals.
+func assistantContent(raw json.RawMessage) ([]responsesContent, *models.APIError) {
+	parts, ok := contentParts(raw)
+	if !ok {
+		return nil, badContent(raw)
 	}
-	var text string
-	if json.Unmarshal(raw, &text) == nil {
-		return text
+	var out []responsesContent
+	for _, part := range parts {
+		switch part.Type {
+		case "text":
+			if part.Text != "" {
+				out = append(out, responsesContent{Type: "output_text", Text: part.Text})
+			}
+		case "refusal":
+			if part.Refusal != "" {
+				out = append(out, responsesContent{Type: "refusal", Refusal: part.Refusal})
+			}
+		default:
+			return nil, unsupportedOverResponses(fmt.Sprintf("a %q content part in an assistant message", part.Type))
+		}
 	}
-	var parts []chatContentPart
-	if json.Unmarshal(raw, &parts) != nil {
-		return string(raw)
+	return out, nil
+}
+
+// toolOutputText joins the text of a tool message, the only content a
+// function call output carries.
+func toolOutputText(raw json.RawMessage) (string, *models.APIError) {
+	parts, ok := contentParts(raw)
+	if !ok {
+		return "", badContent(raw)
 	}
 	var sb strings.Builder
 	for _, part := range parts {
+		if part.Type != "text" {
+			return "", unsupportedOverResponses(fmt.Sprintf("a %q content part in a tool message", part.Type))
+		}
 		sb.WriteString(part.Text)
 	}
-	return sb.String()
+	return sb.String(), nil
 }
 
-// responsesTool translates a chat tool. A tool that is not a plain function
-// keeps the caller's bytes, as on chat completions, so the upstream answers it.
+// responsesTool translates a chat function tool; toResponsesRequest refuses any
+// other kind.
 func responsesTool(t models.Tool) json.RawMessage {
-	if len(t.Raw) > 0 {
-		return t.Raw
-	}
 	params := t.Function.Parameters
 	if len(params) == 0 || string(params) == "null" {
 		params = json.RawMessage(`{"type":"object","properties":{}}`)
@@ -348,10 +636,19 @@ func responsesTool(t models.Tool) json.RawMessage {
 }
 
 // responsesToolChoice translates a chat tool_choice. The modes are the same
-// strings; a named function moves its name up a level.
-func responsesToolChoice(raw json.RawMessage) json.RawMessage {
-	if len(raw) == 0 {
-		return nil
+// strings; a named function moves its name up a level. Any other object (a
+// custom tool, allowed_tools) is refused rather than sent in chat shape.
+func responsesToolChoice(raw json.RawMessage) (json.RawMessage, *models.APIError) {
+	if len(raw) == 0 || string(raw) == "null" {
+		return nil, nil
+	}
+	var mode string
+	if json.Unmarshal(raw, &mode) == nil {
+		switch mode {
+		case "none", "auto", "required":
+			return raw, nil
+		}
+		return nil, unsupportedOverResponses(fmt.Sprintf("tool_choice %q", mode))
 	}
 	var named struct {
 		Type     string `json:"type"`
@@ -364,9 +661,53 @@ func responsesToolChoice(raw json.RawMessage) json.RawMessage {
 			Type string `json:"type"`
 			Name string `json:"name"`
 		}{"function", named.Function.Name})
-		return b
+		return b, nil
 	}
-	return raw
+	if named.Type == "allowed_tools" {
+		return responsesAllowedTools(raw)
+	}
+	what := "this tool_choice"
+	if named.Type != "" {
+		what = fmt.Sprintf("a %q tool_choice", named.Type)
+	}
+	return nil, unsupportedOverResponses(what)
+}
+
+// responsesAllowedTools translates an allowed_tools tool_choice that lists
+// function tools: the mode and the tools move up a level, and each function's
+// name with them. Any other entry is refused.
+func responsesAllowedTools(raw json.RawMessage) (json.RawMessage, *models.APIError) {
+	var chat struct {
+		AllowedTools struct {
+			Mode  string `json:"mode"`
+			Tools []struct {
+				Type     string `json:"type"`
+				Function struct {
+					Name string `json:"name"`
+				} `json:"function"`
+			} `json:"tools"`
+		} `json:"allowed_tools"`
+	}
+	if json.Unmarshal(raw, &chat) != nil || (chat.AllowedTools.Mode != "auto" && chat.AllowedTools.Mode != "required") {
+		return nil, unsupportedOverResponses("this allowed_tools tool_choice")
+	}
+	type tool struct {
+		Type string `json:"type"`
+		Name string `json:"name"`
+	}
+	out := struct {
+		Type  string `json:"type"`
+		Mode  string `json:"mode"`
+		Tools []tool `json:"tools"`
+	}{Type: "allowed_tools", Mode: chat.AllowedTools.Mode, Tools: []tool{}}
+	for _, t := range chat.AllowedTools.Tools {
+		if t.Type != "function" || t.Function.Name == "" {
+			return nil, unsupportedOverResponses(fmt.Sprintf("a %q tool in allowed_tools", t.Type))
+		}
+		out.Tools = append(out.Tools, tool{Type: "function", Name: t.Function.Name})
+	}
+	b, _ := json.Marshal(out)
+	return b, nil
 }
 
 // ── response ───────────────────────────────────────────────────────────────
@@ -416,11 +757,16 @@ type responsesUsage struct {
 	} `json:"output_tokens_details"`
 }
 
-// toChat translates a Responses API response into a chat completion.
-func (r *responsesResponse) toChat() *models.ChatCompletionResponse {
+// toChat translates a Responses API response into a chat completion. An output
+// item that is a call of another kind than a function cannot be answered in
+// chat shape; it fails the call rather than being dropped.
+func (r *responsesResponse) toChat() (*models.ChatCompletionResponse, error) {
 	msg := models.Message{Role: "assistant"}
 	var text strings.Builder
 	for _, item := range r.Output {
+		if err := checkOutputItem(item.Type); err != nil {
+			return nil, err
+		}
 		switch item.Type {
 		case "message":
 			for _, c := range item.Content {
@@ -448,7 +794,18 @@ func (r *responsesResponse) toChat() *models.ChatCompletionResponse {
 			FinishReason: r.finishReason(len(msg.ToolCalls) > 0),
 		}},
 		Usage: r.Usage.toChat(),
+	}, nil
+}
+
+// checkOutputItem fails an output item the chat answer cannot carry: a call of
+// another kind than a function (a custom tool, web search, ...). Reasoning and
+// messages are carried or have nothing to carry.
+func checkOutputItem(itemType string) *models.APIError {
+	if itemType != "function_call" && strings.HasSuffix(itemType, "_call") {
+		return models.ErrUpstreamProvider(http.StatusBadGateway, fmt.Sprintf(
+			"the Responses API answered with a %q item, which a chat completion cannot carry", itemType))
 	}
+	return nil
 }
 
 // finishReason is the chat finish reason for a response that ended.
@@ -541,7 +898,14 @@ func (c *responsesStreamConverter) convert(ev *responsesStreamEvent) ([]models.S
 		return []models.StreamChunk{c.chunk(models.Delta{Content: &delta}, nil)}, nil
 
 	case "response.output_item.added":
-		if ev.Item == nil || ev.Item.Type != "function_call" {
+		if ev.Item == nil {
+			return nil, nil
+		}
+		if err := checkOutputItem(ev.Item.Type); err != nil {
+			c.done = true
+			return nil, err
+		}
+		if ev.Item.Type != "function_call" {
 			return nil, nil
 		}
 		if c.toolIndex == nil {
@@ -572,6 +936,29 @@ func (c *responsesStreamConverter) convert(ev *responsesStreamEvent) ([]models.S
 		if resp == nil {
 			resp = &responsesResponse{}
 		}
+		// The final response lists every output item, including any the
+		// stream never announced with output_item.added.
+		var out []models.StreamChunk
+		for _, item := range resp.Output {
+			if err := checkOutputItem(item.Type); err != nil {
+				return nil, err
+			}
+			// A function call the stream never announced is carried here,
+			// as the non-streaming answer carries it.
+			if _, seen := c.toolIndex[item.ID]; item.Type == "function_call" && !seen {
+				if c.toolIndex == nil {
+					c.toolIndex = map[string]int{}
+				}
+				index := len(c.toolIndex)
+				c.toolIndex[item.ID] = index
+				out = append(out, c.chunk(models.Delta{ToolCalls: []models.ToolCallDelta{{
+					Index:    index,
+					ID:       item.CallID,
+					Type:     "function",
+					Function: &models.FunctionCallDelta{Name: item.Name, Arguments: item.Arguments},
+				}}}, nil))
+			}
+		}
 		finish := resp.finishReason(len(c.toolIndex) > 0)
 		final := c.chunk(models.Delta{}, &finish)
 		usage := models.StreamChunk{
@@ -582,7 +969,7 @@ func (c *responsesStreamConverter) convert(ev *responsesStreamEvent) ([]models.S
 			Choices: []models.StreamChoice{},
 			Usage:   resp.Usage.toChat(),
 		}
-		return []models.StreamChunk{final, usage}, nil
+		return append(out, final, usage), nil
 
 	case "response.failed":
 		c.done = true

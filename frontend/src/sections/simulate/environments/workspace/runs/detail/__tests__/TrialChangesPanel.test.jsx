@@ -3,6 +3,40 @@ import { render, screen } from "src/utils/test-utils";
 import TrialChangesPanel from "../TrialChangesPanel";
 
 describe("TrialChangesPanel", () => {
+  it("says a participant's reads apart from what it committed, and one that only read changed nothing", () => {
+    render(
+      <TrialChangesPanel
+        trialState={{
+          state_changes: [
+            {
+              who: "agent",
+              name: "the agent",
+              attempted: 2,
+              committed: 0,
+              refused: 0,
+              faulted: 0,
+              duplicate: 0,
+              committed_actions: [],
+              read: 2,
+              read_actions: ["get_order", "list_refunds"],
+              no_change: true,
+            },
+          ],
+        }}
+      />,
+    );
+    expect(
+      screen.getByText("2 attempted · 0 committed · 2 read"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("Read, changing nothing: get_order, list_refunds"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("No change: it committed nothing"),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/^Committed:/)).toBeNull();
+  });
+
   it("keeps attempted, refused and committed apart per participant and says what each actor chose", () => {
     render(
       <TrialChangesPanel

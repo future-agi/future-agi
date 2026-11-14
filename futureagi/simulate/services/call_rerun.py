@@ -7,8 +7,9 @@ from simulate.models.test_execution import CallExecutionSnapshot
 
 def transcript_snapshot(call_execution: CallExecution) -> list[dict]:
     """The call's transcript as a rerun snapshot keeps it, with who spoke each actor turn."""
-    return list(
-        call_execution.transcripts.values(
+    return [
+        dict(row)
+        for row in call_execution.transcripts.values(
             "speaker_role",
             "content",
             "start_time_ms",
@@ -17,7 +18,7 @@ def transcript_snapshot(call_execution: CallExecution) -> list[dict]:
             speaker_name=Coalesce("actor_turn__speaker_name", Value("")),
             actor_id=F("actor_turn__actor_id"),
         )
-    )
+    ]
 
 
 def call_snapshot(call_execution: CallExecution) -> CallExecutionSnapshot:

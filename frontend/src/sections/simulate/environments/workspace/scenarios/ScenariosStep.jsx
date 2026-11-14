@@ -12,7 +12,7 @@ import {
 import { useAmendScenarios } from "src/api/simulate-environments/scenariosHooks";
 import { useActors } from "src/api/simulate-environments/versions";
 import EmptyState from "../../components/EmptyState";
-import { speaks } from "../actors/actorUtils";
+import { withCast } from "../actors/actorUtils";
 import ScenarioToolbar from "./ScenarioToolbar";
 import SelectionBar from "./SelectionBar";
 import CoverageMatrix from "./CoverageMatrix";
@@ -121,11 +121,7 @@ export default function ScenariosStep({
   const { data: cast } = useActors(env?.id, {
     enabled: Boolean(env?.versioning?.enabled),
   });
-  const envWithCast = useMemo(
-    () =>
-      cast?.actors ? { ...env, callActors: cast.actors.filter(speaks) } : env,
-    [cast, env],
-  );
+  const envWithCast = useMemo(() => withCast(env, cast), [cast, env]);
   const [view, setView] = useState("table");
   const [rowHeight, setRowHeight] = useState("Short");
   // Repeats (k) for a selection run — how many times each selected scenario is

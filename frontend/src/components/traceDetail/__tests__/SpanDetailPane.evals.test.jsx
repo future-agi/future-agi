@@ -62,7 +62,7 @@ const renderEvalsTab = async (entry) => {
 };
 
 describe("SpanDetailPane evals tab", () => {
-  it("keeps the eval list, labels, explanation and Fix with Falcon when a rollup is present", async () => {
+  it("keeps the eval list, labels, explanation and Fix with AI when a rollup is present", async () => {
     const user = await renderEvalsTab({
       eval_scores: [failedScore],
       eval_rollup: rollup,
@@ -74,7 +74,7 @@ describe("SpanDetailPane evals tab", () => {
     await user.click(screen.getByText("Toxicity check"));
     expect(screen.getByText("The reply insults the user.")).toBeVisible();
     // Summary bar and the expanded failed row both offer it.
-    expect(screen.getAllByText("Fix with Falcon").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Fix with AI").length).toBeGreaterThan(0);
   });
 
   it("offers the per-span rollup as a collapsed section above the list", async () => {
