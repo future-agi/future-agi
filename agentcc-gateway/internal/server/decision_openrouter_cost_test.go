@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"testing"
 
+	"github.com/futureagi/agentcc-gateway/internal/config"
+	"github.com/futureagi/agentcc-gateway/internal/modeldb"
 	"github.com/futureagi/agentcc-gateway/internal/models"
 	"github.com/futureagi/agentcc-gateway/internal/tenant"
 )
@@ -66,4 +68,73 @@ func TestDecisionModelsListingPricesOpenRouterJev(t *testing.T) {
 		t.Fatalf("models =\n%s\nwant\n%s", gotJSON, wantJSON)
 	}
 	expectNoCalls(t, g)
+}
+
+// An operator override keyed on any name a Jev model goes by is what both
+// GET /v1/decisions/models shows and the call through OpenRouter is charged,
+// including when OpenRouter answers with a dated release the bundled prices
+// would normalize to jev-1.13.0 or jev-1.14.0.
+func TestDecisionOpenRouterJevOverrideListingMatchesCharge(t *testing.T) {
+	const overridePerMTok = 0.5
+	price := overridePerMTok / 1_000_000
+	for _, tt := range []struct {
+		name, key, routerModel, resolved string
+	}{
+		{"upstream name", "typesafe/jev-1.13", "typesafe/jev-1.13", "typesafe/jev-1.13-20260917"},
+		{"provider-qualified name", "openrouter/typesafe/jev-1.13", "typesafe/jev-1.13", "typesafe/jev-1.13-20260917"},
+		{"jev-latest answered as dated jev-1.14", "jev-latest", "~typesafe/jev-latest", "typesafe/jev-1.14-20261015"},
+		{"short name", "jev-1.13", "typesafe/jev-1.13", "typesafe/jev-1.13-20260917"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			org := &tenant.OrgConfig{Providers: map[string]*tenant.ProviderConfig{
+				"openrouter": {
+					APIKey: orgTypeSafeKey, APIFormat: "systemone", BaseURL: "https://203.0.113.7", Enabled: true,
+					Models: []string{tt.routerModel},
+				},
+			}}
+			g := newDecisionGateway(t, decisionGatewayOptions{
+				orgs: map[string]*tenant.OrgConfig{"org-a": org},
+				modelOverrides: map[string]modeldb.ModelOverride{
+					modeldb.DecisionKeyPrefix + tt.key: {Mode: string(modeldb.ModeDecision), Pricing: &modeldb.PricingOverride{InputPerToken: &price}},
+				},
+				config: func(cfg *config.Config, upstreamURL string) {
+					cfg.Providers["openrouter"] = config.ProviderConfig{
+						APIFormat: "systemone", BaseURL: upstreamURL, APIKey: fagiHeldKey,
+						Models: []string{tt.routerModel},
+					}
+				},
+			})
+
+			rr := g.do(t, http.MethodGet, "/v1/decisions/models", keyByok, "")
+			var resp struct {
+				Data []decisionModel `json:"data"`
+			}
+			if err := json.Unmarshal(rr.Body.Bytes(), &resp); rr.Code != http.StatusOK || err != nil {
+				t.Fatalf("listing status %d: %s", rr.Code, rr.Body.String())
+			}
+			id := "openrouter/" + tt.routerModel
+			var listed *decisionModelPricing
+			for _, entry := range resp.Data {
+				if entry.ID == id {
+					listed = entry.Pricing
+				}
+			}
+			if listed == nil || listed.InputPerMTok != overridePerMTok {
+				t.Fatalf("listing for %s = %+v, want input_per_mtok %v", id, listed, overridePerMTok)
+			}
+
+			answer := fmt.Sprintf(`{"model":%q,"answers":{"q":{"type":"refusal"}},"usage":{"input_tokens":1000000,"output_tokens":5}}`, tt.resolved)
+			g.upstream.setReply(func(w http.ResponseWriter, _ *http.Request) {
+				io.WriteString(w, answer)
+			})
+			body := fmt.Sprintf(`{"model":%q,"state":"synthetic-state","questions":{"q":{"type":"noul"}}}`, id)
+			rr = g.post(t, keyInternal, body, models.ProviderKeyHeader, callerOwnKey)
+			if rr.Code != http.StatusOK {
+				t.Fatalf("call status %d: %s", rr.Code, rr.Body.String())
+			}
+			if got := rr.Header().Get("x-agentcc-cost"); got != "0.500000" {
+				t.Fatalf("%s answered as %s: x-agentcc-cost = %q, want the listed 0.500000", id, tt.resolved, got)
+			}
+		})
+	}
 }

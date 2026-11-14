@@ -209,11 +209,9 @@ func (p *Plugin) ProcessResponse(_ context.Context, rc *models.RequestContext) p
 		// An unpriced decision model is marked unpriced like any other, never
 		// recorded as free.
 		billed = float64(usage.PromptTokens + usage.CompletionTokens)
-		for _, m := range decisionModelNames(rc) {
-			if cost, ok = db.CalculateDecisionCost(m, usage.PromptTokens, usage.CompletionTokens); ok {
-				break
-			}
-		}
+		// Exact prices for every name first, then normalized Jev names, so an
+		// override on any name the call goes by is never shadowed.
+		cost, ok = db.CalculateDecisionCostAny(decisionModelNames(rc), usage.PromptTokens, usage.CompletionTokens)
 	default: // "chat" or empty
 		if rc.Response == nil || rc.Response.Usage == nil {
 			return pipeline.ResultContinue()

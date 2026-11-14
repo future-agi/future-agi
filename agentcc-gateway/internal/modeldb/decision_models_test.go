@@ -160,3 +160,54 @@ func TestDecisionPricingJevNeverUsesChatEntries(t *testing.T) {
 		}
 	}
 }
+
+// A model known by several names is priced from an exact key for any of them
+// before any name is normalized, so an override on a later, full name is not
+// shadowed by an earlier dated name normalizing to a bundled version.
+func TestDecisionPricingAnyTriesExactNamesBeforeNormalizing(t *testing.T) {
+	dated, upstream, qualified := "typesafe/jev-1.13-20260917", "typesafe/jev-1.13", "openrouter/typesafe/jev-1.13"
+	names := []string{dated, upstream, qualified}
+	p := 0.5 / 1_000_000
+	price := func(db *ModelDB, names ...string) float64 {
+		t.Helper()
+		pricing, ok := db.DecisionPricingAny(names...)
+		if !ok {
+			t.Fatalf("%v: no price", names)
+		}
+		return pricing.InputPerMTok()
+	}
+
+	if got := price(New(BundledModels, nil), names...); math.Abs(got-0.042) > 1e-9 {
+		t.Errorf("no overrides: %g, want the bundled 0.042", got)
+	}
+	for _, key := range []string{upstream, qualified, "jev-1.13", dated} {
+		db := New(BundledModels, map[string]ModelOverride{
+			DecisionKeyPrefix + key: {Mode: string(ModeDecision), Pricing: &PricingOverride{InputPerToken: &p}},
+		})
+		if got := price(db, names...); math.Abs(got-0.5) > 1e-9 {
+			t.Errorf("override on %q: %g, want 0.5", key, got)
+		}
+		// The listing prices the same entry from its upstream and listed names.
+		if got := price(db, upstream, qualified); key != dated && math.Abs(got-0.5) > 1e-9 {
+			t.Errorf("listing with override on %q: %g, want 0.5", key, got)
+		}
+	}
+
+	// Earlier names win among exact keys.
+	q := 0.7 / 1_000_000
+	db := New(BundledModels, map[string]ModelOverride{
+		DecisionKeyPrefix + upstream:  {Mode: string(ModeDecision), Pricing: &PricingOverride{InputPerToken: &p}},
+		DecisionKeyPrefix + qualified: {Mode: string(ModeDecision), Pricing: &PricingOverride{InputPerToken: &q}},
+	})
+	if got := price(db, names...); math.Abs(got-0.5) > 1e-9 {
+		t.Errorf("both overrides: %g, want the upstream name's 0.5", got)
+	}
+
+	// An unknown version stays unpriced under every name.
+	if pricing, ok := New(BundledModels, nil).DecisionPricingAny("typesafe/jev-9.9-20270101", "typesafe/jev-9.9", "openrouter/typesafe/jev-9.9"); ok {
+		t.Errorf("unknown Jev version priced %+v", pricing)
+	}
+	if _, ok := New(BundledModels, nil).DecisionPricingAny(); ok {
+		t.Error("no names priced")
+	}
+}

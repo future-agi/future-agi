@@ -40,32 +40,63 @@ func addDecisionModels(bundled map[string]*ModelInfo) {
 	}
 }
 
-// DecisionPricing returns a decision model's price. It looks only under
-// "decision:" keys and never falls back to a chat model of the same name. It
-// tries, in order:
-//   - the model as named;
-//   - its last path segment ("jev-1.13.0" from "typesafe/jev-1.13.0");
-//   - for Jev only, that segment without its release date, then normalized to
-//     the version it names, so OpenRouter's "typesafe/jev-1.13" and the dated
-//     "typesafe/jev-1.13-20260917" it answers with are priced as jev-1.13.0
-//     (see jevVersionCandidates).
-//
-// An exact key always wins over normalization: an operator override on
-// "decision:jev-1.13" prices "jev-1.13" and its dated releases on its own.
+// DecisionPricing returns a decision model's price. It is DecisionPricingAny
+// for a model known by one name.
 func (db *ModelDB) DecisionPricing(model string) (*PricingInfo, bool) {
-	last := model
-	candidates := []string{model}
-	if idx := strings.LastIndexByte(model, '/'); idx >= 0 && idx < len(model)-1 {
-		last = model[idx+1:]
-		candidates = append(candidates, last)
+	return db.DecisionPricingAny(model)
+}
+
+// DecisionPricingAny returns the price of a decision model that goes by
+// several names, most specific first (a call's dated resolved name, the name
+// it was sent upstream, the caller's provider-qualified name). It looks only
+// under "decision:" keys and never falls back to a chat model of the same
+// name. It makes two passes over the names:
+//   - exact: every name as given, then its last path segment ("jev-1.13.0"
+//     from "typesafe/jev-1.13.0");
+//   - only if no name matched exactly, for Jev only: every name's last segment
+//     without its release date, then normalized to the version it names, so
+//     OpenRouter's "typesafe/jev-1.13" and the dated "typesafe/jev-1.13-20260917"
+//     it answers with are priced as jev-1.13.0 (see jevVersionCandidates).
+//
+// So an exact key for any of the names, such as an operator override on
+// "decision:typesafe/jev-1.13" or "decision:openrouter/typesafe/jev-1.13",
+// always wins over a normalized bundled price for another of them.
+func (db *ModelDB) DecisionPricingAny(names ...string) (*PricingInfo, bool) {
+	for _, name := range names {
+		ids := []string{name}
+		if last := lastPathSegment(name); last != name {
+			ids = append(ids, last)
+		}
+		if pricing, ok := db.decisionPricingFor(ids...); ok {
+			return pricing, true
+		}
 	}
-	candidates = append(candidates, jevVersionCandidates(last)...)
-	for _, id := range candidates {
+	for _, name := range names {
+		if pricing, ok := db.decisionPricingFor(jevVersionCandidates(lastPathSegment(name))...); ok {
+			return pricing, true
+		}
+	}
+	return nil, false
+}
+
+// decisionPricingFor returns the price under the first "decision:" key among
+// ids that has one.
+func (db *ModelDB) decisionPricingFor(ids ...string) (*PricingInfo, bool) {
+	for _, id := range ids {
 		if m, ok := db.models[DecisionKeyPrefix+id]; ok && m.Pricing.HasPricing() {
 			return &m.Pricing, true
 		}
 	}
 	return nil, false
+}
+
+// lastPathSegment returns what follows a model name's last "/", or the name
+// itself when there is no "/" or nothing follows it.
+func lastPathSegment(model string) string {
+	if idx := strings.LastIndexByte(model, '/'); idx >= 0 && idx < len(model)-1 {
+		return model[idx+1:]
+	}
+	return model
 }
 
 // jevVersion matches the Jev names OpenRouter uses: "jev-<major>.<minor>",
@@ -103,7 +134,13 @@ func jevVersionCandidates(name string) []string {
 
 // CalculateDecisionCost prices a decision call from the vendor's token counts.
 func (db *ModelDB) CalculateDecisionCost(model string, inputTokens, outputTokens int) (float64, bool) {
-	pricing, ok := db.DecisionPricing(model)
+	return db.CalculateDecisionCostAny([]string{model}, inputTokens, outputTokens)
+}
+
+// CalculateDecisionCostAny prices a decision call whose model goes by several
+// names, as DecisionPricingAny does, from the vendor's token counts.
+func (db *ModelDB) CalculateDecisionCostAny(names []string, inputTokens, outputTokens int) (float64, bool) {
+	pricing, ok := db.DecisionPricingAny(names...)
 	if !ok {
 		return 0, false
 	}
