@@ -2,10 +2,6 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, userEvent } from "src/utils/test-utils";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
-// Must be first — polyfills localStorage for Node 23+ before the component
-// graph accesses zustand stores at module-init time.
-import "./__localstorage_polyfill__.js";
-
 vi.mock("src/utils/axios", () => ({
   default: { post: vi.fn(), get: vi.fn() },
   endpoints: {
@@ -155,8 +151,12 @@ describe("AddExistingDataset", () => {
     await vi.waitFor(() => {
       expect(snackbarSpy).toHaveBeenCalledTimes(1);
     });
-    const [_message, opts] = snackbarSpy.mock.lastCall;
+    const [message, opts] = snackbarSpy.mock.lastCall;
     expect(opts.variant).toBe("info");
+    render(message);
+    expect(
+      screen.getByText(/Rows are being added to the dataset in the background/),
+    ).toBeInTheDocument();
   });
 
   it("shows success toast when status is completed", async () => {
@@ -224,8 +224,12 @@ describe("AddExistingDataset", () => {
     await vi.waitFor(() => {
       expect(snackbarSpy).toHaveBeenCalledTimes(1);
     });
-    const [_message, opts] = snackbarSpy.mock.lastCall;
+    const [message, opts] = snackbarSpy.mock.lastCall;
     expect(opts.variant).toBe("info");
+    render(message);
+    expect(
+      screen.getByText(/Rows are being added to the dataset in the background/),
+    ).toBeInTheDocument();
   });
 
   it("calls handleclose and onSuccess after mutation succeeds", async () => {

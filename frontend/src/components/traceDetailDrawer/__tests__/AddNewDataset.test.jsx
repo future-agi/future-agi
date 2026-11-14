@@ -2,10 +2,6 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, userEvent } from "src/utils/test-utils";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
-// Must be first — polyfills localStorage for Node 23+ before the component
-// graph accesses zustand stores at module-init time.
-import "./__localstorage_polyfill__.js";
-
 // Capture the real onSuccess handler so edge cases can be tested without
 // relying on React Query's async lifecycle in jsdom.
 let capturedOnSuccess = null;
@@ -105,6 +101,13 @@ describe("AddNewDataset", () => {
     expect(payload.mapping_config).toEqual([
       { col_name: "input.text", data_type: "text", span_field: "input.text" },
     ]);
+    await vi.waitFor(() => expect(snackbarSpy).toHaveBeenCalledTimes(1));
+    const [message, options] = snackbarSpy.mock.lastCall;
+    expect(options.variant).toBe("info");
+    render(message);
+    expect(
+      screen.getByText(/Rows are still being added in the background/),
+    ).toBeInTheDocument();
   });
 
   // ── onSuccess handler: toast variants ────────────────────────────────────
