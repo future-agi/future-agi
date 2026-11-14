@@ -53947,7 +53947,9 @@ export const SimulateV3CallExecutionDetailResponse = zod.object({
             code: zod
               .string()
               .min(1)
-              .describe("fault_not_applied or fault_not_triggered"),
+              .describe(
+                "worker_channel_bypassed, worker_limits_not_enforced, fault_not_applied or fault_not_triggered",
+              ),
             message: zod
               .string()
               .min(1)
@@ -53955,6 +53957,7 @@ export const SimulateV3CallExecutionDetailResponse = zod.object({
             action: zod.string().optional(),
             on_call: zod.number().optional(),
             mode: zod.string().optional(),
+            workers: zod.array(zod.string().min(1)).optional(),
           })
           .describe(
             "How the trial ran that the person should know, e.g. a scenario fault that did not take effect.",
@@ -53963,6 +53966,37 @@ export const SimulateV3CallExecutionDetailResponse = zod.object({
       .optional()
       .describe(
         "How the trial ran that the person should know, e.g. a scenario fault that did not take effect.",
+      ),
+    shared_records: zod
+      .array(
+        zod
+          .object({
+            key: zod
+              .string()
+              .min(1)
+              .describe(
+                "What the calls named, as argument=value; never a database identity.",
+              ),
+            argument: zod.string().min(1),
+            value: zod.string().min(1),
+            actions: zod.array(
+              zod.object({
+                who: zod.string().min(1),
+                tool: zod.string(),
+                outcome: zod.string().min(1),
+                write: zod.boolean(),
+              }),
+            ),
+            committed_writes: zod.number(),
+            truncated: zod.boolean(),
+          })
+          .describe(
+            "Records two or more participants named in this trial, and what the world made of each call.",
+          ),
+      )
+      .optional()
+      .describe(
+        "Records two or more participants named in this trial, and what the world made of each call.",
       ),
   }),
   scoring_status: zod.enum([
@@ -54012,6 +54046,16 @@ export const SimulateV3CallExecutionWorkersResponse = zod.object({
           "infrastructure",
           "not_observed",
         ])
+        .optional(),
+      cleanup: zod
+        .object({
+          status: zod.enum([
+            "stopped_with_sandbox",
+            "still_running",
+            "unknown",
+          ]),
+          at: zod.string().min(1),
+        })
         .optional(),
     }),
   ),

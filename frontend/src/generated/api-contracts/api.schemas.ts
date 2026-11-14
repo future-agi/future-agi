@@ -25667,7 +25667,7 @@ export interface ActorUsageApi {
  */
 export interface TrialNoticeApi {
   /**
-   * fault_not_applied or fault_not_triggered
+   * worker_channel_bypassed, worker_limits_not_enforced, fault_not_applied or fault_not_triggered
    * @minLength 1
    */
   code: string;
@@ -25679,6 +25679,34 @@ export interface TrialNoticeApi {
   action?: string;
   on_call?: number;
   mode?: string;
+  workers?: string[];
+}
+
+export interface SharedRecordActionApi {
+  /** @minLength 1 */
+  who: string;
+  tool: string;
+  /** @minLength 1 */
+  outcome: string;
+  write: boolean;
+}
+
+/**
+ * Records two or more participants named in this trial, and what the world made of each call.
+ */
+export interface SharedRecordApi {
+  /**
+   * What the calls named, as argument=value; never a database identity.
+   * @minLength 1
+   */
+  key: string;
+  /** @minLength 1 */
+  argument: string;
+  /** @minLength 1 */
+  value: string;
+  actions: SharedRecordActionApi[];
+  committed_writes: number;
+  truncated: boolean;
 }
 
 /**
@@ -25695,6 +25723,8 @@ export interface TrialStateApi {
   limits?: TrialStateApiLimits;
   /** How the trial ran that the person should know, e.g. a scenario fault that did not take effect. */
   notices?: TrialNoticeApi[];
+  /** Records two or more participants named in this trial, and what the world made of each call. */
+  shared_records?: SharedRecordApi[];
 }
 
 export interface CallExecutionV3DetailResponseApi {
@@ -25880,6 +25910,21 @@ export const CallWorkerApiState = {
   not_observed: "not_observed",
 } as const;
 
+export type CleanupApiStatus =
+  (typeof CleanupApiStatus)[keyof typeof CleanupApiStatus];
+
+export const CleanupApiStatus = {
+  stopped_with_sandbox: "stopped_with_sandbox",
+  still_running: "still_running",
+  unknown: "unknown",
+} as const;
+
+export interface CleanupApi {
+  status: CleanupApiStatus;
+  /** @minLength 1 */
+  at: string;
+}
+
 export interface CallWorkerApi {
   /** @minLength 1 */
   worker_id: string;
@@ -25894,6 +25939,7 @@ export interface CallWorkerApi {
   model?: string;
   tokens?: number;
   state?: CallWorkerApiState;
+  cleanup?: CleanupApi;
 }
 
 export type CallWorkerEventApiType =

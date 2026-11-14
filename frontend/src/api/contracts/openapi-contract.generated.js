@@ -96676,6 +96676,14 @@ export const OPENAPI_CONTRACT = Object.freeze({
             $ref: "#/definitions/TrialNotice",
           },
         },
+        shared_records: {
+          description:
+            "Records two or more participants named in this trial, and what the world made of each call.",
+          type: "array",
+          items: {
+            $ref: "#/definitions/SharedRecord",
+          },
+        },
       },
       "x-nullable": true,
     },
@@ -96821,6 +96829,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "infrastructure",
             "not_observed",
           ],
+        },
+        cleanup: {
+          $ref: "#/definitions/Cleanup",
         },
       },
     },
@@ -119674,6 +119685,52 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    SharedRecord: {
+      description:
+        "Records two or more participants named in this trial, and what the world made of each call.",
+      required: [
+        "key",
+        "argument",
+        "value",
+        "actions",
+        "committed_writes",
+        "truncated",
+      ],
+      type: "object",
+      properties: {
+        key: {
+          title: "Key",
+          description:
+            "What the calls named, as argument=value; never a database identity.",
+          type: "string",
+          minLength: 1,
+        },
+        argument: {
+          title: "Argument",
+          type: "string",
+          minLength: 1,
+        },
+        value: {
+          title: "Value",
+          type: "string",
+          minLength: 1,
+        },
+        actions: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/SharedRecordAction",
+          },
+        },
+        committed_writes: {
+          title: "Committed writes",
+          type: "integer",
+        },
+        truncated: {
+          title: "Truncated",
+          type: "boolean",
+        },
+      },
+    },
     TrialNotice: {
       description:
         "How the trial ran that the person should know, e.g. a scenario fault that did not take effect.",
@@ -119682,7 +119739,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
       properties: {
         code: {
           title: "Code",
-          description: "fault_not_applied or fault_not_triggered",
+          description:
+            "worker_channel_bypassed, worker_limits_not_enforced, fault_not_applied or fault_not_triggered",
           type: "string",
           minLength: 1,
         },
@@ -119706,6 +119764,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Mode",
           type: "string",
           "x-nullable": true,
+        },
+        workers: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
         },
       },
     },
@@ -119772,6 +119837,24 @@ export const OPENAPI_CONTRACT = Object.freeze({
           },
         },
       },
+    },
+    Cleanup: {
+      required: ["status", "at"],
+      type: "object",
+      properties: {
+        status: {
+          title: "Status",
+          type: "string",
+          enum: ["stopped_with_sandbox", "still_running", "unknown"],
+        },
+        at: {
+          title: "At",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+      },
+      "x-nullable": true,
     },
     CallWorkerTurn: {
       required: ["text", "at"],
@@ -132053,6 +132136,31 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Outcome",
           type: "string",
           minLength: 1,
+          "x-nullable": true,
+        },
+      },
+    },
+    SharedRecordAction: {
+      required: ["who", "tool", "outcome", "write"],
+      type: "object",
+      properties: {
+        who: {
+          title: "Who",
+          type: "string",
+          minLength: 1,
+        },
+        tool: {
+          title: "Tool",
+          type: "string",
+        },
+        outcome: {
+          title: "Outcome",
+          type: "string",
+          minLength: 1,
+        },
+        write: {
+          title: "Write",
+          type: "boolean",
           "x-nullable": true,
         },
       },

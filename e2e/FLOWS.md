@@ -2649,8 +2649,9 @@
 1. seed one completed chat call with a stored Participants record and trial world changes
 2. open the call from its run
 3. open the Participants tab
-4. open the first hand-off row and Open in Traces
+4. open the first hand-off row and Open in Traces, then close the trace
 5. open the World changes tab
+6. open the call the user stopped and its Participants tab
 
 **Backend state verified:**
 
@@ -2660,5 +2661,7 @@
 
 - one table section per turn, each with its own request and only its own hand-off
 - the unplaced hand-off carries the parent unknown chip, and only that one
-- a step read from a trace opens the Traces tab
+- a step read from a trace opens that trace, and closing it leaves the call on its Traces tab
 - World changes lists the worker's refused attempt with its reason
+- World changes lists the order two workers named, with its committed writes
+- the stopped call says it was stopped by the user, and its cancelled worker was stopped with the run sandbox
