@@ -68,6 +68,20 @@ describe("RunReadinessTag", () => {
     expect(screen.getByText("2 of 10 cases held back")).toBeInTheDocument();
   });
 
+  it("counts neither an unmeasured row nor a Stop not seen yet as a limit", () => {
+    const snapshot = {
+      ...LIMITED,
+      rows: [
+        ...LIMITED.rows,
+        row("files", "untested", { measured: false }),
+        row("cancel", "untested"),
+      ],
+    };
+    render(<RunReadinessTag snapshot={snapshot} selection={HELD} />);
+
+    expect(screen.getByText("Started with 1 limit")).toBeInTheDocument();
+  });
+
   it("is not ready when cases were held back, even with every row Supported", () => {
     render(<RunReadinessTag snapshot={READY} selection={HELD} />);
 
