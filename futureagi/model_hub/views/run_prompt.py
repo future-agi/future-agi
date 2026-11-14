@@ -180,6 +180,35 @@ def _extract_tool_ids(tools):
     return tool_ids
 
 
+def _resolve_tools_for_request(request, tools):
+    """Resolve the complete tool selection within the request's active scope."""
+    error_message = "One or more tools are unavailable for this workspace."
+    tool_ids = _extract_tool_ids(tools)
+    if len(tool_ids) != len(tools or []):
+        raise ValueError(error_message)
+    try:
+        requested_ids = {uuid.UUID(str(tool_id)) for tool_id in tool_ids}
+    except ValueError:
+        raise ValueError(error_message) from None
+    if not requested_ids:
+        return []
+
+    organization = _request_organization(request)
+    if not organization:
+        raise ValueError(error_message)
+    resolved_tools = list(
+        Tools.objects.filter(
+            _request_workspace_filter(request),
+            id__in=requested_ids,
+            organization=organization,
+            deleted=False,
+        )
+    )
+    if {tool.id for tool in resolved_tools} != requested_ids:
+        raise ValueError(error_message)
+    return resolved_tools
+
+
 PROVIDERS_WITH_JSON = ["vertex_ai", "azure", "bedrock", "sagemaker"]
 
 # Re-export for backward compatibility - prefer importing from column_utils directly
@@ -1081,14 +1110,10 @@ class LitellmAPIView(CreateAPIView):
         )
         if not dataset:
             return self._gm.not_found("Dataset not found")
-        # Retrieve tools based on the IDs from the validated data
-        tool_ids = _extract_tool_ids(validated_data.get("tools"))
-        tools = Tools.objects.filter(
-            _request_workspace_filter(request),
-            id__in=tool_ids,
-            organization=organization,
-            deleted=False,
-        )
+        try:
+            tools = _resolve_tools_for_request(request, validated_data.get("tools"))
+        except ValueError as e:
+            return self._gm.bad_request(str(e))
 
         # Use transaction to ensure atomicity
         with transaction.atomic():
@@ -1757,6 +1782,11 @@ class AddRunPromptColumnView(APIView):
                     "Please select a supported model."
                 )
 
+            try:
+                tools = _resolve_tools_for_request(request, config.get("tools"))
+            except ValueError as e:
+                return self._gm.bad_request(str(e))
+
             output_format = config.get("output_format")
             messages = config.get("messages", [])
             if output_format != "audio":
@@ -1802,13 +1832,8 @@ class AddRunPromptColumnView(APIView):
                     dataset.column_order = column_order
                     dataset.save()
 
-                # Handle tools if provided in config
-                tools = config.get("tools", [])
                 if tools:
-                    tool_ids = [tool.get("id") for tool in tools if "id" in tool]
-                    if tool_ids:
-                        tools_queryset = Tools.objects.filter(id__in=tool_ids)
-                        run_prompter.tools.set(tools_queryset)
+                    run_prompter.tools.set(tools)
 
                 run_prompter_id = str(run_prompter.id)
 
@@ -1905,13 +1930,11 @@ class PreviewRunPromptColumnView(APIView):
             if not rows:
                 return self._gm.bad_request(get_error_message("ROW_INDICES_NOT_EXIST"))
 
-            # Process tools if provided in config
-            tools_config = []
-            if config.get("tools"):
-                tool_ids = [tool.get("id") for tool in config["tools"] if "id" in tool]
-                if tool_ids:
-                    tools = Tools.objects.filter(id__in=tool_ids)
-                    tools_config = [tool.as_openai_tool() for tool in tools]
+            try:
+                tools = _resolve_tools_for_request(request, config.get("tools"))
+            except ValueError as e:
+                return self._gm.bad_request(str(e))
+            tools_config = [tool.as_openai_tool() for tool in tools]
 
             rf = config.get("response_format")
             if rf and not isinstance(rf, dict):
@@ -2040,6 +2063,11 @@ class EditRunPromptColumnView(APIView):
             if column.source != SourceChoices.RUN_PROMPT.value:
                 return self._gm.bad_request(get_error_message("COLUMN_IS_IN_VALID"))
 
+            try:
+                tools = _resolve_tools_for_request(request, config.get("tools"))
+            except ValueError as e:
+                return self._gm.bad_request(str(e))
+
             # Lock the RunPrompter row to prevent race conditions
             # Use of=('self',) to avoid issues with nullable foreign keys causing outer joins
             with transaction.atomic():
@@ -2112,16 +2140,7 @@ class EditRunPromptColumnView(APIView):
                     "run_prompt_config", run_prompter.run_prompt_config
                 )
 
-                # Handle tools update - first clear existing tools
-                run_prompter.tools.clear()
-
-                # Handle tools update if provided
-                tools = config.get("tools")
-                if tools:
-                    tool_ids = [tool.get("id") for tool in tools if "id" in tool]
-                    if tool_ids:
-                        tools_queryset = Tools.objects.filter(id__in=tool_ids)
-                        run_prompter.tools.set(tools_queryset)
+                run_prompter.tools.set(tools)
 
                 run_prompter.save()
 
