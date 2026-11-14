@@ -60,7 +60,7 @@ export const SCENARIOS_COPY = {
   keptAsWritten: "Kept as written",
   notMeasured: "Not measured at run time",
   couldNotApply: "Could not apply",
-  discardChange: "Discard change",
+  discardChange: "Discard unsaved scenario changes",
   lifecycleFilterLabel: "Lifecycle",
   versionsLabel: "Versions",
   versionsDefault: "Saved (default)",
