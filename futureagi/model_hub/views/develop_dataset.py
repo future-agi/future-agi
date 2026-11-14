@@ -4612,7 +4612,7 @@ class GetCellDataView(APIView):
             column_ids = request.validated_data.get("column_ids", [])
 
             if not row_ids or not column_ids:
-                return self._gm.bad_request_response(
+                return self._gm.bad_request(
                     "Both row_ids and column_ids are required"
                 )
 
