@@ -18,6 +18,11 @@ from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.viewsets import ViewSet
 
+from agentcc.guardrail_settings import (
+    canonical_setting_keys,
+    normalize_guardrail_settings,
+    normalize_saved_guardrail_settings,
+)
 from agentcc.models.org_config import AgentccOrgConfig
 from agentcc.models.provider_credential import AgentccProviderCredential
 from agentcc.models.request_log import AgentccRequestLog
@@ -605,10 +610,15 @@ class AgentccGatewayViewSet(ViewSet):
             def updater(cfg):
                 for field, value in config_patch.items():
                     existing = getattr(cfg, field, None)
+                    if field == "guardrails" and isinstance(existing, dict):
+                        existing = normalize_saved_guardrail_settings(existing)
+                        value = canonical_setting_keys(value)
                     if isinstance(existing, dict) and isinstance(value, dict):
-                        setattr(cfg, field, _deep_merge(existing, value))
-                    else:
-                        setattr(cfg, field, value)
+                        value = _deep_merge(existing, value)
+                    if field == "guardrails" and isinstance(value, dict):
+                        # A patched value is a new write: refuse ambiguous settings.
+                        value = normalize_guardrail_settings(value)
+                    setattr(cfg, field, value)
 
             new_config, synced = self._update_org_config(
                 org,

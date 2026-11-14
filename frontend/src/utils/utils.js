@@ -3,7 +3,6 @@ import React, { useCallback, useEffect, useRef } from "react";
 import { palette } from "src/theme/palette";
 
 import { extractJinjaVariables } from "./jinjaVariables";
-import { logger } from "./logger";
 
 export const colorPalette = [
   // eslint-disable-next-line no-restricted-syntax -- ds: encoding (compare colour palette)
@@ -243,9 +242,7 @@ export function getRandomColor() {
   return color;
 }
 
-export function getRandomId() {
-  return Math.random().toString(36).substr(2, 9);
-}
+export { getRandomId } from "./getRandomId";
 
 export const getScorePercentage = (s, decimalPlaces = 0) => {
   if (s <= 0) {
@@ -255,44 +252,7 @@ export const getScorePercentage = (s, decimalPlaces = 0) => {
   return Number(score.toFixed(decimalPlaces));
 };
 
-export async function copyToClipboard(text) {
-  // Serialize objects/arrays to JSON to avoid "[object Object]" from .toString();
-  // pass primitives through unchanged.
-  const value =
-    typeof text === "object" && text !== null
-      ? JSON.stringify(text, null, 2)
-      : text;
-  try {
-    // navigator.clipboard is undefined on insecure (http) origins; guard with
-    // optional chaining before touching .writeText so it never throws
-    // "Cannot read properties of undefined (reading 'writeText')".
-    if (navigator?.clipboard?.writeText) {
-      await navigator.clipboard.writeText(value);
-      return true;
-    }
-    // Fallback for contexts without the async Clipboard API.
-    const textarea = document.createElement("textarea");
-    textarea.value = value == null ? "" : String(value);
-    textarea.style.position = "fixed";
-    textarea.style.top = "-9999px";
-    textarea.style.opacity = "0";
-    document.body.appendChild(textarea);
-    textarea.focus();
-    textarea.select();
-    let ok = false;
-    try {
-      ok = document.execCommand("copy");
-    } finally {
-      document.body.removeChild(textarea);
-    }
-    return ok;
-  } catch (err) {
-    // Expected on non-secure contexts / when clipboard is blocked.
-    // Log as a warning (breadcrumb) rather than an error (Sentry issue).
-    logger.warn("Failed to copy text: ", err);
-    return false;
-  }
-}
+export { copyToClipboard } from "./copyToClipboard";
 
 export const isMouseInBound = (e, rect) => {
   let ret = false;
@@ -598,9 +558,7 @@ const hexToRgba = (hex, alpha) => {
   return `rgba(${r}, ${g}, ${b}, ${alpha})`;
 };
 
-export const formatISOCustom = (date) => {
-  return new Date(date).toISOString();
-};
+export { formatISOCustom } from "./formatISOCustom";
 
 // Start Generation Here
 export const throttle = (func, limit) => {
@@ -674,7 +632,7 @@ export const customizeAgGridPopup = (theme, targetText, iconPath) => {
       // Basic styling
       element.style.fontWeight = 400;
       element.style.color = theme.palette.text.primary;
-      element.style.fontSize = "13px";
+      element.style.fontSize = "12px";
       element.style.fontFamily = "Inter, sans-serif";
       element.style.paddingLeft = "14px";
       element.style.paddingTop = "14px";
@@ -797,17 +755,7 @@ export function sanitizeContent(content) {
   return content;
 }
 
-export function mergeRefs(...refs) {
-  return (node) => {
-    refs.forEach((ref) => {
-      if (typeof ref === "function") {
-        ref(node);
-      } else if (ref != null) {
-        ref.current = node;
-      }
-    });
-  };
-}
+export { mergeRefs } from "./mergeRefs";
 
 // ---------------------------------------------------------------------------
 // canonicalKeys / canonicalEntries / canonicalValues
