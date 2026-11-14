@@ -32,6 +32,7 @@ from tracer.services.grouping.control import claim_feature_jobs, claim_grouping_
 from tracer.services.grouping.feature_completion import complete_feature_job
 from tracer.services.simulation_diagnosis import _is_caller_fault
 from tracer.services.simulation_investigation import (
+    _CALLER_TEXT_LIMIT,
     SimulationInvestigationConflict,
     _tool_calls,
     simulation_evidence_page,
@@ -933,6 +934,26 @@ def test_debug_evidence_carries_the_simulated_callers_situation_and_persona(
         authored.persona = malformed
         authored.save(update_fields=["persona"])
         assert served()["persona"] is None
+
+    # A blank instruction is no situation.
+    authored.instruction = "  \n\t "
+    authored.save(update_fields=["instruction"])
+    assert served()["situation"] is None
+
+    # Outsized authored values are cut, so one scenario cannot push the page past
+    # the payload limit. The persona stays an object with every key.
+    authored.instruction = "x" * 930_000
+    authored.persona = {**persona, "metadata": {"notes": "y" * 930_000}}
+    authored.save(update_fields=["instruction", "persona"])
+    call_record = served()
+    assert call_record["situation"] == (
+        "x" * _CALLER_TEXT_LIMIT
+        + f"... [{930_000 - _CALLER_TEXT_LIMIT} more characters]"
+    )
+    assert set(call_record["persona"]) == set(persona)
+    assert call_record["persona"]["name"] == "Dana Reyes"
+    assert call_record["persona"]["metadata"].endswith("more characters]")
+    assert len(json.dumps(call_record["persona"])) < 2 * _CALLER_TEXT_LIMIT
 
     # A call with no authored scenario says it has none.
     call.call_metadata = {}

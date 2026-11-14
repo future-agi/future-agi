@@ -347,10 +347,16 @@ def _goals_payload(scenario) -> dict | None:
     }
 
 
+# The caller's situation and persona each stay a few kilobytes, so a page of
+# calls keeps room under the control payload limit. Authored values are far
+# shorter; only an outsized one is cut, and the cut says so.
+_CALLER_TEXT_LIMIT = 4000
+
+
 def _situation(scenario) -> str | None:
     """What the scenario set the simulated caller up to want and know."""
     instruction = scenario.instruction if scenario is not None else ""
-    return instruction if instruction.strip() else None
+    return _capped(instruction, _CALLER_TEXT_LIMIT) if instruction.strip() else None
 
 
 def _persona(scenario) -> dict | None:
@@ -361,7 +367,14 @@ def _persona(scenario) -> dict | None:
     it switches language, and the languages and identifiers under ``metadata``.
     """
     persona = scenario.persona if scenario is not None else None
-    return persona if isinstance(persona, dict) and persona else None
+    if not isinstance(persona, dict) or not persona:
+        return None
+    if len(json.dumps(persona, separators=(",", ":"))) <= _CALLER_TEXT_LIMIT:
+        return persona
+    # The worker accepts only an object, so an outsized persona keeps its keys and
+    # each value gets an even share of the limit.
+    share = _CALLER_TEXT_LIMIT // len(persona)
+    return {key: _capped(value, share) for key, value in persona.items()}
 
 
 # A recorded tool call as the worker accepts it; long values are cut so one
@@ -373,13 +386,13 @@ _TOOL_CALL_LIMIT = 500
 _TOOL_CALLS_BYTES_LIMIT = 256_000
 
 
-def _capped(value):
+def _capped(value, limit: int = _TOOL_CALL_TEXT_LIMIT):
     """Cut a value to the text limit; a dict or list is cut as its JSON text."""
     text = value if isinstance(value, str) else json.dumps(value, separators=(",", ":"))
-    if len(text) <= _TOOL_CALL_TEXT_LIMIT:
+    if len(text) <= limit:
         return value
-    cut = len(text) - _TOOL_CALL_TEXT_LIMIT
-    return f"{text[:_TOOL_CALL_TEXT_LIMIT]}... [{cut} more characters]"
+    cut = len(text) - limit
+    return f"{text[:limit]}... [{cut} more characters]"
 
 
 def _agent_prompt(call: CallExecution, execution: TestExecution) -> str | None:
