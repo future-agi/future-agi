@@ -132,43 +132,47 @@ export const amendHarnessScenarios = async (
 ) => (await axios.post(amendScenariosPath(id), { changes, rework })).data;
 
 // Scenario lifecycle: validate (and read the validation), archive, restore, revisions, source changes.
-// The paths enter the generated surface with `yarn contracts:generate`; until then apiPath throws.
-const environmentPath = (id, rest, params = {}) =>
-  apiPath(`/simulate/api/harness-environments/{id}/${rest}`, { id, ...params });
+const validatePath = (id) =>
+  apiPath("/simulate/api/harness-environments/{id}/scenarios/validate/", {
+    id,
+  });
+const archivePath = (id, key) =>
+  apiPath("/simulate/api/harness-environments/{id}/scenarios/{key}/archive/", {
+    id,
+    key,
+  });
+const restorePath = (id, key) =>
+  apiPath("/simulate/api/harness-environments/{id}/scenarios/{key}/restore/", {
+    id,
+    key,
+  });
+const revisionsPath = (id, key) =>
+  apiPath(
+    "/simulate/api/harness-environments/{id}/scenarios/{key}/revisions/",
+    { id, key },
+  );
+const sourceChangesPath = (id, versionId) =>
+  apiPath(
+    "/simulate/api/harness-environments/{id}/versions/environment/{version_id}/source-changes/",
+    { id, version_id: versionId },
+  );
 
 export const validateHarnessScenarios = async (id, body = {}) => {
-  const response = await axios.post(environmentPath(id, "scenarios/validate/"), body);
+  const response = await axios.post(validatePath(id), body);
   return { ...response.data, httpStatus: response.status };
 };
 
 export const getHarnessScenarioValidation = async (id, jobId) =>
-  (
-    await axios.get(environmentPath(id, "scenarios/validate/"), {
-      params: { job_id: jobId },
-    })
-  ).data;
+  (await axios.get(validatePath(id), { params: { job_id: jobId } })).data;
 
 export const archiveHarnessScenario = async (id, key, reason = "") =>
-  (
-    await axios.post(
-      environmentPath(id, "scenarios/{key}/archive/", { key }),
-      { reason },
-    )
-  ).data;
+  (await axios.post(archivePath(id, key), { reason })).data;
 
 export const restoreHarnessScenario = async (id, key) =>
-  (await axios.post(environmentPath(id, "scenarios/{key}/restore/", { key }), {}))
-    .data;
+  (await axios.post(restorePath(id, key), {})).data;
 
 export const listHarnessScenarioRevisions = async (id, key) =>
-  (await axios.get(environmentPath(id, "scenarios/{key}/revisions/", { key })))
-    .data;
+  (await axios.get(revisionsPath(id, key))).data;
 
 export const getHarnessSourceChanges = async (id, versionId) =>
-  (
-    await axios.get(
-      environmentPath(id, "versions/environment/{version_id}/source-changes/", {
-        version_id: versionId,
-      }),
-    )
-  ).data;
+  (await axios.get(sourceChangesPath(id, versionId))).data;
