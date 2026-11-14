@@ -15,6 +15,7 @@ from clickhouse_connect.driver.exceptions import (
 )
 from clickhouse_driver.errors import Error as ClickHouseDriverError
 from django.conf import settings
+from django.db import DatabaseError
 from django_redis.exceptions import ConnectionInterrupted
 from redis.exceptions import RedisError
 
@@ -1823,6 +1824,14 @@ def _preflight_user_graph_tags(identity: dict[str, Any], analytics: Any) -> None
     as a retryable 503. Binding the same relations here first makes it the
     400 the interactive read gives. Only overlay and liveness reads run; no
     graph SQL does.
+
+    Only that deterministic too-broad answer stops the read. The bind runs on
+    its own reader and its own bounded deadline, not the request's interactive
+    wall; any other failure (a slow or unreachable overlay, a timeout, an eval
+    ownership read that fails) is logged and the read is scheduled as before
+    this preflight existed, because the worker binds the same relations on its
+    own, wider wall and reports its own failures. ``analytics`` is the
+    request's reader; it is not used for the bind.
     """
     from tracer.services.clickhouse.exact_graph_reads import (
         _snapshot_window,
@@ -1832,42 +1841,44 @@ def _preflight_user_graph_tags(identity: dict[str, Any], analytics: Any) -> None
         GRAPH_TAG_OVERLAY_READ_MS,
         GraphTagFilterTooBroadError,
     )
-    from tracer.services.clickhouse.v2.effective_tags import (
-        EffectiveTagRelation,
-        prepare_effective_tag_params,
-    )
+    from tracer.services.clickhouse.v2 import effective_tags
     from tracer.services.entity_tags import TagReadUnavailable
 
+    del analytics  # The bind does not run on the request's wall.
     if not _scheduled_graph_tag_leaves(identity):
         return
     filters = list(identity.get("filters") or [])
     start, end, empty = _snapshot_window(filters)
     if empty:
         return
-    _sql, params, _needs_eval = _user_aggregate_source_sql(
-        project_id=str(identity["project_id"]),
-        filters=filters,
-        start_date=start,
-        end_date=end,
-        include_trace_ids=False,
-        all_snapshot_users=True,
-        # An aggregate eval leaf proves eval ownership, which needs a deadline.
-        started=monotonic(),
-        remaining_read_ms=getattr(analytics, "remaining_read_ms", None),
-    )
-    if not any(isinstance(value, EffectiveTagRelation) for value in params.values()):
-        return
-
-    def execute(query, query_params, *, timeout_ms, settings=None, **_caps):
-        return analytics.execute_ch_query(
-            query, query_params, timeout_ms=timeout_ms, settings=settings
-        )
-
+    deadline = ReadDeadline.start(GRAPH_TAG_OVERLAY_READ_MS)
     try:
-        prepare_effective_tag_params(
+        _sql, params, _needs_eval = _user_aggregate_source_sql(
+            project_id=str(identity["project_id"]),
+            filters=filters,
+            start_date=start,
+            end_date=end,
+            include_trace_ids=False,
+            all_snapshot_users=True,
+            # An aggregate eval leaf proves eval ownership, which needs a
+            # deadline: the preflight's own.
+            started=monotonic(),
+            remaining_read_ms=GRAPH_TAG_OVERLAY_READ_MS,
+        )
+        if not any(
+            isinstance(value, effective_tags.EffectiveTagRelation)
+            for value in params.values()
+        ):
+            return
+        reader = effective_tags.graph_overlay_executor()
+
+        def execute(query, query_params, *, timeout_ms, settings=None, **_caps):
+            return reader(query, query_params, timeout_ms=timeout_ms, settings=settings)
+
+        effective_tags.prepare_effective_tag_params(
             execute,
             {**params, "start_date": start, "end_date": end},
-            deadline=ReadDeadline.start(GRAPH_TAG_OVERLAY_READ_MS),
+            deadline=deadline,
             allow_window_scan=True,
             window_overlay=True,
         )
@@ -1876,7 +1887,27 @@ def _preflight_user_graph_tags(identity: dict[str, Any], analytics: Any) -> None
             # Deterministic for this project and filter: retrying the same
             # graph, here or in the worker, can never succeed.
             raise GraphTagFilterTooBroadError() from exc
-        raise BoundedGraphReadError("query_failed", retryable=True) from exc
+        _log_users_preflight_skipped(identity, exc)
+    except (
+        ReadDeadlineExceeded,
+        TimeoutError,
+        ExactGraphReadError,
+        ClickHouseConnectError,
+        ClickHouseDriverError,
+        DatabaseError,
+        OSError,
+        EOFError,
+    ) as exc:
+        _log_users_preflight_skipped(identity, exc)
+
+
+def _log_users_preflight_skipped(identity: dict[str, Any], exc: BaseException) -> None:
+    logger.warning(
+        "users_graph_tag_preflight_skipped",
+        project_id=str(identity.get("project_id")),
+        error_type=type(exc).__name__,
+        error_code=getattr(exc, "code", None),
+    )
 
 
 def _preflight_scheduled_graph_tags(identity: dict[str, Any]) -> None:

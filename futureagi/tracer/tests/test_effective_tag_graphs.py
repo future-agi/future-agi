@@ -1907,3 +1907,115 @@ def test_scheduled_users_graph_preflight_compiles_aggregate_eval_leaves(
     assert owned == [PROJECT]
     assert bound and bound[0]["allow_window_scan"] and bound[0]["window_overlay"]
     assert [call["namespace"] for call in scheduled] == [namespace]
+
+
+def _schedule_users_graph_with_preflight_failure(monkeypatch, failure, *metric_filters):
+    """Schedule an unaffordable Users graph whose preflight bind fails with
+    ``failure``; the request's own analytics must not be used for that bind.
+    Returns the scheduling calls and the preflight binds."""
+    binds = []
+
+    def prepare(execute, params, **kwargs):
+        binds.append({"execute": execute, **kwargs})
+        if failure is not None:
+            raise failure
+        return params
+
+    monkeypatch.setattr(effective_tags, "prepare_effective_tag_params", prepare)
+    overlay_reads = []
+
+    def overlay_reader(query, query_params, **kwargs):
+        overlay_reads.append(query)
+        return []
+
+    monkeypatch.setattr(
+        effective_tags, "graph_overlay_executor", lambda: overlay_reader
+    )
+    scheduled = []
+    monkeypatch.setattr(
+        graph_dispatch,
+        "_read_or_refresh_exact_graph",
+        lambda **kwargs: scheduled.append(kwargs) or {"query_status": "pending"},
+    )
+
+    def request_wall_read(*_args, **_kwargs):
+        pytest.fail("the preflight must not read on the request's interactive wall")
+
+    graph_dispatch._schedule_unaffordable_graph_read(
+        metric_id="active_users",
+        verdict=graph_dispatch._GraphReadUnaffordable(None),
+        identity={"project_id": PROJECT, "filters": filters(*metric_filters)},
+        pending_payload={"query_status": "pending"},
+        refresh=False,
+        organization_id="org-1",
+        workspace_id=None,
+        namespace="observe-user-system-graph",
+        # A request wall that is almost spent: the preflight has its own.
+        analytics=SimpleNamespace(
+            execute_ch_query=request_wall_read, remaining_read_ms=1
+        ),
+    )
+    return scheduled, binds, overlay_reads
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        TagReadUnavailable("tag_source_unavailable"),
+        ReadDeadlineExceeded("tag overlay read deadline"),
+        TimeoutError("overlay read timed out"),
+    ],
+    ids=["tag-source-unavailable", "deadline", "timeout"],
+)
+def test_scheduled_users_graph_preflight_failure_still_schedules(monkeypatch, failure):
+    """Only a deterministic too-broad Tag may stop a Users graph from being
+    scheduled. An overlay that is slow or briefly unreachable here is not too
+    broad: the worker binds it on its own, wider wall, as before the
+    preflight existed, and reports its own failures."""
+    scheduled, binds, overlay_reads = _schedule_users_graph_with_preflight_failure(
+        monkeypatch, failure, leaf("tag", "wanted")
+    )
+    assert [call["namespace"] for call in scheduled] == ["observe-user-system-graph"]
+    assert len(binds) == 1
+    # Its own reader and deadline, not the nearly spent request wall's.
+    binds[0]["execute"]("SELECT 1", {}, timeout_ms=10)
+    assert overlay_reads == ["SELECT 1"]
+    assert binds[0]["deadline"].remaining_ms() > 1_000
+
+
+def test_scheduled_users_graph_preflight_too_broad_is_still_a_request_error(
+    monkeypatch,
+):
+    with pytest.raises(GraphTagFilterTooBroadError):
+        _schedule_users_graph_with_preflight_failure(
+            monkeypatch,
+            TagReadUnavailable("tag_overlay_budget_exceeded"),
+            leaf("tag", "wanted"),
+        )
+
+
+def test_scheduled_users_graph_preflight_eval_ownership_failure_still_schedules(
+    monkeypatch,
+):
+    """With an aggregate eval leaf the preflight first proves eval ownership
+    in Postgres. A database failure there is a read failure, not a request
+    error: the read is scheduled and the worker proves ownership itself."""
+    from tracer.services.clickhouse import exact_graph_reads
+
+    def owned_ids(_project_id, **_kwargs):
+        raise exact_graph_reads.ExactGraphReadError("eval ownership unavailable")
+
+    monkeypatch.setattr(exact_graph_reads, "_owned_user_eval_config_ids", owned_ids)
+    eval_leaf = {
+        "column_id": "eval_score",
+        "filter_config": {
+            "col_type": "SYSTEM_METRIC",
+            "filter_type": "number",
+            "filter_op": "greater_than_or_equal",
+            "filter_value": 50,
+        },
+    }
+    scheduled, _binds, _reader = _schedule_users_graph_with_preflight_failure(
+        monkeypatch, None, leaf("tag", "wanted"), eval_leaf
+    )
+    assert [call["namespace"] for call in scheduled] == ["observe-user-system-graph"]
