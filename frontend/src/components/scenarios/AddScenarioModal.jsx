@@ -114,7 +114,11 @@ const AddScenarioModal = ({ open, onClose, onCreateSuccess }) => {
       };
 
       trackEvent(Events.scenarioCreateClicked, {
-        [PropertyName.formFields]: payload,
+        [PropertyName.formFields]: {
+          dataset_id: payload.dataset_id,
+          kind: payload.kind,
+          has_description: Boolean(payload.description),
+        },
       });
 
       await axios.post(endpoints.scenarios.create, payload);
