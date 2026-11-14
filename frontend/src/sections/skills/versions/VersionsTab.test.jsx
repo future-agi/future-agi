@@ -66,7 +66,7 @@ describe("VersionsTab", () => {
     fireEvent.click(screen.getByRole("menuitem", { name: "History", exact: true }));
     expect(LabelHistoryDrawer).toHaveBeenLastCalledWith(expect.objectContaining({ open: true, label: "", skill }), expect.anything());
   });
-  it("reads each version as one card: label, note, one facts line, badges, with no field prefixes or raw digest", () => {
+  it("reads each version as one card: label, note, one facts line, badges, with no field prefixes or raw digest", async () => {
     mocks.versions.mockReturnValue(result([{ ...row(3), labels: ["production"] }, row(2)]));
     renderWithRouter(<VersionsTab skill={skill} />);
     const card = screen.getByText("Release 3").closest("tr");
@@ -78,6 +78,8 @@ describe("VersionsTab", () => {
     expect(screen.queryByText(/aaaaaaaaaaaa/)).not.toBeInTheDocument();
     // The label opens the full digest; it never navigates the row.
     fireEvent.click(within(card).getByRole("button", { name: /^v3, show full/ }));
+    expect(mocks.push).not.toHaveBeenCalled();
+    fireEvent.click(await screen.findByRole("button", { name: "Copy full digest" }));
     expect(mocks.push).not.toHaveBeenCalled();
   });
 

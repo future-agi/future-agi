@@ -3,6 +3,7 @@ import PropTypes from "prop-types";
 import { useSearchParams } from "react-router-dom";
 import { paths } from "src/routes/paths";
 import {
+  Box,
   Button,
   Checkbox,
   IconButton,
@@ -48,7 +49,7 @@ const versionsTableSx = (theme) => ({
     "& tbody tr": { display: "grid", gridTemplateColumns: "32px minmax(0, 1fr) auto", alignItems: "start", rowGap: 0.5, height: "auto", py: 1.5, borderBottom: `1px solid ${theme.palette.divider}`, "&:last-of-type": { borderBottom: 0 } },
     "& tbody td": { display: "block", minWidth: 0, border: 0, p: 0, whiteSpace: "normal" },
     ...Object.fromEntries([
-      cell("select", { gridColumn: "1", gridRow: "1 / span 4", "& .MuiCheckbox-root": { p: 0.5, ml: -0.5 } }),
+      cell("select", { gridColumn: "1", gridRow: "1 / span 4", p: 0, width: "auto", "& .MuiCheckbox-root": { p: 0.5, ml: -0.5 } }),
       cell("number", { gridColumn: "2", gridRow: "1", alignSelf: "center" }),
       cell("actions", { gridColumn: "3", gridRow: "1", justifySelf: "end", alignSelf: "center", "& .MuiIconButton-root": { mr: -1 } }),
       cell("note", { gridColumn: "2 / -1", gridRow: "2", "& .MuiTypography-root": { whiteSpace: "normal", overflowWrap: "anywhere" } }),
@@ -113,7 +114,7 @@ export default function VersionsTab({ skill }) {
       accessorKey: "number",
       header: "Version",
       size: 180,
-      cell: ({ row: { original } }) => <VersionLabel number={original.number} digest={original.digest} label="version" />,
+      cell: ({ row: { original } }) => <Box component="span" onClick={(event) => event.stopPropagation()}><VersionLabel number={original.number} digest={original.digest} label="version" /></Box>,
     },
     {
       accessorKey: "note",
