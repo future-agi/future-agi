@@ -394,9 +394,9 @@ class TestCrossOrgProjectIsolation:
         assert resp.status_code == status.HTTP_200_OK
         names = _extract_items(resp)
         assert "Alpha Project" in names, f"Expected Alpha Project in org A, got {names}"
-        assert (
-            "Beta Project" not in names
-        ), f"Beta Project leaked into org A! Got {names}"
+        assert "Beta Project" not in names, (
+            f"Beta Project leaked into org A! Got {names}"
+        )
         client.stop_workspace_injection()
 
     def test_list_projects_org_b(self, seeded_orgs):
@@ -406,9 +406,9 @@ class TestCrossOrgProjectIsolation:
         assert resp.status_code == status.HTTP_200_OK
         names = _extract_items(resp)
         assert "Beta Project" in names, f"Expected Beta Project in org B, got {names}"
-        assert (
-            "Alpha Project" not in names
-        ), f"Alpha Project leaked into org B! Got {names}"
+        assert "Alpha Project" not in names, (
+            f"Alpha Project leaked into org B! Got {names}"
+        )
         client.stop_workspace_injection()
 
     def test_access_other_org_project_by_id(self, seeded_orgs):
@@ -433,9 +433,9 @@ class TestCrossOrgDatasetIsolation:
         resp = client.get("/model-hub/develops/get-datasets/")
         assert resp.status_code == status.HTTP_200_OK
         names = _extract_items(resp)
-        assert (
-            "Beta Dataset" not in names
-        ), f"Beta Dataset leaked into org A! Got {names}"
+        assert "Beta Dataset" not in names, (
+            f"Beta Dataset leaked into org A! Got {names}"
+        )
         client.stop_workspace_injection()
 
     def test_list_datasets_org_b(self, seeded_orgs):
@@ -444,9 +444,9 @@ class TestCrossOrgDatasetIsolation:
         resp = client.get("/model-hub/develops/get-datasets/")
         assert resp.status_code == status.HTTP_200_OK
         names = _extract_items(resp)
-        assert (
-            "Alpha Dataset" not in names
-        ), f"Alpha Dataset leaked into org B! Got {names}"
+        assert "Alpha Dataset" not in names, (
+            f"Alpha Dataset leaked into org B! Got {names}"
+        )
         client.stop_workspace_injection()
 
 
@@ -470,9 +470,9 @@ class TestCrossOrgPromptTemplateIsolation:
         assert resp.status_code == status.HTTP_200_OK
         names = _extract_items(resp)
         assert "Beta Prompt" in names, f"Expected Beta Prompt in org B, got {names}"
-        assert (
-            "Alpha Prompt" not in names
-        ), f"Alpha Prompt leaked into org B! Got {names}"
+        assert "Alpha Prompt" not in names, (
+            f"Alpha Prompt leaked into org B! Got {names}"
+        )
         client.stop_workspace_injection()
 
 
@@ -486,9 +486,9 @@ class TestCrossOrgMonitorIsolation:
         assert resp.status_code == status.HTTP_200_OK
         names = _extract_items(resp)
         assert "Alpha Monitor" in names, f"Expected Alpha Monitor in org A, got {names}"
-        assert (
-            "Beta Monitor" not in names
-        ), f"Beta Monitor leaked into org A! Got {names}"
+        assert "Beta Monitor" not in names, (
+            f"Beta Monitor leaked into org A! Got {names}"
+        )
         client.stop_workspace_injection()
 
     def test_list_monitors_org_b(self, seeded_orgs):
@@ -498,9 +498,9 @@ class TestCrossOrgMonitorIsolation:
         assert resp.status_code == status.HTTP_200_OK
         names = _extract_items(resp)
         assert "Beta Monitor" in names, f"Expected Beta Monitor in org B, got {names}"
-        assert (
-            "Alpha Monitor" not in names
-        ), f"Alpha Monitor leaked into org B! Got {names}"
+        assert "Alpha Monitor" not in names, (
+            f"Alpha Monitor leaked into org B! Got {names}"
+        )
         client.stop_workspace_injection()
 
     def test_access_other_org_monitor_by_id(self, seeded_orgs):
@@ -581,9 +581,9 @@ class TestCrossOrgSecretIsolation:
         resp = client.get("/model-hub/secrets/")
         assert resp.status_code == status.HTTP_200_OK
         names = _extract_items(resp)
-        assert (
-            "Alpha Secret" not in names
-        ), f"Alpha Secret leaked into org B! Got {names}"
+        assert "Alpha Secret" not in names, (
+            f"Alpha Secret leaked into org B! Got {names}"
+        )
         client.stop_workspace_injection()
 
     def test_access_other_org_secret_by_id(self, seeded_orgs):
@@ -621,18 +621,18 @@ class TestCrossOrgAccessByID:
         s = seeded_orgs
         client = _make_client(s["user"], s["ws_a"])
         resp = client.get(f"/tracer/project/{s['project_b'].id}/")
-        assert (
-            resp.status_code in self._DENIED
-        ), f"Expected denied accessing other org's project, got {resp.status_code}"
+        assert resp.status_code in self._DENIED, (
+            f"Expected denied accessing other org's project, got {resp.status_code}"
+        )
         client.stop_workspace_injection()
 
     def test_access_other_org_prompt_by_id(self, seeded_orgs):
         s = seeded_orgs
         client = _make_client(s["user"], s["ws_a"])
         resp = client.get(f"/model-hub/prompt-templates/{s['prompt_b'].id}/")
-        assert (
-            resp.status_code in self._DENIED
-        ), f"Expected denied accessing other org's prompt, got {resp.status_code}"
+        assert resp.status_code in self._DENIED, (
+            f"Expected denied accessing other org's prompt, got {resp.status_code}"
+        )
         client.stop_workspace_injection()
 
     def test_delete_other_org_project(self, seeded_orgs):
@@ -652,9 +652,9 @@ class TestCrossOrgAccessByID:
             {"name": "Hacked Monitor"},
             format="json",
         )
-        assert (
-            resp.status_code in self._DENIED
-        ), f"Should not be able to modify other org's monitor, got {resp.status_code}"
+        assert resp.status_code in self._DENIED, (
+            f"Should not be able to modify other org's monitor, got {resp.status_code}"
+        )
         client.stop_workspace_injection()
 
 
@@ -674,12 +674,12 @@ class TestHeaderManipulation:
         resp = client.get("/model-hub/prompt-templates/")
         assert resp.status_code == status.HTTP_200_OK
         names = _extract_items(resp)
-        assert (
-            "Alpha Prompt" not in names
-        ), f"Alpha Prompt leaked via header switch! Got {names}"
-        assert (
-            "Beta Prompt" in names
-        ), f"Expected Beta Prompt via header switch, got {names}"
+        assert "Alpha Prompt" not in names, (
+            f"Alpha Prompt leaked via header switch! Got {names}"
+        )
+        assert "Beta Prompt" in names, (
+            f"Expected Beta Prompt via header switch, got {names}"
+        )
         client.stop_workspace_injection()
 
     def test_switch_org_then_switch_back(self, seeded_orgs):
@@ -726,9 +726,9 @@ class TestCrossWorkspaceProjectIsolation:
         resp = client_default.get("/tracer/project/")
         assert resp.status_code == status.HTTP_200_OK
         names = _extract_items(resp)
-        assert (
-            "Beta Project" not in names
-        ), f"Beta Project (other org) leaked! Got {names}"
+        assert "Beta Project" not in names, (
+            f"Beta Project (other org) leaked! Got {names}"
+        )
         client_default.stop_workspace_injection()
 
         # From non-default workspace: should see NonDefault Project, NOT Alpha Project
@@ -736,12 +736,12 @@ class TestCrossWorkspaceProjectIsolation:
         resp_nd = client_nd.get("/tracer/project/")
         assert resp_nd.status_code == status.HTTP_200_OK
         names_nd = _extract_items(resp_nd)
-        assert (
-            "NonDefault Project" in names_nd
-        ), f"Expected NonDefault Project, got {names_nd}"
-        assert (
-            "Alpha Project" not in names_nd
-        ), f"Alpha Project leaked into non-default ws! Got {names_nd}"
+        assert "NonDefault Project" in names_nd, (
+            f"Expected NonDefault Project, got {names_nd}"
+        )
+        assert "Alpha Project" not in names_nd, (
+            f"Alpha Project leaked into non-default ws! Got {names_nd}"
+        )
         client_nd.stop_workspace_injection()
 
 
@@ -761,9 +761,9 @@ class TestCrossWorkspaceDatasetIsolation:
         assert resp.status_code == status.HTTP_200_OK
         names = _extract_items(resp)
         assert "WsB Dataset" in names, f"Expected WsB Dataset, got {names}"
-        assert (
-            "Alpha Dataset" not in names
-        ), f"Alpha Dataset leaked into non-default ws! Got {names}"
+        assert "Alpha Dataset" not in names, (
+            f"Alpha Dataset leaked into non-default ws! Got {names}"
+        )
         client_nd.stop_workspace_injection()
 
 
@@ -781,9 +781,9 @@ class TestCrossWorkspacePromptIsolation:
         assert resp.status_code == status.HTTP_200_OK
         names = _extract_items(resp)
         assert "WsB Prompt" in names, f"Expected WsB Prompt, got {names}"
-        assert (
-            "Alpha Prompt" not in names
-        ), f"Alpha Prompt leaked into non-default ws! Got {names}"
+        assert "Alpha Prompt" not in names, (
+            f"Alpha Prompt leaked into non-default ws! Got {names}"
+        )
         client_nd.stop_workspace_injection()
 
 
@@ -802,9 +802,9 @@ class TestCrossWorkspaceMonitorIsolation:
         assert resp.status_code == status.HTTP_200_OK
         names = _extract_items(resp)
         assert "WsB Monitor" in names, f"Expected WsB Monitor, got {names}"
-        assert (
-            "Alpha Monitor" not in names
-        ), f"Alpha Monitor leaked into non-default ws! Got {names}"
+        assert "Alpha Monitor" not in names, (
+            f"Alpha Monitor leaked into non-default ws! Got {names}"
+        )
         client_nd.stop_workspace_injection()
 
 
@@ -822,9 +822,9 @@ class TestCrossWorkspaceSecretIsolation:
         assert resp.status_code == status.HTTP_200_OK
         names = _extract_items(resp)
         assert "WsB Secret" in names, f"Expected WsB Secret, got {names}"
-        assert (
-            "Alpha Secret" not in names
-        ), f"Alpha Secret leaked into non-default ws! Got {names}"
+        assert "Alpha Secret" not in names, (
+            f"Alpha Secret leaked into non-default ws! Got {names}"
+        )
         client_nd.stop_workspace_injection()
 
 
@@ -858,9 +858,9 @@ class TestDefaultWorkspaceNullData:
         resp = client.get("/model-hub/prompt-templates/")
         assert resp.status_code == status.HTTP_200_OK
         names = _extract_items(resp)
-        assert (
-            "Legacy Null Prompt" in names
-        ), f"Null-workspace prompt should be in default ws, got {names}"
+        assert "Legacy Null Prompt" in names, (
+            f"Null-workspace prompt should be in default ws, got {names}"
+        )
         client.stop_workspace_injection()
 
     def test_null_workspace_not_in_nondefault(self, seeded_orgs, two_ws_setup):
@@ -884,9 +884,9 @@ class TestDefaultWorkspaceNullData:
         resp = client.get("/model-hub/prompt-templates/")
         assert resp.status_code == status.HTTP_200_OK
         names = _extract_items(resp)
-        assert (
-            "Legacy Null Prompt ND" not in names
-        ), f"Null-workspace prompt should NOT be in non-default ws, got {names}"
+        assert "Legacy Null Prompt ND" not in names, (
+            f"Null-workspace prompt should NOT be in non-default ws, got {names}"
+        )
         client.stop_workspace_injection()
 
 
@@ -925,9 +925,9 @@ class TestWriteIsolation:
         resp = client_b.get("/tracer/project/")
         assert resp.status_code == status.HTTP_200_OK
         names = _extract_items(resp)
-        assert (
-            "Write Test Project" not in names
-        ), f"Project created in ws A appeared in ws B! Got {names}"
+        assert "Write Test Project" not in names, (
+            f"Project created in ws A appeared in ws B! Got {names}"
+        )
         client_b.stop_workspace_injection()
 
     def test_create_dataset_in_ws_a_not_in_ws_b(self, seeded_orgs, two_ws_setup):
@@ -942,9 +942,9 @@ class TestWriteIsolation:
         resp = client_b.get("/model-hub/develops/get-datasets/")
         assert resp.status_code == status.HTTP_200_OK
         names = _extract_items(resp)
-        assert (
-            "WriteTestDS Dataset" not in names
-        ), f"Dataset created in ws A appeared in ws B! Got {names}"
+        assert "WriteTestDS Dataset" not in names, (
+            f"Dataset created in ws A appeared in ws B! Got {names}"
+        )
         client_b.stop_workspace_injection()
 
     def test_create_secret_in_ws_a_not_in_ws_b(self, seeded_orgs, two_ws_setup):
@@ -957,7 +957,7 @@ class TestWriteIsolation:
         resp = client_b.get("/model-hub/secrets/")
         assert resp.status_code == status.HTTP_200_OK
         names = _extract_items(resp)
-        assert (
-            "WriteTestSecret Secret" not in names
-        ), f"Secret created in ws A appeared in ws B! Got {names}"
+        assert "WriteTestSecret Secret" not in names, (
+            f"Secret created in ws A appeared in ws B! Got {names}"
+        )
         client_b.stop_workspace_injection()

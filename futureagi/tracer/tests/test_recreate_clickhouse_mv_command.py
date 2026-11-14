@@ -39,7 +39,9 @@ class TestRecreateClickhouseMVCommand:
         """An unknown MV name should fail with a clear CommandError."""
         from tracer.services.clickhouse import client as ch_client
 
-        monkeypatch.setattr(ch_client, "get_clickhouse_client", lambda: _fake_client(""))
+        monkeypatch.setattr(
+            ch_client, "get_clickhouse_client", lambda: _fake_client("")
+        )
 
         with pytest.raises(CommandError, match="not in MV_RECREATE_MANIFEST"):
             call_command("recreate_clickhouse_mv", "definitely_not_a_real_mv")
