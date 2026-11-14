@@ -223,6 +223,80 @@ def test_view_delete_of_a_bound_imported_segment_erases_it_and_its_derivatives(
     assert manifest["capture_complete"] is False
 
 
+def _travel(monkeypatch, delta):
+    """Move every service's clock (they all read ``timezone.now``)."""
+    later = timezone.now() + delta
+    monkeypatch.setattr(timezone, "now", lambda: later)
+    return later
+
+
+def _scheduled_ticks(rec):
+    """Every scheduled job that can expire, purge or erase, all rows due."""
+    control_plane.reconcile_tick(span_reader=parent_spans(rec))
+    swept = lifecycle.sweep()
+    purged = derivatives.purge(limit=1000)
+    imports.sweep(storage=rec.store)
+    AttachmentOutbox.objects.filter(processed_at__isnull=True).update(
+        available_at=timezone.now() - timedelta(seconds=1)
+    )
+    return swept, purged, lifecycle.drain_outbox(storage=rec.store)
+
+
+def test_bound_imported_recording_keeps_playing_after_the_24h_deadline(
+    rec, monkeypatch
+):
+    """Regression: binding kept the import's 24 h pending deadline, so the
+    sweep tombstoned every imported segment a day later and the drain erased
+    its original and derivatives. The real binder, sweeps, drain and HTTP
+    manifest read; only the clock, storage and ClickHouse are doubles."""
+    job, segments = imported(rec)
+    written = set().union(*(keys(segment) for segment in segments))
+    assert written <= set(rec.store.objects)
+    assert control_plane.reconcile_tick(span_reader=parent_spans(rec))["bound"] == 2
+    for segment in segments:
+        row = occurrence_of(segment)
+        assert row.expires_at == row.source_expires_at
+        assert row.expires_at - row.created_at > timedelta(days=365)
+    for hours in (25, 24 * 30):
+        _travel(monkeypatch, timedelta(hours=hours))
+        swept, purged, drained = _scheduled_ticks(rec)
+        assert swept.get("occurrences_expired", 0) == 0, (hours, swept)
+        assert "erase_done" not in drained, (hours, drained)
+        assert written <= set(rec.store.objects), hours
+        for segment in segments:
+            segment.refresh_from_db()
+            assert segment.state != RecordingSegmentState.ERASED
+            assert occurrence_of(segment).deleted_at is None
+        manifest = http.ok(
+            rec.api.client.get(
+                f"{http.base(rec.api)}/recordings/{job.recording.client_id}/manifest",
+                {"trace_id": TRACE, "span_id": SPAN},
+                **http.auth(http.issue_tokens(rec.api.user)["access"]),
+            ),
+            200,
+            "RecordingManifest",
+        )
+        assert [s["occurrence_id"] for s in manifest["segments"]] == [
+            str(segment.occurrence_client_id) for segment in segments
+        ]
+    assert not AttachmentOutbox.objects.filter(event="erase").exists()
+
+
+def test_unbound_imported_segments_still_expire_after_the_24h_deadline(
+    rec, monkeypatch
+):
+    """Control: with no parent span nothing binds, and the deadline holds."""
+    _, segments = imported(rec)
+    assert control_plane.reconcile_tick(span_reader=Spans())["pending"] == 2
+    _travel(monkeypatch, timedelta(hours=25))
+    control_plane.reconcile_tick(span_reader=Spans())
+    lifecycle.sweep()
+    assert all(occurrence_of(segment).deleted_at for segment in segments)
+    assert drain_due(rec).get("erase_done") == 2
+    for segment in segments:
+        assert not keys(segment) & set(rec.store.objects)
+
+
 def test_expired_imported_segments_are_retired_by_reconcile_tick_and_erased(rec):
     _, segments = imported(rec)
     AttachmentOccurrence.objects.filter(scope=rec.scope).update(

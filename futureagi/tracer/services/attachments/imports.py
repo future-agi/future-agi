@@ -1081,7 +1081,8 @@ def _publish(job, recording, facts, manifest, rows, token=None):
                 direction=locked.direction,
                 recording=locked,
                 purpose="conversation_recording",
-                # Unbound until ingestion observes the parent and binds retention.
+                # Unbound deadline: ingestion must observe the parent within
+                # 24 h; bind_retention then replaces it with the source's expiry.
                 expires_at=now + timedelta(hours=24),
                 capture_complete=True,
             )
