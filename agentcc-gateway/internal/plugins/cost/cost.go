@@ -411,24 +411,16 @@ func (p *Plugin) tryOrgPricing(rc *models.RequestContext, model string, ct *tena
 	return cost, true
 }
 
-// decisionModelNames lists the names a decision call's model goes by: the
-// model the vendor reports, the one it was sent, the one the caller named,
-// and the provider-qualified id GET /v1/decisions/models lists and prices
-// ("typesafe/jev-latest"), so a bare "jev-latest" is charged the price the
-// listing shows.
 // decisionOrgPriceNames is the order an org's custom decision prices are
 // looked up in. It does not depend on the form of the vendor's answer: a
 // resolved name counts first only when it is a name of its own (a dated
 // release such as "typesafe/jev-1.13-20260917"), not when the answer left the
 // model out (ResolvedModel is then the upstream name) or echoed a name the
-// call was sent as. Then the names the call was sent as, in the order
-// GET /v1/decisions/models lists an entry's price (newDecisionModel): the
-// caller's name, the provider-qualified upstream name, the upstream name.
-//
-// A caller that sends the bare configured name of an unprefixed entry is
-// charged that name's price first, while the listing shows the
-// provider-qualified id's price first; with both names priced, one listed
-// price cannot match both kinds of caller.
+// call was sent as. Then GET /v1/decisions/models's order for the entry
+// (newDecisionModel): the provider-qualified upstream name the listing shows
+// as the id, then the upstream name. Only then the caller's own name, which
+// for a call by the listed id or the configured name is one of those two;
+// then the remaining names of decisionModelNames.
 func decisionOrgPriceNames(rc *models.RequestContext) []string {
 	names := make([]string, 0, 6)
 	add := func(name string) {
@@ -443,17 +435,25 @@ func decisionOrgPriceNames(rc *models.RequestContext) []string {
 	if rc.ResolvedModel != upstream && rc.ResolvedModel != rc.Model {
 		add(rc.ResolvedModel)
 	}
-	add(rc.Model)
-	if rc.Provider != "" && upstream != "" && !strings.HasPrefix(upstream, rc.Provider+"/") {
+	if rc.Provider != "" && upstream != "" {
+		// The listing's id is always the provider plus the name sent
+		// upstream, even when that name starts with the provider's own
+		// prefix ("openrouter/openrouter/auto").
 		add(rc.Provider + "/" + upstream)
 	}
 	add(upstream)
+	add(rc.Model)
 	for _, name := range decisionModelNames(rc) {
 		add(name)
 	}
 	return names
 }
 
+// decisionModelNames lists the names a decision call's model goes by: the
+// model the vendor reports, the one it was sent, the one the caller named,
+// and the provider-qualified id GET /v1/decisions/models lists and prices
+// ("typesafe/jev-latest"), so a bare "jev-latest" is charged the price the
+// listing shows.
 func decisionModelNames(rc *models.RequestContext) []string {
 	names := make([]string, 0, 5)
 	add := func(name string) {
