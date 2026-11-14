@@ -1491,6 +1491,7 @@ class TestRetrieveRunPromptOptionsView:
         assert first_model["is_available"] is True
         assert second_model["is_available"] is False
         assert AVAILABLE_MODELS == catalog_before
+        assert all("is_available" not in model for model in AVAILABLE_MODELS)
 
     def test_retrieve_run_prompt_options_unauthenticated(self):
         """Test that unauthenticated users cannot retrieve options."""
