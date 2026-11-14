@@ -486,7 +486,7 @@ export const FeedBackForm = ({
       </Typography>
       <Typography
         sx={{
-          fontSize: "13px",
+          fontSize: "12px",
           fontWeight: "400",
           lineHeight: "21px",
         }}
@@ -512,7 +512,7 @@ export const FeedBackForm = ({
             >
               Current output
             </Typography>
-            <Typography fontSize={13} color="text.primary">
+            <Typography fontSize={12} color="text.primary">
               {currentValue}
             </Typography>
           </Box>
@@ -521,7 +521,7 @@ export const FeedBackForm = ({
           <CellMarkdown spacing={0} text={reasonText} />
         ) : (
           !currentValue && (
-            <Typography color="text.disabled" fontSize={13}>
+            <Typography color="text.disabled" fontSize={12}>
               Unable to fetch Explanation
             </Typography>
           )
@@ -581,7 +581,7 @@ const ChoiceCheckboxGroup = ({ control, label, choices, renderLabel }) => {
             {label && (
               <Typography
                 sx={{
-                  fontSize: "13px",
+                  fontSize: "12px",
                   fontWeight: "600",
                   lineHeight: "18.2px",
                   letterSpacing: "0.02em",
@@ -633,7 +633,7 @@ const AllInputField = ({ label, ...rest }) => {
       {label && (
         <Typography
           sx={{
-            fontSize: "13px",
+            fontSize: "12px",
             fontWeight: "600",
             lineHeight: "18.2px",
             letterSpacing: "0.02em",
@@ -660,7 +660,7 @@ const AllSelectField = ({ label, ...rest }) => {
       {label && (
         <Typography
           sx={{
-            fontSize: "13px",
+            fontSize: "12px",
             fontWeight: "600",
             lineHeight: "18.2px",
             letterSpacing: "0.02em",
@@ -711,7 +711,7 @@ const RadioField = ({
           {label && (
             <Typography
               sx={{
-                fontSize: "13px",
+                fontSize: "12px",
                 fontWeight: "600",
                 lineHeight: "18.2px",
                 letterSpacing: "0.02em",
@@ -808,7 +808,7 @@ RadioField.propTypes = {
 const Label1 = () => {
   return (
     <Box>
-      <Typography sx={{ fontSize: "13px", fontWeight: "600" }}>
+      <Typography sx={{ fontSize: "12px", fontWeight: "600" }}>
         Re-tune
       </Typography>
       <Typography sx={{ fontSize: "12px" }}>
@@ -822,7 +822,7 @@ const Label1 = () => {
 const Label2 = () => {
   return (
     <Box>
-      <Typography sx={{ fontSize: "13px", fontWeight: "600" }}>
+      <Typography sx={{ fontSize: "12px", fontWeight: "600" }}>
         Re-calculate for this row
       </Typography>
       <Typography sx={{ fontSize: "12px" }}>
@@ -836,7 +836,7 @@ const Label2 = () => {
 const Label3 = () => {
   return (
     <Box>
-      <Typography sx={{ fontSize: "13px", fontWeight: "600" }}>
+      <Typography sx={{ fontSize: "12px", fontWeight: "600" }}>
         Re-tune and re-calculate for this dataset
       </Typography>
       <Typography sx={{ fontSize: "12px" }}>

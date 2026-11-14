@@ -174,7 +174,7 @@ export default function SharedView() {
                   display: "inline-block",
                   mt: 2,
                   color: "primary.main",
-                  fontSize: 13,
+                  fontSize: 12,
                   fontWeight: 500,
                 }}
               >
@@ -248,7 +248,7 @@ export default function SharedView() {
               sx={{ color: "primary.main" }}
             />
             <Typography
-              sx={{ fontSize: 13, fontWeight: 600, color: "text.primary" }}
+              sx={{ fontSize: 12, fontWeight: 600, color: "text.primary" }}
             >
               {isVoiceView
                 ? "Shared voice call"
@@ -392,7 +392,7 @@ export default function SharedView() {
                     width={40}
                     sx={{ mb: 1, opacity: 0.5 }}
                   />
-                  <Typography variant="body2" fontSize={13}>
+                  <Typography variant="body2" fontSize={12}>
                     Select a span to view details
                   </Typography>
                   {summary && (
@@ -524,7 +524,7 @@ function SharedProjectView({ project }) {
         >
           <Box sx={{ p: 2.5 }}>
             <Typography
-              sx={{ fontSize: 13, fontWeight: 600, color: "text.primary" }}
+              sx={{ fontSize: 12, fontWeight: 600, color: "text.primary" }}
             >
               Project details
             </Typography>
@@ -588,7 +588,7 @@ function SharedDashboardView({ dashboard }) {
               <Typography
                 sx={{
                   mt: 0.75,
-                  fontSize: 13,
+                  fontSize: 12,
                   color: "text.secondary",
                   maxWidth: 760,
                 }}
@@ -674,7 +674,7 @@ function DashboardWidgetPreview({ widget }) {
           <Box sx={{ minWidth: 0 }}>
             <Typography
               sx={{
-                fontSize: 13,
+                fontSize: 12,
                 fontWeight: 600,
                 color: "text.primary",
                 wordBreak: "break-word",
@@ -738,7 +738,7 @@ function DashboardWidgetPreview({ widget }) {
             ))}
           </Stack>
         ) : (
-          <Typography sx={{ fontSize: 13, color: "text.disabled" }}>
+          <Typography sx={{ fontSize: 12, color: "text.disabled" }}>
             No metrics configured
           </Typography>
         )}
@@ -762,7 +762,7 @@ function WidgetStat({ label, value }) {
       </Typography>
       <Typography
         sx={{
-          fontSize: 13,
+          fontSize: 12,
           fontWeight: 600,
           color: "text.primary",
           wordBreak: "break-word",

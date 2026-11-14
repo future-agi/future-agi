@@ -48,7 +48,7 @@ function HighlightCard({ highlight }) {
         <Typography
           variant="body2"
           color="text.secondary"
-          sx={{ fontSize: 13, lineHeight: "19px" }}
+          sx={{ fontSize: 12, lineHeight: "19px" }}
         >
           {highlight.reason}
         </Typography>

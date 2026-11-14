@@ -150,7 +150,7 @@ const EditImageZoom = ({
 
   const buttonStyles = {
     color: "text.primary",
-    fontSize: "13px",
+    fontSize: "12px",
     fontWeight: 400,
     lineHeight: "22px",
   };
@@ -329,7 +329,7 @@ const EditImageZoom = ({
                     fontWeight={500}
                     sx={{
                       maxWidth: "200px",
-                      fontSize: "13px",
+                      fontSize: "12px",
                       lineHeight: "22px",
                       whiteSpace: "nowrap",
                       overflow: "hidden",

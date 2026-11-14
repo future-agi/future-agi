@@ -232,7 +232,7 @@ const MessageEditor = ({
                   variant="standard"
                   disableUnderline
                   sx={{
-                    fontSize: "13px",
+                    fontSize: "12px",
                     fontWeight: 600,
                     "& .MuiSelect-select": { py: 0, pr: "28px !important" },
                     "& .MuiSelect-icon": { right: 0 },
@@ -315,7 +315,7 @@ const MessageEditor = ({
           )}
 
           <ShowComponent condition={onFalconClick && !aiOpen}>
-            <Tooltip title="Generate with Falcon AI" arrow placement="top">
+            <Tooltip title="Generate with AI" arrow placement="top">
               <IconButton
                 size="small"
                 onClick={onFalconClick}

@@ -8,7 +8,7 @@ const LatencyCell = ({ value }) => {
     <Typography
       variant="body2"
       sx={{
-        fontSize: 13,
+        fontSize: 12,
         fontVariantNumeric: "tabular-nums",
         textAlign: "right",
         width: "100%",

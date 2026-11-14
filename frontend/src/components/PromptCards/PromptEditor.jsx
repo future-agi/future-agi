@@ -5,7 +5,7 @@ import React, {
   useMemo,
   useRef,
 } from "react";
-import Quill from "quill";
+import Quill from "src/utils/quillHtmlExport";
 import "./PromptCardEditor.css";
 import PropTypes from "prop-types";
 import { Box, useTheme } from "@mui/material";

@@ -95,64 +95,84 @@ class TestMessagesContainAudio:
 
     def test_audio_content_type(self):
         """Test detection of audio_content type."""
-        messages = [{
-            "role": "user",
-            "content": [
-                {"type": "text", "text": "Analyze this audio"},
-                {"type": "audio_content", "audio_content": {"url": "data:audio/mp3;base64,abc", "format": "mp3"}}
-            ]
-        }]
+        messages = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "Analyze this audio"},
+                    {
+                        "type": "audio_content",
+                        "audio_content": {
+                            "url": "data:audio/mp3;base64,abc",
+                            "format": "mp3",
+                        },
+                    },
+                ],
+            }
+        ]
         assert messages_contain_audio(messages) is True
 
     def test_input_audio_type(self):
         """Test detection of input_audio type (OpenAI format)."""
-        messages = [{
-            "role": "user",
-            "content": [
-                {"type": "text", "text": "Transcribe this"},
-                {"type": "input_audio", "input_audio": {"data": "abc", "format": "mp3"}}
-            ]
-        }]
+        messages = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "Transcribe this"},
+                    {
+                        "type": "input_audio",
+                        "input_audio": {"data": "abc", "format": "mp3"},
+                    },
+                ],
+            }
+        ]
         assert messages_contain_audio(messages) is True
 
     def test_image_url_with_audio_data_url(self):
         """Test detection of image_url containing audio data URL (legacy/incorrect usage)."""
-        messages = [{
-            "role": "user",
-            "content": [
-                {"type": "text", "text": "Analyze this"},
-                {"type": "image_url", "image_url": {"url": "data:audio/mp3;base64,abc"}}
-            ]
-        }]
+        messages = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "Analyze this"},
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": "data:audio/mp3;base64,abc"},
+                    },
+                ],
+            }
+        ]
         assert messages_contain_audio(messages) is True
 
     def test_image_url_with_actual_image(self):
         """Test that image_url with actual image returns False."""
-        messages = [{
-            "role": "user",
-            "content": [
-                {"type": "text", "text": "Describe this image"},
-                {"type": "image_url", "image_url": {"url": "data:image/png;base64,abc"}}
-            ]
-        }]
+        messages = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "Describe this image"},
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": "data:image/png;base64,abc"},
+                    },
+                ],
+            }
+        ]
         assert messages_contain_audio(messages) is False
 
     def test_text_only_message(self):
         """Test that text-only messages return False."""
-        messages = [{
-            "role": "user",
-            "content": [
-                {"type": "text", "text": "Just a simple question"}
-            ]
-        }]
+        messages = [
+            {
+                "role": "user",
+                "content": [{"type": "text", "text": "Just a simple question"}],
+            }
+        ]
         assert messages_contain_audio(messages) is False
 
     def test_string_content(self):
         """Test that simple string content returns False."""
-        messages = [{
-            "role": "user",
-            "content": "Just a simple question"
-        }]
+        messages = [{"role": "user", "content": "Just a simple question"}]
         assert messages_contain_audio(messages) is False
 
     def test_empty_messages(self):
@@ -167,15 +187,22 @@ class TestMessagesContainAudio:
 class TestPreprocessMessagesForProvider:
     """Tests for the preprocess_messages_for_provider function."""
 
-    def _create_audio_message(self, audio_url="data:audio/mp3;base64,SGVsbG8=", audio_format="mp3"):
+    def _create_audio_message(
+        self, audio_url="data:audio/mp3;base64,SGVsbG8=", audio_format="mp3"
+    ):
         """Helper to create a standard audio message."""
-        return [{
-            "role": "user",
-            "content": [
-                {"type": "text", "text": "Analyze this audio"},
-                {"type": "audio_content", "audio_content": {"url": audio_url, "format": audio_format}}
-            ]
-        }]
+        return [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "Analyze this audio"},
+                    {
+                        "type": "audio_content",
+                        "audio_content": {"url": audio_url, "format": audio_format},
+                    },
+                ],
+            }
+        ]
 
     def test_vertex_ai_conversion(self):
         """Test that Vertex AI converts audio_content to image_url."""
@@ -237,13 +264,18 @@ class TestPreprocessMessagesForProvider:
 
     def test_preserves_non_audio_content(self):
         """Test that non-audio content is preserved."""
-        messages = [{
-            "role": "user",
-            "content": [
-                {"type": "text", "text": "Describe this image"},
-                {"type": "image_url", "image_url": {"url": "data:image/png;base64,abc"}}
-            ]
-        }]
+        messages = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "Describe this image"},
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": "data:image/png;base64,abc"},
+                    },
+                ],
+            }
+        ]
         result = preprocess_messages_for_provider(messages, "openai")
 
         assert len(result) == 1
@@ -266,14 +298,28 @@ class TestPreprocessMessagesForProvider:
 
     def test_multiple_audio_blocks(self):
         """Test processing of multiple audio blocks."""
-        messages = [{
-            "role": "user",
-            "content": [
-                {"type": "text", "text": "Compare these audios"},
-                {"type": "audio_content", "audio_content": {"url": "data:audio/mp3;base64,abc", "format": "mp3"}},
-                {"type": "audio_content", "audio_content": {"url": "data:audio/wav;base64,def", "format": "wav"}}
-            ]
-        }]
+        messages = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "Compare these audios"},
+                    {
+                        "type": "audio_content",
+                        "audio_content": {
+                            "url": "data:audio/mp3;base64,abc",
+                            "format": "mp3",
+                        },
+                    },
+                    {
+                        "type": "audio_content",
+                        "audio_content": {
+                            "url": "data:audio/wav;base64,def",
+                            "format": "wav",
+                        },
+                    },
+                ],
+            }
+        ]
         result = preprocess_messages_for_provider(messages, "openai")
 
         assert len(result) == 1
@@ -299,16 +345,21 @@ class TestRegressionCOREBACKENDYR0:
         and when fallback to Anthropic happened, Anthropic rejected it with
         "Unsupported image format: mp3".
         """
-        messages = [{
-            "role": "user",
-            "content": [
-                {"type": "text", "text": "Evaluate this audio"},
-                {"type": "audio_content", "audio_content": {
-                    "url": "data:audio/mp3;base64,SGVsbG8gV29ybGQ=",
-                    "format": "mp3"
-                }}
-            ]
-        }]
+        messages = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "Evaluate this audio"},
+                    {
+                        "type": "audio_content",
+                        "audio_content": {
+                            "url": "data:audio/mp3;base64,SGVsbG8gV29ybGQ=",
+                            "format": "mp3",
+                        },
+                    },
+                ],
+            }
+        ]
 
         # Process for Anthropic
         result = preprocess_messages_for_provider(messages, "anthropic")
@@ -317,8 +368,12 @@ class TestRegressionCOREBACKENDYR0:
         content = result[0]["content"]
         for block in content:
             block_type = block.get("type", "")
-            assert block_type != "image_url", "image_url should not be present for Anthropic"
-            assert block_type != "audio_content", "audio_content should be stripped for Anthropic"
+            assert block_type != "image_url", (
+                "image_url should not be present for Anthropic"
+            )
+            assert block_type != "audio_content", (
+                "audio_content should be stripped for Anthropic"
+            )
 
     def test_audio_messages_detected_before_anthropic_fallback(self):
         """
@@ -327,25 +382,38 @@ class TestRegressionCOREBACKENDYR0:
         This is used by the fallback logic to skip Anthropic when audio is present.
         """
         # Original message that would have caused the error
-        messages_with_incorrect_type = [{
-            "role": "user",
-            "content": [
-                {"type": "text", "text": "Analyze this audio"},
-                {"type": "image_url", "image_url": {"url": "data:audio/mp3;base64,abc"}}
-            ]
-        }]
+        messages_with_incorrect_type = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "Analyze this audio"},
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": "data:audio/mp3;base64,abc"},
+                    },
+                ],
+            }
+        ]
 
         # This should be detected as containing audio
         assert messages_contain_audio(messages_with_incorrect_type) is True
 
         # Corrected message format
-        messages_with_correct_type = [{
-            "role": "user",
-            "content": [
-                {"type": "text", "text": "Analyze this audio"},
-                {"type": "audio_content", "audio_content": {"url": "data:audio/mp3;base64,abc", "format": "mp3"}}
-            ]
-        }]
+        messages_with_correct_type = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "Analyze this audio"},
+                    {
+                        "type": "audio_content",
+                        "audio_content": {
+                            "url": "data:audio/mp3;base64,abc",
+                            "format": "mp3",
+                        },
+                    },
+                ],
+            }
+        ]
 
         # This should also be detected as containing audio
         assert messages_contain_audio(messages_with_correct_type) is True
@@ -357,16 +425,21 @@ class TestRegressionCOREBACKENDYR0:
         Vertex AI uses image_url for audio content, which is why the original
         code worked for Vertex AI but failed on fallback.
         """
-        messages = [{
-            "role": "user",
-            "content": [
-                {"type": "text", "text": "Analyze this audio"},
-                {"type": "audio_content", "audio_content": {
-                    "url": "data:audio/mp3;base64,SGVsbG8gV29ybGQ=",
-                    "format": "mp3"
-                }}
-            ]
-        }]
+        messages = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "Analyze this audio"},
+                    {
+                        "type": "audio_content",
+                        "audio_content": {
+                            "url": "data:audio/mp3;base64,SGVsbG8gV29ybGQ=",
+                            "format": "mp3",
+                        },
+                    },
+                ],
+            }
+        ]
 
         result = preprocess_messages_for_provider(messages, "vertex_ai")
 

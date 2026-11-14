@@ -46,7 +46,7 @@ const PersonaSection = ({ control, description = "" }) => {
           sx: {
             color: "status.info.fg",
             fontWeight: "fontWeightMedium",
-            fontSize: "13px",
+            fontSize: "12px",
             textDecoration: "underline",
           },
         }}

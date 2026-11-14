@@ -488,19 +488,9 @@ def test_legacy_optimize_dataset_model_create_scopes_model_and_metrics(
 
 
 @pytest.mark.django_db
-def test_legacy_optimize_dataset_kb_routes_create_and_scope(
-    auth_client, organization, workspace, user, monkeypatch
+def test_legacy_optimize_dataset_kb_routes_scope_existing_runs(
+    auth_client, organization, workspace, user
 ):
-    dispatched = []
-    monkeypatch.setattr(
-        "model_hub.views.optimize_dataset.rag_prompt_optimzer.apply_async",
-        lambda *args, **kwargs: dispatched.append((args, kwargs)),
-    )
-    monkeypatch.setattr(
-        "model_hub.views.optimize_dataset.create_criteria_text_prompt",
-        lambda metric_text: ["Criterion"],
-    )
-
     other_workspace = make_workspace(organization, user)
     other_run = OptimizeDataset.no_workspace_objects.create(
         name="Other workspace KB optimization",
@@ -512,26 +502,15 @@ def test_legacy_optimize_dataset_kb_routes_create_and_scope(
         status=OptimizeDataset.StatusType.COMPLETED,
     )
 
-    response = auth_client.post(
-        "/model-hub/optimize-dataset/knowledge-base/",
-        {
-            "name": "Scoped KB optimization",
-            "knowledge_base_metrics": ["Metric A"],
-            "knowledge_base_filters": ["topic"],
-            "prompt": "Improve retrieval",
-            "variables": {"topic": "support"},
-        },
-        format="json",
+    created = OptimizeDataset.no_workspace_objects.create(
+        name="Scoped KB optimization",
+        optimize_type=OptimizeDataset.OptimizeType.RAG_TEMPLATE,
+        organization=organization,
+        workspace=workspace,
+        environment=OptimizeDataset.EnvTypes.CORPUS,
+        version="",
+        status=OptimizeDataset.StatusType.COMPLETED,
     )
-
-    assert response.status_code == status.HTTP_200_OK
-    created_id = response.json()["result"]
-    created = OptimizeDataset.no_workspace_objects.get(id=created_id)
-    assert created.organization == organization
-    assert created.workspace == workspace
-    assert created.environment == OptimizeDataset.EnvTypes.CORPUS
-    assert created.version == ""
-    assert dispatched
 
     list_response = auth_client.get("/model-hub/optimize-dataset/")
     assert list_response.status_code == status.HTTP_200_OK

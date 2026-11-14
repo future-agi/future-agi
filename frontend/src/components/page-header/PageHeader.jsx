@@ -38,7 +38,7 @@ export default function PageHeader({ title, badge, description, info, actions, b
             {badge}
           </Stack>
           {description && (
-            <Typography sx={{ fontSize: 13, lineHeight: "20px", color: "text.tertiary" }}>
+            <Typography sx={{ fontSize: 12, lineHeight: "20px", color: "text.tertiary" }}>
               {description}
             </Typography>
           )}

@@ -126,7 +126,7 @@ const EvalItem = ({ item, selected, onChange }) => {
           <ListItemText
             primaryTypographyProps={{
               fontWeight: 500,
-              fontSize: "13px",
+              fontSize: "12px",
               borderRadius: "6px",
               maxWidth: "170px",
               overflow: "hidden",

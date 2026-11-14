@@ -49,8 +49,6 @@ const SaveViewPopover = ({
           sx: {
             width: 320,
             borderRadius: "8px",
-            border: "1px solid",
-            borderColor: "divider",
             p: 1,
             mt: 0.5,
           },
@@ -70,7 +68,7 @@ const SaveViewPopover = ({
         <Box sx={{ flex: 1 }}>
           <Typography
             sx={{
-              fontSize: 13,
+              fontSize: 12,
               fontWeight: 600,
               color: "text.primary",
               fontFamily: "'IBM Plex Sans', sans-serif",
@@ -117,7 +115,9 @@ const SaveViewPopover = ({
             if (e.key === "Enter") handleSave();
           }}
           error={isDuplicate}
-          helperText={isDuplicate ? "A view with this name already exists." : ""}
+          helperText={
+            isDuplicate ? "A view with this name already exists." : ""
+          }
           autoFocus
           InputLabelProps={{
             sx: {
@@ -129,7 +129,7 @@ const SaveViewPopover = ({
           }}
           InputProps={{
             sx: {
-              fontSize: 13,
+              fontSize: 12,
               fontFamily: "'IBM Plex Sans', sans-serif",
               borderRadius: "4px",
             },

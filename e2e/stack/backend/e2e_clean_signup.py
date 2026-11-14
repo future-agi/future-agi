@@ -19,4 +19,18 @@ def clean_signup(request):
     if not data.get("password"):
         return Response({"error": "A password is required for test actors"}, status=400)
     first_signup(data, seed_demo_data=False)
+    # Explicit opt-in on this test-image-only route. Ordinary actors remain
+    # non-staff; this actor may view/change keys but is never a superuser.
+    if request.data.get("key_administrator") is True:
+        from django.contrib.auth.models import Permission
+
+        from accounts.models import User
+
+        actor = User.objects.get(email=data["email"])
+        actor.is_staff = True
+        actor.save(update_fields=["is_staff"])
+        actor.user_permissions.add(*Permission.objects.filter(
+            content_type__app_label="accounts",
+            codename__in=["view_orgapikey", "change_orgapikey"],
+        ))
     return Response({"status": "success"})

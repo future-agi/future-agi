@@ -602,9 +602,7 @@ class TestContinuousReclassification:
     ):
         task = self._continuous_with_entries(project, custom_eval_config)
         now = timezone.now()
-        _apply_resolved(
-            task, resolved=ResolvedRowSet((), (), False), now=now
-        )
+        _apply_resolved(task, resolved=ResolvedRowSet((), (), False), now=now)
         task.refresh_from_db()
         assert task.reclassified_evals_revision is None
         _apply_resolved(task, resolved=ResolvedRowSet((), (), True), now=now)

@@ -68,7 +68,7 @@ export default function WidgetDescriptionPopover({
         sx={{
           "& .MuiOutlinedInput-root": { p: 1.25 },
           "& .MuiOutlinedInput-input": {
-            fontSize: "13px",
+            fontSize: "12px",
             lineHeight: 1.6,
           },
         }}

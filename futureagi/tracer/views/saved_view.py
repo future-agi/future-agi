@@ -307,6 +307,7 @@ class SavedViewViewSet(BaseModelViewSetMixin, ModelViewSet):
             elif requested_name == "":
                 return self._gm.bad_request("View name cannot be empty.")
             else:
+
                 def copy_name(suffix):
                     label = " (Copy)" if suffix is None else f" (Copy {suffix})"
                     return f"{original.name[: max_len - len(label)]}{label}"

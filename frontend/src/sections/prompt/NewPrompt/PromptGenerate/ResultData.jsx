@@ -1,5 +1,6 @@
 import { Box, IconButton, Tooltip } from "@mui/material";
 import { AgGridReact } from "ag-grid-react";
+import "src/utils/ag-grid-setup";
 import React, { useMemo, useRef } from "react";
 import { useAgThemeWith } from "src/hooks/use-ag-theme";
 import PropTypes from "prop-types";

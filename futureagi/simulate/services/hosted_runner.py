@@ -77,8 +77,7 @@ def _leased_room_run_seconds(case_count: int, max_seconds: float) -> float:
     outer deadline.
     """
     return (
-        case_count * (max_seconds + _leased_overhead_seconds())
-        + _BASE_CLEANUP_SECONDS
+        case_count * (max_seconds + _leased_overhead_seconds()) + _BASE_CLEANUP_SECONDS
     )
 
 

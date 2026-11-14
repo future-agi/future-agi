@@ -18,7 +18,7 @@ export function card(theme) {
         root: {
           padding: theme.spacing(2, 2, 0),
         },
-        title: { fontSize: 13, lineHeight: "20px", fontWeight: 500 },
+        title: { fontSize: 12, lineHeight: "20px", fontWeight: 500 },
         subheader: {
           fontSize: 11,
           lineHeight: "16px",

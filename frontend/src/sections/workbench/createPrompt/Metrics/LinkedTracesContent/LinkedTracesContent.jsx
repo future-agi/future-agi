@@ -4,6 +4,7 @@ import "src/styles/clean-data-table.css";
 import { Box, Button, Skeleton } from "@mui/material";
 import MetricsHeaderSection from "../MetricsHeaderSection";
 import { AgGridReact } from "ag-grid-react";
+import "src/utils/ag-grid-setup";
 import { useAgThemeWith } from "src/hooks/use-ag-theme";
 import { AG_THEME_OVERRIDES } from "src/theme/ag-theme";
 import { getMetricsListColumnDefs, normalizeFilters } from "../common";
