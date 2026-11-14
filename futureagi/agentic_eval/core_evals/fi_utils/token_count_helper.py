@@ -297,7 +297,7 @@ def _compute_costs(pricing: dict, token_usage: dict) -> tuple[float, float, bool
         cost_per_minute = pricing.get("input_per_minute")
         if cost_per_minute is None:
             cost_per_minute = pricing.get("per_minute_audio")
-        if not _is_nonnegative_number(cost_per_minute):
+        if cost_per_minute is None or not _is_nonnegative_number(cost_per_minute):
             return 0.0, 0.0, False
         audio_seconds = token_usage.get("audio_seconds") or 0.0
 
