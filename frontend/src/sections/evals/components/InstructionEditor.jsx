@@ -9,6 +9,7 @@ import {
   Popover,
   Tooltip,
   Typography,
+  ButtonBase,
 } from "@mui/material";
 import PropTypes from "prop-types";
 import React, {
@@ -272,6 +273,8 @@ const InstructionEditor = ({
   // Defaults to `disabled` for backward compat.
   modelSelectorDisabled,
   openModelMenuSignal = 0,
+  outputType,
+  choiceCount,
   label = "Instructions",
   templateFormat = "mustache",
   onTemplateFormatChange,
@@ -282,6 +285,7 @@ const InstructionEditor = ({
   // parent form can collect mode / internet / summary / connectors / KBs.
   mode,
   onModeChange,
+  previousModeRef,
   useInternet,
   onUseInternetChange,
   activeSummary,
@@ -624,7 +628,7 @@ const InstructionEditor = ({
         {/* Template format selector */}
         {onTemplateFormatChange && (
           <>
-            <Box
+            <ButtonBase
               onClick={(e) => !disabled && setFormatAnchor(e.currentTarget)}
               sx={{
                 display: "inline-flex",
@@ -655,11 +659,15 @@ const InstructionEditor = ({
                   ?.label || "Mustache"}
               </Typography>
               <Iconify
-                icon={formatAnchor ? "mdi:chevron-up" : "mdi:chevron-down"}
+                icon={
+                  formatAnchor
+                    ? "solar:alt-arrow-up-linear"
+                    : "solar:alt-arrow-down-linear"
+                }
                 width={14}
                 sx={{ color: "text.disabled" }}
               />
-            </Box>
+            </ButtonBase>
             <Popover
               open={Boolean(formatAnchor)}
               anchorEl={formatAnchor}
@@ -668,7 +676,7 @@ const InstructionEditor = ({
               transformOrigin={{ vertical: "top", horizontal: "right" }}
               slotProps={{
                 paper: {
-                  sx: { borderRadius: "8px", p: 0.5, minWidth: 220 },
+                  sx: { borderRadius: "8px", p: 0.5, minWidth: 240 },
                 },
               }}
             >
@@ -684,8 +692,8 @@ const InstructionEditor = ({
                 >
                   <Typography
                     sx={{
-                      fontSize: "14px",
-                      fontWeight: 700,
+                      fontSize: "12px",
+                      fontWeight: 600,
                       fontFamily: "monospace",
                       width: 40,
                       textAlign: "center",
@@ -700,14 +708,14 @@ const InstructionEditor = ({
                   <Box>
                     <Typography
                       variant="body2"
-                      sx={{ fontSize: "13px", fontWeight: 600 }}
+                      sx={{ fontSize: "12px", fontWeight: 600 }}
                     >
                       {fmt.label}
                     </Typography>
                     <Typography
                       variant="caption"
                       color="text.secondary"
-                      sx={{ fontSize: "11px" }}
+                      sx={{ fontSize: "12px" }}
                     >
                       {fmt.description}
                     </Typography>
@@ -741,8 +749,7 @@ const InstructionEditor = ({
             sx={{
               borderBottom: "1px solid",
               borderColor: "divider",
-              backgroundColor: (theme) =>
-                theme.palette.mode === "dark" ? "#1a1a2e" : "#fafafe",
+              backgroundColor: "background.aiSurface",
               borderRadius: "8px 8px 0 0",
             }}
           >
@@ -767,7 +774,7 @@ const InstructionEditor = ({
                   <Typography
                     variant="body2"
                     color="text.secondary"
-                    sx={{ fontSize: "13px" }}
+                    sx={{ fontSize: "12px" }}
                   >
                     Generating...
                   </Typography>
@@ -790,14 +797,14 @@ const InstructionEditor = ({
                     }
                     if (e.key === "Escape") handleClose();
                   }}
-                  sx={{ fontSize: "13px", flex: 1 }}
+                  sx={{ fontSize: "12px", flex: 1 }}
                 />
               ) : (
                 <Typography
                   variant="body2"
                   sx={{
                     flex: 1,
-                    fontSize: "13px",
+                    fontSize: "12px",
                     color: "text.secondary",
                     fontStyle: "italic",
                   }}
@@ -821,11 +828,8 @@ const InstructionEditor = ({
                       size="small"
                       onClick={handleReject}
                       sx={{
-                        textTransform: "none",
-                        fontSize: "12px",
                         color: "text.secondary",
                         minWidth: 0,
-                        px: 1,
                       }}
                     >
                       Reject
@@ -835,11 +839,7 @@ const InstructionEditor = ({
                       variant="outlined"
                       onClick={handleAccept}
                       sx={{
-                        textTransform: "none",
-                        fontSize: "12px",
                         minWidth: 0,
-                        px: 1.5,
-                        fontWeight: 600,
                       }}
                     >
                       Accept
@@ -851,10 +851,9 @@ const InstructionEditor = ({
                     size="small"
                     onClick={() => handleSubmit(aiPrompt)}
                     disabled={!aiPrompt.trim()}
-                    sx={{ p: 0.5 }}
                   >
                     <Iconify
-                      icon="mdi:arrow-up-circle"
+                      icon="solar:round-arrow-up-linear"
                       width={20}
                       sx={{
                         color: aiPrompt.trim()
@@ -864,9 +863,9 @@ const InstructionEditor = ({
                     />
                   </IconButton>
                 )}
-                <IconButton size="small" onClick={handleClose} sx={{ p: 0.25 }}>
+                <IconButton size="small" onClick={handleClose}>
                   <Iconify
-                    icon="mdi:close"
+                    icon="solar:close-linear"
                     width={16}
                     sx={{ color: "text.disabled" }}
                   />
@@ -893,7 +892,7 @@ const InstructionEditor = ({
                     if (e.key === "Escape") handleClose();
                   }}
                   sx={{
-                    fontSize: "13px",
+                    fontSize: "12px",
                     borderTop: "1px solid",
                     borderColor: "divider",
                     pt: 0.75,
@@ -940,13 +939,13 @@ const InstructionEditor = ({
               outline: "none !important",
               padding: 0,
               minHeight: 140,
-              fontSize: "14px",
+              fontSize: "12px",
               lineHeight: 1.6,
               ...(disabled && { cursor: "not-allowed !important" }),
             },
             "& .ql-editor:focus": {
               outline: "none !important",
-              boxShadow: "none !important",
+              boxShadow: "none",
             },
             "& .ql-editor.ql-blank::before": {
               fontStyle: "normal",
@@ -978,6 +977,7 @@ const InstructionEditor = ({
               disabled={modelBarDisabled}
               mode={mode}
               onModeChange={onModeChange}
+              previousModeRef={previousModeRef}
               useInternet={useInternet}
               onUseInternetChange={onUseInternetChange}
               activeSummary={activeSummary}
@@ -990,22 +990,19 @@ const InstructionEditor = ({
               onActiveContextOptionsChange={onActiveContextOptionsChange}
               hideDatasetContextToggle={hideDatasetContextToggle}
               openModelMenuSignal={openModelMenuSignal}
+              outputType={outputType}
+              choiceCount={choiceCount}
             />
           </Box>
           {!aiOpen && (
-            <Tooltip title="Write with Falcon AI" arrow placement="top">
+            <Tooltip title="Write with AI" arrow placement="top">
               <IconButton
                 size="small"
                 onClick={() => setAiOpen(true)}
                 disabled={disabled}
                 sx={{
-                  width: 32,
-                  height: 32,
                   "&:hover": {
-                    backgroundColor: (theme) =>
-                      theme.palette.mode === "dark"
-                        ? "rgba(124,77,255,0.12)"
-                        : "rgba(124,77,255,0.06)",
+                    backgroundColor: "status.discovery.bg",
                   },
                 }}
               >

@@ -3,10 +3,12 @@ import PropTypes from "prop-types";
 import { Drawer, IconButton } from "@mui/material";
 import Iconify from "src/components/iconify";
 import HuggingDetailForm from "./HuggingDetailForm";
+import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
 
 const HuggingFaceDetailDrawer = ({
   show,
-  reset,
+  getValues,
+  setValue,
   control,
   huggingFaceDetail,
   watch,
@@ -20,27 +22,54 @@ const HuggingFaceDetailDrawer = ({
 }) => {
   useEffect(() => {
     if (!show) return;
-    if (show && showNameField && huggingFaceDetail?.name) {
-      const defaultValues = { name: huggingFaceDetail.name };
-      if (subsetOptions?.length > 0) {
-        defaultValues.huggingface_dataset_config = subsetOptions[0].value;
-      }
-      if (splitOptions?.length > 0) {
-        defaultValues.huggingface_dataset_split = splitOptions[0].value;
-      }
-      defaultValues.num_rows = 1;
-      reset(defaultValues);
+
+    if (showNameField && huggingFaceDetail?.name && !getValues("name")) {
+      setValue("name", huggingFaceDetail.name);
+    }
+
+    const currentSubset = getValues("huggingface_dataset_config");
+    if (
+      subsetOptions?.length > 0 &&
+      !subsetOptions.some(({ value }) => value === currentSubset)
+    ) {
+      setValue("huggingface_dataset_config", subsetOptions[0].value);
+    }
+
+    const currentSplit = getValues("huggingface_dataset_split");
+    if (
+      splitOptions?.length > 0 &&
+      !splitOptions.some(({ value }) => value === currentSplit)
+    ) {
+      setValue("huggingface_dataset_split", splitOptions[0].value);
     }
   }, [
     show,
     showNameField,
     huggingFaceDetail?.name,
-    reset,
+    getValues,
+    setValue,
     subsetOptions,
     splitOptions,
   ]);
+
+  useEffect(() => {
+    if (!show) return;
+
+    // Initialize on open, not on options refresh while the user is editing.
+    const currentRowCount = getValues("num_rows");
+    if (
+      currentRowCount === undefined ||
+      currentRowCount === null ||
+      currentRowCount === ""
+    ) {
+      setValue("num_rows", 1);
+    }
+  }, [show, getValues, setValue]);
+  const covered = useDrawerCovered(show);
+
   return (
     <Drawer
+      sx={coveredDrawerSx(covered)}
       open={show}
       onClose={onClose}
       anchor="right"
@@ -48,14 +77,14 @@ const HuggingFaceDetailDrawer = ({
         backdrop: { invisible: true },
       }}
       PaperProps={{
-        sx: { width: 1, maxWidth: 525 },
+        sx: { width: 1, maxWidth: 640 },
       }}
     >
       <IconButton
         onClick={onClose}
         sx={{ position: "absolute", top: "12px", right: "12px" }}
       >
-        <Iconify icon="mingcute:close-line" />
+        <Iconify icon="solar:close-linear" />
       </IconButton>
       <HuggingDetailForm
         control={control}
@@ -76,7 +105,8 @@ const HuggingFaceDetailDrawer = ({
 HuggingFaceDetailDrawer.propTypes = {
   show: PropTypes.bool.isRequired,
   setShow: PropTypes.func.isRequired,
-  reset: PropTypes.func.isRequired,
+  getValues: PropTypes.func.isRequired,
+  setValue: PropTypes.func.isRequired,
   control: PropTypes.object.isRequired,
   huggingFaceDetail: PropTypes.object,
   watch: PropTypes.func.isRequired,

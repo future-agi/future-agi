@@ -17,7 +17,7 @@ const JsonOutputRenderer = ({
   const [expandedPaths, setExpandedPaths] = useState(() => {
     const initial = new Set();
     if (initialExpanded) {
-      initial.add("root");
+      initial.add("");
     }
     return initial;
   });
@@ -46,11 +46,15 @@ const JsonOutputRenderer = ({
   }, []);
 
   const expandAll = useCallback(() => {
-    const paths = new Set(["root"]);
+    const paths = new Set([""]);
     const collectPaths = (obj, currentPath) => {
       if (typeof obj === "object" && obj !== null) {
         Object.keys(obj).forEach((key) => {
-          const newPath = currentPath ? `${currentPath}.${key}` : key;
+          const newPath = Array.isArray(obj)
+            ? `${currentPath}[${key}]`
+            : currentPath
+              ? `${currentPath}.${key}`
+              : key;
           paths.add(newPath);
           collectPaths(obj[key], newPath);
         });
@@ -61,7 +65,7 @@ const JsonOutputRenderer = ({
   }, [parsedData]);
 
   const collapseAll = useCallback(() => {
-    setExpandedPaths(new Set(["root"]));
+    setExpandedPaths(new Set([""]));
   }, []);
 
   const handleCopyPath = useCallback(
@@ -92,7 +96,7 @@ const JsonOutputRenderer = ({
             sx={{
               color: "text.disabled",
               fontStyle: "italic",
-              fontSize: "13px",
+              fontSize: "12px",
             }}
           >
             {"<max depth reached>"}
@@ -104,7 +108,7 @@ const JsonOutputRenderer = ({
         return (
           <Typography
             component="span"
-            sx={{ color: "error.main", fontSize: "13px" }}
+            sx={{ color: "error.main", fontSize: "12px" }}
           >
             null
           </Typography>
@@ -115,7 +119,7 @@ const JsonOutputRenderer = ({
         return (
           <Typography
             component="span"
-            sx={{ color: "warning.main", fontSize: "13px" }}
+            sx={{ color: "warning.main", fontSize: "12px" }}
           >
             {value.toString()}
           </Typography>
@@ -126,7 +130,7 @@ const JsonOutputRenderer = ({
         return (
           <Typography
             component="span"
-            sx={{ color: "info.main", fontSize: "13px" }}
+            sx={{ color: "info.main", fontSize: "12px" }}
           >
             {value}
           </Typography>
@@ -139,7 +143,7 @@ const JsonOutputRenderer = ({
         return (
           <Typography
             component="span"
-            sx={{ color: "success.dark", fontSize: "13px" }}
+            sx={{ color: "success.dark", fontSize: "12px" }}
           >
             &quot;{displayValue}&quot;
           </Typography>
@@ -156,13 +160,17 @@ const JsonOutputRenderer = ({
               sx={{ p: 0, mr: 0.5 }}
             >
               <Iconify
-                icon={isExpanded ? "mdi:chevron-down" : "mdi:chevron-right"}
+                icon={
+                  isExpanded
+                    ? "solar:alt-arrow-down-linear"
+                    : "solar:alt-arrow-right-linear"
+                }
                 width={16}
               />
             </IconButton>
             <Typography
               component="span"
-              sx={{ color: "text.secondary", fontSize: "13px" }}
+              sx={{ color: "text.secondary", fontSize: "12px" }}
             >
               Array[{value.length}]
             </Typography>
@@ -208,13 +216,17 @@ const JsonOutputRenderer = ({
               sx={{ p: 0, mr: 0.5 }}
             >
               <Iconify
-                icon={isExpanded ? "mdi:chevron-down" : "mdi:chevron-right"}
+                icon={
+                  isExpanded
+                    ? "solar:alt-arrow-down-linear"
+                    : "solar:alt-arrow-right-linear"
+                }
                 width={16}
               />
             </IconButton>
             <Typography
               component="span"
-              sx={{ color: "text.secondary", fontSize: "13px" }}
+              sx={{ color: "text.secondary", fontSize: "12px" }}
             >
               {"{"}
               {keys.length} keys
@@ -252,7 +264,7 @@ const JsonOutputRenderer = ({
       }
 
       return (
-        <Typography component="span" sx={{ fontSize: "13px" }}>
+        <Typography component="span" sx={{ fontSize: "12px" }}>
           {String(value)}
         </Typography>
       );
@@ -287,32 +299,32 @@ const JsonOutputRenderer = ({
       );
     }
     return (
-      <Typography color="error" fontSize="13px">
+      <Typography color="error" fontSize="12px">
         Invalid JSON
       </Typography>
     );
   }
 
   return (
-    <Box sx={{ fontFamily: "monospace", fontSize: "13px" }}>
+    <Box sx={{ fontFamily: "monospace", fontSize: "12px" }}>
       <Box sx={{ display: "flex", gap: 1, mb: 1 }}>
         <Tooltip title="Expand all">
           <IconButton size="small" onClick={expandAll}>
-            <Iconify icon="mdi:unfold-more-horizontal" width={18} />
+            <Iconify icon="solar:chevrons-up-down-linear" width={20} />
           </IconButton>
         </Tooltip>
         <Tooltip title="Collapse all">
           <IconButton size="small" onClick={collapseAll}>
-            <Iconify icon="mdi:unfold-less-horizontal" width={18} />
+            <Iconify icon="solar:chevrons-down-up-linear" width={20} />
           </IconButton>
         </Tooltip>
         <Tooltip title="Copy all">
           <IconButton size="small" onClick={() => handleCopyValue(parsedData)}>
-            <Iconify icon="basil:copy-outline" width={18} />
+            <Iconify icon="solar:copy-linear" width={20} />
           </IconButton>
         </Tooltip>
       </Box>
-      {renderValue(parsedData, "root", 0)}
+      {renderValue(parsedData, "", 0)}
     </Box>
   );
 };
@@ -345,7 +357,7 @@ const JsonKeyValue = ({
         backgroundColor: isHovered
           ? (theme) => alpha(theme.palette.primary.main, 0.05)
           : "transparent",
-        borderRadius: 0.5,
+        borderRadius: "4px",
         px: 0.5,
         "&:hover .copy-buttons": {
           opacity: 1,
@@ -360,7 +372,7 @@ const JsonKeyValue = ({
           color: "primary.main",
           fontWeight: 500,
           mr: 1,
-          fontSize: "13px",
+          fontSize: "12px",
         }}
       >
         {keyName}:
@@ -383,7 +395,7 @@ const JsonKeyValue = ({
               onClick={() => onCopyPath(path)}
               sx={{ p: 0.25 }}
             >
-              <Iconify icon="mdi:code-braces" width={14} />
+              <Iconify icon="solar:code-linear" width={14} />
             </IconButton>
           </Tooltip>
           <Tooltip title="Copy value">
@@ -392,7 +404,7 @@ const JsonKeyValue = ({
               onClick={() => onCopyValue(value)}
               sx={{ p: 0.25 }}
             >
-              <Iconify icon="basil:copy-outline" width={14} />
+              <Iconify icon="solar:copy-linear" width={14} />
             </IconButton>
           </Tooltip>
         </Box>

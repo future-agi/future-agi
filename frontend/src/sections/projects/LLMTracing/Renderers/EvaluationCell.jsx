@@ -1,11 +1,13 @@
 import React from "react";
-import { Chip } from "@mui/material";
+import { Box } from "@mui/material";
 import { interpolateColorTokenBasedOnScore } from "src/utils/utils";
 import PropTypes from "prop-types";
 import NumericCell from "../../../common/DevelopCellRenderer/EvaluateCellRenderer/NumericCell";
 import { OutputTypes } from "src/sections/common/DevelopCellRenderer/CellRenderers/cellRendererHelper";
 import EvalStatusIndicator from "src/components/eval/EvalStatusIndicator";
 import { getEvalNonScoreStatusFromValue } from "src/utils/evalStatus";
+import EvalResultChips from "./EvalResultChips";
+import { buildEvalCellModel } from "../evalCellModel";
 
 const EvaluationCell = ({ value, column, isSpanLevel = false }) => {
   const shouldReverse = column?.reverseOutput;
@@ -36,6 +38,24 @@ const EvaluationCell = ({ value, column, isSpanLevel = false }) => {
           skippedReason={value?.skipped_reason}
         />
       </div>
+    );
+  }
+
+  const isCountCell =
+    value &&
+    typeof value === "object" &&
+    !Array.isArray(value) &&
+    Object.keys(value).length > 0 &&
+    Object.values(value).every(
+      (count) => typeof count === "number" && Number.isFinite(count),
+    );
+  if (isCountCell) {
+    return (
+      <EvalResultChips
+        value={value}
+        outputType={column?.outputType}
+        choicesMap={column?.choicesMap}
+      />
     );
   }
 
@@ -91,7 +111,34 @@ const EvaluationCell = ({ value, column, isSpanLevel = false }) => {
           backgroundColor,
           padding: "0 12px",
           margin: 0,
-          fontSize: "14px",
+          fontSize: "12px",
+          color,
+        }}
+      >
+        {isPass ? "Pass" : "Fail"}
+      </div>
+    );
+  }
+
+  // Voice keeps scalar Pass/Fail output rather than count-mode cells. Normalize
+  // its historical casing/boolean variants before the numeric fallback so a
+  // literal "Fail" never becomes a missing value or a passing result.
+  const scalarModel = buildEvalCellModel(value, column?.outputType);
+  if (scalarModel.kind === "verdict") {
+    const isPass = scalarModel.verdict === "pass";
+    const { bgcolor: backgroundColor, color } =
+      interpolateColorTokenBasedOnScore(isPass ? 100 : 0, 100);
+    return (
+      <div
+        style={{
+          height: "100%",
+          width: "100%",
+          display: "flex",
+          alignItems: "center",
+          backgroundColor,
+          padding: "0 12px",
+          margin: 0,
+          fontSize: "12px",
           color,
         }}
       >
@@ -103,26 +150,19 @@ const EvaluationCell = ({ value, column, isSpanLevel = false }) => {
   // Array of values
   if (Array.isArray(value)) {
     return (
-      <div
-        style={{
+      <Box
+        sx={{
           display: "flex",
-          gap: "8px",
-          flexWrap: "wrap",
-          padding: "10px 12px",
+          alignItems: "center",
+          padding: "0 12px",
           height: "100%",
-          overflow: "auto",
+          overflow: "hidden",
+          fontSize: 12,
+          color: "text.primary",
         }}
       >
-        {value.map((each) => (
-          <Chip
-            size="small"
-            key={each}
-            label={each}
-            variant="outlined"
-            color="primary"
-          />
-        ))}
-      </div>
+        {value.join(" · ")}
+      </Box>
     );
   }
 
@@ -175,7 +215,7 @@ const EvaluationCell = ({ value, column, isSpanLevel = false }) => {
         color,
         paddingInline: "12px",
         fontWeight: 500,
-        fontSize: "13px",
+        fontSize: "12px",
         height: "100%",
         display: "flex",
         alignItems: "center",

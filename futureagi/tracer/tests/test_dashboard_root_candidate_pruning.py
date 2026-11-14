@@ -21,15 +21,16 @@ def test_root_witness_is_only_for_latency_raw_discovery(metric_name, per_metric)
     original = deepcopy(config)
     builder = _builder(config)
     sql, params = builder.build_metric_query(builder.metrics[0])
-    raw, replay = sql.split('SELECT dashboard_replay_source.*', 1)
+    raw, replay = sql.split('FROM spans AS dashboard_replay_source', 1)
     root = "AND (dashboard_candidate_source.parent_span_id IS NULL OR dashboard_candidate_source.parent_span_id = '')"
     assert raw.count(root) == int(metric_name == 'latency')
     if metric_name == 'latency':
         assert raw.index(root) < raw.index('\n                WHERE ')
     # Parent/date/deletion/value corrections must win before outer predicates.
     assert 'dashboard_replay_source.parent_span_id' not in replay
-    assert 'ORDER BY dashboard_replay_source._version DESC' in replay
-    assert 'LIMIT 1 BY' in replay
+    assert 'ORDER BY dashboard_replay_source._version DESC' not in replay
+    assert 'LIMIT 1 BY' not in sql
+    assert 'max(dashboard_replay_source._version)' in replay
     for component in ('project_id', 'observation_type', 'service_name', 'trace_id', 'id'):
         assert f'dashboard_replay_source.{component}' in replay
     assert 'toStartOfHour(dashboard_replay_source.start_time)' in replay

@@ -16,13 +16,14 @@ import {
   Stack,
   TextField,
   Typography,
-  alpha,
 } from "@mui/material";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Helmet } from "react-helmet-async";
 import { useNavigate } from "react-router-dom";
 
 import Iconify from "src/components/iconify";
+import PanelSection from "src/components/section";
+import { CreditExhaustionBanner } from "src/components/CreditExhaustionBanner";
 import EnvironmentSwitcher from "src/components/harness/EnvironmentSwitcher";
 import StatusChip from "src/components/custom-status-chip/CustomStatusChip";
 import { STATUS_TYPES } from "src/utils/statusUtils";
@@ -30,11 +31,11 @@ import {
   createHarnessJob,
   listHarnessJobs,
   preflightHarnessJob,
-  storeHarnessSecretValues,
   uploadHarnessSecretFile,
   uploadHarnessSource,
 } from "src/api/harness/harness";
 import { paths } from "src/routes/paths";
+import { useCreditExhaustion } from "src/hooks/use-credit-exhaustion";
 
 import { parseDotEnv } from "./dotenv";
 import {
@@ -110,15 +111,9 @@ const providerCredentialName = (connector) =>
 
 function Section({ title, description, children }) {
   return (
-    <Paper variant="outlined" sx={{ p: 2 }}>
-      <Typography variant="subtitle2">{title}</Typography>
-      {description && (
-        <Typography variant="caption" color="text.secondary">
-          {description}
-        </Typography>
-      )}
-      <Box sx={{ mt: 1.5 }}>{children}</Box>
-    </Paper>
+    <PanelSection variant="panel" title={title} description={description}>
+      {children}
+    </PanelSection>
   );
 }
 
@@ -133,24 +128,20 @@ function SourceTile({ icon, title, description, selected, onSelect }) {
         alignItems: "flex-start",
         // ButtonBase centres its content; these tiles read as labelled rows, not buttons.
         justifyContent: "flex-start",
-        gap: 1.25,
-        p: 1.75,
-        borderRadius: 1,
+        gap: 1.5,
+        p: 1.5,
+        borderRadius: "8px",
         textAlign: "left",
         border: 1,
-        borderColor: selected ? "accent.brand" : "divider",
-        bgcolor: selected
-          ? alpha(theme.palette.primary.main, 0.08)
-          : "transparent",
+        borderColor: selected ? "text.primary" : "divider",
+        bgcolor: selected ? "action.selected" : "transparent",
         transition: theme.transitions.create([
           "border-color",
           "background-color",
         ]),
         "&:hover": {
-          borderColor: selected ? "accent.brand" : "text.disabled",
-          bgcolor: selected
-            ? alpha(theme.palette.primary.main, 0.12)
-            : "action.hover",
+          borderColor: selected ? "text.primary" : "text.disabled",
+          bgcolor: selected ? "action.selected" : "action.hover",
         },
       })}
     >
@@ -160,7 +151,7 @@ function SourceTile({ icon, title, description, selected, onSelect }) {
         sx={{
           mt: 0.25,
           flexShrink: 0,
-          color: selected ? "accent.brand" : "text.secondary",
+          color: selected ? "text.primary" : "text.secondary",
         }}
       />
       <Box sx={{ minWidth: 0 }}>
@@ -190,6 +181,12 @@ Section.propTypes = {
 export default function HarnessCreate() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const {
+    exhaustionError,
+    handleError: handleCreditError,
+    handleUpgradeClick,
+    handleDismiss: dismissCreditBanner,
+  } = useCreditExhaustion({ feature: "hosted_harness" });
 
   const { data: listData } = useQuery({
     queryKey: ["harness-jobs"],
@@ -212,12 +209,20 @@ export default function HarnessCreate() {
   const [providerTargetId, setProviderTargetId] = useState("");
   const [providerDynamicVariables, setProviderDynamicVariables] = useState("");
   const [scenarioCount, setScenarioCount] = useState(10);
+  // Explicit parallelism control (C4 §6). Default 1; NEVER auto-derived from the
+  // scenario count. Locked at 1 when the environment does not yet enable W>1.
+  const [parallelism, setParallelism] = useState(1);
   // Per call, not per run. See callLimitConfig above.
   const [callTimeoutSeconds, setCallTimeoutSeconds] = useState("");
   const [preflight, setPreflight] = useState(null);
   // Shown beside the Preflight button: the general error banner sits at the foot of the
   // form, out of view when the button is what was clicked.
   const [preflightError, setPreflightError] = useState("");
+  // Control gating: disabled — not hidden — when preflight reports parallel
+  // execution is off for this environment; enabled until a preflight has run.
+  // This is requested concurrency; admission reports what the sandbox can run.
+  const parallelismEnabled = preflight?.parallelism_enabled !== false;
+  const maxParallelism = 8;
   // A changed input does not invalidate what preflight already told us — it just means the
   // answer may be out of date. Hiding the panel loses the findings the user was reading.
   const [preflightDirty, setPreflightDirty] = useState(false);
@@ -379,11 +384,9 @@ export default function HarnessCreate() {
     scenario_count: Number(scenarioCount),
     runtime: {
       isolation: "dedicated_vm",
-      cpu_units: 4,
-      memory_mb: 8192,
-      parallelism: 1,
+      parallelism: parallelismEnabled ? Number(parallelism) || 1 : 1,
       concurrency_weight: 1,
-      max_duration_seconds: Math.max(3600, Number(scenarioCount) * 360),
+      max_duration_seconds: Math.max(600, Number(scenarioCount) * 360),
       network_policy: "live",
     },
     security: {
@@ -406,7 +409,6 @@ export default function HarnessCreate() {
       level: "full",
       retention_days: 30,
       allow_bundle_download: false,
-      max_artifact_bytes: 1073741824,
     },
     metadata: {
       name:
@@ -422,8 +424,8 @@ export default function HarnessCreate() {
     },
   });
 
-  // Preflight verifies the typed values against the provider before Run stores them;
-  // the create payload never carries raw values, only the stored refs.
+  // Preflight verifies the typed values against the provider; Run sends them once as
+  // write-only credential_values, which the server stores. Refs are names-only.
   const preflightPayload = () => ({
     ...hostedPayload(pendingEnvironmentRefs()),
     ...(Object.keys(targetCredentialValues()).length
@@ -461,16 +463,18 @@ export default function HarnessCreate() {
         return;
       }
       const valuesToStore = targetCredentialValues();
-      const stored = Object.keys(valuesToStore).length
-        ? await storeHarnessSecretValues(valuesToStore)
-        : { secret_refs: {} };
-      const value = await createHarnessJob(
-        hostedPayload(stored.secret_refs || {}),
-      );
+      const value = await createHarnessJob({
+        ...hostedPayload(),
+        ...(Object.keys(valuesToStore).length
+          ? { credential_values: valuesToStore }
+          : {}),
+      });
       queryClient.invalidateQueries({ queryKey: ["harness-jobs"] });
       navigate(paths.dashboard.simulate.harness.detail(value.job.job_id));
     } catch (requestError) {
-      setError(errorMessage(requestError));
+      if (!handleCreditError(requestError)) {
+        setError(errorMessage(requestError));
+      }
       setSubmitting(false);
     }
   };
@@ -614,8 +618,7 @@ export default function HarnessCreate() {
     // generic value. Secret-looking names are always handled as credentials,
     // matching the backend's fail-closed config validation.
     const isSecret =
-      item.kind === "secret" ||
-      isSecretCredentialName(item.environment_name);
+      item.kind === "secret" || isSecretCredentialName(item.environment_name);
     const isFile = item.kind === "file";
     const revealed = revealedSecrets.has(item.environment_name);
     return (
@@ -633,7 +636,7 @@ export default function HarnessCreate() {
         <Box sx={{ width: { md: 280 }, flexShrink: 0 }}>
           <Typography
             variant="body2"
-            fontWeight={600}
+            fontWeight={500}
             sx={{ fontFamily: "monospace", wordBreak: "break-all" }}
           >
             {item.environment_name}
@@ -774,7 +777,7 @@ export default function HarnessCreate() {
   return (
     <>
       <Helmet>
-        <title>Create RL Environment | Future AGI</title>
+        <title>Create Environment | Future AGI</title>
       </Helmet>
 
       <Box sx={{ height: "100vh", overflow: "auto", p: 2 }}>
@@ -790,7 +793,7 @@ export default function HarnessCreate() {
                 size="small"
                 color="inherit"
                 onClick={() => navigate(paths.dashboard.simulate.harness.root)}
-                startIcon={<Iconify icon="eva:arrow-back-fill" width={18} />}
+                startIcon={<Iconify icon="solar:arrow-left-linear" width={18} />}
                 sx={{ color: "text.secondary", px: 1, ml: -1, minWidth: 0 }}
               >
                 All environments
@@ -806,7 +809,7 @@ export default function HarnessCreate() {
               />
             </Stack>
             <Typography typography="m2" fontWeight={600}>
-              Create RL environment
+              Create environment
             </Typography>
             <Typography typography="s1" color="text.secondary">
               Point ALK at your agent, check what it needs, then run the whole
@@ -848,7 +851,7 @@ export default function HarnessCreate() {
                       onSelect={() => selectSource("upload")}
                     />
                     <SourceTile
-                      icon="mdi:github"
+                      icon="simple-icons:github"
                       title="GitHub repository"
                       description="Check out a branch the runner can reach."
                       selected={sourceMode === "github"}
@@ -864,7 +867,7 @@ export default function HarnessCreate() {
                         alignItems="center"
                         sx={{
                           p: 1.5,
-                          borderRadius: 1,
+                          borderRadius: "8px",
                           border: 1,
                           borderColor: "divider",
                           bgcolor: "background.neutral",
@@ -873,10 +876,10 @@ export default function HarnessCreate() {
                         <Iconify
                           icon="solar:folder-with-files-bold"
                           width={24}
-                          sx={{ color: "accent.brand", flexShrink: 0 }}
+                          sx={{ color: "text.secondary", flexShrink: 0 }}
                         />
                         <Box sx={{ minWidth: 0, flex: 1 }}>
-                          <Typography variant="body2" fontWeight={600} noWrap>
+                          <Typography variant="body2" fontWeight={500} noWrap>
                             {uploadedSource.name}
                           </Typography>
                           <Typography variant="caption" color="text.secondary">
@@ -919,7 +922,7 @@ export default function HarnessCreate() {
                           gap: 0.75,
                           px: 2,
                           py: 4,
-                          borderRadius: 1,
+                          borderRadius: "8px",
                           border: "1px dashed",
                           borderColor: "divider",
                           cursor:
@@ -931,7 +934,7 @@ export default function HarnessCreate() {
                             "background-color",
                           ]),
                           "&:hover": {
-                            borderColor: "accent.brand",
+                            borderColor: "text.secondary",
                             bgcolor: "action.hover",
                           },
                         })}
@@ -1045,7 +1048,7 @@ export default function HarnessCreate() {
                 </Stack>
               </Section>
 
-              <Paper variant="outlined" sx={{ p: 2 }}>
+              <PanelSection variant="panel">
                 <Stack
                   direction="row"
                   spacing={1.5}
@@ -1202,7 +1205,6 @@ export default function HarnessCreate() {
                           }
                           sx={{
                             px: 0.5,
-                            fontWeight: 400,
                             color: "text.secondary",
                           }}
                         >
@@ -1218,7 +1220,7 @@ export default function HarnessCreate() {
                     )}
                   </Stack>
                 )}
-              </Paper>
+              </PanelSection>
 
               <Section
                 title="Additional environment values"
@@ -1539,6 +1541,28 @@ export default function HarnessCreate() {
                   direction={{ xs: "column", sm: "row" }}
                   spacing={1.5}
                   alignItems={{ sm: "center" }}
+                  sx={{ mt: 1.5 }}
+                >
+                  <TextField
+                    size="small"
+                    label="Parallel worlds"
+                    type="number"
+                    value={parallelismEnabled ? parallelism : 1}
+                    onChange={(event) => setParallelism(event.target.value)}
+                    disabled={!parallelismEnabled}
+                    inputProps={{ min: 1, max: maxParallelism }}
+                    sx={{ width: 140, flexShrink: 0 }}
+                  />
+                  <Typography variant="caption" color="text.secondary">
+                    {parallelismEnabled
+                      ? "Requested concurrent scenarios in one sandbox. Resources and certified limits may reduce the effective value; remaining scenarios wait for a free world."
+                      : "Parallel execution is not yet enabled for this environment, so runs use a single world."}
+                  </Typography>
+                </Stack>
+                <Stack
+                  direction={{ xs: "column", sm: "row" }}
+                  spacing={1.5}
+                  alignItems={{ sm: "center" }}
                   sx={{ mt: 2 }}
                 >
                   <TextField
@@ -1560,6 +1584,11 @@ export default function HarnessCreate() {
                 </Stack>
               </Section>
 
+              <CreditExhaustionBanner
+                error={exhaustionError}
+                onUpgrade={handleUpgradeClick}
+                onDismiss={dismissCreditBanner}
+              />
               {error && (
                 <Alert severity="error" variant="outlined">
                   {error}
@@ -1598,21 +1627,21 @@ export default function HarnessCreate() {
               </Stack>
             </Stack>
 
-            <Paper variant="outlined" sx={{ p: 2 }}>
-              <Typography variant="subtitle2">What ALK will do</Typography>
-              <Typography variant="caption" color="text.secondary">
-                Every stage runs without operator prompts once the run starts.
-              </Typography>
-              <Stack spacing={1.2} sx={{ mt: 1.5 }}>
+            <PanelSection
+              variant="panel"
+              title="What ALK will do"
+              description="Every stage runs without operator prompts once the run starts."
+            >
+              <Stack spacing={1.5}>
                 {stages.map((stage) => (
                   <Stack
                     key={stage}
                     direction="row"
-                    spacing={1.2}
+                    spacing={1.5}
                     alignItems="center"
                   >
                     <Iconify
-                      icon="solar:record-circle-linear"
+                      icon="solar:circle-linear"
                       color="text.secondary"
                       sx={{ opacity: 0.6 }}
                     />
@@ -1626,7 +1655,7 @@ export default function HarnessCreate() {
                   </Stack>
                 ))}
               </Stack>
-            </Paper>
+            </PanelSection>
           </Box>
         </Stack>
       </Box>

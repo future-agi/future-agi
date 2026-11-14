@@ -198,6 +198,46 @@ class SpeakerRoleResolver:
         role_map = cls._get_map(provider=provider, is_outbound=is_outbound)
         return role_map.get((role or "").lower()) == "simulator"
 
+    # Where our own recorder's stereo file is noted in call_metadata:
+    # (bucket, artifact kind, key holding its URL).
+    _OWN_STEREO_ARTIFACTS: tuple[tuple[str, str, str], ...] = (
+        ("hosted_harness_artifacts", "recording_stereo", "url"),
+        ("alk_recording_artifacts", "stereo", "recording_url"),
+    )
+
+    @classmethod
+    def stereo_channel_roles(
+        cls,
+        stereo_url: str,
+        call_metadata: dict[str, Any],
+        *,
+        provider: ProviderChoices,
+        is_outbound: bool,
+    ) -> dict[str, str]:
+        """Display role on each channel of the stereo recording at ``stereo_url``.
+
+        "customer" is the simulator and "assistant" the tested agent.
+        """
+        # Our recorder always writes simulator left, tested agent right. The URL
+        # must match: a rerun can leave an old artifact note beside a new
+        # provider recording.
+        own_recording = any(
+            cls._noted_url(call_metadata.get(bucket), kind, url_key) == stereo_url
+            for bucket, kind, url_key in cls._OWN_STEREO_ARTIFACTS
+        )
+        # A provider recording carries the provider's own "assistant" on the
+        # right, which is the simulator when the provider account is ours.
+        if not own_recording and cls.is_simulator(
+            "assistant", provider=provider, is_outbound=is_outbound
+        ):
+            return {"left": "assistant", "right": "customer"}
+        return {"left": "customer", "right": "assistant"}
+
+    @staticmethod
+    def _noted_url(artifacts: Any, kind: str, url_key: str) -> Any:
+        artifact = artifacts.get(kind) if isinstance(artifacts, dict) else None
+        return artifact.get(url_key) if isinstance(artifact, dict) else None
+
     @classmethod
     def align_transcript_rows(
         cls,

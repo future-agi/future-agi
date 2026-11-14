@@ -2,6 +2,15 @@ import { describe, expect, it } from "vitest";
 import { enrichTurns } from "../transcriptUtils";
 
 describe("enrichTurns", () => {
+  it("preserves structured function calls through normalization", () => {
+    const toolCalls = [{ name: "lookup_order", arguments: { id: 12 } }];
+    const [turn] = enrichTurns([
+      { speaker_role: "tool", content: "Function call", tool_calls: toolCalls },
+    ]);
+    expect(turn.toolCalls).toEqual(toolCalls);
+    expect(turn.role).toBe("tool");
+  });
+
   it("does not infer voice timing or interruptions for chat turns", () => {
     const turns = enrichTurns(
       [

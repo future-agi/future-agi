@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 
 import pytest
+from clickhouse_connect.driver.binding import finalize_query
 from rest_framework import serializers
 
 from tracer.serializers.filters import FilterListField
@@ -75,9 +76,12 @@ def test_serializer_and_compiler_preserve_mixed_typed_picker_values() -> None:
     assert config["attribute_value_types"] == ["string", "number", "boolean"]
 
     where, params = ClickHouseFilterBuilderV2(query_mode="span").translate(validated)
-    assert "mapContains(attrs_string, 'attempt')" in where
-    assert "mapContains(attrs_number, 'attempt')" in where
-    assert "mapContains(attrs_bool, 'attempt')" in where
+    # The attribute key is bound, not inlined; render before asserting on it.
+    assert params["attr_key_1"] == "attempt"
+    rendered = finalize_query(where, params)
+    assert "mapContains(attrs_string, 'attempt')" in rendered
+    assert "mapContains(attrs_number, 'attempt')" in rendered
+    assert "mapContains(attrs_bool, 'attempt')" in rendered
     assert ("1",) in params.values()
     assert (1.0,) in params.values()
     assert (1,) in params.values()
@@ -93,10 +97,13 @@ def test_mixed_typed_not_in_negates_any_matching_representation() -> None:
     payload["filter_config"]["attribute_value_types"] = ["string", "number"]
     validated = FilterListField().run_validation([payload])
 
-    where, _ = ClickHouseFilterBuilderV2(query_mode="span").translate(validated)
+    where, params = ClickHouseFilterBuilderV2(query_mode="span").translate(validated)
     assert "AND NOT" in where
-    assert "mapContains(attrs_string, 'attempt')" in where
-    assert "mapContains(attrs_number, 'attempt')" in where
+    # The attribute key is bound, not inlined; render before asserting on it.
+    assert params["attr_key_1"] == "attempt"
+    rendered = finalize_query(where, params)
+    assert "mapContains(attrs_string, 'attempt')" in rendered
+    assert "mapContains(attrs_number, 'attempt')" in rendered
     assert "NOT IN" not in where
 
 

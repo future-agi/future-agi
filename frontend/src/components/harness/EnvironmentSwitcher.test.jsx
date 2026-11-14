@@ -28,11 +28,11 @@ describe("EnvironmentSwitcher", () => {
       />,
     );
 
-    await user.click(screen.getByLabelText("Switch RL environment"));
+    await user.click(screen.getByLabelText("Switch environment"));
 
     const items = within(screen.getByRole("menu")).getAllByRole("menuitem");
     expect(items).toHaveLength(jobs.length + 1);
-    expect(items.at(-1)).toHaveTextContent("Create RL environment");
+    expect(items.at(-1)).toHaveTextContent("Create environment");
   });
 
   it("reports the environment that was picked", async () => {
@@ -47,7 +47,7 @@ describe("EnvironmentSwitcher", () => {
       />,
     );
 
-    await user.click(screen.getByLabelText("Switch RL environment"));
+    await user.click(screen.getByLabelText("Switch environment"));
     await user.click(screen.getByText("ride-voice-smoke-1"));
 
     expect(onSelect).toHaveBeenCalledWith("b");
@@ -65,8 +65,8 @@ describe("EnvironmentSwitcher", () => {
       />,
     );
 
-    await user.click(screen.getByLabelText("Switch RL environment"));
-    await user.click(screen.getByText("Create RL environment"));
+    await user.click(screen.getByLabelText("Switch environment"));
+    await user.click(screen.getByText("Create environment"));
 
     expect(onCreate).toHaveBeenCalledTimes(1);
   });
@@ -84,11 +84,11 @@ describe("EnvironmentSwitcher", () => {
       />,
     );
 
-    await user.click(screen.getByLabelText("Switch RL environment"));
+    await user.click(screen.getByLabelText("Switch environment"));
 
     const items = within(screen.getByRole("menu")).getAllByRole("menuitem");
     expect(items).toHaveLength(jobs.length);
-    expect(screen.queryByText("Create RL environment")).toBeNull();
+    expect(screen.queryByText("Create environment")).toBeNull();
   });
 
   // A cold load of a detail URL can leave the list unresolved; a dropdown onto nothing but
@@ -104,7 +104,7 @@ describe("EnvironmentSwitcher", () => {
       />,
     );
 
-    expect(screen.queryByLabelText("Switch RL environment")).toBeNull();
+    expect(screen.queryByLabelText("Switch environment")).toBeNull();
     expect(screen.getByText("ride-voice-e2e-3")).toBeInTheDocument();
   });
 });

@@ -1,9 +1,10 @@
+import { ROW_HEIGHT } from "src/theme/sizes";
+import EmptyContent from "src/components/empty-content";
 /* eslint-disable react/prop-types */
 import { useState, useMemo, useCallback, useRef } from "react";
 import {
   Box,
   Button,
-  Chip,
   IconButton,
   Skeleton,
   Stack,
@@ -12,6 +13,7 @@ import {
   Typography,
 } from "@mui/material";
 import { AgGridReact } from "ag-grid-react";
+import "src/utils/ag-grid-setup";
 import Iconify from "src/components/iconify";
 import {
   useAutomationRules,
@@ -60,7 +62,9 @@ function SourceCellRenderer({ data }) {
   if (!data) return null;
   return (
     <Box sx={{ display: "flex", alignItems: "center", height: "100%" }}>
-      <Chip label={data.source_type} size="small" variant="outlined" />
+      <Typography variant="body2" color="text.secondary">
+        {data.source_type}
+      </Typography>
     </Box>
   );
 }
@@ -86,7 +90,9 @@ function TriggerFrequencyCellRenderer({ data }) {
     )?.label || "Manually";
   return (
     <Box sx={{ display: "flex", alignItems: "center", height: "100%" }}>
-      <Chip label={label} size="small" variant="outlined" />
+      <Typography variant="body2" color="text.secondary">
+        {label}
+      </Typography>
     </Box>
   );
 }
@@ -127,14 +133,13 @@ function ActionsCellRenderer({ data, context }) {
       <Tooltip title={tooltip} placement="top">
         <span>
           <Button
+            className="row-hover-action"
             size="small"
             variant="outlined"
             startIcon={
               <Iconify
-                icon={
-                  isRunning ? "svg-spinners:180-ring" : "mingcute:play-line"
-                }
-                width={15}
+                icon={isRunning ? "svg-spinners:180-ring" : "solar:play-linear"}
+                width={16}
               />
             }
             onClick={(e) => {
@@ -146,7 +151,6 @@ function ActionsCellRenderer({ data, context }) {
             sx={{
               minWidth: 108,
               justifyContent: "center",
-              fontWeight: 700,
               borderColor: "primary.main",
               "&.Mui-disabled": {
                 borderColor: "action.disabledBackground",
@@ -158,6 +162,7 @@ function ActionsCellRenderer({ data, context }) {
         </span>
       </Tooltip>
       <IconButton
+        className="row-hover-action"
         size="small"
         color="error"
         onClick={(e) => {
@@ -165,7 +170,7 @@ function ActionsCellRenderer({ data, context }) {
           context?.onDeleteConfirm(data);
         }}
       >
-        <Iconify icon="mingcute:close-line" width={18} />
+        <Iconify icon="solar:close-linear" width={16} />
       </IconButton>
     </Box>
   );
@@ -227,6 +232,7 @@ export default function AutomationRulesTab({ queueId, queue }) {
       },
       {
         field: "trigger_count",
+        cellStyle: { fontVariantNumeric: "tabular-nums" },
         headerName: "Triggers",
         flex: 0.8,
         minWidth: 100,
@@ -285,23 +291,10 @@ export default function AutomationRulesTab({ queueId, queue }) {
 
   const CustomNoRowsOverlay = useCallback(
     () => (
-      <Box
-        sx={{
-          display: "flex",
-          flexDirection: "column",
-          alignItems: "center",
-          justifyContent: "center",
-          height: "100%",
-          gap: 0.5,
-        }}
-      >
-        <Typography color="text.secondary">
-          No automation rules configured.
-        </Typography>
-        <Typography variant="caption" color="text.secondary">
-          Create a rule to automatically add items to this queue.
-        </Typography>
-      </Box>
+      <EmptyContent
+        title="No automation rules configured."
+        description="Create a rule to automatically add items to this queue."
+      />
     ),
     [],
   );
@@ -325,7 +318,7 @@ export default function AutomationRulesTab({ queueId, queue }) {
         <Button
           variant="contained"
           color="primary"
-          startIcon={<Iconify icon="mingcute:add-line" width={16} />}
+          startIcon={<Iconify icon="solar:add-linear" width={16} />}
           onClick={() => setCreateOpen(true)}
         >
           Add Rule
@@ -370,8 +363,8 @@ export default function AutomationRulesTab({ queueId, queue }) {
             columnDefs={columnDefs}
             defaultColDef={defaultColDef}
             context={gridContext}
-            rowHeight={52}
-            headerHeight={42}
+            rowHeight={ROW_HEIGHT.default}
+            headerHeight={32}
             pagination={false}
             animateRows={false}
             suppressRowClickSelection

@@ -255,6 +255,37 @@ class TestListBuilderOutputContract:
                     )
                 finally:
                     builder._bounded_internal_scan = original_internal
+            elif name == "build_filter_seed_density_probe_query":
+                # The density probe is offered only by the short exact-string
+                # row-budgeted lane, so exercise it with the smallest filter
+                # that turns that lane on.
+                original_filters = builder.filters
+                original_internal = builder._bounded_internal_scan
+                builder.filters = [
+                    *original_filters,
+                    {
+                        "column_id": "contract.density",
+                        "filter_config": {
+                            "col_type": "SPAN_ATTRIBUTE",
+                            "filter_type": "text",
+                            "filter_op": "in",
+                            "filter_value": ["v1"],
+                            "attribute_value_types": ["string"],
+                        },
+                    },
+                ]
+                builder._bounded_internal_scan = False
+                try:
+                    start, end = builder.parse_time_range(builder.filters)
+                    if not builder.supports_filter_seed_density_probe():
+                        continue
+                    result = method(
+                        slice_start=max(start, end - timedelta(days=1)),
+                        slice_end=end,
+                    )
+                finally:
+                    builder.filters = original_filters
+                    builder._bounded_internal_scan = original_internal
             elif name in {
                 "build_filter_anchor_probe",
                 "build_filter_graph_key_witness_probe",

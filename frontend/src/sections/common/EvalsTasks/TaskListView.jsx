@@ -1,18 +1,12 @@
-import {
-  alpha,
-  Box,
-  Button,
-  Chip,
-  IconButton,
-  Popover,
-  Typography,
-} from "@mui/material";
+import { Box, Button, IconButton, Popover, Typography } from "@mui/material";
 import { formatDistanceToNow } from "date-fns";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import PropTypes from "prop-types";
 import _ from "lodash";
 import Iconify from "src/components/iconify";
+import EmptyState from "src/components/empty-state";
+import RunStatusBadge from "src/components/status-badge/StatusBadge";
 import FormSearchField from "src/components/FormSearchField/FormSearchField";
 import { DataTable, DataTablePagination } from "src/components/data-table";
 import { useDebounce } from "src/hooks/use-debounce";
@@ -23,6 +17,8 @@ import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
 import DeleteConfirmation from "./DeleteConfirmation";
 import { QUERY_FAILED_RETRY_MESSAGE } from "src/utils/queryReadState";
 import { readEvalTaskListPage } from "./task_list_read";
+import { isResumableTaskStatus } from "./task_status";
+import { compactSamplingLabel } from "src/sections/tasks/components/simpleSamplingPolicy";
 
 const POLL_INTERVAL_MS = 5000;
 
@@ -38,44 +34,21 @@ const shouldPollRow = (row) => {
 // ── Status Config ──
 
 const STATUS_CONFIG = {
-  pending: {
-    paletteColor: "warning",
-    icon: "solar:clock-circle-linear",
-  },
-  running: {
-    paletteColor: "info",
-    icon: "svg-spinners:ring-resize",
-  },
-  completed: {
-    paletteColor: "success",
-    icon: "solar:check-circle-linear",
-  },
-  failed: {
-    paletteColor: "error",
-    icon: "solar:close-circle-linear",
-  },
-  paused: {
-    paletteColor: "default",
-    icon: "solar:pause-circle-linear",
-  },
+  pending: { role: "neutral", icon: "solar:clock-circle-linear" },
+  running: { role: "info", icon: "svg-spinners:ring-resize" },
+  completed: { role: "success", icon: "solar:check-circle-linear" },
+  failed: { role: "danger", icon: "solar:close-circle-linear" },
+  paused: { role: "warning", icon: "solar:pause-circle-linear" },
 };
 
 const StatusBadge = ({ status }) => {
   const config = STATUS_CONFIG[status] || STATUS_CONFIG.pending;
-  const palColor = config.paletteColor;
   return (
-    <Chip
+    <RunStatusBadge
+      status={status}
       label={_.capitalize(status)}
-      size="small"
-      color={palColor}
-      variant="outlined"
+      role={config.role}
       icon={<Iconify icon={config.icon} width={14} />}
-      sx={{
-        fontWeight: 500,
-        fontSize: "12px",
-        height: 24,
-        "& .MuiChip-icon": { ml: 0.5 },
-      }}
     />
   );
 };
@@ -119,24 +92,6 @@ const HoverChipList = ({ items, label, emptyText }) => {
       : items[0].name || items[0].eval_template_name;
   const remaining = items.length - 1;
 
-  const chipStyles = {
-    backgroundColor: (theme) => alpha(theme.palette.primary.main, 0.1),
-    color: "primary.main",
-    borderRadius: "4px",
-    fontWeight: 500,
-    fontSize: "12px",
-    height: 22,
-    "& .MuiChip-label": { px: 0.75 },
-    "&:hover, &.MuiChip-clickable:hover": {
-      backgroundColor: (theme) =>
-        alpha(
-          theme.palette.primary.main,
-          0.1 + theme.palette.action.hoverOpacity,
-        ),
-      color: "primary.main",
-    },
-  };
-
   return (
     <>
       <Box
@@ -144,11 +99,17 @@ const HoverChipList = ({ items, label, emptyText }) => {
         onMouseLeave={scheduleClose}
         sx={{ display: "flex", alignItems: "center", height: "100%", gap: 0.5 }}
       >
-        <Chip label={firstItem} size="small" sx={chipStyles} />
+        <Typography
+          variant="caption"
+          noWrap
+          sx={{ color: "text.primary", fontSize: "12px", fontWeight: 500 }}
+        >
+          {firstItem}
+        </Typography>
         {remaining > 0 && (
           <Typography
             variant="caption"
-            sx={{ color: "text.secondary", fontSize: "12px", pl: 0.5 }}
+            sx={{ color: "text.tertiary", fontSize: "12px", pl: 0.5 }}
           >
             +{remaining} other{remaining > 1 ? "s" : ""}
           </Typography>
@@ -171,9 +132,6 @@ const HoverChipList = ({ items, label, emptyText }) => {
             maxWidth: 320,
             maxHeight: 280,
             overflowY: "auto",
-            boxShadow: "-5px 5px 10px rgba(0,0,0,0.1)",
-            border: "1px solid",
-            borderColor: "divider",
             borderRadius: "8px",
           },
         }}
@@ -192,16 +150,14 @@ const HoverChipList = ({ items, label, emptyText }) => {
                 ? item
                 : item.name || item.eval_template_name || "—";
             return (
-              <Chip
+              <Typography
                 key={idx}
-                label={text}
-                size="small"
-                sx={{
-                  ...chipStyles,
-                  alignSelf: "flex-start",
-                  maxWidth: "100%",
-                }}
-              />
+                variant="caption"
+                noWrap
+                sx={{ color: "text.primary", fontSize: "12px" }}
+              >
+                {text}
+              </Typography>
             );
           })}
         </Box>
@@ -402,6 +358,8 @@ const TaskListView = ({
   }, [observeId]);
 
   const lastPage = Math.max(0, Math.ceil(total / pageSize) - 1);
+  // Nothing exists yet (not a search that matched nothing).
+  const isFirstRun = !isLoading && !isError && total === 0 && !debouncedSearch;
   useEffect(() => {
     if (page > lastPage) setPage(lastPage);
   }, [lastPage, page]);
@@ -509,7 +467,7 @@ const TaskListView = ({
         header: "Project",
         size: 150,
         cell: ({ getValue }) => (
-          <Typography variant="body2" noWrap sx={{ fontSize: "13px" }}>
+          <Typography variant="body2" noWrap sx={{ fontSize: "12px" }}>
             {getValue() || "—"}
           </Typography>
         ),
@@ -537,10 +495,10 @@ const TaskListView = ({
         id: "samplingRate",
         accessorKey: "sampling_rate",
         header: "Sampling",
-        size: 90,
-        cell: ({ getValue }) => (
-          <Typography variant="body2" sx={{ fontSize: "13px" }}>
-            {getValue()}%
+        size: 150,
+        cell: ({ getValue, row }) => (
+          <Typography variant="body2" sx={{ fontSize: "12px" }}>
+            {compactSamplingLabel(row.original.sampling_policy, getValue())}
           </Typography>
         ),
       },
@@ -570,7 +528,7 @@ const TaskListView = ({
                   />
                 </IconButton>
               )}
-              {status === "paused" && (
+              {isResumableTaskStatus(status) && (
                 <IconButton
                   size="small"
                   onClick={(e) => {
@@ -649,16 +607,22 @@ const TaskListView = ({
         minHeight: 0,
       }}
     >
-      {/* Top Controls */}
+      {/* Top Controls — hidden on first run; the empty state has the action */}
       <Box
         sx={{
-          display: "flex",
+          display: isFirstRun ? "none" : "flex",
           justifyContent: "space-between",
           alignItems: "center",
           gap: 1.5,
         }}
       >
-        <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+        <Box
+          sx={{
+            display: isFirstRun ? "none" : "flex",
+            alignItems: "center",
+            gap: 1,
+          }}
+        >
           <FormSearchField
             size="small"
             placeholder="Search tasks..."
@@ -674,7 +638,7 @@ const TaskListView = ({
           />
         </Box>
 
-        <Box sx={{ display: "flex", gap: 1, alignItems: "center" }}>
+        <Box sx={{ display: "flex", gap: 1, alignItems: "center", ml: "auto" }}>
           {selectedItems.length > 0 && (
             <>
               <Typography variant="caption" color="text.secondary">
@@ -693,7 +657,6 @@ const TaskListView = ({
                     role
                   ]
                 }
-                sx={{ textTransform: "none", fontSize: "12px", height: 32 }}
               >
                 Delete
               </Button>
@@ -701,7 +664,6 @@ const TaskListView = ({
                 size="small"
                 variant="outlined"
                 onClick={() => setRowSelection({})}
-                sx={{ textTransform: "none", fontSize: "12px", height: 32 }}
               >
                 Cancel
               </Button>
@@ -711,16 +673,15 @@ const TaskListView = ({
             <Button
               variant="contained"
               color="primary"
-              startIcon={<Iconify icon="mingcute:add-line" width={18} />}
+              startIcon={<Iconify icon="solar:add-linear" width={16} />}
               onClick={onCreateTask}
               disabled={
                 !RolePermission.OBSERVABILITY[PERMISSIONS.ADD_TASKS_ALERTS][
                   role
                 ]
               }
-              sx={{ px: 2.5, typography: "body2", textTransform: "none" }}
             >
-              Create Task
+              Create task
             </Button>
           )}
         </Box>
@@ -746,32 +707,63 @@ const TaskListView = ({
           </Button>
         </Box>
       )}
-      <DataTable
-        columns={columns}
-        data={items}
-        isLoading={isLoading}
-        rowCount={total}
-        sorting={sorting}
-        onSortingChange={handleSortingChange}
-        rowSelection={rowSelection}
-        onRowSelectionChange={setRowSelection}
-        onRowClick={(row) => onRowClick?.(row)}
-        getRowId={(row) => row.id}
-        enableSelection
-        emptyMessage={isError ? QUERY_FAILED_RETRY_MESSAGE : "No tasks found"}
-      />
+      {isFirstRun ? (
+        <EmptyState
+          icon="solar:checklist-minimalistic-linear"
+          title="No tasks yet"
+          description="A task runs evals on your traces automatically, on new data or on a sample of what's already there."
+          action={
+            <Button
+              variant="contained"
+              color="primary"
+              size="small"
+              startIcon={<Iconify icon="solar:add-linear" width={16} />}
+              onClick={onCreateTask}
+              disabled={
+                !RolePermission.OBSERVABILITY[PERMISSIONS.ADD_TASKS_ALERTS][
+                  role
+                ]
+              }
+            >
+              Create task
+            </Button>
+          }
+          docsHref="https://docs.futureagi.com/docs/observe/features/evals"
+        />
+      ) : (
+        <>
+          <DataTable
+            columns={columns}
+            data={items}
+            isLoading={isLoading}
+            rowCount={total}
+            sorting={sorting}
+            onSortingChange={handleSortingChange}
+            rowSelection={rowSelection}
+            onRowSelectionChange={setRowSelection}
+            onRowClick={(row) => onRowClick?.(row)}
+            getRowId={(row) => row.id}
+            enableSelection
+            emptyMessage={
+              isError
+                ? QUERY_FAILED_RETRY_MESSAGE
+                : `No tasks match “${debouncedSearch}”`
+            }
+          />
 
-      {/* Pagination */}
-      <DataTablePagination
-        page={queryPage}
-        pageSize={pageSize}
-        total={total}
-        onPageChange={setPage}
-        onPageSizeChange={(size) => {
-          setPageSize(size);
-          setPage(0);
-        }}
-      />
+          {/* Pagination */}
+          <DataTablePagination
+            page={queryPage}
+            pageSize={pageSize}
+            total={total}
+            onPageChange={setPage}
+            onPageSizeChange={(size) => {
+              setPageSize(size);
+              setPage(0);
+            }}
+          />
+        </>
+      )}
 
       {/* Delete confirmation */}
       {deleteTarget && (

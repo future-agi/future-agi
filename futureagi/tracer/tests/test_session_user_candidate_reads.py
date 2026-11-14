@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import json
 import os
+import re
 import time
 import uuid
 from datetime import UTC, datetime, timedelta
@@ -10,12 +12,14 @@ from types import SimpleNamespace
 from unittest import mock
 
 import pytest
+from clickhouse_driver.util.escape import escape_params
 from django.conf import settings as django_settings
 from django.test import override_settings
 
 from tracer.selectors.trace_filter_reads import read_bounded_filter_page
 from tracer.services.clickhouse.query_builders.user_list import (
     UnsupportedBoundedUserListQuery,
+    UserListQueryBuilder,
 )
 from tracer.services.clickhouse.v2.query_builders.session_list import (
     SessionListQueryBuilderV2,
@@ -88,15 +92,29 @@ def test_user_default_page_replays_latest_state_before_pagination():
     assert physical_params["project_id"] == builder.project_id
     assert "candidate_users AS" in page_sql
     assert "FROM spans" in page_sql
-    assert "candidate_span_identities AS" in page_sql
+    # Unseeded reads carry no user/scalar seed, so every latest row in the
+    # exact window witnesses its own identity. The identity superset CTE is
+    # only built when a seed narrows the scan.
+    assert "candidate_span_identities AS" not in page_sql
     assert "latest_candidate_spans AS" in page_sql
     assert "latest_is_deleted = 0" in page_sql
+    compact_page_sql = " ".join(page_sql.split())
+    assert (
+        "AND toStartOfHour(start_time) >= toStartOfHour( "
+        "fromUnixTimestamp64Micro(%(user_window_start_us)s, 'UTC') )"
+        in compact_page_sql
+    )
+    assert (
+        "AND toStartOfHour(start_time) < fromUnixTimestamp64Micro( "
+        "%(user_window_end_us)s, 'UTC' )" in compact_page_sql
+    )
     assert "span_user_rollup" not in page_sql
     assert "span_user_rollup" not in combined_sql
     cursor_seed_sql, cursor_seed_params = builder.build_dimension_candidate_query(
         limit=26
     )
     assert "latest_candidate_spans AS" in cursor_seed_sql
+    assert "candidate_span_identities AS" not in cursor_seed_sql
     assert (
         cursor_seed_params["user_window_start_us"]
         < cursor_seed_params["user_window_end_us"]
@@ -105,10 +123,233 @@ def test_user_default_page_replays_latest_state_before_pagination():
     assert params["limit"] == 25
     assert params["offset"] == 50
     assert "argMax(is_deleted, _version) AS latest_is_deleted" in metrics_sql
-    assert "(project_id, trace_id, id, start_time) IN" in metrics_sql
+    compact_metrics_sql = " ".join(metrics_sql.split())
+    assert (
+        "GROUP BY project_id, observation_type, service_name, identity_hour, trace_id, id"
+        in compact_metrics_sql
+    )
+    assert (
+        "( project_id, observation_type, service_name, toStartOfHour(start_time), trace_id, id ) IN"
+        in compact_metrics_sql
+    )
+    latest_scan = metrics_sql.split("latest_candidate_spans AS (", 1)[1].split(
+        "GROUP BY", 1
+    )[0]
+    assert "argMax(start_time, _version) AS latest_start_time" in latest_scan
+    assert "start_time >=" not in latest_scan
+    assert "start_time <" not in latest_scan
+    assert "end_user_id IN" not in latest_scan
+    assert "latest_is_deleted = 0" not in latest_scan
+    resolved = metrics_sql.split("resolved_candidate_spans AS (", 1)[1].split(
+        "extra_metrics AS (", 1
+    )[0]
+    assert "latest_start_time AS start_time" in resolved
+    assert "latest_is_deleted = 0" in resolved
+    assert "latest_start_time >= fromUnixTimestamp64Micro(" in resolved
+    assert "latest_start_time < fromUnixTimestamp64Micro(" in resolved
+    assert "IN %(candidate_end_user_ids)s" in resolved
     assert "eu_survivor_map" in metrics_sql
     assert "ts_survivor_map" in metrics_sql
+    assert "candidate_session_ids AS" in metrics_sql
+    assert "WHERE new_id IN (SELECT new_id FROM touched_session_groups)" in metrics_sql
+    assert "OVER (PARTITION BY new_id)" not in metrics_sql
     assert len(metrics_params["candidate_end_user_ids"]) == 1
+    assert set(re.findall(r"%\((\w+)\)s", metrics_sql)) <= metrics_params.keys()
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "builder_class", [UserListQueryBuilder, UserListQueryBuilderV2]
+)
+@pytest.mark.parametrize("workspace", [False, True])
+def test_user_page_metrics_preserves_combined_query_and_empty_page_contract(
+    builder_class, workspace
+):
+    project_id, user_id = str(uuid.uuid4()), str(uuid.uuid4())
+    builder = builder_class(
+        organization_id=str(uuid.uuid4()),
+        **({"project_ids": [project_id]} if workspace else {"project_id": project_id}),
+        filters=_window(datetime(2026, 8, 1, 10, tzinfo=UTC)),
+        limit=25,
+        offset=50,
+    )
+    combined_sql, combined_params = builder.build()
+    original_params = dict(combined_params)
+    assert builder.build_page_metrics_query([]) == ("", {})
+    sql, params = builder.build_page_metrics_query([user_id])
+    assert params["candidate_end_user_ids"] == (user_id,)
+    assert params["project_ids" if workspace else "project_id"] == (
+        (project_id,) if workspace else project_id
+    )
+    assert set(re.findall(r"%\((\w+)\)s", sql)) <= params.keys()
+    assert builder.params == original_params
+    assert builder.build() == (combined_sql, original_params)
+
+
+def _inline_user_metric_rows(sql, params, span_rows, user_id, session_id):
+    """Execute only SELECTs over inline spans and already-latest dimension rows.
+
+    VALUES has no PREWHERE/FINAL: preserve predicates with the existing clause
+    lowering helper and remove FINAL only from the fixed dimension fixtures.
+    The offline runner can route chdb.query to its read-only native CH25 adapter.
+    """
+    chdb = pytest.importorskip("chdb", reason="isolated native fixture engine required")
+    from tracer.tests.test_session_exact_latest_cursor import _values_where
+
+    context = SimpleNamespace(server_info=SimpleNamespace(get_timezone=lambda: "UTC"))
+    rendered = sql % escape_params(params, context)
+    rendered = re.sub(
+        r"\b(end_users|end_user_id_remap|trace_session_id_remap)\s+FINAL\b",
+        r"\1",
+        rendered,
+    )
+    columns = """project_id UUID, observation_type String, service_name String,
+        start_time DateTime64(6, 'UTC'), trace_id String, id String,
+        end_user_id Nullable(UUID), trace_session_id Nullable(UUID),
+        _version UInt64, is_deleted UInt8, status String, latency_ms Int32,
+        end_time Nullable(DateTime64(6, 'UTC'))"""
+    literals = escape_params(
+        {
+            "columns": columns,
+            "rows": tuple(span_rows),
+            "user_id": user_id,
+            "session_id": session_id,
+            "raw_user_id": str(uuid.UUID(int=20)),
+            "raw_session_id": str(uuid.UUID(int=30)),
+        },
+        context,
+    )
+    assert rendered.lstrip().startswith("WITH")
+    rendered = f"""
+        WITH spans AS (
+            SELECT * FROM values({literals["columns"]}, {literals["rows"][1:-1]})
+        ), end_users AS (
+            SELECT toUUID({literals["user_id"]}) AS end_user_id
+        ), end_user_id_remap AS (
+            SELECT toUUID({literals["user_id"]}) AS old_id,
+                toUUID({literals["raw_user_id"]}) AS new_id
+        ), trace_session_id_remap AS (
+            SELECT toUUID({literals["session_id"]}) AS old_id,
+                toUUID({literals["raw_session_id"]}) AS new_id
+        ), {rendered.lstrip()[4:]}
+    """
+    result = str(chdb.query(_values_where(rendered), "JSONEachRow"))
+    rows = [json.loads(line) for line in result.splitlines() if line]
+    # JSON transports UInt64 as strings; the application native driver uses ints.
+    for row in rows:
+        for field in row:
+            if field.startswith("num_"):
+                row[field] = int(row[field])
+    return rows
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("case", "expected_calls"),
+    [
+        ("timestamp_correction", 1),
+        ("timestamp_corrected_tombstone", 0),
+        ("distinct_service_identity", 2),
+        ("correction_outside_window_same_hour", 0),
+    ],
+)
+def test_user_page_metrics_exact_physical_replay_inline(case, expected_calls):
+    project_id, user_id, session_id = (str(uuid.UUID(int=i)) for i in (1, 2, 3))
+    start = datetime(2026, 8, 1, 10, 0)
+    end = start + timedelta(minutes=30)
+    at = start + timedelta(minutes=10)
+    latest_at = (
+        end + timedelta(minutes=1)
+        if case == "correction_outside_window_same_hour"
+        else at + timedelta(microseconds=1)
+    )
+    if case == "distinct_service_identity":
+        latest_at = at
+
+    def row(version, moment, service, deleted):
+        # escape_params(datetime) truncates microseconds; explicit strings retain
+        # the storage correction that this regression must distinguish.
+        return (
+            project_id,
+            "llm",
+            service,
+            moment.isoformat(sep=" ", timespec="microseconds"),
+            "trace",
+            "span",
+            str(uuid.UUID(int=20)),
+            str(uuid.UUID(int=30)),
+            version,
+            deleted,
+            "ERROR",
+            1000,
+            (moment + timedelta(seconds=1)).isoformat(sep=" ", timespec="microseconds"),
+        )
+
+    span_rows = [
+        row(1, at, "a", 0),
+        row(
+            2,
+            latest_at,
+            "b" if case == "distinct_service_identity" else "a",
+            int(case == "timestamp_corrected_tombstone"),
+        ),
+    ]
+    builder = UserListQueryBuilderV2(
+        organization_id=str(uuid.UUID(int=4)),
+        project_id=project_id,
+        filters=[
+            {
+                "column_id": "created_at",
+                "filter_config": {
+                    "filter_type": "datetime",
+                    "filter_op": "between",
+                    "filter_value": [start.isoformat(), end.isoformat()],
+                },
+            }
+        ],
+    )
+    expected = (
+        [
+            {
+                "end_user_id": user_id,
+                "num_sessions": 1,
+                "avg_session_duration": 1.0,
+                "avg_trace_latency": 1000.0,
+                "num_llm_calls": expected_calls,
+                "num_guardrails_triggered": 0,
+                "num_active_days": 1,
+                "num_traces_with_errors": 1,
+            }
+        ]
+        if expected_calls
+        else []
+    )
+    sql, params = builder.build_page_metrics_query([user_id])
+    assert (
+        _inline_user_metric_rows(sql, params, span_rows, user_id, session_id)
+        == expected
+    )
+
+    # Exercise the current manager's requested-metric path on the same source
+    # rows and compare both APIs with explicit expected rows, including aliases.
+    metric_keys = {
+        "num_sessions",
+        "avg_session_duration",
+        "avg_trace_latency",
+        "num_llm_calls",
+        "num_guardrails_triggered",
+        "num_active_days",
+        "num_traces_with_errors",
+    }
+    requested = {}
+    for sql, params, _fields in builder.build_requested_page_metric_queries(
+        [user_id], metric_keys
+    ):
+        for result in _inline_user_metric_rows(
+            sql, params, span_rows, user_id, session_id
+        ):
+            requested.setdefault(result["end_user_id"], {}).update(result)
+    assert list(requested.values()) == expected
 
 
 @pytest.mark.unit
@@ -168,7 +409,7 @@ def test_session_candidate_page_is_physical_latest_and_page_metrics_are_scoped()
     )
 
     page_sql, page_params = builder.build_candidate_page_query()
-    metrics_sql, metrics_params = builder.build_page_metrics_query([session_id])
+    metrics_sql, metrics_params = builder.build_page_hydration_query([session_id])
 
     assert builder.supports_candidate_first_page() is True
     assert "argMax(is_deleted, _version) AS latest_is_deleted" in page_sql
@@ -287,7 +528,8 @@ def test_session_aggregate_filter_and_sort_use_narrow_exact_candidate_shape():
 
     assert builder.supports_candidate_first_page() is True
     assert "argMax(tuple(total_tokens), _version).1 AS latest_total_tokens" in sql
-    assert "sum(total_tokens) AS total_tokens" in sql
+    assert "max(member_total_tokens) AS total_tokens" in sql
+    assert "sum(usage_total_tokens) AS member_total_tokens" in sql
     assert "HAVING total_tokens > %(having_" in sql
     assert "ORDER BY total_tokens DESC, session_id DESC" in sql
     assert 10 in params.values()
@@ -442,9 +684,7 @@ def test_raw_new_session_seed_classifier_expands_group_and_keeps_all_filters():
     assert "latest_attr_exists_1 AND" in match_sql
     assert "countIf(latest_attr_exists_0 AND" in match_sql
     assert "countIf(latest_attr_exists_1 AND" in match_sql
-    assert (
-        "AND countIf(is_root) > 0" in match_sql
-    )
+    assert "AND countIf(is_root) > 0" in match_sql
     assert match_params["candidate_filter_session_id_array"] == [new_session_id]
     assert match_params["latest_filter_param_0"] == "rejected"
     assert match_params["latest_filter_param_1"] == "us"
@@ -1808,7 +2048,10 @@ def test_positive_end_user_cursor_with_scalar_filter_uses_scoped_exact_path():
     assert builder.supports_candidate_cursor_page() is True
     sql, _ = builder.build_candidate_cursor_page_query()
     assert "candidate_user_raw_session_pairs" in sql
-    assert "matching_scalar_sessions AS" in sql
+    # Roots are read from the same all-span replay the scalar predicate uses.
+    assert "matching_scalar_sessions AS" not in sql
+    assert "candidate_root_identities AS" not in sql
+    assert "countIf(is_root) > 0" in sql
     scalar_seed = sql.split("candidate_scalar_span_identities AS (", 1)[1].split(
         "latest_candidate_scalar_spans AS (", 1
     )[0]
@@ -1855,16 +2098,13 @@ def test_session_page_enrichments_replay_tombstones_and_resolve_remaps():
     )
     session_id = str(uuid.uuid4())
 
-    metrics_sql, metrics_params = builder.build_page_metrics_query([session_id])
-    content_sql, content_params = builder.build_content_query([session_id])
-    attrs_sql, attrs_params = builder.build_span_attributes_query([session_id])
+    hydration_sql, hydration_params = builder.build_page_hydration_query([session_id])
 
-    for params in (metrics_params, content_params, attrs_params):
-        assert params["candidate_filter_session_id_array"] == [session_id]
+    assert hydration_params["candidate_filter_session_id_array"] == [session_id]
     # One primary-key old-ID probe plus one authoritative reverse new-ID pass.
     # The scalar tuple-array wrapper executes those source arms once even though
-    # content hydration consumes the tiny map in multiple CTE stages.
-    for sql in (metrics_sql, content_sql, attrs_sql):
+    # page hydration consumes the tiny map in multiple CTE stages.
+    for sql in (hydration_sql,):
         assert sql.count("FROM trace_session_id_remap FINAL") == 2
         assert "WHERE new_id IN (" in sql
         assert "candidate_target_new_ids AS" in sql
@@ -1872,10 +2112,10 @@ def test_session_page_enrichments_replay_tombstones_and_resolve_remaps():
         assert "AS candidate_session_pairs" in sql
         assert "SELECT arrayJoin(candidate_session_pairs) AS pair" in sql
         assert "OVER (PARTITION BY new_id)" not in sql
-    assert "trace_session_id IN %(content_session_ids)s" in content_sql
-    assert "if(ts_remap.survivor_id IS NULL OR ts_remap.survivor_id = " in content_sql
+    assert "trace_session_id IN %(candidate_session_ids)s" in hydration_sql
+    assert "if(ts_remap.survivor_id IS NULL OR ts_remap.survivor_id = " in hydration_sql
 
-    for sql in (metrics_sql, content_sql, attrs_sql):
+    for sql in (hydration_sql,):
         candidate_sql = sql.split("candidate_root_identities AS (", 1)[1].split(
             "),\n        latest_roots AS (", 1
         )[0]
@@ -1940,6 +2180,9 @@ def test_user_trace_and_session_candidates_execute_with_alias_remaps():
             """
             CREATE TABLE spans (
                 project_id UUID,
+                observation_type LowCardinality(String),
+                service_name LowCardinality(String),
+                project_version_id Nullable(UUID),
                 trace_id String,
                 id String,
                 start_time DateTime64(6, 'UTC'),
@@ -1950,7 +2193,7 @@ def test_user_trace_and_session_candidates_execute_with_alias_remaps():
                 _version UInt64
             ) ENGINE = ReplacingMergeTree(_version)
             PARTITION BY toDate(start_time)
-            ORDER BY (project_id, toStartOfHour(start_time), trace_id, id, start_time)
+            ORDER BY (project_id, observation_type, service_name, toStartOfHour(start_time), trace_id, id)
             """
         )
         client.execute(
@@ -2015,7 +2258,11 @@ def test_user_trace_and_session_candidates_execute_with_alias_remaps():
                     index + 1,
                 )
             )
-        client.execute("INSERT INTO spans VALUES", span_rows)
+        client.execute(
+            "INSERT INTO spans (project_id, trace_id, id, start_time, parent_span_id, "
+            "trace_session_id, end_user_id, is_deleted, _version) VALUES",
+            span_rows,
+        )
 
         filters = [
             {
@@ -2084,6 +2331,301 @@ def test_user_trace_and_session_candidates_execute_with_alias_remaps():
         assert len(sessions) == 1
         assert str(sessions[0]["session_id"]) == old_session_id
         assert sessions[0]["total_count"] == 1
+    finally:
+        client.execute(f"USE {original_database}")
+        client.execute(f"DROP DATABASE IF EXISTS {database}")
+
+
+@pytest.mark.integration
+def test_user_candidates_on_production_span_schema_keep_project_and_latest_state():
+    """Run the user trace/session candidate reads on the deployed span schema.
+
+    ``spans`` uses the deployed engine, ``ReplacingMergeTree(_version,
+    is_deleted)``, with its non-nullable ``parent_span_id`` and physical-key
+    ordering; merges are stopped so every version stays on disk. A root that is
+    live and then deleted under the same physical identity must not be read.
+    Another project's rows reuse the same user, session and trace ids and must
+    not change the results, the one-row page, or the session start.
+    """
+
+    client = _ch25_client()
+    original_database = client.execute("SELECT currentDatabase()")[0][0]
+    database = f"_test_user_candidates_{uuid.uuid4().hex}"
+    project_id, other_project_id = str(uuid.uuid4()), str(uuid.uuid4())
+    old_user_id, new_user_id = str(uuid.uuid4()), str(uuid.uuid4())
+    old_session_id, new_session_id = str(uuid.uuid4()), str(uuid.uuid4())
+    deleted_session_id = str(uuid.uuid4())
+    now = datetime.now(UTC).replace(tzinfo=None, microsecond=0)
+    start, end = now - timedelta(days=1), now + timedelta(days=1)
+    trace_ids = (str(uuid.uuid4()), str(uuid.uuid4()))
+    deleted_trace_id = str(uuid.uuid4())
+    other_only_trace_id = str(uuid.uuid4())
+    session_start = now - timedelta(minutes=2)
+
+    try:
+        client.execute(f"CREATE DATABASE {database}")
+        client.execute(f"USE {database}")
+        client.execute(
+            """
+            CREATE TABLE spans (
+                project_id UUID,
+                observation_type LowCardinality(String),
+                service_name LowCardinality(String) DEFAULT '',
+                start_time DateTime64(6, 'UTC'),
+                trace_id String,
+                id String,
+                parent_span_id String DEFAULT '',
+                project_version_id Nullable(UUID),
+                end_user_id Nullable(UUID),
+                trace_session_id Nullable(UUID),
+                is_deleted UInt8 DEFAULT 0,
+                _version UInt64
+            ) ENGINE = ReplacingMergeTree(_version, is_deleted)
+            PARTITION BY toDate(start_time)
+            PRIMARY KEY (project_id, observation_type, service_name, toStartOfHour(start_time))
+            ORDER BY (project_id, observation_type, service_name, toStartOfHour(start_time), trace_id, id)
+            """
+        )
+        client.execute("SYSTEM STOP MERGES spans")
+        client.execute(
+            """
+            CREATE TABLE end_users (
+                project_id UUID,
+                end_user_id UUID,
+                user_id String,
+                user_id_type String,
+                is_deleted UInt8,
+                version DateTime64(6, 'UTC')
+            ) ENGINE = ReplacingMergeTree(version)
+            ORDER BY end_user_id
+            """
+        )
+        for table in ("end_user_id_remap", "trace_session_id_remap"):
+            client.execute(
+                f"""
+                CREATE TABLE {table} (
+                    old_id UUID,
+                    new_id UUID,
+                    version DateTime64(6, 'UTC')
+                ) ENGINE = ReplacingMergeTree(version)
+                ORDER BY old_id
+                """
+            )
+
+        client.execute(
+            "INSERT INTO end_users VALUES",
+            [(project_id, old_user_id, "guest-e3dce503", "custom", 0, now)],
+        )
+        client.execute(
+            "INSERT INTO end_user_id_remap VALUES",
+            [(old_user_id, new_user_id, now)],
+        )
+        client.execute(
+            "INSERT INTO trace_session_id_remap VALUES",
+            [(old_session_id, new_session_id, now)],
+        )
+
+        def root(project, trace_id, span_id, at, session_id, user_id, deleted, version):
+            return (
+                project,
+                trace_id,
+                span_id,
+                at,
+                "",
+                session_id,
+                user_id,
+                deleted,
+                version,
+            )
+
+        span_rows = []
+        for index, (trace_id, end_user_id, session_id) in enumerate(
+            zip(
+                trace_ids,
+                (old_user_id, new_user_id),
+                (old_session_id, new_session_id),
+                strict=True,
+            )
+        ):
+            span_rows.append(
+                root(
+                    project_id,
+                    trace_id,
+                    f"root-{index}",
+                    session_start + timedelta(minutes=index),
+                    session_id,
+                    end_user_id,
+                    0,
+                    index + 1,
+                )
+            )
+        # The newest root in the project: live first, then deleted with a higher
+        # version under the same physical identity.
+        deleted_at = now - timedelta(seconds=30)
+        span_rows.append(
+            root(
+                project_id,
+                deleted_trace_id,
+                "root-deleted",
+                deleted_at,
+                deleted_session_id,
+                old_user_id,
+                0,
+                1,
+            )
+        )
+        span_rows.append(
+            root(
+                project_id,
+                deleted_trace_id,
+                "root-deleted",
+                deleted_at,
+                deleted_session_id,
+                old_user_id,
+                1,
+                2,
+            )
+        )
+        # Another project reusing the same ids: earlier starts for the shared
+        # sessions and a newer root than anything in the requested project.
+        for index, (trace_id, end_user_id, session_id) in enumerate(
+            zip(
+                trace_ids,
+                (old_user_id, new_user_id),
+                (old_session_id, new_session_id),
+                strict=True,
+            )
+        ):
+            span_rows.append(
+                root(
+                    other_project_id,
+                    trace_id,
+                    f"other-root-{index}",
+                    now - timedelta(minutes=30 + index),
+                    session_id,
+                    end_user_id,
+                    0,
+                    5,
+                )
+            )
+        span_rows.append(
+            root(
+                other_project_id,
+                other_only_trace_id,
+                "root-other",
+                now - timedelta(seconds=5),
+                old_session_id,
+                old_user_id,
+                0,
+                5,
+            )
+        )
+        client.execute(
+            "INSERT INTO spans (project_id, trace_id, id, start_time, parent_span_id, "
+            "trace_session_id, end_user_id, is_deleted, _version) VALUES",
+            span_rows,
+        )
+
+        filters = [
+            {
+                "column_id": "created_at",
+                "filter_config": {
+                    "filter_type": "datetime",
+                    "filter_op": "between",
+                    "filter_value": [start.isoformat(), end.isoformat()],
+                },
+            },
+            {
+                "column_id": "user_id",
+                "filter_config": {
+                    "col_type": "TRACE_END_USER",
+                    "filter_type": "text",
+                    "filter_op": "equals",
+                    "filter_value": "guest-e3dce503",
+                },
+            },
+        ]
+        builder = TraceListQueryBuilderV2(
+            project_id=project_id,
+            filters=filters,
+            bounded_identity_only=True,
+        )
+
+        def classify(limit):
+            seed_sql, seed_params = builder.build_filter_seed_page(
+                slice_start=start, slice_end=end, limit=limit
+            )
+            seed_raw, seed_columns = client.execute(
+                seed_sql, seed_params, with_column_types=True
+            )
+            seed_rows = _dict_rows(seed_raw, seed_columns)
+            match_sql, match_params = builder.build_filter_match_query_from_seed_rows(
+                seed_rows
+            )
+            match_raw, match_columns = client.execute(
+                match_sql, match_params, with_column_types=True
+            )
+            return seed_rows, _dict_rows(match_raw, match_columns)
+
+        def roots(rows):
+            return {
+                (
+                    row["trace_id"],
+                    row["root_span_id"],
+                    row["start_time"].replace(tzinfo=None),
+                )
+                for row in rows
+            }
+
+        # The requested project's live roots. The other project's roots for the
+        # same trace ids start earlier and carry a higher version, so reading
+        # them would change the canonical root of each trace.
+        live_roots = {
+            (trace_ids[0], "root-0", session_start),
+            (trace_ids[1], "root-1", session_start + timedelta(minutes=1)),
+        }
+        seed_rows, matches = classify(25)
+        assert roots(seed_rows) == live_roots
+        assert roots(matches) == live_roots
+        assert len(matches) == len(trace_ids)
+        assert {row["_root_version"] for row in matches} == {1, 2}
+
+        # The deleted root is the newest in the project; the one-row page is
+        # the newest live root instead.
+        newest_live_root = max(live_roots, key=lambda root_key: root_key[2])
+        one_seed, one_match = classify(1)
+        assert roots(one_seed) == {newest_live_root}
+        assert roots(one_match) == {newest_live_root}
+        assert len(one_match) == 1
+
+        def session_page(page_size):
+            session_builder = SessionListQueryBuilderV2(
+                project_id=project_id,
+                page_size=page_size,
+                filters=[
+                    filters[0],
+                    {
+                        "column_id": "end_user_id",
+                        "filter_config": {
+                            "filter_type": "text",
+                            "filter_op": "in",
+                            "filter_value": [old_user_id],
+                        },
+                    },
+                ],
+            )
+            session_sql, session_params = session_builder.build_candidate_page_query()
+            session_raw, session_columns = client.execute(
+                session_sql, session_params, with_column_types=True
+            )
+            return _dict_rows(session_raw, session_columns)
+
+        for page_size in (25, 1):
+            sessions = session_page(page_size)
+            assert len(sessions) == 1, page_size
+            assert str(sessions[0]["session_id"]) == old_session_id
+            assert sessions[0]["total_count"] == 1
+            assert sessions[0]["session_start"].replace(tzinfo=None) == session_start
     finally:
         client.execute(f"USE {original_database}")
         client.execute(f"DROP DATABASE IF EXISTS {database}")
@@ -2714,30 +3256,28 @@ def test_candidate_reads_on_ch25_preserve_remap_and_tombstone_semantics():
         )
         assert client.execute(derived_count_sql, derived_count_params)[0][0] == 1
 
+    # One statement now carries every payload the page used to re-read three
+    # times; the attribute rows are unzipped from its arrays.
     phase_timings = []
-    results = {}
-    for name, (sql, params) in {
-        "metrics": session_builder.build_page_metrics_query([old_session_id]),
-        "content": session_builder.build_content_query([old_session_id]),
-        "attributes": session_builder.build_span_attributes_query([old_session_id]),
-    }.items():
-        started = time.monotonic()
-        raw, returned_columns = client.execute(sql, params, with_column_types=True)
-        phase_timings.append((time.monotonic() - started) * 1000)
-        results[name] = _dict_rows(raw, returned_columns)
+    sql, params = session_builder.build_page_hydration_query([old_session_id])
+    started = time.monotonic()
+    raw, returned_columns = client.execute(sql, params, with_column_types=True)
+    phase_timings.append((time.monotonic() - started) * 1000)
+    hydrated = _dict_rows(raw, returned_columns)
+    attributes = type(session_builder).expand_page_attribute_rows(hydrated)
 
-    assert results["metrics"][0]["total_cost"] == 2.0
-    assert results["metrics"][0]["total_tokens"] == 20
-    assert results["metrics"][0]["traces_count"] == 1
-    assert results["content"][0]["first_message"] == "live-message"
-    assert results["content"][0]["last_message"] == "live-message"
-    assert len(results["attributes"]) == 1
-    assert results["attributes"][0]["attrs_string"] == {
+    assert hydrated[0]["total_cost"] == 2.0
+    assert hydrated[0]["total_tokens"] == 20
+    assert hydrated[0]["traces_count"] == 1
+    assert hydrated[0]["first_message"] == "live-message"
+    assert hydrated[0]["last_message"] == "live-message"
+    assert len(attributes) == 1
+    assert attributes[0]["attrs_string"] == {
         "live_key": "yes",
         "final_status": "Rejected",
     }
-    assert "deleted_key" not in results["attributes"][0]["span_attributes_raw"]
-    assert "outside_key" not in results["attributes"][0]["span_attributes_raw"]
+    assert "deleted_key" not in attributes[0]["span_attributes_raw"]
+    assert "outside_key" not in attributes[0]["span_attributes_raw"]
 
     # Generous CI ceilings; local disposable runs are normally <1s for Users
     # and <100ms per Session phase. Production A/B remains a separate sealed

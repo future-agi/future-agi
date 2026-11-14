@@ -1,3 +1,4 @@
+import EmptyState from "src/components/empty-state";
 import React, { useState, useEffect, useCallback } from "react";
 import PropTypes from "prop-types";
 import Box from "@mui/material/Box";
@@ -49,10 +50,10 @@ function getConnectorIcon(connector) {
   if (name.includes("jira")) return "mdi:jira";
   if (name.includes("slack")) return "mdi:slack";
   if (name.includes("notion")) return "simple-icons:notion";
-  if (name.includes("linear")) return "mdi:view-kanban-outline";
-  if (name.includes("sentry")) return "mdi:bug-outline";
-  if (name.includes("postgres")) return "mdi:database";
-  return "mdi:puzzle-outline";
+  if (name.includes("linear")) return "solar:kanban-linear";
+  if (name.includes("sentry")) return "solar:bug-linear";
+  if (name.includes("postgres")) return "solar:database-linear";
+  return "solar:widget-linear";
 }
 
 function getStatusInfo(connector) {
@@ -212,7 +213,7 @@ export default function ConnectorSettingsPage() {
               color: "text.primary",
             }}
           >
-            Falcon AI Connectors
+            Connectors
           </Typography>
           <Typography
             sx={{
@@ -222,14 +223,14 @@ export default function ConnectorSettingsPage() {
               mt: 0.5,
             }}
           >
-            Connect external MCP servers to extend Falcon AI with additional
-            tools and capabilities.
+            Connect external MCP servers to give Chat additional tools and
+            capabilities.
           </Typography>
         </Box>
         <Button
           type="button"
           variant="contained"
-          startIcon={<Iconify icon="mdi:plus" width={18} />}
+          startIcon={<Iconify icon="solar:add-linear" width={20} />}
           onClick={handleNew}
           sx={{ flexShrink: 0 }}
         >
@@ -247,8 +248,9 @@ export default function ConnectorSettingsPage() {
       <Box
         sx={{
           display: "flex",
-          border: (t) => `1px solid ${t.palette.divider}`,
-          borderRadius: "12px",
+          border: "1px solid",
+          borderColor: "border.default",
+          borderRadius: "8px",
           overflow: "hidden",
           minHeight: 500,
           bgcolor: "background.paper",
@@ -257,9 +259,10 @@ export default function ConnectorSettingsPage() {
         {/* Left: Connector list */}
         <Box
           sx={{
-            width: 300,
+            width: 280,
             flexShrink: 0,
-            borderRight: (t) => `1px solid ${t.palette.divider}`,
+            borderRight: "1px solid",
+            borderColor: "border.default",
             display: "flex",
             flexDirection: "column",
           }}
@@ -276,7 +279,7 @@ export default function ConnectorSettingsPage() {
                 startAdornment: (
                   <InputAdornment position="start">
                     <Iconify
-                      icon="mdi:magnify"
+                      icon="solar:magnifier-linear"
                       width={16}
                       sx={{ color: "text.disabled" }}
                     />
@@ -285,7 +288,7 @@ export default function ConnectorSettingsPage() {
               }}
               sx={{
                 "& .MuiInputBase-root": {
-                  fontSize: 13,
+                  fontSize: 12,
                   height: 34,
                   borderRadius: "8px",
                 },
@@ -301,7 +304,7 @@ export default function ConnectorSettingsPage() {
                   textAlign: "center",
                   py: 4,
                   color: "text.disabled",
-                  fontSize: 13,
+                  fontSize: 12,
                 }}
               >
                 {search ? "No matching connectors" : "No connectors yet"}
@@ -316,10 +319,11 @@ export default function ConnectorSettingsPage() {
                   selected={isActive}
                   onClick={() => handleSelect(conn.id)}
                   sx={{
-                    borderRadius: "8px",
+                    borderRadius: "6px",
                     mb: "2px",
                     px: 1.5,
-                    py: "7px",
+                    py: 0,
+                    height: 28,
                     minHeight: 0,
                     "&.Mui-selected": {
                       bgcolor: theme.palette.action.selected,
@@ -327,24 +331,23 @@ export default function ConnectorSettingsPage() {
                     "&:hover": { bgcolor: theme.palette.action.hover },
                   }}
                 >
-                  <ListItemIcon sx={{ minWidth: 32, color: "text.secondary" }}>
-                    <Iconify icon={getConnectorIcon(conn)} width={18} />
+                  <ListItemIcon sx={{ minWidth: 28, color: "text.secondary" }}>
+                    <Iconify icon={getConnectorIcon(conn)} width={16} />
                   </ListItemIcon>
                   <ListItemText
                     primary={conn.name}
                     primaryTypographyProps={{
                       noWrap: true,
-                      fontSize: 13,
-                      fontWeight: isActive ? 600 : 500,
+                      fontSize: 12,
+                      fontWeight: isActive ? 500 : 400,
                     }}
                   />
-                  <Chip
-                    label={statusInfo.label}
-                    size="small"
-                    variant="outlined"
-                    color={statusInfo.color}
-                    sx={{ height: 18, fontSize: 9, fontWeight: 600, ml: 0.5 }}
-                  />
+                  <Typography
+                    component="span"
+                    sx={{ ml: 0.5, fontSize: 12, color: "text.tertiary" }}
+                  >
+                    {statusInfo.label}
+                  </Typography>
                 </ListItemButton>
               );
             })}
@@ -378,50 +381,33 @@ export default function ConnectorSettingsPage() {
               onRefresh={() => refreshSelected(selected.id)}
             />
           ) : (
-            <Box
-              sx={{
-                flex: 1,
-                display: "flex",
-                flexDirection: "column",
-                alignItems: "center",
-                justifyContent: "center",
-                px: 4,
-              }}
-            >
-              <Iconify
-                icon="mdi:puzzle-outline"
-                width={48}
-                sx={{ color: "text.disabled", mb: 2 }}
-              />
-              <Typography sx={{ fontSize: 15, fontWeight: 600, mb: 0.5 }}>
-                {connectors.length === 0
-                  ? "No connectors configured"
-                  : "Select a connector"}
-              </Typography>
-              <Typography
-                sx={{
-                  fontSize: 13,
-                  color: "text.secondary",
-                  textAlign: "center",
-                  maxWidth: 320,
-                }}
-              >
-                {connectors.length === 0
-                  ? "Add an external MCP server to give Falcon AI access to additional tools."
-                  : "Choose a connector from the list to view its details and tools."}
-              </Typography>
-              {connectors.length === 0 && (
-                <Button
-                  type="button"
-                  variant="outlined"
-                  startIcon={<Iconify icon="mdi:plus" width={16} />}
-                  onClick={handleNew}
-                  sx={{ mt: 2, textTransform: "none", borderRadius: "8px" }}
-                >
-                  Add your first connector
-                </Button>
-              )}
-            </Box>
+            <EmptyState
+              icon="solar:widget-linear"
+              title={
+                connectors.length === 0
+                  ? "No connectors yet"
+                  : "Select a connector"
+              }
+              description={
+                connectors.length === 0
+                  ? "Add an external MCP server to give Chat access to additional tools."
+                  : "Choose a connector from the list to view its details and tools."
+              }
+              action={
+                connectors.length === 0 ? (
+                  <Button
+                    type="button"
+                    variant="contained"
+                    color="primary"
+                    size="small"
+                    onClick={handleNew}
+                  >
+                    Add connector
+                  </Button>
+                ) : undefined
+              }
+              sx={{ pt: 6, pb: 6, justifyContent: "center" }}
+            />
           )}
         </Box>
       </Box>
@@ -434,7 +420,6 @@ export default function ConnectorSettingsPage() {
 // ---------------------------------------------------------------------------
 function ConnectorDetail({ connector, loading, onEdit, onDelete, onRefresh }) {
   const theme = useTheme();
-  const isDark = theme.palette.mode === "dark";
   const statusInfo = getStatusInfo(connector);
   const [testing, setTesting] = useState(false);
   const [discovering, setDiscovering] = useState(false);
@@ -587,7 +572,7 @@ function ConnectorDetail({ connector, loading, onEdit, onDelete, onRefresh }) {
             sx={{
               width: 40,
               height: 40,
-              borderRadius: "10px",
+              borderRadius: "8px",
               display: "flex",
               alignItems: "center",
               justifyContent: "center",
@@ -595,11 +580,11 @@ function ConnectorDetail({ connector, loading, onEdit, onDelete, onRefresh }) {
               color: "primary.main",
             }}
           >
-            <Iconify icon={getConnectorIcon(connector)} width={22} />
+            <Iconify icon={getConnectorIcon(connector)} width={20} />
           </Box>
           <Box>
             <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
-              <Typography sx={{ fontSize: 16, fontWeight: 700 }}>
+              <Typography sx={{ fontSize: 16, fontWeight: 600 }}>
                 {connector.name}
               </Typography>
               <Chip
@@ -607,12 +592,11 @@ function ConnectorDetail({ connector, loading, onEdit, onDelete, onRefresh }) {
                 size="small"
                 variant="outlined"
                 color={statusInfo.color}
-                sx={{ height: 20, fontSize: 10, fontWeight: 600 }}
               />
             </Box>
             {connector.description && (
               <Typography
-                sx={{ fontSize: 13, color: "text.secondary", mt: 0.25 }}
+                sx={{ fontSize: 12, color: "text.secondary", mt: 0.25 }}
               >
                 {connector.description}
               </Typography>
@@ -627,9 +611,7 @@ function ConnectorDetail({ connector, loading, onEdit, onDelete, onRefresh }) {
           p: 2,
           borderRadius: "8px",
           mb: 2,
-          bgcolor: isDark
-            ? alpha(theme.palette.common.white, 0.03)
-            : alpha(theme.palette.common.black, 0.02),
+          bgcolor: "background.neutral",
           border: (t) => `1px solid ${t.palette.divider}`,
         }}
       >
@@ -637,7 +619,7 @@ function ConnectorDetail({ connector, loading, onEdit, onDelete, onRefresh }) {
           <Box>
             <Typography
               sx={{
-                fontSize: 11,
+                fontSize: 12,
                 fontWeight: 600,
                 color: "text.disabled",
                 mb: 0.25,
@@ -645,14 +627,14 @@ function ConnectorDetail({ connector, loading, onEdit, onDelete, onRefresh }) {
             >
               Server URL
             </Typography>
-            <Typography sx={{ fontSize: 13, fontFamily: "monospace" }}>
+            <Typography sx={{ fontSize: 12, fontFamily: "monospace" }}>
               {connector.server_url}
             </Typography>
           </Box>
           <Box>
             <Typography
               sx={{
-                fontSize: 11,
+                fontSize: 12,
                 fontWeight: 600,
                 color: "text.disabled",
                 mb: 0.25,
@@ -660,14 +642,14 @@ function ConnectorDetail({ connector, loading, onEdit, onDelete, onRefresh }) {
             >
               Authentication
             </Typography>
-            <Typography sx={{ fontSize: 13 }}>
+            <Typography sx={{ fontSize: 12 }}>
               {connector.auth_type || "none"}
             </Typography>
           </Box>
           <Box>
             <Typography
               sx={{
-                fontSize: 11,
+                fontSize: 12,
                 fontWeight: 600,
                 color: "text.disabled",
                 mb: 0.25,
@@ -675,7 +657,7 @@ function ConnectorDetail({ connector, loading, onEdit, onDelete, onRefresh }) {
             >
               Transport
             </Typography>
-            <Typography sx={{ fontSize: 13 }}>
+            <Typography sx={{ fontSize: 12 }}>
               {connector.transport || "sse"}
             </Typography>
           </Box>
@@ -684,19 +666,19 @@ function ConnectorDetail({ connector, loading, onEdit, onDelete, onRefresh }) {
 
       {/* Error */}
       {connector.last_error && (
-        <Alert severity="error" sx={{ mb: 2, fontSize: 12 }}>
+        <Alert severity="error" sx={{ mb: 2 }}>
           {connector.last_error}
         </Alert>
       )}
 
       {feedback && (
-        <Alert severity={feedback.severity} sx={{ mb: 2, fontSize: 12 }}>
+        <Alert severity={feedback.severity} sx={{ mb: 2 }}>
           {feedback.message}
         </Alert>
       )}
 
       {toolError && (
-        <Alert severity="warning" sx={{ mb: 2, fontSize: 12 }}>
+        <Alert severity="warning" sx={{ mb: 2 }}>
           {toolError}
         </Alert>
       )}
@@ -707,9 +689,8 @@ function ConnectorDetail({ connector, loading, onEdit, onDelete, onRefresh }) {
           type="button"
           size="small"
           variant="outlined"
-          startIcon={<Iconify icon="mdi:pencil-outline" width={14} />}
+          startIcon={<Iconify icon="solar:pen-linear" width={14} />}
           onClick={onEdit}
-          sx={{ textTransform: "none", borderRadius: "8px", fontSize: 12 }}
         >
           Edit
         </Button>
@@ -718,10 +699,9 @@ function ConnectorDetail({ connector, loading, onEdit, onDelete, onRefresh }) {
             type="button"
             size="small"
             variant="outlined"
-            startIcon={<Iconify icon="mdi:refresh" width={14} />}
+            startIcon={<Iconify icon="solar:refresh-linear" width={14} />}
             onClick={handleReauth}
             disabled={reauthing}
-            sx={{ textTransform: "none", borderRadius: "8px", fontSize: 12 }}
           >
             {reauthing ? "Authenticating..." : "Re-authenticate"}
           </Button>
@@ -730,10 +710,9 @@ function ConnectorDetail({ connector, loading, onEdit, onDelete, onRefresh }) {
           type="button"
           size="small"
           variant="outlined"
-          startIcon={<Iconify icon="mdi:magnify" width={14} />}
+          startIcon={<Iconify icon="solar:magnifier-linear" width={14} />}
           onClick={handleDiscover}
           disabled={discovering}
-          sx={{ textTransform: "none", borderRadius: "8px", fontSize: 12 }}
         >
           {discovering ? "Discovering..." : "Discover Tools"}
         </Button>
@@ -741,10 +720,9 @@ function ConnectorDetail({ connector, loading, onEdit, onDelete, onRefresh }) {
           type="button"
           size="small"
           variant="outlined"
-          startIcon={<Iconify icon="mdi:connection" width={14} />}
+          startIcon={<Iconify icon="solar:plug-circle-linear" width={14} />}
           onClick={handleTest}
           disabled={testing}
-          sx={{ textTransform: "none", borderRadius: "8px", fontSize: 12 }}
         >
           {testing ? "Testing..." : "Test Connection"}
         </Button>
@@ -753,12 +731,9 @@ function ConnectorDetail({ connector, loading, onEdit, onDelete, onRefresh }) {
           size="small"
           variant="outlined"
           color="error"
-          startIcon={<Iconify icon="mdi:delete-outline" width={14} />}
+          startIcon={<Iconify icon="solar:trash-bin-trash-linear" width={14} />}
           onClick={onDelete}
           sx={{
-            textTransform: "none",
-            borderRadius: "8px",
-            fontSize: 12,
             ml: "auto",
           }}
         >
@@ -768,14 +743,14 @@ function ConnectorDetail({ connector, loading, onEdit, onDelete, onRefresh }) {
 
       {/* Tools */}
       <Divider sx={{ mb: 2 }} />
-      <Typography sx={{ fontSize: 13, fontWeight: 700, mb: 1.5 }}>
+      <Typography sx={{ fontSize: 12, fontWeight: 600, mb: 1.5 }}>
         Discovered Tools{" "}
         {tools.length > 0 && (
           <Chip
             label={tools.length}
             size="small"
             variant="outlined"
-            sx={{ height: 18, fontSize: 10, ml: 0.5 }}
+            sx={{ ml: 0.5 }}
           />
         )}
       </Typography>
@@ -788,17 +763,12 @@ function ConnectorDetail({ connector, loading, onEdit, onDelete, onRefresh }) {
           trailing="switch"
         />
       ) : tools.length === 0 ? (
-        <Box sx={{ textAlign: "center", py: 4 }}>
-          <Iconify
-            icon="mdi:tools"
-            width={36}
-            sx={{ color: "text.disabled", mb: 1 }}
-          />
-          <Typography sx={{ fontSize: 13, color: "text.disabled" }}>
-            No tools discovered yet. Click &ldquo;Discover Tools&rdquo; or
-            &ldquo;Re-authenticate&rdquo; to fetch available tools.
-          </Typography>
-        </Box>
+        <EmptyState
+          icon="solar:toolbox-linear"
+          title="No tools yet"
+          description="Click Discover Tools or Re-authenticate to fetch available tools."
+          sx={{ pt: 6, pb: 6 }}
+        />
       ) : (
         <Box
           sx={{
@@ -832,7 +802,7 @@ function ConnectorDetail({ connector, loading, onEdit, onDelete, onRefresh }) {
                   {desc && (
                     <Typography
                       noWrap
-                      sx={{ fontSize: 11, color: "text.secondary" }}
+                      sx={{ fontSize: 12, color: "text.secondary" }}
                     >
                       {desc}
                     </Typography>
@@ -965,12 +935,12 @@ function ConnectorEditor({ connector, onSaved, onCancel }) {
         p: 3,
       }}
     >
-      <Typography sx={{ fontSize: 16, fontWeight: 700, mb: 2.5 }}>
+      <Typography sx={{ fontSize: 16, fontWeight: 600, mb: 2.5 }}>
         {isEdit ? "Edit Connector" : "Add Connector"}
       </Typography>
 
       {error && (
-        <Alert severity="error" sx={{ mb: 2, fontSize: 12 }}>
+        <Alert severity="error" sx={{ mb: 2 }}>
           {error}
         </Alert>
       )}
@@ -988,7 +958,7 @@ function ConnectorEditor({ connector, onSaved, onCancel }) {
         onChange={handleChange("name")}
         sx={{
           mb: 2,
-          "& .MuiInputBase-root": { fontSize: 13, borderRadius: "8px" },
+          "& .MuiInputBase-root": { fontSize: 12, borderRadius: "8px" },
         }}
       />
 
@@ -1006,7 +976,7 @@ function ConnectorEditor({ connector, onSaved, onCancel }) {
         sx={{
           mb: 2,
           "& .MuiInputBase-root": {
-            fontSize: 13,
+            fontSize: 12,
             borderRadius: "8px",
             fontFamily: "monospace",
           },
@@ -1022,7 +992,7 @@ function ConnectorEditor({ connector, onSaved, onCancel }) {
         <Select
           value={form.transport}
           onChange={handleChange("transport")}
-          sx={{ fontSize: 13, borderRadius: "8px" }}
+          sx={{ fontSize: 12, borderRadius: "8px" }}
         >
           <MenuItem value="streamable_http">Streamable HTTP</MenuItem>
           <MenuItem value="sse">SSE (Legacy)</MenuItem>
@@ -1038,7 +1008,7 @@ function ConnectorEditor({ connector, onSaved, onCancel }) {
         <Select
           value={form.auth_type}
           onChange={handleChange("auth_type")}
-          sx={{ fontSize: 13, borderRadius: "8px" }}
+          sx={{ fontSize: 12, borderRadius: "8px" }}
         >
           <MenuItem value="none">None</MenuItem>
           <MenuItem value="oauth">OAuth 2.0</MenuItem>
@@ -1067,7 +1037,7 @@ function ConnectorEditor({ connector, onSaved, onCancel }) {
             onChange={handleChange("auth_header_name")}
             sx={{
               mb: 2,
-              "& .MuiInputBase-root": { fontSize: 13, borderRadius: "8px" },
+              "& .MuiInputBase-root": { fontSize: 12, borderRadius: "8px" },
             }}
           />
           <Typography
@@ -1089,7 +1059,7 @@ function ConnectorEditor({ connector, onSaved, onCancel }) {
             onChange={handleChange("auth_header_value")}
             sx={{
               mb: 2,
-              "& .MuiInputBase-root": { fontSize: 13, borderRadius: "8px" },
+              "& .MuiInputBase-root": { fontSize: 12, borderRadius: "8px" },
             }}
           />
         </>
@@ -1116,7 +1086,7 @@ function ConnectorEditor({ connector, onSaved, onCancel }) {
             onChange={handleChange("auth_header_value")}
             sx={{
               mb: 2,
-              "& .MuiInputBase-root": { fontSize: 13, borderRadius: "8px" },
+              "& .MuiInputBase-root": { fontSize: 12, borderRadius: "8px" },
             }}
           />
         </>
@@ -1129,12 +1099,6 @@ function ConnectorEditor({ connector, onSaved, onCancel }) {
           size="small"
           onClick={handleSave}
           disabled={saving}
-          sx={{
-            textTransform: "none",
-            borderRadius: "8px",
-            fontSize: 13,
-            px: 3,
-          }}
         >
           {saving ? "Saving..." : isEdit ? "Save" : "Create"}
         </Button>
@@ -1143,7 +1107,6 @@ function ConnectorEditor({ connector, onSaved, onCancel }) {
           variant="outlined"
           size="small"
           onClick={onCancel}
-          sx={{ textTransform: "none", borderRadius: "8px", fontSize: 13 }}
         >
           Cancel
         </Button>

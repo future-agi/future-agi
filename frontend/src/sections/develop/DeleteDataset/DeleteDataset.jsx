@@ -44,7 +44,13 @@ const DeleteDataset = ({ open, onClose, refreshGrid, selected, redirect }) => {
   });
 
   return (
-    <Dialog open={open} onClose={onClose} maxWidth="xs" fullWidth>
+    <Dialog
+      open={open}
+      onClose={onClose}
+      maxWidth={false}
+      PaperProps={{ sx: { maxWidth: 400 } }}
+      fullWidth
+    >
       <Box sx={{ padding: 2 }}>
         <DialogTitle sx={{ padding: 0, margin: 0 }}>
           <Box
@@ -63,7 +69,7 @@ const DeleteDataset = ({ open, onClose, refreshGrid, selected, redirect }) => {
               {selected?.length > 1 && "s"}
             </Typography>
             <IconButton onClick={onClose}>
-              <Iconify icon="mdi:close" color="text.primary" />
+              <Iconify icon="solar:close-linear" color="text.primary" />
             </IconButton>
           </Box>
           <HelperText
@@ -87,7 +93,10 @@ const DeleteDataset = ({ open, onClose, refreshGrid, selected, redirect }) => {
               variant="contained"
               loading={isPending}
               onClick={handleDeleteDataset}
-              sx={{ backgroundColor: "red.500", color: "common.white" }}
+              sx={{
+                backgroundColor: "status.danger.solid",
+                color: "common.white",
+              }}
               // sx={{ color: "#fff", backgroundColor: "rgba(219, 47, 45, 1)" }}
             >
               <Typography variant="s2" fontWeight={"fontWeightSemiBold"}>

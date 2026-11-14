@@ -1,6 +1,11 @@
 import React from "react";
 import PropTypes from "prop-types";
-import { Events, getPageViewEvent, trackEvent } from "src/utils/Mixpanel";
+import {
+  Events,
+  getPageViewEvent,
+  pageViewPath,
+  trackEvent,
+} from "src/utils/Mixpanel";
 import Stack from "@mui/material/Stack";
 import { useLocation } from "react-router-dom";
 
@@ -14,7 +19,7 @@ export default function AuthClassicLayout({ children }) {
       eventName: Events.pageView,
       extras: {},
     };
-    trackEvent(eventName, { path: location.pathname, ...extras });
+    trackEvent(eventName, { path: pageViewPath(location.pathname), ...extras });
   }, [location]);
 
   return (
