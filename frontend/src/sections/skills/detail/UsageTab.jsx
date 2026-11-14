@@ -105,6 +105,11 @@ export default function UsageTab({ skill }) {
     },
   };
 
+  const fetchMeaning = <Typography variant="s3" color="text.secondary" component="p" sx={{ m: 0 }}>
+    Counts requests that fetched this skill. A fetch doesn&apos;t prove an
+    agent used it.
+  </Typography>;
+  const usageShown = !(preview === "loading" || query.isPending || preview === "error" || query.isError || empty) && Boolean(usage);
   return (
     <Stack spacing={3}>
       <TextField
@@ -141,8 +146,9 @@ export default function UsageTab({ skill }) {
               { label: "Fetches", value: usage.total.toLocaleString() },
               { label: "Last fetch", value: <When value={usage.lastFetchedAt} /> },
               { label: "Versions fetched", value: usage.byVersion.filter((item) => item.count > 0).length },
-            ]} sx={{ "& > .MuiBox-root > .MuiTypography-root": { typography: "s3" }, "& > .MuiBox-root > .MuiBox-root > .MuiTypography-root": { typography: "m1" } }} />} />
-            <TechnicalDetails title="Fetch counts and details">
+            ]} sx={{ "& > .MuiBox-root > .MuiTypography-root": { typography: "s3" }, "& > .MuiBox-root > .MuiBox-root > .MuiTypography-root": { typography: "m1" } }} />}
+              about={fetchMeaning}
+              details={<>
             <Section
               title="Fetches by version"
               description="Daily requests, grouped by UTC date."
@@ -245,14 +251,12 @@ export default function UsageTab({ skill }) {
                 </Table>
               </TableContainer>
             </Section>
-            </TechnicalDetails>
+              </>} />
           </>
         )
       )}
-      <TechnicalDetails title="What fetches mean"><Typography variant="s3" color="text.secondary">
-        Counts requests that fetched this skill. A fetch doesn&apos;t prove an
-        agent used it.
-      </Typography></TechnicalDetails>
+      {/* While the adoption panel is showing it carries this caveat inside its own "About this data"; otherwise it stands alone. */}
+      {!usageShown && <TechnicalDetails title="About this data">{fetchMeaning}</TechnicalDetails>}
     </Stack>
   );
 }

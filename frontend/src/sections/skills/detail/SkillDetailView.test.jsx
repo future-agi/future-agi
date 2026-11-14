@@ -347,3 +347,42 @@ it('keeps viewer edit visibly disabled and Use skill primary', () => {
   expect(screen.getByRole('menuitem', { name: 'Archive' })).toHaveAttribute('aria-disabled', 'true');
   expect(screen.getByText("You can't archive this skill. Ask a workspace admin.")).toBeInTheDocument();
 });
+
+vi.mock("../contexts/ContextDependentsPanel", () => ({ default: () => <p>Used by panel</p> }));
+
+describe("header shape in every state (UX iteration 3, LIB4)", () => {
+  const showNamed = (name) => render(
+    <ThemeProvider theme={theme}>
+      <MemoryRouter initialEntries={[{ pathname: "/dashboard/skills/skill-a", state: name ? { skillName: name } : null }]}>
+        <Routes><Route path="/dashboard/skills/:skillId" element={<SkillDetailView />} /></Routes>
+      </MemoryRouter>
+    </ThemeProvider>,
+  );
+  it("keeps the breadcrumb and title above the error and not-found states", () => {
+    useSkill.mockReturnValue({ isError: true, error: { code: "network_error" }, refetch: vi.fn() });
+    const view = showNamed("refund-policy");
+    const crumbs = screen.getByRole("navigation", { name: "Breadcrumb" });
+    expect(within(crumbs).getByRole("link", { name: "Skills" })).toHaveAttribute("href", "/dashboard/skills");
+    expect(within(crumbs).getByText("refund-policy")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { level: 1, name: "refund-policy" })).toBeInTheDocument();
+    expect(screen.getByText("Could not load this skill")).toBeInTheDocument();
+    view.unmount();
+    useSkill.mockReturnValue({ isError: true, error: { code: "skill_not_found" } });
+    showNamed(null);
+    expect(within(screen.getByRole("navigation", { name: "Breadcrumb" })).getByText("Skill")).toBeInTheDocument();
+    expect(screen.getByText("Skill not found")).toBeInTheDocument();
+  });
+  it("loads as a header-shaped skeleton: one progressbar named Loading skill", () => {
+    useSkill.mockReturnValue({ isPending: true });
+    showNamed("refund-policy");
+    expect(screen.getAllByRole("progressbar")).toHaveLength(1);
+    expect(screen.getByRole("progressbar", { name: "Loading skill" })).toBeInTheDocument();
+  });
+  it("calls the dependents tab Used by without changing its URL value", () => {
+    show();
+    const tab = screen.getByRole("tab", { name: "Used by" });
+    expect(screen.queryByRole("tab", { name: "Dependents" })).not.toBeInTheDocument();
+    fireEvent.click(tab);
+    expect(screen.getByLabelText("URL")).toHaveTextContent("?tab=dependents");
+  });
+});

@@ -2,6 +2,7 @@ import PropTypes from "prop-types";
 import { useState } from "react";
 import {
   Link as RouterLink,
+  useLocation,
   useNavigate,
   useParams,
   useSearchParams,
@@ -15,6 +16,7 @@ import {
   ListItemIcon,
   Menu,
   MenuItem,
+  Skeleton,
   Stack,
   Tab,
   Typography,
@@ -59,7 +61,7 @@ const TABS = ["files", "tests", "dependents", "versions", "usage", "use"];
 const TAB_LABELS = {
   files: "Files",
   tests: "Tests",
-  dependents: "Dependents",
+  dependents: "Used by",
   versions: "Versions",
   usage: "Activity",
   use: "Use",
@@ -301,8 +303,35 @@ DetailContent.propTypes = {
   preview: PropTypes.string,
 };
 
+// The same header the loaded page has, so nothing jumps when the skill arrives (principle 7):
+// breadcrumb, title, one line of purpose, the identity chips and the tab strip.
+function SkillHeaderSkeleton() {
+  return (
+    <Box role="progressbar" aria-live="polite" aria-busy="true" aria-label="Loading skill" sx={{ width: 1, minWidth: 0, "& .MuiSkeleton-root": { bgcolor: "divider" } }}>
+      <Stack spacing={1.5} sx={{ minWidth: 0 }}>
+        <Skeleton variant="rounded" width={140} height={12} />
+        <Skeleton variant="rounded" width={200} height={20} />
+        <Skeleton variant="rounded" width="min(420px, 100%)" height={12} />
+        <Stack direction="row" spacing={1} alignItems="center">
+          <Skeleton variant="rounded" width={150} height={28} />
+          <Skeleton variant="rounded" width={96} height={20} />
+          <Skeleton variant="rounded" width={72} height={12} />
+        </Stack>
+        <Stack direction="row" spacing={3} sx={{ borderBottom: 1, borderColor: "divider", pb: 1.25 }}>
+          {[36, 40, 72, 56, 52, 28].map((width, index) => <Skeleton key={width + index} variant="rounded" width={width} height={12} />)}
+        </Stack>
+      </Stack>
+      <Box sx={{ pt: 3 }}><ContentSkeleton variant="panel" role="presentation" label="Loading skill details" sx={{ "& > .MuiStack-root": { p: 0 } }} /></Box>
+    </Box>
+  );
+}
+
 export default function SkillDetailView() {
   const { skillId } = useParams();
+  const location = useLocation();
+  // The library hands over the name so the breadcrumb and title survive a failed load.
+  const knownName = typeof location.state?.skillName === "string" ? location.state.skillName : "";
+  const missingHeader = <ObjectHeader crumbs={[{ label: "Skills", to: paths.dashboard.skills.root }, { label: knownName || "Skill" }]} title={knownName || "Skill"} />;
   const { identity } = useSkillV11Scope();
   const [params, setParams] = useSearchParams();
   const preview = usePreviewState();
@@ -319,10 +348,10 @@ export default function SkillDetailView() {
   return (
     <Stack sx={{ p: { xs: 2, md: 3 }, minWidth: 0 }}>
       {preview === "loading" || query.isPending ? (
-        <ContentSkeleton variant="page" label="Loading skill" />
+        <SkillHeaderSkeleton />
       ) : preview === "error" || query.isError ? (
         notFound && preview !== "error" ? (
-          <EmptyState
+          <Stack spacing={3} sx={{ minWidth: 0 }}>{missingHeader}<EmptyState
             title="Skill not found"
             description="It may have been archived, or it may belong to another workspace."
             action={
@@ -334,13 +363,13 @@ export default function SkillDetailView() {
                 Back to Skills
               </Button>
             }
-          />
+          /></Stack>
         ) : (
-          <ErrorState
+          <Stack spacing={3} sx={{ minWidth: 0 }}>{missingHeader}<ErrorState
             title="Could not load this skill"
             detail="Check your connection and try again."
             onRetry={retry}
-          />
+          /></Stack>
         )
       ) : query.data ? (
         <DetailContent
@@ -349,11 +378,11 @@ export default function SkillDetailView() {
           preview={preview}
         />
       ) : (
-        <EmptyState
+        <Stack spacing={3} sx={{ minWidth: 0 }}>{missingHeader}<EmptyState
           title="Skill not found"
           description="It may have been archived, or it may belong to another workspace."
           action={<Button component={RouterLink} to={paths.dashboard.skills.root} variant="outlined">Back to Skills</Button>}
-        />
+        /></Stack>
       )}
     </Stack>
   );

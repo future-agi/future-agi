@@ -1,9 +1,10 @@
 import { useEffect, useState } from "react";
+import PropTypes from "prop-types";
 import { Link as RouterLink, useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import When from "../components/When";
 import { httpStatus } from "../utils/conclusions";
 import { useSkillsAccess } from "../utils/access";
-import { Autocomplete, Avatar, Box, Button, Link, MenuItem, Stack, TextField, Typography } from "@mui/material";
+import { Autocomplete, Avatar, Box, Button, Link, MenuItem, Stack, TextField, Typography, useMediaQuery } from "@mui/material";
 import { useSkillsList } from "src/api/skills";
 import { paths } from "src/routes/paths";
 import PageHeader from "src/components/page-header";
@@ -23,8 +24,29 @@ import ImportSkillsDialog from "./ImportSkillsDialog";
 import LibraryEmptyState from "./LibraryEmptyState";
 import SkillRowMenu from "./SkillRowMenu";
 
+// Below sm each skill is a stacked card: name and menu, description, then one quiet facts line.
+function SkillCard({ skill, onOpen }) {
+  const production = skill.labels.find((item) => item.name === "production");
+  return (
+    <Box component="li" onClick={() => onOpen(skill)} sx={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) auto", columnGap: 1, py: 1.5, borderBottom: 1, borderColor: "divider", cursor: "pointer" }}>
+      <Stack direction="row" spacing={1} alignItems="center" sx={{ minWidth: 0 }}>
+        <Link component={RouterLink} to={paths.dashboard.skills.detail(skill.id)} state={{ skillName: skill.name }} underline="hover" color="text.primary"
+          onClick={(event) => event.stopPropagation()} sx={{ typography: "s1", fontWeight: 500, overflowWrap: "anywhere" }}>{skill.name}</Link>
+        {skill.hasDraft && <StatusBadge status="draft" label="Draft" />}
+      </Stack>
+      <Box sx={{ gridColumn: 2, gridRow: "1 / span 2", alignSelf: "start", mr: -1 }}><SkillRowMenu skill={skill} /></Box>
+      <Typography variant="s3" color="text.secondary" sx={{ gridColumn: 1, overflowWrap: "anywhere" }}>{skill.description}</Typography>
+      <Typography variant="s3" color="text.secondary" sx={{ gridColumn: "1 / -1", mt: 0.5 }}>
+        {production ? `Production v${production.version}` : "Not in production"} · {skill.latestVersion ? `Latest v${skill.latestVersion}` : "Not published"} · <When value={skill.updatedAt} />
+      </Typography>
+    </Box>
+  );
+}
+SkillCard.propTypes = { skill: PropTypes.object.isRequired, onOpen: PropTypes.func.isRequired };
+
 export default function SkillsLibraryView() {
   const navigate = useNavigate();
+  const phone = useMediaQuery((theme) => theme.breakpoints.down("sm"));
   const { canWrite } = useSkillsAccess();
   const [params, setParams] = useSearchParams();
   const [newTemplate, setNewTemplate] = useState(null);
@@ -77,11 +99,12 @@ export default function SkillsLibraryView() {
       return next;
     }, { replace: true });
   };
-  const openSkill = (skill) => navigate(paths.dashboard.skills.detail(skill.id));
+  // The name travels with the link so the detail page can keep its breadcrumb if it can't load.
+  const openSkill = (skill) => navigate(paths.dashboard.skills.detail(skill.id), { state: { skillName: skill.name } });
   const columns = [
     { accessorKey: "name", header: "Name", minSize: 240, meta: { flex: 2 }, cell: ({ row: { original: skill } }) => (
       <Stack sx={{ minWidth: 0 }}>
-        <Stack direction="row" spacing={1} alignItems="center"><Link component={RouterLink} to={paths.dashboard.skills.detail(skill.id)} underline="hover" color="text.primary"
+        <Stack direction="row" spacing={1} alignItems="center"><Link component={RouterLink} to={paths.dashboard.skills.detail(skill.id)} state={{ skillName: skill.name }} underline="hover" color="text.primary"
           onClick={(event) => event.stopPropagation()} sx={{ typography: "s1" }}>{skill.name}</Link>{skill.hasDraft && <StatusBadge status="draft" label="Draft" />}</Stack>
         <Typography variant="s3" color="text.secondary" noWrap>{skill.description}</Typography>
       </Stack>
@@ -104,21 +127,21 @@ export default function SkillsLibraryView() {
   ].filter((column) => column.accessorKey !== "tags" || rows.some((skill) => skill.tags?.length)).map((column) => ({ ...column, enableSorting: false }));
 
   return (
-    <Stack sx={{ p: { xs: 2, md: 3 }, minWidth: 0 }}>
+    <Stack spacing={1.5} sx={{ p: { xs: 2, md: 3 }, minWidth: 0 }}>
       <PageHeader title="Skills" description="Versioned instructions and files your agents load on demand." sx={{ mb: 0 }}
-        actions={canWrite && !firstRun && <><Button variant="outlined" onClick={() => setImportOpen(true)}>Import</Button><Button variant={outOfRange ? "outlined" : "contained"} color="primary" onClick={() => setNewTemplate("blank")}>New skill</Button></>} />
-      {!loading && !failed && stats?.total > 0 && <Typography variant="s3" color="text.secondary" sx={{ mt: 1.5 }}>{[`${stats.total} ${stats.total === 1 ? 'skill' : 'skills'}`, stats.inProduction > 0 && `${stats.inProduction} in production`, stats.fetches7d > 0 && `${stats.fetches7d} ${stats.fetches7d === 1 ? 'fetch' : 'fetches'} in 7 days`, stats.myDrafts > 0 && `${stats.myDrafts} ${stats.myDrafts === 1 ? 'draft' : 'drafts'}`].filter(Boolean).join(' · ')}</Typography>}
+        actions={canWrite && !firstRun && <><Button variant="outlined" onClick={() => setImportOpen(true)}>Import</Button><Button variant="contained" color="primary" onClick={() => setNewTemplate("blank")}>New skill</Button></>} />
+      {!loading && !failed && stats?.total > 0 && <Typography variant="s3" color="text.secondary">{[`${stats.total} ${stats.total === 1 ? 'skill' : 'skills'}`, stats.inProduction > 0 && `${stats.inProduction} in production`, stats.fetches7d > 0 && `${stats.fetches7d} ${stats.fetches7d === 1 ? 'fetch' : 'fetches'} in 7 days`, stats.myDrafts > 0 && `${stats.myDrafts} ${stats.myDrafts === 1 ? 'draft' : 'drafts'}`].filter(Boolean).join(' · ')}</Typography>}
       {!loading && query.isFetching && query.data && <StatusBadge status="checking" label="Updating…" />}
-      {!firstRun && <ListToolbar alignItems="flex-end" sx={{ flexWrap: "wrap", rowGap: 1 }}>
-        <FormSearchField sx={{ width: 280, maxWidth: "100%" }} label="Search skills" searchQuery={search} placeholder="Search skills" inputProps={{ "aria-label": "Search skills" }} onChange={(event) => changeParams({ search: event.target.value })} />
+      {!firstRun && <ListToolbar direction={{ xs: "column", sm: "row" }} alignItems={{ xs: "stretch", sm: "flex-end" }} useFlexGap sx={{ flexWrap: "wrap", rowGap: 1, "& > *": { maxWidth: "100%", flexShrink: 0 } }}>
+        <FormSearchField sx={{ width: { xs: 1, sm: 280 }, minWidth: 0 }} label="Search skills" searchQuery={search} placeholder="Search skills" inputProps={{ "aria-label": "Search skills" }} onChange={(event) => changeParams({ search: event.target.value })} />
         <Autocomplete freeSolo autoSelect selectOnFocus forcePopupIcon size="small" options={tagSuggestions} value={tag || null}
-          onChange={(_event, value) => changeParams({ tag: value?.trim() || "" })} sx={{ width: 200, maxWidth: "100%", "& .MuiOutlinedInput-root": { height: dsSize.control.sm, py: 0 } }}
+          onChange={(_event, value) => changeParams({ tag: value?.trim() || "" })} sx={{ width: { xs: 1, sm: 200 }, "& .MuiOutlinedInput-root": { height: dsSize.control.sm, py: 0 } }}
           renderInput={(inputParams) => <TextField {...inputParams} size="small" label="Tag" placeholder="Any tag" />} />
-        <TextField select label="Label" size="small" SelectProps={{ displayEmpty: true }} value={label} onChange={(event) => changeParams({ label: event.target.value })} sx={{ minWidth: 140 }}>
+        <TextField select label="Label" size="small" SelectProps={{ displayEmpty: true }} value={label} onChange={(event) => changeParams({ label: event.target.value })} sx={{ width: { xs: 1, sm: 160 } }}>
           <MenuItem value="">All labels</MenuItem>{SYSTEM_LABELS.map((value) => <MenuItem key={value} value={value}>{value}</MenuItem>)}
           {label && !SYSTEM_LABELS.includes(label) && <MenuItem value={label}>{label}</MenuItem>}
         </TextField>
-        <TextField select label="Sort" size="small" value={`${sort}:${order}`} sx={{ minWidth: 180 }} onChange={(event) => {
+        <TextField select label="Sort" size="small" value={`${sort}:${order}`} sx={{ width: { xs: 1, sm: 180 } }} onChange={(event) => {
           const [nextSort, nextOrder] = event.target.value.split(":"); changeParams({ sort: nextSort, order: nextOrder });
         }}>
           <MenuItem value="updated:desc">Recently updated</MenuItem><MenuItem value="updated:asc">Least recently updated</MenuItem>
@@ -127,16 +150,18 @@ export default function SkillsLibraryView() {
         </TextField>
       </ListToolbar>}
       {loading ? <ContentSkeleton variant="rows" rows={6} label="Loading skills" />
-        : outOfRange ? <EmptyState variant="no-results" title="This page is no longer available" action={<Button variant="contained" onClick={() => changeParams({ page: 1 }, false)}>Go to first page</Button>} />
+        : outOfRange ? <EmptyState variant="no-results" title="This page is no longer available" description="Your filters are kept." action={<Button variant="outlined" onClick={() => changeParams({ page: 1 }, false)}>Go to first page</Button>} />
         : failed ? <ErrorState title="Couldn't load skills." detail="Your library is still saved. Try loading it again." onRetry={() => { changeParams({ state: null }, false); query.refetch(); }} />
         : firstRun ? <LibraryEmptyState isViewer={!canWrite} onCreate={setNewTemplate} onImport={() => setImportOpen(true)} />
         : rows.length === 0 && count > 0 ? <EmptyState variant="no-results" title="No skills on this page" description="The library changed since you opened this page."
           action={<Button variant="outlined" onClick={() => changeParams({ page: 1 }, false)}>Go to first page</Button>} />
         : rows.length === 0 ? <EmptyState variant="no-results" title="No skills match these filters." description="Try a different search or clear the filters."
           onClearFilters={() => changeParams({ search: null, tag: null, label: null, state: null })} />
-        : <Box sx={{ minWidth: 0 }}><Box sx={{ height: rows.length * ROW_HEIGHT.twoLine + TABLE_HEADER_HEIGHT.default }}><DataTable columns={columns} data={rows} rowCount={count} rowHeight={ROW_HEIGHT.twoLine} onRowClick={openSkill} /></Box>
-          <DataTablePagination page={page - 1} pageSize={pageSize} pageSizeOptions={[10, 25, 50, 100]} total={count} pageCount={query.data.totalPages}
-            disabled={query.isFetching} onPageChange={(nextPage) => changeParams({ page: nextPage + 1 }, false)} onPageSizeChange={(size) => changeParams({ page_size: size })} />
+        : <Box sx={{ minWidth: 0 }}>
+          {phone ? <Stack component="ul" aria-label="Skills" sx={{ listStyle: "none", m: 0, p: 0 }}>{rows.map((skill) => <SkillCard key={skill.id} skill={skill} onOpen={openSkill} />)}</Stack>
+            : <Box sx={{ height: rows.length * ROW_HEIGHT.twoLine + TABLE_HEADER_HEIGHT.default, "& .MuiDataGrid-row:last-child .MuiDataGrid-cell": { borderBottom: 0 } }}><DataTable columns={columns} data={rows} rowCount={count} rowHeight={ROW_HEIGHT.twoLine} onRowClick={openSkill} /></Box>}
+          <Box sx={{ "& > .MuiBox-root": { flexWrap: "wrap", columnGap: { xs: 1, sm: 2 }, px: { xs: 0, sm: 2 } } }}><DataTablePagination page={page - 1} pageSize={pageSize} pageSizeOptions={[10, 25, 50, 100]} total={count}
+            disabled={query.isFetching} onPageChange={(nextPage) => changeParams({ page: nextPage + 1 }, false)} onPageSizeChange={(size) => changeParams({ page_size: size })} /></Box>
         </Box>}
       {canWrite && newTemplate !== null && <NewSkillDialog open onClose={() => setNewTemplate(null)} initialTemplate={newTemplate} />}
       {canWrite && importOpen && <ImportSkillsDialog open onClose={() => setImportOpen(false)} {...(reopenPlanIds ? { initialTab: "migration", reopenPlanIds } : {})} />}

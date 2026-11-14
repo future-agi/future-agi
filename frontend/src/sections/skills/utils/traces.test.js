@@ -191,11 +191,11 @@ describe("observed adoption", () => {
     (mode) => {
       show(AdoptionPanel, { skill }, { mode });
       expect(
-        screen.getByText("Observed fetches after production moved to v1"),
+        screen.getByText("Fetches since production moved to v1"),
       ).toBeInTheDocument();
       expect(screen.getByText("Both fetched")).toBeInTheDocument();
       // The limits of fetch evidence sit in a labelled disclosure; open it to read them.
-      fireEvent.click(screen.getByRole("button", { name: "What this activity can tell you" }));
+      fireEvent.click(screen.getByRole("button", { name: "About this data" }));
       expect(
         screen.getByText(
           /Fetches show retrieval, not installation or successful use/,
@@ -207,6 +207,31 @@ describe("observed adoption", () => {
       ).not.toBeInTheDocument();
     },
   );
+  it("names a consumer as a person or key, never a bare email plus the channel", () => {
+    const row = observations.results[0];
+    mocks.adoption.mockReturnValue(success({ ...observations, count: 3, results: [
+      { ...row, consumerId: "a", consumerLabel: "maya.chen@acme-support.example", channel: "api" },
+      { ...row, consumerId: "b", consumerLabel: "maya.chen@acme-support.example", channel: "api", keyName: "ci-release-key" },
+      { ...row, consumerId: "c", consumerLabel: "Synthetic integration", channel: "mcp" },
+    ] }));
+    show(AdoptionPanel, { skill });
+    expect(screen.getByText("Maya Chen · API key")).toBeInTheDocument();
+    expect(screen.getByText("ci-release-key")).toBeInTheDocument();
+    expect(screen.getByText("Synthetic integration · MCP")).toBeInTheDocument();
+    expect(screen.queryByText(/@acme-support\.example/)).not.toBeInTheDocument();
+  });
+  it("keeps every explanatory note in one About this data disclosure and every count in one Counts and details", () => {
+    show(AdoptionPanel, { skill });
+    expect(screen.getAllByRole("button", { name: "About this data" })).toHaveLength(1);
+    expect(screen.getAllByRole("button", { name: "Counts and details" })).toHaveLength(1);
+    for (const name of ["Observation window and limits", "Observation counters", "What this activity can tell you"]) {
+      expect(screen.queryByRole("button", { name })).not.toBeInTheDocument();
+    }
+    fireEvent.click(screen.getByRole("button", { name: "About this data" }));
+    expect(screen.getByText(/Window:/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Counts and details" }));
+    expect(screen.getByText(/current only/)).toBeInTheDocument();
+  });
   it("distinguishes absent production from no observations", () => {
     mocks.adoption.mockReturnValue(
       success({ ...observations, target: null, results: [], count: 0 }),

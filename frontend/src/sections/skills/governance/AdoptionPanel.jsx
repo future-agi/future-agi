@@ -45,6 +45,18 @@ const timestamp = (value) =>
         timeZoneName: "short",
       })
     : "Ordering unavailable";
+// A consumer reads as a person or key, never "email · api" (UX iteration 3, LIB5).
+const CHANNELS = { api: "API key", mcp: "MCP", download: "Download" };
+const consumerName = (row) => {
+  const label = String(row.consumerLabel || "").trim();
+  const channel = CHANNELS[row.channel] || row.channel;
+  const keyName = typeof row.keyName === "string" ? row.keyName.trim() : "";
+  if (keyName && row.channel === "api") return keyName;
+  const person = /^[^@\s]+@[^@\s]+$/.test(label)
+    ? label.split("@")[0].split(/[._-]+/).filter(Boolean).map((word) => `${word[0].toUpperCase()}${word.slice(1)}`).join(" ")
+    : label;
+  return `${person || "Unknown consumer"} · ${channel}`;
+};
 const dateInput = (value) => formatDate(value).replace(" ", "T");
 
 function TraceDialog({ versions, initialVersionId, onClose }) {
@@ -201,7 +213,7 @@ TraceDialog.propTypes = {
   onClose: PropTypes.func.isRequired,
 };
 
-function AdoptionContent({ skill, days: externalDays, summary }) {
+function AdoptionContent({ skill, days: externalDays, summary, about, details }) {
   const preview = usePreviewState();
   const [localDays, setDays] = useState(7);
   const days = externalDays ?? localDays;
@@ -228,8 +240,8 @@ function AdoptionContent({ skill, days: externalDays, summary }) {
     <Section
       title={
         target
-          ? `Observed fetches after production moved to v${target.version}`
-          : "Observed production fetches"
+          ? `Fetches since production moved to v${target.version}`
+          : "Production fetches"
       }
       actions={
         <Stack
@@ -288,25 +300,6 @@ function AdoptionContent({ skill, days: externalDays, summary }) {
           <>
             <Typography variant="s1">{target.promotedAt ? `After production moved to v${target.version}, ${data.summary.mixed} ${data.summary.mixed === 1 ? 'observed consumer has' : 'observed consumers have'} fetched both the current and other versions in this window. ${data.summary.otherOnly} fetched only other versions.` : 'Observed versions are shown without claiming adoption after this move.'}</Typography>
             {summary}
-            <TechnicalDetails title="Observation window and limits">
-            <Typography variant="s3" color="text.secondary">
-              Moved {timestamp(target.promotedAt)}. Window:{" "}
-              {timestamp(data.window.start)} – {timestamp(data.window.end)}. As
-              of {timestamp(data.window.asOf)}.
-            </Typography>
-            {target.promotedAt &&
-              new Date(target.promotedAt) < new Date(data.window.start) && (
-                <Typography variant="s3" color="text.secondary">
-                  Within this window after promotion.
-                </Typography>
-              )}
-            {!target.promotedAt && (
-              <Alert severity="warning">
-                The promotion order is unavailable. Observed versions are shown
-                without claiming adoption after this move.
-              </Alert>
-            )}
-            </TechnicalDetails>
             {preview === "empty" || data.count === 0 ? (
               <EmptyState
                 title="No observed identities in this window"
@@ -314,16 +307,6 @@ function AdoptionContent({ skill, days: externalDays, summary }) {
               />
             ) : (
               <>
-                <TechnicalDetails title="Observation counters"><Typography
-                  variant="s3"
-                  color="text.secondary"
-                  sx={{ fontVariantNumeric: "tabular-nums" }}
-                >
-                  {data.summary.currentOnly} current only ·{" "}
-                  {data.summary.otherOnly} other only · {data.summary.mixed}{" "}
-                  both · {data.summary.notSeen} not seen after move ·{" "}
-                  {data.summary.ambiguous} ordering uncertain
-                </Typography></TechnicalDetails>
                 <TableContainer sx={{ maxWidth: "100%" }}>
                   <Table
                     size="small"
@@ -343,7 +326,7 @@ function AdoptionContent({ skill, days: externalDays, summary }) {
                           key={`${row.consumerId}:${row.channel}`}
                           sx={{ height: ROW_HEIGHT.default }}
                         >
-                          <TableCell><Typography variant="s1" display="block">{row.consumerLabel} · {row.channel}</Typography><Typography variant="s3" display="block" color="text.secondary">{STATE_LABELS[row.state] || "Unknown observation"}</Typography></TableCell>
+                          <TableCell><Typography variant="s1" display="block">{consumerName(row)}</Typography><Typography variant="s3" display="block" color="text.secondary">{STATE_LABELS[row.state] || "Unknown observation"}</Typography></TableCell>
                           <TableCell>{row.versions.map((version) => <Typography key={version.versionId} variant="s3" component="div" title={version.versionId}>v{version.version} · <When value={version.lastAt} /></Typography>)}</TableCell>
                           <TableCell><When value={row.lastAt} /></TableCell>
                         </TableRow>
@@ -368,12 +351,51 @@ function AdoptionContent({ skill, days: externalDays, summary }) {
             )}
           </>
         )}
-        <TechnicalDetails title="What this activity can tell you"><Typography variant="s3" color="text.secondary">
-          Fetches show retrieval, not installation or successful use. One key
-          may represent several processes, and each channel is counted separately. Historical timestamp ordering is best
-          effort; daily counts cannot establish exact post-promotion request
-          totals.
-        </Typography></TechnicalDetails>
+        {(details || (target && data && data.count > 0 && preview !== "empty")) && <TechnicalDetails title="Counts and details">
+          <Stack spacing={2} sx={{ minWidth: 0 }}>
+          {target && data && data.count > 0 && preview !== "empty" && <Typography
+            variant="s3"
+            color="text.secondary"
+            sx={{ fontVariantNumeric: "tabular-nums" }}
+          >
+            {data.summary.currentOnly} current only ·{" "}
+            {data.summary.otherOnly} other only · {data.summary.mixed}{" "}
+            both · {data.summary.notSeen} not seen after move ·{" "}
+            {data.summary.ambiguous} ordering uncertain
+          </Typography>}
+          {details}
+          </Stack>
+        </TechnicalDetails>}
+        <TechnicalDetails title="About this data">
+          <Stack spacing={1}>
+            {target && data && <>
+              <Typography variant="s3" color="text.secondary">
+                Moved {timestamp(target.promotedAt)}. Window:{" "}
+                {timestamp(data.window.start)} – {timestamp(data.window.end)}. As
+                of {timestamp(data.window.asOf)}.
+              </Typography>
+              {target.promotedAt &&
+                new Date(target.promotedAt) < new Date(data.window.start) && (
+                  <Typography variant="s3" color="text.secondary">
+                    Within this window after promotion.
+                  </Typography>
+                )}
+              {!target.promotedAt && (
+                <Alert severity="warning">
+                  The promotion order is unavailable. Observed versions are shown
+                  without claiming adoption after this move.
+                </Alert>
+              )}
+            </>}
+            <Typography variant="s3" color="text.secondary">
+              Fetches show retrieval, not installation or successful use. One key
+              may represent several processes, and each channel is counted separately. Historical timestamp ordering is best
+              effort; daily counts cannot establish exact post-promotion request
+              totals.
+            </Typography>
+            {about}
+          </Stack>
+        </TechnicalDetails>
       </Stack>
       {showTraces && target && (
         <TraceDialog
@@ -385,12 +407,12 @@ function AdoptionContent({ skill, days: externalDays, summary }) {
     </Section>
   );
 }
-AdoptionContent.propTypes = { skill: PropTypes.object.isRequired, days: PropTypes.number, summary: PropTypes.node };
+AdoptionContent.propTypes = { skill: PropTypes.object.isRequired, days: PropTypes.number, summary: PropTypes.node, about: PropTypes.node, details: PropTypes.node };
 
-export default function AdoptionPanel({ skill, days, summary }) {
+export default function AdoptionPanel({ skill, days, summary, about, details }) {
   const access = useSkillV11Scope();
   return (
-    <AdoptionContent key={`${access.identity}:${skill.id}:${days ?? "local"}`} skill={skill} days={days} summary={summary} />
+    <AdoptionContent key={`${access.identity}:${skill.id}:${days ?? "local"}`} skill={skill} days={days} summary={summary} about={about} details={details} />
   );
 }
 AdoptionPanel.propTypes = AdoptionContent.propTypes;

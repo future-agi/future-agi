@@ -13,7 +13,7 @@ import { Upload } from "src/components/upload";
 import ChecksList from "src/sections/skills/components/ChecksList";
 import { LIMITS } from "src/sections/skills/constants";
 import ImportPreviewTable from "./ImportPreviewTable";
-import ActionReason from "../components/ActionReason";
+import ImportFooter from "./ImportFooter";
 import RetainedMigrationPanel from "./RetainedMigrationPanel";
 
 function uploadForm(files) {
@@ -97,12 +97,17 @@ function ImportSkillsDialogContent({ open, onClose, initialTab, reopenPlanIds })
     }
   };
 
+  // The footer is the same on every tab; each tab supplies only its body and its enabled state and reason.
+  const uploadReason = result ? "" : !preview ? (files.length ? "" : "Choose a file or folder first")
+    : selectedBundles.length === 0 ? "Select at least one skill to import"
+    : selectedBundles.some((bundle) => bundle.status === "invalid" || bundle.checks.summary.errors > 0) ? "Fix the errors in the selected skills to continue"
+    : hasWarnings && !acknowledged ? "Review the warnings to continue"
+    : label && !canImport ? (selectedBundles.some((bundle) => bundle.skillId && releaseSnapshots[bundle.key]?.label === label && !releaseSnapshots[bundle.key]?.canMove) ? "Import without a label to continue" : `Checking who can move ${label}…`) : "";
+
   return (
     <ModalWrapper open={open} onClose={onClose} title="Import skills" modalWidth={tab === "migration" ? "1200px" : "880px"} paperSx={{ maxWidth: tab === "migration" ? "lg" : 880, overflow: "hidden" }}
       subTitle={tab === "migration" ? migrationConsequence : tab === "github" ? "Review the source, then import as an unpublished draft." : "Review files and checks before publishing versions to your workspace."}
-      actionBtnProps={{ "aria-describedby": tab === "upload" && !preview && !files.length ? "import-action-reason-1" : undefined }}
-      isLoading={busy} isValid={Boolean(result) || (preview ? canImport : files.length > 0)}
-      dialogActionSx={tab === "migration" ? { display: "none" } : {}} onSubmit={submit} actionBtnSx={tab !== "upload" ? { display: "none" } : {}} actionBtnTitle={result ? "Done" : preview ? "Import" : "Preview import"}>
+      isLoading={busy} hideCancelBtn dialogActionSx={{ display: "none" }} actionBtnSx={{ display: "none" }}>
       <CustomTabs value={tab} onChange={(_, value) => setTab(value)} aria-label="Import method"><Tab value="upload" label="Upload" disabled={busy} /><Tab value="github" label="GitHub" disabled={busy} /><Tab value="migration" label="From another tool" disabled={busy} /></CustomTabs>
       {tab === 'migration' ? <RetainedMigrationPanel footerTarget={migrationFooter} onConsequenceChange={setMigrationConsequence} onBusyChange={setMigrationBusy} onClose={onClose} initialPlanIds={reopenPlanIds} /> : tab === 'github' ? <Box sx={{ minWidth: 0, overflowY: 'auto' }}><GitHubImportPanel onStaged={(receipt) => {
         const id = receipt.consumed?.skillId ?? receipt.skill?.id;
@@ -159,7 +164,9 @@ function ImportSkillsDialogContent({ open, onClose, initialTab, reopenPlanIds })
           {result.failed.length > 0 && <Typography variant="s3" color="text.secondary">Successful imports are saved. Fix the failed skills and import them again.</Typography>}
         </>}
       </Stack>}
-      {tab === "upload" && !preview && !files.length && <ActionReason id="import-action-reason-1" reason="Choose a file or folder first" />}
+      {tab === "upload" && <ImportFooter label={result ? "Done" : preview ? "Import" : "Preview import"} enabled={Boolean(result) || (preview ? canImport : files.length > 0)} reason={uploadReason} busy={busy} onPrimary={submit} onCancel={onClose} />}
+      {/* The GitHub panel owns its draft action; the footer there is Cancel only, so no Preview import is offered. */}
+      {tab === "github" && <ImportFooter hidePrimary onCancel={onClose} busy={busy} />}
       {tab === "migration" && <Box ref={setMigrationFooter} sx={{ flexShrink: 0, bgcolor: "background.paper" }} />}
     </ModalWrapper>
   );

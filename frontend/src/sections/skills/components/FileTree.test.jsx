@@ -90,3 +90,20 @@ it('groups context files and reveals the selected linked file without changing i
   expect(screen.getByRole('treeitem', { name: 'Linked skills' })).toHaveAttribute('aria-expanded', 'true');
   expect(screen.getByRole('treeitem', { name: 'SKILL.md' })).toHaveAttribute('aria-selected', 'true');
 });
+
+describe("FileTree groups", () => {
+  const grouped = [
+    { path: "AGENTS.md", origin: { kind: "owned" } },
+    { path: ".futureagi/context.json", origin: { kind: "generated" } },
+  ];
+  it("calls platform-added files Other files, explains the group, and keeps the paths one open away", async () => {
+    const user = userEvent.setup();
+    render(<FileTree files={grouped} selectedPath="AGENTS.md" onSelect={vi.fn()} />);
+    const group = screen.getByRole("treeitem", { name: "Other files" });
+    expect(screen.queryByText("Generated files")).not.toBeInTheDocument();
+    expect(screen.getByText("Added by Future AGI so apps load the right versions.")).toBeVisible();
+    expect(group).toHaveAccessibleDescription("Added by Future AGI so apps load the right versions.");
+    await user.click(group);
+    expect(screen.getByRole("treeitem", { name: ".futureagi" })).toBeInTheDocument();
+  });
+});
