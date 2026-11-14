@@ -2636,7 +2636,7 @@
 - the Simulate menu is exactly Environment, Scenarios, Run Simulation
 - each of those two items opens its page by URL and title, never /404
 
-### SIM-E2E-003 — a multi-agent call shows its workers turn by turn, an unplaced step as unknown, and a refused worker action
+### SIM-E2E-009 — a multi-agent call shows its workers turn by turn, an unplaced step as unknown, and a refused worker action
 
 **Goal:** A developer opens a multi-agent call and sees which worker did what in each turn, what the record could not place, and what the world refused a worker
 
