@@ -32,7 +32,19 @@ config hold, or puts the previous result back when there is none.
 A previous result is only put back while its span, trace, session and eval
 config still exist: a delete that lands while the recalculation is open
 skips the retired result (deletes act on live rows), so the put-back must
-not bring it back.
+not bring it back. The put-back reads the parents without locking them
+(row locks there broke the common path), so a delete that has not
+committed when the put-back reads them is not seen. Two later re-reads
+narrow that window; neither closes it:
+
+* once the put-back commits (``_recheck_after_commit``), which retires the
+  result if the delete committed by then;
+* by the sweep, on each of its ticks for ``PUT_BACK_RECHECK_SECONDS`` after
+  the put-back (``recheck_put_backs``, from the ``EvalPutBack`` row the
+  put-back writes). A delete that commits later is caught at the next tick,
+  so the result can stay live under a deleted parent until then. A delete
+  still uncommitted ``PUT_BACK_RECHECK_SECONDS`` after the put-back is not
+  caught at all.
 
 If the process dies during the eval (a deploy's SIGKILL, an OOM), the row is
 left behind. ``recover_stale_recalculations`` (scheduled with the eval-task
@@ -49,7 +61,7 @@ from __future__ import annotations
 from datetime import timedelta
 
 import structlog
-from django.db import IntegrityError, transaction
+from django.db import DatabaseError, IntegrityError, transaction
 from django.db.models import Exists, OuterRef, Q, TextField
 from django.db.models.functions import Cast
 from django.utils import timezone
@@ -58,6 +70,7 @@ from tfc.settings.runtime_setting_specs import LONGEST_RUNNING_ENTRY_SECONDS
 from tracer.models.observation_span import (
     EvalEntryStatus,
     EvalLogger,
+    EvalPutBack,
     EvalRecalculation,
 )
 from tracer.services.eval_tasks.entries import (
@@ -105,6 +118,15 @@ RECOVER_ANSWERED_AFTER_SECONDS = 120
 # How many recalculations one sweep tick finishes at most.
 RECOVER_BATCH = 200
 
+# How long after a put-back the sweep keeps re-reading the restored result's
+# parents for a delete that committed after the put-back's own checks. The
+# sweep ticks every 10 minutes, so this is about six re-reads. A delete
+# transaction still open after that is not caught.
+PUT_BACK_RECHECK_SECONDS = 3600
+
+# How many put-backs one sweep tick re-reads at most, oldest first.
+RECHECK_BATCH = 500
+
 ALREADY_RUNNING = "A recalculation is already running for this result."
 STILL_EVALUATING = (
     "This result is still being evaluated. Try again when it has finished."
@@ -134,6 +156,10 @@ def _rows():
 
 def _journal():
     return EvalRecalculation.objects.using("default")
+
+
+def _put_backs():
+    return EvalPutBack.objects.using("default")
 
 
 def _task_is_draining(task_id) -> bool:
@@ -315,16 +341,19 @@ def _still_there(results):
 
 
 def _retire_if_parents_deleted(previous_id) -> bool:
-    """The after-commit tombstone check of a put-back: retire ``previous_id``
-    for good if its span, trace, session or eval config is deleted now.
+    """The tombstone check of a put-back: retire ``previous_id`` for good if
+    it is live and its span, trace, session or eval config is deleted now.
 
     A put-back checks its parents inside the restoring update
     (``_still_there``), so a delete that had not committed then is not seen:
-    its cascade ran before the restore and missed the restored result, which
-    would stay live under a deleted parent. Re-reading the parents once the
-    put-back has committed closes that window without locking them (row
-    locks on the parents conflict with the reconciler's ``FOR UPDATE`` on
-    configs). Returns whether it retired the result."""
+    its cascade ran while the result was retired and missed it, which would
+    leave the restored result live under a deleted parent. This re-reads the
+    parents without locking them (row locks on the parents conflict with the
+    reconciler's ``FOR UPDATE`` on configs), so it only sees a delete that
+    has committed by the time it runs. It runs once the put-back commits
+    (``_recheck_after_commit``) and again on each sweep tick for
+    ``PUT_BACK_RECHECK_SECONDS`` (``recheck_put_backs``). Returns whether it
+    retired the result."""
     with transaction.atomic(using="default"):
         live = _rows().filter(pk=previous_id, deleted=False)
         if not live.exists() or _still_there(live).exists():
@@ -338,11 +367,36 @@ def _retire_if_parents_deleted(previous_id) -> bool:
     return True
 
 
+def _watch_put_back(previous_id) -> None:
+    """Record the put-back of ``previous_id`` for the sweep's later re-reads
+    (``recheck_put_backs``), in the put-back's transaction.
+
+    In a savepoint of its own: a failed write is logged and never fails the
+    put-back; the after-commit check still runs."""
+    try:
+        with transaction.atomic(using="default"):
+            _put_backs().bulk_create(
+                [EvalPutBack(result_id=previous_id, restored_at=timezone.now())],
+                update_conflicts=True,
+                unique_fields=["result"],
+                update_fields=["restored_at"],
+            )
+    except DatabaseError:
+        logger.exception(
+            "recalculate_put_back_watch_failed",
+            eval_logger_id=str(previous_id),
+        )
+
+
 def _recheck_after_commit(previous_id) -> None:
-    """Run the tombstone check once the caller's transaction commits: the
-    request's close, the sweep and the reconciler all put results back in
-    one. Never fails the caller: a failed check is logged and the result
-    stays as the put-back left it."""
+    """Watch a put-back for a delete that commits after it.
+
+    Records it for the sweep's re-reads (``_watch_put_back``), and runs the
+    tombstone check once the caller's transaction commits: the request's
+    close, the sweep and the reconciler all put results back in one. Never
+    fails the caller: a failed check is logged and the result stays as the
+    put-back left it, for the sweep to re-read."""
+    _watch_put_back(previous_id)
 
     def check():
         try:
@@ -865,6 +919,58 @@ def _recover_untasked(journal, cutoff, answered_cutoff) -> str:
     return outcome
 
 
+def recheck_put_backs(
+    *,
+    window_seconds: int = PUT_BACK_RECHECK_SECONDS,
+    limit: int = RECHECK_BATCH,
+) -> dict:
+    """Re-read the parents of recent put-backs. Counts only.
+
+    For each ``EvalPutBack``, oldest first: if the result is live and its
+    span, trace, session or eval config is deleted now, retire it for good
+    with its Error Feed memberships (``_retire_if_parents_deleted``). The row
+    is removed once that retired the result, once the result is no longer
+    live (a later Recalculate retired it, and writes its own row if it puts
+    it back), or once it is older than ``window_seconds``. Until then each
+    tick reads it again, so a delete that commits after the put-back's own
+    checks is still caught, at the next tick. A delete that commits after
+    the window is not.
+
+    * ``rechecked``: put-backs whose parents were read;
+    * ``retired``: of those, results retired because a parent was deleted;
+    * ``released``: rows removed;
+    * ``busy``: rows another tick holds right now.
+    """
+    expired_before = timezone.now() - timedelta(seconds=window_seconds)
+    counts = {"rechecked": 0, "retired": 0, "released": 0, "busy": 0, "errors": 0}
+    watch_ids = list(
+        _put_backs().order_by("restored_at").values_list("pk", flat=True)[:limit]
+    )
+    for watch_id in watch_ids:
+        try:
+            with transaction.atomic(using="default"):
+                watch = (
+                    _put_backs()
+                    .select_for_update(skip_locked=True)
+                    .filter(pk=watch_id)
+                    .first()
+                )
+                if watch is None:
+                    counts["busy"] += 1
+                    continue
+                live = _previous_is_live(watch.result_id)
+                retired = live and _retire_if_parents_deleted(watch.result_id)
+                counts["rechecked"] += 1
+                counts["retired"] += int(retired)
+                if not live or retired or watch.restored_at < expired_before:
+                    watch.delete()
+                    counts["released"] += 1
+        except Exception:
+            logger.exception("recalculate_put_back_recheck_failed", watch_id=watch_id)
+            counts["errors"] += 1
+    return counts
+
+
 def _log_recovered(journal, outcome) -> None:
     logger.info(
         "recalculate_recovered",
@@ -881,6 +987,7 @@ __all__ = [
     "KEPT",
     "LEFT_RETIRED",
     "NEVER_FINISHED",
+    "PUT_BACK_RECHECK_SECONDS",
     "RECOVER_AFTER_SECONDS",
     "RECOVER_ANSWERED_AFTER_SECONDS",
     "RESTORED",
@@ -893,6 +1000,7 @@ __all__ = [
     "close_untasked_recalculation",
     "keep_replacement",
     "put_back_dropped_replacements",
+    "recheck_put_backs",
     "recover_stale_recalculations",
     "refuse_unfinished",
     "refuse_while_untasked_runs",
