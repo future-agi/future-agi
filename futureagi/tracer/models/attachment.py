@@ -320,6 +320,10 @@ class AttachmentBudget(models.Model):
     validation_jobs = models.PositiveIntegerField(default=0)
     window_started_at = models.DateTimeField()
     initialization_attempts = models.PositiveIntegerField(default=0)
+    # Completed-recording imports: in-flight recording jobs, objects and links.
+    active_recordings = models.PositiveIntegerField(default=0)
+    object_count = models.PositiveIntegerField(default=0)
+    link_count = models.PositiveIntegerField(default=0)
 
 
 class AttachmentMediaSession(models.Model):
@@ -396,6 +400,9 @@ class AttachmentRecording(ScopedAttachmentRecord):
     )
     policy_version = models.PositiveBigIntegerField()
     deletion_generation = models.PositiveBigIntegerField()
+    # Probed facts of an imported (server-segmented) recording; null otherwise.
+    sample_rate = models.PositiveIntegerField(null=True)
+    channels = models.PositiveSmallIntegerField(null=True)
     duration_ms = models.PositiveIntegerField(null=True)
     capture_complete = models.BooleanField(default=False)
     manifest = models.JSONField(null=True)

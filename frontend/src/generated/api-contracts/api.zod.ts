@@ -78217,10 +78217,16 @@ export const TracerV1HealthListResponse = zod.object({
 });
 
 /**
- * The body is authenticated and shape-checked first, so the refusal is
-the same for every well-formed request and reveals nothing about the
-source. No source is fetched, sealed or recorded.
- * @summary No trusted source resolver is deployed: every import is refused.
+ * A write capability never reaches this route (``principal.identity``
+accepts app sessions and API keys only). The source is an opaque
+envelope or a registered provider output: no URL, path or credential
+is ever in the body. Admission (scope ``allow_import`` plus deny-wins
+privacy, exact policy and deletion generation, atomic reservations)
+runs before any byte is read; the worker does the transfer.
+
+A single-attachment import has no trusted resolver deployed and is
+refused identically for every well-formed request.
+ * @summary Admit a completed-recording import with ORIGINAL credentials only.
  */
 export const ImportAttachmentParams = zod.object({
   project_id: zod.string(),

@@ -45,6 +45,7 @@ from tracer.services.attachments import (
     bootstrap as broker,
 )
 from tracer.services.attachments import (
+    imports,
     manifests,
     occurrences,
     playback,
@@ -421,18 +422,29 @@ class AttachmentImportView(AttachmentView):
         responses={202: openapi.Response("Import accepted"), **ERRORS},
     )
     def post(self, request, project_id):
-        """No trusted source resolver is deployed: every import is refused.
+        """Admit a completed-recording import with ORIGINAL credentials only.
 
-        The body is authenticated and shape-checked first, so the refusal is
-        the same for every well-formed request and reveals nothing about the
-        source. No source is fetched, sealed or recorded.
+        A write capability never reaches this route (``principal.identity``
+        accepts app sessions and API keys only). The source is an opaque
+        envelope or a registered provider output: no URL, path or credential
+        is ever in the body. Admission (scope ``allow_import`` plus deny-wins
+        privacy, exact policy and deletion generation, atomic reservations)
+        runs before any byte is read; the worker does the transfer.
+
+        A single-attachment import has no trusted resolver deployed and is
+        refused identically for every well-formed request.
         """
         self.enabled()
         self.key(request)
         writer, scope = self.writer(request, project_id)
-        self.body(request, "ImportRequest")
+        body = self.body(request, "ImportRequest")
         broker.check_writer(writer, scope)
-        raise AttachmentError("source_unavailable", 403)
+        if body.get("mode") != "completed_recording":
+            raise AttachmentError("source_unavailable", 403)
+        document, _ = imports.submit(
+            imports.Importer(writer.kind, writer.id), scope_id=scope.id, body=body
+        )
+        return json_response(document, status=202)
 
 
 class AttachmentImportStatusView(AttachmentView):
@@ -445,9 +457,13 @@ class AttachmentImportStatusView(AttachmentView):
         self.enabled()
         writer, scope = self.writer(request, project_id)
         broker.check_writer(writer, scope)
-        _uuid(job_id)
-        # No import job can exist while imports are refused.
-        raise AttachmentError("not_found", 404)
+        # Content-free status, visible only to the original importer.
+        document = imports.status(
+            imports.Importer(writer.kind, writer.id),
+            scope_id=scope.id,
+            job_id=_uuid(job_id),
+        )
+        return json_response(document)
 
 
 class AttachmentOccurrencesView(AttachmentView):

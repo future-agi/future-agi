@@ -45,6 +45,21 @@ TRACER_SCHEDULES: list[ScheduleConfig] = [
         queue="tasks_xl",
         description="Settle Insights reports whose workflow stopped",
     ),
+    # Attachment recordings: both are no-ops unless FI_ATTACHMENTS_ENABLED.
+    ScheduleConfig(
+        schedule_id="run-attachment-recording-jobs",
+        activity_name="run_attachment_recording_jobs",
+        interval_seconds=30,
+        queue="tasks_xl",
+        description="Advance completed-recording imports and derivatives",
+    ),
+    ScheduleConfig(
+        schedule_id="sweep-attachment-recordings",
+        activity_name="sweep_attachment_recordings",
+        interval_seconds=300,
+        queue="tasks_xl",
+        description="Expire attachment import jobs and source envelopes",
+    ),
     ScheduleConfig(
         schedule_id="check-alerts",
         activity_name="check_alerts",

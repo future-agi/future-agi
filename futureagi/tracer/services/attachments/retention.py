@@ -20,6 +20,7 @@ from django.utils import timezone
 from tracer.models.attachment import (
     Attachment,
     AttachmentAuditEvent,
+    AttachmentBlob,
     AttachmentOccurrence,
     AttachmentOutbox,
     AttachmentScope,
@@ -36,6 +37,12 @@ from tracer.services.attachments.uploads import (
 )
 
 logger = structlog.get_logger(__name__)
+
+# Attachment-keyed erase work (no upload job: an imported recording segment) is
+# repeated once this long after the tombstone. A derivative being produced at
+# the moment of deletion is promoted before its fenced publication fails, so a
+# single erase could miss it; the producer erases it too, but may die first.
+ATTACHMENT_ERASE_HORIZON = timedelta(minutes=15)
 
 
 def run_deletion_hook(hook, **kwargs):
@@ -170,9 +177,8 @@ def _tombstone(row, scope, *, actor_id=None, reason):
         pk=row.attachment_id, scope=scope, deleted_at__isnull=True
     ).update(state=AttachmentState.DELETED, deleted_at=timezone.now())
     if upload is None:
-        # No upload job (an imported segment): queue erase work keyed on the
-        # attachment. ``erase`` refuses it until that storage layout has an
-        # erase path, so the row stays visible instead of being dropped.
+        # No upload job (an imported recording segment): queue erase work keyed
+        # on the attachment; ``erase`` removes its object and derivatives.
         AttachmentOutbox.objects.update_or_create(
             scope=scope,
             upload=None,
@@ -393,9 +399,7 @@ def erase(event_id, *, storage):
     if event.processed_at or event.available_at > now:
         return False
     if event.upload_id is None:
-        # Attachment-keyed erase work (no upload job). Its storage layout has no
-        # erase path in this module yet; refusing keeps the row for the owner.
-        raise AttachmentError("cleanup_unsupported", 409)
+        return _erase_attachment(event, scope, storage, now)
     upload = AttachmentUpload.objects.select_related("capture_session").get(
         pk=event.upload_id, scope=scope
     )
@@ -417,5 +421,39 @@ def erase(event_id, *, storage):
         event.processed_at = now
     else:
         event.available_at = min(horizon, now + timedelta(seconds=30))
+    event.save(update_fields=["attempts", "processed_at", "available_at"])
+    return True
+
+
+def _erase_attachment(event, scope, storage, now):
+    """Attachment-keyed erase: the attachment has no upload job.
+
+    Only the layout the server itself writes for such attachments is erased
+    (an imported segment's ``original/{attachment id}`` and its derivatives);
+    anything else is refused and stays queued for an owner to look at.
+    """
+    attachment = Attachment.objects.filter(pk=event.attachment_id, scope=scope).first()
+    if attachment is None:
+        raise AttachmentError("cleanup_unsupported", 409)
+    if not _unreferenced(scope, attachment.id):
+        return False  # Never erase separately authorized survivors.
+    if attachment.state != AttachmentState.DELETED or attachment.deleted_at is None:
+        raise AttachmentError("cleanup_fenced", 409)
+    blob = AttachmentBlob.objects.filter(attachment=attachment, scope=scope).first()
+    if blob is not None and blob.storage_key != f"original/{attachment.client_id}":
+        raise AttachmentError("cleanup_unsupported", 409)
+    # Imported here so retention keeps no import-time dependency on recordings.
+    from tracer.services.attachments import derivatives
+
+    storage.erase_upload(attachment.client_id)
+    derivatives.erase_for_attachment(
+        scope_id=scope.id, attachment_client_id=attachment.client_id, storage=storage
+    )
+    event.attempts = min(event.attempts + 1, 65535)
+    horizon = attachment.deleted_at + ATTACHMENT_ERASE_HORIZON
+    if now >= horizon:
+        event.processed_at = now
+    else:
+        event.available_at = horizon
     event.save(update_fields=["attempts", "processed_at", "available_at"])
     return True
