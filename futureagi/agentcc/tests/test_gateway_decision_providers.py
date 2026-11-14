@@ -49,6 +49,10 @@ class TestDecisionProvidersReachTheGateway:
         return provider_dns(CASES["dns"])
 
     def test_preset_saves_are_pushed_intact(self, auth_client, organization, gateway):
+        assert any(
+            save["name"] == "openrouter" and save["config"]["api_format"] == "systemone"
+            for save in CASES["saves"]
+        )
         for save in CASES["saves"]:
             response = auth_client.post(
                 "/agentcc/gateways/default/update-provider/", save, format="json"

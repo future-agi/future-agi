@@ -109,6 +109,9 @@ func TestDecisionProvidersPushedByTheBackend(t *testing.T) {
 	if err := json.Unmarshal(raw, &fixture); err != nil {
 		t.Fatal(err)
 	}
+	if want, ok := fixture.Gateway["openrouter"]; !ok || want.Dialect != "openrouter" || want.Endpoint != "https://openrouter.ai/api/alpha/decisions" {
+		t.Fatalf("missing systemone OpenRouter decision contract: %+v", want)
+	}
 
 	// Decoded as PUT /-/orgs/{id}/config decodes it.
 	var contract gatewayadmin.OrgConfig

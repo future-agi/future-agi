@@ -63,6 +63,13 @@ const PROVIDER_PRESETS = {
     keyPlaceholder: "sk-...",
     supportedFormats: ["openai", "anthropic"],
   },
+  openrouter: {
+    label: "OpenRouter",
+    baseUrl: "https://openrouter.ai/api/v1",
+    apiFormat: "openai",
+    keyPlaceholder: "Enter your OpenRouter API key",
+    supportedFormats: ["openai", SYSTEMONE_API_FORMAT],
+  },
   anthropic: {
     label: "Anthropic",
     baseUrl: "https://api.anthropic.com",
@@ -175,7 +182,8 @@ const PROVIDER_PRESETS = {
     apiFormat: SYSTEMONE_API_FORMAT,
     keyPlaceholder: "Enter API key",
     supportedFormats: [SYSTEMONE_API_FORMAT],
-    baseUrlHelp: "Required — the gateway posts to this URL plus /v1/systemone",
+    baseUrlHelp:
+      "Required — enter your endpoint's base URL; the gateway uses its System One dialect path",
     models: [],
   },
 };
@@ -199,13 +207,14 @@ const parseProviderBaseUrl = (value) => {
 };
 
 // Mirror the gateway's vendor recognition: a custom label cannot turn a
-// TypeSafe, Perplexity or OpenAI endpoint into a keyless self-hosted provider.
+// TypeSafe, Perplexity, OpenAI or OpenRouter endpoint into a keyless self-hosted provider.
 const allowsKeylessSystemOne = (name, apiFormat, baseUrl) => {
   if (!isSystemOneFormat(apiFormat)) return false;
   const url = parseProviderBaseUrl(baseUrl);
-  if (!url || /^(typesafe|perplexity|openai)/i.test(name)) return false;
+  if (!url || /^(typesafe|perplexity|openai|openrouter)/i.test(name))
+    return false;
   const host = url.hostname.toLowerCase().replace(/\.$/, "");
-  return !["typesafe.ai", "perplexity.ai", "openai.com"].some(
+  return !["typesafe.ai", "perplexity.ai", "openai.com", "openrouter.ai"].some(
     (vendor) => host === vendor || host.endsWith(`.${vendor}`),
   );
 };
