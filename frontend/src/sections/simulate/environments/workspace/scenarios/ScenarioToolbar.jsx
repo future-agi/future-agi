@@ -1,6 +1,6 @@
 import PropTypes from "prop-types";
 import { useState } from "react";
-import { Box, Stack, Button, TextField } from "@mui/material";
+import { Box, Stack, Button, TextField, Typography } from "@mui/material";
 
 import Iconify from "src/components/iconify";
 import { FilterPanel } from "src/components/filter-panel";
@@ -24,6 +24,7 @@ export default function ScenarioToolbar({
   groupBy, onGroupByChange, groupings = [],
   filterFields, filters, onApplyFilters, filterCount,
   rowHeight = "Short", onRowHeightChange,
+  proofCounts = null,
   actions,
 }) {
   const [filterAnchor, setFilterAnchor] = useState(null);
@@ -92,6 +93,16 @@ export default function ScenarioToolbar({
             rowHeight={rowHeight}
             onRowHeightChange={onRowHeightChange}
           />
+          {proofCounts ? (
+            <Typography
+              variant="caption"
+              color="text.secondary"
+              data-testid="scenario-proof-counts"
+              sx={{ ml: 1, whiteSpace: "nowrap" }}
+            >
+              {SCENARIOS_COPY.proofCounts(proofCounts)}
+            </Typography>
+          ) : null}
           <Stack direction="row" alignItems="center" spacing={1} sx={{ ml: "auto" }}>
             {actions}
           </Stack>
@@ -130,5 +141,10 @@ ScenarioToolbar.propTypes = {
   filterCount: PropTypes.number,
   rowHeight: PropTypes.string,
   onRowHeightChange: PropTypes.func,
+  proofCounts: PropTypes.shape({
+    proved: PropTypes.number,
+    kept_as_written: PropTypes.number,
+    not_proved: PropTypes.number,
+  }),
   actions: PropTypes.node,
 };

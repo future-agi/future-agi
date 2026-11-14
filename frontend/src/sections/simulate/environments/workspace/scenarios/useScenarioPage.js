@@ -46,6 +46,7 @@ export default function useScenarioPage({
   const fields = data?.fields ?? [];
   const scenarioEditing = data?.scenarioEditing ?? null;
   const levelLabels = data?.levelLabels ?? EMPTY_LABELS;
+  const proofCounts = data?.proofCounts ?? null;
 
   // Whole-suite total per section name, so a header reads "240 scenarios" even
   // when the page holds only a slice of that group.
@@ -90,5 +91,6 @@ export default function useScenarioPage({
     groupBy: appliedGroupBy,
     scenarioEditing,
     levelLabels,
+    proofCounts,
   };
 }

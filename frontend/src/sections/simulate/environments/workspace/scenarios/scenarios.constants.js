@@ -44,6 +44,8 @@ export const SCENARIOS_COPY = {
   emptyBody:
     "Scenarios are normally derived from your agent when the environment is built.",
   critical: "Critical: a failure here is a release blocker",
+  proofCounts: ({ proved = 0, kept_as_written: kept = 0, not_proved: notProved = 0 }) =>
+    `${proved} proved · ${kept} kept as written · ${notProved} not proved`,
 };
 
 // A row the unsaved changes add or change; an added one can't be picked for a

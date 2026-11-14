@@ -38,6 +38,9 @@ const toPage = (data) => ({
   // What each coverage level and noise bed is called. Served, never spelled here: renaming one is
   // a change in the backend and none in this app.
   levelLabels: data?.level_labels ?? {},
+  // Proved, kept as written and not proved over the whole suite. The lifecycle counts carry the
+  // same three keys and replace the older proof counts when the server sends them.
+  proofCounts: data?.lifecycle_counts ?? data?.proof_counts ?? null,
 });
 
 /**
