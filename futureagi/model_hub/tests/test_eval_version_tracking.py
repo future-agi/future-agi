@@ -56,9 +56,7 @@ class _FakeAppsNoUsage:
         if model_name is None:
             app_label, model_name = app_label.split(".")
         if app_label == "usage":
-            raise LookupError(
-                f"No installed app with label '{app_label}'"
-            )
+            raise LookupError(f"No installed app with label '{app_label}'")
         # For any model_hub lookup, the guard must have already returned,
         # so this branch should never be reached.
         raise AssertionError(
@@ -417,16 +415,14 @@ class TestPinnedChildVersionTracking:
         )
 
         captured_configs: list[dict] = []
-        _install_run_eval_func_patches(
-            monkeypatch, captured_configs, log_id="log-002"
-        )
+        _install_run_eval_func_patches(monkeypatch, captured_configs, log_id="log-002")
 
         from model_hub.utils.composite_execution import execute_composite_children_sync
 
         links = list(
-            CompositeEvalChild.objects.filter(
-                parent=parent
-            ).select_related("child", "pinned_version")
+            CompositeEvalChild.objects.filter(parent=parent).select_related(
+                "child", "pinned_version"
+            )
         )
         assert len(links) == 1
         assert links[0].pinned_version is None, (
@@ -461,6 +457,7 @@ class TestPinnedChildVersionTracking:
 
 
 # ── Eval usage response shape contract ───────────────────────────────────────
+
 
 class TestEvalUsageResponseContract:
     """Verify the EvalUsageStatsView response shape.
@@ -541,6 +538,7 @@ class TestEvalUsageResponseContract:
 
 # ── Direct unit tests for resolve_for_metric / get_default ───────────────────
 
+
 @pytest.mark.django_db
 class TestResolveForMetric:
     """Unit tests for EvalTemplateVersion.objects.resolve_for_metric covering
@@ -560,6 +558,7 @@ class TestResolveForMetric:
         )
         from model_hub.models.choices import DatasetSourceChoices
         from model_hub.models.develop_dataset import Dataset
+
         dataset = Dataset.objects.create(
             name=f"ver-test-ds-{id(self)}",
             organization=organization,
@@ -567,6 +566,7 @@ class TestResolveForMetric:
             source=DatasetSourceChoices.BUILD.value,
         )
         from model_hub.models.evals_metric import UserEvalMetric
+
         uem = UserEvalMetric.objects.create(
             name=f"uem-{id(self)}",
             dataset=dataset,
@@ -581,11 +581,15 @@ class TestResolveForMetric:
         """Pinned non-deleted version is returned instead of the default."""
         template, uem = self._setup(organization, workspace)
         v1 = EvalTemplateVersion.objects.create(
-            eval_template=template, version_number=1, is_default=False,
+            eval_template=template,
+            version_number=1,
+            is_default=False,
             config_snapshot={"criteria": "v1"},
         )
         EvalTemplateVersion.objects.create(
-            eval_template=template, version_number=2, is_default=True,
+            eval_template=template,
+            version_number=2,
+            is_default=True,
             config_snapshot={"criteria": "v2"},
         )
         uem.pinned_version = v1
@@ -600,11 +604,16 @@ class TestResolveForMetric:
         """Soft-deleted pinned version falls back to the active default."""
         template, uem = self._setup(organization, workspace)
         v1 = EvalTemplateVersion.objects.create(
-            eval_template=template, version_number=1, is_default=False,
-            config_snapshot={"criteria": "v1"}, deleted=True,
+            eval_template=template,
+            version_number=1,
+            is_default=False,
+            config_snapshot={"criteria": "v1"},
+            deleted=True,
         )
         v2 = EvalTemplateVersion.objects.create(
-            eval_template=template, version_number=2, is_default=True,
+            eval_template=template,
+            version_number=2,
+            is_default=True,
             config_snapshot={"criteria": "v2"},
         )
         uem.pinned_version = v1
@@ -619,11 +628,15 @@ class TestResolveForMetric:
         """No pin set → returns the default version."""
         template, uem = self._setup(organization, workspace)
         EvalTemplateVersion.objects.create(
-            eval_template=template, version_number=1, is_default=False,
+            eval_template=template,
+            version_number=1,
+            is_default=False,
             config_snapshot={"criteria": "v1"},
         )
         v2 = EvalTemplateVersion.objects.create(
-            eval_template=template, version_number=2, is_default=True,
+            eval_template=template,
+            version_number=2,
+            is_default=True,
             config_snapshot={"criteria": "v2"},
         )
 
@@ -641,11 +654,15 @@ class TestResolveForMetric:
         """
         template, uem = self._setup(organization, workspace)
         EvalTemplateVersion.objects.create(
-            eval_template=template, version_number=1, is_default=False,
+            eval_template=template,
+            version_number=1,
+            is_default=False,
             config_snapshot={"criteria": "v1"},
         )
         v3 = EvalTemplateVersion.objects.create(
-            eval_template=template, version_number=3, is_default=False,
+            eval_template=template,
+            version_number=3,
+            is_default=False,
             config_snapshot={"criteria": "v3"},
         )
 
@@ -663,7 +680,9 @@ class TestResolveForMetric:
 
         template, _ = self._setup(organization, workspace)
         v2 = EvalTemplateVersion.objects.create(
-            eval_template=template, version_number=2, is_default=True,
+            eval_template=template,
+            version_number=2,
+            is_default=True,
             config_snapshot={"criteria": "v2"},
         )
 

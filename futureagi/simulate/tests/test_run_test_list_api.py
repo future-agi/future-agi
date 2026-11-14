@@ -390,9 +390,9 @@ class TestRunTestRuntimeContracts:
         )
         full_response = auth_client.get("/simulate/run-tests/?page=1&limit=50")
 
-        assert (
-            summary_response.status_code == status.HTTP_200_OK
-        ), summary_response.content
+        assert summary_response.status_code == status.HTTP_200_OK, (
+            summary_response.content
+        )
         assert full_response.status_code == status.HTTP_503_SERVICE_UNAVAILABLE
 
     def test_create_accepts_declared_agent_version_field(
@@ -694,9 +694,9 @@ class TestRunTestRuntimeContracts:
             format="json",
         )
 
-        assert (
-            create_response.status_code == status.HTTP_201_CREATED
-        ), create_response.content
+        assert create_response.status_code == status.HTTP_201_CREATED, (
+            create_response.content
+        )
         eval_config_id = create_response.json()["created_eval_configs"][0]["id"]
         eval_config = SimulateEvalConfig.objects.get(id=eval_config_id)
         assert eval_config.run_test_id == run_test_with_v10_scenario.id
@@ -709,9 +709,9 @@ class TestRunTestRuntimeContracts:
             f"{eval_config_id}/get-structure/"
         )
 
-        assert (
-            structure_response.status_code == status.HTTP_200_OK
-        ), structure_response.content
+        assert structure_response.status_code == status.HTTP_200_OK, (
+            structure_response.content
+        )
         structure = structure_response.json()["result"]["eval"]
         assert structure["id"] == eval_config_id
         assert structure["template_id"] == str(word_count_eval_template.id)
@@ -746,9 +746,9 @@ class TestRunTestRuntimeContracts:
             format="json",
         )
 
-        assert (
-            update_response.status_code == status.HTTP_200_OK
-        ), update_response.content
+        assert update_response.status_code == status.HTTP_200_OK, (
+            update_response.content
+        )
         eval_config.refresh_from_db()
         assert eval_config.name == "word_count_updated"
         assert eval_config.mapping == {"text": "agent_output"}
@@ -2172,8 +2172,7 @@ class TestDeleteEvalConfigView:
         )
 
         response = auth_client.delete(
-            f"/simulate/run-tests/{hidden_run_test.id}"
-            f"/eval-configs/{hidden_config.id}/"
+            f"/simulate/run-tests/{hidden_run_test.id}/eval-configs/{hidden_config.id}/"
         )
 
         hidden_config.refresh_from_db()

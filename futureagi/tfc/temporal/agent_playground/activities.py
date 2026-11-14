@@ -534,8 +534,7 @@ async def mark_node_skipped_activity(
     """Mark a node as skipped due to upstream failure."""
     if input.error:
         activity.logger.exception(
-            "Graph execution error: node %s skipped "
-            "(graph_execution_id=%s, reason=%s)",
+            "Graph execution error: node %s skipped (graph_execution_id=%s, reason=%s)",
             input.node_id,
             input.graph_execution_id,
             input.reason,

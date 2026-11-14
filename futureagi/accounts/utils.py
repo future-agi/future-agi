@@ -386,8 +386,8 @@ def first_signup(data, mode=None, telemetry_source="web", *, seed_demo_data=True
                 organization=organization, type="system"
             )
             transaction.on_commit(
-                lambda key_id=system_key.id, org_id=organization.id: _record_signup_api_key_event(
-                    key_id, org_id
+                lambda key_id=system_key.id, org_id=organization.id: (
+                    _record_signup_api_key_event(key_id, org_id)
                 )
             )
         # The intent and account commit together. Only the E2E image's explicit
@@ -404,8 +404,8 @@ def first_signup(data, mode=None, telemetry_source="web", *, seed_demo_data=True
             )
 
         transaction.on_commit(
-            lambda user_id=user.id, source=telemetry_source: _fire_deployment_telemetry_registration(
-                user_id, source
+            lambda user_id=user.id, source=telemetry_source: (
+                _fire_deployment_telemetry_registration(user_id, source)
             )
         )
         return user

@@ -7,9 +7,7 @@ def _repo_root():
 
 
 def _swagger():
-    with (
-        _repo_root() / "api_contracts" / "openapi" / "swagger.json"
-    ).open() as f:
+    with (_repo_root() / "api_contracts" / "openapi" / "swagger.json").open() as f:
         return json.load(f)
 
 
@@ -37,10 +35,7 @@ def _body_ref(operation):
 
 
 def _response_ref(operation, status_code="200"):
-    return (
-        operation["responses"][status_code]["schema"]["$ref"]
-        .rsplit("/", 1)[-1]
-    )
+    return operation["responses"][status_code]["schema"]["$ref"].rsplit("/", 1)[-1]
 
 
 def test_agent_version_empty_mutations_have_request_contracts():

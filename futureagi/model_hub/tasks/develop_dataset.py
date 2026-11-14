@@ -50,8 +50,12 @@ from model_hub.utils.kb_indexer import KB_TABLE_NAME, KBIndexer
 from model_hub.utils.synthetic_task_manager import SyntheticTaskManager
 from tfc.temporal import temporal_activity
 from tfc.constants.api_calls import APICallStatusChoices, APICallTypeChoices
+
 try:
-    from ee.usage.utils.usage_entries import count_text_tokens, log_and_deduct_cost_for_api_request
+    from ee.usage.utils.usage_entries import (
+        count_text_tokens,
+        log_and_deduct_cost_for_api_request,
+    )
 except ImportError:
     count_text_tokens = None
     log_and_deduct_cost_for_api_request = None
@@ -359,6 +363,7 @@ def create_synthetic_dataset(
             request_uuid = task_manager.start_task(str(dataset_id))
 
         from tfc.constants.api_calls import APICallTypeChoices
+
         try:
             from ee.usage.schemas.event_types import BillingEventType
         except ImportError:
@@ -438,7 +443,9 @@ def create_synthetic_dataset(
         tik_total_tokens = 0
         for col in synthetic_df.columns:
             for value in synthetic_df[col]:
-                tik_total_tokens += (count_text_tokens(str(value)) if count_text_tokens else 0)
+                tik_total_tokens += (
+                    count_text_tokens(str(value)) if count_text_tokens else 0
+                )
 
         rows = list(Row.objects.filter(dataset=dataset))
 
@@ -550,18 +557,18 @@ def create_synthetic_dataset(
 
                 if emit is not None and UsageEvent is not None:
                     emit(
-                    UsageEvent(
-                        org_id=str(organization.id),
-                        event_type=api_call_type,
-                        amount=credits,
-                        properties={
-                            "source": "synthetic_dataset",
-                            "source_id": str(dataset.id),
-                            "raw_cost_usd": str(actual_cost),
-                            **llm_usage_properties(agent),
-                        },
+                        UsageEvent(
+                            org_id=str(organization.id),
+                            event_type=api_call_type,
+                            amount=credits,
+                            properties={
+                                "source": "synthetic_dataset",
+                                "source_id": str(dataset.id),
+                                "raw_cost_usd": str(actual_cost),
+                                **llm_usage_properties(agent),
+                            },
+                        )
                     )
-                )
             except Exception:
                 pass  # Metering failure must not break the action
 

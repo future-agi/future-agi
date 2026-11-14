@@ -293,6 +293,6 @@ class TestTraceListingCHQuery:
         # clickhouse-driver returns DateTime64 as naive datetimes; the
         # value is in UTC but tzinfo is dropped, so compare via the
         # naive form of our base instant.
-        assert rows[0]["trace_min_start_time"] == (
-            base + timedelta(seconds=1)
-        ).replace(tzinfo=None)
+        assert rows[0]["trace_min_start_time"] == (base + timedelta(seconds=1)).replace(
+            tzinfo=None
+        )
