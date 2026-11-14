@@ -1949,7 +1949,7 @@ and those older than `AGENTCC_WEBHOOK_PENDING_MAX_AGE_HOURS` expire.
     keys = ["AGENTCC_WEBHOOK_RUN_BUDGET_SECONDS"]
     default = "`60`"
     setups = ["S", "D", "H"]
-    text = "Worker: seconds one webhook delivery run keeps starting POSTs before it yields its slot to the next webhook in turn; a POST in flight then takes at most 13 seconds more. `1` to `90`. Helm: `config.extraEnv`."
+    text = "Worker: seconds one webhook delivery run keeps starting POSTs before it yields its slot to the next webhook in turn; a POST in flight then ends within 13 seconds of its start once the receiver has answered with its headers (the response body is read under that total deadline). `1` to `90`. Helm: `config.extraEnv`."
 
     [[part.section.row]]
     keys = ["APP_VERSION"]

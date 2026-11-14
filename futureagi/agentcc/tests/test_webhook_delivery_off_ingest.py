@@ -23,9 +23,14 @@ URL_CHECK = "agentcc.services.webhook_delivery.ensure_public_http_url"
 
 
 def _response(status):
+    """A streamed response: delivery reads its body through ``raw``."""
+    import io
+
     resp = MagicMock()
     resp.status_code = status
     resp.text = "server error" if status >= 400 else "ok"
+    resp.encoding = "utf-8"
+    resp.raw = io.BytesIO(resp.text.encode())
     return resp
 
 
@@ -34,7 +39,7 @@ def _session(status_by_url, sleep_by_url=None):
     http = MagicMock()
     sleep_by_url = sleep_by_url or {}
 
-    def post(url, data=None, headers=None, timeout=None):
+    def post(url, data=None, headers=None, timeout=None, stream=False):
         if url in sleep_by_url:
             time.sleep(sleep_by_url[url])
         return _response(status_by_url[url])
@@ -583,7 +588,7 @@ def _flaky_session(url, fail_every):
     http = MagicMock()
     calls = {"n": 0}
 
-    def post(posted_url, data=None, headers=None, timeout=None):
+    def post(posted_url, data=None, headers=None, timeout=None, stream=False):
         calls["n"] += 1
         return _response(502 if calls["n"] % fail_every == 0 else 200)
 
@@ -1245,3 +1250,59 @@ def test_a_dispatch_between_run_end_and_workflow_close_starts_a_real_run(
     assert ids[0] != ids[1], "the second run reused the closing run's workflow id"
     webhook.refresh_from_db()
     assert webhook.last_run_started_at == second
+
+
+@pytest.mark.integration
+def test_a_receiver_dripping_its_body_cannot_hold_a_post_past_its_deadline(
+    organization,
+):
+    """Round 4 review: the read timeout is per read, so a receiver that sends
+    its headers and then a byte every few seconds held a POST (and its worker
+    thread) indefinitely. A POST now ends at DELIVERY_POST_DEADLINE_SECONDS
+    in all, as a failed attempt, and the run goes on."""
+    import threading
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+    import requests
+
+    class Drip(BaseHTTPRequestHandler):
+        def do_POST(self):
+            self.rfile.read(int(self.headers.get("Content-Length", 0)))
+            self.send_response(200)
+            self.send_header("Content-Length", "100")
+            self.end_headers()
+            try:
+                for _ in range(100):
+                    self.wfile.write(b"x")
+                    self.wfile.flush()
+                    time.sleep(0.4)
+            except OSError:
+                pass
+
+        def log_message(self, *args):
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Drip)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    url = f"http://127.0.0.1:{server.server_address[1]}/hook"
+    webhook = _webhook(organization, "drip", url)
+    _events(webhook, 1)
+    try:
+        with (
+            patch.object(webhook_delivery, "DELIVERY_POST_DEADLINE_SECONDS", 1.5),
+            patch.object(webhook_delivery, "DELIVERY_TIMEOUT", (3, 1)),
+            patch(URL_CHECK),
+            patch(SESSION, return_value=requests.Session()),
+        ):
+            started = time.monotonic()
+            result = deliver_webhook(webhook.pk)
+            elapsed = time.monotonic() - started
+    finally:
+        server.shutdown()
+    # Each read returns within the per-read timeout, so without a total
+    # deadline the 100 bytes take 40 s.
+    assert elapsed < 5, elapsed
+    assert result["failed"] == 1
+    event = AgentccWebhookEvent.all_objects.get(webhook=webhook)
+    assert event.status == "pending" and event.attempts == 1
+    assert "in time" in event.last_error

@@ -25,11 +25,20 @@ EVENTS = AgentccWebhookEvent.all_objects
 
 
 def _session(status):
+    import io
+
     http = MagicMock()
-    resp = MagicMock()
-    resp.status_code = status
-    resp.text = "server error" if status >= 400 else "ok"
-    http.post.return_value = resp
+
+    def post(*_args, **_kwargs):
+        # A streamed response: delivery reads its body through ``raw``.
+        resp = MagicMock()
+        resp.status_code = status
+        resp.text = "server error" if status >= 400 else "ok"
+        resp.encoding = "utf-8"
+        resp.raw = io.BytesIO(resp.text.encode())
+        return resp
+
+    http.post.side_effect = post
     return http
 
 
