@@ -370,7 +370,7 @@ function PlanSection({ contextId, versions, viewed, cases, target, canWrite, onS
           </TableCell><TableCell><FormControlLabel control={<Checkbox size="small" disabled={!isChosen(item.id)} checked={isChosen(item.id) && isHistorical(item.id)} onChange={(event) => setHistoricalOver({ ...historicalOver, [item.id]: event.target.checked })} />} label={<Typography variant="s3" color="text.secondary">{reference !== '' ? `Was failing on v${reference}` : 'Was failing before'}</Typography>} />
         </TableCell></TableRow>)}</TableBody></Table> : <Typography variant="s1">Review at least one case below before running it on the application.</Typography>}
       </Box>
-      {!ready && <Typography variant="s3" color="text.secondary">{!target?.qualified ? 'Pin the application configuration above to plan a run.' : !caseIds.length ? 'Select at least one reviewed case.' : candidateIsReference || candidateIsProduction ? 'Choose versions that differ from the one being tested.' : 'Choose a version to compare with, or the version it was failing on.'}</Typography>}
+      {!ready && <Typography variant="s3" color="text.secondary">{!target?.qualified ? 'Pin the configuration above to plan a run.' : !caseIds.length ? 'Select at least one reviewed case.' : candidateIsReference || candidateIsProduction ? 'Choose versions that differ from the one being tested.' : 'Choose a version to compare with, or the version it was failing on.'}</Typography>}
       {ready && preview.isPending && <ContentSkeleton label="Planning the application run" />}
       {preview.isError && <Alert severity="error">{preview.error?.response?.data?.error?.message || 'Could not plan this run. Check the target, versions and reviewed examples.'}</Alert>}
       {result && <Stack spacing={1}>

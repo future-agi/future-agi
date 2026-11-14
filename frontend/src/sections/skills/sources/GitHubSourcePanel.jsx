@@ -19,7 +19,9 @@ export function GitHubSourceStatus({ skill, onOpen }) {
 GitHubSourceStatus.propTypes = { skill: PropTypes.object.isRequired, onOpen: PropTypes.func.isRequired };
 
 // Source evidence stays quiet; the actionable replacement diff receives the space.
-export default function GitHubSourcePanel({ skill }) {
+// `linkedOnly` (Files tab): render nothing until a linked source has loaded, so an unlinked
+// skill shows no stray status there (the ⋯ menu says "Not linked to GitHub").
+export default function GitHubSourcePanel({ skill, linkedOnly = false }) {
   const source = useSkillSource(skill.id);
   const draft = useSkillDraft(skill.id);
   const check = useCheckSkillSource(skill.id);
@@ -56,6 +58,7 @@ export default function GitHubSourcePanel({ skill }) {
     }
   };
 
+  if (linkedOnly && (source.isPending || source.isError) && state !== 'loading' && state !== 'error') return null;
   if (state === 'loading' || source.isPending) return <ContentSkeleton variant="rows" rows={3} label="Loading GitHub source" />;
   if (state === 'empty' || getSkillErrorCode(source.error) === 'source_not_found') {
     return <Typography variant="s3" color="text.secondary" sx={{ py: 1 }}>Not linked to GitHub</Typography>;
@@ -89,4 +92,4 @@ export default function GitHubSourcePanel({ skill }) {
   </Stack>;
 }
 
-GitHubSourcePanel.propTypes = { skill: PropTypes.object.isRequired };
+GitHubSourcePanel.propTypes = { skill: PropTypes.object.isRequired, linkedOnly: PropTypes.bool };

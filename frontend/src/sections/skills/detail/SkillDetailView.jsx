@@ -210,7 +210,8 @@ function DetailContent({ skill, preview }) {
               description="Your files are in a draft. Publish a version to browse it here."
             />
           ) : (
-            <FilesTab skill={skill} />
+            // A linked skill keeps its GitHub update check beside its files.
+            <Stack spacing={3}><FilesTab skill={skill} /><GitHubSourcePanel skill={skill} linkedOnly /></Stack>
           ))}
         {tab === "tests" && <TestsTab skill={skill} />}
         {tab === "dependents" && <ContextDependentsPanel skillId={skill.id} state={preview} />}

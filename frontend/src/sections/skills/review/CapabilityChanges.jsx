@@ -16,7 +16,9 @@ export default function CapabilityChanges({ changes, onOpenFile }) {
             {!changes.changes.length && (
               <Typography variant="s1">No permission changes found.</Typography>
             )}
-            <TechnicalDetails title="Compared content"><Typography variant="s3">{changes.changes.length ? "Only recognized static declarations are compared. This is not a safety certification." : "No changes in recognized static declarations. This is not a safety certification."}</Typography><Stack direction="row" flexWrap="wrap" gap={1}><IdentityChip label="Before" value={changes.beforeDigest} /><IdentityChip label="Candidate" value={changes.afterDigest} /></Stack></TechnicalDetails>
+            {/* The compared fingerprints stay in view: they bind what the reviewer saw to this exact pair. */}
+            <Stack direction="row" flexWrap="wrap" gap={1}><IdentityChip inline label="Before" value={changes.beforeDigest} /><IdentityChip inline label="Candidate" value={changes.afterDigest} /></Stack>
+            <TechnicalDetails title="Compared content"><Typography variant="s3">{changes.changes.length ? "Only recognized static declarations are compared. This is not a safety certification." : "No changes in recognized static declarations. This is not a safety certification."}</Typography></TechnicalDetails>
             {changes.changes.map((item) => (
               <Box key={`${item.path}:${item.category}:${item.name}`}>
                 <Typography variant="m3" sx={{ overflowWrap: "anywhere" }}>

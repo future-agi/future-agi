@@ -457,8 +457,8 @@ export default function ReleaseReviewBody({
           a.path.localeCompare(b.path),
   );
   const checksEmpty = checks && checks.items?.length === 0 && checks.summary?.errors === 0 && checks.summary?.warnings === 0 && capabilities?.changes.length === 0 && !packet.externalPipeline;
+  const permissions = <CapabilityChanges changes={capabilities} onOpenFile={onOpenFile} />;
   const otherChecks = <>
-    <CapabilityChanges changes={capabilities} onOpenFile={onOpenFile} />
     <Section title="Static checks">
       {checks ? <ChecksList checks={checks} /> : <Typography variant="s3">Checks unavailable. This is not a successful check.</Typography>}
     </Section>
@@ -607,6 +607,9 @@ export default function ReleaseReviewBody({
           </Typography>
         )}
       </Section>
+          {/* Permissions stay visible with their compared fingerprints; only empty static checks and
+              pipeline results fold into "Other checks". */}
+          {permissions}
           {checksEmpty ? <Stack spacing={1}>
             <Typography variant="m3">Other checks: nothing to review</Typography>
             <TechnicalDetails title="Other checks">{otherChecks}</TechnicalDetails>

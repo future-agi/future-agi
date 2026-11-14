@@ -125,9 +125,10 @@ test('SKILLS-E2E-060: distinguish reported delivery from incomplete and unknown 
       await expect(complete.getByText('Matches target', { exact: true })).toBeVisible();
       await expect(complete.getByText('Pinned as intended', { exact: true })).toBeVisible();
       // Exercise raw server timestamps and fractional ages, not preformatted UI fixtures.
-      await expect(page.getByText(/^As of \d{1,2} [A-Z][a-z]{2} \d{4}, \d{2}:\d{2} UTC$/)).toBeVisible();
-      await expect(complete.getByText(/^Updated \d+(s|min|h) ago$/)).toBeVisible();
-      await expect(page.getByText('3 of 4 consumers still need delivery verification.', { exact: true })).toBeVisible();
+      // Times read relatively in the view; each keeps its exact UTC instant as the time element's title.
+      await expect(page.getByText(/^As of /).getByTitle(/^\d{1,2} [A-Z][a-z]{2} \d{4}, \d{2}:\d{2} UTC$/)).toBeVisible();
+      await expect(complete.getByTitle(/^\d{1,2} [A-Z][a-z]{2} \d{4}, \d{2}:\d{2} UTC$/)).toBeVisible();
+      await expect(page.getByText('3 of 4 connected consumers need a delivery report to confirm the version received.', { exact: true })).toBeVisible();
       for (const binding of bindings.slice(1)) {
         const row = table.getByRole('row').filter({ hasText: binding.name });
         await expect(row.getByText('Runtime loading not observed', { exact: true })).toBeVisible();
