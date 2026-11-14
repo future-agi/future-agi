@@ -276,11 +276,18 @@ describe("DraftBar", () => {
       );
       render(<DraftBar env={ENV} />);
 
+      // The new version needs a name before it can be saved.
+      expect(saveButton()).toBeDisabled();
+      await userEvent.type(
+        screen.getByRole("textbox", { name: DRAFTS_COPY.versionName }),
+        " Finance controller ",
+      );
       await userEvent.click(saveButton());
 
       expect(saveValidatedMutate).toHaveBeenCalledWith({
         candidates: { environmentVersionId: "e9", suiteVersionId: "s9" },
         expectedReviewDigest: DIGEST,
+        name: "Finance controller",
       });
       expect(saveMutate).not.toHaveBeenCalled();
     });
@@ -316,7 +323,7 @@ describe("DraftBar", () => {
       ).toBeEnabled();
     });
 
-    it("saves without a check when the check is unavailable on our side, saying so", () => {
+    it("saves without a check when the check is unavailable on our side, saying so", async () => {
       decided();
       withValidation(
         { state: "check_unavailable" },
@@ -327,6 +334,10 @@ describe("DraftBar", () => {
       expect(
         screen.getByText(DRAFTS_COPY.validation.check_unavailable),
       ).toBeInTheDocument();
+      await userEvent.type(
+        screen.getByRole("textbox", { name: DRAFTS_COPY.versionName }),
+        "v10",
+      );
       expect(saveButton()).toBeEnabled();
     });
   });

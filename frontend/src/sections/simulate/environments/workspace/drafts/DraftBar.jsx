@@ -5,6 +5,7 @@ import {
   Button,
   CircularProgress,
   Stack,
+  TextField,
   Typography,
 } from "@mui/material";
 
@@ -69,6 +70,8 @@ export default function DraftBar({
     enabled: enabled && Boolean(drafts?.any),
   });
   const [confirming, setConfirming] = useState(false);
+  // A validated save makes a new version, and the server asks for its name.
+  const [versionName, setVersionName] = useState("");
   const staleId = useId();
   const busyId = useId();
   const holdId = useId();
@@ -134,6 +137,7 @@ export default function DraftBar({
     saveValidated.mutate({
       candidates: drafts.candidates,
       expectedReviewDigest: review?.review_digest,
+      name: versionName.trim(),
     });
   };
   const onSave = () => {
@@ -202,7 +206,7 @@ export default function DraftBar({
       <Button
         size="small"
         variant="contained"
-        disabled={saveReasons.length > 0 || pending}
+        disabled={saveReasons.length > 0 || pending || !versionName.trim()}
         aria-describedby={saveReasons.join(" ") || undefined}
         onClick={onSaveValidated}
       >
@@ -270,6 +274,16 @@ export default function DraftBar({
         >
           {discard.isPending ? COPY.discarding : COPY.discard}
         </Button>
+        {canSaveValidated && !validating && (
+          <TextField
+            size="small"
+            value={versionName}
+            onChange={(event) => setVersionName(event.target.value)}
+            placeholder={COPY.versionName}
+            inputProps={{ "aria-label": COPY.versionName, maxLength: 80 }}
+            sx={{ width: 200 }}
+          />
+        )}
         {primary}
       </Stack>
       {validationNote && (
