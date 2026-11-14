@@ -1789,7 +1789,15 @@ With Prometheus enabled, monitor
 
 Outbound gateway webhooks are delivered by the background Temporal schedule
 `agentcc-webhook-delivery` about every 10 seconds, not during log ingest.
-A failing webhook delays only its own events.
+A failing webhook delays only its own events. Delivery runs share the
+worker's `default` queue with evals, experiments and alert emails, so at most
+`AGENTCC_WEBHOOK_MAX_CONCURRENT_DELIVERIES` run at once. A run goes on past a
+failed attempt (that event retries after 30 s, doubling, and is dead-lettered
+after 5 attempts) and stops when the receiver looks down: no HTTP answer, or 3
+failures in a row. That webhook's next run then waits 10 seconds, doubling
+with its failure streak to at most 5 minutes. Auto-disable leaves the
+webhook's pending events pending: enabling it again resumes their delivery,
+and those older than `AGENTCC_WEBHOOK_PENDING_MAX_AGE_HOURS` expire.
 '''
 
     [[part.section.row]]
@@ -1910,7 +1918,19 @@ A failing webhook delays only its own events.
     keys = ["AGENTCC_WEBHOOK_DISABLE_AFTER_FAILURES"]
     default = "`100`"
     setups = ["S", "D", "H"]
-    text = "Backend and worker: auto-disable a gateway webhook after this many consecutive failed delivery attempts. `0` means never auto-disable. Helm: `config.extraEnv`."
+    text = "Backend and worker: auto-disable a gateway webhook after this many consecutive failed delivery attempts, once they span `AGENTCC_WEBHOOK_DISABLE_AFTER_MINUTES`. Its pending events stay pending for when it is enabled again. `0` means never auto-disable. Helm: `config.extraEnv`."
+
+    [[part.section.row]]
+    keys = ["AGENTCC_WEBHOOK_DISABLE_AFTER_MINUTES"]
+    default = "`60`"
+    setups = ["S", "D", "H"]
+    text = "Backend and worker: the least time a webhook's consecutive failures must span before auto-disable, so a short receiver outage never disables it. `0` means the failure count alone decides. Helm: `config.extraEnv`."
+
+    [[part.section.row]]
+    keys = ["AGENTCC_WEBHOOK_MAX_CONCURRENT_DELIVERIES"]
+    default = "`3`"
+    setups = ["S", "D", "H"]
+    text = "Worker: most gateway webhook delivery runs in flight at once, across all webhooks; they share the `default` queue's activity slots (`TEMPORAL_MAX_CONCURRENT_ACTIVITIES`) with other background work. `0` means no limit. Helm: `config.extraEnv`."
 
     [[part.section.row]]
     keys = ["APP_VERSION"]

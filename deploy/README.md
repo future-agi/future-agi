@@ -461,8 +461,18 @@ of a deleted webhook**. Never purge pending events of a live webhook by hand:
 the pending-age and per-webhook cap settings handle those. See the
 [configuration reference](https://docs.futureagi.com/docs/self-hosting/configuration/reference#application-behaviour)
 for `AGENTCC_WEBHOOK_PENDING_MAX_AGE_HOURS` (24 hours),
-`AGENTCC_WEBHOOK_MAX_PENDING_PER_WEBHOOK` (10000), and
-`AGENTCC_WEBHOOK_DISABLE_AFTER_FAILURES` (100).
+`AGENTCC_WEBHOOK_MAX_PENDING_PER_WEBHOOK` (10000),
+`AGENTCC_WEBHOOK_DISABLE_AFTER_FAILURES` (100),
+`AGENTCC_WEBHOOK_DISABLE_AFTER_MINUTES` (60) and
+`AGENTCC_WEBHOOK_MAX_CONCURRENT_DELIVERIES` (3).
+
+A webhook is auto-disabled only after 100 failed deliveries in a row that
+span at least 60 minutes, so a short receiver outage never disables it. Its
+pending events stay pending: once the receiver is fixed, choose **Enable** on
+the Webhooks page and delivery resumes; events older than the pending age
+limit expire instead. Deleting a webhook cancels its pending events at once;
+the maintenance run cancels its failed and dead-letter history within about
+10 minutes.
 
 Preview the selection with `--dry-run`, check the reported counts, then run
 without it. The examples below remove delivered history older than 30 days,
