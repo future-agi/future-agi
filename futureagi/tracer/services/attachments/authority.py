@@ -140,6 +140,16 @@ class LiveAuthority:
             or not isinstance(started_at, datetime)
         ):
             return None
+        from tracer.services.attachments.session_deletion import session_deleted
+
+        # Collector sessions have no PG Trace row. Their durable session-delete
+        # marker must deny media even while CH still returns the live span.
+        try:
+            if session_deleted(scope.project_id, getattr(span, "trace_session_id", None)):
+                return None
+        except Exception:  # noqa: BLE001 - source/marker read boundary; fail closed
+            logger.warning("attachment_session_deletion_unavailable")
+            return None
         expires_at = retention_for(scope.organization_id, started_at)
         if expires_at is None:
             return None

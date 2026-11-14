@@ -869,6 +869,10 @@ def _soft_delete_trace_session_tree(trace_sessions):
         retire_analysis_sources(
             project_id=project_id, trace_ids=project_trace_ids, session_ids=selected
         )
+        from tracer.services.attachments.retention import run_deletion_hook
+        from tracer.services.attachments.session_deletion import sweep_deleted_sessions
+
+        run_deletion_hook(sweep_deleted_sessions, project_id=project_id)
 
 
 class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
@@ -1113,6 +1117,12 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
         from tracer.services.analysis_retention import retire_analysis_sources
 
         retire_analysis_sources(project_id=project_id, session_ids=[trace_session_id])
+        from tracer.services.attachments.retention import run_deletion_hook
+        from tracer.services.attachments.session_deletion import sweep_deleted_sessions
+
+        # LiveAuthority honors the durable marker immediately. Queue a bounded
+        # erase batch now; the lifecycle sweep retries CH outages and the tail.
+        run_deletion_hook(sweep_deleted_sessions, project_id=project_id)
 
         return Response(status=drf_status.HTTP_204_NO_CONTENT)
 
