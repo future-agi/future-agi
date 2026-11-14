@@ -293,8 +293,9 @@ async def test_findings_on_another_input_are_kept_after_the_tool_error(
 async def test_unlocalizable_on_another_input_is_kept_after_the_tool_error(
     monkeypatch, no_ffmpeg
 ):
-    """The audio input failed on ffmpeg, but the agent gave up on the text
-    input for its own reason: that skip is the agent's answer, not ffmpeg."""
+    """The audio input failed on ffmpeg, but the agent opened the text input
+    and gave up on it for its own reason: that skip is the agent's answer,
+    not ffmpeg."""
     from contextlib import asynccontextmanager
     from types import SimpleNamespace
 
@@ -325,6 +326,8 @@ async def test_unlocalizable_on_another_input_is_kept_after_the_tool_error(
             tools = {t.name: t for t in cases[0].tools()}
             reply = await tools["inspect_input"].handler({"key": "output"})
             assert reply["is_error"] is True
+            opened = await tools["inspect_input"].handler({"key": "transcript"})
+            assert "is_error" not in opened
             accepted = await tools["submit_findings"].handler(
                 {
                     "selected_input_key": "transcript",
@@ -357,3 +360,71 @@ async def test_unlocalizable_on_another_input_is_kept_after_the_tool_error(
     assert result.analysis == {}
     assert result.selected_key == "transcript"
     assert result.skip_reason == "The criterion needs call metadata."
+
+
+async def test_unlocalizable_on_an_untried_audio_input_names_the_tool(
+    monkeypatch, no_ffmpeg
+):
+    """Two audio inputs (a call's two recordings): the first failed on ffmpeg,
+    and the agent gives up on the second without trying it. That one would
+    fail the same way, so the task names the missing tool."""
+    from contextlib import asynccontextmanager
+    from types import SimpleNamespace
+
+    claude_agent_sdk = pytest.importorskip("claude_agent_sdk")
+    from ee.evals.localizer.agentcc_transport import AgentCCTransport
+
+    cases = []
+    real_tools = LocalizationCase.tools
+
+    def capture_tools(self):
+        cases.append(self)
+        return real_tools(self)
+
+    class Client:
+        def __init__(self, options):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            pass
+
+        async def query(self, prompt):
+            pass
+
+        async def receive_response(self):
+            tools = {t.name: t for t in cases[0].tools()}
+            reply = await tools["inspect_input"].handler({"key": "output"})
+            assert reply["is_error"] is True
+            accepted = await tools["submit_findings"].handler(
+                {
+                    "selected_input_key": "customer_recording",
+                    "outcome": "unlocalizable",
+                    "explanation": "The audio could not be inspected.",
+                    "entries": [],
+                }
+            )
+            assert "is_error" not in accepted
+            yield SimpleNamespace(
+                is_error=False, subtype="success", terminal_reason="completed"
+            )
+
+    @asynccontextmanager
+    async def no_network(self):
+        yield self
+
+    monkeypatch.setattr(claude_agent_sdk, "ClaudeSDKClient", Client)
+    monkeypatch.setattr(claude_agent_sdk, "ResultMessage", SimpleNamespace)
+    monkeypatch.setattr(AgentCCTransport, "serve", no_network)
+    monkeypatch.setattr(LocalizationCase, "tools", capture_tools)
+
+    kwargs = _kwargs()
+    kwargs["input"] = {**kwargs["input"], "customer_recording": _wav()}
+    kwargs["input_type"] = {**kwargs["input_type"], "customer_recording": "audio"}
+    with pytest.raises(MediaToolUnavailable) as caught:
+        await ClaudeAgentLocalizer(**kwargs)._run(
+            GatewayConfig("http://unused.invalid", "fake", timeout=5)
+        )
+    assert caught.value is cases[0].media_tool_error
