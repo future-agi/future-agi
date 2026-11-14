@@ -75,15 +75,24 @@ func (r *StreamCheckResult) StoreBlock(rc *models.RequestContext) {
 		return
 	}
 	rc.Flags.GuardrailTriggered = true
+	rc.Flags.StreamGuardrailBlocked = true
+	name := "streaming"
 	before := len(rc.GuardrailResults)
 	if r.pipeline != nil {
 		storeGuardrailResults(rc, r.pipeline)
+		if len(r.pipeline.Triggered) > 0 {
+			name = r.pipeline.Triggered[0].Name
+		}
 	}
 	if len(rc.GuardrailResults) == before {
 		rc.GuardrailResults = append(rc.GuardrailResults, models.GuardrailResult{
-			Name: "streaming", Action: "block", Message: r.Message, Outcome: "blocked",
+			Name: name, Action: "block", Message: r.Message, Outcome: "blocked",
 		})
 	}
+	// As the non-streaming post stage does, so the audit event and the log
+	// name the check that blocked rather than an earlier logged one.
+	rc.Metadata["guardrail_name"] = name
+	rc.Metadata["guardrail_action"] = "blocked"
 }
 
 // ProcessChunk accumulates text from a stream chunk and runs guardrails

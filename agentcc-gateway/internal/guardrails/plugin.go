@@ -109,7 +109,11 @@ func (p *GuardrailPlugin) ProcessResponse(ctx context.Context, rc *models.Reques
 				rc.Metadata["guardrail_name"] = tg.Name
 				rc.Metadata["guardrail_action"] = "blocked"
 			}
-			storeGuardrailResults(rc, result)
+			// A stream the streaming checker stopped already stored these
+			// checks' results; this re-run on the captured text repeats them.
+			if !rc.Flags.StreamGuardrailBlocked {
+				storeGuardrailResults(rc, result)
+			}
 			if result.Unavailable {
 				return pipeline.ResultError(models.ErrGuardrailUnavailable(p.buildBlockMessage(result)))
 			}

@@ -142,9 +142,12 @@ type RequestFlags struct {
 	CacheHit           bool
 	GuardrailTriggered bool
 	GuardrailMonitored bool // monitor-only matches appear in logs, never in response headers
-	FallbackUsed       bool
-	Timeout            bool
-	ShortCircuited     bool
+	// StreamGuardrailBlocked marks a stream the streaming guardrail checker
+	// stopped; its results are already stored on the request.
+	StreamGuardrailBlocked bool
+	FallbackUsed           bool
+	Timeout                bool
+	ShortCircuited         bool
 	// NoSpend marks a call that cannot spend, such as a delete. Budget and
 	// credit limits do not refuse it: a key out of budget can still clean up.
 	NoSpend bool

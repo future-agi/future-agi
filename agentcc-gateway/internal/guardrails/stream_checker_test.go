@@ -410,4 +410,20 @@ func TestStreamChecker_StoreBlockRecordsTheBlockingCheck(t *testing.T) {
 	if got.Name != "blocker" || got.Action != "block" || got.Mode == "monitor" {
 		t.Fatalf("stream block result=%+v", got)
 	}
+	if rc.Metadata["guardrail_name"] != "blocker" || rc.Metadata["guardrail_action"] != "blocked" {
+		t.Errorf("metadata=%v, want the blocking check and action blocked", rc.Metadata)
+	}
+
+	// Finalizing the stream runs post-plugins on the captured text, which
+	// re-runs the same check: it must not store the block a second time.
+	content, _ := json.Marshal("This is more than ten characters of content")
+	rc.Response = &models.ChatCompletionResponse{Choices: []models.Choice{{Message: models.Message{Role: "assistant", Content: content}}}}
+	rc.Request = &models.ChatCompletionRequest{Model: "gpt-4o"}
+	plugin := NewPlugin(engine, registry, nil, nil, nil)
+	if res := plugin.ProcessResponse(context.Background(), rc); res.Error == nil {
+		t.Fatal("the post stage still reports the block")
+	}
+	if len(rc.GuardrailResults) != 2 {
+		t.Fatalf("results=%+v, the stream block was stored twice", rc.GuardrailResults)
+	}
 }
