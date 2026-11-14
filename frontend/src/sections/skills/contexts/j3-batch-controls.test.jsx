@@ -29,19 +29,27 @@ it('preselects followers with an update, shows the deliberate pin as a disabled 
   const pin = screen.getByRole('checkbox', { name: 'Select c v1 for update' });
   expect(pin).toBeDisabled();
   expect(pin.closest('[title]')).toHaveAttribute('title', 'Pinned to v7 on purpose. Change the pin in the context to update.');
-  expect(screen.getByText(/Prepare starts a draft for each selected context/)).toBeVisible();
+  expect(screen.getByText('Preparing starts a draft for each selected context. Production doesn\'t change.')).toBeVisible();
+  expect(screen.getByRole('heading', { name: 'Used by' })).toBeVisible();
+  expect(screen.getByRole('columnheader', { name: 'Locked at' })).toBeVisible();
+  expect(screen.queryByText(/Locked skill version/)).not.toBeInTheDocument();
+  expect(screen.queryByText(/not proof of delivery/)).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole('button', { name: 'Prepare draft updates for 2 contexts' }));
-  expect(await screen.findByText('a · 0 skills unchanged')).toBeVisible();
-  expect(screen.getByText('b · 0 skills unchanged')).toBeVisible();
-  expect(screen.getAllByText('Draft origin not reported. Accept below to apply policy v7 → v8. Production stays unchanged.')).toHaveLength(2);
+  expect(await screen.findByText('a: policy v7 → v8 · Production stays unchanged')).toBeVisible();
+  expect(screen.getByText('b: policy v7 → v8 · Production stays unchanged')).toBeVisible();
+  // Before the first Prepare the copy is future tense; once cards exist it is gone.
+  expect(screen.queryByText(/Preparing starts a draft/)).not.toBeInTheDocument();
+  expect(screen.queryByText(/will be updated|Draft started|Draft origin/)).not.toBeInTheDocument();
   expect(state.prepare).toHaveBeenCalledWith([{ contextId: 'a', name: 'a', version: 1 }, { contextId: 'b', name: 'b', version: 1 }]);
 });
 
-it('distinguishes a started draft from the accepted skill changes without implying a release', async () => {
+it('leads each prepared card with the change and keeps production visibly unchanged', async () => {
   state.prepare.mockResolvedValue([{ ...plan('support-agent'), reusedDraft: false, target: { contextId: 'support-agent', name: 'support-agent', version: 1, productionVersion: 1 } }]);
   render(<MemoryRouter><ContextFollowerUpdate skillId="child" targets={[{ contextId: 'support-agent', name: 'support-agent', version: 1, productionVersion: 1 }]} /></MemoryRouter>);
   fireEvent.click(screen.getByRole('button', { name: 'Prepare draft updates for 1 context' }));
-  expect(await screen.findByText('Draft started for support-agent. Accept below to apply policy v7 → v8. Production stays v1.')).toBeVisible();
+  expect(await screen.findByText('support-agent: policy v7 → v8 · Production stays v1')).toBeVisible();
+  expect(screen.queryByText(/Draft started/)).not.toBeInTheDocument();
+  expect(screen.queryByText(/One context draft will be updated/)).not.toBeInTheDocument();
   expect(screen.getByRole('button', { name: 'Apply selected updates to 1 context draft' })).toBeDisabled();
   expect(state.apply).not.toHaveBeenCalled();
 });
@@ -62,6 +70,45 @@ it('requires one explicit acknowledgement, applies only previewed plans, and ren
   expect(state.prepare.mock.calls[1][0]).toEqual([{ contextId: 'b', name: 'b', version: 1 }]);
   expect(screen.getByRole('link', { name: 'Review a draft' })).toBeVisible();
   expect(screen.getByRole('checkbox', { name: /Accept these linked-skill versions/ })).not.toBeChecked();
+});
+
+it('shows the pinned row with a disabled checkbox, a lock mark and Production as a name', () => {
+  state.dependents.data.results = [{ ...row('a', 'update_available'), labels: ['production'] }, row('c', 'pinned_as_intended')];
+  mount();
+  const pin = screen.getByRole('checkbox', { name: 'Select c v1 for update' });
+  expect(pin).toBeDisabled();
+  const rowOf = (name) => screen.getByRole('checkbox', { name }).closest('tr');
+  expect(rowOf('Select c v1 for update').querySelector('.component-iconify')).not.toBeNull();
+  expect(rowOf('Select a v1 for update').querySelector('.component-iconify')).toBeNull();
+  expect(within(rowOf('Select a v1 for update')).getByText('Production')).toBeVisible();
+  expect(within(rowOf('Select c v1 for update')).getByText('Pinned on purpose')).toBeVisible();
+  expect(within(rowOf('Select c v1 for update')).getByText('v7')).toBeVisible();
+});
+
+it('keeps Prepare off after every selected context is updated, and on again once the selection changes', async () => {
+  state.prepare.mockResolvedValue([plan('a'), plan('b')]);
+  state.apply.mockResolvedValue([{ target: { contextId: 'a', name: 'a', version: 1 }, status: 'applied', revision: 2 }, { target: { contextId: 'b', name: 'b', version: 1 }, status: 'applied', revision: 2 }]);
+  mount();
+  fireEvent.click(screen.getByRole('button', { name: 'Prepare draft updates for 2 contexts' }));
+  fireEvent.click(await screen.findByRole('checkbox', { name: /Accept these linked-skill versions/ }));
+  fireEvent.click(screen.getByRole('button', { name: 'Apply selected updates to 2 context drafts' }));
+  await screen.findByText('Draft updated for 2 contexts. Production unchanged.');
+  const prepare = screen.getByRole('button', { name: 'Prepare draft updates for 2 contexts' });
+  expect(prepare).toBeDisabled();
+  expect(prepare).toHaveAccessibleDescription('Already prepared for this selection.');
+  fireEvent.click(screen.getByRole('checkbox', { name: 'Select b v1 for update' }));
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Prepare draft updates for 1 context' })).toBeEnabled());
+});
+
+it('keeps Prepare available after a partial apply so the rejected context can be prepared again', async () => {
+  state.prepare.mockResolvedValue([plan('a'), plan('b')]);
+  state.apply.mockResolvedValue([{ target: { contextId: 'a', name: 'a', version: 1 }, status: 'applied', revision: 2 }, { target: { contextId: 'b', name: 'b', version: 1 }, status: 'error', code: 'stale_plan', httpStatus: 409 }]);
+  mount();
+  fireEvent.click(screen.getByRole('button', { name: 'Prepare draft updates for 2 contexts' }));
+  fireEvent.click(await screen.findByRole('checkbox', { name: /Accept these linked-skill versions/ }));
+  fireEvent.click(screen.getByRole('button', { name: 'Apply selected updates to 2 context drafts' }));
+  await screen.findByText(/upstream skill changed after this plan was previewed/);
+  expect(screen.getByRole('button', { name: 'Prepare draft updates for 2 contexts' })).toBeEnabled();
 });
 
 it('shows a different-origin draft as an exception and never selects an unavailable pin', async () => {

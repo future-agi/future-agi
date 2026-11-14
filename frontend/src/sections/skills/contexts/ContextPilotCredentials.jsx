@@ -15,8 +15,11 @@ import {
   TableHead,
   TableRow,
   TextField,
+  Tooltip,
   Typography,
+  useMediaQuery,
 } from "@mui/material";
+import { useTheme } from "@mui/material/styles";
 import StatusBadge from "src/components/status-badge";
 import Iconify from "src/components/iconify";
 import IdentityChip from "../components/IdentityChip";
@@ -72,8 +75,46 @@ const credentialStatus = (credential, now = Date.now()) => {
 
 const newKey = () => crypto.randomUUID();
 
-function CredentialRow({ credential, versionLabel, onRevoke }) {
+function CredentialActions({ credential, status, onRevoke }) {
   const [anchor, setAnchor] = useState(null);
+  return (
+    <>
+      <IconButton
+        size="small"
+        aria-label={`Actions for credential ${credential.id.slice(0, 8)}`}
+        onClick={(event) => setAnchor(event.currentTarget)}
+      >
+        <Iconify icon="solar:menu-dots-bold" width={16} />
+      </IconButton>
+      <Menu
+        anchorEl={anchor}
+        open={Boolean(anchor)}
+        onClose={() => setAnchor(null)}
+      >
+        <MenuItem
+          disabled={status === "revoked"}
+          onClick={() => {
+            setAnchor(null);
+            onRevoke(credential);
+          }}
+        >
+          <ListItemIcon>
+            <Iconify icon="solar:forbidden-circle-linear" width={16} />
+          </ListItemIcon>
+          Revoke
+        </MenuItem>
+      </Menu>
+    </>
+  );
+}
+CredentialActions.propTypes = {
+  credential: PropTypes.object.isRequired,
+  status: PropTypes.string.isRequired,
+  onRevoke: PropTypes.func.isRequired,
+};
+
+// A revoked key no longer expires in any useful sense, so it shows "Revoked" and nothing else.
+function CredentialRow({ credential, versionLabel, onRevoke }) {
   const status = credentialStatus(credential);
   return (
     <TableRow hover sx={{ height: ROW_HEIGHT.default }}>
@@ -84,39 +125,17 @@ function CredentialRow({ credential, versionLabel, onRevoke }) {
         <Typography variant="s1">{versionLabel(credential)}</Typography>
       </TableCell>
       <TableCell>
-        <Typography variant="s1">
-          <When value={credential.expiresAt} kind="expiry" />
-        </Typography>
+        {status !== "revoked" && (
+          <Typography variant="s1">
+            <When value={credential.expiresAt} kind="expiry" />
+          </Typography>
+        )}
       </TableCell>
       <TableCell>
         <StatusBadge status={status} />
       </TableCell>
       <TableCell align="right">
-        <IconButton
-          size="small"
-          aria-label={`Actions for credential ${credential.id.slice(0, 8)}`}
-          onClick={(event) => setAnchor(event.currentTarget)}
-        >
-          <Iconify icon="solar:menu-dots-bold" width={16} />
-        </IconButton>
-        <Menu
-          anchorEl={anchor}
-          open={Boolean(anchor)}
-          onClose={() => setAnchor(null)}
-        >
-          <MenuItem
-            disabled={status === "revoked"}
-            onClick={() => {
-              setAnchor(null);
-              onRevoke(credential);
-            }}
-          >
-            <ListItemIcon>
-              <Iconify icon="solar:forbidden-circle-linear" width={16} />
-            </ListItemIcon>
-            Revoke
-          </MenuItem>
-        </Menu>
+        <CredentialActions credential={credential} status={status} onRevoke={onRevoke} />
       </TableCell>
     </TableRow>
   );
@@ -127,6 +146,38 @@ CredentialRow.propTypes = {
   onRevoke: PropTypes.func.isRequired,
 };
 
+// Below sm the key list is stacked rows: "Read-only key · v2 · Expires in 26 min", the status and the menu on
+// one line. The key ID rides in the name's tooltip instead of a column.
+function CredentialStackRow({ credential, versionLabel, onRevoke }) {
+  const status = credentialStatus(credential);
+  return (
+    <Stack
+      role="listitem"
+      direction="row"
+      alignItems="center"
+      spacing={1}
+      sx={{ py: 1, borderBottom: 1, borderColor: "divider", minWidth: 0 }}
+    >
+      <Typography variant="s1" sx={{ flex: 1, minWidth: 0 }}>
+        <Tooltip title={`Key ${credential.id}`} describeChild>
+          <span tabIndex={0}>Read-only key</span>
+        </Tooltip>
+        {" · "}
+        {versionLabel(credential)}
+        {status !== "revoked" && (
+          <>
+            {" · "}
+            <When value={credential.expiresAt} kind="expiry" />
+          </>
+        )}
+      </Typography>
+      <StatusBadge status={status} />
+      <CredentialActions credential={credential} status={status} onRevoke={onRevoke} />
+    </Stack>
+  );
+}
+CredentialStackRow.propTypes = CredentialRow.propTypes;
+
 // Intent: an admin issues and later revokes the isolated credential a pilot
 // install uses, next to the exact version it is bound to.
 export default function ContextPilotCredentials({
@@ -134,7 +185,10 @@ export default function ContextPilotCredentials({
   snapshot,
   canIssue,
   onAvailabilityChange,
+  showHeading = true,
 }) {
+  const theme = useTheme();
+  const phone = useMediaQuery(theme.breakpoints.down("sm"));
   const [days, setDays] = useState(7);
   const [issueKey, setIssueKey] = useState(newKey);
   const [copyState, setCopyState] = useState("");
@@ -164,11 +218,11 @@ export default function ContextPilotCredentials({
   return (
     <>
       <Stack spacing={1.5}>
-        <Typography variant="m3">Create a read-only key for v{snapshot.version}</Typography>
-        <Typography variant="s3">
-          Read-only, bound to v{snapshot.version} of this context. It cannot
-          read drafts, other versions or moving labels. The secret is shown
-          once and is never placed in a command.
+        {showHeading && <Typography variant="m3">Create a read-only key for v{snapshot.version}</Typography>}
+        <Typography variant="s3" color="text.secondary">
+          Read-only, and bound to v{snapshot.version} of this context. It
+          can&apos;t read drafts, other versions or moving labels. The secret is
+          shown once and is never placed in a command.
         </Typography>
         <Stack direction={{ xs: "column", sm: "row" }} spacing={1} alignItems={{ xs: "flex-start", sm: "center" }}>
           <TextField
@@ -218,7 +272,7 @@ export default function ContextPilotCredentials({
               <Typography variant="s1">
                 Read-only key created for v{snapshot.version}.
                 {issued.secretAvailable
-                  ? " Copy it now into FI_CONTEXT_CREDENTIAL; it is not shown again."
+                  ? " Copy it now; it isn't shown again. The install steps below say where to set it."
                   : " This was a replay; the secret is no longer available. Issue a new credential."}
               </Typography>
               <IdentityChip value={issued.id} kind="id" label="Key" />
@@ -263,6 +317,17 @@ export default function ContextPilotCredentials({
               Retry
             </Button>
           </Alert>
+        ) : rows.length > 0 && phone ? (
+          <Stack role="list" aria-label="Pilot credentials for this context" sx={{ minWidth: 0 }}>
+            {rows.map((row) => (
+              <CredentialStackRow
+                key={row.id}
+                credential={row}
+                versionLabel={versionLabel}
+                onRevoke={setRevoking}
+              />
+            ))}
+          </Stack>
         ) : rows.length > 0 ? (
           <TableContainer><Table size="small" aria-label="Pilot credentials for this context">
             <TableHead>
@@ -331,4 +396,5 @@ ContextPilotCredentials.propTypes = {
   snapshot: PropTypes.object.isRequired,
   canIssue: PropTypes.bool,
   onAvailabilityChange: PropTypes.func,
+  showHeading: PropTypes.bool,
 };

@@ -7,6 +7,8 @@ import {
   waitFor,
 } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
+// The Use panel holds Copy back for viewers; these cases are the author's, so the role signal says "not a viewer".
+vi.mock("../../utils/access", () => ({ useSkillsAccess: () => ({ ready: true, sameScope: true, isViewer: false, canWrite: true, canAdmin: false }) }));
 import CaseImportDialog from "../../review/CaseImportDialog";
 import ContextCaptureDialog from "../../contexts/ContextCaptureDialog";
 import ContextUsePanel, {
@@ -294,19 +296,19 @@ describe("qualified exact install handoff", () => {
   });
   it('offers an explicit preview SDK path without inventing package or host qualification', () => {
     const { rerender } = render(<ContextUsePanel {...useProps} qualification={undefined} />);
-    expect(screen.getByText(/Preview installer — writes AGENTS.md/)).toBeVisible();
+    expect(screen.getByText(/Preview installer\. Writes AGENTS\.md/)).toBeVisible();
     expect(screen.getByRole('button', { name: 'Copy plan command' })).toBeEnabled();
     expect(screen.getByLabelText('Context install plan command')).toHaveTextContent('--allow-preview');
     expect(screen.getByLabelText('Context install plan command')).not.toHaveTextContent('pip install');
     rerender(<ContextUsePanel {...useProps} qualification={{ ...qualification, profiles: [{ ...qualification.profiles[0], state: 'preview' }] }} />);
-    expect(screen.getByText(/Preview installer — writes AGENTS.md/)).toBeVisible();
+    expect(screen.getByText(/Preview installer\. Writes AGENTS\.md/)).toBeVisible();
     expect(screen.getByLabelText('Context install plan command')).toHaveTextContent('--allow-preview');
   });
   it('keeps the reviewed apply step visible and copies its command separately', async () => {
     const write = vi.fn().mockResolvedValue(undefined);
     Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: write } });
     render(<ContextUsePanel {...useProps} />);
-    expect(screen.getByRole('heading', { name: '4. Apply after you review the plan' })).toBeVisible();
+    expect(screen.getByRole('heading', { name: '4. Install' })).toBeVisible();
     click('Copy apply command');
     await screen.findByText('Copied the apply command.');
     expect(write).toHaveBeenCalledWith("python -m fi.context apply --plan 'context-plan.json' --quiescent");

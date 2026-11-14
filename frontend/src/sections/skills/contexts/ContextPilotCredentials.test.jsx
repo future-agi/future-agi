@@ -86,6 +86,8 @@ describe("ContextPilotCredentials", () => {
     hooks.list = { data: { results: [credential(CONTEXT, CONTEXT, { revokedAt: "2026-11-10T01:00:00Z" })] }, isLoading: false, isError: false };
     render(<ContextPilotCredentials contextId={CONTEXT} snapshot={snapshot} canIssue />);
     expect(screen.getByText("Revoked")).toBeInTheDocument();
+    // A revoked key keeps no expiry text: it reads "Revoked" only.
+    expect(screen.queryByText(/^Expires in|^Expired/)).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Actions for credential 11111111" }));
     expect(screen.getByRole("menuitem", { name: "Revoke" })).toHaveAttribute("aria-disabled", "true");
   });
@@ -131,4 +133,29 @@ it('makes key creation primary only when no active key exists for this exact ver
   expect(screen.getByRole('columnheader', { name: 'Key' })).toBeVisible();
   expect(screen.getByRole('columnheader', { name: 'Version' })).toBeVisible();
   expect(screen.getByRole('button', { name: 'Copy full Key' })).toBeVisible();
+});
+
+it('names itself when it stands alone, and drops the duplicate heading inside the install steps', () => {
+  const view = render(<ContextPilotCredentials contextId={CONTEXT} snapshot={snapshot} canIssue />);
+  expect(screen.getByText('Create a read-only key for v1')).toBeVisible();
+  view.rerender(<ContextPilotCredentials contextId={CONTEXT} snapshot={snapshot} canIssue showHeading={false} />);
+  expect(screen.queryByText(/Create a read-only key for/)).not.toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Create credential' })).toBeVisible();
+});
+const phone = (matches) => vi.stubGlobal('matchMedia', (query) => ({ matches, media: query, addEventListener() {}, removeEventListener() {}, addListener() {}, removeListener() {} }));
+it('stacks keys below sm with the key ID in a tooltip and no expiry on a revoked key', () => {
+  phone(true);
+  try {
+    hooks.list.data.results = [credential(CONTEXT, CONTEXT, { expiresAt: '2099-01-01T00:00:00.000Z' }), credential(OTHER, CONTEXT, { revokedAt: '2026-11-10T01:00:00Z', grants: [{ kind: 'agent_context', resourceId: CONTEXT, labels: [], versionIds: [VERSION] }] })];
+    render(<ContextPilotCredentials contextId={CONTEXT} snapshot={snapshot} canIssue />);
+    expect(screen.queryByRole('table')).not.toBeInTheDocument();
+    const rows = screen.getAllByRole('listitem');
+    expect(rows).toHaveLength(2);
+    expect(rows[0]).toHaveTextContent(/Read-only key · v1 · /);
+    expect(rows[0]).not.toHaveTextContent('11111111');
+    expect(rows[1]).toHaveTextContent('Read-only key · v1');
+    expect(rows[1]).toHaveTextContent('Revoked');
+    expect(rows[1]).not.toHaveTextContent(/Expires in|Expired/);
+    expect(screen.getByRole('button', { name: 'Actions for credential 22222222' })).toBeVisible();
+  } finally { vi.unstubAllGlobals(); }
 });

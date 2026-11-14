@@ -4,6 +4,7 @@ import { Link as RouterLink } from 'react-router-dom';
 import { Alert, Button, Checkbox, FormControlLabel, Stack, Typography } from '@mui/material';
 import { useFollowerUpdates } from 'src/api/skills/context-follower-update';
 import OperationFeedback from '../components/OperationFeedback';
+import ActionReason, { reasonProps } from '../components/ActionReason';
 import { paths } from 'src/routes/paths';
 import TechnicalDetails from '../components/TechnicalDetails';
 import IdentityChip from '../components/IdentityChip';
@@ -20,7 +21,27 @@ const reasons = {
   plan_stale: 'The upstream skill changed after this plan was previewed.',
   unknown: 'The operation was not confirmed for this context.',
 };
+const mountName = (change) => change.mount?.replace(/^skills\//, '').replace(/\/$/, '');
 const explain = (item) => reasons[item.code] || (item.httpStatus === 409 ? 'The plan no longer matches the current upstream or draft. Preview again.' : `Not confirmed (${item.code}).`);
+
+// The card leads with the change itself, so the draft is never described as both started and about to change.
+function ReadyCard({ item }) {
+  const changed = item.plan.changes.filter((change) => change.change !== 'unchanged');
+  const unchanged = item.plan.changes.filter((change) => change.change === 'unchanged');
+  const summary = changed.map((change) => `${mountName(change)} ${change.before ? `v${change.before.version}` : 'not linked'} → ${change.after ? `v${change.after.version}` : 'removed'}`).join('; ') || 'the reviewed changes';
+  const notes = [unchanged.length > 0 && `${unchanged.length} other linked ${unchanged.length === 1 ? 'skill' : 'skills'} unchanged`, item.reusedDraft === true && `Your existing draft for ${item.target.name} is kept`].filter(Boolean);
+  return <>
+    <Typography variant="m3" sx={{ overflowWrap: 'anywhere' }}>{item.target.name}: {summary} · {item.target.productionVersion != null ? `Production stays v${item.target.productionVersion}` : 'Production stays unchanged'}</Typography>
+    {notes.length > 0 && <Typography variant="s3" color="text.secondary">{notes.join(' · ')}.</Typography>}
+    <TechnicalDetails title="Technical details">
+      <IdentityChip value={item.plan.candidateDigest} label="Candidate digest" />
+      <IdentityChip value={item.plan.fingerprint} label="Plan fingerprint" />
+      {unchanged.map((change) => <Typography key={change.skillId} variant="s3">{change.mount} · No change · v{change.after?.version ?? change.before?.version}</Typography>)}
+    </TechnicalDetails>
+    {item.plan.checks?.summary?.errors > 0 && <Alert severity="error">Blocking checks prevent this context from being updated. The others are not affected.</Alert>}
+  </>;
+}
+ReadyCard.propTypes = { item: PropTypes.object.isRequired };
 
 export default function ContextFollowerUpdate({ skillId, targets, sourceRelease, skillName, onApplied }) {
   const updates = useFollowerUpdates(skillId);
@@ -65,30 +86,28 @@ export default function ContextFollowerUpdate({ skillId, targets, sourceRelease,
     setPhase('applied');
   };
   const failed = [...items.filter((item) => item.status === 'error'), ...outcomes];
+  // After every selected context has been updated, preparing again would only restart the same drafts; it waits
+  // for a changed selection. A failed or partial apply keeps Prepare available.
+  const alreadyApplied = phase === 'applied' && failed.length === 0 && done.length > 0 && preparedKey === selectionKey;
+  const prepareLabel = targets.length ? `Prepare draft updates for ${targets.length} ${targets.length === 1 ? 'context' : 'contexts'}` : 'Prepare draft updates';
   const nameOf = (target) => `${target.name} v${target.version}`;
   return <Stack spacing={1.5} sx={{ pb: 8, minWidth: 0 }} aria-label="Update follower contexts" role="group">
     <Typography variant="m3" component="h3">Update contexts that follow production</Typography>
     <Typography variant="s1">Review the skill changes for each selected context, then accept them into drafts.</Typography>
     {!targets.length && <Typography variant="s3" color="text.secondary">Select at least one context to prepare updates.</Typography>}
     {selectionChanged && targets.length > 0 && <><Typography variant="s3" color="warning.main" role="status">Selection changed — prepare again.</Typography><Button variant="outlined" disabled sx={{ alignSelf: 'flex-start' }}>Apply selected updates</Button></>}
-    <Button color="primary" sx={{ alignSelf: 'flex-start' }} variant={ready.length || done.length ? 'outlined' : 'contained'} disabled={!targets.length || busy} onClick={() => preview(targets)}>{targets.length ? `Prepare draft updates for ${targets.length} ${targets.length === 1 ? 'context' : 'contexts'}` : 'Prepare draft updates'}</Button>
-    {phase === 'previewing' && <Typography variant="s3" role="status">Starting drafts and resolving exact versions…</Typography>}
+    {!items.length && !alreadyApplied && phase !== 'previewing' && <Typography variant="s3" color="text.secondary">Preparing starts a draft for each selected context. Production doesn&apos;t change.</Typography>}
+    <Stack direction="row" useFlexGap spacing={1.5} alignItems="center" sx={{ flexWrap: 'wrap' }}>
+      <Button color="primary" variant={ready.length || done.length ? 'outlined' : 'contained'} disabled={!targets.length || busy || alreadyApplied} {...reasonProps('follower-prepare-reason', alreadyApplied ? 'Already prepared for this selection.' : '')} onClick={() => preview(targets)}>{prepareLabel}</Button>
+      <ActionReason id="follower-prepare-reason" reason={alreadyApplied ? 'Already prepared for this selection.' : ''} sx={{ flexBasis: 'auto' }} />
+    </Stack>
+    {phase === 'previewing' && <Typography variant="s3" role="status">Starting drafts and checking versions…</Typography>}
     {items.map((item) => <Stack key={item.target.contextId} sx={{ border: 1, borderRadius: 1, borderColor: 'divider', p: 1.5, minWidth: 0 }} spacing={0.5}>
       {item.status !== 'ready' && <Typography variant="m3">{item.target.name}</Typography>}
-      {item.status === 'ready' ? <>
-        <Typography variant="m3" sx={{ overflowWrap: 'anywhere' }}>{item.target.name} · {item.plan.changes.filter((change) => change.change === 'unchanged').length} skills unchanged</Typography>
-        <Typography variant="s3" color="text.secondary">{item.reusedDraft === true ? `Existing draft kept for ${item.target.name}.` : item.reusedDraft === false ? `Draft started for ${item.target.name}.` : 'Draft origin not reported.'} Accept below to apply {item.plan.changes.filter((change) => change.change !== 'unchanged').map((change) => `${change.mount?.replace(/^skills\//, '').replace(/\/$/, '')} ${change.before ? `v${change.before.version}` : 'not linked'} → ${change.after ? `v${change.after.version}` : 'removed'}`).join('; ') || 'the reviewed changes'}. {item.target.productionVersion != null ? `Production stays v${item.target.productionVersion}.` : 'Production stays unchanged.'}</Typography>
-        <TechnicalDetails title="Technical details">
-          <IdentityChip value={item.plan.candidateDigest} label="Candidate digest" />
-          <IdentityChip value={item.plan.fingerprint} label="Plan fingerprint" />
-          {item.plan.changes.filter((change) => change.change === 'unchanged').map((change) => <Typography key={change.skillId} variant="s3">{change.mount} · No change · v{change.after?.version ?? change.before?.version}</Typography>)}
-        </TechnicalDetails>
-        {item.plan.checks?.summary?.errors > 0 && <Alert severity="error">Blocking checks prevent this context from being updated. The others are not affected.</Alert>}
-      </> : <Alert severity="warning">{explain(item)}</Alert>}
+      {item.status === 'ready' ? <ReadyCard item={item} /> : <Alert severity="warning">{explain(item)}</Alert>}
     </Stack>)}
     {phase === 'previewed' && failed.length > 0 && ready.length === 0 && <Typography variant="s1">No context can be updated from this preview.</Typography>}
     {(phase === 'previewed' || phase === 'applying') && ready.length > 0 && <>
-      <Typography variant="s3" color="text.secondary">{ready.length === 1 ? 'One context draft will be updated.' : `${ready.length} context drafts will be updated.`} Review the versions and update policies above before accepting these draft changes.</Typography>
       <FormControlLabel control={<Checkbox checked={accepted} disabled={busy} onChange={(event) => setAccepted(event.target.checked)} />} label={`Accept these linked-skill versions and update rules for ${ready.length} ${ready.length === 1 ? 'context' : 'contexts'}.`} />
       <Button color="primary" sx={{ alignSelf: 'flex-start' }} variant="contained" disabled={!accepted || busy} onClick={apply}>{`Apply selected updates to ${ready.length} context ${ready.length === 1 ? 'draft' : 'drafts'}`}</Button>
     </>}

@@ -83,6 +83,11 @@ it('distinguishes first run, filtered empty, out-of-range and failed reads', () 
   fireEvent.click(screen.getByRole('button', { name: 'Clear filters' }));
   expect(filter).toHaveBeenCalledWith({ page: 1, search: '', tag: '', label: '' });
   view.rerender(<ContextLibraryView {...library} query={{ ...library.query, data: { ...library.query.data, page: 3 } }} onFilterChange={filter} />);
+  expect(screen.getByText('This page is no longer available')).toBeVisible();
+  expect(screen.getByText('Your filters are kept.')).toBeVisible();
+  expect(screen.getByRole('button', { name: 'Go to first page' })).toHaveClass('MuiButton-outlined');
+  // The out-of-range state is not a filtered empty: it never offers Clear filters.
+  expect(screen.queryByRole('button', { name: 'Clear filters' })).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole('button', { name: 'Go to first page' }));
   expect(filter).toHaveBeenLastCalledWith({ page: 1 });
   view.rerender(<ContextLibraryView {...library} query={{ scopeKey, error: new Error('offline'), refetch: vi.fn() }} />);
@@ -163,4 +168,59 @@ it('omits release-only tabs before publishing and offers review from the empty s
   const panel = screen.getByRole('tabpanel');
   fireEvent.click(within(panel).getByRole('button', { name: 'Review saved draft' }));
   expect(review).toHaveBeenCalledOnce();
+});
+
+const contextRow = (extra = {}) => ({ id: 'ctx', name: 'support-agent', description: 'Customer support.', latestVersion: 2, labels: [{ name: 'production', version: 1 }], hasDraft: false, updatedAt: '2026-11-10T00:00:00Z', updatedBy: { name: 'Sam Rivera' }, ...extra });
+it('has no Draft column and shows a "Your draft" badge in the name cell only when a draft exists', () => {
+  render(<ContextLibraryView {...library} query={{ scopeKey, data: { count: 2, page: 1, pageSize: 25, results: [contextRow(), contextRow({ id: 'two', name: 'returns-desk', hasDraft: true })] } }} filters={{ page: 1, pageSize: 25 }} onFilterChange={vi.fn()} />);
+  expect(screen.getAllByRole('columnheader').map((cell) => cell.textContent)).toEqual(['Name', 'Production', 'Latest', 'Updated', '']);
+  expect(screen.getAllByText('Your draft')).toHaveLength(1);
+  const rows = screen.getAllByRole('row').slice(1);
+  expect(within(rows[0]).queryByText('Your draft')).not.toBeInTheDocument();
+  expect(within(rows[1]).getByText('Your draft').closest('td')).toBe(within(rows[1]).getByRole('button', { name: 'returns-desk' }).closest('td'));
+  expect(within(rows[0]).queryByText('—')).not.toBeInTheDocument();
+});
+it('shows each context as a stacked card below sm with one readable facts line', () => {
+  vi.stubGlobal('matchMedia', (query) => ({ matches: true, media: query, addEventListener() {}, removeEventListener() {}, addListener() {}, removeListener() {} }));
+  try {
+    render(<ContextLibraryView {...library} query={{ scopeKey, data: { count: 1, page: 1, pageSize: 25, results: [contextRow()] } }} filters={{ page: 1, pageSize: 25 }} onFilterChange={vi.fn()} />);
+    const row = screen.getAllByRole('row')[1];
+    expect(within(row).getByText('Production v1')).toBeVisible();
+    expect(within(row).getByText('Latest v2')).toBeVisible();
+    expect(within(row).queryByText('—')).not.toBeInTheDocument();
+  } finally { vi.unstubAllGlobals(); }
+});
+it('opens one full-width detail row per linked skill with a named expand button, instead of a disclosure in every row', () => {
+  const links = [{ skillId: 'one', selector: { label: 'production' } }, { skillId: 'two', selector: { version: 1 } }];
+  state.upstream = { one: { data: { name: 'refund-policy', labels: [{ name: 'production', version: 2, versionId: 'new' }] } } };
+  const session = { contextSpec: { links }, resolvedLock: { links: links.map((link) => ({ ...link, version: 1, versionId: `id-${link.skillId}-1111`, digest: `sha256:${'c'.repeat(64)}`, mount: `skills/${link.skillId}/` })) } };
+  render(<MemoryRouter><ContextLinksPanel scopeKey="scope" readOnly session={session} /></MemoryRouter>);
+  const table = screen.getByRole('table', { name: 'Linked skills' });
+  expect(screen.queryByRole('button', { name: 'Technical details' })).not.toBeInTheDocument();
+  expect(within(table).getAllByRole('columnheader').map((cell) => cell.textContent)).toEqual(['Skill', 'Update rule', 'Version in this context', 'Status', 'Action', 'Details']);
+  // The update action sits in its own column; the status cell holds only the badge.
+  const update = within(table).getByRole('link', { name: 'Review update' });
+  expect(update.closest('td').cellIndex).toBe(4);
+  expect(within(update.closest('tr')).getByText('v2 available').closest('td').cellIndex).toBe(3);
+  // Digests never show in the row; the version opens them on demand.
+  expect(screen.queryByText(/sha256|cccccc/)).not.toBeInTheDocument();
+  const expand = within(table).getByRole('button', { name: 'Show details for refund-policy' });
+  expect(expand).toHaveAttribute('aria-expanded', 'false');
+  fireEvent.click(expand);
+  expect(expand).toHaveAttribute('aria-expanded', 'true');
+  expect(screen.getByText('Content fingerprint')).toBeVisible();
+  expect(screen.getByText('Content fingerprint').closest('td')).toHaveAttribute('colspan', '6');
+  fireEvent.click(expand);
+  expect(screen.queryByText('Content fingerprint')).not.toBeInTheDocument();
+});
+it('says where editing starts when the viewed version is not the latest', () => {
+  const latest = { id: 'v2', number: 2, digest: `sha256:${'b'.repeat(64)}` };
+  const props = { ...detail, query: { ...detail.query, data: { ...detail.query.data, context: { ...detail.query.data.context, latestVersion: 2 }, latest } }, versions: [latest, version] };
+  render(<MemoryRouter><ContextDetailView {...props} /></MemoryRouter>);
+  expect(screen.getByRole('button', { name: 'Edit viewed v1' })).toBeVisible();
+  expect(screen.getByText("Editing starts from v1, the version you're viewing. Latest is v2.")).toBeVisible();
+});
+it('does not add the origin line when the viewed version is the latest', () => {
+  render(<MemoryRouter><ContextDetailView {...detail} /></MemoryRouter>);
+  expect(screen.queryByText(/Editing starts from/)).not.toBeInTheDocument();
 });
