@@ -67400,6 +67400,14 @@ export const OPENAPI_CONTRACT = Object.freeze({
             $ref: "#/definitions/HarnessCapabilitySelectionRow",
           },
         },
+        workers: {
+          description:
+            "One row per declared worker; empty when the contract declares none.",
+          type: "array",
+          items: {
+            $ref: "#/definitions/WorkerBoundary",
+          },
+        },
         counts: {
           $ref: "#/definitions/HarnessCapabilityCounts",
         },
@@ -103811,6 +103819,85 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    WorkerBoundary: {
+      description:
+        "One row per declared worker; empty when the contract declares none.",
+      required: [
+        "worker_id",
+        "name",
+        "binding",
+        "status",
+        "reason_code",
+        "reason",
+        "tools",
+        "bypassed",
+        "fix",
+        "checked_at",
+      ],
+      type: "object",
+      properties: {
+        worker_id: {
+          title: "Worker id",
+          type: "string",
+          minLength: 1,
+        },
+        name: {
+          title: "Name",
+          type: "string",
+          minLength: 1,
+        },
+        binding: {
+          title: "Binding",
+          type: "string",
+          enum: ["separate", "shared"],
+        },
+        status: {
+          title: "Status",
+          type: "string",
+          enum: [
+            "supported",
+            "partial",
+            "blocked",
+            "unavailable",
+            "untested",
+            "stale",
+          ],
+        },
+        reason_code: {
+          title: "Reason code",
+          type: "string",
+          minLength: 1,
+        },
+        reason: {
+          title: "Reason",
+          type: "string",
+          minLength: 1,
+        },
+        tools: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/WorkerTool",
+          },
+        },
+        bypassed: {
+          description:
+            "Recent calls where the worker reached the world without its own channel.",
+          type: "array",
+          items: {
+            $ref: "#/definitions/WorkerBypass",
+          },
+        },
+        fix: {
+          $ref: "#/definitions/HarnessCapabilityFix",
+        },
+        checked_at: {
+          title: "Checked at",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+      },
+    },
     HarnessCertifiedPairing: {
       required: [
         "bundle_id",
@@ -125159,6 +125246,54 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    WorkerBypass: {
+      description:
+        "Recent calls where the worker reached the world without its own channel.",
+      required: ["run_id", "call_execution_id", "tool"],
+      type: "object",
+      properties: {
+        run_id: {
+          title: "Run id",
+          type: "string",
+          minLength: 1,
+        },
+        call_execution_id: {
+          title: "Call execution id",
+          type: "string",
+          minLength: 1,
+        },
+        tool: {
+          title: "Tool",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+      },
+    },
+    WorkerTool: {
+      required: ["tool", "action", "boundary"],
+      type: "object",
+      properties: {
+        tool: {
+          title: "Tool",
+          type: "string",
+          minLength: 1,
+        },
+        action: {
+          title: "Action",
+          description:
+            "The sealed world action; null when the tool has no route.",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        boundary: {
+          title: "Boundary",
+          type: "string",
+          enum: ["allowed", "blocked", "not_enforced"],
+        },
+      },
+    },
     HarnessCompareInterval: {
       description: "Newcombe 95% interval of the difference.",
       required: ["low", "high"],
@@ -129979,6 +130114,14 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "array",
           items: {
             $ref: "#/definitions/HarnessCapabilityRow",
+          },
+        },
+        workers: {
+          description:
+            "One row per declared worker; empty when the contract declares none.",
+          type: "array",
+          items: {
+            $ref: "#/definitions/WorkerBoundary",
           },
         },
         counts: {

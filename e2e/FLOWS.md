@@ -2780,3 +2780,22 @@
 - the report reads validation failed with a plain reason naming issue_refund, answer blocked, and tool routing Blocked on the failed action
 - the run answers 409 pair_failed, not retryable, with the reason code and a reason naming issue_refund, carries no internal text, and creates no run job
 - recheck answers 202 with a new validating job, and the bundle is pending again
+
+### SIM-E2E-007 — run readiness shows each worker's tools as Allowed, Blocked or Not enforced, never Supported
+
+**Goal:** A developer testing a multi-agent app sees, per worker, which tools the test world holds it to, and is told to rebuild an environment sealed before worker limits
+
+**Spec:** `flows/simulate/readiness-worker-boundaries.spec.ts:18`
+
+**Tags:** —
+
+**User steps:**
+
+1. seed a certified Environment with two separately wired workers and the world door's worker limits sealed (e2e/lib/harness_environment_seed.py, workers=sealed)
+2. seed one with the same workers sealed before worker limits (workers=old_seal)
+3. read each pairing's readiness (GET capabilities)
+
+**Backend state verified:**
+
+- the sealed pairing reads both workers Partial held_at_world_cooperative, the lookup worker's lookup_order Allowed and issue_refund Blocked, and no worker Supported
+- the old seal reads both workers Blocked sealed_before_worker_limits with a rebuild fix and every tool Not enforced
