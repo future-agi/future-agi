@@ -109,9 +109,7 @@ def _readable_span(span: SimSpanDict, resource: Resource) -> ReadableSpan:
         # observation_type derives from the span-kind attr, not OTel SpanKind.
         kind=SpanKind.INTERNAL,
         status=Status(
-            StatusCode.ERROR
-            if span.get("status_code") == "ERROR"
-            else StatusCode.OK
+            StatusCode.ERROR if span.get("status_code") == "ERROR" else StatusCode.OK
         ),
         start_time=span.get("start_time"),
         end_time=span.get("end_time"),

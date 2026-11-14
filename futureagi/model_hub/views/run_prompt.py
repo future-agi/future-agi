@@ -1749,7 +1749,9 @@ class AddRunPromptColumnView(APIView):
                 return self._gm.bad_request(get_error_message("COLUMN_NAME_EXISTS"))
 
             model_name = config.get("model")
-            if model_name and not is_model_in_catalog(model_name, organization_id=organization.id):
+            if model_name and not is_model_in_catalog(
+                model_name, organization_id=organization.id
+            ):
                 return self._gm.bad_request(
                     f"Model '{model_name}' is no longer available. "
                     "Please select a supported model."
@@ -2026,7 +2028,9 @@ class EditRunPromptColumnView(APIView):
                 return self._gm.not_found("Column or dataset not found")
 
             model_name = config.get("model")
-            if model_name and not is_model_in_catalog(model_name, organization_id=dataset.organization_id):
+            if model_name and not is_model_in_catalog(
+                model_name, organization_id=dataset.organization_id
+            ):
                 return self._gm.bad_request(
                     f"Model '{model_name}' is no longer available. "
                     "Please select a supported model."
@@ -2411,7 +2415,7 @@ class LiteLLMModelListView(APIView):
         responses={
             200: ModelListResponseSerializer,
             **MODEL_HUB_ERROR_RESPONSES,
-        }
+        },
     )
     def get(self, request, *args, **kwargs):
         # Get the organization from the request
@@ -2746,8 +2750,10 @@ class RunPromptForRowsView(APIView):
                     return self._gm.not_found("Row not found")
 
             deprecated_models = [
-                rp.model for rp in run_prompters
-                if rp.model and not is_model_in_catalog(rp.model, organization_id=user_org_id)
+                rp.model
+                for rp in run_prompters
+                if rp.model
+                and not is_model_in_catalog(rp.model, organization_id=user_org_id)
             ]
             if deprecated_models:
                 names = ", ".join(f"'{m}'" for m in set(deprecated_models))

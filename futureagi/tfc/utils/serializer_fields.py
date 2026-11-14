@@ -60,9 +60,7 @@ class StringOrObjectField(serializers.JSONField):
         # caller) would persist ``model: []`` happily.
         if isinstance(data, (str, dict)):
             return data
-        raise serializers.ValidationError(
-            "Expected a string or a JSON object."
-        )
+        raise serializers.ValidationError("Expected a string or a JSON object.")
 
     class Meta:
         swagger_schema_fields = {
@@ -91,9 +89,7 @@ class StringOrArrayField(serializers.JSONField):
         # or ``content: {}`` happily.
         if isinstance(data, (str, list)):
             return data
-        raise serializers.ValidationError(
-            "Expected a string or a JSON array."
-        )
+        raise serializers.ValidationError("Expected a string or a JSON array.")
 
     class Meta:
         swagger_schema_fields = {

@@ -108,7 +108,9 @@ def _prepare_vertex_provider_config(provider_config):
             )
             or key.get("token_uri") != "https://oauth2.googleapis.com/token"
         ):
-            raise ValueError("The JSON must be a Google service-account key with a project ID.")
+            raise ValueError(
+                "The JSON must be a Google service-account key with a project ID."
+            )
         try:
             private_key = serialization.load_pem_private_key(
                 key["private_key"].encode(), password=None
@@ -136,6 +138,7 @@ def _prepare_vertex_provider_config(provider_config):
     config["api_format"] = "gemini"
     config.pop("api_key", None)
     return config
+
 
 # Public-facing URL shown to users in the dashboard (e.g. https://gateway.futureagi.com).
 # Falls back to AGENTCC_GATEWAY_URL if not set.
@@ -213,7 +216,9 @@ def _guardrail_check_key(checks, name):
     existing entry under either is reused instead of adding a duplicate.
     """
     aliases = [name, _RULE_TO_REGISTRY.get(name, name)]
-    aliases += [rule for rule, registry in _RULE_TO_REGISTRY.items() if registry == name]
+    aliases += [
+        rule for rule, registry in _RULE_TO_REGISTRY.items() if registry == name
+    ]
     return next((alias for alias in aliases if alias in checks), name)
 
 
@@ -232,9 +237,7 @@ def _guardrail_check_fields(guardrail_config):
 # User-facing health-check failure text. The raw GatewayClientError carries the
 # internal gateway URL and upstream response bodies; those go to the logs only.
 HEALTH_CHECK_UNREACHABLE = "The gateway could not be reached."
-HEALTH_CHECK_TIMED_OUT = (
-    "The gateway did not respond before the health-check timeout."
-)
+HEALTH_CHECK_TIMED_OUT = "The gateway did not respond before the health-check timeout."
 HEALTH_CHECK_UNEXPECTED = (
     "The health check could not be completed because of a server error."
 )
