@@ -766,8 +766,27 @@ class TrialNoticeSerializer(serializers.Serializer):
     mode = serializers.CharField(required=False, allow_null=True, allow_blank=True)
 
 
+class DuplicateCommitSerializer(serializers.Serializer):
+    """One of the agent's writes the world committed twice: the first's answer was lost, and the agent repeated it."""
+
+    action = serializers.CharField()
+    name = serializers.CharField(required=False, allow_blank=True)
+    arguments = serializers.JSONField(required=False, allow_null=True)
+    first_action_id = serializers.CharField(
+        required=False, allow_null=True, allow_blank=True
+    )
+    repeat_action_id = serializers.CharField(
+        required=False, allow_null=True, allow_blank=True
+    )
+
+
 class TrialStateSerializer(serializers.Serializer):
     state_changes = TrialStateChangeSerializer(many=True, required=False)
+    duplicates = DuplicateCommitSerializer(
+        many=True,
+        required=False,
+        help_text="Writes the world committed twice after the agent's answer was lost; the trial fails on them.",
+    )
     decisions = ActorDecisionSerializer(many=True, required=False)
     approvals = ApprovalLineSerializer(many=True, required=False)
     usage = ActorUsageSerializer(many=True, required=False)

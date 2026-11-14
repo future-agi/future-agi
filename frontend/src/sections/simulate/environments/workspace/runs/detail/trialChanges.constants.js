@@ -21,6 +21,8 @@ export const TRIAL_CHANGES_COPY = {
   // A commit the scenario's timeout hid: the world made it, the one who acted was told it timed out.
   answerLost: (actions) =>
     `Committed but answered with a timeout: ${actions.join(", ")}`,
+  // A write the world made twice after the agent's answer was lost: the trial fails on it.
+  committedTwice: (action) => `Committed twice: ${action}`,
   // Doing nothing can be the right result, so it is said, never left blank.
   noChange: "No change: it committed nothing",
   decisionsHeading: "What the actors chose",

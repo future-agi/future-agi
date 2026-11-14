@@ -484,4 +484,30 @@ describe("TrialChangesPanel", () => {
       screen.queryByText("Worth knowing about this trial"),
     ).not.toBeInTheDocument();
   });
+
+  it("shows a write the world committed twice in red", () => {
+    render(
+      <TrialChangesPanel
+        trialState={{
+          state_changes: [
+            {
+              who: "agent",
+              name: "the agent",
+              attempted: 2,
+              committed: 2,
+              refused: 0,
+              faulted: 0,
+              duplicate: 0,
+              committed_actions: ["issue_refund", "issue_refund"],
+              answer_lost_actions: ["issue_refund"],
+            },
+          ],
+          duplicates: [{ action: "orders.issue_refund", name: "issue_refund" }],
+        }}
+      />,
+    );
+    expect(
+      screen.getByText("Committed twice: issue_refund"),
+    ).toBeInTheDocument();
+  });
 });

@@ -646,6 +646,20 @@ def _actor_missing_reason(receipt: Mapping[str, Any]) -> str | None:
     )
 
 
+# Failures whose message the harness writes for the reader of a run, shown as it is.
+_READER_FAILURES = frozenset({"duplicate_commit"})
+
+
+def _reader_failure_reason(receipt: Mapping[str, Any]) -> str | None:
+    """A failure the harness explains in the reader's words (the agent repeated a write after its answer was lost and
+    the world committed it twice); None for any other failure."""
+    failure = receipt.get("failure")
+    if not isinstance(failure, Mapping) or failure.get("code") not in _READER_FAILURES:
+        return None
+    message = str(failure.get("message") or "").strip()
+    return message or None
+
+
 def build_call_rows(
     execution: TestExecution,
     calls: list[CallExecution] | None = None,
@@ -829,6 +843,7 @@ def build_call_rows(
                 # Why it was skipped, when the harness gave a reason; why an actor's call is inconclusive; a stopped call.
                 "outcome_reason": receipt.get("reason")
                 or _actor_missing_reason(receipt)
+                or _reader_failure_reason(receipt)
                 or (
                     _STOPPED
                     if call.status == CallExecution.CallStatus.CANCELLED

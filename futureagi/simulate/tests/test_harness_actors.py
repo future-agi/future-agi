@@ -1652,6 +1652,48 @@ def test_a_fault_that_did_not_take_effect_is_kept_on_the_trial_for_the_person(
     assert TrialStateSerializer(data=metadata[TRIAL_STATE_KEY]).is_valid()
 
 
+def test_a_write_committed_twice_is_kept_on_the_trial_and_named_in_the_call_s_reason(
+    organization, workspace
+):
+    from simulate.models import CallExecution
+    from simulate.services.hosted_harness_ingestion import TRIAL_STATE_KEY
+    from simulate.services.run_results_v3 import _reader_failure_reason
+    from simulate.tests.test_harness_call_actors import _ingest
+    from simulate.views.run_results_v3 import TrialStateSerializer
+
+    duplicate = {
+        "action": "orders.issue_refund",
+        "name": "issue_refund",
+        "arguments": {"order": 7},
+        "first_action_id": "a1",
+        "repeat_action_id": "a2",
+    }
+    metadata: dict = {}
+    _ingest(
+        organization,
+        workspace,
+        "duplicate-commit",
+        CallExecution.SimulationCallType.TEXT,
+        {"messages": [], "world_actors": {"duplicates": [duplicate, "x"]}},
+        metadata,
+    )
+    assert metadata[TRIAL_STATE_KEY] == {"duplicates": [duplicate]}
+    assert TrialStateSerializer(data=metadata[TRIAL_STATE_KEY]).is_valid()
+    message = "The agent repeated issue_refund after its answer was lost, and the world committed it twice."
+    assert (
+        _reader_failure_reason(
+            {"failure": {"code": "duplicate_commit", "message": message}}
+        )
+        == message
+    )
+    assert (
+        _reader_failure_reason(
+            {"failure": {"code": "check_broken", "message": "trace"}}
+        )
+        is None
+    )
+
+
 def test_an_actor_is_offered_and_given_only_the_environment_s_own_files_and_records(
     user, workspace, storage, auth_client
 ):

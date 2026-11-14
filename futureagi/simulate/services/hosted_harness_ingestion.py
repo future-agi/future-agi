@@ -1469,7 +1469,13 @@ def _ingest_hosted_transcript(
                 metadata.pop(WORLD_ACTIONS_KEY, None)
             trial: dict[str, Any] = {
                 key: _entries(world.get(key))
-                for key in ("state_changes", "decisions", "approvals", "usage")
+                for key in (
+                    "state_changes",
+                    "decisions",
+                    "approvals",
+                    "usage",
+                    "duplicates",
+                )
                 if isinstance(world, dict) and isinstance(world.get(key), list)
             }
             # The limits the trial ran with, so the record says which applied.

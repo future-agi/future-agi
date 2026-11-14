@@ -40,6 +40,7 @@ export default function TrialChangesPanel({ trialState }) {
   const decisions = all.filter((one) => one.play !== "history");
   const approvals = trialState?.approvals || [];
   const usage = trialState?.usage || [];
+  const duplicates = trialState?.duplicates || [];
   // How the trial ran that the reader must know, e.g. a scenario fault that did not take effect: said first.
   const notices = (trialState?.notices || []).filter((one) => one?.message);
   const noticeList = notices.length > 0 && (
@@ -90,6 +91,14 @@ export default function TrialChangesPanel({ trialState }) {
         <Typography sx={quiet}>{C.about}</Typography>
       </Box>
       {noticeList}
+      {duplicates.map((one, index) => (
+        <Typography
+          key={`duplicate-${index}`}
+          sx={{ typography: "s2", fontWeight: 600, color: "error.main" }}
+        >
+          {C.committedTwice(one.name || one.action)}
+        </Typography>
+      ))}
       {changes.map((one) => (
         <Box key={one.who}>
           <Typography sx={{ typography: "s2", fontWeight: 600 }}>
@@ -181,6 +190,9 @@ TrialChangesPanel.propTypes = {
     decisions: PropTypes.arrayOf(PropTypes.object),
     approvals: PropTypes.arrayOf(PropTypes.object),
     usage: PropTypes.arrayOf(PropTypes.object),
+    duplicates: PropTypes.arrayOf(
+      PropTypes.shape({ action: PropTypes.string, name: PropTypes.string }),
+    ),
     notices: PropTypes.arrayOf(
       PropTypes.shape({ code: PropTypes.string, message: PropTypes.string }),
     ),
