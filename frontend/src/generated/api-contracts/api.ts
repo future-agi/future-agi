@@ -20063,9 +20063,14 @@ export type falconAiFilesUploadCreateResponse403 = {
   status: 403;
 };
 
+export type falconAiFilesUploadCreateResponse503 = {
+  data: FalconErrorResponseApi;
+  status: 503;
+};
+
 export type falconAiFilesUploadCreateResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 201 | 400 | 403>;
+  status: Exclude<HTTPStatusCodes, 201 | 400 | 403 | 503>;
 };
 
 export type falconAiFilesUploadCreateResponseSuccess =
@@ -20075,6 +20080,7 @@ export type falconAiFilesUploadCreateResponseSuccess =
 export type falconAiFilesUploadCreateResponseError = (
   | falconAiFilesUploadCreateResponse400
   | falconAiFilesUploadCreateResponse403
+  | falconAiFilesUploadCreateResponse503
   | falconAiFilesUploadCreateResponseDefault
 ) & {
   headers: ApiResponseHeaders;
