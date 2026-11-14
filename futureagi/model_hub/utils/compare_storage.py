@@ -54,8 +54,7 @@ _MISSING_OBJECT_CODES = ("NoSuchKey", "NoSuchObject")
 
 
 def compare_bucket_name() -> str:
-    """The private bucket for comparison data. The upload bucket is refused:
-    anyone may read its objects by URL."""
+    """The private bucket for comparison data; the upload bucket is excluded."""
     bucket = str(getattr(settings, "COMPARE_BUCKET_NAME", "") or "").strip()
     upload_bucket = str(getattr(settings, "UPLOAD_BUCKET_NAME", "") or "").strip()
     if not bucket or bucket.lower() == upload_bucket.lower():

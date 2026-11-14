@@ -276,8 +276,7 @@ def _restrict_anonymous_access(policy: dict, bucket_name: str) -> dict | None:
 
 
 def _tighten_existing_bucket_policy(client: Minio, bucket_name: str) -> None:
-    """Buckets created by earlier releases let anyone list, overwrite and delete
-    every object. Cut that back to reads once per process; never fail the caller."""
+    """Normalize older bucket policies to read-only once per process; never fail the caller."""
     try:
         current = client.get_bucket_policy(bucket_name)
     except Exception as exc:  # NoSuchBucketPolicy, or a policy we may not read
@@ -387,9 +386,8 @@ def _remember_private_bucket(bucket_name: str, refusals_before: int) -> bool:
 
 
 def policy_allows_anyone(policy: str) -> bool:
-    """Whether a bucket policy may allow anyone at all to do anything. A policy
-    that cannot be read as a list of statements counts as allowing anyone, as
-    does an Allow for everyone but some principals (NotPrincipal)."""
+    """Whether a bucket policy has an unrestricted principal. Unreadable
+    statements and NotPrincipal grants are treated as unrestricted."""
     try:
         document = json.loads(policy)
     except (TypeError, ValueError):
@@ -412,9 +410,8 @@ def policy_allows_anyone(policy: str) -> bool:
 
 
 def ensure_private_bucket(client: Minio, bucket_name: str) -> None:
-    """Check that the bucket exists with no bucket policy that lets anyone in,
-    so only the backend's own credentials reach its objects. A bucket whose
-    policy may let anyone in, or whose policy these credentials may not read,
+    """Check that the bucket exists with a restricted bucket policy. A bucket
+    whose policy is unrestricted or cannot be inspected
     raises PrivateBucketRefused and is asked again on the next call. A bucket
     found private is checked again after PRIVATE_BUCKET_RECHECK_SECONDS. A
     check that another check refused while it ran raises PrivateBucketRefused
@@ -514,7 +511,7 @@ def _check_private_bucket(client: Minio, bucket_name: str) -> None:
     except Exception as exc:
         code = getattr(exc, "code", None)
         if code == "AccessDenied":
-            # Whether anyone else may read it cannot be told: do not use it.
+            # The policy cannot be inspected: do not use this bucket.
             logger.error("storage_private_bucket_policy_unreadable", bucket=bucket_name)
             raise PrivateBucketRefused(bucket_name) from exc
         if code not in _NO_POLICY_CODES:

@@ -96,7 +96,7 @@ def _compare_objects(storage, compare_id):
 
 
 @pytest.mark.django_db(transaction=True)
-def test_compare_pages_and_metadata_are_not_readable_by_url(
+def test_compare_pages_and_metadata_use_private_bucket(
     auth_client, organization, workspace, minio_storage, monkeypatch, tmp_path
 ):
     shared = [f"private-{index:02d}" for index in range(12)]
@@ -117,7 +117,7 @@ def test_compare_pages_and_metadata_are_not_readable_by_url(
         f"compare/{compare_id}/page_1.json",
         f"compare/{compare_id}/page_2.json",
     ]
-    # Nothing of the comparison is in the bucket whose objects anyone may read.
+    # Comparison objects stay in the dedicated bucket.
     assert minio_storage.upload_bucket not in found
     assert list(found) == [minio_storage.compare_bucket]
     for name in names:
@@ -150,7 +150,7 @@ def test_compare_pages_and_metadata_are_not_readable_by_url(
 
 
 @pytest.mark.django_db
-def test_a_public_or_upload_bucket_is_refused_for_comparison_data(
+def test_an_unrestricted_or_upload_bucket_is_refused_for_comparison_data(
     minio_storage, settings
 ):
     from model_hub.utils.compare_storage import write_compare_json
@@ -161,7 +161,7 @@ def test_a_public_or_upload_bucket_is_refused_for_comparison_data(
     with pytest.raises(PrivateBucketRefused):
         write_compare_json(compare_id, "metadata.json", {"status": "completed"})
 
-    # A bucket an operator made readable by URL is not used either.
+    # An unrestricted bucket is not used either.
     settings.COMPARE_BUCKET_NAME = minio_storage.compare_bucket
     ensure_bucket(minio_storage.client, minio_storage.compare_bucket)
     with pytest.raises(PrivateBucketRefused):
@@ -170,9 +170,8 @@ def test_a_public_or_upload_bucket_is_refused_for_comparison_data(
 
 
 class _CreatedFirstWithPolicy:
-    """Storage where another process creates the bucket, with a policy that
-    lets anyone read it, just before this one's creation, which still
-    answers success."""
+    """Storage where another process creates the bucket with an unrestricted
+    policy just before this creation, which still answers success."""
 
     def __init__(self, client):
         self._client = client
