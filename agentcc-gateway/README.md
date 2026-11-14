@@ -1064,6 +1064,7 @@ Combines with provider-key rotation (`POST /-/admin/providers/{id}/rotate` · `/
 | **Accurate tokenizer** | Token counting package at [`internal/tokenizer/`](./internal/tokenizer/) |
 | **Hot config reload** | `POST /-/reload` reloads providers / keys / routes |
 | **Cost tracking** | Uses the LiteLLM pricing DB (2 373 models loaded at startup); emits `agentcc_cost_microdollars_total` |
+| **Provider-reported cost** | For OpenRouter, Perplexity and xAI at their official hosts, records the cost the vendor states in its response (`usage.cost`, `usage.cost.total_cost`, `usage.cost_in_usd_ticks`) instead of the catalogue estimate, on chat, Responses, Messages and completions, streamed or not. Org custom pricing still wins; `ignore_provider_cost: true` on a provider turns it off. Each priced row's metadata says `cost_source`: `org_custom`, `provider_reported`, `catalogue` or `unpriced` (see `config.example.yaml`) |
 | **Per-tenant spend sync** | [`internal/tenant/spend_sync.go`](./internal/tenant/spend_sync.go) |
 | **Clustering** | [`internal/cluster/`](./internal/cluster/) |
 | **Edge mode** | [`internal/edge/`](./internal/edge/) |
