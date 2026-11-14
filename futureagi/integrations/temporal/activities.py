@@ -81,6 +81,9 @@ def sync_integration_connection(connection_id: str):
         ConnectionStatus.ACTIVE,
         ConnectionStatus.SYNCING,
         ConnectionStatus.BACKFILLING,
+        # The scheduler selects ACTIVE only; sync_now also dispatches ERROR
+        # connections so a user can retry after correcting a rejected export.
+        ConnectionStatus.ERROR,
     ):
         logger.info(
             "Connection not in syncable state",
@@ -497,8 +500,12 @@ def _sync_export_integration(connection):
 
     # Determine time window for log export.
     if not connection.last_synced_at:
-        # First sync: export logs from the last 24 hours (or backfill_from).
-        sync_from = connection.backfill_from or (now - timedelta(hours=24))
+        # Persist the first window before sending. Recomputing a rolling 24-hour
+        # window on retry would age unacknowledged rows out of the backfill.
+        if not connection.backfill_from:
+            connection.backfill_from = now - timedelta(hours=24)
+            connection.save(update_fields=["backfill_from", "updated_at"])
+        sync_from = connection.backfill_from
     else:
         # Incremental: overlap by 1 minute for safety (target deduplicates).
         sync_from = connection.last_synced_at - timedelta(minutes=1)
@@ -802,10 +809,10 @@ def _export_datadog(connection, credentials, service, sync_from, sync_to):
 
 def _get_export_queryset(connection, sync_from, sync_to):
     """Build the shared AgentccRequestLog queryset for export platforms."""
-    from agentcc.models import AgentccRequestLog
+    from agentcc.models import AgentccAPIKey, AgentccRequestLog
 
     qs = (
-        AgentccRequestLog.objects.filter(
+        AgentccRequestLog.no_workspace_objects.filter(
             organization=connection.organization,
             deleted=False,
         )
@@ -820,7 +827,17 @@ def _get_export_queryset(connection, sync_from, sync_to):
         .order_by("started_at", "created_at")
     )
     if connection.workspace_id:
-        qs = qs.filter(workspace=connection.workspace)
+        # Gateway ingestion stores org-scoped rows with a null workspace.
+        # Resolve those through the trusted key, never caller metadata or an
+        # org-wide null-workspace fallback that could export another workspace.
+        workspace_keys = AgentccAPIKey.no_workspace_objects.filter(
+            organization=connection.organization,
+            workspace_id=connection.workspace_id,
+        ).values("gateway_key_id")
+        qs = qs.filter(
+            Q(workspace_id=connection.workspace_id)
+            | Q(workspace__isnull=True, api_key_id__in=workspace_keys)
+        )
     return qs
 
 
