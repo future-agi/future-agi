@@ -2,6 +2,7 @@ package server
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -11,6 +12,8 @@ import (
 	"time"
 
 	"github.com/futureagi/agentcc-gateway/internal/config"
+	"github.com/futureagi/agentcc-gateway/internal/models"
+	"github.com/futureagi/agentcc-gateway/internal/pipeline"
 )
 
 // declareOpenAI names the bridge's providers ("openai" unless ids are given)
@@ -186,6 +189,61 @@ func TestGenAIChatOnlyParamsDroppedOverResponsesAreReported(t *testing.T) {
 				if !found {
 					t.Errorf("x-agentcc-translation-drops = %q, want it to name %s", w.Header().Get("x-agentcc-translation-drops"), want)
 				}
+			}
+		})
+	}
+}
+
+// testRequestPlugin changes or refuses a request before the provider call, as
+// a tool policy or guardrail would.
+type testRequestPlugin struct {
+	stripTools bool
+	refuse     bool
+}
+
+func (p testRequestPlugin) Name() string  { return "test-request-plugin" }
+func (p testRequestPlugin) Priority() int { return 10 }
+func (p testRequestPlugin) ProcessRequest(_ context.Context, rc *models.RequestContext) pipeline.PluginResult {
+	if p.refuse {
+		return pipeline.ResultError(models.ErrForbidden("refused by policy"))
+	}
+	if p.stripTools && rc.Request != nil {
+		rc.Request.Tools = nil
+	}
+	return pipeline.ResultContinue()
+}
+func (p testRequestPlugin) ProcessResponse(context.Context, *models.RequestContext) pipeline.PluginResult {
+	return pipeline.ResultContinue()
+}
+
+// The drops a translated route reports are the ones the request it finally
+// sends goes through: none from the Responses route when a policy stripped
+// its tools (it goes to chat completions with stop) or refused it.
+func TestGenAIReportsResponsesDropsOnlyWhenItTakesThatRoute(t *testing.T) {
+	body := `{"contents":[{"role":"user","parts":[{"text":"Weather in Paris?"}]}],
+		"tools":[{"functionDeclarations":[{"name":"get_weather","description":"Weather for a city","parameters":{"type":"object","properties":{"city":{"type":"string"}}}}]}],
+		"generationConfig":{"stopSequences":["END"]}}`
+	for _, tt := range []struct {
+		name   string
+		plugin testRequestPlugin
+		status int
+		chat   int
+	}{
+		{"tools stripped", testRequestPlugin{stripTools: true}, http.StatusOK, 1},
+		{"refused", testRequestPlugin{refuse: true}, http.StatusForbidden, 0},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			srv, upstream := newResponsesBridgeServerWith(t, bridgeServerOptions{plugins: []pipeline.Plugin{tt.plugin}})
+			req := httptest.NewRequest(http.MethodPost, "/v1beta/models/gpt-5.6-terra:generateContent", bytes.NewBufferString(body))
+			req.Header.Set("Content-Type", "application/json")
+			w := httptest.NewRecorder()
+			srv.httpServer.Handler.ServeHTTP(w, req)
+			if w.Code != tt.status {
+				t.Fatalf("status = %d, want %d: %s", w.Code, tt.status, w.Body.String())
+			}
+			checkHits(t, upstream, tt.chat, 0)
+			if got := w.Header().Get("x-agentcc-translation-drops"); strings.Contains(got, "stop") {
+				t.Errorf("x-agentcc-translation-drops = %q, but no Responses call dropped stop", got)
 			}
 		})
 	}

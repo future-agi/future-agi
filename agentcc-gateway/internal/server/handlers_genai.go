@@ -208,9 +208,6 @@ func (h *Handlers) GenAIHandler(w http.ResponseWriter, r *http.Request) {
 	canonicalReq.Model = upstreamModel
 	canonicalReq.Stream = action == "streamGenerateContent"
 	canonicalReq.TranslatedFrom = "google"
-	// What the provider's Responses route drops from this request (chat-only
-	// parameters, extra choices) is a translation drop too.
-	drops = append(drops, responsesRouteDrops(provider, canonicalReq)...)
 	if len(drops) > 0 {
 		joined := strings.Join(drops, ",")
 		rc.Metadata["translation_drops"] = joined
@@ -537,6 +534,7 @@ func (h *Handlers) handleGenAINonStreamViaCanonical(
 
 	var canonicalResp *models.ChatCompletionResponse
 	err := h.engine.Process(ctx, rc, func(ctx context.Context, rc *models.RequestContext) error {
+		noteResponsesRouteDrops(w, rc, provider, canonicalReq)
 		var callErr error
 		canonicalResp, callErr = provider.ChatCompletion(ctx, canonicalReq)
 		if callErr != nil {
@@ -634,6 +632,7 @@ func (h *Handlers) handleGenAIStreamViaCanonical(
 	var errCh <-chan error
 
 	if err := h.engine.Process(ctx, rc, func(ctx context.Context, rc *models.RequestContext) error {
+		noteResponsesRouteDrops(w, rc, provider, canonicalReq)
 		rawChunkCh, errCh = provider.StreamChatCompletion(ctx, canonicalReq)
 		return nil
 	}); err != nil {

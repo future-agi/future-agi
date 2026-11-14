@@ -190,9 +190,6 @@ func (h *Handlers) AnthropicMessages(w http.ResponseWriter, r *http.Request) {
 	canonicalReq.TranslatedFrom = "anthropic"
 	canonicalReq.Model = upstreamModel
 	canonicalReq.Stream = isStream
-	// What the provider's Responses route drops from this request (chat-only
-	// parameters, extra choices) is a translation drop too.
-	drops = append(drops, responsesRouteDrops(provider, canonicalReq)...)
 	if len(drops) > 0 {
 		joined := strings.Join(drops, ",")
 		rc.Metadata["translation_drops"] = joined
@@ -624,6 +621,7 @@ func (h *Handlers) handleAnthropicNonStreamViaCanonical(
 
 	var canonicalResp *models.ChatCompletionResponse
 	err := h.engine.Process(ctx, rc, func(ctx context.Context, rc *models.RequestContext) error {
+		noteResponsesRouteDrops(w, rc, provider, canonicalReq)
 		var callErr error
 		canonicalResp, callErr = provider.ChatCompletion(ctx, canonicalReq)
 		if callErr != nil {
@@ -749,6 +747,7 @@ func (h *Handlers) handleAnthropicStreamViaCanonical(
 		// Do not commit a 200/SSE response until the upstream has actually
 		// produced a chunk. Vertex can terminate before its first chunk (for
 		// example, an unexpected EOF), which must remain a retryable HTTP error.
+		noteResponsesRouteDrops(w, rc, provider, canonicalReq)
 		for attempt := 0; attempt < 2; attempt++ {
 			rawChunkCh, errCh = provider.StreamChatCompletion(streamCtx, canonicalReq)
 			if rawChunkCh == nil {
@@ -1118,6 +1117,25 @@ func setUsageResponse(rc *models.RequestContext, promptTokens, completionTokens 
 			TotalTokens:      promptTokens + completionTokens,
 		},
 	}
+}
+
+// noteResponsesRouteDrops adds what provider's Responses route drops from a
+// translated request to the drops the route reports (x-agentcc-translation-drops
+// and the log's translation_drops). It runs in the provider call, after the
+// pre-plugins, so a request a policy changed or refused reports only what its
+// final form loses.
+func noteResponsesRouteDrops(w http.ResponseWriter, rc *models.RequestContext, provider providers.Provider, req *models.ChatCompletionRequest) {
+	extra := responsesRouteDrops(provider, req)
+	if len(extra) == 0 {
+		return
+	}
+	drops := extra
+	if prev := rc.Metadata["translation_drops"]; prev != "" {
+		drops = append(strings.Split(prev, ","), extra...)
+	}
+	joined := strings.Join(drops, ",")
+	rc.Metadata["translation_drops"] = joined
+	w.Header().Set("x-agentcc-translation-drops", joined)
 }
 
 // responsesRouteDrops names what provider's Responses route will drop from a
