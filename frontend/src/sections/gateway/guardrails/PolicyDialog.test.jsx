@@ -21,6 +21,13 @@ const { create, update, keys, snackbar } = vi.hoisted(() => ({
       keyPrefix: "sk-old",
       status: "revoked",
     },
+    {
+      // GET /agentcc/api-keys/ returns prefixes that already end in "...".
+      id: "dashboard-three",
+      name: "Dotted",
+      keyPrefix: "sk-agentcc-4...",
+      status: "active",
+    },
   ],
 }));
 vi.mock("../keys/hooks/useApiKeys", () => ({
@@ -52,6 +59,9 @@ describe("PolicyDialog", () => {
       screen.getByText(/Old key \(sk-old…\)/).closest("li"),
     ).toHaveAttribute("aria-disabled", "true");
     expect(screen.queryByText(/DO-NOT-DISPLAY-SECRET/)).not.toBeInTheDocument();
+    expect(
+      screen.getByText("Dotted (sk-agentcc-4…) · active"),
+    ).toBeInTheDocument();
     await userEvent.click(screen.getByText(/Staging \(sk-test…\)/));
     await userEvent.click(screen.getByRole("button", { name: "Save policy" }));
     await waitFor(() =>

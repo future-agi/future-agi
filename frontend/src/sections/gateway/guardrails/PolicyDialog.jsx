@@ -40,6 +40,10 @@ const errorText = (value) => {
   return value || "";
 };
 
+// Key prefixes may already end in "..."; show one ellipsis.
+const keyPrefixLabel = (key) =>
+  (key.keyPrefix || key.key_prefix || "").replace(/\.+$/, "");
+
 // The check editor reads `confidence_threshold`; policy checks may store
 // either spelling.
 const thresholdForEditor = (check) =>
@@ -217,7 +221,7 @@ export default function PolicyDialog({ open, onClose, policy, gatewayId }) {
                 options={keys}
                 value={keys.filter((key) => form.applied_keys.includes(key.id))}
                 getOptionLabel={(key) =>
-                  `${key.name} (${key.keyPrefix || key.key_prefix || ""}…) · ${key.status}`
+                  `${key.name} (${keyPrefixLabel(key)}…) · ${key.status}`
                 }
                 getOptionDisabled={(key) => key.status !== "active"}
                 isOptionEqualToValue={(a, b) => a.id === b.id}
