@@ -249,3 +249,67 @@ def test_legacy_survives_missing_control(user, workspace, storage):
     assert views[REFUND_KEYS[0]]["legacy"] is True
     assert views[REFUND_KEYS[0]]["warning"] == "legacy_no_negative_control"
     assert views[REFUND_KEYS[1]]["state"] == "draft"
+
+
+def _with_rules_and_files(version, rules, digests):
+    documents = dict(version.documents or {})
+    documents["contract"] = {
+        **(documents.get("contract") or {}),
+        "hard_constraints": rules,
+    }
+    documents["file_digests"] = digests
+    HarnessEnvironmentVersion._base_manager.filter(id=version.id).update(
+        documents=documents
+    )
+    version.refresh_from_db()
+    return version
+
+
+def _cite(environment, sources_by_key):
+    for key, sources in sources_by_key.items():
+        member = HarnessSuiteMember.no_workspace_objects.get(
+            suite_version=environment.suite_version, scenario_key=key
+        )
+        member.content = {**(member.content or {}), "sources": sources}
+        member.save(update_fields=["content", "updated_at"])
+
+
+def test_source_changed_rule_and_file(user, workspace, storage):
+    environment = _environment(user, workspace, storage, "lc-sources")
+    _suite(environment, _ten())
+    parent = _with_rules_and_files(
+        environment.environment_version,
+        ["Refund at most once.", "Never refund after 14 days."],
+        {"knowledge/policy.md": "aaa", "knowledge/other.md": "bbb"},
+    )
+    child = _copy(parent, HarnessEnvironmentVersion, parent=parent)
+    # Rule 0 moved index only; rule 1 now reads 30 days; policy.md changed; other.md did not.
+    _with_rules_and_files(
+        child,
+        ["A new first rule.", "Refund at most once.", "Never refund after 30 days."],
+        {"knowledge/policy.md": "ccc", "knowledge/other.md": "bbb"},
+    )
+    _cite(
+        environment,
+        {
+            REFUND_KEYS[0]: [
+                {"kind": "rule", "ref": "rule:0", "quote": "at most once"}
+            ],
+            REFUND_KEYS[1]: [
+                {"kind": "rule", "ref": "rule:1", "quote": "Never refund after 14 days"}
+            ],
+            REFUND_KEYS[2]: [
+                {"kind": "file", "ref": "file:policy.md", "quote": "14 days"}
+            ],
+            REFUND_KEYS[3]: [
+                {"kind": "file", "ref": "file:other.md", "quote": "anything"}
+            ],
+        },
+    )
+
+    views = _views(environment, version=child)
+
+    flagged = {key for key, view in views.items() if view["source_changed"]}
+    assert flagged == {REFUND_KEYS[1], REFUND_KEYS[2]}
+    assert views[REFUND_KEYS[1]]["source_changed"] == ["rule:1"]
+    assert views[REFUND_KEYS[2]]["state"] == "draft"

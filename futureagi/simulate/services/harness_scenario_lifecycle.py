@@ -75,6 +75,8 @@ class LifecycleView(TypedDict):
     proof: ProofSummary | None
     sources: list[dict[str, Any]]
     source_changed: list[str]
+    # The environment version the cited sources changed in, when any did.
+    source_changed_version: int | None
 
 
 class _Safe(dict):
@@ -188,6 +190,7 @@ def _view(
         proof=_summary(entry),
         sources=[],
         source_changed=[],
+        source_changed_version=None,
     )
 
 
@@ -406,6 +409,8 @@ def scenario_lifecycle(
             view = _view("draft", reason="not_validated")
         view["sources"] = [dict(one) for one in resolved.get(key) or []]
         view["source_changed"] = changed.get(key, [])
+        if view["source_changed"]:
+            view["source_changed_version"] = environment_version.version_number
         bad = next((one for one in view["sources"] if not one.get("resolved")), None)
         if bad is not None and view["state"] in ("validated", "active"):
             view.update(
@@ -428,8 +433,94 @@ def in_draft_view() -> LifecycleView:
     return _view("draft", reason="in_draft")
 
 
+def _parent_documents(
+    environment_version: HarnessEnvironmentVersion,
+) -> Mapping[str, Any] | None:
+    if environment_version.parent_id is None:
+        return None
+    parent = (
+        HarnessEnvironmentVersion._base_manager.filter(id=environment_version.parent_id)
+        .values_list("documents", flat=True)
+        .first()
+    )
+    return parent if isinstance(parent, Mapping) else {}
+
+
+def _rules_of(documents: Mapping[str, Any]) -> list[str]:
+    contract = documents.get("contract")
+    rules = contract.get("hard_constraints") if isinstance(contract, Mapping) else None
+    return [str(one) for one in rules or []]
+
+
+def _matched_rule(quote: str, rules: list[str]) -> str | None:
+    from simulate.services.harness_scenario_sources import normalise
+
+    wanted = normalise(quote)
+    return next((rule for rule in rules if wanted and wanted in normalise(rule)), None)
+
+
+def _file_digest(path: str, digests: Mapping[str, Any]) -> str | None:
+    from simulate.services.harness_scenario_sources import bare_digest
+
+    for candidate in (path, f"knowledge/{path}"):
+        if candidate in digests:
+            return bare_digest(digests[candidate])
+    return None
+
+
+def changed_refs(
+    environment_version: HarnessEnvironmentVersion,
+    contents: Mapping[str, Any],
+    *,
+    parent_documents: Mapping[str, Any] | None = None,
+) -> dict[str, list[str]]:
+    """For each key, the rule and file refs it cites whose text changed from the parent version.
+
+    A rule changed when no rule of this version holds its quote, or the rule holding it now reads
+    differently; a rule that only moved index is not a change. A file changed when its digest
+    differs, or when either version did not record digests, which errs toward revalidating.
+    """
+    parent = (
+        parent_documents
+        if parent_documents is not None
+        else _parent_documents(environment_version)
+    )
+    if parent is None:
+        return {}
+    documents = environment_version.documents or {}
+    new_rules, old_rules = _rules_of(documents), _rules_of(parent)
+    new_files = documents.get("file_digests")
+    old_files = parent.get("file_digests")
+    changed: dict[str, list[str]] = {}
+    for key, content in contents.items():
+        refs: list[str] = []
+        for source in (content or {}).get("sources") or []:
+            if not isinstance(source, Mapping):
+                continue
+            ref = str(source.get("ref") or "")
+            if source.get("kind") == "rule":
+                quote = str(source.get("quote") or "")
+                now, before = (
+                    _matched_rule(quote, new_rules),
+                    _matched_rule(quote, old_rules),
+                )
+                if now is None or now != before:
+                    refs.append(ref)
+            elif source.get("kind") == "file":
+                path = ref.removeprefix("file:").strip().lstrip("/")
+                if not isinstance(new_files, Mapping) or not isinstance(
+                    old_files, Mapping
+                ):
+                    refs.append(ref)
+                elif _file_digest(path, new_files) != _file_digest(path, old_files):
+                    refs.append(ref)
+        if refs:
+            changed[key] = refs
+    return changed
+
+
 def source_changed(
     environment_version: HarnessEnvironmentVersion, contents: Mapping[str, Any]
 ) -> dict[str, list[str]]:
     """T21: for each key, the refs it cites that changed since the parent environment version."""
-    return {}
+    return changed_refs(environment_version, contents)

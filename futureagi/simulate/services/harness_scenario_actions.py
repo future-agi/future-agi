@@ -437,3 +437,113 @@ def not_active(environment: HostedHarnessJob) -> list[dict[str, Any]]:
         for key, view in views.items()
         if view["state"] not in ("active", "archived")
     ]
+
+
+SOURCE_CHANGES_MAX = 200
+TEXT_PREVIEW = 2000
+
+
+def _file_texts(version: Any, paths: set[str]) -> dict[str, str | None]:
+    from simulate.services.harness_versioning import archives
+
+    if not paths or not getattr(version, "archive_object_key", None):
+        return {}
+    wanted = paths | {f"knowledge/{path}" for path in paths}
+    try:
+        members = archives.stream_members(
+            version.archive_object_key, wanted, 1024 * 1024
+        )
+    except Exception:  # noqa: BLE001 - an unreadable archive shows no text
+        logger.warning(
+            "harness_source_changes_archive_unread", version_id=str(version.id)
+        )
+        return {}
+    texts: dict[str, str | None] = {}
+    for path in paths:
+        body = members.get(path) or members.get(f"knowledge/{path}")
+        if body is None:
+            continue
+        try:
+            texts[path] = body.decode("utf-8")[:TEXT_PREVIEW]
+        except UnicodeDecodeError:
+            texts[path] = None
+    return texts
+
+
+def source_changes(environment: HostedHarnessJob, version_id: Any) -> dict[str, Any]:
+    """What changed between an environment version and its parent in the rules and files the
+    default suite cites, each with the cases that cite it."""
+    from simulate.services.harness_scenario_lifecycle import (
+        _matched_rule,
+        _parent_documents,
+        _rules_of,
+        changed_refs,
+    )
+
+    version = HarnessEnvironmentVersion._base_manager.filter(
+        id=version_id, job_id=environment.id, deleted=False
+    ).first()
+    if version is None:
+        raise _error("version_not_found", "no such version in this environment", 404)
+    parent_documents = _parent_documents(version) or {}
+    parent = (
+        HarnessEnvironmentVersion._base_manager.filter(id=version.parent_id).first()
+        if version.parent_id
+        else None
+    )
+    contents = dict(
+        HarnessSuiteMember.no_workspace_objects.filter(
+            suite_version_id=environment.suite_version_id
+        ).values_list("scenario_key", "content")
+    )
+    changed = (
+        changed_refs(version, contents, parent_documents=parent_documents)
+        if parent
+        else {}
+    )
+    new_rules, old_rules = (
+        _rules_of(version.documents or {}),
+        _rules_of(parent_documents),
+    )
+    by_change: dict[tuple[str, str], dict[str, Any]] = {}
+    files: set[str] = set()
+    for key, refs in changed.items():
+        for source in (contents.get(key) or {}).get("sources") or []:
+            if (
+                not isinstance(source, Mapping)
+                or str(source.get("ref") or "") not in refs
+            ):
+                continue
+            kind, ref = str(source.get("kind")), str(source.get("ref") or "")
+            entry = by_change.setdefault(
+                (kind, ref),
+                {
+                    "kind": kind,
+                    "ref": ref,
+                    "before": None,
+                    "after": None,
+                    "cited_by": [],
+                },
+            )
+            if key not in entry["cited_by"]:
+                entry["cited_by"].append(key)
+            if kind == "rule":
+                quote = str(source.get("quote") or "")
+                entry["before"] = _matched_rule(quote, old_rules)
+                entry["after"] = _matched_rule(quote, new_rules)
+            else:
+                files.add(ref.removeprefix("file:").strip().lstrip("/"))
+    before_texts = _file_texts(parent, files) if parent else {}
+    after_texts = _file_texts(version, files)
+    for (kind, ref), entry in by_change.items():
+        if kind == "file":
+            path = ref.removeprefix("file:").strip().lstrip("/")
+            entry["before"] = before_texts.get(path)
+            entry["after"] = after_texts.get(path)
+    changes = sorted(by_change.values(), key=lambda one: (one["kind"], one["ref"]))
+    return {
+        "from_version": getattr(parent, "version_number", None),
+        "to_version": version.version_number,
+        "changes": changes[:SOURCE_CHANGES_MAX],
+        "truncated": len(changes) > SOURCE_CHANGES_MAX,
+    }

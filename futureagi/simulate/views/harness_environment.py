@@ -73,6 +73,7 @@ from simulate.serializers.harness_environment import (
     HarnessScenarioValidateSerializer,
     HarnessScenarioValidationQuerySerializer,
     HarnessScenarioValidationStatusSerializer,
+    HarnessSourceChangesSerializer,
     HarnessSuiteMemberSerializer,
     HarnessVerifyCreateResponseSerializer,
     HarnessVerifyCreateSerializer,
@@ -726,6 +727,25 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
         return Response(
             result, status=status.HTTP_202_ACCEPTED if running else status.HTTP_200_OK
         )
+
+    @validated_request(
+        responses={200: HarnessSourceChangesSerializer},
+        operation_id="simulate_api_harness-environments_source_changes",
+    )
+    @action(
+        detail=True,
+        methods=["get"],
+        url_path=r"versions/environment/(?P<version_id>[0-9a-fA-F-]{36})/source-changes",
+    )
+    def source_changes(self, request, pk=None, version_id=None):
+        """The rules and files this environment version changed that cases cite, with the cases citing each."""
+        from simulate.services.harness_scenario_actions import source_changes
+
+        version_reads.require_versioning()
+        job = self._job(request, pk)
+        if job is None:
+            return self._not_found()
+        return Response(source_changes(job, version_id))
 
     @validated_request(
         request_serializer=HarnessScenarioValidateSerializer,
