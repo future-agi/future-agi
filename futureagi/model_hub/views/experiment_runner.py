@@ -330,24 +330,19 @@ def check_and_update_experiment_dataset_status(experiment_dataset_id: uuid.UUID)
 
         current_status = experiment_dataset.status
 
-        # Get result columns (source_id = experiment_dataset.id)
-        result_column_ids = list(
+        # Current eval and reason columns are linked through the EDT relation;
+        # their source IDs can include an output-column ID before "-sourceid-".
+        # Keep source-based fallbacks for older columns without the relation.
+        all_column_ids = list(
             Column.objects.filter(
-                source_id=str(experiment_dataset_id), deleted=False
-            ).values_list("id", flat=True)
-        )
-
-        # CRITICAL FIX: Also get evaluation columns for this experiment_dataset
-        # Eval columns have source_id like "{experiment_dataset.id}-sourceid-{eval_metric_id}"
-        eval_column_ids = list(
-            Column.objects.filter(
-                source_id__startswith=f"{experiment_dataset_id}-sourceid-",
+                Q(experiments_dataset_column=experiment_dataset)
+                | Q(source_id=str(experiment_dataset_id))
+                | Q(source_id__startswith=f"{experiment_dataset_id}-sourceid-"),
                 deleted=False,
-            ).values_list("id", flat=True)
+            )
+            .values_list("id", flat=True)
+            .distinct()
         )
-
-        # Combine all column IDs (result columns + evaluation columns)
-        all_column_ids = list(set(result_column_ids + eval_column_ids))
 
         if not all_column_ids:
             # No columns means dataset is complete - use optimistic update
@@ -1311,7 +1306,11 @@ class ExperimentRunner:
 
             try:
                 messages = populate_placeholders(
-                    messages, self.dataset.id, row.id, column.id, model_name=model,
+                    messages,
+                    self.dataset.id,
+                    row.id,
+                    column.id,
+                    model_name=model,
                     template_format=model_config.get("template_format"),
                 )
                 if output_format != "audio":
@@ -1590,7 +1589,11 @@ def _process_row_impl(
 
         try:
             messages = populate_placeholders(
-                messages, dataset_id, row_id, column_id, model_name=model,
+                messages,
+                dataset_id,
+                row_id,
+                column_id,
+                model_name=model,
                 template_format=model_config.get("template_format"),
             )
             if output_format != "audio":
