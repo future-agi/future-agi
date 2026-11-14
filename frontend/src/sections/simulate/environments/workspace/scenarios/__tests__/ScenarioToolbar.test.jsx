@@ -9,6 +9,10 @@ const props = {
   onQueryChange: vi.fn(),
   view: "table",
   onViewChange: vi.fn(),
+  // The page always hands the toolbar its filter fields; the filter panel reads them.
+  filterFields: [],
+  filters: [],
+  onApplyFilters: vi.fn(),
 };
 
 describe("ScenarioToolbar — proof counts", () => {
@@ -26,7 +30,9 @@ describe("ScenarioToolbar — proof counts", () => {
 
   it("shows no counts line when the server sends none", () => {
     render(<ScenarioToolbar {...props} />);
-    expect(screen.queryByTestId("scenario-proof-counts")).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId("scenario-proof-counts"),
+    ).not.toBeInTheDocument();
   });
 });
 
@@ -35,7 +41,11 @@ describe("ScenarioToolbar — lifecycle filter", () => {
     const user = userEvent.setup();
     const onLifecycleFilterChange = vi.fn();
     render(
-      <ScenarioToolbar {...props} lifecycleFilter="" onLifecycleFilterChange={onLifecycleFilterChange} />,
+      <ScenarioToolbar
+        {...props}
+        lifecycleFilter=""
+        onLifecycleFilterChange={onLifecycleFilterChange}
+      />,
     );
     await user.click(screen.getByRole("combobox", { name: "Lifecycle" }));
     await user.click(screen.getByRole("option", { name: "Source changed" }));

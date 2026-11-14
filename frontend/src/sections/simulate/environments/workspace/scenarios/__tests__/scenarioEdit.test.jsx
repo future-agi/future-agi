@@ -7,10 +7,7 @@ import { render, screen, fireEvent, waitFor } from "src/utils/test-utils";
 configure({ asyncUtilTimeout: 5000 });
 afterAll(() => configure({ asyncUtilTimeout: 1000 }));
 
-import { MOCK_WORLD } from "src/api/simulate-environments/_fixtures/world";
-import { generatedPool } from "src/api/simulate-environments/_fixtures/scenarioPool";
 import ScenariosStep from "../ScenariosStep";
-import AddScenariosDrawer from "../AddScenariosDrawer";
 import {
   TEST_ENV,
   SERVER_ROWS,
@@ -20,25 +17,30 @@ import {
 
 // The list reads the server (fixtures) source.
 vi.mock("src/api/simulate-environments/scenarios", async () => {
-  const actual = await vi.importActual("src/api/simulate-environments/scenarios");
+  const actual = await vi.importActual(
+    "src/api/simulate-environments/scenarios",
+  );
   return {
     ...actual,
     listScenarios: vi.fn(),
     amendScenarios: vi.fn(),
     // Mock coverage too so CoverageMatrix does not fire a real (failing) request
     // that spams the axios auth-redirect interceptor on every render.
-    scenarioCoverage: vi.fn(async () => ({ axes: [], per_axis: [], rows: [], columns: [], cells: [] })),
+    scenarioCoverage: vi.fn(async () => ({
+      axes: [],
+      per_axis: [],
+      rows: [],
+      columns: [],
+      cells: [],
+    })),
   };
 });
-const { listScenarios, amendScenarios } = await import("src/api/simulate-environments/scenarios");
+const { listScenarios, amendScenarios } = await import(
+  "src/api/simulate-environments/scenarios"
+);
 const { queryScenarioFixture, resetScenarioFixture } = await import(
   "src/api/simulate-environments/_fixtures/scenariosFixtures"
 );
-
-const env = MOCK_WORLD;
-// The Add drawer offers scenarios not already on the environment; it is rendered
-// directly (the trigger is disabled), so it keeps its own pooled candidates.
-const pooled = generatedPool(env).slice(0, 12);
 
 // The first displayed row (default goal-grouped view) — the one the edit pencil
 // opens.
@@ -63,27 +65,15 @@ beforeEach(() => {
 });
 
 describe("ScenariosStep — add", () => {
-  it("disables the Add scenarios button (coming soon) — the drawer stays built", () => {
+  it("opens Add scenarios from the toolbar", async () => {
     renderStep();
-    expect(screen.getByRole("button", { name: "Add scenarios" })).toBeDisabled();
-  });
-
-  // The drawer is kept fully wired even though the Add button is disabled for
-  // now, so it is exercised directly here rather than through the trigger.
-  it("the add drawer appends the chosen scenarios through onAdd", () => {
-    const onAdd = vi.fn();
-    render(
-      <AddScenariosDrawer open env={env} selected={pooled} onAdd={onAdd} onClose={() => {}} />,
-    );
-
-    expect(screen.getByText(/could not know to write/i)).toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole("checkbox", { name: /select all/i }));
-    fireEvent.click(screen.getByRole("button", { name: /^Add \d+ scenarios?$/ }));
-
-    expect(onAdd).toHaveBeenCalledTimes(1);
-    const added = onAdd.mock.calls[0][0];
-    expect(added.length).toBeGreaterThan(0);
+    await screen.findByRole("table");
+    const add = screen.getByRole("button", { name: "Add scenarios" });
+    expect(add).toBeEnabled();
+    fireEvent.click(add);
+    expect(
+      await screen.findByTestId("add-scenarios-drawer"),
+    ).toBeInTheDocument();
   });
 });
 
@@ -99,11 +89,15 @@ describe("ScenariosStep — edit", () => {
     renderStep();
     await screen.findByRole("table");
     const row = firstRow();
-    fireEvent.click(screen.getAllByRole("button", { name: "Edit scenario" })[0]);
+    fireEvent.click(
+      screen.getAllByRole("button", { name: "Edit scenario" })[0],
+    );
 
     // Name is proved, not described — it prefills but is read-only (not in the
     // server's editable_fields).
-    const nameField = screen.getAllByLabelText("Name", { selector: "input" })[0];
+    const nameField = screen.getAllByLabelText("Name", {
+      selector: "input",
+    })[0];
     expect(nameField).toHaveValue(row.name);
     expect(nameField).toBeDisabled();
 
@@ -115,7 +109,9 @@ describe("ScenariosStep — edit", () => {
     const saveBtn = screen.getByRole("button", { name: "Save scenario" });
     expect(saveBtn).toBeDisabled();
 
-    fireEvent.change(passesWhen, { target: { value: "Passes when it books the ride." } });
+    fireEvent.change(passesWhen, {
+      target: { value: "Passes when it books the ride." },
+    });
     expect(saveBtn).toBeEnabled();
     fireEvent.click(saveBtn);
 
@@ -124,7 +120,12 @@ describe("ScenariosStep — edit", () => {
     expect(amendScenarios).toHaveBeenCalledWith("job-test", {
       rework: false,
       changes: [
-        { op: "set_field", scenario: row.name, field: "tests", value: "Passes when it books the ride." },
+        {
+          op: "set_field",
+          scenario: row.name,
+          field: "tests",
+          value: "Passes when it books the ride.",
+        },
       ],
     });
   });
@@ -139,18 +140,29 @@ describe("ScenarioEditor persona choices", () => {
         open
         onClose={() => {}}
         onSave={onSave}
-        row={{ id: "r1", name: "s1", _raw: { persona: { accent: "Scottish", languages: ["English"] } } }}
+        row={{
+          id: "r1",
+          name: "s1",
+          _raw: { persona: { accent: "Scottish", languages: ["English"] } },
+        }}
         scenarioEditing={{
           editable_fields: ["tests"],
           persona_fields: ["accent", "languages"],
-          persona_choices: { accent: ["American", "Indian"], languages: ["English", "Hindi"] },
+          persona_choices: {
+            accent: ["American", "Indian"],
+            languages: ["English", "Hindi"],
+          },
           rework_fields: ["accent", "languages"],
         }}
       />,
     );
     fireEvent.mouseDown(screen.getByLabelText("Accent"));
-    expect(await screen.findByRole("option", { name: "Indian" })).toBeInTheDocument();
-    expect(screen.getByRole("option", { name: "Scottish" })).toBeInTheDocument();
+    expect(
+      await screen.findByRole("option", { name: "Indian" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("option", { name: "Scottish" }),
+    ).toBeInTheDocument();
     fireEvent.click(screen.getByRole("option", { name: "Indian" }));
     fireEvent.click(screen.getByRole("button", { name: /save/i }));
     expect(onSave.mock.calls[0][0].changes).toEqual([

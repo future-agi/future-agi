@@ -43,7 +43,11 @@ vi.mock("src/api/simulate-environments/versions", async () => {
 
 const validateScenarios = vi.fn();
 vi.mock("src/api/harness/scenarios", () => ({
-  useValidateScenarios: () => ({ mutate: validateScenarios, isPending: false, isSuccess: false }),
+  useValidateScenarios: () => ({
+    mutate: validateScenarios,
+    isPending: false,
+    isSuccess: false,
+  }),
 }));
 
 const { default: RunDialog } = await import("../RunDialog");
@@ -782,12 +786,12 @@ describe("RunDialog", () => {
   });
 });
 
-
 describe("RunDialog lifecycle refusals", () => {
   beforeEach(() => {
     state.versions = VERSIONS;
     state.plans = {};
-    state.members = {};
+    // The default suite holds the picked cases, so Try again can re-submit them.
+    state.members = { s3: members("k1", "k2", "k3"), s2: members("k1", "k9") };
     state.drafts = null;
     validateScenarios.mockReset();
     vi.useFakeTimers({ shouldAdvanceTime: true });
@@ -796,7 +800,12 @@ describe("RunDialog lifecycle refusals", () => {
   it("disables Try again for retry_after seconds, then re-submits the same picks", async () => {
     const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
     const { onSubmit } = renderDialog({
-      error: { statusCode: 409, error: "pair_validating", message: "being validated", retry_after: 3 },
+      error: {
+        statusCode: 409,
+        error: "pair_validating",
+        message: "being validated",
+        retry_after: 3,
+      },
     });
     const again = screen.getByTestId("run-try-again");
     expect(again).toBeDisabled();
@@ -813,7 +822,12 @@ describe("RunDialog lifecycle refusals", () => {
   it("offers Validate scenarios when every case waits for validation", async () => {
     const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
     renderDialog({
-      error: { statusCode: 409, error: "all_cases_blocked", message: "held", action: "validate_scenarios" },
+      error: {
+        statusCode: 409,
+        error: "all_cases_blocked",
+        message: "held",
+        action: "validate_scenarios",
+      },
     });
     await user.click(screen.getByTestId("run-validate-scenarios"));
     expect(validateScenarios).toHaveBeenCalledWith({});
@@ -821,7 +835,9 @@ describe("RunDialog lifecycle refusals", () => {
   });
 
   it("offers no button for a block of another kind", () => {
-    renderDialog({ error: { statusCode: 409, error: "all_cases_blocked", message: "held" } });
+    renderDialog({
+      error: { statusCode: 409, error: "all_cases_blocked", message: "held" },
+    });
     expect(screen.queryByTestId("run-validate-scenarios")).toBeNull();
     vi.useRealTimers();
   });

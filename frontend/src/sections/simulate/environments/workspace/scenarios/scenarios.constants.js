@@ -25,7 +25,6 @@ export const SCENARIOS_COPY = {
   searchPlaceholder: "Search scenarios by name, task or use case…",
   addLabel: "Add scenarios",
   addShortLabel: "Add",
-  addComingSoon: "Coming soon",
   editLabel: "Edit scenario",
   openRow: (name) => `Open ${name}`,
   removeLabel: "Remove from this environment",
@@ -44,15 +43,19 @@ export const SCENARIOS_COPY = {
   emptyBody:
     "Scenarios are normally derived from your agent when the environment is built.",
   critical: "Critical: a failure here is a release blocker",
-  proofCounts: ({ proved = 0, kept_as_written: kept = 0, not_proved: notProved = 0 }) =>
-    `${proved} proved · ${kept} kept as written · ${notProved} not proved`,
+  proofCounts: ({
+    proved = 0,
+    kept_as_written: kept = 0,
+    not_proved: notProved = 0,
+  }) => `${proved} proved · ${kept} kept as written · ${notProved} not proved`,
   lifecycle: {
     draft: "Draft",
     validated: "Validated",
     active: "Active",
     archived: "Archived",
   },
-  legacyTooltip: "Validated before checks were recorded. Validate again to confirm.",
+  legacyTooltip:
+    "Validated before checks were recorded. Validate again to confirm.",
   keptAsWritten: "Kept as written",
   lifecycleFilterLabel: "Lifecycle",
   lifecycleFilters: [
@@ -66,7 +69,8 @@ export const SCENARIOS_COPY = {
   ],
   validate: "Validate scenarios",
   validating: "Validating… (up to 45 min)",
-  validationNoResults: "Validation finished but recorded no results; try again.",
+  validationNoResults:
+    "Validation finished but recorded no results; try again.",
   archive: "Archive",
   restore: "Restore",
   archiveTitle: "Archive this scenario?",
@@ -82,7 +86,13 @@ export const SCENARIOS_COPY = {
   controlsTitle: "Negative controls",
   revisionsTitle: "Revisions",
   controlResult: (control) =>
-    control.assumed?.length ? "Not run" : control.failed === false ? "Passed" : control.failed ? "Failed" : "Not run",
+    control.assumed?.length
+      ? "Not run"
+      : control.failed === false
+        ? "Passed"
+        : control.failed
+          ? "Failed"
+          : "Not run",
   sourceChanged: (version) => `Source changed in environment v${version}`,
   addMissingCases: "Add missing cases",
   uncoveredTitle: "Planned levels no scenario covers yet",
@@ -95,7 +105,11 @@ export const LIFECYCLE_ROLES = {
   active: "success",
   archived: "neutral",
 };
-export const LANE_WARNINGS = ["solution_assumed", "proof_deferred", "control_not_run"];
+export const LANE_WARNINGS = [
+  "solution_assumed",
+  "proof_deferred",
+  "control_not_run",
+];
 
 // A row the unsaved changes add or change; an added one can't be picked for a
 // run yet.
@@ -154,15 +168,24 @@ export const deriveUseCase = (row) => {
   }
   if (id.includes("-rule-")) {
     const short = title.split(/[.:]/)[0].slice(0, 42).trim();
-    return { id: `rule:${short.toLowerCase()}`, label: short || "Rule enforcement" };
+    return {
+      id: `rule:${short.toLowerCase()}`,
+      label: short || "Rule enforcement",
+    };
   }
   if (id.includes("-trap-")) {
     const table = title.split(":")[0].trim();
-    if (table) return { id: `trap:${table.toLowerCase()}`, label: `${humanize(table)} data` };
+    if (table)
+      return {
+        id: `trap:${table.toLowerCase()}`,
+        label: `${humanize(table)} data`,
+      };
     return { id: "trap:other", label: "Data traps" };
   }
-  if (id.includes("-adversarial-")) return { id: `adv:${title.toLowerCase()}`, label: title || "Adversarial" };
-  if (id.includes("-edge-")) return { id: `edge:${title.toLowerCase()}`, label: title || "Edge case" };
+  if (id.includes("-adversarial-"))
+    return { id: `adv:${title.toLowerCase()}`, label: title || "Adversarial" };
+  if (id.includes("-edge-"))
+    return { id: `edge:${title.toLowerCase()}`, label: title || "Edge case" };
   return { id: "other", label: "Other" };
 };
 
@@ -180,7 +203,10 @@ export const groupKeyOf = (row, mode, env) => {
     const subs = subTasksFor(row, env);
     const first = subs?.[0]?.label;
     if (!first) return { id: "subgoal:none", label: "No sub-goals" };
-    const slug = first.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+    const slug = first
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "");
     return { id: `subgoal:${slug}`, label: first };
   }
   return deriveUseCase(row);
@@ -190,7 +216,8 @@ export const groupScenarios = (rows, mode = "goal", env) => {
   const buckets = new Map();
   (rows || []).forEach((r) => {
     const key = groupKeyOf(r, mode, env);
-    if (!buckets.has(key.id)) buckets.set(key.id, { id: key.id, label: key.label, rows: [] });
+    if (!buckets.has(key.id))
+      buckets.set(key.id, { id: key.id, label: key.label, rows: [] });
     buckets.get(key.id).rows.push(r);
   });
   // Bigger groups first — the tail of one-off adversarial/edge titles shouldn't

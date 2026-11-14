@@ -45,11 +45,9 @@ import PagedScenarioViews from "./PagedScenarioViews";
 const LOCK_TOOLTIP = "Fork this environment to edit.";
 
 // The add CTA. Rendered in two places (the toolbar when the list is populated, and
-// the empty placeholder), so it lives here as one node. Disabled with a
-// coming-soon tooltip for now — the drawer it opens is built and wired, just
-// not surfaced yet. On a locked template the same disabled button reads the
-// fork tooltip instead. Wrapped in a span so the tooltip still fires over the
-// disabled button.
+// the empty placeholder), so it lives here as one node. It opens Add scenarios; on
+// a locked template it is disabled with the fork tooltip, wrapped in a span so the
+// tooltip still fires over the disabled button.
 // `short` is the toolbar form: the list it sits on says what gets added, so the
 // visible label drops the noun and the accessible name keeps it.
 function AddButton({
@@ -59,18 +57,13 @@ function AddButton({
   short = false,
 }) {
   return (
-    <CustomTooltip
-      show
-      arrow
-      size="small"
-      title={locked ? LOCK_TOOLTIP : SCENARIOS_COPY.addComingSoon}
-    >
+    <CustomTooltip show={locked} arrow size="small" title={LOCK_TOOLTIP}>
       <Box component="span" sx={{ display: "inline-flex", flexShrink: 0 }}>
         <Button
           variant={contained ? "contained" : "outlined"}
           color="primary"
           size="small"
-          disabled
+          disabled={locked}
           onClick={onClick}
           aria-label={SCENARIOS_COPY.addLabel}
           startIcon={<Iconify icon="solar:add-circle-linear" width={16} />}
@@ -110,7 +103,6 @@ RoutePlaceholder.propTypes = { onAdd: PropTypes.func, locked: PropTypes.bool };
 export default function ScenariosStep({
   env,
   envState,
-  patch,
   locked = false,
   onStartRun,
   canRun = false,
@@ -192,7 +184,9 @@ export default function ScenariosStep({
   const pageData = useScenarioPage({
     jobId: env?.id,
     search: debouncedQuery,
-    filters: lifecycleFilter ? { ...filters, lifecycle: lifecycleFilter } : filters,
+    filters: lifecycleFilter
+      ? { ...filters, lifecycle: lifecycleFilter }
+      : filters,
     groupBy,
     page,
     pageSize,
@@ -448,14 +442,6 @@ export default function ScenariosStep({
           enqueueSnackbar("Couldn't delete. Try again", { variant: "error" }),
       },
     );
-  };
-
-  // Adds dedupe against what is already on the environment, so re-adding a row
-  // the drawer still had selected is a no-op rather than a duplicate.
-  const addScenarios = (rows) => {
-    const existing = new Set(selected.map((s) => s.id));
-    const fresh = (rows || []).filter((r) => !existing.has(r.id));
-    if (fresh.length) patch({ scenarios: [...selected, ...fresh] });
   };
 
   // Edits route through the amend route as set_field / set_persona ops (the
