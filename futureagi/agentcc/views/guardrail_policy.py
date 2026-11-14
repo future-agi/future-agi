@@ -167,7 +167,7 @@ class AgentccGuardrailPolicyViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewS
                     instance,
                     data={"scope": "key", "applied_keys": key_ids},
                     partial=True,
-                    context={"request": request, "organization": org},
+                    context={"request": request, "organization": org, "view": self},
                 )
                 if not serializer.is_valid():
                     return self._gm.bad_request(serializer.errors)

@@ -159,11 +159,17 @@ class AgentccGuardrailPolicySerializer(serializers.ModelSerializer):
             self.validate_checks(instance.checks)
         except serializers.ValidationError as e:
             reasons = "; ".join(str(d) for d in e.detail)
+            # Apply only accepts assignments, so checks must be saved separately.
+            guidance = (
+                "PATCH the policy with corrected checks, then retry apply."
+                if getattr(self.context.get("view"), "action", None) == "apply"
+                else "Send corrected checks with this save."
+            )
             raise serializers.ValidationError(
                 {
                     "checks": (
                         f"The stored checks cannot run on the gateway ({reasons}). "
-                        "Send corrected checks with this save."
+                        f"{guidance}"
                     )
                 }
             ) from e
