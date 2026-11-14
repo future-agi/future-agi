@@ -163,7 +163,7 @@ class UserAlertMonitorSerializer(serializers.ModelSerializer):
                     {"metric": "Metric is required for evaluation metrics."}
                 )
             try:
-                custom_eval_config = CustomEvalConfig.objects.get(
+                custom_eval_config = CustomEvalConfig.objects.using("default").get(
                     id=metric, project=project
                 )
             except CustomEvalConfig.DoesNotExist:

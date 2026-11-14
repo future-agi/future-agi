@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Iterator
 from copy import deepcopy
 from datetime import UTC, date, datetime, time, timedelta
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from tracer.services.eval_tasks.sampling.policy import (
     HASH_SPACE,
@@ -88,10 +88,10 @@ class SamplingQuery:
         )
         self.params.policy = policy
         self._counter = 0
-        self.live_floor = None
-        self.proof_row_ids = None
-        self.proof_unit_ids = None
-        self.member_unit_ids = None
+        self.live_floor: datetime | None = None
+        self.proof_row_ids: tuple[str, ...] | None = None
+        self.proof_unit_ids: list[str] | None = None
+        self.member_unit_ids: list[str] | None = None
         self.current_state = False
 
     def bind(self, value: object) -> str:
@@ -364,6 +364,7 @@ class SamplingQuery:
                     else f"{unit_scope} AND {root_traces}"
                 )
             else:
+                assert self.member_unit_ids is not None
                 # Closed expansion: read only this batch's frozen members, not
                 # the whole window once per batch. Whole traces (or sessions
                 # with their remap aliases) keep row filters identical to a
@@ -598,6 +599,7 @@ class SamplingQuery:
         unit_ids: list[str] | None = None,
     ) -> tuple[str, dict]:
         self.live_floor = arrival_floor if self.policy["mode"] == "live" else None
+        member_units: list[str] | None = None
         if unit_ids is not None:
             from tracer.services.eval_tasks.sampling.unit_scope import unit_batches
 
@@ -610,11 +612,11 @@ class SamplingQuery:
                 raise ValueError("Member expansion requires one bounded closed page.")
             # Push the page's units into every physical read; the exact
             # canonical membership test below still runs after latest replay.
-            self.member_unit_ids = identities
+            self.member_unit_ids = member_units = identities
         ctes = self._source() if self.policy["mode"] == "closed" else self._classified()
         predicates = ["r.unit_id != ''"]
-        if unit_ids is not None:
-            self.params["sp_member_units"] = tuple(self.member_unit_ids)
+        if member_units is not None:
+            self.params["sp_member_units"] = tuple(member_units)
             predicates.append("r.unit_id IN %(sp_member_units)s")
         if arrival_floor is not None:
             self.params["sp_floor"] = arrival_floor
@@ -810,10 +812,10 @@ def live_proof_settings() -> dict:
         getattr(
             settings,
             "EVAL_SAMPLING_LIVE_PROOF_MAX_ROWS",
-            READ_SETTINGS["max_rows_to_read"],
+            cast(int, READ_SETTINGS["max_rows_to_read"]),
         )
     )
-    if not 1 <= rows <= READ_SETTINGS["max_rows_to_read"]:
+    if not 1 <= rows <= cast(int, READ_SETTINGS["max_rows_to_read"]):
         raise ValueError(
             "EVAL_SAMPLING_LIVE_PROOF_MAX_ROWS must not exceed the sampling read ceiling."
         )
@@ -837,7 +839,7 @@ def stream_query(
         classify_read_error,
     )
 
-    if len(sql.encode("utf-8")) > READ_SETTINGS["max_query_size"]:
+    if len(sql.encode("utf-8")) > cast(int, READ_SETTINGS["max_query_size"]):
         # Deterministic for this policy: a request/policy error, never retried
         # and never reported as an outage.
         raise SamplingStatementTooLarge(
@@ -888,9 +890,10 @@ def live_scan_windows(
     _version is the CH25 ingestion/change clock, including backdated spans;
     event timestamps only choose which partition-sized follow-up reads to run.
     """
+    window_start = parse_time(policy["window"]["start"])
     params = {
         "project": str(task.project_id),
-        "start": parse_time(policy["window"]["start"]),
+        "start": window_start,
         "ceiling": ceiling,
         "ceiling_ns": int(ceiling.timestamp() * 1_000_000) * 1000,
     }
@@ -912,7 +915,7 @@ def live_scan_windows(
         PREWHERE project_id = %(project)s AND {scope}
         WHERE start_time >= %(start)s AND start_time < %(ceiling)s
         GROUP BY day ORDER BY day LIMIT 367"""
-    days = []
+    days: list[date | str] = []
     for block in stream_query(sql, params):
         days.extend(row[0] for row in block)
         if len(days) > 366:
@@ -923,7 +926,7 @@ def live_scan_windows(
         day = value if isinstance(value, date) else date.fromisoformat(str(value))
         start = datetime.combine(day, time.min, tzinfo=UTC)
         yield {
-            "start": max(start, params["start"]).isoformat(),
+            "start": max(start, window_start).isoformat(),
             "end": min(start + timedelta(days=1), ceiling).isoformat(),
         }
 
