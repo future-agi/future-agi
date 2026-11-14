@@ -221,9 +221,12 @@ def lifecycle_counts(views: Iterable[LifecycleView]) -> dict[str, int]:
         counts[view["state"]] += 1
         if view["state"] == "archived":
             continue
-        if view["warning"] in LANE_CODES:
+        runnable = view["state"] in ("validated", "active")
+        # Only a proof that ran counts as proved (TH-8752): a lane code or a legacy proof
+        # runs, kept as written.
+        if runnable and (view["warning"] or view["legacy"]):
             counts["kept_as_written"] += 1
-        elif view["state"] in ("validated", "active"):
+        elif runnable:
             counts["proved"] += 1
         else:
             counts["not_proved"] += 1

@@ -318,3 +318,27 @@ def test_source_changed_rule_and_file(user, workspace, storage):
     assert flagged == {REFUND_KEYS[1], REFUND_KEYS[2]}
     assert views[REFUND_KEYS[1]]["source_changed"] == ["rule:1"]
     assert views[REFUND_KEYS[2]]["state"] == "draft"
+
+
+def test_counts_call_only_a_run_proof_proved():
+    from simulate.services.harness_scenario_lifecycle import lifecycle_counts
+
+    def view(state, warning=None, legacy=False):
+        return {"state": state, "warning": warning, "legacy": legacy}
+
+    counts = lifecycle_counts(
+        [
+            view("active"),
+            view("active", warning="solution_assumed"),
+            view("active", warning="legacy_no_negative_control", legacy=True),
+            view("validated", legacy=True),
+            view("draft"),
+            view("archived"),
+        ]
+    )
+
+    assert (counts["proved"], counts["kept_as_written"], counts["not_proved"]) == (
+        1,
+        3,
+        1,
+    )
