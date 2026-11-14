@@ -47,10 +47,10 @@
     },
     {
       "image": "futureagi/agentcc-gateway",
-      "budget_mb": 9,
+      "budget_mb": 10,
       "projected_mb": 8.0,
-      "measured_mb": 6.5,
-      "note": "projected 7.2 + 0.8: the static HEALTHCHECK probe (/usr/local/bin/healthcheck, 0.79 MB gzip on amd64; scratch has no shell or wget). fi-collector carries the same probe within its budget."
+      "measured_mb": 9.003605,
+      "note": "TH-10221: 2026-11-14 CI-equivalent Buildx builds, default gzip registry layer bytes, measured cdb6adf08 and its dev merge at 9.003605 MB amd64 / 8.086703 MB arm64; public dev 7a80e9725 measured 8.982484 / 8.066267 MB. Key-scoped policies add 21,121 / 20,436 bytes; amd64 exceeds the old 9 MB cap by 3,605 bytes. Budget follows ceil(max(measured 9.003605, projected 8.0) * 1.10) = 10 MB. The scratch runtime already uses CGO-disabled, trimpath, stripped binaries; retain the CA bundle and static HEALTHCHECK probe. Only this image's budget changes."
     },
     {
       "image": "futureagi/serving",
