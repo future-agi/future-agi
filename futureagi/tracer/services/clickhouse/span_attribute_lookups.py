@@ -337,11 +337,17 @@ def scoped_trace_ids(
         query_mode=ClickHouseFilterBuilder.QUERY_MODE_SPAN,
         project_id=str(project_id),
         score_date_scope=False,
+        # No read window here: a trace_name leaf resolves the live roots of
+        # exactly these traces, through the trace_id bloom index.
+        trace_name_root_window=None,
+        trace_name_root_traces_sql="toString(trace_id) IN %(_tids)s",
     )
     where, params = fb.translate(filters)
     params = dict(params)
     params["_pid"] = str(project_id)
     params["_tids"] = ids
+    # Subqueries the builder emits (the trace_name root lookup) scope by it.
+    params["project_id"] = str(project_id)
 
     where_clause = f" AND ({where})" if where else ""
     query = (

@@ -49,8 +49,14 @@ def test_span_mode_resolves_root_without_accepting_child_name():
         "(project_id, trace_id) IN (SELECT project_id, trace_id FROM spans FINAL" in sql
     )
     assert "WHERE is_deleted = 0" in sql
-    assert "start_time >= %(start_date)s - INTERVAL 1 DAY" in sql
-    assert "start_time < %(end_date)s" in sql
+    # Whole storage hours before FINAL: an exact start_time cut in PREWHERE
+    # could drop the live version of a root corrected within its hour.
+    assert (
+        "toStartOfHour(start_time) > %(start_date)s - INTERVAL 1 DAY - INTERVAL 1 HOUR"
+        in sql
+    )
+    assert "toStartOfHour(start_time) <= %(end_date)s" in sql
+    assert "start_time >= %(start_date)s" not in sql
     assert f"lowerUTF8(toString({TRACE_NAME_SQL}))" in sql
     assert params["col_1"] == "root name"
 

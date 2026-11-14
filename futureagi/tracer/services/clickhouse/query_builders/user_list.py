@@ -20,6 +20,7 @@ from tracer.services.clickhouse.query_builders.trace_usage import (
     usage_aggregate_sql,
     usage_coverage_sql,
 )
+from tracer.services.clickhouse.trace_name_sql import scope_trace_name_roots
 from tracer.services.clickhouse.v2.id_remap_sql import (
     bounded_survivor_map_subquery,
     literal_survivor_map_subquery,
@@ -978,7 +979,7 @@ class UserListQueryBuilder(BaseQueryBuilder):
         LIMIT %(slice_user_limit)s
         {_SEEDED_PAGE_READ_SETTINGS}
         """
-        return query, params
+        return self._scope_walk_trace_name_roots(query), params
 
     def build_matching_activity_instant_query(
         self,
@@ -1037,7 +1038,7 @@ class UserListQueryBuilder(BaseQueryBuilder):
         LIMIT %(slice_user_limit)s
         {_SEEDED_PAGE_READ_SETTINGS}
         """
-        return query, params
+        return self._scope_walk_trace_name_roots(query), params
 
     def build_matching_activity_existence_query(
         self,
@@ -1072,7 +1073,7 @@ class UserListQueryBuilder(BaseQueryBuilder):
         LIMIT 1
         {_SEEDED_PAGE_READ_SETTINGS}
         """
-        return query, params
+        return self._scope_walk_trace_name_roots(query), params
 
     def build_matching_activity_presence_query(
         self, *, range_start: Any, range_end: Any
@@ -1197,6 +1198,22 @@ class UserListQueryBuilder(BaseQueryBuilder):
                 "the matching-activity walk chose no witness for this page"
             )
         return {**witness.params, **range_params, "_witness_sql": witness.sql}
+
+    def _scope_walk_trace_name_roots(self, query: str) -> str:
+        """Bound a walk statement's trace_name root lookups by its own range.
+
+        A trace_name leaf resolves a span through its trace's live root. The
+        walk's statements are bounded by their slice or probe range, never by
+        the request window, so the root lookup covers only the traces with a
+        span in that range (the trace_id bloom index finds their roots),
+        instead of every root of the request window in every statement.
+        """
+
+        return scope_trace_name_roots(
+            query,
+            "(project_id, trace_id) IN (SELECT project_id, trace_id FROM spans "
+            f"PREWHERE {self._matching_activity_range_predicate()})",
+        )
 
     def _matching_activity_range_predicate(self) -> str:
         return f"""{self._project_predicate("spans")}
@@ -2291,6 +2308,13 @@ class UserListQueryBuilder(BaseQueryBuilder):
         ) AS native_span_flags
         GROUP BY end_user_id
         """
+        # A trace_name leaf looks up the live roots of these users' own
+        # candidate traces only, not of every trace in the window.
+        query = scope_trace_name_roots(
+            query,
+            "(project_id, trace_id) IN "
+            "(SELECT project_id, trace_id FROM latest_candidate_spans)",
+        )
         return query, params
 
     def _finite_user_activity_ctes(

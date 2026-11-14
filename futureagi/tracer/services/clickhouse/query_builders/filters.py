@@ -18,6 +18,7 @@ from tracer.services.clickhouse.query_builders.voice_filter_expressions import (
     voice_conversation_root_expression,
 )
 from tracer.services.clickhouse.trace_name_sql import (
+    TRACE_NAME_ROOT_TRACES_MARKER,
     TRACE_NAME_SQL,
     TRACE_ROOT_LOOKBACK,
 )
@@ -65,8 +66,8 @@ def resolve_eval_filter_metadata(
     """
 
     from django.core.exceptions import ValidationError
-
     from model_hub.models.evals_metric import EvalTemplate
+
     from tracer.models.custom_eval_config import CustomEvalConfig
 
     config_ids: tuple[str, ...] = ()
@@ -123,7 +124,6 @@ def resolve_annotation_label_output_type(
     """
 
     from django.core.exceptions import ValidationError
-
     from model_hub.models.develop_annotations import AnnotationsLabels
 
     try:
@@ -836,6 +836,8 @@ class ClickHouseFilterBuilder:
         eval_filter_metadata: dict[str, EvalFilterMetadata] | None = None,
         resolved_candidate_sessions_table: str | None = None,
         eval_count_mode: bool = False,
+        trace_name_root_traces_sql: str | None = None,
+        trace_name_root_window: tuple[str, str] | None = ("start_date", "end_date"),
     ) -> None:
         # Observe lists opt into newest-completed tiles. Session/user/dashboard
         # consumers retain matching across all live attempts by default.
@@ -912,6 +914,15 @@ class ClickHouseFilterBuilder:
         # candidates, including parent_span_id and start_time. It is code-owned,
         # never an HTTP-supplied table or a raw/insert-only candidate index.
         self.resolved_candidate_spans_table = resolved_candidate_spans_table
+        # Span mode compiles a trace_name leaf as a lookup of each trace's live
+        # root. ``trace_name_root_window`` names the outer parameters holding
+        # the read window (start, end) that bounds it, or is None when the
+        # caller has no window. ``trace_name_root_traces_sql`` is a code-owned
+        # predicate over the root scan restricting it to the statement's finite
+        # candidate traces; with a resolved candidate relation it defaults to
+        # that relation's traces. A lookup needs at least one of the two.
+        self.trace_name_root_traces_sql = trace_name_root_traces_sql
+        self.trace_name_root_window = trace_name_root_window
         if resolved_candidate_sessions_table is not None and (
             re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", resolved_candidate_sessions_table)
             is None
@@ -2052,9 +2063,8 @@ class ClickHouseFilterBuilder:
                 return (
                     f"(project_id, trace_id) IN ("
                     f"SELECT project_id, trace_id FROM spans FINAL "
-                    f"PREWHERE {project_pred} "
-                    f"AND start_time >= %(start_date)s - {TRACE_ROOT_LOOKBACK} "
-                    f"AND start_time < %(end_date)s "
+                    f"PREWHERE {project_pred}"
+                    f"{self._trace_name_root_scope_sql()} "
                     f"WHERE is_deleted = 0 "
                     f"AND (parent_span_id IS NULL OR parent_span_id = '') "
                     f"AND ({inner}))"
@@ -2102,6 +2112,39 @@ class ClickHouseFilterBuilder:
             f"{root_clause}"
             f"AND {inner})"
         )
+
+    def _trace_name_root_scope_sql(self) -> str:
+        """Bound a span-mode trace-name root lookup by window and candidates.
+
+        The window is whole storage hours: the spans replacement key holds
+        ``toStartOfHour(start_time)``, and a newer version can carry a
+        corrected start_time inside the same hour. PREWHERE runs before FINAL
+        collapses versions, so an exact start_time cut there could drop the
+        live version; an hour cut keeps every version of a row.
+        """
+
+        terms: list[str] = []
+        if self.trace_name_root_window is not None:
+            start, end = self.trace_name_root_window
+            # hour(t) >= hour(s) exactly when hour(t) > s - 1 hour, and
+            # hour(t) <= hour(e) exactly when hour(t) <= e.
+            terms.append(
+                "toStartOfHour(start_time) > "
+                f"%({start})s - {TRACE_ROOT_LOOKBACK} - INTERVAL 1 HOUR"
+            )
+            terms.append(f"toStartOfHour(start_time) <= %({end})s")
+        candidates = self.trace_name_root_traces_sql
+        if candidates is None and self.resolved_candidate_spans_table is not None:
+            candidates = (
+                "(project_id, trace_id) IN (SELECT project_id, trace_id "
+                f"FROM {self.resolved_candidate_spans_table})"
+            )
+        if candidates is None and self.trace_name_root_window is None:
+            raise _unsupported_filter_shape(
+                "a span trace_name filter needs a read window or candidate traces"
+            )
+        terms.append(f"({candidates})" if candidates else TRACE_NAME_ROOT_TRACES_MARKER)
+        return "".join(f" AND {term}" for term in terms)
 
     def _span_attr_key_sql(self, attribute_key: str) -> str:
         """Render attribute data without relaxing SQL identifier validation."""

@@ -20,3 +20,20 @@ TRACE_NAME_SQL = "if(trace_name != '', trace_name, if(empty(parent_span_id), nam
 
 # Roots that started before a read window still name the window's child spans.
 TRACE_ROOT_LOOKBACK = "INTERVAL 1 DAY"
+
+# Marker inside a span-mode trace-name root lookup. A statement with a finite
+# set of candidate traces replaces it (``scope_trace_name_roots``) so the root
+# read covers only those traces; left alone, it is a no-op and the lookup is
+# bounded by its time window alone.
+TRACE_NAME_ROOT_TRACES_MARKER = "1 = 1 /* trace-name root candidates */"
+
+
+def scope_trace_name_roots(sql: str, candidates_sql: str) -> str:
+    """Restrict every trace-name root lookup in ``sql`` to ``candidates_sql``.
+
+    ``candidates_sql`` is a code-owned predicate over the root scan's
+    ``spans`` columns, such as ``(project_id, trace_id) IN (SELECT project_id,
+    trace_id FROM <candidate CTE>)``.
+    """
+
+    return sql.replace(TRACE_NAME_ROOT_TRACES_MARKER, f"({candidates_sql})")
