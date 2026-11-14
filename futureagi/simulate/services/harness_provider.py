@@ -3269,10 +3269,17 @@ def _lifecycle_for_list(
         archived.append(view)
     archived_keys = {row.scenario_key for row in archived_rows}
     from simulate.services.harness_scenario_sources import resolve
+    from simulate.services.harness_versioning.drafts import open_draft
+
+    def resolve_draft_sources(by_key: dict[str, list[Any]]) -> dict[str, Any]:
+        # An unsaved case may cite a file the unsaved environment adds (a policy upload).
+        return resolve(
+            job, open_draft(job, "environment") or environment_version, by_key
+        )
 
     return {
         "wanted": wanted,
-        "resolve_sources": lambda by_key: resolve(job, environment_version, by_key),
+        "resolve_sources": resolve_draft_sources,
         "views": {key: view for key, view in views.items() if key not in archived_keys},
         "archived": archived,
         "archived_rows": archived_rows,

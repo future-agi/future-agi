@@ -28,6 +28,7 @@ SOURCE_KINDS = (
 QUOTE_MAX = 500
 FILE_READ_MAX = 1024 * 1024
 FILE_CHANGED = "the file changed; validate again"
+FILE_UNCHECKED = "not checked yet; validate to check the quote"
 
 
 class SourceView(TypedDict):
@@ -273,6 +274,9 @@ def resolve(
                         False,
                         "the file is not in this environment version",
                     )
+                elif not result:
+                    # Never read against a file yet: an unsaved case, or one not validated since.
+                    resolved, problem = False, FILE_UNCHECKED
                 elif bare_digest(result.get("matched_digest")) != current:
                     resolved, problem = False, FILE_CHANGED
                 else:

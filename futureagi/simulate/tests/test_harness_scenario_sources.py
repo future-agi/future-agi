@@ -6,7 +6,11 @@ from unittest.mock import patch
 import pytest
 
 from simulate.models import HarnessEnvironmentVersion, HostedHarnessConversationMessage
-from simulate.services.harness_scenario_sources import FILE_CHANGED, resolve
+from simulate.services.harness_scenario_sources import (
+    FILE_CHANGED,
+    FILE_UNCHECKED,
+    resolve,
+)
 from simulate.services.hosted_harness_conversation import enqueue_message
 from simulate.tests.test_harness_readiness import _environment
 from simulate.tests.test_harness_readiness import (  # noqa: F401 - fixture
@@ -110,3 +114,19 @@ def test_list_reads_no_archive_for_file_sources(user, workspace, storage):
         changed = _one(environment, version, source, stored)
 
     assert (changed["resolved"], changed["problem"]) == (False, FILE_CHANGED)
+
+
+def test_a_file_never_checked_reads_unchecked_not_changed(user, workspace, storage):
+    environment = _environment(user, workspace, storage, "src-unchecked")
+    version = environment.environment_version
+    documents = dict(version.documents or {})
+    documents["file_digests"] = {"knowledge/policy.md": "abc123"}
+    HarnessEnvironmentVersion._base_manager.filter(id=version.id).update(
+        documents=documents
+    )
+    version.refresh_from_db()
+    source = {"kind": "file", "ref": "file:policy.md", "quote": "14 days"}
+
+    unchecked = _one(environment, version, source)
+
+    assert (unchecked["resolved"], unchecked["problem"]) == (False, FILE_UNCHECKED)
