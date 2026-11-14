@@ -697,6 +697,44 @@ def test_superseded_copies_are_collected_after_a_grace_not_after_seven_days(
 
 
 @pytest.mark.django_db(transaction=True)
+def test_compaction_takes_server_side_ranges_only_where_they_pay_and_are_safe(
+    live_writer, settings, monkeypatch
+):
+    from tracer.services.derived_metrics import compaction_ranges
+
+    writer = live_writer
+    metric = uuid4()
+    initial, _ = prepare_field(writer, metric=metric, n=1)  # unit_start 2026-01-31
+    writer.stage_and_publish(initial)
+    # A small head copies faster through the legacy path.
+    assert writer.compaction_path() == "small"
+    head = writer.compact()
+    assert not head.published_by.source_ceilings.get("range_compaction")
+    assert head.published_by.batches.exists()
+    settings.METRICS_SERVER_SIDE_MIN_ROWS = 0
+    replacement, _ = prepare_field(writer, metric=metric, n=2)
+    writer.stage_and_publish(replacement)
+    assert writer.compaction_path() == "server"
+    head = writer.compact()
+    assert head.published_by.source_ceilings.get("range_compaction") is True
+    assert not head.published_by.batches.exists()
+    assert [r[:3] for r in current_fields(writer, head)] == [("unit-a", 2.0, 0)]
+    # An expiry is due (the head holds a row past the physical cutoff): the
+    # legacy copy, as before, and this pass's expiry retires the row.
+    writer.retention_days = lambda: 30
+    assert writer.compaction_path() == "expiry_due"
+    writer.retention_days = lambda: 0
+    # No query log: the lost-acknowledgement proof is impossible; the legacy
+    # copy, with a warning, never silently.
+    monkeypatch.setattr(compaction_ranges, "query_log_available", lambda store: False)
+    assert writer.compaction_path() == "query_log"
+    monkeypatch.undo()
+    assert compaction_ranges.query_log_available(writer.store) is True
+    settings.METRICS_SERVER_SIDE_COMPACTION = 0
+    assert writer.compaction_path() == "disabled"
+
+
+@pytest.mark.django_db(transaction=True)
 def test_checkpoint_byte_boundary_preserves_all_wide_payloads(live_writer):
     from tracer.services.derived_metrics.publication import (
         MAX_COMPACTION_BYTES,

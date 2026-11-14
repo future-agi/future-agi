@@ -17,6 +17,7 @@ from datetime import UTC, datetime, timedelta
 from time import monotonic
 from uuid import UUID, uuid4
 
+import structlog
 from django.conf import settings
 from django.core.exceptions import ImproperlyConfigured
 from django.db import connection, transaction
@@ -86,6 +87,8 @@ from tracer.services.derived_metrics.unit_reads import (
     unit_values_select,
 )
 
+logger = structlog.get_logger(__name__)
+
 MAX_PASS_UNITS = 50_000
 # A pass that stops at its soft budget aborts its attempt with this reason;
 # the next pass carries its ledger and marks it carried (abort_stale).
@@ -140,6 +143,37 @@ def estimated_captures(definitions, unit_count):
     """
     fields = sum(1 for d in definitions if getattr(d, "level", "") != "span")
     return fields * -(-unit_count // MAX_BATCH_ROWS)
+
+
+def server_side_compaction():
+    """Whether compaction may copy checkpoint ranges inside ClickHouse.
+
+    METRICS_SERVER_SIDE_COMPACTION: 1 (default) or 0, which always keeps the
+    legacy batch copy. RefreshWriter.compaction_path decides per compaction.
+    """
+    value = getattr(settings, "METRICS_SERVER_SIDE_COMPACTION", 1)
+    if type(value) is not int or value not in (0, 1):
+        raise ImproperlyConfigured("METRICS_SERVER_SIDE_COMPACTION must be 0 or 1")
+    return value == 1
+
+
+DEFAULT_SERVER_SIDE_MIN_ROWS = 300_000
+
+
+def server_side_min_rows():
+    """Head rows from which server-side ranges beat the legacy copy.
+
+    Measured: equal at about 100k rows a table (3 tables), and about 2.5x
+    faster at 300k a table. METRICS_SERVER_SIDE_MIN_ROWS, 0 to 10^10.
+    """
+    value = getattr(
+        settings, "METRICS_SERVER_SIDE_MIN_ROWS", DEFAULT_SERVER_SIDE_MIN_ROWS
+    )
+    if type(value) is not int or not 0 <= value <= 10_000_000_000:
+        raise ImproperlyConfigured(
+            "METRICS_SERVER_SIDE_MIN_ROWS must be an integer from 0 to 10000000000"
+        )
+    return value
 
 
 DEFAULT_HISTORY_GC_GRACE_SECONDS = 1800
@@ -1108,13 +1142,16 @@ class RefreshWriter:
         finally:
             self._compaction_deadline = previous
 
-    def compact(self, *, server_side=False):
+    def compact(self, *, server_side=None):
         """Checkpoint every store, including tombstones; never copy a revoked base.
 
-        Server-side ranges remain opt-in while the complete range/crash and
-        deployment-topology qualification is outstanding. Legacy callers keep
-        their exact payload receipt semantics.
+        compaction_path() chooses server-side ranges or the legacy batch copy
+        (server_side forces one). Both need local ReplacingMergeTree tables and
+        refuse any other topology; the legacy copy keeps its exact payload
+        receipt semantics.
         """
+        if server_side is None:
+            server_side = self.compaction_path() == "server"
         if server_side:
             from tracer.services.derived_metrics.compaction_ranges import compact_ranges
 
@@ -1194,6 +1231,76 @@ class RefreshWriter:
             # Never delete CH history from a transaction that might roll PG back.
             if MetricReadManifest.objects.filter(published_by=attempt).exists():
                 transaction.on_commit(self.collect_garbage)
+
+    def compaction_path(self):
+        """ "server" or why compaction keeps the legacy copy; never silent.
+
+        Server-side ranges copy inside ClickHouse with fixed per-range costs
+        (about 25-30 s in all), so a head below METRICS_SERVER_SIDE_MIN_ROWS
+        copies faster through the legacy path. They need system.query_log
+        (lost-acknowledgement proof). And they never copy a row past the
+        physical retention cutoff: while the head holds one (an expiry is due),
+        the legacy copy is used and that pass's expiry retires it.
+        """
+        from tracer.services.derived_metrics.compaction_ranges import (
+            query_log_available,
+        )
+        from tracer.services.derived_metrics.size_cap import head_rows
+
+        if not server_side_compaction():
+            return "disabled"
+        head = MetricProjectRefresh.for_project(self.lease.project_id).head_manifest
+        if head is None:
+            return "empty"
+        if head_rows(head) < server_side_min_rows():
+            return "small"
+        if not query_log_available(self.store):
+            logger.warning(
+                "metric_server_side_compaction_unavailable",
+                project_id=str(self.lease.project_id),
+                reason="query_log",
+            )
+            return "query_log"
+        if self._head_holds_expired_rows(head):
+            return "expiry_due"
+        return "server"
+
+    def _head_holds_expired_rows(self, head):
+        """Whether the head holds a row past the physical retention cutoff.
+
+        Raw revisions are probed, not collapsed rows, so a superseded old
+        revision also keeps the legacy copy (conservative).
+        """
+        from tracer.services.derived_metrics.retention import physical_cutoff
+
+        if self.retention_days is None:
+            return False
+        cutoff = physical_cutoff(self, now=self.lease.clock(), head=head)
+        if cutoff is None:
+            return False
+        attempts = tuple(UUID(str(a)) for _, a in head.allowed_attempts())
+        for table in (
+            FIELD_VALUES,
+            FIELD_CHECKPOINT,
+            SOURCE_DEPENDENCIES,
+            LIST_CURRENT_ROOTS,
+            LIST_CURRENT_MEMBERS,
+            LIST_USER_ACTIVITY,
+        ):
+            if self.store.execute(
+                f"SELECT 1 FROM {table.name} PREWHERE org_id = toUUID(%(old_org)s) "
+                "AND project_id = toUUID(%(old_project)s) "
+                "WHERE attempt_id IN %(old_attempts)s "
+                "AND unit_start < toDateTime64(%(old_cutoff)s, 6, 'UTC') LIMIT 1",
+                {
+                    "old_org": str(self.org_id),
+                    "old_project": str(self.lease.project_id),
+                    "old_attempts": attempts,
+                    "old_cutoff": cutoff,
+                },
+            ):
+                return True
+        return False
 
     def collect_garbage(self):
         """Collect PG reachability first; its durable outbox survives CH failures.

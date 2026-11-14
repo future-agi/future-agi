@@ -820,6 +820,9 @@ INTERACTIVE_READ_SETTING_SPECS = {
 # METRICS_MAX_CHECKPOINT_ROWS is the most stored metric rows a project may hold;
 # above it the project's metrics pause as too_large (expiry and erasure still
 # run) until the limit is raised.
+# METRICS_SERVER_SIDE_COMPACTION=1 lets compaction copy checkpoints inside
+# ClickHouse for heads of at least METRICS_SERVER_SIDE_MIN_ROWS rows; smaller
+# heads, and 0, keep the legacy batch copy through the PG ledger.
 # METRICS_BURST_* bound one pass of a forward-only burst sweep: its wall budget,
 # its page count and the source keys per page.
 METRICS_FEATURE_SETTING_SPECS = _specs(
@@ -833,6 +836,8 @@ METRICS_FEATURE_SETTING_SPECS = _specs(
         ("METRICS_HISTORY_GC_GRACE_SECONDS", 1_800, 600, 604_800),
         ("METRICS_GC_MASK_PARTITIONS_PER_RUN", 4, 0, 64),
         ("METRICS_MAX_CHECKPOINT_ROWS", 800_000, 1, 10_000_000_000),
+        ("METRICS_SERVER_SIDE_COMPACTION", 1, 0, 1),
+        ("METRICS_SERVER_SIDE_MIN_ROWS", 300_000, 0, 10_000_000_000),
         ("METRICS_BURST_PASS_SECONDS", 20, 1, 300),
         ("METRICS_BURST_MAX_PAGES", 19, 1, 200),
         ("METRICS_BURST_PAGE_KEYS", 5_000, 1, 10_000),

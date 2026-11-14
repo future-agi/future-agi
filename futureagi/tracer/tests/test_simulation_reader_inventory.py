@@ -2091,6 +2091,15 @@ _FILED_BY_MODULE: dict[str, dict[str, Filing]] = {
         ),
     },
     "tracer.services.derived_metrics.refresh": {
+        "RefreshWriter._head_holds_expired_rows": filed(
+            NO_SPAN_TABLE,
+            why="probes the head's metric stores for a row past the retention cutoff",
+            table=(
+                "metric_field_values, metric_field_values_checkpoint, "
+                "metric_source_dependencies, list_current_root_facts, "
+                "list_current_members and list_current_user_activity"
+            ),
+        ),
         "RefreshWriter.collect_unreachable_rows": filed(
             NO_SPAN_TABLE,
             why="deletes rows of closed attempts no reader can reach from the metric stores",

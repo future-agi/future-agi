@@ -308,6 +308,14 @@ def test_compaction_and_burst_settings_load_bounded_from_the_environment(
             0,
             64,
         ),
+        (
+            "METRICS_SERVER_SIDE_MIN_ROWS",
+            "refresh",
+            "server_side_min_rows",
+            300_000,
+            0,
+            10_000_000_000,
+        ),
     ],
 )
 def test_pass_and_expiry_settings_load_bounded(
@@ -344,6 +352,66 @@ def test_pass_and_expiry_settings_load_bounded(
         setattr(settings, name, invalid)
         with pytest.raises(ImproperlyConfigured):
             read()
+
+
+def test_server_side_compaction_switch_fails_closed(settings):
+    from django.core.exceptions import ImproperlyConfigured
+
+    from tfc.settings.runtime_setting_specs import (
+        RUNTIME_NUMERIC_SETTING_SPECS,
+        load_numeric_settings,
+    )
+    from tracer.services.derived_metrics import refresh
+
+    name = "METRICS_SERVER_SIDE_COMPACTION"
+    assert load_numeric_settings(RUNTIME_NUMERIC_SETTING_SPECS, source={})[name] == 1
+    with pytest.raises(ValueError):
+        load_numeric_settings(RUNTIME_NUMERIC_SETTING_SPECS, source={name: "2"})
+    if hasattr(settings, name):
+        delattr(settings, name)
+    assert refresh.server_side_compaction() is True
+    settings.METRICS_SERVER_SIDE_COMPACTION = 0
+    assert refresh.server_side_compaction() is False
+    for invalid in (2, True, "1"):
+        setattr(settings, name, invalid)
+        with pytest.raises(ImproperlyConfigured):
+            refresh.server_side_compaction()
+
+
+def test_a_lost_acknowledgement_waits_out_the_query_log_flush():
+    """query_log is flushed every 7.5 s by default: an INSERT that finished but
+    whose acknowledgement was lost can be missing from it for that long. The
+    proof waits for it instead of aborting the namespace, and still reports
+    unresolved once the wait is over."""
+    from tracer.services.derived_metrics.compaction_ranges import submission_state
+
+    class Store:
+        def __init__(self, finished_after):
+            self.reads, self.finished_after = 0, finished_after
+
+        def execute(self, sql, params):
+            if "query_log" in sql:
+                self.reads += 1
+                return [(int(self.reads > self.finished_after),)]
+            return [(0,)]
+
+    now = [0.0]
+
+    def sleep(seconds):
+        now[0] += seconds
+
+    flushed = Store(finished_after=3)
+    assert submission_state(
+        flushed, "q", wait=15, sleep=sleep, clock=lambda: now[0]
+    ) == (1, 0)
+    assert flushed.reads == 4 and now[0] == 1.5
+    now[0] = 0.0
+    never = Store(finished_after=10_000)
+    assert submission_state(never, "q", wait=15, sleep=sleep, clock=lambda: now[0]) == (
+        0,
+        0,
+    )
+    assert now[0] >= 15
 
 
 @pytest.mark.django_db

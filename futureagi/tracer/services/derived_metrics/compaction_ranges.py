@@ -704,14 +704,7 @@ def stage_ranges(writer, attempt):
         ).exclude(status="done")
         for submission in pending.iterator(chunk_size=32):
             query_id = submission.store_payload["query_id"]
-            finished = writer.store.execute(
-                "SELECT count() FROM system.query_log WHERE query_id = %(query)s AND type = 'QueryFinish'",
-                {"query": query_id},
-            )[0][0]
-            running = writer.store.execute(
-                "SELECT count() FROM system.processes WHERE query_id = %(query)s",
-                {"query": query_id},
-            )[0][0]
+            finished, running = submission_state(writer.store, query_id)
             if not finished or running:
                 # Absence from processes is not proof a delayed socket cannot
                 # submit. Retain the outbox and exclude this entire namespace.
@@ -860,8 +853,61 @@ def check_range_policy(writer, attempt, oldest):
         raise MetricRetentionChanged("retention policy changed; replan required")
 
 
+# system.query_log is written asynchronously (flush_interval_milliseconds,
+# 7.5 s by default). A finished INSERT whose acknowledgement was lost can be
+# absent from it for that long; wait for it rather than abort the namespace.
+# No SYSTEM FLUSH LOGS: the metrics user need not hold that privilege.
+QUERY_LOG_FLUSH_WAIT_SECONDS = 15
+
+
+def query_log_available(store):
+    """Whether the lost-acknowledgement proof can read system.query_log.
+
+    Needs log_queries for this user and the query_log table. Without them a
+    lost acknowledgement could never be proven, so compaction keeps the
+    legacy copy (RefreshWriter.compaction_path), never silently.
+    """
+    try:
+        enabled = store.execute(
+            "SELECT value FROM system.settings WHERE name = 'log_queries'"
+        )
+        table = store.execute(
+            "SELECT count() FROM system.tables WHERE database = 'system' "
+            "AND name = 'query_log'"
+        )
+    except ServerException:
+        return False
+    return enabled == [("1",)] and table[0][0] == 1
+
+
+def submission_state(store, query_id, *, wait=None, sleep=None, clock=monotonic):
+    """(finished, running) of a submitted INSERT, waiting out the log flush.
+
+    A query that is neither finished in query_log nor still running may just
+    not be flushed yet: re-read until it appears, it shows as running, or the
+    flush wait passes. Only then is it unresolved.
+    """
+    from time import sleep as default_sleep
+
+    sleep = sleep or default_sleep
+    wait = QUERY_LOG_FLUSH_WAIT_SECONDS if wait is None else wait
+    deadline = clock() + wait
+    while True:
+        finished = store.execute(
+            "SELECT count() FROM system.query_log WHERE query_id = %(query)s AND type = 'QueryFinish'",
+            {"query": query_id},
+        )[0][0]
+        running = store.execute(
+            "SELECT count() FROM system.processes WHERE query_id = %(query)s",
+            {"query": query_id},
+        )[0][0]
+        if finished or running or clock() >= deadline:
+            return finished, running
+        sleep(0.5)
+
+
 def compact_ranges(writer):
-    """Explicit qualification entry point; ordinary callers retain batch replay."""
+    """Server-side checkpoint ranges (RefreshWriter.compaction_path chooses)."""
     deadline = monotonic() + 600
     with writer.store.compaction_budget(deadline):
         target_rows = RANGE_ROWS
