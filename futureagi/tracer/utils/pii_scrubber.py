@@ -3,9 +3,10 @@ PII Scrubber — Presidio-powered server-side PII redaction.
 
 Replaces detected PII with <ENTITY_TYPE> tokens (e.g., <EMAIL_ADDRESS>).
 Low-level helpers preserve their historical fail-open behavior for explicit
-callers.  Batch ingestion fails closed when a project explicitly enables PII
-redaction and the Presidio engines cannot be initialized, or a value cannot be
-analysed or anonymized: the batch is rejected before anything is stored.
+callers.  Batch ingestion never stores a raw value of a project that enables PII
+redaction: a value that can never be scanned (too long, undecodable) is stored
+as ``UNSCANNABLE_VALUE``, and when the engines are unavailable or fail for any
+other reason, the batch is rejected before anything is stored, to be retried.
 """
 
 import json
@@ -31,6 +32,10 @@ _INIT_FAILED = False
 
 # spaCy's error code for "model package not installed / not a valid path".
 _SPACY_MISSING_MODEL_CODE = "E050"
+# spaCy's error code for text longer than the model's ``max_length``.
+_SPACY_TEXT_TOO_LONG_CODE = "E088"
+# What a value of a PII-enabled project becomes when it can never be scanned.
+UNSCANNABLE_VALUE = "[REDACTED: could not be scanned]"
 
 
 def _is_permanent_init_error(exc: BaseException) -> bool:
@@ -190,11 +195,26 @@ class PIIScrubError(RuntimeError):
     """A value of a PII-enabled project could not be scrubbed. Never carries the value."""
 
 
+def _unscannable_reason(exc: BaseException) -> str | None:
+    """Why this input fails on every attempt, or None for a failure a retry may clear.
+
+    * spaCy ``ValueError`` E088: the text is longer than the model's limit.
+    * ``UnicodeError``: the value cannot be encoded or decoded.
+    """
+    if isinstance(exc, UnicodeError):
+        return "undecodable"
+    if isinstance(exc, ValueError) and _SPACY_TEXT_TOO_LONG_CODE in str(exc):
+        return "too_long"
+    return None
+
+
 def scrub_pii_in_string(text: str, *, strict: bool = False) -> str:
     """Analyse and anonymize PII in *text* using Presidio.
 
     Best effort by default: a failure returns *text* unchanged. With *strict*,
-    it raises ``PIIScrubError`` instead, so the caller never keeps raw text.
+    no failure returns *text*: input that fails on every attempt (too long,
+    undecodable) becomes ``UNSCANNABLE_VALUE``, and any other failure raises
+    ``PIIScrubError`` so the caller can retry.
     """
     if not text or not _ensure_engines():
         return text
@@ -214,8 +234,13 @@ def scrub_pii_in_string(text: str, *, strict: bool = False) -> str:
         return anonymized.text
     except Exception as exc:
         if strict:
-            # The value stays out of the error: spaCy's E088, for one, is raised
-            # for text too long to analyse, and the text is exactly what must not leak.
+            reason = _unscannable_reason(exc)
+            if reason is not None:
+                # A retry would fail the same way and drop the rest of the batch with
+                # it: mask this value and keep the others. Neither the log nor the
+                # error ever carries the value.
+                logger.warning("pii_scrub_value_masked", reason=reason)
+                return UNSCANNABLE_VALUE
             raise PIIScrubError(
                 f"PII redaction failed ({type(exc).__name__}); the value is not stored."
             ) from exc
@@ -275,10 +300,11 @@ def scrub_pii_in_span_batch(
 ) -> None:
     """Scrub PII in-place across a batch of span dicts.
 
-    Only scrubs spans whose project has PII redaction enabled. Fails closed for
-    those spans: unavailable engines raise ``RuntimeError``, and a value that
-    cannot be analysed or anonymized raises ``PIIScrubError``, so the caller
-    stores nothing of the batch.
+    Only scrubs spans whose project has PII redaction enabled, and never keeps
+    one of their raw values. A value that can never be scanned is replaced with
+    ``UNSCANNABLE_VALUE`` and the batch goes on. Unavailable engines raise
+    ``RuntimeError``, and any other scrub failure raises ``PIIScrubError``, so
+    the caller stores nothing of the batch and can retry it.
     """
     pii_enabled = any(
         span_data.get("project_name")

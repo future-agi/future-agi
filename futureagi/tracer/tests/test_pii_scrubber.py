@@ -270,15 +270,15 @@ class TestScrubPiiInSpanBatch:
     @pytest.mark.parametrize(
         "failure",
         [
-            {"analyze": ValueError("[E088] Text of length 1000001 exceeds maximum.")},
+            {"analyze": RuntimeError("engine crashed")},
+            {"analyze": MemoryError("model evicted")},
             {"anonymize": RuntimeError("anonymizer failed")},
         ],
-        ids=["analysis", "anonymization"],
+        ids=["analysis", "memory", "anonymization"],
     )
-    def test_enabled_project_rejects_the_batch_when_a_value_cannot_be_scrubbed(
-        self, failure
-    ):
-        # With the engines installed, a failure must not keep the raw value.
+    def test_a_failure_a_retry_may_clear_rejects_the_batch(self, failure):
+        # With the engines installed, an engine failure must not keep the raw
+        # value; the batch is rejected so its retry can scrub it.
         from tracer.utils.pii_scrubber import scrub_pii_in_span_batch
 
         spans = [
@@ -293,6 +293,54 @@ class TestScrubPiiInSpanBatch:
 
         assert type(raised.value).__name__ == "PIIScrubError"
         assert "a@b.com" not in str(raised.value)
+
+    @pytest.mark.parametrize(
+        "error, reason",
+        [
+            (
+                ValueError("[E088] Text of length 1000001 exceeds maximum of 1000000."),
+                "too_long",
+            ),
+            (
+                UnicodeEncodeError("utf-8", "\ud800", 0, 1, "surrogates not allowed"),
+                "undecodable",
+            ),
+        ],
+        ids=["too-long", "undecodable"],
+    )
+    def test_a_value_that_can_never_be_scanned_is_masked_and_the_batch_kept(
+        self, error, reason
+    ):
+        # A retry would fail the same way and drop every other span with it.
+        from tracer.utils import pii_scrubber
+        from tracer.utils.pii_scrubber import scrub_pii_in_span_batch
+
+        unscannable = "Email: a@b.com, and much more than spaCy will read"
+        spans = [
+            {
+                "project_name": "proj",
+                "attributes": {"fi.input.value": unscannable, "fi.span.kind": "LLM"},
+            },
+            {"project_name": "proj", "attributes": {"fi.output.value": "all good"}},
+        ]
+
+        def analyze(text, **kwargs):
+            if text == unscannable:
+                raise error
+            return []
+
+        with (
+            self._engines(analyze=analyze),
+            mock.patch.object(pii_scrubber, "logger") as log,
+        ):
+            scrub_pii_in_span_batch(spans, {"proj": True})
+
+        assert spans[0]["attributes"] == {
+            "fi.input.value": "[REDACTED: could not be scanned]",
+            "fi.span.kind": "LLM",
+        }
+        assert spans[1]["attributes"] == {"fi.output.value": "all good"}
+        log.warning.assert_called_once_with("pii_scrub_value_masked", reason=reason)
 
     def test_a_json_encoded_value_fails_closed_too(self):
         from tracer.utils.pii_scrubber import scrub_pii_in_span_batch
