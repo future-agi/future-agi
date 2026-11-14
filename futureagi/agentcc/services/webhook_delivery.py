@@ -360,11 +360,20 @@ class _DeadlineAdapter(http_requests.adapters.HTTPAdapter):
     def proxy_manager_for(self, *args, **kwargs):
         return self._watch_pools(super().proxy_manager_for(*args, **kwargs))
 
-    def send(self, request, **kwargs):
+    def send(
+        self, request, stream=False, timeout=None, verify=True, cert=None, proxies=None
+    ):
         deadline = _PostDeadline.current()
         if deadline is not None and deadline.expired:
             raise http_requests.Timeout(DELIVERY_DEADLINE_ERROR)
-        resp = super().send(request, **kwargs)
+        resp = super().send(
+            request,
+            stream=stream,
+            timeout=timeout,
+            verify=verify,
+            cert=cert,
+            proxies=proxies,
+        )
         if resp.is_redirect:
             # requests reads a redirect's body before the next hop; closed,
             # it reads nothing.
