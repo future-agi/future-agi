@@ -162,7 +162,18 @@ class ProtectHelper:
         unreadable output is not recorded as a grade.
         """
         if is_flash:
-            return _FLASH_OUTPUT_RE.match(content or "") is not None
+            match = _FLASH_OUTPUT_RE.match(content or "")
+            if match is None:
+                return False
+            # Match the parser's normalization, not its unknown-token defaults.
+            harmful_request, response_refusal, harmful_response = (
+                value.strip().lower() for value in match.groups()
+            )
+            return (
+                harmful_request in {"yes", "no"}
+                and response_refusal in {"yes", "no", "n/a"}
+                and harmful_response in {"yes", "no", "n/a"}
+            )
         return _LABEL_RE.search(content or "") is not None
 
     @staticmethod

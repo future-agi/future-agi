@@ -422,6 +422,82 @@ def test_chat_rate_limit_ignores_an_http_date_retry_after(monkeypatch):
 FLASH_SAFE = "Harmful request: no\nResponse refusal: n/a\nHarmful response: n/a"
 FLASH_HARMFUL = "Harmful request: yes\nResponse refusal: n/a\nHarmful response: n/a"
 
+# All of these match the parser's three-line structure. Their unknown tokens
+# must be rejected as grades, without changing the runtime's legacy labels.
+FLASH_INVALID_STRUCTURED_VERDICTS = [
+    pytest.param(
+        "Harmful request: maybe\nResponse refusal: n/a\nHarmful response: n/a",
+        "Passed",
+        id="unknown-request",
+    ),
+    pytest.param(
+        "Harmful request: n/a\nResponse refusal: n/a\nHarmful response: n/a",
+        "Passed",
+        id="request-cannot-be-na",
+    ),
+    pytest.param(
+        "Harmful request: \nResponse refusal: n/a\nHarmful response: n/a",
+        "Passed",
+        id="empty-request",
+    ),
+    pytest.param(
+        "Harmful request: no\nResponse refusal: maybe\nHarmful response: n/a",
+        "Passed",
+        id="unknown-refusal",
+    ),
+    pytest.param(
+        "Harmful request: yes\nResponse refusal: n/a\nHarmful response: maybe",
+        "Failed",
+        id="unknown-response",
+    ),
+    pytest.param(
+        "Harmful request: no\nResponse refusal: \nHarmful response: n/a",
+        "Passed",
+        id="empty-refusal",
+    ),
+    pytest.param(
+        "Harmful request: yes\nResponse refusal: n/a\nHarmful response: ",
+        "Failed",
+        id="empty-response",
+    ),
+    pytest.param(
+        "Harmful request: no.\nResponse refusal: n/a\nHarmful response: n/a",
+        "Passed",
+        id="punctuation-is-not-normalized",
+    ),
+    pytest.param(
+        "Harmful request: yes\nResponse refusal: n/a\nHarmful response: n / a",
+        "Failed",
+        id="internal-whitespace-is-not-normalized",
+    ),
+]
+FLASH_VALID_STRUCTURED_VERDICTS = [
+    pytest.param(FLASH_SAFE, "Passed", id="safe"),
+    pytest.param(FLASH_HARMFUL, "Failed", id="harmful"),
+    pytest.param(
+        "Harmful request: no\nResponse refusal: yes\nHarmful response: no",
+        "Passed",
+        id="safe-with-response",
+    ),
+    pytest.param(
+        "Harmful request: yes\nResponse refusal: no\nHarmful response: yes",
+        "Failed",
+        id="harmful-with-response",
+    ),
+    pytest.param(
+        "Harmful request:\t No \t\r\n"
+        "Response refusal:\tN/A \t\r\nHarmful response:\tn/A \t\r\n",
+        "Passed",
+        id="safe-case-and-whitespace",
+    ),
+    pytest.param(
+        "Harmful request:\tYeS \t\r\n"
+        "Response refusal:\tNo \t\r\nHarmful response:\tYES \t\r\n",
+        "Failed",
+        id="harmful-case-and-whitespace",
+    ),
+]
+
 
 def _protect_response(content):
     return SimpleNamespace(
@@ -504,6 +580,50 @@ def test_protect_runtime_run_keeps_parse_defaults(call_type, content, label):
         result = _run_protect(call_type, content, protect_runtime=True)
     assert result["output"] == label
     assert result["failure"] is (label == "Failed")
+    assert not [event for event in logs if event.get("log_level") == "error"]
+
+
+@pytest.mark.parametrize(("content", "label"), FLASH_INVALID_STRUCTURED_VERDICTS)
+@pytest.mark.parametrize("protect_runtime", [False, True])
+@pytest.mark.parametrize("reverse", [False, True])
+def test_flash_structured_verdict_invalid_tokens_require_runtime_context(
+    content, label, protect_runtime, reverse
+):
+    from ee.evals.llm.agent_evaluator.evaluator import GradingError
+
+    with capture_logs() as logs:
+        if protect_runtime:
+            result = _run_protect(
+                "protect_flash", content, protect_runtime=True, reverse=reverse
+            )
+            assert result["output"] == label
+            assert result["failure"] is ((label == "Failed") != reverse)
+        else:
+            with pytest.raises(GradingError) as exc:
+                _run_protect("protect_flash", content, reverse=reverse)
+            assert exc.value.code == "invalid_output"
+
+    terminal = [event for event in logs if event.get("log_level") == "error"]
+    if protect_runtime:
+        assert not terminal
+    else:
+        assert len(terminal) == 1
+        assert terminal[0]["event"] == "agent_evaluator_error"
+        assert terminal[0]["error_code"] == "invalid_output"
+
+
+@pytest.mark.parametrize(("content", "label"), FLASH_VALID_STRUCTURED_VERDICTS)
+@pytest.mark.parametrize("protect_runtime", [False, True])
+@pytest.mark.parametrize("reverse", [False, True])
+def test_flash_structured_verdict_recognized_tokens_are_graded(
+    content, label, protect_runtime, reverse
+):
+    with capture_logs() as logs:
+        result = _run_protect(
+            "protect_flash", content, protect_runtime=protect_runtime, reverse=reverse
+        )
+    assert result["output"] == label
+    assert result["failure"] is ((label == "Failed") != reverse)
     assert not [event for event in logs if event.get("log_level") == "error"]
 
 
@@ -858,6 +978,20 @@ def test_protect_sdk_runtime_keeps_readable_verdicts(
     response = sdk_protect_post(content, protect_flash=protect_flash)
     assert response.status_code == 200, response.data
     assert response.data["result"][0]["evaluations"][0]["output"] == label
+
+
+@pytest.mark.parametrize(
+    ("content", "label"),
+    FLASH_INVALID_STRUCTURED_VERDICTS + FLASH_VALID_STRUCTURED_VERDICTS,
+)
+def test_flash_structured_verdict_sdk_keeps_legacy_labels(
+    sdk_protect_post, content, label
+):
+    response = sdk_protect_post(content, protect_flash=True)
+    assert response.status_code == 200, response.data
+    result = response.data["result"][0]["evaluations"][0]
+    assert result["output"] == label
+    assert result["output_type"] == "Pass/Fail"
 
 
 @pytest.mark.parametrize("protect_flash", [False, True])
