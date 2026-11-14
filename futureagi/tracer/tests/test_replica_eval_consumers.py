@@ -852,3 +852,40 @@ def test_fresh_config_list_includes_a_config_created_after_freeze(
 
     assert config_id in listed(fresh="true")
     assert config_id not in listed()
+
+
+def test_fresh_config_list_without_a_project_stays_in_the_workspace(
+    auth_client, user, project, eval_template
+):
+    """`fresh` without a project_id lists the request workspace's configs, not
+    those of a sibling workspace in the same organization."""
+    from accounts.models.workspace import Workspace
+    from tracer.models.custom_eval_config import CustomEvalConfig
+    from tracer.models.project import Project
+
+    own_id = _create_config(auth_client, project, eval_template)
+    sibling = Project.no_workspace_objects.create(
+        name="Sibling workspace project",
+        organization=project.organization,
+        workspace=Workspace.objects.create(
+            name="Sibling workspace",
+            organization=project.organization,
+            created_by=user,
+            is_active=True,
+        ),
+        model_type=project.model_type,
+        trace_type="observe",
+    )
+    sibling_config = CustomEvalConfig.objects.create(
+        name="sibling-" + uuid.uuid4().hex,
+        project=sibling,
+        eval_template=eval_template,
+        config={},
+        mapping={},
+    )
+
+    response = auth_client.get(LIST_URL, {"fresh": "true"})
+    assert response.status_code == 200, response.content
+    listed = [str(row["id"]) for row in response.json()["result"]]
+    assert own_id in listed
+    assert str(sibling_config.pk) not in listed

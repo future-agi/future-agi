@@ -290,6 +290,13 @@ class CustomEvalConfigView(BaseModelViewSetMixin, ModelViewSet):
                 project__organization=getattr(request, "organization", None)
                 or request.user.organization,
             ).all()
+            if query_data.get("fresh"):
+                # Only the request's workspace: Project's manager applies the
+                # workspace the request runs in (the org-wide filter above
+                # alone spans sibling workspaces).
+                queryset = queryset.filter(
+                    project__in=Project.objects.using("default").values("id")
+                )
             project_id = query_data.get("project_id")
             if project_id:
                 queryset = queryset.filter(project_id=project_id)
