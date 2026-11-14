@@ -7028,47 +7028,16 @@ OSS_AVAILABLE_MODELS = [
         "window, ideal for long-context chat and reasoning. Released March 2025[1][3].",
     },
     {
-        "model_name": "fireworks_ai/accounts/fireworks/models/llama-v3p2-1b-instruct",
+        # Confirmed working on Fireworks serverless in issue #3221.
+        "model_name": "fireworks_ai/accounts/fireworks/models/gpt-oss-120b",
         "providers": "fireworks_ai",
         "api_key_name": "FIREWORKS_AI_API_KEY",
         "mode": "chat",
-        "parameters": 1000000000,
+        "parameters": "unknown",
         "context_window": "unknown",
-        "best_for": ["lightweight instruction following", "chatbots", "simple Q&A"],
-        "speed": "very fast",
-        "languages": ["English"],
-        "notes": "Llama v3p2 1B Instruct is a lightweight, instruction-tuned model for basic chat and "
-        "Q&A, suitable for low-resource environments.",
-    },
-    {
-        "model_name": "fireworks_ai/accounts/fireworks/models/llama-v3p2-3b-instruct",
-        "providers": "fireworks_ai",
-        "api_key_name": "FIREWORKS_AI_API_KEY",
-        "mode": "chat",
-        "parameters": 3000000000,
-        "context_window": "unknown",
-        "best_for": [
-            "efficient instruction following",
-            "chatbots",
-            "multilingual chat",
-        ],
-        "speed": "fast",
-        "languages": ["English", "multilingual"],
-        "notes": "Llama v3p2 3B Instruct is a compact, instruction-tuned model for efficient chat and "
-        "multilingual Q&A.",
-    },
-    {
-        "model_name": "fireworks_ai/accounts/fireworks/models/llama-v3p2-11b-vision-instruct",
-        "providers": "fireworks_ai",
-        "api_key_name": "FIREWORKS_AI_API_KEY",
-        "mode": "chat",
-        "parameters": 11000000000,
-        "context_window": "unknown",
-        "best_for": ["vision-language tasks", "multimodal chat", "complex Q&A"],
-        "speed": "fast",
-        "languages": ["English", "multilingual"],
-        "notes": "Llama v3p2 11B Vision Instruct is a mid-sized, vision-capable model for multimodal "
-        "chat and advanced Q&A.",
+        "best_for": ["general-purpose chat"],
+        "notes": "GPT-OSS 120B is an open-weight chat model served by Fireworks AI.",
+        # No verified Fireworks rates: use fallback pricing, not another host's rates.
     },
     {
         "model_name": "accounts/fireworks/models/llama-v3p2-90b-vision-instruct",
@@ -7086,93 +7055,6 @@ OSS_AVAILABLE_MODELS = [
         "languages": ["English", "multilingual"],
         "notes": "Llama v3p2 90B Vision Instruct is a large, multimodal model for enterprise-grade "
         "vision-language applications and complex reasoning.",
-    },
-    {
-        "model_name": "fireworks_ai/accounts/fireworks/models/firefunction-v2",
-        "providers": "fireworks_ai",
-        "api_key_name": "FIREWORKS_AI_API_KEY",
-        "mode": "chat",
-        "parameters": "unknown",
-        "context_window": "unknown",
-        "best_for": [
-            "general-purpose chat",
-            "text generation",
-            "instruction following",
-        ],
-        "speed": "fast",
-        "languages": ["English"],
-        "notes": "Firefunction-v2 is a proprietary Fireworks AI model designed for fast, "
-        "general-purpose chat and instruction following. It is optimized for low latency and "
-        "high throughput, suitable for a wide range of text generation and conversational "
-        "tasks[2][5][9].",
-    },
-    {
-        "model_name": "fireworks_ai/accounts/fireworks/models/mixtral-8x22b-instruct-hf",
-        "providers": "fireworks_ai",
-        "api_key_name": "FIREWORKS_AI_API_KEY",
-        "mode": "chat",
-        "parameters": 141000000000,
-        "active_parameters": 39000000000,
-        "context_window": 64000,
-        "best_for": [
-            "math reasoning",
-            "code generation",
-            "multilingual chat",
-            "function calling",
-            "long-context document analysis",
-        ],
-        "speed": "medium",
-        "languages": ["English", "German", "French", "Spanish", "Italian"],
-        "notes": "Mixtral 8x22B Instruct is a sparse Mixture-of-Experts model (141B total, 39B active "
-        "per token) with a 64K context window. It outperforms all open models on coding and "
-        "math tasks, supports function calling, and is highly efficient for large-scale and "
-        "multilingual applications. Released under Apache 2.0 license[6][8][10][11][12].",
-    },
-    {
-        "model_name": "fireworks_ai/accounts/fireworks/models/qwen2-72b-instruct",
-        "providers": "fireworks_ai",
-        "api_key_name": "FIREWORKS_AI_API_KEY",
-        "mode": "chat",
-        "parameters": 72000000000,
-        "context_window": "unknown",
-        "best_for": ["advanced chat", "reasoning", "multilingual tasks"],
-        "speed": "standard",
-        "languages": ["English", "multilingual"],
-        "notes": "Qwen2-72B-Instruct is a large, instruction-tuned model for advanced chat, reasoning, "
-        "and multilingual applications. Hosted on Fireworks AI for fast inference and "
-        "scalable deployment[1][9].",
-    },
-    {
-        "model_name": "fireworks_ai/accounts/fireworks/models/yi-large",
-        "providers": "fireworks_ai",
-        "api_key_name": "FIREWORKS_AI_API_KEY",
-        "mode": "chat",
-        "parameters": "34B or larger",
-        "context_window": "up to 200000",
-        "best_for": [
-            "multilingual chat",
-            "long-context summarization",
-            "complex reasoning",
-        ],
-        "speed": "fast",
-        "languages": ["English", "Chinese", "multilingual"],
-        "notes": "Yi-Large is a high-capacity, multilingual model with support for very large context "
-        "windows (up to 200K tokens), suitable for long-document analysis and advanced "
-        "chat[1][9].",
-    },
-    {
-        "model_name": "fireworks_ai/accounts/fireworks/models/deepseek-coder-v2-instruct",
-        "providers": "fireworks_ai",
-        "api_key_name": "FIREWORKS_AI_API_KEY",
-        "mode": "chat",
-        "parameters": "unknown (large)",
-        "context_window": "unknown",
-        "best_for": ["code generation", "instruction following", "developer chat"],
-        "speed": "fast",
-        "languages": ["English", "multilingual"],
-        "notes": "Deepseek Coder V2 Instruct is a large code-specialized model for chat-based "
-        "programming, code generation, and developer Q&A. Hosted on Fireworks AI for "
-        "low-latency inference[1][9].",
     },
     {
         "model_name": "fireworks_ai/nomic-ai/nomic-embed-text-v1.5",
