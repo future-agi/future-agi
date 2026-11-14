@@ -804,3 +804,111 @@ def test_voice_transcript_rejects_unstorable_text_before_replacing_rows(
     ]
     response.close.assert_called_once_with()
     response.release_conn.assert_called_once_with()
+
+
+@pytest.mark.parametrize("kind", ["transcript", "tool_trace"])
+def test_receipt_rejects_non_utf8_artifact_without_writes(receipt_channel, kind):
+    job, capability, body = receipt_channel
+    call = job.scenario_registrations.get().call_execution
+    before = _call_state(call)
+    objects = {}
+    invalid_content = b"private-artifact-\xff"
+    digest = _upload(capability, objects, invalid_content, kind)
+    if kind == "transcript":
+        body["call"]["transcript_artifact"] = f"sha256:{digest}"
+    response = _post_receipt(capability, objects, body, via_api=True)
+    assert response.status_code == 400, response.content
+    assert response.json()["error"] == "invalid_jsonb_string"
+    assert response.json()["retryable"] is False
+    assert b"private-artifact" not in response.content
+    assert not HostedHarnessReceipt.no_workspace_objects.filter(job=job).exists()
+    assert _call_state(call) == before
+
+
+@pytest.mark.parametrize("separator", [" ", " "])
+def test_receipt_keeps_unicode_separator_inside_tool_trace_line(
+    receipt_channel, separator
+):
+    job, capability, body = receipt_channel
+    objects = {}
+    text = f"before{separator}after"
+    trace = json.dumps({"name": "lookup", "result": text}, ensure_ascii=False).encode()
+    assert separator.encode() in trace
+    _upload(capability, objects, trace, "tool_trace")
+    response = _post_receipt(capability, objects, body, via_api=True)
+    assert response.status_code == 200, response.content
+    call = job.scenario_registrations.get().call_execution
+    call.refresh_from_db()
+    assert call.provider_call_data["livekit"]["tool_calls"] == [
+        {"name": "lookup", "result": text}
+    ]
+
+
+def test_receipt_accepts_crlf_tool_trace_and_skips_blank_lines(receipt_channel):
+    job, capability, body = receipt_channel
+    objects = {}
+    lines = [
+        json.dumps({"name": "first"}),
+        "",
+        "   ",
+        json.dumps({"name": "second"}),
+        "",
+    ]
+    _upload(capability, objects, "\r\n".join(lines).encode(), "tool_trace")
+    response = _post_receipt(capability, objects, body, via_api=True)
+    assert response.status_code == 200, response.content
+    call = job.scenario_registrations.get().call_execution
+    call.refresh_from_db()
+    assert call.provider_call_data["livekit"]["tool_calls"] == [
+        {"name": "first"},
+        {"name": "second"},
+    ]
+
+
+@pytest.mark.parametrize("number", [float("inf"), float("-inf"), float("nan")])
+@pytest.mark.parametrize("kind", ["transcript", "tool_trace"])
+def test_receipt_rejects_nonfinite_artifact_timing_without_writes(
+    receipt_channel, number, kind
+):
+    job, capability, body = receipt_channel
+    call = job.scenario_registrations.get().call_execution
+    before = _call_state(call)
+    objects = {}
+    if kind == "transcript":
+        content = json.dumps(
+            {"messages": [{"role": "user", "content": "hello", "at": number}]}
+        ).encode()
+        digest = _upload(capability, objects, content, kind)
+        body["call"]["transcript_artifact"] = f"sha256:{digest}"
+    else:
+        content = json.dumps({"name": "lookup", "at": number}).encode()
+        _upload(capability, objects, content, kind)
+    response = _post_receipt(capability, objects, body, via_api=True)
+    assert response.status_code == 400, response.content
+    assert response.json()["error"] == "invalid_jsonb_number"
+    assert response.json()["retryable"] is False
+    assert not HostedHarnessReceipt.no_workspace_objects.filter(job=job).exists()
+    assert _call_state(call) == before
+
+
+@pytest.mark.parametrize("kind", ["transcript", "tool_trace"])
+def test_receipt_rejects_overflowing_number_literal_without_writes(
+    receipt_channel, kind
+):
+    # json parses 1e999 to float("inf") without the Infinity constant.
+    job, capability, body = receipt_channel
+    call = job.scenario_registrations.get().call_execution
+    before = _call_state(call)
+    objects = {}
+    if kind == "transcript":
+        content = b'{"messages": [{"role": "user", "content": "hello", "at": 1e999}]}'
+        digest = _upload(capability, objects, content, kind)
+        body["call"]["transcript_artifact"] = f"sha256:{digest}"
+    else:
+        _upload(capability, objects, b'{"name": "lookup", "at": 1e999}', kind)
+    response = _post_receipt(capability, objects, body, via_api=True)
+    assert response.status_code == 400, response.content
+    assert response.json()["error"] == "invalid_jsonb_number"
+    assert response.json()["retryable"] is False
+    assert not HostedHarnessReceipt.no_workspace_objects.filter(job=job).exists()
+    assert _call_state(call) == before

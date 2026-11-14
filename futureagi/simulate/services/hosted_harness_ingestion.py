@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import math
 import tempfile
 from datetime import datetime, timedelta
 from typing import Any, BinaryIO
@@ -1240,6 +1241,42 @@ def _receipt_evaluation_coverage(body: dict[str, Any]) -> dict[str, int | bool]:
     }
 
 
+def _decode_artifact_text(data: bytes, *, field: str) -> str:
+    """Decode an uploaded artifact, refusing bytes that are not UTF-8 without echoing them."""
+    try:
+        return data.decode("utf-8")
+    except UnicodeDecodeError:
+        raise HostedHarnessError(
+            "invalid_jsonb_string",
+            f"{field} is not valid UTF-8 text",
+            status_code=400,
+        ) from None
+
+
+def _load_artifact_json(text: str, *, field: str) -> Any:
+    """Parse artifact JSON, refusing numbers JSONB cannot store before any timing math."""
+
+    def nonfinite(_token: str) -> float:
+        raise HostedHarnessError(
+            "invalid_jsonb_number",
+            f"{field} contains a non-finite number",
+            status_code=400,
+        )
+
+    def finite_float(token: str) -> float:
+        value = float(token)
+        if not math.isfinite(value):
+            nonfinite(token)
+        return value
+
+    return json.loads(text, parse_constant=nonfinite, parse_float=finite_float)
+
+
+def _jsonl_lines(text: str) -> list[str]:
+    """Split JSONL on newlines only; U+2028 and other separators belong to the data."""
+    return [line.removesuffix("\r") for line in text.split("\n")]
+
+
 def _read_hosted_tool_trace(
     artifact: HostedHarnessArtifact, base_time: float | None
 ) -> list[dict[str, Any]]:
@@ -1253,13 +1290,13 @@ def _read_hosted_tool_trace(
         response = get_storage_client().get_object(
             UPLOAD_BUCKET_NAME, artifact.object_key
         )
-        raw = response.read().decode("utf-8")
+        raw = _decode_artifact_text(response.read(), field="tool trace artifact")
         calls: list[dict[str, Any]] = []
-        for line in raw.splitlines():
+        for line in _jsonl_lines(raw):
             if not line.strip():
                 continue
             try:
-                value = json.loads(line)
+                value = _load_artifact_json(line, field="tool trace artifact")
             except json.JSONDecodeError:
                 continue
             if isinstance(value, dict):
@@ -1331,9 +1368,9 @@ def _ingest_hosted_transcript(
         response = get_storage_client().get_object(
             UPLOAD_BUCKET_NAME, artifact.object_key
         )
-        raw = response.read().decode("utf-8")
+        raw = _decode_artifact_text(response.read(), field="transcript artifact")
         try:
-            payload = json.loads(raw)
+            payload = _load_artifact_json(raw, field="transcript artifact")
         except json.JSONDecodeError:
             payload = {"transcript": raw, "messages": []}
         messages = payload.get("messages") if isinstance(payload, dict) else []
