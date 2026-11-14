@@ -114,3 +114,26 @@ test("a missing target is an error, not a clean scan", () => {
   assert.equal(code, 2, out);
   assert.match(out, /MISSING/);
 });
+
+test("an archive it cannot read is an error, not a clean scan", () => {
+  const good = zip("trace.trace", "nothing secret here");
+  // A PK header with no end-of-central-directory record.
+  const truncated = good.subarray(0, good.length - 22);
+  // An entry with a compression method it does not read (12, bzip2).
+  const bzip = Buffer.from(good);
+  bzip.writeUInt16LE(12, 8);
+  bzip.writeUInt16LE(12, 30 + "trace.trace".length + deflateLen(good) + 10);
+  // A deflated entry whose data does not inflate.
+  const corrupt = Buffer.from(good);
+  corrupt.fill(0xff, 30 + "trace.trace".length, 30 + "trace.trace".length + 4);
+  for (const [name, bytes] of [["truncated.zip", truncated], ["bzip.zip", bzip], ["corrupt.zip", corrupt]]) {
+    const { code, out } = scan(tmpdir({ [name]: bytes }));
+    assert.equal(code, 2, `${name}: ${out}`);
+    assert.match(out, /UNREADABLE/);
+    assert.match(out, /not a clean scan/);
+  }
+  // Control: the readable archive is still a clean scan.
+  assert.equal(scan(tmpdir({ "ok.zip": good })).code, 0);
+});
+
+function deflateLen(z) { return z.readUInt32LE(18); }

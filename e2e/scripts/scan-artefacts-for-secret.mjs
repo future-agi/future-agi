@@ -49,17 +49,22 @@ const needles = [
 
 // Minimal zip reader (stored and deflated entries), enough for Playwright's
 // traces, blob reports and the HTML report's embedded archive.
-function unzip(buf) {
+// Anything it cannot read is reported (unreadable), so the scan is not
+// clean: bytes it never examined cannot pass as "0 hit(s)".
+function unzip(buf, label) {
   const entries = [];
   let eocd = -1;
   for (let i = buf.length - 22; i >= Math.max(0, buf.length - 65_557); i--) {
     if (buf.readUInt32LE(i) === 0x06054b50) { eocd = i; break; }
   }
-  if (eocd < 0) return entries;
+  if (eocd < 0) { unreadableAt(label, 'zip without an end-of-central-directory record'); return entries; }
   const count = buf.readUInt16LE(eocd + 10);
   let p = buf.readUInt32LE(eocd + 16);
+  if (count === 0xffff || p === 0xffffffff) { unreadableAt(label, 'zip64 archive'); return entries; }
+  let read = 0;
   for (let n = 0; n < count && p + 46 <= buf.length; n++) {
     if (buf.readUInt32LE(p) !== 0x02014b50) break;
+    read += 1;
     const method = buf.readUInt16LE(p + 10);
     const compSize = buf.readUInt32LE(p + 20);
     const nameLen = buf.readUInt16LE(p + 28);
@@ -71,12 +76,14 @@ function unzip(buf) {
     const lNameLen = buf.readUInt16LE(local + 26);
     const lExtraLen = buf.readUInt16LE(local + 28);
     const data = buf.subarray(local + 30 + lNameLen + lExtraLen, local + 30 + lNameLen + lExtraLen + compSize);
+    if (method !== 0 && method !== 8) { unreadableAt(`${label}!${name}`, `compression method ${method}`); continue; }
     try {
-      entries.push([name, method === 0 ? data : method === 8 ? zlib.inflateRawSync(data) : Buffer.alloc(0)]);
-    } catch {
-      entries.push([name, Buffer.alloc(0)]);
+      entries.push([name, method === 0 ? data : zlib.inflateRawSync(data)]);
+    } catch (e) {
+      unreadableAt(`${label}!${name}`, `inflate failed: ${e.message}`);
     }
   }
+  if (read < count) unreadableAt(label, `read ${read} of ${count} central directory entries`);
   return entries;
 }
 
@@ -96,6 +103,11 @@ function context(buf, form) {
 let hits = 0;
 let scanned = 0;
 let missing = 0;
+let unreadable = 0;
+function unreadableAt(label, why) {
+  unreadable += 1;
+  console.log(`UNREADABLE ${label} (${why})`);
+}
 function scanBuffer(label, buf, depth = 0) {
   scanned += 1;
   for (const [form, needle] of needles) {
@@ -107,7 +119,7 @@ function scanBuffer(label, buf, depth = 0) {
   }
   if (depth > 3) return;
   if (buf.length > 4 && buf.readUInt32LE(0) === 0x04034b50) {
-    for (const [name, data] of unzip(buf)) scanBuffer(`${label}!${name}`, data, depth + 1);
+    for (const [name, data] of unzip(buf, label)) scanBuffer(`${label}!${name}`, data, depth + 1);
   }
   // The HTML report embeds its data as a base64 zip in a data: URL.
   const marker = Buffer.from('data:application/zip;base64,');
@@ -130,8 +142,10 @@ function walk(p) {
 for (const t of targets) walk(t);
 console.log(`scanned ${scanned} files/entries for ${needles.length} encodings of the secret: ${hits} hit(s)`);
 if (hits) process.exit(1);
-if (missing || !scanned) {
-  console.log(missing ? `${missing} target(s) missing: not a clean scan` : 'nothing scanned: not a clean scan');
+if (missing || unreadable || !scanned) {
+  console.log(missing ? `${missing} target(s) missing: not a clean scan`
+    : unreadable ? `${unreadable} archive(s)/entries could not be read: not a clean scan`
+      : 'nothing scanned: not a clean scan');
   process.exit(2);
 }
 process.exit(0);
