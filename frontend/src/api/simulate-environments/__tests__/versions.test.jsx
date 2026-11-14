@@ -1599,6 +1599,31 @@ describe("validate before save requests", () => {
     );
   });
 
+  it("keeps the key for a retry of the same candidates, and not after a refusal", async () => {
+    const CANDIDATES = { environmentVersionId: "e9", suiteVersionId: "s9" };
+    axios.post.mockRejectedValueOnce({ message: "Network Error" });
+    axios.post.mockRejectedValueOnce({
+      statusCode: 409,
+      error: "review_stale",
+    });
+    axios.post.mockResolvedValue({ data: {} });
+    const { result } = renderHook(() => useSaveCandidates("env-1"), {
+      wrapper,
+    });
+    const click = () =>
+      act(() =>
+        result.current.mutateAsync({ candidates: CANDIDATES }).catch(() => {}),
+      );
+
+    await click();
+    await click();
+    await click();
+
+    const keys = axios.post.mock.calls.map(([, body]) => body.idempotency_key);
+    expect(keys[0]).toBe(keys[1]);
+    expect(keys[2]).not.toBe(keys[1]);
+  });
+
   it("maps the validation and candidates on the drafts", () => {
     const drafts = toDrafts({
       environment: null,
