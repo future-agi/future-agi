@@ -301,3 +301,35 @@ func TestDecisionAliasListingCannotKnowTheResolvedVersion(t *testing.T) {
 		t.Fatalf("charged %q, want the resolved version's override 0.500000", got)
 	}
 }
+
+// Org custom pricing in the listing follows tryOrgPricing's order: the listed
+// id the caller sends wins over the upstream name, for a prefixed and an
+// unprefixed Models entry alike.
+func TestDecisionOrgCustomPricingListingMatchesCharge(t *testing.T) {
+	for _, entry := range []string{"openrouter/typesafe/jev-1.13", "typesafe/jev-1.13"} {
+		t.Run(entry, func(t *testing.T) {
+			const id = "openrouter/typesafe/jev-1.13"
+			provider := &tenant.ProviderConfig{APIKey: orgTypeSafeKey, APIFormat: "systemone", Enabled: true, Models: []string{entry}}
+			org := &tenant.OrgConfig{
+				Providers: map[string]*tenant.ProviderConfig{"openrouter": provider},
+				CostTracking: &tenant.CostTrackingConfig{Enabled: true, CustomPricing: map[string]*tenant.CustomPricing{
+					"typesafe/jev-1.13": {InputPerMTok: 0.7},
+					id:                  {InputPerMTok: 0.9},
+				}},
+			}
+			g := newDecisionGateway(t, decisionGatewayOptions{
+				orgs: map[string]*tenant.OrgConfig{"org-a": org},
+				config: func(cfg *config.Config, upstreamURL string) {
+					cfg.Providers["openrouter"] = config.ProviderConfig{APIFormat: "systemone", BaseURL: upstreamURL, Models: []string{entry}}
+				},
+			})
+			if got := listedDecisionPrice(t, g, keyByok, id); got != 0.9 {
+				t.Fatalf("listing for %s = %v, want the listed id's 0.9", id, got)
+			}
+			if got := chargedDecisionCost(t, g, keyByok, id, "typesafe/jev-1.13-20260917"); got != "0.900000" {
+				t.Fatalf("charged %q, want the listed 0.900000", got)
+			}
+			expectOnlyKey(t, g, orgTypeSafeKey, 1)
+		})
+	}
+}

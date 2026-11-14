@@ -306,7 +306,9 @@ func newDecisionModel(db *modeldb.ModelDB, orgCfg *tenant.OrgConfig, providerID,
 		Format:   format,
 	}
 	if orgCfg != nil && orgCfg.CostTracking != nil && orgCfg.CostTracking.Enabled {
-		for _, name := range []string{bare, entry.ID} {
+		// tryOrgPricing's order: the name the caller sends (the listed id),
+		// then the name sent upstream.
+		for _, name := range []string{entry.ID, bare} {
 			if custom := orgCfg.CostTracking.CustomPricing[name]; custom != nil {
 				entry.Pricing = &decisionModelPricing{InputPerMTok: custom.InputPerMTok, OutputPerMTok: custom.OutputPerMTok}
 				return entry, true
