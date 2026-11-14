@@ -14,6 +14,7 @@ export const STATE_LABEL = {
   out_of_budget: "Stopped at budget",
   stopped: "Stopped",
   failed: "Failed",
+  too_few_cases: "Too few failing cases",
 };
 
 export const OUTCOME_LABEL = {
@@ -41,6 +42,8 @@ const SURFACE_LABEL = {
 const MUST_PASS_RULE =
   "A case that passed every time before must not drop beyond normal noise. A case that fails every run is run again to confirm before it counts.";
 
+// Only a fix whose run had too few failing cases has the first step.
+const VARIATIONS_STEP = { id: "variations", label: "Variations" };
 const STEPS = [
   { id: "reproduce", label: "Reproduce" },
   { id: "search", label: "Search" },
@@ -149,9 +152,31 @@ function searchCount(plan, candidates) {
   return `${tried} · best so far ${bestTargetPct(rated)}% on ${plan.target} target scenarios`;
 }
 
+const keptVariations = (fix) =>
+  Object.keys(fix.request?.variation_parents || {}).length;
+
+const hasVariations = (fix) =>
+  fix.step === "variations" ||
+  !!fix.request?.variations_pending ||
+  keptVariations(fix) > 0;
+
+function variationLines(fix) {
+  const { request } = fix;
+  if (request.variations_pending) {
+    return [
+      `Writes variations of the ${request.target_scenario_keys.length} failing cases, then keeps those the current version also fails`,
+    ];
+  }
+  const kept = keptVariations(fix);
+  return [
+    `Kept ${kept} ${kept === 1 ? "variation" : "variations"} the current version failed: ${request.target_scenario_keys.length} failing cases`,
+  ];
+}
+
 function stepLines(id, fix) {
   const { plan, diagnosis } = fix;
   const candidates = fix.candidates || [];
+  if (id === "variations") return variationLines(fix);
   if (id === "reproduce") {
     return [
       fix.source_run_number != null && fix.agent?.version_number != null
@@ -184,9 +209,10 @@ function stepLines(id, fix) {
 }
 
 export function stepRows(fix) {
-  const current = STEPS.findIndex((s) => s.id === fix.step);
+  const steps = hasVariations(fix) ? [VARIATIONS_STEP, ...STEPS] : STEPS;
+  const current = steps.findIndex((s) => s.id === fix.step);
   const finished = fix.step === "done";
-  return STEPS.map((s, i) => {
+  return steps.map((s, i) => {
     let state = "todo";
     if (finished || i < current) state = "done";
     else if (i === current) state = "now";

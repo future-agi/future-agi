@@ -137343,6 +137343,7 @@
                     "title": "Step",
                     "type": "string",
                     "enum": [
+                        "variations",
                         "reproduce",
                         "search",
                         "verify",
@@ -137545,6 +137546,20 @@
                 "max_minutes": {
                     "title": "Max minutes",
                     "type": "integer"
+                },
+                "variations_pending": {
+                    "title": "Variations pending",
+                    "type": "boolean",
+                    "default": false
+                },
+                "variation_parents": {
+                    "title": "Variation parents",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string",
+                        "minLength": 1
+                    },
+                    "default": {}
                 }
             }
         },
@@ -137823,7 +137838,8 @@
                         "not_reproduced",
                         "out_of_budget",
                         "stopped",
-                        "failed"
+                        "failed",
+                        "too_few_cases"
                     ]
                 },
                 "stage": {
@@ -137836,6 +137852,7 @@
                     "description": "A finished fix is done, whatever the engine last said.",
                     "type": "string",
                     "enum": [
+                        "variations",
                         "reproduce",
                         "search",
                         "verify",
@@ -138214,6 +138231,9 @@
                 "budget_credits_max",
                 "max_minutes_max",
                 "scenarios_min",
+                "cases_min",
+                "variations_per_case",
+                "verified_cases_min",
                 "scenarios_max"
             ],
             "type": "object",
@@ -138228,6 +138248,18 @@
                 },
                 "scenarios_min": {
                     "title": "Scenarios min",
+                    "type": "integer"
+                },
+                "cases_min": {
+                    "title": "Cases min",
+                    "type": "integer"
+                },
+                "variations_per_case": {
+                    "title": "Variations per case",
+                    "type": "integer"
+                },
+                "verified_cases_min": {
+                    "title": "Verified cases min",
                     "type": "integer"
                 },
                 "scenarios_max": {
@@ -138246,7 +138278,8 @@
                 "surfaces",
                 "defaults",
                 "limits",
-                "blocked"
+                "blocked",
+                "variations_blocked"
             ],
             "type": "object",
             "properties": {
@@ -138281,6 +138314,9 @@
                     "$ref": "#/definitions/AgentFixLaunchLimits"
                 },
                 "blocked": {
+                    "$ref": "#/definitions/AgentFixFailure"
+                },
+                "variations_blocked": {
                     "$ref": "#/definitions/AgentFixFailure"
                 }
             }
@@ -138387,7 +138423,8 @@
                         "not_reproduced",
                         "out_of_budget",
                         "stopped",
-                        "failed"
+                        "failed",
+                        "too_few_cases"
                     ]
                 },
                 "stage": {
@@ -138400,6 +138437,7 @@
                     "description": "A finished fix is done, whatever the engine last said.",
                     "type": "string",
                     "enum": [
+                        "variations",
                         "reproduce",
                         "search",
                         "verify",

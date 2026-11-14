@@ -60,6 +60,16 @@ _TOKEN_TAIL_SECONDS = 120 + 300
 logger = structlog.get_logger(__name__)
 
 
+# A run gets at least this long a scenario, whatever its environment's own limit.
+RUN_SECONDS_PER_SCENARIO = 360
+
+
+def run_max_duration_seconds(runtime_seconds: int, scenarios: int) -> int:
+    """A run's time limit: its environment's, or RUN_SECONDS_PER_SCENARIO a scenario when
+    that is longer."""
+    return max(runtime_seconds, scenarios * RUN_SECONDS_PER_SCENARIO)
+
+
 def _active_attempt_budget_seconds(job: HostedHarnessJob) -> int:
     """Budget an active capability for authoring plus scenario execution."""
 
@@ -378,7 +388,9 @@ def create_selected_harness_run(
             idempotency_key = f"coding-agent:{coding_agent_key_id}:{idempotency_key}"
         idempotency_digest = hashlib.sha256(idempotency_key.encode()).hexdigest()
         child_idempotency_key = run_idempotency_key(environment, idempotency_key)
-        resolved = resolve_run_pins(environment, rerun_of=rerun_of, picks=picks)
+        resolved = resolve_run_pins(
+            environment, rerun_of=rerun_of, picks=picks, fix_run=fix_run
+        )
         if resolved is not None:
             # A repeated request is answered before anything is written.
             replayed = _replayed_run(
@@ -495,8 +507,8 @@ def create_selected_harness_run(
                     child_payload[name] = json.loads(json.dumps(value))
         child_payload["scenario_count"] = len(manifest)
         runtime = child_payload["runtime"]
-        runtime["max_duration_seconds"] = max(
-            runtime["max_duration_seconds"], len(manifest) * 360
+        runtime["max_duration_seconds"] = run_max_duration_seconds(
+            runtime["max_duration_seconds"], len(manifest)
         )
         if seed is not None:
             child_payload["seed"] = seed
@@ -817,13 +829,15 @@ def resolve_run_pins(
     *,
     rerun_of: HostedHarnessJob | None = None,
     picks: VersionPicks | None = None,
+    fix_run: Any = None,
 ) -> ResolvedPins | None:
     """The versions a new run would be pinned to, when versioning pins runs.
 
     Per piece a pick wins, then a rerun's kept pin, then the environment's default. A
     rerun keeps its source's pins when they can run: they are the defaults, their
     bundle is cached, or certifying is on; otherwise it runs the defaults. Picks that
-    cannot run are refused rather than run as the defaults.
+    cannot run are refused rather than run as the defaults. Only a check run of
+    ``fix_run`` may pick the suite version private to it.
     """
     from simulate.services.harness_versioning.assembly import (
         bundle_ready,
@@ -875,7 +889,7 @@ def resolve_run_pins(
             )
     ids = _pin_ids(source)
     if chosen:
-        _check_picks(environment, picks, defaults)
+        _check_picks(environment, picks, defaults, fix_run=fix_run)
         picked = tuple(
             pick or kept for pick, kept in zip(picks.ids(), ids, strict=True)
         )
@@ -1043,11 +1057,16 @@ def agent_version_pickable(environment: HostedHarnessJob, agent_id: Any) -> bool
 
 
 def _check_picks(
-    environment: HostedHarnessJob, picks: VersionPicks, defaults: tuple[Any, Any, Any]
+    environment: HostedHarnessJob,
+    picks: VersionPicks,
+    defaults: tuple[Any, Any, Any],
+    *,
+    fix_run: Any = None,
 ) -> None:
     """Refuse a pick that is not one of this environment's runnable versions.
 
-    A pick of the default is the default, so a dialog that sends it back always runs.
+    A pick of the default is the default, so a dialog that sends it back always runs. A
+    suite version private to a fix is the pick of that fix's check runs alone.
     """
     from simulate.models import HarnessEnvironmentVersion, HarnessSuiteVersion
     from simulate.models.harness_versioning import VersionStatus
@@ -1059,9 +1078,12 @@ def _check_picks(
         ("suite", HarnessSuiteVersion, suite_id, defaults[2]),
     ):
         if pick and pick != default:
-            if not model.no_workspace_objects.filter(
+            versions = model.no_workspace_objects.filter(
                 job=environment, id=pick, status=VersionStatus.ACTIVE
-            ).exists():
+            )
+            if piece == "suite" and pick != getattr(fix_run, "suite_version_id", None):
+                versions = versions.filter(fix_run__isnull=True)
+            if not versions.exists():
                 raise _not_pickable(piece)
     if not agent_id or agent_id == defaults[0]:
         return

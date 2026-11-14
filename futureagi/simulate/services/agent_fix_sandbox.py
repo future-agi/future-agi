@@ -67,7 +67,7 @@ class EngineCredentials:
 def launch(fix_run_id: str) -> AgentFixLaunch:
     """Start the fix's engine in a new sandbox: the first time, or again after the previous
     engine died. Says why instead when there is none."""
-    refusal = _claim_launch(fix_run_id)
+    refusal = claim(fix_run_id)
     if refusal is not None:
         return AgentFixLaunch(observation=refusal)
     release(fix_run_id)
@@ -249,10 +249,10 @@ def _start_engine(sandbox, capability: EngineCapability) -> str:
     return str(command.cmd_id)
 
 
-def _claim_launch(fix_run_id: str) -> Observation | None:
-    """Take the run's next sandbox, or say why it gets none. The previous sandbox's
-    credentials stop working here, before anything new exists. A fix held back by the caps
-    stays queued, and its deadline has not started."""
+def claim(fix_run_id: str) -> Observation | None:
+    """Take the run's next step (a sandbox, or its first step writing variations), or say
+    why it gets none. The previous sandbox's credentials stop working here, before anything
+    new exists. A fix held back by the caps stays queued, and its deadline has not started."""
     with transaction.atomic():
         fix_run = AgentFixRun.no_workspace_objects.select_for_update().get(
             id=fix_run_id

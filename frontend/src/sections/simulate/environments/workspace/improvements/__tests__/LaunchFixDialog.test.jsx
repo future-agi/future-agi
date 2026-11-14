@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { SnackbarProvider } from "notistack";
+import { paths } from "src/routes/paths";
 
 import {
   fixtureLaunchOptions,
@@ -124,7 +125,9 @@ describe("LaunchFixDialog", () => {
       fixCases().getByRole("checkbox", { name: "Authority claim" }),
     );
     expect(
-      screen.getByText("11 failing to fix · 6 must keep passing"),
+      screen.getByText(
+        "11 failing, and up to 33 variations of them · 6 must keep passing",
+      ),
     ).toBeInTheDocument();
     expect(protectCases().getByText("6 of 6")).toBeInTheDocument();
     expect(
@@ -205,7 +208,10 @@ describe("LaunchFixDialog", () => {
       "add a locked file",
       "locked",
       (user) =>
-        user.type(screen.getByLabelText("Add a locked file"), "spec.json{Enter}"),
+        user.type(
+          screen.getByLabelText("Add a locked file"),
+          "spec.json{Enter}",
+        ),
     ],
     [
       "change the budget",
@@ -273,13 +279,85 @@ describe("LaunchFixDialog", () => {
     ).toBeDisabled();
   });
 
+  it("writes variations first for fewer failing cases than a fix needs", async () => {
+    const base = fixtureLaunchOptions("te-run-6");
+    const few = base.suggested.target_scenario_keys.slice(0, 5);
+    pinOptions({
+      ...base,
+      suggested: { ...base.suggested, target_scenario_keys: few },
+    });
+    renderDialog();
+    expect(
+      await screen.findByText(
+        "An epoch needs 12 failing cases. It first writes 3 variations of each, then fixes the ones the current version also fails. With fewer than 6 failing cases it can only end with Limited validation and opens a draft pull request.",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Start improvement" }),
+    ).toBeEnabled();
+  });
+
+  it("disables Start while the variations could not be written", async () => {
+    const base = fixtureLaunchOptions("te-run-6");
+    pinOptions({
+      ...base,
+      suggested: {
+        ...base.suggested,
+        target_scenario_keys: base.suggested.target_scenario_keys.slice(0, 5),
+      },
+      variations_blocked: {
+        code: "fix_suite_draft_open",
+        message:
+          "Save or discard the environment's unsaved scenario changes first.",
+      },
+    });
+    renderDialog();
+    expect(
+      await screen.findByText(
+        "Save or discard the environment's unsaved scenario changes first.",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Start improvement" }),
+    ).toBeDisabled();
+    // The way out: the environment's Scenarios tab, whose draft bar saves or discards.
+    await userEvent.click(
+      screen.getByRole("button", { name: "Review unsaved changes" }),
+    );
+    expect(onClose).toHaveBeenCalled();
+    expect(navigate).toHaveBeenCalledWith(
+      `${paths.dashboard.simulate.environments.detail("env-1")}?tab=scenarios`,
+    );
+  });
+
+  it("offers no draft link when the variations are not needed", async () => {
+    const base = fixtureLaunchOptions("te-run-6");
+    pinOptions({
+      ...base,
+      variations_blocked: {
+        code: "fix_suite_draft_open",
+        message:
+          "Save or discard the environment's unsaved scenario changes first.",
+      },
+    });
+    renderDialog();
+    await screen.findByRole("button", { name: "Start improvement" });
+    expect(
+      screen.queryByRole("button", { name: "Review unsaved changes" }),
+    ).not.toBeInTheDocument();
+  });
+
   it("disables a part the agent cannot change", async () => {
     const base = fixtureLaunchOptions("te-run-6");
     pinOptions({
       ...base,
       surfaces: base.surfaces.map((s) =>
         s.id === "settings"
-          ? { ...s, allowed: false, reason: "Settings live on the hosting platform." }
+          ? {
+              ...s,
+              allowed: false,
+              reason: "Settings live on the hosting platform.",
+            }
           : s,
       ),
     });

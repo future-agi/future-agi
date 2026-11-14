@@ -781,6 +781,7 @@ def _ensure_activities_registered() -> None:
     # native voice queues.
     try:
         from simulate.temporal.activities.agent_fix import (
+            advance_agent_fix_variations,
             close_agent_fix_run,
             launch_agent_fix_sandbox,
             release_agent_fix_sandbox,
@@ -809,13 +810,14 @@ def _ensure_activities_registered() -> None:
                 record_hosted_harness_launch_failure,
                 poll_hosted_harness_attempt,
                 cancel_hosted_harness_attempt,
+                advance_agent_fix_variations,
                 launch_agent_fix_sandbox,
                 watch_agent_fix_engine,
                 release_agent_fix_sandbox,
                 close_agent_fix_run,
             ],
         )
-        log.info("registered_hosted_runner_activities", count=11)
+        log.info("registered_hosted_runner_activities", count=12)
     except ImportError as e:
         log.warning("could_not_load_hosted_runner_activities", error=str(e))
 

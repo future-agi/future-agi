@@ -28,11 +28,14 @@ import {
 import ScenarioPicker from "./ScenarioPicker";
 import { formatCredits, formatMinutes } from "./fixRunView";
 import {
+  blockedByDraft,
+  blockedReason as blockedReasonOf,
   budgetSteps,
   countsLine,
   launchError,
   minuteSteps,
   reviewSentence,
+  variationsNote,
 } from "./launchFormView";
 
 const selectSx = {
@@ -191,7 +194,9 @@ export default function LaunchFixDialog({ open, onClose, envId, sourceRunId }) {
 
   const { agent, environment, limits } = options;
   const error = launchError({ targets, protectedKeys, surfaces, limits });
-  const blockedReason = options.blocked?.message;
+  const blockedReason = blockedReasonOf(options, targets.length);
+  const draftBlocks = blockedByDraft(options, targets.length);
+  const variations = variationsNote(targets.length, limits, agent.kind);
   const startDisabled = !!blockedReason || !!error || launch.isPending;
   const agentLine = [
     `${agent.name} · agent v${agent.version_number}`,
@@ -279,8 +284,15 @@ export default function LaunchFixDialog({ open, onClose, envId, sourceRunId }) {
           </Row>
           <Row k="Scenarios">
             <Typography sx={{ typography: "s2" }}>
-              {countsLine(targets.length, protectedKeys.length)}
+              {countsLine(targets.length, protectedKeys.length, limits)}
             </Typography>
+            {variations && (
+              <Typography
+                sx={{ typography: "s3", color: "text.subtitle", mt: 0.5 }}
+              >
+                {variations}
+              </Typography>
+            )}
             <Typography
               component="button"
               type="button"
@@ -394,6 +406,20 @@ export default function LaunchFixDialog({ open, onClose, envId, sourceRunId }) {
             error ||
             "A winner comes back for you to review. Nothing changes until you ship it."}
         </Typography>
+        {draftBlocks && (
+          <Button
+            size="small"
+            onClick={() => {
+              onClose();
+              // The Scenarios tab's draft bar saves or discards the changes.
+              navigate(
+                `${paths.dashboard.simulate.environments.detail(envId)}?tab=scenarios`,
+              );
+            }}
+          >
+            Review unsaved changes
+          </Button>
+        )}
         <Button size="small" onClick={onClose} sx={{ color: "text.secondary" }}>
           Cancel
         </Button>

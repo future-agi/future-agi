@@ -87,6 +87,13 @@ HOSTED_RUNNER_CHAT_MODE = "chat"
 # "Fix my agent": the wait between looks at the engine. A look costs about 8 history events and
 # 3 sandbox API calls, and a fix can run for a day, so a shorter wait would near Temporal's limits.
 AGENT_FIX_WATCH_TICK_SECONDS = 120
+# A fix's first step on a run with too few failing cases: the builder writes the variations
+# within the first cap, then the base version's run on them ends within that run's own time
+# limit and the grace, for the run to start and report. The step's time is its own, not
+# the fix's.
+AGENT_FIX_VARIATIONS_WRITE_MINUTES = 60
+AGENT_FIX_VARIATIONS_RUN_GRACE_MINUTES = 15
+AGENT_FIX_VARIATIONS_TICK_SECONDS = 60
 
 
 # =============================================================================

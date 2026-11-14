@@ -8,12 +8,49 @@ export const HELD_BACK_MINIMUM = 12;
 export const heldBackCount = (picked) =>
   picked >= HELD_BACK_MINIMUM ? Math.floor(picked / 3) : 0;
 
-export function countsLine(picked, protectedCount) {
+// Fewer failing cases than a fix needs: it first writes variations of each.
+export const needsVariations = (picked, limits) =>
+  picked > 0 && picked < (limits?.cases_min ?? 0);
+
+export function countsLine(picked, protectedCount, limits) {
   const held = heldBackCount(picked);
-  const failing = held
-    ? `${picked} failing: ${picked - held} to fix, ${held} held back to prove it`
-    : `${picked} failing to fix`;
+  let failing = `${picked} failing to fix`;
+  if (held) {
+    failing = `${picked} failing: ${picked - held} to fix, ${held} held back to prove it`;
+  } else if (needsVariations(picked, limits)) {
+    failing = `${picked} failing, and up to ${picked * limits.variations_per_case} variations of them`;
+  }
   return `${failing} · ${protectedCount} must keep passing`;
+}
+
+// With so few, too few cases can be held back to verify the fix, however well it
+// does: it ends with Limited validation, and a GitHub agent's pull request is a draft.
+export function variationsNote(picked, limits, agentKind) {
+  if (!needsVariations(picked, limits)) return null;
+  const note = `An epoch needs ${limits.cases_min} failing cases. It first writes ${limits.variations_per_case} variations of each, then fixes the ones the current version also fails.`;
+  if (picked >= limits.verified_cases_min) return note;
+  const draft = agentKind === "github" ? " and opens a draft pull request" : "";
+  return `${note} With fewer than ${limits.verified_cases_min} failing cases it can only end with Limited validation${draft}.`;
+}
+
+// Whether Start is disabled only by the environment's unsaved scenario changes, which
+// the variations would be written on top of: the user can save or discard them.
+export function blockedByDraft(options, picked) {
+  return (
+    !options.blocked &&
+    needsVariations(picked, options.limits) &&
+    options.variations_blocked?.code === "fix_suite_draft_open"
+  );
+}
+
+// Why Start is disabled by the platform: the fix itself, or the variations it
+// would write first.
+export function blockedReason(options, picked) {
+  if (options.blocked) return options.blocked.message;
+  if (needsVariations(picked, options.limits)) {
+    return options.variations_blocked?.message || null;
+  }
+  return null;
 }
 
 const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
@@ -59,7 +96,7 @@ export const minuteSteps = (value, limits) =>
 export function launchError({ targets, protectedKeys, surfaces, limits }) {
   if (!targets.length) return "Pick at least one failing case to fix.";
   if (targets.length < limits.scenarios_min) {
-    return `Needs at least ${limits.scenarios_min} failing cases to prove a fix.`;
+    return `Needs at least ${limits.scenarios_min} failing cases: with ${limits.variations_per_case} variations of each, they can reach the ${limits.cases_min} an epoch needs.`;
   }
   if (targets.length > limits.scenarios_max) {
     return `Pick at most ${limits.scenarios_max} cases to fix.`;

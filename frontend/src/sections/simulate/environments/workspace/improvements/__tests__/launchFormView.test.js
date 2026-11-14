@@ -7,13 +7,23 @@ import {
   budgetSteps,
   minuteSteps,
   launchError,
+  variationsNote,
+  blockedReason,
 } from "../launchFormView";
 
 const LIMITS = {
   budget_credits_max: 50000,
   max_minutes_max: 1440,
   scenarios_min: 1,
+  cases_min: 1,
+  variations_per_case: 3,
   scenarios_max: 200,
+};
+const FLOOR = {
+  ...LIMITS,
+  scenarios_min: 3,
+  cases_min: 12,
+  verified_cases_min: 6,
 };
 const SURFACES = [
   { id: "prompt", label: "Instructions" },
@@ -33,6 +43,56 @@ describe("held back", () => {
       "12 failing: 8 to fix, 4 held back to prove it · 9 must keep passing",
     );
     expect(countsLine(3, 1)).toBe("3 failing to fix · 1 must keep passing");
+  });
+});
+
+describe("variations", () => {
+  it("writes variations first below the floor, instead of refusing", () => {
+    expect(countsLine(5, 1, FLOOR)).toBe(
+      "5 failing, and up to 15 variations of them · 1 must keep passing",
+    );
+    expect(variationsNote(7, FLOOR)).toBe(
+      "An epoch needs 12 failing cases. It first writes 3 variations of each, then fixes the ones the current version also fails.",
+    );
+    expect(variationsNote(12, FLOOR)).toBeNull();
+    expect(
+      launchError({
+        targets: ["a", "b", "c", "d", "e"],
+        protectedKeys: [],
+        surfaces: ["prompt"],
+        limits: FLOOR,
+      }),
+    ).toBeNull();
+  });
+
+  it("says a fix from too few cases can only end with Limited validation", () => {
+    const tail =
+      "With fewer than 6 failing cases it can only end with Limited validation";
+    expect(variationsNote(5, FLOOR, "archive")).toMatch(
+      new RegExp(`${tail}\\.$`),
+    );
+    expect(variationsNote(5, FLOOR, "github")).toMatch(
+      new RegExp(`${tail} and opens a draft pull request\\.$`),
+    );
+    expect(variationsNote(6, FLOOR, "github")).not.toMatch(
+      /Limited validation/,
+    );
+  });
+
+  it("blocks Start for the variations only when the pick needs them", () => {
+    const options = {
+      blocked: null,
+      variations_blocked: {
+        code: "fix_suite_draft_open",
+        message: "Save first",
+      },
+      limits: FLOOR,
+    };
+    expect(blockedReason(options, 5)).toBe("Save first");
+    expect(blockedReason(options, 12)).toBeNull();
+    expect(blockedReason({ ...options, blocked: { message: "Busy" } }, 5)).toBe(
+      "Busy",
+    );
   });
 });
 
@@ -90,8 +150,8 @@ describe("launch checks", () => {
     [ok, null],
     [{ ...ok, targets: [] }, "Pick at least one failing case to fix."],
     [
-      { ...ok, limits: { ...LIMITS, scenarios_min: 12 } },
-      "Needs at least 12 failing cases to prove a fix.",
+      { ...ok, limits: FLOOR },
+      "Needs at least 3 failing cases: with 3 variations of each, they can reach the 12 an epoch needs.",
     ],
     [
       { ...ok, targets: Array.from({ length: 201 }, (_, i) => `t${i}`) },

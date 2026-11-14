@@ -140,7 +140,9 @@ class VersionedSourceAgent:
             "picks": VersionPicks(
                 agent_version_id=agent_version_id,
                 environment_version_id=source_run.environment_version_id,
-                suite_version_id=source_run.suite_version_id,
+                # The fix's own suite once it wrote variations, else the failed run's.
+                suite_version_id=fix_run.suite_version_id
+                or source_run.suite_version_id,
             )
         }
 
@@ -157,8 +159,13 @@ class VersionedSourceAgent:
                 " there",
                 status_code=422,
             )
+        # Only over the version the fix was made on: a default that moved since would
+        # lose that change.
         return make_default(
-            candidate.agent_version, candidate.fix_run.environment, user=user
+            candidate.agent_version,
+            candidate.fix_run.environment,
+            user=user,
+            expected_default_id=candidate.fix_run.base_agent_version_id,
         )
 
 

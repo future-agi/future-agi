@@ -20,6 +20,7 @@ from simulate.models import (
     AgentFixRun,
     AgentVersion,
     HarnessAgentVersionRuntime,
+    HarnessSuiteVersion,
     HostedHarnessAttempt,
     HostedHarnessExecution,
     HostedHarnessJob,
@@ -45,6 +46,8 @@ from simulate.selectors.agent_fix import (
     committed_usd,
     engine_brief,
     is_retryable,
+    launch_options,
+    limited_validation,
     ran_at,
 )
 from simulate.services import agent_fix_engine as engine
@@ -354,18 +357,165 @@ class TestHeldBackSplit:
 
         assert split_held_back("run", failing) == []
 
+    # Four failing cases, each with two variations that failed too: twelve cases.
+    PARENTS = {f"s{i}-v{n}": f"s{i}" for i in range(4) for n in (1, 2)}
+
+    def test_a_case_and_its_variations_are_held_back_together(self):
+        failing = {key: ["refunded"] for key in [f"s{i}" for i in range(4)]}
+        failing |= {key: ["refunded"] for key in self.PARENTS}
+
+        for seed in ("a", "b", "c", "d", "e", "f"):
+            held = split_held_back(seed, failing, self.PARENTS)
+            cases = {self.PARENTS.get(key, key) for key in held}
+            # A third is four: one case and its two variations fit, a second would not.
+            assert len(cases) == 1
+            assert sorted(held) == sorted(
+                key for key in failing if self.PARENTS.get(key, key) in cases
+            )
+
+    def test_a_case_whose_family_alone_fails_a_sub_goal_stays_to_search_on(self):
+        failing = {key: ["refunded"] for key in [f"s{i}" for i in range(1, 4)]}
+        failing |= {
+            key: ["apologised"] if parent == "s0" else ["refunded"]
+            for key, parent in self.PARENTS.items()
+        } | {"s0": ["apologised"]}
+
+        for seed in ("a", "b", "c", "d", "e", "f"):
+            held = split_held_back(seed, failing, self.PARENTS)
+            assert held
+            assert "s0" not in {self.PARENTS.get(key, key) for key in held}
+
+
+def test_fewer_cases_than_the_verified_minimum_can_never_hold_back_four():
+    from itertools import product
+
+    from simulate.selectors.agent_fix import verified_cases_min
+
+    def most_held_cases(count):
+        """The most distinct cases any split holds back, over every way the count's
+        cases can keep their variations, at the default floor of twelve."""
+        best = 0
+        for kept in product(range(4), repeat=count):
+            failing, parents = {}, {}
+            for case, variations in enumerate(kept):
+                failing[f"s{case}"] = ["refunded"]
+                for number in range(variations):
+                    failing[f"s{case}-v{number}"] = ["refunded"]
+                    parents[f"s{case}-v{number}"] = f"s{case}"
+            if len(failing) < 12:
+                continue
+            for seed in ("a", "b", "c", "d"):
+                held = split_held_back(seed, failing, parents)
+                best = max(best, len({parents.get(key, key) for key in held}))
+        return best
+
+    assert verified_cases_min() == 6
+    assert most_held_cases(5) < 4
+    assert most_held_cases(6) == 4
+
+
+@pytest.mark.parametrize(
+    ("held_back", "parents", "limited"),
+    [
+        # Four held-back cases from two cases of the run: not enough to verify.
+        (["a", "a-v1", "a-v2", "b"], {"a-v1": "a", "a-v2": "a"}, True),
+        (["a", "b", "c", "d-v1"], {"d-v1": "d"}, False),
+    ],
+)
+def test_verified_needs_held_back_cases_from_four_different_cases(
+    source_run, held_back, parents, limited
+):
+    fix_run = _fix_run(source_run)
+    fix_run.request = {
+        **fix_run.request,
+        "held_back_scenario_keys": held_back,
+        "variation_parents": parents,
+    }
+
+    assert limited_validation(fix_run) is limited
+
+
+def _open_suite_draft(environment):
+    """Unsaved scenario changes on the environment's default suite."""
+    return HarnessSuiteVersion.no_workspace_objects.create(
+        job=environment,
+        organization_id=environment.organization_id,
+        workspace_id=environment.workspace_id,
+        status="draft",
+        origin="manual",
+        hash="sha256:" + "d" * 64,
+        archive_object_key="drafts/suite.tar.gz",
+        archive_sha256="0" * 64,
+        archive_size=1,
+        parent=environment.suite_version,
+    )
+
 
 class TestLaunch:
     def test_too_few_failing_cases_are_refused_and_passing_ones_do_not_count(
         self, source_run, user, settings
     ):
-        settings.AGENT_FIX_MIN_FAILING_CASES = 2
+        # One failing case and its three variations cannot reach five.
+        settings.AGENT_FIX_MIN_FAILING_CASES = 5
 
         with pytest.raises(HostedHarnessError) as refused:
             _launch(source_run, user, targets=KEYS)
 
         assert refused.value.code == "fix_targets_too_few"
         assert refused.value.status_code == 422
+        assert not AgentFixRun.no_workspace_objects.exists()
+
+    def test_a_run_under_the_floor_writes_variations_first_instead_of_refusing(
+        self, source_run, user, settings
+    ):
+        # One failing case and its three variations can reach four.
+        settings.AGENT_FIX_MIN_FAILING_CASES = 4
+
+        fix_run = _launch(source_run, user)
+
+        request = FixRequest.model_validate(fix_run.request)
+        assert (
+            request.variations_pending,
+            request.target_scenario_keys,
+            request.held_back_scenario_keys,
+            fix_run.suite_version_id,
+        ) == (True, [KEYS[0]], [], None)
+
+    def test_an_open_suite_draft_refuses_a_fix_that_writes_variations(
+        self, environment, source_run, user, settings
+    ):
+        settings.AGENT_FIX_MIN_FAILING_CASES = 4
+        _open_suite_draft(environment)
+
+        refused = _refusal(_launch, source_run, user)
+        options = launch_options(source_run)
+
+        assert refused == ("fix_suite_draft_open", 409)
+        assert not AgentFixRun.no_workspace_objects.exists()
+        # The fix itself could start: only the variations it writes first are blocked.
+        assert options.blocked is None
+        assert options.variations_blocked.code == "fix_suite_draft_open"
+        # A fix with enough failing cases writes no variations, so the draft is no matter.
+        settings.AGENT_FIX_MIN_FAILING_CASES = 1
+        fix_run = _launch(source_run, user)
+        assert FixRequest.model_validate(fix_run.request).variations_pending is False
+
+    def test_variations_that_would_not_fit_are_refused(
+        self, source_run, user, settings
+    ):
+        settings.AGENT_FIX_MIN_FAILING_CASES = 4
+
+        # The suite's two scenarios and three variations.
+        with patch("simulate.services.agent_fix_runs.CHAT_CHECKPOINT_MAX_SCENARIOS", 4):
+            too_many = _refusal(_launch, source_run, user)
+        # The failing case and its three variations, once each.
+        settings.HARNESS_MAX_EXECUTIONS_PER_RUN = 3
+        too_large = _refusal(_launch, source_run, user)
+
+        assert (too_many, too_large) == (
+            ("scenario_limit_exceeded", 422),
+            ("run_too_large", 422),
+        )
         assert not AgentFixRun.no_workspace_objects.exists()
 
     def test_the_split_reaches_the_request_and_the_engine(self, source_run, user):
@@ -2008,6 +2158,99 @@ class TestMakeDefault:
         assert outcome == "activated"
         assert environment.agent_version_id == candidate.agent_version_id
         assert make_candidate_default(candidate, user=user) == "already_default"
+
+    def _winner(self, source_run):
+        """A finished fix's proven candidate, made on the source run's version."""
+        fix_run = _fix_run(source_run)
+        candidate = _candidate(fix_run)
+        AgentFixCandidate.no_workspace_objects.filter(id=candidate.id).update(
+            outcome=Outcome.WINNER
+        )
+        close_fix_run(fix_run.id, State.READY)
+        candidate.refresh_from_db()
+        return candidate
+
+    def test_a_busy_environment_refuses_the_ship_and_leaves_no_move_for_later(
+        self, environment, source_run, user
+    ):
+        from simulate.services.harness_versioning.rebuild import (
+            retry_deferred_activations,
+        )
+
+        HarnessAgentVersionRuntime.no_workspace_objects.filter(
+            agent_version_id=source_run.agent_version_id
+        ).update(source_kind="archive")
+        first = self._winner(source_run)
+        second = self._winner(source_run)
+        # An update is adding scenarios: a move now would wait for it.
+        payload = dict(environment.payload)
+        payload["metadata"] = {**payload["metadata"], "scenario_extend": {"n": 1}}
+        HostedHarnessJob.no_workspace_objects.filter(id=environment.id).update(
+            payload=payload
+        )
+
+        with pytest.raises(HostedHarnessError) as refused:
+            make_candidate_default(second, user=user)
+
+        assert (refused.value.code, refused.value.status_code) == (
+            "fix_environment_busy",
+            409,
+        )
+        # Meanwhile another fix ships; the update ends and deferred moves are retried.
+        payload["metadata"].pop("scenario_extend")
+        HostedHarnessJob.no_workspace_objects.filter(id=environment.id).update(
+            payload=payload
+        )
+        assert make_candidate_default(first, user=user) == "activated"
+        retry_deferred_activations(second.agent_version_id)
+        environment.refresh_from_db()
+        assert environment.agent_version_id == first.agent_version_id
+
+    def test_a_fix_is_not_shipped_over_a_default_that_moved_since_its_base(
+        self, environment, source_run, user
+    ):
+        HarnessAgentVersionRuntime.no_workspace_objects.filter(
+            agent_version_id=source_run.agent_version_id
+        ).update(source_kind="archive")
+        # Two fixes from the same run: shipping the second would undo the first.
+        first = self._winner(source_run)
+        second = self._winner(source_run)
+
+        assert make_candidate_default(first, user=user) == "activated"
+        with pytest.raises(HostedHarnessError) as refused:
+            make_candidate_default(second, user=user)
+
+        assert (refused.value.code, refused.value.status_code) == (
+            "fix_base_moved",
+            409,
+        )
+        base = source_run.agent_version.version_number
+        now = first.agent_version.version_number
+        assert f"made on v{base}" in refused.value.message
+        assert f"now v{now}" in refused.value.message
+        environment.refresh_from_db()
+        assert environment.agent_version_id == first.agent_version_id
+
+    def test_a_fix_is_refused_not_failed_when_the_environment_lost_its_default(
+        self, environment, source_run, user
+    ):
+        HarnessAgentVersionRuntime.no_workspace_objects.filter(
+            agent_version_id=source_run.agent_version_id
+        ).update(source_kind="archive")
+        winner = self._winner(source_run)
+        # The default is SET_NULL: deleting the version leaves the environment none.
+        HostedHarnessJob.no_workspace_objects.filter(id=environment.id).update(
+            agent_version=None
+        )
+
+        with pytest.raises(HostedHarnessError) as refused:
+            make_candidate_default(winner, user=user)
+
+        assert (refused.value.code, refused.value.status_code) == (
+            "fix_base_moved",
+            409,
+        )
+        assert "no default version any more" in refused.value.message
 
     @pytest.mark.parametrize(
         ("state", "outcome", "refusal"),

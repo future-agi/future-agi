@@ -512,7 +512,8 @@ def list_versions(job: HostedHarnessJob) -> dict[str, list[dict[str, Any]]]:
         .defer(*_PIECE_DEFERRED)
     )
     suites = _newest_first(
-        HarnessSuiteVersion.no_workspace_objects.filter(job=job)
+        # A suite version private to a fix is never listed.
+        HarnessSuiteVersion.no_workspace_objects.filter(job=job, fix_run__isnull=True)
         .select_related("created_by")
         .defer(*_PIECE_DEFERRED)
     )
