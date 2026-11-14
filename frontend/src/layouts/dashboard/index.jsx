@@ -7,9 +7,10 @@ import { useBoolean } from "src/hooks/use-boolean";
 import { useResponsive } from "src/hooks/use-responsive";
 
 import { useSettingsContext } from "src/components/settings";
-import { useRouter } from "src/routes/hooks";
+import { usePathname, useRouter } from "src/routes/hooks";
+import { paths } from "src/routes/paths";
 
-import Main from "./main";
+import Main, { dashboardFrameSx, PHONE_BAR_HEIGHT } from "./main";
 import NavMini from "./nav-mini";
 import NavVertical from "./nav-vertical";
 import NavHorizontal from "./nav-horizontal";
@@ -79,21 +80,17 @@ export default function DashboardLayout({ children }) {
     navComponent = <NavVertical openNav={nav.value} onCloseNav={nav.onFalse} />;
   }
 
-  const boxStyles = isHorizontal
-    ? {
-        display: "block",
-      }
-    : {
-        minHeight: 1,
-        minWidth: 0,
-        width: 1,
-        display: "flex",
-        flexDirection: { xs: "row", lg: "row" },
-        // The frame: sidebar and page edges on the canvas; <Main> is the
-        // inset content panel.
-        backgroundColor: "background.default",
-        ...(isMini ? {} : { overflowX: "auto" }),
-      };
+  // Skills pages also contain and clip absolutely positioned content, so it
+  // can never scroll the shell (see dashboardFrameSx).
+  const pathname = usePathname();
+  const skillsRoot = paths.dashboard.skills.root;
+  const inSkills = pathname === skillsRoot || pathname.startsWith(`${skillsRoot}/`);
+  const boxStyles = dashboardFrameSx({
+    horizontal: isHorizontal,
+    mini: isMini,
+    phone: !lgUp,
+    contain: inSkills,
+  });
 
   return (
     <>
@@ -103,7 +100,7 @@ export default function DashboardLayout({ children }) {
           direction="row"
           alignItems="center"
           spacing={1}
-          sx={{ height: 56, px: 1, bgcolor: "background.paper", borderBottom: 1, borderColor: "divider" }}
+          sx={{ height: PHONE_BAR_HEIGHT, flexShrink: 0, px: 1, bgcolor: "background.paper", borderBottom: 1, borderColor: "divider" }}
         >
           <IconButton onClick={nav.onTrue} aria-label="Open navigation" sx={{ color: "text.primary" }}>
             <Iconify icon="solar:hamburger-menu-linear" width={24} />
@@ -139,8 +136,8 @@ export default function DashboardLayout({ children }) {
       <Box sx={boxStyles}>
         {navComponent}
         <NavGatewayPanel />
-        {/* The phone bar sits above the scrolling panel; keep the panel inside the viewport. */}
-        <Main sx={lgUp ? undefined : { height: "calc(100vh - 56px)" }}>
+        {/* The phone bar sits above the scrolling panel; the panel fills the frame under it. */}
+        <Main sx={lgUp ? undefined : { height: `calc(100vh - ${PHONE_BAR_HEIGHT}px)` }}>
           <HostUpdateNotice />
           {children}
         </Main>

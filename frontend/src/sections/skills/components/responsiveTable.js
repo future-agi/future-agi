@@ -4,8 +4,10 @@ import { Box } from '@mui/material';
 
 // Two ways for a Skills table to survive a 390px phone (UX-R7 §1.6, iteration 1 SH6).
 
+// Pixel strings on purpose: in sx a bare `1` means 100%, and a 100%-wide
+// absolutely positioned header widened the whole document (iteration 2 SH1).
 const visuallyHidden = {
-  position: 'absolute', width: 1, height: 1, p: 0, m: '-1px', overflow: 'hidden',
+  position: 'absolute', width: '1px', height: '1px', p: 0, m: '-1px', overflow: 'hidden',
   clip: 'rect(0 0 0 0)', whiteSpace: 'nowrap', border: 0,
 };
 const CHECKBOX = '.MuiTableCell-paddingCheckbox';

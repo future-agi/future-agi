@@ -17,10 +17,11 @@ export const scrollTabsSx = {
     WebkitMaskImage: 'var(--tab-fade)',
     maskImage: 'var(--tab-fade)',
   },
+  // A mask uses only alpha: "black" is fully shown, "transparent" fully faded.
   '& .MuiTabs-scroller': {
-    '--tab-fade-start': '#000',
-    '--tab-fade-end': '#000',
-    '--tab-fade': `linear-gradient(to right, var(--tab-fade-start), #000 ${FADE}px, #000 calc(100% - ${FADE}px), var(--tab-fade-end))`,
+    '--tab-fade-start': 'black',
+    '--tab-fade-end': 'black',
+    '--tab-fade': `linear-gradient(to right, var(--tab-fade-start), black ${FADE}px, black calc(100% - ${FADE}px), var(--tab-fade-end))`,
   },
   '& .MuiTabs-scroller[data-fade-start="true"]': { '--tab-fade-start': 'transparent' },
   '& .MuiTabs-scroller[data-fade-end="true"]': { '--tab-fade-end': 'transparent' },
