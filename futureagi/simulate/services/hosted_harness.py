@@ -384,7 +384,17 @@ def create_selected_harness_run(
     # Before the lock as well: the validation job it starts, and its dispatch, must commit
     # although the 409 it raises would roll the run's transaction back.
     released: set[str] = set()
-    if planned is not None:
+    # A request whose key already made a run is answered, or refused, under the lock below.
+    repeated = HostedHarnessJob.no_workspace_objects.filter(
+        organization_id=environment.organization_id,
+        idempotency_key=run_idempotency_key(
+            environment,
+            f"coding-agent:{coding_agent_key_id}:{idempotency_key}"
+            if coding_agent_key_id is not None
+            else idempotency_key,
+        ),
+    ).exists()
+    if planned is not None and not repeated:
         early = resolve_run_pins(environment, rerun_of=rerun_of, picks=picks)
         if early is not None:
             from simulate.services.harness_versioning.validation import (
