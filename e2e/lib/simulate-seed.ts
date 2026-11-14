@@ -239,6 +239,8 @@ export function seedHarnessEnvironment(opts: {
   certified?: boolean;
   productionOnly?: 'lookup_order' | 'issue_refund';
   failedCheck?: 'lookup_order' | 'issue_refund';
+  // Two separately wired workers, with the world door's worker limits sealed or, as an old seal, without.
+  workers?: 'sealed' | 'old_seal';
 }): HarnessEnvironmentSeed {
   const suffix = seedSuffix();
   return runSeedScript(
@@ -255,6 +257,7 @@ export function seedHarnessEnvironment(opts: {
         certified: opts.certified ?? true,
         production_only: opts.productionOnly ?? null,
         failed_check: opts.failedCheck ?? null,
+        workers: opts.workers ?? null,
       }),
     },
   ) as HarnessEnvironmentSeed;

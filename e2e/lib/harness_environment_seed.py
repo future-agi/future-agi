@@ -117,9 +117,45 @@ def _documents(refunds, lookups, suffix):
     ]
 
 
-def _authoring(documents, *, certified, production_only):
+# Two declared workers wired separately, each reaching the world through its own channel. ``workers="sealed"`` seals
+# the world door's per-worker limits in the bundle; ``workers="old_seal"`` declares them without, as a bundle sealed
+# before worker limits.
+WORKERS = [
+    {
+        "id": "order_lookup",
+        "name": "Order-lookup worker",
+        "tools": ["lookup_order", "issue_refund"],
+        "allowed_tools": ["lookup_order"],
+        "binding": "separate",
+        "address_env": "ORDER_LOOKUP_API_URL",
+    },
+    {
+        "id": "refund",
+        "name": "Refund worker",
+        "tools": ["issue_refund"],
+        "allowed_tools": ["issue_refund"],
+        "binding": "separate",
+        "address_env": "REFUND_API_URL",
+    },
+]
+DOOR_FILES = {
+    "environment-bundle/generated/tool-proxy/door.json": {"worker_deadlines": "per_worker"},
+    "environment-bundle/generated/tool-proxy/permissions.json": {
+        "worker:order_lookup": {"allow": ["POST orders.lookup"]},
+        "worker:refund": {"allow": ["POST refunds.issue"]},
+    },
+}
+
+
+def _authoring(documents, *, certified, production_only, workers=None):
     # Each tool as ALK writes it: an object named by `name`, so the review lists the contract item by item.
     contract = {"agent": "support", "tools": [{"name": tool} for tool in TOOLS]}
+    if workers:
+        contract["tool_entrypoints"] = [
+            {"tool": "lookup_order", "endpoint": "/orders/lookup", "method": "POST"},
+            {"tool": "issue_refund", "endpoint": "/refunds/issue", "method": "POST"},
+        ]
+        contract["workers"] = WORKERS
     if production_only:
         contract["tool_entrypoints"] = [{"tool": production_only, "mode": "in_process"}]
         contract["dependencies"] = [
@@ -146,7 +182,17 @@ def _authoring(documents, *, certified, production_only):
         files.update(
             {
                 "environment-bundle/manifest.json": {
-                    "files": [{"path": "world.sqlite", "sha256": "a" * 64, "size": 2}],
+                    "files": [
+                        {"path": "world.sqlite", "sha256": "a" * 64, "size": 2},
+                        *(
+                            {
+                                "path": path.removeprefix("environment-bundle/"),
+                                "sha256": "a" * 64,
+                                "size": 2,
+                            }
+                            for path in (DOOR_FILES if workers == "sealed" else ())
+                        ),
+                    ],
                     "digest": BUNDLE_DIGEST,
                     "provenance": {"source_digest": "e" * 64},
                 },
@@ -170,6 +216,8 @@ def _authoring(documents, *, certified, production_only):
                 },
             }
         )
+    if certified and workers == "sealed":
+        files.update(DOOR_FILES)
     return {
         path: (value if isinstance(value, str) else json.dumps(value)).encode()
         for path, value in files.items()
@@ -186,6 +234,7 @@ def seed_environment(
     certified=True,
     production_only=None,
     failed_check=None,
+    workers=None,
 ):
     """A completed, backfilled Environment of ``refunds`` + ``lookups`` scenarios."""
     from simulate.models import (
@@ -233,7 +282,12 @@ def seed_environment(
         },
     )
     body = archives.pack_archive(
-        _authoring(documents, certified=certified, production_only=production_only)
+        _authoring(
+            documents,
+            certified=certified,
+            production_only=production_only,
+            workers=workers,
+        )
     )
     object_key = archives.pair_key(organization.id, environment.id, body)
     archives.put_archive(object_key, body)
