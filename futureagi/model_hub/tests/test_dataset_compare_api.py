@@ -1,4 +1,7 @@
 import contextlib
+import json
+import shutil
+import time
 import uuid
 from pathlib import Path
 from unittest import mock
@@ -15,7 +18,7 @@ from model_hub.models.choices import (
 from model_hub.models.develop_dataset import Cell, Column, Dataset, Row
 from model_hub.models.evals_metric import EvalTemplate, UserEvalMetric
 from model_hub.views.develop_dataset import CompareDatasetsView
-from tfc.utils.storage import get_compare_local_dir
+from tfc.utils.storage import get_compare_local_dir, get_compare_metadata_path
 
 
 @pytest.fixture
@@ -348,6 +351,7 @@ def test_compare_pagination_tolerates_eval_columns_without_source_id(
         base_column_name="input",
         dynamic_sources=dynamic_sources,
         result={},
+        total_pages=1,
     )
 
     eval_configs = [
@@ -361,20 +365,32 @@ def test_compare_pagination_tolerates_eval_columns_without_source_id(
     assert result["table"][0][str(other_eval.id)]["cell_value"] == "fail"
 
 
+class _ComparisonPageStore(dict):
+    """Comparison pages by storage key, with every key read and written."""
+
+    def __init__(self):
+        super().__init__()
+        self.reads = []
+        self.writes = []
+
+    def keys_used_under(self, compare_id):
+        prefix = f"compare/{compare_id}/"
+        return [key for key in [*self.reads, *self.writes] if key.startswith(prefix)]
+
+
 @pytest.fixture
 def comparison_page_store(monkeypatch, tmp_path):
-    import json
-
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("COMPARE_DATASET_LOCAL_ROOT", str(tmp_path / "compare"))
-    pages = {}
+    pages = _ComparisonPageStore()
 
     def upload(*, compare_id, compare_json, page_name):
-        pages[f"compare/{compare_id}/{page_name}"] = json.loads(
-            json.dumps(compare_json)
-        )
+        key = f"compare/{compare_id}/{page_name}"
+        pages.writes.append(key)
+        pages[key] = json.loads(json.dumps(compare_json))
 
     def download(object_key):
+        pages.reads.append(object_key)
         return pages[object_key]
 
     monkeypatch.setattr(
@@ -434,13 +450,20 @@ def other_org_dataset(db):
 
 
 def _compare_request(
-    client, base, compared, *, download=False, compare_id=None, base_column_name="input"
+    client,
+    base,
+    compared,
+    *,
+    download=False,
+    compare_id=None,
+    base_column_name="input",
+    current_page_index=0,
 ):
     payload = {
         "dataset_ids": [str(compared.id)],
         "base_column_name": base_column_name,
         "page_size": 10,
-        "current_page_index": 0,
+        "current_page_index": current_page_index,
     }
     if compare_id is not None:
         payload["compare_id"] = compare_id
@@ -1171,7 +1194,7 @@ def compare_member_client(organization, workspace):
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.parametrize("download", [False, True])
 @pytest.mark.parametrize("scope", ["another_organization", "another_workspace"])
-def test_compare_cached_id_requires_requested_datasets(
+def test_compare_cached_id_of_another_scope_builds_requested_datasets(
     auth_client,
     compare_member_client,
     compare_datasets,
@@ -1213,15 +1236,18 @@ def test_compare_cached_id_requires_requested_datasets(
     response = _compare_request(
         compare_member_client, base, compared, download=download, compare_id=compare_id
     )
-    assert response.status_code == status.HTTP_404_NOT_FOUND, (
-        response._proof_body if response.streaming else response.content
-    )
+    body = _body(response)
+    assert response.status_code == status.HTTP_200_OK, body
+    assert "Requested pair-1" in body
+    assert "Cached pair" not in body
+    if not download:
+        assert response.data["result"]["metadata"]["compare_id"] != compare_id
 
 
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.parametrize("download", [False, True])
 @pytest.mark.parametrize("scope", ["another_organization", "another_workspace"])
-def test_compare_cached_id_for_same_base_and_another_compared_dataset_returns_not_found(
+def test_compare_cached_id_for_same_base_and_another_compared_dataset_is_not_served(
     user,
     compare_member_client,
     comparison_page_store,
@@ -1231,7 +1257,9 @@ def test_compare_cached_id_for_same_base_and_another_compared_dataset_returns_no
     download,
 ):
     """A comparison stored for the requested base and a dataset outside the
-    request scope is not served for the base and the requested dataset."""
+    request scope is not served for the base and the requested dataset: the
+    request is handled like one with a compare_id that has no stored
+    comparison."""
     from accounts.models.workspace import Workspace
 
     base = _compare_dataset(
@@ -1276,12 +1304,14 @@ def test_compare_cached_id_for_same_base_and_another_compared_dataset_returns_no
             compare_member_client, base, compared, compare_id=compare_id
         )
     body = _body(response)
-    assert response.status_code == status.HTTP_404_NOT_FOUND, body
     assert "stored-" not in body
-
-    own = _compare_request(compare_member_client, base, compared)
-    assert own.status_code == status.HTTP_200_OK, own.content
-    assert "requested-compared-alpha" in own.content.decode()
+    if download:
+        assert response.status_code == status.HTTP_400_BAD_REQUEST, body
+        assert "Unable to download dataset" in body
+    else:
+        assert response.status_code == status.HTTP_200_OK, body
+        assert "requested-compared-alpha" in body
+        assert response.data["result"]["metadata"]["compare_id"] != compare_id
 
 
 @pytest.mark.django_db(transaction=True)
@@ -1387,16 +1417,21 @@ def test_compare_unknown_compare_id_is_a_cache_miss(
     request_shape,
 ):
     """A compare_id with no stored comparison on this server is built again
-    under that id from the requested datasets, and its download uses the rows
-    sent with the request."""
+    from the requested datasets under a new compare_id, and nothing is read
+    or stored under the id sent. Its download uses the rows sent with the
+    request."""
     base, compared = _new_compare_pair(organization, workspace, "Fresh pair")
     compare_id = str(uuid.uuid4())
     if request_shape == "compare":
         response = _compare_request(auth_client, base, compared, compare_id=compare_id)
         assert response.status_code == status.HTTP_200_OK, response.content
-        assert response.data["result"]["metadata"]["compare_id"] == compare_id
+        new_compare_id = response.data["result"]["metadata"]["compare_id"]
+        assert new_compare_id != compare_id
         assert "prepare" in comparison_cell_reads
         assert "Fresh pair-1" in response.content.decode()
+        assert comparison_page_store.keys_used_under(compare_id) == []
+        assert not Path(get_compare_local_dir(compare_id)).exists()
+        assert f"compare/{new_compare_id}/page_1.json" in comparison_page_store
     elif request_shape == "download_with_rows":
         response = _download(
             auth_client, base, [compared], compare_id=compare_id, with_rows=True
@@ -1407,6 +1442,286 @@ def test_compare_unknown_compare_id_is_a_cache_miss(
         response = _download(auth_client, base, [compared], compare_id=compare_id)
         assert response.status_code == status.HTTP_400_BAD_REQUEST, _body(response)
         assert "Unable to download dataset" in _body(response)
+
+
+def _page_of_another_selection(label):
+    """A stored comparison page in the shape the comparison builder writes."""
+    column_id = str(uuid.uuid4())
+    return {
+        "column_config": [
+            {
+                "id": column_id,
+                "name": f"{label} column",
+                "data_type": DataTypeChoices.TEXT.value,
+            }
+        ],
+        "table": [
+            {
+                "row_id": str(uuid.uuid4()),
+                column_id: {
+                    "cell_value": f"{label} value",
+                    "cell_row_id": str(uuid.uuid4()),
+                },
+            }
+        ],
+    }
+
+
+@pytest.mark.django_db(transaction=True)
+def test_compare_id_without_stored_metadata_reads_none_of_its_pages(
+    auth_client, comparison_page_store, organization, workspace
+):
+    """Storage can hold pages under a compare_id that has no stored comparison
+    on this server, written for another selection. A later block request
+    with that id builds the requested comparison under a new compare_id, and
+    reads and writes nothing under the id sent."""
+    base, compared = _new_compare_pair(organization, workspace, "Requested pair")
+    compare_id = str(uuid.uuid4())
+    comparison_page_store[f"compare/{compare_id}/page_2.json"] = (
+        _page_of_another_selection("Earlier selection")
+    )
+
+    response = _compare_request(
+        auth_client, base, compared, compare_id=compare_id, current_page_index=1
+    )
+
+    body = _body(response)
+    assert response.status_code == status.HTTP_200_OK, body
+    assert "Earlier selection" not in body
+    new_compare_id = response.data["result"]["metadata"]["compare_id"]
+    assert new_compare_id != compare_id
+    assert response.data["result"]["table"] == []
+    assert response.data["result"]["metadata"]["total_rows"] == 1
+    assert comparison_page_store.keys_used_under(compare_id) == []
+    assert not Path(get_compare_local_dir(compare_id)).exists()
+    assert f"compare/{new_compare_id}/page_1.json" in comparison_page_store.writes
+
+
+@pytest.mark.django_db(transaction=True)
+def test_compare_reads_only_the_pages_of_the_stored_comparison(
+    auth_client, comparison_page_store, organization, workspace
+):
+    """A block after the last page of a stored comparison is empty, even when
+    storage has a later page under the same compare_id."""
+    base, compared = _new_compare_pair(organization, workspace, "One page pair")
+    built = _compare_request(auth_client, base, compared)
+    assert built.status_code == status.HTTP_200_OK, built.content
+    compare_id = built.data["result"]["metadata"]["compare_id"]
+    comparison_page_store[f"compare/{compare_id}/page_2.json"] = (
+        _page_of_another_selection("Later page")
+    )
+    comparison_page_store.reads.clear()
+
+    response = _compare_request(
+        auth_client, base, compared, compare_id=compare_id, current_page_index=1
+    )
+
+    body = _body(response)
+    assert response.status_code == status.HTTP_200_OK, body
+    assert "Later page" not in body
+    assert response.data["result"]["metadata"]["compare_id"] == compare_id
+    assert response.data["result"]["table"] == []
+    assert comparison_page_store.reads == []
+
+
+def _base_values(response, base):
+    base_column_id = str(Column.objects.get(dataset=base, name="input").id)
+    table = response.data["result"]["table"]
+    return [row[base_column_id]["cell_value"] for row in table]
+
+
+@pytest.mark.django_db(transaction=True)
+def test_compare_later_blocks_return_rows_of_the_requested_comparison(
+    auth_client, comparison_page_store, comparison_cell_reads, organization, workspace
+):
+    """Later blocks sent with the returned compare_id get the next pages of
+    that comparison. On a server with no stored comparison for the id, the
+    block is the requested page of a new build under a new compare_id, and
+    the blocks after it are served from that build."""
+    values = [f"value-{index:02d}" for index in range(25)]
+    base, compared = [
+        _compare_dataset(
+            organization,
+            workspace,
+            f"Paged {index}",
+            [(value, f"Paged {index} {value}") for value in values],
+        )
+        for index in range(2)
+    ]
+    first = _compare_request(auth_client, base, compared)
+    assert first.status_code == status.HTTP_200_OK, first.content
+    compare_id = first.data["result"]["metadata"]["compare_id"]
+    blocks = [first] + [
+        _compare_request(
+            auth_client, base, compared, compare_id=compare_id, current_page_index=page
+        )
+        for page in (1, 2)
+    ]
+    for block in blocks:
+        assert block.status_code == status.HTTP_200_OK, block.content
+        assert block.data["result"]["metadata"]["compare_id"] == compare_id
+        assert block.data["result"]["metadata"]["total_rows"] == len(values)
+    block_values = [_base_values(block, base) for block in blocks]
+    assert [len(page) for page in block_values] == [10, 10, 5]
+    assert sorted(value for page in block_values for value in page) == values
+    assert comparison_cell_reads.count("prepare") == 1
+
+    # The stored metadata is kept on the server that built the comparison.
+    shutil.rmtree(get_compare_local_dir(compare_id))
+    rebuilt = _compare_request(
+        auth_client, base, compared, compare_id=compare_id, current_page_index=1
+    )
+    assert rebuilt.status_code == status.HTTP_200_OK, rebuilt.content
+    new_compare_id = rebuilt.data["result"]["metadata"]["compare_id"]
+    assert new_compare_id != compare_id
+    assert comparison_cell_reads.count("prepare") == 2
+    assert (
+        rebuilt.data["result"]["table"]
+        == comparison_page_store[f"compare/{new_compare_id}/page_2.json"]["table"]
+    )
+    assert len(_base_values(rebuilt, base)) == 10
+    assert set(_base_values(rebuilt, base)) <= set(values)
+
+    last = _compare_request(
+        auth_client, base, compared, compare_id=new_compare_id, current_page_index=2
+    )
+    assert last.status_code == status.HTTP_200_OK, last.content
+    assert last.data["result"]["metadata"]["compare_id"] == new_compare_id
+    assert comparison_cell_reads.count("prepare") == 2
+    assert (
+        last.data["result"]["table"]
+        == comparison_page_store[f"compare/{new_compare_id}/page_3.json"]["table"]
+    )
+    assert len(_base_values(last, base)) == 5
+
+
+class _TimeWithoutWaits:
+    """The time module, except that a wait fails the request at once."""
+
+    def __getattr__(self, name):
+        return getattr(time, name)
+
+    @staticmethod
+    def sleep(seconds):
+        raise AssertionError("waited for a stored comparison")
+
+
+def _comparison_shown(response):
+    """The columns, rows and counts a comparison response shows, without the
+    ids each build assigns."""
+    result = response.data["result"]
+    rows = sorted(
+        json.dumps(
+            {key: value for key, value in row.items() if key != "row_id"},
+            sort_keys=True,
+        )
+        for row in result.get("table", [])
+    )
+    counts = {
+        key: value for key, value in result["metadata"].items() if key != "compare_id"
+    }
+    return result.get("column_config"), rows, counts
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.parametrize("download", [False, True])
+@pytest.mark.parametrize(
+    "stored_state", ["completed", "too_few_pages", "still_building"]
+)
+def test_compare_id_of_another_selection_gets_the_unknown_id_response(
+    auth_client,
+    comparison_page_store,
+    organization,
+    workspace,
+    monkeypatch,
+    stored_state,
+    download,
+):
+    """A compare_id stored on this server for another selection gets the same
+    response as a compare_id with no stored comparison. Its page count is
+    not checked and its build is not waited for."""
+    from model_hub.views import develop_dataset
+
+    stored_base, stored_compared = _new_compare_pair(
+        organization, workspace, "Stored pair"
+    )
+    built = _compare_request(auth_client, stored_base, stored_compared)
+    assert built.status_code == status.HTTP_200_OK, built.content
+    compare_id = built.data["result"]["metadata"]["compare_id"]
+    metadata_path = Path(get_compare_metadata_path(compare_id))
+    metadata = json.loads(metadata_path.read_text())
+    if stored_state == "too_few_pages":
+        metadata["total_pages"] = 0
+    elif stored_state == "still_building":
+        metadata.update(status="processing", total_processed=1)
+    stored_metadata = json.dumps(metadata)
+    metadata_path.write_text(stored_metadata)
+    comparison_page_store.reads.clear()
+    comparison_page_store.writes.clear()
+    monkeypatch.setattr(develop_dataset, "time", _TimeWithoutWaits())
+
+    base, compared = _new_compare_pair(organization, workspace, "Requested pair")
+    if download:
+        responses = [
+            _download(auth_client, base, [compared], compare_id=sent, with_rows=True)
+            for sent in (compare_id, str(uuid.uuid4()))
+        ]
+    else:
+        responses = [
+            _compare_request(auth_client, base, compared, compare_id=sent)
+            for sent in (compare_id, str(uuid.uuid4()))
+        ]
+    stored_id_response, unknown_id_response = responses
+
+    body = _body(stored_id_response)
+    assert stored_id_response.status_code == status.HTTP_200_OK, body
+    assert unknown_id_response.status_code == status.HTTP_200_OK
+    assert "Requested pair-1" in body
+    assert "Stored pair" not in body
+    if download:
+        assert body == _body(unknown_id_response)
+    else:
+        assert _comparison_shown(stored_id_response) == _comparison_shown(
+            unknown_id_response
+        )
+        assert stored_id_response.data["result"]["metadata"]["compare_id"] not in (
+            compare_id,
+            unknown_id_response.data["result"]["metadata"]["compare_id"],
+        )
+    assert metadata_path.read_text() == stored_metadata
+    assert comparison_page_store.keys_used_under(compare_id) == []
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.parametrize("download", [False, True])
+def test_compare_id_still_building_checks_dataset_scope_first(
+    user, comparison_page_store, organization, monkeypatch, download
+):
+    """A compare_id stored for the requested selection and still being built
+    returns 404 at once when the datasets are not found in the request's
+    organization. The page count and the build are not checked first."""
+    from model_hub.views import develop_dataset
+
+    other_organization, other_owner, other_workspace = _another_organization()
+    base, compared = _new_compare_pair(
+        other_organization, other_workspace, "Building pair"
+    )
+    compare_id = _store_comparison(other_owner, base, compared)
+    metadata_path = Path(get_compare_metadata_path(compare_id))
+    metadata = json.loads(metadata_path.read_text())
+    metadata.update(status="processing", total_processed=1)
+    metadata_path.write_text(json.dumps(metadata))
+    monkeypatch.setattr(develop_dataset, "time", _TimeWithoutWaits())
+
+    client = _client_without_workspace(user)
+    with _request_binding(organization):
+        if download:
+            response = _download(client, base, [compared], compare_id=compare_id)
+        else:
+            response = _compare_request(client, base, compared, compare_id=compare_id)
+    body = _body(response)
+    assert response.status_code == status.HTTP_404_NOT_FOUND, body
+    assert "Building pair" not in body
 
 
 @pytest.mark.django_db(transaction=True)
@@ -1449,9 +1764,11 @@ def test_compare_download_keeps_selected_dataset_order(
 
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.parametrize("download", [False, True])
-def test_compare_cached_id_with_another_base_column_returns_not_found(
+def test_compare_cached_id_with_another_base_column_is_not_served(
     auth_client, comparison_page_store, organization, workspace, download
 ):
+    """Joined on the judge column, the pair has no common value. The pages
+    stored for the input column are not served, and download has no rows."""
     base, compared = _new_compare_pair(organization, workspace, "Joined pair")
     built = _compare_request(auth_client, base, compared)
     assert built.status_code == status.HTTP_200_OK, built.content
@@ -1472,8 +1789,16 @@ def test_compare_cached_id_with_another_base_column_returns_not_found(
             compare_id=compare_id,
             base_column_name="judge",
         )
-    assert response.status_code == status.HTTP_404_NOT_FOUND, _body(response)
-    assert "Joined pair" not in _body(response)
+    body = _body(response)
+    assert "Joined pair" not in body
+    if download:
+        assert response.status_code == status.HTTP_400_BAD_REQUEST, body
+        assert "Unable to download dataset" in body
+    else:
+        assert response.status_code == status.HTTP_200_OK, body
+        assert not response.data["result"].get("table")
+        assert response.data["result"]["metadata"]["total_rows"] == 0
+        assert response.data["result"]["metadata"]["compare_id"] != compare_id
 
 
 @pytest.mark.django_db(transaction=True)
