@@ -16,6 +16,7 @@ from model_hub.services.ground_truth_service import GroundTruthService
 from model_hub.utils.eval_metadata import (
     EvaluationMetadataUnavailable,
     read_evaluation_column_types,
+    read_evaluation_workspace,
 )
 from model_hub.views.eval_runner import (
     EvaluationRunner,
@@ -648,6 +649,9 @@ def process_eval_for_single_row(
                     mapping_uids.append(base_col_id)
 
         col_map = read_evaluation_column_types(mapping_uids)
+        # process_mapping reads the row's dataset and workspace. Load them
+        # inside the retry boundary first so those checks use the cache.
+        read_evaluation_workspace(row)
         required_field, mapping = process_mapping(
             mappings, row, run_prompt_column=run_prompt_column, runner=runner
         )

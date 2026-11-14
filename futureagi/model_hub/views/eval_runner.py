@@ -1589,6 +1589,11 @@ class EvaluationRunner:
 
         is_futureagi_eval = self.futureagi_eval
 
+        # Resolve the lazy relations before mapping checks read them and before
+        # logging/billing. Only this read is replayable; the logger and provider
+        # must run at most once.
+        workspace = read_evaluation_workspace(row)
+
         if not config.get("preview", False):
             input_token_count = self._get_input_token_count(row, mappings, config)
         else:
@@ -1634,9 +1639,6 @@ class EvaluationRunner:
         if log_and_deduct_cost_for_api_request is None:
             return None
 
-        # Resolve the lazy relation before entering logging/billing. Only this
-        # read is replayable; the logger and provider must run at most once.
-        workspace = read_evaluation_workspace(row)
         api_call_log_row = log_and_deduct_cost_for_api_request(
             org if org else self.user_eval_metric.organization,
             api_call_type,
