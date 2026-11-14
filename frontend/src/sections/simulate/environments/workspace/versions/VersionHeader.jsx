@@ -42,10 +42,14 @@ export default function VersionHeader({ version }) {
         >
           {named(version)}
         </Typography>
-        {version.isDefault && (
-          <VersionBadge label={VERSIONS_COPY.default} />
-        )}
+        {version.isDefault && <VersionBadge label={VERSIONS_COPY.default} />}
         {status && <VersionBadge label={status} />}
+        {version.savedWithoutCheck && (
+          <VersionBadge
+            label={VERSIONS_COPY.savedWithoutCheck}
+            role="warning"
+          />
+        )}
         <PreflightBadge status={version.preflightStatus} />
       </Stack>
       {origin && (

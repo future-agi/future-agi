@@ -337,6 +337,7 @@ export const versionFromApi = (item = {}) => ({
   requestedHere: Boolean(item.requested_here),
   pickable: Boolean(item.pickable),
   discardable: Boolean(item.discardable),
+  savedWithoutCheck: Boolean(item.saved_without_check),
 });
 
 // A check still pending after this long is stuck: offered again, not polled.
