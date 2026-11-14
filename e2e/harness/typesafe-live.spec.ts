@@ -1,5 +1,4 @@
-import { request as pwRequest } from '@playwright/test';
-import type { APIRequestContext, Page } from '@playwright/test';
+import type { Page } from '@playwright/test';
 import { createHash } from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
@@ -16,15 +15,26 @@ import { E2E } from '../lib/env';
 // spends real money, so it is skipped unless both are set:
 //   E2E_TYPESAFE_LIVE=1  TYPESAFE_API_KEY=<a TypeSafe test key with a spend cap>
 // TYPESAFE_BASE_URL overrides the upstream for a dry run against the stack's
-// mock (http://mock-llm:8080 with TYPESAFE_API_KEY=e2e-decision-typesafe-key),
-// which also needs AGENTCC_ALLOW_PRIVATE_PROVIDER_URLS=true on the backend and
-// the gateway. A dry run proves the harness, not TypeSafe.
+// mock (http://mock-llm:8080 with TYPESAFE_API_KEY set to the mock's synthetic
+// TypeSafe key, see e2e/stack/mock-llm/server.mjs), which also needs
+// AGENTCC_ALLOW_PRIVATE_PROVIDER_URLS=true on the backend and the gateway. A
+// dry run proves the harness, not TypeSafe.
 //
 // It writes test-results/typesafe-live/report.{json,md}: per case the request
 // (a long state truncated), the response, the Request Logs row or "no row",
-// the expected cost and a verdict. Keys are never written: not the TypeSafe
-// key, not the gateway keys. Findings are soft assertions, so every case runs
-// and the report is complete; any FAIL fails the test.
+// the expected cost and a verdict. Findings are soft assertions, so every case
+// runs and the report is complete; any FAIL fails the test.
+//
+// Keys never reach Playwright, so they cannot reach its reports either: not
+// the TypeSafe key, not the gateway keys. Playwright titles an input step with
+// the value typed (`Fill "<value>"`), snapshots a failing page's inputs
+// (password fields included) into error-context.md, and stores an API call's
+// log, request headers included, as the step's error on a transport failure;
+// the HTML and blob reports keep all three. So the dashboard dialog gets a
+// placeholder key, the real one is set through the provider's rotate API, and
+// every call carrying a key goes through Node's fetch. Check a run's
+// artefacts before sharing them:
+//   SCAN_SECRET="$TYPESAFE_API_KEY" node scripts/scan-artefacts-for-secret.mjs playwright-report test-results
 //
 // Budget: about 40 upstream calls and 45k input tokens per run (< $0.01).
 
@@ -115,7 +125,8 @@ const Q = {
 };
 const ALL = { ...Q.noul, ...Q.choice, ...Q.score };
 
-// The config's retain-on-failure trace would capture the key typed into the dialog.
+// No key is ever typed into the page (see above); trace, screenshots and video
+// stay off anyway, so a later change cannot capture one by accident.
 test.use({ trace: 'off', screenshot: 'off', video: 'off' });
 
 test.describe('TypeSafe Jev live decision route (opt-in)', () => {
@@ -131,18 +142,13 @@ test.describe('TypeSafe Jev live decision route (opt-in)', () => {
       const suffix = Date.now().toString(36);
       const context = await scopeActors.openContext(browser, owner);
       const page = await context.newPage();
-      const gw = await pwRequest.newContext({ baseURL: E2E.gatewayUrl, timeout: 120_000 });
-      const admin = await pwRequest.newContext({ baseURL: E2E.gatewayUrl,
-        extraHTTPHeaders: { Authorization: `Bearer ${GATEWAY_ADMIN_TOKEN}` } });
 
       try {
-        await run(page, owner, gw, admin, suffix);
+        await run(page, owner, suffix);
       } catch (e) {
         throw sanitized(e);
       } finally {
         writeReport();
-        await gw.dispose();
-        await admin.dispose();
         await context.close();
       }
     });
@@ -176,12 +182,38 @@ function step<T>(name: string, body: () => Promise<T>): Promise<T> {
   });
 }
 
+interface HttpResponse { status: number; headers: Record<string, string>; text: string }
+// Node's fetch, not Playwright's request context: Playwright records each API
+// call as a report step and, when the transport fails, keeps the call log with
+// every request header (a gateway or TypeSafe key) as that step's error. An
+// empty header value means "send no such header".
+async function http(base: string, method: string, route: string,
+  opts: { headers?: Record<string, string>; body?: string; timeoutMs?: number } = {}): Promise<HttpResponse> {
+  const headers = Object.fromEntries(Object.entries(opts.headers ?? {}).filter(([, v]) => v !== ''));
+  let res: Response;
+  try {
+    res = await fetch(new URL(route, base), { method, headers, body: opts.body,
+      signal: AbortSignal.timeout(opts.timeoutMs ?? 120_000) });
+  } catch (e) {
+    const err = e as Error & { cause?: { message?: string; code?: string } };
+    throw new Error(redact(`${method} ${route}: ${err.message}${err.cause ? ` (${err.cause.code ?? err.cause.message ?? ''})` : ''}`));
+  }
+  return { status: res.status, headers: Object.fromEntries(res.headers), text: await res.text() };
+}
+const gateway = (method: string, route: string, headers: Record<string, string>, body?: string) =>
+  http(E2E.gatewayUrl, method, route, { headers, body });
+const admin = async (route: string) =>
+  gateway('GET', route, { Authorization: `Bearer ${GATEWAY_ADMIN_TOKEN}` });
+const json = (res: HttpResponse) => { try { return JSON.parse(res.text); } catch { return {}; } };
+
 function addCase(c: CaseRecord) {
   report.cases.push(safe(c));
   expect.soft(c.verdict, `${c.id} ${c.title}: ${redact(c.actual)}`).not.toBe('FAIL');
 }
 
-async function run(page: Page, owner: ScopeActor, gw: APIRequestContext, admin: APIRequestContext, suffix: string) {
+async function run(page: Page, owner: ScopeActor, suffix: string) {
+  const ownerHeaders = { Authorization: `Bearer ${owner.tokens.access}`, 'Content-Type': 'application/json',
+    'X-Organization-Id': owner.organizationId, 'X-Workspace-Id': owner.workspaceId };
   // ---------------------------------------------------------------- Case 1
   const providerCfg = await step('Case 1: add the TypeSafe provider in the dashboard', async () => {
     await page.goto('/dashboard/gateway/providers', { waitUntil: 'domcontentloaded' });
@@ -190,22 +222,31 @@ async function run(page: Page, owner: ScopeActor, gw: APIRequestContext, admin: 
     await dialog.getByLabel('Provider').click();
     await page.getByRole('option', { name: 'TypeSafe', exact: true }).click();
     if (BASE_URL) await dialog.getByLabel('Base URL').fill(BASE_URL);
-    await dialog.getByLabel('API Key').fill(TYPESAFE_KEY);
+    // A placeholder, never the real key (see the header). System One
+    // providers are never probed from the dialog, so it calls nothing.
+    await dialog.getByLabel('API Key').fill(`ts-placeholder-${suffix}`);
     const saved = page.waitForResponse(r => r.url().includes('/agentcc/gateways/') && r.request().method() === 'POST',
       { timeout: UI_READY });
     await dialog.getByRole('button', { name: 'Add Provider' }).click();
-    const savedStatus = (await saved).status();
+    const savedRes = await saved;
+    const savedStatus = savedRes.status();
     await expect(dialog).toBeHidden({ timeout: UI_READY });
-    // The dialog is closed: no key on screen.
     await page.screenshot({ path: `${OUT_DIR}/01-providers.png`, fullPage: true });
     const creds = await owner.api.get<{ result?: unknown; results?: unknown }>('/agentcc/provider-credentials/');
     const list = (Array.isArray(creds) ? creds : (creds.results ?? creds.result ?? [])) as Array<Record<string, unknown>>;
     const typesafe = list.find(p => p.provider_name === PROVIDER);
-    addCase({ id: '1a', title: 'Dashboard TypeSafe preset saves a provider', ticket: 'Add a TypeSafe provider with a TypeSafe key',
-      verdict: savedStatus === 200 && !!typesafe ? 'PASS' : 'FAIL',
-      actual: `save status ${savedStatus}; provider ${typesafe ? `saved, models ${JSON.stringify(typesafe.models_list)}` : 'missing'}`,
+    // The real key goes in through the rotate API, outside Playwright.
+    const rotated = typesafe
+      ? await http(E2E.apiUrl, 'POST', `/agentcc/provider-credentials/${String(typesafe.id)}/rotate/`,
+        { headers: ownerHeaders, body: JSON.stringify({ credentials: { api_key: TYPESAFE_KEY } }) })
+      : undefined;
+    const synced = rotated ? (json(rotated).result as { gateway_synced?: boolean } | undefined)?.gateway_synced : undefined;
+    addCase({ id: '1a', title: 'Dashboard TypeSafe preset saves a provider; the key is set by rotate', ticket: 'Add a TypeSafe provider with a TypeSafe key',
+      verdict: savedStatus === 200 && !!typesafe && rotated?.status === 200 && synced === true ? 'PASS' : 'FAIL',
+      actual: `save status ${savedStatus}; provider ${typesafe ? `saved, models ${JSON.stringify(typesafe.models_list)}` : 'missing'}; `
+        + `key rotate ${rotated?.status ?? 'not run'}, gateway_synced ${String(synced)}`,
       calls: [] });
-    return typesafe;
+    return typesafe ? { ...typesafe, saveUrl: savedRes.url() } as Record<string, unknown> & { saveUrl: string } : undefined;
   });
   if (!providerCfg) throw new Error('TypeSafe provider was not saved; cannot continue');
 
@@ -221,25 +262,25 @@ async function run(page: Page, owner: ScopeActor, gw: APIRequestContext, admin: 
 
   await step('gateway has the org providers and the key', async () => {
     await expect.poll(async () => {
-      const res = await admin.get('/-/orgs/configs');
-      if (res.status() !== 200) return `status ${res.status()}`;
-      const providers = ((await res.json()).data?.[owner.organizationId]?.providers ?? {}) as Record<string, unknown>;
+      const res = await admin('/-/orgs/configs');
+      if (res.status !== 200) return `status ${res.status}`;
+      const providers = (json(res).data?.[owner.organizationId]?.providers ?? {}) as Record<string, unknown>;
       // Presence only: the response holds the provider keys and is never logged.
       return [PROVIDER, BAD_KEY_PROVIDER].every(p => p in providers) ? 'ready' : 'waiting';
     }, { ...CONFIG_VISIBLE, message: 'org providers reach the gateway' }).toBe('ready');
-    await expect.poll(async () => (await gw.get('/v1/decisions/models', { headers: auth })).status(),
+    await expect.poll(async () => (await gateway('GET', '/v1/decisions/models', auth)).status,
       { ...CONFIG_VISIBLE, message: 'gateway key synced' }).toBe(200);
   });
 
   const call = async (label: string, body: unknown, opts: { headers?: Record<string, string>; raw?: string; upstream?: boolean } = {})
     : Promise<CallRecord> => {
-    const res = await gw.post('/v1/systemone', { headers: { ...auth, ...(opts.headers ?? {}), 'Content-Type': 'application/json' },
-      data: opts.raw ?? JSON.stringify(body) });
-    const text = await res.text();
+    const res = await gateway('POST', '/v1/systemone', { ...auth, ...(opts.headers ?? {}), 'Content-Type': 'application/json' },
+      opts.raw ?? JSON.stringify(body));
+    const text = res.text;
     let parsed: unknown = text;
     try { parsed = JSON.parse(text); } catch { /* keep text */ }
-    const headers = Object.fromEntries(Object.entries(res.headers()).filter(([k]) => k.startsWith('x-agentcc-')));
-    if (opts.upstream !== false && res.status() === 200) {
+    const headers = Object.fromEntries(Object.entries(res.headers).filter(([k]) => k.startsWith('x-agentcc-')));
+    if (opts.upstream !== false && res.status === 200) {
       report.header.upstreamCalls += 1;
       report.header.upstreamInputTokens += Number((parsed as { usage?: { input_tokens?: number } })?.usage?.input_tokens ?? 0);
     } else if (headers['x-agentcc-upstream-status']) {
@@ -247,7 +288,7 @@ async function run(page: Page, owner: ScopeActor, gw: APIRequestContext, admin: 
     }
     const model = (body as { model?: string })?.model;
     return { label, request: { route: '/v1/systemone', model, body: truncateState(body ?? opts.raw) },
-      status: res.status(), headers, body: parsed, logRow: 'not checked' };
+      status: res.status, headers, body: parsed, logRow: 'not checked' };
   };
   const logRow = async (requestId: string | undefined, expectRow: boolean) => {
     if (!requestId) return 'no row' as const;
@@ -352,7 +393,7 @@ async function run(page: Page, owner: ScopeActor, gw: APIRequestContext, admin: 
     const narrow = await owner.api.post<{ result: { key: string } }>('/agentcc/api-keys/',
       { name: `e2e-typesafe-noprov-${suffix}`, allowed_providers: ['openai'] });
     secrets.push(narrow.result.key);
-    await expect.poll(async () => (await gw.get('/v1/decisions/models', { headers: { Authorization: `Bearer ${narrow.result.key}` } })).status(),
+    await expect.poll(async () => (await gateway('GET', '/v1/decisions/models', { Authorization: `Bearer ${narrow.result.key}` })).status,
       CONFIG_VISIBLE).not.toBe(401);
     const b = await call('allowed_providers excludes typesafe', body, { headers: { Authorization: `Bearer ${narrow.result.key}` }, upstream: false });
     addCase({ id: '5b', title: 'Key whose allowed_providers excludes typesafe', ticket: 'refused (403)', calls: [b],
@@ -362,17 +403,16 @@ async function run(page: Page, owner: ScopeActor, gw: APIRequestContext, admin: 
     // agentcc_tokens_input_total summed over the typesafe series; undefined
     // when the gateway serves no /-/metrics (prometheus off in config.yaml).
     const metric = async () => {
-      const res = await admin.get('/-/metrics');
-      if (res.status() !== 200) return undefined;
-      return (await res.text()).split('\n')
+      const res = await admin('/-/metrics');
+      if (res.status !== 200) return undefined;
+      return res.text.split('\n')
         .filter(l => l.startsWith('agentcc_tokens_input_total{') && l.includes(`provider="${PROVIDER}"`))
         .reduce((sum, l) => sum + Number(l.trim().split(/\s+/).pop()), 0);
     };
     const pushConfig = async (cfg: Record<string, unknown>, ready: (gatewayOrg: Record<string, unknown>) => boolean) => {
       await owner.api.post('/agentcc/org-configs/', { ...cfg, change_description: `e2e typesafe ${suffix}` });
       await expect.poll(async () => {
-        const res = await admin.get('/-/orgs/configs');
-        const org = (await res.json()).data?.[owner.organizationId] ?? {};
+        const org = json(await admin('/-/orgs/configs')).data?.[owner.organizationId] ?? {};
         return ready(org);
       }, { ...CONFIG_VISIBLE, message: 'org limits reach the gateway' }).toBe(true);
     };
@@ -383,7 +423,7 @@ async function run(page: Page, owner: ScopeActor, gw: APIRequestContext, admin: 
       const rl = await owner.api.post<{ result: { key: string } }>('/agentcc/api-keys/', { name: `e2e-typesafe-rpm-${suffix}` });
       secrets.push(rl.result.key);
       const rlAuth = { Authorization: `Bearer ${rl.result.key}` };
-      await expect.poll(async () => (await gw.get('/v1/decisions/models', { headers: rlAuth })).status(), CONFIG_VISIBLE).not.toBe(401);
+      await expect.poll(async () => (await gateway('GET', '/v1/decisions/models', rlAuth)).status, CONFIG_VISIBLE).not.toBe(401);
       const first = await call('rpm=1 first', body, { headers: rlAuth });
       const before = await metric();
       const second = await call('rpm=1 second', body, { headers: rlAuth, upstream: false });
@@ -403,7 +443,7 @@ async function run(page: Page, owner: ScopeActor, gw: APIRequestContext, admin: 
       await pushConfig({ rate_limiting: {}, budgets: { enabled: true, default_period: 'total', keys: { [bk.result.name]: { limit: 0.000001, hard: true } } } },
         org => !!(org.budgets as { keys?: Record<string, unknown> })?.keys?.[bk.result.name] && !(org.rate_limiting as { per_key_rpm?: number })?.per_key_rpm);
       const bkAuth = { Authorization: `Bearer ${bk.result.key}` };
-      await expect.poll(async () => (await gw.get('/v1/decisions/models', { headers: bkAuth })).status(), CONFIG_VISIBLE).not.toBe(401);
+      await expect.poll(async () => (await gateway('GET', '/v1/decisions/models', bkAuth)).status, CONFIG_VISIBLE).not.toBe(401);
       const spend = await call('budget first (spends past the limit)', body, { headers: bkAuth });
       const b1 = await metric();
       const refused = await call('budget second', body, { headers: bkAuth, upstream: false });
@@ -519,7 +559,7 @@ async function run(page: Page, owner: ScopeActor, gw: APIRequestContext, admin: 
     const models = Array.from(new Set([...((providerCfg.models_list as string[]) ?? []), 'jev-1.14.0', 'jev-0.0.0']));
     const update = await tryApi(() => owner.api.patch(`/agentcc/provider-credentials/${providerCfg.id as string}/`, { models_list: models }));
     await expect.poll(async () => {
-      const org = (await (await admin.get('/-/orgs/configs')).json()).data?.[owner.organizationId] ?? {};
+      const org = json(await admin('/-/orgs/configs')).data?.[owner.organizationId] ?? {};
       return ((org.providers?.[PROVIDER]?.models ?? []) as string[]).includes('jev-1.14.0');
     }, { ...CONFIG_VISIBLE, message: 'jev-1.14.0 listed at the gateway' }).toBe(true).catch(() => undefined);
 
@@ -537,8 +577,8 @@ async function run(page: Page, owner: ScopeActor, gw: APIRequestContext, admin: 
       const row = c.logRow as Record<string, unknown>;
       if (row !== null && typeof row === 'object' && Number(row.cost).toFixed(6) !== c.expectedCost) issues.push(`${c.label}: log cost ${String(row.cost)}`);
     }
-    const listing = await gw.get('/v1/decisions/models', { headers: auth });
-    const entries = ((await listing.json()).data ?? []) as Array<{ id: string; pricing?: { input_per_mtok: number; output_per_mtok: number } }>;
+    const listing = await gateway('GET', '/v1/decisions/models', auth);
+    const entries = (json(listing).data ?? []) as Array<{ id: string; pricing?: { input_per_mtok: number; output_per_mtok: number } }>;
     const priced = (id: string) => entries.find(e => e.id === id || e.id.endsWith(`/${id}`))?.pricing;
     for (const id of ['jev-latest', 'jev-1.14.0']) {
       const p = priced(id);

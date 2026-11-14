@@ -1,0 +1,121 @@
+#!/usr/bin/env node
+// Scans Playwright artefacts for a secret before they are shared: the HTML
+// report (its embedded base64 zip is unpacked), JSON/blob reports, traces and
+// any other file, including the zip archives among them. Looks for the raw
+// value, its URL-encoded form and its base64 forms at all three byte offsets.
+//
+//   SCAN_SECRET=<value> node scripts/scan-artefacts-for-secret.mjs <dir|file>...
+//
+// SCAN_CONTEXT=1 also prints the text around each raw hit, the secret masked.
+// The secret is read from the environment so it never lands in shell history
+// or process listings. Prints one line per hit (path and form, never the
+// value) and exits 1 on any hit, 0 when every artefact is clean.
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+import * as zlib from 'node:zlib';
+
+const secret = process.env.SCAN_SECRET ?? '';
+if (secret.length < 8) {
+  console.error('SCAN_SECRET must be set to the value to look for (at least 8 characters).');
+  process.exit(2);
+}
+const targets = process.argv.slice(2);
+if (!targets.length) {
+  console.error('usage: SCAN_SECRET=<value> node scripts/scan-artefacts-for-secret.mjs <dir|file>...');
+  process.exit(2);
+}
+
+// Base64 of the secret depends on its byte offset in the encoded stream; the
+// middle of each of the three encodings is stable whatever precedes it.
+function base64Needles(value) {
+  const bytes = Buffer.from(value, 'utf8');
+  const out = [];
+  for (let shift = 0; shift < 3; shift++) {
+    const enc = Buffer.concat([Buffer.alloc(shift), bytes]).toString('base64');
+    // Drop the characters touched by the padding prefix and the tail.
+    const start = Math.ceil((shift * 4) / 3) + 1;
+    const end = enc.length - 4;
+    if (end - start >= 8) out.push(enc.slice(start, end));
+  }
+  return out;
+}
+const needles = [
+  ['raw', Buffer.from(secret, 'utf8')],
+  ['url-encoded', Buffer.from(encodeURIComponent(secret), 'utf8')],
+  ['json-escaped', Buffer.from(JSON.stringify(secret).slice(1, -1), 'utf8')],
+  ...base64Needles(secret).map((n, i) => [`base64@${i}`, Buffer.from(n, 'utf8')]),
+].filter(([, b], i, all) => all.findIndex(([, o]) => o.equals(b)) === i);
+
+// Minimal zip reader (stored and deflated entries), enough for Playwright's
+// traces, blob reports and the HTML report's embedded archive.
+function unzip(buf) {
+  const entries = [];
+  let eocd = -1;
+  for (let i = buf.length - 22; i >= Math.max(0, buf.length - 65_557); i--) {
+    if (buf.readUInt32LE(i) === 0x06054b50) { eocd = i; break; }
+  }
+  if (eocd < 0) return entries;
+  const count = buf.readUInt16LE(eocd + 10);
+  let p = buf.readUInt32LE(eocd + 16);
+  for (let n = 0; n < count && p + 46 <= buf.length; n++) {
+    if (buf.readUInt32LE(p) !== 0x02014b50) break;
+    const method = buf.readUInt16LE(p + 10);
+    const compSize = buf.readUInt32LE(p + 20);
+    const nameLen = buf.readUInt16LE(p + 28);
+    const extraLen = buf.readUInt16LE(p + 30);
+    const commentLen = buf.readUInt16LE(p + 32);
+    const local = buf.readUInt32LE(p + 42);
+    const name = buf.subarray(p + 46, p + 46 + nameLen).toString('utf8');
+    p += 46 + nameLen + extraLen + commentLen;
+    const lNameLen = buf.readUInt16LE(local + 26);
+    const lExtraLen = buf.readUInt16LE(local + 28);
+    const data = buf.subarray(local + 30 + lNameLen + lExtraLen, local + 30 + lNameLen + lExtraLen + compSize);
+    try {
+      entries.push([name, method === 0 ? data : method === 8 ? zlib.inflateRawSync(data) : Buffer.alloc(0)]);
+    } catch {
+      entries.push([name, Buffer.alloc(0)]);
+    }
+  }
+  return entries;
+}
+
+let hits = 0;
+let scanned = 0;
+function scanBuffer(label, buf, depth = 0) {
+  scanned += 1;
+  for (const [form, needle] of needles) {
+    if (buf.indexOf(needle) >= 0) {
+      hits += 1;
+      console.log(`HIT ${label} (${form})`);
+      if (process.env.SCAN_CONTEXT === '1') {
+        const at = buf.indexOf(needle);
+        const around = buf.subarray(Math.max(0, at - 160), at + needle.length + 40).toString('utf8');
+        console.log(`    …${around.split(needle.toString('utf8')).join('<SECRET>').replace(/\s+/g, ' ')}…`);
+      }
+    }
+  }
+  if (depth > 3) return;
+  if (buf.length > 4 && buf.readUInt32LE(0) === 0x04034b50) {
+    for (const [name, data] of unzip(buf)) scanBuffer(`${label}!${name}`, data, depth + 1);
+  }
+  // The HTML report embeds its data as a base64 zip in a data: URL.
+  const marker = Buffer.from('data:application/zip;base64,');
+  for (let i = buf.indexOf(marker); i >= 0; i = buf.indexOf(marker, i + 1)) {
+    let j = i + marker.length;
+    while (j < buf.length && /[A-Za-z0-9+/=]/.test(String.fromCharCode(buf[j]))) j++;
+    const zip = Buffer.from(buf.subarray(i + marker.length, j).toString('latin1'), 'base64');
+    scanBuffer(`${label}#embedded-zip`, zip, depth + 1);
+  }
+}
+function walk(p) {
+  if (!fs.existsSync(p)) { console.log(`MISSING ${p}`); return; }
+  const st = fs.statSync(p);
+  if (st.isDirectory()) {
+    for (const e of fs.readdirSync(p)) walk(path.join(p, e));
+  } else if (st.isFile()) {
+    scanBuffer(p, fs.readFileSync(p));
+  }
+}
+for (const t of targets) walk(t);
+console.log(`scanned ${scanned} files/entries for ${needles.length} encodings of the secret: ${hits} hit(s)`);
+process.exit(hits ? 1 : 0);
