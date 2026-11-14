@@ -401,7 +401,7 @@ test('SKILLS-E2E-001: author, restore and consume the reviewed workspace skill',
       expect(deltas).toEqual({ api: 1, download: 1, mcp: 1 + v1Files.length });
       await testInfo.attach('fetch-deltas', { body: JSON.stringify(deltas), contentType: 'application/json' });
       await page.getByRole('tab', { name: 'Activity', exact: true }).click();
-      await page.getByRole('button', { name: 'What fetches mean', exact: true }).click();
+      await page.getByRole('button', { name: 'About this data', exact: true }).click();
       await expect(page.getByText(FETCH_CAVEAT, { exact: true })).toBeVisible({ timeout: UI_READY });
     }, { timeout: UI_READY });
 

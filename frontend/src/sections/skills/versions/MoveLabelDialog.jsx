@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import PropTypes from "prop-types";
 import { Alert, Button, Stack, TextField, Typography } from "@mui/material";
+import { Link as RouterLink } from "react-router-dom";
 import { enqueueSnackbar } from "notistack";
 
 import {
@@ -12,6 +13,8 @@ import {
   useSkillLabels,
   useSkillVersions,
 } from "src/api/skills";
+import { useSkillTestEvidence } from "src/api/skills/testing";
+import { paths } from "src/routes/paths";
 import ModalWrapper from "src/components/ModalWrapper/ModalWrapper";
 import ContentSkeleton from "src/components/content-skeleton";
 import ErrorState from "src/components/error-state";
@@ -71,6 +74,12 @@ function MoveLabelForm({ onClose, skill, label, version }) {
     current,
     validTarget ? target : undefined,
   );
+  // The same query TestEvidence reads, so a version with no test runs can say so beside the action.
+  const evidenceCandidate = validTarget ? { kind: 'version', version: target, digest: targetVersion.data?.digest } : undefined;
+  const evidenceQuery = useSkillTestEvidence(validTarget ? skill.id : undefined, evidenceCandidate);
+  // A previously chosen run keeps TestEvidence mounted so its mismatch warning still shows.
+  const noEvidence = validTarget && !evidenceRunId && Boolean(evidenceQuery.data) && !(evidenceQuery.data.runs?.length);
+  const movesProduction = name === "production" && validTarget && current !== target;
   const summaryReady =
     current === null ||
     (compare.data && !compare.isError && !compare.isFetching);
@@ -254,7 +263,7 @@ function MoveLabelForm({ onClose, skill, label, version }) {
         {ready && current === target && <ActionReason id="move-action-reason-1" reason="Choose a different version" />}
         {!canMove && <Alert severity="info">A workspace admin or organization admin must move this protected label. Publishing an ordinary version remains available.</Alert>}
         {targetVersion.isError && <ErrorState title="Could not load the target version" onRetry={targetVersion.refetch} />}
-        {validTarget && <TestEvidence skillId={skill.id} candidate={{ kind: 'version', version: target, digest: targetVersion.data?.digest }} onSelectRun={setEvidenceRunId} selectedRunId={evidenceRunId} />}
+        {validTarget && !noEvidence && <TestEvidence skillId={skill.id} candidate={{ kind: 'version', version: target, digest: targetVersion.data?.digest }} onSelectRun={setEvidenceRunId} selectedRunId={evidenceRunId} />}
         <TextField
           label="Note (optional)"
           size="small"
@@ -266,6 +275,11 @@ function MoveLabelForm({ onClose, skill, label, version }) {
           disabled={move.isPending}
         />
       </Stack>
+      {/* The consequence and the missing-evidence warning sit right above the action, not up in the form. */}
+      {(noEvidence || movesProduction) && <Stack spacing={1} sx={{ flexShrink: 0 }}>
+        {noEvidence && <Alert severity="warning" action={<Button color="inherit" size="small" component={RouterLink} to={`${paths.dashboard.skills.edit(skill.id)}?tab=tests`}>Run tests</Button>}>No tests run for these files. Not tested is not a pass.</Alert>}
+        {movesProduction && <Typography variant="s1">Apps that follow production pick up v{target} the next time they fetch. Pinned versions don&apos;t change.</Typography>}
+      </Stack>}
     </ModalWrapper>
   );
 }

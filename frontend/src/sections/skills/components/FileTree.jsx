@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import PropTypes from 'prop-types';
 import { Autocomplete, Box, Button, ButtonBase, IconButton, Stack, TextField, Tooltip, Typography } from '@mui/material';
 import Iconify from 'src/components/iconify';
@@ -10,8 +10,11 @@ import FileStatusBadge from './FileStatusBadge';
 import './skillIcons';
 
 const DEFAULT_PINNED = ['SKILL.md'];
+// Files the platform adds so apps load the right versions. Their paths stay listed under this group.
+const OTHER_FILES_NOTE = 'Added by Future AGI so apps load the right versions.';
 
 export default function FileTree({ files, selectedPath, onSelect, onCreate, onRename, onDelete, pinned = DEFAULT_PINNED, protectedPaths = DEFAULT_PINNED, isPathReadOnly = () => false, readOnly = true, generatedFolders = [] }) {
+  const noteId = useId();
   const [collapsed, setCollapsed] = useState(() => new Set([...generatedFolders, 'group:linked', 'group:generated']));
   const [focused, setFocused] = useState(null);
   const [dialog, setDialog] = useState(null);
@@ -40,7 +43,7 @@ export default function FileTree({ files, selectedPath, onSelect, onCreate, onRe
       const items = files.filter((file) => (['linked', 'generated'].includes(file.origin?.kind) ? file.origin.kind : 'owned') === kind);
       return { name, path: groupPath, type: 'folder', children: prefixFolders(buildFileTree(items)) };
     };
-    const tree = grouped ? [['owned', 'Instructions'], ['linked', 'Linked skills'], ['generated', 'Generated files']].map(([kind, name]) => groupTree(kind, name)).filter((group) => group.children.length) : buildFileTree(files);
+    const tree = grouped ? [['owned', 'Instructions'], ['linked', 'Linked skills'], ['generated', 'Other files']].map(([kind, name]) => groupTree(kind, name)).filter((group) => group.children.length) : buildFileTree(files);
     tree.sort((a, b) => {
       const ai = pinned.indexOf(a.path);
       const bi = pinned.indexOf(b.path);
@@ -124,12 +127,17 @@ export default function FileTree({ files, selectedPath, onSelect, onCreate, onRe
     <Box role="tree" aria-label="Skill files">
       {rows.map((row, index) => <ButtonBase key={row.path} component="div" role="treeitem"
         ref={(element) => { if (element) refs.current.set(row.path, element); else refs.current.delete(row.path); }}
-        tabIndex={row.path === activePath ? 0 : -1} aria-label={row.name} aria-level={row.level} aria-posinset={row.position} aria-setsize={row.setSize}
+        tabIndex={row.path === activePath ? 0 : -1} aria-label={row.name} aria-describedby={row.path === 'group:generated' ? noteId : undefined} aria-level={row.level} aria-posinset={row.position} aria-setsize={row.setSize}
         aria-selected={row.path === selectedPath} aria-expanded={row.type === 'folder' ? !collapsed.has(row.path) : undefined}
         onFocus={() => setFocused(row.path)} onKeyDown={(event) => onKeyDown(event, row, index)} onClick={() => activate(row)}
         sx={{ display: 'flex', justifyContent: 'flex-start', gap: 1, width: '100%', minHeight: 32, pl: 1 + (row.level - 1) * 1.5, pr: 1, borderRadius: 1, bgcolor: row.path === selectedPath ? 'action.selected' : 'transparent', '&:hover': { bgcolor: 'action.hover' }, '&.Mui-focusVisible': { outline: '2px solid', outlineColor: 'primary.main', outlineOffset: -2 } }}>
         <Box sx={{ width: 16, flexShrink: 0, display: 'flex' }}>{row.type === 'folder' && <Iconify width={16} icon={collapsed.has(row.path) ? 'solar:alt-arrow-right-linear' : 'solar:alt-arrow-down-linear'} />}</Box>
-        <Typography variant="s1" sx={{ flex: 1, textAlign: 'left', overflowWrap: 'anywhere', fontWeight: pinned.includes(row.path) ? 500 : 400 }}>{row.name}</Typography>
+        {row.path === 'group:generated'
+          ? <Box sx={{ flex: 1, minWidth: 0, textAlign: 'left', py: 0.5 }}>
+            <Typography variant="s1" sx={{ display: 'block', overflowWrap: 'anywhere' }}>{row.name}</Typography>
+            <Typography id={noteId} variant="s3" color="text.secondary" sx={{ display: 'block' }}>{OTHER_FILES_NOTE}</Typography>
+          </Box>
+          : <Typography variant="s1" sx={{ flex: 1, textAlign: 'left', overflowWrap: 'anywhere', fontWeight: pinned.includes(row.path) ? 500 : 400 }}>{row.name}</Typography>}
         {generatedFolders.includes(row.path) && <Typography variant="s3" color="text.secondary">Generated</Typography>}
         {row.status && <FileStatusBadge status={row.status} />}
       </ButtonBase>)}

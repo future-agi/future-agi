@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => ({
   move: vi.fn(),
   refetch: vi.fn(),
   toast: vi.fn(),
+  evidence: vi.fn(),
 }));
 vi.mock("src/api/skills", () => ({
   useSkillLabels: mocks.labels,
@@ -19,6 +20,7 @@ vi.mock("src/api/skills", () => ({
   useSetSkillLabel: () => ({ mutateAsync: mocks.move, isPending: false }),
   getSkillErrorCode: (error) => error.code,
 }));
+vi.mock("src/api/skills/testing", () => ({ useSkillTestEvidence: () => mocks.evidence() }));
 vi.mock("notistack", () => ({ enqueueSnackbar: mocks.toast }));
 vi.mock("src/components/iconify", () => ({ default: () => null }));
 vi.mock("src/sections/skills/components/VersionSelect", () => {
@@ -59,6 +61,7 @@ beforeEach(() => {
   mocks.compare.mockReturnValue({ data: comparison });
   mocks.move.mockResolvedValue({});
   mocks.refetch.mockResolvedValue(labelsResult(2));
+  mocks.evidence.mockReturnValue({ data: { runs: [{ runId: "run-1" }] } });
 });
 
 describe("MoveLabelDialog", () => {
@@ -248,4 +251,36 @@ it('defaults to the newest different version and explains an explicit no-op', as
   expect(screen.getByRole('button', { name: 'Move production', exact: true })).toBeDisabled();
   expect(screen.getByText('Choose a different version')).toBeInTheDocument();
   expect(mocks.move).not.toHaveBeenCalled();
+});
+
+describe("moving production states its consequence at the point of decision", () => {
+  const open = (label = "production") => render(<MoveLabelDialog open onClose={vi.fn()} skill={skill} label={label} />);
+  it("says what happens to apps and pinned versions, and keeps the single click", async () => {
+    open();
+    expect(await screen.findByText("Apps that follow production pick up v3 the next time they fetch. Pinned versions don't change.")).toBeInTheDocument();
+    fireEvent.change(screen.getByRole("combobox", { name: "Version" }), { target: { value: "2" } });
+    expect(screen.getByText(/pick up v2 the next time they fetch/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /^Move production from v1 to v2$/ }));
+    await waitFor(() => expect(mocks.move).toHaveBeenCalledTimes(1));
+  });
+  it("shows the missing-evidence line once, as a warning beside the action, and Test evidence only when runs exist", async () => {
+    mocks.evidence.mockReturnValue({ data: { runs: [] } });
+    open();
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("No tests run for these files. Not tested is not a pass.");
+    expect(screen.getAllByText(/Not tested is not a pass/)).toHaveLength(1);
+    expect(screen.queryByText("Test evidence")).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Run tests" })).toHaveAttribute("href", "/dashboard/skills/skill-1/edit?tab=tests");
+  });
+  it("keeps Test evidence (and its attach control) when the version has runs", async () => {
+    open();
+    expect(await screen.findByText("Test evidence")).toBeInTheDocument();
+    expect(screen.queryByText(/Not tested is not a pass/)).not.toBeInTheDocument();
+  });
+  it("does not talk about production for another label", async () => {
+    mocks.labels.mockReturnValue({ data: [{ name: "staging", version: 1, canMove: true }, { name: "production", version: 2, canMove: true }], refetch: mocks.refetch });
+    open("staging");
+    await screen.findByText("Currently points to v1.");
+    expect(screen.queryByText(/Apps that follow production/)).not.toBeInTheDocument();
+  });
 });
