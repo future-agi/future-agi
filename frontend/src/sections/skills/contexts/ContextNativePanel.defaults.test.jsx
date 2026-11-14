@@ -417,3 +417,10 @@ it('keeps the screen-reader-only plan header 1px wide inside its cell, so it can
   expect(getComputedStyle(label).width).toBe('1px');
   expect(getComputedStyle(label.closest('th')).position).toBe('relative');
 });
+it('claims no regression when no attempt finished', () => {
+  h.detail = { ...h.detail, status: 'failed', jobState: 'failed', failure: 'runtime_dispatch_failed', received: 0, result: { reproduction: 'not_requested', regressed_cases: 0 }, decision: { state: 'hold', reasons: [] },
+    cells: [{ caseId: 'refund', variant: 'candidate', repeatIndex: 0, status: 'not_started', answer: 'unverifiable', selection: 'unverifiable', delivery: 'unverifiable', tools: 'unverifiable' }] };
+  renderPanel();
+  expect(screen.getByText('v6 passed 0 of 2 cases.')).toBeVisible();
+  expect(screen.queryByText(/regression/i)).not.toBeInTheDocument();
+});

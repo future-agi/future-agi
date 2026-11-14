@@ -50,7 +50,9 @@ export function applicationConclusion(run, suiteTotal) {
   const baseline = fixBaseline(run);
   const fixed = baseline ? passed.filter((id) => anyFailed(cellsFor(run, id, baseline.variant))).map((id) => titles[id]) : [];
   const fixes = fixed.length ? ` and fixes ${list(fixed)}, which ${fixed.length === 1 ? 'fails' : 'fail'} on ${baseline.name}` : '';
-  const regressed = Number.isInteger(result.regressed_cases) ? result.regressed_cases : null;
+  // A run where no attempt finished establishes no regression either way (its failure is shown above it).
+  const finished = (run.cells || []).some((cell) => cell.status === 'completed');
+  const regressed = finished && Number.isInteger(result.regressed_cases) ? result.regressed_cases : null;
   const regressions = regressionSentence(regressed, total, Math.max(total, Number.isInteger(suiteTotal) ? suiteTotal : 0));
   if (!result.reproduction || result.reproduction === 'not_requested') return `${lead}${fixes}.${regressions}`;
   const reproduction = result.reproduction === 'reproduced'
