@@ -825,7 +825,7 @@ def test_receipt_rejects_non_utf8_artifact_without_writes(receipt_channel, kind)
     assert _call_state(call) == before
 
 
-@pytest.mark.parametrize("separator", [" ", " "])
+@pytest.mark.parametrize("separator", ["\u2028", "\u2029"])
 def test_receipt_keeps_unicode_separator_inside_tool_trace_line(
     receipt_channel, separator
 ):
@@ -912,3 +912,136 @@ def test_receipt_rejects_overflowing_number_literal_without_writes(
     assert response.json()["retryable"] is False
     assert not HostedHarnessReceipt.no_workspace_objects.filter(job=job).exists()
     assert _call_state(call) == before
+
+
+HUGE_TIMINGS = [1e306, 10**310]
+
+
+@pytest.mark.parametrize("value", HUGE_TIMINGS)
+def test_text_transcript_refuses_out_of_range_timing(receipt_channel, value):
+    job, capability, body = receipt_channel
+    call = job.scenario_registrations.get().call_execution
+    before = _call_state(call)
+    objects = {}
+    content = json.dumps(
+        {"messages": [{"role": "user", "content": "hello", "at": value}]}
+    ).encode()
+    digest = _upload(capability, objects, content, "transcript")
+    body["call"]["transcript_artifact"] = f"sha256:{digest}"
+    response = _post_receipt(capability, objects, body, via_api=True)
+    assert response.status_code == 400, response.content
+    assert response.json()["error"] == "invalid_jsonb_number"
+    assert response.json()["retryable"] is False
+    assert not HostedHarnessReceipt.no_workspace_objects.filter(job=job).exists()
+    assert _call_state(call) == before
+
+
+@pytest.mark.parametrize("value", HUGE_TIMINGS)
+def test_tool_trace_with_a_timed_transcript_refuses_out_of_range_timing(
+    receipt_channel, value
+):
+    job, capability, body = receipt_channel
+    call = job.scenario_registrations.get().call_execution
+    before = _call_state(call)
+    objects = {}
+    transcript = json.dumps(
+        {"messages": [{"role": "user", "content": "hello", "at": 1_700_000_000}]}
+    ).encode()
+    digest = _upload(capability, objects, transcript, "transcript")
+    body["call"]["transcript_artifact"] = f"sha256:{digest}"
+    _upload(
+        capability,
+        objects,
+        json.dumps({"name": "lookup", "at": value}).encode(),
+        "tool_trace",
+    )
+    response = _post_receipt(capability, objects, body, via_api=True)
+    assert response.status_code == 400, response.content
+    assert response.json()["error"] == "invalid_jsonb_number"
+    assert not HostedHarnessReceipt.no_workspace_objects.filter(job=job).exists()
+    assert _call_state(call) == before
+
+
+@pytest.mark.parametrize(
+    "document",
+    [
+        {"messages": [{"role": "user", "content": "hi", "started_speaking_at": 1e306}]},
+        {
+            "messages": [
+                {"role": "user", "content": "hi", "started_speaking_at": 10**310}
+            ]
+        },
+        {
+            "messages": [
+                {
+                    "role": "user",
+                    "content": "hi",
+                    "started_speaking_at": 1_700_000_000,
+                    "stopped_speaking_at": 1e306,
+                }
+            ]
+        },
+        {
+            "recording_offset_ms": 10**310,
+            "messages": [
+                {"role": "user", "content": "hi", "started_speaking_at": 1_700_000_000}
+            ],
+        },
+    ],
+)
+def test_voice_transcript_refuses_out_of_range_timing_before_replacing_rows(
+    receipt_channel, document
+):
+    job, _, _ = receipt_channel
+    call = job.scenario_registrations.get().call_execution
+    call.simulation_call_type = CallExecution.SimulationCallType.VOICE
+    call.save(update_fields=["simulation_call_type"])
+    CallTranscript.objects.create(
+        call_execution=call, speaker_role="user", content="earlier transcript"
+    )
+    response = MagicMock()
+    response.read.return_value = json.dumps(document).encode()
+    storage = MagicMock()
+    storage.get_object.return_value = response
+    with (
+        patch(
+            "simulate.services.hosted_harness_ingestion.get_storage_client",
+            return_value=storage,
+        ),
+        pytest.raises(HostedHarnessError) as error,
+    ):
+        _ingest_hosted_transcript(call, SimpleNamespace(object_key="transcript.json"))
+    assert error.value.status_code == 400
+    assert error.value.code == "invalid_jsonb_number"
+    assert list(call.transcripts.values_list("content", flat=True)) == [
+        "earlier transcript"
+    ]
+
+
+def test_voice_transcript_keeps_plausible_timing(receipt_channel):
+    job, _, _ = receipt_channel
+    call = job.scenario_registrations.get().call_execution
+    call.simulation_call_type = CallExecution.SimulationCallType.VOICE
+    call.save(update_fields=["simulation_call_type"])
+    document = {
+        "recording_offset_ms": 1500,
+        "messages": [
+            {
+                "role": "user",
+                "content": "hi",
+                "started_speaking_at": 1_700_000_000,
+                "stopped_speaking_at": 1_700_000_002.25,
+            }
+        ],
+    }
+    response = MagicMock()
+    response.read.return_value = json.dumps(document).encode()
+    storage = MagicMock()
+    storage.get_object.return_value = response
+    with patch(
+        "simulate.services.hosted_harness_ingestion.get_storage_client",
+        return_value=storage,
+    ):
+        _ingest_hosted_transcript(call, SimpleNamespace(object_key="transcript.json"))
+    row = call.transcripts.get()
+    assert (row.start_time_ms, row.end_time_ms) == (1500, 3750)

@@ -1272,6 +1272,33 @@ def _load_artifact_json(text: str, *, field: str) -> Any:
     return json.loads(text, parse_constant=nonfinite, parse_float=finite_float)
 
 
+# The latest epoch second a timing value may name (9999-12-31T23:59:59Z). Bounding
+# timing inputs keeps every derived offset within float and BigInteger range.
+_MAX_TIMING_SECONDS = 253402300799
+
+
+def _timing_number(value: Any, *, field: str, scale: float = 1.0) -> float | None:
+    """A timing number from an artifact, or None when it is not a number.
+
+    ``scale`` is 1000 for millisecond values. A number beyond any plausible
+    timestamp (or too large for a float) is refused instead of overflowing the
+    offset arithmetic or the stored offset column.
+    """
+    if not isinstance(value, (int, float)):
+        return None
+    try:
+        number = float(value)
+    except OverflowError:
+        number = math.inf
+    if not math.isfinite(number) or abs(number) > _MAX_TIMING_SECONDS * scale:
+        raise HostedHarnessError(
+            "invalid_jsonb_number",
+            f"{field} contains a timing value out of range",
+            status_code=400,
+        )
+    return number
+
+
 def _jsonl_lines(text: str) -> list[str]:
     """Split JSONL on newlines only; U+2028 and other separators belong to the data."""
     return [line.removesuffix("\r") for line in text.split("\n")]
@@ -1300,8 +1327,8 @@ def _read_hosted_tool_trace(
             except json.JSONDecodeError:
                 continue
             if isinstance(value, dict):
-                at = value.get("at")
-                if base_time is not None and isinstance(at, (int, float)) and at > 0:
+                at = _timing_number(value.get("at"), field="tool trace artifact")
+                if base_time is not None and at is not None and at > 0:
                     value["start_time_ms"] = int(round((at - base_time) * 1000))
                 calls.append(value)
         # These calls are stored in provider_call_data. Malformed lines are skipped
@@ -1408,8 +1435,8 @@ def _ingest_hosted_transcript(
             # Turns carry the epoch second they were delivered (`at`), on the tool trace's
             # clock, so turns and tool calls are measured from one base into one timeline.
             def sent_at(message: dict) -> float | None:
-                value = message.get("at")
-                return value if isinstance(value, (int, float)) and value > 0 else None
+                value = _timing_number(message.get("at"), field="transcript artifact")
+                return value if value is not None and value > 0 else None
 
             messages = [
                 message
@@ -1460,21 +1487,26 @@ def _ingest_hosted_transcript(
             # (the recorder attaches after the call starts, so this lands
             # late), and a call start after the first word (clock skew) falls
             # back to that word.
+            def spoken_at(message: dict, key: str) -> float | None:
+                return _timing_number(message.get(key), field="transcript artifact")
+
             speech_starts = [
-                message["started_speaking_at"]
+                start
                 for message in messages
                 if isinstance(message, dict)
-                and isinstance(message.get("started_speaking_at"), (int, float))
+                and (start := spoken_at(message, "started_speaking_at")) is not None
             ]
             first_speech = min(speech_starts) if speech_starts else None
-            recording_offset = (
+            recording_offset = _timing_number(
                 payload.get("recording_offset_ms")
                 if isinstance(payload, dict)
-                else None
+                else None,
+                field="transcript artifact",
+                scale=1000,
             )
             call_start = _epoch_seconds(call.started_at)
-            if first_speech is not None and isinstance(recording_offset, (int, float)):
-                base_time = first_speech - max(0.0, float(recording_offset)) / 1000
+            if first_speech is not None and recording_offset is not None:
+                base_time = first_speech - max(0.0, recording_offset) / 1000
             elif (
                 first_speech is not None
                 and call_start is not None
@@ -1494,13 +1526,13 @@ def _ingest_hosted_transcript(
                 if content is None:
                     continue
                 role = str(message.get("role") or "unknown")
-                started = message.get("started_speaking_at")
-                stopped = message.get("stopped_speaking_at")
-                if base_time is not None and isinstance(started, (int, float)):
+                started = spoken_at(message, "started_speaking_at")
+                stopped = spoken_at(message, "stopped_speaking_at")
+                if base_time is not None and started is not None:
                     start_ms = int(round((started - base_time) * 1000))
                     end_ms = (
                         int(round((stopped - base_time) * 1000))
-                        if isinstance(stopped, (int, float))
+                        if stopped is not None
                         else start_ms
                     )
                     previous_end_ms = end_ms
