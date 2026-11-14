@@ -814,6 +814,111 @@ def _cost(runs: list[Any]) -> Reading:
     )
 
 
+_CHILD_CALLS_READ = 20
+_CUT_SHORT = frozenset({"deadline_passed", "no_return", "cancel_requested", "cancelled"})
+
+
+def _children(pairing: Pairing, runs: list[Any]) -> Reading:
+    """Sub-agent evidence from this agent's own runs: one evidence line per checklist item, seen or not. Absence is
+    unmeasured, never a failure."""
+    from simulate.models import CallExecution
+    from simulate.services.harness_workers import WORKERS_KEY
+    from simulate.services.hosted_harness_ingestion import TRIAL_STATE_KEY
+
+    declared = [one for one in _contract(pairing).get("workers") or [] if isinstance(one, Mapping)]
+    calls = (
+        list(
+            CallExecution.objects.filter(
+                test_execution_id__in=HostedHarnessJob.no_workspace_objects.filter(id__in=runs).values(
+                    "test_execution_id"
+                ),
+                call_metadata__has_key=WORKERS_KEY,
+            ).order_by("-created_at")[:_CHILD_CALLS_READ]
+        )
+        if runs
+        else []
+    )
+    if not declared and not calls:
+        return Reading("not_applicable", "single_agent", "This agent declares no workers and its runs recorded none.")
+    if not calls:
+        return Reading("not_run", "no_run", "No run of this agent has shown its workers yet.")
+    records = [(call.call_metadata or {}).get(WORKERS_KEY) or {} for call in calls]
+    trials = [(call.call_metadata or {}).get(TRIAL_STATE_KEY) or {} for call in calls]
+    receipts = [(call.call_metadata or {}).get("hosted_harness_receipt") or {} for call in calls]
+    declared_ids = {str(one.get("id")) for one in declared if one.get("id")}
+
+    def hand_offs_whole(record: Mapping[str, Any]) -> bool:
+        events = record.get("events") or []
+        out = {one.get("delegation_id") for one in events if one.get("type") == "delegated"}
+        back = {one.get("delegation_id") for one in events if one.get("type") == "returned"}
+        ended = {
+            one.get("worker_id") for one in record.get("workers") or [] if one.get("state") in _CUT_SHORT
+        }
+        stuck = [
+            one for one in events
+            if one.get("type") == "delegated" and one.get("delegation_id") not in back
+            and one.get("worker_id") not in ended
+        ]
+        return bool(out) and not stuck
+
+    def seen_all(record: Mapping[str, Any]) -> bool:
+        observed_ids = {str(one.get("id")) for one in record.get("workers") or [] if one.get("observed")}
+        return declared_ids <= observed_ids
+
+    any_hand_off = any(
+        one.get("type") == "delegated" for record in records for one in record.get("events") or []
+    )
+    ids_by_call = [
+        {str(one.get("worker_id")) for one in record.get("workers") or [] if one.get("observed")} for record in records
+    ]
+    sub_goals = [one for receipt in receipts for one in receipt.get("sub_goals") or [] if isinstance(one, Mapping)]
+    worker_goals = [one for one in sub_goals if str(one.get("subject") or "").startswith("worker:")]
+
+    def result(found: bool, applicable: bool = True) -> str:
+        return "not_applicable" if not applicable else "seen" if found else "not_seen"
+
+    checks: list[EvidenceCheck] = [
+        {"check": "stable_ids", "result": result(any(
+            a & b for i, a in enumerate(ids_by_call) for b in ids_by_call[i + 1:]
+        ), len(calls) > 1)},
+        {"check": "delegation_and_return", "result": result(any(hand_offs_whole(one) for one in records))},
+        {"check": "tool_attribution", "result": result(all(
+            one.get("attribution") != "unattributed"
+            for record in records for one in record.get("events") or [] if one.get("type") == "tool_call"
+        ))},
+        {"check": "permissions_exercised", "result": result(any(
+            str(entry.get("who") or "").startswith("worker:")
+            and (entry.get("refused_actions") or entry.get("committed_actions"))
+            for trial in trials for entry in trial.get("state_changes") or [] if isinstance(entry, Mapping)
+        ))},
+        {"check": "worker_verdicts", "result": result(bool(worker_goals))},
+        {"check": "timeout_or_cancel", "result": result(any(
+            one.get("state") in _CUT_SHORT for record in records for one in record.get("workers") or []
+        ))},
+        {"check": "unmeasured_without_evidence", "result": result(any(one.get("held") is None for one in worker_goals))},
+    ]
+    at = calls[0].created_at.isoformat()
+    if any(seen_all(record) and hand_offs_whole(record) for record in records):
+        return Reading("passed", evidence=checks, checked_at=at)
+    if not any_hand_off:
+        return Reading(
+            "limited",
+            "no_hand_offs",
+            "Workers were seen only through their tool calls; the app records no hand-offs.",
+            evidence=checks,
+            checked_at=at,
+        )
+    seen_ids = {str(one.get("id")) for record in records for one in record.get("workers") or [] if one.get("observed")}
+    return Reading(
+        "limited",
+        "workers_partly_observed",
+        f"{len(declared_ids & seen_ids)} of {len(declared_ids)} declared workers were seen in runs; the rest read Not"
+        " observed.",
+        evidence=checks,
+        checked_at=at,
+    )
+
+
 def observed(pairing: Pairing) -> dict[str, Reading]:
     """What this agent's runs on this environment version show for the rows no check
     measures; they hold no case and never lower the answer."""
@@ -829,4 +934,5 @@ def observed(pairing: Pairing) -> dict[str, Reading]:
         ),
         "resume": _resume(runs),
         "cost": _cost(runs),
+        "children": _children(pairing, runs),
     }
