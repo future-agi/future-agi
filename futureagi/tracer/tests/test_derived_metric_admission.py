@@ -151,28 +151,86 @@ def test_k1_fairness_for_pending_and_incremental_projects(enabled, state_factory
         assert set(seen[start : start + 3]) == {s.project_id for s in states}
 
 
-def test_failing_projects_never_take_the_slot_from_healthy_ones(enabled, state_factory):
-    """10M: with one slot shared by five projects, projects failing every pass
-    (past their backoff) kept taking turns from a catching-up burst. A healthy
-    eligible project is always admitted first, whatever their admission order;
-    a failing one still runs when no healthy project is eligible."""
-    failing = state_factory(
+def _dispatch_turns(dispatches, start, *, fail=()):
+    """Run ``dispatches`` one-slot dispatches, a second apart; return who ran.
+
+    Every admitted pass "runs" for that second and is released. A project in
+    ``fail`` fails each of its passes, as record_failure records it.
+    """
+    order = []
+    for step in range(dispatches):
+        now = start + timedelta(seconds=step)
+        reservations = admission.reserve_projects(clock=lambda now=now: now)
+        for reservation in reservations:
+            order.append(reservation.grant.project_id)
+            if reservation.grant.project_id in fail:
+                admission.record_failure(
+                    reservation, now=now, code="metric_refresh_failed"
+                )
+        release_all(reservations, now)
+    return order
+
+
+def test_a_once_failed_project_gets_a_turn_beside_always_busy_ones(
+    enabled, state_factory
+):
+    """10M: with the one slot always busy, ordering healthy projects first
+    starved a project that failed once: its retry was due, but always-busy
+    projects took every turn. Among eligible projects the least recently
+    admitted goes first, so it runs within as many dispatches as there are
+    eligible projects once its retry is due."""
+    busy = [
+        quiet_state(
+            state_factory,
+            pending_repair=True,
+            last_started_at=NOW - timedelta(seconds=30 - index),
+        )
+        for index in range(3)
+    ]
+    once_failed = state_factory(
         pending_repair=True,
-        consecutive_failures=4,
-        last_error_at=NOW - timedelta(hours=1),
-        last_started_at=NOW - timedelta(hours=2),
+        consecutive_failures=1,
+        last_error_at=NOW - timedelta(seconds=30),
+        last_started_at=NOW - timedelta(seconds=40),
     )
-    healthy = quiet_state(
-        state_factory, pending_repair=True, last_started_at=NOW - timedelta(minutes=1)
+    # Not eligible before its retry is due: the busy projects share the slot.
+    early = _dispatch_turns(6, NOW)
+    assert once_failed.project_id not in early
+    assert set(early) == {state.project_id for state in busy}
+    # Retry due (base backoff 60 s after the failure): within 4 dispatches.
+    due = NOW + timedelta(seconds=admission.BACKOFF_BASE_SECONDS)
+    assert once_failed.project_id in _dispatch_turns(4, due)
+
+
+def test_a_permanently_failing_project_waits_out_its_backoff(enabled, state_factory):
+    """Dropping healthy-first does not let a failing project take more than its
+    share: after each failure it is ineligible until its retry is due, and the
+    backoff doubles, so it runs once per backoff while the others keep turns."""
+    busy = [
+        quiet_state(
+            state_factory,
+            pending_repair=True,
+            last_started_at=NOW - timedelta(seconds=30 - index),
+        )
+        for index in range(3)
+    ]
+    failing = state_factory(
+        pending_repair=True, last_started_at=NOW - timedelta(seconds=60)
     )
-    (reservation,) = admission.reserve_projects(clock=lambda: NOW)
-    assert reservation.grant.project_id == healthy.project_id
-    release_all([reservation], NOW)
-    MetricProjectRefresh.objects.filter(pk=healthy.pk).update(pending_repair=False)
-    later = NOW + timedelta(seconds=1)
-    (reservation,) = admission.reserve_projects(clock=lambda: later)
-    assert reservation.grant.project_id == failing.project_id
-    release_all([reservation], later)
+    order = _dispatch_turns(300, NOW, fail={failing.project_id})
+    turns = [
+        index for index, project in enumerate(order) if project == failing.project_id
+    ]
+    # 300 one-second dispatches: it runs first (oldest), then at most once per
+    # backoff (60, 120, then 240 s), never in two consecutive dispatches.
+    assert turns[0] == 0
+    assert len(turns) <= 4, turns
+    assert all(
+        b - a >= admission.BACKOFF_BASE_SECONDS
+        for a, b in zip(turns, turns[1:], strict=False)
+    ), turns
+    for state in busy:
+        assert order.count(state.project_id) >= (300 - len(turns)) // 3 - 1
 
 
 def test_a_tick_refills_a_freed_slot_instead_of_waiting_for_the_next(

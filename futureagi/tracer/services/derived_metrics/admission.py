@@ -258,19 +258,13 @@ def eligible_projects(now: datetime):
             | Q(head_manifest__published_by__source_ceilings__recovery_pending=True)
             | Q(next_due_at__lte=now)
         )
-        # Healthy projects first: a project still failing after its backoff
-        # must not take the single slot from projects that make progress (10M:
-        # failing projects kept taking turns from a catching-up burst). Then
-        # least recently admitted first, not oldest success: endless chunks
-        # move to the back of the same fair queue. A failing project still runs
-        # whenever no healthy project is eligible.
-        .order_by(
-            ExpressionWrapper(
-                Q(consecutive_failures__gt=0), output_field=BooleanField()
-            ),
-            Coalesce("last_started_at", "created_at"),
-            "project_id",
-        )
+        # Least recently admitted first among ELIGIBLE projects, failing or
+        # not: backoff alone deprioritises a failing project (it is not
+        # eligible until retry_due), and endless chunks move to the back of the
+        # same queue. Every eligible project gets a turn within as many
+        # dispatches as there are eligible projects. (10M: ordering healthy
+        # projects first starved once-failed ones behind always-busy ones.)
+        .order_by(Coalesce("last_started_at", "created_at"), "project_id")
     )
 
 
@@ -516,7 +510,7 @@ def dispatch_until(
     """dispatch(), then again whenever a slot frees, until ``seconds`` pass.
 
     Every round is an ordinary dispatch: the same K slots, eligibility,
-    healthy-first fair order and dispatch lock, so a freed slot is refilled
+    least-recently-admitted order and dispatch lock, so a freed slot is refilled
     within ``poll`` seconds instead of at the next tick.
     """
     from time import sleep as default_sleep
