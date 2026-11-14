@@ -545,6 +545,7 @@ describe("scoped entity tag writes", () => {
       { id: "other", type: "span", entity: other, currentTags: other.tags },
     ];
     const onSuccess = vi.fn();
+    const onBulkSettled = vi.fn();
     const client = new QueryClient();
     const invalidate = vi.spyOn(client, "invalidateQueries");
     const popover = (open, bulkItems) => (
@@ -555,6 +556,7 @@ describe("scoped entity tag writes", () => {
           onClose={vi.fn()}
           bulkItems={bulkItems}
           onSuccess={onSuccess}
+          onBulkSettled={onBulkSettled}
         />
       </QueryClientProvider>
     );
@@ -573,6 +575,8 @@ describe("scoped entity tag writes", () => {
     });
     expect(invalidate).toHaveBeenCalledWith({ queryKey: ["trace-detail"] });
     expect(onSuccess).toHaveBeenCalledTimes(1);
+    // The grid reloads after the late writes landed, not only on close.
+    expect(onBulkSettled).toHaveBeenCalledWith("trace");
     expect(screen.getByText("sdk")).toBeInTheDocument();
     expect(screen.queryByText("a")).not.toBeInTheDocument();
 
@@ -602,6 +606,7 @@ describe("scoped entity tag writes", () => {
     ];
     const client = new QueryClient();
     const invalidate = vi.spyOn(client, "invalidateQueries");
+    const onBulkSettled = vi.fn();
     const popover = (items) => (
       <QueryClientProvider client={client}>
         <AddTagsPopover
@@ -609,6 +614,7 @@ describe("scoped entity tag writes", () => {
           anchorEl={document.body}
           onClose={vi.fn()}
           bulkItems={items}
+          onBulkSettled={onBulkSettled}
         />
       </QueryClientProvider>
     );
@@ -622,6 +628,10 @@ describe("scoped entity tag writes", () => {
       { variant: "error" },
     );
     expect(invalidate).toHaveBeenCalledWith({ queryKey: ["trace-detail"] });
+    // The voice drawer edits tags on its own payload.
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: ["voiceCallDetail"] });
+    // Some items may have been written: the grid reloads.
+    expect(onBulkSettled).toHaveBeenCalledWith("trace");
     expect(screen.getByText("sdk")).toBeInTheDocument();
   });
 

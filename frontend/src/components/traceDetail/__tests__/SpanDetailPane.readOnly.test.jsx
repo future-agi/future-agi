@@ -69,6 +69,18 @@ describe("SpanDetailPane read-only", () => {
     expect(screen.queryByTestId("scores-list")).toBeNull();
   });
 
+  it("disables span tag editing when tag_target is explicitly null", () => {
+    renderPane({
+      entry: {
+        observation_span: { ...entry.observation_span, tag_target: null },
+      },
+    });
+    expect(screen.getByText("billing")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "tag" }),
+    ).not.toBeInTheDocument();
+  });
+
   it("offers Fix with AI in the Evals tab only when it can act", async () => {
     const user = userEvent.setup();
     const { unmount } = renderPane({ onAction: vi.fn() });

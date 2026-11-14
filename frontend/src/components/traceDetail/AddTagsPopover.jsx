@@ -24,6 +24,7 @@ const AddTagsPopover = ({
   bulkItems,
   currentTags = EMPTY_TAGS,
   onSuccess,
+  onBulkSettled,
 }) => {
   const items = React.useMemo(
     () => (Array.isArray(bulkItems) ? bulkItems : EMPTY_TAGS),
@@ -175,18 +176,24 @@ const AddTagsPopover = ({
         bulk ? `Tags applied to ${itemCount} items` : "Tags updated",
         { variant: "success" },
       );
-      // Refreshes the trace-detail drawer. The LLM tracing grid is AG-Grid
-      // server-side (not React Query), so it relies on onSuccess instead.
+      // Refreshes the trace-detail and voice drawers. The LLM tracing grid is
+      // AG-Grid server-side (not React Query), so it relies on onSuccess and
+      // onBulkSettled instead.
       queryClient.invalidateQueries({ queryKey: ["trace-detail"] });
+      queryClient.invalidateQueries({ queryKey: ["voiceCallDetail"] });
+      if (bulk) onBulkSettled?.(type);
       // A single save also hands back the acknowledged result and the saved
       // entity, so a grid can update that row without reloading the list.
       onSuccess?.(result, bulk ? undefined : { entity: savedEntity, type });
     },
-    onError: (error, { bulk, sessionId }) => {
+    onError: (error, { bulk, sessionId, type }) => {
       if (!bulk || sessionId === session.current.id) {
         setTags(confirmedTags.current);
       }
       queryClient.invalidateQueries({ queryKey: ["trace-detail"] });
+      queryClient.invalidateQueries({ queryKey: ["voiceCallDetail"] });
+      // Some items of a failed bulk save may have been written.
+      if (bulk) onBulkSettled?.(type);
       enqueueSnackbar(
         `${bulk ? "Some items may have been updated. " : ""}${tagUpdateErrorMessage(error)}`,
         { variant: "error" },
@@ -302,6 +309,9 @@ AddTagsPopover.propTypes = {
   ),
   currentTags: PropTypes.array,
   onSuccess: PropTypes.func,
+  // Called with the saved type ("trace" | "span") once a bulk save settles,
+  // also after the popover closed, so the grid can show what was written.
+  onBulkSettled: PropTypes.func,
 };
 
 export default React.memo(AddTagsPopover);

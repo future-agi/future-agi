@@ -4825,6 +4825,15 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                   setTagsBulkItems([]);
                 }}
                 bulkItems={tagsBulkItems}
+                // The close-time purge can run before the writes land, so
+                // reload the grid the bulk save wrote to once it settles.
+                onBulkSettled={(type) => {
+                  if (projectSource === PROJECT_SOURCE.SIMULATOR) return;
+                  refreshGridRef(
+                    type === "span" ? primarySpanGridRef : primaryTraceGridRef,
+                    { purge: true },
+                  );
+                }}
               />
             </Suspense>
             <Suspense fallback={null}>

@@ -1920,7 +1920,7 @@ const SpanDetailPane = ({
         <InlineTagsRow
           tags={span?.tags || []}
           entity={span}
-          readOnly={readOnly}
+          readOnly={readOnly || span?.tag_target === null}
           onSaved={onTagsSaved}
         />
       </Box>

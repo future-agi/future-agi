@@ -126,6 +126,8 @@ const InlineTagsRow = ({ tags = [], entity }) => {
   // Until the refetch lands, the tags are the last acknowledged save.
   const latest = useLatestEntityTags(entity, tags);
   const normalized = useMemo(() => normalizeTags(latest.tags), [latest.tags]);
+  // tag_target: null is a row the backend can show but not save from.
+  const locked = entity?.tag_target === null;
 
   const { mutate, isPending } = useMutation({
     mutationFn: ({ tags: newTags, entity: savedEntity, base }) =>
@@ -166,7 +168,7 @@ const InlineTagsRow = ({ tags = [], entity }) => {
           name={tag.name}
           color={tag.color}
           size="small"
-          readOnly={isPending || isSourceTag(entity, tag.name)}
+          readOnly={locked || isPending || isSourceTag(entity, tag.name)}
           onRemove={() => persist(normalized.filter((_, i) => i !== idx))}
           onColorChange={(c) =>
             persist(
@@ -181,34 +183,36 @@ const InlineTagsRow = ({ tags = [], entity }) => {
           }}
         />
       ))}
-      {isAdding ? (
-        <Box
-          sx={{ minWidth: 130 }}
-          onBlur={(e) => {
-            if (!e.currentTarget.contains(e.relatedTarget)) setIsAdding(false);
-          }}
-        >
-          <TagInput
-            onAdd={(newTag) => {
-              persist([...normalized, newTag]);
-              setIsAdding(false);
+      {!locked &&
+        (isAdding ? (
+          <Box
+            sx={{ minWidth: 130 }}
+            onBlur={(e) => {
+              if (!e.currentTarget.contains(e.relatedTarget))
+                setIsAdding(false);
             }}
-            existingNames={normalized.map((t) => t.name)}
-            disabled={isPending}
-            placeholder="tag name"
-          />
-        </Box>
-      ) : (
-        <Button
-          size="small"
-          color="inherit"
-          onClick={() => setIsAdding(true)}
-          startIcon={<Iconify icon="solar:add-linear" width={12} />}
-          sx={{ color: "text.secondary" }}
-        >
-          tag
-        </Button>
-      )}
+          >
+            <TagInput
+              onAdd={(newTag) => {
+                persist([...normalized, newTag]);
+                setIsAdding(false);
+              }}
+              existingNames={normalized.map((t) => t.name)}
+              disabled={isPending}
+              placeholder="tag name"
+            />
+          </Box>
+        ) : (
+          <Button
+            size="small"
+            color="inherit"
+            onClick={() => setIsAdding(true)}
+            startIcon={<Iconify icon="solar:add-linear" width={12} />}
+            sx={{ color: "text.secondary" }}
+          >
+            tag
+          </Button>
+        ))}
     </Stack>
   );
 };
