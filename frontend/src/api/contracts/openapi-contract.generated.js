@@ -134426,7 +134426,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
         reason: {
           title: "Reason",
           type: "string",
-          enum: ["check_unreadable", "no_checks", "evidence_not_supported"],
+          enum: [
+            "check_unreadable",
+            "no_checks",
+            "evidence_not_supported",
+            "judge_unavailable",
+          ],
         },
       },
     },
