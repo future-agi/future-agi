@@ -57,8 +57,7 @@ _TIME_BUCKET_EXPR = (
     "toDateTime(intDiv(toUInt32(start_time), %(freq_seconds)s) * %(freq_seconds)s)"
 )
 _EVAL_SPAN_BUCKET_EXPR = (
-    "toDateTime(intDiv(toUInt32(span_start_time), %(freq_seconds)s) "
-    "* %(freq_seconds)s)"
+    "toDateTime(intDiv(toUInt32(span_start_time), %(freq_seconds)s) * %(freq_seconds)s)"
 )
 
 # Statuses whose rows carry no real value (NULL outputs). NOT IN keeps legacy

@@ -46,9 +46,7 @@ class RcaTrailStepContractTests(SimpleTestCase):
             f"declared keys dropped on output: {kept - set(out)}",
         )
         for key in kept:
-            self.assertEqual(
-                out[key], frame[key], f"value changed for {key!r}"
-            )
+            self.assertEqual(out[key], frame[key], f"value changed for {key!r}")
 
     def _assert_contract(self, frame):
         self._assert_valid(frame)

@@ -29,7 +29,8 @@ def _parse_regions():
 
 
 @swagger_auto_schema(
-    method="get", responses={200: PublicConfigResponseSerializer, **ACCOUNTS_ERROR_RESPONSES}
+    method="get",
+    responses={200: PublicConfigResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
 )
 @api_view(["GET"])
 @permission_classes([AllowAny])

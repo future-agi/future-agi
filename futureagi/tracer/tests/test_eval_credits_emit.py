@@ -112,7 +112,9 @@ def captured_emit(monkeypatch):
 def _credit_event(captured):
     """Pick the ai_credits emit, ignoring tracing/observe events fired elsewhere."""
     matches = [e for e in captured if e.event_type in _CREDIT_EVENT_TYPES]
-    assert matches, f"No ai_credits event emitted. Captured: {[e.event_type for e in captured]}"
+    assert matches, (
+        f"No ai_credits event emitted. Captured: {[e.event_type for e in captured]}"
+    )
     assert len(matches) == 1, f"Expected one ai_credits event, got {len(matches)}"
     return matches[0]
 
