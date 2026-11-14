@@ -44,7 +44,6 @@ import ExperimentTabHeader from "./ExperimentTab/ExperimentTabHeader";
 
 const TabOptions = [
   { label: "Data", value: "data" },
-  { label: "Annotations", value: "annotations" },
   { label: "Experiments", value: "experiments" },
   { label: "Optimization", value: "optimization" },
   { label: "Summary", value: "summary" },

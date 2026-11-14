@@ -31,7 +31,7 @@ const RoleChip = ({ role }) => {
         px: "12px",
         py: "4px",
         height: "24px",
-        borderRadius: 0.5,
+        borderRadius: "4px",
         width: "fit-content",
         ...styles,
       }}
@@ -106,7 +106,7 @@ const WorkspaceRoleSelect = ({
       >
         {WS_ROLE_OPTIONS.map((opt) => (
           <MenuItem key={opt.value} value={opt.value}>
-            <Typography typography="s2" fontWeight="fontWeightMedium">
+            <Typography typography="s2" fontWeight={400}>
               {opt.label}
             </Typography>
           </MenuItem>
@@ -193,7 +193,7 @@ const RemoveFromWorkspaceButton = ({
           {isPending ? (
             <CircularProgress size={16} />
           ) : (
-            <Iconify icon="solar:trash-bin-minimalistic-bold" width={18} />
+            <Iconify icon="solar:trash-bin-minimalistic-bold" width={20} />
           )}
         </IconButton>
       </CustomTooltip>
@@ -231,11 +231,11 @@ const WorkspaceDetailPanel = (props) => {
   const { data, api } = props;
   const { orgLevel, user } = useAuthContext();
   const workspaces = data?.workspaces || [];
-  const targetOrgLevel = data?.org_level ?? data?.orgLevel;
+  const targetOrgLevel = data?.org_level;
   const isTargetOrgAdmin = targetOrgLevel >= LEVELS.ADMIN;
   const isSameUser = user?.email === data?.email;
 
-  const actorOrgLevel = orgLevel ?? user?.org_level ?? user?.orgLevel;
+  const actorOrgLevel = orgLevel ?? user?.org_level;
   const canEditRoles =
     !isSameUser &&
     actorOrgLevel != null &&
@@ -301,11 +301,11 @@ const WorkspaceDetailPanel = (props) => {
 
         {/* Rows */}
         {workspaces.map((ws) => {
-          const wsId = ws.workspace_id ?? ws.workspaceId;
-          const wsName = ws.workspace_name ?? ws.workspaceName;
-          const wsRoleValue = ws.ws_role ?? ws.wsRole;
-          const wsLevelValue = ws.ws_level ?? ws.wsLevel;
-          const autoAccess = ws.auto_access ?? ws.autoAccess;
+          const wsId = ws.workspace_id;
+          const wsName = ws.workspace_name;
+          const wsRoleValue = ws.ws_role;
+          const wsLevelValue = ws.ws_level;
+          const autoAccess = ws.auto_access;
           return (
             <React.Fragment key={wsId}>
               <Box

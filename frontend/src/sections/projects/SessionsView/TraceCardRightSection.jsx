@@ -3,6 +3,7 @@ import React, { useState } from "react";
 import { useParams } from "react-router";
 import { Typography, Box, Button, Stack, Tabs, Tab } from "@mui/material";
 import TraceDetailDrawerV2 from "src/components/traceDetail/TraceDetailDrawerV2";
+import { useGetTraceDetail } from "src/api/project/trace-detail";
 import SvgColor from "src/components/svg-color";
 import { ShowComponent } from "src/components/show";
 import EvaluationsContent from "./EvaluationsContent";
@@ -34,7 +35,7 @@ const TraceCardRightSection = ({
   // Ensure systemMetrics is valid
   const safeSystemMetrics = {
     total_latency_ms: formatMs(systemMetrics?.total_latency_ms) || "N/A",
-    // user_id: user?.id,
+    ...(systemMetrics?.user_id ? { user_id: systemMetrics.user_id } : {}),
     total_cost: systemMetrics?.total_cost || "N/A",
     total_token_count: systemMetrics?.total_tokens || "N/A",
     input_tokens: systemMetrics?.input_tokens || "N/A", //DUMMY
@@ -47,6 +48,12 @@ const TraceCardRightSection = ({
   };
 
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
+
+  const { data: traceDetail } = useGetTraceDetail(
+    isDrawerOpen ? traceId : null,
+    { projectId: observeId },
+  );
+  const projectId = observeId || traceDetail?.trace?.project;
 
   return (
     <Box
@@ -99,37 +106,17 @@ const TraceCardRightSection = ({
         </Stack>
       </Stack>
       <Box sx={{ borderBottom: 1, borderColor: "divider" }}>
-        <Tabs
+        <Tabs sx={{ boxShadow: "none" }}
           value={value}
           onChange={handleChange}
           aria-label="trace detail tabs"
           textColor="primary"
           indicatorColor="primary"
-          sx={{
-            typography: "s2",
-            "& .Mui-selected": {
-              color: "primary.main",
-              fontWeight: "fontWeightSemiBold",
-            },
-            "& .MuiTabs-indicator": {
-              backgroundColor: "primary.main",
-            },
-            "& .MuiTab-root": {},
-          }}
         >
           {tabsConfig.map((tab, index) => (
             <Tab
               key={tab.label}
-              icon={
-                <SvgColor
-                  sx={{
-                    bgcolor: index === value ? "primary.main" : "text.disabled",
-                    height: "16px",
-                    width: "16px",
-                  }}
-                  src={tab.icon}
-                />
-              }
+              icon={<SvgColor sx={{ width: "16px" }} src={tab.icon} />}
               iconPosition="start"
               label={`${tab.label} ${
                 tab.label === "Evaluations"
@@ -170,16 +157,15 @@ const TraceCardRightSection = ({
           variant="outlined"
           size="small"
           fullWidth
-          sx={{ borderRadius: "8px" }}
-          onClick={() => setIsDrawerOpen(true)}
+          onClick={(e) => {
+            e.stopPropagation();
+            setIsDrawerOpen(true);
+          }}
           startIcon={
             <SvgColor
               src="/assets/icons/custom/eye.svg"
-              sx={{
-                height: "16px",
-                width: "16px",
-                color: "text.primary",
-              }}
+              width="16px"
+              sx={{ color: "text.primary" }}
             />
           }
         >
@@ -197,7 +183,7 @@ const TraceCardRightSection = ({
         traceId={traceId}
         open={isDrawerOpen}
         onClose={() => setIsDrawerOpen(false)}
-        projectId={observeId}
+        projectId={projectId}
         hasPrev={false}
         hasNext={false}
       />

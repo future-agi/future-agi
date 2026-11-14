@@ -1,6 +1,6 @@
-import { sub } from 'date-fns';
+import { sub } from "date-fns";
 
-import { ASSETS_API } from 'src/config-global';
+import { ASSETS_API } from "src/config-global";
 
 import {
   _id,
@@ -27,7 +27,7 @@ import {
   _productNames,
   _descriptions,
   _phoneNumbers,
-} from './assets';
+} from "./assets";
 
 // ----------------------------------------------------------------------
 
@@ -65,11 +65,17 @@ export const _mock = {
   },
   // Image
   image: {
-    cover: (index) => `${ASSETS_API}/assets/images/cover/cover_${index + 1}.jpg`,
-    avatar: (index) => `${ASSETS_API}/assets/images/avatar/avatar_${index + 1}.jpg`,
-    travel: (index) => `${ASSETS_API}/assets/images/travel/travel_${index + 1}.jpg`,
-    company: (index) => `${ASSETS_API}/assets/images/company/company_${index + 1}.png`,
-    product: (index) => `${ASSETS_API}/assets/images/m_product/product_${index + 1}.jpg`,
-    portrait: (index) => `${ASSETS_API}/assets/images/portrait/portrait_${index + 1}.jpg`,
+    cover: (index) =>
+      `${ASSETS_API}/assets/images/cover/cover_${index + 1}.jpg`,
+    avatar: (index) =>
+      `${ASSETS_API}/assets/images/avatar/avatar_${index + 1}.jpg`,
+    travel: (index) =>
+      `${ASSETS_API}/assets/images/travel/travel_${index + 1}.jpg`,
+    company: (index) =>
+      `${ASSETS_API}/assets/images/company/company_${index + 1}.png`,
+    product: (index) =>
+      `${ASSETS_API}/assets/images/m_product/product_${index + 1}.jpg`,
+    portrait: (index) =>
+      `${ASSETS_API}/assets/images/portrait/portrait_${index + 1}.jpg`,
   },
 };

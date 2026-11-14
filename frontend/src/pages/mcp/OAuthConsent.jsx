@@ -2,7 +2,6 @@ import React, { useState, useEffect } from "react";
 import { useSearchParams } from "react-router-dom";
 import {
   Box,
-  Card,
   Typography,
   Checkbox,
   FormControlLabel,
@@ -12,11 +11,23 @@ import {
   Stack,
   Divider,
 } from "@mui/material";
+import Section from "src/components/section";
 import { useTheme } from "@mui/material/styles";
 import axios from "src/utils/axios";
 import { endpoints } from "src/utils/axios";
 
 // ---------------------------------------------------------------------------
+
+const apiErrorMessage = (payload, fallback) => {
+  const nestedError = payload?.error;
+  return (
+    payload?.detail ||
+    payload?.message ||
+    (typeof nestedError === "string" ? nestedError : nestedError?.message) ||
+    payload?.result ||
+    fallback
+  );
+};
 
 export default function OAuthConsent() {
   const theme = useTheme();
@@ -51,20 +62,23 @@ export default function OAuthConsent() {
             const result = response.data.result;
             setConsentData(result);
             const initial = {};
-            (result.availableGroups || []).forEach((group) => {
+            (result.available_groups || []).forEach((group) => {
               initial[group.slug] = group.checked;
             });
             setSelectedGroups(initial);
           } else {
             setError(
-              response.data?.error || "Failed to load authorization data.",
+              apiErrorMessage(
+                response.data,
+                "Failed to load authorization data.",
+              ),
             );
           }
         } catch (err) {
-          const message =
-            err?.response?.data?.error ||
-            err?.message ||
-            "Failed to load authorization data.";
+          const message = apiErrorMessage(
+            err?.response?.data,
+            err?.message || "Failed to load authorization data.",
+          );
           setError(message);
         } finally {
           setLoading(false);
@@ -105,20 +119,23 @@ export default function OAuthConsent() {
           setConsentData(result);
           // Initialize checkbox state from server response
           const initial = {};
-          (result.availableGroups || []).forEach((group) => {
+          (result.available_groups || []).forEach((group) => {
             initial[group.slug] = group.checked;
           });
           setSelectedGroups(initial);
         } else {
           setError(
-            response.data?.error || "Failed to load authorization data.",
+            apiErrorMessage(
+              response.data,
+              "Failed to load authorization data.",
+            ),
           );
         }
       } catch (err) {
-        const message =
-          err?.response?.data?.error ||
-          err?.message ||
-          "Failed to load authorization data.";
+        const message = apiErrorMessage(
+          err?.response?.data,
+          err?.message || "Failed to load authorization data.",
+        );
         setError(message);
       } finally {
         setLoading(false);
@@ -160,9 +177,7 @@ export default function OAuthConsent() {
         });
       }
 
-      const redirectUrl =
-        response.data?.result?.redirectUrl ||
-        response.data?.result?.redirect_url;
+      const redirectUrl = response.data?.result?.redirect_url;
       if (response.data?.status && redirectUrl) {
         window.location.href = redirectUrl;
       } else {
@@ -171,7 +186,10 @@ export default function OAuthConsent() {
       }
     } catch (err) {
       setError(
-        err?.response?.data?.error || err?.message || "Authorization failed.",
+        apiErrorMessage(
+          err?.response?.data,
+          err?.message || "Authorization failed.",
+        ),
       );
       setSubmitting(false);
     }
@@ -179,7 +197,7 @@ export default function OAuthConsent() {
 
   // Render
   const selectedCount = Object.values(selectedGroups).filter(Boolean).length;
-  const totalCount = consentData?.availableGroups?.length || 0;
+  const totalCount = consentData?.available_groups?.length || 0;
 
   return (
     <Box
@@ -192,7 +210,8 @@ export default function OAuthConsent() {
         p: 2,
       }}
     >
-      <Card
+      <Section
+        variant="panel"
         sx={{
           maxWidth: 480,
           width: "100%",
@@ -246,7 +265,7 @@ export default function OAuthConsent() {
                 Authorize MCP Connection
               </Typography>
               <Typography variant="body2" color="text.secondary" align="center">
-                <strong>{consentData.clientName}</strong> wants to access your
+                <strong>{consentData.client_name}</strong> wants to access your
                 Future AGI account
               </Typography>
             </>
@@ -272,14 +291,14 @@ export default function OAuthConsent() {
                 sx={{
                   mb: 1,
                   display: "block",
-                  textTransform: "uppercase",
+                  textTransform: "none",
                   letterSpacing: 0.5,
                 }}
               >
                 Permissions ({selectedCount} of {totalCount})
               </Typography>
               <Stack spacing={0}>
-                {(consentData.availableGroups || []).map((group) => (
+                {(consentData.available_groups || []).map((group) => (
                   <FormControlLabel
                     key={group.slug}
                     control={
@@ -341,16 +360,7 @@ export default function OAuthConsent() {
                   variant="contained"
                   onClick={() => handleConsent(true)}
                   disabled={submitting || selectedCount === 0}
-                  sx={{
-                    bgcolor: "#7C3AED",
-                    color: "#fff",
-                    fontWeight: 600,
-                    px: 3,
-                    "&:hover": { bgcolor: "#6D28D9" },
-                    "&.Mui-disabled": {
-                      bgcolor: "action.disabledBackground",
-                    },
-                  }}
+                  sx={{ px: 3 }}
                 >
                   {submitting ? (
                     <CircularProgress size={20} color="inherit" />
@@ -362,7 +372,7 @@ export default function OAuthConsent() {
             </Box>
           </>
         )}
-      </Card>
+      </Section>
     </Box>
   );
 }

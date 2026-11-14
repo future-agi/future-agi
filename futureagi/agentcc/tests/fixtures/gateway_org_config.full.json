@@ -1,0 +1,347 @@
+{
+  "providers": {
+    "openai": {
+      "api_key": "sk-test-openai",
+      "base_url": "https://api.openai.com/v1",
+      "api_format": "openai",
+      "models": ["gpt-4o", "gpt-4o-mini"],
+      "timeout": 60,
+      "weight": 1,
+      "enabled": true,
+      "max_concurrent": 25,
+      "conn_pool_size": 50
+    }
+  },
+  "guardrails": {
+    "pipeline_mode": "parallel",
+    "fail_open": true,
+    "timeout_ms": 1000,
+    "checks": {
+      "pii-detection": {
+        "enabled": true,
+        "action": "block",
+        "confidence_threshold": 0.8,
+        "config": {
+          "redact": true
+        }
+      }
+    }
+  },
+  "routing": {
+    "strategy": "weighted",
+    "fallback_enabled": true,
+    "fallback_on_status_codes": [429, 500],
+    "model_fallbacks": {
+      "gpt-4o": ["gpt-4o-mini"]
+    },
+    "conditional_routes": [
+      {
+        "field": "metadata.priority",
+        "operator": "$eq",
+        "value": "high",
+        "target": "openai"
+      }
+    ],
+    "default_model": "gpt-4o-mini",
+    "complexity": {
+      "enabled": true,
+      "default_tier": "standard",
+      "tiers": {
+        "standard": {
+          "max_score": 50,
+          "model": "gpt-4o-mini",
+          "provider": "openai"
+        }
+      },
+      "weights": {
+        "tokens": 0.7,
+        "tools": 0.3
+      }
+    },
+    "fastest": {
+      "enabled": false,
+      "max_concurrent": 2,
+      "cancel_delay": "100ms"
+    },
+    "scheduled": {
+      "enabled": true,
+      "max_pending_jobs": 100,
+      "result_ttl": "24h",
+      "max_schedule_ahead": "7d",
+      "retry_attempts": 3,
+      "worker_count": 2
+    },
+    "adaptive": {
+      "enabled": true,
+      "learning_requests": 100,
+      "update_interval": "1m",
+      "smoothing_factor": 0.2,
+      "min_weight": 0.1,
+      "signal_weights": {
+        "latency": 0.5,
+        "error_rate": 0.3,
+        "cost": 0.2
+      }
+    },
+    "provider_lock": {
+      "enabled": true,
+      "allowed_providers": ["openai"]
+    },
+    "access_groups": {
+      "default": {
+        "models": ["gpt-4o-mini"],
+        "description": "Default gateway models",
+        "aliases": {
+          "fast": "gpt-4o-mini"
+        }
+      }
+    },
+    "failover": {
+      "enabled": true,
+      "max_attempts": 2,
+      "on_status_codes": [429],
+      "on_timeout": true,
+      "per_attempt_timeout": "30s"
+    },
+    "circuit_breaker": {
+      "enabled": true,
+      "failure_threshold": 5,
+      "success_threshold": 2,
+      "cooldown": "30s",
+      "on_status_codes": [500, 502, 503]
+    },
+    "retry": {
+      "enabled": true,
+      "max_retries": 2,
+      "initial_delay": "100ms",
+      "max_delay": "2s",
+      "multiplier": 2,
+      "on_status_codes": [429, 500],
+      "on_timeout": true
+    },
+    "mirror": {
+      "enabled": true,
+      "rules": [
+        {
+          "source_model": "gpt-4o",
+          "target_provider": "openai",
+          "target_model": "gpt-4o-mini",
+          "sample_rate": 0.1
+        }
+      ]
+    },
+    "model_timeouts": {
+      "gpt-4o": "45s"
+    }
+  },
+  "cache": {
+    "enabled": true,
+    "backend": "redis",
+    "default_ttl": 3600,
+    "max_entries": 1000,
+    "redis": {
+      "address": "redis:6379",
+      "db": 0,
+      "mode": "single",
+      "pool_size": 10,
+      "tls": false,
+      "key_prefix": "agentcc:test:",
+      "compress": true
+    },
+    "semantic": {
+      "enabled": true,
+      "backend": "qdrant",
+      "threshold": 0.92,
+      "dimensions": 1536,
+      "max_entries": 10000,
+      "qdrant": {
+        "url": "http://qdrant:6333",
+        "collection": "gateway_cache",
+        "api_key": "qdrant-key"
+      }
+    },
+    "edge": {
+      "enabled": true,
+      "default_ttl": 300,
+      "max_size": 1048576,
+      "cacheable_models": ["gpt-4o-mini"],
+      "require_opt_in": true
+    }
+  },
+  "rate_limiting": {
+    "enabled": true,
+    "global_rpm": 1000,
+    "global_tpm": 100000,
+    "per_key_rpm": 100,
+    "per_key_tpm": 10000,
+    "per_model_rpm": 500,
+    "per_user_rpm": 50
+  },
+  "budgets": {
+    "enabled": true,
+    "default_period": "monthly",
+    "warn_threshold": 0.8,
+    "org_limit": 100,
+    "org_period": "monthly",
+    "hard_limit": true,
+    "action": "block",
+    "teams": {
+      "engineering": {
+        "limit": 50,
+        "period": "monthly",
+        "hard": false,
+        "action": "warn",
+        "per_model": {
+          "gpt-4o": 20
+        }
+      }
+    }
+  },
+  "cost_tracking": {
+    "enabled": true,
+    "custom_pricing": {
+      "custom-model": {
+        "input_per_mtok": 1.25,
+        "output_per_mtok": 5
+      }
+    }
+  },
+  "ip_acl": {
+    "enabled": true,
+    "allow": ["10.0.0.0/8"],
+    "deny": ["192.0.2.10"]
+  },
+  "alerting": {
+    "enabled": true,
+    "rules": [
+      {
+        "name": "high-errors",
+        "metric": "error_count",
+        "condition": ">=",
+        "threshold": 10,
+        "window": "5m",
+        "cooldown": "15m",
+        "channels": ["ops"]
+      }
+    ],
+    "channels": [
+      {
+        "name": "ops",
+        "type": "webhook",
+        "url": "https://example.com/hooks/gateway",
+        "headers": {
+          "X-Test": "true"
+        }
+      }
+    ]
+  },
+  "privacy": {
+    "enabled": true,
+    "mode": "patterns",
+    "redact_patterns": [
+      {
+        "name": "ssn",
+        "pattern": "\\d{3}-\\d{2}-\\d{4}"
+      }
+    ]
+  },
+  "tool_policy": {
+    "enabled": true,
+    "max_tools_per_request": 8,
+    "default_action": "reject",
+    "allow": ["search"],
+    "deny": ["delete_all"]
+  },
+  "mcp": {
+    "enabled": true,
+    "servers": {
+      "github": {
+        "url": "https://mcp.example.com",
+        "transport": "http",
+        "auth": {
+          "type": "bearer",
+          "token": "mcp-token"
+        },
+        "tools_cache_ttl": "5m"
+      }
+    },
+    "guardrails": {
+      "enabled": true,
+      "blocked_tools": ["shell"],
+      "allowed_servers": ["github"],
+      "validate_inputs": true,
+      "validate_outputs": true,
+      "tool_rate_limits": {
+        "search": 10
+      }
+    }
+  },
+  "audit": {
+    "enabled": true,
+    "min_severity": "info",
+    "categories": ["auth", "routing"],
+    "sinks": [
+      {
+        "type": "webhook",
+        "url": "https://example.com/audit",
+        "headers": {
+          "X-Audit": "true"
+        }
+      }
+    ]
+  },
+  "a2a": {
+    "enabled": true,
+    "card": {
+      "name": "Gateway Agent",
+      "description": "Gateway agent card",
+      "version": "1.0.0"
+    },
+    "agents": {
+      "assistant": {
+        "url": "https://agent.example.com/a2a",
+        "auth": {
+          "type": "api_key",
+          "header": "X-API-Key"
+        },
+        "description": "Assistant agent",
+        "skills": [
+          {
+            "id": "summarize",
+            "name": "Summarize",
+            "description": "Summarize text"
+          }
+        ]
+      }
+    }
+  },
+  "model_database": {
+    "overrides": {
+      "custom-model": {
+        "max_input_tokens": 128000,
+        "max_output_tokens": 4096,
+        "pricing": {
+          "input_per_token": 0.000001,
+          "output_per_token": 0.000005
+        },
+        "capabilities": {
+          "function_calling": true,
+          "parallel_tool_calls": true,
+          "vision": false,
+          "audio_input": false,
+          "audio_output": false,
+          "pdf_input": true,
+          "streaming": true,
+          "response_schema": true,
+          "system_messages": true,
+          "prompt_caching": false,
+          "reasoning": false
+        }
+      }
+    }
+  },
+  "model_map": {
+    "smart": "gpt-4o",
+    "fast": "gpt-4o-mini"
+  }
+}

@@ -13,6 +13,10 @@ import PropTypes from "prop-types";
 import React from "react";
 import Iconify from "src/components/iconify";
 
+const actionBtnBaseSx = {
+  minWidth: "90px",
+};
+
 export default function ModalWrapper({
   children,
   onSubmit,
@@ -28,10 +32,11 @@ export default function ModalWrapper({
   actionBtnSx = {},
   cancelBtnSx = {},
   dialogActionSx = {},
-  modalWidth = "570px",
+  modalWidth = "560px",
   actionBtnProps = {},
   cancelBtnProps = {},
   onCancelBtn,
+  paperSx = {},
 }) {
   const theme = useTheme();
   return (
@@ -45,11 +50,11 @@ export default function ModalWrapper({
       PaperProps={{
         sx: {
           width: modalWidth,
-          borderRadius: theme.spacing(1),
           padding: theme.spacing(2),
           display: "flex",
           flexDirection: "column",
           gap: theme.spacing(2),
+          ...paperSx,
         },
       }}
     >
@@ -63,6 +68,7 @@ export default function ModalWrapper({
             {title}
           </Typography>
           <IconButton
+            aria-label="Close"
             disabled={isLoading}
             onClick={onClose}
             sx={{
@@ -72,7 +78,7 @@ export default function ModalWrapper({
               color: "text.primary",
             }}
           >
-            <Iconify icon="akar-icons:cross" />
+            <Iconify icon="solar:close-linear" />
           </IconButton>
         </Stack>
         {subTitle && (
@@ -91,7 +97,7 @@ export default function ModalWrapper({
           padding: 0,
           display: "flex",
           flexDirection: "row",
-          gap: "16px",
+          gap: "8px",
           mt: 2,
           "& button": {
             margin: 0,
@@ -101,23 +107,18 @@ export default function ModalWrapper({
       >
         {!hideCancelBtn && (
           <Button
+            size="small"
             disabled={isLoading}
             onClick={onCancelBtn ? onCancelBtn : onClose}
             variant="outlined"
             type="button"
             sx={{
-              minWidth: "180px",
-              "&:hover": {
-                borderColor: "divider",
-              },
-              color: "text.disabled",
+              ...actionBtnBaseSx,
               ...cancelBtnSx,
             }}
             {...cancelBtnProps}
           >
-            <Typography variant="s1" fontWeight="fontWeightMedium">
-              {cancelBtnTitle}
-            </Typography>
+            {cancelBtnTitle}
           </Button>
         )}
         <LoadingButton
@@ -128,16 +129,14 @@ export default function ModalWrapper({
           size="small"
           onClick={onSubmit}
           sx={{
-            minWidth: "180px",
+            ...actionBtnBaseSx,
             marginLeft: "0 !important",
             ...actionBtnSx,
           }}
           disabled={!isValid || isLoading}
           {...actionBtnProps}
         >
-          <Typography variant="s1" fontWeight="fontWeightSemiBold">
-            {actionBtnTitle}
-          </Typography>
+          {actionBtnTitle}
         </LoadingButton>
       </DialogActions>
     </Dialog>
@@ -163,4 +162,5 @@ ModalWrapper.propTypes = {
   modalWidth: PropTypes.string,
   actionBtnProps: PropTypes.object,
   cancelBtnProps: PropTypes.object,
+  paperSx: PropTypes.object,
 };

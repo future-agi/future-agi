@@ -18,8 +18,12 @@ import {
 import Iconify from "src/components/iconify";
 import { enqueueSnackbar } from "notistack";
 import CellMarkdown from "src/sections/common/CellMarkdown";
+import { ShowComponent } from "src/components/show";
 import useVoiceAudioStore from "./voiceAudioStore";
 import { computeTotals, enrichTurns, formatClock } from "./transcriptUtils";
+import { DEFAULT_ROLE_LABELS } from "./constants";
+import FunctionCallContent from "./FunctionCallContent";
+import { statusColors } from "src/utils/runStatus";
 
 // Highlight query matches in a string — returns React nodes.
 const highlightMatches = (text, query) => {
@@ -45,7 +49,7 @@ const highlightMatches = (text, query) => {
           bgcolor: "warning.lighter",
           color: "warning.darker",
           px: "2px",
-          borderRadius: "2px",
+          borderRadius: "4px",
         }}
       >
         {text.slice(found, found + needle.length)}
@@ -67,9 +71,11 @@ const useSpeakerColors = () => {
         theme.palette.mode === "dark"
           ? theme.palette.primary.light
           : theme.palette.primary.main,
-      user: theme.palette.mode === "dark" ? "#FF9933" : "#E9690C",
-      system: theme.palette.mode === "dark" ? "#a78bfa" : "#7c3aed",
-      tool: theme.palette.mode === "dark" ? "#fbbf24" : "#d97706",
+      // The caller (customer) reads orange, as in the live product — the
+      // design system's orange data colour (light and dark).
+      user: theme.palette.data?.[5] || statusColors(theme, "warning").fg,
+      system: theme.palette.text.secondary,
+      tool: statusColors(theme, "warning").fg,
       unknown: theme.palette.text.disabled,
     }),
     [theme],
@@ -85,7 +91,14 @@ const useSpeakerColors = () => {
 // same role in this legend. Any other role still shows up but trails.
 const TALK_ROLE_ORDER = ["user", "assistant", "system", "tool"];
 
-const TalkRatioBar = ({ totals, colors }) => {
+const TalkRatioBar = ({
+  totals,
+  colors,
+  hideLabel = false,
+  hidePercentages = false,
+  legendAlign = "left",
+  roleLabels = DEFAULT_ROLE_LABELS,
+}) => {
   const total = totals.total || 1;
   const segments = Object.entries(totals.byRole)
     .filter(([, v]) => v > 0)
@@ -98,40 +111,59 @@ const TalkRatioBar = ({ totals, colors }) => {
     });
 
   return (
-    <Stack direction="row" alignItems="center" gap={1} sx={{ minWidth: 0 }}>
-      <Typography
+    <Stack
+      direction="row"
+      alignItems="center"
+      gap={1}
+      sx={{ minWidth: 0, width: "100%" }}
+    >
+      {!hideLabel && (
+        <Typography
+          sx={{
+            typography: "s3",
+            color: "text.secondary",
+            textTransform: "none",
+            letterSpacing: 0,
+          }}
+        >
+          Talk ratio
+        </Typography>
+      )}
+      <Stack
+        direction="row"
+        gap={1.25}
         sx={{
-          fontSize: 10,
-          fontWeight: 600,
-          color: "text.secondary",
-          textTransform: "uppercase",
-          letterSpacing: "0.04em",
+          flexWrap: "wrap",
+          ...(legendAlign === "right" ? { ml: "auto" } : {}),
         }}
       >
-        Talk ratio
-      </Typography>
-      <Stack direction="row" gap={1.25} sx={{ flexWrap: "wrap" }}>
-        {segments.map(([role, val]) => (
-          <Stack key={role} direction="row" alignItems="center" gap={0.5}>
-            <Box
-              sx={{
-                width: 8,
-                height: 8,
-                borderRadius: "2px",
-                bgcolor: colors[role] || colors.unknown,
-              }}
-            />
-            <Typography
-              sx={{
-                fontSize: 10,
-                color: "text.secondary",
-                textTransform: "capitalize",
-              }}
-            >
-              {role} {Math.round((val / total) * 100)}%
-            </Typography>
-          </Stack>
-        ))}
+        {segments.map(([role, val]) => {
+          const label = roleLabels?.[role] || role;
+          const legendText = hidePercentages
+            ? label
+            : `${label} ${Math.round((val / total) * 100)}%`;
+          return (
+            <Stack key={role} direction="row" alignItems="center" gap={0.5}>
+              <Box
+                sx={{
+                  width: 8,
+                  height: 8,
+                  borderRadius: "4px",
+                  bgcolor: colors[role] || colors.unknown,
+                }}
+              />
+              <Typography
+                sx={{
+                  fontSize: 12,
+                  color: "text.secondary",
+                  textTransform: "capitalize",
+                }}
+              >
+                {legendText}
+              </Typography>
+            </Stack>
+          );
+        })}
       </Stack>
     </Stack>
   );
@@ -140,6 +172,10 @@ const TalkRatioBar = ({ totals, colors }) => {
 TalkRatioBar.propTypes = {
   totals: PropTypes.object.isRequired,
   colors: PropTypes.object.isRequired,
+  hideLabel: PropTypes.bool,
+  hidePercentages: PropTypes.bool,
+  legendAlign: PropTypes.oneOf(["left", "right"]),
+  roleLabels: PropTypes.object,
 };
 
 const SpeakerTimelineStrip = ({
@@ -184,7 +220,7 @@ const SpeakerTimelineStrip = ({
         bgcolor: "background.neutral",
         border: "1px solid",
         borderColor: "divider",
-        borderRadius: "3px",
+        borderRadius: "4px",
         cursor: "pointer",
         overflow: "hidden",
       }}
@@ -209,7 +245,7 @@ const SpeakerTimelineStrip = ({
                 width: `${width}%`,
                 bgcolor: colors[t.role] || colors.unknown,
                 opacity: 0.75,
-                borderRadius: "2px",
+                borderRadius: "4px",
                 transition: "opacity 120ms",
                 "&:hover": { opacity: 1 },
               }}
@@ -226,7 +262,6 @@ const SpeakerTimelineStrip = ({
           left: `${playheadPct}%`,
           width: "2px",
           bgcolor: "text.primary",
-          boxShadow: "0 0 0 1px rgba(0,0,0,0.2)",
           pointerEvents: "none",
         }}
       />
@@ -248,10 +283,21 @@ SpeakerTimelineStrip.propTypes = {
 
 const TurnRow = React.forwardRef(
   (
-    { turn, colors, query, isPlaying, isFocused, onSeek, onCopy, onAnnotate },
+    {
+      turn,
+      colors,
+      query,
+      isPlaying,
+      isFocused,
+      onSeek,
+      onCopy,
+      onAnnotate,
+      showTemporalMetadata,
+    },
     ref,
   ) => {
     const color = colors[turn.role] || colors.unknown;
+    const isFunctionCall = turn.role === "tool" && turn.toolCalls?.length > 0;
 
     return (
       <Box
@@ -268,23 +314,27 @@ const TurnRow = React.forwardRef(
           borderColor: "divider",
           cursor: turn.start != null ? "pointer" : "default",
           bgcolor: isPlaying
-            ? "rgba(123, 86, 219, 0.08)"
+            ? "status.discovery.bg"
             : isFocused
               ? "action.hover"
-              : "transparent",
+              : isFunctionCall
+                ? "background.neutral"
+                : "transparent",
           transition: "background-color 80ms",
           "&:hover": {
-            bgcolor: isPlaying ? "rgba(123, 86, 219, 0.12)" : "action.hover",
+            bgcolor: isPlaying ? "status.discovery.bg" : "action.hover",
           },
           "&:hover .turn-actions": { opacity: 1 },
+          "&:focus-within .turn-actions": { opacity: 1 },
           "&::before": {
+            display: isFunctionCall ? "none" : "block",
             content: '""',
             position: "absolute",
             left: 0,
             top: 6,
             bottom: 6,
             width: "3px",
-            borderRadius: "2px",
+            borderRadius: "4px",
             bgcolor: color,
             opacity: isPlaying ? 1 : 0.7,
           },
@@ -297,14 +347,14 @@ const TurnRow = React.forwardRef(
           gap={1}
           sx={{ minHeight: 16 }}
         >
-          {turn.start != null && (
+          {showTemporalMetadata && turn.start != null && (
             <Typography
               sx={{
                 fontFamily: "monospace",
-                fontSize: 10,
+                fontSize: 12,
                 color: "text.secondary",
                 px: 0.5,
-                borderRadius: "2px",
+                borderRadius: "4px",
                 pointerEvents: "none",
               }}
             >
@@ -312,19 +362,21 @@ const TurnRow = React.forwardRef(
             </Typography>
           )}
 
-          {turn.duration != null && turn.duration > 0 && (
-            <Typography
-              sx={{
-                fontFamily: "monospace",
-                fontSize: 9.5,
-                color: "text.disabled",
-              }}
-            >
-              {turn.duration.toFixed(1)}s
-            </Typography>
-          )}
+          {showTemporalMetadata &&
+            turn.duration != null &&
+            turn.duration > 0 && (
+              <Typography
+                sx={{
+                  fontFamily: "monospace",
+                  fontSize: 12,
+                  color: "text.disabled",
+                }}
+              >
+                {turn.duration.toFixed(1)}s
+              </Typography>
+            )}
 
-          {turn.overlapsPrev && (
+          {showTemporalMetadata && turn.overlapsPrev && (
             <Tooltip
               title="Interruption — started before previous turn ended"
               arrow
@@ -335,16 +387,16 @@ const TurnRow = React.forwardRef(
                   alignItems: "center",
                   gap: "2px",
                   px: 0.5,
-                  bgcolor: "error.lighter",
-                  color: "error.dark",
-                  borderRadius: "2px",
-                  fontSize: 9,
+                  bgcolor: "status.danger.bg",
+                  color: "status.danger.fg",
+                  borderRadius: "4px",
+                  fontSize: 12,
                   fontWeight: 600,
                   letterSpacing: "0.02em",
-                  textTransform: "uppercase",
+                  textTransform: "none",
                 }}
               >
-                <Iconify icon="mdi:alert-circle" width={10} />
+                <Iconify icon="solar:danger-circle-linear" width={12} />
                 interrupt
               </Box>
             </Tooltip>
@@ -362,14 +414,14 @@ const TurnRow = React.forwardRef(
           >
             <Tooltip title="Copy turn" arrow>
               <IconButton
+                aria-label={isFunctionCall ? "Copy function call" : "Copy turn"}
                 size="small"
                 onClick={(e) => {
                   e.stopPropagation();
                   onCopy?.(turn);
                 }}
-                sx={{ width: 22, height: 22 }}
               >
-                <Iconify icon="tabler:copy" width={12} />
+                <Iconify icon="solar:copy-linear" width={12} />
               </IconButton>
             </Tooltip>
             {onAnnotate && (
@@ -380,9 +432,8 @@ const TurnRow = React.forwardRef(
                     e.stopPropagation();
                     onAnnotate?.(turn);
                   }}
-                  sx={{ width: 22, height: 22 }}
                 >
-                  <Iconify icon="mdi:comment-text-outline" width={12} />
+                  <Iconify icon="solar:chat-round-line-linear" width={12} />
                 </IconButton>
               </Tooltip>
             )}
@@ -393,7 +444,7 @@ const TurnRow = React.forwardRef(
         <Box
           sx={{
             mt: 0.25,
-            fontSize: 12.5,
+            fontSize: 12,
             lineHeight: 1.45,
             color: "text.primary",
             "& p": { m: 0 },
@@ -401,9 +452,14 @@ const TurnRow = React.forwardRef(
             wordBreak: "break-word",
           }}
         >
-          {query ? (
+          {isFunctionCall ? (
+            <FunctionCallContent
+              calls={turn.toolCalls}
+              renderText={(text) => highlightMatches(text, query)}
+            />
+          ) : query ? (
             <Typography
-              sx={{ fontSize: 12.5, lineHeight: 1.45, whiteSpace: "pre-wrap" }}
+              sx={{ fontSize: 12, lineHeight: 1.45, whiteSpace: "pre-wrap" }}
             >
               {highlightMatches(turn.content, query)}
             </Typography>
@@ -426,6 +482,7 @@ TurnRow.propTypes = {
   onSeek: PropTypes.func,
   onCopy: PropTypes.func,
   onAnnotate: PropTypes.func,
+  showTemporalMetadata: PropTypes.bool,
 };
 
 // Memoized wrapper — with ~40 turns and a 60Hz currentTime poll, the list
@@ -463,12 +520,12 @@ const SilenceGap = ({ seconds }) => (
     }}
   >
     <Iconify
-      icon="mdi:timer-sand-empty"
-      width={10}
+      icon="solar:hourglass-linear"
+      width={12}
       sx={{ color: "text.disabled" }}
     />
     <Typography
-      sx={{ fontSize: 9.5, color: "text.disabled", fontFamily: "monospace" }}
+      sx={{ fontSize: 12, color: "text.disabled", fontFamily: "monospace" }}
     >
       {seconds.toFixed(1)}s silence
     </Typography>
@@ -488,7 +545,34 @@ const FILTERS = [
   { id: "user", label: "Customer" },
 ];
 
-const TranscriptView = ({ transcript, onAnnotate, embedded = false }) => {
+const TranscriptView = ({
+  transcript,
+  onAnnotate,
+  embedded = false,
+  // Header-row customization hooks used by the chat drawer to repurpose
+  // the voice TalkRatioBar as a compact speaker legend:
+  //   - hideTimelineStrip: drop the orange/white bar below the TALK RATIO
+  //     row (chat doesn't have a speaker timeline derived from audio).
+  //   - hideTalkRatioPercentages: render only colored-dot + role label
+  //     (no percentage text) — keeps the row reading as a legend, not
+  //     a stats row.
+  //   - talkRatioLegendAlign: "right" pushes the legend chips to the end
+  //     of the row so TALK RATIO sits left-aligned with the legend on
+  //     the opposite side.
+  hideTimelineStrip = false,
+  hideTalkRatioLabel = false,
+  hideTalkRatioPercentages = false,
+  talkRatioLegendAlign = "left",
+  // "Silence" is a voice concept (dead air between speaker turns). For
+  // chat transcripts the gap between messages is just response latency,
+  // not silence — so the chat drawer passes true here to suppress the
+  // inline silence dividers.
+  hideSilenceMarkers = false,
+  // Chat messages have ordering and word-count weights, but no audio
+  // intervals. Disabling temporal features prevents those weights from being
+  // rendered as seconds or interpreted as voice interruptions.
+  enableTemporalFeatures = true,
+}) => {
   const colors = useSpeakerColors();
 
   const seekTo = useVoiceAudioStore((s) => s.seekTo);
@@ -503,7 +587,10 @@ const TranscriptView = ({ transcript, onAnnotate, embedded = false }) => {
   // user clicks a row, clicks "Follow playback", or jumps via the timeline.
   const [autoScroll, setAutoScroll] = useState(true);
 
-  const turns = useMemo(() => enrichTurns(transcript), [transcript]);
+  const turns = useMemo(
+    () => enrichTurns(transcript, { enableTemporalFeatures }),
+    [transcript, enableTemporalFeatures],
+  );
 
   const totals = useMemo(() => computeTotals(turns), [turns]);
 
@@ -679,15 +766,22 @@ const TranscriptView = ({ transcript, onAnnotate, embedded = false }) => {
     }
   }, [playingIdx, scrollRowIntoView]);
 
-  const handleCopyTurn = useCallback((turn) => {
-    const text = `[${formatClock(turn.start)}] ${turn.rawRole || turn.role}: ${turn.content}`;
-    navigator.clipboard.writeText(text).then(() => {
-      enqueueSnackbar("Turn copied", {
-        variant: "info",
-        autoHideDuration: 1200,
+  const handleCopyTurn = useCallback(
+    (turn) => {
+      const timestamp =
+        enableTemporalFeatures && turn.start != null
+          ? `[${formatClock(turn.start)}] `
+          : "";
+      const text = `${timestamp}${turn.rawRole || turn.role}: ${turn.content}`;
+      navigator.clipboard.writeText(text).then(() => {
+        enqueueSnackbar("Turn copied", {
+          variant: "info",
+          autoHideDuration: 1200,
+        });
       });
-    });
-  }, []);
+    },
+    [enableTemporalFeatures],
+  );
 
   if (turns.length === 0) {
     return null;
@@ -705,16 +799,26 @@ const TranscriptView = ({ transcript, onAnnotate, embedded = false }) => {
         flexDirection: "column",
       }}
     >
-      {/* Header: talk ratio + timeline strip — flat, no wrapper border */}
+      {/* Header: talk ratio + timeline strip — flat, no wrapper border.
+          Chat drawer hides the timeline strip (no audio-backed speaker
+          timeline) and uses the talk-ratio row as a compact legend. */}
       <Stack gap={0.75} sx={{ flexShrink: 0 }}>
-        <TalkRatioBar totals={totals} colors={colors} />
-        <SpeakerTimelineStrip
-          turns={turns}
+        <TalkRatioBar
+          totals={totals}
           colors={colors}
-          duration={duration}
-          currentTime={currentTime}
-          onSeek={handleSeek}
+          hideLabel={hideTalkRatioLabel}
+          hidePercentages={hideTalkRatioPercentages}
+          legendAlign={talkRatioLegendAlign}
         />
+        <ShowComponent condition={!hideTimelineStrip}>
+          <SpeakerTimelineStrip
+            turns={turns}
+            colors={colors}
+            duration={duration}
+            currentTime={currentTime}
+            onSeek={handleSeek}
+          />
+        </ShowComponent>
       </Stack>
 
       {/* Toolbar: search + filter pills */}
@@ -738,7 +842,11 @@ const TranscriptView = ({ transcript, onAnnotate, embedded = false }) => {
             bgcolor: "background.paper",
           }}
         >
-          <Iconify icon="mdi:magnify" width={13} color="text.disabled" />
+          <Iconify
+            icon="solar:magnifier-linear"
+            width={14}
+            color="text.disabled"
+          />
           <Box
             component="input"
             placeholder="Search transcript"
@@ -749,7 +857,7 @@ const TranscriptView = ({ transcript, onAnnotate, embedded = false }) => {
               border: "none",
               outline: "none",
               bgcolor: "transparent",
-              fontSize: 11,
+              fontSize: 12,
               color: "text.primary",
               fontFamily: "inherit",
               py: 0.25,
@@ -758,7 +866,7 @@ const TranscriptView = ({ transcript, onAnnotate, embedded = false }) => {
           />
           {query && (
             <Iconify
-              icon="mdi:close"
+              icon="solar:close-linear"
               width={12}
               onClick={() => setQuery("")}
               sx={{
@@ -787,7 +895,7 @@ const TranscriptView = ({ transcript, onAnnotate, embedded = false }) => {
               sx={{
                 px: 1,
                 py: 0.4,
-                fontSize: 11,
+                fontSize: 12,
                 fontWeight: filter === f.id ? 600 : 400,
                 color: filter === f.id ? "text.primary" : "text.secondary",
                 bgcolor: filter === f.id ? "background.neutral" : "transparent",
@@ -806,7 +914,7 @@ const TranscriptView = ({ transcript, onAnnotate, embedded = false }) => {
 
         <Tooltip title="Press J/K to navigate turns" arrow placement="top">
           <Iconify
-            icon="mdi:keyboard-outline"
+            icon="solar:keyboard-linear"
             width={14}
             sx={{ color: "text.disabled" }}
           />
@@ -839,16 +947,18 @@ const TranscriptView = ({ transcript, onAnnotate, embedded = false }) => {
               minHeight: 120,
             }}
           >
-            <Typography sx={{ fontSize: 11, color: "text.disabled" }}>
+            <Typography sx={{ fontSize: 12, color: "text.disabled" }}>
               No matching turns
             </Typography>
           </Box>
         ) : (
           filteredTurns.map((turn, i) => (
             <React.Fragment key={turn.id}>
-              {turn.silenceBefore != null && turn.silenceBefore > 0.3 && (
-                <SilenceGap seconds={turn.silenceBefore} />
-              )}
+              {!hideSilenceMarkers &&
+                turn.silenceBefore != null &&
+                turn.silenceBefore > 0.3 && (
+                  <SilenceGap seconds={turn.silenceBefore} />
+                )}
               <MemoTurnRow
                 ref={(el) => (rowRefs.current[i] = el)}
                 turn={turn}
@@ -859,6 +969,7 @@ const TranscriptView = ({ transcript, onAnnotate, embedded = false }) => {
                 onSeek={handleSeek}
                 onCopy={handleCopyTurn}
                 onAnnotate={onAnnotate}
+                showTemporalMetadata={enableTemporalFeatures}
               />
             </React.Fragment>
           ))
@@ -891,15 +1002,15 @@ const TranscriptView = ({ transcript, onAnnotate, embedded = false }) => {
                 bgcolor: "primary.main",
                 color: "primary.contrastText",
                 borderRadius: "999px",
-                fontSize: 11,
+                fontSize: 12,
                 fontWeight: 600,
-                boxShadow: "0 4px 16px rgba(0,0,0,0.18)",
+                boxShadow: (theme) => theme.customShadows?.dropdown,
                 "&:hover": {
                   bgcolor: "primary.dark",
                 },
               }}
             >
-              <Iconify icon="mdi:target" width={13} />
+              <Iconify icon="solar:target-linear" width={14} />
               Follow playback
             </ButtonBase>
           </Box>
@@ -912,6 +1023,12 @@ const TranscriptView = ({ transcript, onAnnotate, embedded = false }) => {
 TranscriptView.propTypes = {
   transcript: PropTypes.array,
   onAnnotate: PropTypes.func,
+  hideTimelineStrip: PropTypes.bool,
+  hideTalkRatioLabel: PropTypes.bool,
+  hideTalkRatioPercentages: PropTypes.bool,
+  talkRatioLegendAlign: PropTypes.oneOf(["left", "right"]),
+  hideSilenceMarkers: PropTypes.bool,
+  enableTemporalFeatures: PropTypes.bool,
   embedded: PropTypes.bool,
 };
 

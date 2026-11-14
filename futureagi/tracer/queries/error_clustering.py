@@ -16,6 +16,7 @@ try:
 except ImportError:
     ErrorEmbeddingClusterer = _ee_stub("ErrorEmbeddingClusterer")
 from agentic_eval.core.database.ch_vector import ClickHouseVectorDB
+from tracer.services.clickhouse import clustering_tables
 
 logger = structlog.get_logger(__name__)
 from tracer.models.project import Project
@@ -31,52 +32,21 @@ class ErrorClusteringDB:
 
     def __init__(self, euclidean_threshold: float = 0.6):
         self.euclidean_threshold = euclidean_threshold
-        self.table_name = "error_embeddings"
+        self.table_name = clustering_tables.ERROR_EMBEDDINGS_TABLE
 
     def ensure_centroid_table(self):
         """Ensure the cluster_centroids table exists in ClickHouse."""
-
         db = ClickHouseVectorDB()
         try:
-            # Array(...) can't sit inside Nullable; override server profiles
-            # that set data_type_default_nullable=1 so unmodified types aren't
-            # auto-wrapped.
-            query = """
-                CREATE TABLE IF NOT EXISTS cluster_centroids (
-                    cluster_id String,
-                    project_id UUID,
-                    centroid Array(Float32),
-                    member_count UInt32,
-                    family String,
-                    last_updated DateTime DEFAULT now(),
-                    PRIMARY KEY (cluster_id)
-                ) ENGINE = ReplacingMergeTree(last_updated)
-                ORDER BY (cluster_id)
-            """
-            db.client.execute(query, settings={"data_type_default_nullable": 0})
+            clustering_tables.ensure_centroid_table(db)
         finally:
             db.close()
 
     def ensure_error_embeddings_table(self):
         """Ensure the error_embeddings table exists in ClickHouse."""
-
         db = ClickHouseVectorDB()
         try:
-            # Use the standard ClickHouse vector table structure
-            query = f"""
-                CREATE TABLE IF NOT EXISTS {self.table_name} (
-                    id UUID,
-                    eval_id UUID,
-                    vector Array(Float32),
-                    metadata Nested (
-                        key String,
-                        value Nullable(String)
-                    ),
-                    deleted UInt8 DEFAULT 0
-                ) ENGINE = MergeTree()
-                ORDER BY (eval_id, id)
-            """
-            db.client.execute(query, settings={"data_type_default_nullable": 0})
+            clustering_tables.ensure_error_embeddings_table(db)
         finally:
             db.close()
 
@@ -209,7 +179,11 @@ class ErrorClusteringDB:
                 LIMIT 1000
             """
 
-            rows = db.client.execute(query, {"project_id": project_id})
+            rows = db.execute_read(
+                query,
+                {"project_id": project_id},
+                max_result_rows=1_000,
+            )
 
             embeddings = []
             for row_id, vector, keys, values in rows:
@@ -257,7 +231,7 @@ class ErrorClusteringDB:
                 ORDER BY last_updated DESC
             """
 
-            rows = db.client.execute(query, {"project_id": project_id})
+            rows = db.execute_read(query, {"project_id": project_id})
 
             for cluster_id, centroid, member_count, family in rows:
                 if family not in clusters_by_family:
@@ -345,7 +319,11 @@ class ErrorClusteringDB:
                     WHERE cluster_id = %(cluster_id)s
                     LIMIT 1
                 """
-                rows = db.client.execute(query, {"cluster_id": cluster_id})
+                rows = db.execute_read(
+                    query,
+                    {"cluster_id": cluster_id},
+                    max_result_rows=1,
+                )
 
                 if rows:
                     old_centroid, old_member_count = rows[0]
@@ -680,7 +658,11 @@ class ErrorClusteringDB:
                     AND deleted = 0
             """
 
-            rows = db.client.execute(fetch_query, {"project_id": project_id})
+            rows = db.execute_read(
+                fetch_query,
+                {"project_id": project_id},
+                max_result_rows=max(1, len(embedding_ids)),
+            )
 
             if not rows:
                 logger.warning(

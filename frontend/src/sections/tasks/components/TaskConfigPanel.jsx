@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
+import { SegmentedTabs } from "src/components/tabs/tabs";
 import PropTypes from "prop-types";
 import {
   Box,
@@ -8,11 +9,9 @@ import {
   FormHelperText,
   IconButton,
   Tab,
-  Tabs,
   TextField,
   Tooltip,
   Typography,
-  useTheme,
 } from "@mui/material";
 import { useFieldArray, useFormState, useWatch } from "react-hook-form";
 import { useQuery } from "@tanstack/react-query";
@@ -20,7 +19,7 @@ import axios, { endpoints } from "src/utils/axios";
 import _ from "lodash";
 import Iconify from "src/components/iconify";
 import FormTextFieldV2 from "src/components/FormTextField/FormTextFieldV2";
-import { FormSearchSelectFieldControl } from "src/components/FromSearchSelectField";
+import TaskProjectField from "./TaskProjectField";
 import FilterErrorBoundary from "src/components/ComplexFilter/FilterErrorBoundary";
 import {
   EvalPickerDrawer,
@@ -29,11 +28,13 @@ import {
 import { enqueueSnackbar } from "src/components/snackbar";
 import ModalWrapper from "src/components/ModalWrapper/ModalWrapper";
 import TaskSchedulingSection from "./TaskSchedulingSection";
-import { getNewTaskFilters } from "src/sections/tasks/schema";
-import { objectCamelToSnake } from "src/utils/utils";
+import TaskSamplingSection from "./task_sampling_section";
 import { useGetProjectDetails } from "src/api/project/project-detail";
 import { PROJECT_SOURCE } from "src/utils/constants";
+import { mappingChipLabel } from "src/sections/evals/utils/evalMappingPath";
 import TaskFilterBar from "./TaskFilterBar";
+import { getSafeActionErrorMessage } from "src/utils/errorUtils";
+import { nextTaskRowTypeForProject } from "../taskProjectKind";
 
 const ROW_TYPE_OPTIONS = [
   { value: "spans", label: "Spans", icon: "solar:layers-outline" },
@@ -55,7 +56,8 @@ const SectionHeader = ({ title, subtitle, action }) => (
       <Typography
         variant="subtitle2"
         fontWeight={600}
-        sx={{ fontSize: "13px" }}
+        component="h2"
+        sx={{ fontSize: "12px" }}
       >
         {title}
       </Typography>
@@ -98,7 +100,6 @@ const EVAL_TYPE_META = {
 
 // ── Configured Eval Card ──
 const ConfiguredEvalCard = ({ evalItem, onEdit, onRemove }) => {
-  const theme = useTheme();
   const invalid = !evalItem?.id;
   const name =
     evalItem?.name ||
@@ -136,10 +137,7 @@ const ConfiguredEvalCard = ({ evalItem, onEdit, onRemove }) => {
         borderRadius: 1,
         border: "1px solid",
         borderColor: hasError ? "error.main" : "divider",
-        bgcolor:
-          theme.palette.mode === "dark"
-            ? "rgba(255,255,255,0.02)"
-            : "rgba(0,0,0,0.01)",
+        bgcolor: "background.neutral",
         transition: "border-color 0.15s",
         "&:hover": { borderColor: hasError ? "error.main" : "primary.main" },
       }}
@@ -162,7 +160,7 @@ const ConfiguredEvalCard = ({ evalItem, onEdit, onRemove }) => {
             variant="body2"
             fontWeight={500}
             noWrap
-            sx={{ fontSize: "13px" }}
+            sx={{ fontSize: "12px" }}
           >
             {name}
           </Typography>
@@ -177,8 +175,6 @@ const ConfiguredEvalCard = ({ evalItem, onEdit, onRemove }) => {
               }
               size="small"
               sx={{
-                height: 18,
-                fontSize: "10px",
                 bgcolor: "background.neutral",
                 color: "text.secondary",
                 "& .MuiChip-label": { px: 0.5 },
@@ -190,8 +186,6 @@ const ConfiguredEvalCard = ({ evalItem, onEdit, onRemove }) => {
               label={model}
               size="small"
               sx={{
-                height: 18,
-                fontSize: "10px",
                 bgcolor: "background.neutral",
                 color: "text.secondary",
                 "& .MuiChip-label": { px: 0.5 },
@@ -204,8 +198,6 @@ const ConfiguredEvalCard = ({ evalItem, onEdit, onRemove }) => {
               size="small"
               variant="outlined"
               sx={{
-                height: 18,
-                fontSize: "10px",
                 borderColor: "divider",
                 color: "text.secondary",
                 "& .MuiChip-label": { px: 0.5 },
@@ -219,7 +211,7 @@ const ConfiguredEvalCard = ({ evalItem, onEdit, onRemove }) => {
             sx={{
               display: "block",
               mt: 0.5,
-              fontSize: "11px",
+              fontSize: "12px",
               color: "error.main",
             }}
           >
@@ -231,11 +223,9 @@ const ConfiguredEvalCard = ({ evalItem, onEdit, onRemove }) => {
             {mappedKeys.slice(0, 4).map((key) => (
               <Chip
                 key={key}
-                label={`${key} → ${evalItem.mapping[key]}`}
+                label={mappingChipLabel(key, evalItem.mapping[key])}
                 size="small"
                 sx={{
-                  fontSize: "10px",
-                  height: 18,
                   bgcolor: "background.neutral",
                   color: "text.secondary",
                   fontFamily: "monospace",
@@ -248,8 +238,6 @@ const ConfiguredEvalCard = ({ evalItem, onEdit, onRemove }) => {
                 label={`+${mappedKeys.length - 4}`}
                 size="small"
                 sx={{
-                  fontSize: "10px",
-                  height: 18,
                   "& .MuiChip-label": { px: 0.5 },
                 }}
               />
@@ -265,7 +253,7 @@ const ConfiguredEvalCard = ({ evalItem, onEdit, onRemove }) => {
               onClick={onEdit}
               sx={{ p: 0.25, color: "text.secondary" }}
             >
-              <Iconify icon="solar:pen-2-linear" width={15} />
+              <Iconify icon="solar:pen-2-linear" width={16} />
             </IconButton>
           </Tooltip>
         )}
@@ -275,7 +263,7 @@ const ConfiguredEvalCard = ({ evalItem, onEdit, onRemove }) => {
             onClick={onRemove}
             sx={{ p: 0.25, color: "text.secondary" }}
           >
-            <Iconify icon="mingcute:close-line" width={16} />
+            <Iconify icon="solar:close-linear" width={16} />
           </IconButton>
         </Tooltip>
       </Box>
@@ -294,7 +282,7 @@ const TaskConfigPanel = ({
   mode,
   control,
   setValue,
-  getValues: _getValues,
+  getValues,
   projectLocked = false,
   initialProjectName = null,
 }) => {
@@ -306,6 +294,8 @@ const TaskConfigPanel = ({
   const project = useWatch({ control, name: "project" });
   const rowType = useWatch({ control, name: "rowType" }) || "spans";
   const taskFilters = useWatch({ control, name: "filters" });
+  const startDate = useWatch({ control, name: "startDate" });
+  const endDate = useWatch({ control, name: "endDate" });
   const isProjectSelected = !!project;
   // row_type is immutable after task creation — the dispatcher, the
   // target_type on every EvalLogger row, and the dedup index are all
@@ -314,22 +304,34 @@ const TaskConfigPanel = ({
   const rowTypeLocked = mode === "edit";
 
   // Fetch project details to detect voice projects (simulator source)
-  const { data: projectDetails } = useGetProjectDetails(
-    project,
-    isProjectSelected,
-  );
+  const { data: projectDetails, isSuccess: projectDetailsResolved } =
+    useGetProjectDetails(project, isProjectSelected);
   const isVoiceProject = projectDetails?.source === PROJECT_SOURCE.SIMULATOR;
 
   // Auto-set rowType to voiceCalls when voice project is detected,
   // default to "spans" otherwise.
   useEffect(() => {
-    if (!isProjectSelected) return;
-    if (isVoiceProject && rowType !== "voiceCalls") {
-      setValue("rowType", "voiceCalls");
-    } else if (!isVoiceProject && rowType === "voiceCalls") {
-      setValue("rowType", "spans");
-    }
-  }, [isProjectSelected, isVoiceProject, rowType, setValue]);
+    // A pending project-detail query is not evidence that the project is
+    // non-voice. Treating undefined as non-voice caused voice -> spans ->
+    // voice transitions, aborting two list reads before Live Preview could
+    // issue the one correct request. Existing tasks also have an immutable
+    // row type and must never be rewritten by this project-kind helper.
+    const nextRowType = nextTaskRowTypeForProject({
+      isProjectSelected,
+      projectDetailsResolved,
+      projectSource: projectDetails?.source,
+      rowType,
+      rowTypeLocked,
+    });
+    if (nextRowType) setValue("rowType", nextRowType);
+  }, [
+    isProjectSelected,
+    projectDetails?.source,
+    projectDetailsResolved,
+    rowType,
+    rowTypeLocked,
+    setValue,
+  ]);
 
   const {
     fields: configuredEvals,
@@ -344,8 +346,6 @@ const TaskConfigPanel = ({
     // the `id` field (which holds the real CustomEvalConfig UUID from the API).
     keyName: "_fieldId",
   });
-
-
 
   const [pendingProject, setPendingProject] = useState(null);
 
@@ -373,13 +373,6 @@ const TaskConfigPanel = ({
 
   const evalsDetailsErrorMessage = _.get(errors, "evalsDetails")?.message || "";
 
-  const formValues = useWatch({ control });
-
-  const filtersWithoutDate = useMemo(
-    () => getNewTaskFilters(formValues, project, true).filters || [],
-    [formValues, project],
-  );
-
   // Projects list — only fetch in create mode (not locked)
   const { data: projectsList } = useQuery({
     queryKey: ["project-list"],
@@ -390,33 +383,6 @@ const TaskConfigPanel = ({
     select: (data) => data.data?.result?.projects,
     enabled: !projectLocked,
   });
-
-  // Eval attributes for variable mapping. Includes rowType so the picker
-  // shows the right paths per target type — span attribute keys for spans,
-  // trace fields + spans.first/last.<key> for traces, session fields +
-  // traces.{first,last}.spans.{first,last}.<key> for sessions.
-  const { data: evalAttributes } = useQuery({
-    queryKey: ["eval-attributes", project, rowType, filtersWithoutDate],
-    queryFn: () =>
-      axios.get(endpoints.project.getEvalAttributeList(), {
-        params: {
-          project_id: project,
-          row_type: rowType,
-          filters: JSON.stringify(objectCamelToSnake(filtersWithoutDate)),
-        },
-      }),
-    select: (data) => data.data?.result,
-    enabled: isProjectSelected,
-  });
-
-  const sourceColumns = useMemo(() => {
-    if (!evalAttributes) return [];
-    return evalAttributes.map((attr) => ({
-      headerName: attr,
-      field: attr,
-      name: attr,
-    }));
-  }, [evalAttributes]);
 
   const handleEvalAdded = useCallback(
     async (evalConfig) => {
@@ -429,15 +395,14 @@ const TaskConfigPanel = ({
 
       const serialized = serializeEvalConfig(evalConfig);
 
-
       const corePayload = {
         eval_template: tplId,
         name: evalConfig.name,
         model: evalConfig.model || null,
-        mapping: evalConfig.mapping || {},
+        mapping: serialized.mapping,
         config: {
           ...serialized.config,
-          mapping: evalConfig.mapping || {},
+          mapping: serialized.mapping,
         },
         error_localizer: !!evalConfig.errorLocalizerEnabled,
       };
@@ -458,7 +423,7 @@ const TaskConfigPanel = ({
               ...(evalConfig.config || {}),
               ...corePayload.config,
             },
-            mapping: evalConfig.mapping || {},
+            mapping: serialized.mapping,
           };
         } else {
           const { data: resp } = await axios.post(
@@ -474,14 +439,15 @@ const TaskConfigPanel = ({
               ...(evalConfig.config || {}),
               ...corePayload.config,
             },
-            mapping: evalConfig.mapping || {},
+            mapping: serialized.mapping,
           };
         }
       } catch (error) {
         enqueueSnackbar(
-          error?.response?.data?.result ||
-          error?.response?.data?.error ||
-          "Failed to save evaluation",
+          getSafeActionErrorMessage(
+            error,
+            "Evaluation could not be saved. Please retry.",
+          ),
           { variant: "error" },
         );
         throw error;
@@ -528,7 +494,8 @@ const TaskConfigPanel = ({
     if (!stored) return null;
     // API response uses `eval_template` for the template FK;
     // locally-added evals use `templateId` / `template_id`.
-    const tplId = stored.templateId || stored.template_id || stored.eval_template;
+    const tplId =
+      stored.templateId || stored.template_id || stored.eval_template;
 
     const savedErrorLocalizer =
       stored.error_localizer_enabled ?? stored.error_localizer;
@@ -563,8 +530,10 @@ const TaskConfigPanel = ({
           flexDirection: "column",
           gap: 2.5,
           p: 2.5,
+          minWidth: 0,
           overflow: "auto",
           height: "100%",
+          boxSizing: "border-box",
         }}
       >
         {/* ── Basic Info ── */}
@@ -598,12 +567,8 @@ const TaskConfigPanel = ({
                 helperText="Project cannot be changed after creation"
               />
             ) : (
-              <FormSearchSelectFieldControl
+              <TaskProjectField
                 control={control}
-                fieldName="project"
-                size="small"
-                label="Project"
-                required
                 options={
                   projectsList?.map((p) => ({
                     label: p.name,
@@ -611,8 +576,6 @@ const TaskConfigPanel = ({
                   })) || []
                 }
                 onChange={handleProjectFieldChange}
-                style={{ width: "100%" }}
-                noOptions="No projects available"
               />
             )}
 
@@ -622,42 +585,17 @@ const TaskConfigPanel = ({
                 <Typography
                   variant="caption"
                   color="text.secondary"
-                  sx={{ fontSize: "11px", display: "block", mb: 0.75 }}
+                  sx={{ fontSize: "12px", display: "block", mb: 0.75 }}
                 >
                   Run evaluations on
                 </Typography>
-                <Tabs
+                <SegmentedTabs
                   value={rowType}
                   onChange={(_, v) => {
                     if (rowTypeLocked) return;
                     setValue("rowType", v);
                   }}
-                  variant="standard"
-                  scrollButtons={false}
-                  TabIndicatorProps={{ style: { display: "none" } }}
-                  sx={{
-                    minHeight: 28,
-                    "& .MuiTabs-scroller": { overflow: "visible !important" },
-                    "& .MuiTab-root": {
-                      minHeight: 28,
-                      px: 1.25,
-                      py: 0,
-                      mr: "0px !important",
-                      textTransform: "none",
-                      fontSize: "12px",
-                      borderRadius: "6px",
-                      minWidth: "auto",
-                    },
-                    border: "1px solid",
-                    borderColor: "divider",
-                    p: "2px",
-                    borderRadius: "8px",
-                    width: "fit-content",
-                    bgcolor: (theme) =>
-                      theme.palette.mode === "dark"
-                        ? "rgba(255,255,255,0.04)"
-                        : "background.neutral",
-                  }}
+                  sx={{ width: "fit-content" }}
                 >
                   {ROW_TYPE_OPTIONS.map((t) => (
                     <Tab
@@ -672,35 +610,13 @@ const TaskConfigPanel = ({
                             gap: 0.5,
                           }}
                         >
-                          <Iconify icon={t.icon} width={13} />
+                          <Iconify icon={t.icon} width={14} />
                           {t.label}
                         </Box>
                       }
-                      sx={{
-                        bgcolor:
-                          rowType === t.value
-                            ? (theme) =>
-                              theme.palette.mode === "dark"
-                                ? "rgba(255,255,255,0.12)"
-                                : "background.paper"
-                            : "transparent",
-                        boxShadow:
-                          rowType === t.value
-                            ? (theme) =>
-                              theme.palette.mode === "dark"
-                                ? "none"
-                                : "0 1px 3px rgba(0,0,0,0.08)"
-                            : "none",
-                        borderRadius: "6px",
-                        fontWeight: rowType === t.value ? 600 : 400,
-                        color:
-                          rowType === t.value
-                            ? "text.primary"
-                            : "text.disabled",
-                      }}
                     />
                   ))}
-                </Tabs>
+                </SegmentedTabs>
               </Box>
             )}
           </Box>
@@ -708,28 +624,32 @@ const TaskConfigPanel = ({
 
         <Divider />
 
-        {/* Everything below Basic Info is disabled until a project is selected */}
+        {!isProjectSelected && (
+          <Typography
+            variant="caption"
+            color="text.secondary"
+            sx={{ fontSize: "12px", display: "block", fontStyle: "italic" }}
+          >
+            Select a project to configure filters, scheduling, and evaluations.
+          </Typography>
+        )}
+
+        {/* Controls are disabled until a project is selected; keep the instruction readable. */}
         <Box
+          component="fieldset"
+          disabled={!isProjectSelected}
           sx={{
+            m: 0,
+            p: 0,
+            border: 0,
+            minWidth: 0,
             display: "flex",
             flexDirection: "column",
             gap: 2.5,
-            opacity: isProjectSelected ? 1 : 0.45,
+            // Keep instructions and validation readable even before project selection.
             pointerEvents: isProjectSelected ? "auto" : "none",
-            transition: "opacity 0.15s",
           }}
         >
-          {!isProjectSelected && (
-            <Typography
-              variant="caption"
-              color="text.secondary"
-              sx={{ fontSize: "11px", display: "block", fontStyle: "italic" }}
-            >
-              Select a project to configure filters, scheduling, and
-              evaluations.
-            </Typography>
-          )}
-
           {/* ── Evaluations ── */}
           <Box>
             <SectionHeader
@@ -741,13 +661,7 @@ const TaskConfigPanel = ({
                   size="small"
                   disabled={!isProjectSelected}
                   onClick={handleAddEval}
-                  startIcon={<Iconify icon="mingcute:add-line" width={14} />}
-                  sx={{
-                    textTransform: "none",
-                    fontWeight: 500,
-                    fontSize: "12px",
-                    height: 28,
-                  }}
+                  startIcon={<Iconify icon="solar:add-linear" width={14} />}
                 >
                   Add Evaluation
                 </Button>
@@ -778,7 +692,7 @@ const TaskConfigPanel = ({
                 <Typography
                   variant="body2"
                   color="text.disabled"
-                  sx={{ fontSize: "13px" }}
+                  sx={{ fontSize: "12px" }}
                 >
                   No evaluations added yet
                 </Typography>
@@ -816,10 +730,15 @@ const TaskConfigPanel = ({
           {/* ── Scheduling ── */}
           <Box>
             <SectionHeader
-              title="Scheduling"
-              subtitle="Choose when and how much data to evaluate"
+              title="When to run"
+              subtitle="Execution timing is separate from data selection"
             />
             <TaskSchedulingSection control={control} isEdit={mode === "edit"} />
+          </Box>
+          <Divider />
+          <Box>
+            <SectionHeader title="Data to evaluate" />
+            <TaskSamplingSection control={control} getValues={getValues} />
           </Box>
         </Box>
       </Box>
@@ -830,7 +749,6 @@ const TaskConfigPanel = ({
         source="task"
         sourceId={project}
         sourceRowType={rowType}
-        sourceColumns={sourceColumns}
         onEvalAdded={handleEvalAdded}
         existingEvals={configuredEvals}
         initialEval={editingEval}
@@ -838,6 +756,7 @@ const TaskConfigPanel = ({
         onFiltersChange={(f) =>
           setValue("filters", f || [], { shouldDirty: true })
         }
+        sourceTimeWindow={{ startDate, endDate }}
       />
 
       <ModalWrapper

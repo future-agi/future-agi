@@ -197,7 +197,7 @@ const FormSelectField = (
                       size="small"
                       sx={{ color: theme.palette.divider }}
                     >
-                      <Iconify icon="eva:search-fill" />
+                      <Iconify icon="solar:magnifier-linear" />
                     </IconButton>
                     <Input
                       placeholder="Search"
@@ -252,7 +252,7 @@ const FormSelectField = (
                     },
                   }}
                 >
-                  <Iconify icon="eva:plus-fill" /> &nbsp; {createLabel}
+                  <Iconify icon="solar:add-linear" /> &nbsp; {createLabel}
                 </LabelButton>
               )}
 
@@ -277,7 +277,7 @@ const FormSelectField = (
   );
 };
 
-FormSelectField.propTypes = {
+const formSelectFieldPropTypes = {
   control: PropTypes.any,
   options: PropTypes.arrayOf(
     PropTypes.shape({
@@ -305,5 +305,9 @@ FormSelectField.propTypes = {
   required: PropTypes.bool,
 };
 
+FormSelectField.propTypes = formSelectFieldPropTypes;
+
 // @ts-ignore
+FormSelectField.propTypes = formSelectFieldPropTypes;
 export const EnhancedFormSelectField = React.forwardRef(FormSelectField);
+EnhancedFormSelectField.propTypes = formSelectFieldPropTypes;

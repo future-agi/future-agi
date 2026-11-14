@@ -4,17 +4,24 @@
 server:
   port: 8080
   host: "0.0.0.0"
-  read_timeout: 5s
+  read_header_timeout: 5s
+  read_timeout: 60s
   write_timeout: 300s
   idle_timeout: 120s
   shutdown_timeout: 30s
-  max_request_body_size: 10485760  # 10MB
+  max_request_body_size: 10485760 # 10MB
+  max_header_bytes: 1048576 # request header cap; 0 or unset = 1MB
   default_request_timeout: 60s
+  # The one ceiling on a request, over any x-agentcc-timeout header or
+  # per-model timeout. It may be longer than write_timeout, which then applies
+  # only to a response this ceiling does not govern. Unset, it becomes
+  # write_timeout. Read at startup, like the rest of this block.
+  max_request_timeout: 300s
 
 providers:
   openai:
     base_url: "https://api.openai.com"
-    api_key: "${OPENAI_API_KEY}"  # Set via env var
+    api_key: "${OPENAI_API_KEY}" # Set via env var
     api_format: "openai"
     default_timeout: 60s
     max_concurrent: 100
@@ -175,6 +182,20 @@ providers:
   #   models:
   #     - gpt-4o
 
+  # Speech vendors, relayed over their own streaming WebSocket APIs at /deepgram/... and
+  # /cartesia/... (point the vendor SDK's base URL there and use a gateway key as its key).
+  # Only internal keys may use them, since they run on the platform's vendor credentials.
+  # deepgram:
+  #   base_url: "https://api.deepgram.com"
+  #   api_key: "${DEEPGRAM_API_KEY}"
+  #   api_format: "deepgram"
+  #   auto_discover: false
+  # cartesia:
+  #   base_url: "https://api.cartesia.ai"
+  #   api_key: "${CARTESIA_API_KEY}"
+  #   api_format: "cartesia"
+  #   auto_discover: false
+
   # groq:
   #   api_key: "${GROQ_API_KEY}"
   #   type: "groq"                   # auto-sets base_url + api_format
@@ -208,11 +229,33 @@ providers:
   #   models:
   #     - meta-llama/Meta-Llama-3.1-70B-Instruct
 
+  # api_path_prefix overrides the version segment placed between base_url and
+  # each endpoint. Unset means "/v1", which is what almost every
+  # OpenAI-compatible provider uses.
+  #
+  #   api_path_prefix: ""            # upstream serves /chat/completions
+  #   api_path_prefix: "/v1/openai"  # upstream mounts the API deeper
+  #
+  # A base_url that already ends in the prefix is left alone rather than having
+  # it repeated, so copying a vendor's documented URL verbatim works:
+  # "https://api.mistral.ai/v1" resolves to ".../v1/chat/completions", not
+  # ".../v1/v1/chat/completions". openai-format providers only.
+
+  # Perplexity exposes two complementary APIs over the same OpenAI-compatible base URL:
+  #   * Sonar API  (chat completions) - models: sonar, sonar-pro, sonar-reasoning, sonar-reasoning-pro, sonar-deep-research
+  #   * Agent API  (responses)        - orchestrates third-party LLMs (default model: gpt-5.1)
+  # See https://docs.perplexity.ai for full reference.
   # perplexity:
   #   api_key: "${PERPLEXITY_API_KEY}"
   #   type: "perplexity"
   #   models:
-  #     - llama-3.1-sonar-large-128k-online
+  #     - sonar-pro
+  #     - sonar
+  #     - sonar-reasoning-pro
+  #     - sonar-reasoning
+  #     - sonar-deep-research
+  #     # Agent API (third-party model via Perplexity Agent orchestration)
+  #     - gpt-5.1
 
   # cerebras:
   #   api_key: "${CEREBRAS_API_KEY}"
@@ -233,6 +276,12 @@ providers:
   #     - openai/gpt-4o
   #     - anthropic/claude-3.5-sonnet
 
+  # telnyx:
+  #   api_key: "${TELNYX_API_KEY}"
+  #   type: "telnyx"
+  #   models:
+  #     - MiniMaxAI/MiniMax-M3-MXFP8
+
 # Explicit model-to-provider mapping (overrides provider-level models).
 # model_map:
 #   gpt-4o: openai
@@ -240,7 +289,9 @@ providers:
 
 # Virtual API key authentication.
 # When enabled, all requests must include Authorization: Bearer sk-agentcc-xxx
-# When disabled (default), the gateway runs in open mode.
+# Setting AGENTCC_INTERNAL_API_KEY in the environment turns this on automatically
+# and registers that key. Running with no key and no auth block leaves the
+# gateway open — only do that on a trusted, non-public network.
 # auth:
 #   enabled: true
 #   keys:
@@ -287,6 +338,7 @@ providers:
 #     claude-3-opus-20240229: 120s
 #   mirror:                                 # Traffic mirroring for shadow testing
 #     enabled: true
+#     max_concurrent: 64                    # In-flight mirrors; beyond this, mirrors are dropped (default 64)
 #     rules:
 #       - source_model: "gpt-4o"            # Mirror gpt-4o requests
 #         target_provider: "anthropic"       # Send copy to Anthropic
@@ -350,7 +402,6 @@ logging:
   #   include_bodies: false      # Include full request/response bodies (default: false)
   #   buffer_size: 4096          # Async buffer size (default: 4096)
   #   workers: 2                 # Number of log worker goroutines (default: 2)
-
 # guardrails:
 #   enabled: true
 #   fail_open: true                     # If a guardrail times out or errors, allow the request (default: true)
@@ -386,12 +437,17 @@ logging:
 #   allowed_headers: ["Authorization", "Content-Type"]
 #   exposed_headers: []
 #   max_age: 86400
-#   allow_credentials: false
+#   allow_credentials: false              # cannot be true while allowed_origins is ["*"] or empty (rejected at startup)
 
 # Restrict inbound traffic by IP / CIDR.
 # ip_acl:
 #   enabled: true
-#   trusted_proxies: 1                    # hops of X-Forwarded-For to trust
+#   # Proxy hops in front of the gateway that append to X-Forwarded-For. The
+#   # client address (ip_acl, per-key allowed_ips, audit) is the entry this many
+#   # hops from the right; X-Forwarded-For is ignored when 0 (the default) and
+#   # X-Real-IP is never trusted.
+#   # Google Cloud external Application Load Balancer: 2. One nginx hop: 1.
+#   trusted_proxies: 1
 #   allow: ["10.0.0.0/8", "192.168.1.0/24"]
 #   deny:  ["203.0.113.7"]                # deny takes precedence over allow
 
@@ -449,15 +505,114 @@ logging:
 #       headers:
 #         Authorization: "Bearer ${SIEM_TOKEN}"
 
-# OpenTelemetry tracing.
+# OpenTelemetry tracing. One span per request carrying model, provider,
+# latency, token counts, cost, cache status, and any caller dimensions sent in
+# the x-agentcc-metadata header. Attribute names follow the OTel GenAI semantic
+# conventions (gen_ai.*), with session.id / user.id / metadata for the rest, so
+# spans are consumable by any GenAI-aware backend without a translation layer.
 # otel:
 #   enabled: true
 #   service_name: "agentcc-gateway"
-#   exporter: "stdout"                 # currently: stdout
+#   exporter: "otlp"                   # stdout | otlp
+#   endpoint: "http://otel-collector:4318"   # required for otlp; /v1/traces is
+#                                            # appended when the URL has no path
+#   protocol: "http/protobuf"          # the only supported OTLP transport
+#   headers:                           # hosted collectors authenticate here;
+#     X-Api-Key: "${FI_API_KEY}"       # keep credentials in the environment,
+#     X-Secret-Key: "${FI_SECRET_KEY}" # not in this file
+#   include_bodies: false              # attach prompt + completion to each span
+#                                      # (input.value / output.value). Off by
+#                                      # default: it sends user content to the
+#                                      # collector. Redacted with the same
+#                                      # privacy config as the request log.
 #   sample_rate: 0.1                   # 10% of requests
-#   attributes:
+#   trace_propagation: false           # honour an inbound W3C `traceparent`:
+#                                      # adopt its trace id and nest this span
+#                                      # under the caller's span instead of
+#                                      # starting a second root in the trace.
+#                                      # Only parents a caller that marks itself
+#                                      # sampled — an unsampled caller never
+#                                      # exports the span we would point at.
+#                                      # Leave off unless the caller ships its
+#                                      # spans to the same destination as this
+#                                      # gateway: a trace whose root lives in
+#                                      # another backend has no root here, and
+#                                      # consumers that key on the root span
+#                                      # will not list it. The caller-supplied
+#                                      # trace id is trusted input, so enable it
+#                                      # deliberately.
+#   metadata_attributes: true          # default. Also emit each caller metadata
+#                                      # key as agentcc.metadata.<key>, next to
+#                                      # the `metadata` JSON object that is
+#                                      # always written. The flat copies are
+#                                      # what a backend can filter and group on;
+#                                      # the JSON object is one opaque string.
+#                                      # Capped at 16 pairs / 64-char keys /
+#                                      # 512-char values, matching OpenAI's own
+#                                      # metadata limits. Keys past the cap are
+#                                      # dropped in sorted order and counted in
+#                                      # agentcc.metadata_dropped.
+#   body_attributes: true              # default. Emit the request body's unknown
+#                                      # top-level fields as agentcc.body.<key>
+#                                      # — an SDK's extra_body, and every
+#                                      # OpenAI parameter newer than the field
+#                                      # list the request struct knows about
+#                                      # (reasoning_effort, parallel_tool_calls,
+#                                      # store...). Scalars only: a nested
+#                                      # object is not filterable, and objects
+#                                      # are the shape credentials arrive in.
+#                                      # Numbers stay numbers, so range filters
+#                                      # work. Values are redacted with the
+#                                      # privacy config; the caps and the
+#                                      # agentcc.body_dropped counter mirror
+#                                      # metadata's.
+#   capture_headers:                   # request headers to copy onto the span
+#     - "x-acme-*"                     # as http.request.header.<name>. Empty by
+#     - "x-request-source"             # default. Trailing * is a prefix
+#                                      # wildcard; matching is case-insensitive.
+#                                      # An allowlist, never a blocklist:
+#                                      # request headers carry credentials, and
+#                                      # a trace goes somewhere wider than a log
+#                                      # does. Authorization, x-api-key, cookie
+#                                      # and friends stay denied even when a
+#                                      # wildcard — or an exact entry — names
+#                                      # them. Values are redacted with the
+#                                      # privacy config; metadata values are not,
+#                                      # because they are dimensions the caller
+#                                      # chose to group by.
+#   attributes:                        # emitted as OTLP resource attributes
 #     environment: "production"
 #     region: "us-east-1"
+#
+# Exporting to the FutureAGI platform: point endpoint at
+# https://api.futureagi.com/v1/traces, authenticate with X-Api-Key/X-Secret-Key,
+# and set project_name (plus project_type: "observe") under attributes — the
+# platform reads those resource attributes to decide which project the spans
+# land in, and creates it on first use.
+#
+# Spans are queued and flushed in the background, so an unreachable collector
+# never adds latency to a request. The gateway's own x-agentcc-trace-id travels
+# as the agentcc.trace_id span attribute, so a span can be matched to its
+# request-log row; agentcc.request_id and agentcc.is_stream are likewise
+# gateway facts with no conventional equivalent.
+#
+# Adding your own attributes: the gateway's stand-in for span.SetAttribute() is
+# caller metadata, and it has two channels. Send x-agentcc-metadata with a JSON
+# object, or set the OpenAI-spec `metadata` field in the request body — both
+# land as agentcc.metadata.<key> on the span and in the request log. The header
+# wins if the same key comes through both, because infrastructure tagging should
+# not be overridable by the payload it forwards. Values are strings; keys under
+# auth_, key_, org_, budget_, ratelimit_, cost, cache_, guardrail_ and credit_
+# are reserved for the gateway's own plugins and are silently dropped. There is
+# deliberately no un-prefixed passthrough: a bare key could shadow a gen_ai.*
+# convention the backend reads.
+#
+# Anything else you put in the body is exported too, as agentcc.body.<key>, so
+# an SDK's extra_body needs no gateway-side configuration to show up. The
+# difference between the two is the promise, not the plumbing: metadata is
+# curated, exported verbatim so grouping keys survive, and works on every
+# endpoint through the header. Body fields are whatever the payload carried —
+# scalars only, redacted, and only on endpoints whose body the gateway parses.
 
 # Prometheus metrics endpoint.
 # prometheus:
@@ -500,9 +655,9 @@ logging:
 #       provider: "openai"
 #       max_input_tokens: 128000
 #       max_output_tokens: 16384
-#       pricing:
-#         input_per_mtok: 2.50
-#         output_per_mtok: 10.00
+#       pricing:                             # USD per TOKEN (not per million)
+#         input_per_token: 0.0000025         # = $2.50 / 1M tokens
+#         output_per_token: 0.00001          # = $10.00 / 1M tokens
 #       deprecation_date: "2026-12-31"
 #       regions: ["us-east-1", "us-west-2"]
 
@@ -575,6 +730,11 @@ logging:
 #     max_size: 1048576                # 1MB per entry
 
 # Pull config (keys, budgets, RBAC) from a Django control plane.
+# Env: AGENTCC_CONTROL_PLANE_URL, AGENTCC_CONTROL_PLANE_TOKEN (defaults to the
+# admin token), AGENTCC_WEBHOOK_SECRET, AGENTCC_SYNC_ON_STARTUP,
+# AGENTCC_SYNC_INTERVAL. Without sync_on_startup, keys created in the UI stop
+# working when the gateway restarts; with more than one replica, set an
+# interval so a key created on one reaches the others.
 # control_plane:
 #   url: "http://localhost:8000"
 #   admin_token: "${CONTROL_PLANE_ADMIN_TOKEN}"
@@ -582,11 +742,19 @@ logging:
 #   sync_on_startup: true
 #   sync_interval: 5m                  # 0 = disabled
 
+# Providers orgs add through the control plane (Gateway > Providers).
+# org_providers:
+#   # Let an org provider's base_url point at private/LAN addresses (RFC 1918,
+#   # 100.64.0.0/10, fc00::/7, Docker service names): a local Ollama or vLLM.
+#   # Off by default; enable only when every org on this gateway is trusted.
+#   # Loopback, link-local, cloud metadata, multicast and unspecified addresses
+#   # are refused regardless. Env: AGENTCC_ALLOW_PRIVATE_PROVIDER_URLS=true
+#   # (set it on the backend too, for model discovery and saving providers).
+#   allow_private_urls: false
+
 # OpenAI-compatible Assistants API proxy.
 # assistants:
 #   enabled: true
-#   run_timeout: 5m
-#   stream_read_timeout: 60s
 
 # Model Context Protocol — expose tools from registered MCP servers to models.
 # mcp:
@@ -644,3 +812,86 @@ logging:
 #         - id: "web-search"
 #           name: "Web Search"
 #           description: "Search the open web"
+
+# Durable video generation is opt-in. Redis requires AOF appendfsync everysec
+# or RDB snapshots, and maxmemory-policy noeviction. No automatic memory fallback.
+# Explicit development-only memory storage requires allow_non_durable_store: true.
+# Credentials use ${ENV}, vault://, aws-sm://, gcp-sm:// or azure-kv://.
+# Credential rotation requires a restart; disabled routes return 501 not_configured.
+# Runtime kill switch: <video namespace>killswitch via admin /-/admin/video/.
+# The default Redis prefix (agentcc: or empty) retains video:v1:. Custom Redis
+# prefixes use <redis.prefix>video:v1: for every video queue, limit and sweeper.
+# Before upgrading an existing custom-prefix installation, drain its legacy
+# video:v1: jobs with the previous gateway release and the same configuration.
+# Legacy shared jobs cannot be safely attributed/migrated between installations.
+# Kill switch config is startup-only; use the admin endpoint at runtime.
+# Canonical requests are stored plain in Redis under the metadata retention.
+# video:
+#   enabled: false
+#   kill_switch: false
+#   store: redis
+#   allow_non_durable_store: false
+#   correlation_secret: "${VIDEO_CORRELATION_SECRET}" # Required for org_key_hmac.
+#   submit:
+#     sync_wait: 5s
+#     deadline: 30s
+#     unknown_reconcile_deadline: 15m
+#     lease_ttl: 60s
+#   poll:
+#     max_concurrent_total: 32
+#     per_provider_max_concurrent: 8
+#     max_interval: 60s
+#     max_consecutive_failures: 20
+#     max_unknown_status: 3
+#     timeout_reconcile_window: 2h
+#   copy: { deadline: 10m, max_concurrent: 8 }
+#   reconcile: { allow_absent_resubmit: false }
+#   media:
+#     max_inline_bytes: 20971520
+#     fetch_timeout: 20s
+#     total_ingress_timeout: 60s
+#     max_decoded_pixels: 36000000
+#   artifacts:
+#     backend: disk
+#     ttl: 24h
+#     max_bytes: 2147483648
+#     disk: { root: /var/lib/agentcc/video }
+#     s3: { bucket: "", prefix: "video/", region: "", access_key: "${AWS_ACCESS_KEY_ID}", secret_key: "${AWS_SECRET_ACCESS_KEY}", sse: "AES256" }
+#     presign: { enabled: false, ttl: 15m } # Phase 1 content is streamed by the gateway.
+#   retention: { job_metadata: 720h, idempotency: 720h }
+#   limits: { org_max_active_jobs: 10, org_submit_rpm: 60 }
+#   providers:
+#     byteplus:
+#       enabled: false
+#       api_key: "${ARK_API_KEY}"  # Also vault://, aws-sm://, gcp-sm://, azure-kv://.
+#       # credential_ref: provider:byteplus  # Optional existing provider key; api_key takes precedence.
+#       base_url: https://ark.ap-southeast.bytepluses.com/api/v3
+#       region: ap-southeast-1
+#       account_ref: byteplus-main
+#       models: [dreamina-seedance-2-5-260628, dreamina-seedance-2-0-260128]
+#       limits: { submit_rpm: 10, poll_qps: 10, max_active_tasks: 5 }
+#       deadlines: { connect: 10s, read: 30s, submit: 30s, run: 2h, reconcile: 15m }
+#       poll: { base_interval: 5s }
+#       allow_unpriced_models: false
+#       tariff_revision: byteplus-2026-10-02
+#       safety_identifier_mode: org_key_hmac
+#       execution_expires_after: 7200
+#       acknowledge_public_output: false  # Enablement blocked until explicitly acknowledged.
+#       min_tokens_with_video_input: 0    # Operator-asserted minimum; zero rejects video-input estimates.
+#     openrouter:  # Aggregator route: proves the OpenRouter path, not the model vendor's native API.
+#       enabled: false
+#       api_key: "${OPENROUTER_API_KEY}"
+#       base_url: https://openrouter.ai/api/v1
+#       region: global
+#       account_ref: openrouter-main
+#       # Request as "openrouter/<vendor>/<model>". Pinned to the 2026-11-06 public catalog.
+#       models: [bytedance/seedance-1-5-pro, google/veo-3.1-lite, kwaivgi/kling-v3.0-std, alibaba/wan-3.0, minimax/hailuo-3-max, runway/gen-4.5, x-ai/grok-imagine-video-1.5-lite]
+#       limits: { submit_rpm: 10, poll_qps: 2, max_active_tasks: 4 }
+#       deadlines: { connect: 10s, read: 30s, submit: 60s, run: 30m, reconcile: 5m }
+#       poll: { base_interval: 10s }
+#       allow_unpriced_models: false
+#       tariff_revision: openrouter-2026-11-06  # Upper-bound reservation; settles OpenRouter usage.cost in USD.
+#       safety_identifier_mode: none            # org_key_hmac sends a keyed HMAC as `user`.
+#       # No execution_expires_after, acknowledge_public_output or min_tokens_with_video_input:
+#       # those are BytePlus-only. Outputs are copied through OpenRouter's authenticated
+#       # content endpoint; there is no upstream cancel, idempotency key or job lookup.

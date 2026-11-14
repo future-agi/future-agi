@@ -9,6 +9,8 @@ const ROOTS = {
 
 export const paths = {
   minimalUI: "https://mui.com/store/items/minimal-dashboard/",
+  // OSS self-hosted first-run flow (pre-auth, no dashboard layout)
+  ossSetup: "/setup",
   // AUTH
   auth: {
     jwt: {
@@ -38,13 +40,18 @@ export const paths = {
       integrations: `${ROOTS.DASHBOARD}/settings/integrations`,
       integrationDetail: (id) =>
         `${ROOTS.DASHBOARD}/settings/integrations/${id}`,
+      workspaceIntegrations: (workspaceId) =>
+        `${ROOTS.DASHBOARD}/settings/workspace/${workspaceId}/integrations`,
+      workspaceIntegrationDetail: (workspaceId, id) =>
+        `${ROOTS.DASHBOARD}/settings/workspace/${workspaceId}/integrations/${id}`,
       mcpServer: `${ROOTS.DASHBOARD}/settings/mcp-server`,
-      falconAIConnectors: `${ROOTS.DASHBOARD}/settings/falcon-ai-connectors`,
+      falconAIConnectors: `${ROOTS.DASHBOARD}/settings/connectors`,
       orgSettings: `${ROOTS.DASHBOARD}/settings/org-settings`,
       usageSummary: `${ROOTS.DASHBOARD}/settings/usage-summary`,
       billing: `${ROOTS.DASHBOARD}/settings/billing`,
       pricing: `${ROOTS.DASHBOARD}/settings/pricing`,
       eeLicenses: `${ROOTS.DASHBOARD}/settings/ee-licenses`,
+      updates: `${ROOTS.DASHBOARD}/settings/updates`,
     },
     performance: `${ROOTS.DASHBOARD}/performance`,
     data: `${ROOTS.DASHBOARD}/data`,
@@ -78,11 +85,30 @@ export const paths = {
       root: `${ROOTS.DASHBOARD}/simulate`,
       agentDefinition: `${ROOTS.DASHBOARD}/simulate/agent-definitions`,
       scenarios: `${ROOTS.DASHBOARD}/simulate/scenarios`,
-      personas: `${ROOTS.DASHBOARD}/simulate/personas`,
       simulatorAgent: `${ROOTS.DASHBOARD}/simulate/simulator-agent`,
       test: `${ROOTS.DASHBOARD}/simulate/test`,
+      testCallDetails: (testId, executionId) =>
+        `${ROOTS.DASHBOARD}/simulate/test/${testId}/${executionId}/call-details`,
+      harness: {
+        root: `${ROOTS.DASHBOARD}/simulate/harness`,
+        new: `${ROOTS.DASHBOARD}/simulate/harness/new`,
+        detail: (jobId) => `${ROOTS.DASHBOARD}/simulate/harness/${jobId}`,
+      },
+      environments: {
+        root: `${ROOTS.DASHBOARD}/simulate/environments`,
+        templates: `${ROOTS.DASHBOARD}/simulate/environments/templates`,
+        useTemplate: (templateId) =>
+          `${ROOTS.DASHBOARD}/simulate/environments/templates/${templateId}`,
+        detail: (envId) => `${ROOTS.DASHBOARD}/simulate/environments/${envId}`,
+        workspaceTab: (envId, tab) =>
+          `${ROOTS.DASHBOARD}/simulate/environments/${envId}?tab=${tab}`,
+        execution: (envId, testId, executionId) =>
+          `${ROOTS.DASHBOARD}/simulate/environments/${envId}/runs/${testId}/${executionId}`,
+        improvement: (envId, fixId) =>
+          `${ROOTS.DASHBOARD}/simulate/environments/${envId}/improvements/${fixId}`,
+      },
     },
-    feed: `${ROOTS.DASHBOARD}/feed`,
+    feed: `${ROOTS.DASHBOARD}/error-feed`,
     errorFeed: {
       root: `${ROOTS.DASHBOARD}/error-feed`,
       detail: (id) => `${ROOTS.DASHBOARD}/error-feed/${id}`,

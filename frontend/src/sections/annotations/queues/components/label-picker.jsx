@@ -10,43 +10,10 @@ import {
   Typography,
 } from "@mui/material";
 import Iconify from "src/components/iconify";
+import CustomTooltip from "src/components/tooltip/CustomTooltip";
 import { useAnnotationLabelsList } from "src/api/annotation-labels/annotation-labels";
 import CreateLabelDrawer from "src/sections/annotations/labels/create-label-drawer";
-
-const TYPE_CHIP_COLORS = {
-  text: { bg: "#f0f4ff", color: "#3b6ce7" },
-  numeric: { bg: "#f0faf4", color: "#1a8a4a" },
-  categorical: { bg: "#fef6ee", color: "#c4631a" },
-  thumbs_up_down: { bg: "#fdf2f8", color: "#c026a3" },
-  star: { bg: "#fffbeb", color: "#b45309" },
-};
-
-TypeChip.propTypes = {
-  type: PropTypes.string,
-};
-
-function TypeChip({ type }) {
-  const label = (type || "")
-    .replace(/_/g, " ")
-    .replace(/\b\w/g, (c) => c.toUpperCase());
-  const colors = TYPE_CHIP_COLORS[type] || { bg: "#f5f5f5", color: "#666" };
-  return (
-    <Box
-      sx={{
-        px: 1,
-        py: 0.25,
-        borderRadius: 0.5,
-        bgcolor: colors.bg,
-        fontSize: 11,
-        fontWeight: 500,
-        color: colors.color,
-        whiteSpace: "nowrap",
-      }}
-    >
-      {label}
-    </Box>
-  );
-}
+import LabelTypeChip from "src/components/label-type-chip/LabelTypeChip";
 
 function mergeLabelsById(...labelLists) {
   const labelsById = new Map();
@@ -61,9 +28,14 @@ function mergeLabelsById(...labelLists) {
 LabelPicker.propTypes = {
   selectedIds: PropTypes.array,
   onChange: PropTypes.func.isRequired,
+  lockLastSelected: PropTypes.bool,
 };
 
-export default function LabelPicker({ selectedIds = [], onChange }) {
+export default function LabelPicker({
+  selectedIds = [],
+  onChange,
+  lockLastSelected = false,
+}) {
   const [search, setSearch] = useState("");
   const [createDrawerOpen, setCreateDrawerOpen] = useState(false);
   const [createdLabels, setCreatedLabels] = useState([]);
@@ -80,8 +52,12 @@ export default function LabelPicker({ selectedIds = [], onChange }) {
   );
   const selectedSet = useMemo(() => new Set(selectedIds), [selectedIds]);
 
+  const isDeselectLocked = (id) =>
+    lockLastSelected && selectedIds.length === 1 && selectedSet.has(id);
+
   const handleToggle = (id) => {
     if (selectedSet.has(id)) {
+      if (isDeselectLocked(id)) return;
       onChange(selectedIds.filter((i) => i !== id));
     } else {
       onChange([...selectedIds, id]);
@@ -120,19 +96,28 @@ export default function LabelPicker({ selectedIds = [], onChange }) {
       {/* Selected labels as removable chips */}
       {selectedLabels.length > 0 && (
         <Box sx={{ display: "flex", flexWrap: "wrap", gap: 0.5, mb: 0.5 }}>
-          {selectedLabels.map((label) => (
-            <Chip
-              key={label.id}
-              label={label.name}
-              size="small"
-              color="primary"
-              onDelete={() => handleToggle(label.id)}
-              sx={{
-                borderRadius: 0.5,
-                fontWeight: 500,
-              }}
-            />
-          ))}
+          {selectedLabels.map((label) =>
+            isDeselectLocked(label.id) ? (
+              <CustomTooltip
+                key={label.id}
+                show
+                arrow
+                size="small"
+                placement="top"
+                title="A queue must keep at least one label"
+              >
+                <Chip label={label.name} size="small" color="primary" />
+              </CustomTooltip>
+            ) : (
+              <Chip
+                key={label.id}
+                label={label.name}
+                size="small"
+                color="primary"
+                onDelete={() => handleToggle(label.id)}
+              />
+            ),
+          )}
         </Box>
       )}
 
@@ -147,7 +132,7 @@ export default function LabelPicker({ selectedIds = [], onChange }) {
           startAdornment: (
             <InputAdornment position="start">
               <Iconify
-                icon="eva:search-fill"
+                icon="solar:magnifier-linear"
                 sx={{ color: "text.disabled", width: 16, height: 16 }}
               />
             </InputAdornment>
@@ -161,8 +146,8 @@ export default function LabelPicker({ selectedIds = [], onChange }) {
           maxHeight: 200,
           overflow: "auto",
           border: "1px solid",
-          borderColor: "divider",
-          borderRadius: 0.5,
+          borderColor: "border.default",
+          borderRadius: "8px",
         }}
       >
         {filteredLabels.map((label) => (
@@ -177,7 +162,7 @@ export default function LabelPicker({ selectedIds = [], onChange }) {
               py: 0.5,
               cursor: "pointer",
               borderBottom: "1px solid",
-              borderColor: "divider",
+              borderColor: "border.subtle",
               "&:last-child": { borderBottom: 0 },
               "&:hover": { bgcolor: "action.hover" },
             }}
@@ -190,16 +175,27 @@ export default function LabelPicker({ selectedIds = [], onChange }) {
                 minWidth: 0,
               }}
             >
-              <Checkbox
-                checked={selectedSet.has(label.id)}
+              <CustomTooltip
+                show={isDeselectLocked(label.id)}
+                arrow
                 size="small"
-                sx={{ p: 0.5 }}
-              />
-              <Typography variant="body2" noWrap>
+                placement="top"
+                title="A queue must keep at least one label"
+              >
+                <Box component="span" sx={{ display: "inline-flex" }}>
+                  <Checkbox
+                    checked={selectedSet.has(label.id)}
+                    disabled={isDeselectLocked(label.id)}
+                    size="small"
+                    sx={{ p: 0.5 }}
+                  />
+                </Box>
+              </CustomTooltip>
+              <Typography noWrap sx={{ fontSize: 12, fontWeight: 500 }}>
                 {label.name}
               </Typography>
             </Box>
-            <TypeChip type={label.type} />
+            <LabelTypeChip type={label.type} />
           </Box>
         ))}
         {filteredLabels.length === 0 && (
@@ -217,9 +213,9 @@ export default function LabelPicker({ selectedIds = [], onChange }) {
       <Button
         variant="outlined"
         color="primary"
-        startIcon={<Iconify icon="mingcute:add-line" width={16} />}
+        startIcon={<Iconify icon="solar:add-linear" width={16} />}
         onClick={() => setCreateDrawerOpen(true)}
-        sx={{ alignSelf: "flex-start", fontSize: 12 }}
+        sx={{ alignSelf: "flex-start" }}
       >
         Create new label
       </Button>

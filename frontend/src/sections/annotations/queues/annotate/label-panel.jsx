@@ -25,9 +25,11 @@ import {
   Typography,
 } from "@mui/material";
 import { alpha } from "@mui/material/styles";
+import { statusColors } from "src/utils/runStatus";
 import { enqueueSnackbar } from "notistack";
 import Iconify from "src/components/iconify";
 import CellMarkdown from "src/sections/common/CellMarkdown";
+import { isLabelValueEmpty } from "src/sections/annotations/queues/utils/label-value";
 import { fDateTime, fToNowStrict } from "src/utils/format-time";
 import LabelInput from "./label-input";
 import AnnotationHistory from "./annotation-history";
@@ -52,11 +54,11 @@ const Kbd = ({ children }) => (
       minWidth: 20,
       height: 20,
       px: 0.5,
-      borderRadius: 0.5,
+      borderRadius: "4px",
       bgcolor: "action.hover",
       border: "1px solid",
       borderColor: "divider",
-      fontSize: 11,
+      fontSize: 12,
       fontWeight: 600,
       fontFamily: "inherit",
       color: "text.secondary",
@@ -121,19 +123,16 @@ function quietSurface(theme, opacity = 0.035) {
   return alpha(theme.palette.text.primary, opacity);
 }
 
+const STATUS_ROLE = {
+  warning: "warning",
+  info: "info",
+  success: "success",
+  error: "danger",
+};
+
 function statusTone(theme, color = "warning") {
-  const paletteColor = theme.palette[color] || theme.palette.info;
-  return {
-    border: alpha(
-      paletteColor.main,
-      theme.palette.mode === "dark" ? 0.32 : 0.24,
-    ),
-    bg: alpha(paletteColor.main, theme.palette.mode === "dark" ? 0.12 : 0.055),
-    text:
-      theme.palette.mode === "dark"
-        ? paletteColor.light || paletteColor.main
-        : paletteColor.dark || paletteColor.main,
-  };
+  const c = statusColors(theme, STATUS_ROLE[color] || "info");
+  return { border: c.border, bg: c.bg, text: c.fg };
 }
 
 function statusChipSx(color) {
@@ -141,8 +140,8 @@ function statusChipSx(color) {
     const tone = statusTone(theme, color);
     return {
       height: 20,
-      fontSize: 11,
-      fontWeight: 700,
+      fontSize: 12,
+      fontWeight: 600,
       borderColor: tone.border,
       bgcolor: tone.bg,
       color: tone.text,
@@ -157,16 +156,9 @@ function focusedScopeSx(isFocused) {
     outline: "2px solid",
     outlineOffset: -2,
     outlineColor: (theme) => theme.palette.primary.main,
-    boxShadow: (theme) =>
-      `0 0 0 5px ${alpha(theme.palette.primary.main, theme.palette.mode === "dark" ? 0.28 : 0.16)}`,
-    bgcolor: (theme) =>
-      alpha(
-        theme.palette.primary.main,
-        theme.palette.mode === "dark" ? 0.1 : 0.06,
-      ),
+    bgcolor: "action.hover",
     scrollMarginBlock: 96,
-    transition:
-      "outline-color 180ms ease, box-shadow 180ms ease, background-color 180ms ease",
+    transition: "outline-color 180ms ease, background-color 180ms ease",
   };
 }
 
@@ -180,8 +172,6 @@ function ReviewStatusChip({ comment }) {
       variant="outlined"
       sx={(theme) => ({
         ...statusChipSx(reviewThreadStatusColor(comment.thread_status))(theme),
-        height: 18,
-        fontSize: 10,
         ml: 0.75,
       })}
     />
@@ -255,7 +245,7 @@ function ShortcutsOverlay({ onClose }) {
         position: "absolute",
         inset: 0,
         zIndex: 10,
-        bgcolor: "rgba(0,0,0,0.3)",
+        bgcolor: (theme) => alpha(theme.palette.common.black, 0.3),
         display: "flex",
         alignItems: "flex-start",
         justifyContent: "center",
@@ -268,10 +258,10 @@ function ShortcutsOverlay({ onClose }) {
           bgcolor: "background.paper",
           border: "1px solid",
           borderColor: "divider",
-          borderRadius: 0.5,
+          borderRadius: "4px",
           p: 2.5,
           width: 300,
-          boxShadow: 8,
+          boxShadow: (theme) => theme.customShadows?.dialog,
         }}
       >
         <Box
@@ -285,15 +275,15 @@ function ShortcutsOverlay({ onClose }) {
           <Stack direction="row" spacing={0.75} alignItems="center">
             <Iconify
               icon="solar:keyboard-bold-duotone"
-              width={18}
+              width={20}
               color="primary.main"
             />
-            <Typography variant="subtitle2" fontWeight={700}>
+            <Typography variant="subtitle2" fontWeight={600}>
               Keyboard Shortcuts
             </Typography>
           </Stack>
-          <IconButton size="small" onClick={onClose} sx={{ p: 0.25 }}>
-            <Iconify icon="mingcute:close-line" width={16} />
+          <IconButton size="small" onClick={onClose}>
+            <Iconify icon="solar:close-linear" width={16} />
           </IconButton>
         </Box>
         <Stack spacing={1}>
@@ -392,6 +382,7 @@ const LabelPanel = forwardRef(function LabelPanel(
 
   // Refs for flushing debounced text inputs before submit
   const textFlushRefs = useRef({});
+  const labelRefs = useRef(new Map());
   // Mirror of values state, always up-to-date (including after flush)
   const valuesRef = useRef(values);
   valuesRef.current = values;
@@ -509,29 +500,18 @@ const LabelPanel = forwardRef(function LabelPanel(
     // Read from ref to capture any values flushed above
     const currentValues = valuesRef.current;
 
-    // Check required labels have values
-    const missingRequired = labels.filter((ql) => {
-      if (!ql.required) return false;
-      const labelId = ql.label_id;
-      const v = currentValues[labelId];
-      if (v === null || v === undefined) return true;
-      if (ql.type === "star" && !v.rating) return true;
-      if (ql.type === "categorical" && (!v.selected || v.selected.length === 0))
-        return true;
-      if (ql.type === "text" && !v.text?.trim()) return true;
-      if (ql.type === "thumbs_up_down" && !v.value) return true;
-      if (ql.type === "numeric" && (v.value === null || v.value === undefined))
-        return true;
-      return false;
-    });
+    // Every label must be annotated before submitting
+    const missingLabels = labels.filter((ql) =>
+      isLabelValueEmpty(ql.type, currentValues[ql.label_id]),
+    );
 
-    if (missingRequired.length > 0) {
-      const names = missingRequired.map((l) => l.name).join(", ");
-      enqueueSnackbar(`Required labels missing: ${names}`, {
+    if (missingLabels.length > 0) {
+      const names = missingLabels.map((l) => l.name).join(", ");
+      enqueueSnackbar(`Please annotate all labels: ${names}`, {
         variant: "warning",
       });
-      // Highlight the missing required labels
-      const errorSet = new Set(missingRequired.map((l) => l.label_id));
+      // Highlight the labels still missing a value
+      const errorSet = new Set(missingLabels.map((l) => l.label_id));
       setErrorLabels(errorSet);
       return;
     }
@@ -565,9 +545,9 @@ const LabelPanel = forwardRef(function LabelPanel(
 
   useImperativeHandle(ref, () => ({ submit: handleSubmit }), [handleSubmit]);
 
-  const hasValues = Object.values(displayValues).some(
-    (v) => v !== null && v !== undefined && v !== "",
-  );
+  const allAnswered =
+    labels.length > 0 &&
+    labels.every((l) => !isLabelValueEmpty(l.type, displayValues[l.label_id]));
 
   // Keyboard navigation for labels (Tab/Shift+Tab + number keys + ? for help)
   useEffect(() => {
@@ -596,61 +576,92 @@ const LabelPanel = forwardRef(function LabelPanel(
         setFocusedIndex((prev) => {
           const total = labels.length;
           if (total === 0) return 0;
-          if (e.shiftKey) return (prev - 1 + total) % total;
-          return (prev + 1) % total;
+          const next = e.shiftKey
+            ? (prev - 1 + total) % total
+            : (prev + 1) % total;
+          window.requestAnimationFrame(() => {
+            const nextLabel = labels[next];
+            const node = labelRefs.current.get(
+              String(nextLabel?.label_id || ""),
+            );
+            node?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+            const focusTarget = node?.querySelector(
+              'input, textarea, button, [tabindex]:not([tabindex="-1"])',
+            );
+            focusTarget?.focus?.({ preventScroll: true });
+          });
+          return next;
         });
         return;
       }
 
       // Number keys → dispatch to focused label
       const num = parseInt(e.key, 10);
-      if (num >= 1 && num <= 9 && labels.length > 0) {
-        const ql = labels[focusedIndex];
-        if (!ql) return;
-        const labelId = ql.label_id;
-        const currentVal = displayValues[labelId] ?? null;
+      if (Number.isNaN(num) || labels.length === 0) return;
+
+      const ql = labels[focusedIndex];
+      if (!ql) return;
+      const labelId = ql.label_id;
+      const currentVal = displayValues[labelId] ?? null;
+
+      if (ql.type === "star") {
+        const max = ql.settings?.no_of_stars || 5;
+        // A single keypress can't produce "10", so the "0" key maps to a
+        // rating of 10 (the max). Digits 1-9 map to themselves.
+        const rating = num === 0 ? 10 : num;
+        if (rating >= 1 && rating <= max) {
+          e.preventDefault();
+          const current = currentVal?.rating || 0;
+          handleChange(labelId, { rating: rating === current ? 0 : rating });
+        }
+        return;
+      }
+
+      if (ql.type === "thumbs_up_down") {
+        if (num === 1) {
+          e.preventDefault();
+          handleChange(labelId, {
+            value: currentVal?.value === "up" ? null : "up",
+          });
+        } else if (num === 2) {
+          e.preventDefault();
+          handleChange(labelId, {
+            value: currentVal?.value === "down" ? null : "down",
+          });
+        }
+        return;
+      }
+
+      if (ql.type === "categorical") {
+        const rawOptions = ql.settings?.options || [];
+        const options = rawOptions
+          .map((opt) =>
+            typeof opt === "string" ? opt : opt?.label || opt?.value || "",
+          )
+          .filter(Boolean);
+        // Number shortcuts are only offered for up to 10 options: digits 1-9
+        // select options 1-9 and "0" selects the 10th (same as the star
+        // "0 = 10" mapping). With more than 10 options the mapping is
+        // ambiguous, so number shortcuts are disabled entirely.
+        if (options.length > 10) return;
+        let optIndex = -1;
+        if (num >= 1 && num <= 9) optIndex = num - 1;
+        else if (num === 0 && options.length === 10) optIndex = 9;
+        if (optIndex < 0 || optIndex >= options.length) return;
 
         e.preventDefault();
-
-        if (ql.type === "star") {
-          const max = ql.settings?.no_of_stars || 5;
-          if (num <= max) {
-            const current = currentVal?.rating || 0;
-            handleChange(labelId, { rating: num === current ? 0 : num });
-          }
-        } else if (ql.type === "thumbs_up_down") {
-          if (num === 1) {
-            handleChange(labelId, {
-              value: currentVal?.value === "up" ? null : "up",
-            });
-          } else if (num === 2) {
-            handleChange(labelId, {
-              value: currentVal?.value === "down" ? null : "down",
-            });
-          }
-        } else if (ql.type === "categorical") {
-          const rawOptions = ql.settings?.options || [];
-          const options = rawOptions
-            .map((opt) =>
-              typeof opt === "string" ? opt : opt?.label || opt?.value || "",
-            )
-            .filter(Boolean);
-          const optIndex = num - 1;
-          if (optIndex < options.length) {
-            const opt = options[optIndex];
-            const selected = currentVal?.selected || [];
-            const isMulti = ql.settings?.multi_choice || false;
-            if (isMulti) {
-              const next = selected.includes(opt)
-                ? selected.filter((v) => v !== opt)
-                : [...selected, opt];
-              handleChange(labelId, { selected: next });
-            } else {
-              handleChange(labelId, {
-                selected: selected[0] === opt ? [] : [opt],
-              });
-            }
-          }
+        const opt = options[optIndex];
+        const selected = currentVal?.selected || [];
+        const isMulti = ql.settings?.multi_choice || false;
+        if (isMulti) {
+          const next = selected.includes(opt)
+            ? selected.filter((v) => v !== opt)
+            : [...selected, opt];
+          handleChange(labelId, { selected: next });
+        } else {
+          handleChange(labelId, {
+            selected: selected[0] === opt ? [] : [opt],
+          });
         }
       }
     };
@@ -680,7 +691,7 @@ const LabelPanel = forwardRef(function LabelPanel(
             mb: 2,
             px: 1.5,
             py: 1,
-            borderRadius: 0.5,
+            borderRadius: "4px",
             bgcolor: "action.hover",
             border: "1px solid",
             borderColor: "divider",
@@ -690,7 +701,7 @@ const LabelPanel = forwardRef(function LabelPanel(
           }}
         >
           <Iconify
-            icon="mingcute:lock-fill"
+            icon="solar:lock-linear"
             width={16}
             sx={{ color: "text.secondary" }}
           />
@@ -711,7 +722,7 @@ const LabelPanel = forwardRef(function LabelPanel(
               p: 1.25,
               border: "1px solid",
               borderColor: tone.border,
-              borderRadius: 0.75,
+              borderRadius: "4px",
               bgcolor: tone.bg,
               minWidth: 0,
               overflowX: "hidden",
@@ -751,7 +762,7 @@ const LabelPanel = forwardRef(function LabelPanel(
                   key={comment.id || comment.created_at}
                   sx={{
                     p: 1,
-                    borderRadius: 0.75,
+                    borderRadius: "4px",
                     bgcolor: "background.paper",
                     border: "1px solid",
                     borderColor: "divider",
@@ -819,7 +830,7 @@ const LabelPanel = forwardRef(function LabelPanel(
 
       {overallReviewComments.length > 0 ? (
         <Alert severity="warning" icon={false} sx={{ mb: 2 }}>
-          <Typography variant="caption" fontWeight={700} display="block">
+          <Typography variant="caption" fontWeight={600} display="block">
             Reviewer feedback
           </Typography>
           <Stack spacing={0.75} sx={{ mt: 0.75 }}>
@@ -854,7 +865,7 @@ const LabelPanel = forwardRef(function LabelPanel(
         </Alert>
       ) : reviewFeedback && !hasReviewCommentTrail ? (
         <Alert severity="warning" icon={false} sx={{ mb: 2 }}>
-          <Typography variant="caption" fontWeight={700} display="block">
+          <Typography variant="caption" fontWeight={600} display="block">
             Reviewer feedback
           </Typography>
           <Typography variant="body2">{reviewFeedback}</Typography>
@@ -921,10 +932,10 @@ const LabelPanel = forwardRef(function LabelPanel(
             <Iconify
               icon={
                 showInstructions
-                  ? "eva:chevron-up-fill"
-                  : "eva:chevron-down-fill"
+                  ? "solar:alt-arrow-up-linear"
+                  : "solar:alt-arrow-down-linear"
               }
-              width={18}
+              width={20}
               sx={{ color: "text.disabled" }}
             />
           </Stack>
@@ -932,15 +943,15 @@ const LabelPanel = forwardRef(function LabelPanel(
             <Box
               sx={{
                 bgcolor: "background.neutral",
-                borderRadius: 0.5,
+                borderRadius: "4px",
                 p: 2,
                 mt: 1,
                 maxHeight: 280,
                 overflow: "auto",
-                fontSize: 13,
+                fontSize: 12,
               }}
             >
-              <CellMarkdown text={instructions} fontSize={13} spacing={6} />
+              <CellMarkdown text={instructions} fontSize={12} spacing={6} />
             </Box>
           </Collapse>
           <Divider sx={{ mt: 2 }} />
@@ -969,7 +980,7 @@ const LabelPanel = forwardRef(function LabelPanel(
             onChange={(e) => onViewingAnnotatorChange?.(e.target.value || null)}
             inputProps={{ "aria-label": "Viewing annotator" }}
             sx={{
-              borderRadius: 0.5,
+              borderRadius: "4px",
               "& .MuiSelect-select": { py: 1 },
             }}
           >
@@ -1037,11 +1048,16 @@ const LabelPanel = forwardRef(function LabelPanel(
           return (
             <Box
               key={ql.id}
+              ref={(node) => {
+                const key = String(labelId || "");
+                if (node) labelRefs.current.set(key, node);
+                else labelRefs.current.delete(key);
+              }}
               data-review-label-id={labelId}
               data-comment-focus={labelFocused ? "true" : undefined}
               onClick={() => !readOnly && setFocusedIndex(i)}
               sx={{
-                borderRadius: 0.75,
+                borderRadius: "4px",
                 cursor: "default",
                 ...focusedScopeSx(labelFocused),
               }}
@@ -1079,7 +1095,7 @@ const LabelPanel = forwardRef(function LabelPanel(
                     return {
                       mt: 1,
                       p: 1.25,
-                      borderRadius: 0.5,
+                      borderRadius: "4px",
                       border: "1px solid",
                       borderColor: tone.border,
                       bgcolor: tone.bg,
@@ -1088,7 +1104,7 @@ const LabelPanel = forwardRef(function LabelPanel(
                 >
                   <Typography
                     variant="caption"
-                    fontWeight={700}
+                    fontWeight={600}
                     sx={(theme) => ({
                       display: "block",
                       mb: 0.75,
@@ -1145,7 +1161,7 @@ const LabelPanel = forwardRef(function LabelPanel(
             focusedCommentScope === "item" ? "true" : undefined
           }
           sx={{
-            borderRadius: 0.75,
+            borderRadius: "4px",
             ...focusedScopeSx(focusedCommentScope === "item"),
           }}
         >
@@ -1175,51 +1191,51 @@ const LabelPanel = forwardRef(function LabelPanel(
 
       {/* Submit (hidden in read-only mode) */}
       {!readOnly && (
-        <Tooltip title="Ctrl+Enter" placement="top">
-          <span>
-            <Button
-              variant="contained"
-              fullWidth
-              color="inherit"
-              sx={{
-                mt: 2,
-                borderRadius: 0.75,
-                minHeight: 42,
-                fontWeight: 800,
-                bgcolor: (theme) =>
-                  theme.palette.mode === "dark"
-                    ? theme.palette.common.white
-                    : theme.palette.grey[900],
-                color: (theme) =>
-                  theme.palette.mode === "dark"
-                    ? theme.palette.grey[900]
-                    : theme.palette.common.white,
-                boxShadow: "none",
-                "&:hover": {
-                  bgcolor: (theme) =>
-                    theme.palette.mode === "dark"
-                      ? alpha(theme.palette.common.white, 0.92)
-                      : theme.palette.grey[800],
-                  boxShadow: (theme) =>
-                    `0 12px 24px ${alpha(theme.palette.text.primary, 0.14)}`,
-                },
-                "&.Mui-disabled": {
-                  color: "text.disabled",
-                  bgcolor: (theme) => quietSurface(theme, 0.08),
-                },
-              }}
-              onClick={handleSubmit}
-              disabled={isPending || !hasValues}
-              startIcon={
-                isPending ? (
-                  <CircularProgress size={16} color="inherit" />
-                ) : null
-              }
-            >
-              {submitLabel}
-            </Button>
-          </span>
-        </Tooltip>
+        <Box
+          data-testid="annotation-submit-action"
+          data-sticky-action="true"
+          sx={{
+            position: "sticky",
+            bottom: 0,
+            zIndex: 2,
+            mt: 2,
+            pt: 1.25,
+            pb: 0.5,
+            bgcolor: "background.paper",
+            borderTop: 1,
+            borderColor: "divider",
+          }}
+        >
+          <Tooltip title="Ctrl+Enter" placement="top">
+            <span>
+              <Button
+                variant="contained"
+                fullWidth
+                color="inherit"
+                sx={{
+                  bgcolor: "text.primary",
+                  color: "background.paper",
+                  "&:hover": {
+                    bgcolor: "text.secondary",
+                  },
+                  "&.Mui-disabled": {
+                    color: "text.disabled",
+                    bgcolor: (theme) => quietSurface(theme, 0.08),
+                  },
+                }}
+                onClick={handleSubmit}
+                disabled={isPending || !allAnswered}
+                startIcon={
+                  isPending ? (
+                    <CircularProgress size={16} color="inherit" />
+                  ) : null
+                }
+              >
+                {submitLabel}
+              </Button>
+            </span>
+          </Tooltip>
+        </Box>
       )}
     </Box>
   );

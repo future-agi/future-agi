@@ -13,6 +13,8 @@ import {
 import { useNavigate } from "react-router";
 import Iconify from "src/components/iconify";
 import _ from "lodash";
+import { useAuthContext } from "src/auth/hooks";
+import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
 
 const STATUS_CONFIG = {
   pending: { color: "warning", icon: "solar:clock-circle-linear" },
@@ -33,9 +35,6 @@ const StatusChip = ({ status }) => {
       variant="outlined"
       icon={<Iconify icon={cfg.icon} width={14} />}
       sx={{
-        fontWeight: 500,
-        fontSize: "12px",
-        height: 24,
         "& .MuiChip-icon": { ml: 0.5 },
       }}
     />
@@ -68,8 +67,12 @@ const TaskHeader = ({
   actions,
   nameEditable = true,
   backTo,
+  selectionSummary,
 }) => {
   const navigate = useNavigate();
+  const { role } = useAuthContext();
+  const canEditTask =
+    RolePermission.OBSERVABILITY[PERMISSIONS.ADD_TASKS_ALERTS][role];
   const [editing, setEditing] = useState(false);
   const [draftName, setDraftName] = useState(name || "");
 
@@ -93,6 +96,8 @@ const TaskHeader = ({
         display: "flex",
         justifyContent: "space-between",
         alignItems: "center",
+        flexWrap: "wrap",
+        gap: 1,
         px: 2,
         py: 1.25,
         borderBottom: "1px solid",
@@ -117,15 +122,15 @@ const TaskHeader = ({
               onClick={() => navigate(backTo)}
               sx={{ p: 0.25, color: "text.secondary" }}
             >
-              <Iconify icon="mdi:arrow-left" width={18} />
+              <Iconify icon="solar:arrow-left-linear" width={20} />
             </IconButton>
           </Tooltip>
         )}
-        <Breadcrumbs separator="/" sx={{ fontSize: "13px" }}>
+        <Breadcrumbs separator="/" sx={{ fontSize: "12px" }}>
           <Link
             underline="hover"
             color="text.secondary"
-            sx={{ cursor: "pointer", fontSize: "13px" }}
+            sx={{ cursor: "pointer", fontSize: "12px" }}
             onClick={() => navigate("/dashboard/tasks")}
           >
             Tasks
@@ -147,7 +152,7 @@ const TaskHeader = ({
               variant="standard"
               sx={{
                 "& .MuiInputBase-input": {
-                  fontSize: "14px",
+                  fontSize: "12px",
                   fontWeight: 600,
                   py: 0.25,
                 },
@@ -158,7 +163,11 @@ const TaskHeader = ({
               <Typography
                 color="text.primary"
                 fontWeight={600}
-                sx={{ fontSize: "14px" }}
+                component="h1"
+                sx={{
+                  fontSize: "12px",
+                  overflowWrap: "anywhere",
+                }}
               >
                 {mode === "create" ? "Create Task" : name || "Untitled Task"}
               </Typography>
@@ -167,6 +176,7 @@ const TaskHeader = ({
                   <IconButton
                     size="small"
                     onClick={() => setEditing(true)}
+                    disabled={!canEditTask}
                     sx={{ p: 0.25, color: "text.secondary" }}
                   >
                     <Iconify icon="solar:pen-2-linear" width={14} />
@@ -182,10 +192,8 @@ const TaskHeader = ({
             label={projectName}
             size="small"
             variant="outlined"
-            icon={<Iconify icon="mdi:folder-outline" width={14} />}
+            icon={<Iconify icon="solar:folder-linear" width={14} />}
             sx={{
-              fontSize: "11px",
-              height: 22,
               borderColor: "divider",
               "& .MuiChip-icon": { ml: 0.5 },
             }}
@@ -196,9 +204,19 @@ const TaskHeader = ({
       </Box>
 
       {actions && (
-        <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+        <Box
+          sx={{
+            display: "flex",
+            alignItems: "center",
+            gap: 1,
+            flexWrap: "wrap",
+          }}
+        >
           {actions}
         </Box>
+      )}
+      {selectionSummary && (
+        <Box sx={{ flexBasis: "100%", minWidth: 0 }}>{selectionSummary}</Box>
       )}
     </Box>
   );
@@ -213,6 +231,7 @@ TaskHeader.propTypes = {
   actions: PropTypes.node,
   nameEditable: PropTypes.bool,
   backTo: PropTypes.string,
+  selectionSummary: PropTypes.node,
 };
 
 export default TaskHeader;

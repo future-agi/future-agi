@@ -27,7 +27,6 @@ const PasswordSentLogin = ({
     mutationFn: (email) =>
       axios.post(endpoints.auth.passwordResetInitiate, {
         email,
-        resend_email: true,
       }),
     meta: {
       errorHandled: true,
@@ -55,7 +54,7 @@ const PasswordSentLogin = ({
         <Typography
           fontWeight={"fontWeightSemiBold"}
           sx={{
-            fontSize: "28px",
+            fontSize: "24px",
             color: "text.primary",
             fontFamily: "Inter",
             lineHeight: "36px",
@@ -66,7 +65,7 @@ const PasswordSentLogin = ({
         <Typography
           fontWeight={"fontWeightSemiBold"}
           sx={{
-            fontSize: "28px",
+            fontSize: "24px",
             color: "text.secondary",
             maxWidth: "440px",
             fontFamily: "Inter",
@@ -104,7 +103,7 @@ const PasswordSentLogin = ({
             placeholder="Enter password"
             type={password.value ? "text" : "password"}
             autoComplete="current-password"
-            sx={{ "& .MuiOutlinedInput-root": { borderRadius: 0.5 } }}
+            sx={{ "& .MuiOutlinedInput-root": { borderRadius: "4px" } }}
             {...(errorMsg && {
               error: true,
               helperText: "Please recheck the password",
@@ -152,7 +151,6 @@ const PasswordSentLogin = ({
               size="large"
               variant="contained"
               type="submit"
-              sx={{ height: "42px" }}
               loading={isSubmitting}
             >
               Continue
@@ -165,7 +163,7 @@ const PasswordSentLogin = ({
         sx={{ color: "primary.main" }}
         onClick={() => setRegisterSuccess(false)}
         startIcon={
-          <Iconify icon="line-md:chevron-left" width={16} height={16} />
+          <Iconify icon="solar:alt-arrow-left-linear" width={16} height={16} />
         }
       >
         <Typography

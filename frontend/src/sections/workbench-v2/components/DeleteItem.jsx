@@ -2,7 +2,7 @@ import { Box, Typography } from "@mui/material";
 import PropTypes from "prop-types";
 import React from "react";
 import ModalWrapper from "src/components/ModalWrapper/ModalWrapper";
-import { iconStyles, PROMPT_ICON_MAPPER, PROMPT_ITEM_TYPES } from "../common";
+import { PROMPT_ICON_MAPPER, PROMPT_ITEM_TYPES } from "../common";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import axios, { endpoints } from "../../../utils/axios";
 import { useNavigate, useParams } from "react-router";
@@ -48,11 +48,9 @@ export const DeleteItem = ({
         queryClient.invalidateQueries({
           queryKey: ["prompt-folders"],
         });
-        if (folder === "all") {
-          queryClient.invalidateQueries({
-            queryKey: ["folder-items", folder],
-          });
-        }
+        queryClient.invalidateQueries({
+          queryKey: ["folder-items"],
+        });
       }
     },
   });
@@ -85,7 +83,7 @@ export const DeleteItem = ({
       }}
       onSubmit={handleDelete}
       isLoading={isDeleting}
-      isValid={id}
+      isValid={Boolean(id)}
     >
       <Box
         sx={{
@@ -102,7 +100,6 @@ export const DeleteItem = ({
       >
         <Box
           sx={{
-            boxShadow: iconStyles.boxShadow,
             height: 44,
             width: 44,
             bgcolor: "background.paper",
@@ -126,7 +123,7 @@ export const DeleteItem = ({
             {name}
           </Typography>
           {createdBy && (
-            <Typography fontSize={"13px"} fontWeight={400}>
+            <Typography fontSize={"12px"} fontWeight={400}>
               {`Created by ${createdBy}`}
             </Typography>
           )}

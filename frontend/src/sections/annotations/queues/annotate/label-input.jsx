@@ -9,21 +9,30 @@ import {
 } from "react";
 import {
   Box,
+  Button,
   Checkbox,
   Radio,
   Slider,
   Stack,
   TextField,
   Typography,
+  ButtonBase,
+  useTheme,
 } from "@mui/material";
 import { alpha } from "@mui/material/styles";
+import { enqueueSnackbar } from "notistack";
 import Iconify from "src/components/iconify";
 
 const LABEL_COLORS = {
+  // eslint-disable-next-line no-restricted-syntax -- ds: encoding (annotation label type)
   star: "#d26464",
+  // eslint-disable-next-line no-restricted-syntax -- ds: encoding (annotation label type)
   categorical: "#2e9469",
+  // eslint-disable-next-line no-restricted-syntax -- ds: encoding (annotation label type)
   numeric: "#5278c7",
+  // eslint-disable-next-line no-restricted-syntax -- ds: encoding (annotation label type)
   text: "#8067c9",
+  // eslint-disable-next-line no-restricted-syntax -- ds: encoding (annotation label type)
   thumbs_up_down: "#b7772a",
 };
 
@@ -37,11 +46,11 @@ const Kbd = ({ children }) => (
       minWidth: 18,
       height: 18,
       px: 0.5,
-      borderRadius: 0.5,
+      borderRadius: "4px",
       bgcolor: "action.hover",
       border: "1px solid",
       borderColor: "divider",
-      fontSize: 10,
+      fontSize: 12,
       fontWeight: 600,
       fontFamily: "inherit",
       color: "text.secondary",
@@ -64,13 +73,14 @@ export default function LabelInput({
   onLabelNotesChange,
 }) {
   const { type, settings = {} } = label;
-  const color = LABEL_COLORS[type] || "#888";
+  const { palette } = useTheme();
+  const color = LABEL_COLORS[type] || palette.text.disabled;
   const inputRef = useRef(null);
 
   return (
     <Box
       sx={{
-        borderRadius: 0.5,
+        borderRadius: "4px",
         bgcolor: (theme) =>
           alpha(color, theme.palette.mode === "dark" ? 0.07 : 0.045),
         border: "1px solid",
@@ -79,7 +89,7 @@ export default function LabelInput({
             ? alpha(theme.palette.error.main, 0.55)
             : focused
               ? alpha(color, 0.5)
-              : alpha(theme.palette.text.primary, 0.06),
+              : theme.palette.divider,
         transition: "border-color 0.15s, box-shadow 0.15s",
         boxShadow: (theme) =>
           hasError
@@ -105,7 +115,7 @@ export default function LabelInput({
           sx={{
             width: 3,
             height: 14,
-            borderRadius: 0.5,
+            borderRadius: "4px",
             bgcolor: hasError ? "error.main" : color,
             flexShrink: 0,
             transition: "bgcolor 0.15s",
@@ -118,11 +128,9 @@ export default function LabelInput({
           sx={{ flex: 1, lineHeight: 1.3, transition: "color 0.15s" }}
         >
           {label.name}
-          {label.required && (
-            <Typography component="span" color="error.main" sx={{ ml: 0.25 }}>
-              *
-            </Typography>
-          )}
+          <Typography component="span" color="error.main" sx={{ ml: 0.25 }}>
+            *
+          </Typography>
           {hasError && (
             <Typography
               component="span"
@@ -143,11 +151,11 @@ export default function LabelInput({
               height: 24,
               borderRadius: "50%",
               border: "1px solid",
-              borderColor: (theme) => alpha(theme.palette.text.primary, 0.16),
-              bgcolor: (theme) => alpha(theme.palette.text.primary, 0.045),
+              borderColor: "border.default",
+              bgcolor: "background.neutral",
               color: "text.secondary",
               fontSize: 12,
-              fontWeight: 700,
+              fontWeight: 600,
               flexShrink: 0,
             }}
           >
@@ -313,7 +321,7 @@ const DebouncedTextInput = forwardRef(function DebouncedTextInput(
       sx={{
         "& .MuiOutlinedInput-root": {
           bgcolor: "background.paper",
-          fontSize: 13,
+          fontSize: 12,
         },
       }}
     />
@@ -337,57 +345,79 @@ function StarInput({ value, settings, onChange, focused }) {
   const current = value?.rating || 0;
 
   return (
-    <Stack direction="row" spacing={0.25} alignItems="center">
-      {Array.from({ length: max }, (_, i) => {
-        const starVal = i + 1;
-        const isActive = starVal <= current;
-        return (
-          <Box
-            key={starVal}
-            onClick={() =>
-              onChange({ rating: starVal === current ? 0 : starVal })
-            }
-            sx={{
-              position: "relative",
-              cursor: "pointer",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              width: 32,
-              height: 32,
-              borderRadius: 0.5,
-              transition: "all 0.1s",
-              bgcolor: isActive ? "rgba(239,68,68,0.1)" : "transparent",
-              "&:hover": {
-                bgcolor: "rgba(239,68,68,0.15)",
-              },
-            }}
-          >
-            <Iconify
-              icon={isActive ? "solar:star-bold" : "solar:star-line-duotone"}
-              width={20}
+    <Stack spacing={0.5}>
+      <Stack direction="row" spacing={0.25} alignItems="center">
+        {Array.from({ length: max }, (_, i) => {
+          const starVal = i + 1;
+          const isActive = starVal <= current;
+          return (
+            <ButtonBase
+              component="div"
+              key={starVal}
+              onClick={() =>
+                onChange({ rating: starVal === current ? 0 : starVal })
+              }
               sx={{
-                color: isActive ? "#ef4444" : "text.disabled",
-                transition: "color 0.1s",
+                textAlign: "left",
+                position: "relative",
+                cursor: "pointer",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                width: 32,
+                height: 32,
+                borderRadius: "4px",
+                transition: "all 0.12s",
+                bgcolor: isActive ? "status.danger.bg" : "transparent",
+                "&:hover": {
+                  bgcolor: "status.danger.bg",
+                },
               }}
-            />
-            {focused && (
-              <Box
+            >
+              <Iconify
+                icon={isActive ? "solar:star-bold" : "solar:star-line-duotone"}
+                width={20}
                 sx={{
-                  position: "absolute",
-                  bottom: -1,
-                  fontSize: 8,
-                  fontWeight: 700,
-                  color: "text.disabled",
-                  lineHeight: 1,
+                  color: isActive ? "status.danger.fg" : "text.disabled",
+                  transition: "color 0.12s",
                 }}
-              >
-                {starVal}
-              </Box>
-            )}
-          </Box>
-        );
-      })}
+              />
+              {focused && (
+                <Box
+                  sx={{
+                    position: "absolute",
+                    bottom: -1,
+                    fontSize: 8,
+                    fontWeight: 600,
+                    color: "text.disabled",
+                    lineHeight: 1,
+                  }}
+                >
+                  {starVal === 10 ? 0 : starVal}
+                </Box>
+              )}
+            </ButtonBase>
+          );
+        })}
+      </Stack>
+      {focused && max >= 10 && (
+        <Box
+          sx={{
+            display: "flex",
+            alignItems: "center",
+            gap: 0.5,
+            color: "text.secondary",
+          }}
+        >
+          <Typography variant="caption" sx={{ fontSize: 12 }}>
+            Press
+          </Typography>
+          <Kbd>0</Kbd>
+          <Typography variant="caption" sx={{ fontSize: 12 }}>
+            for 10
+          </Typography>
+        </Box>
+      )}
     </Stack>
   );
 }
@@ -408,74 +438,80 @@ function ThumbsInput({ value, onChange, focused }) {
 
   return (
     <Stack direction="row" spacing={1}>
-      <Box
+      <ButtonBase
+        component="div"
         onClick={() => onChange({ value: isUp ? null : "up" })}
         sx={{
+          justifyContent: "flex-start",
+          textAlign: "left",
           display: "flex",
           alignItems: "center",
           gap: 0.75,
           px: 1.5,
           py: 0.75,
-          borderRadius: 0.5,
+          borderRadius: "4px",
           cursor: "pointer",
           border: "1px solid",
-          borderColor: isUp ? "#22c55e" : "divider",
-          bgcolor: isUp ? "rgba(34,197,94,0.08)" : "transparent",
+          borderColor: isUp ? "status.success.fg" : "divider",
+          bgcolor: isUp ? "status.success.bg" : "transparent",
           transition: "all 0.15s",
           "&:hover": {
-            borderColor: "#22c55e",
-            bgcolor: "rgba(34,197,94,0.05)",
+            borderColor: "status.success.fg",
+            bgcolor: "status.success.bg",
           },
         }}
       >
         <Iconify
           icon="solar:like-bold"
-          width={18}
-          sx={{ color: isUp ? "#22c55e" : "text.secondary" }}
+          width={20}
+          sx={{ color: isUp ? "status.success.fg" : "text.secondary" }}
         />
         <Typography
           variant="caption"
           fontWeight={500}
-          color={isUp ? "#22c55e" : "text.secondary"}
+          color={isUp ? "status.success.fg" : "text.secondary"}
         >
           Yes
         </Typography>
         {focused && <Kbd>1</Kbd>}
-      </Box>
-      <Box
+      </ButtonBase>
+      <ButtonBase
+        component="div"
         onClick={() => onChange({ value: isDown ? null : "down" })}
         sx={{
+          justifyContent: "flex-start",
+          textAlign: "left",
           display: "flex",
           alignItems: "center",
           gap: 0.75,
           px: 1.5,
           py: 0.75,
-          borderRadius: 0.5,
+          borderRadius: "4px",
           cursor: "pointer",
           border: "1px solid",
-          borderColor: isDown ? "#ef4444" : "divider",
-          bgcolor: isDown ? "rgba(239,68,68,0.08)" : "transparent",
+          borderColor: isDown ? "status.danger.fg" : "divider",
+          bgcolor: isDown ? "status.danger.bg" : "transparent",
           transition: "all 0.15s",
           "&:hover": {
-            borderColor: "#ef4444",
-            bgcolor: "rgba(239,68,68,0.05)",
+            borderColor: "status.danger.fg",
+            bgcolor: "status.danger.bg",
           },
         }}
       >
         <Iconify
           icon="solar:dislike-bold"
-          width={18}
-          sx={{ color: isDown ? "#ef4444" : "text.secondary" }}
+          width={20}
+          sx={{ color: isDown ? "status.danger.fg" : "text.secondary" }}
         />
         <Typography
           variant="caption"
           fontWeight={500}
-          color={isDown ? "#ef4444" : "text.secondary"}
+          color={isDown ? "status.danger.fg" : "text.secondary"}
         >
           No
         </Typography>
         {focused && <Kbd>2</Kbd>}
-      </Box>
+      </ButtonBase>
     </Stack>
   );
 }
@@ -499,11 +535,19 @@ function CategoricalInput({ settings, value, onChange, focused }) {
   const options = rawOptions.map(getOptionLabel).filter(Boolean);
   const isMulti = settings.multi_choice || false;
 
+  const keyHintFor = (i) => {
+    if (options.length > 10) return null;
+    if (i < 9) return i + 1;
+    if (i === 9 && options.length === 10) return 0;
+    return null;
+  };
+
   if (isMulti) {
     return (
       <Stack spacing={0.25}>
         {options.map((opt, i) => (
-          <Box
+          <ButtonBase
+            component="div"
             key={opt}
             onClick={() => {
               const next = value.includes(opt)
@@ -512,19 +556,20 @@ function CategoricalInput({ settings, value, onChange, focused }) {
               onChange(next);
             }}
             sx={{
+              textAlign: "left",
               display: "flex",
               alignItems: "center",
               justifyContent: "space-between",
               gap: 1,
               px: 0,
               py: 0.5,
-              borderRadius: 0.5,
+              borderRadius: "4px",
               cursor: "pointer",
               bgcolor: value.includes(opt)
-                ? "rgba(34,197,94,0.08)"
+                ? "status.success.bg"
                 : "transparent",
               "&:hover": { bgcolor: "action.hover" },
-              transition: "background-color 0.1s",
+              transition: "background-color 0.12s",
             }}
           >
             <Box
@@ -536,13 +581,13 @@ function CategoricalInput({ settings, value, onChange, focused }) {
                 sx={{
                   p: 0,
                   color: "text.disabled",
-                  "&.Mui-checked": { color: "#22c55e" },
+                  "&.Mui-checked": { color: "status.success.fg" },
                 }}
               />
               <Typography variant="body2">{opt}</Typography>
             </Box>
-            {focused && i < 9 && <Kbd>{i + 1}</Kbd>}
-          </Box>
+            {focused && keyHintFor(i) !== null && <Kbd>{keyHintFor(i)}</Kbd>}
+          </ButtonBase>
         ))}
       </Stack>
     );
@@ -553,22 +598,24 @@ function CategoricalInput({ settings, value, onChange, focused }) {
       {options.map((opt, i) => {
         const isSelected = value[0] === opt;
         return (
-          <Box
+          <ButtonBase
+            component="div"
             key={opt}
             // Clicking an already-selected option deselects it (sends empty array) — intentional
             onClick={() => onChange(isSelected ? [] : [opt])}
             sx={{
+              textAlign: "left",
               display: "flex",
               alignItems: "center",
               justifyContent: "space-between",
               gap: 1,
               px: 0.3,
               py: 0.5,
-              borderRadius: 0.5,
+              borderRadius: "4px",
               cursor: "pointer",
-              bgcolor: isSelected ? "rgba(34,197,94,0.08)" : "transparent",
+              bgcolor: isSelected ? "status.success.bg" : "transparent",
               "&:hover": { bgcolor: "action.hover" },
-              transition: "background-color 0.1s",
+              transition: "background-color 0.12s",
             }}
           >
             <Box
@@ -580,13 +627,13 @@ function CategoricalInput({ settings, value, onChange, focused }) {
                 sx={{
                   p: 0,
                   color: "text.disabled",
-                  "&.Mui-checked": { color: "#22c55e" },
+                  "&.Mui-checked": { color: "status.success.fg" },
                 }}
               />
               <Typography variant="body2">{opt}</Typography>
             </Box>
-            {focused && i < 9 && <Kbd>{i + 1}</Kbd>}
-          </Box>
+            {focused && keyHintFor(i) !== null && <Kbd>{keyHintFor(i)}</Kbd>}
+          </ButtonBase>
         );
       })}
     </Stack>
@@ -606,7 +653,80 @@ CategoricalInput.propTypes = {
 function NumericInput({ settings, value, onChange, inputRef }) {
   const min = settings.min ?? 0;
   const max = settings.max ?? 10;
-  const step = settings.step ?? 1;
+  const rawStep = settings.step_size ?? settings.step ?? 1;
+  const step = Number(rawStep) > 0 ? Number(rawStep) : 1;
+  const displayType = settings.display_type || "slider";
+
+  const handleNumberChange = (event) => {
+    const raw = event.target.value;
+    if (raw === "") {
+      onChange(null);
+      return;
+    }
+    const n = Number(raw);
+    if (Number.isNaN(n)) return;
+    if (n > max) {
+      enqueueSnackbar(`Maximum value is ${max} only`, { variant: "warning" });
+      return;
+    }
+
+    if (/^-?0\d/.test(raw)) event.target.value = String(n);
+    onChange(n);
+  };
+
+  const handleNumberBlur = () => {
+    if (value !== null && value !== undefined && value < min) onChange(min);
+  };
+
+  if (displayType === "button") {
+    const buttonValues = [];
+    for (
+      let option = Number(min);
+      option <= Number(max) + Number.EPSILON && buttonValues.length < 101;
+      option += step
+    ) {
+      buttonValues.push(Number(option.toFixed(6)));
+    }
+    if (!buttonValues.includes(Number(max))) buttonValues.push(Number(max));
+
+    return (
+      <Stack spacing={1}>
+        <Stack direction="row" flexWrap="wrap" gap={0.75}>
+          {buttonValues.map((option) => {
+            const selected = Number(value) === Number(option);
+            return (
+              <Button
+                key={option}
+                size="small"
+                variant={selected ? "contained" : "outlined"}
+                color="primary"
+                onClick={() => onChange(option)}
+                sx={{
+                  minWidth: 42,
+                }}
+              >
+                {option}
+              </Button>
+            );
+          })}
+        </Stack>
+        <TextField
+          inputRef={inputRef}
+          type="number"
+          size="small"
+          value={value ?? ""}
+          onChange={handleNumberChange}
+          onBlur={handleNumberBlur}
+          inputProps={{ min, max, step }}
+          sx={{
+            width: 96,
+            "& .MuiOutlinedInput-root": { fontSize: 12, color: "text.primary" },
+            "& input": { textAlign: "center", px: 0.5 },
+          }}
+        />
+      </Stack>
+    );
+  }
 
   return (
     <Stack direction="row" spacing={2} alignItems="center">
@@ -616,23 +736,19 @@ function NumericInput({ settings, value, onChange, inputRef }) {
         max={max}
         step={step}
         onChange={(_, v) => onChange(v)}
-        sx={{ flex: 1, color: "#3b82f6" }}
+        sx={{ flex: 1, color: "status.info.fg" }}
       />
       <TextField
         inputRef={inputRef}
         type="number"
         size="small"
-        value={value ?? ""}
-        onChange={(e) => {
-          const n = e.target.value === "" ? null : Number(e.target.value);
-          if (n === null || !Number.isNaN(n)) {
-            onChange(n === null ? n : Math.max(min, Math.min(max, n)));
-          }
-        }}
+        value={value ?? min}
+        onChange={handleNumberChange}
+        onBlur={handleNumberBlur}
         inputProps={{ min, max, step }}
         sx={{
           width: 64,
-          "& .MuiOutlinedInput-root": { fontSize: 13, color: "text.primary" },
+          "& .MuiOutlinedInput-root": { fontSize: 12, color: "text.primary" },
           "& input": { textAlign: "center", px: 0.5 },
         }}
       />

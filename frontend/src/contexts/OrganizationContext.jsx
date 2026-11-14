@@ -11,14 +11,21 @@ import axios, { endpoints } from "src/utils/axios";
 import { useAuthContext } from "src/auth/hooks";
 import { enqueueSnackbar } from "src/components/snackbar";
 import logger from "src/utils/logger";
+import {
+  SS_KEY_ORG_DISPLAY_NAME,
+  SS_KEY_ORG_ID,
+  SS_KEY_ORG_LEVEL,
+  SS_KEY_ORG_NAME,
+  SS_KEY_ORG_ROLE,
+  SS_KEY_WORKSPACE_DISPLAY_NAME,
+  SS_KEY_WORKSPACE_ID,
+  SS_KEY_WORKSPACE_NAME,
+  SS_KEY_WORKSPACE_ORG_ID,
+  SS_KEY_WORKSPACE_ROLE,
+  SS_KEY_WS_LEVEL,
+} from "src/utils/sessionKeys";
 
 // --- sessionStorage helpers ---------------------------------------------------
-
-const SS_KEY_ORG_ID = "organizationId";
-const SS_KEY_ORG_NAME = "organizationName";
-const SS_KEY_ORG_DISPLAY_NAME = "organizationDisplayName";
-const SS_KEY_ORG_ROLE = "organizationRole";
-const SS_KEY_ORG_LEVEL = "orgLevel";
 
 function readSessionOrganization() {
   try {
@@ -143,35 +150,36 @@ export function OrganizationProvider({ children }) {
       setOrganizationHeader(stored.id);
       const updated = { ...stored };
       // Always sync role/level from latest user-info response
-      updated.role =
-        (user.organization_role ?? user.organizationRole) || stored.role;
+      updated.role = user.organization_role || stored.role;
       updated.orgLevel =
-        (user.org_level ?? user.orgLevel) != null
-          ? user.org_level ?? user.orgLevel
-          : stored.orgLevel;
+        user.org_level != null ? user.org_level : stored.orgLevel;
       setOrganization(updated);
       writeSessionOrganization(updated);
       setIsReady(true);
       return;
     }
 
-    // No sessionStorage → fetch org list from membership and seed first org
+    // No sessionStorage → seed from the org list. `is_selected` is the
+    // backend's answer; orgs[0] is just DB order.
     const seedFromMembership = async () => {
       try {
         const response = await axios.get(endpoints.organizations.list);
-        const orgs =
-          response?.data?.result?.organizations || response?.data || [];
+        const candidate =
+          response?.data?.result?.organizations || response?.data;
+        const orgs = Array.isArray(candidate) ? candidate : [];
         if (orgs.length > 0) {
-          const first = orgs[0];
+          const selected = orgs.find((org) => org.is_selected) || orgs[0];
           const initial = {
-            id: first.id,
-            name: first.name || null,
-            displayName: first.display_name || first.displayName || null,
-            role: (user.organization_role ?? user.organizationRole) || null,
+            id: selected.id,
+            name: selected.name || null,
+            displayName: selected.display_name || null,
+            role: selected.role || user.organization_role || null,
             orgLevel:
-              (user.org_level ?? user.orgLevel) != null
-                ? user.org_level ?? user.orgLevel
-                : null,
+              selected.level != null
+                ? selected.level
+                : user.org_level != null
+                  ? user.org_level
+                  : null,
           };
           setOrganization(initial);
           writeSessionOrganization(initial);
@@ -200,13 +208,9 @@ export function OrganizationProvider({ children }) {
       const newOrg = {
         id: orgData.id || newOrganizationId,
         name: orgData.name || null,
-        displayName:
-          orgData.display_name || orgData.displayName || orgData.name || null,
-        role: (result.org_role ?? result.orgRole) || null,
-        orgLevel:
-          (result.org_level ?? result.orgLevel) != null
-            ? result.org_level ?? result.orgLevel
-            : null,
+        displayName: orgData.display_name || orgData.name || null,
+        role: result.org_role || null,
+        orgLevel: result.org_level != null ? result.org_level : null,
       };
 
       // 1. Update organization sessionStorage
@@ -215,15 +219,30 @@ export function OrganizationProvider({ children }) {
       // 2. Update organization axios header
       setOrganizationHeader(newOrg.id);
 
-      // 3. If a workspace was returned, update workspace sessionStorage too
+      // 3. Re-point the workspace at the new org, or drop the old org's.
       if (wsData.id) {
-        sessionStorage.setItem("workspaceId", wsData.id);
-        sessionStorage.setItem("workspaceName", wsData.name || "");
+        sessionStorage.setItem(SS_KEY_WORKSPACE_ID, wsData.id);
+        sessionStorage.setItem(SS_KEY_WORKSPACE_NAME, wsData.name || "");
         sessionStorage.setItem(
-          "workspaceDisplayName",
-          wsData.display_name || wsData.displayName || wsData.name || "",
+          SS_KEY_WORKSPACE_DISPLAY_NAME,
+          wsData.display_name || wsData.name || "",
         );
+        sessionStorage.setItem(SS_KEY_WORKSPACE_ORG_ID, newOrg.id);
+        if (result.workspace_role) {
+          sessionStorage.setItem(SS_KEY_WORKSPACE_ROLE, result.workspace_role);
+        } else {
+          sessionStorage.removeItem(SS_KEY_WORKSPACE_ROLE);
+        }
+        sessionStorage.removeItem(SS_KEY_WS_LEVEL);
         axios.defaults.headers.common["X-Workspace-Id"] = wsData.id;
+      } else {
+        sessionStorage.removeItem(SS_KEY_WORKSPACE_ID);
+        sessionStorage.removeItem(SS_KEY_WORKSPACE_NAME);
+        sessionStorage.removeItem(SS_KEY_WORKSPACE_DISPLAY_NAME);
+        sessionStorage.removeItem(SS_KEY_WORKSPACE_ROLE);
+        sessionStorage.removeItem(SS_KEY_WS_LEVEL);
+        sessionStorage.removeItem(SS_KEY_WORKSPACE_ORG_ID);
+        delete axios.defaults.headers.common["X-Workspace-Id"];
       }
 
       // 4. Hard refresh — clears all React state, query cache, component trees

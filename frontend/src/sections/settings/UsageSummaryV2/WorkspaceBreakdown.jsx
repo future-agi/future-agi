@@ -43,7 +43,11 @@ export default function WorkspaceBreakdown({
     queryKey: ["v2-workspace-breakdown", dimension, period, periodEnd],
     queryFn: () =>
       axios.get(endpoints.settings.v2.usageWorkspaceBreakdown, {
-        params: { dimension, period, ...(periodEnd ? { period_end: periodEnd } : {}) },
+        params: {
+          dimension,
+          period,
+          ...(periodEnd ? { period_end: periodEnd } : {}),
+        },
       }),
     select: (res) => res.data?.result?.workspaces || [],
     enabled: !!dimension,
@@ -106,7 +110,10 @@ export default function WorkspaceBreakdown({
                 Workspace
               </TableSortLabel>
             </TableCell>
-            <TableCell align="right">
+            <TableCell
+              sx={{ fontVariantNumeric: "tabular-nums" }}
+              align="right"
+            >
               <TableSortLabel
                 active={orderBy === "usage"}
                 direction={orderBy === "usage" ? order : "desc"}
@@ -115,7 +122,12 @@ export default function WorkspaceBreakdown({
                 Usage ({displayUnit})
               </TableSortLabel>
             </TableCell>
-            <TableCell align="right">% of Total</TableCell>
+            <TableCell
+              sx={{ fontVariantNumeric: "tabular-nums" }}
+              align="right"
+            >
+              % of Total
+            </TableCell>
           </TableRow>
         </TableHead>
         <TableBody>
@@ -130,12 +142,16 @@ export default function WorkspaceBreakdown({
                   {w.workspace_name}
                 </Typography>
               </TableCell>
-              <TableCell align="right">
-                <Typography variant="body2">
-                  {fUsage(w.usage)}
-                </Typography>
+              <TableCell
+                sx={{ fontVariantNumeric: "tabular-nums" }}
+                align="right"
+              >
+                <Typography variant="body2">{fUsage(w.usage)}</Typography>
               </TableCell>
-              <TableCell align="right">
+              <TableCell
+                sx={{ fontVariantNumeric: "tabular-nums" }}
+                align="right"
+              >
                 <Typography variant="body2" color="text.secondary">
                   {totalUsage > 0
                     ? ((w.usage / totalUsage) * 100).toFixed(1)
@@ -150,12 +166,16 @@ export default function WorkspaceBreakdown({
             <TableCell>
               <Typography variant="subtitle2">Total</Typography>
             </TableCell>
-            <TableCell align="right">
-              <Typography variant="subtitle2">
-                {fUsage(totalUsage)}
-              </Typography>
+            <TableCell
+              sx={{ fontVariantNumeric: "tabular-nums" }}
+              align="right"
+            >
+              <Typography variant="subtitle2">{fUsage(totalUsage)}</Typography>
             </TableCell>
-            <TableCell align="right">
+            <TableCell
+              sx={{ fontVariantNumeric: "tabular-nums" }}
+              align="right"
+            >
               <Typography variant="subtitle2">100%</Typography>
             </TableCell>
           </TableRow>

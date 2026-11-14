@@ -1,9 +1,10 @@
 import React, { useCallback, useMemo, useState } from "react";
 import PropTypes from "prop-types";
-import { Box, Stack } from "@mui/material";
+import { Box, Button, Stack } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import axios from "src/utils/axios";
+import { apiPath } from "src/api/contracts/api-surface";
 import { enqueueSnackbar } from "notistack";
 import { fDateTime } from "src/utils/format-time";
 import TagChip from "src/components/traceDetail/TagChip";
@@ -32,9 +33,9 @@ const MetricChip = ({ label, value }) => (
       bgcolor: "background.neutral",
       border: "1px solid",
       borderColor: "divider",
-      borderRadius: "2px",
+      borderRadius: "4px",
       minWidth: 64,
-      fontSize: 11,
+      fontSize: 12,
       color: "text.primary",
       lineHeight: "16px",
       whiteSpace: "nowrap",
@@ -88,7 +89,9 @@ const InlineTagsRow = ({ tags = [], traceId }) => {
 
   const { mutate: saveTags, isPending } = useMutation({
     mutationFn: (newTags) =>
-      axios.patch(`/tracer/trace/${traceId}/tags/`, { tags: newTags }),
+      axios.patch(apiPath("/tracer/trace/{id}/tags/", { id: traceId }), {
+        tags: newTags,
+      }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["voiceCallDetail"] });
       queryClient.invalidateQueries({ queryKey: ["trace-detail"] });
@@ -106,8 +109,8 @@ const InlineTagsRow = ({ tags = [], traceId }) => {
       sx={{ flexWrap: "wrap", gap: 0.5, alignItems: "center" }}
     >
       <Iconify
-        icon="mdi:tag-outline"
-        width={13}
+        icon="solar:tag-linear"
+        width={14}
         sx={{ color: "text.disabled" }}
       />
       {normalized.map((tag, idx) => (
@@ -148,27 +151,15 @@ const InlineTagsRow = ({ tags = [], traceId }) => {
           />
         </Box>
       ) : (
-        <Box
+        <Button
+          size="small"
+          color="inherit"
           onClick={() => setIsAdding(true)}
-          sx={{
-            display: "inline-flex",
-            alignItems: "center",
-            gap: "2px",
-            px: 0.5,
-            py: "1px",
-            borderRadius: "3px",
-            border: "1px dashed",
-            borderColor: "divider",
-            fontSize: 11,
-            color: "text.disabled",
-            cursor: "pointer",
-            lineHeight: "16px",
-            "&:hover": { borderColor: "primary.main", color: "primary.main" },
-          }}
+          startIcon={<Iconify icon="solar:add-linear" width={12} />}
+          sx={{ color: "text.secondary" }}
         >
-          <Iconify icon="mdi:plus" width={12} />
           tag
-        </Box>
+        </Button>
       )}
     </Stack>
   );
@@ -179,7 +170,7 @@ InlineTagsRow.propTypes = {
   traceId: PropTypes.string,
 };
 
-const CallDetailsBar = ({ data, onAction }) => {
+const CallDetailsBar = ({ data, onAction, hiddenActionIds = [] }) => {
   const chips = useMemo(() => {
     const out = [];
     const callType = data?.call_type;
@@ -232,13 +223,24 @@ const CallDetailsBar = ({ data, onAction }) => {
   // call IDs aren't real tracer traces and the endpoint 404s, which
   // surfaces a nasty "Unable to retrieve trace" toast.
   const isObserve = data?.module === "project";
-  const { data: traceDetail } = useGetTraceDetail(isObserve ? traceId : null);
+  const { data: traceDetail } = useGetTraceDetail(isObserve ? traceId : null, {
+    projectId: data?.project_id,
+  });
   const tags =
     traceDetail?.trace?.tags ||
     traceDetail?.tags ||
     data?.tags ||
     data?.trace?.tags ||
     [];
+
+  const actions = useMemo(() => {
+    const hiddenIds = new Set(hiddenActionIds);
+    const availableActions = data?.trace_id
+      ? VOICE_ACTIONS
+      : VOICE_ACTIONS.filter((a) => !TRACE_GATED_ACTION_IDS.has(a.id));
+
+    return availableActions.filter((a) => !hiddenIds.has(a.id));
+  }, [data?.trace_id, hiddenActionIds]);
 
   if (chips.length === 0 && tags.length === 0 && !onAction && !traceId)
     return null;
@@ -261,16 +263,7 @@ const CallDetailsBar = ({ data, onAction }) => {
           so the menu items aren't rendered as inert clicks. */}
       {onAction && (
         <Stack direction="row" justifyContent="flex-end" sx={{ mb: 0.75 }}>
-          <VoiceActionsDropdown
-            onAction={onAction}
-            actions={
-              data?.trace_id
-                ? VOICE_ACTIONS
-                : VOICE_ACTIONS.filter(
-                    (a) => !TRACE_GATED_ACTION_IDS.has(a.id),
-                  )
-            }
-          />
+          <VoiceActionsDropdown onAction={onAction} actions={actions} />
         </Stack>
       )}
 
@@ -302,6 +295,7 @@ const CallDetailsBar = ({ data, onAction }) => {
 CallDetailsBar.propTypes = {
   data: PropTypes.object,
   onAction: PropTypes.func,
+  hiddenActionIds: PropTypes.arrayOf(PropTypes.string),
 };
 
 export default CallDetailsBar;

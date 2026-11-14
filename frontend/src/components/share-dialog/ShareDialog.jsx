@@ -1,11 +1,5 @@
 /* eslint-disable react/prop-types */
-import React, {
-  useState,
-  useMemo,
-  useCallback,
-  useEffect,
-  useRef,
-} from "react";
+import React, { useState, useMemo, useCallback } from "react";
 import PropTypes from "prop-types";
 import {
   Box,
@@ -21,27 +15,13 @@ import {
 import Iconify from "src/components/iconify";
 import { enqueueSnackbar } from "notistack";
 import {
-  useGetSharedLinks,
-  useCreateSharedLink,
-  useUpdateSharedLink,
   useAddSharedLinkAccess,
   useRemoveSharedLinkAccess,
 } from "src/api/shared-links";
-
-/* ── helpers ──────────────────────────────────── */
-
-function buildFallbackUrl(resourceType, resourceId) {
-  // Use current page URL — it already has the drawer/trace state in query params
-  return window.location.href;
-}
-
-function copyToClipboard(text) {
-  navigator.clipboard.writeText(text);
-  enqueueSnackbar("Link copied!", {
-    variant: "success",
-    autoHideDuration: 1500,
-  });
-}
+import useDialogGeneration from "./useDialogGeneration";
+import useShareLink from "./useShareLink";
+import useShareAccess from "./useShareAccess";
+import useCopyLink from "./useCopyLink";
 
 /* ── AccessOption ─────────────────────────────── */
 
@@ -51,10 +31,25 @@ const AccessOption = ({
   label,
   description,
   selected,
+  disabled,
+  pending,
+  unconfirmed,
   onClick,
 }) => (
   <Box
-    onClick={onClick}
+    role="button"
+    aria-pressed={selected ? "true" : "false"}
+    aria-busy={pending ? "true" : undefined}
+    aria-disabled={disabled ? "true" : undefined}
+    tabIndex={disabled ? -1 : 0}
+    onClick={disabled ? undefined : onClick}
+    onKeyDown={(e) => {
+      if (disabled || !onClick) return;
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        onClick();
+      }
+    }}
     sx={{
       display: "flex",
       alignItems: "center",
@@ -64,8 +59,9 @@ const AccessOption = ({
       borderRadius: "6px",
       border: "1.5px solid",
       borderColor: selected ? "primary.main" : "divider",
-      bgcolor: selected ? "rgba(87, 63, 204, 0.04)" : "background.paper",
-      cursor: "pointer",
+      bgcolor: selected ? "action.hover" : "background.paper",
+      cursor: disabled ? "not-allowed" : "pointer",
+      opacity: disabled ? 0.6 : 1,
       transition: "all 120ms",
       "&:hover": { borderColor: selected ? "primary.main" : "text.disabled" },
     }}
@@ -75,7 +71,7 @@ const AccessOption = ({
         width: 32,
         height: 32,
         borderRadius: "8px",
-        bgcolor: selected ? "rgba(87, 63, 204, 0.1)" : "action.hover",
+        bgcolor: selected ? "status.discovery.bg" : "action.hover",
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
@@ -89,137 +85,73 @@ const AccessOption = ({
       />
     </Box>
     <Box sx={{ flex: 1 }}>
-      <Typography sx={{ fontSize: 13, fontWeight: 500, color: "text.primary" }}>
+      <Typography sx={{ fontSize: 12, fontWeight: 500, color: "text.primary" }}>
         {label}
       </Typography>
       <Typography
-        sx={{ fontSize: 11, color: "text.disabled", lineHeight: "14px" }}
+        sx={{ fontSize: 12, color: "text.disabled", lineHeight: "14px" }}
       >
         {description}
       </Typography>
     </Box>
-    {selected && (
-      <Iconify
-        icon="mdi:check-circle"
-        width={18}
-        sx={{ color: "primary.main", flexShrink: 0 }}
-      />
+    {pending ? (
+      <Typography sx={{ fontSize: 12, color: "text.disabled", flexShrink: 0 }}>
+        Updating…
+      </Typography>
+    ) : selected && unconfirmed ? (
+      <Typography sx={{ fontSize: 12, color: "text.disabled", flexShrink: 0 }}>
+        Last confirmed
+      </Typography>
+    ) : (
+      selected && (
+        <Iconify
+          icon="solar:check-circle-bold"
+          width={20}
+          sx={{ color: "primary.main", flexShrink: 0 }}
+        />
+      )
     )}
   </Box>
 );
 
 /* ── ShareDialog ──────────────────────────────── */
 
-const ShareDialog = ({
-  open,
-  onClose,
-  resourceType,
-  resourceId,
-  fallbackShareUrl,
-}) => {
+const ShareDialog = ({ open, onClose, resourceType, resourceId }) => {
   const [emailInput, setEmailInput] = useState("");
-  const [copied, setCopied] = useState(false);
   const [localEmails, setLocalEmails] = useState([]); // optimistic local ACL
-  const [accessMode, setAccessMode] = useState("restricted"); // "restricted" | "public"
 
-  // Fetch existing shared links for this resource
-  const {
-    data: links,
-    isLoading: linksLoading,
-    isError: linksError,
-  } = useGetSharedLinks(open ? resourceType : null, open ? resourceId : null);
-  // Handle both camelCase (isActive) and snake_case (is_active) from DRF
-  const activeLink = useMemo(() => {
-    if (!links || !Array.isArray(links)) return null;
-    return links.find((l) => (l.is_active ?? l.isActive) !== false) || null;
-  }, [links]);
+  const generation = useDialogGeneration(
+    open,
+    `${resourceType ?? ""}|${resourceId ?? ""}`,
+  );
+  const link = useShareLink({ open, resourceType, resourceId, generation });
+  const access = useShareAccess({
+    shareLink: link.shareLink,
+    linksUpdatedAt: link.linksUpdatedAt,
+    linkBlocked: link.blocked,
+    refetch: link.refetch,
+    generation,
+  });
+  const { shareLink, loading } = link;
+  const shareLinkReady = access.ready;
 
-  const createMutation = useCreateSharedLink();
-  const updateMutation = useUpdateSharedLink();
+  // Only a token link is shareable: a dashboard page URL needs sign-in.
+  const shareUrl = link.tokenUrl || null;
+  const copyReady = Boolean(shareUrl) && !link.blocked && !access.settling;
+  const { copied, copy: handleCopy } = useCopyLink({
+    url: shareUrl,
+    ready: copyReady,
+    generation,
+  });
+
+  const notice = link.notice || access.notice;
+  const handleRetry = () => link.retry(access.clearUnknown);
+
   const addAccessMutation = useAddSharedLinkAccess();
   const removeAccessMutation = useRemoveSharedLinkAccess();
-  const autoCreated = useRef(false);
 
-  // Auto-create a restricted shared link when dialog opens and none exists
-  useEffect(() => {
-    if (!open || !resourceType || !resourceId) return;
-    // Only attempt create when links loaded successfully, is empty, and we haven't tried yet
-    if (
-      !linksLoading &&
-      !linksError &&
-      links &&
-      links.length === 0 &&
-      !createMutation.isPending &&
-      !autoCreated.current
-    ) {
-      autoCreated.current = true;
-      createMutation.mutate({
-        resource_type: resourceType,
-        resource_id: resourceId,
-        access_type: "restricted",
-      });
-    }
-  }, [
-    open,
-    links,
-    linksLoading,
-    linksError,
-    resourceType,
-    resourceId,
-    createMutation,
-  ]);
-
-  // Reset auto-create flag when dialog closes
-  useEffect(() => {
-    if (!open) autoCreated.current = false;
-  }, [open]);
-
-  // Sync access mode from server link
-  useEffect(() => {
-    if (activeLink) {
-      const serverMode = activeLink.accessType || activeLink.access_type;
-      if (serverMode) setAccessMode(serverMode);
-    }
-  }, [activeLink]);
-
-  // Persist access mode changes to server
-  const handleAccessModeChange = useCallback(
-    (mode) => {
-      setAccessMode(mode);
-      if (activeLink?.id) {
-        updateMutation.mutate({ id: activeLink.id, access_type: mode });
-      }
-    },
-    [activeLink, updateMutation],
-  );
-
-  // Share URL: token-based when link exists, direct fallback otherwise
-  // Also use the just-created link data from createMutation
-  const shareUrl = useMemo(() => {
-    // First check the active link from the query
-    const token = activeLink?.token;
-    if (token) {
-      return `${window.location.origin}/shared/${token}`;
-    }
-    // Check if create mutation just returned a new link
-    const createdToken = createMutation.data?.data?.result?.token;
-    if (createdToken) {
-      return `${window.location.origin}/shared/${createdToken}`;
-    }
-    // Caller-supplied direct fallback (e.g. a voice-call full-page URL)
-    if (fallbackShareUrl) return fallbackShareUrl;
-    // Last-resort fallback — current page URL.
-    return buildFallbackUrl(resourceType, resourceId);
-  }, [
-    activeLink,
-    createMutation.data,
-    resourceType,
-    resourceId,
-    fallbackShareUrl,
-  ]);
-
-  const accessList = activeLink?.accessList || activeLink?.access_list || [];
   const allEmails = useMemo(() => {
+    const accessList = shareLink?.access_list || [];
     const backendEmails = accessList.map((e) => ({
       id: e.id,
       email: e.email,
@@ -229,13 +161,7 @@ const ShareDialog = ({
       .filter((e) => !backendEmails.some((b) => b.email === e))
       .map((e) => ({ id: e, email: e, source: "local" }));
     return [...backendEmails, ...localOnly];
-  }, [accessList, localEmails]);
-
-  const handleCopy = useCallback(() => {
-    copyToClipboard(shareUrl);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
-  }, [shareUrl]);
+  }, [shareLink, localEmails]);
 
   const handleAddEmail = useCallback(() => {
     const email = emailInput.trim().toLowerCase();
@@ -249,6 +175,16 @@ const ShareDialog = ({
       setEmailInput("");
       return;
     }
+    const linkId = shareLink?.id;
+    if (!linkId || !shareLinkReady) {
+      enqueueSnackbar(
+        loading
+          ? "Share link is still being generated"
+          : "Share link isn't ready yet",
+        { variant: "warning" },
+      );
+      return;
+    }
 
     // Try backend, always add locally for instant feedback
     setLocalEmails((prev) => [...prev, email]);
@@ -258,24 +194,28 @@ const ShareDialog = ({
       autoHideDuration: 2000,
     });
 
-    const linkId = activeLink?.id;
-    if (linkId) {
-      addAccessMutation.mutate({ linkId, emails: [email] });
-    }
-  }, [emailInput, allEmails, activeLink, addAccessMutation]);
+    addAccessMutation.mutate({ linkId, emails: [email] });
+  }, [
+    emailInput,
+    allEmails,
+    shareLink,
+    shareLinkReady,
+    loading,
+    addAccessMutation,
+  ]);
 
   const handleRemoveEmail = useCallback(
     (entry) => {
       if (entry.source === "local") {
         setLocalEmails((prev) => prev.filter((e) => e !== entry.email));
-      } else if (activeLink?.id) {
+      } else if (shareLink?.id) {
         removeAccessMutation.mutate({
-          linkId: activeLink.id,
+          linkId: shareLink.id,
           accessId: entry.id,
         });
       }
     },
-    [activeLink, removeAccessMutation],
+    [shareLink, removeAccessMutation],
   );
 
   const handleKeyDown = (e) => {
@@ -289,13 +229,12 @@ const ShareDialog = ({
     <Dialog
       open={open}
       onClose={onClose}
-      maxWidth="xs"
+      maxWidth={false}
       fullWidth
       PaperProps={{
         sx: {
           borderRadius: "12px",
-          boxShadow: "0 20px 60px rgba(0,0,0,0.15)",
-          maxWidth: 440,
+          maxWidth: 560,
           overflow: "visible",
         },
       }}
@@ -314,20 +253,20 @@ const ShareDialog = ({
                 width: 28,
                 height: 28,
                 borderRadius: "6px",
-                bgcolor: "rgba(87, 63, 204, 0.1)",
+                bgcolor: "status.discovery.bg",
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "center",
               }}
             >
               <Iconify
-                icon="mdi:share-variant-outline"
-                width={15}
+                icon="solar:share-linear"
+                width={16}
                 sx={{ color: "primary.main" }}
               />
             </Box>
             <Typography
-              sx={{ fontSize: 15, fontWeight: 600, color: "text.primary" }}
+              sx={{ fontSize: 12, fontWeight: 600, color: "text.primary" }}
             >
               Share
             </Typography>
@@ -337,7 +276,7 @@ const ShareDialog = ({
             onClick={onClose}
             sx={{ color: "text.disabled" }}
           >
-            <Iconify icon="mdi:close" width={18} />
+            <Iconify icon="solar:close-linear" width={20} />
           </IconButton>
         </Stack>
 
@@ -357,24 +296,30 @@ const ShareDialog = ({
             }}
           >
             <Iconify
-              icon="mdi:link-variant"
+              icon="solar:link-linear"
               width={16}
               sx={{ color: "text.disabled", flexShrink: 0 }}
             />
-            {linksLoading || createMutation.isPending ? (
+            {loading || !shareUrl ? (
               <Typography
                 sx={{ flex: 1, fontSize: 12, color: "text.disabled" }}
               >
-                Generating share link...
+                {link.generating
+                  ? "Generating share link..."
+                  : link.verifying
+                    ? "Checking share link..."
+                    : "Share link not available"}
               </Typography>
             ) : (
               <Typography
                 noWrap
+                title={shareUrl}
                 sx={{
                   flex: 1,
                   fontSize: 12,
                   fontFamily: "monospace",
                   color: "text.secondary",
+                  userSelect: "all",
                 }}
               >
                 {shareUrl}
@@ -384,20 +329,15 @@ const ShareDialog = ({
               size="small"
               variant={copied ? "contained" : "outlined"}
               onClick={handleCopy}
-              disabled={linksLoading || createMutation.isPending}
+              disabled={!copyReady}
               startIcon={
                 <Iconify
-                  icon={copied ? "mdi:check" : "mdi:content-copy"}
+                  icon={copied ? "solar:check-linear" : "solar:copy-linear"}
                   width={14}
                 />
               }
               sx={{
-                textTransform: "none",
-                fontSize: 12,
-                height: 30,
-                px: 1.5,
                 flexShrink: 0,
-                borderRadius: "6px",
                 ...(copied
                   ? {
                       bgcolor: "primary.main",
@@ -410,6 +350,32 @@ const ShareDialog = ({
             </Button>
           </Box>
 
+          {notice && (
+            <Stack
+              direction="row"
+              alignItems="center"
+              spacing={1}
+              role="status"
+              aria-live="polite"
+              sx={{ mt: -1, mb: 2 }}
+            >
+              <Typography sx={{ flex: 1, fontSize: 12, color: "warning.dark" }}>
+                {notice.message}
+              </Typography>
+              {notice.action && (
+                <Button
+                  size="small"
+                  variant="text"
+                  onClick={handleRetry}
+                  disabled={link.retryBusy || loading}
+                  sx={{ textTransform: "none", fontSize: 12, flexShrink: 0 }}
+                >
+                  {notice.action}
+                </Button>
+              )}
+            </Stack>
+          )}
+
           {/* ── Access Mode ───────────────────── */}
           <Typography
             sx={{
@@ -417,7 +383,7 @@ const ShareDialog = ({
               fontWeight: 600,
               color: "text.disabled",
               mb: 1,
-              textTransform: "uppercase",
+              textTransform: "none",
               letterSpacing: "0.5px",
             }}
           >
@@ -425,20 +391,26 @@ const ShareDialog = ({
           </Typography>
           <Stack spacing={1} sx={{ mb: 2 }}>
             <AccessOption
-              icon="mdi:earth"
+              icon="solar:global-linear"
               iconColor="text.disabled"
               label="Anyone with the link"
               description="No sign-in required to view"
-              selected={accessMode === "public"}
-              onClick={() => handleAccessModeChange("public")}
+              selected={access.confirmedMode === "public"}
+              pending={access.pendingMode === "public"}
+              unconfirmed={access.accessUnknown}
+              disabled={!shareLinkReady}
+              onClick={() => access.changeMode("public")}
             />
             <AccessOption
-              icon="mdi:shield-lock-outline"
+              icon="solar:shield-keyhole-linear"
               iconColor="text.disabled"
               label="Restricted"
               description="Only people you add can view"
-              selected={accessMode === "restricted"}
-              onClick={() => handleAccessModeChange("restricted")}
+              selected={access.confirmedMode === "restricted"}
+              pending={access.pendingMode === "restricted"}
+              unconfirmed={access.accessUnknown}
+              disabled={!shareLinkReady}
+              onClick={() => access.changeMode("restricted")}
             />
           </Stack>
 
@@ -449,7 +421,7 @@ const ShareDialog = ({
               fontWeight: 600,
               color: "text.disabled",
               mb: 1,
-              textTransform: "uppercase",
+              textTransform: "none",
               letterSpacing: "0.5px",
             }}
           >
@@ -465,13 +437,13 @@ const ShareDialog = ({
               onKeyDown={handleKeyDown}
               InputProps={{
                 sx: {
-                  fontSize: 13,
+                  fontSize: 12,
                   borderRadius: "8px",
                   bgcolor: "background.paper",
                 },
                 startAdornment: (
                   <Iconify
-                    icon="mdi:email-outline"
+                    icon="solar:letter-linear"
                     width={16}
                     sx={{ color: "text.disabled", mr: 0.75 }}
                   />
@@ -482,14 +454,10 @@ const ShareDialog = ({
               variant="contained"
               size="small"
               onClick={handleAddEmail}
-              disabled={!emailInput.trim()}
+              disabled={!emailInput.trim() || !shareLinkReady}
               sx={{
-                textTransform: "none",
-                px: 2,
                 flexShrink: 0,
-                borderRadius: "8px",
                 bgcolor: "primary.main",
-                height: 40,
                 "&:hover": { bgcolor: "primary.dark" },
                 "&.Mui-disabled": { bgcolor: "action.disabledBackground" },
               }}
@@ -511,10 +479,10 @@ const ShareDialog = ({
             >
               <Typography
                 sx={{
-                  fontSize: 11,
+                  fontSize: 12,
                   fontWeight: 600,
                   color: "text.disabled",
-                  textTransform: "uppercase",
+                  textTransform: "none",
                   letterSpacing: "0.5px",
                   px: 1.5,
                   py: 0.75,
@@ -552,7 +520,7 @@ const ShareDialog = ({
                         alignItems: "center",
                         justifyContent: "center",
                         color: "white",
-                        fontSize: 11,
+                        fontSize: 12,
                         fontWeight: 600,
                       }}
                     >
@@ -568,7 +536,7 @@ const ShareDialog = ({
                       >
                         {entry.email}
                       </Typography>
-                      <Typography sx={{ fontSize: 10, color: "text.disabled" }}>
+                      <Typography sx={{ fontSize: 12, color: "text.disabled" }}>
                         Can view
                       </Typography>
                     </Box>
@@ -576,10 +544,11 @@ const ShareDialog = ({
                   <Tooltip title="Remove access">
                     <IconButton
                       size="small"
+                      aria-label={`Remove access for ${entry.email}`}
                       onClick={() => handleRemoveEmail(entry)}
                       sx={{ opacity: 0.4, "&:hover": { opacity: 1 } }}
                     >
-                      <Iconify icon="mdi:close" width={14} />
+                      <Iconify icon="solar:close-linear" width={14} />
                     </IconButton>
                   </Tooltip>
                 </Stack>
@@ -596,7 +565,6 @@ ShareDialog.propTypes = {
   open: PropTypes.bool.isRequired,
   onClose: PropTypes.func.isRequired,
   resourceType: PropTypes.string.isRequired,
-  fallbackShareUrl: PropTypes.string,
   resourceId: PropTypes.string.isRequired,
 };
 

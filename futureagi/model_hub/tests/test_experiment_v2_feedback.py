@@ -14,6 +14,7 @@ from rest_framework.test import APIClient
 
 from accounts.models import Organization, User
 from accounts.models.workspace import Workspace
+from agentic_eval.core.embeddings.embedding_manager import EmbeddingManager
 from model_hub.models.choices import (
     CellStatus,
     DatasetSourceChoices,
@@ -142,6 +143,34 @@ def eval_template_choices(db, organization):
         owner=OwnerChoices.USER.value,
         config={"output": "choices", "eval_type_id": "test_eval_type"},
         choices=["Good", "Bad", "Neutral"],
+        multi_choice=True,
+    )
+
+
+@pytest.fixture
+def eval_template_choice_scores(db, organization):
+    return EvalTemplate.objects.create(
+        name="test-eval-template-choice-scores",
+        description="A scoring template with a choice→score map",
+        organization=organization,
+        owner=OwnerChoices.USER.value,
+        config={"output": "score", "eval_type_id": "test_eval_type"},
+        choice_scores={"Yes": 1.0, "Maybe": 0.5, "No": 0.0},
+    )
+
+
+@pytest.fixture
+def user_eval_metric_choice_scores(
+    db, organization, workspace, dataset, eval_template_choice_scores
+):
+    return UserEvalMetric.objects.create(
+        name="Test Eval Metric Choice Scores",
+        organization=organization,
+        workspace=workspace,
+        template=eval_template_choice_scores,
+        dataset=dataset,
+        config={"mapping": {}},
+        status=StatusType.COMPLETED.value,
     )
 
 
@@ -309,10 +338,10 @@ def url(experiment_id, path=""):
 @pytest.mark.django_db
 class TestExperimentFeedbackGetTemplateV2:
     def test_get_template_success_pass_fail(
-        self, auth_client, experiment, user_eval_metric
+        self, auth_client, experiment_with_evals, user_eval_metric
     ):
         response = auth_client.get(
-            url(experiment.id, "get-template/"),
+            url(experiment_with_evals.id, "get-template/"),
             {"user_eval_metric_id": str(user_eval_metric.id)},
         )
         assert response.status_code == status.HTTP_200_OK, response.json()
@@ -325,6 +354,7 @@ class TestExperimentFeedbackGetTemplateV2:
     def test_get_template_success_choices(
         self, auth_client, experiment, user_eval_metric_choices
     ):
+        experiment.user_eval_template_ids.add(user_eval_metric_choices)
         response = auth_client.get(
             url(experiment.id, "get-template/"),
             {"user_eval_metric_id": str(user_eval_metric_choices.id)},
@@ -335,6 +365,60 @@ class TestExperimentFeedbackGetTemplateV2:
         assert data["choices"] == ["A", "B", "C"]
         assert data["multi_choice"] is True
 
+    def test_get_template_multi_choice_ignores_metric_side_override(
+        self,
+        auth_client,
+        experiment,
+        eval_template_choices,
+        dataset,
+        organization,
+        workspace,
+    ):
+        # Metric-side multi_choice override is ignored; the template's
+        # canonical direct field is the single source of truth.
+        metric = UserEvalMetric.objects.create(
+            name="Tone-like Metric",
+            organization=organization,
+            workspace=workspace,
+            template=eval_template_choices,
+            dataset=dataset,
+            config={"config": {"multi_choice": False}},
+            status=StatusType.COMPLETED.value,
+        )
+        experiment.user_eval_template_ids.add(metric)
+
+        response = auth_client.get(
+            url(experiment.id, "get-template/"),
+            {"user_eval_metric_id": str(metric.id)},
+        )
+        assert response.status_code == status.HTTP_200_OK, response.json()
+        data = response.json()["result"]
+        assert data["multi_choice"] is True
+        assert data["choices"] == eval_template_choices.choices
+
+    def test_get_template_returns_choice_scores_when_defined(
+        self, auth_client, experiment, user_eval_metric_choice_scores
+    ):
+        experiment.user_eval_template_ids.add(user_eval_metric_choice_scores)
+        response = auth_client.get(
+            url(experiment.id, "get-template/"),
+            {"user_eval_metric_id": str(user_eval_metric_choice_scores.id)},
+        )
+        assert response.status_code == status.HTTP_200_OK, response.json()
+        data = response.json()["result"]
+        assert data["choice_scores"] == {"Yes": 1.0, "Maybe": 0.5, "No": 0.0}
+
+    def test_get_template_returns_null_choice_scores_when_absent(
+        self, auth_client, experiment_with_evals, user_eval_metric
+    ):
+        response = auth_client.get(
+            url(experiment_with_evals.id, "get-template/"),
+            {"user_eval_metric_id": str(user_eval_metric.id)},
+        )
+        assert response.status_code == status.HTTP_200_OK, response.json()
+        data = response.json()["result"]
+        assert data["choice_scores"] is None
+
     def test_get_template_missing_metric_id(self, auth_client, experiment):
         response = auth_client.get(url(experiment.id, "get-template/"))
         assert response.status_code == status.HTTP_400_BAD_REQUEST
@@ -343,6 +427,15 @@ class TestExperimentFeedbackGetTemplateV2:
         response = auth_client.get(
             url(experiment.id, "get-template/"),
             {"user_eval_metric_id": str(uuid.uuid4())},
+        )
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+
+    def test_get_template_rejects_metric_not_attached_to_experiment(
+        self, auth_client, experiment, user_eval_metric
+    ):
+        response = auth_client.get(
+            url(experiment.id, "get-template/"),
+            {"user_eval_metric_id": str(user_eval_metric.id)},
         )
         assert response.status_code == status.HTTP_400_BAD_REQUEST
 
@@ -372,6 +465,33 @@ class TestExperimentFeedbackGetTemplateV2:
         )
         assert response.status_code == status.HTTP_400_BAD_REQUEST
 
+    def test_get_template_rejects_other_org_metric(
+        self, auth_client, experiment, snapshot_dataset
+    ):
+        other_org = Organization.objects.create(name="Other Org Metric")
+        other_template = EvalTemplate.objects.create(
+            name="other-org-eval-template",
+            description="A different org template",
+            organization=other_org,
+            owner=OwnerChoices.USER.value,
+            config={"output": "Pass/Fail", "eval_type_id": "test_eval_type"},
+        )
+        other_metric = UserEvalMetric.objects.create(
+            name="Other Org Metric",
+            organization=other_org,
+            template=other_template,
+            dataset=snapshot_dataset,
+            config={"mapping": {}},
+            status=StatusType.COMPLETED.value,
+        )
+
+        response = auth_client.get(
+            url(experiment.id, "get-template/"),
+            {"user_eval_metric_id": str(other_metric.id)},
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+
 
 # ==================== Create Tests ====================
 
@@ -379,10 +499,15 @@ class TestExperimentFeedbackGetTemplateV2:
 @pytest.mark.django_db
 class TestExperimentFeedbackCreateV2:
     def test_create_feedback_success(
-        self, auth_client, experiment, user_eval_metric, eval_column_per_edt, row
+        self,
+        auth_client,
+        experiment_with_evals,
+        user_eval_metric,
+        eval_column_per_edt,
+        row,
     ):
         response = auth_client.post(
-            url(experiment.id),
+            url(experiment_with_evals.id),
             {
                 "source": FeedbackSourceChoices.EXPERIMENT.value,
                 "source_id": str(eval_column_per_edt.id),
@@ -403,10 +528,15 @@ class TestExperimentFeedbackCreateV2:
         assert feedback.value == "Failed"
 
     def test_create_feedback_source_is_experiment(
-        self, auth_client, experiment, user_eval_metric, eval_column_per_edt, row
+        self,
+        auth_client,
+        experiment_with_evals,
+        user_eval_metric,
+        eval_column_per_edt,
+        row,
     ):
         response = auth_client.post(
-            url(experiment.id),
+            url(experiment_with_evals.id),
             {
                 "source": FeedbackSourceChoices.EXPERIMENT.value,
                 "source_id": str(eval_column_per_edt.id),
@@ -456,6 +586,81 @@ class TestExperimentFeedbackCreateV2:
         )
         assert response.status_code == status.HTTP_400_BAD_REQUEST
 
+    def test_create_feedback_rejects_source_column_outside_snapshot(
+        self,
+        auth_client,
+        experiment_with_evals,
+        dataset,
+        user_eval_metric,
+        row,
+    ):
+        outside_column = Column.objects.create(
+            name="Outside Column",
+            dataset=dataset,
+            data_type=DataTypeChoices.TEXT.value,
+            source=SourceChoices.EXPERIMENT_EVALUATION.value,
+            status=StatusType.COMPLETED.value,
+        )
+
+        response = auth_client.post(
+            url(experiment_with_evals.id),
+            {
+                "source": FeedbackSourceChoices.EXPERIMENT.value,
+                "source_id": str(outside_column.id),
+                "user_eval_metric": str(user_eval_metric.id),
+                "value": "Failed",
+                "explanation": "Wrong snapshot",
+                "row_id": str(row.id),
+            },
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert not Feedback.objects.filter(explanation="Wrong snapshot").exists()
+
+    def test_create_feedback_rejects_metric_not_attached_to_experiment(
+        self, auth_client, experiment, user_eval_metric, eval_column_per_edt, row
+    ):
+        response = auth_client.post(
+            url(experiment.id),
+            {
+                "source": FeedbackSourceChoices.EXPERIMENT.value,
+                "source_id": str(eval_column_per_edt.id),
+                "user_eval_metric": str(user_eval_metric.id),
+                "value": "Failed",
+                "explanation": "Detached metric",
+                "row_id": str(row.id),
+            },
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert not Feedback.objects.filter(explanation="Detached metric").exists()
+
+    def test_create_feedback_rejects_non_eval_source_column_in_snapshot(
+        self,
+        auth_client,
+        experiment_with_evals,
+        user_eval_metric,
+        input_column,
+        row,
+    ):
+        response = auth_client.post(
+            url(experiment_with_evals.id),
+            {
+                "source": FeedbackSourceChoices.EXPERIMENT.value,
+                "source_id": str(input_column.id),
+                "user_eval_metric": str(user_eval_metric.id),
+                "value": "Failed",
+                "explanation": "Input column feedback",
+                "row_id": str(row.id),
+            },
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert not Feedback.objects.filter(explanation="Input column feedback").exists()
+
 
 # ==================== Details Tests ====================
 
@@ -463,10 +668,15 @@ class TestExperimentFeedbackCreateV2:
 @pytest.mark.django_db
 class TestExperimentFeedbackDetailsV2:
     def test_get_details_with_metric_and_row(
-        self, auth_client, experiment, feedback_per_edt, user_eval_metric, row
+        self,
+        auth_client,
+        experiment_with_evals,
+        feedback_per_edt,
+        user_eval_metric,
+        row,
     ):
         response = auth_client.get(
-            url(experiment.id, "get-feedback-details/"),
+            url(experiment_with_evals.id, "get-feedback-details/"),
             {
                 "user_eval_metric_id": str(user_eval_metric.id),
                 "row_id": str(row.id),
@@ -479,10 +689,10 @@ class TestExperimentFeedbackDetailsV2:
         assert data["feedback"][0]["comment"] == "The model hallucinated"
 
     def test_get_details_metric_only(
-        self, auth_client, experiment, feedback_per_edt, user_eval_metric
+        self, auth_client, experiment_with_evals, feedback_per_edt, user_eval_metric
     ):
         response = auth_client.get(
-            url(experiment.id, "get-feedback-details/"),
+            url(experiment_with_evals.id, "get-feedback-details/"),
             {"user_eval_metric_id": str(user_eval_metric.id)},
         )
         assert response.status_code == status.HTTP_200_OK
@@ -526,6 +736,43 @@ class TestExperimentFeedbackDetailsV2:
         )
         assert response.status_code == status.HTTP_400_BAD_REQUEST
 
+    def test_get_details_excludes_feedback_from_other_snapshot(
+        self, auth_client, experiment, organization, user, user_eval_metric
+    ):
+        other_snapshot = Dataset.objects.create(
+            name="Other Snapshot",
+            organization=organization,
+            source=DatasetSourceChoices.EXPERIMENT_SNAPSHOT.value,
+        )
+        other_row = Row.objects.create(dataset=other_snapshot, order=0)
+        other_column = Column.objects.create(
+            name="Other Snapshot Eval Column",
+            dataset=other_snapshot,
+            data_type=DataTypeChoices.TEXT.value,
+            source=SourceChoices.EXPERIMENT_EVALUATION.value,
+            status=StatusType.COMPLETED.value,
+        )
+        Feedback.objects.create(
+            source=FeedbackSourceChoices.EXPERIMENT.value,
+            source_id=str(other_column.id),
+            user_eval_metric=user_eval_metric,
+            value="Failed",
+            explanation="Other snapshot feedback",
+            user=user,
+            row_id=str(other_row.id),
+            organization=organization,
+        )
+
+        response = auth_client.get(
+            url(experiment.id, "get-feedback-details/"),
+            {"user_eval_metric_id": str(user_eval_metric.id)},
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        data = response.json()["result"]
+        assert data["total_count"] == 0
+        assert data["feedback"] == []
+
 
 # ==================== Submit Feedback Tests ====================
 
@@ -566,6 +813,65 @@ class TestExperimentFeedbackSubmitV2:
         assert data["action_type"] == "retune"
         mock_embed.parallel_process_metadata.assert_called_once()
         mock_embed.close.assert_called_once()
+
+    def test_submit_rejects_metric_that_does_not_match_feedback(
+        self,
+        auth_client,
+        experiment_with_evals,
+        feedback_per_edt,
+        organization,
+        workspace,
+        dataset,
+        eval_template,
+    ):
+        other_metric = UserEvalMetric.objects.create(
+            name="Other Same Org Metric",
+            organization=organization,
+            workspace=workspace,
+            template=eval_template,
+            dataset=dataset,
+            config={"mapping": {}},
+            status=StatusType.COMPLETED.value,
+        )
+
+        response = auth_client.post(
+            url(experiment_with_evals.id, "submit-feedback/"),
+            {
+                "feedback_id": str(feedback_per_edt.id),
+                "user_eval_metric_id": str(other_metric.id),
+                "action_type": "retune",
+            },
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+
+    @patch("model_hub.views.experiment_feedback_v2.EmbeddingManager")
+    @patch("model_hub.views.experiment_feedback_v2.EvaluationRunner")
+    def test_submit_rejects_deleted_feedback(
+        self,
+        mock_runner_cls,
+        mock_embed_cls,
+        auth_client,
+        experiment_with_evals,
+        feedback_per_edt,
+        user_eval_metric,
+    ):
+        feedback_per_edt.delete()
+
+        response = auth_client.post(
+            url(experiment_with_evals.id, "submit-feedback/"),
+            {
+                "feedback_id": str(feedback_per_edt.id),
+                "user_eval_metric_id": str(user_eval_metric.id),
+                "action_type": "retune",
+            },
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        mock_runner_cls.assert_not_called()
+        mock_embed_cls.assert_not_called()
 
     @patch("model_hub.views.experiment_feedback_v2.EmbeddingManager")
     @patch("model_hub.views.experiment_feedback_v2.EvaluationRunner")
@@ -1099,3 +1405,410 @@ class TestStartEvalsProcessExperimentScoped:
 
         assert response.status_code == status.HTTP_400_BAD_REQUEST
         mock_workflow.assert_not_called()
+
+
+@pytest.mark.django_db
+class TestExperimentRerunCellsV2:
+    @patch("tfc.temporal.experiments.start_rerun_cells_v2_workflow")
+    def test_rerun_cells_accepts_max_concurrent_rows(
+        self,
+        mock_workflow,
+        auth_client,
+        experiment,
+        snapshot_dataset,
+        output_column,
+        row,
+    ):
+        mock_workflow.return_value = "wf-cell-rerun"
+        Cell.objects.create(
+            dataset=snapshot_dataset,
+            column=output_column,
+            row=row,
+            value="old output",
+            status=CellStatus.PASS.value,
+        )
+
+        response = auth_client.post(
+            f"{BASE_URL}/{experiment.id}/rerun-cells/",
+            {
+                "cells": [
+                    {
+                        "column_id": str(output_column.id),
+                        "row_id": str(row.id),
+                    }
+                ],
+                "max_concurrent_rows": 2,
+            },
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_200_OK, response.json()
+        mock_workflow.assert_called_once()
+        assert mock_workflow.call_args.kwargs["max_concurrent_rows"] == 2
+
+
+@pytest.mark.django_db
+class TestExperimentDeleteV2:
+    @patch("tfc.temporal.experiments.cancel_experiment_workflow")
+    def test_delete_soft_deletes_v2_generated_eval_columns(
+        self,
+        mock_cancel,
+        auth_client,
+        experiment_with_evals,
+        experiment_dataset,
+        output_column,
+        eval_column_per_edt,
+        eval_column_base,
+        user_eval_metric,
+        snapshot_dataset,
+    ):
+        per_edt_reason = Column.objects.create(
+            name="Per-EDT Eval Reason",
+            dataset=snapshot_dataset,
+            data_type=DataTypeChoices.TEXT.value,
+            source=SourceChoices.EVALUATION_REASON.value,
+            source_id=f"{eval_column_per_edt.id}-sourceid-{user_eval_metric.id}",
+            status=StatusType.COMPLETED.value,
+        )
+        base_reason = Column.objects.create(
+            name="Base Eval Reason",
+            dataset=snapshot_dataset,
+            data_type=DataTypeChoices.TEXT.value,
+            source=SourceChoices.EVALUATION_REASON.value,
+            source_id=f"{eval_column_base.id}-sourceid-{user_eval_metric.id}",
+            status=StatusType.COMPLETED.value,
+        )
+        columns = [
+            output_column,
+            eval_column_per_edt,
+            per_edt_reason,
+            eval_column_base,
+            base_reason,
+        ]
+        previous_column_updates = {
+            column.id: column.updated_at for column in columns
+        }
+        previous_edt_updated_at = experiment_dataset.updated_at
+        previous_experiment_updated_at = experiment_with_evals.updated_at
+
+        response = auth_client.delete(
+            f"{BASE_URL}/delete/",
+            {"experiment_ids": [str(experiment_with_evals.id)]},
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_200_OK, response.json()
+        mock_cancel.assert_called_once_with(str(experiment_with_evals.id))
+
+        for column in columns:
+            column.refresh_from_db()
+            assert column.deleted is True, column.name
+            assert column.deleted_at is not None, column.name
+            assert column.updated_at == column.deleted_at, column.name
+            assert column.updated_at > previous_column_updates[column.id], column.name
+
+        experiment_dataset.refresh_from_db()
+        assert experiment_dataset.deleted is True
+        assert experiment_dataset.deleted_at is not None
+        assert experiment_dataset.updated_at == experiment_dataset.deleted_at
+        assert experiment_dataset.updated_at > previous_edt_updated_at
+
+        experiment_with_evals.refresh_from_db()
+        assert experiment_with_evals.deleted is True
+        assert experiment_with_evals.deleted_at is not None
+        assert experiment_with_evals.updated_at == experiment_with_evals.deleted_at
+        assert experiment_with_evals.updated_at > previous_experiment_updated_at
+
+
+# ==================== #3278: feedback vector lifecycle ====================
+
+
+@pytest.mark.django_db
+class TestFeedbackVectorLifecycle:
+    """Feedback edits/deletes must revoke the vector's retrieval eligibility.
+
+    Regression coverage for #3278: the embed path upserts on a stable
+    ``feedback_id`` identity (not the per-embed ``item_id``), and
+    ``Feedback.delete()`` tombstones the ClickHouse ``feedbacks`` rows that
+    carry the record's identity.
+    """
+
+    @patch("model_hub.views.experiment_feedback_v2.EmbeddingManager")
+    @patch("model_hub.views.experiment_feedback_v2.EvaluationRunner")
+    def test_submit_stamps_feedback_id_in_embedding_metadata(
+        self,
+        mock_runner_cls,
+        mock_embed_cls,
+        auth_client,
+        experiment_with_evals,
+        feedback_per_edt,
+        user_eval_metric,
+        eval_cell_per_edt,
+        input_cell,
+    ):
+        mock_runner = MagicMock()
+        mock_runner._get_required_fields_and_mappings.return_value = ([], {})
+        mock_runner_cls.return_value = mock_runner
+        mock_embed = MagicMock()
+        mock_embed_cls.return_value = mock_embed
+
+        response = auth_client.post(
+            url(experiment_with_evals.id, "submit-feedback/"),
+            {
+                "feedback_id": str(feedback_per_edt.id),
+                "user_eval_metric_id": str(user_eval_metric.id),
+                "action_type": "retune",
+            },
+            format="json",
+        )
+        assert response.status_code == status.HTTP_200_OK
+
+        metadatas = mock_embed.parallel_process_metadata.call_args.kwargs["metadatas"]
+        assert metadatas["feedback_id"] == str(feedback_per_edt.id)
+
+    @patch("agentic_eval.core.database.ch_vector.ClickHouseVectorDB")
+    def test_delete_tombstones_feedback_vectors(
+        self,
+        mock_db_cls,
+        db,
+        feedback_per_edt,
+        user_eval_metric,
+        django_capture_on_commit_callbacks,
+    ):
+        Feedback.objects.filter(pk=feedback_per_edt.pk).update(
+            eval_template=user_eval_metric.template
+        )
+        feedback_per_edt.refresh_from_db()
+        mock_client = MagicMock()
+        mock_db_cls.return_value = mock_client
+
+        with django_capture_on_commit_callbacks(execute=True):
+            feedback_per_edt.delete()
+
+        mock_client.mark_deleted_by_metadata.assert_called_once_with(
+            "feedbacks",
+            {"feedback_id": str(feedback_per_edt.id)},
+        )
+        mock_client.close.assert_called_once()
+        feedback_per_edt.refresh_from_db()
+        assert feedback_per_edt.deleted is True
+
+    @patch("agentic_eval.core.database.ch_vector.ClickHouseVectorDB")
+    def test_delete_without_eval_template_tombstones_unscoped(
+        self, mock_db_cls, db, feedback_per_edt, django_capture_on_commit_callbacks
+    ):
+        mock_client = MagicMock()
+        mock_db_cls.return_value = mock_client
+
+        with django_capture_on_commit_callbacks(execute=True):
+            feedback_per_edt.delete()
+
+        mock_client.mark_deleted_by_metadata.assert_called_once_with(
+            "feedbacks",
+            {"feedback_id": str(feedback_per_edt.id)},
+        )
+
+    @patch("agentic_eval.core.database.ch_vector.ClickHouseVectorDB")
+    def test_delete_swallows_clickhouse_failure(
+        self, mock_db_cls, db, feedback_per_edt, django_capture_on_commit_callbacks
+    ):
+        mock_client = MagicMock()
+        mock_client.mark_deleted_by_metadata.side_effect = RuntimeError("ch down")
+        mock_db_cls.return_value = mock_client
+
+        with django_capture_on_commit_callbacks(execute=True):
+            feedback_per_edt.delete()
+
+        feedback_per_edt.refresh_from_db()
+        assert feedback_per_edt.deleted is True
+
+    @patch("agentic_eval.core.database.ch_vector.ClickHouseVectorDB")
+    def test_queryset_delete_tombstones_via_post_delete(
+        self,
+        mock_db_cls,
+        db,
+        feedback_per_edt,
+        user_eval_metric,
+        django_capture_on_commit_callbacks,
+    ):
+        """Collector deletes (queryset/cascade) bypass Feedback.delete() and
+        fire post_delete — the receiver must tombstone instead."""
+        Feedback.objects.filter(pk=feedback_per_edt.pk).update(
+            eval_template=user_eval_metric.template
+        )
+        mock_client = MagicMock()
+        mock_db_cls.return_value = mock_client
+
+        with django_capture_on_commit_callbacks(execute=True):
+            Feedback.objects.filter(pk=feedback_per_edt.pk).delete()
+
+        mock_client.mark_deleted_by_metadata.assert_called_once_with(
+            "feedbacks",
+            {"feedback_id": str(feedback_per_edt.id)},
+        )
+
+
+class TestFeedbackUniqueKeySelection:
+    """data_formatter picks feedback_id (stable) over item_id (per-embed)."""
+
+    def _manager(self):
+        with patch(
+            "agentic_eval.core.database.ch_vector.ClickHouseVectorDB.__init__",
+            lambda self, *a, **k: None,
+        ):
+            mgr = EmbeddingManager()
+        mgr.db_client = MagicMock()
+        mgr.insert_embedding = MagicMock()
+        return mgr
+
+    def _run(self, mgr, row_dict):
+        with patch(
+            "agentic_eval.core.embeddings.embedding_manager.model_manager"
+        ) as mock_mm:
+            mock_mm._use_serving = False
+            mock_mm.text_model = MagicMock()
+            mock_mm.text_model.encode.return_value.tolist.return_value = [0.1]
+            return mgr.data_formatter(
+                row_dict=row_dict,
+                inputs_formater=["prompt"],
+                table_name="feedbacks",
+                insert=True,
+                eval_id="eval-1",
+                organization_id="org-1",
+            )
+
+    def test_uses_feedback_id_when_present(self):
+        mgr = self._manager()
+        self._run(
+            mgr,
+            {
+                "feedback_id": "fb-123",
+                "prompt": "hello",
+                "feedback_comment": "x",
+                "feedback_value": "Failed",
+            },
+        )
+        mgr.insert_embedding.assert_called_once()
+        kwargs = mgr.insert_embedding.call_args.kwargs
+        assert kwargs["unique_key"] == ["feedback_id", "feedback_input"]
+        assert kwargs["unique_key_value"] == "fb-123"
+
+    def test_falls_back_to_item_id_without_feedback_id(self):
+        mgr = self._manager()
+        self._run(mgr, {"prompt": "hello", "feedback_comment": "x"})
+        mgr.insert_embedding.assert_called_once()
+        kwargs = mgr.insert_embedding.call_args.kwargs
+        assert kwargs["unique_key"] == "item_id"
+        assert kwargs["unique_key_value"]
+
+    def test_multi_input_keeps_one_vector_per_field(self):
+        """Two inputs of one submission must not tombstone each other.
+
+        Spies on the real insert_embedding → upsert_vector path: each input
+        upserts under (feedback_id, feedback_input), so a later input only
+        supersedes its own field's prior vector.
+        """
+        from agentic_eval.core.database.ch_vector import ClickHouseVectorDB
+
+        with patch.object(ClickHouseVectorDB, "__init__", return_value=None):
+            mgr = EmbeddingManager()
+        mgr.db_client = MagicMock()
+
+        with patch(
+            "agentic_eval.core.embeddings.embedding_manager.model_manager"
+        ) as mock_mm:
+            mock_mm._use_serving = False
+            mock_mm.text_model = MagicMock()
+            mock_mm.text_model.encode.return_value.tolist.return_value = [0.1]
+            mgr.data_formatter(
+                row_dict={
+                    "feedback_id": "fb-1",
+                    "prompt": "p",
+                    "response": "r",
+                    "feedback_comment": "x",
+                    "feedback_value": "Failed",
+                },
+                inputs_formater=["prompt", "response"],
+                table_name="feedbacks",
+                insert=True,
+                eval_id="eval-1",
+                organization_id="org-1",
+            )
+
+        calls = mgr.db_client.upsert_vector.call_args_list
+        assert len(calls) == 2
+        assert [c.args[4] for c in calls] == [
+            ["feedback_id", "feedback_input"],
+            ["feedback_id", "feedback_input"],
+        ]
+        assert [c.args[3]["feedback_input"] for c in calls] == [
+            "prompt",
+            "response",
+        ]
+        assert all(c.args[3]["feedback_id"] == "fb-1" for c in calls)
+
+
+class TestMarkDeletedByMetadata:
+    """ch_vector tombstone helper emits a scoped ALTER … UPDATE deleted = 1."""
+
+    def test_scoped_tombstone_sql(self):
+        from agentic_eval.core.database.ch_vector import ClickHouseVectorDB
+
+        with patch.object(ClickHouseVectorDB, "__init__", return_value=None):
+            db = ClickHouseVectorDB()
+        db.client = MagicMock()
+
+        db.mark_deleted_by_metadata(
+            "feedbacks", {"feedback_id": "fb-9"}, eval_id="eval-7"
+        )
+
+        sql = db.client.execute.call_args.args[0]
+        assert sql.startswith("ALTER TABLE feedbacks UPDATE deleted = 1")
+        assert "deleted = 0" in sql
+        assert "eval_id = 'eval-7'" in sql
+        assert "has(metadata.key, 'feedback_id')" in sql
+        assert "'fb-9'" in sql
+        assert db.client.execute.call_args.kwargs["settings"] == {"mutations_sync": 2}
+
+    def test_unscoped_tombstone_sql(self):
+        from agentic_eval.core.database.ch_vector import ClickHouseVectorDB
+
+        with patch.object(ClickHouseVectorDB, "__init__", return_value=None):
+            db = ClickHouseVectorDB()
+        db.client = MagicMock()
+
+        db.mark_deleted_by_metadata("feedbacks", {"feedback_id": "fb-9"})
+
+        sql = db.client.execute.call_args.args[0]
+        assert "eval_id" not in sql
+        assert "has(metadata.key, 'feedback_id')" in sql
+
+    def test_tombstone_sql_can_exclude_replacement_revision(self):
+        from agentic_eval.core.database.ch_vector import ClickHouseVectorDB
+
+        with patch.object(ClickHouseVectorDB, "__init__", return_value=None):
+            db = ClickHouseVectorDB()
+        db.client = MagicMock()
+
+        db.mark_deleted_by_metadata(
+            "feedbacks",
+            {"feedback_id": "fb-9"},
+            exclude_filters={"feedback_revision": "revision-1"},
+        )
+
+        sql = db.client.execute.call_args.args[0]
+        assert "feedback_id" in sql
+        assert "NOT (has(metadata.key, 'feedback_revision')" in sql
+        assert "'revision-1'" in sql
+
+    def test_empty_filters_cannot_tombstone_the_entire_table(self):
+        from agentic_eval.core.database.ch_vector import ClickHouseVectorDB
+
+        with patch.object(ClickHouseVectorDB, "__init__", return_value=None):
+            client = ClickHouseVectorDB()
+        client.client = MagicMock()
+
+        with pytest.raises(ValueError, match="metadata filter"):
+            client.mark_deleted_by_metadata("feedbacks", {})
+
+        client.client.execute.assert_not_called()

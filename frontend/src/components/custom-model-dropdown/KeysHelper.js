@@ -63,12 +63,7 @@ export const buttonStyles = (isSelected, theme) => ({
   color: isSelected ? "primary.dark" : "text.primary",
   backgroundColor: isSelected ? "action.hover" : "transparent",
   border: "1px solid",
-  fontSize: "12px",
-  fontWeight: 500,
-  px: 1,
-  height: "26px",
   borderColor: isSelected ? "primary.main" : "text.disabled",
-  borderRadius: "20px",
   "&:hover": {
     backgroundColor: isSelected ? "action.hover" : theme.palette.action.hover,
   },
@@ -121,6 +116,17 @@ export const filterAndSortProviders = (
 
   return typeof sortFn === "function" ? sortFn(filtered) : filtered;
 };
+
+export const normalizeProviderStatus = (provider = {}) => ({
+  ...provider,
+  display_name:
+    provider.display_name || provider.displayName || provider.provider || "",
+  displayName:
+    provider.displayName || provider.display_name || provider.provider || "",
+  hasKey: provider.hasKey ?? provider.has_key ?? false,
+  maskedKey: provider.maskedKey ?? provider.masked_key ?? null,
+  logoUrl: provider.logoUrl ?? provider.logo_url ?? "",
+});
 
 export const getFilterOptions = ({
   defaultModelProviders = [],

@@ -6,7 +6,12 @@ import axios, { endpoints } from "src/utils/axios";
 import { getAgentFormValues } from "./common";
 import { useMutation } from "@tanstack/react-query";
 import logger from "src/utils/logger";
-import { AGENT_TYPES, isLiveKitProvider } from "./constants";
+import {
+  AGENT_TYPES,
+  isLiveKitProvider,
+  supportsConcurrency,
+  VOICE_TRANSPORT,
+} from "./constants";
 
 export const useAgentConfigForm = (schema, agentDetails) => {
   const {
@@ -19,6 +24,7 @@ export const useAgentConfigForm = (schema, agentDetails) => {
     setValue,
     getValues,
     trigger,
+    clearErrors,
   } = useForm({
     mode: "onSubmit",
     resolver: zodResolver(schema, undefined, { mode: "async" }),
@@ -41,18 +47,30 @@ export const useAgentConfigForm = (schema, agentDetails) => {
     setValue,
     getValues,
     trigger,
+    clearErrors,
   };
+};
+
+// Where a refusal's detail keys land on the form.
+const REFUSAL_FIELDS = {
+  api_key: "apiKey",
+  assistant_id: "assistantId",
+  instrumentation: "observabilityEnabled",
 };
 
 export const useAgentSubmit = ({
   agentDefinitionId,
+  agentKind,
   reset,
   queryClient,
   enqueueSnackbar,
   setError,
+  setFieldError = () => {},
+  setValue = () => {},
   setSelectedVersion,
   onClose,
 }) => {
+  const isSourceAgent = agentKind === "source";
   const { isPending, mutateAsync } = useMutation({
     mutationFn: (payload) =>
       axios.post(
@@ -64,7 +82,7 @@ export const useAgentSubmit = ({
   const onSubmit = async (data) => {
     try {
       // Build payload with snake_case keys for the backend
-      const payload = {
+      let payload = {
         agent_type: data.agentType,
         agent_name: data.agentName,
         languages: data.languages,
@@ -73,9 +91,9 @@ export const useAgentSubmit = ({
         assistant_id: data.assistantId,
         description: data.description,
         knowledge_base: data.knowledgeBase || null,
-        country_code: data.countryCode,
         contact_number: data.contactNumber,
         inbound: data.inbound,
+        target_speaks_first: data.targetSpeaksFirst,
         commit_message: data.commitMessage,
         observability_enabled: data.observabilityEnabled,
         authentication_method: "api_key",
@@ -94,19 +112,24 @@ export const useAgentSubmit = ({
       };
 
       // Only process and include voice-specific fields for voice agents
+      let voiceContactNumber = null;
       if (data.agentType === "voice") {
         const fullContactNumber = data?.countryCode
           ? `+${data.countryCode}${data.contactNumber.trim()}`
           : data.contactNumber.trim();
-        payload.contact_number = fullContactNumber;
+        // A web (WebRTC) simulation carries no number — the backend reads an
+        // empty contact_number as the signal to run over WebRTC.
+        payload.contact_number =
+          data.voiceTransport === VOICE_TRANSPORT.TELEPHONY
+            ? fullContactNumber
+            : "";
         delete payload.model;
         delete payload.model_details;
 
-        // Parse LiveKit fields for backend
+        // Parse LiveKit fields for backend. LiveKit supports both web (WebRTC,
+        // no number) and telephony (SIP, with number); contact_number is set
+        // above from the transport toggle, so don't force it empty here.
         if (isLiveKitProvider(data.provider)) {
-          payload.contact_number = "";
-          payload.livekit_max_concurrency =
-            parseInt(data.livekitMaxConcurrency, 10) || 5;
           if (
             !payload.livekit_config_json ||
             (typeof payload.livekit_config_json === "string" &&
@@ -125,25 +148,36 @@ export const useAgentSubmit = ({
           }
         }
 
-        // Remove LiveKit fields for non-LiveKit providers
+        // Concurrency applies to every web provider (livekit / vapi / retell),
+        // so send it whenever the provider supports concurrent cases.
+        if (supportsConcurrency(data.provider)) {
+          payload.livekit_max_concurrency =
+            parseInt(data.livekitMaxConcurrency, 10) || 5;
+        }
+
+        // Remove LiveKit-only fields for non-LiveKit providers, keeping the
+        // shared concurrency value for vapi/retell.
         if (!isLiveKitProvider(data.provider)) {
           delete payload.livekit_url;
           delete payload.livekit_api_key;
           delete payload.livekit_api_secret;
           delete payload.livekit_agent_name;
           delete payload.livekit_config_json;
-          delete payload.livekit_max_concurrency;
+          if (!supportsConcurrency(data.provider)) {
+            delete payload.livekit_max_concurrency;
+          }
         }
+
+        voiceContactNumber = payload.contact_number;
       } else {
         // Remove voice-specific fields for non-voice agents
         delete payload.country_code;
         payload["contact_number"] = ""; //dummy number
-        // delete payload.provider;
-        // delete payload.api_key;
+        delete payload.provider;
+        delete payload.api_key;
         delete payload.assistant_id;
-        delete payload.observability_enabled;
-        // delete payload.inbound;
-        // delete payload.authentication_method;
+        if (!isSourceAgent) delete payload.observability_enabled;
+        delete payload.authentication_method;
         delete payload.livekit_url;
         delete payload.livekit_api_key;
         delete payload.livekit_api_secret;
@@ -155,7 +189,7 @@ export const useAgentSubmit = ({
       if (payload?.authentication_method !== "api_key") {
         delete payload.api_key;
         delete payload.assistant_id;
-        delete payload.observability_enabled;
+        if (!isSourceAgent) delete payload.observability_enabled;
       }
 
       //remove empty headers
@@ -186,6 +220,23 @@ export const useAgentSubmit = ({
         delete payload.token;
       }
 
+      payload = Object.fromEntries(
+        Object.entries(payload).filter(([, value]) => value !== ""),
+      );
+
+      // contact_number has to survive that strip. An empty string is what tells
+      // the backend to run over WebRTC, and the version endpoint only writes
+      // fields present in the request — omitting it keeps the previous number.
+      if (voiceContactNumber !== null) {
+        payload.contact_number = voiceContactNumber;
+      }
+
+      // A code agent's description may be empty on purpose; omitting it makes
+      // the version endpoint keep the definition's placeholder text instead.
+      if (isSourceAgent) {
+        payload.description = data.description ?? "";
+      }
+
       const { livekit_api_key, livekit_api_secret, ...safePayload } = payload;
       trackEvent(Events.updateAgentDefClicked, {
         [PropertyName.id]: agentDefinitionId,
@@ -210,6 +261,19 @@ export const useAgentSubmit = ({
 
       if (onClose) onClose(response);
     } catch (err) {
+      const refusal = err.response?.data;
+      // Only this code names form fields; an ordinary 400 also carries details.
+      if (
+        refusal?.code === "observability_prerequisite_missing" &&
+        refusal.details &&
+        typeof refusal.details === "object"
+      ) {
+        Object.entries(REFUSAL_FIELDS).forEach(([key, field]) => {
+          const message = refusal.details[key]?.[0];
+          if (message) setFieldError(field, { type: "server", message });
+        });
+        setValue("observabilityEnabled", false);
+      }
       setError(
         err.response?.data?.error ||
           err.response?.data?.details?.non_field_errors?.[0] ||

@@ -1,9 +1,13 @@
+import { ROW_HEIGHT } from "src/theme/sizes";
 import { Box } from "@mui/material";
 import { AgGridReact } from "ag-grid-react";
+import "src/utils/ag-grid-setup";
 import React, { useMemo, forwardRef, useRef, useEffect } from "react";
 import { useAgThemeWith } from "src/hooks/use-ag-theme";
 import { AG_THEME_OVERRIDES } from "src/theme/ag-theme";
-import { ProcessingStatusCell, TitleCell } from "./knowledge-cells";
+import { TitleCell } from "./knowledge-cells";
+import DownloadFileCell from "./download-file-cell";
+import { ProcessingStatusCell } from "../KnowledgeBaseData/CellRenderer";
 import PropTypes from "prop-types";
 import axios from "src/utils/axios";
 import { endpoints } from "src/utils/axios";
@@ -50,7 +54,7 @@ const SheetTableView = forwardRef((props, ref) => {
           page_number: p,
         });
 
-        const rows = data?.result?.tableData ?? [];
+        const rows = data?.result?.table_data ?? [];
 
         const transaction = {
           update: rows,
@@ -61,7 +65,7 @@ const SheetTableView = forwardRef((props, ref) => {
         }
         setStatus({
           status: data?.result?.status,
-          status_count: data?.result?.statusCount,
+          status_count: data?.result?.status_count,
         });
       } catch (e) {
         logger.error("Failed to refresh rows", e);
@@ -113,8 +117,16 @@ const SheetTableView = forwardRef((props, ref) => {
         flex: 1,
         columnId: "updated_by",
       },
+      {
+        headerName: "Download",
+        colId: "download",
+        sortable: false,
+        cellStyle: cellCenterStyle,
+        cellRenderer: ({ data }) =>
+          data ? <DownloadFileCell file={data} knowledgeId={knowledgeId} /> : null,
+      },
     ],
-    [],
+    [knowledgeId],
   );
 
   const defaultColDef = useMemo(
@@ -161,27 +173,21 @@ const SheetTableView = forwardRef((props, ref) => {
             sort: sort,
           });
 
-          // setRowDataForRefresh(data?.result?.tableData)
-
-          const lastUpdated =
-            data?.result?.last_updated ?? data?.result?.lastUpdated;
+          const lastUpdated = data?.result?.last_updated;
           if (lastUpdated) {
             setLastUpdatedDate(lastUpdated);
           }
 
-          const totalRows =
-            data?.result?.total_rows ?? data?.result?.totalRows ?? 0;
+          const totalRows = data?.result?.total_rows ?? 0;
           setTotalRows(totalRows);
 
           if (data?.result?.status) {
             setStatus({
               status: data?.result?.status,
-              status_count:
-                data?.result?.status_count ?? data?.result?.statusCount,
+              status_count: data?.result?.status_count,
             });
           }
-          const rows =
-            data?.result?.table_data ?? data?.result?.tableData ?? [];
+          const rows = data?.result?.table_data ?? [];
 
           params.success({
             rowData: rows,
@@ -298,7 +304,7 @@ const SheetTableView = forwardRef((props, ref) => {
     >
       <AgGridReact
         ref={ref}
-        rowHeight={54}
+        rowHeight={ROW_HEIGHT.default}
         defaultColDef={defaultColDef}
         theme={agTheme}
         columnDefs={columnDefs}

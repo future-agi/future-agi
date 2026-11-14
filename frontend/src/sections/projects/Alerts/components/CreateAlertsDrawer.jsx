@@ -169,7 +169,7 @@ export default function CreateAlertsDrawer({ open }) {
                 <Link
                   href="https://docs.futureagi.com/docs/observe/features/alerts"
                   underline="always"
-                  color="blue.500"
+                  color="text.link"
                   target="_blank"
                   rel="noopener noreferrer"
                   fontWeight="fontWeightMedium"
@@ -178,9 +178,9 @@ export default function CreateAlertsDrawer({ open }) {
                 </Link>
               </Box>
               <IconButton
+                size="small"
                 onClick={() => setConfirmationModalOpen(true)}
                 sx={{
-                  padding: theme.spacing(0.5),
                   margin: 0,
                 }}
               >
@@ -229,7 +229,6 @@ export default function CreateAlertsDrawer({ open }) {
             color="error"
             size="small"
             onClick={handleConfirmClose}
-            sx={{ paddingX: theme.spacing(3) }}
           >
             Confirm
           </Button>

@@ -12,6 +12,7 @@ const CustomModelTools = ({
   tools,
   disableHover = false,
   disableClick = false,
+  viewOnly = false,
   hoverPlacement = "bottom",
   onClick = () => {},
   label,
@@ -23,6 +24,7 @@ const CustomModelTools = ({
   };
 
   const handleOpenDropdown = () => {
+    if (viewOnly) return;
     if (!showModelTool) {
       onClick?.();
       setShowModelTool(true);
@@ -32,6 +34,7 @@ const CustomModelTools = ({
   return (
     <Box sx={{ height: "24px" }}>
       <CustomTooltip
+        card
         show={true}
         title={<ToolsHoverState tools={tools} disableHover={disableHover} />}
         placement={!disableHover ? hoverPlacement : "bottom"}
@@ -51,23 +54,21 @@ const CustomModelTools = ({
         <IconButton
           onClick={handleOpenDropdown}
           disabled={disableClick}
+          disableRipple={viewOnly}
           sx={{
-            borderRadius: "4px",
             backgroundColor: "background.paper",
             border: "1px solid",
             borderColor: "divider",
-            padding: "4px",
-            height: "32px",
-            width: label ? "auto" : "44px",
             marginTop: isModalContainer ? "-4px" : 0,
             color: "text.primary",
+            ...(viewOnly && { cursor: "default" }),
           }}
         >
           <SvgColor
             src="/assets/prompt/tools.svg"
             sx={{
-              height: "20px",
-              width: "20px",
+              height: "16px",
+              width: "16px",
               flexShrink: 0,
             }}
           />
@@ -115,6 +116,7 @@ CustomModelTools.propTypes = {
   tools: PropTypes.array,
   disableHover: PropTypes.bool,
   disableClick: PropTypes.bool,
+  viewOnly: PropTypes.bool,
   hoverPlacement: PropTypes.string,
   onClick: PropTypes.func,
   label: PropTypes.string,

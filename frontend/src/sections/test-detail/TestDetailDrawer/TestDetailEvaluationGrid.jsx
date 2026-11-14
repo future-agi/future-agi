@@ -1,5 +1,6 @@
 import { Box, Skeleton } from "@mui/material";
 import { AgGridReact } from "ag-grid-react";
+import "src/utils/ag-grid-setup";
 import React, { useMemo } from "react";
 import { useAgThemeWith } from "src/hooks/use-ag-theme";
 import { AG_THEME_OVERRIDES } from "src/theme/ag-theme";
@@ -16,7 +17,6 @@ const DEFAULT_COL_DEF = {
   filter: false,
   suppressHeaderMenuButton: true,
   suppressHeaderContextMenu: true,
-  suppressMultiSort: true,
 };
 
 const TestDetailEvaluationGrid = ({ evalOutputs, callStatus }) => {

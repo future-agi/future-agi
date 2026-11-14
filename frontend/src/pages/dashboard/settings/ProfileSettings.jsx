@@ -1,7 +1,8 @@
 import React, { useEffect, useState } from "react";
+import PageHeader from "src/components/page-header";
 import { Helmet } from "react-helmet-async";
 import Typography from "@mui/material/Typography";
-import { Box, useTheme, Skeleton, CircularProgress } from "@mui/material";
+import { Box, useTheme, Skeleton } from "@mui/material";
 import axios, { endpoints } from "src/utils/axios";
 import Tooltip from "@mui/material/Tooltip";
 import ProfileInfoModal from "./ProfileInfoModal";
@@ -15,6 +16,7 @@ import { LoadingButton } from "@mui/lab";
 import TotpSection from "src/sections/settings/Security/TotpSection";
 import PasskeySection from "src/sections/settings/Security/PasskeySection";
 import RecoveryCodesSection from "src/sections/settings/Security/RecoveryCodesSection";
+import ContentSkeleton from "src/components/content-skeleton";
 
 const ProfileSettings = () => {
   const theme = useTheme();
@@ -37,6 +39,11 @@ const ProfileSettings = () => {
   const [openProfileInfoModal, setOpenProfileInfoModal] = useState(false);
   const [refreshData, setRefreshData] = useState(false);
   const [resetPasswordDisabled, setResetPasswordDisabled] = useState(false);
+  const twoFactorEnabled =
+    twoFaStatus?.two_factor_enabled ?? twoFaStatus?.twoFactorEnabled;
+  const recoveryCodesRemaining =
+    twoFaStatus?.recovery_codes_remaining ??
+    twoFaStatus?.recoveryCodesRemaining;
 
   const { mutate: getUserInfo, isPending: isGetUserInfoLoading } = useMutation({
     mutationFn: async () => {
@@ -125,27 +132,11 @@ const ProfileSettings = () => {
       <Box
         sx={{ display: "flex", flexDirection: "column", gap: theme.spacing(2) }}
       >
-        <Box>
-          <Typography
-            sx={{
-              typography: "m2",
-              fontWeight: "fontWeightSemiBold",
-              color: "text.primary",
-            }}
-          >
-            Profile Details
-          </Typography>
-          <Typography
-            sx={{
-              typography: "s1",
-              fontWeight: "fontWeightRegular",
-              color: "text.primary",
-              marginTop: (theme) => theme.spacing(0.5),
-            }}
-          >
-            Manage your profile details
-          </Typography>
-        </Box>
+        <PageHeader
+          title="Profile Details"
+          description="Manage your profile details"
+          sx={{ mb: 0 }}
+        />
 
         <Box
           sx={{
@@ -203,7 +194,7 @@ const ProfileSettings = () => {
               </Typography>
               <Tooltip title="Edit Name">
                 <Iconify
-                  icon="fluent:edit-12-regular"
+                  icon="solar:pen-linear"
                   color="text.primary"
                   onClick={() => {
                     trackEvent(Events.editNameClicked);
@@ -339,8 +330,8 @@ const ProfileSettings = () => {
             }}
           >
             <Iconify
-              icon="bx:error"
-              color="red.500"
+              icon="solar:danger-circle-linear"
+              color="status.danger.fg"
               sx={{
                 width: "18px",
                 height: "18px",
@@ -390,7 +381,7 @@ const ProfileSettings = () => {
                 height: "100px",
               }}
             >
-              <CircularProgress size={24} />
+              <ContentSkeleton variant="panel" />
             </Box>
           ) : (
             <Box
@@ -408,9 +399,9 @@ const ProfileSettings = () => {
                 passkey={twoFaStatus?.methods?.passkey}
                 onStatusChange={refetch2fa}
               />
-              {twoFaStatus?.twoFactorEnabled && (
+              {twoFactorEnabled && (
                 <RecoveryCodesSection
-                  remaining={twoFaStatus?.recoveryCodesRemaining}
+                  remaining={recoveryCodesRemaining}
                   hasTotp={twoFaStatus?.methods?.totp?.enabled}
                   onStatusChange={refetch2fa}
                 />

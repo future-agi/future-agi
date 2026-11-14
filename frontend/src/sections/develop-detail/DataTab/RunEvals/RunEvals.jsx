@@ -4,9 +4,11 @@ import axios, { endpoints } from "src/utils/axios";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useParams } from "react-router";
 import { AgGridReact } from "ag-grid-react";
+import "src/utils/ag-grid-setup";
 import PropTypes from "prop-types";
 import { useAgThemeWithoutGridWith } from "src/hooks/use-ag-theme";
 import { AG_THEME_OVERRIDES } from "src/theme/ag-theme";
+import { ROW_HEIGHT } from "src/theme/sizes";
 
 const RunEvals = ({ gridRef, setIsData }) => {
   const [mainData, setMainData] = useState(null);
@@ -37,8 +39,8 @@ const RunEvals = ({ gridRef, setIsData }) => {
       return response.data;
     },
     onSuccess: (data) => {
-      const runPromptData = data?.result?.columnConfig?.filter(
-        (item) => item?.originType === "run_prompt",
+      const runPromptData = data?.result?.column_config?.filter(
+        (item) => item?.origin_type === "run_prompt",
       );
       setMainData(runPromptData);
     },
@@ -65,10 +67,10 @@ const RunEvals = ({ gridRef, setIsData }) => {
       const mergedData = [...datasetUserEvalList, ...mainData];
 
       return mergedData.map((item) => ({
-        content: item?.name || item?.evalTemplateName,
-        field: item?.originType === "run_prompt" ? item.sourceId : item.id,
+        content: item?.name || item?.eval_template_name,
+        field: item?.origin_type === "run_prompt" ? item.source_id : item.id,
         originType:
-          item?.originType === "run_prompt" ? item.originType : "eval",
+          item?.origin_type === "run_prompt" ? item.origin_type : "eval",
       }));
     }
     return [];
@@ -125,7 +127,7 @@ const RunEvals = ({ gridRef, setIsData }) => {
             rowData={rowData}
             domLayout="autoHeight"
             rowSelection={rowSelection}
-            rowHeight={35}
+            rowHeight={ROW_HEIGHT.default}
             headerHeight={0}
             overlayNoRowsTemplate={
               '<span style="padding: 10px; color: var(--text-muted);">No data available</span>'

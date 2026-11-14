@@ -1,4 +1,4 @@
-import { Box, LinearProgress } from "@mui/material";
+import { Box } from "@mui/material";
 import React, { useMemo } from "react";
 import ExperimentSummaryTable from "./ExperimentSummaryTable";
 import ExperimentEvaluationChart from "./ExperimentEvaluationChart";
@@ -8,16 +8,39 @@ import axios, { endpoints } from "src/utils/axios";
 import { ExperimentSummaryStaticColumnDefs } from "./tableConfig";
 import ExperimentEvalCellRenderer from "./CustomRenderers/ExperimentEvalCellRenderer";
 import RankWithIndexRenderer from "./CustomRenderers/RankWithIndexRenderer";
+import { LoadingScreen } from "src/components/loading-screen";
 
 const IndividualExperimentSummaryView = () => {
   const { individualExperimentId } = useParams();
 
-  const { data, isLoading } = useQuery({
-    queryKey: ["experiment-summary", individualExperimentId],
+  const {
+    data: experimentDatasetMetadata,
+    isLoading: isMetadataLoading,
+    isError: isMetadataError,
+  } = useQuery({
+    queryKey: [
+      "individual-experiment-dataset-metadata",
+      individualExperimentId,
+    ],
     queryFn: () =>
       axios.get(
-        endpoints.develop.experiment.getSummary(individualExperimentId),
+        endpoints.develop.individualExperimentDataset(individualExperimentId),
+        { params: { page_size: 1, current_page_index: 0 } },
       ),
+    select: (e) => e?.data?.result?.metadata,
+  });
+
+  const summaryExperimentId =
+    experimentDatasetMetadata?.experiment_id ||
+    experimentDatasetMetadata?.experimentId ||
+    individualExperimentId;
+
+  const { data, isLoading: isSummaryLoading } = useQuery({
+    queryKey: ["experiment-summary", summaryExperimentId],
+    enabled:
+      Boolean(summaryExperimentId) && (!isMetadataLoading || isMetadataError),
+    queryFn: () =>
+      axios.get(endpoints.develop.experiment.getSummary(summaryExperimentId)),
     select: (e) => e?.data?.result,
   });
 
@@ -51,8 +74,8 @@ const IndividualExperimentSummaryView = () => {
     return colData;
   }, [data]);
 
-  if (isLoading) {
-    return <LinearProgress />;
+  if (isMetadataLoading || isSummaryLoading) {
+    return <LoadingScreen />;
   }
 
   return (

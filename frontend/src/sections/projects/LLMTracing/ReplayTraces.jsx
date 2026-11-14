@@ -6,15 +6,33 @@ import SvgColor from "../../../components/svg-color/svg-color";
 import { useReplaySessionsStoreShallow } from "../SessionsView/ReplaySessions/store";
 import { REPLAY_MODULES } from "../SessionsView/ReplaySessions/configurations";
 import PropTypes from "prop-types";
+import {
+  formatSelectionCount,
+  getSelectionCountState,
+} from "./listTotalMetadata";
 
 const ReplayTraces = ({ gridApi }) => {
-  const { selectAll, toggledNodes, totalRowCount } = useTraceGridStoreShallow(
-    (s) => ({
-      selectAll: s.selectAll,
-      toggledNodes: s.toggledNodes,
-      totalRowCount: s.totalRowCount,
-    }),
-  );
+  const {
+    selectAll,
+    toggledNodes,
+    totalRowCount,
+    totalRowCountLowerBound,
+    totalRowCountIsLowerBound,
+  } = useTraceGridStoreShallow((s) => ({
+    selectAll: s.selectAll,
+    toggledNodes: s.toggledNodes,
+    totalRowCount: s.totalRowCount,
+    totalRowCountLowerBound: s.totalRowCountLowerBound,
+    totalRowCountIsLowerBound: s.totalRowCountIsLowerBound,
+  }));
+
+  const selectionCount = getSelectionCountState({
+    selectAll,
+    toggledNodes,
+    totalRowCount,
+    totalRowCountLowerBound,
+    totalRowCountIsLowerBound,
+  });
 
   const {
     openReplaySessionDrawer,
@@ -77,15 +95,11 @@ const ReplayTraces = ({ gridApi }) => {
       >
         <span>
           <Button
-            sx={{
-              p: "8px",
-            }}
             color={selectAll || toggledNodes.length > 0 ? "primary" : "inherit"}
             startIcon={
               <SvgColor
+                width="16px"
                 sx={{
-                  height: "16px",
-                  width: "16px",
                   color:
                     selectAll || toggledNodes.length > 0
                       ? "primary"
@@ -102,7 +116,7 @@ const ReplayTraces = ({ gridApi }) => {
               Object.values(openReplaySessionDrawer).some((open) => open)
             }
           >
-            {`Replay Trace${selectAll || toggledNodes.length > 1 || toggledNodes.length === 0 ? "s" : ""} ${selectAll || toggledNodes.length > 0 ? `(${selectAll ? totalRowCount - toggledNodes.length : toggledNodes.length})` : ""}`}
+            {`Replay Trace${selectAll || toggledNodes.length > 1 || toggledNodes.length === 0 ? "s" : ""} ${selectAll || toggledNodes.length > 0 ? `(${formatSelectionCount(selectionCount)})` : ""}`}
           </Button>
         </span>
       </CustomTooltip>

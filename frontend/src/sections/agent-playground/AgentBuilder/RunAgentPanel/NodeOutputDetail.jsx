@@ -1,3 +1,4 @@
+import ErrorState from "src/components/error-state";
 import {
   Box,
   Divider,
@@ -10,6 +11,7 @@ import {
 import PropTypes from "prop-types";
 import React, { useMemo, useState, useCallback, useRef } from "react";
 import { AgGridReact } from "ag-grid-react";
+import "src/utils/ag-grid-setup";
 import { useAgThemeWith } from "src/hooks/use-ag-theme";
 import { useGetNodeExecutionDetail } from "src/api/agent-playground/agent-playground";
 import CustomJsonViewer from "src/components/custom-json-viewer/CustomJsonViewer";
@@ -226,10 +228,18 @@ export default function NodeOutputDetail({ executionId, nodeExecutionId }) {
 
   const nodeStatus = nodeDetail?.status?.toLowerCase();
   const isNodeRunning = nodeStatus === "running" || nodeStatus === "pending";
+  const nodeExecutionIdentifier =
+    nodeDetail?.nodeExecutionId ||
+    nodeDetail?.node_execution_id ||
+    nodeExecutionId;
+  const errorMessage = nodeDetail?.errorMessage ?? nodeDetail?.error_message;
 
-  const inputs = nodeDetail?.inputs || [];
-  const outputs = nodeDetail?.outputs || [];
-  const hasErrorMessage = !!nodeDetail?.errorMessage && outputs.length === 0;
+  const inputs = useMemo(() => nodeDetail?.inputs || [], [nodeDetail?.inputs]);
+  const outputs = useMemo(
+    () => nodeDetail?.outputs || [],
+    [nodeDetail?.outputs],
+  );
+  const hasErrorMessage = !!errorMessage && outputs.length === 0;
   const isPairedMode = inputs.length > 0 && inputs.length === outputs.length;
 
   // Map API response to AG Grid row data
@@ -239,30 +249,30 @@ export default function NodeOutputDetail({ executionId, nodeExecutionId }) {
     if (isNodeRunning) {
       if (inputs.length > 0) {
         return inputs.map((inp, i) => ({
-          id: `${nodeDetail.nodeExecutionId}-${i}`,
+          id: `${nodeExecutionIdentifier}-${i}`,
           input: inp?.payload ?? "",
           _running: true,
         }));
       }
-      return [{ id: nodeDetail.nodeExecutionId, _running: true }];
+      return [{ id: nodeExecutionIdentifier, _running: true }];
     }
 
     if (hasErrorMessage) {
       if (inputs.length > 0) {
         // Has inputs but output errored — one row per input
         return inputs.map((inp, i) => ({
-          id: `${nodeDetail.nodeExecutionId}-${i}`,
+          id: `${nodeExecutionIdentifier}-${i}`,
           input: inp?.payload ?? "",
-          output: nodeDetail.errorMessage,
+          output: errorMessage,
         }));
       }
       // No inputs and no outputs
       return [
         {
-          id: nodeDetail.nodeExecutionId,
+          id: nodeExecutionIdentifier,
           inputs: [],
           outputs: [],
-          output: nodeDetail.errorMessage,
+          output: errorMessage,
         },
       ];
     }
@@ -270,7 +280,7 @@ export default function NodeOutputDetail({ executionId, nodeExecutionId }) {
     if (isPairedMode) {
       // Equal counts — one row per input/output pair
       return inputs.map((inp, i) => ({
-        id: `${nodeDetail.nodeExecutionId}-${i}`,
+        id: `${nodeExecutionIdentifier}-${i}`,
         input: inp?.payload ?? "",
         output: outputs[i]?.payload ?? "",
       }));
@@ -279,13 +289,15 @@ export default function NodeOutputDetail({ executionId, nodeExecutionId }) {
     // Unequal counts — single row, each cell gets full port array
     return [
       {
-        id: nodeDetail.nodeExecutionId,
+        id: nodeExecutionIdentifier,
         inputs,
         outputs,
       },
     ];
   }, [
     nodeDetail,
+    nodeExecutionIdentifier,
+    errorMessage,
     hasErrorMessage,
     isPairedMode,
     isNodeRunning,
@@ -447,20 +459,7 @@ export default function NodeOutputDetail({ executionId, nodeExecutionId }) {
   }
 
   if (isError) {
-    return (
-      <Box
-        sx={{
-          flex: 1,
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-        }}
-      >
-        <Typography typography="s2" color="error.main">
-          Failed to load node details
-        </Typography>
-      </Box>
-    );
+    return <ErrorState title="Failed to load node details" sx={{ flex: 1 }} />;
   }
 
   if (!nodeDetail) {

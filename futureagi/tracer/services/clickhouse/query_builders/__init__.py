@@ -54,6 +54,7 @@ from tracer.services.clickhouse.query_builders.time_series import (
     TimeSeriesQueryBuilder,
 )
 from tracer.services.clickhouse.query_builders.trace_list import TraceListQueryBuilder
+from tracer.services.clickhouse.query_builders.user_list import UserListQueryBuilder
 from tracer.services.clickhouse.query_builders.voice_call_list import (
     VoiceCallListQueryBuilder,
 )
@@ -67,6 +68,7 @@ __all__ = [
     "MonitorMetricsQueryBuilder",
     "TimeSeriesQueryBuilder",
     "TraceListQueryBuilder",
+    "UserListQueryBuilder",
     "SpanListQueryBuilder",
     "SessionAnalyticsQueryBuilder",
     "SessionListQueryBuilder",

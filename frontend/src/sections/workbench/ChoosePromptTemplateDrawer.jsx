@@ -4,87 +4,132 @@ import {
   Drawer,
   Grid,
   IconButton,
+  Menu,
+  MenuItem,
   Stack,
   Typography,
   Skeleton,
   Button,
-  useTheme,
 } from "@mui/material";
 import PropTypes from "prop-types";
 import React, { useState, useRef, useCallback, useEffect } from "react";
+import { useSnackbar } from "notistack";
 import FormSearchField from "src/components/FormSearchField/FormSearchField";
 import Iconify from "src/components/iconify";
+import ConfirmDialog from "src/components/custom-dialog/confirm-dialog";
 import { SelectedPromptTemplateDrawer } from "./SelectedPromptTemplateDrawer";
 import SvgColor from "src/components/svg-color";
-import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
+import {
+  useInfiniteQuery,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
 import _ from "lodash";
 import axios, { endpoints } from "src/utils/axios";
+import { useDeletePromptTemplate } from "src/api/develop/prompt";
 import { useDebounce } from "../../hooks/use-debounce";
 import { extractTextFromPrompt } from "../../components/ImprovePromptDrawer/common";
 import EmptyLayout from "src/components/EmptyLayout/EmptyLayout";
 import { usePromptStore } from "../workbench-v2/store/usePromptStore";
 import { Events, trackEvent } from "src/utils/Mixpanel";
 import { PropertyName } from "../../utils/Mixpanel";
+import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
 
-const TemplateCard = ({ name, description, createdBy, onClick }) => {
-  const theme = useTheme();
+const TemplateCard = ({ name, description, createdBy, onClick, onDelete }) => {
+  const [menuAnchor, setMenuAnchor] = useState(null);
   return (
     <Box
       sx={{
+        position: "relative",
         border: "1px solid",
-        borderColor:
-          theme.palette.mode === "dark"
-            ? theme.palette.action.disabled
-            : "divider",
-        boxShadow:
-          theme.palette.mode === "dark"
-            ? `0 4px 12px ${theme.palette.action.disabled}`
-            : `0 2px 8px ${theme.palette.action.hover}`,
-        borderRadius: "4px",
-        minHeight: "156px",
+        borderColor: "divider",
+        borderRadius: "8px",
+        minHeight: "120px",
         padding: "12px",
         display: "flex",
         flexDirection: "column",
-        gap: "6px",
+        gap: "8px",
         cursor: "pointer",
         height: "100%",
-        transition: "box-shadow 0.3s ease, border-color 0.3s ease",
+        transition: "border-color 0.2s ease",
         "&:hover": {
-          boxShadow:
-            theme.palette.mode === "dark"
-              ? `0 6px 16px ${theme.palette.action.disabledBackground}`
-              : `0 4px 12px ${theme.palette.action.focus}`,
+          borderColor: "text.disabled",
         },
       }}
       component={"div"}
       onClick={onClick}
     >
+      {onDelete && (
+        <>
+          <IconButton
+            size="small"
+            aria-label="Template actions"
+            onClick={(e) => {
+              e.stopPropagation();
+              setMenuAnchor(e.currentTarget);
+            }}
+            sx={{
+              position: "absolute",
+              top: 6,
+              right: 6,
+              color: "text.secondary",
+            }}
+          >
+            <Iconify icon="solar:menu-dots-vertical-linear" width={20} />
+          </IconButton>
+          <Menu
+            anchorEl={menuAnchor}
+            open={Boolean(menuAnchor)}
+            onClose={(e) => {
+              e?.stopPropagation?.();
+              setMenuAnchor(null);
+            }}
+            onClick={(e) => e.stopPropagation()}
+            anchorOrigin={{ vertical: "bottom", horizontal: "right" }}
+            transformOrigin={{ vertical: "top", horizontal: "right" }}
+          >
+            <MenuItem
+              onClick={(e) => {
+                e.stopPropagation();
+                setMenuAnchor(null);
+                onDelete();
+              }}
+              sx={{ gap: 1 }}
+            >
+              <Iconify icon="solar:trash-bin-trash-bold" width={16} />
+              Delete
+            </MenuItem>
+          </Menu>
+        </>
+      )}
       <Box
         sx={{
-          border: "2px solid",
-          borderColor: "divider",
+          border: "1px solid",
+          borderColor: "border.subtle",
           display: "flex",
           justifyContent: "center",
           alignItems: "center",
-          height: 44,
-          width: 44,
-          borderRadius: "8px",
+          height: 28,
+          width: 28,
+          flexShrink: 0,
+          borderRadius: "6px",
         }}
       >
         <SvgColor
           src="/assets/icons/ic_prompt_template.svg"
           sx={{
             border: "2.22px solid",
-            bgcolor: "green.500",
-            height: 20,
-            width: 20,
+            bgcolor: "status.success.solid",
+            height: 16,
+            width: 16,
           }}
         />
       </Box>
       <Stack>
         <Typography
-          typography={"s1"}
-          fontWeight={"fontWeightMedium"}
+          fontSize={12}
+          lineHeight="20px"
+          fontWeight={"fontWeightSemiBold"}
           color={"text.primary"}
           sx={{
             whiteSpace: "nowrap", //  prevent wrapping
@@ -97,7 +142,7 @@ const TemplateCard = ({ name, description, createdBy, onClick }) => {
         <Typography
           typography={"s2"}
           fontWeight={"fontWeightRegular"}
-          color={"text.secondary"}
+          color={"text.tertiary"}
           sx={{
             overflowWrap: "break-word",
             wordBreak: "break-word",
@@ -122,28 +167,28 @@ const TemplateCard = ({ name, description, createdBy, onClick }) => {
 };
 
 const SkeletonCard = () => {
-  const theme = useTheme();
   return (
     <Box
       sx={{
-        boxShadow: `4px -4px 16px 0px ${theme.palette.action.hover}`,
-        borderRadius: "4px",
-        minHeight: "156px",
+        border: "1px solid",
+        borderColor: "divider",
+        borderRadius: "8px",
+        minHeight: "120px",
         padding: "12px",
         display: "flex",
         flexDirection: "column",
-        gap: "6px",
+        gap: "8px",
         height: "100%",
       }}
     >
       <Skeleton
         variant="rectangular"
-        width={44}
-        height={44}
-        sx={{ borderRadius: "8px" }}
+        width={28}
+        height={28}
+        sx={{ borderRadius: "6px" }}
       />
       <Stack gap={1}>
-        <Skeleton variant="text" width="80%" height={24} />
+        <Skeleton variant="text" width="80%" height={20} />
         <Skeleton variant="text" width="100%" height={20} />
         <Skeleton variant="text" width="60%" height={20} />
       </Stack>
@@ -162,7 +207,7 @@ const CategoriesSkeleton = () => (
           sx={{
             px: 0.5,
             py: 0.5,
-            borderRadius: 0.5,
+            borderRadius: "4px",
           }}
         >
           <Skeleton variant="text" width="80%" height={20} />
@@ -177,6 +222,7 @@ TemplateCard.propTypes = {
   description: PropTypes.string,
   createdBy: PropTypes.string,
   onClick: PropTypes.func,
+  onDelete: PropTypes.func,
 };
 
 export const ChoosePromptTemplateDrawer = ({ open, onClose, importMode }) => {
@@ -192,6 +238,29 @@ export const ChoosePromptTemplateDrawer = ({ open, onClose, importMode }) => {
   const loadMoreRef = useRef(null);
   const debouncedSearchQuery = useDebounce(searchQuery, 300);
   const { setNewPromptModal } = usePromptStore();
+  const { enqueueSnackbar } = useSnackbar();
+  const queryClient = useQueryClient();
+
+  // Template to delete (drives the confirm dialog). null = closed.
+  const [templateToDelete, setTemplateToDelete] = useState(null);
+  // Drives the dialog's open state on its own so the payload (name) can stay
+  // mounted through the fade-out and only clear on `onExited`.
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+
+  const { mutate: deleteTemplate, isPending: isDeleting } =
+    useDeletePromptTemplate({
+      onSuccess: () => {
+        enqueueSnackbar("Template deleted", { variant: "success" });
+        setDeleteDialogOpen(false);
+        queryClient.invalidateQueries({ queryKey: ["prompt-templates"] });
+      },
+      onError: (err) => {
+        enqueueSnackbar(
+          err?.response?.data?.message || "Failed to delete template",
+          { variant: "error" },
+        );
+      },
+    });
 
   const { data, isLoading, isFetchingNextPage, fetchNextPage, hasNextPage } =
     // @ts-ignore
@@ -277,6 +346,7 @@ export const ChoosePromptTemplateDrawer = ({ open, onClose, importMode }) => {
     setCategory(newCategory);
   };
 
+  const covered = useDrawerCovered(open);
   return (
     <Drawer
       anchor="right"
@@ -298,6 +368,7 @@ export const ChoosePromptTemplateDrawer = ({ open, onClose, importMode }) => {
         },
       }}
       open={open}
+      sx={coveredDrawerSx(covered)}
       onClose={handleClose}
     >
       {/* select template header */}
@@ -329,7 +400,7 @@ export const ChoosePromptTemplateDrawer = ({ open, onClose, importMode }) => {
 
         <Box>
           <IconButton onClick={handleClose}>
-            <Iconify color="text.primary" icon="mingcute:close-line" />
+            <Iconify color="text.primary" icon="solar:close-linear" />
           </IconButton>
         </Box>
       </Box>
@@ -337,7 +408,7 @@ export const ChoosePromptTemplateDrawer = ({ open, onClose, importMode }) => {
       <Stack direction="row" sx={{ height: "100%", paddingLeft: "6px" }}>
         <Box
           sx={{
-            width: "250px",
+            width: "224px",
             padding: "12px",
             paddingLeft: "6px",
             flexShrink: 0,
@@ -353,21 +424,21 @@ export const ChoosePromptTemplateDrawer = ({ open, onClose, importMode }) => {
             sx={{
               display: "flex",
               flexDirection: "row",
-              mb: "10px",
-              gap: "10px",
+              mb: "8px",
+              gap: "8px",
               alignItems: "center",
-              px: 0.5,
-              py: 0.5,
-              borderRadius: "4px",
+              px: 1,
+              minHeight: 28,
+              borderRadius: "6px",
               backgroundColor:
-                category === "templates" ? "action.hover" : undefined,
+                category === "templates" ? "action.selected" : undefined,
               "&:hover": {
                 cursor: "pointer",
               },
             }}
           >
             <SvgColor
-              sx={{ height: 20, width: 20, color: "primary.main" }}
+              sx={{ height: 16, width: 16, color: "primary.main" }}
               src={
                 category === "templates"
                   ? "/assets/icons/ic_open_folder.svg"
@@ -375,9 +446,10 @@ export const ChoosePromptTemplateDrawer = ({ open, onClose, importMode }) => {
               }
             />
             <Typography
-              variant="s1"
+              fontSize={12}
+              lineHeight="20px"
               color={"text.primary"}
-              fontWeight={"fontWeightMedium"}
+              fontWeight={category === "templates" ? 500 : 400}
             >
               My templates
             </Typography>
@@ -396,17 +468,19 @@ export const ChoosePromptTemplateDrawer = ({ open, onClose, importMode }) => {
               <CategoriesSkeleton />
             ) : (
               <Box
-                sx={{ display: "flex", flexDirection: "column", gap: "8px" }}
+                sx={{ display: "flex", flexDirection: "column", gap: "4px" }}
               >
                 {categories?.map((cat) => (
                   <Box
                     onClick={() => handleCategoryChange(cat.name)}
                     sx={{
-                      px: 0.5,
-                      py: 0.5,
+                      px: 1,
+                      minHeight: 28,
+                      display: "flex",
+                      alignItems: "center",
                       bgcolor:
-                        cat?.name === category ? "action.hover" : undefined,
-                      borderRadius: 0.5,
+                        cat?.name === category ? "action.selected" : undefined,
+                      borderRadius: "6px",
                       "&:hover": {
                         cursor: "pointer",
                       },
@@ -414,8 +488,9 @@ export const ChoosePromptTemplateDrawer = ({ open, onClose, importMode }) => {
                     key={cat?.name}
                   >
                     <Typography
-                      variant="s1"
-                      fontWeight={"fontWeightMedium"}
+                      fontSize={12}
+                      lineHeight="20px"
+                      fontWeight={cat?.name === category ? 500 : 400}
                       color={"text.primary"}
                     >
                       {cat?.displayName}
@@ -465,7 +540,7 @@ export const ChoosePromptTemplateDrawer = ({ open, onClose, importMode }) => {
               boxSizing: "border-box",
             }}
           >
-            <Grid container spacing={2} sx={{ width: "100%" }}>
+            <Grid container spacing={1.5} sx={{ width: "100%" }}>
               {/* Render actual templates */}
               {data?.allTemplates?.map((template, index) => (
                 <Grid item key={`${template.id}-${index}`} xs={12} sm={6}>
@@ -500,6 +575,17 @@ export const ChoosePromptTemplateDrawer = ({ open, onClose, importMode }) => {
                         promptConfig: template,
                         desc: "",
                       })
+                    }
+                    onDelete={
+                      category === "templates"
+                        ? () => {
+                            setTemplateToDelete({
+                              id: template.id,
+                              name: template?.name,
+                            });
+                            setDeleteDialogOpen(true);
+                          }
+                        : undefined
                     }
                   />
                 </Grid>
@@ -591,6 +677,35 @@ export const ChoosePromptTemplateDrawer = ({ open, onClose, importMode }) => {
           />
         </Stack>
       </Stack>
+
+      <ConfirmDialog
+        open={deleteDialogOpen}
+        onClose={() => !isDeleting && setDeleteDialogOpen(false)}
+        TransitionProps={{ onExited: () => setTemplateToDelete(null) }}
+        title="Delete template"
+        content={
+          <Typography typography="s1" color="text.secondary">
+            Are you sure you want to delete{" "}
+            <Box
+              component="span"
+              sx={{ fontWeight: "fontWeightSemiBold", color: "text.primary" }}
+            >
+              {templateToDelete?.name || "this template"}
+            </Box>
+            ? This can&apos;t be undone.
+          </Typography>
+        }
+        action={
+          <Button
+            variant="contained"
+            color="error"
+            disabled={isDeleting}
+            onClick={() => deleteTemplate(templateToDelete?.id)}
+          >
+            {isDeleting ? "Deleting…" : "Delete"}
+          </Button>
+        }
+      />
     </Drawer>
   );
 };

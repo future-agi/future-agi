@@ -46,7 +46,7 @@ const TestDetailDrawerRightSection = ({
   simulationCallType,
   sessionId,
   provider,
-  hideAnnotationTab=false,
+  hideAnnotationTab = false,
 }) => {
   const [currentRightTab, setCurrentRightTab] = useState(
     simulationCallType === AGENT_TYPES.CHAT ? "evaluations" : "callAnalytics",
@@ -267,13 +267,7 @@ const TestDetailDrawerRightSection = ({
                   },
                 }}
                 startIcon={
-                  <SvgColor
-                    sx={{
-                      height: "20px",
-                      width: "20px",
-                    }}
-                    src="/assets/icons/ic_compare.svg"
-                  />
+                  <SvgColor width={20} src="/assets/icons/ic_compare.svg" />
                 }
                 onClick={() => setCompareReplay(true)}
               >

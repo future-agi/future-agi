@@ -14,15 +14,18 @@ Requires:
 
 Covered:
 - Connection and schema lifecycle
-- Data insertion (spans, evals, nulls, deduplication)
-- DashboardQueryBuilder integration (system/eval metrics, time ranges, filters, aggregations)
 - SimulationQueryBuilder integration (system metrics, breakdowns, filters)
 - DatasetQueryBuilder integration (system metrics, breakdowns)
+- usage_apicalllog eval-score materialization per eval-output shape
+- an opt-in eval-score backfill benchmark, see TestEvalScoreBackfillAtScale
 """
 
+import json
 import os
+import time
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
+from pathlib import Path
 
 import pytest
 
@@ -31,6 +34,273 @@ import pytest
 # ---------------------------------------------------------------------------
 
 _TEST_DATABASE = "test_futureagi"
+_EVAL_TABLE = f"{_TEST_DATABASE}.usage_apicalllog"
+_EVAL_TRACE_TABLE = f"{_TEST_DATABASE}.eval_score_test_traces"
+
+
+def _rewrite_eval_dashboard_tables(sql: str) -> str:
+    """Point an eval dashboard query at this suite's isolated CH fixtures."""
+    return sql.replace("usage_apicalllog", _EVAL_TABLE).replace(
+        "FROM traces AS trace_project_scan",
+        f"FROM {_EVAL_TRACE_TABLE} AS trace_project_scan",
+    )
+
+
+# (label, config payload, the eval_score it must materialize, holds a real number)
+EVAL_OUTPUT_SHAPES: tuple[tuple[str, dict, float, bool], ...] = (
+    (
+        "structured_complete",
+        {"output": {"output": {"score": 1, "choice": "Complete"}}},
+        1.0,
+        True,
+    ),
+    (
+        "structured_partial",
+        {"output": {"output": {"score": 0.5, "choice": "Partial"}}},
+        0.5,
+        True,
+    ),
+    (
+        "structured_incomplete",
+        {"output": {"output": {"score": 0.2, "choice": "Incomplete"}}},
+        0.2,
+        True,
+    ),
+    (
+        "structured_null_score",
+        {"output": {"output": {"score": None, "choice": "Unknown"}}},
+        0.0,
+        False,
+    ),
+    (
+        "structured_text_score",
+        {"output": {"output": {"score": "high"}}},
+        0.0,
+        False,
+    ),
+    ("scalar_score", {"output": {"output": 0.8}}, 0.8, True),
+    ("text_output", {"output": {"output": "Passed"}}, 0.0, False),
+    ("no_output", {"output": {}}, 0.0, False),
+)
+
+EVAL_SCORED_SHAPES = tuple(s for s in EVAL_OUTPUT_SHAPES if s[3])
+EVAL_SCORED_AVERAGE = 0.625
+
+# Over every shape: the four numbers above plus "Passed" read as 1.0. The empty,
+# null-score and text-score rows are excluded rather than averaged in as 0.
+EVAL_ALL_SHAPES_AVERAGE = 0.7
+
+# Every path that answers "did this eval pass?" has to name this same set.
+EVAL_PASSING_SHAPES = frozenset({"structured_complete", "text_output"})
+
+EVAL_SHAPE_PAYLOADS = {label: payload for label, payload, _s, _h in EVAL_OUTPUT_SHAPES}
+EVAL_SHAPE_SCORES = {label: score for label, _p, score, _h in EVAL_OUTPUT_SHAPES}
+
+# ---------------------------------------------------------------------------
+# Backfill benchmark seeding (opt-in, see TestEvalScoreBackfillAtScale)
+# ---------------------------------------------------------------------------
+
+# Unqualified: the benchmark client sets _TEST_DATABASE as its default, so the
+# command's own currentDatabase()-scoped partition query works verbatim.
+_BENCH_TABLE = "usage_apicalllog_bench"
+
+# Upper bounds per 100k rows, so the production mix is expressible exactly:
+# structured outputs are a 1.56% slice, split 76 / 18 / 6 inside that slice.
+BENCH_BUCKET_SCALE = 100_000
+BENCH_MIX: tuple[tuple[int, str], ...] = (
+    (1_186, "structured_complete"),
+    (1_467, "structured_incomplete"),
+    (1_560, "structured_partial"),
+    (41_560, "scalar_score"),
+    (81_560, "text_output"),
+    (BENCH_BUCKET_SCALE, "no_output"),
+)
+
+# Repeated prose plus a random tail, so a seeded row weighs about what a
+# production row weighs on disk rather than compressing away to nothing.
+BENCH_REASON_REPEATS = 20
+BENCH_REASON_RANDOM_BYTES = 600
+BENCH_REASON_SENTENCES: tuple[str, ...] = (
+    "The response addresses every requirement stated in the user prompt.",
+    "Key steps in the reasoning chain are present and ordered correctly.",
+    "The assistant restated the constraint before applying it to the answer.",
+    "No unsupported factual claims were introduced beyond the given context.",
+    "The final paragraph summarises the outcome without adding new content.",
+    "Tone stays consistent with the system instruction throughout the turn.",
+    "One requested field is missing from the structured portion of the reply.",
+    "The answer stops short of covering the third sub question that was asked.",
+    "Formatting follows the requested schema and parses without modification.",
+    "Citations map to passages that actually appear in the retrieved context.",
+    "The model hedged where the context was genuinely ambiguous, which is fine.",
+    "A minor arithmetic slip appears in the intermediate calculation step.",
+    "Latency stayed inside the budget configured for this evaluation template.",
+    "The refusal was appropriate given the policy category that was triggered.",
+    "Coverage of the source document is partial but the omissions are minor.",
+    "The reply repeats the question back before answering, which is redundant.",
+    "Instructions about output length were respected within a small margin.",
+    "The completion resolves the ambiguity by asking a clarifying question.",
+    "Nothing in the transcript indicates the tool call result was ignored.",
+    "The grader found the response complete against all listed criteria.",
+)
+
+# Small blocks: a seeded row carries kilobytes of config, so the default block
+# size builds multi-GB buffers and a modest box runs out of memory mid-seed.
+BENCH_SEED_SETTINGS = (
+    "max_insert_threads = 1, max_threads = 1, max_memory_usage = 1400000000, "
+    "max_block_size = 1024, max_insert_block_size = 32768, "
+    "min_insert_block_size_rows = 32768, min_insert_block_size_bytes = 0"
+)
+BENCH_READ_SETTINGS = "max_memory_usage = 1400000000, max_threads = 3"
+BENCH_SETTLED_PARTS = 16
+
+
+def _bench_sql_literal(value: str) -> str:
+    return "'" + value.replace("\\", "\\\\").replace("'", "\\'") + "'"
+
+
+def _bench_multi_if(column: str, value_for_label) -> str:
+    """Render BENCH_MIX as a multiIf over a per-row bucket column."""
+    branches = [
+        f"{column} < {upper}, {_bench_sql_literal(value_for_label(label))}"
+        for upper, label in BENCH_MIX[:-1]
+    ]
+    branches.append(_bench_sql_literal(value_for_label(BENCH_MIX[-1][1])))
+    return "multiIf(" + ", ".join(branches) + ")"
+
+
+def _bench_output_fragment(label: str) -> str:
+    """The opening of one row's config, carrying that shape's eval output."""
+    output = EVAL_SHAPE_PAYLOADS[label]["output"]
+    if "output" not in output:
+        return '"output":{'
+    return '"output":{"output":' + json.dumps(output["output"]) + ","
+
+
+def _bench_reason_sql() -> str:
+    pool = (
+        "multiIf("
+        + ", ".join(
+            f"modulo(number, {len(BENCH_REASON_SENTENCES)}) = {i}, "
+            f"{_bench_sql_literal(sentence)}"
+            for i, sentence in enumerate(BENCH_REASON_SENTENCES[:-1])
+        )
+        + f", {_bench_sql_literal(BENCH_REASON_SENTENCES[-1])})"
+    )
+    return (
+        f"concat(repeat(concat({pool}, ' '), {BENCH_REASON_REPEATS}), "
+        f"hex(randomString({BENCH_REASON_RANDOM_BYTES})))"
+    )
+
+
+def _bench_ddl(table: str, shape: str) -> str:
+    """Canonical DDL, optionally wound to the shape PeerDB built in production."""
+    from tracer.services.clickhouse.schema import (
+        CDC_USAGE_APICALLLOG,
+        _to_single_node_engine,
+    )
+
+    ddl = _to_single_node_engine(CDC_USAGE_APICALLLOG).replace(
+        "CREATE TABLE IF NOT EXISTS usage_apicalllog",
+        f"CREATE TABLE IF NOT EXISTS {table}",
+    )
+    if shape != "prod":
+        return ddl
+
+    ddl = ddl.replace("PARTITION BY toYYYYMM(created_at)\n", "").replace(
+        "ORDER BY (organization_id, source_id, created_at, id)", "ORDER BY id"
+    )
+    assert "PARTITION BY" not in ddl and "ORDER BY id" in ddl, (
+        "the production table shape could not be derived from the canonical DDL"
+    )
+    return ddl
+
+
+def _bench_seed(client, table: str, rows: int, shape: str) -> None:
+    from tracer.services.clickhouse.schema import EVAL_OUTPUT_JSON_ARGS
+
+    client.command(f"DROP TABLE IF EXISTS {table}")
+    client.command(_bench_ddl(table, shape))
+    # Wind the expression back to the one a deployed cluster still carries, so
+    # every seeded row lands genuinely stale.
+    client.command(
+        f"ALTER TABLE {table} MODIFY COLUMN eval_score Float64 "
+        f"MATERIALIZED JSONExtractFloat({EVAL_OUTPUT_JSON_ARGS})"
+    )
+
+    label_expr = _bench_multi_if("bucket", lambda label: label)
+    output_expr = _bench_multi_if("bucket", _bench_output_fragment)
+    if shape == "prod":
+        created_expr = "now64(6) - toIntervalSecond(modulo(number, 15552000))"
+    else:
+        created_expr = (
+            "toDateTime64('2026-01-01 00:00:00', 6) + "
+            f"toIntervalSecond(intDiv(number * 15552000, {rows}))"
+        )
+
+    # One tenant, as a single customer's table looks, and merges held off until
+    # the seed is in so they do not compete with it for memory.
+    org = "toUUID('11111111-1111-1111-1111-111111111111')"
+    client.command(f"SYSTEM STOP MERGES {table}")
+
+    written = 0
+    while written < rows:
+        take = min(500_000, rows - written)
+        client.command(
+            f"""
+            INSERT INTO {table}
+                (id, log_id, organization_id, workspace_id, status, reference_id,
+                 config, source, source_id, created_at, updated_at,
+                 _peerdb_synced_at, _peerdb_is_deleted, _peerdb_version)
+            SELECT toInt64(number), generateUUIDv4(), {org}, {org}, 'success', label,
+                   toJSONString(concat('{{', output, '"reason":"', reason,
+                       '"}},"trace_id":"', toString(generateUUIDv4()),
+                       '","model":"gpt-4o-mini","latency_ms":',
+                       toString(modulo(number, 5000) + 120), '}}')),
+                   'tracer', 'bench-template', created, created, created, 0, 1
+            FROM (
+                SELECT number, modulo(number, {BENCH_BUCKET_SCALE}) AS bucket,
+                       {label_expr} AS label,
+                       {output_expr} AS output,
+                       {_bench_reason_sql()} AS reason,
+                       {created_expr} AS created
+                FROM numbers({written}, {take})
+            )
+            SETTINGS {BENCH_SEED_SETTINGS}
+            """
+        )
+        written += take
+
+    client.command(f"SYSTEM START MERGES {table}")
+    _bench_settle(client, table)
+
+
+def _bench_settle(client, table: str, timeout: int = 600) -> None:
+    """Let merges consolidate the seed so timings are not merge noise.
+
+    Bounded: a fully merged table takes far longer than the timings are worth,
+    and a part count in the low tens already matches a real table's layout.
+    """
+    deadline = time.time() + timeout
+    last, stable = None, 0
+    while time.time() < deadline:
+        merging = client.query(
+            "SELECT count() FROM system.merges "
+            f"WHERE database = '{_TEST_DATABASE}' AND table = '{table}'"
+        ).result_rows[0][0]
+        parts = client.query(
+            "SELECT count() FROM system.parts WHERE active "
+            f"AND database = '{_TEST_DATABASE}' AND table = '{table}'"
+        ).result_rows[0][0]
+        if parts <= BENCH_SETTLED_PARTS:
+            return
+        if merging == 0 and parts == last:
+            stable += 1
+            if stable >= 3:
+                return
+        else:
+            stable = 0
+        last = parts
+        time.sleep(5)
 
 
 @pytest.fixture(scope="session")
@@ -58,143 +328,44 @@ def ch_schema(ch_client):
 
     Creates the test_futureagi database and applies all DDL statements.
     Runs once per test session.
+
+    Uses ``_to_single_node_engine`` so the DDL works on the single-node
+    test ClickHouse instance (no Keeper / Replicated engines).
     """
-    from tracer.services.clickhouse.schema import get_all_schema_ddl
+    import clickhouse_connect
+    from tracer.services.clickhouse.schema import (
+        _to_single_node_engine,
+        SCHEMA_DDL_STATEMENTS,
+    )
 
     ch_client.command(f"CREATE DATABASE IF NOT EXISTS {_TEST_DATABASE}")
 
-    for name, ddl in get_all_schema_ddl():
-        # Rewrite DDL to target the test database
-        ddl_test = ddl.replace("futureagi.", f"{_TEST_DATABASE}.")
-        try:
-            ch_client.command(ddl_test)
-        except Exception:
-            pass  # Table/view may already exist from a previous run
-
-    return ch_client
-
-
-@pytest.fixture
-def ch_test_data(ch_schema):
-    """Insert test span data and clean up after test.
-
-    Inserts a known set of spans into the CDC table and waits briefly
-    for the Materialized View to populate the ``spans`` table.
-    """
-    client = ch_schema
-    project_id = str(uuid.uuid4())
-    trace_id = str(uuid.uuid4())
-    now = datetime.now(timezone.utc)
-
-    # Insert test trace into CDC trace table
-    client.command(
-        f"""
-        INSERT INTO {_TEST_DATABASE}.tracer_trace
-            (id, project_id, name, session_id, external_id, tags,
-             _peerdb_synced_at, _peerdb_is_deleted, _peerdb_version)
-        VALUES
-            ('{trace_id}', '{project_id}', 'Test Trace', '', '', '[]',
-             now64(), 0, 1)
-        """
+    # Connect with the test database as default so unqualified table names
+    # in DDL (``CREATE TABLE foo``) land in test_futureagi, not ``default``.
+    db_client = clickhouse_connect.get_client(
+        host=os.environ.get("CH_TEST_HOST", "localhost"),
+        port=int(os.environ.get("CH_TEST_PORT", "18123")),
+        database=_TEST_DATABASE,
     )
 
-    # Insert test spans into CDC observation span table
-    spans = []
-    for i in range(5):
-        span_id = f"span_{uuid.uuid4().hex[:16]}"
-        latency = 100 * (i + 1)
-        cost = 0.001 * (i + 1)
-        tokens = 10 * (i + 1)
-        model = "gpt-4" if i % 2 == 0 else "gpt-3.5-turbo"
-        status = "OK" if i < 4 else "ERROR"
-        start_time = now - timedelta(seconds=latency / 1000 + 1)
-        end_time = now
-
-        client.command(
-            f"""
-            INSERT INTO {_TEST_DATABASE}.tracer_observation_span
-                (id, trace_id, project_id, name, observation_type, status,
-                 start_time, end_time, latency_ms, model, provider,
-                 prompt_tokens, completion_tokens, total_tokens, cost,
-                 input, output, span_attributes, resource_attributes,
-                 metadata, tags, span_events,
-                 _peerdb_synced_at, _peerdb_is_deleted, _peerdb_version)
-            VALUES
-                ('{span_id}', '{trace_id}', '{project_id}', 'Span {i}', 'llm', '{status}',
-                 '{start_time.strftime("%Y-%m-%d %H:%M:%S")}',
-                 '{end_time.strftime("%Y-%m-%d %H:%M:%S")}',
-                 {latency}, '{model}', 'openai',
-                 {tokens}, {tokens // 2}, {tokens + tokens // 2}, {cost},
-                 '{{"prompt": "hello {i}"}}', '{{"response": "world {i}"}}',
-                 '{{}}',' {{}}',
-                 '{{}}', '[]', '[]',
-                 now64(), 0, {i + 1})
-            """
-        )
-        spans.append(
-            {
-                "id": span_id,
-                "trace_id": trace_id,
-                "project_id": project_id,
-                "latency_ms": latency,
-                "cost": cost,
-                "total_tokens": tokens + tokens // 2,
-                "model": model,
-                "status": status,
-            }
-        )
-
-    yield {
-        "client": client,
-        "project_id": project_id,
-        "trace_id": trace_id,
-        "spans": spans,
-        "now": now,
-    }
-
-    # Cleanup
-    for table in [
-        "tracer_observation_span",
-        "tracer_trace",
-        "tracer_eval_logger",
-        "spans",
-    ]:
+    for name, ddl in SCHEMA_DDL_STATEMENTS:
+        # Convert to single-node engines for the test CH instance
+        ddl_test = _to_single_node_engine(ddl)
+        # Rewrite any explicit ``futureagi.`` references to the test database
+        ddl_test = ddl_test.replace("futureagi.", f"{_TEST_DATABASE}.")
         try:
-            client.command(f"TRUNCATE TABLE {_TEST_DATABASE}.{table}")
-        except Exception:
-            pass
+            db_client.command(ddl_test)
+        except Exception as exc:
+            # Ignore "already exists" errors; propagate others so schema
+            # issues surface during test runs instead of hiding silently.
+            err_msg = str(exc)
+            if "already exists" not in err_msg.lower():
+                import warnings
 
+                warnings.warn(f"CH schema DDL failed for {name}: {err_msg[:200]}")
 
-@pytest.fixture
-def ch_eval_data(ch_test_data):
-    """Insert eval logger data linked to the test spans."""
-    client = ch_test_data["client"]
-    project_id = ch_test_data["project_id"]
-    config_id = str(uuid.uuid4())
-    now = ch_test_data["now"]
-
-    for i, span in enumerate(ch_test_data["spans"]):
-        eval_id = str(uuid.uuid4())
-        score = 0.5 + (i * 0.1)  # 0.5, 0.6, 0.7, 0.8, 0.9
-        passed = 1 if score >= 0.7 else 0
-
-        client.command(
-            f"""
-            INSERT INTO {_TEST_DATABASE}.tracer_eval_logger
-                (id, span_id, trace_id, project_id, config_id,
-                 output_float, output_bool, eval_name,
-                 created_at,
-                 _peerdb_synced_at, _peerdb_is_deleted, _peerdb_version)
-            VALUES
-                ('{eval_id}', '{span["id"]}', '{span["trace_id"]}', '{project_id}',
-                 '{config_id}', {score}, {passed}, 'accuracy',
-                 '{now.strftime("%Y-%m-%d %H:%M:%S")}',
-                 now64(), 0, {i + 1})
-            """
-        )
-
-    ch_test_data["config_id"] = config_id
-    return ch_test_data
+    db_client.close()
+    return ch_client
 
 
 # ---------------------------------------------------------------------------
@@ -206,58 +377,29 @@ def ch_eval_data(ch_test_data):
 def ch_simulation_data(ch_schema):
     """Insert test simulation call data."""
     client = ch_schema
-    workspace_id = str(uuid.uuid4())
+    test_execution_id = str(uuid.uuid4())
     scenario_id = str(uuid.uuid4())
-    agent_def_id = str(uuid.uuid4())
+    agent_version_id = str(uuid.uuid4())
     now = datetime.now(timezone.utc)
-
-    # Create simulate_call_execution table if not already present from schema
-    try:
-        client.command(
-            f"""
-            CREATE TABLE IF NOT EXISTS {_TEST_DATABASE}.simulate_call_execution (
-                id UUID DEFAULT generateUUIDv4(),
-                workspace_id UUID,
-                scenario_id UUID,
-                agent_definition_id UUID,
-                agent_version String DEFAULT '',
-                call_type LowCardinality(String) DEFAULT 'text',
-                status LowCardinality(String) DEFAULT 'completed',
-                duration_seconds Float64 DEFAULT 0,
-                response_time_ms Float64 DEFAULT 0,
-                avg_agent_latency_ms Float64 DEFAULT 0,
-                cost_cents Float64 DEFAULT 0,
-                overall_score Float64 DEFAULT 0,
-                message_count UInt32 DEFAULT 0,
-                created_at DateTime64(3) DEFAULT now64(),
-                _peerdb_synced_at DateTime64(6) DEFAULT now64(),
-                _peerdb_is_deleted UInt8 DEFAULT 0,
-                _peerdb_version Int64 DEFAULT 1
-            ) ENGINE = ReplacingMergeTree(_peerdb_version)
-            ORDER BY (id)
-            """
-        )
-    except Exception:
-        pass
 
     for i in range(5):
         call_id = str(uuid.uuid4())
         call_type = "voice" if i % 2 == 0 else "text"
-        status = "completed" if i < 4 else "failed"
+        call_status = "completed" if i < 4 else "failed"
         duration = 30.0 + i * 10
         score = 0.6 + i * 0.08
 
         client.command(
             f"""
             INSERT INTO {_TEST_DATABASE}.simulate_call_execution
-                (id, workspace_id, scenario_id, agent_definition_id,
-                 agent_version, call_type, status,
+                (id, test_execution_id, scenario_id, agent_version_id,
+                 simulation_call_type, status,
                  duration_seconds, cost_cents, overall_score,
                  message_count, created_at,
                  _peerdb_synced_at, _peerdb_is_deleted, _peerdb_version)
             VALUES
-                ('{call_id}', '{workspace_id}', '{scenario_id}', '{agent_def_id}',
-                 'v1.{i}', '{call_type}', '{status}',
+                ('{call_id}', '{test_execution_id}', '{scenario_id}', '{agent_version_id}',
+                 '{call_type}', '{call_status}',
                  {duration}, {i * 0.5}, {score},
                  {10 + i}, '{now.strftime("%Y-%m-%d %H:%M:%S")}',
                  now64(), 0, {i + 1})
@@ -266,9 +408,9 @@ def ch_simulation_data(ch_schema):
 
     yield {
         "client": client,
-        "workspace_id": workspace_id,
+        "test_execution_id": test_execution_id,
         "scenario_id": scenario_id,
-        "agent_def_id": agent_def_id,
+        "agent_version_id": agent_version_id,
     }
 
     try:
@@ -281,34 +423,9 @@ def ch_simulation_data(ch_schema):
 def ch_dataset_data(ch_schema):
     """Insert test dataset cell data."""
     client = ch_schema
-    workspace_id = str(uuid.uuid4())
     dataset_id = str(uuid.uuid4())
+    row_id = str(uuid.uuid4())
     now = datetime.now(timezone.utc)
-
-    # Create model_hub_cell table if not already present
-    try:
-        client.command(
-            f"""
-            CREATE TABLE IF NOT EXISTS {_TEST_DATABASE}.model_hub_cell (
-                id UUID DEFAULT generateUUIDv4(),
-                workspace_id UUID,
-                dataset_id UUID,
-                column_id UUID,
-                row_number UInt32 DEFAULT 0,
-                prompt_tokens Nullable(UInt32),
-                completion_tokens Nullable(UInt32),
-                response_time Nullable(Float64),
-                status LowCardinality(String) DEFAULT 'completed',
-                created_at DateTime64(3) DEFAULT now64(),
-                _peerdb_synced_at DateTime64(6) DEFAULT now64(),
-                _peerdb_is_deleted UInt8 DEFAULT 0,
-                _peerdb_version Int64 DEFAULT 1
-            ) ENGINE = ReplacingMergeTree(_peerdb_version)
-            ORDER BY (id)
-            """
-        )
-    except Exception:
-        pass
 
     column_id = str(uuid.uuid4())
 
@@ -317,18 +434,18 @@ def ch_dataset_data(ch_schema):
         prompt_tokens = 50 + i * 10
         completion_tokens = 20 + i * 5
         response_time = 100.0 + i * 50
-        status = "completed" if i < 4 else "error"
+        cell_status = "completed" if i < 4 else "error"
 
         client.command(
             f"""
             INSERT INTO {_TEST_DATABASE}.model_hub_cell
-                (id, workspace_id, dataset_id, column_id, row_number,
+                (id, dataset_id, column_id, row_id,
                  prompt_tokens, completion_tokens, response_time, status,
                  created_at,
                  _peerdb_synced_at, _peerdb_is_deleted, _peerdb_version)
             VALUES
-                ('{cell_id}', '{workspace_id}', '{dataset_id}', '{column_id}', {i},
-                 {prompt_tokens}, {completion_tokens}, {response_time}, '{status}',
+                ('{cell_id}', '{dataset_id}', '{column_id}', '{row_id}',
+                 {prompt_tokens}, {completion_tokens}, {response_time}, '{cell_status}',
                  '{now.strftime("%Y-%m-%d %H:%M:%S")}',
                  now64(), 0, {i + 1})
             """
@@ -336,13 +453,106 @@ def ch_dataset_data(ch_schema):
 
     yield {
         "client": client,
-        "workspace_id": workspace_id,
         "dataset_id": dataset_id,
         "column_id": column_id,
     }
 
     try:
         client.command(f"TRUNCATE TABLE {_TEST_DATABASE}.model_hub_cell")
+    except Exception:
+        pass
+
+
+@pytest.fixture
+def ch_eval_output_rows(ch_schema):
+    """Recreate usage_apicalllog from the canonical DDL and seed every shape.
+
+    Dropped first because ``CREATE TABLE IF NOT EXISTS`` would keep a stale
+    MATERIALIZED expression from an earlier run.
+    """
+    from tracer.services.clickhouse.schema import (
+        CDC_USAGE_APICALLLOG,
+        _to_single_node_engine,
+    )
+    from tracer.services.clickhouse.v2.apply_schema_rewriter import split_statements
+
+    client = ch_schema
+    organization_id = str(uuid.uuid4())
+    workspace_id = str(uuid.uuid4())
+    project_id = str(uuid.uuid4())
+    all_shapes_source_id = str(uuid.uuid4())
+    scored_shapes_source_id = str(uuid.uuid4())
+    trace_ids = {label: str(uuid.uuid4()) for label, *_unused in EVAL_OUTPUT_SHAPES}
+
+    ddl = _to_single_node_engine(CDC_USAGE_APICALLLOG).replace(
+        "CREATE TABLE IF NOT EXISTS usage_apicalllog",
+        f"CREATE TABLE IF NOT EXISTS {_EVAL_TABLE}",
+    )
+    client.command(f"DROP TABLE IF EXISTS {_EVAL_TABLE}")
+    client.command(ddl)
+    client.command(f"DROP TABLE IF EXISTS {_EVAL_TRACE_TABLE}")
+    trace_schema_path = (
+        Path(__file__).resolve().parents[1]
+        / "services/clickhouse/v2/schema/015_traces_and_trace_dict.sql"
+    )
+    trace_ddl = next(
+        statement
+        for statement in split_statements(trace_schema_path.read_text())
+        if "CREATE TABLE IF NOT EXISTS traces" in statement
+    ).replace(
+        "CREATE TABLE IF NOT EXISTS traces",
+        f"CREATE TABLE {_EVAL_TRACE_TABLE}",
+    )
+    client.command(trace_ddl)
+    trace_values = ", ".join(
+        f"(toUUID('{trace_id}'), toUUID('{project_id}'), now64(6), 0, {offset + 1})"
+        for offset, trace_id in enumerate(trace_ids.values())
+    )
+    client.command(
+        f"INSERT INTO {_EVAL_TRACE_TABLE} "
+        f"(id, project_id, created_at, is_deleted, _version) VALUES {trace_values}"
+    )
+
+    # Backdated so clock skew against the CH container can't push rows past "now".
+    seeded_at = "now64(6) - toIntervalHour(1)"
+
+    def _seed(source_id, shapes, first_id):
+        for offset, (label, payload, _score, _has_number) in enumerate(shapes):
+            # trace_id: eval filters select on eval_trace_id, so it names the row.
+            # config is double-encoded (a JSON string holding JSON) in CH.
+            config = dict(payload, trace_id=trace_ids[label])
+            literal = json.dumps(config).replace("\\", "\\\\").replace("'", "\\'")
+            client.command(
+                f"""
+                INSERT INTO {_EVAL_TABLE}
+                    (id, log_id, organization_id, workspace_id, status,
+                     reference_id, config, source, source_id,
+                     created_at, updated_at,
+                     _peerdb_synced_at, _peerdb_is_deleted, _peerdb_version)
+                SELECT {first_id + offset}, generateUUIDv4(),
+                       toUUID('{organization_id}'), toUUID('{workspace_id}'),
+                       'success', '{label}', toJSONString('{literal}'),
+                       'tracer', '{source_id}',
+                       {seeded_at}, {seeded_at}, {seeded_at}, 0, 1
+                """
+            )
+
+    _seed(all_shapes_source_id, EVAL_OUTPUT_SHAPES, 1)
+    _seed(scored_shapes_source_id, EVAL_SCORED_SHAPES, 101)
+
+    yield {
+        "client": client,
+        "organization_id": organization_id,
+        "workspace_id": workspace_id,
+        "project_id": project_id,
+        "trace_ids": trace_ids,
+        "all_shapes_source_id": all_shapes_source_id,
+        "scored_shapes_source_id": scored_shapes_source_id,
+    }
+
+    try:
+        client.command(f"TRUNCATE TABLE {_EVAL_TABLE}")
+        client.command(f"DROP TABLE IF EXISTS {_EVAL_TRACE_TABLE}")
     except Exception:
         pass
 
@@ -364,28 +574,29 @@ class TestClickHouseConnection:
     def test_schema_initialization(self, ch_schema):
         """Applying DDL should create all expected tables."""
         client = ch_schema
-        result = client.command(
+        result = client.query(
             f"SELECT name FROM system.tables WHERE database = '{_TEST_DATABASE}'"
         )
-        tables = result if isinstance(result, list) else result.split("\n")
-        table_str = str(tables)
+        tables = [row[0] for row in result.result_rows]
         # Core CDC tables should exist
-        assert "tracer_observation_span" in table_str
-        assert "tracer_trace" in table_str
+        assert "tracer_observation_span" in tables
+        assert "tracer_trace" in tables
 
     def test_drop_and_recreate_schema(self, ch_client):
         """Should be able to drop and recreate the test database."""
         from tracer.services.clickhouse.schema import (
-            get_all_schema_ddl,
+            _to_single_node_engine,
             get_drop_statements,
+            SCHEMA_DDL_STATEMENTS,
         )
 
         temp_db = "test_futureagi_temp"
         ch_client.command(f"CREATE DATABASE IF NOT EXISTS {temp_db}")
 
-        # Apply schema
-        for name, ddl in get_all_schema_ddl():
-            ddl_test = ddl.replace("futureagi.", f"{temp_db}.")
+        # Apply schema (single-node engines for test CH)
+        for name, ddl in SCHEMA_DDL_STATEMENTS:
+            ddl_test = _to_single_node_engine(ddl)
+            ddl_test = ddl_test.replace("futureagi.", f"{temp_db}.")
             try:
                 ch_client.command(ddl_test)
             except Exception:
@@ -407,497 +618,6 @@ class TestClickHouseConnection:
             f"SELECT count() FROM system.databases WHERE name = '{temp_db}'"
         )
         assert result == 0
-
-
-# ===========================================================================
-# B. TestClickHouseDataInsertion
-# ===========================================================================
-
-
-@pytest.mark.integration
-class TestClickHouseDataInsertion:
-    """Test data insertion into ClickHouse CDC tables."""
-
-    def test_insert_span_data(self, ch_test_data):
-        """Inserting spans into CDC table should be queryable."""
-        client = ch_test_data["client"]
-        project_id = ch_test_data["project_id"]
-
-        result = client.command(
-            f"""
-            SELECT count()
-            FROM {_TEST_DATABASE}.tracer_observation_span FINAL
-            WHERE project_id = '{project_id}'
-              AND _peerdb_is_deleted = 0
-            """
-        )
-        assert result == 5
-
-    def test_insert_eval_data(self, ch_eval_data):
-        """Inserting eval logger entries should be queryable."""
-        client = ch_eval_data["client"]
-        project_id = ch_eval_data["project_id"]
-
-        result = client.command(
-            f"""
-            SELECT count()
-            FROM {_TEST_DATABASE}.tracer_eval_logger FINAL
-            WHERE project_id = '{project_id}'
-              AND _peerdb_is_deleted = 0
-            """
-        )
-        assert result == 5
-
-    def test_insert_with_null_fields(self, ch_schema):
-        """Inserting a span with NULL optional fields should succeed."""
-        client = ch_schema
-        span_id = f"null_span_{uuid.uuid4().hex[:8]}"
-        project_id = str(uuid.uuid4())
-        trace_id = str(uuid.uuid4())
-
-        client.command(
-            f"""
-            INSERT INTO {_TEST_DATABASE}.tracer_observation_span
-                (id, trace_id, project_id, name, observation_type,
-                 start_time, end_time, latency_ms, model,
-                 prompt_tokens, completion_tokens, total_tokens, cost,
-                 input, output, span_attributes, resource_attributes,
-                 metadata, tags, span_events,
-                 _peerdb_synced_at, _peerdb_is_deleted, _peerdb_version)
-            VALUES
-                ('{span_id}', '{trace_id}', '{project_id}', 'Null Span', 'tool',
-                 NULL, NULL, NULL, NULL,
-                 NULL, NULL, NULL, NULL,
-                 '', '', '{{}}', '{{}}',
-                 '{{}}', '[]', '[]',
-                 now64(), 0, 1)
-            """
-        )
-
-        result = client.command(
-            f"""
-            SELECT count()
-            FROM {_TEST_DATABASE}.tracer_observation_span FINAL
-            WHERE id = '{span_id}' AND _peerdb_is_deleted = 0
-            """
-        )
-        assert result == 1
-
-        # Cleanup
-        client.command(
-            f"""
-            INSERT INTO {_TEST_DATABASE}.tracer_observation_span
-                (id, trace_id, project_id, name, observation_type,
-                 input, output, span_attributes, resource_attributes,
-                 metadata, tags, span_events,
-                 _peerdb_synced_at, _peerdb_is_deleted, _peerdb_version)
-            VALUES
-                ('{span_id}', '{trace_id}', '{project_id}', 'Null Span', 'tool',
-                 '', '', '{{}}', '{{}}',
-                 '{{}}', '[]', '[]',
-                 now64(), 1, 2)
-            """
-        )
-
-    def test_insert_duplicate_deduplication(self, ch_schema):
-        """ReplacingMergeTree should keep only the latest version of a row."""
-        client = ch_schema
-        span_id = f"dedup_span_{uuid.uuid4().hex[:8]}"
-        project_id = str(uuid.uuid4())
-        trace_id = str(uuid.uuid4())
-
-        # Insert version 1
-        client.command(
-            f"""
-            INSERT INTO {_TEST_DATABASE}.tracer_observation_span
-                (id, trace_id, project_id, name, observation_type,
-                 latency_ms, input, output,
-                 span_attributes, resource_attributes, metadata, tags, span_events,
-                 _peerdb_synced_at, _peerdb_is_deleted, _peerdb_version)
-            VALUES
-                ('{span_id}', '{trace_id}', '{project_id}', 'Version 1', 'llm',
-                 100, '', '',
-                 '{{}}', '{{}}', '{{}}', '[]', '[]',
-                 now64(), 0, 1)
-            """
-        )
-
-        # Insert version 2 (same id, higher version)
-        client.command(
-            f"""
-            INSERT INTO {_TEST_DATABASE}.tracer_observation_span
-                (id, trace_id, project_id, name, observation_type,
-                 latency_ms, input, output,
-                 span_attributes, resource_attributes, metadata, tags, span_events,
-                 _peerdb_synced_at, _peerdb_is_deleted, _peerdb_version)
-            VALUES
-                ('{span_id}', '{trace_id}', '{project_id}', 'Version 2', 'llm',
-                 200, '', '',
-                 '{{}}', '{{}}', '{{}}', '[]', '[]',
-                 now64(), 0, 2)
-            """
-        )
-
-        # With FINAL, should see only the latest version
-        result = client.command(
-            f"""
-            SELECT name
-            FROM {_TEST_DATABASE}.tracer_observation_span FINAL
-            WHERE id = '{span_id}' AND _peerdb_is_deleted = 0
-            """
-        )
-        assert "Version 2" in str(result)
-
-        # Count should be 1 (deduplicated)
-        count = client.command(
-            f"""
-            SELECT count()
-            FROM {_TEST_DATABASE}.tracer_observation_span FINAL
-            WHERE id = '{span_id}' AND _peerdb_is_deleted = 0
-            """
-        )
-        assert count == 1
-
-        # Cleanup: soft-delete
-        client.command(
-            f"""
-            INSERT INTO {_TEST_DATABASE}.tracer_observation_span
-                (id, trace_id, project_id, name, observation_type,
-                 input, output, span_attributes, resource_attributes,
-                 metadata, tags, span_events,
-                 _peerdb_synced_at, _peerdb_is_deleted, _peerdb_version)
-            VALUES
-                ('{span_id}', '{trace_id}', '{project_id}', 'Version 2', 'llm',
-                 '', '', '{{}}', '{{}}',
-                 '{{}}', '[]', '[]',
-                 now64(), 1, 3)
-            """
-        )
-
-
-# ===========================================================================
-# C. TestDashboardQueryBuilderIntegration
-# ===========================================================================
-
-
-@pytest.mark.integration
-class TestDashboardQueryBuilderIntegration:
-    """Test DashboardQueryBuilder against a real ClickHouse instance."""
-
-    def _build_config(
-        self,
-        project_id,
-        metric_name="latency",
-        aggregation="avg",
-        metric_type="system_metric",
-        preset="30D",
-        granularity="day",
-        filters=None,
-        breakdowns=None,
-        **extra_metric_fields,
-    ):
-        config = {
-            "project_ids": [project_id],
-            "granularity": granularity,
-            "time_range": {"preset": preset},
-            "metrics": [
-                {
-                    "id": "m1",
-                    "name": metric_name,
-                    "type": metric_type,
-                    "aggregation": aggregation,
-                    **extra_metric_fields,
-                }
-            ],
-            "filters": filters or [],
-            "breakdowns": breakdowns or [],
-        }
-        return config
-
-    def _execute_query(self, client, sql, params):
-        """Execute a parameterized query against the test database."""
-        # Rewrite table references to the test database
-        sql_test = sql.replace("futureagi.", f"{_TEST_DATABASE}.")
-        # Replace bare table references that aren't already prefixed
-        for table in ["spans", "tracer_eval_logger", "trace_annotation"]:
-            # Only replace if not already prefixed with database name
-            sql_test = sql_test.replace(
-                f"FROM {table} ", f"FROM {_TEST_DATABASE}.{table} "
-            )
-            sql_test = sql_test.replace(
-                f"FROM {table}\n", f"FROM {_TEST_DATABASE}.{table}\n"
-            )
-            sql_test = sql_test.replace(
-                f"JOIN {table} ", f"JOIN {_TEST_DATABASE}.{table} "
-            )
-        try:
-            result = client.query(sql_test, parameters=params)
-            return result.result_rows
-        except Exception as e:
-            # Return empty if query references tables that don't exist in test
-            if "UNKNOWN_TABLE" in str(e) or "doesn't exist" in str(e):
-                pytest.skip(f"Table not available in test DB: {e}")
-            raise
-
-    def test_system_metric_query_executes(self, ch_test_data):
-        """Building and executing a latency query should not raise."""
-        from tracer.services.clickhouse.query_builders.dashboard import (
-            DashboardQueryBuilder,
-        )
-
-        config = self._build_config(ch_test_data["project_id"])
-        builder = DashboardQueryBuilder(config)
-        queries = builder.build_all_queries()
-        assert len(queries) == 1
-
-        sql, params, metric_info = queries[0]
-        rows = self._execute_query(ch_test_data["client"], sql, params)
-        # Should return rows (possibly empty if MV hasn't run)
-        assert isinstance(rows, list)
-
-    def test_eval_metric_query_executes(self, ch_eval_data):
-        """Building and executing an eval metric query should not raise."""
-        from tracer.services.clickhouse.query_builders.dashboard import (
-            DashboardQueryBuilder,
-        )
-
-        config = self._build_config(
-            ch_eval_data["project_id"],
-            metric_name="accuracy",
-            metric_type="eval_metric",
-            aggregation="avg",
-            config_id=ch_eval_data["config_id"],
-            output_type="SCORE",
-        )
-        builder = DashboardQueryBuilder(config)
-        queries = builder.build_all_queries()
-        sql, params, _ = queries[0]
-        rows = self._execute_query(ch_eval_data["client"], sql, params)
-        assert isinstance(rows, list)
-
-    def test_time_range_filtering_works(self, ch_schema):
-        """Data inserted at different dates should be filtered by time range."""
-        client = ch_schema
-        project_id = str(uuid.uuid4())
-        trace_id = str(uuid.uuid4())
-        now = datetime.now(timezone.utc)
-
-        # Insert trace
-        client.command(
-            f"""
-            INSERT INTO {_TEST_DATABASE}.tracer_trace
-                (id, project_id, name, session_id, external_id, tags,
-                 _peerdb_synced_at, _peerdb_is_deleted, _peerdb_version)
-            VALUES
-                ('{trace_id}', '{project_id}', 'Time Test Trace', '', '', '[]',
-                 now64(), 0, 1)
-            """
-        )
-
-        # Insert spans at different dates: 2 days ago and 10 days ago
-        for days_ago, label in [(2, "recent"), (10, "old")]:
-            span_id = f"time_{label}_{uuid.uuid4().hex[:8]}"
-            ts = now - timedelta(days=days_ago)
-            client.command(
-                f"""
-                INSERT INTO {_TEST_DATABASE}.tracer_observation_span
-                    (id, trace_id, project_id, name, observation_type,
-                     start_time, end_time, latency_ms,
-                     input, output, span_attributes, resource_attributes,
-                     metadata, tags, span_events,
-                     _peerdb_synced_at, _peerdb_is_deleted, _peerdb_version)
-                VALUES
-                    ('{span_id}', '{trace_id}', '{project_id}', 'Span {label}', 'llm',
-                     '{ts.strftime("%Y-%m-%d %H:%M:%S")}',
-                     '{ts.strftime("%Y-%m-%d %H:%M:%S")}',
-                     100, '', '',
-                     '{{}}', '{{}}', '{{}}', '[]', '[]',
-                     now64(), 0, 1)
-                """
-            )
-
-        # Query directly to verify time filtering
-        count_7d = client.command(
-            f"""
-            SELECT count()
-            FROM {_TEST_DATABASE}.tracer_observation_span FINAL
-            WHERE project_id = '{project_id}'
-              AND _peerdb_is_deleted = 0
-              AND start_time >= now() - INTERVAL 7 DAY
-            """
-        )
-        count_30d = client.command(
-            f"""
-            SELECT count()
-            FROM {_TEST_DATABASE}.tracer_observation_span FINAL
-            WHERE project_id = '{project_id}'
-              AND _peerdb_is_deleted = 0
-              AND start_time >= now() - INTERVAL 30 DAY
-            """
-        )
-        assert count_7d == 1  # Only the recent span
-        assert count_30d == 2  # Both spans
-
-        # Cleanup
-        for label in ["recent", "old"]:
-            client.command(
-                f"""
-                ALTER TABLE {_TEST_DATABASE}.tracer_observation_span
-                DELETE WHERE project_id = '{project_id}'
-                """
-            )
-
-    def test_breakdown_query_returns_grouped_data(self, ch_test_data):
-        """A breakdown query should group results by the breakdown dimension."""
-        from tracer.services.clickhouse.query_builders.dashboard import (
-            DashboardQueryBuilder,
-        )
-
-        config = self._build_config(
-            ch_test_data["project_id"],
-            breakdowns=[{"type": "system_metric", "name": "model"}],
-        )
-        builder = DashboardQueryBuilder(config)
-        queries = builder.build_all_queries()
-        sql, params, _ = queries[0]
-
-        assert "breakdown_value" in sql
-        rows = self._execute_query(ch_test_data["client"], sql, params)
-        assert isinstance(rows, list)
-
-    def test_filter_string_equals(self, ch_test_data):
-        """A filter with equal_to operator should narrow results."""
-        from tracer.services.clickhouse.query_builders.dashboard import (
-            DashboardQueryBuilder,
-        )
-
-        config = self._build_config(
-            ch_test_data["project_id"],
-            filters=[
-                {
-                    "metric_type": "system_metric",
-                    "metric_name": "model",
-                    "operator": "equal_to",
-                    "value": "gpt-4",
-                }
-            ],
-        )
-        builder = DashboardQueryBuilder(config)
-        queries = builder.build_all_queries()
-        sql, params, _ = queries[0]
-
-        assert "model" in sql
-        rows = self._execute_query(ch_test_data["client"], sql, params)
-        assert isinstance(rows, list)
-
-    def test_filter_string_contains(self, ch_test_data):
-        """A str_contains filter should use LIKE."""
-        from tracer.services.clickhouse.query_builders.dashboard import (
-            DashboardQueryBuilder,
-        )
-
-        config = self._build_config(
-            ch_test_data["project_id"],
-            filters=[
-                {
-                    "metric_type": "system_metric",
-                    "metric_name": "model",
-                    "operator": "str_contains",
-                    "value": "gpt",
-                }
-            ],
-        )
-        builder = DashboardQueryBuilder(config)
-        queries = builder.build_all_queries()
-        sql, params, _ = queries[0]
-
-        assert "LIKE" in sql
-        rows = self._execute_query(ch_test_data["client"], sql, params)
-        assert isinstance(rows, list)
-
-    def test_filter_number_between(self, ch_test_data):
-        """Numeric filters with greater_than/less_than should narrow results."""
-        from tracer.services.clickhouse.query_builders.dashboard import (
-            DashboardQueryBuilder,
-        )
-
-        config = self._build_config(
-            ch_test_data["project_id"],
-            filters=[
-                {
-                    "metric_type": "system_metric",
-                    "metric_name": "cost",
-                    "operator": "greater_than",
-                    "value": 0.001,
-                },
-                {
-                    "metric_type": "system_metric",
-                    "metric_name": "cost",
-                    "operator": "less_than",
-                    "value": 0.01,
-                },
-            ],
-        )
-        builder = DashboardQueryBuilder(config)
-        queries = builder.build_all_queries()
-        sql, params, _ = queries[0]
-        rows = self._execute_query(ch_test_data["client"], sql, params)
-        assert isinstance(rows, list)
-
-    def test_aggregation_avg_returns_correct_value(self, ch_test_data):
-        """avg() aggregation on known data should return the correct average."""
-        client = ch_test_data["client"]
-        project_id = ch_test_data["project_id"]
-
-        # Compute expected average from test data
-        latencies = [s["latency_ms"] for s in ch_test_data["spans"]]
-        expected_avg = sum(latencies) / len(latencies)
-
-        result = client.command(
-            f"""
-            SELECT avg(latency_ms)
-            FROM {_TEST_DATABASE}.tracer_observation_span FINAL
-            WHERE project_id = '{project_id}'
-              AND _peerdb_is_deleted = 0
-            """
-        )
-        assert abs(float(result) - expected_avg) < 0.01
-
-    def test_aggregation_p95_returns_correct_value(self, ch_test_data):
-        """quantile(0.95) should return a value within the expected range."""
-        client = ch_test_data["client"]
-        project_id = ch_test_data["project_id"]
-
-        latencies = sorted([s["latency_ms"] for s in ch_test_data["spans"]])
-
-        result = client.command(
-            f"""
-            SELECT quantile(0.95)(latency_ms)
-            FROM {_TEST_DATABASE}.tracer_observation_span FINAL
-            WHERE project_id = '{project_id}'
-              AND _peerdb_is_deleted = 0
-            """
-        )
-        p95 = float(result)
-        # p95 should be between the max and second-to-max value
-        assert p95 >= latencies[-2]
-        assert p95 <= latencies[-1] * 1.1  # Allow small margin
-
-    def test_aggregation_count_distinct(self, ch_test_data):
-        """uniq() should count distinct models correctly."""
-        client = ch_test_data["client"]
-        project_id = ch_test_data["project_id"]
-
-        result = client.command(
-            f"""
-            SELECT uniq(model)
-            FROM {_TEST_DATABASE}.tracer_observation_span FINAL
-            WHERE project_id = '{project_id}'
-              AND _peerdb_is_deleted = 0
-            """
-        )
-        # Test data has 2 distinct models: gpt-4, gpt-3.5-turbo
-        assert int(result) == 2
 
 
 # ===========================================================================
@@ -927,7 +647,7 @@ class TestSimulationQueryBuilderIntegration:
             "time_range": {"preset": preset},
             "metrics": [
                 {
-                    "id": "m1",
+                    "id": metric_name,
                     "name": metric_name,
                     "type": "system_metric",
                     "aggregation": aggregation,
@@ -944,7 +664,7 @@ class TestSimulationQueryBuilderIntegration:
             SimulationQueryBuilder,
         )
 
-        config = self._build_config(ch_simulation_data["workspace_id"])
+        config = self._build_config(ch_simulation_data["test_execution_id"])
         builder = SimulationQueryBuilder(config)
         queries = builder.build_all_queries()
         assert len(queries) == 1
@@ -967,7 +687,7 @@ class TestSimulationQueryBuilderIntegration:
         )
 
         config = self._build_config(
-            ch_simulation_data["workspace_id"],
+            ch_simulation_data["test_execution_id"],
             breakdowns=[{"type": "system_metric", "name": "agent_version"}],
         )
         builder = SimulationQueryBuilder(config)
@@ -982,7 +702,7 @@ class TestSimulationQueryBuilderIntegration:
         )
 
         config = self._build_config(
-            ch_simulation_data["workspace_id"],
+            ch_simulation_data["test_execution_id"],
             filters=[
                 {
                     "metric_type": "system_metric",
@@ -1034,7 +754,7 @@ class TestDatasetQueryBuilderIntegration:
             "time_range": {"preset": preset},
             "metrics": [
                 {
-                    "id": "m1",
+                    "id": metric_name,
                     "name": metric_name,
                     "type": "system_metric",
                     "aggregation": aggregation,
@@ -1051,7 +771,7 @@ class TestDatasetQueryBuilderIntegration:
             DatasetQueryBuilder,
         )
 
-        config = self._build_config(ch_dataset_data["workspace_id"])
+        config = self._build_config(ch_dataset_data["dataset_id"])
         builder = DatasetQueryBuilder(config)
         queries = builder.build_all_queries()
         assert len(queries) == 1
@@ -1073,10 +793,408 @@ class TestDatasetQueryBuilderIntegration:
         )
 
         config = self._build_config(
-            ch_dataset_data["workspace_id"],
+            ch_dataset_data["dataset_id"],
             breakdowns=[{"type": "system_metric", "name": "column_name"}],
         )
         builder = DatasetQueryBuilder(config)
         queries = builder.build_all_queries()
         sql, _, _ = queries[0]
         assert "breakdown_value" in sql
+
+
+# ===========================================================================
+# F. TestEvalScoreMaterialization
+# ===========================================================================
+
+
+@pytest.mark.integration
+class TestEvalScoreMaterialization:
+    """Eval scores read back out of a real ClickHouse instance."""
+
+    def test_every_eval_output_shape_materializes_its_score(self, ch_eval_output_rows):
+        """Structured outputs resolve to their nested score; the rest hold."""
+        result = ch_eval_output_rows["client"].query(
+            f"SELECT reference_id, eval_score FROM {_EVAL_TABLE} "
+            f"WHERE source_id = '{ch_eval_output_rows['all_shapes_source_id']}'"
+        )
+
+        assert dict(result.result_rows) == {
+            label: score for label, _payload, score, _has_number in EVAL_OUTPUT_SHAPES
+        }
+
+    def test_structured_eval_output_str_holds_the_nested_object(
+        self, ch_eval_output_rows
+    ):
+        """Readers branch on eval_output_str, so it must not be empty here."""
+        label, payload, _score, _has_number = EVAL_OUTPUT_SHAPES[0]
+        result = ch_eval_output_rows["client"].query(
+            f"SELECT eval_output_str FROM {_EVAL_TABLE} "
+            f"WHERE source_id = '{ch_eval_output_rows['all_shapes_source_id']}' "
+            f"AND reference_id = '{label}'"
+        )
+
+        assert json.loads(result.result_rows[0][0]) == payload["output"]["output"]
+
+    @pytest.mark.parametrize(
+        ("source_key", "expected"),
+        [
+            ("scored_shapes_source_id", EVAL_SCORED_AVERAGE),
+            ("all_shapes_source_id", EVAL_ALL_SHAPES_AVERAGE),
+        ],
+    )
+    def test_dashboard_average_counts_only_the_shapes_it_can_score(
+        self, ch_eval_output_rows, source_key, expected
+    ):
+        """Structured rows are averaged in; a null or text score stays excluded."""
+        from tracer.services.clickhouse.query_builders.dashboard import (
+            DashboardQueryBuilder,
+        )
+
+        config = {
+            "organization_id": ch_eval_output_rows["organization_id"],
+            "workspace_id": ch_eval_output_rows["workspace_id"],
+            "project_ids": [ch_eval_output_rows["project_id"]],
+            "granularity": "day",
+            "time_range": {"preset": "7D"},
+            "metrics": [
+                {
+                    "id": "structured_eval",
+                    "name": "structured_eval",
+                    "type": "eval_metric",
+                    "config_id": ch_eval_output_rows[source_key],
+                    "aggregation": "avg",
+                }
+            ],
+        }
+        sql, params, _ = DashboardQueryBuilder(config).build_all_queries()[0]
+        sql_test = _rewrite_eval_dashboard_tables(sql)
+
+        result = ch_eval_output_rows["client"].query(sql_test, parameters=params)
+
+        assert [row[1] for row in result.result_rows] == [pytest.approx(expected)]
+
+    def test_pass_fail_paths_classify_every_row_the_same_way(self, ch_eval_output_rows):
+        """One eval, three widgets: the time series, the breakdown label and the
+        filter have to reach the same verdict on the same row.
+        """
+        from tracer.services.clickhouse.query_builders.dashboard import (
+            DashboardQueryBuilder,
+        )
+
+        client = ch_eval_output_rows["client"]
+        source_id = ch_eval_output_rows["all_shapes_source_id"]
+        metric = {
+            "id": "pass_fail_eval",
+            "name": "pass_fail_eval",
+            "type": "eval_metric",
+            "config_id": source_id,
+            "output_type": "PASS_FAIL",
+            "aggregation": "pass_count",
+        }
+        config = {
+            "organization_id": ch_eval_output_rows["organization_id"],
+            "workspace_id": ch_eval_output_rows["workspace_id"],
+            "project_ids": [ch_eval_output_rows["project_id"]],
+            "granularity": "day",
+            "time_range": {"preset": "7D"},
+            "metrics": [metric],
+            "breakdowns": [metric],
+        }
+
+        def _run(sql, params=None):
+            return client.query(
+                _rewrite_eval_dashboard_tables(sql), parameters=params
+            ).result_rows
+
+        builder = DashboardQueryBuilder(config)
+
+        sql, params, _ = builder.build_all_queries()[0]
+        time_series_passes = sum(row[1] for row in _run(sql, params))
+
+        label_expr = builder._resolve_all_breakdowns({})[0]["expr"]
+        breakdown_passes = {
+            label
+            for label, verdict in _run(
+                f"SELECT reference_id, {label_expr} FROM usage_apicalllog AS ev0 "
+                f"WHERE source_id = '{source_id}'"
+            )
+            if verdict == "Passed"
+        }
+
+        clauses, filter_params = builder._build_subquery_filters(
+            [
+                {
+                    "metric_type": "eval_metric",
+                    "metric_name": source_id,
+                    "output_type": "PASS_FAIL",
+                    "operator": "equal_to",
+                    "value": 1.0,
+                }
+            ],
+            {},
+            "f_",
+        )
+        subquery = clauses[0][clauses[0].index("(") + 1 : clauses[0].rindex(")")]
+        label_by_trace_id = {
+            trace_id: label
+            for label, trace_id in ch_eval_output_rows["trace_ids"].items()
+        }
+        filter_passes = {
+            label_by_trace_id[row[0]]
+            for row in _run(subquery, {**params, **filter_params})
+        }
+
+        assert breakdown_passes == filter_passes == set(EVAL_PASSING_SHAPES), (
+            "the breakdown label and the eval filter disagree on which rows "
+            f"passed: breakdown {sorted(breakdown_passes)}, "
+            f"filter {sorted(filter_passes)}"
+        )
+        assert time_series_passes == len(EVAL_PASSING_SHAPES), (
+            "the time series counts a different number of passes than the "
+            f"breakdown and the filter do: {time_series_passes}"
+        )
+
+    def test_backfill_leaves_the_score_index_agreeing_with_the_rows(
+        self, ch_eval_output_rows
+    ):
+        """A backfilled row has to stay visible to a filter on eval_score."""
+        from tracer.management.commands.backfill_eval_score import (
+            materialize_statements,
+            rebuild_statements,
+        )
+        from tracer.services.clickhouse.schema import (
+            CDC_USAGE_APICALLLOG,
+            EVAL_OUTPUT_JSON_ARGS,
+            _to_single_node_engine,
+        )
+
+        client = ch_eval_output_rows["client"]
+        table = f"{_EVAL_TABLE}_deployed"
+        client.command(f"DROP TABLE IF EXISTS {table}")
+        client.command(
+            _to_single_node_engine(CDC_USAGE_APICALLLOG).replace(
+                "CREATE TABLE IF NOT EXISTS usage_apicalllog",
+                f"CREATE TABLE IF NOT EXISTS {table}",
+            )
+        )
+        # Wind the table back to the expression a deployed cluster still has.
+        client.command(
+            f"ALTER TABLE {table} MODIFY COLUMN eval_score Float64 "
+            f"MATERIALIZED JSONExtractFloat({EVAL_OUTPUT_JSON_ARGS})"
+        )
+        for offset, (_label, payload, _score, _has_number) in enumerate(
+            EVAL_SCORED_SHAPES
+        ):
+            literal = json.dumps(payload).replace("\\", "\\\\").replace("'", "\\'")
+            client.command(
+                f"INSERT INTO {table} (id, log_id, organization_id, status, config, "
+                "source, source_id, created_at, updated_at, _peerdb_synced_at, "
+                "_peerdb_is_deleted, _peerdb_version) SELECT "
+                f"{201 + offset}, generateUUIDv4(), generateUUIDv4(), 'success', "
+                f"toJSONString('{literal}'), 'tracer', 'deployed', "
+                "now64(6), now64(6), now64(6), 0, 1"
+            )
+
+        for statement in rebuild_statements(table) + materialize_statements(table):
+            client.command(f"{statement} SETTINGS mutations_sync = 2")
+
+        expected = sum(1 for _l, _p, score, _h in EVAL_SCORED_SHAPES if score >= 1.0)
+        counts = {
+            skip_indexes: client.query(
+                f"SELECT count() FROM {table} WHERE eval_score >= 1.0 "
+                f"SETTINGS use_skip_indexes = {skip_indexes}"
+            ).result_rows[0][0]
+            for skip_indexes in (0, 1)
+        }
+
+        client.command(f"DROP TABLE IF EXISTS {table}")
+        assert counts[1] == counts[0] == expected, (
+            "the eval_score minmax index disagrees with the stored rows after "
+            f"the backfill, so filters prune real rows away: {counts}"
+        )
+
+
+# ===========================================================================
+# F. TestEvalScoreBackfillAtScale
+# ===========================================================================
+
+
+@pytest.fixture
+def ch_backfill_bench_table(ch_schema):
+    """Seed a large usage_apicalllog copy, or skip when the run is not opted in."""
+    rows = int(os.environ.get("EVAL_SCORE_BENCH_ROWS", "0"))
+    if rows <= 0:
+        pytest.skip(
+            "set EVAL_SCORE_BENCH_ROWS to run the eval_score backfill benchmark"
+        )
+
+    import clickhouse_connect
+
+    shape = os.environ.get("EVAL_SCORE_BENCH_SHAPE", "prod")
+    client = clickhouse_connect.get_client(
+        host=os.environ.get("CH_TEST_HOST", "localhost"),
+        port=int(os.environ.get("CH_TEST_PORT", "18123")),
+        database=_TEST_DATABASE,
+        send_receive_timeout=14400,
+        settings={"max_execution_time": 14400},
+    )
+
+    started = time.perf_counter()
+    _bench_seed(client, _BENCH_TABLE, rows, shape)
+
+    yield {
+        "client": client,
+        "table": _BENCH_TABLE,
+        "rows": rows,
+        "shape": shape,
+        "seed_seconds": time.perf_counter() - started,
+    }
+
+    client.command(f"DROP TABLE IF EXISTS {_BENCH_TABLE}")
+    client.close()
+
+
+@pytest.mark.benchmark
+@pytest.mark.skipif(
+    not os.environ.get("EVAL_SCORE_BENCH_ROWS"),
+    reason="set EVAL_SCORE_BENCH_ROWS to run the eval_score backfill benchmark",
+)
+class TestEvalScoreBackfillAtScale:
+    """Time the eval_score backfill on a large table and prove it stays correct.
+
+    Opt-in twice over: the ``benchmark`` marker is deselected by the default
+    addopts, and the fixture skips unless ``EVAL_SCORE_BENCH_ROWS`` is set. A
+    ten million row seed must never run in an ordinary suite invocation.
+
+        EVAL_SCORE_BENCH_ROWS=10000000 pytest
+            tracer/tests/test_clickhouse_integration.py -m benchmark -k AtScale -s
+
+    ``EVAL_SCORE_BENCH_SHAPE`` picks the table shape: ``prod`` (default,
+    unpartitioned and ordered by id, which is what PeerDB built) or
+    ``canonical`` (the schema.py DDL, partitioned by month).
+    """
+
+    @staticmethod
+    def _timed(call):
+        started = time.perf_counter()
+        result = call()
+        return time.perf_counter() - started, result
+
+    def _stale_count(self, client, table):
+        from tracer.management.commands.backfill_eval_score import _AFFECTED_COUNT
+        from tracer.services.clickhouse.eval_expressions import (
+            eval_has_structured_score,
+        )
+        from tracer.services.clickhouse.schema import (
+            CH_EVAL_SCORE_EXPR,
+            EVAL_OUTPUT_JSON_ARGS,
+        )
+
+        sql = _AFFECTED_COUNT.format(
+            table=table,
+            column="eval_score",
+            expr=CH_EVAL_SCORE_EXPR,
+            predicate=eval_has_structured_score(EVAL_OUTPUT_JSON_ARGS),
+        )
+        seconds, result = self._timed(
+            lambda: client.query(f"{sql}\nSETTINGS {BENCH_READ_SETTINGS}")
+        )
+        return seconds, int(result.result_rows[0][0])
+
+    def test_backfill_scales_and_leaves_every_shape_correct(
+        self, ch_backfill_bench_table
+    ):
+        """The real backfill statements, timed, against a table of real size."""
+        from tracer.management.commands.backfill_eval_score import (
+            _PARTITIONS,
+            materialize_statements,
+            rebuild_statements,
+        )
+
+        client = ch_backfill_bench_table["client"]
+        table = ch_backfill_bench_table["table"]
+        rows = ch_backfill_bench_table["rows"]
+
+        size = client.query(
+            "SELECT sum(rows), sum(bytes_on_disk), count() FROM system.parts "
+            f"WHERE database = '{_TEST_DATABASE}' AND table = '{table}' AND active"
+        ).result_rows[0]
+
+        dry_run_cold, stale_before = self._stale_count(client, table)
+        assert stale_before > 0, (
+            "the seed is not stale, so this run would time a no-op backfill"
+        )
+
+        rebuild_seconds = 0.0
+        for statement in rebuild_statements(table):
+            seconds, _ = self._timed(lambda s=statement: client.command(s))
+            rebuild_seconds += seconds
+
+        partitions = [
+            row[0] for row in client.query(_PARTITIONS.format(table=table)).result_rows
+        ]
+        assert partitions, "the backfill found no partitions to materialize"
+
+        column_seconds = index_seconds = 0.0
+        for partition in partitions:
+            column_sql, index_sql = materialize_statements(table, partition)
+            # mutations_sync = 2 so the wall time is completion, not submission.
+            seconds, _ = self._timed(
+                lambda s=column_sql: client.command(f"{s} SETTINGS mutations_sync = 2")
+            )
+            column_seconds += seconds
+            seconds, _ = self._timed(
+                lambda s=index_sql: client.command(f"{s} SETTINGS mutations_sync = 2")
+            )
+            index_seconds += seconds
+
+        dry_run_after, stale_after = self._stale_count(client, table)
+
+        parity = {
+            use_skip_indexes: int(
+                client.query(
+                    f"SELECT count() FROM {table} WHERE eval_score >= 1.0 "
+                    f"SETTINGS use_skip_indexes = {use_skip_indexes}, "
+                    f"{BENCH_READ_SETTINGS}"
+                ).result_rows[0][0]
+            )
+            for use_skip_indexes in (0, 1)
+        }
+        scores = dict(
+            client.query(
+                f"SELECT reference_id, eval_score FROM {table} "
+                f"GROUP BY reference_id, eval_score SETTINGS {BENCH_READ_SETTINGS}"
+            ).result_rows
+        )
+
+        print(
+            "\n".join(
+                [
+                    "",
+                    f"eval_score backfill, {rows:,} rows, "
+                    f"{ch_backfill_bench_table['shape']} table shape",
+                    f"  rows on disk           {size[0]:,} in {size[2]} active parts",
+                    f"  bytes on disk          {size[1]:,} "
+                    f"({size[1] / max(size[0], 1):.0f} per row)",
+                    f"  seed                   {ch_backfill_bench_table['seed_seconds']:8.2f}s",
+                    f"  dry-run scan           {dry_run_cold:8.2f}s  ({stale_before:,} stale)",
+                    f"  rebuild DDL, 3 stmts   {rebuild_seconds:8.2f}s",
+                    f"  MATERIALIZE COLUMN     {column_seconds:8.2f}s  "
+                    f"over {len(partitions)} partition(s)",
+                    f"  MATERIALIZE INDEX      {index_seconds:8.2f}s",
+                    f"  dry-run scan after     {dry_run_after:8.2f}s  ({stale_after:,} stale)",
+                    "",
+                ]
+            )
+        )
+
+        assert stale_after == 0, (
+            f"{stale_after} rows are still stale after the backfill"
+        )
+        assert parity[1] == parity[0], (
+            "the eval_score minmax index disagrees with the stored rows after "
+            f"the backfill, so filters prune real rows away: {parity}"
+        )
+        assert scores == {
+            label: EVAL_SHAPE_SCORES[label] for _bound, label in BENCH_MIX
+        }, f"a seeded output shape resolved to the wrong score: {scores}"

@@ -1,19 +1,29 @@
 import json
+import time
 import uuid
+from typing import TYPE_CHECKING, Any
 
 import structlog
-from django.db import close_old_connections
-
 from accounts.models import workspace
 from accounts.models.workspace import Workspace
 from agentic_eval.core.utils.functions import detect_input_type
+from django.db import (
+    InterfaceError,
+    OperationalError,
+    close_old_connections,
+    transaction,
+)
+from django.db.models import Q
+
+from model_hub.services.localization_errors import LocalizationFailure
 
 logger = structlog.get_logger(__name__)
 try:
-    from ee.evals.localizer.error_localizer import ErrorLocalizer
+    from ee.evals.localizer.claude_harness import create_localizer as ErrorLocalizer
 except ImportError:
     # Activity-aware stub: runs inside Temporal evaluation activities.
     from tfc.ee_stub import _ee_activity_stub
+
     ErrorLocalizer = _ee_activity_stub("ErrorLocalizer")
 from analytics.utils import (
     MixpanelEvents,
@@ -21,6 +31,7 @@ from analytics.utils import (
     get_mixpanel_properties,
     track_mixpanel_event,
 )
+from evaluations.engine.instance import resolve_pass_threshold
 from model_hub.models.choices import CellStatus, ModelChoices, SourceChoices, StatusType
 from model_hub.models.develop_dataset import Cell, Column, Dataset, Row
 from model_hub.models.error_localizer_model import (
@@ -28,13 +39,20 @@ from model_hub.models.error_localizer_model import (
     ErrorLocalizerStatus,
     ErrorLocalizerTask,
 )
-from model_hub.models.evals_metric import UserEvalMetric
+from model_hub.models.evals_metric import (
+    EvalTemplate,
+    EvalTemplateVersion,
+    UserEvalMetric,
+)
 from model_hub.models.evaluation import Evaluation
 from model_hub.models.run_prompt import RunPrompter
+from model_hub.services.error_localizer_service import should_run_error_localizer
+from model_hub.utils.api_log_config import parse_api_log_config
 from model_hub.views.develop_optimiser import DevelopOptimizer
 from model_hub.views.eval_runner import EvaluationRunner
 from model_hub.views.experiment_runner import ExperimentRunner
 from sdk.utils.helpers import _get_api_call_type
+from tfc.constants.api_calls import APICallStatusChoices, APICallTypeChoices
 from tfc.temporal import temporal_activity
 from tfc.utils.distributed_locks import distributed_lock_manager
 
@@ -42,29 +60,43 @@ from tfc.utils.distributed_locks import distributed_lock_manager
 from tfc.utils.distributed_state import evaluation_tracker
 from tfc.utils.error_codes import get_error_for_api_status
 from tracer.models.observation_span import EvalLogger
-from tfc.constants.api_calls import APICallStatusChoices, APICallTypeChoices
+
+if TYPE_CHECKING:
+    from simulate.models.eval_config import SimulateEvalConfig
+    from simulate.models.test_execution import CallExecution
+    from tracer.models.observation_span import ObservationSpan
+    from tracer.models.project import Project
 
 try:
     from ee.usage.models.usage import APICallLog
 except ImportError:
     APICallLog = None
 try:
-    from ee.usage.utils.usage_entries import log_and_deduct_cost_for_api_request, refund_cost_for_api_call
+    from ee.usage.utils.usage_entries import (
+        log_and_deduct_cost_for_api_request,
+        refund_cost_for_api_call,
+    )
 except ImportError:
     log_and_deduct_cost_for_api_request = None
     refund_cost_for_api_call = None
 
 
 def _mark_cells_usage_limit_error(user_eval_metric, usage_check):
-    """Flip RUNNING cells for this eval to ERROR when a usage pre-check fails.
+    """Write ERROR cells for this eval when a pre-check fails.
 
-    Without this, non-composite eval cells stay in RUNNING forever (the worker
-    raised before writing any result), leaving the UI stuck on a loading
-    skeleton. The structured `value_infos` lets the frontend render a
-    credit-limit-specific message + upgrade CTA instead of a generic error.
+    Used for credit/usage denials and OSS agent-eval entitlement blocks.
+    Pre-checks often fail *before* EvaluationRunner creates RUNNING cells, so
+    we must upsert ERROR cells for every dataset row — not only flip RUNNING.
+    Otherwise the UI shows empty columns instead of the same error treatment
+    as other eval failures.
+
+    Structured `value_infos` lets the frontend render a credit/entitlement
+    message + upgrade CTA (see ErrorCellRenderer).
     """
     try:
         from django.db.models import Q
+
+        from model_hub.views.eval_runner import bulk_update_or_create_cells
 
         # Dataset evals: Column.source_id == uem.id, source = 'evaluation'.
         # Experiment evals: one column per (prompt_config, dataset snapshot,
@@ -76,6 +108,8 @@ def _mark_cells_usage_limit_error(user_eval_metric, usage_check):
                 source=SourceChoices.EXPERIMENT_EVALUATION.value,
                 source_id__endswith=f"-sourceid-{user_eval_metric.id}",
             ),
+            dataset_id=user_eval_metric.dataset_id,
+            dataset__organization_id=user_eval_metric.organization_id,
             deleted=False,
         )
         eval_column_ids = list(eval_columns.values_list("id", flat=True))
@@ -89,9 +123,23 @@ def _mark_cells_usage_limit_error(user_eval_metric, usage_check):
             Column.objects.filter(
                 source=SourceChoices.EVALUATION_REASON.value,
                 source_id__endswith=f"-sourceid-{user_eval_metric.id}",
+                dataset_id=user_eval_metric.dataset_id,
+                dataset__organization_id=user_eval_metric.organization_id,
                 deleted=False,
             ).values_list("id", flat=True)
         )
+
+        dataset_id = user_eval_metric.dataset_id
+        if not dataset_id:
+            return
+
+        row_ids = list(
+            Row.objects.filter(dataset_id=dataset_id, deleted=False).values_list(
+                "id", flat=True
+            )
+        )
+        if not row_ids:
+            return
 
         upgrade_cta = None
         cta = getattr(usage_check, "upgrade_cta", None)
@@ -107,20 +155,31 @@ def _mark_cells_usage_limit_error(user_eval_metric, usage_check):
             "upgrade_cta": upgrade_cta,
         }
         display = usage_check.reason or "Usage limit exceeded"
+        new_values = {
+            "status": CellStatus.ERROR.value,
+            "value": display,
+            "value_infos": value_infos,
+        }
 
-        updated = Cell.objects.filter(
-            column_id__in=eval_column_ids + reason_column_ids,
-            deleted=False,
-            status=CellStatus.RUNNING.value,
-        ).update(
-            status=CellStatus.ERROR.value,
-            value=display,
-            value_infos=value_infos,
-        )
+        updated = 0
+        created = 0
+        for column_id in eval_column_ids + reason_column_ids:
+            u, c = bulk_update_or_create_cells(
+                row_ids,
+                column_id,
+                dataset_id,
+                new_values,
+                user_eval_metric_id=str(user_eval_metric.id),
+                skip_completed=True,
+            )
+            updated += u
+            created += c
+
         logger.info(
             "usage_limit_error_marked_on_cells",
             eval_id=str(user_eval_metric.id),
             cells_updated=updated,
+            cells_created=created,
             error_code=usage_check.error_code,
         )
     except Exception as exc:
@@ -175,16 +234,38 @@ def process_single_evaluation(user_eval_metric):
     )
     track_mixpanel_event(MixpanelEvents.EVAL_RUN_STARTED.value, properties)
 
-    # Block agent-type evals when ee is absent.
+    # Agent-type evals need the ee/ AgentEvaluator. Gate via the capability
+    # service (self-hosted runs them on user-keyed models; deployment mode
+    # alone must not deny) — deny only on capability denial, or genuinely
+    # absent ee code before the service is configured.
     if getattr(user_eval_metric.template, "eval_type", "") == "agent":
-        from tfc.ee_gating import is_oss
-        if is_oss():
+        try:
+            from tfc.capabilities import service as capability_service
+
+            if capability_service.is_configured():
+                _decision = capability_service.check(
+                    "agentic_eval",
+                    org_id=str(user_eval_metric.organization.id),
+                )
+                _agent_denied = not _decision.allowed
+            else:
+                from tfc.ee_loader import has_ee
+
+                _agent_denied = not has_ee("ee.evals")
+        except Exception:
+            # Permission checks fail closed. Do not fall back to has_ee()
+            # (True on every build shipping ee/) — deny and log the trace.
+            logger.exception("agentic_eval_capability_check_failed")
+            _agent_denied = True
+
+        if _agent_denied:
             user_eval_metric.status = StatusType.FAILED.value
             user_eval_metric.save(update_fields=["status"])
             _err_msg = (
                 "Agent evaluations are not available on your plan. "
                 "Use LLM-as-a-Judge or Code evaluations instead."
             )
+
             # Mark cells as error so the UI doesn't stay stuck on loading
             class _ErrInfo:
                 error_code = "ENTITLEMENT_DENIED"
@@ -193,6 +274,7 @@ def process_single_evaluation(user_eval_metric):
                 current_usage = 0
                 limit = 0
                 upgrade_cta = None
+
             _mark_cells_usage_limit_error(user_eval_metric, _ErrInfo())
             raise ValueError(_err_msg)
 
@@ -212,15 +294,31 @@ def process_single_evaluation(user_eval_metric):
             _mark_cells_usage_limit_error(user_eval_metric, usage_check)
             raise ValueError(usage_check.reason or "Usage limit exceeded")
 
+    # Stamp which eval version will run — pinned version wins, else the
+    # template default (EvalTemplateVersion.objects.resolve_for_metric).
+    source_configs = {
+        "dataset_id": str(user_eval_metric.dataset.id),
+        "source": "dataset",
+    }
+    try:
+        version = EvalTemplateVersion.objects.resolve_for_metric(user_eval_metric)
+        if version:
+            source_configs["version_id"] = str(version.id)
+            source_configs["version_number"] = version.version_number
+    except Exception:
+        logger.warning(
+            "version_tracking_failed",
+            path="dataset_eval",
+            eval_id=str(eval_id),
+            exc_info=True,
+        )
+
     runner = EvaluationRunner(
         user_eval_metric_id=user_eval_metric.id,
         is_only_eval=True,
         source="dataset_evaluation",
         source_id=user_eval_metric.template.id,
-        source_configs={
-            "dataset_id": str(user_eval_metric.dataset.id),
-            "source": "dataset",
-        },
+        source_configs=source_configs,
     )
     cols_used = runner._get_all_column_ids_being_used()
 
@@ -463,7 +561,11 @@ def execute_evaluation():
 def process_evaluation_single_task(evaluation):
     close_old_connections()
 
-    eval_obj = UserEvalMetric.objects.get(id=evaluation["eval_id"])
+    # select_related avoids an N+1 when resolve_for_metric touches
+    # pinned_version/template during version stamping.
+    eval_obj = UserEvalMetric.objects.select_related(
+        "dataset", "template", "pinned_version"
+    ).get(id=evaluation["eval_id"])
     logger.info(f"Processing evaluation {eval_obj.id}")
 
     if evaluation["type"] == "single":
@@ -651,28 +753,6 @@ def _get_input_type(input):
     return input_type
 
 
-def _eval_passed(value) -> bool:
-    """
-    Determine if an eval result represents a passing evaluation.
-    Returns True if the eval passed (error localizer should be skipped).
-    """
-    if value is None:
-        return False
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, (int, float)):
-        return value >= 0.8
-    if isinstance(value, str):
-        return value.lower() in ("passed", "pass", "true", "1")
-    if isinstance(value, list):
-        return all(_eval_passed(v) for v in value) if value else False
-    if isinstance(value, dict):
-        inner = value.get("result") or value.get("output")
-        if inner is not None:
-            return _eval_passed(inner)
-    return False
-
-
 def _validate_error_localizer_fields(rule_prompt, input_data, eval_result):
     """
     Validate required fields for error localization.
@@ -684,29 +764,48 @@ def _validate_error_localizer_fields(rule_prompt, input_data, eval_result):
         missing_fields.append("rule_prompt")
     if not input_data:
         missing_fields.append("input_data")
-    if not eval_result:
+    if eval_result is None:
         missing_fields.append("eval_result")
 
     if missing_fields:
         error_msg = f"Missing required fields: {', '.join(missing_fields)}"
-        logger.error(f"ErrorLocalizerTask validation failed - {error_msg}")
+        # Expected, handled: localizer is skipped (FAILED status persisted) when
+        # required fields are absent (e.g. no eval_result). Warning, not error.
+        logger.warning(f"ErrorLocalizerTask validation failed - {error_msg}")
         return ErrorLocalizerStatus.FAILED, error_msg
 
     return ErrorLocalizerStatus.PENDING, ""
 
 
+def _has_localized_segments(error_analysis: dict | list | None) -> bool:
+    if not error_analysis:
+        return False
+    if isinstance(error_analysis, dict):
+        return any(isinstance(v, list) and v for v in error_analysis.values())
+    if isinstance(error_analysis, list):
+        return bool(error_analysis)
+    return True
+
+
 def trigger_error_localization_for_column(
-    eval_template,
-    config,
-    required_field,
-    mapping,
-    eval_result,
-    response,
-    cell,
-    log_id=None,
-):
+    eval_template: EvalTemplate,
+    config: dict,
+    required_field: list,
+    mapping: list,
+    eval_result: Any,
+    response: dict,
+    cell: Cell,
+    log_id: str | None = None,
+    eval_config: dict | None = None,
+) -> None:
     """
     Helper function to create ErrorLocalizerTask records for cells.
+
+    `config` is the per-evaluator prepared config (used for input variables
+    and rule_prompt fallback). `eval_config` is the caller's runtime config
+    (typically ``UserEvalMetric.config``) so the pass_threshold resolver can
+    honour ``run_config`` overrides instead of the template default the
+    prepared config carries.
     """
     input_data_dict = {}
     required_keys = []
@@ -750,10 +849,12 @@ def trigger_error_localization_for_column(
         rule_prompt, input_data_dict, eval_result
     )
 
+    pass_threshold = resolve_pass_threshold(eval_template, eval_config)
+
     if task_exists:
         task = ErrorLocalizerTask.objects.get(source_id=cell.id)
-        metadata = task.metadata
-        metadata.update({"log_id": log_id})
+        metadata = task.metadata or {}
+        metadata.update({"log_id": log_id, "pass_threshold": pass_threshold})
         task.eval_result = eval_result
         task.eval_explanation = response.get("reason", "")
         task.input_data = input_data_dict
@@ -778,7 +879,7 @@ def trigger_error_localization_for_column(
             rule_prompt=rule_prompt,
             organization=cell.dataset.organization,
             workspace=workspace,
-            metadata={"log_id": log_id},
+            metadata={"log_id": log_id, "pass_threshold": pass_threshold},
             status=initial_status,
             error_message=error_message,
         )
@@ -787,76 +888,276 @@ def trigger_error_localization_for_column(
     logger.info(f"Created ErrorLocalizerTask for cell {cell.id}")
 
 
+# Statement-level PostgreSQL failures (a statement timeout or cancel, or a
+# dropped connection Django reopens) that the span trigger retries in place.
+_TRANSIENT_DB_ERRORS = (OperationalError, InterfaceError)
+SPAN_LOCALIZATION_ATTEMPTS = 3
+SPAN_LOCALIZATION_RETRY_DELAY_SECONDS = 0.5
+
+
 def trigger_error_localization_for_span(
-    eval_template, eval_logger, value, mapping, eval_explanation, log_id=None
-):
-    try:
-        """
-        Helper function to create ErrorLocalizerTask records for spans.
-        """
-        input_data_dict = mapping
-        input_keys = list(input_data_dict.keys())
-        input_type_dict = _get_input_type(input_data_dict)
+    eval_template: EvalTemplate,
+    eval_logger: EvalLogger,
+    value: Any,
+    mapping: dict,
+    eval_explanation: str,
+    log_id: str | None = None,
+    eval_config: dict | None = None,
+    *,
+    observation_span: "ObservationSpan",
+) -> None:
+    """Create or refresh localization for an accepted span result.
 
-        task_exists = ErrorLocalizerTask.objects.filter(
-            source_id=eval_logger.id
-        ).exists()
-        workspace = eval_logger.observation_span.project.workspace
-        if not workspace:
-            workspace = Workspace.objects.get(
-                organization=eval_logger.observation_span.project.organization,
-                is_default=True,
-                is_active=True,
+    Runs after the evaluator persisted the result, so nothing raised here
+    reaches the caller. Deliberate refusals log a WARNING. Once the entry is
+    completed nothing else retries localization, so a transient database
+    failure is retried here.
+
+    Each attempt checks the span's context in one short transaction or
+    savepoint and writes in another. Input types are detected between the two,
+    outside any transaction: detection fetches every URL-shaped mapping value
+    over the network, and an open transaction would hold a pooled connection
+    and table locks for the whole fetch. A refused entry never fetches, and a
+    retried write reuses the types already detected.
+    """
+    log_context = {
+        "eval_logger_id": str(eval_logger.id),
+        "span_id": str(observation_span.id),
+    }
+    span_context: dict[str, Any] = {
+        "eval_template": eval_template,
+        "eval_logger": eval_logger,
+        "observation_span": observation_span,
+    }
+    input_types = None
+    for attempt in range(1, SPAN_LOCALIZATION_ATTEMPTS + 1):
+        try:
+            if input_types is None:
+                with transaction.atomic():
+                    if _resolve_span_localization_workspace(**span_context) is None:
+                        return
+                input_types = _get_input_type(mapping)
+            with transaction.atomic():
+                # The owning task is read again: its project may have been
+                # deleted while the media was being fetched.
+                target_workspace = _resolve_span_localization_workspace(**span_context)
+                if target_workspace is None:
+                    return
+                _create_or_refresh_span_localization(
+                    eval_template=eval_template,
+                    eval_logger=eval_logger,
+                    project=observation_span.project,
+                    target_workspace=target_workspace,
+                    value=value,
+                    mapping=mapping,
+                    input_types=input_types,
+                    eval_explanation=eval_explanation,
+                    log_id=log_id,
+                    eval_config=eval_config,
+                )
+        except _TRANSIENT_DB_ERRORS as e:
+            if attempt < SPAN_LOCALIZATION_ATTEMPTS:
+                logger.warning(
+                    "error_localizer_span_trigger_retrying",
+                    **log_context,
+                    attempt=attempt,
+                    error_type=type(e).__name__,
+                )
+                time.sleep(SPAN_LOCALIZATION_RETRY_DELAY_SECONDS * attempt)
+                continue
+            # A sustained outage also fails run_entry's terminal write, which
+            # Temporal retries with the whole entry. Reaching this means a
+            # transient outlasted every attempt while the entry still completed.
+            logger.error(
+                "error_localizer_span_trigger_db_unavailable",
+                **log_context,
+                attempts=attempt,
+                error_type=type(e).__name__,
             )
+        except Exception as e:
+            logger.error(
+                "error_localizer_span_trigger_failed",
+                **log_context,
+                error_type=type(e).__name__,
+            )
+        return
 
-        rule_prompt = (
-            eval_template.config.get("rule_prompt")
-            or eval_template.criteria
-            or eval_template.description
+
+def _resolve_span_localization_workspace(
+    *,
+    eval_template: EvalTemplate,
+    eval_logger: EvalLogger,
+    observation_span: "ObservationSpan",
+) -> Workspace | None:
+    """Return the workspace that owns this span's localization.
+
+    Uses the evaluator's project-scoped span, which may exist only in CH.
+    Returns None after logging a WARNING when the span's context refuses
+    localization. A repeat call reads only the owning task, and a fallback
+    default workspace, again: the span's project, the config and their
+    workspaces come from relations cached on the instances.
+    """
+    from tracer.models.eval_task import EvalTask
+
+    project = observation_span.project
+    config = eval_logger.custom_eval_config
+    config_project = config.project
+    # The owning task's project is the target. Task create and update accept
+    # only configs from the task's own project, but an existing task may still
+    # reference a config from another project; that pairing is localized only
+    # within the same organization and workspace (checked below). Legacy
+    # entries without a task use the config project as their owner.
+    target_project_id = config.project_id
+    if eval_logger.eval_task_id:
+        target_project_id = (
+            EvalTask.objects.filter(id=eval_logger.eval_task_id)
+            .values_list("project_id", flat=True)
+            .first()
         )
-
-        # Validate required fields before creating/updating task
-        initial_status, error_message = _validate_error_localizer_fields(
-            rule_prompt, input_data_dict, value
+        if target_project_id is None:
+            # A missing or soft-deleted task owns nothing left to localize.
+            logger.warning(
+                "error_localizer_span_context_mismatch",
+                eval_logger_id=str(eval_logger.id),
+                eval_task_id=str(eval_logger.eval_task_id),
+                reason="owning_task_missing",
+            )
+            return None
+    if (
+        str(eval_logger.observation_span_id) != str(observation_span.id)
+        or str(eval_logger.trace_id) != str(observation_span.trace_id)
+        or str(target_project_id) != str(project.id)
+        or config_project.organization_id != project.organization_id
+        or str(config.eval_template_id) != str(eval_template.id)
+    ):
+        logger.warning(
+            "error_localizer_span_context_mismatch",
+            eval_logger_id=str(eval_logger.id),
+            reason="span_context",
         )
+        return None
 
-        if task_exists:
-            task = ErrorLocalizerTask.objects.get(source_id=eval_logger.id)
-            metadata = task.metadata
-            metadata.update({"log_id": str(log_id)})
-            task.eval_result = value
-            task.eval_explanation = eval_explanation
-            task.input_data = input_data_dict
-            task.input_keys = input_keys
-            task.input_types = input_type_dict
-            task.status = initial_status
-            task.rule_prompt = rule_prompt
-            task.error_message = error_message
-            task.metadata = metadata
-            task.save()
+    target_workspace = project.workspace
+    if not target_workspace:
+        target_workspace = Workspace.objects.get(
+            organization=project.organization,
+            is_default=True,
+            is_active=True,
+        )
+    # A null author workspace denotes this tenant's default workspace,
+    # not permission to borrow a config into an arbitrary workspace.
+    config_workspace_matches = config_project.workspace_id == target_workspace.id or (
+        config_project.workspace_id is None
+        and target_workspace.is_default
+        and target_workspace.is_active
+    )
+    if target_workspace.organization_id != project.organization_id:
+        logger.warning(
+            "error_localizer_workspace_mismatch",
+            eval_logger_id=str(eval_logger.id),
+            reason="target_workspace_organization",
+        )
+        return None
+    if not config_workspace_matches:
+        # A config whose project lies in another workspace is refused; one in
+        # another organization was refused by the span-context check above.
+        logger.warning(
+            "error_localizer_workspace_mismatch",
+            eval_logger_id=str(eval_logger.id),
+            reason="cross_workspace_config",
+        )
+        return None
+    return target_workspace
 
-        else:
-            task = ErrorLocalizerTask(
-                eval_template=eval_template,
-                source=ErrorLocalizerSource.OBSERVE,
+
+def _create_or_refresh_span_localization(
+    *,
+    eval_template: EvalTemplate,
+    eval_logger: EvalLogger,
+    project: "Project",
+    target_workspace: Workspace,
+    value: Any,
+    mapping: dict,
+    input_types: dict,
+    eval_explanation: str,
+    log_id: str | None,
+    eval_config: dict | None,
+) -> None:
+    """Write the localization for a span whose context was just resolved."""
+    input_data_dict = mapping
+    input_keys = list(input_data_dict.keys())
+
+    task_exists = ErrorLocalizerTask.objects.filter(source_id=eval_logger.id).exists()
+
+    rule_prompt = (
+        eval_template.config.get("rule_prompt")
+        or eval_template.criteria
+        or eval_template.description
+    )
+
+    # Validate required fields before creating/updating task
+    initial_status, error_message = _validate_error_localizer_fields(
+        rule_prompt, input_data_dict, value
+    )
+
+    pass_threshold = resolve_pass_threshold(eval_template, eval_config)
+
+    if task_exists:
+        workspace_scope = Q(workspace=target_workspace)
+        if target_workspace.is_default and target_workspace.is_active:
+            # The workspace migration did not backfill historical tasks.
+            # Adopt only this organization's legacy rows into its default.
+            workspace_scope |= Q(workspace__isnull=True)
+        try:
+            task = ErrorLocalizerTask.objects.get(
+                workspace_scope,
                 source_id=eval_logger.id,
-                input_data=input_data_dict,
-                input_keys=input_keys,
-                input_types=input_type_dict,
-                eval_result=value,
-                eval_explanation=eval_explanation,
-                rule_prompt=rule_prompt,
-                organization=eval_logger.observation_span.project.organization,
-                metadata={"log_id": log_id},
-                workspace=workspace,
-                status=initial_status,
-                error_message=error_message,
+                source=ErrorLocalizerSource.OBSERVE,
+                organization=project.organization,
             )
-            task.save()
+        except ErrorLocalizerTask.DoesNotExist:
+            # This source's localization belongs to another tenant, workspace
+            # or source; leave it untouched rather than raising into the crash
+            # handler. ``unique_source_id`` rules out creating a second row.
+            logger.warning(
+                "error_localizer_span_existing_task_out_of_scope",
+                eval_logger_id=str(eval_logger.id),
+            )
+            return
+        task.workspace = target_workspace
+        metadata = task.metadata or {}
+        metadata.update({"log_id": str(log_id), "pass_threshold": pass_threshold})
+        task.eval_result = value
+        task.eval_explanation = eval_explanation
+        task.input_data = input_data_dict
+        task.input_keys = input_keys
+        task.input_types = input_types
+        task.status = initial_status
+        task.rule_prompt = rule_prompt
+        task.error_message = error_message
+        task.metadata = metadata
+        task.save()
 
-        logger.info(f"Created ErrorLocalizerTask for Eval Logger {eval_logger.id}")
-    except Exception as e:
-        logger.error(f"Error in trigger_error_localization_for_span: {str(e)}")
+    else:
+        task = ErrorLocalizerTask(
+            eval_template=eval_template,
+            source=ErrorLocalizerSource.OBSERVE,
+            source_id=eval_logger.id,
+            input_data=input_data_dict,
+            input_keys=input_keys,
+            input_types=input_types,
+            eval_result=value,
+            eval_explanation=eval_explanation,
+            rule_prompt=rule_prompt,
+            organization=project.organization,
+            metadata={"log_id": log_id, "pass_threshold": pass_threshold},
+            workspace=target_workspace,
+            status=initial_status,
+            error_message=error_message,
+        )
+        task.save()
+
+    logger.info(f"Created ErrorLocalizerTask for Eval Logger {eval_logger.id}")
 
 
 def _get_input_keys(input_data):
@@ -871,12 +1172,6 @@ def _get_input_keys(input_data):
 
 def trigger_error_localization_for_standalone(evaluation: Evaluation):
     try:
-        if _eval_passed(evaluation.data):
-            logger.info(
-                f"Skipping error localization for passing eval {evaluation.id}"
-            )
-            return None
-
         input_keys = _get_input_keys(evaluation.input_data)
         input_types = _get_input_type(evaluation.input_data)
 
@@ -911,6 +1206,11 @@ def trigger_error_localization_for_standalone(evaluation: Evaluation):
             workspace=workspace,
             status=initial_status,
             error_message=error_message,
+            metadata={
+                "pass_threshold": resolve_pass_threshold(
+                    evaluation.eval_template, evaluation.eval_config
+                )
+            },
         )
 
         logger.info(
@@ -924,8 +1224,13 @@ def trigger_error_localization_for_standalone(evaluation: Evaluation):
 
 
 def trigger_error_localization_for_playground(
-    eval_template, log, value, mapping, eval_explanation
-):
+    eval_template: EvalTemplate,
+    log: "APICallLog",
+    value: Any,
+    mapping: dict,
+    eval_explanation: str,
+    eval_config: dict | None = None,
+) -> None:
     try:
         """
         Helper function to create ErrorLocalizerTask records for playground.
@@ -951,6 +1256,8 @@ def trigger_error_localization_for_playground(
             rule_prompt, input_data_dict, value
         )
 
+        pass_threshold = resolve_pass_threshold(eval_template, eval_config)
+
         try:
             task = ErrorLocalizerTask.objects.get(source_id=log.log_id)
             task.eval_result = value
@@ -961,6 +1268,9 @@ def trigger_error_localization_for_playground(
             task.status = initial_status
             task.rule_prompt = rule_prompt
             task.error_message = error_message
+            metadata = task.metadata or {}
+            metadata.update({"pass_threshold": pass_threshold})
+            task.metadata = metadata
         except ErrorLocalizerTask.DoesNotExist:
             task = ErrorLocalizerTask(
                 eval_template=eval_template,
@@ -976,6 +1286,7 @@ def trigger_error_localization_for_playground(
                 workspace=workspace,
                 status=initial_status,
                 error_message=error_message,
+                metadata={"pass_threshold": pass_threshold},
             )
 
         task.save()
@@ -985,14 +1296,14 @@ def trigger_error_localization_for_playground(
 
 
 def trigger_error_localization_for_simulate(
-    eval_template,
-    call_execution,
-    eval_config,
-    value,
-    mapping,
-    eval_explanation,
-    log_id=None,
-):
+    eval_template: EvalTemplate,
+    call_execution: "CallExecution",
+    eval_config: "SimulateEvalConfig",
+    value: Any,
+    mapping: dict,
+    eval_explanation: str,
+    log_id: str | None = None,
+) -> None:
     try:
         """
         Helper function to create ErrorLocalizerTask records for simulate evaluations.
@@ -1039,26 +1350,43 @@ def trigger_error_localization_for_simulate(
             rule_prompt, input_data_dict, value
         )
 
-        task = ErrorLocalizerTask(
-            eval_template=eval_template,
-            source=ErrorLocalizerSource.SIMULATE,
-            source_id=call_execution.id,
-            input_data=input_data_dict,
-            input_keys=input_keys,
-            input_types=input_type_dict,
-            eval_result=value,
-            eval_explanation=eval_explanation,
-            rule_prompt=rule_prompt,
-            organization=call_execution.test_execution.run_test.organization,
-            metadata={
-                "log_id": log_id,
-                # "call_execution_id": str(call_execution.id),
-                "eval_config_id": str(eval_config.id),
-            },
-            status=initial_status,
-            error_message=error_message,
+        # Partition per (call_execution, eval_config) so multiple evals on the
+        # same call coexist; update_or_create keeps Temporal retries idempotent
+        # against the workspace-agnostic source_id unique index.
+        source_id = uuid.uuid5(
+            uuid.NAMESPACE_OID,
+            f"simulate:{call_execution.id}:{eval_config.id}",
         )
-        task.save()
+        from ee.evals.localizer.conversation_audio import simulation_audio_snapshot
+
+        simulation_audio = simulation_audio_snapshot(
+            call_execution, eval_config, input_type_dict
+        )
+        task, _created = ErrorLocalizerTask.no_workspace_objects.update_or_create(
+            source_id=source_id,
+            deleted=False,
+            defaults={
+                "eval_template": eval_template,
+                "source": ErrorLocalizerSource.SIMULATE,
+                "input_data": input_data_dict,
+                "input_keys": input_keys,
+                "input_types": input_type_dict,
+                "eval_result": value,
+                "eval_explanation": eval_explanation,
+                "rule_prompt": rule_prompt,
+                "organization": call_execution.test_execution.run_test.organization,
+                "workspace": workspace,
+                "metadata": {
+                    "log_id": log_id,
+                    "call_execution_id": str(call_execution.id),
+                    "eval_config_id": str(eval_config.id),
+                    "simulation_audio": simulation_audio,
+                    "pass_threshold": resolve_pass_threshold(eval_template, config),
+                },
+                "status": initial_status,
+                "error_message": error_message,
+            },
+        )
 
         logger.info(
             f"Created ErrorLocalizerTask for Simulate Eval - Call: {call_execution.id}, Config: {eval_config.id}"
@@ -1067,7 +1395,10 @@ def trigger_error_localization_for_simulate(
         logger.error(f"Error in trigger_error_localization_for_simulate: {str(e)}")
 
 
-@temporal_activity(time_limit=3600, queue="tasks_s", rate_limit="100/s")
+# Error localization launches a Claude Agent SDK subprocess and can make several
+# model/tool turns.  Treat it as XL work so a burst of failed evals cannot launch
+# hundreds of SDK sessions on the high-concurrency ``tasks_s`` worker.
+@temporal_activity(time_limit=3600, queue="tasks_xl", rate_limit="100/s")
 def process_single_error_localization(task_id):
     """
     Process a single error localization task.
@@ -1075,6 +1406,25 @@ def process_single_error_localization(task_id):
     try:
         close_old_connections()
         task = ErrorLocalizerTask.objects.get(id=task_id)
+
+        should_run, reason = should_run_error_localizer(
+            task.eval_result,
+            task.eval_template,
+            runtime_threshold=(task.metadata or {}).get("pass_threshold"),
+        )
+        if not should_run:
+            logger.info(
+                "error_localizer_skipped",
+                task_id=str(task.id),
+                source=str(task.source),
+                source_id=str(task.source_id),
+                eval_template_id=(
+                    str(task.eval_template_id) if task.eval_template_id else None
+                ),
+                reason=reason,
+            )
+            task.mark_as_skipped(reason)
+            return
 
         # Make sure the task is marked as running
         if task.status != ErrorLocalizerStatus.RUNNING:
@@ -1115,8 +1465,12 @@ def process_single_error_localization(task_id):
 
             if not api_call_log_row:
                 logger.error("API call not allowed : Error validating the api call.")
-                task.mark_as_failed("API call not allowed : Error validating the api call.")
-                raise ValueError("API call not allowed : Error validating the api call.")
+                task.mark_as_failed(
+                    "API call not allowed : Error validating the api call."
+                )
+                raise ValueError(
+                    "API call not allowed : Error validating the api call."
+                )
 
             if api_call_log_row.status != APICallStatusChoices.PROCESSING.value:
                 error_message = get_error_for_api_status(api_call_log_row.status)
@@ -1126,43 +1480,72 @@ def process_single_error_localization(task_id):
         try:
             localizer = ErrorLocalizer(
                 eval_name=task.eval_template.name,
-                choices=(
-                    task.eval_template.choices if task.eval_template.choices else []
-                ),
+                choices=task.eval_template.choices or [],
                 rule_prompt=task.rule_prompt,
                 input=task.input_data,
-                input_keys=task.input_keys,
                 input_type=task.input_types,
                 evaluation_result=task.eval_result,
                 evaluation_explanation=task.eval_explanation,
+                simulation_audio=(
+                    (task.metadata or {}).get("simulation_audio") or {}
+                    if task.source == ErrorLocalizerSource.SIMULATE
+                    and "audio" in (task.input_types or {}).values()
+                    else None
+                ),
             )
+            localizer.gateway_metadata = {
+                "organization_id": str(task.organization_id),
+                "workspace_id": str(task.workspace_id),
+                "error_localizer_task_id": str(task.id),
+            }
 
-            error_analysis, selected_input_key = localizer.localize_errors()
+            result = localizer.localize_errors()
         except Exception as e:
-            import traceback
-
-            logger.error(
-                f"Error in process_single_error_localization: {str(e)}\n{traceback.format_exc()}"
+            # SDK exceptions can contain prompts or provider bodies. Persist only
+            # our typed reason, and never attach the raw exception to diagnostics.
+            failure_code = (
+                e.code.value
+                if isinstance(e, LocalizationFailure)
+                else "unexpected_error"
             )
-            task.mark_as_failed(str(e))
+            logger.error(
+                "error_localizer_failed",
+                task_id=str(task.id),
+                source_id=str(task.source_id),
+                failure_code=failure_code,
+                error_type=type(e).__name__,
+            )
+            task.mark_as_failed(f"Error localization failed ({failure_code}).")
             if refund_cost_for_api_call is not None:
                 refund_cost_for_api_call(api_call_log_row)
             return
 
-        # Check if we got valid results
+        error_analysis = result.analysis
+        selected_input_key = result.selected_key
+
         if not error_analysis:
-            logger.warning(
-                f"Error localization returned empty results for cell {task.source_id}"
+            skip_reason = (
+                result.skip_reason or "Error localization did not produce any results."
             )
-            task.mark_as_skipped("Error localization returned empty results")
+            logger.warning(
+                "error_localizer_empty_results",
+                source_id=str(task.source_id),
+                reason=skip_reason,
+            )
+            task.mark_as_skipped(skip_reason)
             if refund_cost_for_api_call is not None:
                 refund_cost_for_api_call(api_call_log_row)
             return
 
         # Update the task with the results
         task.mark_as_completed(error_analysis, selected_input_key)
+        if not _has_localized_segments(error_analysis):
+            task.error_message = (
+                "No part of the input could be pinned as the cause of this failure."
+            )
+            task.save(update_fields=["error_message"])
         api_call_log_row.status = APICallStatusChoices.SUCCESS.value
-        api_call_log_row.save(update_fields=["status"])
+        api_call_log_row.save(update_fields=["status", "updated_at"])
 
         # Dual-write: emit usage event for new billing system (cost-based)
         try:
@@ -1193,28 +1576,30 @@ def process_single_error_localization(task_id):
             if not actual_cost:
                 error_agent = getattr(localizer, "error_agent", None)
                 error_llm = getattr(error_agent, "llm", None)
-                actual_cost = getattr(error_llm, "cost", {}).get(
-                    "total_cost", 0
-                )
+                actual_cost = getattr(error_llm, "cost", {}).get("total_cost", 0)
             if BillingConfig is not None:
                 credits = BillingConfig.get().calculate_ai_credits(actual_cost)
 
-            if emit is not None and UsageEvent is not None and BillingEventType is not None:
+            if (
+                emit is not None
+                and UsageEvent is not None
+                and BillingEventType is not None
+            ):
                 emit(
-                UsageEvent(
-                    org_id=str(task.organization.id),
-                    event_type=BillingEventType.ERROR_LOCALIZER,
-                    amount=credits,
-                    properties={
-                        "source": "error_localizer",
-                        "source_id": str(task.id),
-                        "raw_cost_usd": str(actual_cost),
-                        **llm_usage_properties(
-                            getattr(localizer, "error_agent", None)
-                        ),
-                    },
+                    UsageEvent(
+                        org_id=str(task.organization.id),
+                        event_type=BillingEventType.ERROR_LOCALIZER,
+                        amount=credits,
+                        properties={
+                            "source": "error_localizer",
+                            "source_id": str(task.id),
+                            "raw_cost_usd": str(actual_cost),
+                            **llm_usage_properties(
+                                getattr(localizer, "error_agent", None)
+                            ),
+                        },
+                    )
                 )
-            )
         except Exception:
             pass  # Metering failure must not break the action
 
@@ -1238,18 +1623,22 @@ def process_single_error_localization(task_id):
                 cell.save(update_fields=["value_infos"])
 
                 metadata = task.metadata
-                if metadata.get("log_id", None):
+                if metadata.get("log_id", None) and APICallLog is not None:
                     try:
-                        if APICallLog is not None:
-                            log = APICallLog.objects.get(log_id=metadata.get("log_id"))
-                        config = json.loads(log.config)
+                        log = APICallLog.objects.get(log_id=metadata.get("log_id"))
+                        # Historical rows can be double-encoded JSON strings
+                        # or plain dicts (see parse_api_log_config). Write
+                        # the dict back — config is a JSONField; json.dumps
+                        # here would re-create the double encoding the 0115
+                        # migration unwraps.
+                        config = parse_api_log_config(log.config)
                         config["error_localizer"] = {
                             "error_analysis": error_analysis,
                             "selected_input_key": selected_input_key,
                             "input_types": task.input_types,
                             "input_data": task.input_data,
                         }
-                        log.config = json.dumps(config)
+                        log.config = config
                         log.save(update_fields=["config"])
                     except APICallLog.DoesNotExist:
                         logger.info("Log doesn't exist.")
@@ -1276,18 +1665,17 @@ def process_single_error_localization(task_id):
                 eval_logger.save(update_fields=["output_metadata"])
 
                 metadata = task.metadata
-                if metadata.get("log_id", None):
+                if metadata.get("log_id", None) and APICallLog is not None:
                     try:
-                        if APICallLog is not None:
-                            log = APICallLog.objects.get(log_id=metadata.get("log_id"))
-                        config = json.loads(log.config)
+                        log = APICallLog.objects.get(log_id=metadata.get("log_id"))
+                        config = parse_api_log_config(log.config)
                         config["error_localizer"] = {
                             "error_analysis": error_analysis,
                             "selected_input_key": selected_input_key,
                             "input_types": task.input_types,
                             "input_data": task.input_data,
                         }
-                        log.config = json.dumps(config)
+                        log.config = config
                         log.save(update_fields=["config"])
                     except APICallLog.DoesNotExist:
                         logger.info("Log doesn't exist.")
@@ -1300,16 +1688,17 @@ def process_single_error_localization(task_id):
 
         elif task.source == ErrorLocalizerSource.PLAYGROUND:
             try:
-                if APICallLog is not None:
-                    eval_logger = APICallLog.objects.get(log_id=task.source_id)
-                config = json.loads(eval_logger.config) or {}
+                if APICallLog is None:
+                    return  # OSS build — no APICallLog model to update
+                eval_logger = APICallLog.objects.get(log_id=task.source_id)
+                config = parse_api_log_config(eval_logger.config)
                 config["error_localizer"] = {
                     "error_analysis": error_analysis,
                     "selected_input_key": selected_input_key,
                     "input_types": task.input_types,
                     "input_data": task.input_data,
                 }
-                eval_logger.config = json.dumps(config)
+                eval_logger.config = config
                 eval_logger.save(update_fields=["config"])
             except Exception as e:
                 logger.exception(f"Error in updating log config: {str(e)}")

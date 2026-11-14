@@ -19,8 +19,8 @@ export const GRAPH_NODES = [
     name: "End call",
     description: "Split flow based on conditions or logic",
     icon: "/assets/icons/components/ic_end_call.svg",
-    color: "red.600",
-    backgroundColor: "red.o5",
+    color: "status.danger.fg",
+    backgroundColor: "status.danger.bg",
     agentType: AGENT_TYPES.VOICE,
   },
   {
@@ -28,8 +28,8 @@ export const GRAPH_NODES = [
     name: "Transfer call",
     description: "Combine inputs from multiple paths",
     icon: "/assets/icons/components/ic_transfer_call.svg",
-    color: "orange.600",
-    backgroundColor: "orange.o5",
+    color: "status.warning.fg",
+    backgroundColor: "status.warning.bg",
     agentType: AGENT_TYPES.VOICE,
   },
   {
@@ -37,8 +37,8 @@ export const GRAPH_NODES = [
     name: "End chat",
     description: "End the chat session",
     icon: "/assets/icons/ic_end_chat.svg",
-    color: "red.600",
-    backgroundColor: "red.o5",
+    color: "status.danger.fg",
+    backgroundColor: "status.danger.bg",
     agentType: AGENT_TYPES.CHAT,
   },
   {
@@ -46,8 +46,8 @@ export const GRAPH_NODES = [
     name: "Transfer chat",
     description: "Transfer chat to another agent",
     icon: "/assets/icons/ic_transfer_chat.svg",
-    color: "orange.600",
-    backgroundColor: "orange.o5",
+    color: "status.warning.fg",
+    backgroundColor: "status.warning.bg",
     agentType: AGENT_TYPES.CHAT,
   },
 ];
@@ -111,13 +111,15 @@ const extractEdgeData = (edge) => {
 // src/sections/scenarios/scenario-detail/common.js
 export const transformNode = (node, extraData = {}) => {
   const nodeType = getTypeFromNodeData(node);
+  const data = { ...extractNodeData(node, nodeType), ...extraData };
   return {
     id: node?.name ?? getRandomId(),
     type: nodeType,
     position: node?.metadata?.position
       ? node?.metadata?.position
       : { x: 250, y: 50 },
-    data: { ...extractNodeData(node, nodeType), ...extraData },
+    data,
+    ...(data.isStart && { deletable: false }),
   };
 };
 
@@ -239,26 +241,26 @@ const getBaseColorsBasedOnNodeType = (nodeType) => {
   } else if (nodeType === NODE_TYPES.END) {
     return {
       backgroundColor: "background.paper",
-      borderColor: "red.600",
-      hoverBorderColor: "red.600",
+      borderColor: "status.danger.border",
+      hoverBorderColor: "status.danger.border",
     };
   } else if (nodeType === NODE_TYPES.TRANSFER) {
     return {
       backgroundColor: "background.paper",
-      borderColor: "orange.600",
-      hoverBorderColor: "orange.600",
+      borderColor: "status.warning.border",
+      hoverBorderColor: "status.warning.border",
     };
   } else if (nodeType === NODE_TYPES.END_CHAT) {
     return {
       backgroundColor: "background.paper",
-      borderColor: "red.600",
-      hoverBorderColor: "red.600",
+      borderColor: "status.danger.border",
+      hoverBorderColor: "status.danger.border",
     };
   } else if (nodeType === NODE_TYPES.TRANSFER_CHAT) {
     return {
       backgroundColor: "background.paper",
-      borderColor: "orange.600",
-      hoverBorderColor: "orange.600",
+      borderColor: "status.warning.border",
+      hoverBorderColor: "status.warning.border",
     };
   }
 };
@@ -267,15 +269,15 @@ export const getNodeColors = (isStart, isHighlighted, isActive, nodeType) => {
   const baseColors = getBaseColorsBasedOnNodeType(nodeType);
   if (isHighlighted === "success") {
     return {
-      backgroundColor: "green.o10",
-      borderColor: "green.600",
-      hoverBorderColor: "green.600",
+      backgroundColor: "status.success.bg",
+      borderColor: "status.success.border",
+      hoverBorderColor: "status.success.border",
     };
   } else if (isHighlighted === "error") {
     return {
-      backgroundColor: "red.o10",
-      borderColor: "red.600",
-      hoverBorderColor: "red.600",
+      backgroundColor: "status.danger.bg",
+      borderColor: "status.danger.border",
+      hoverBorderColor: "status.danger.border",
     };
   } else {
     if (isStart) {

@@ -1,24 +1,26 @@
+import EmptyContent from "src/components/empty-content";
 import PropTypes from "prop-types";
+import DataTablePagination from "src/components/data-table/DataTablePagination";
 import { useState, useMemo, useCallback, useRef } from "react";
 import {
   Box,
-  Chip,
   IconButton,
   MenuItem,
   Popover,
   Skeleton,
   Tooltip,
   Typography,
-  Select,
-  Stack,
 } from "@mui/material";
 import { AgGridReact } from "ag-grid-react";
+import "src/utils/ag-grid-setup";
 import Iconify from "src/components/iconify";
 import SvgColor from "src/components/svg-color";
 import { fDate } from "src/utils/format-time";
 import { useAgThemeWith } from "src/hooks/use-ag-theme";
 import { AG_THEME_OVERRIDES } from "src/theme/ag-theme";
 import "src/styles/clean-data-table.css";
+import { getAnnotationLabelUsageCount } from "./annotation-label-usage";
+import { ROW_HEIGHT } from "src/theme/sizes";
 
 const SkeletonCell = () => (
   <Box sx={{ display: "flex", alignItems: "center", height: "100%", px: 1 }}>
@@ -30,14 +32,6 @@ const SKELETON_ROWS = Array.from({ length: 5 }, (_, i) => ({
   id: `skeleton-${i}`,
   _skeleton: true,
 }));
-
-const TYPE_COLORS = {
-  categorical: "primary",
-  numeric: "success",
-  text: "default",
-  star: "warning",
-  thumbs_up_down: "secondary",
-};
 
 const TYPE_LABELS = {
   categorical: "Categorical",
@@ -65,12 +59,9 @@ function TypeCellRenderer({ data }) {
   if (!data) return null;
   return (
     <Box sx={{ display: "flex", alignItems: "center", height: "100%" }}>
-      <Chip
-        label={TYPE_LABELS[data.type] || data.type}
-        color={TYPE_COLORS[data.type] || "default"}
-        size="small"
-        variant="soft"
-      />
+      <Typography variant="body2" color="text.primary">
+        {TYPE_LABELS[data.type] || data.type}
+      </Typography>
     </Box>
   );
 }
@@ -92,7 +83,9 @@ function UsedInCellRenderer({ data }) {
   if (!data) return null;
   return (
     <Box sx={{ display: "flex", alignItems: "center", height: "100%" }}>
-      <Typography variant="body2">{data.usage_count ?? 0}</Typography>
+      <Typography variant="body2">
+        {getAnnotationLabelUsageCount(data)}
+      </Typography>
     </Box>
   );
 }
@@ -122,12 +115,15 @@ function ActionsCellRenderer({ data, context }) {
     >
       <IconButton
         size="small"
+        aria-label={
+          context?.archivedView ? "Restore label actions" : "Label actions"
+        }
         onClick={(e) => {
           e.stopPropagation();
           context?.onOpenMenu(e, data);
         }}
       >
-        <Iconify icon="eva:more-vertical-fill" />
+        <Iconify icon="solar:menu-dots-vertical-linear" />
       </IconButton>
     </Box>
   );
@@ -160,6 +156,8 @@ AnnotationLabelTable.propTypes = {
   onEdit: PropTypes.func,
   onDuplicate: PropTypes.func,
   onArchive: PropTypes.func,
+  onRestore: PropTypes.func,
+  archivedView: PropTypes.bool,
 };
 
 export default function AnnotationLabelTable({
@@ -173,6 +171,8 @@ export default function AnnotationLabelTable({
   onEdit,
   onDuplicate,
   onArchive,
+  onRestore,
+  archivedView = false,
 }) {
   const agTheme = useAgThemeWith(AG_THEME_OVERRIDES.noHeaderBorder);
   const gridRef = useRef(null);
@@ -195,6 +195,7 @@ export default function AnnotationLabelTable({
     if (action === "edit") onEdit?.(row);
     else if (action === "duplicate") onDuplicate?.(row);
     else if (action === "archive") onArchive?.(row);
+    else if (action === "restore") onRestore?.(row);
   };
 
   const columnDefs = useMemo(
@@ -221,7 +222,8 @@ export default function AnnotationLabelTable({
         cellRenderer: loading ? SkeletonCell : DescriptionCellRenderer,
       },
       {
-        field: "usage_count",
+        field: "annotation_count",
+        cellStyle: { fontVariantNumeric: "tabular-nums" },
         headerName: "Used In",
         flex: 0.8,
         minWidth: 100,
@@ -260,36 +262,24 @@ export default function AnnotationLabelTable({
   );
 
   const gridContext = useMemo(
-    () => ({ onOpenMenu: handleOpenMenu }),
-    [handleOpenMenu],
+    () => ({ onOpenMenu: handleOpenMenu, archivedView }),
+    [handleOpenMenu, archivedView],
   );
 
   const onCellClicked = useCallback(
     (event) => {
       if (!event?.data) return;
+      if (archivedView) return;
       if (event.column?.getColId() === "actions") return;
       onEdit?.(event.data);
     },
-    [onEdit],
+    [archivedView, onEdit],
   );
 
   const getRowId = useCallback((params) => params.data?.id, []);
 
   const CustomNoRowsOverlay = useCallback(
-    () => (
-      <Box
-        sx={{
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          height: "100%",
-        }}
-      >
-        <Typography variant="body2" color="text.secondary">
-          No labels match your filters.
-        </Typography>
-      </Box>
-    ),
+    () => <EmptyContent title="No labels match your filters." />,
     [],
   );
 
@@ -311,8 +301,8 @@ export default function AnnotationLabelTable({
             columnDefs={columnDefs}
             defaultColDef={defaultColDef}
             context={gridContext}
-            rowHeight={42}
-            headerHeight={42}
+            rowHeight={ROW_HEIGHT.default}
+            headerHeight={32}
             pagination={false}
             animateRows={false}
             suppressRowClickSelection
@@ -323,87 +313,13 @@ export default function AnnotationLabelTable({
           />
         </Box>
 
-        {/* Pagination */}
-        <Stack
-          direction="row"
-          alignItems="center"
-          justifyContent="space-between"
-          sx={{
-            p: 2,
-            borderTop: "1px solid",
-            borderColor: "divider",
-            flexShrink: 0,
-            gap: 2,
-          }}
-        >
-          <Stack gap={1} direction="row" alignItems="center">
-            <Typography
-              typography="body2"
-              color="text.primary"
-              fontWeight="fontWeightRegular"
-            >
-              Results per page
-            </Typography>
-            <Select
-              size="small"
-              value={rowsPerPage}
-              onChange={(e) =>
-                onRowsPerPageChange?.(parseInt(e.target.value, 10))
-              }
-              sx={{ height: 36, bgcolor: "background.paper" }}
-            >
-              {[10, 25, 50].map((size) => (
-                <MenuItem key={size} value={size}>
-                  {size}
-                </MenuItem>
-              ))}
-            </Select>
-          </Stack>
-
-          <Stack direction="row" alignItems="center" gap={2}>
-            <Typography variant="body2" color="text.secondary">
-              {totalCount > 0
-                ? `${page * rowsPerPage + 1}–${Math.min((page + 1) * rowsPerPage, totalCount)} of ${totalCount}`
-                : "0 of 0"}
-            </Typography>
-            <Stack direction="row" gap={0.5}>
-              <IconButton
-                size="small"
-                disabled={page === 0}
-                onClick={() => onPageChange?.(page - 1)}
-                sx={{
-                  borderRadius: 1,
-                  border: "1px solid",
-                  borderColor: "divider",
-                }}
-              >
-                <Iconify
-                  icon="octicon:chevron-left-24"
-                  width={18}
-                  height={18}
-                  sx={{ path: { strokeWidth: 1.5 } }}
-                />
-              </IconButton>
-              <IconButton
-                size="small"
-                disabled={(page + 1) * rowsPerPage >= totalCount}
-                onClick={() => onPageChange?.(page + 1)}
-                sx={{
-                  borderRadius: 1,
-                  border: "1px solid",
-                  borderColor: "divider",
-                }}
-              >
-                <Iconify
-                  icon="octicon:chevron-right-24"
-                  width={18}
-                  height={18}
-                  sx={{ path: { strokeWidth: 1.5 } }}
-                />
-              </IconButton>
-            </Stack>
-          </Stack>
-        </Stack>
+        <DataTablePagination
+          page={page}
+          pageSize={rowsPerPage}
+          total={totalCount}
+          onPageChange={onPageChange}
+          onPageSizeChange={onRowsPerPageChange}
+        />
       </Box>
 
       {/* Actions popover menu */}
@@ -415,30 +331,47 @@ export default function AnnotationLabelTable({
         transformOrigin={{ vertical: "top", horizontal: "right" }}
       >
         <Box sx={{ py: 0.5 }}>
-          <MenuItem onClick={() => handleAction("edit")}>
-            <SvgColor
-              src="/assets/icons/ic_edit.svg"
-              sx={{ width: 18, height: 18, mr: 1 }}
-            />
-            Edit
-          </MenuItem>
-          <MenuItem onClick={() => handleAction("duplicate")}>
-            <SvgColor
-              src="/assets/icons/ic_duplicate.svg"
-              sx={{ width: 18, height: 18, mr: 1 }}
-            />
-            Duplicate
-          </MenuItem>
           <MenuItem
-            onClick={() => handleAction("archive")}
-            sx={{ color: "error.main" }}
+            onClick={() => handleAction(archivedView ? "restore" : "edit")}
           >
-            <SvgColor
-              src="/assets/icons/ic_delete.svg"
-              sx={{ width: 18, height: 18, mr: 1, color: "error.main" }}
-            />
-            Archive
+            {archivedView ? (
+              <>
+                <Iconify
+                  icon="solar:archive-up-bold"
+                  width={16}
+                  sx={{ mr: 1 }}
+                />
+                Restore
+              </>
+            ) : (
+              <>
+                <SvgColor
+                  src="/assets/icons/ic_edit.svg"
+                  sx={{ width: 18, height: 18, mr: 1 }}
+                />
+                Edit
+              </>
+            )}
           </MenuItem>
+          {!archivedView && (
+            <MenuItem onClick={() => handleAction("duplicate")}>
+              <SvgColor
+                src="/assets/icons/ic_duplicate.svg"
+                sx={{ width: 18, height: 18, mr: 1 }}
+              />
+              Duplicate
+            </MenuItem>
+          )}
+          {!archivedView && (
+            <MenuItem onClick={() => handleAction("archive")}>
+              <Iconify
+                icon="solar:archive-down-bold"
+                width={16}
+                sx={{ mr: 1 }}
+              />
+              Archive
+            </MenuItem>
+          )}
         </Box>
       </Popover>
     </>

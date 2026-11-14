@@ -3,6 +3,10 @@ from rest_framework import serializers
 from model_hub.models.kb import KnowledgeBase
 
 
+class KnowledgeBaseDownloadQuerySerializer(serializers.Serializer):
+    file_id = serializers.UUIDField()
+
+
 class KnowledgeBaseSerializer(serializers.ModelSerializer):
     class Meta:
         model = KnowledgeBase
@@ -30,9 +34,11 @@ class KnowledgeBaseCreateSerializer(serializers.ModelSerializer):
             "created_at",
             "updated_at",
         ]
-        read_only_fields = ["id", "created_at", "updated_at"]
+        read_only_fields = ["id", "organization", "created_at", "updated_at"]
 
     def create(self, validated_data):
-        user = self.context["request"].user
-        validated_data["organization"] = user.organization
+        request = self.context["request"]
+        validated_data["organization"] = (
+            getattr(request, "organization", None) or request.user.organization
+        )
         return super().create(validated_data)

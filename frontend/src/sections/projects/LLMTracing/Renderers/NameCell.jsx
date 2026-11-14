@@ -8,7 +8,7 @@ const NameCell = ({ value, colDef, applyQuickFilters }) => {
     <QuickFilter
       onClick={() =>
         applyQuickFilters({
-          col: colDef?.col,
+          col: colDef?.context?.sourceColumn,
           value,
           filterAnchor: {},
         })
@@ -17,7 +17,7 @@ const NameCell = ({ value, colDef, applyQuickFilters }) => {
       <Typography
         variant="body2"
         sx={{
-          fontSize: 13,
+          fontSize: 12,
           fontWeight: 400,
           color: "text.primary",
           overflow: "hidden",

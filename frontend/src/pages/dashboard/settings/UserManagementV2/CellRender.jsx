@@ -116,7 +116,7 @@ const ChipCell = ({ value, styleMap }) => {
           py: "4px",
           gap: "8px",
           height: "24px",
-          borderRadius: 0.5,
+          borderRadius: "4px",
           ...styles,
         }}
         direction={"row"}
@@ -174,14 +174,14 @@ export const WorkspaceChipsCell = ({ value }) => {
     <Box sx={{ display: "flex", flexDirection: "column", gap: 0.5, py: 0.5 }}>
       {value.map((ws) => (
         <Box
-          key={ws.workspace_id ?? ws.workspaceId}
+          key={ws.workspace_id}
           sx={{ display: "flex", alignItems: "center", gap: 1 }}
         >
           <Typography variant="caption" fontWeight="fontWeightMedium">
-            {ws.workspace_name ?? ws.workspaceName}
+            {ws.workspace_name}
           </Typography>
           <Typography variant="caption" color="inherit" sx={{ opacity: 0.7 }}>
-            {ws.ws_role ?? ws.wsRole}
+            {ws.ws_role}
           </Typography>
         </Box>
       ))}
@@ -197,17 +197,8 @@ export const WorkspaceChipsCell = ({ value }) => {
         tooltip: {
           sx: {
             maxWidth: 300,
-            bgcolor: "background.paper",
-            color: "text.primary",
-            border: "1px solid",
-            borderColor: "divider",
-            boxShadow: 3,
             "& .MuiTooltip-arrow": {
-              color: "background.paper",
-              "&::before": {
-                border: "1px solid",
-                borderColor: "divider",
-              },
+              "&::before": {},
             },
           },
         },
@@ -222,13 +213,11 @@ export const WorkspaceChipsCell = ({ value }) => {
         }}
       >
         <Chip
-          label={first.workspace_name ?? first.workspaceName}
+          label={first.workspace_name}
           size="small"
           sx={{
             maxWidth: 160,
-            height: 24,
             typography: "s2",
-            fontWeight: "fontWeightMedium",
             bgcolor: (theme) => theme.palette.action.hover,
             color: "text.primary",
             "&:hover": {
@@ -242,9 +231,7 @@ export const WorkspaceChipsCell = ({ value }) => {
             size="small"
             variant="outlined"
             sx={{
-              height: 24,
               typography: "s2",
-              fontWeight: "fontWeightMedium",
               borderColor: "divider",
               color: "text.secondary",
             }}
@@ -261,8 +248,8 @@ export const ActionRender = (props) => {
   const status = data.status;
   const { user, orgLevel } = useAuthContext();
 
-  const targetOrgLevel = data?.org_level ?? data?.orgLevel;
-  const actorOrgLevel = orgLevel ?? user?.org_level ?? user?.orgLevel;
+  const targetOrgLevel = data?.org_level;
+  const actorOrgLevel = orgLevel ?? user?.org_level;
   const loggedInUserEmail = user?.email;
   const selectedUserEmail = data?.email;
 
@@ -307,7 +294,7 @@ export const ActionRender = (props) => {
             py: "4px",
             gap: "8px",
             height: "24px",
-            borderRadius: 0.5,
+            borderRadius: "4px",
             cursor: isDisabled ? "not-allowed" : "pointer",
           }}
           direction={"row"}
@@ -319,7 +306,7 @@ export const ActionRender = (props) => {
         >
           <CustomTooltip show={isDisabled} title={tooltipReason}>
             <Iconify
-              icon="uiw:more"
+              icon="solar:menu-dots-linear"
               sx={{
                 color: isDisabled ? "divider" : "text.primary",
               }}

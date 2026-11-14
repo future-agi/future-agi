@@ -54,7 +54,7 @@ describe("getSelectedCallExecutionIds (TH-4954 regression)", () => {
     expect(getSelectedCallExecutionIds().sort()).toEqual(["a", "b", "c"]);
   });
 
-  it("getSelectedCallExecutionIdsFilter wraps the IDs into a list filter", () => {
+  it("getSelectedCallExecutionIdsFilter wraps the IDs into a categorical multi-select filter", () => {
     useTestDetailStore.setState({
       selectedFixableRecommendations: [
         { index: 0, callExecutionIds: ["a", "b"] },
@@ -65,7 +65,7 @@ describe("getSelectedCallExecutionIds (TH-4954 regression)", () => {
     expect(filter).toHaveLength(1);
     expect(filter[0].column_id).toBe("call_execution_id");
     expect(filter[0].filter_config.filter_op).toBe("in");
-    expect(filter[0].filter_config.filter_type).toBe("list");
+    expect(filter[0].filter_config.filter_type).toBe("categorical");
     expect(filter[0].filter_config.filter_value.sort()).toEqual(["a", "b"]);
   });
 });

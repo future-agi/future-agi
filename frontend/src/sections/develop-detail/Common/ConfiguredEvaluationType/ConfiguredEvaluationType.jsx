@@ -5,7 +5,6 @@ import {
   Tab,
   Tabs,
   Typography,
-  useTheme,
   TextField,
   InputAdornment,
 } from "@mui/material";
@@ -43,8 +42,12 @@ const categories = [
   { label: "Text", value: "TEXT" },
 ];
 
+const evalTemplateTags = (evalItem) =>
+  Array.isArray(evalItem?.eval_template_tags)
+    ? evalItem.eval_template_tags
+    : [];
+
 const ConfiguredEvaluationType = ({ onClose, onOptionClick, datasetId }) => {
-  const theme = useTheme();
   const [searchText, setSearchText] = useState("");
   const [selectedCategory, setSelectedCategory] = useState("all");
 
@@ -59,27 +62,29 @@ const ConfiguredEvaluationType = ({ onClose, onOptionClick, datasetId }) => {
       }),
     select: (d) => d?.data?.result?.evals,
   });
+  const evals = useMemo(
+    () => (Array.isArray(evalList) ? evalList : []),
+    [evalList],
+  );
 
   const filteredEvalList = useMemo(() => {
-    if (!evalList) return [];
     if (selectedCategory === "all") {
-      return evalList.filter(
+      return evals.filter(
         (each) =>
           !searchText ||
           each.name.toLowerCase().includes(searchText.toLowerCase()),
       );
     }
-    return evalList.filter(
+    return evals.filter(
       (each) =>
-        each.evalTemplateTags.includes(selectedCategory) &&
+        evalTemplateTags(each).includes(selectedCategory) &&
         (!searchText ||
           each.name.toLowerCase().includes(searchText.toLowerCase())),
     );
-  }, [selectedCategory, evalList, searchText]);
+  }, [selectedCategory, evals, searchText]);
 
   const categoryCount = useMemo(() => {
-    if (!evalList) return {};
-    return evalList
+    return evals
       .filter(
         (each) =>
           !searchText ||
@@ -88,14 +93,14 @@ const ConfiguredEvaluationType = ({ onClose, onOptionClick, datasetId }) => {
       .reduce(
         (acc, each) => {
           acc["all"] = (acc["all"] || 0) + 1;
-          each.evalTemplateTags.forEach(
-            (tag) => (acc[tag] = (acc[tag] || 0) + 1),
-          );
+          evalTemplateTags(each).forEach((tag) => {
+            acc[tag] = (acc[tag] || 0) + 1;
+          });
           return acc;
         },
         { all: 0 },
       );
-  }, [evalList, searchText]);
+  }, [evals, searchText]);
 
   const handleSearchChange = (event) => {
     const value = event.target.value;
@@ -128,7 +133,7 @@ const ConfiguredEvaluationType = ({ onClose, onOptionClick, datasetId }) => {
             justifyContent: "space-between",
           }}
         >
-          <Typography fontWeight={700} color="text.primary">
+          <Typography fontWeight={600} color="text.primary">
             Preset Evaluations
           </Typography>
           <Button variant="soft" size="small" onClick={onClose}>
@@ -147,7 +152,7 @@ const ConfiguredEvaluationType = ({ onClose, onOptionClick, datasetId }) => {
               startAdornment: (
                 <InputAdornment position="start">
                   <Iconify
-                    icon="eva:search-fill"
+                    icon="solar:magnifier-linear" width={16}
                     sx={{ color: "text.secondary" }}
                   />
                 </InputAdornment>
@@ -162,13 +167,7 @@ const ConfiguredEvaluationType = ({ onClose, onOptionClick, datasetId }) => {
             borderColor: "divider",
           }}
         >
-          <Tabs
-            textColor="primary"
-            TabIndicatorProps={{
-              style: {
-                backgroundColor: theme.palette.primary.main,
-              },
-            }}
+          <Tabs sx={{ boxShadow: "none" }}
             value={selectedCategory}
             onChange={(e, value) => setSelectedCategory(value)}
             TabScrollButtonProps={{
@@ -182,18 +181,12 @@ const ConfiguredEvaluationType = ({ onClose, onOptionClick, datasetId }) => {
             <Tab
               label="All"
               value="all"
-              sx={{
-                "&.MuiTab-root": {
-                  marginRight: 2,
-                  fontSize: 12,
-                },
-              }}
               icon={
                 loadingEvalList ? (
                   <Skeleton variant="text" width={20} height={35} />
                 ) : (
-                  <Label variant="soft" color="success" sx={{ fontSize: 12 }}>
-                    {evalList.length}
+                  <Label variant="soft" color="success">
+                    {evals.length}
                   </Label>
                 )
               }
@@ -208,22 +201,12 @@ const ConfiguredEvaluationType = ({ onClose, onOptionClick, datasetId }) => {
                   loadingEvalList ? (
                     <Skeleton variant="text" width={20} height={35} />
                   ) : (
-                    <Label variant="soft" color="success" sx={{ fontSize: 12 }}>
+                    <Label variant="soft" color="success">
                       {categoryCount[value] || 0}
                     </Label>
                   )
                 }
                 iconPosition="end"
-                sx={{
-                  "&.MuiTab-root": {
-                    marginRight: 2,
-                    fontSize: 12,
-                    "&.Mui-selected": {
-                      color: "inherit",
-                    },
-                    color: "text.secondary",
-                  },
-                }}
               />
             ))}
           </Tabs>
@@ -239,14 +222,14 @@ const ConfiguredEvaluationType = ({ onClose, onOptionClick, datasetId }) => {
       >
         {loadingEvalList && <EvalTypesSkeleton />}
         {filteredEvalList.map((eachEval) => {
-          const { name, id, description, evalTemplateTags } = eachEval;
+          const { name, id, description } = eachEval;
 
           return (
             <EvaluationTypeCard
               key={id}
               title={name}
               subTitle={description}
-              tags={evalTemplateTags}
+              tags={evalTemplateTags(eachEval)}
               onClick={() => onOptionClick(eachEval)}
             />
           );

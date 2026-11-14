@@ -16,38 +16,44 @@ import {
 import { CSS } from "@dnd-kit/utilities";
 import Iconify from "src/components/iconify";
 import CustomTooltip from "src/components/tooltip/CustomTooltip";
+import { useDeploymentMode } from "src/hooks/useDeploymentMode";
 
 // Shared 24px bordered pill button
-const ToolbarPill = ({ icon, label, onClick, sx }) => (
-  <ButtonBase
-    onClick={onClick}
-    sx={{
-      display: "inline-flex",
-      alignItems: "center",
-      gap: 0.5,
-      height: 24,
-      px: 1,
-      border: "1px solid",
-      borderColor: "divider",
-      borderRadius: "4px",
-      bgcolor: "transparent",
-      fontSize: 11,
-      fontWeight: 400,
-      fontFamily: "'Inter', sans-serif",
-      color: "text.primary",
-      whiteSpace: "nowrap",
-      flexShrink: 0,
-      "&:hover": {
-        bgcolor: "action.hover",
-        borderColor: "text.disabled",
-      },
-      ...sx,
-    }}
-  >
-    {icon && <Iconify icon={icon} width={14} />}
-    {label && <span>{label}</span>}
-  </ButtonBase>
+export const ToolbarPill = React.forwardRef(
+  ({ icon, label, onClick, sx }, ref) => (
+    <ButtonBase
+      ref={ref}
+      onClick={onClick}
+      sx={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 0.5,
+        height: 24,
+        px: 1,
+        border: "1px solid",
+        borderColor: "divider",
+        borderRadius: "4px",
+        bgcolor: "transparent",
+        fontSize: 12,
+        fontWeight: 400,
+        fontFamily: "'Inter', sans-serif",
+        color: "text.primary",
+        whiteSpace: "nowrap",
+        flexShrink: 0,
+        "&:hover": {
+          bgcolor: "action.hover",
+          borderColor: "text.disabled",
+        },
+        ...sx,
+      }}
+    >
+      {icon && <Iconify icon={icon} width={14} />}
+      {label && <span>{label}</span>}
+    </ButtonBase>
+  ),
 );
+
+ToolbarPill.displayName = "ToolbarPill";
 
 ToolbarPill.propTypes = {
   icon: PropTypes.string,
@@ -105,7 +111,7 @@ const TabPill = ({
       </Typography>
       {!isDefault && onClose && (
         <Iconify
-          icon="mdi:close"
+          icon="solar:close-linear"
           width={12}
           color="text.disabled"
           onPointerDown={(e) => e.stopPropagation()}
@@ -133,7 +139,6 @@ const TabPill = ({
       placement="bottom"
       arrow
       size="small"
-      type="black"
     >
       {pill}
     </CustomTooltip>
@@ -205,6 +210,7 @@ const DrawerToolbar = ({
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
   );
   const displayRef = useRef(null);
+  const { isOSS } = useDeploymentMode();
 
   const effectiveTabs = tabs?.length
     ? tabs
@@ -212,7 +218,7 @@ const DrawerToolbar = ({
         {
           id: "trace",
           label: "Trace",
-          icon: "mdi:link-variant",
+          icon: "solar:link-linear",
           isDefault: true,
         },
       ];
@@ -348,7 +354,6 @@ const DrawerToolbar = ({
             placement="bottom"
             arrow
             size="small"
-            type="black"
           >
             <ButtonBase
               onClick={(e) => onCreateTab?.(e)}
@@ -365,23 +370,28 @@ const DrawerToolbar = ({
                 "&:hover": { bgcolor: "action.hover", color: "text.secondary" },
               }}
             >
-              <Iconify icon="mdi:plus" width={14} />
+              <Iconify icon="solar:add-linear" width={14} />
             </ButtonBase>
           </CustomTooltip>
         )}
 
-        {/* Imagine with Falcon — only in trace detail, not list page or read-only */}
+        {/* Imagine with AI — only in trace detail, not list page or read-only */}
         {!readOnly && onCreateImagineTab && (
           <CustomTooltip
             show
-            title="Imagine with Falcon"
+            title={
+              isOSS ? "Imagine is not available in OSS" : "Imagine with AI"
+            }
             placement="bottom"
             arrow
             size="small"
-            type="black"
           >
+            {/* Kept mounted rather than `disabled` so the tooltip still fires on hover */}
             <ButtonBase
-              onClick={() => onCreateImagineTab?.()}
+              onClick={() => {
+                if (!isOSS) onCreateImagineTab?.();
+              }}
+              disableRipple={isOSS}
               sx={{
                 display: "inline-flex",
                 alignItems: "center",
@@ -392,15 +402,18 @@ const DrawerToolbar = ({
                 ml: 0.5,
                 flexShrink: 0,
                 color: "text.disabled",
-                "&:hover": {
-                  background:
-                    "linear-gradient(135deg, rgba(123,86,219,0.08) 0%, rgba(26,188,254,0.08) 100%)",
-                  color: "#7B56DB",
-                },
+                opacity: isOSS ? 0.5 : 1,
+                cursor: isOSS ? "not-allowed" : "pointer",
+                "&:hover": isOSS
+                  ? {}
+                  : {
+                      bgcolor: "action.hover",
+                      color: "accent.brand",
+                    },
               }}
             >
-              <Iconify icon="mdi:creation" width={14} />
-              <Typography sx={{ fontSize: 11, fontWeight: 500, lineHeight: 1 }}>
+              <Iconify icon="solar:stars-minimalistic-linear" width={14} />
+              <Typography sx={{ fontSize: 12, fontWeight: 500, lineHeight: 1 }}>
                 Imagine
               </Typography>
             </ButtonBase>
@@ -431,7 +444,7 @@ const DrawerToolbar = ({
             {!hideFilter && (
               <Box sx={{ position: "relative", display: "inline-flex" }}>
                 <ToolbarPill
-                  icon="mdi:filter-outline"
+                  icon="solar:filter-linear"
                   onClick={(e) => onFilterOpen?.(e)}
                 />
                 {hasActiveFilter && (
@@ -443,7 +456,7 @@ const DrawerToolbar = ({
                       width: 6,
                       height: 6,
                       borderRadius: "50%",
-                      bgcolor: "#ef4444",
+                      bgcolor: "status.danger.solid",
                       border: "1px solid",
                       borderColor: "background.paper",
                     }}
@@ -456,7 +469,7 @@ const DrawerToolbar = ({
             {!hideDisplay && (
               <ToolbarPill
                 ref={displayRef}
-                icon="mdi:tune-vertical"
+                icon="solar:tuning-2-linear"
                 label="Display"
                 onClick={(e) => onDisplayOpen?.(e.currentTarget)}
               />

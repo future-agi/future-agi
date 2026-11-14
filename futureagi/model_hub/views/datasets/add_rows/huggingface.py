@@ -3,7 +3,7 @@ import uuid
 
 import structlog
 from django.db import transaction
-from django.shortcuts import get_object_or_404
+from django.db.models import Q
 from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
@@ -11,20 +11,62 @@ from rest_framework.views import APIView
 logger = structlog.get_logger(__name__)
 from model_hub.models.choices import SourceChoices, StatusType
 from model_hub.models.develop_dataset import Cell, Column, Dataset, Row
+from model_hub.serializers.contracts import (
+    MODEL_HUB_ERROR_RESPONSES,
+    HuggingFaceAddRowsRequestSerializer,
+)
+from model_hub.serializers.develop_dataset_contracts import (
+    DatasetRowsImportMessageResponseSerializer,
+)
 from model_hub.utils.utils import (
     get_data_type_huggingface,
     load_hf_dataset_with_retries,
 )
 from model_hub.views.datasets.create.huggingface import CreateDatasetFromHuggingFaceView
 from model_hub.views.utils.hugginface import process_huggingface_dataset
+from tfc.middleware.workspace_context import get_current_workspace
+from tfc.utils.api_contracts import validated_request
 from tfc.utils.error_codes import get_error_message
 from tfc.utils.general_methods import GeneralMethods
 from tfc.constants.api_calls import APICallStatusChoices, APICallTypeChoices
 try:
-    from ee.usage.utils.usage_entries import ROW_LIMIT_REACHED_MESSAGE, log_and_deduct_cost_for_resource_request
+    from ee.usage.utils.usage_entries import (
+        ROW_LIMIT_REACHED_MESSAGE,
+        log_and_deduct_cost_for_resource_request,
+    )
 except ImportError:
     ROW_LIMIT_REACHED_MESSAGE = None
     log_and_deduct_cost_for_resource_request = None
+
+
+def _request_organization(request):
+    return getattr(request, "organization", None) or request.user.organization
+
+
+def _request_workspace_filter(request, field_name="workspace"):
+    workspace = getattr(request, "workspace", None) or get_current_workspace()
+    if not workspace:
+        return Q()
+    if getattr(workspace, "is_default", False):
+        return (
+            Q(**{field_name: workspace})
+            | Q(
+                **{
+                    f"{field_name}__is_default": True,
+                    f"{field_name}__organization_id": workspace.organization_id,
+                }
+            )
+            | Q(**{f"{field_name}__isnull": True})
+        )
+    return Q(**{field_name: workspace})
+
+
+def _request_dataset_queryset(request):
+    return Dataset.objects.filter(
+        _request_workspace_filter(request),
+        organization=_request_organization(request),
+        deleted=False,
+    )
 
 
 class AddRowsFromHuggingFaceView(APIView):
@@ -32,12 +74,21 @@ class AddRowsFromHuggingFaceView(APIView):
     permission_classes = [IsAuthenticated]
     parser_classes = (MultiPartParser, FormParser, JSONParser)
 
+    @validated_request(
+        request_serializer=HuggingFaceAddRowsRequestSerializer,
+        responses={
+            200: DatasetRowsImportMessageResponseSerializer,
+            **MODEL_HUB_ERROR_RESPONSES,
+        },
+        reject_unknown_fields=True,
+    )
     def post(self, request, dataset_id, *args, **kwargs):
         try:
-            num_rows = request.data.get("num_rows")
-            dataset_name = request.data.get("huggingface_dataset_name")
-            config_name = request.data.get("huggingface_dataset_config")
-            split = request.data.get("huggingface_dataset_split")
+            data = request.validated_data
+            num_rows = data.get("num_rows")
+            dataset_name = data.get("huggingface_dataset_name")
+            config_name = data.get("huggingface_dataset_config")
+            split = data.get("huggingface_dataset_split")
 
             # Validate required fields (matching UI Zod schema)
             if not config_name or not str(config_name).strip():
@@ -45,17 +96,17 @@ class AddRowsFromHuggingFaceView(APIView):
             if not split or not str(split).strip():
                 return self._gm.bad_request("HuggingFace dataset split is required")
 
+            dataset = _request_dataset_queryset(request).filter(id=dataset_id).first()
+            if not dataset:
+                return self._gm.not_found(get_error_message("DATASET_NOT_FOUND"))
+            organization = _request_organization(request)
+
             try:
                 first_row = load_hf_dataset_with_retries(
                     dataset_name,
                     config_name,
                     split,
-                    str(
-                        (
-                            getattr(request, "organization", None)
-                            or request.user.organization
-                        ).id
-                    ),
+                    str(organization.id),
                     streaming=False,
                 )
                 if not first_row:
@@ -69,11 +120,6 @@ class AddRowsFromHuggingFaceView(APIView):
                 return self._gm.bad_request(
                     get_error_message("FAILED_TO_PREVIEW_DATASET")
                 )
-
-            dataset = get_object_or_404(Dataset, id=dataset_id)
-            organization = (
-                getattr(request, "organization", None) or request.user.organization
-            )
 
             # try:
             #     rows_in_dataset = data.shape[0]
@@ -90,8 +136,10 @@ class AddRowsFromHuggingFaceView(APIView):
             new_rows_count = (
                 int(num_rows)
                 if num_rows
-                else CreateDatasetFromHuggingFaceView().get_huggingface_dataset_info(
-                    dataset_name, split
+                else int(
+                    CreateDatasetFromHuggingFaceView()
+                    .get_huggingface_dataset_info(dataset_name, split)
+                    .get("num_rows", 0)
                 )
             )
             existing_rows_count = Row.objects.filter(
@@ -178,9 +226,7 @@ class AddRowsFromHuggingFaceView(APIView):
 
             # columns = Column.objects.filter(dataset=dataset)
 
-            last_row = (
-                Row.all_objects.filter(dataset=dataset).order_by("-created_at").first()
-            )
+            last_row = Row.all_objects.filter(dataset=dataset).order_by("-order").first()
             if last_row:
                 max_order = last_row.order
             else:
@@ -204,12 +250,7 @@ class AddRowsFromHuggingFaceView(APIView):
                     dataset_name,
                     config_name,
                     split,
-                    str(
-                        (
-                            getattr(request, "organization", None)
-                            or request.user.organization
-                        ).id
-                    ),
+                    str(organization.id),
                     new_rows_count,
                     column_order,
                     rows,

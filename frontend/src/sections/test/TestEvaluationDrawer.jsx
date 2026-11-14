@@ -19,6 +19,7 @@ import { useTestEvaluationStore } from "./states";
 import TestEvaluationPage from "./TestEvaluationPage";
 import { AGENT_TYPES } from "../agents/constants";
 import { SourceType } from "../scenarios/common";
+import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
 
 const TestEvaluationDrawer = ({ executionIds, onSuccessOfAdditionOfEvals }) => {
   const { openTestEvaluation, setOpenTestEvaluation } =
@@ -93,31 +94,23 @@ const TestEvaluationDrawer = ({ executionIds, onSuccessOfAdditionOfEvals }) => {
     });
   }, [queryClient, testId]);
 
-
   const handleEvalAdded = useCallback(
     async (evalConfig) => {
       if (!testId) return;
       const editing = editingEvalItem;
       const payload = serializeEvalConfig(evalConfig);
-      try {
-        if (editing?.id) {
-          await updateEvalAsync({
-            evalConfigId: editing.id,
-            payload,
-          });
-          enqueueSnackbar("Eval updated successfully", { variant: "success" });
-        } else {
-          await addEvalsAsync({ evaluations_config: [payload] });
-          enqueueSnackbar("Eval added successfully", { variant: "success" });
-        }
-        handleRefresh();
-        setEditingEvalItem(null);
-      } catch (error) {
-        enqueueSnackbar(error?.response?.data?.error || "Failed to save eval", {
-          variant: "error",
+      if (editing?.id) {
+        await updateEvalAsync({
+          evalConfigId: editing.id,
+          payload,
         });
-        throw error;
+        enqueueSnackbar("Eval updated successfully", { variant: "success" });
+      } else {
+        await addEvalsAsync({ evaluations_config: [payload] });
+        enqueueSnackbar("Eval added successfully", { variant: "success" });
       }
+      handleRefresh();
+      setEditingEvalItem(null);
     },
     [addEvalsAsync, updateEvalAsync, handleRefresh, testId, editingEvalItem],
   );
@@ -132,16 +125,18 @@ const TestEvaluationDrawer = ({ executionIds, onSuccessOfAdditionOfEvals }) => {
     setOpenTestEvaluation(false);
   }, [setOpenTestEvaluation]);
 
+  const covered = useDrawerCovered(openTestEvaluation);
   return (
     <>
       <Drawer
         anchor="right"
         open={openTestEvaluation}
-              variant={onSuccessOfAdditionOfEvals?"temporary":"persistent"}
+        sx={coveredDrawerSx(covered)}
+        variant={onSuccessOfAdditionOfEvals ? "temporary" : "persistent"}
         onClose={onCloseHandler}
         PaperProps={{
           sx: (theme) => ({
-            width: 720,
+            width: 640,
             maxWidth: "95vw",
             height: "100vh",
             position: "fixed",

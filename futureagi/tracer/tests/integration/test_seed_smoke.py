@@ -2,6 +2,7 @@
 
 Asserts the 24-span corpus lands in both Postgres (ORM) and ClickHouse (SQL).
 """
+
 import pytest
 from django.conf import settings
 
@@ -18,7 +19,7 @@ def test_seeded_corpus_lands_in_pg_and_ch(seeded_corpus, ch_schema):
     # CH side
     db = settings.CLICKHOUSE["CH_DATABASE"]
     ch_count = ch_schema.command(
-        f"SELECT count() FROM {db}.tracer_observation_span "
-        f"WHERE project_id = '{project.id}' AND _peerdb_is_deleted = 0"
+        f"SELECT count() FROM {db}.spans "
+        f"WHERE project_id = '{project.id}' AND is_deleted = 0"
     )
     assert int(ch_count) == expected

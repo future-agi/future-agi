@@ -4,6 +4,8 @@ import structlog
 from django.http import JsonResponse
 from django.utils import timezone
 
+from tfc.utils.api_errors import build_error_envelope
+
 logger = structlog.get_logger(__name__)
 
 
@@ -65,6 +67,11 @@ class Require2FAMiddleware:
 
         # Grace period expired — restrict access
         return JsonResponse(
-            {"error": "2FA required", "code": "2fa_required"},
+            build_error_envelope(
+                "2FA required",
+                status_code=403,
+                code="2fa_required",
+                error_type="permission_error",
+            ),
             status=403,
         )

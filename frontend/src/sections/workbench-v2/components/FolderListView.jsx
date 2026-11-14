@@ -1,13 +1,6 @@
-import {
-  Box,
-  Button,
-  Divider,
-  MenuItem,
-  Pagination,
-  Select,
-  Stack,
-  Typography,
-} from "@mui/material";
+import { Box, Button, Stack } from "@mui/material";
+import { QUICKSTART_PROMPT } from "src/components/empty-state/quickstarts";
+import DataTablePagination from "src/components/data-table/DataTablePagination";
 import React, { useEffect, useMemo, useState } from "react";
 import PromptItem from "./PromptItem";
 import {
@@ -45,18 +38,17 @@ export default function FolderListView({ sortConfig }) {
     ],
     queryFn: () => {
       const params = {
-        ...(folder !== "all" &&
-          !debouncedSearchQuery && { prompt_folder: folder }),
-        ...((folder === "all" || debouncedSearchQuery) && { send_all: true }),
         page,
         page_size: pageLimit,
         name: debouncedSearchQuery,
       };
 
-      if (folder === "all" || debouncedSearchQuery) {
+      if (folder === "all") {
+        params.send_all = true;
         params.sort_order = sortConfig?.direction;
         params.sort_by = sortConfig?.field;
       } else {
+        params.prompt_folder = folder;
         if (sortConfig?.field) {
           params.ordering = `${sortConfig?.direction === "desc" ? "-" : ""}${
             sortConfig.field
@@ -124,6 +116,16 @@ export default function FolderListView({ sortConfig }) {
     };
   }, [folder, data, isLoading, promptTemplates, loadingTemplates]);
 
+  // The count renders beside the list heading (ActionBar), not on its own row.
+  const setTotalCount = usePromptStore((s) => s.setTotalCount);
+  const listTotalCount = combinedData.totalCount;
+  const listIsEmpty = !combinedData.isLoading && !combinedData.data?.length;
+  useEffect(() => {
+    setTotalCount(
+      combinedData.isLoading || listIsEmpty ? null : listTotalCount,
+    );
+  }, [setTotalCount, combinedData.isLoading, listIsEmpty, listTotalCount]);
+
   const [selectedPromptTemplate, setSelectedPromptTemplate] = useState({
     id: "",
     name: "",
@@ -149,16 +151,15 @@ export default function FolderListView({ sortConfig }) {
         {...(folder === "my-templates"
           ? EMPTY_MESSAGE.template
           : EMPTY_MESSAGE.prompt)}
-        linkText={"Check docs"}
+        linkText="Read the docs"
         link="https://docs.futureagi.com/docs/prompt"
-        sx={{
-          height: "80%",
-        }}
+        quickstart={folder === "my-templates" ? undefined : QUICKSTART_PROMPT}
         action={
           <Button
             onClick={() => setNewPromptModal(true)}
             variant="contained"
             color="primary"
+            size="small"
             disabled={!RolePermission.PROMPTS[PERMISSIONS.CREATE][role]}
           >
             Create prompt
@@ -170,28 +171,6 @@ export default function FolderListView({ sortConfig }) {
 
   return (
     <>
-      {!isEmpty && !debouncedSearchQuery && (
-        <>
-          <Box
-            sx={{
-              padding: 2,
-            }}
-          >
-            <Typography
-              typography={"s3"}
-              fontWeight={"fontWeightRegular"}
-              color={"text.primary"}
-            >
-              No.of prompts: {combinedData?.totalCount}
-            </Typography>
-          </Box>
-          <Divider
-            sx={{
-              borderColor: "divider",
-            }}
-          />
-        </>
-      )}
       <Stack
         direction="column"
         sx={{
@@ -214,7 +193,7 @@ export default function FolderListView({ sortConfig }) {
                   isLoading={true}
                   sx={{
                     borderBottom: "1px solid",
-                    borderColor: "divider",
+                    borderColor: "border.subtle",
                   }}
                 />
               ))
@@ -230,7 +209,7 @@ export default function FolderListView({ sortConfig }) {
                   id={prompt.id}
                   sx={{
                     borderBottom: "1px solid",
-                    borderColor: "divider",
+                    borderColor: "border.subtle",
                   }}
                   setSelectedPromptTemplate={setSelectedPromptTemplate}
                   isSearching={!!debouncedSearchQuery}
@@ -239,60 +218,26 @@ export default function FolderListView({ sortConfig }) {
         </Stack>
 
         {/* Fixed Pagination Section */}
-        <Stack
+        <Box
           sx={{
-            borderTop: "1px solid",
-            borderColor: "divider",
-            padding: 2,
-            display: "flex",
-            justifyContent: "space-between",
             width: "100%",
             backgroundColor: "background.paper",
             position: "absolute",
             bottom: 0,
           }}
-          direction="row"
-          justifyContent="space-between"
-          alignItems="center"
         >
-          <Stack gap={1} direction="row" alignItems="center">
-            <Typography
-              typography="s2"
-              color="text.primary"
-              fontWeight="fontWeightRegular"
-            >
-              Result per page
-            </Typography>
-            <Select
-              size="small"
-              id="page-size-select"
-              value={pageLimit}
-              onChange={(e) => {
-                setPage(1);
-                setPageLimit(e.target.value);
-              }}
-              sx={{
-                height: 36,
-              }}
-            >
-              <MenuItem value={10}>10</MenuItem>
-              <MenuItem value={20}>20</MenuItem>
-              <MenuItem value={30}>30</MenuItem>
-              <MenuItem value={40}>40</MenuItem>
-              <MenuItem value={50}>50</MenuItem>
-            </Select>
-          </Stack>
-          <Pagination
-            count={combinedData.totalPages}
-            variant="outlined"
-            shape="rounded"
-            page={page}
-            color="primary"
-            onChange={(e, value) => {
-              setPage(value);
+          <DataTablePagination
+            page={page - 1}
+            pageSize={pageLimit}
+            pageCount={combinedData.totalPages}
+            pageSizeOptions={[10, 20, 30, 40, 50]}
+            onPageChange={(p) => setPage(p + 1)}
+            onPageSizeChange={(size) => {
+              setPage(1);
+              setPageLimit(size);
             }}
           />
-        </Stack>
+        </Box>
       </Stack>
       <SelectedPromptTemplateDrawer
         open={Boolean(selectedPromptTemplate?.id)}

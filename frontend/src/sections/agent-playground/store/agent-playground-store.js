@@ -1,5 +1,6 @@
 import { startTransition } from "react";
-import { create } from "zustand";
+import { create } from "src/utils/zustand";
+import { registerUserStoreReset } from "src/utils/auth/userStoreResets";
 import { devtools } from "zustand/middleware";
 import { useShallow } from "zustand/react/shallow";
 import { CURRENT_ENVIRONMENT } from "src/config-global";
@@ -813,8 +814,8 @@ export const useAgentPlaygroundStore = create(
         if (!nodeConnections?.length) return;
         const lookup = new Map();
         nodeConnections.forEach((nc) => {
-          const src = nc.sourceNodeId;
-          const tgt = nc.targetNodeId;
+          const src = nc.sourceNodeId || nc.source_node_id;
+          const tgt = nc.targetNodeId || nc.target_node_id;
           if (src && tgt && nc.id) lookup.set(`${src}->${tgt}`, nc.id);
         });
         const { edges } = get();
@@ -860,3 +861,5 @@ export const useAgentPlaygroundStoreShallow = (fun) =>
 export const resetAgentPlaygroundStore = () => {
   useAgentPlaygroundStore.getState().reset();
 };
+
+registerUserStoreReset("agent-playground", resetAgentPlaygroundStore);

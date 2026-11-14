@@ -2,6 +2,7 @@ import uuid
 from collections import defaultdict
 
 import structlog
+from drf_yasg.utils import swagger_auto_schema
 from rest_framework.parsers import JSONParser
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
@@ -9,7 +10,14 @@ from rest_framework.views import APIView
 
 from accounts.authentication import APIKeyAuthentication, LangfuseBasicAuthentication
 from integrations.transformers.langfuse_transformer import LangfuseTransformer
+from tfc.utils.api_errors import build_error_envelope
+from tfc.utils.api_contracts import validated_request
+from tfc.utils.api_serializers import ApiDetailErrorResponseSerializer
 from tracer.models.project import Project
+from tracer.serializers.langfuse_ingestion import (
+    LangfuseIngestionRequestSerializer,
+    LangfuseIngestionResponseSerializer,
+)
 from tracer.utils.langfuse_upsert import parse_langfuse_timestamp, upsert_langfuse_trace
 from tracer.utils.otel import get_or_create_project
 
@@ -123,14 +131,25 @@ class LangfuseIngestionView(APIView):
     authentication_classes = [LangfuseBasicAuthentication, APIKeyAuthentication]
     permission_classes = [IsAuthenticated]
 
+    @validated_request(
+        request_serializer=LangfuseIngestionRequestSerializer,
+        responses={
+            207: LangfuseIngestionResponseSerializer,
+            403: ApiDetailErrorResponseSerializer,
+        },
+        reject_unknown_fields=True,
+    )
     def post(self, request, *args, **kwargs):
-        batch = request.data.get("batch", [])
+        batch = request.validated_data.get("batch", [])
         if not batch:
             return Response({"successes": [], "errors": []}, status=207)
 
         user = request.user
         if not hasattr(user, "organization") or not user.organization:
-            return Response({"detail": "User has no organization."}, status=403)
+            return Response(
+                build_error_envelope("User has no organization.", status_code=403),
+                status=403,
+            )
 
         org = getattr(request, "organization", None) or user.organization
         workspace = getattr(request, "workspace", None)

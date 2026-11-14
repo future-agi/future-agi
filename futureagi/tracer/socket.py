@@ -9,6 +9,8 @@ from dateutil.relativedelta import relativedelta
 from django.db import connection
 
 from sockets.consumer import DataConsumer
+from tracer.models.custom_eval_config import CustomEvalConfig
+from tracer.models.project import Project
 from tracer.utils.filters import FilterEngine
 
 # from tracer.models.observation_span import ObservationSpan
@@ -16,6 +18,8 @@ from tracer.utils.filters import FilterEngine
 
 class GraphDataConsumer(DataConsumer):
     async def receive_json(self, content):
+        if not await self._guard.ensure_live(inbound=True):
+            return
         self.project_id = content.get("projectId")
         self.filters = content.get("filters", [])
         self.interval = content.get("interval", "hour")
@@ -31,7 +35,47 @@ class GraphDataConsumer(DataConsumer):
             await self.close()
             return
 
+        if self.scope.get("auth_scope") is not None:
+            if not await self._authorize_saml_frame():
+                return
+
         await self.send_metrics_data()
+
+    async def _authorize_saml_frame(self):
+        bound_org = self.scope["auth_scope"].org_id
+        project = await self._saml_project(self.project_id, bound_org)
+        if project is None:
+            await self._deny_saml_scope("project")
+            return False
+        if self.eval_id and not await self._saml_eval(self.eval_id, bound_org):
+            await self._deny_saml_scope("evaluation")
+            return False
+        self.project_id = str(project.id)
+        return True
+
+    @database_sync_to_async
+    def _saml_project(self, project_id, bound_org):
+        return (
+            Project.objects.filter(id=project_id, organization_id=bound_org)
+            .only("id")
+            .first()
+        )
+
+    @database_sync_to_async
+    def _saml_eval(self, eval_id, bound_org):
+        return CustomEvalConfig.objects.filter(
+            id=eval_id, project__organization_id=bound_org
+        ).exists()
+
+    async def _deny_saml_scope(self, requested_resource):
+        import structlog
+
+        structlog.get_logger("saml2_auth.security").warning(
+            "saml_scope_conflict",
+            requested_resource=requested_resource,
+            transport="websocket",
+        )
+        await self.close(code=4003)
 
     async def send_metrics_data(self):
         if self.graph == "trace":
@@ -51,10 +95,10 @@ class GraphDataConsumer(DataConsumer):
         # Determine the start and end range based on filters
         start_time, end_time = None, None
         for filter_item in self.filters:
-            filter_config = filter_item.get("filterConfig", {})
-            filter_type = filter_config.get("filterType")
-            filter_op = filter_config.get("filterOp")
-            filter_value = filter_config.get("filterValue")
+            filter_config = filter_item.get("filter_config", {})
+            filter_type = filter_config.get("filter_type")
+            filter_op = filter_config.get("filter_op")
+            filter_value = filter_config.get("filter_value")
 
             if (
                 filter_type == "datetime"
@@ -315,8 +359,8 @@ class GraphDataConsumer(DataConsumer):
                 )
             ) AS metrics,
             tcec.name
-            {",t.id AS id_trace" if self.graph == 'trace' else ""}
-            {",os.id AS id_span" if self.graph == 'span' else ""}
+            {",t.id AS id_trace" if self.graph == "trace" else ""}
+            {",os.id AS id_span" if self.graph == "span" else ""}
         FROM tracer_observation_span os
         JOIN tracer_trace t ON os.trace_id = t.id
         LEFT JOIN eval_metrics em ON os.id = em.observation_span_id
@@ -332,7 +376,7 @@ class GraphDataConsumer(DataConsumer):
             self.filters, query
         )
         query += f"""
-        GROUP BY timestamp, config_id, tcec.name{", id_trace" if self.graph == 'trace' else ''}{", id_span" if self.graph == 'span' else ""}{';' if not having else " "+having}"""
+        GROUP BY timestamp, config_id, tcec.name{", id_trace" if self.graph == "trace" else ""}{", id_span" if self.graph == "span" else ""}{";" if not having else " " + having}"""
 
         params = [self.project_id for _ in range(5)]
         rows = await self.fetch_raw_data(query, params)
@@ -414,7 +458,7 @@ class GraphDataConsumer(DataConsumer):
                         "percentile empty": lambda ec=empty_count, tc=total_count: (
                             round((ec / tc * 100), 2) if tc > 0 else 0
                         ),
-                        "sum": lambda av=all_values: (sum(av) if av else 0),
+                        "sum": lambda av=all_values: sum(av) if av else 0,
                         "average": lambda av=all_values, tc=total_count: (
                             round(sum(av) / tc, 2) if av else 0
                         ),
@@ -477,28 +521,28 @@ class GraphDataConsumer(DataConsumer):
                                     JOIN tracer_trace ON tracer_eval_logger.trace_id = tracer_trace.id
                                     JOIN tracer_observation_span ON tracer_eval_logger.observation_span_id = tracer_observation_span.id
                                 """
-        condition = ""
-        params = []
+        condition = "WHERE tracer_trace.project_id = %s"
+        params = [self.project_id]
         trace_id = None
 
         created_at_condition = ""
         if self.filters:
             for filter in self.filters:
-                if filter.get("columnId") == "trace_id":
-                    filter_config = filter.get("filterConfig", {})
-                    trace_id = filter_config.get("filterValue")
+                if filter.get("column_id") == "trace_id":
+                    filter_config = filter.get("filter_config", {})
+                    trace_id = filter_config.get("filter_value")
                     if trace_id:
                         try:
                             str(uuid.UUID(trace_id))
                         except ValueError:
                             continue
                         # Use parameterized query instead of string interpolation
-                        condition = "WHERE tracer_eval_logger.trace_id = %s"
+                        condition += " AND tracer_eval_logger.trace_id = %s"
                         params.append(trace_id)
-                elif filter.get("columnId") == "created_at":
-                    filter_config = filter.get("filterConfig", {})
-                    start_date = filter_config.get("startDate")
-                    end_date = filter_config.get("endDate")
+                elif filter.get("column_id") == "created_at":
+                    filter_config = filter.get("filter_config", {})
+                    start_date = filter_config.get("start_date")
+                    end_date = filter_config.get("end_date")
                     if start_date and end_date:
                         # Use parameterized query instead of string interpolation
                         created_at_condition = (
@@ -562,7 +606,7 @@ class GraphDataConsumer(DataConsumer):
             raise ValueError("Invalid keys provided")
 
         query = f"""
-                SELECT {', '.join(selected_columns)}
+                SELECT {", ".join(selected_columns)}
                 FROM tracer_observation_span
                 WHERE project_id = %s
             """
@@ -572,8 +616,8 @@ class GraphDataConsumer(DataConsumer):
             AND parent_span_id IS NULL"""
 
         query += f"""
-            GROUP BY {column_map['timestamp']}
-            ORDER BY {column_map['timestamp']};
+            GROUP BY {column_map["timestamp"]}
+            ORDER BY {column_map["timestamp"]};
         """
         params = [filters.get("project_id")]
 
@@ -586,7 +630,9 @@ class GraphDataConsumer(DataConsumer):
                 keys[i]: (
                     row[i].strftime("%Y-%m-%dT%H:%M:%S")
                     if isinstance(row[i], datetime)
-                    else float(row[i]) if isinstance(row[i], Decimal) else row[i]
+                    else float(row[i])
+                    if isinstance(row[i], Decimal)
+                    else row[i]
                 )
                 for i in range(len(keys))
             }

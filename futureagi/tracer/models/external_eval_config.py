@@ -7,7 +7,6 @@ from accounts.models import Organization
 from accounts.models.workspace import Workspace
 from model_hub.models.evals_metric import EvalTemplate
 from tfc.utils.base_model import BaseModel
-from tracer.models.custom_eval_config import ModelChoices
 
 
 class PlatformChoices(models.TextChoices):
@@ -38,9 +37,7 @@ class ExternalEvalConfig(BaseModel):
     )
     config = models.JSONField(default=dict, blank=True, null=True)
     mapping = models.JSONField(default=dict)
-    model = models.CharField(
-        max_length=255, choices=ModelChoices.choices, blank=True, null=True
-    )
+    model = models.CharField(max_length=255, blank=True, null=True)
 
     eval_results = models.JSONField(default=dict, blank=True, null=True)
     error_message = models.TextField(null=True, blank=True)

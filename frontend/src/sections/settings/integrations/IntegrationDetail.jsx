@@ -1,12 +1,10 @@
 import { useState } from "react";
 import PropTypes from "prop-types";
-import { useNavigate, useParams } from "react-router-dom";
+import { useLocation, useNavigate, useParams } from "react-router-dom";
 import {
   Alert,
   Box,
   Button,
-  Card,
-  CircularProgress,
   Grid,
   IconButton,
   Menu,
@@ -14,8 +12,10 @@ import {
   Typography,
   useTheme,
 } from "@mui/material";
+import Section from "src/components/section";
 import { LoadingButton } from "@mui/lab";
 import Iconify from "src/components/iconify";
+import { LoadingScreen } from "src/components/loading-screen";
 import { paths } from "src/routes/paths";
 import { fDateTime, fToNow } from "src/utils/format-time";
 import {
@@ -58,8 +58,16 @@ function formatInterval(seconds) {
 
 export default function IntegrationDetail() {
   const theme = useTheme();
-  const { connectionId } = useParams();
+  const { connectionId, workspaceId } = useParams();
   const navigate = useNavigate();
+  const location = useLocation();
+  const integrationsPath =
+    workspaceId &&
+    location.pathname.includes(
+      `/settings/workspace/${workspaceId}/integrations`,
+    )
+      ? paths.dashboard.settings.workspaceIntegrations(workspaceId)
+      : paths.dashboard.settings.integrations;
   const {
     data: connection,
     isLoading,
@@ -75,11 +83,7 @@ export default function IntegrationDetail() {
   const [menuAnchor, setMenuAnchor] = useState(null);
 
   if (isLoading) {
-    return (
-      <Box display="flex" justifyContent="center" py={8}>
-        <CircularProgress />
-      </Box>
-    );
+    return <LoadingScreen sx={{ height: "100%", minHeight: "60vh" }} />;
   }
 
   if (isError) {
@@ -91,8 +95,10 @@ export default function IntegrationDetail() {
         <Button
           size="small"
           variant="outlined"
-          startIcon={<Iconify icon="formkit:left" width={16} height={16} />}
-          onClick={() => navigate(paths.dashboard.settings.integrations)}
+          startIcon={
+            <Iconify icon="solar:arrow-left-linear" width={16} height={16} />
+          }
+          onClick={() => navigate(integrationsPath)}
           sx={{ mt: theme.spacing(1), ...backButtonSx }}
         >
           Back to Integrations
@@ -108,8 +114,10 @@ export default function IntegrationDetail() {
         <Button
           size="small"
           variant="outlined"
-          startIcon={<Iconify icon="formkit:left" width={16} height={16} />}
-          onClick={() => navigate(paths.dashboard.settings.integrations)}
+          startIcon={
+            <Iconify icon="solar:arrow-left-linear" width={16} height={16} />
+          }
+          onClick={() => navigate(integrationsPath)}
           sx={{ mt: theme.spacing(1), ...backButtonSx }}
         >
           Back to Integrations
@@ -126,15 +134,20 @@ export default function IntegrationDetail() {
       <Button
         size="small"
         variant="outlined"
-        startIcon={<Iconify icon="formkit:left" width={16} height={16} />}
-        onClick={() => navigate(paths.dashboard.settings.integrations)}
+        startIcon={
+          <Iconify icon="solar:arrow-left-linear" width={16} height={16} />
+        }
+        onClick={() => navigate(integrationsPath)}
         sx={{ mb: theme.spacing(2), ...backButtonSx }}
       >
         Back to Integrations
       </Button>
 
       {/* Overview Card */}
-      <Card sx={{ mb: theme.spacing(3), p: theme.spacing(3) }}>
+      <Section
+        variant="panel"
+        sx={{ mb: theme.spacing(3), p: theme.spacing(3) }}
+      >
         <Box
           display="flex"
           justifyContent="space-between"
@@ -186,7 +199,6 @@ export default function IntegrationDetail() {
                   setMenuAnchor(null);
                   setDeleteOpen(true);
                 }}
-                sx={{ color: "error.main" }}
               >
                 Delete
               </MenuItem>
@@ -221,10 +233,13 @@ export default function IntegrationDetail() {
             value={formatInterval(connData.sync_interval_seconds)}
           />
         </Grid>
-      </Card>
+      </Section>
 
       {/* Sync Status Card */}
-      <Card sx={{ mb: theme.spacing(3), p: theme.spacing(3) }}>
+      <Section
+        variant="panel"
+        sx={{ mb: theme.spacing(3), p: theme.spacing(3) }}
+      >
         <Typography
           sx={{
             typography: "m3",
@@ -297,7 +312,7 @@ export default function IntegrationDetail() {
               size="small"
               loading={isPausing}
               onClick={() => pause(connectionId)}
-              startIcon={<Iconify icon="mdi:pause" width={16} />}
+              startIcon={<Iconify icon="solar:pause-linear" width={16} />}
               sx={{
                 ...outlinedNeutralButtonSx,
                 color: "text.primary",
@@ -318,16 +333,15 @@ export default function IntegrationDetail() {
               loading={isResuming}
               onClick={() => resume(connectionId)}
               startIcon={<Iconify icon="solar:play-bold" width={16} />}
-              sx={{ fontWeight: 500 }}
             >
               Resume
             </LoadingButton>
           )}
         </Box>
-      </Card>
+      </Section>
 
       {/* Sync History */}
-      <Card sx={{ p: theme.spacing(3) }}>
+      <Section variant="panel" sx={{ p: theme.spacing(3) }}>
         <Typography
           sx={{
             typography: "m3",
@@ -339,7 +353,7 @@ export default function IntegrationDetail() {
           Sync History
         </Typography>
         <IntegrationSyncHistory connectionId={connectionId} />
-      </Card>
+      </Section>
 
       {/* Dialogs */}
       <EditIntegrationDialog
@@ -352,7 +366,7 @@ export default function IntegrationDetail() {
         onClose={() => setDeleteOpen(false)}
         onDeleted={() => {
           setDeleteOpen(false);
-          navigate(paths.dashboard.settings.integrations);
+          navigate(integrationsPath);
         }}
         connection={connData}
       />

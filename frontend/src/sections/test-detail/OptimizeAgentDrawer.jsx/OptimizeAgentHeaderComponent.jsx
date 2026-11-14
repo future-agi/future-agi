@@ -19,7 +19,10 @@ import ModalWrapper from "src/components/ModalWrapper/ModalWrapper";
 import { ShowComponent } from "src/components/show";
 import SvgColor from "src/components/svg-color";
 import CallStatus from "src/sections/test/CallLogs/CallStatus";
-import { KeyOptimizerMapping } from "../CreateEditOptimization/common";
+import {
+  KeyOptimizerMapping,
+  mapConfigurationToForm,
+} from "../CreateEditOptimization/common";
 import RerunOptimizationModal from "../CreateEditOptimization/RerunOptimizationModal";
 import OptimizeAgentHeaderComponentSkeleton from "./OptimizeAgentHeaderComponentSkeleton";
 import { AgentPromptOptimizerRerunStatus } from "../FixMyAgentDrawer/common";
@@ -29,8 +32,14 @@ import { getDocsLinkBasedOnOptimizer } from "./common";
 import { formatStartTimeByRequiredFormat } from "src/utils/utils";
 
 const OptimizeAgentHeaderComponent = ({ optimization, isLoading }) => {
-  const { optimiserType, model, status, optimiserName, providerLogo } =
-    optimization || {};
+  const {
+    model,
+    status,
+    optimiser_type: optimiserType,
+    optimiser_name: optimiserName,
+    provider_logo: providerLogo,
+    start_time: startTime,
+  } = optimization || {};
   const [feedbackModalOpen, setFeedbackModalOpen] = useState(false);
   const [createEditOptimizationModalOpen, setCreateEditOptimizationModalOpen] =
     useState(null);
@@ -44,10 +53,10 @@ const OptimizeAgentHeaderComponent = ({ optimization, isLoading }) => {
 
   const getDefaultValues = (optimization) => {
     return {
-      name: `${optimization?.optimiserName} - Rerun - ${format(new Date(), "dd MMM yyyy")}`,
+      name: `${optimiserName} - Rerun - ${format(new Date(), "dd MMM yyyy")}`,
       model: optimization?.model,
-      optimiserType: optimization?.optimiserType,
-      configuration: optimization?.configuration,
+      optimiserType: optimiserType,
+      configuration: mapConfigurationToForm(optimization?.configuration),
     };
   };
 
@@ -55,7 +64,7 @@ const OptimizeAgentHeaderComponent = ({ optimization, isLoading }) => {
     return <OptimizeAgentHeaderComponentSkeleton />;
   }
   const formattedStartTime = formatStartTimeByRequiredFormat(
-    optimization?.start_time,
+    startTime,
     "MMM dd, yyyy 'at' h:mm a",
   );
   return (
@@ -74,9 +83,7 @@ const OptimizeAgentHeaderComponent = ({ optimization, isLoading }) => {
           <CallStatus value={status ?? "Completed"} />
         </Box>
 
-        <ShowComponent
-          condition={!!optimization?.start_time && !!formattedStartTime}
-        >
+        <ShowComponent condition={!!startTime && !!formattedStartTime}>
           <Typography typography={"s3"} fontWeight={"fontWeightRegular"}>
             Optimization ran on {formattedStartTime}
           </Typography>
@@ -107,8 +114,6 @@ const OptimizeAgentHeaderComponent = ({ optimization, isLoading }) => {
             sx={{
               backgroundColor: "transparent",
               color: "text.primary",
-              borderRadius: 0.5,
-              fontWeight: 600,
               border: "1px solid",
               borderColor: "divider",
               ":hover": {
@@ -129,13 +134,13 @@ const OptimizeAgentHeaderComponent = ({ optimization, isLoading }) => {
           />
           <ShowComponent condition={optimization?.parameters?.length > 0}>
             <Button
-              sx={{ px: "8px" }}
               variant="outlined"
               size="small"
               startIcon={
                 <SvgColor
+                  width={16}
                   src="/assets/prompt/slider-options.svg"
-                  sx={{ height: "16px", width: "16px", color: "text.primary" }}
+                  sx={{ color: "text.primary" }}
                 />
               }
               onClick={(e) => setAnchorRef(e.currentTarget)}
@@ -195,7 +200,7 @@ const OptimizeAgentHeaderComponent = ({ optimization, isLoading }) => {
             backgroundColor: "background.neutral",
             borderColor: "divider",
             padding: 2,
-            borderRadius: 0.5,
+            borderRadius: "4px",
           }}
         >
           <FormTextFieldV2
@@ -255,14 +260,14 @@ const OptimizeAgentHeaderComponent = ({ optimization, isLoading }) => {
             </Typography>
             <Link
               href={getDocsLinkBasedOnOptimizer(optimiserType)}
-              color="blue.500"
+              color="status.info.fg"
               target="_blank"
               rel="noopener noreferrer"
               fontWeight="fontWeightMedium"
-              fontSize="14px"
+              fontSize="12px"
               sx={{
                 textDecoration: "underline",
-                fontSize: "13px",
+                fontSize: "12px",
                 alignSelf: "center",
                 marginBottom: 1,
               }}

@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import PropTypes from "prop-types";
 import {
   Dialog,
@@ -78,6 +78,12 @@ export default function TaskConfirmDialog({
 }) {
   const [editType, setEditType] = useState("fresh_run");
 
+  // The dialog stays mounted between opens, so a previous "edit_rerun" pick
+  // would still be selected next time — and the other option deletes data.
+  useEffect(() => {
+    if (open) setEditType("fresh_run");
+  }, [open]);
+
   const handleConfirm = () => {
     onConfirm(editType);
   };
@@ -108,8 +114,7 @@ export default function TaskConfirmDialog({
       PaperProps={{
         sx: {
           borderRadius: "8px",
-          boxShadow: "0px 4px 12px rgba(0, 0, 0, 0.1)",
-          width: "544px",
+          width: "560px",
           height: "282px",
         },
       }}
@@ -125,7 +130,7 @@ export default function TaskConfirmDialog({
               color: "text.primary",
               padding: 0,
               mt: 2.8,
-              fontSize: "14px",
+              fontSize: "12px",
               fontWeight: 500,
               mb: 1.2,
             }}
@@ -162,13 +167,6 @@ export default function TaskConfirmDialog({
             onClick={handleConfirm}
             loading={isLoading}
             color="primary"
-            sx={{
-              fontSize: "16px",
-              fontWeight: 600,
-              borderRadius: "8px",
-              textTransform: "none",
-              px: 3,
-            }}
           >
             {confirmText}
           </LoadingButton>

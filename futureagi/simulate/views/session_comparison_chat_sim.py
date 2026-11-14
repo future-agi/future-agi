@@ -1,11 +1,16 @@
 import structlog
 from django.shortcuts import get_object_or_404
+from drf_yasg.utils import swagger_auto_schema
 from rest_framework.exceptions import ValidationError
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 
 from model_hub.models.develop_dataset import Row
 from simulate.models import CallExecution
+from simulate.serializers.response.call_execution import (
+    CallExecutionErrorResponseSerializer,
+    SessionComparisonResponseSerializer,
+)
 from simulate.utils.session_comparison import (
     fetch_comparison_metrics,
     fetch_comparison_recordings,
@@ -96,6 +101,13 @@ class SessionComparisonChatSimView(APIView):
             raise ValidationError("No session ID found for comparison")
         return session_id, "session"
 
+    @swagger_auto_schema(
+        responses={
+            200: SessionComparisonResponseSerializer,
+            400: CallExecutionErrorResponseSerializer,
+            500: CallExecutionErrorResponseSerializer,
+        },
+    )
     def get(self, request, call_execution_id, *args, **kwargs):
         try:
             call_exec = get_object_or_404(

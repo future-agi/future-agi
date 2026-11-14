@@ -58,7 +58,6 @@ ReplayConfigurationProvider.propTypes = {
     modalTitle: PropTypes.string,
     apiEndpoints: PropTypes.shape({
       createScenarios: PropTypes.func,
-      getAgentDefinition: PropTypes.func,
       addToScenarioGroup: PropTypes.func,
     }),
     textContent: PropTypes.shape({

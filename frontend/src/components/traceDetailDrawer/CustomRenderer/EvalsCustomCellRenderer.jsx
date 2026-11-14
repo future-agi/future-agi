@@ -1,4 +1,4 @@
-import { Box, Button, Chip, Skeleton, Typography } from "@mui/material";
+import { Box, Button, Skeleton, Typography } from "@mui/material";
 import PropTypes from "prop-types";
 import React, { useState } from "react";
 import Iconify from "src/components/iconify";
@@ -14,6 +14,8 @@ import AddToFeedBackModal, {
 import { ShowComponent } from "src/components/show/ShowComponent";
 import CellMarkdown from "src/sections/common/CellMarkdown";
 import NumericCell from "src/sections/common/DevelopCellRenderer/EvaluateCellRenderer/NumericCell";
+import EvalStatusIndicator from "src/components/eval/EvalStatusIndicator";
+import { getEvalNonScoreStatus } from "src/utils/evalStatus";
 
 const TooltipContent = ({
   explanation,
@@ -53,20 +55,13 @@ const TooltipContent = ({
       <Box>
         <ShowComponent condition={showMoreCondition}>
           <Box sx={{ mb: 1 }}>
-            <Typography
-              typography="s3"
-              sx={{
-                fontWeight: "fontWeightSemiBold",
-                textDecoration: "underline",
-                width: "20%",
-                ":hover": {
-                  cursor: "pointer",
-                },
-              }}
+            <Button
+              size="small"
+              variant="text"
               onClick={() => setExpanded(true)}
             >
               Show More
-            </Typography>
+            </Button>
           </Box>
         </ShowComponent>
         <Box sx={{ display: "flex", width: "100%", gap: 1 }}>
@@ -75,7 +70,7 @@ const TooltipContent = ({
               size="small"
               fullWidth
               variant="outlined"
-              startIcon={<Iconify icon="tabler:eye" />}
+              startIcon={<Iconify icon="solar:eye-linear" />}
               sx={buttonSx}
               onClick={onViewDetail}
             >
@@ -87,7 +82,7 @@ const TooltipContent = ({
               size="small"
               fullWidth
               variant="outlined"
-              startIcon={<Iconify icon="tabler:message" />}
+              startIcon={<Iconify icon="solar:chat-round-line-linear" />}
               onClick={onAddFeedback}
               sx={buttonSx}
             >
@@ -179,6 +174,9 @@ const EvalsCustomCellRenderer = (props) => {
   const loading = props.data?.loading;
   const error = props.data?.error;
   const outputType = props.data?.outputType;
+  // Lifecycle status (pending/running/skipped) from the eval read APIs.
+  const nonScoreStatus = getEvalNonScoreStatus(props.data?.status);
+  const skippedReason = props.data?.skippedReason;
   const showAddFeedback = props?.showAddFeedback;
   const showViewDetail = props?.showViewDetail;
 
@@ -202,9 +200,7 @@ const EvalsCustomCellRenderer = (props) => {
       }
       return (
         <Box sx={{ display: "flex", gap: 1, padding: 1, width: "100%" }}>
-          {props.value.map((each) => (
-            <Chip key={each} label={each} variant="outlined" color="primary" />
-          ))}
+          {props.value.join(" · ")}
         </Box>
       );
     } else if (outputType === "bool" || outputType === "Pass/Fail") {
@@ -257,14 +253,30 @@ const EvalsCustomCellRenderer = (props) => {
     // This is temporary change to show "-" when there is no value
 
     if (column.field === "score") {
-      if (loading) {
+      if (nonScoreStatus) {
         return (
-          <Box sx={{ width: "100%", padding: 1 }}>
-            <Skeleton
-              sx={{ width: "100%", height: "20px" }}
-              variant="rounded"
+          <Box sx={{ width: "100%", height: "100%" }}>
+            <EvalStatusIndicator
+              status={nonScoreStatus}
+              skippedReason={skippedReason}
             />
           </Box>
+        );
+      }
+
+      if (loading) {
+        return (
+          <Skeleton
+            variant="rectangular"
+            animation="wave"
+            sx={{
+              width: "100%",
+              height: "100%",
+              minHeight: 20,
+              borderRadius: 0,
+              transform: "none",
+            }}
+          />
         );
       }
 

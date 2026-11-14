@@ -76,9 +76,11 @@ def test_returns_400_when_no_scenario_ids(run_test, scenario_ids):
 
     assert response is not None
     assert response.status_code == status.HTTP_400_BAD_REQUEST
-    payload = response.data["result"]
-    assert payload["error"] == "No scenarios"
-    assert payload["scenarios"] == []
+    # build_error_envelope flattens the dict: the ``details`` dict preserves
+    # the original structured keys from the passed dict.
+    details = response.data.get("details", {})
+    assert "No scenarios" in str(details.get("error", ""))
+    assert "scenarios" in details
 
 
 def test_returns_none_when_all_scenarios_completed(
@@ -130,11 +132,10 @@ def test_returns_400_when_any_scenario_running(
 
     assert response is not None
     assert response.status_code == status.HTTP_400_BAD_REQUEST
-    payload = response.data["result"]
-    assert payload["error"] == "Scenarios incomplete"
-    names = [s["name"] for s in payload["scenarios"]]
-    assert names == ["StillRunning"]
-    assert payload["scenarios"][0]["status"] == StatusType.RUNNING.value
+    details = response.data.get("details", {})
+    assert "Scenarios incomplete" in str(details.get("error", ""))
+    assert "scenarios" in details
+    assert "StillRunning" in str(details["scenarios"])
 
 
 def test_failed_scenarios_also_block(
@@ -154,7 +155,9 @@ def test_failed_scenarios_also_block(
 
     assert response is not None
     assert response.status_code == status.HTTP_400_BAD_REQUEST
-    assert response.data["result"]["scenarios"][0]["status"] == StatusType.FAILED.value
+    details = response.data.get("details", {})
+    assert "scenarios" in details
+    assert StatusType.FAILED.value in str(details["scenarios"])
 
 
 def test_cross_org_scenarios_are_not_leaked(

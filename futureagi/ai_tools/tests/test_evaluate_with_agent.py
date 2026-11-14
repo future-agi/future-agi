@@ -12,6 +12,7 @@ deterministic, and free of external dependencies. What we're testing:
   5. Error propagation: orchestrator exception surfaces cleanly
 """
 
+import sys
 import uuid
 from unittest.mock import MagicMock, patch
 
@@ -19,10 +20,7 @@ import pytest
 
 from ai_tools.tests.conftest import run_tool
 from ai_tools.tests.fixtures import make_trace
-try:
-    from ee.usage.schemas.events import CheckResult
-except ImportError:
-    CheckResult = None
+from tfc.ee_gating import EEFeature, FeatureUnavailable
 
 # ---------------------------------------------------------------------------
 # Helpers / constants
@@ -125,10 +123,7 @@ def mock_orchestrator():
 @pytest.fixture(autouse=True)
 def allow_agentic_eval_feature():
     """Default tests assume evaluate_with_agent is available."""
-    with patch(
-        "ee.usage.services.entitlements.Entitlements.check_feature",
-        return_value=CheckResult(allowed=True),
-    ):
+    with patch("tfc.ee_gating.check_ee_feature", return_value=None):
         yield
 
 
@@ -139,13 +134,10 @@ def allow_agentic_eval_feature():
 
 class TestInputValidation:
     def test_blocked_when_agentic_eval_not_allowed(self, tool_context):
-        with patch(
-            "ee.usage.services.entitlements.Entitlements.check_feature"
-        ) as mock_check:
-            mock_check.return_value = CheckResult(
-                allowed=False,
-                reason="Agentic evaluation requires Boost plan",
-                error_code="ENTITLEMENT_DENIED",
+        with patch("tfc.ee_gating.check_ee_feature") as mock_check:
+            mock_check.side_effect = FeatureUnavailable(
+                EEFeature.AGENTIC_EVAL,
+                detail="Agentic evaluation requires Boost plan",
             )
 
             result = run_tool(
@@ -159,12 +151,35 @@ class TestInputValidation:
             )
 
             assert result.is_error
-            assert result.error_code == "PERMISSION_DENIED"
-            assert "requires Boost plan" in result.content
+            assert result.error_code == "ENTITLEMENT_DENIED"
+            assert result.data == {
+                "feature": EEFeature.AGENTIC_EVAL.value,
+                "upgrade_required": True,
+            }
             mock_check.assert_called_once_with(
-                str(tool_context.organization.id), "has_agentic_eval"
+                EEFeature.AGENTIC_EVAL, org_id=str(tool_context.organization.id)
             )
 
+    def test_ee_agenthub_import_failure_returns_unavailable(
+        self, tool_context, monkeypatch
+    ):
+        """Both lanes: entitled org but ee.agenthub missing degrades to
+        feature-unavailable (the open-build path), it does not crash."""
+        monkeypatch.setitem(sys.modules, "ee.agenthub.eval_orchestrator", None)
+        with patch("tfc.ee_gating.check_ee_feature", return_value=None):
+            result = run_tool(
+                "evaluate_with_agent",
+                {
+                    "source_id": _FAKE_TRACE_ID,
+                    "input_scope": "trace",
+                    "criteria": "Is it helpful?",
+                },
+                tool_context,
+            )
+        assert result.is_error
+        assert result.error_code == "ENTITLEMENT_DENIED"
+
+    @pytest.mark.requires_ee
     def test_invalid_scope_returns_error(self, tool_context):
         result = run_tool(
             "evaluate_with_agent",
@@ -179,6 +194,7 @@ class TestInputValidation:
         assert "banana" in result.content
         assert "input_scope" in result.content
 
+    @pytest.mark.requires_ee
     def test_all_valid_scopes_accepted(self, tool_context, mock_orchestrator):
         for scope in ("span", "trace", "session", "dataset_row", "cell"):
             result = run_tool(
@@ -201,6 +217,8 @@ class TestInputValidation:
 
 
 class TestHappyPath:
+    pytestmark = pytest.mark.requires_ee
+
     def test_returns_result_and_explanation(self, tool_context, mock_orchestrator):
         result = run_tool(
             "evaluate_with_agent",
@@ -293,6 +311,8 @@ class TestHappyPath:
 
 
 class TestChoices:
+    pytestmark = pytest.mark.requires_ee
+
     def test_numeric_scoring_mode_when_no_choices(self, tool_context):
         """With no choices, the tool passes choices=None → orchestrator defaults to 0–1 scoring."""
         with (
@@ -360,6 +380,8 @@ class TestChoices:
 
 
 class TestOptionalParams:
+    pytestmark = pytest.mark.requires_ee
+
     def test_kb_id_passed_to_gather_resources(self, tool_context):
         with (
             patch(
@@ -457,6 +479,8 @@ class TestOptionalParams:
 
 
 class TestErrorHandling:
+    pytestmark = pytest.mark.requires_ee
+
     def test_orchestrator_exception_surfaces_as_error(self, tool_context):
         with (
             patch(

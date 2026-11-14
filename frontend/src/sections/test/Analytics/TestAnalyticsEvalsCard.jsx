@@ -91,14 +91,14 @@ const TestAnalyticsEvalsCard = (props) => {
     if (isCompare) {
       Object.entries(data || {}).map(([id, item], index) => {
         item.forEach((temp) => {
-          if (temp.outputType === "score") {
+          if (temp.output_type === "score") {
             if (!obj[temp.name]) {
               obj[temp.name] = [
                 {
                   datasetId: id,
                   name: temp.name,
                   datasetIndex: index,
-                  average: temp.totalAvg || 0,
+                  average: temp.total_avg || 0,
                 },
               ];
             } else {
@@ -106,18 +106,18 @@ const TestAnalyticsEvalsCard = (props) => {
                 datasetId: id,
                 name: temp.name,
                 datasetIndex: index,
-                average: temp.totalAvg || 0,
+                average: temp.total_avg || 0,
               });
             }
           }
-          if (temp.outputType === "Pass/Fail") {
+          if (temp.output_type === "Pass/Fail") {
             if (!obj[temp.name]) {
               obj[temp.name] = [
                 {
                   datasetId: id,
                   name: temp.name,
                   datasetIndex: index,
-                  average: temp.totalPassRate || 0,
+                  average: temp.total_pass_rate || 0,
                 },
               ];
             } else {
@@ -125,7 +125,7 @@ const TestAnalyticsEvalsCard = (props) => {
                 datasetId: id,
                 name: temp.name,
                 datasetIndex: index,
-                average: temp.totalPassRate || 0,
+                average: temp.total_pass_rate || 0,
               });
             }
           }
@@ -136,13 +136,13 @@ const TestAnalyticsEvalsCard = (props) => {
       const redarLabel = [];
       const redarData = [];
       graphData?.forEach((item) => {
-        if (item.outputType === "score") {
-          redarData.push(item.totalAvg);
+        if (item.output_type === "score") {
+          redarData.push(item.total_avg);
           redarLabel.push(item.name);
         }
-        if (item.outputType === "Pass/Fail") {
+        if (item.output_type === "Pass/Fail") {
           redarLabel.push(item.name);
-          redarData.push(item.totalPassRate);
+          redarData.push(item.total_pass_rate);
         }
       });
 
@@ -343,21 +343,21 @@ const TestAnalyticsEvalsCard = (props) => {
                           >
                             <Box
                               sx={{
-                                backgroundColor: "green.o10",
+                                backgroundColor: "status.success.bg",
                                 padding: 1,
-                                color: "green.500",
+                                color: "status.success.fg",
                                 display: "flex",
                                 justifyContent: "center",
                                 alignItems: "center",
                                 width: "32px",
                                 height: "32px",
-                                borderRadius: "2px",
+                                borderRadius: "4px",
                               }}
                             >
                               <Iconify
                                 // @ts-ignore
                                 icon="qlementine-icons:success-16"
-                                color="green.500"
+                                color="status.success.fg"
                               />
                             </Box>
                             <Box>
@@ -373,8 +373,8 @@ const TestAnalyticsEvalsCard = (props) => {
                                 fontWeight={"fontWeightSemiBold"}
                                 sx={{
                                   color: "text.primary",
-                                  fontWeight: 700,
-                                  fontSize: "1.125rem",
+                                  fontWeight: 600,
+                                  fontSize: "1rem",
                                 }}
                               >
                                 {temp?.value?.[index] || 0} %
@@ -395,20 +395,20 @@ const TestAnalyticsEvalsCard = (props) => {
                 const headerData = {
                   name: item.name,
                   average:
-                    item.outputType == "choices"
-                      ? item.totalChoicesAvg
-                      : item.outputType == "Pass/Fail"
-                        ? item.totalPassRate || 0
-                        : item.totalAvg || 0,
+                    item.output_type == "choices"
+                      ? item.total_choices_avg
+                      : item.output_type == "Pass/Fail"
+                        ? item.total_pass_rate || 0
+                        : item.total_avg || 0,
                   isNumericEval:
-                    item.outputType == OutputTypes.NUMERIC
+                    item.output_type == OutputTypes.NUMERIC
                       ? true
-                      : item?.isNumericEval,
-                  isNumericEvalPercentage: item?.isNumericEvalPercentage,
+                      : item?.is_numeric_eval,
+                  isNumericEvalPercentage: item?.is_numeric_eval_percentage,
                 };
-                const applySort = Boolean(item?.isNumericEval);
+                const applySort = Boolean(item?.is_numeric_eval);
                 const { graphLabels, graphData } =
-                  item.outputType == "Pass/Fail"
+                  item.output_type == "Pass/Fail"
                     ? getPassFailChartData(item?.result)
                     : getChartData(item?.result, applySort);
 
@@ -423,7 +423,7 @@ const TestAnalyticsEvalsCard = (props) => {
                       padding: "16px",
                     }}
                   >
-                    <ShowComponent condition={item.outputType == "choices"}>
+                    <ShowComponent condition={item.output_type == "choices"}>
                       <DonutChart
                         height={300}
                         data={graphData}
@@ -432,7 +432,7 @@ const TestAnalyticsEvalsCard = (props) => {
                         datasetIndex={selectedIndex}
                       />
                     </ShowComponent>
-                    <ShowComponent condition={item.outputType == "Pass/Fail"}>
+                    <ShowComponent condition={item.output_type == "Pass/Fail"}>
                       <StackBarChart
                         height={300}
                         data={graphData}
@@ -441,7 +441,7 @@ const TestAnalyticsEvalsCard = (props) => {
                         datasetIndex={selectedIndex}
                       />
                     </ShowComponent>
-                    <ShowComponent condition={item.outputType == "score"}>
+                    <ShowComponent condition={item.output_type == "score"}>
                       <AreaChartWrapper
                         data={graphData}
                         graphLabels={graphLabels}
@@ -459,9 +459,9 @@ const TestAnalyticsEvalsCard = (props) => {
               sx={{
                 marginTop: "16px",
                 borderRadius: "4px",
-                backgroundColor: "blue.o5",
+                backgroundColor: "status.info.bg",
                 border: "1px solid",
-                borderColor: "blue.200",
+                borderColor: "status.info.border",
                 padding: "12px",
                 display: "flex",
                 flexDirection: "column",
@@ -471,14 +471,14 @@ const TestAnalyticsEvalsCard = (props) => {
               <Typography
                 typography={"s1"}
                 fontWeight={"fontWeightSemiBold"}
-                color="blue.500"
+                color="status.info.fg"
               >
                 There are no common columns to compare
               </Typography>
               <Typography
                 typography={"s3"}
                 fontWeight={"fontWeightRegular"}
-                color="blue.500"
+                color="status.info.fg"
               >
                 {"We've"} summarized each dataset. Please select one to view and
                 compare individually.

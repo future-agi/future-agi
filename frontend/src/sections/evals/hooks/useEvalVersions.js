@@ -38,6 +38,7 @@ export function useSetDefaultVersion(templateId) {
     mutationFn: async (versionId) => {
       const { data } = await axios.put(
         endpoints.develop.eval.setDefaultVersion(templateId, versionId),
+        {},
       );
       return data?.result;
     },
@@ -58,6 +59,7 @@ export function useRestoreVersion(templateId) {
     mutationFn: async (versionId) => {
       const { data } = await axios.post(
         endpoints.develop.eval.restoreVersion(templateId, versionId),
+        {},
       );
       return data?.result;
     },

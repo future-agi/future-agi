@@ -1,53 +1,23 @@
 import React, { useMemo, useState } from "react";
+import { SegmentedTabs } from "src/components/tabs/tabs";
 import PropTypes from "prop-types";
-import {
-  Box,
-  Tab,
-  Tabs,
-  Typography,
-  IconButton,
-  useTheme,
-} from "@mui/material";
+import { Box, Tab, Typography, IconButton } from "@mui/material";
 import { ShowComponent } from "src/components/show";
 import "react-json-view-lite/dist/index.css";
 import { transformSafeJson } from "src/utils/utils";
 import Iconify from "src/components/iconify";
 import { copyToClipboard } from "src/utils/utils";
 import { enqueueSnackbar } from "notistack";
-import Image from "src/components/image";
 import CustomJsonViewer from "src/components/custom-json-viewer/CustomJsonViewer";
 import { AudioPlaybackProvider } from "src/components/custom-audio/context-provider/AudioPlaybackContext";
 import SingleImageViewerProvider from "src/sections/develop-detail/Common/SingleImageViewer/SingleImageViewerProvider";
-import { useSingleImageViewContext } from "src/sections/develop-detail/Common/SingleImageViewer/SingleImageContext";
 import CellMarkdown from "src/sections/common/CellMarkdown";
 import CustomVideoPlayer from "src/components/VideoPlayer/CustomVideoPlayer";
 import TestAudioPlayer from "../../custom-audio/TestAudioPlayer";
-
-const ImageCard = ({ image }) => {
-  const { setImageUrl } = useSingleImageViewContext();
-  return (
-    <Box
-      sx={{
-        borderRadius: (theme) => theme.spacing(1),
-        overflow: "hidden",
-        cursor: "pointer",
-      }}
-      onClick={() => {
-        setImageUrl(image);
-      }}
-    >
-      <Image key={image} src={image} alt="image" width={200} />
-    </Box>
-  );
-};
-
-ImageCard.propTypes = {
-  image: PropTypes.string,
-};
+import ImageCard from "src/components/multimodal/ImageCard";
 
 const CustomDataPointCard = ({ value, label, allowCopy = false }) => {
   const [tabValue, setTabValue] = useState("raw");
-  const theme = useTheme();
 
   const handleTabChange = (event, newValue) => {
     setTabValue(newValue);
@@ -130,26 +100,7 @@ const CustomDataPointCard = ({ value, label, allowCopy = false }) => {
           >
             {label}
           </Typography>
-          <Tabs
-            textColor="primary"
-            value={tabValue}
-            onChange={handleTabChange}
-            TabIndicatorProps={{
-              style: { display: "none" },
-            }}
-            sx={{
-              "& .MuiTab-root": {
-                marginRight: (theme) => theme.spacing(2),
-                color: "text.disabled",
-                typography: "s2",
-                fontWeight: "fontWeightRegular",
-              },
-              "& .Mui-selected": {
-                color: theme.palette.primary.main,
-                fontWeight: "fontWeightSemiBold",
-              },
-            }}
-          >
+          <SegmentedTabs value={tabValue} onChange={handleTabChange}>
             <Tab value="markdown" label="Markdown" />
             <Tab value="raw" label="Raw" />
             {allowCopy && (
@@ -162,13 +113,13 @@ const CustomDataPointCard = ({ value, label, allowCopy = false }) => {
                 }}
               >
                 <Iconify
-                  icon="basil:copy-outline"
+                  icon="solar:copy-linear"
                   color="text.secondary"
                   width={20}
                 />
               </IconButton>
             )}
-          </Tabs>
+          </SegmentedTabs>
         </Box>
 
         <ShowComponent condition={tabValue === "raw"}>

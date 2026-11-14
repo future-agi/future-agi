@@ -1,19 +1,16 @@
-import { Box } from "@mui/material";
+import { Box, Tab } from "@mui/material";
+import { SegmentedTabs } from "src/components/tabs/tabs";
 import PropTypes from "prop-types";
 import React, { useState } from "react";
-import { CustomTab, CustomTabs, TabWrapper } from "./SummaryStyle";
 import { ShowComponent } from "src/components/show";
 import DatasetCompareEvalSummary from "./DatasetCompareEvalSummary";
 import DatasetComparePromptSummary from "./DatasetComparePromptSummary";
-import DatasetCompareAnnotationSummary from "./DatasetCompareAnnotationSummary";
 import EvalsCard from "./EvalsCard/EvalsCard";
 import PromptCard from "./PromptCard";
-import AnnotationCard from "./AnnotationCard";
 
 const tabOptions = [
   { label: "Evals", value: "evals", disabled: false },
   { label: "Prompt", value: "prompt", disabled: false },
-  { label: "Annotation", value: "annotation", disabled: false },
 ];
 
 const CompareDatasetEvalsCards = (props) => {
@@ -43,29 +40,18 @@ const CompareDatasetEvalsCards = (props) => {
       }}
     >
       <Box display="flex" justifyContent={"space-between"}>
-        <TabWrapper>
-          <CustomTabs
-            textColor="primary"
-            value={currentTab}
-            onChange={changeTab}
-            TabIndicatorProps={{
-              style: {
-                opacity: 0,
-                height: "100%",
-                borderRadius: "8px",
-              },
-            }}
-          >
+        <Box sx={{ mb: 2 }}>
+          <SegmentedTabs value={currentTab} onChange={changeTab}>
             {tabOptions.map((tab) => (
-              <CustomTab
+              <Tab
                 key={tab.value}
                 label={tab.label}
                 value={tab.value}
                 disabled={tab.disabled}
               />
             ))}
-          </CustomTabs>
-        </TabWrapper>
+          </SegmentedTabs>
+        </Box>
       </Box>
       <Box sx={{ overflow: "auto", height: "calc(100vh - 200px)" }}>
         <ShowComponent condition={currentTab === "evals"}>
@@ -104,13 +90,6 @@ const CompareDatasetEvalsCards = (props) => {
               datasetId={datasetId}
               datasetIndex={selectedIndex}
             />
-          )}
-        </ShowComponent>
-        <ShowComponent condition={currentTab === "annotation"}>
-          {isCompare ? (
-            <DatasetCompareAnnotationSummary />
-          ) : (
-            <AnnotationCard datasetId={datasetId} setCurrentTab={() => {}} />
           )}
         </ShowComponent>
       </Box>

@@ -345,22 +345,6 @@ const AddExistingDataset = ({
                       onChange={() => handleCheckboxChange(index)}
                       checked={item.checked}
                       sx={{ marginRight: "5px" }}
-                      icon={
-                        <Iconify
-                          icon="system-uicons:checkbox-empty"
-                          color="text.disabled"
-                          width="20px"
-                          height="20px"
-                        />
-                      }
-                      checkedIcon={
-                        <Iconify
-                          icon="famicons:checkbox"
-                          color="primary.light"
-                          width="20px"
-                          height="20px"
-                        />
-                      }
                     />
                     <TextField
                       fullWidth
@@ -436,6 +420,7 @@ const AddExistingDataset = ({
                           ).map((col, i) => ({
                             label: col?.name,
                             value: col,
+                            disabled: isMenuItemDisabled(col, item),
                             component: (
                               <MenuItem
                                 key={i}
@@ -444,10 +429,6 @@ const AddExistingDataset = ({
                                   display: "flex",
                                   justifyContent: "space-between",
                                   alignItems: "center",
-                                  color: theme.palette.text.primary,
-                                  "&.Mui-disabled": {
-                                    color: theme.palette.divider,
-                                  },
                                 }}
                               >
                                 {col.name}
@@ -462,7 +443,7 @@ const AddExistingDataset = ({
                                     }}
                                   >
                                     <Iconify
-                                      icon="fluent:edit-16-regular"
+                                      icon="solar:pen-linear"
                                       width={14}
                                       height={14}
                                     />
@@ -476,11 +457,17 @@ const AddExistingDataset = ({
                             value: "add_column",
                             alwaysVisible: true,
                             component: (
-                              <MenuItem key="add_column">
-                                <Box sx={{ color: "primary.main" }}>
-                                  + Add Column
-                                </Box>
-                              </MenuItem>
+                              <Box
+                                key="add_column"
+                                sx={{
+                                  color: "primary.main",
+                                  width: "100%",
+                                  px: 2,
+                                  py: 0.75,
+                                }}
+                              >
+                                + Add Column
+                              </Box>
                             ),
                           },
                         ]}
@@ -520,7 +507,7 @@ const AddExistingDataset = ({
                                   edge="end"
                                 >
                                   <Iconify
-                                    icon="tdesign:enter"
+                                    icon="solar:arrow-left-down-linear"
                                     width="12"
                                     height="12"
                                   />
@@ -625,8 +612,6 @@ const AddExistingDataset = ({
           variant="outlined"
           fullWidth
           sx={{
-            fontSize: "14px",
-            fontWeight: 500,
             color: theme.palette.text.secondary,
             borderColor: theme.palette.divider,
           }}
@@ -646,11 +631,9 @@ const AddExistingDataset = ({
           }
           onClick={handleAddToDataset}
           sx={{
-            fontSize: "14px",
-            fontWeight: 600,
             "&.Mui-disabled": {
               bgcolor: theme.palette.divider,
-              color: theme.palette.background.paper,
+              color: theme.palette.text.disabled,
             },
           }}
         >
@@ -663,7 +646,7 @@ const AddExistingDataset = ({
 
 AddExistingDataset.propTypes = {
   handleclose: PropTypes.func,
-  selectedNode: PropTypes.number,
+  selectedNode: PropTypes.oneOfType([PropTypes.string, PropTypes.number]),
   availableDatasets: PropTypes.array,
   observationFields: PropTypes.array,
   selectedTraces: PropTypes.array,

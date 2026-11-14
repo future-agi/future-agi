@@ -308,7 +308,7 @@ export default function ContentWrapper({
           </ShowComponent>
           <ShowComponent condition={currentStep === 2}>
             <Suspense fallback={<Loading />}>
-              <MapVariables />
+              <MapVariables scenarioDetail={scenarioDetail} />
             </Suspense>
           </ShowComponent>
           <ShowComponent condition={currentStep === 1}>

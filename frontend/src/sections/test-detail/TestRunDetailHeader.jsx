@@ -150,10 +150,9 @@ const TestRunDetailHeader = () => {
                 onClick={() => exportLogs()}
                 startIcon={
                   <SvgColor
+                    width={16}
                     src="/assets/icons/action_buttons/ic_download.svg"
                     sx={{
-                      width: 16,
-                      height: 16,
                       color: "text.primary",
                     }}
                   />
@@ -167,13 +166,12 @@ const TestRunDetailHeader = () => {
                   color="primary"
                   size="small"
                   sx={{
-                    borderRadius: "4px",
                     borderColor: "primary.main",
                   }}
                   onClick={() => setConfirmStop(true)}
                   startIcon={
                     <Iconify
-                      icon="bi:stop-circle"
+                      icon="solar:stop-circle-linear"
                       width="14px"
                       height="14px"
                       sx={{
@@ -209,13 +207,14 @@ const TestRunDetailHeader = () => {
                       },
                     },
                     popper: {
-                      modifiers: {
-                        name: "preventOverflow",
-                        options: {
-                          boundary: "viewport",
-                          padding: 12,
+                      modifiers: [
+                        {
+                          name: "preventOverflow",
+                          options: {
+                            boundary: "viewport",
+                          },
                         },
-                      },
+                      ],
                     },
                   }}
                 >
@@ -225,8 +224,6 @@ const TestRunDetailHeader = () => {
                       variant="outlined"
                       sx={{
                         ...theme.typography.s2_1,
-                        fontWeight: 500,
-                        paddingX: 2,
                       }}
                       startIcon={
                         <SvgColor src="/assets/icons/navbar/ic_get_started.svg" />
@@ -347,18 +344,19 @@ const TestRunDetailHeader = () => {
                   {
                     id: "run-start",
                     condition: true,
-                    value: `${formatDurationSafe(kpis?.totalDuration || 0)}`,
+                    value: `${formatDurationSafe(kpis?.total_duration || 0)}`,
                     iconSrc: "/assets/icons/ic_clock.svg",
                     iconSx: { width: 12 },
                   },
                   {
                     id: "direction",
                     condition:
-                      agentType !== AGENT_TYPES.CHAT && kpis?.isInbound != null,
-                    value: kpis?.isInbound === false ? "Outbound" : "Inbound",
+                      agentType !== AGENT_TYPES.CHAT &&
+                      kpis?.is_inbound != null,
+                    value: kpis?.is_inbound === false ? "Outbound" : "Inbound",
                     variant: "chip",
                     iconSrc:
-                      kpis?.isInbound === false
+                      kpis?.is_inbound === false
                         ? "/assets/icons/ic_call_outbound.svg"
                         : "/assets/icons/ic_call_inbound.svg",
                   },

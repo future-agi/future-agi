@@ -20,14 +20,15 @@ import { useDevelopDetailContext } from "../../Context/DevelopDetailContext";
 import { useDatasetColumnConfig } from "src/api/develop/develop-detail";
 import DynamicColumnSkeleton from "../DynamicColumnSkeleton";
 import { ShowComponent } from "../../../../components/show";
+import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
 
 const getDefaultValue = () => {
   return {
-    columnId: "",
+    column_id: "",
     instruction: "",
-    languageModelId: "",
+    language_model_id: "",
     concurrency: "",
-    newColumnName: "",
+    new_column_name: "",
   };
 };
 
@@ -40,13 +41,7 @@ export const ExtractEntitiesChild = ({
   const { refreshGrid } = useDevelopDetailContext();
 
   const { control, handleSubmit, reset } = useForm({
-    defaultValues: {
-      columnId: "",
-      instruction: "",
-      languageModelId: "",
-      concurrency: undefined,
-      newColumnName: "",
-    },
+    defaultValues: getDefaultValue(),
     resolver: zodResolver(
       ExtractEntitiesValidationSchema(!!onFormSubmit, !!editId),
     ),
@@ -59,7 +54,6 @@ export const ExtractEntitiesChild = ({
     if (initialData) {
       reset(initialData);
     } else if (!editId) {
-      // Reset to default values when opening for new column (no editId)
       reset(getDefaultValue());
     }
   }, [initialData, reset, editId]);
@@ -72,13 +66,10 @@ export const ExtractEntitiesChild = ({
         variant: "success",
       });
       reset();
-      // null for gridRef option and true for set column.
       refreshGrid(null, true);
       onClose();
     },
   });
-
-  // const onSubmit = (formValues) => addColumn(formValues);
 
   const {
     data: previewData,
@@ -113,20 +104,10 @@ export const ExtractEntitiesChild = ({
     },
   });
 
-  const transformFormToApi = (formValues) => {
-    const { columnId, newColumnName, languageModelId, ...rest } = formValues;
-    return {
-      ...rest,
-      column_id: columnId,
-      new_column_name: newColumnName,
-      language_model_id: languageModelId,
-    };
-  };
-
   const onSubmit = (formValues) => {
     if (editId) {
       updateColumn({
-        config: transformFormToApi(formValues),
+        config: formValues,
         operation_type: "extract_entities",
       });
       return;
@@ -134,13 +115,13 @@ export const ExtractEntitiesChild = ({
     if (onFormSubmit) {
       onFormSubmit({ ...formValues, type: "extract_entities" });
     } else {
-      addColumn(transformFormToApi(formValues));
+      addColumn(formValues);
     }
   };
 
   const handlePreview = handleSubmit((formValues) => {
     if (!onFormSubmit) {
-      preview(transformFormToApi(formValues));
+      preview(formValues);
     }
   });
 
@@ -169,7 +150,7 @@ export const ExtractEntitiesChild = ({
             mb: 2,
           }}
         >
-          <Typography fontWeight={700} color="text.secondary">
+          <Typography fontWeight={600} color="text.secondary">
             {editId ? "Edit Extract Entities" : "Extract Entities"}
           </Typography>
           <IconButton
@@ -179,7 +160,7 @@ export const ExtractEntitiesChild = ({
             }}
             size="small"
           >
-            <Iconify icon="mingcute:close-line" />
+            <Iconify icon="solar:close-linear" />
           </IconButton>
         </Box>
         <Box
@@ -198,13 +179,13 @@ export const ExtractEntitiesChild = ({
               size="small"
               placeholder="Enter column name"
               control={control}
-              fieldName="newColumnName"
+              fieldName="new_column_name"
               required={!onFormSubmit}
             />
           )}
           <FormSearchSelectFieldControl
             control={control}
-            fieldName="columnId"
+            fieldName="column_id"
             size="small"
             label="Column"
             required
@@ -215,7 +196,7 @@ export const ExtractEntitiesChild = ({
             fullWidth
           />
           <Box sx={{ display: "flex", flexDirection: "column", gap: 1 }}>
-            <Typography fontWeight={700} fontSize="12px" color="text.secondary">
+            <Typography fontWeight={600} fontSize="12px" color="text.secondary">
               Instructions (To extract entities)
             </Typography>
             <FormTextFieldV2
@@ -228,14 +209,14 @@ export const ExtractEntitiesChild = ({
               maxRows={4}
               sx={{
                 backgroundColor: "background.neutral",
-                borderRadius: "10px",
+                borderRadius: "8px",
               }}
               placeholder="Enter instructions here"
             />
           </Box>
           <CustomModelDropdownControl
             control={control}
-            fieldName="languageModelId"
+            fieldName="language_model_id"
             label="Model"
             searchDropdown
             size="small"
@@ -310,7 +291,6 @@ ExtractEntitiesChild.propTypes = {
 };
 
 const ExtractEntities = ({ initialData, onFormSubmit }) => {
-  // Using individual store
   const { openExtractEntities, setOpenExtractEntities } =
     useExtractEntitiesStore();
 
@@ -328,10 +308,12 @@ const ExtractEntities = ({ initialData, onFormSubmit }) => {
     select: (data) => data?.data?.result?.metadata,
   });
 
+  const covered = useDrawerCovered(openExtractEntities);
   return (
     <Drawer
       anchor="right"
       open={openExtractEntities}
+      sx={coveredDrawerSx(covered)}
       onClose={onClose}
       variant="persistent"
       PaperProps={{
@@ -339,8 +321,7 @@ const ExtractEntities = ({ initialData, onFormSubmit }) => {
           height: "100vh",
           position: "fixed",
           zIndex: 2,
-          boxShadow: "-10px 0px 100px #00000035",
-          borderRadius: "10px",
+          borderRadius: "8px",
           backgroundColor: "background.paper",
         },
       }}

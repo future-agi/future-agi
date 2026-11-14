@@ -34,6 +34,16 @@ class DifferentCategoryTool(BaseTool):
         return ToolResult(content="different category")
 
 
+class ConflictingDummyTool(BaseTool):
+    name = "dummy_tool"
+    description = "Different implementation with colliding name"
+    category = "test"
+    input_model = EmptyInput
+
+    def execute(self, params, context):
+        return ToolResult(content="conflict")
+
+
 class TestToolRegistry:
     def test_register_and_get(self, fresh_registry):
         tool = DummyTool()
@@ -43,10 +53,15 @@ class TestToolRegistry:
     def test_get_nonexistent(self, fresh_registry):
         assert fresh_registry.get("nonexistent") is None
 
-    def test_register_duplicate_raises(self, fresh_registry):
+    def test_register_duplicate_same_class_is_idempotent(self, fresh_registry):
+        fresh_registry.register(DummyTool())
+        fresh_registry.register(DummyTool())
+        assert fresh_registry.count() == 1
+
+    def test_register_name_collision_raises(self, fresh_registry):
         fresh_registry.register(DummyTool())
         with pytest.raises(ValueError, match="already registered"):
-            fresh_registry.register(DummyTool())
+            fresh_registry.register(ConflictingDummyTool())
 
     def test_list_all(self, fresh_registry):
         fresh_registry.register(DummyTool())
@@ -90,13 +105,18 @@ class TestToolRegistry:
         assert fresh_registry.categories() == []
 
     def test_global_registry_has_tools(self):
-        """The global registry should have tools registered via @register_tool."""
+        """Native tools register via @register_tool; the API catalog via ai_tools.generated."""
+        from ai_tools.generated import GeneratedAPITool
+
         assert registry.count() >= 10
-        assert registry.get("whoami") is not None
-        assert registry.get("list_workspaces") is not None
-        assert registry.get("list_evaluations") is not None
-        assert registry.get("list_datasets") is not None
-        assert registry.get("search_traces") is not None
+        # Native tools with no API equivalent
+        assert registry.get("search") is not None
+        assert registry.get("read_schema") is not None
+        assert registry.get("list_users") is not None
+        assert registry.get("create_api_key") is not None
+        # Catalog tools shared with the MCP server
+        for name in ("whoami", "list_workspaces", "list_datasets", "search_traces"):
+            assert isinstance(registry.get(name), GeneratedAPITool), name
 
     def test_global_registry_categories(self):
         cats = registry.categories()
@@ -104,6 +124,10 @@ class TestToolRegistry:
         assert "evaluations" in cats
         assert "datasets" in cats
         assert "tracing" in cats
+        assert "dashboards" in cats
+        assert "users" in cats
+        # Catalog groups are mapped onto Falcon's category vocabulary
+        assert "observability" not in cats
 
 
 class TestBaseTool:

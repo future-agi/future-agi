@@ -99,7 +99,7 @@ const _LoadingSkeleton = () => {
         variant="rectangular"
         width="80%"
         sx={{
-          borderRadius: 0.5,
+          borderRadius: "4px",
         }}
         height={15}
       />

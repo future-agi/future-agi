@@ -3,6 +3,14 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from accounts.authentication import APIKeyAuthentication, LangfuseBasicAuthentication
+from tfc.utils.api_contracts import validated_request
+from tfc.utils.api_serializers import (
+    ApiDetailErrorResponseSerializer,
+    ApiTextErrorResponseSerializer,
+    HealthCheckResponseSerializer,
+    LangfuseHealthResponseSerializer,
+    LangfuseTracesResponseSerializer,
+)
 from tfc.utils.general_methods import GeneralMethods
 
 
@@ -14,6 +22,12 @@ class HealthCheckView(APIView):
 
     _gm = GeneralMethods()
 
+    @validated_request(
+        responses={
+            200: HealthCheckResponseSerializer,
+            500: ApiTextErrorResponseSerializer,
+        }
+    )
     def get(self, request, *args, **kwargs):
         """
         GET method for health check.
@@ -37,6 +51,14 @@ class AuthenticatedHealthView(APIView):
     authentication_classes = [LangfuseBasicAuthentication, APIKeyAuthentication]
     permission_classes = [IsAuthenticated]
 
+    @validated_request(
+        responses={
+            200: LangfuseHealthResponseSerializer,
+            401: ApiDetailErrorResponseSerializer,
+            403: ApiDetailErrorResponseSerializer,
+            500: ApiTextErrorResponseSerializer,
+        }
+    )
     def get(self, request, *args, **kwargs):
         return Response(
             {"status": "OK", "version": "1.0.0"},
@@ -54,6 +76,14 @@ class LangfuseCompatTracesView(APIView):
     authentication_classes = [LangfuseBasicAuthentication, APIKeyAuthentication]
     permission_classes = [IsAuthenticated]
 
+    @validated_request(
+        responses={
+            200: LangfuseTracesResponseSerializer,
+            401: ApiDetailErrorResponseSerializer,
+            403: ApiDetailErrorResponseSerializer,
+            500: ApiTextErrorResponseSerializer,
+        }
+    )
     def get(self, request, *args, **kwargs):
         try:
             limit = min(int(request.query_params.get("limit", 50)), 1000)

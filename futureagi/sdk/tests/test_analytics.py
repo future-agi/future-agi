@@ -272,19 +272,9 @@ class TestAnalyticsAuth:
 
     @pytest.mark.parametrize("url", [METRICS_URL, RUNS_URL, ANALYTICS_URL])
     def test_unauthenticated_request_is_rejected(self, api_client, url):
-        """Request without any credentials is rejected.
-
-        NOTE: These views lack permission_classes, so unauthenticated requests
-        pass DRF auth and hit the view's own validation first, returning 400
-        (no query params) or 500 (no organization). This is a known limitation
-        -- ideally it should return 401.
-        """
+        """Request without any credentials returns 401 before business validation."""
         response = api_client.get(url)
-        assert response.status_code in [
-            status.HTTP_400_BAD_REQUEST,
-            status.HTTP_401_UNAUTHORIZED,
-            status.HTTP_500_INTERNAL_SERVER_ERROR,
-        ]
+        assert response.status_code == status.HTTP_401_UNAUTHORIZED
 
     @pytest.mark.parametrize("url", [METRICS_URL, RUNS_URL, ANALYTICS_URL])
     def test_invalid_api_key_returns_401(self, api_client, url):
@@ -824,7 +814,7 @@ class TestSimulationRunsView:
         result = response.json()["result"]
         eval_outputs = result["eval_outputs"]
         # Only Accuracy should remain, Fluency should be filtered out
-        for config_id, data in eval_outputs.items():
+        for _config_id, data in eval_outputs.items():
             assert data["name"].lower() == "accuracy"
 
     def test_eval_name_filter_comma_separated(self, sdk_client, call_execution):
@@ -1157,7 +1147,7 @@ class TestAnalyticsPagination:
     def test_metrics_pagination_params(self, sdk_client, run_test, db, scenario):
         """Metrics run_test_name mode respects page and limit params."""
         # Create multiple executions
-        for i in range(15):
+        for _i in range(15):
             exec_obj = TestExecution.objects.create(
                 run_test=run_test,
                 status="completed",
@@ -1199,7 +1189,7 @@ class TestAnalyticsPagination:
     ):
         """Runs execution_id mode paginates call_results."""
         # Create 12 call executions
-        for i in range(12):
+        for _i in range(12):
             CallExecution.objects.create(
                 test_execution=test_execution,
                 scenario=scenario,
@@ -1234,8 +1224,8 @@ class TestAnalyticsPagination:
 
     def test_runs_run_test_name_pagination(self, sdk_client, run_test, scenario, db):
         """Runs run_test_name mode paginates executions."""
-        for i in range(8):
-            exec_obj = TestExecution.objects.create(
+        for _i in range(8):
+            TestExecution.objects.create(
                 run_test=run_test,
                 status="completed",
             )
@@ -1321,26 +1311,28 @@ class TestAnalyticsEdgeCases:
 
     def test_metrics_view_handles_internal_error(self, sdk_client, db):
         """Metrics view catches exceptions and returns 500."""
-        with patch("sdk.views.analytics.SimulationQuerySerializer") as mock_serializer:
-            mock_serializer.side_effect = RuntimeError("boom")
+        with patch(
+            "sdk.views.analytics.SimulationMetricsView._handle_execution",
+            side_effect=RuntimeError("boom"),
+        ):
             response = sdk_client.get(METRICS_URL, {"execution_id": str(uuid.uuid4())})
         assert response.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
 
     def test_runs_view_handles_internal_error(self, sdk_client, db):
         """Runs view catches exceptions and returns 500."""
         with patch(
-            "sdk.views.analytics.SimulationRunsQuerySerializer"
-        ) as mock_serializer:
-            mock_serializer.side_effect = RuntimeError("boom")
+            "sdk.views.analytics.SimulationRunsView._handle_execution_detail",
+            side_effect=RuntimeError("boom"),
+        ):
             response = sdk_client.get(RUNS_URL, {"execution_id": str(uuid.uuid4())})
         assert response.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
 
     def test_analytics_view_handles_internal_error(self, sdk_client, db):
         """Analytics view catches exceptions and returns 500."""
         with patch(
-            "sdk.views.analytics.SimulationAnalyticsQuerySerializer"
-        ) as mock_serializer:
-            mock_serializer.side_effect = RuntimeError("boom")
+            "sdk.views.analytics.SimulationAnalyticsView._handle_execution",
+            side_effect=RuntimeError("boom"),
+        ):
             response = sdk_client.get(
                 ANALYTICS_URL, {"execution_id": str(uuid.uuid4())}
             )
@@ -1753,7 +1745,7 @@ class TestAdditionalCoverage:
         )
 
         # rt1 has an older completed execution
-        older = TestExecution.objects.create(
+        TestExecution.objects.create(
             run_test=rt1,
             status="completed",
             total_calls=5,

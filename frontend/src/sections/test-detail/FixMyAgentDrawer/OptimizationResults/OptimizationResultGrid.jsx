@@ -1,5 +1,6 @@
 import { Box } from "@mui/material";
 import { AgGridReact } from "ag-grid-react";
+import "src/utils/ag-grid-setup";
 import React, { useMemo } from "react";
 import { useAgThemeWith } from "src/hooks/use-ag-theme";
 import { AG_THEME_OVERRIDES } from "src/theme/ag-theme";
@@ -20,7 +21,6 @@ const defaultColDef = {
   filter: false,
   resizable: true,
   suppressMenu: true,
-  suppressMultiSort: true,
 };
 
 const OptimizationResultGrid = ({ optimizationId, isDrawer = true }) => {
@@ -43,7 +43,7 @@ const OptimizationResultGrid = ({ optimizationId, isDrawer = true }) => {
   }));
 
   const columnDefs = useMemo(() => {
-    return getOptimizationResultColumnConfig(optimizationData?.columnConfig);
+    return getOptimizationResultColumnConfig(optimizationData?.column_config);
   }, [optimizationData]);
 
   return (

@@ -5,15 +5,13 @@ import {
   CircularProgress,
   IconButton,
   InputAdornment,
-  MenuItem,
-  Select,
   Skeleton,
   TextField,
   Tooltip,
   Typography,
   useTheme,
 } from "@mui/material";
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation } from "@tanstack/react-query";
 import PropTypes from "prop-types";
 import React, {
   useCallback,
@@ -26,7 +24,9 @@ import { useParams } from "react-router";
 import Iconify from "src/components/iconify";
 import { enqueueSnackbar } from "src/components/snackbar";
 import axios, { endpoints } from "src/utils/axios";
+import CustomTooltip from "src/components/tooltip";
 import { useSimulationDetailContext } from "./context/SimulationDetailContext";
+import VersionSelect from "./VersionSelect";
 import SimulationEvaluationDrawer from "./SimulationEvaluationDrawer";
 import SimulationExecutionsSelection from "./SimulationExecutionsSelection";
 import {
@@ -107,21 +107,6 @@ const SimulationDetailHeader = ({ onBack }) => {
     setSelectAll(false);
   }, [getGridApi, setToggledNodes, setSelectAll]);
 
-  // Fetch prompt versions filtered by current template
-  const { data: versionsData, isLoading: isLoadingVersions } = useQuery({
-    queryKey: ["prompt-versions-for-simulation-detail", promptTemplateId],
-    queryFn: async () => {
-      const res = await axios.get(
-        endpoints.develop.runPrompt.getPromptVersions(),
-        { params: { template_id: promptTemplateId } },
-      );
-      return res.data;
-    },
-    enabled: !!promptTemplateId,
-  });
-
-  const versions = versionsData?.results || [];
-
   const isInitializedRef = useRef(false);
   const isSyncingRef = useRef(false);
   const prevScenariosRef = useRef(null);
@@ -131,7 +116,7 @@ const SimulationDetailHeader = ({ onBack }) => {
   if (simulation && !isInitializedRef.current) {
     skipNextSyncRef.current = true;
     setSelectedVersion(
-      simulation.promptVersion || simulation.promptVersionDetail?.id || "",
+      simulation.prompt_version || simulation.prompt_version_detail?.id || "",
     );
     setSelectedScenarios(simulation.scenarios || []);
     prevScenariosRef.current = simulation.scenarios || [];
@@ -198,8 +183,7 @@ const SimulationDetailHeader = ({ onBack }) => {
     }
   }, [simulation, selectedScenarios, updateSimulation]);
 
-  const handleVersionChange = (event) => {
-    const newVersion = event.target.value;
+  const handleVersionChange = (newVersion) => {
     if (newVersion === "create-new") {
       window.open(
         `/dashboard/workbench/create/${promptTemplateId}?tab=Playground`,
@@ -215,6 +199,7 @@ const SimulationDetailHeader = ({ onBack }) => {
     mutationFn: async () => {
       return axios.post(
         endpoints.promptSimulation.execute(promptTemplateId, simulation?.id),
+        {},
       );
     },
     onSuccess: () => {
@@ -231,13 +216,6 @@ const SimulationDetailHeader = ({ onBack }) => {
     },
   });
 
-  const getVersionLabel = (version) => {
-    const v = String(version.template_version).startsWith("v")
-      ? version.template_version
-      : `v${version.template_version}`;
-    return v;
-  };
-
   if (isLoading) {
     return (
       <Box display="flex" alignItems="center" gap={2} py={1}>
@@ -249,6 +227,11 @@ const SimulationDetailHeader = ({ onBack }) => {
 
   const evals =
     simulation?.simulate_eval_configs_detail || simulation?.evals_detail || [];
+
+  const selectedScenarioIds = new Set(selectedScenarios || []);
+  const hasEmptyScenario = (simulation?.scenarios_detail || []).some(
+    (s) => selectedScenarioIds.has(s.id) && (s.dataset_rows || 0) === 0,
+  );
 
   return (
     <>
@@ -276,10 +259,9 @@ const SimulationDetailHeader = ({ onBack }) => {
             size="small"
             sx={{
               border: `1px solid ${theme.palette.divider}`,
-              borderRadius: 1,
             }}
           >
-            <Iconify icon="eva:arrow-back-fill" width={18} height={18} />
+            <Iconify icon="solar:arrow-left-linear" width={20} height={20} />
           </IconButton>
 
           <Tooltip
@@ -301,7 +283,6 @@ const SimulationDetailHeader = ({ onBack }) => {
             label={`${executionsCount} run${executionsCount !== 1 ? "s" : ""}`}
             size="small"
             variant="outlined"
-            sx={{ height: 24, fontSize: "0.7rem" }}
           />
 
           {/* Spacer */}
@@ -318,7 +299,7 @@ const SimulationDetailHeader = ({ onBack }) => {
               {/* Version Dropdown */}
               <Box display="flex" alignItems="center" gap={0.5}>
                 <Iconify
-                  icon="mdi:source-branch"
+                  icon="solar:git-branch-linear"
                   width={16}
                   sx={{ color: "text.secondary" }}
                 />
@@ -329,59 +310,13 @@ const SimulationDetailHeader = ({ onBack }) => {
                 >
                   Version:
                 </Typography>
-                <Select
+                <VersionSelect
+                  promptTemplateId={promptTemplateId}
                   value={selectedVersion}
                   onChange={handleVersionChange}
-                  disabled={isLoadingVersions || isUpdating}
-                  size="small"
-                  displayEmpty
-                  renderValue={(value) => {
-                    if (!value) return "Select";
-                    const version = versions.find((v) => v.id === value);
-                    return version ? getVersionLabel(version) : "Select";
-                  }}
-                  sx={{
-                    minWidth: 80,
-                    "& .MuiSelect-select": { py: 0.5, fontSize: "0.8rem" },
-                    "& .MuiOutlinedInput-notchedOutline": {
-                      borderColor: theme.palette.divider,
-                    },
-                  }}
-                >
-                  {versions.map((version) => (
-                    <MenuItem key={version.id} value={version.id}>
-                      <Box display="flex" alignItems="center" gap={0.5}>
-                        <span>{getVersionLabel(version)}</span>
-                        {version.is_default && (
-                          <Chip
-                            label="Default"
-                            size="small"
-                            sx={{ height: 16, fontSize: "0.55rem" }}
-                            color="primary"
-                          />
-                        )}
-                      </Box>
-                    </MenuItem>
-                  ))}
-                  <MenuItem
-                    value="create-new"
-                    sx={{
-                      borderTop: `1px solid ${theme.palette.divider}`,
-                      mt: 0.5,
-                    }}
-                  >
-                    <Box display="flex" alignItems="center" gap={0.5}>
-                      <Iconify
-                        icon="mdi:plus"
-                        width={16}
-                        sx={{ color: theme.palette.primary.main }}
-                      />
-                      <Typography variant="caption" color="primary">
-                        New Version
-                      </Typography>
-                    </Box>
-                  </MenuItem>
-                </Select>
+                  versionDetail={simulation?.prompt_version_detail}
+                  disabled={isUpdating}
+                />
               </Box>
 
               {/* Scenarios Button */}
@@ -392,8 +327,8 @@ const SimulationDetailHeader = ({ onBack }) => {
                 onClick={() => setScenarioPopoverOpen(true)}
                 startIcon={
                   <SvgColor
+                    width={16}
                     src="/assets/icons/navbar/ic_sessions.svg"
-                    sx={{ width: "16px", height: "16px" }}
                   />
                 }
               >
@@ -413,35 +348,42 @@ const SimulationDetailHeader = ({ onBack }) => {
                 size="small"
                 onClick={() => setOpenEvaluation(DRAWER_OPEN_ENUMS.EVALS)}
                 startIcon={
-                  <Iconify
-                    sx={{
-                      height: "16px",
-                      width: "16px",
-                    }}
-                    icon="material-symbols:check-circle-outline"
-                  />
+                  <Iconify width={16} icon="solar:check-circle-linear" />
                 }
               >
                 Evals ({evals.length})
               </Button>
 
               {/* Run Button */}
-              <Button
-                variant="contained"
+              <CustomTooltip
+                show={hasEmptyScenario}
+                title="Some selected scenarios have no datapoints. Remove them from the selection to run."
                 size="small"
-                color="primary"
-                startIcon={
-                  isExecuting ? (
-                    <CircularProgress size={14} color="inherit" />
-                  ) : (
-                    <SvgColor src="/assets/icons/navbar/ic_get_started.svg" />
-                  )
-                }
-                onClick={() => executeSimulation()}
-                disabled={isExecuting || selectedScenarios.length === 0}
+                arrow
               >
-                {isExecuting ? "Starting..." : "Run Simulation"}
-              </Button>
+                <Box>
+                  <Button
+                    variant="contained"
+                    size="small"
+                    color="primary"
+                    startIcon={
+                      isExecuting ? (
+                        <CircularProgress size={14} color="inherit" />
+                      ) : (
+                        <SvgColor src="/assets/icons/navbar/ic_get_started.svg" />
+                      )
+                    }
+                    onClick={() => executeSimulation()}
+                    disabled={
+                      isExecuting ||
+                      selectedScenarios.length === 0 ||
+                      hasEmptyScenario
+                    }
+                  >
+                    {isExecuting ? "Starting..." : "Run Simulation"}
+                  </Button>
+                </Box>
+              </CustomTooltip>
             </>
           )}
         </Box>
@@ -455,11 +397,11 @@ const SimulationDetailHeader = ({ onBack }) => {
             onChange={(e) => setSearchQuery(e.target.value)}
             sx={{ width: 250 }}
             InputProps={{
-              sx: { fontSize: "0.85rem" },
+              sx: { fontSize: "0.875rem" },
               startAdornment: (
                 <InputAdornment position="start">
                   <Iconify
-                    icon="eva:search-fill"
+                    icon="solar:magnifier-linear"
                     width={16}
                     sx={{ color: "text.disabled" }}
                   />
@@ -472,7 +414,7 @@ const SimulationDetailHeader = ({ onBack }) => {
                     onClick={() => setSearchQuery("")}
                     sx={{ p: 0.25 }}
                   >
-                    <Iconify icon="eva:close-fill" width={14} />
+                    <Iconify icon="solar:close-linear" width={14} />
                   </IconButton>
                 </InputAdornment>
               ),
@@ -497,14 +439,14 @@ const SimulationDetailHeader = ({ onBack }) => {
         title={`Delete Simulation${selectedCount !== 1 ? "s" : ""}`}
         subTitle="Deleting these runs will remove all simulation results and call details permanently. Are you sure you want to proceed?"
         isValid={true}
-        modalWidth="480px"
+        modalWidth="560px"
         onSubmit={() => deleteExecutions.mutate()}
         onCancelBtn={() => setOpenEvaluation(null)}
         actionBtnTitle="Delete"
         actionBtnSx={{
-          bgcolor: "red.500",
+          bgcolor: "status.danger.solid",
           color: "common.white",
-          "&:hover": { bgcolor: "red.600" },
+          "&:hover": { bgcolor: "status.danger.solid" },
         }}
         isLoading={deleteExecutions.isPending}
       />

@@ -9,19 +9,47 @@ from tfc.temporal.drop_in import temporal_activity
 
 
 @temporal_activity(time_limit=600, queue="default")
-def run_post_registration_activity(user_id: str, generated_password: str):
+def run_post_registration_activity(
+    user_id: str, generated_password: str | None, organization_id: str | None = None
+):
     """
     Process post-registration steps.
 
     - Sends signup email
     - Sends HubSpot notification
     - Sends Slack notification
-    - Uploads demo dataset
-    - Creates demo traces and spans
+    - Dispatches demo seeding to seed_demo_data_activity (its own retry
+      boundary, so seeding retries never resend the notifications above)
     """
     from accounts.utils import _run_post_registration
 
-    return _run_post_registration(user_id, generated_password)
+    if organization_id is None:
+        return _run_post_registration(user_id, generated_password)
+    return _run_post_registration(
+        user_id, generated_password, organization_id=organization_id
+    )
+
+
+@temporal_activity(time_limit=120, queue="default")
+def publish_demo_trace_activity(trace_id: str):
+    """Retry CH publication using saved IDs without creating another demo project."""
+    from accounts.demo_seeding import publish_pending_demo_trace
+
+    return publish_pending_demo_trace(trace_id)
+
+
+@temporal_activity(time_limit=600, queue="default")
+def seed_demo_data_activity(organization_id: str):
+    from accounts.demo_seeding import seed_pending_demo_data
+
+    return seed_pending_demo_data(organization_id)
+
+
+@temporal_activity(time_limit=300, queue="default")
+def recover_demo_data_activity():
+    from accounts.demo_seeding import recover_pending_demo_data
+
+    return recover_pending_demo_data()
 
 
 @temporal_activity(time_limit=3600, queue="tasks_l")
@@ -60,10 +88,11 @@ def delete_compare_folder_activity(compare_id: str):
     import os
     import shutil
 
-    from tfc.utils.storage import delete_compare_folder
+    from tfc.utils.storage import delete_compare_folder, get_compare_local_dir
 
-    if os.path.isdir(f"compare/{compare_id}"):
-        shutil.rmtree(f"compare/{compare_id}")
+    compare_dir = get_compare_local_dir(compare_id)
+    if os.path.isdir(compare_dir):
+        shutil.rmtree(compare_dir)
     delete_compare_folder(compare_id)
 
 

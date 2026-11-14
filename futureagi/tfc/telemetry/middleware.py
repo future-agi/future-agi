@@ -29,7 +29,8 @@ Configuration in settings.py:
 import json
 import time
 import uuid
-from typing import Any, Callable, Optional
+from collections.abc import Callable
+from typing import Any
 
 import structlog
 from django.http import HttpRequest, HttpResponse
@@ -41,6 +42,14 @@ logger = structlog.get_logger(__name__)
 # Defaults
 DEFAULT_MAX_BODY_SIZE = 8192
 DEFAULT_MAX_ITEMS = 50
+SENSITIVE_BODY_PATH_PREFIXES = (
+    "/telemetry/",
+    "/saml2_auth/",
+    "/simulate/api/harness-jobs/secret-values/",
+    "/simulate/api/harness-jobs/secret-files/",
+    # Signed over its raw bytes and may carry committer emails; never read early.
+    "/simulate/api/harness/github/webhook/",
+)
 
 
 def _safe_json(value: Any, max_size: int = DEFAULT_MAX_BODY_SIZE) -> str:
@@ -69,9 +78,7 @@ def _safe_json(value: Any, max_size: int = DEFAULT_MAX_BODY_SIZE) -> str:
         return f"<{type(value).__name__}>"
 
 
-def _parse_json_body(
-    body: bytes, max_size: int = DEFAULT_MAX_BODY_SIZE
-) -> Optional[dict]:
+def _parse_json_body(body: bytes, max_size: int = DEFAULT_MAX_BODY_SIZE) -> dict | None:
     """Parse JSON body, return None on failure."""
     try:
         if len(body) > max_size * 2:  # Allow some headroom for parsing
@@ -96,6 +103,8 @@ def _mask_sensitive(data: dict, depth: int = 0) -> dict:
         "api_key",
         "apikey",
         "authorization",
+        "environment_values",
+        "credential_values",
     }
     masked = {}
 
@@ -232,7 +241,11 @@ class OTelContextMiddleware:
                 span.set_attribute("http.request.headers", _safe_json(headers))
 
             # Request body
-            if self.capture_request_body and request.body:
+            if (
+                self.capture_request_body
+                and not request.path.startswith(SENSITIVE_BODY_PATH_PREFIXES)
+                and request.body
+            ):
                 self._capture_request_body(span, request)
 
             # Client IP
@@ -297,7 +310,11 @@ class OTelContextMiddleware:
                 is_error and self.capture_response_on_error
             )
 
-            if should_capture and hasattr(response, "content"):
+            if (
+                should_capture
+                and not request.path.startswith(SENSITIVE_BODY_PATH_PREFIXES)
+                and hasattr(response, "content")
+            ):
                 self._capture_response_body(span, response, is_error)
 
         except Exception as e:
@@ -384,7 +401,7 @@ class OTelContextMiddleware:
 
         return headers
 
-    def _get_client_ip(self, request: HttpRequest) -> Optional[str]:
+    def _get_client_ip(self, request: HttpRequest) -> str | None:
         """Get client IP, handling proxies."""
         x_forwarded = request.META.get("HTTP_X_FORWARDED_FOR")
         if x_forwarded:

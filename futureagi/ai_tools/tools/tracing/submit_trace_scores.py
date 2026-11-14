@@ -82,8 +82,10 @@ class SubmitTraceScoresTool(BaseTool):
     def execute(
         self, params: SubmitTraceScoresInput, context: ToolContext
     ) -> ToolResult:
-        from tracer.models.trace import Trace, TraceErrorAnalysisStatus
+        from tracer.models.project import Project
         from tracer.models.trace_error_analysis import TraceErrorAnalysis
+        from tracer.queries import deep_analysis_state
+        from tracer.services.clickhouse.v2 import get_reader
 
         # Validate priority
         priority = params.recommended_priority.upper()
@@ -93,13 +95,21 @@ class SubmitTraceScoresTool(BaseTool):
                 "Must be HIGH, MEDIUM, or LOW."
             )
 
-        # Verify trace access
-        try:
-            trace = Trace.objects.select_related("project").get(
-                id=params.trace_id,
-                project__organization=context.organization,
-            )
-        except Trace.DoesNotExist:
+        # Verify trace access. The trace lives only in CH post-cutover; resolve
+        # its project from the CH root span and check org access via the PG
+        # Project (kept).
+        with get_reader() as reader:
+            roots = reader.root_ids_by_trace_ids([str(params.trace_id)])
+        root = roots.get(str(params.trace_id))
+        project_id = root[1] if root else None
+        project = (
+            Project.objects.filter(
+                id=project_id, organization=context.organization
+            ).first()
+            if project_id
+            else None
+        )
+        if project is None:
             return ToolResult.not_found("Trace", str(params.trace_id))
 
         # Find the analysis record
@@ -108,7 +118,7 @@ class SubmitTraceScoresTool(BaseTool):
             try:
                 analysis = TraceErrorAnalysis.objects.get(
                     id=params.analysis_id,
-                    trace=trace,
+                    trace_id=params.trace_id,
                 )
             except TraceErrorAnalysis.DoesNotExist:
                 analysis = None
@@ -116,7 +126,7 @@ class SubmitTraceScoresTool(BaseTool):
         # Fallback: get the most recent analysis for this trace
         if analysis is None:
             analysis = (
-                TraceErrorAnalysis.objects.filter(trace=trace)
+                TraceErrorAnalysis.objects.filter(trace_id=params.trace_id)
                 .order_by("-analysis_date")
                 .first()
             )
@@ -124,8 +134,8 @@ class SubmitTraceScoresTool(BaseTool):
         # If still no analysis, create one (scores-only, no findings)
         if analysis is None:
             analysis = TraceErrorAnalysis.objects.create(
-                trace=trace,
-                project=trace.project,
+                trace_id=params.trace_id,
+                project=project,
                 overall_score=params.overall_score,
                 total_errors=0,
                 recommended_priority=priority,
@@ -161,9 +171,8 @@ class SubmitTraceScoresTool(BaseTool):
             ]
         )
 
-        # Mark trace analysis as completed
-        trace.error_analysis_status = TraceErrorAnalysisStatus.COMPLETED
-        trace.save(update_fields=["error_analysis_status"])
+        # Done derives from the TraceErrorAnalysis row above; release the marker.
+        deep_analysis_state.clear(str(params.trace_id))
 
         # Trigger embedding ingestion for this trace's errors
         try:
@@ -182,11 +191,11 @@ class SubmitTraceScoresTool(BaseTool):
         try:
             from tracer.tasks.error_analysis import cluster_project_errors
 
-            cluster_project_errors.delay(str(trace.project_id))
+            cluster_project_errors.delay(str(project.id))
         except Exception as e:
             logger.warning(
                 "clustering_trigger_failed",
-                project_id=str(trace.project_id),
+                project_id=str(project.id),
                 error=str(e),
             )
 

@@ -8,9 +8,9 @@ import {
   IconButton,
   Modal,
   Typography,
-  useTheme,
-  CircularProgress,
+  Tab,
 } from "@mui/material";
+import { SegmentedTabs } from "src/components/tabs/tabs";
 import PropTypes from "prop-types";
 import React, { useState } from "react";
 import { useForm } from "react-hook-form";
@@ -23,12 +23,12 @@ import { useMutation } from "@tanstack/react-query";
 import { enqueueSnackbar } from "src/components/snackbar";
 import { LoadingButton } from "@mui/lab";
 import { useNavigate } from "react-router";
-import { CustomTab, CustomTabs, TabWrapper } from "./AddDatasetStyle";
 import { ShowComponent } from "src/components/show";
 import { FormCodeEditor } from "src/components/form-code-editor";
 import { trackEvent, Events, PropertyName } from "src/utils/Mixpanel";
 import FormTextFieldV2 from "src/components/FormTextField/FormTextFieldV2";
 import { getRequestErrorMessage } from "src/utils/errorUtils";
+import ContentSkeleton from "src/components/content-skeleton";
 
 const defaultValues = {
   name: "",
@@ -57,7 +57,6 @@ const tabOptions = [
 ];
 
 const AddSDKModal = ({ open, onClose, refreshGrid }) => {
-  const theme = useTheme();
   const { control, handleSubmit, reset, setValue } = useForm({
     defaultValues,
     resolver: zodResolver(ManuallyCreateDatasetValidationSchema2),
@@ -85,9 +84,9 @@ const AddSDKModal = ({ open, onClose, refreshGrid }) => {
     mutationFn: (data) => axios.post(endpoints.row.addRowSdk, data, {}),
     onSuccess: (data) => {
       const result = data?.data?.result;
-      setValue("Pcode", result?.code?.pythonAddCol || "");
-      setValue("Tcode", result?.code?.typescriptAddCol || "");
-      setValue("CUcode", result?.code?.curlAddCol || "");
+      setValue("Pcode", result?.code?.python_add_col || "");
+      setValue("Tcode", result?.code?.typescript_add_col || "");
+      setValue("CUcode", result?.code?.curl_add_col || "");
     },
     onError: (error) => {
       setIsNext(false);
@@ -109,10 +108,11 @@ const AddSDKModal = ({ open, onClose, refreshGrid }) => {
       onCloseClick();
       //@ts-ignore
       addRowSDK({
-        dataset_name: data?.data?.result?.datasetName,
+        dataset_name: data?.data?.result?.dataset_name,
       });
       setIsNext(true);
     },
+    meta: { errorHandled: true },
     onError: (error) => {
       enqueueSnackbar(
         getRequestErrorMessage(error, "Failed to create dataset", {
@@ -142,7 +142,12 @@ const AddSDKModal = ({ open, onClose, refreshGrid }) => {
 
   return (
     <>
-      <Dialog open={open} onClose={onCloseClick} maxWidth="sm" PaperProps={{}}>
+      <Dialog
+        open={open}
+        onClose={onCloseClick}
+        maxWidth={false}
+        PaperProps={{ sx: { maxWidth: 720 } }}
+      >
         <Box sx={{ padding: 2 }}>
           <DialogTitle sx={{ padding: 0, margin: 0 }}>
             <Box
@@ -161,7 +166,7 @@ const AddSDKModal = ({ open, onClose, refreshGrid }) => {
                 Create Dataset
               </Typography>
               <IconButton onClick={onCloseClick}>
-                <Iconify icon="mdi:close" color="text.primary" />
+                <Iconify icon="solar:close-linear" color="text.primary" />
               </IconButton>
             </Box>
             <HelperText text="Datasets can be used to for evals, prompt experimentation, or fine - tuning." />
@@ -184,7 +189,7 @@ const AddSDKModal = ({ open, onClose, refreshGrid }) => {
               <Button
                 onClick={onCloseClick}
                 variant="outlined"
-                // sx={{ padding: "6px 24px", borderColor: "divider" }}
+                // sx={{ borderColor: "divider" }}
               >
                 {/* <Typography variant="s2" fontWeight={"fontWeightSemiBold"} color="text.secondary">
                   </Typography> */}
@@ -196,7 +201,7 @@ const AddSDKModal = ({ open, onClose, refreshGrid }) => {
                 autoFocus
                 color="primary"
                 loading={isPending1}
-                // sx={{ padding: "6px 24px" }}
+                //
               >
                 {/* <Typography variant="s2" fontWeight={"fontWeightSemiBold"}> */}
                 Next
@@ -221,13 +226,13 @@ const AddSDKModal = ({ open, onClose, refreshGrid }) => {
           flexWrap: "wrap",
           // p: "15px",
           overflow: "auto",
-          "& .MuiBackdrop-root": { backgroundColor: "#00000040" },
+          "& .MuiBackdrop-root": { backgroundColor: "rgba(0,0,0,0.25)" },
         }}
       >
         <Box
           bgcolor="background.paper"
           mx="auto"
-          maxWidth="919px"
+          maxWidth="960px"
           width="100%"
           borderRadius="16px"
           padding={2}
@@ -255,7 +260,7 @@ const AddSDKModal = ({ open, onClose, refreshGrid }) => {
                   );
                 }}
               >
-                <Iconify icon="mdi:close" />
+                <Iconify icon="solar:close-linear" />
               </IconButton>
             </Box>
             <Box sx={{}}>
@@ -270,7 +275,7 @@ const AddSDKModal = ({ open, onClose, refreshGrid }) => {
               minHeight="200px"
               margin="25px 0"
             >
-              <CircularProgress size={40} />
+              <ContentSkeleton variant="panel" />
             </Box>
           ) : (
             <Box
@@ -313,7 +318,7 @@ const AddSDKModal = ({ open, onClose, refreshGrid }) => {
                     }
                     sx={{ color: "text.secondary" }}
                   >
-                    <Iconify icon="eva:copy-outline" width={16} height={16} />
+                    <Iconify icon="solar:copy-linear" width={16} height={16} />
                   </IconButton>
                 </Box>
               </Box>
@@ -352,7 +357,7 @@ const AddSDKModal = ({ open, onClose, refreshGrid }) => {
                     }
                     sx={{ color: "text.secondary" }}
                   >
-                    <Iconify icon="eva:copy-outline" width={16} height={16} />
+                    <Iconify icon="solar:copy-linear" width={16} height={16} />
                   </IconButton>
                 </Box>
               </Box>
@@ -375,19 +380,19 @@ const AddSDKModal = ({ open, onClose, refreshGrid }) => {
                     p="5px 12px"
                     color="black"
                   >
-                    {data?.data?.result?.apiKeys?.apiKey}
+                    {data?.data?.result?.api_keys?.api_key}
                   </Typography>
                   <IconButton
                     size="small"
                     onClick={() =>
                       copyToClipboard(
-                        data?.data?.result?.apiKeys?.apiKey,
+                        data?.data?.result?.api_keys?.api_key,
                         "API Key",
                       )
                     }
                     sx={{ color: "text.secondary" }}
                   >
-                    <Iconify icon="eva:copy-outline" width={16} height={16} />
+                    <Iconify icon="solar:copy-linear" width={16} height={16} />
                   </IconButton>
                 </Box>
               </Box>
@@ -410,19 +415,19 @@ const AddSDKModal = ({ open, onClose, refreshGrid }) => {
                     p="5px 12px"
                     color="black"
                   >
-                    {data?.data?.result?.apiKeys?.secretKey}
+                    {data?.data?.result?.api_keys?.secret_key}
                   </Typography>
                   <IconButton
                     size="small"
                     onClick={() =>
                       copyToClipboard(
-                        data?.data?.result?.apiKeys?.secretKey,
+                        data?.data?.result?.api_keys?.secret_key,
                         "Secret Key",
                       )
                     }
                     sx={{ color: "text.secondary" }}
                   >
-                    <Iconify icon="eva:copy-outline" width={16} height={16} />
+                    <Iconify icon="solar:copy-linear" width={16} height={16} />
                   </IconButton>
                 </Box>
               </Box>
@@ -430,30 +435,21 @@ const AddSDKModal = ({ open, onClose, refreshGrid }) => {
           )}
           {!isPending && (
             <Box>
-              <TabWrapper>
-                <CustomTabs
-                  textColor="primary"
+              <Box sx={{ mb: 1.5 }}>
+                <SegmentedTabs
                   value={currentTab}
                   onChange={(e, value) => setCurrentTab(value)}
-                  TabIndicatorProps={{
-                    style: {
-                      backgroundColor: theme.palette.primary.main,
-                      opacity: 0.08,
-                      height: "100%",
-                      borderRadius: "8px",
-                    },
-                  }}
                 >
                   {tabOptions.map((tab) => (
-                    <CustomTab
+                    <Tab
                       key={tab.value}
                       label={tab.label}
                       value={tab.value}
                       disabled={tab.disabled}
                     />
                   ))}
-                </CustomTabs>
-              </TabWrapper>
+                </SegmentedTabs>
+              </Box>
               <Box
                 bgcolor="background.neutral"
                 borderRadius="8px"

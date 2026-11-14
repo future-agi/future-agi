@@ -1,5 +1,7 @@
 import { useMemo } from "react";
 
+const getNodeExecution = (node) => node?.nodeExecution || node?.node_execution;
+
 /**
  * Resolve a React Flow node ID to the correct executionId and nodeExecutionId
  * for the node-execution-detail API call.
@@ -19,10 +21,10 @@ export default function useResolvedExecution({
       const parentNode = executionData.nodes.find((n) => n.id === parentId);
       const innerNodes = (parentNode?.subGraph || parentNode?.sub_graph)?.nodes;
       const innerNode = innerNodes?.find((n) => n.id === innerOriginalId);
-      return innerNode?.nodeExecution?.id || null;
+      return getNodeExecution(innerNode)?.id || null;
     }
     const node = executionData.nodes.find((n) => n.id === selectedNodeId);
-    return node?.nodeExecution?.id || null;
+    return getNodeExecution(node)?.id || null;
   }, [selectedNodeId, executionData]);
 
   //graph execution id

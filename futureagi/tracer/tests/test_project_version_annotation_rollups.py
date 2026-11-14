@@ -142,6 +142,22 @@ def test_list_runs_annotation_rollups_use_active_request_organization(
 
 
 @pytest.mark.django_db
+def test_list_runs_rejects_legacy_project_alias(auth_client, user):
+    organization, workspace = _make_second_org_workspace(user)
+    project, _project_version, _label = _make_project_version_with_score(
+        user, organization, workspace
+    )
+
+    auth_client.set_workspace(workspace)
+    response = auth_client.get(
+        "/tracer/project-version/list_runs/",
+        {"projectId": str(project.id)},
+    )
+
+    assert response.status_code == 400
+
+
+@pytest.mark.django_db
 def test_export_data_annotation_rollups_use_active_request_organization(
     auth_client, user
 ):
@@ -165,3 +181,23 @@ def test_export_data_annotation_rollups_use_active_request_organization(
     csv_body = b"".join(response.streaming_content).decode("utf-8")
     assert label.name in csv_body
     assert ",7.0" in csv_body or ",7" in csv_body
+
+
+@pytest.mark.django_db
+def test_export_data_omitted_run_ids_exports_all_project_runs(auth_client, user):
+    organization, workspace = _make_second_org_workspace(user)
+    project, project_version, label = _make_project_version_with_score(
+        user, organization, workspace
+    )
+
+    auth_client.set_workspace(workspace)
+    response = auth_client.post(
+        "/tracer/project-version/get_export_data/",
+        {"project_id": str(project.id)},
+        format="json",
+    )
+
+    assert response.status_code == 200
+    csv_body = b"".join(response.streaming_content).decode("utf-8")
+    assert f"{project_version.name} - {project_version.version}" in csv_body
+    assert label.name in csv_body

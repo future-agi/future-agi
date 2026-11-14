@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo } from "react";
 import { Drawer, Box, Tabs, Tab } from "@mui/material";
+import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
 import PropTypes from "prop-types";
 import CompareDrawerSkeleton from "src/sections/project-detail/CompareDrawer/Skeletons/CompareDrawerSkeleton";
 import { useQuery } from "@tanstack/react-query";
@@ -18,6 +19,43 @@ import RunTraceWrapper from "./RunTraceWrapper";
 import DraggableIcon from "./DraggableIcon";
 
 const MIN_GAP = 60; // Minimum gap between the two draggable icons
+
+const normalizeCompareRunTrace = (traceData = {}) => ({
+  ...traceData,
+  projectVersionName:
+    traceData.projectVersionName || traceData.project_version_name,
+  evalsMetrics: traceData.evalsMetrics || traceData.evals_metrics || {},
+  systemMetrics: normalizeSystemMetrics(
+    traceData.systemMetrics || traceData.system_metrics || {},
+  ),
+  observationSpans:
+    traceData.observationSpans || traceData.observation_spans || [],
+});
+
+const normalizeSystemMetrics = (systemMetrics = {}) => ({
+  ...systemMetrics,
+  avgCost: systemMetrics.avgCost ?? systemMetrics.avg_cost ?? 0,
+  avgLatencyMs: systemMetrics.avgLatencyMs ?? systemMetrics.avg_latency_ms ?? 0,
+});
+
+const normalizeCompareRunsPayload = (payload = {}) => {
+  const rawComparison =
+    payload.traceComparison || payload.trace_comparison || {};
+  const traceComparison = Object.fromEntries(
+    Object.entries(rawComparison).map(([projectVersionId, traceData]) => [
+      projectVersionId,
+      normalizeCompareRunTrace(traceData),
+    ]),
+  );
+
+  return {
+    ...payload,
+    traceComparison,
+    totalTraces: payload.totalTraces ?? payload.total_traces ?? 0,
+    totalEvalConfigs:
+      payload.totalEvalConfigs || payload.total_eval_configs || {},
+  };
+};
 
 const getEvalList = (compareData) => {
   if (!compareData?.traceComparison) {
@@ -60,7 +98,7 @@ const CompareRunsDrawerChild = ({
         index: currentRow,
       }),
     enabled: selectedRuns.length > 0,
-    select: (data) => data.data?.result,
+    select: (data) => normalizeCompareRunsPayload(data.data?.result),
   });
 
   useEffect(() => {
@@ -150,8 +188,8 @@ const CompareRunsDrawerChild = ({
             height: "6px !important",
           },
           "&::-webkit-scrollbar-thumb": {
-            backgroundColor: "rgba(0, 0, 0, 0.3)",
-            borderRadius: "3px",
+            backgroundColor: "border.strong",
+            borderRadius: "4px",
           },
           "&::-webkit-scrollbar-track": {
             backgroundColor: "transparent",
@@ -307,7 +345,7 @@ const CompareRunsDrawerChild = ({
             </Box>
             <Box sx={{ paddingX: 2 }}>
               <CompareNavigateButtons
-                totalCount={compareData?.total_traces}
+                totalCount={compareData?.totalTraces}
                 currentCount={currentRow + 1}
                 onNext={() => {
                   setCurrentRow(currentRow + 1);
@@ -353,14 +391,6 @@ const CompareRunsDrawerChild = ({
                     value={activeTab}
                     onChange={(e, newValue) => setActiveTab(newValue)}
                     aria-label="compare tabs"
-                    sx={{
-                      "& .Mui-selected": {
-                        color: "primary.main",
-                      },
-                      "& .MuiTabs-indicator": {
-                        backgroundColor: "primary.main",
-                      },
-                    }}
                   >
                     <Tab label="Traces" />
                     <Tab label="Annotations" />
@@ -383,10 +413,12 @@ CompareRunsDrawerChild.propTypes = {
 };
 
 const CompareRunsDrawer = ({ open, onClose, selectedRows, projectDetail }) => {
+  const covered = useDrawerCovered(open);
   return (
     <Drawer
       anchor="right"
       open={open}
+      sx={coveredDrawerSx(covered)}
       ModalProps={{
         BackdropProps: {
           style: { backgroundColor: "transparent" },

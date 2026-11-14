@@ -1,6 +1,7 @@
 import ast
 import io
 import json
+import statistics
 
 import pandas as pd
 import structlog
@@ -16,7 +17,6 @@ from django.db.models import (
     JSONField,
     OuterRef,
     Q,
-    StdDev,
     Subquery,
     Value,
     When,
@@ -36,17 +36,23 @@ from model_hub.models.score import Score
 from model_hub.serializers.develop_annotations import (
     AnnotationProjectVersionMapperSerializer,
 )
+from tfc.routers import uses_db
 from tfc.utils.base_viewset import BaseModelViewSetMixin
 from tfc.utils.error_codes import get_error_message, get_specific_error_message
 from tfc.utils.general_methods import GeneralMethods
 from tfc.utils.parse_errors import parse_serialized_errors
+from tracer.db_routing import DATABASE_FOR_PROJECT_VERSION_IDS
 from tracer.models.custom_eval_config import CustomEvalConfig
 from tracer.models.observation_span import EvalLogger, ObservationSpan
 from tracer.models.project import Project
 from tracer.models.project_version import ProjectVersion, ProjectVersionWinner
 from tracer.models.trace import Trace
 from tracer.serializers.project import ProjectVersionExportSerializer
-from tracer.serializers.project_version import ProjectVersionSerializer
+from tracer.serializers.project_version import (
+    ProjectVersionRunsQuerySerializer,
+    ProjectVersionSerializer,
+)
+from tracer.services.clickhouse.v2 import get_reader
 from tracer.utils.filters import ColType, FilterEngine
 from tracer.utils.helper import (
     get_default_project_version_config,
@@ -61,6 +67,57 @@ logger = structlog.get_logger(__name__)
 ## TODO: need a major revamp. queries are wrong.
 
 
+def _get_request_organization(request):
+    return getattr(request, "organization", None) or request.user.organization
+
+
+def _project_workspace_scope_q(request, project_prefix="project__"):
+    workspace = getattr(request, "workspace", None)
+    if not workspace:
+        return Q()
+
+    workspace_field = f"{project_prefix}workspace"
+    organization_field = f"{project_prefix}organization_id"
+    organization = _get_request_organization(request)
+    organization_id = getattr(workspace, "organization_id", None) or getattr(
+        organization, "id", None
+    )
+
+    if getattr(workspace, "is_default", False):
+        return (
+            Q(**{workspace_field: workspace})
+            | Q(
+                **{
+                    f"{workspace_field}__is_default": True,
+                    f"{workspace_field}__organization_id": organization_id,
+                }
+            )
+            | Q(
+                **{
+                    f"{workspace_field}__isnull": True,
+                    organization_field: organization_id,
+                }
+            )
+        )
+    return Q(**{workspace_field: workspace})
+
+
+def _soft_delete_project_version_tree(project_versions):
+    now = timezone.now()
+    deleted_ids = []
+    for project_version in project_versions:
+        project_version.traces.update(deleted=True, deleted_at=now)
+        project_version.winner_version.update(deleted=True, deleted_at=now)
+        project_version.observation_spans.update(deleted=True, deleted_at=now)
+
+        project_version.deleted = True
+        project_version.deleted_at = now
+        project_version.save(update_fields=["deleted", "deleted_at", "updated_at"])
+        deleted_ids.append(str(project_version.id))
+
+    return deleted_ids
+
+
 class ProjectVersionView(BaseModelViewSetMixin, ModelViewSet):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
@@ -69,8 +126,13 @@ class ProjectVersionView(BaseModelViewSetMixin, ModelViewSet):
     def get_queryset(self):
         project_version_id = self.kwargs.get("pk")
 
-        # Get base queryset with automatic filtering from mixin
-        query_Set = super().get_queryset()
+        request_organization = _get_request_organization(self.request)
+
+        # Get base queryset with automatic filtering from mixin, then add an
+        # explicit organization guard for ProjectVersion's indirect project FK.
+        query_Set = super().get_queryset().filter(
+            project__organization=request_organization
+        )
 
         if project_version_id:
             return query_Set.filter(id=project_version_id)
@@ -90,6 +152,9 @@ class ProjectVersionView(BaseModelViewSetMixin, ModelViewSet):
 
         return query_Set
 
+    def perform_destroy(self, instance):
+        _soft_delete_project_version_tree([instance])
+
     def create(self, request, *args, **kwargs):
         """
         Create a new project version.
@@ -100,8 +165,13 @@ class ProjectVersionView(BaseModelViewSetMixin, ModelViewSet):
             if serializer.is_valid():
                 project = serializer.validated_data.get("project")
 
-                # Get the count of existing versions for this project
-                version_num = ProjectVersion.objects.filter(project=project).count() + 1
+                # Get the count of existing versions for this project.
+                version_manager = getattr(
+                    ProjectVersion, "no_workspace_objects", ProjectVersion.objects
+                )
+                version_num = (
+                    version_manager.filter(project=project, deleted=False).count() + 1
+                )
                 version = f"v{version_num}"
 
                 serializer.validated_data["version"] = version
@@ -130,16 +200,37 @@ class ProjectVersionView(BaseModelViewSetMixin, ModelViewSet):
             if parsed_config is None:
                 return self._gm.bad_request(get_error_message("CONFIG_MISSING"))
 
+            request_organization = _get_request_organization(self.request)
             project = Project.objects.get(
+                _project_workspace_scope_q(self.request, project_prefix=""),
                 id=project_id,
-                organization=getattr(self.request, "organization", None)
-                or self.request.user.organization,
+                organization=request_organization,
             )
             result = {}
 
+            # CH25-TODO(wave-3): ``per_project_version_metric_aggregate``
+            # now exists on CHSpanReader (wave-3 commit 93c5c415f) and
+            # returns dict[pv_id, {avg_latency_root, avg_cost, ...}]. The
+            # CH span aggregate IS now unblocked. What still gates the
+            # migration is the inner EvalLogger Subquery+OuterRef chain
+            # (``metric_<config.id>`` annotations) which is fused into the
+            # outer queryset's annotate() — replacing it requires:
+            #   (1) CH per-pv aggregate via per_project_version_metric_aggregate(pv_ids)
+            #   (2) PG batched EvalLogger aggregate keyed on
+            #       (project_version_id, custom_eval_config_id), reproducing the
+            #       float/bool/str_list discrimination in Python
+            #   (3) reassembling each ``obj`` to the exact JSON shape the
+            #       consumer loop at lines ~369-395 reads: dict with
+            #       ``avg_latency_ms``, ``avg_cost``, and ``metric_<config.id>``
+            #       keys where the metric value is ``{"score": <float>}`` for
+            #       numeric/bool and ``{"<choice>": {"score": <float>}}`` for
+            #       str_list. Producing the WRONG shape silently mis-computes
+            #       project_version winner scores — a P1 regression risk.
+            # Deferred: shape-preservation refactor is out of scope for the
+            # bulk migration chunk. Tracked as a follow-up.
             # Build the base query with all necessary annotations
             base_query = (
-                ObservationSpan.objects.filter(project_id=project_id)
+                ObservationSpan.objects.filter(project=project)
                 .values("project_version_id")
                 .annotate(
                     avg_latency_ms=Coalesce(
@@ -167,7 +258,7 @@ class ProjectVersionView(BaseModelViewSetMixin, ModelViewSet):
             # Get all eval configs from the project version
             eval_configs = CustomEvalConfig.objects.filter(
                 id__in=EvalLogger.objects.filter(
-                    observation_span__project_id=project_id
+                    observation_span__project=project
                 )
                 .values("custom_eval_config_id")
                 .distinct(),
@@ -309,11 +400,15 @@ class ProjectVersionView(BaseModelViewSetMixin, ModelViewSet):
 
                 # Update the project version with the calculated sum
                 project_version = ProjectVersion.objects.get(
-                    id=obj["project_version_id"]
+                    id=obj["project_version_id"],
+                    project=project,
                 )
                 project_version.avg_eval_score = sum
                 project_version.save(update_fields=["avg_eval_score"])
                 result[project_version.id] = sum
+
+            if not result:
+                return self._gm.bad_request("No project versions found for project")
 
             # Create dict with project version scores and ranks
             version_scores = {
@@ -341,8 +436,7 @@ class ProjectVersionView(BaseModelViewSetMixin, ModelViewSet):
             winner_id = sorted_versions[0][0]
             winner = ProjectVersion.objects.get(
                 id=winner_id,
-                project__organization=getattr(self.request, "organization", None)
-                or self.request.user.organization,
+                project=project,
             )
 
             try:
@@ -385,21 +479,36 @@ class ProjectVersionView(BaseModelViewSetMixin, ModelViewSet):
         try:
             serializer = ProjectVersionExportSerializer(data=request.data)
             if serializer.is_valid():
-                validated_data = serializer.data
+                validated_data = serializer.validated_data
                 project_id = validated_data["project_id"]
                 project_version_ids = validated_data["runs_ids"]
 
             else:
                 return self._gm.bad_request(serializer.errors)
 
-            request_organization = (
-                getattr(request, "organization", None) or request.user.organization
-            )
+            request_organization = _get_request_organization(request)
 
+            try:
+                project = Project.objects.get(
+                    _project_workspace_scope_q(request, project_prefix=""),
+                    id=project_id,
+                    organization=request_organization,
+                )
+            except Project.DoesNotExist:
+                return self._gm.bad_request(get_error_message("PROJECT_NOT_FOUND"))
+
+            # CH25-TODO(wave-3): ``per_project_version_metric_aggregate``
+            # (wave-3 commit 93c5c415f) covers the CH span aggregate part
+            # of this export. Migration is still deferred for the same
+            # reason as the winner rollup above (see CH25-TODO at ~208):
+            # the EvalLogger Subquery+OuterRef metric_<config.id> shape
+            # has to be reproduced exactly in Python or the exported CSV
+            # cells carry wrong scores. The ``project_version__*`` joins
+            # (name, version, avg_eval_score) would become a separate PG
+            # ``ProjectVersion.objects.filter(id__in=).values(...)`` step
+            # and zip-by-pv_id in Python.
             # Build the base query with all necessary annotations
-            base_query = ObservationSpan.objects.filter(
-                project_id=project_id,
-            )
+            base_query = ObservationSpan.objects.filter(project=project)
 
             if project_version_ids:
                 base_query = base_query.filter(
@@ -428,19 +537,10 @@ class ProjectVersionView(BaseModelViewSetMixin, ModelViewSet):
                 ),
             )
 
-            # Create a subquery for each eval config ID from project config
-            try:
-                project = Project.objects.get(
-                    id=project_id,
-                    organization=request_organization,
-                )
-            except Project.DoesNotExist:
-                return self._gm.bad_request(get_error_message("PROJECT_NOT_FOUND"))
-
             # Get all eval configs from the project version
             eval_configs = CustomEvalConfig.objects.filter(
                 id__in=EvalLogger.objects.filter(
-                    observation_span__project_id=project_id
+                    observation_span__project=project
                 )
                 .values("custom_eval_config_id")
                 .distinct(),
@@ -553,7 +653,7 @@ class ProjectVersionView(BaseModelViewSetMixin, ModelViewSet):
                 )
 
             # Add Avg Annotations
-            annotation_labels = AnnotationsLabels.objects.filter(project__id=project_id)
+            annotation_labels = AnnotationsLabels.objects.filter(project=project)
             annotation_labels = annotation_labels.exclude(
                 type=AnnotationTypeChoices.TEXT.value
             )
@@ -717,7 +817,7 @@ class ProjectVersionView(BaseModelViewSetMixin, ModelViewSet):
                 )
 
             # Apply filters
-            filter_params = self.request.data.get("filters", [])
+            filter_params = validated_data.get("filters", [])
             if filter_params:
                 combined_filter_conditions = Q()
 
@@ -735,9 +835,9 @@ class ProjectVersionView(BaseModelViewSetMixin, ModelViewSet):
                 non_annotation_filters = [
                     f
                     for f in filter_params
-                    if f.get("col_type") not in annotation_col_types
-                    and (f.get("column_id") or f.get("columnId"))
-                    not in annotation_column_ids
+                    if (f.get("filter_config") or {}).get("col_type")
+                    not in annotation_col_types
+                    and f.get("column_id") not in annotation_column_ids
                 ]
 
                 # Eval metric filters (excluding annotation filters)
@@ -771,7 +871,7 @@ class ProjectVersionView(BaseModelViewSetMixin, ModelViewSet):
                     base_query = base_query.filter(combined_filter_conditions)
 
             # Apply sorting
-            sort_params = self.request.data.get("sort_params", [])
+            sort_params = validated_data.get("sort_params", [])
             if sort_params:
                 sort_conditions = []
                 for sort_param in sort_params:
@@ -964,27 +1064,18 @@ class ProjectVersionView(BaseModelViewSetMixin, ModelViewSet):
         project_version_ids = self.request.data.get("ids", [])
 
         try:
-            # Bulk update deleted status and timestamp for all specified IDs
-            project_versions = ProjectVersion.objects.filter(id__in=project_version_ids)
-            for project_version in project_versions:
-                # Soft delete related models
-                project_version.traces.update(deleted=True, deleted_at=timezone.now())
-                project_version.winner_version.update(
-                    deleted=True, deleted_at=timezone.now()
-                )
-                project_version.observation_spans.update(
-                    deleted=True, deleted_at=timezone.now()
-                )
-
-                # Mark the project version as deleted
-                project_version.deleted = True
-                project_version.deleted_at = timezone.now()
-                project_version.save()
+            request_organization = _get_request_organization(self.request)
+            project_versions = ProjectVersion.objects.filter(
+                _project_workspace_scope_q(self.request),
+                id__in=project_version_ids,
+                project__organization=request_organization,
+            )
+            deleted_ids = _soft_delete_project_version_tree(project_versions)
 
             return self._gm.success_response(
                 {
                     "message": "Successfully deleted project versions",
-                    "deleted_ids": project_version_ids,
+                    "deleted_ids": deleted_ids,
                 }
             )
         except Exception as e:
@@ -1001,9 +1092,9 @@ class ProjectVersionView(BaseModelViewSetMixin, ModelViewSet):
             visibility = self.request.data.get("visibility", {})
             try:
                 project_version = ProjectVersion.objects.get(
+                    _project_workspace_scope_q(self.request),
                     id=project_version_id,
-                    project__organization=getattr(self.request, "organization", None)
-                    or self.request.user.organization,
+                    project__organization=_get_request_organization(self.request),
                 )
             except ProjectVersion.DoesNotExist:
                 return self._gm.bad_request("Project version not found")
@@ -1029,9 +1120,16 @@ class ProjectVersionView(BaseModelViewSetMixin, ModelViewSet):
             )
 
     @action(detail=False, methods=["get"])
+    @uses_db(
+        DATABASE_FOR_PROJECT_VERSION_IDS,
+        feature_key="feature:project_version_ids",
+    )
     def get_project_version_ids(self, request, *args, **kwargs):
         try:
-            queryset = self.get_queryset()
+            # KNOWN PERF BUG (independent of routing): this paginates in
+            # memory after serializing the entire queryset. Worth fixing
+            # separately to push pagination down to SQL.
+            queryset = self.get_queryset().using(DATABASE_FOR_PROJECT_VERSION_IDS)
             serializer = self.get_serializer(queryset, many=True)
 
             project_version_ids = [
@@ -1066,9 +1164,9 @@ class ProjectVersionView(BaseModelViewSetMixin, ModelViewSet):
             project_version_id = self.request.data.get("project_version_id")
             annotation_values = self.request.data.get("annotation_values")
             project_version = ProjectVersion.objects.get(
+                _project_workspace_scope_q(self.request),
                 id=project_version_id,
-                project__organization=getattr(self.request, "organization", None)
-                or self.request.user.organization,
+                project__organization=_get_request_organization(self.request),
             )
 
             if not project_version:
@@ -1078,18 +1176,18 @@ class ProjectVersionView(BaseModelViewSetMixin, ModelViewSet):
 
             if curr_annotation is None:
                 if annotation_values is not None:
-                    annotation_values["organization"] = (
-                        getattr(self.request, "organization", None)
-                        or self.request.user.organization
+                    annotation_values["organization"] = _get_request_organization(
+                        self.request
                     )
                     serializer = AnnotationProjectVersionMapperSerializer(
                         data=annotation_values
                     )
                     if serializer.is_valid():
                         annotation = serializer.save(
-                            organization=getattr(self.request, "organization", None)
-                            or self.request.user.organization
+                            organization=_get_request_organization(self.request)
                         )
+                    else:
+                        return self._gm.bad_request(serializer.errors)
                 else:
                     raise Exception("Annotation details are required")
             else:
@@ -1124,10 +1222,19 @@ class ProjectVersionView(BaseModelViewSetMixin, ModelViewSet):
             if not project_version_id:
                 raise Exception("Project version id is required")
 
+            project_version = ProjectVersion.objects.get(
+                _project_workspace_scope_q(self.request),
+                id=project_version_id,
+                project__organization=_get_request_organization(self.request),
+            )
+
             # Get trace IDs in a single query
-            trace_ids = Trace.objects.filter(
-                project_version_id=project_version_id
-            ).values_list("id", flat=True)
+            trace_ids = list(
+                Trace.objects.filter(
+                    project=project_version.project,
+                    project_version=project_version,
+                ).values_list("id", flat=True)
+            )
             if not trace_ids:
                 return self._gm.success_response(
                     {
@@ -1138,70 +1245,99 @@ class ProjectVersionView(BaseModelViewSetMixin, ModelViewSet):
                     }
                 )
 
-            # System Metrics - Optimize with aggregation
-            spans_metrics = ObservationSpan.objects.filter(
-                trace_id__in=trace_ids
-            ).aggregate(
-                avg_latency=Avg("latency_ms", filter=Q(parent_span_id__isnull=True)),
-                avg_cost=Round(
-                    Avg(
-                        "cost", filter=Q(cost__isnull=False), output_field=FloatField()
-                    ),
-                    6,
-                ),
-                latency_stddev=StdDev(
-                    "latency_ms", filter=Q(parent_span_id__isnull=True)
-                ),
-                cost_stddev=StdDev(
-                    "cost", filter=Q(cost__isnull=False), output_field=FloatField()
-                ),
-                count=Count(
-                    "id",
-                    filter=Q(prompt_tokens__isnull=False)
-                    & Q(completion_tokens__isnull=False),
-                ),
-                avg_tokens=Round(
-                    Avg(F("total_tokens"), filter=Q(total_tokens__isnull=False)), 2
-                ),
+            # Single CH fetch covers both the window-wide aggregate
+            # (avg_latency/avg_cost/stddev/avg_tokens) and the per-span
+            # outlier scan that used to issue two ORM queries. Python
+            # ``statistics.pstdev`` matches Django's default ``StdDev``
+            # (population, ``STDDEV_POP``) — see the per-variable comments
+            # below. All metrics here are project-scoped via the
+            # trace_ids pre-fetch above, which itself was filtered by
+            # ``project=project_version.project``, so the org/workspace
+            # gate is preserved through the trace_ids pre-step.
+            trace_ids_str = [str(tid) for tid in trace_ids]
+            with get_reader() as reader:
+                ch_spans = reader.list_by_trace_ids(trace_ids_str)
+
+            # CH stores parent_span_id as non-nullable String (schema 001);
+            # root spans have an empty string. Mirror the original
+            # ``parent_span_id__isnull=True`` filter via ``== ""``.
+            # Legacy ORM ``Avg(..., filter=Q(<col>__isnull=False))`` excludes
+            # null rows from the mean denominator AND the variance, so we
+            # filter null entries OUT of the input lists here. ``latency_ms``
+            # is stored as non-nullable Int in CH (schema 001), so the
+            # original PG ``filter=Q(parent_span_id__isnull=True)`` restricts
+            # to root spans. The list comprehension below uses
+            # ``latency_ms is not None`` — codex wave-3 P3 noted this
+            # accepts zero values (matching Django's Avg semantic; nulls
+            # are excluded by IS NOT NULL, zero is a valid sample).
+            root_latencies = [
+                int(s.latency_ms)
+                for s in ch_spans
+                if s.parent_span_id == "" and s.latency_ms is not None
+            ]
+            costs_with_value = [
+                float(s.cost) for s in ch_spans if s.cost is not None
+            ]
+            tokens_with_value = [
+                int(s.total_tokens)
+                for s in ch_spans
+                if s.total_tokens is not None
+            ]
+
+            latency_mean = (
+                statistics.fmean(root_latencies) if root_latencies else 0
+            )
+            # ``statistics.pstdev`` matches Django's default ``StdDev``,
+            # which is **population** stddev (``STDDEV_POP``) — see
+            # django/db/models/aggregates.py::StdDev.__init__ where
+            # ``function = "STDDEV_SAMP" if sample else "STDDEV_POP"`` and
+            # the call sites here used the bare ``StdDev(...)`` form
+            # (sample=False default). ``statistics.pstdev`` returns 0 for
+            # n<2 without raising, so the explicit ``if root_latencies else
+            # 0`` guard stays only to preserve the downstream divide-by-
+            # zero protection at the z-score sites.
+            latency_std = (
+                statistics.pstdev(root_latencies) if root_latencies else 0
+            )
+            cost_mean = (
+                round(statistics.fmean(costs_with_value), 6)
+                if costs_with_value
+                else 0
+            )
+            cost_std = (
+                statistics.pstdev(costs_with_value)
+                if costs_with_value
+                else 0
+            )
+            avg_tokens = (
+                round(statistics.fmean(tokens_with_value), 2)
+                if tokens_with_value
+                else 0
             )
 
-            # Get spans for outlier detection with fewer fields
-            spans = ObservationSpan.objects.filter(trace_id__in=trace_ids).values(
-                "trace_id",
-                "latency_ms",
-                "total_tokens",
-                "prompt_tokens",
-                "completion_tokens",
-                "cost",
-                "parent_span_id",
-            )
-
-            latency_mean = spans_metrics["avg_latency"] or 0
-            latency_std = spans_metrics["latency_stddev"] or 0
-            cost_mean = spans_metrics["avg_cost"] or 0
-            cost_std = spans_metrics["cost_stddev"] or 0
-
-            # Identify outliers
+            # Identify outliers across all spans (root + non-root for cost,
+            # root-only for latency — matches the legacy
+            # ``parent_span_id__isnull=True`` latency predicate).
             latency_failed_trace_ids = set()
             cost_failed_trace_ids = set()
 
-            for span in spans:
-                if span["latency_ms"] and span["parent_span_id"] is None:
+            for span in ch_spans:
+                if span.latency_ms and span.parent_span_id == "":
                     z_score_latency = (
-                        (span["latency_ms"] - latency_mean) / latency_std
+                        (span.latency_ms - latency_mean) / latency_std
                         if latency_std
                         else 0
                     )
 
                     if abs(z_score_latency) > 1.96:
-                        latency_failed_trace_ids.add(span["trace_id"])
+                        latency_failed_trace_ids.add(span.trace_id)
 
-                if span.get("cost"):
+                if span.cost:
                     z_score_cost = (
-                        (float(span["cost"]) - cost_mean) / cost_std if cost_std else 0
+                        (float(span.cost) - cost_mean) / cost_std if cost_std else 0
                     )
                     if abs(z_score_cost) > 1.96:
-                        cost_failed_trace_ids.add(span["trace_id"])
+                        cost_failed_trace_ids.add(span.trace_id)
 
             # Eval Metrics - Optimize with aggregation
 
@@ -1320,9 +1456,9 @@ class ProjectVersionView(BaseModelViewSetMixin, ModelViewSet):
                 {
                     "trace_ids": list(trace_ids),
                     "system_metrics": {
-                        "avg_latency_ms": spans_metrics["avg_latency"] or 0,
-                        "avg_cost": spans_metrics["avg_cost"] or 0,
-                        "avg_tokens": spans_metrics["avg_tokens"] or 0,
+                        "avg_latency_ms": latency_mean or 0,
+                        "avg_cost": cost_mean or 0,
+                        "avg_tokens": avg_tokens or 0,
                     },
                     "eval_metrics": eval_metrics,
                 }
@@ -1341,19 +1477,20 @@ class ProjectVersionView(BaseModelViewSetMixin, ModelViewSet):
         Get a paginated list of all projects for the organization.
         """
         try:
-            project_id = self.request.query_params.get(
-                "project_id"
-            ) or self.request.query_params.get("projectId")
-            if not project_id:
-                raise Exception("Project id is required")
-
-            request_organization = (
-                getattr(request, "organization", None) or request.user.organization
+            query_serializer = ProjectVersionRunsQuerySerializer(
+                data=request.query_params
             )
+            if not query_serializer.is_valid():
+                return self._gm.bad_request(query_serializer.errors)
+            query_data = query_serializer.validated_data
+            project_id = str(query_data["project_id"])
+
+            request_organization = _get_request_organization(request)
 
             # Get project and validate access
             try:
                 project = Project.objects.get(
+                    _project_workspace_scope_q(request, project_prefix=""),
                     id=project_id,
                     organization=request_organization,
                 )
@@ -1364,7 +1501,7 @@ class ProjectVersionView(BaseModelViewSetMixin, ModelViewSet):
             eval_configs = list(
                 CustomEvalConfig.objects.filter(
                     id__in=EvalLogger.objects.filter(
-                        observation_span__project_id=project_id
+                        observation_span__project=project
                     )
                     .values("custom_eval_config_id")
                     .distinct(),
@@ -1373,7 +1510,7 @@ class ProjectVersionView(BaseModelViewSetMixin, ModelViewSet):
             )
 
             annotation_labels = list(
-                AnnotationsLabels.objects.filter(project__id=project_id).exclude(
+                AnnotationsLabels.objects.filter(project=project).exclude(
                     type=AnnotationTypeChoices.TEXT.value
                 )
             )
@@ -1387,12 +1524,25 @@ class ProjectVersionView(BaseModelViewSetMixin, ModelViewSet):
                 project_config, annotation_labels
             )
 
+            # CH25-TODO(wave-3): ``per_project_version_metric_aggregate``
+            # (wave-3 commit 93c5c415f) now exists. Deferral rationale
+            # matches the winner rollup above (see CH25-TODO at ~208):
+            # reproducing the metric_<config.id> JSON shape with the same
+            # float/bool/str_list discrimination in Python is the cross-
+            # cutting refactor. The ``project_version__deleted`` PG gate
+            # would become a pre-step:
+            #   pv_ids = list(ProjectVersion.objects.filter(
+            #       Q(deleted=False) | Q(deleted=None),
+            #       project=project,
+            #   ).values_list("id", flat=True))
+            # …then per_project_version_metric_aggregate(pv_ids). Deferred
+            # together with the other 2 sites.
             # Build the base query with system metrics
             base_query = (
                 ObservationSpan.objects.filter(
                     Q(project_version__deleted=False)
                     | Q(project_version__deleted=None),
-                    project_id=project_id,
+                    project=project,
                 )
                 .values("project_version_id")
                 .annotate(
@@ -1692,11 +1842,7 @@ class ProjectVersionView(BaseModelViewSetMixin, ModelViewSet):
                 )
 
             # Apply filters at database level
-            filter_params = self.request.query_params.get("filters", "[]")
-            try:
-                filter_params = json.loads(filter_params)
-            except json.JSONDecodeError:
-                filter_params = []
+            filter_params = query_data.get("filters", [])
 
             if filter_params:
                 combined_filter_conditions = Q()
@@ -1715,9 +1861,9 @@ class ProjectVersionView(BaseModelViewSetMixin, ModelViewSet):
                 non_annotation_filters = [
                     f
                     for f in filter_params
-                    if f.get("col_type") not in annotation_col_types
-                    and (f.get("column_id") or f.get("columnId"))
-                    not in annotation_column_ids
+                    if (f.get("filter_config") or {}).get("col_type")
+                    not in annotation_col_types
+                    and f.get("column_id") not in annotation_column_ids
                 ]
 
                 # Eval metric filters (excluding annotation filters)
@@ -1751,7 +1897,7 @@ class ProjectVersionView(BaseModelViewSetMixin, ModelViewSet):
                     base_query = base_query.filter(combined_filter_conditions)
 
             # Apply sorting at database level
-            sort_params = self.request.data.get("sort_params", [])
+            sort_params = query_data.get("sort_params", [])
             sort_conditions = []
             post_process_sorts = []  # For sorts that need post-processing
 
@@ -1831,8 +1977,8 @@ class ProjectVersionView(BaseModelViewSetMixin, ModelViewSet):
             total_count = base_query.count()
 
             # Apply pagination
-            page_number = int(self.request.query_params.get("page_number", 0))
-            page_size = int(self.request.query_params.get("page_size", 30))
+            page_number = query_data.get("page_number", 0)
+            page_size = query_data.get("page_size", 30)
             start = page_number * page_size
             end = start + page_size
 

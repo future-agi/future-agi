@@ -10,6 +10,12 @@ from tracer.utils.otel import ConversationAttributes, MessageAttributes
 BATCH_SIZE = 1000
 MAX_RETRIES = 3
 
+# CH25-TODO: KEEP-PG. Django data migration — runs against the PG
+# source-of-truth via apps.get_model() (the historical-model API). Data
+# migrations cannot use CHSpanReader by design: they execute inside the
+# migration framework's PG transaction and need to mutate the PG table
+# directly. Updated rows propagate to CH via PeerDB CDC after the
+# migration commits.
 def add_transcripts_to_eval_attributes(apps, schema_editor):
     ObservationSpan = apps.get_model("tracer", "ObservationSpan")
 

@@ -14,6 +14,7 @@ import {
 } from "@mui/material";
 import { alpha } from "@mui/material/styles";
 import Iconify from "src/components/iconify";
+import { statusColors } from "src/utils/runStatus";
 import { fDateTime, fToNowStrict } from "src/utils/format-time";
 import AnnotationHistory from "./annotation-history";
 import { ALL_ANNOTATORS } from "./annotation-view-mode";
@@ -26,24 +27,29 @@ const VALUE_COLORS = {
 };
 
 function neutralBorder(theme, opacity = 0.12) {
-  return alpha(theme.palette.text.primary, opacity);
+  return opacity > 0.12 ? theme.palette.border.default : theme.palette.divider;
 }
 
 function quietSurface(theme, opacity = 0.035) {
-  return alpha(
-    theme.palette.text.primary,
-    theme.palette.mode === "dark" ? opacity * 1.6 : opacity,
-  );
+  return opacity > 0.05
+    ? theme.palette.action.hover
+    : theme.palette.background.neutral;
 }
 
+const STATUS_ROLE = {
+  warning: "warning",
+  info: "info",
+  success: "success",
+  error: "danger",
+};
+
 function statusTone(theme, color = "warning") {
-  const palette = theme.palette[color] || theme.palette.warning;
-  const isDark = theme.palette.mode === "dark";
+  const c = statusColors(theme, STATUS_ROLE[color] || "warning");
   return {
-    text: isDark ? palette.light : palette.dark,
-    bg: alpha(palette.main, isDark ? 0.14 : 0.07),
-    bgHover: alpha(palette.main, isDark ? 0.18 : 0.1),
-    border: alpha(palette.main, isDark ? 0.34 : 0.24),
+    text: c.fg,
+    bg: c.bg,
+    bgHover: c.bg,
+    border: c.border,
   };
 }
 
@@ -52,12 +58,12 @@ function statusChipSx(color) {
     const tone = statusTone(theme, color);
     return {
       height: 20,
-      fontSize: 11,
-      borderRadius: 0.75,
+      fontSize: 12,
+      borderRadius: "4px",
       color: tone.text,
       borderColor: tone.border,
       bgcolor: tone.bg,
-      fontWeight: 700,
+      fontWeight: 600,
     };
   };
 }
@@ -65,12 +71,12 @@ function statusChipSx(color) {
 function neutralChipSx(theme) {
   return {
     height: 20,
-    fontSize: 11,
-    borderRadius: 0.75,
+    fontSize: 12,
+    borderRadius: "4px",
     color: "text.secondary",
     borderColor: neutralBorder(theme, 0.12),
     bgcolor: quietSurface(theme, 0.03),
-    fontWeight: 650,
+    fontWeight: 600,
   };
 }
 
@@ -268,8 +274,6 @@ function ReviewStatusChip({ comment }) {
       variant="outlined"
       sx={(theme) => ({
         ...statusChipSx(reviewThreadStatusColor(comment.thread_status))(theme),
-        height: 18,
-        fontSize: 10,
         ml: 0.75,
         flexShrink: 0,
       })}
@@ -462,16 +466,9 @@ function focusedScopeSx(isFocused) {
     outline: "2px solid",
     outlineOffset: -2,
     outlineColor: (theme) => theme.palette.primary.main,
-    boxShadow: (theme) =>
-      `0 0 0 5px ${alpha(theme.palette.primary.main, theme.palette.mode === "dark" ? 0.28 : 0.16)}`,
-    bgcolor: (theme) =>
-      alpha(
-        theme.palette.primary.main,
-        theme.palette.mode === "dark" ? 0.1 : 0.06,
-      ),
+    bgcolor: "action.hover",
     scrollMarginBlock: 96,
-    transition:
-      "outline-color 180ms ease, box-shadow 180ms ease, background-color 180ms ease",
+    transition: "outline-color 180ms ease, background-color 180ms ease",
   };
 }
 
@@ -491,7 +488,7 @@ function ReviewCommentStack({ comments = [], compact = false }) {
                 p: compact ? 0.75 : 1,
                 border: 1,
                 borderColor: blocking ? tone.border : neutralBorder(theme, 0.1),
-                borderRadius: 0.75,
+                borderRadius: "4px",
                 bgcolor: blocking ? tone.bg : quietSurface(theme, 0.025),
               };
             }}
@@ -570,7 +567,7 @@ function TargetedFeedbackComposer({
           p: 1.25,
           border: 1,
           borderColor: (theme) => statusTone(theme, "warning").border,
-          borderRadius: 0.75,
+          borderRadius: "4px",
           bgcolor: (theme) => statusTone(theme, "warning").bg,
         }}
       >
@@ -633,10 +630,8 @@ function TargetedFeedbackComposer({
             onClick={onDone}
             sx={{
               ml: "auto",
-              borderRadius: 0.75,
               borderColor: (theme) => neutralBorder(theme, 0.14),
               color: "text.primary",
-              fontWeight: 700,
               "&:hover": {
                 borderColor: (theme) => neutralBorder(theme, 0.22),
                 bgcolor: (theme) => quietSurface(theme, 0.05),
@@ -877,7 +872,7 @@ function ScoreReviewSurface({
           flexWrap="wrap"
           sx={{ mb: 1, minWidth: 0 }}
         >
-          <Iconify icon="solar:user-check-rounded-bold" width={18} />
+          <Iconify icon="solar:user-check-rounded-bold" width={20} />
           <Typography variant="subtitle2" sx={{ flex: 1, minWidth: 0 }}>
             Answer review
           </Typography>
@@ -918,7 +913,7 @@ function ScoreReviewSurface({
                     borderColor: hasOpenFeedback
                       ? statusTone(theme, "warning").border
                       : neutralBorder(theme, 0.1),
-                    borderRadius: 0.75,
+                    borderRadius: "4px",
                     bgcolor: "background.paper",
                     overflow: "hidden",
                     ...focusedScopeSx(isFocused),
@@ -940,7 +935,7 @@ function ScoreReviewSurface({
                   <Box sx={{ flex: 1, minWidth: 0 }}>
                     <Typography
                       variant="body2"
-                      fontWeight={700}
+                      fontWeight={600}
                       sx={WRAP_TEXT_SX}
                     >
                       {label.name}
@@ -983,7 +978,7 @@ function ScoreReviewSurface({
                     <Box sx={{ mt: 1.25 }}>
                       <Typography
                         variant="caption"
-                        fontWeight={700}
+                        fontWeight={600}
                         sx={(theme) => ({
                           color: statusTone(theme, "warning").text,
                         })}
@@ -1005,7 +1000,7 @@ function ScoreReviewSurface({
   return (
     <Box sx={{ mb: 1.5 }}>
       <Stack direction="row" alignItems="center" spacing={1} sx={{ mb: 1 }}>
-        <Iconify icon="solar:widget-4-bold" width={18} />
+        <Iconify icon="solar:widget-4-bold" width={20} />
         <Typography variant="subtitle2" sx={{ flex: 1, minWidth: 0 }}>
           Score matrix
         </Typography>
@@ -1030,7 +1025,7 @@ function ScoreReviewSurface({
         sx={{
           border: 1,
           borderColor: "divider",
-          borderRadius: 0.75,
+          borderRadius: "4px",
           bgcolor: "background.paper",
           overflowX: "auto",
           overflowY: "hidden",
@@ -1058,7 +1053,7 @@ function ScoreReviewSurface({
           >
             <Typography
               variant="caption"
-              fontWeight={700}
+              fontWeight={600}
               color="text.secondary"
             >
               Label
@@ -1079,7 +1074,7 @@ function ScoreReviewSurface({
             >
               <Typography
                 variant="body2"
-                fontWeight={700}
+                fontWeight={600}
                 noWrap
                 sx={{ minWidth: 0 }}
               >
@@ -1131,7 +1126,7 @@ function ScoreReviewSurface({
                   <Stack spacing={0.75}>
                     <Typography
                       variant="body2"
-                      fontWeight={700}
+                      fontWeight={600}
                       sx={WRAP_TEXT_SX}
                     >
                       {label.name}
@@ -1268,14 +1263,16 @@ function FeedbackDraftSummary({ feedbackDrafts, onRemove }) {
   if (!feedbackDrafts.length) return null;
   return (
     <Box
+      data-testid="review-feedback-draft-summary"
       sx={(theme) => {
         const tone = statusTone(theme, "warning");
         return {
           p: 1.25,
           border: 1,
           borderColor: tone.border,
-          borderRadius: 0.75,
+          borderRadius: "4px",
           bgcolor: tone.bg,
+          minHeight: 0,
         };
       }}
     >
@@ -1286,7 +1283,7 @@ function FeedbackDraftSummary({ feedbackDrafts, onRemove }) {
         useFlexGap
         flexWrap="wrap"
       >
-        <Iconify icon="solar:target-bold" width={18} />
+        <Iconify icon="solar:target-bold" width={20} />
         <Typography variant="subtitle2" sx={{ flex: 1, minWidth: 0 }}>
           Feedback to send
         </Typography>
@@ -1300,7 +1297,19 @@ function FeedbackDraftSummary({ feedbackDrafts, onRemove }) {
           })}
         />
       </Stack>
-      <Stack spacing={0.75} sx={{ mt: 1 }}>
+      <Stack
+        data-testid="review-feedback-draft-list"
+        data-scroll-locked="true"
+        spacing={0.75}
+        sx={{
+          mt: 1,
+          maxHeight: { xs: 148, sm: 184, md: 220 },
+          overflowY: "auto",
+          overscrollBehavior: "contain",
+          pr: 0.5,
+          mr: -0.5,
+        }}
+      >
         {feedbackDrafts.map((target) => (
           <Box
             key={target.key}
@@ -1308,7 +1317,7 @@ function FeedbackDraftSummary({ feedbackDrafts, onRemove }) {
               p: 1,
               border: 1,
               borderColor: "divider",
-              borderRadius: 0.75,
+              borderRadius: "4px",
               bgcolor: "background.paper",
             }}
           >
@@ -1321,7 +1330,7 @@ function FeedbackDraftSummary({ feedbackDrafts, onRemove }) {
             >
               <Typography
                 variant="caption"
-                fontWeight={700}
+                fontWeight={600}
                 sx={{ flex: "1 1 180px", minWidth: 0, ...WRAP_TEXT_SX }}
               >
                 {target.labelName} / {target.annotatorName}
@@ -1335,7 +1344,6 @@ function FeedbackDraftSummary({ feedbackDrafts, onRemove }) {
                   ml: "auto",
                   flexShrink: 0,
                   color: (theme) => statusTone(theme, "error").text,
-                  fontWeight: 700,
                   "&:hover": {
                     bgcolor: (theme) => statusTone(theme, "error").bg,
                   },
@@ -1375,7 +1383,7 @@ function ItemNotesList({ notes, annotatorRows }) {
         color="text.secondary"
         sx={{ display: "block", mb: 1 }}
       >
-        ITEM NOTES
+        Item notes
       </Typography>
       {notes.length === 0 ? (
         <Typography variant="body2" color="text.secondary">
@@ -1390,7 +1398,7 @@ function ItemNotesList({ notes, annotatorRows }) {
                 p: 1.25,
                 border: 1,
                 borderColor: "divider",
-                borderRadius: 0.75,
+                borderRadius: "4px",
                 bgcolor: "background.neutral",
               }}
             >
@@ -1420,7 +1428,7 @@ function ReviewActivityPanel({ comments }) {
       sx={{
         border: 1,
         borderColor: "divider",
-        borderRadius: 0.75,
+        borderRadius: "4px",
         bgcolor: "background.paper",
         overflow: "hidden",
       }}
@@ -1431,7 +1439,7 @@ function ReviewActivityPanel({ comments }) {
         spacing={1}
         sx={{ px: 1.5, py: 1.25, bgcolor: "background.neutral" }}
       >
-        <Iconify icon="solar:history-bold" width={18} />
+        <Iconify icon="solar:history-bold" width={20} />
         <Typography variant="subtitle2" sx={{ flex: 1 }}>
           Review activity
         </Typography>
@@ -1441,7 +1449,6 @@ function ReviewActivityPanel({ comments }) {
           variant="outlined"
           sx={(theme) => ({
             ...neutralChipSx(theme),
-            height: 22,
             minWidth: 30,
           })}
         />
@@ -1719,7 +1726,7 @@ export default function AnnotationComparisonPanel({
           p: 1.25,
           border: 1,
           borderColor: "divider",
-          borderRadius: 0.75,
+          borderRadius: "4px",
           bgcolor: "background.neutral",
           ...focusedScopeSx(focusedCommentScope === "item"),
         }}
@@ -1774,7 +1781,7 @@ export default function AnnotationComparisonPanel({
             p: 1.25,
             border: 1,
             borderColor: (theme) => statusTone(theme, "warning").border,
-            borderRadius: 0.75,
+            borderRadius: "4px",
             bgcolor: (theme) => statusTone(theme, "warning").bg,
           }}
         >
@@ -1804,7 +1811,7 @@ export default function AnnotationComparisonPanel({
                   p: 1,
                   border: 1,
                   borderColor: "divider",
-                  borderRadius: 0.75,
+                  borderRadius: "4px",
                   bgcolor: "background.paper",
                 }}
               >
@@ -1843,7 +1850,7 @@ export default function AnnotationComparisonPanel({
 
       {overallReviewComments.length > 0 ? (
         <Alert severity="warning" icon={false} sx={{ mb: 2 }}>
-          <Typography variant="caption" fontWeight={700} display="block">
+          <Typography variant="caption" fontWeight={600} display="block">
             Reviewer feedback
           </Typography>
           <Stack spacing={0.75} sx={{ mt: 0.75 }}>
@@ -1874,7 +1881,7 @@ export default function AnnotationComparisonPanel({
         </Alert>
       ) : reviewNotes ? (
         <Alert severity="warning" icon={false} sx={{ mb: 2 }}>
-          <Typography variant="caption" fontWeight={700} display="block">
+          <Typography variant="caption" fontWeight={600} display="block">
             Reviewer feedback
           </Typography>
           <Typography variant="body2" sx={WRAP_TEXT_SX}>
@@ -1901,14 +1908,14 @@ export default function AnnotationComparisonPanel({
               p: 1.25,
               border: 1,
               borderColor: hasNotes ? tone.border : neutralBorder(theme, 0.1),
-              borderRadius: 0.75,
+              borderRadius: "4px",
               bgcolor: hasNotes ? tone.bg : theme.palette.background.paper,
             };
           }}
         >
           <Typography
             variant="caption"
-            fontWeight={700}
+            fontWeight={600}
             color="text.secondary"
             sx={{ display: "block", mb: 0.75 }}
           >
@@ -1986,7 +1993,6 @@ export default function AnnotationComparisonPanel({
               (viewingAnnotatorId || ALL_ANNOTATORS) === ALL_ANNOTATORS
             }
             onClick={() => onViewingAnnotatorChange?.(ALL_ANNOTATORS)}
-            sx={{ borderRadius: 0.75, minHeight: 30 }}
           >
             All annotators
           </Button>
@@ -2002,8 +2008,6 @@ export default function AnnotationComparisonPanel({
                 aria-pressed={isSelected}
                 onClick={() => onViewingAnnotatorChange?.(annotator.id)}
                 sx={{
-                  borderRadius: 0.75,
-                  minHeight: 30,
                   maxWidth: "100%",
                   justifyContent: "flex-start",
                   overflow: "hidden",
@@ -2052,13 +2056,6 @@ export default function AnnotationComparisonPanel({
           onDoneFeedback={() => setActiveFeedbackKey(null)}
         />
 
-        {canReviewSubmittedAnnotations && (
-          <FeedbackDraftSummary
-            feedbackDrafts={feedbackDrafts}
-            onRemove={handleRemoveLabelFeedback}
-          />
-        )}
-
         <ItemNotesList notes={visibleSpanNotes} annotatorRows={annotatorRows} />
 
         <ReviewActivityPanel comments={reviewActivityComments} />
@@ -2068,6 +2065,7 @@ export default function AnnotationComparisonPanel({
 
       {canReviewSubmittedAnnotations && (
         <Box
+          data-testid="review-action-bar"
           sx={{
             position: "sticky",
             bottom: 0,
@@ -2076,26 +2074,32 @@ export default function AnnotationComparisonPanel({
             py: 1.5,
             borderTop: 1,
             borderColor: "divider",
-            bgcolor: (theme) =>
-              theme.palette.mode === "dark"
-                ? alpha(theme.palette.background.paper, 0.96)
-                : theme.palette.background.paper,
+            bgcolor: "background.paper",
             boxShadow: (theme) =>
               theme.palette.mode === "dark"
                 ? `0 -12px 30px ${alpha(theme.palette.common.black, 0.34)}`
                 : `0 -10px 26px ${alpha(theme.palette.grey[600], 0.12)}`,
             zIndex: 2,
+            maxHeight: { xs: "58vh", md: "48vh" },
+            overflow: "hidden",
+            display: "flex",
+            flexDirection: "column",
+            gap: 1,
           }}
         >
+          <FeedbackDraftSummary
+            feedbackDrafts={feedbackDrafts}
+            onRemove={handleRemoveLabelFeedback}
+          />
           <Stack
             direction="row"
             alignItems="center"
             spacing={1}
             useFlexGap
             flexWrap="wrap"
-            sx={{ mb: 1 }}
+            sx={{ flexShrink: 0 }}
           >
-            <Iconify icon="solar:checklist-minimalistic-bold" width={18} />
+            <Iconify icon="solar:checklist-minimalistic-bold" width={20} />
             <Typography
               variant="caption"
               color="text.secondary"
@@ -2108,35 +2112,23 @@ export default function AnnotationComparisonPanel({
                 : reviewActionHint}
             </Typography>
           </Stack>
-          <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
+          <Stack
+            direction={{ xs: "column", sm: "row" }}
+            spacing={1}
+            sx={{ flexShrink: 0 }}
+          >
             <Button
               variant="contained"
               color="inherit"
               fullWidth
               disabled={isApproveDisabled}
               onClick={() => onApprove?.({ notes: "", labelComments: [] })}
-              startIcon={
-                <Iconify icon="eva:checkmark-circle-2-fill" width={18} />
-              }
+              startIcon={<Iconify icon="solar:check-circle-bold" width={20} />}
               sx={{
-                borderRadius: 0.75,
-                bgcolor: (theme) =>
-                  theme.palette.mode === "dark"
-                    ? theme.palette.common.white
-                    : theme.palette.grey[900],
-                color: (theme) =>
-                  theme.palette.mode === "dark"
-                    ? theme.palette.grey[900]
-                    : theme.palette.common.white,
-                boxShadow: "none",
-                fontWeight: 700,
+                bgcolor: "text.primary",
+                color: "background.paper",
                 "&:hover": {
-                  bgcolor: (theme) =>
-                    theme.palette.mode === "dark"
-                      ? alpha(theme.palette.common.white, 0.9)
-                      : theme.palette.grey[800],
-                  boxShadow: (theme) =>
-                    `0 10px 20px ${alpha(theme.palette.text.primary, 0.16)}`,
+                  bgcolor: "text.secondary",
                 },
               }}
             >
@@ -2147,27 +2139,14 @@ export default function AnnotationComparisonPanel({
               fullWidth
               disabled={isPending || !hasRequestFeedback}
               onClick={() => onReject?.(buildReviewPayload())}
-              startIcon={<Iconify icon="eva:close-circle-fill" width={18} />}
+              startIcon={<Iconify icon="solar:close-circle-bold" width={20} />}
               sx={{
-                borderRadius: 0.75,
-                borderColor: (theme) => alpha(theme.palette.error.main, 0.3),
-                bgcolor: (theme) =>
-                  alpha(
-                    theme.palette.error.main,
-                    theme.palette.mode === "dark" ? 0.12 : 0.06,
-                  ),
-                color: (theme) =>
-                  theme.palette.mode === "dark"
-                    ? theme.palette.error.light
-                    : theme.palette.error.dark,
-                fontWeight: 700,
+                borderColor: (theme) => statusTone(theme, "error").border,
+                bgcolor: (theme) => statusTone(theme, "error").bg,
+                color: (theme) => statusTone(theme, "error").text,
                 "&:hover": {
-                  borderColor: (theme) => alpha(theme.palette.error.main, 0.4),
-                  bgcolor: (theme) =>
-                    alpha(
-                      theme.palette.error.main,
-                      theme.palette.mode === "dark" ? 0.16 : 0.09,
-                    ),
+                  borderColor: (theme) => statusColors(theme, "danger").fg,
+                  bgcolor: (theme) => statusTone(theme, "error").bg,
                 },
               }}
             >

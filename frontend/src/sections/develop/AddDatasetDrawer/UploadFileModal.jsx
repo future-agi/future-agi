@@ -66,13 +66,14 @@ const UploadFileModal = ({ open, onClose, refreshGrid }) => {
       });
       queryClient.invalidateQueries({ queryKey: ["dataset-detail"] });
       trackEvent(Events.datasetFromJSONCSVSuccessful, {
-        [PropertyName.datasetId]: data?.data?.result?.datasetId,
+        [PropertyName.datasetId]: data?.data?.result?.dataset_id,
       });
       onCloseClick(null, true);
       reset();
       refreshGrid();
-      navigate(`/dashboard/develop/${data?.data?.result?.datasetId}?tab=data`);
+      navigate(`/dashboard/develop/${data?.data?.result?.dataset_id}?tab=data`);
     },
+    meta: { errorHandled: true },
     onError: (error) => {
       enqueueSnackbar(
         getRequestErrorMessage(error, "Failed to upload dataset", {
@@ -166,7 +167,8 @@ const UploadFileModal = ({ open, onClose, refreshGrid }) => {
     <Dialog
       open={open}
       onClose={() => onCloseClick()}
-      maxWidth="sm"
+      maxWidth={false}
+      PaperProps={{ sx: { maxWidth: 720 } }}
       fullWidth
       aria-labelledby="upload-file-dialog-title"
       aria-describedby="upload-file-dialog-description"
@@ -198,7 +200,7 @@ const UploadFileModal = ({ open, onClose, refreshGrid }) => {
               Upload a File
             </Typography>
             <IconButton onClick={() => onCloseClick()}>
-              <Iconify icon="mdi:close" color="text.primary" />
+              <Iconify icon="solar:close-linear" color="text.primary" />
             </IconButton>
           </Box>
           <HelperText
@@ -241,7 +243,7 @@ const UploadFileModal = ({ open, onClose, refreshGrid }) => {
                 }}
                 onDrop={handleFileChange}
                 heading="Choose a file or drag & drop it here"
-                description="Supports JSONL, JSON, and CSV file format up to 10 MB"
+                description="Supports JSONL, JSON, and CSV file format up to 25 MB"
                 actionButton={
                   <Button
                     variant="outlined"
@@ -249,7 +251,6 @@ const UploadFileModal = ({ open, onClose, refreshGrid }) => {
                     sx={{
                       paddingY: (theme) => theme.spacing(0.75),
                       paddingX: (theme) => theme.spacing(3),
-                      borderRadius: (theme) => theme.spacing(1),
                       background: (theme) => theme.palette.divider,
                       color: "text.primary",
                       borderColor: "text.disabled",
@@ -285,13 +286,7 @@ const UploadFileModal = ({ open, onClose, refreshGrid }) => {
             loading={isPending}
             disabled={!isDirty}
           >
-            {/* <Typography
-              variant="s2"
-              width={"80px"}
-              fontWeight={"fontWeightSemiBold"}
-            > */}
-            Save
-            {/* </Typography> */}
+            Upload
           </LoadingButton>
         </DialogActions>
       </Box>

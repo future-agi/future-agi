@@ -74,7 +74,7 @@ const MappedTable = ({ mappedData }) => {
 
   return (
     <TableContainer
-      elevation={1}
+      elevation={0}
       component={Paper}
       sx={{ flex: 1, overflow: "auto" }}
     >

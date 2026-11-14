@@ -91,9 +91,7 @@ function scrollRangeIntoView(range) {
   if (!range) return;
   const startNode = range.startContainer;
   const startEl =
-    startNode.nodeType === Node.TEXT_NODE
-      ? startNode.parentElement
-      : startNode;
+    startNode.nodeType === Node.TEXT_NODE ? startNode.parentElement : startNode;
   if (!startEl || !startEl.isConnected) return;
 
   let current = startEl.parentElement;

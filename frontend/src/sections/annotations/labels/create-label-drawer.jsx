@@ -25,6 +25,7 @@ import NumericSettings from "./settings/numeric-settings";
 import TextSettings from "./settings/text-settings";
 import StarSettings from "./settings/star-settings";
 import LabelInput from "../queues/annotate/label-input";
+import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
 
 const LABEL_TYPES = [
   {
@@ -64,7 +65,7 @@ const DEFAULT_SETTINGS = {
   },
   numeric: { min: 0, max: 10, step_size: 1, display_type: "slider" },
   text: {
-    placeholder: "Enter your feedback...",
+    placeholder: "",
     max_length: 500,
     min_length: 0,
   },
@@ -183,15 +184,18 @@ export default function CreateLabelDrawer({
     settings: buildPreviewSettings(selectedType, watchedSettings),
   };
 
+  const covered = useDrawerCovered(open);
+
   return (
     <Drawer
+      sx={coveredDrawerSx(covered)}
       anchor="right"
       open={open}
       onClose={onClose}
       PaperProps={{
         sx: {
           width: { xs: "100%", md: "60vw" },
-          minWidth: 850,
+          minWidth: 960,
           height: "100vh",
           borderRadius: "0 !important",
         },
@@ -221,7 +225,7 @@ export default function CreateLabelDrawer({
             {isEdit ? "Edit Label" : "Create Label"}
           </Typography>
           <IconButton onClick={onClose} size="small">
-            <Iconify icon="mingcute:close-line" />
+            <Iconify icon="solar:close-linear" />
           </IconButton>
         </Stack>
 
@@ -441,7 +445,7 @@ export default function CreateLabelDrawer({
  * Build a settings object suitable for the LabelInput preview.
  * Maps form field names to what LabelInput expects.
  */
-function buildPreviewSettings(type, settings) {
+export function buildPreviewSettings(type, settings) {
   if (!settings) return {};
 
   if (type === "categorical") {
@@ -459,6 +463,7 @@ function buildPreviewSettings(type, settings) {
       min: settings.min ?? 0,
       max: settings.max ?? 10,
       step: settings.step_size ?? settings.step ?? 1,
+      display_type: settings.display_type || "slider",
     };
   }
 

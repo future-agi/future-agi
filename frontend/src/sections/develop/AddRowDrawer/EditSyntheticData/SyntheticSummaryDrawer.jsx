@@ -26,6 +26,7 @@ import { useKnowledgeBaseList } from "src/api/knowledge-base/files";
 import { useDatasetOriginStore } from "../../../develop-detail/states";
 import CustomDialog from "../../../develop-detail/Common/CustomDialog/CustomDialog";
 import { getDatasetQueryOptions } from "src/api/develop/develop-detail";
+import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
 
 const titleProps = {
   variant: "s1",
@@ -42,14 +43,12 @@ const SyntheticSummary = ({ summaryData = {}, onClose, isLoading }) => {
   const theme = useTheme();
   const {
     dataset = {},
-    numRows: rowNumber = "",
-    kbId = "",
+    num_rows: rowNumber = "",
+    kb_id: kbId = "",
     columns = [],
   } = summaryData;
 
-  const { data: knowledgeBaseList } = useKnowledgeBaseList("", null, {
-    status: true,
-  });
+  const { data: knowledgeBaseList } = useKnowledgeBaseList("", null);
 
   const knowledgeBaseOptions = useMemo(
     () =>
@@ -261,11 +260,11 @@ export default function SyntheticSummaryDrawer() {
   const { data, isLoading } = useQuery({
     queryKey: [
       dataset,
-      tableData?.data?.result?.syntheticDataset,
+      tableData?.data?.result?.synthetic_dataset,
       openSummaryDrawer,
     ],
     queryFn: () => axios.get(endpoints.develop.getSyntheticConfig(dataset)),
-    enabled: !!dataset && !!tableData?.data?.result?.syntheticDataset,
+    enabled: !!dataset && !!tableData?.data?.result?.synthetic_dataset,
     select: (d) => d.data?.result?.data,
   });
 
@@ -317,22 +316,23 @@ export default function SyntheticSummaryDrawer() {
     });
   }, [setOpenConfirmEdit, setOpenEditDrawer, setOpenSummaryDrawer]);
 
+  const covered = useDrawerCovered(openSummaryDrawer);
   return (
     <>
       <Drawer
         anchor="right"
         open={openSummaryDrawer}
+        sx={coveredDrawerSx(covered)}
         onClose={() => setOpenSummaryDrawer(false)}
         PaperProps={{
           sx: {
             height: "100vh",
             position: "fixed",
             zIndex: 10,
-            boxShadow: "-10px 0px 100px #00000035",
             borderRadius: "0px !important",
             backgroundColor: "background.paper",
-            minWidth: "400px",
-            maxWidth: "500px",
+            minWidth: "480px",
+            maxWidth: "480px",
           },
         }}
         ModalProps={{
@@ -374,13 +374,7 @@ export default function SyntheticSummaryDrawer() {
                 disabled={isUpdating}
                 onClick={handleRegenerate}
                 startIcon={
-                  <SvgColor
-                    sx={{
-                      height: 16,
-                      width: 16,
-                    }}
-                    src="/assets/icons/ic_reload.svg"
-                  />
+                  <SvgColor width={16} src="/assets/icons/ic_reload.svg" />
                 }
                 size="small"
                 color="primary"
@@ -402,13 +396,7 @@ export default function SyntheticSummaryDrawer() {
                 }
               }}
               startIcon={
-                <SvgColor
-                  sx={{
-                    height: 16,
-                    width: 16,
-                  }}
-                  src="/assets/icons/ic_edit.svg"
-                />
+                <SvgColor width={16} src="/assets/icons/ic_edit.svg" />
               }
               size="small"
               color="primary"

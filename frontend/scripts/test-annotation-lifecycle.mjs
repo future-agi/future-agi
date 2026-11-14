@@ -3,6 +3,7 @@ import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 import puppeteer from "puppeteer-core";
+import { apiPath } from "../src/api/contracts/api-surface.js";
 
 const FRONTEND_URL = process.env.FRONTEND_URL || "http://localhost:3032";
 const QUEUE_ID = process.env.ANNOTATION_QUEUE_ID;
@@ -25,6 +26,11 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ARTIFACT_DIR = path.join(__dirname, ".artifacts");
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+const queueApiPath = (template, params = {}) =>
+  apiPath(template, { queue_id: QUEUE_ID, ...params });
+
+const withQuery = (pathName, query) => `${pathName}?${query}`;
 
 function assert(condition, message) {
   if (!condition) throw new Error(message);
@@ -290,7 +296,7 @@ async function listQueueItems(apiBase, accessToken, params = {}) {
     await apiGet(
       apiBase,
       accessToken,
-      `/model-hub/annotation-queues/${QUEUE_ID}/items/?${query}`,
+      withQuery(queueApiPath("/model-hub/annotation-queues/{queue_id}/items/"), query),
     ),
   );
 }
@@ -341,7 +347,9 @@ async function runSkipWorkflow({ page, apiBase, accessToken }) {
   await apiPatch(
     apiBase,
     accessToken,
-    `/model-hub/annotation-queues/${QUEUE_ID}/items/${item.id}/`,
+    queueApiPath("/model-hub/annotation-queues/{queue_id}/items/{id}/", {
+      id: item.id,
+    }),
     { status: "pending" },
   ).catch(() => {});
 
@@ -368,7 +376,7 @@ async function runAssignAndMyItems({ page, apiBase, accessToken, user }) {
   await apiPost(
     apiBase,
     accessToken,
-    `/model-hub/annotation-queues/${QUEUE_ID}/items/assign/`,
+    queueApiPath("/model-hub/annotation-queues/{queue_id}/items/assign/"),
     { item_ids: [item.id], user_ids: [], action: "set" },
   );
 
@@ -442,7 +450,7 @@ async function runAssignAndMyItems({ page, apiBase, accessToken, user }) {
   await apiPost(
     apiBase,
     accessToken,
-    `/model-hub/annotation-queues/${QUEUE_ID}/items/assign/`,
+    queueApiPath("/model-hub/annotation-queues/{queue_id}/items/assign/"),
     { item_ids: [assignedItemId], user_ids: [], action: "set" },
   ).catch(() => {});
 
@@ -463,7 +471,9 @@ async function runAudioWorkflow({ page, apiBase, accessToken }) {
     const detail = await apiGet(
       apiBase,
       accessToken,
-      `/model-hub/annotation-queues/${QUEUE_ID}/items/${item.id}/annotate-detail/`,
+      queueApiPath("/model-hub/annotation-queues/{queue_id}/items/{id}/annotate-detail/", {
+        id: item.id,
+      }),
     ).catch(() => null);
     const callId = detail?.item?.source_content?.call_id;
     if (!callId) continue;
@@ -514,7 +524,10 @@ async function findAnnotationLabelByName(apiBase, accessToken, name) {
     await apiGet(
       apiBase,
       accessToken,
-      `/model-hub/annotations-labels/?search=${encodeURIComponent(name)}`,
+      withQuery(
+        apiPath("/model-hub/annotations-labels/"),
+        `search=${encodeURIComponent(name)}`,
+      ),
     ),
   );
   return rows.find((label) => label.name === name);
@@ -525,7 +538,7 @@ async function runSettingsLabelsCrud({ page, apiBase, accessToken }) {
   const name = `codex lifecycle label ${suffix}`;
   const renamed = `${name} renamed`;
 
-  const created = await apiPost(apiBase, accessToken, "/model-hub/annotations-labels/", {
+  const created = await apiPost(apiBase, accessToken, apiPath("/model-hub/annotations-labels/"), {
     name,
     type: "text",
     description: "Created by lifecycle e2e",
@@ -543,19 +556,28 @@ async function runSettingsLabelsCrud({ page, apiBase, accessToken }) {
     await waitForText(page, name, 30000);
     const createdScreenshotPath = await screenshot(page, "lifecycle-settings-label-created.png");
 
-    await apiPut(apiBase, accessToken, `/model-hub/annotations-labels/${createdLabel.id}/`, {
-      name: renamed,
-      type: "text",
-      description: "Renamed by lifecycle e2e",
-      settings: { placeholder: "Lifecycle", min_length: 0, max_length: 500 },
-      allow_notes: false,
-    });
+    await apiPut(
+      apiBase,
+      accessToken,
+      apiPath("/model-hub/annotations-labels/{id}/", { id: createdLabel.id }),
+      {
+        name: renamed,
+        type: "text",
+        description: "Renamed by lifecycle e2e",
+        settings: { placeholder: "Lifecycle", min_length: 0, max_length: 500 },
+        allow_notes: false,
+      },
+    );
     await openQueue(page, "Settings");
     await typeIntoInput(page, ["Search labels"], renamed);
     await waitForText(page, renamed, 30000);
     const renamedScreenshotPath = await screenshot(page, "lifecycle-settings-label-renamed.png");
 
-    await apiDelete(apiBase, accessToken, `/model-hub/annotations-labels/${createdLabel.id}/`);
+    await apiDelete(
+      apiBase,
+      accessToken,
+      apiPath("/model-hub/annotations-labels/{id}/", { id: createdLabel.id }),
+    );
     deleted = true;
     await openQueue(page, "Settings");
     await typeIntoInput(page, ["Search labels"], renamed);
@@ -574,7 +596,7 @@ async function runSettingsLabelsCrud({ page, apiBase, accessToken }) {
       await apiDelete(
         apiBase,
         accessToken,
-        `/model-hub/annotations-labels/${createdLabel.id}/`,
+        apiPath("/model-hub/annotations-labels/{id}/", { id: createdLabel.id }),
       ).catch(() => {});
     }
   }
@@ -585,7 +607,7 @@ async function runMultiConditionEdit({ page, apiBase, accessToken }) {
   const created = await apiPost(
     apiBase,
     accessToken,
-    `/model-hub/annotation-queues/${QUEUE_ID}/automation-rules/`,
+    queueApiPath("/model-hub/annotation-queues/{queue_id}/automation-rules/"),
     {
       name: ruleName,
       source_type: "trace",
@@ -615,7 +637,9 @@ async function runMultiConditionEdit({ page, apiBase, accessToken }) {
     await apiPatch(
       apiBase,
       accessToken,
-      `/model-hub/annotation-queues/${QUEUE_ID}/automation-rules/${created.id}/`,
+      queueApiPath("/model-hub/annotation-queues/{queue_id}/automation-rules/{id}/", {
+        id: created.id,
+      }),
       editedPayload,
     );
 
@@ -629,7 +653,9 @@ async function runMultiConditionEdit({ page, apiBase, accessToken }) {
     const saved = await apiPatch(
       apiBase,
       accessToken,
-      `/model-hub/annotation-queues/${QUEUE_ID}/automation-rules/${created.id}/`,
+      queueApiPath("/model-hub/annotation-queues/{queue_id}/automation-rules/{id}/", {
+        id: created.id,
+      }),
       finalPayload,
     );
     assert(
@@ -652,7 +678,9 @@ async function runMultiConditionEdit({ page, apiBase, accessToken }) {
     await apiDelete(
       apiBase,
       accessToken,
-      `/model-hub/annotation-queues/${QUEUE_ID}/automation-rules/${created.id}/`,
+      queueApiPath("/model-hub/annotation-queues/{queue_id}/automation-rules/{id}/", {
+        id: created.id,
+      }),
     ).catch(() => {});
   }
 }
@@ -663,7 +691,7 @@ async function runDatetimeRoundtrip({ page, apiBase, accessToken }) {
   const created = await apiPost(
     apiBase,
     accessToken,
-    `/model-hub/annotation-queues/${QUEUE_ID}/automation-rules/`,
+    queueApiPath("/model-hub/annotation-queues/{queue_id}/automation-rules/"),
     {
       name: ruleName,
       source_type: "trace",
@@ -693,7 +721,9 @@ async function runDatetimeRoundtrip({ page, apiBase, accessToken }) {
     await apiDelete(
       apiBase,
       accessToken,
-      `/model-hub/annotation-queues/${QUEUE_ID}/automation-rules/${created.id}/`,
+      queueApiPath("/model-hub/annotation-queues/{queue_id}/automation-rules/{id}/", {
+        id: created.id,
+      }),
     ).catch(() => {});
   }
 }

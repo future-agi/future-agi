@@ -22,11 +22,11 @@ const buildUserFilterAndNavigate = ({
   navigate,
 }) => {
   const userIdFilter = {
-    columnId: "user_id",
-    filterConfig: {
-      filterType: "text",
-      filterOp: "equals",
-      filterValue: selectedUserId,
+    column_id: "user_id",
+    filter_config: {
+      filter_type: "text",
+      filter_op: "equals",
+      filter_value: selectedUserId,
     },
     _meta: {
       parentProperty: "user_id",
@@ -37,11 +37,13 @@ const buildUserFilterAndNavigate = ({
   // remove invalid filters
   const mergedFilters = (filters || []).filter(
     (f) =>
-      f?.columnId && f?.filterConfig?.filterType && f?.filterConfig?.filterOp,
+      f?.column_id &&
+      f?.filter_config?.filter_type &&
+      f?.filter_config?.filter_op,
   );
 
   // ensure userId filter is present
-  const alreadyHasUserId = mergedFilters.some((f) => f.columnId === "user_id");
+  const alreadyHasUserId = mergedFilters.some((f) => f.column_id === "user_id");
   if (!alreadyHasUserId) {
     mergedFilters.push(userIdFilter);
   }
@@ -116,7 +118,7 @@ const UserHeaderSection = ({
             />
           </Box>
           <Button
-            startIcon={<Iconify icon="clarity:refresh-line" />}
+            startIcon={<Iconify icon="solar:refresh-linear" />}
             onClick={() => {
               setZoomRange(DEFAULT_ZOOM_RANGE);
               setDateFilter(DEFAULT_DATE_FILTER);
@@ -143,7 +145,6 @@ const UserHeaderSection = ({
                 navigate,
               })
             }
-            sx={{ paddingX: "16px" }}
             startIcon={<SvgColor src="/assets/icons/navbar/ic_llm.svg" />}
           >
             View Traces
@@ -162,7 +163,6 @@ const UserHeaderSection = ({
                 navigate,
               })
             }
-            sx={{ paddingX: "16px" }}
             startIcon={<SvgColor src="/assets/icons/navbar/ic_sessions.svg" />}
           >
             View Sessions

@@ -1,5 +1,5 @@
 import { Box, Drawer, IconButton, Typography } from "@mui/material";
-import React, { useEffect } from "react";
+import React, { useEffect, useMemo } from "react";
 import { useForm } from "react-hook-form";
 import Iconify from "src/components/iconify";
 import PropTypes from "prop-types";
@@ -15,15 +15,20 @@ import FormTextFieldV2 from "src/components/FormTextField/FormTextFieldV2";
 import { FormSearchSelectFieldControl } from "src/components/FromSearchSelectField";
 import { useExtractJsonKeyStore } from "../../states";
 import { useDevelopDetailContext } from "../../Context/DevelopDetailContext";
-import { useDatasetColumnConfig } from "src/api/develop/develop-detail";
+import {
+  useDatasetColumnConfig,
+  useGetJsonColumnSchema,
+} from "src/api/develop/develop-detail";
 import DynamicColumnSkeleton from "../DynamicColumnSkeleton";
 import { ShowComponent } from "../../../../components/show";
+import { isJsonColumn } from "./columnFilterUtils";
+import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
 
 const getDefaultValue = () => {
   return {
-    columnId: "",
-    jsonKey: "",
-    newColumnName: "",
+    column_id: "",
+    json_key: "",
+    new_column_name: "",
     concurrency: "",
   };
 };
@@ -37,12 +42,7 @@ export const ExtractJsonKeyChild = ({
   const { refreshGrid } = useDevelopDetailContext();
 
   const { control, handleSubmit, reset } = useForm({
-    defaultValues: {
-      columnId: "",
-      jsonKey: "",
-      newColumnName: "",
-      concurrency: "",
-    },
+    defaultValues: getDefaultValue(),
     resolver: zodResolver(
       ExtractJsonKeyValidationSchema(!!onFormSubmit, !!editId),
     ),
@@ -50,6 +50,23 @@ export const ExtractJsonKeyChild = ({
 
   const { dataset } = useParams();
   const allColumns = useDatasetColumnConfig(dataset);
+  // refetchOnMount: "always" ensures the schema is fresh when the drawer opens,
+  // so a newly-created api_call column isn't hidden by a stale cache entry.
+  const { data: jsonSchemas = {} } = useGetJsonColumnSchema(dataset, {
+    refetchOnMount: "always",
+  });
+
+  const columnOptions = useMemo(
+    () =>
+      allColumns
+        ?.filter((column) => isJsonColumn(column, jsonSchemas))
+        ?.map((column) => ({
+          label: column.headerName,
+          value: column.field,
+        })),
+    [allColumns, jsonSchemas],
+  );
+
   useEffect(() => {
     if (initialData) {
       reset(initialData);
@@ -106,20 +123,10 @@ export const ExtractJsonKeyChild = ({
     },
   });
 
-  const transformFormToApi = (formValues) => {
-    const { columnId, newColumnName, jsonKey, ...rest } = formValues;
-    return {
-      ...rest,
-      column_id: columnId,
-      new_column_name: newColumnName,
-      json_key: jsonKey,
-    };
-  };
-
   const onSubmit = (formValues) => {
     if (editId) {
       updateColumn({
-        config: transformFormToApi(formValues),
+        config: formValues,
         operation_type: "extract_json",
       });
       return;
@@ -127,13 +134,13 @@ export const ExtractJsonKeyChild = ({
     if (onFormSubmit) {
       onFormSubmit({ ...formValues, type: "extract_json" });
     } else {
-      addColumn(transformFormToApi(formValues));
+      addColumn(formValues);
     }
   };
 
   const handlePreview = handleSubmit((formValues) => {
     if (!onFormSubmit) {
-      preview(transformFormToApi(formValues));
+      preview(formValues);
     }
   });
 
@@ -162,7 +169,7 @@ export const ExtractJsonKeyChild = ({
             mb: 2,
           }}
         >
-          <Typography fontWeight={700} color="text.secondary">
+          <Typography fontWeight={600} color="text.secondary">
             {editId ? "Edit Extract JSON Key" : "Extract JSON Key"}
           </Typography>
           <IconButton
@@ -172,7 +179,7 @@ export const ExtractJsonKeyChild = ({
             }}
             size="small"
           >
-            <Iconify icon="mingcute:close-line" />
+            <Iconify icon="solar:close-linear" />
           </IconButton>
         </Box>
         <Box
@@ -191,7 +198,7 @@ export const ExtractJsonKeyChild = ({
               size="small"
               placeholder="Enter column name"
               control={control}
-              fieldName="newColumnName"
+              fieldName="new_column_name"
             />
           )}
           <FormSearchSelectFieldControl
@@ -199,20 +206,15 @@ export const ExtractJsonKeyChild = ({
             label="Column"
             size="small"
             control={control}
-            fieldName="columnId"
-            options={allColumns
-              ?.filter((column) => column.dataType === "json")
-              ?.map((column) => ({
-                label: column.headerName,
-                value: column.field,
-              }))}
+            fieldName="column_id"
+            options={columnOptions}
             noOptions={"No suitable column"}
           />
           <FormTextFieldV2
             label="JSON Key"
             size="small"
             control={control}
-            fieldName="jsonKey"
+            fieldName="json_key"
             placeholder="Enter JSON Path of the key (to be extracted)"
           />
 
@@ -283,10 +285,12 @@ const ExtractJsonKey = ({ initialData, onFormSubmit }) => {
     select: (data) => data?.data?.result?.metadata,
   });
 
+  const covered = useDrawerCovered(openExtractJsonKey);
   return (
     <Drawer
       anchor="right"
       open={openExtractJsonKey}
+      sx={coveredDrawerSx(covered)}
       onClose={onClose}
       variant="persistent"
       PaperProps={{
@@ -294,8 +298,7 @@ const ExtractJsonKey = ({ initialData, onFormSubmit }) => {
           height: "100vh",
           position: "fixed",
           zIndex: 2,
-          boxShadow: "-10px 0px 100px #00000035",
-          borderRadius: "10px",
+          borderRadius: "8px",
           backgroundColor: "background.paper",
         },
       }}
@@ -305,19 +308,31 @@ const ExtractJsonKey = ({ initialData, onFormSubmit }) => {
         },
       }}
     >
-      {isLoadingColumnConfig && (
-        <Box sx={{ minWidth: "510px", height: "100%" }}>
-          <DynamicColumnSkeleton />
-        </Box>
+      {/* Mount the child only while the drawer is open. The drawer is
+          variant="persistent" so it stays in the DOM, which means without
+          this gate the child + its useGetJsonColumnSchema hook would mount
+          once on first open and never refetch — newly-created API call
+          columns would stay invisible until a full page refresh. Gating
+          on openExtractJsonKey forces a fresh mount each open, which makes
+          the existing `refetchOnMount: "always"` on the schema hook actually
+          do its job. */}
+      {openExtractJsonKey && (
+        <>
+          {isLoadingColumnConfig && (
+            <Box sx={{ minWidth: "510px", height: "100%" }}>
+              <DynamicColumnSkeleton />
+            </Box>
+          )}
+          <ShowComponent condition={!isLoadingColumnConfig}>
+            <ExtractJsonKeyChild
+              initialData={columnConfig ?? initialData}
+              onFormSubmit={onFormSubmit}
+              onClose={onClose}
+              editId={editId}
+            />
+          </ShowComponent>
+        </>
       )}
-      <ShowComponent condition={!isLoadingColumnConfig}>
-        <ExtractJsonKeyChild
-          initialData={columnConfig ?? initialData}
-          onFormSubmit={onFormSubmit}
-          onClose={onClose}
-          editId={editId}
-        />
-      </ShowComponent>
     </Drawer>
   );
 };

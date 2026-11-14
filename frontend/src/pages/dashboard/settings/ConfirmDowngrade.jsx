@@ -13,11 +13,9 @@ import React, { useEffect } from "react";
 import Iconify from "src/components/iconify";
 
 const ConfirmDowngrade = ({ open, onClose, onConfirm, isLoading }) => {
-
-  useEffect(()=>{
+  useEffect(() => {
     // console.log("open : ", open)
-  },[open]);
-
+  }, [open]);
 
   return (
     <Dialog
@@ -45,7 +43,7 @@ const ConfirmDowngrade = ({ open, onClose, onConfirm, isLoading }) => {
             Are you sure you want to downgrade to free?
           </Typography>
           <IconButton onClick={onClose}>
-            <Iconify icon="mdi:close" />
+            <Iconify icon="solar:close-linear" />
           </IconButton>
         </Box>
       </DialogTitle>
@@ -68,7 +66,6 @@ const ConfirmDowngrade = ({ open, onClose, onConfirm, isLoading }) => {
     </Dialog>
   );
 };
-
 
 ConfirmDowngrade.propTypes = {
   open: PropTypes.bool,

@@ -101,8 +101,7 @@ class AgentccRoutingPolicyViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewSet
     def destroy(self, request, *args, **kwargs):
         try:
             instance = self.get_object()
-            instance.deleted = True
-            instance.save(update_fields=["deleted", "updated_at"])
+            instance.delete()
             synced = self._sync_routing_to_gateway(instance.organization)
             data = {"deleted": True, "gateway_synced": synced}
             if not synced:
@@ -162,7 +161,10 @@ class AgentccRoutingPolicyViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewSet
         """
         try:
             from agentcc.models import AgentccOrgConfig
-            from agentcc.services.config_push import push_org_config
+            from agentcc.services.config_push import (
+                push_org_config,
+                validate_org_config,
+            )
 
             active_policies = AgentccRoutingPolicy.no_workspace_objects.filter(
                 organization=org, is_active=True, deleted=False
@@ -214,6 +216,9 @@ class AgentccRoutingPolicyViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewSet
                     is_active=True,
                     change_description="Routing policy sync",
                 )
+                # Fail closed: a version the gateway contract rejects must not
+                # become active. Raising here rolls the whole save back.
+                validate_org_config(new_config)
 
             return push_org_config(str(org.id), new_config)
         except Exception as e:

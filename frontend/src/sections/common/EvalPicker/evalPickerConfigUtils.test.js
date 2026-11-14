@@ -35,12 +35,18 @@ describe("buildDataInjection", () => {
 
   it("maps each context option to its specific flag", () => {
     expect(buildDataInjection(["dataset_row"])).toEqual({ full_row: true });
-    expect(buildDataInjection(["span_context"])).toEqual({ span_context: true });
-    expect(buildDataInjection(["trace_context"])).toEqual({ trace_context: true });
+    expect(buildDataInjection(["span_context"])).toEqual({
+      span_context: true,
+    });
+    expect(buildDataInjection(["trace_context"])).toEqual({
+      trace_context: true,
+    });
     expect(buildDataInjection(["session_context"])).toEqual({
       session_context: true,
     });
-    expect(buildDataInjection(["call_context"])).toEqual({ call_context: true });
+    expect(buildDataInjection(["call_context"])).toEqual({
+      call_context: true,
+    });
   });
 
   it("accepts a legacy full_row option as an alias for dataset_row", () => {

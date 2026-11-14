@@ -1,12 +1,8 @@
 import { zodResolver } from "@hookform/resolvers/zod";
+import { SegmentedTabs } from "src/components/tabs/tabs";
 import { LoadingButton } from "@mui/lab";
-import { Box, Button, Typography, useTheme } from "@mui/material";
+import { Box, Button, Typography, Tab } from "@mui/material";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import {
-  CustomTab,
-  CustomTabs,
-  TabWrapper,
-} from "src/sections/develop/AddDatasetDrawer/AddDatasetStyle";
 import { enqueueSnackbar } from "notistack";
 import PropTypes from "prop-types";
 import React, { useEffect } from "react";
@@ -18,89 +14,7 @@ import { z } from "zod";
 import { ShowComponent } from "src/components/show";
 import YAML from "yaml";
 import FormTextFieldV2 from "../FormTextField/FormTextFieldV2";
-
-const tabOptions = [
-  { label: "JSON", value: "json", disabled: false },
-  { label: "YAML", value: "yaml", disabled: false },
-];
-
-const editorOptions = {
-  selectOnLineNumbers: true,
-  roundedSelection: false,
-  readOnly: false,
-  cursorStyle: "line",
-  automaticLayout: true,
-  wordWrap: "on",
-  lineNumbers: "off",
-  folding: false,
-  minimap: { enabled: false },
-  glyphMargin: false,
-  lineDecorationsWidth: 0,
-  renderIndentGuides: true,
-  lineNumbersMinChars: 0,
-  scrollbar: {
-    vertical: "visible",
-    horizontal: "visible",
-    verticalScrollbarSize: 10,
-    horizontalScrollbarSize: 10,
-    alwaysConsumeMouseWheel: false,
-    useShadows: false,
-  },
-};
-
-function getDefaultValues(editTool) {
-  const defaultJson = `{
-  "type": "function",
-  "function": {
-      "name": "",
-      "description": "",
-      "parameters": {
-          "type": "object",
-          "properties": {},
-          "required": []
-      }
-  }
-}`;
-
-  const defaultYaml = `
-  type: function
-  function:
-    name:
-    description:
-    parameters:
-      type: object
-      properties: {}
-      required: []
-  `;
-
-  if (editTool) {
-    return {
-      name: editTool?.name || "",
-      description: editTool?.description || "",
-      config_type: editTool?.configType,
-      inputSchema: {
-        json:
-          editTool?.configType === "json" && editTool?.config
-            ? JSON.stringify(editTool?.config, null, 2)
-            : defaultJson,
-        yaml:
-          editTool?.configType === "yaml" && editTool?.yamlConfig
-            ? editTool?.yamlConfig
-            : defaultYaml,
-      },
-    };
-  }
-
-  return {
-    name: "",
-    description: "",
-    config_type: "json",
-    inputSchema: {
-      json: defaultJson,
-      yaml: defaultYaml,
-    },
-  };
-}
+import { editorOptions, getDefaultValues, tabOptions } from "./EditTool.utils";
 
 const toolSchema = z
   .object({
@@ -158,7 +72,6 @@ const toolSchema = z
 const EditTool = ({ onCancel, editTool }) => {
   const isEditMode = Boolean(editTool);
   const queryClient = useQueryClient();
-  const theme = useTheme();
 
   const {
     control,
@@ -272,30 +185,21 @@ const EditTool = ({ onCancel, editTool }) => {
         >
           Input schema
         </Typography>
-        <TabWrapper sx={{ marginBottom: "0", width: "max-content" }}>
-          <CustomTabs
-            textColor="primary"
+        <Box sx={{ mb: 1.5 }}>
+          <SegmentedTabs
             value={configType}
             onChange={(e, value) => setValue("config_type", value)}
-            TabIndicatorProps={{
-              style: {
-                backgroundColor: theme.palette.primary.main,
-                opacity: 0.08,
-                height: "100%",
-                borderRadius: "8px",
-              },
-            }}
           >
             {tabOptions.map((tab) => (
-              <CustomTab
+              <Tab
                 key={tab.value}
                 label={tab.label}
                 value={tab.value}
                 disabled={tab.disabled}
               />
             ))}
-          </CustomTabs>
-        </TabWrapper>
+          </SegmentedTabs>
+        </Box>
         <Box
           sx={{
             border: "1px solid",
@@ -346,12 +250,12 @@ const EditTool = ({ onCancel, editTool }) => {
       </Box>
       <Box sx={{ display: "flex", justifyContent: "flex-end", gap: 1.4 }}>
         <Button
+          size="small"
           onClick={onCancel}
           variant="outlined"
           type="button"
           sx={{
             width: "90px",
-            height: "30px",
             border: "1px solid",
             borderColor: "action.hover",
             backgroundColor: "background.paper",
@@ -359,26 +263,17 @@ const EditTool = ({ onCancel, editTool }) => {
             display: "flex",
             alignItems: "center",
             flexDirection: "row",
-            ...theme.typography["s2"],
-            fontWeight: (theme) => theme.typography.fontWeightMedium,
-            py: (theme) => theme.spacing(0.75),
-            px: (theme) => theme.spacing(3),
-            borderRadius: "8px",
           }}
         >
           Cancel
         </Button>
         <LoadingButton
+          size="small"
           variant="contained"
           color="primary"
           type="submit"
           sx={{
-            width: editTool ? "90px" : "95px",
-            height: "30px",
-            ...theme.typography["s2"],
-            fontWeight: (theme) => theme.typography["fontWeightSemiBold"],
-            py: (theme) => theme.spacing(0.75),
-            px: (theme) => theme.spacing(3),
+            minWidth: "90px",
             ...(!isValid && {
               color: (theme) => `${theme.palette.background.paper} !important`,
               backgroundColor: (theme) => `${theme.palette.divider} !important`,

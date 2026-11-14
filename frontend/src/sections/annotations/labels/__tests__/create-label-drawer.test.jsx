@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, userEvent, waitFor } from "src/utils/test-utils";
-import CreateLabelDrawer from "../create-label-drawer";
+import CreateLabelDrawer, { buildPreviewSettings } from "../create-label-drawer";
 
 // Mock the API hooks
 const mockCreate = vi.fn();
@@ -298,5 +298,24 @@ describe("CreateLabelDrawer", () => {
 
     expect(screen.getByLabelText(/name/i)).toHaveValue("Accuracy");
     expect(screen.getByLabelText(/description/i)).toHaveValue("A description");
+  });
+});
+
+describe("buildPreviewSettings", () => {
+  it("forwards display_type so numeric previews are not blank", () => {
+    expect(
+      buildPreviewSettings("numeric", {
+        min: 0,
+        max: 5,
+        step_size: 1,
+        display_type: "input",
+      }),
+    ).toMatchObject({ min: 0, max: 5, step: 1, display_type: "input" });
+  });
+
+  it("defaults numeric display_type to slider when not provided", () => {
+    expect(buildPreviewSettings("numeric", { min: 1, max: 10 })).toMatchObject({
+      display_type: "slider",
+    });
   });
 });

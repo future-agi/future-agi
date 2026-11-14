@@ -64,6 +64,8 @@ const TestEvaluationPage = ({
 
   const { refreshTestRunGrid } = useTestDetailContext();
 
+  const refreshOpeningGrid = onSuccessOfAdditionOfEvals ?? refreshTestRunGrid;
+
   const selectedCount = useTestRunsSelectedCount();
 
   const [openUpdateKeysDialog, setOpenUpdateKeysDialog] = useState(false);
@@ -71,9 +73,7 @@ const TestEvaluationPage = ({
   const { data: testData, loading } = useTestRunDetails(testId);
   const isPendingTestDetail = loading?.isPending;
   const agentType =
-    testData?.agent_definition_detail?.agent_type ??
-    testData?.agentDefinitionDetail?.agentType ??
-    AGENT_TYPES.CHAT;
+    testData?.agent_definition_detail?.agent_type ?? AGENT_TYPES.CHAT;
   const queryClient = useQueryClient();
 
   const { mutate: updateTestRuns } = useUpdateTestRuns(testId, {
@@ -125,6 +125,10 @@ const TestEvaluationPage = ({
       queryClient.invalidateQueries({
         queryKey: ["test-runs-detail", testId],
       });
+      queryClient.invalidateQueries({
+        queryKey: ["test-execution-detail", "KPIS"],
+      });
+      refreshOpeningGrid?.();
       enqueueSnackbar("Eval deleted successfully", {
         variant: "success",
       });
@@ -142,12 +146,10 @@ const TestEvaluationPage = ({
     onSuccess: () => {
       setOpenConfirmRunEvaluations(false);
       onClose();
-      if (executionIds) {
-        onSuccessOfAdditionOfEvals?.();
-      } else {
+      if (!executionIds) {
         clearSelection();
-        refreshTestRunGrid?.();
       }
+      refreshOpeningGrid?.();
 
       enqueueSnackbar("Evals run successfully", {
         variant: "success",
@@ -159,9 +161,7 @@ const TestEvaluationPage = ({
     () =>
       (
         testData?.simulate_eval_configs_detail ??
-        testData?.simulateEvalConfigsDetail ??
         testData?.evals_detail ??
-        testData?.evalsDetail ??
         []
       ).map((evalItem) => ({
         ...evalItem,
@@ -188,22 +188,16 @@ const TestEvaluationPage = ({
   const onToggleToolCallCheck = (e) => {
     const value = e.target.checked;
     if (agentType === AGENT_TYPES.VOICE) {
-      const agentVersionDetails =
-        testData?.agent_version ?? testData?.agentVersion;
       const configurationSnapshot =
-        agentVersionDetails?.configuration_snapshot ??
-        agentVersionDetails?.configurationSnapshot;
+        testData?.agent_version?.configuration_snapshot;
       if (!configurationSnapshot) {
         enqueueSnackbar("There was error getting agent version details", {
           variant: "error",
         });
         return;
       }
-      const vapiApiKey =
-        configurationSnapshot?.api_key ?? configurationSnapshot?.apiKey;
-      const vapiAssistantId =
-        configurationSnapshot?.assistant_id ??
-        configurationSnapshot?.assistantId;
+      const vapiApiKey = testData?.agent_version?.api_key;
+      const vapiAssistantId = configurationSnapshot?.assistant_id;
       if ((!vapiApiKey || !vapiAssistantId) && value) {
         setOpenUpdateKeysDialog(true);
         return;
@@ -234,7 +228,7 @@ const TestEvaluationPage = ({
           All Evaluations
         </Typography>
         <IconButton onClick={onClose} sx={{ p: 0.5, color: "text.primary" }}>
-          <Iconify icon="mingcute:close-line" width={20} />
+          <Iconify icon="solar:close-linear" width={20} />
         </IconButton>
       </Box>
       <ShowComponent condition={selectedCount === 0}>
@@ -274,7 +268,7 @@ const TestEvaluationPage = ({
             borderColor="divider"
             borderRadius={1}
           >
-            <Typography fontSize={15} fontWeight={600} mb={0.5}>
+            <Typography fontSize={12} fontWeight={600} mb={0.5}>
               No evaluations added
             </Typography>
             <Typography fontSize={12} color="text.secondary" mb={2}>
@@ -283,19 +277,13 @@ const TestEvaluationPage = ({
             <Button
               size="small"
               variant="contained"
-              startIcon={<Iconify icon="mdi:plus" width={16} />}
+              startIcon={<Iconify icon="solar:add-linear" width={16} />}
               onClick={handleAddEvaluationClick}
               disabled={
                 !RolePermission.EVALS[PERMISSIONS.EDIT_CREATE_DELETE_EVALS][
                   role
                 ]
               }
-              sx={{
-                textTransform: "none",
-                fontSize: "12px",
-                px: 2,
-                fontWeight: 500,
-              }}
             >
               Add Evaluation
             </Button>
@@ -331,11 +319,7 @@ const TestEvaluationPage = ({
           sx={{ ml: 0, mr: 0 }}
           control={
             <Checkbox
-              checked={
-                testData?.enable_tool_evaluation ??
-                testData?.enableToolEvaluation ??
-                false
-              }
+              checked={testData?.enable_tool_evaluation ?? false}
               onChange={onToggleToolCallCheck}
               size="small"
               sx={{ p: 0.5 }}
@@ -358,13 +342,6 @@ const TestEvaluationPage = ({
             variant="outlined"
             size="small"
             onClick={onClose}
-            sx={{
-              textTransform: "none",
-              fontSize: "12px",
-              fontWeight: 500,
-              borderRadius: "6px",
-              px: 2,
-            }}
           >
             Cancel
           </Button>
@@ -392,15 +369,8 @@ const TestEvaluationPage = ({
                   ]
                 }
                 startIcon={
-                  <Iconify icon="mdi:play-circle-outline" width={16} />
+                  <Iconify icon="solar:play-circle-linear" width={16} />
                 }
-                sx={{
-                  textTransform: "none",
-                  fontSize: "12px",
-                  fontWeight: 500,
-                  borderRadius: "6px",
-                  px: 2,
-                }}
               >
                 Run Evaluation
               </Button>
@@ -418,9 +388,7 @@ const TestEvaluationPage = ({
             eval_config_ids: evalsToRun.map((e) => e.id),
             test_execution_ids: executionIds ? executionIds : toggledNodes,
             select_all: selectAll,
-            enable_tool_evaluation:
-              testData?.enable_tool_evaluation ??
-              testData?.enableToolEvaluation,
+            enable_tool_evaluation: testData?.enable_tool_evaluation,
           });
         }}
         selectedUserEvalList={evals}
@@ -463,10 +431,8 @@ const TestEvaluationPage = ({
           setOpenUpdateKeysDialog(false);
         }}
         onClose={() => setOpenUpdateKeysDialog(false)}
-        agentDetails={testData?.agent_version ?? testData?.agentVersion}
-        agentDefinitionId={
-          testData?.agent_definition ?? testData?.agentDefinition
-        }
+        agentDetails={testData?.agent_version}
+        agentDefinitionId={testData?.agent_definition}
       />
     </Box>
   );

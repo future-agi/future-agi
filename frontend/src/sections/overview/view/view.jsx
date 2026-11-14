@@ -63,7 +63,7 @@ export default function OverviewView() {
               total={data?.issues?.total_count}
               chart={{
                 colors: [theme.palette.info.light, theme.palette.info.main],
-                series: data?.volume?.last_day?.map((val) => val.y),
+                series: data?.issues?.last_day?.map((val) => val.y),
               }}
             />
           </Grid>

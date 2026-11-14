@@ -18,6 +18,11 @@ import { LoadingButton } from "@mui/lab";
 import { FormSelectField } from "src/components/FormSelectField";
 import { PromptSection } from "src/components/prompt-section";
 import { copyToClipboard } from "src/utils/utils";
+import {
+  handleAuthFailClose,
+  handleWsErrorFrame,
+  runPromptOverSocket,
+} from "src/sections/workbench/createPrompt/common";
 import { enqueueSnackbar } from "notistack";
 import { useMutation } from "@tanstack/react-query";
 import axios, { endpoints } from "src/utils/axios";
@@ -28,7 +33,7 @@ import { useImprovePromptStore, useRunPromptStoreShallow } from "../../states";
 import { useDatasetColumnConfig } from "src/api/develop/develop-detail";
 import { useParams } from "react-router";
 import { usePromptStreamUrl } from "src/sections/workbench/createPrompt/hooks/usePromptStreamUrl";
-import { runPromptOverSocket } from "src/sections/workbench/createPrompt/common";
+import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
 
 const ImprovePrompt = () => {
   const { improvePrompt: data, setImprovePrompt } = useImprovePromptStore();
@@ -38,17 +43,19 @@ const ImprovePrompt = () => {
   };
   const setOpenRunPrompt = useRunPromptStoreShallow((s) => s.setOpenRunPrompt);
   const allColumns = useDatasetColumnConfig(dataset);
+  const covered = useDrawerCovered(Boolean(data));
   return (
     <Drawer
       anchor="right"
       open={Boolean(data)}
+      sx={coveredDrawerSx(covered)}
       onClose={onClose}
       PaperProps={{
         sx: {
           height: "100vh",
           position: "fixed",
           zIndex: 9999,
-          borderRadius: "10px",
+          borderRadius: "8px",
           backgroundColor: "background.paper",
         },
       }}
@@ -168,6 +175,14 @@ const LeftSection = ({
         return new Promise((resolve, reject) => {
           // Add settled flag to track promise resolution
           let settled = false;
+          const isSettled = () => settled;
+          const markSettled = () => {
+            settled = true;
+          };
+          const resetImprovementState = () => {
+            setIsGenerateVisible(false);
+            setStreamedText("");
+          };
 
           // Close any existing WebSocket connection
           if (websocketRef.current) {
@@ -186,6 +201,17 @@ const LeftSection = ({
               type: "improve_prompt",
             },
             onMessage: (wsData) => {
+              // Surface top-level BE error frames (permission, workspace, etc.)
+              // before the type filter so the spinner doesn't hang on 4003/4004.
+              const handled = handleWsErrorFrame({
+                wsData,
+                isSettled,
+                markSettled,
+                cleanup: resetImprovementState,
+                reject,
+                defaultMessage: "Failed to improve prompt",
+              });
+              if (handled) return;
               if (wsData?.type !== "improve_prompt") return;
 
               const current_activity = wsData?.current_activity;
@@ -254,13 +280,19 @@ const LeftSection = ({
               setStreamedText("");
               reject(err);
             },
-            onClose: () => {
-              if (!settled) {
-                settled = true;
-                setIsGenerateVisible(false);
-                setStreamedText("");
-                reject(new Error("WebSocket connection closed unexpectedly"));
-              }
+            onClose: (event) => {
+              const handled = handleAuthFailClose({
+                event,
+                isSettled,
+                markSettled,
+                cleanup: resetImprovementState,
+                reject,
+              });
+              if (handled) return;
+              if (settled) return;
+              settled = true;
+              resetImprovementState();
+              reject(new Error("WebSocket connection closed unexpectedly"));
             },
           });
 
@@ -401,14 +433,14 @@ const LeftSection = ({
         }}
       >
         <Typography
-          fontWeight={700}
-          sx={{ fontSize: "14px" }}
+          fontWeight={600}
+          sx={{ fontSize: "12px" }}
           color="text.primary"
         >
           Improve AI
         </Typography>
         <IconButton onClick={onClose} size="small">
-          {/* <Iconify icon="mingcute:close-line" /> */}
+          {/* <Iconify icon="solar:close-linear" /> */}
         </IconButton>
       </Box>
       {availableRunPrompt ? (
@@ -456,7 +488,7 @@ const LeftSection = ({
             {promptData && (
               <Box
                 sx={{
-                  backgroundColor: "rgba(147, 143, 163, 0.08)",
+                  backgroundColor: "background.neutral",
                   padding: "8px 10px",
                   borderRadius: "8px",
                   marginLeft: "50px",
@@ -468,14 +500,14 @@ const LeftSection = ({
                     name={"improvement_requirements"}
                   />
                 ) : (
-                  <Typography sx={{ fontSize: "14px" }}>
+                  <Typography sx={{ fontSize: "12px" }}>
                     {promptData}
                   </Typography>
                 )}
                 <Box sx={{ textAlign: "right" }}>
                   {!edit ? (
                     <Iconify
-                      icon="material-symbols:edit"
+                      icon="solar:pen-linear"
                       color="text.secondary"
                       sx={{ cursor: "pointer" }}
                       onClick={() => setEdit(true)}
@@ -492,19 +524,13 @@ const LeftSection = ({
                     >
                       <Button
                         sx={{
-                          padding: "0px 5px",
                           backgroundColor: "action.selected",
                           color: "text.primary",
                         }}
                       >
                         Cancel
                       </Button>
-                      <Button
-                        variant="contained"
-                        color="primary"
-                        sx={{ padding: "0px 5px" }}
-                        type="submit"
-                      >
+                      <Button variant="contained" color="primary" type="submit">
                         Update
                       </Button>
                     </Box>
@@ -525,7 +551,7 @@ const LeftSection = ({
             paddingBottom: "10px",
           }}
         >
-          <Typography sx={{ fontSize: "14px" }}>
+          <Typography sx={{ fontSize: "12px" }}>
             To run the Improvement, It has to be run prompt only.
           </Typography>
         </Box>
@@ -651,8 +677,8 @@ const RightSection = ({
         }}
       >
         <Typography
-          fontWeight={700}
-          sx={{ fontSize: "14px" }}
+          fontWeight={600}
+          sx={{ fontSize: "12px" }}
           color="text.secondary"
         >
           Prompt Improvement
@@ -674,7 +700,7 @@ const RightSection = ({
               disabled={!selectedPrompt?.promptData?.prompt}
               size="small"
             >
-              <Iconify icon="basil:copy-outline" />
+              <Iconify icon="solar:copy-linear" />
             </IconButton>
           </Tooltip>
           <LoadingButton
@@ -689,7 +715,7 @@ const RightSection = ({
             Apply
           </LoadingButton>
           <IconButton onClick={onClose} size="small">
-            <Iconify icon="mingcute:close-line" />
+            <Iconify icon="solar:close-linear" />
           </IconButton>
         </Box>
       </Box>
@@ -704,10 +730,10 @@ const RightSection = ({
           paddingTop: isGenerateVisible && "0px",
           overflow: "auto",
           lineHeight: "24px",
-          fontSize: "14px",
+          fontSize: "12px",
           // paddingBottom: "10px",
           borderRadius: "8px",
-          backgroundColor: "rgba(147, 143, 163, 0.08)",
+          backgroundColor: "background.neutral",
         }}
       >
         {isGenerateVisible ? (
@@ -744,8 +770,8 @@ const AllInputField = ({ label, ...rest }) => {
       {label && (
         <Typography
           sx={{
-            fontSize: "14px",
-            fontWeight: "700",
+            fontSize: "12px",
+            fontWeight: "600",
             lineHeight: "18.2px",
             letterSpacing: "0.02em",
             color: "text.secondary",

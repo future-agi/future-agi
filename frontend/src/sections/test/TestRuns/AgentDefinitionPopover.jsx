@@ -149,7 +149,7 @@ const AgentDefinitionPopoverChild = ({ simulationType }) => {
           </ShowComponent>
           <ShowComponent condition={!isPending}>
             {agentDefinitions?.map((agent) => {
-              const { id, agentName } = agent;
+              const { id, agent_name: agentName } = agent;
               const labelId = `checkbox-list-label-${id}`;
               const isSelected = selectedAgentDefinition?.id === id;
 
@@ -193,7 +193,7 @@ const AgentDefinitionPopoverChild = ({ simulationType }) => {
                           <ListItemText
                             id={labelId}
                             primary={
-                              agentName.length > 30
+                              agentName?.length > 30
                                 ? agentName.slice(0, 30) + "..."
                                 : agentName
                             }

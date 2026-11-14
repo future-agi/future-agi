@@ -1,8 +1,8 @@
-import React, { useState, useCallback } from "react";
+import EmptyState from "src/components/empty-state";
+import React, { useState, useCallback, useMemo } from "react";
 import PropTypes from "prop-types";
 import {
   Box,
-  Card,
   Stack,
   Typography,
   Accordion,
@@ -14,14 +14,16 @@ import {
   TableCell,
   TableHead,
   TableRow,
-  TablePagination,
   ToggleButton,
   ToggleButtonGroup,
   CircularProgress,
   Skeleton,
   Tooltip,
 } from "@mui/material";
+import { TablePaginationCustom } from "src/components/table";
+import Section from "src/components/section";
 import Iconify from "src/components/iconify";
+import StatusBadge from "src/components/status-badge/StatusBadge";
 import { useQuery } from "@tanstack/react-query";
 import axiosInstance, { endpoints } from "src/utils/axios";
 import useSessions from "./hooks/useSessions";
@@ -38,6 +40,12 @@ const SORT_OPTIONS = [
   { value: "most_requests", label: "Most Requests" },
   { value: "highest_cost", label: "Highest Cost" },
 ];
+
+const SESSION_ORDERING_BY_SORT = {
+  newest: "-last_request_at",
+  most_requests: "-request_count",
+  highest_cost: "-total_cost",
+};
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -57,6 +65,16 @@ function formatTimestamp(iso) {
     return "N/A";
   }
 }
+
+const CHIP_ROLE = {
+  success: "success",
+  warning: "warning",
+  error: "danger",
+  info: "info",
+  primary: "discovery",
+  secondary: "discovery",
+  default: "neutral",
+};
 
 function getStatusChipColor(code) {
   if (code >= 200 && code < 300) return "success";
@@ -132,22 +150,21 @@ function SessionDetail({ sessionId, onRequestClick }) {
             onClick={() => onRequestClick(req.id)}
           >
             <TableCell sx={{ whiteSpace: "nowrap" }}>
-              {formatTimestamp(req.startedAt)}
+              {formatTimestamp(req.started_at)}
             </TableCell>
             <TableCell>
-              <Tooltip title={req.requestId || req.id} placement="top" arrow>
+              <Tooltip title={req.request_id || req.id} placement="top" arrow>
                 <Typography variant="body2" noWrap sx={{ maxWidth: 120 }}>
-                  {(req.requestId || req.id || "").slice(0, 12)}...
+                  {(req.request_id || req.id || "").slice(0, 12)}...
                 </Typography>
               </Tooltip>
             </TableCell>
             <TableCell>{req.model || "-"}</TableCell>
             <TableCell>
-              <Chip
-                label={req.status_code ?? "-"}
-                size="small"
-                variant="outlined"
-                color={getStatusChipColor(req.status_code)}
+              <StatusBadge
+                status={req.status_code}
+                label={String(req.status_code ?? "-")}
+                role={CHIP_ROLE[getStatusChipColor(req.status_code)]}
               />
             </TableCell>
             <TableCell>
@@ -155,15 +172,17 @@ function SessionDetail({ sessionId, onRequestClick }) {
                 variant="body2"
                 sx={{
                   color:
-                    req.latencyMs != null
-                      ? getLatencyColor(req.latencyMs)
+                    req.latency_ms != null
+                      ? getLatencyColor(req.latency_ms)
                       : undefined,
                 }}
               >
-                {req.latencyMs != null ? `${req.latencyMs}ms` : "-"}
+                {req.latency_ms != null ? `${req.latency_ms}ms` : "-"}
               </Typography>
             </TableCell>
-            <TableCell>{formatCost(req.cost)}</TableCell>
+            <TableCell sx={{ fontVariantNumeric: "tabular-nums" }}>
+              {formatCost(req.cost)}
+            </TableCell>
           </TableRow>
         ))}
       </TableBody>
@@ -181,18 +200,15 @@ const SessionExplorer = ({ filters, onRequestClick }) => {
   const [pageSize, setPageSize] = useState(25);
   const [expandedSession, setExpandedSession] = useState(null);
 
-  // Map the UI sort value to API ordering param
-  const orderingMap = {
-    newest: "-last_request_at",
-    most_requests: "-request_count",
-    highest_cost: "-total_cost",
-  };
+  const queryFilters = useMemo(
+    () => ({ ...filters, ordering: SESSION_ORDERING_BY_SORT[sortBy] }),
+    [filters, sortBy],
+  );
 
   const { data, isLoading } = useSessions({
-    ...filters,
-    page: String(page),
-    pageSize: String(pageSize),
-    sessionSort: orderingMap[sortBy],
+    filters: queryFilters,
+    page,
+    pageSize,
   });
 
   const sessions = data?.result?.results ?? data?.results ?? [];
@@ -227,7 +243,7 @@ const SessionExplorer = ({ filters, onRequestClick }) => {
   // =========================================================================
 
   return (
-    <Card>
+    <Section variant="panel" sx={{ p: 0, overflow: "hidden" }}>
       {/* ---- Sort controls ---- */}
       <Stack
         direction="row"
@@ -285,7 +301,9 @@ const SessionExplorer = ({ filters, onRequestClick }) => {
               }}
             >
               <AccordionSummary
-                expandIcon={<Iconify icon="mdi:chevron-down" width={20} />}
+                expandIcon={
+                  <Iconify icon="solar:alt-arrow-down-linear" width={20} />
+                }
               >
                 <Stack
                   direction="row"
@@ -334,13 +352,13 @@ const SessionExplorer = ({ filters, onRequestClick }) => {
                     noWrap
                     sx={{ ml: "auto" }}
                   >
-                    {formatTimestamp(session.firstRequestAt)} -{" "}
-                    {formatTimestamp(session.lastRequestAt)}
+                    {formatTimestamp(session.first_request_at)} -{" "}
+                    {formatTimestamp(session.last_request_at)}
                   </Typography>
 
-                  {session.errorCount > 0 && (
+                  {session.error_count > 0 && (
                     <Chip
-                      label={`${session.errorCount} errors`}
+                      label={`${session.error_count} errors`}
                       size="small"
                       color="error"
                       variant="outlined"
@@ -364,30 +382,16 @@ const SessionExplorer = ({ filters, onRequestClick }) => {
 
       {/* ---- Empty state ---- */}
       {!isLoading && sessions.length === 0 && (
-        <Stack alignItems="center" spacing={1.5} py={6}>
-          <Iconify
-            icon="mdi:group"
-            width={48}
-            sx={{ color: "text.disabled" }}
-          />
-          <Typography variant="h6" color="text.secondary">
-            No sessions found
-          </Typography>
-          <Typography
-            variant="body2"
-            color="text.secondary"
-            textAlign="center"
-            maxWidth={400}
-          >
-            Requests with session IDs appear here. Check that your gateway is
-            configured to capture session IDs.
-          </Typography>
-        </Stack>
+        <EmptyState
+          icon="solar:users-group-rounded-linear"
+          title="No sessions yet"
+          description="Requests with session IDs appear here. Check that your gateway captures session IDs."
+          sx={{ pt: 6, pb: 6 }}
+        />
       )}
 
       {/* ---- Pagination ---- */}
-      <TablePagination
-        component="div"
+      <TablePaginationCustom
         count={totalCount}
         page={page - 1}
         rowsPerPage={pageSize}
@@ -395,7 +399,7 @@ const SessionExplorer = ({ filters, onRequestClick }) => {
         onPageChange={handlePageChange}
         onRowsPerPageChange={handleRowsPerPageChange}
       />
-    </Card>
+    </Section>
   );
 };
 

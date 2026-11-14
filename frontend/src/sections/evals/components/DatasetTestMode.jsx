@@ -13,9 +13,9 @@ import {
   Tabs,
   TextField,
   Typography,
+  ButtonBase,
 } from "@mui/material";
 import CustomTooltip from "src/components/tooltip/CustomTooltip";
-import { TreeView, TreeItem } from "@mui/lab";
 import PropTypes from "prop-types";
 import React, {
   useCallback,
@@ -26,6 +26,7 @@ import React, {
   useState,
 } from "react";
 import Iconify from "src/components/iconify";
+import { useMapToVariable } from "./useMapToVariable";
 import axios, { endpoints } from "src/utils/axios";
 import { canonicalEntries } from "src/utils/utils";
 import { useDebounce } from "src/hooks/use-debounce";
@@ -35,6 +36,10 @@ import { buildCompositeRuntimeConfig } from "../Helpers/compositeRuntimeConfig";
 import useErrorLocalizerPoll from "../hooks/useErrorLocalizerPoll";
 import { useExecuteCompositeEvalAdhoc } from "../hooks/useCompositeEval";
 import { unwrapCellValue } from "./datasetCellValue";
+import { buildTree } from "./columnTree";
+import RequiredMark from "src/components/RequiredMark";
+import { getSafeActionErrorMessage } from "src/utils/errorUtils";
+import ContentSkeleton from "src/components/content-skeleton";
 
 const DATASET_PAGE_SIZE = 25;
 
@@ -52,7 +57,7 @@ export function JsonValueTree({ value, expanded, onToggle }) {
         component="pre"
         sx={{
           fontFamily: "monospace",
-          fontSize: "11px",
+          fontSize: "12px",
           color: "primary.main",
           whiteSpace: "pre-wrap",
           wordBreak: "break-all",
@@ -87,10 +92,11 @@ export function JsonValueTree({ value, expanded, onToggle }) {
   return (
     <Box>
       {/* Toggle */}
-      <Box
+      <ButtonBase
         onClick={onToggle}
         sx={{
           display: "flex",
+          justifyContent: "flex-start",
           alignItems: "center",
           gap: 0.5,
           cursor: "pointer",
@@ -98,20 +104,24 @@ export function JsonValueTree({ value, expanded, onToggle }) {
         }}
       >
         <Iconify
-          icon={expanded ? "mdi:chevron-down" : "mdi:chevron-right"}
+          icon={
+            expanded
+              ? "solar:alt-arrow-down-linear"
+              : "solar:alt-arrow-right-linear"
+          }
           width={14}
           sx={{ color: "text.disabled" }}
         />
         <Typography
           variant="caption"
           color="text.secondary"
-          sx={{ fontSize: "11px" }}
+          sx={{ fontSize: "12px" }}
         >
           {Array.isArray(parsed)
             ? `Array (${parsed.length} items)`
             : `Object (${Object.keys(parsed).length} keys)`}
         </Typography>
-      </Box>
+      </ButtonBase>
 
       {/* Expanded content */}
       {expanded && (
@@ -137,7 +147,7 @@ function JsonEntries({ data, depth = 0 }) {
       <Typography
         variant="caption"
         color="text.disabled"
-        sx={{ fontSize: "10px" }}
+        sx={{ fontSize: "12px" }}
       >
         ...
       </Typography>
@@ -193,7 +203,11 @@ function JsonEntryRow({ entryKey, entryValue, isObject, depth, isLast }) {
       >
         {isObject && (
           <Iconify
-            icon={open ? "mdi:chevron-down" : "mdi:chevron-right"}
+            icon={
+              open
+                ? "solar:alt-arrow-down-linear"
+                : "solar:alt-arrow-right-linear"
+            }
             width={12}
             sx={{ color: "text.disabled", mt: 0.25, flexShrink: 0 }}
           />
@@ -215,7 +229,7 @@ function JsonEntryRow({ entryKey, entryValue, isObject, depth, isLast }) {
             variant="caption"
             fontWeight={600}
             sx={{
-              fontSize: "11px",
+              fontSize: "12px",
               minWidth: 60,
               flexShrink: 0,
               color: "text.secondary",
@@ -231,7 +245,7 @@ function JsonEntryRow({ entryKey, entryValue, isObject, depth, isLast }) {
                 setValueExpanded((v) => !v);
               }}
               sx={{
-                fontSize: "11px",
+                fontSize: "12px",
                 color: "primary.main",
                 wordBreak: "break-all",
                 overflow: "hidden",
@@ -256,7 +270,7 @@ function JsonEntryRow({ entryKey, entryValue, isObject, depth, isLast }) {
             <Typography
               variant="caption"
               color="text.disabled"
-              sx={{ fontSize: "10px" }}
+              sx={{ fontSize: "12px" }}
             >
               {Array.isArray(entryValue)
                 ? `[${entryValue.length}]`
@@ -283,84 +297,118 @@ function JsonEntryRow({ entryKey, entryValue, isObject, depth, isLast }) {
 
 // ---------------------------------------------------------------------------
 // ColumnTreeSelect — dropdown with tree view for column + nested path selection
+// (buildTree lives in ./columnTree so its logic stays unit-testable in isolation)
 // ---------------------------------------------------------------------------
-function buildTree(columnNames) {
-  const roots = [];
-  const nodeMap = {}; // path → node
 
-  const getOrCreate = (path, label, parentList) => {
-    if (nodeMap[path]) return nodeMap[path];
-    const node = { id: path, label, path, children: [] };
-    nodeMap[path] = node;
-    parentList.push(node);
-    return node;
-  };
-
-  columnNames.forEach((fullPath) => {
-    // Split into segments: "col.a.b" → ["col","a","b"], "col[0].x" → ["col","[0]","x"]
-    const segments = [];
-    let current = "";
-    for (let i = 0; i < fullPath.length; i++) {
-      const ch = fullPath[i];
-      if (ch === ".") {
-        if (current) segments.push(current);
-        current = "";
-      } else if (ch === "[") {
-        if (current) segments.push(current);
-        current = "[";
-      } else if (ch === "]") {
-        current += "]";
-        segments.push(current);
-        current = "";
-      } else {
-        current += ch;
-      }
-    }
-    if (current) segments.push(current);
-
-    if (segments.length === 1) {
-      getOrCreate(fullPath, segments[0], roots);
-    } else {
-      // Walk segments, creating intermediate nodes
-      let parentList = roots;
-      let builtPath = "";
-      for (let i = 0; i < segments.length; i++) {
-        const sep = i === 0 ? "" : segments[i].startsWith("[") ? "" : ".";
-        builtPath += sep + segments[i];
-        const node = getOrCreate(builtPath, segments[i], parentList);
-        parentList = node.children;
-      }
-    }
-  });
-  return roots;
-}
-
-function renderTreeNode(node, onSelect) {
+// Indented tree row. Parent rows carry a chevron to collapse/expand their
+// children (open by default) and show their direct-child count on the right.
+// Clicking the row selects the node's path (when it is a real column — leaves,
+// and prefixes that are themselves columns); the chevron only toggles.
+// `forceOpen` keeps rows expanded while a search is active so matches stay
+// visible regardless of the user's collapse state.
+function TreeRow({ node, onSelect, selectedPath, forceOpen = false }) {
   const hasKids = node.children.length > 0;
+  const selectable = node.isColumn ?? !hasKids;
+  const [open, setOpen] = useState(true);
+  const effectiveOpen = forceOpen || open;
+  const selected = !!selectedPath && selectedPath === node.path;
+  const toggle = (e) => {
+    e.stopPropagation();
+    setOpen((o) => !o);
+  };
   return (
-    <TreeItem
-      key={node.id}
-      nodeId={node.id}
-      label={
+    <>
+      <Box
+        onClick={() => (selectable ? onSelect(node.path) : setOpen((o) => !o))}
+        sx={{
+          display: "flex",
+          alignItems: "center",
+          gap: 0.5,
+          pl: 0.75,
+          pr: 0.75,
+          py: 0.5,
+          cursor: "pointer",
+          borderRadius: "6px",
+          bgcolor: selected ? "action.selected" : "transparent",
+          "&:hover": {
+            bgcolor: selected ? "action.selected" : "action.hover",
+          },
+        }}
+      >
+        {hasKids ? (
+          <Iconify
+            icon={
+              effectiveOpen
+                ? "solar:alt-arrow-down-linear"
+                : "solar:alt-arrow-right-linear"
+            }
+            width={16}
+            onClick={toggle}
+            sx={{ color: "text.secondary", flexShrink: 0, cursor: "pointer" }}
+          />
+        ) : (
+          <Box sx={{ width: 16, flexShrink: 0 }} />
+        )}
         <Typography
+          noWrap
           sx={{
+            flex: 1,
+            minWidth: 0,
             fontSize: "12px",
-            fontFamily: "monospace",
+            fontFamily: "Inter, sans-serif",
             fontWeight: hasKids ? 600 : 400,
-            color: hasKids ? "text.primary" : "text.secondary",
-            py: 0.15,
-          }}
-          onClick={(e) => {
-            e.stopPropagation();
-            onSelect(node.path);
+            color: "text.primary",
           }}
         >
           {node.label}
         </Typography>
-      }
-    >
-      {hasKids && node.children.map((child) => renderTreeNode(child, onSelect))}
-    </TreeItem>
+        {selected && (
+          <Iconify
+            icon="solar:check-linear"
+            width={16}
+            sx={{ color: "primary.main", flexShrink: 0 }}
+          />
+        )}
+        {hasKids && (
+          <Box
+            sx={{
+              flexShrink: 0,
+              minWidth: 20,
+              px: 0.75,
+              borderRadius: "8px",
+              bgcolor: "action.hover",
+              textAlign: "center",
+            }}
+          >
+            <Typography
+              sx={{
+                fontSize: "12px",
+                fontFamily: "Inter, sans-serif",
+                color: "text.secondary",
+                lineHeight: "18px",
+              }}
+            >
+              {node.children.length}
+            </Typography>
+          </Box>
+        )}
+      </Box>
+      {hasKids && effectiveOpen && (
+        <Box
+          sx={{ ml: "15px", borderLeft: "1px solid", borderColor: "divider" }}
+        >
+          {node.children.map((child) => (
+            <TreeRow
+              key={child.id}
+              node={child}
+              onSelect={onSelect}
+              selectedPath={selectedPath}
+              forceOpen={forceOpen}
+            />
+          ))}
+        </Box>
+      )}
+    </>
   );
 }
 
@@ -373,42 +421,31 @@ function ColumnTreeSelect({
   disabledTooltip = "",
 }) {
   const [open, setOpen] = useState(false);
-  const [typing, setTyping] = useState(false);
+  const [search, setSearch] = useState("");
   const anchorRef = useRef(null);
   const tree = useMemo(() => buildTree(columnNames), [columnNames]);
 
-  // Only filter when user is actively typing, not when re-opening with a selected value
+  // Filter by the dropdown search bar — substring match on the full path,
+  // keeping ancestors of any matching node so nested hits stay reachable.
   const filtered = useMemo(() => {
-    if (!typing || !value) return tree;
-    const q = value.toLowerCase();
+    const q = search.trim().toLowerCase();
+    if (!q) return tree;
     const filterNodes = (nodes) =>
       nodes
         .map((node) => {
-          if (node.path.toLowerCase().startsWith(q)) return node;
+          if (node.path.toLowerCase().includes(q)) return node;
           const kids = filterNodes(node.children);
           if (kids.length) return { ...node, children: kids };
           return null;
         })
         .filter(Boolean);
     return filterNodes(tree);
-  }, [tree, value, typing]);
-
-  // Collect all node IDs for default expansion
-  const allIds = useMemo(() => {
-    const ids = [];
-    const walk = (nodes) =>
-      nodes.forEach((n) => {
-        ids.push(n.id);
-        walk(n.children);
-      });
-    walk(filtered);
-    return ids;
-  }, [filtered]);
+  }, [tree, search]);
 
   const handleSelect = (path) => {
     onChange(path);
     setOpen(false);
-    setTyping(false);
+    setSearch("");
   };
 
   const textField = (
@@ -419,47 +456,51 @@ function ColumnTreeSelect({
       value={value}
       placeholder={disabled ? "Loading columns..." : "Select column"}
       disabled={disabled}
-      onFocus={() => {
-        if (disabled) return;
-        setOpen(true);
-      }}
-      onChange={(e) => {
-        if (disabled) return;
-        setTyping(true);
-        onChange(e.target.value);
-        if (!open) setOpen(true);
-      }}
-      autoComplete="off"
-      inputProps={{
-        autoComplete: "off",
-        autoCorrect: "off",
-        spellCheck: false,
+      onClick={() => {
+        if (!disabled) setOpen(true);
       }}
       InputProps={{
-        sx: { fontSize: "12px", fontFamily: "monospace", height: 30, py: 0 },
+        readOnly: true,
+        sx: {
+          fontSize: "12px",
+          fontFamily: "Inter, sans-serif",
+          height: 30,
+          py: 0,
+          cursor: disabled ? "default" : "pointer",
+        },
         endAdornment: (
           <InputAdornment position="end">
             {disabled ? (
               <CircularProgress size={14} />
             ) : (
               <Iconify
-                icon={open ? "mdi:chevron-up" : "mdi:chevron-down"}
+                icon={
+                  open
+                    ? "solar:alt-arrow-up-linear"
+                    : "solar:alt-arrow-down-linear"
+                }
                 width={16}
                 sx={{ color: "text.disabled", cursor: "pointer" }}
-                onClick={() => {
+                onClick={(e) => {
+                  e.stopPropagation();
                   setOpen((p) => !p);
-                  setTyping(false);
                 }}
               />
             )}
           </InputAdornment>
         ),
       }}
-      sx={{
+      sx={(theme) => ({
         ...(isUnmapped && {
-          "& .MuiOutlinedInput-notchedOutline": { borderColor: "warning.main" },
+          "& .MuiOutlinedInput-notchedOutline": {
+            borderColor: theme.palette.amber[500],
+            borderWidth: "1.5px",
+          },
+          "&:hover .MuiOutlinedInput-notchedOutline": {
+            borderColor: theme.palette.amber[600],
+          },
         }),
-      }}
+      })}
     />
   );
 
@@ -479,7 +520,7 @@ function ColumnTreeSelect({
       ) : (
         textField
       )}
-      {!disabled && open && filtered.length > 0 && (
+      {!disabled && open && (
         <Popper
           open
           anchorEl={anchorRef.current}
@@ -491,42 +532,73 @@ function ColumnTreeSelect({
               // Don't close if clicking the input field itself
               if (anchorRef.current?.contains(e.target)) return;
               setOpen(false);
-              setTyping(false);
+              setSearch("");
             }}
           >
-            <Paper
-              elevation={8}
-              sx={{
-                mt: 0.5,
-                borderRadius: "8px",
-                border: "1px solid",
-                borderColor: "divider",
-              }}
-            >
-              <Box sx={{ maxHeight: 260, overflow: "auto", py: 0.5 }}>
-                <TreeView
-                  defaultExpanded={allIds}
-                  defaultCollapseIcon={
-                    <Iconify
-                      icon="mdi:chevron-down"
-                      width={14}
-                      sx={{ color: "text.disabled" }}
-                    />
-                  }
-                  defaultExpandIcon={
-                    <Iconify
-                      icon="mdi:chevron-right"
-                      width={14}
-                      sx={{ color: "text.disabled" }}
-                    />
-                  }
-                  sx={{
-                    "& .MuiTreeItem-content": { py: 0.1, borderRadius: "4px" },
-                    "& .MuiTreeItem-content:hover": { bgcolor: "action.hover" },
+            <Paper sx={{ mt: 0.5 }}>
+              <Box sx={{ p: 0.75 }}>
+                <TextField
+                  size="small"
+                  fullWidth
+                  autoFocus
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  placeholder="Search columns…"
+                  autoComplete="off"
+                  inputProps={{
+                    autoComplete: "off",
+                    autoCorrect: "off",
+                    spellCheck: false,
                   }}
-                >
-                  {filtered.map((node) => renderTreeNode(node, handleSelect))}
-                </TreeView>
+                  InputProps={{
+                    startAdornment: (
+                      <InputAdornment position="start">
+                        <Iconify
+                          icon="solar:magnifier-linear"
+                          width={16}
+                          sx={{ color: "text.disabled" }}
+                        />
+                      </InputAdornment>
+                    ),
+                    endAdornment: search ? (
+                      <InputAdornment position="end">
+                        <Iconify
+                          icon="solar:close-linear"
+                          width={16}
+                          sx={{ color: "text.disabled", cursor: "pointer" }}
+                          onClick={() => setSearch("")}
+                        />
+                      </InputAdornment>
+                    ) : null,
+                    sx: {
+                      fontSize: "12px",
+                      fontFamily: "Inter, sans-serif",
+                      height: 32,
+                      py: 0,
+                    },
+                  }}
+                />
+              </Box>
+              <Box sx={{ maxHeight: 260, overflow: "auto", pb: 0.5, px: 0.5 }}>
+                {filtered.length > 0 ? (
+                  filtered.map((node) => (
+                    <TreeRow
+                      key={node.id}
+                      node={node}
+                      onSelect={handleSelect}
+                      selectedPath={value}
+                      forceOpen={Boolean(search.trim())}
+                    />
+                  ))
+                ) : (
+                  <Typography
+                    variant="caption"
+                    color="text.disabled"
+                    sx={{ display: "block", px: 1, py: 1 }}
+                  >
+                    No matching columns
+                  </Typography>
+                )}
               </Box>
             </Paper>
           </ClickAwayListener>
@@ -608,6 +680,7 @@ const DatasetTestMode = React.forwardRef(
       model = "turing_large",
       variables = [],
       codeParams = {},
+      runConfig,
       onTestResult,
       onColumnsLoaded,
       initialDatasetId = "",
@@ -659,6 +732,14 @@ const DatasetTestMode = React.forwardRef(
         ? { ...initialMapping }
         : {},
     );
+
+    // Shared click-to-map behaviour for the Columns/Value table rows. Here a
+    // row's path is the column name (cell.name), matching the mapping options.
+    const { renderRowMapAction, mapMenu, rowHoverSx } = useMapToVariable({
+      variables,
+      mapping,
+      setMapping,
+    });
 
     // Search + expand
     const [tableSearch, setTableSearch] = useState("");
@@ -943,10 +1024,20 @@ const DatasetTestMode = React.forwardRef(
     }, [sourceColumns, isWorkbenchMode]);
 
     // Resolve UUID-based mapping values to display names (edit mode).
-    // Handles both plain UUIDs and "uuid.path" nested references.
+    // Handles plain UUIDs, "uuid.path" nested references, and workbench
+    // field identifiers (e.g. "input_prompt" → "model_input").
     const uuidResolutionDone = React.useRef(false);
     useEffect(() => {
-      if (!columns.length && !Object.keys(extraFieldToName).length) return;
+      const fieldToName = {};
+      Object.entries(sourceNameToField).forEach(([name, field]) => {
+        fieldToName[field] = name;
+      });
+      if (
+        !columns.length &&
+        !Object.keys(extraFieldToName).length &&
+        !Object.keys(fieldToName).length
+      )
+        return;
       if (uuidResolutionDone.current) return;
       const idToName = {};
       columns.forEach((c) => {
@@ -970,12 +1061,15 @@ const DatasetTestMode = React.forwardRef(
           } else if (extraFieldToName[val]) {
             next[variable] = extraFieldToName[val];
             changed = true;
+          } else if (fieldToName[val]) {
+            next[variable] = fieldToName[val];
+            changed = true;
           }
         });
         if (changed) uuidResolutionDone.current = true;
         return changed ? next : prev;
       });
-    }, [columns, extraFieldToName, jsonSchemas]);
+    }, [columns, extraFieldToName, sourceNameToField, jsonSchemas]);
 
     // Prune stale mapping keys when variables list changes (instruction edits).
     useEffect(() => {
@@ -1174,9 +1268,10 @@ const DatasetTestMode = React.forwardRef(
               )
           : await axios.post(endpoints.develop.eval.evalPlayground, {
               template_id: tid,
-              model,
+              ...(model ? { model } : {}),
               error_localizer: errorLocalizerEnabled,
               config: {
+                ...(runConfig ? { run_config: runConfig } : {}),
                 mapping: evalMapping,
                 ...(Object.keys(codeParams || {}).length > 0
                   ? { params: codeParams }
@@ -1226,16 +1321,15 @@ const DatasetTestMode = React.forwardRef(
             startErrorLocalizerPoll(data.result.log_id);
           }
         } else {
-          const errMsg = data?.result || "Evaluation failed";
+          const errMsg = "Evaluation failed. Please retry.";
           setError(errMsg);
           onTestResult?.(false, errMsg);
         }
       } catch (err) {
-        const errMsg =
-          err?.result ||
-          err?.detail ||
-          err?.message ||
-          "Failed to run evaluation";
+        const errMsg = getSafeActionErrorMessage(
+          err,
+          "Failed to run evaluation. Please retry.",
+        );
         setError(errMsg);
         onTestResult?.(false, errMsg);
       } finally {
@@ -1253,6 +1347,7 @@ const DatasetTestMode = React.forwardRef(
       isWorkbenchMode,
       sourceNameToField,
       codeParams,
+      runConfig,
       isComposite,
       compositeAdhocConfig,
       model,
@@ -1342,12 +1437,20 @@ const DatasetTestMode = React.forwardRef(
     );
 
     return (
-      <Box sx={{ display: "flex", flexDirection: "column", gap: 1.5 }}>
+      <Box
+        sx={{
+          display: "flex",
+          flexDirection: "column",
+          gap: 1.5,
+          height: "100%",
+        }}
+      >
         {/* Dataset selector — hidden when initialDatasetId or sourceColumns is provided */}
         {!initialDatasetId && !isWorkbenchMode && (
           <Box>
             <Typography variant="body2" fontWeight={600} sx={{ mb: 0.5 }}>
-              Choose Dataset<span style={{ color: "#d32f2f" }}>*</span>
+              Choose Dataset
+              <RequiredMark />
             </Typography>
             <Autocomplete
               fullWidth
@@ -1386,7 +1489,7 @@ const DatasetTestMode = React.forwardRef(
                   component="li"
                   {...props}
                   key={option.id}
-                  sx={{ fontSize: "13px" }}
+                  sx={{ fontSize: "12px" }}
                 >
                   {option.name || option.id}
                 </Box>
@@ -1405,7 +1508,7 @@ const DatasetTestMode = React.forwardRef(
                       params.InputProps.endAdornment
                     ),
                   }}
-                  sx={{ "& .MuiInputBase-root": { fontSize: "13px" } }}
+                  sx={{ "& .MuiInputBase-root": { fontSize: "12px" } }}
                 />
               )}
             />
@@ -1427,9 +1530,8 @@ const DatasetTestMode = React.forwardRef(
                 setError(null);
                 onClearResult?.();
               }}
-              sx={{ width: 24, height: 24 }}
             >
-              <Iconify icon="mdi:chevron-left" width={16} />
+              <Iconify icon="solar:alt-arrow-left-linear" width={16} />
             </IconButton>
             <IconButton
               size="small"
@@ -1440,9 +1542,8 @@ const DatasetTestMode = React.forwardRef(
                 setError(null);
                 onClearResult?.();
               }}
-              sx={{ width: 24, height: 24 }}
             >
-              <Iconify icon="mdi:chevron-right" width={16} />
+              <Iconify icon="solar:alt-arrow-right-linear" width={16} />
             </IconButton>
           </Box>
         )}
@@ -1450,7 +1551,7 @@ const DatasetTestMode = React.forwardRef(
         {/* Loading */}
         {!isWorkbenchMode && loadingData && (
           <Box sx={{ display: "flex", justifyContent: "center", py: 2 }}>
-            <CircularProgress size={20} />
+            <ContentSkeleton variant="panel" />
           </Box>
         )}
 
@@ -1472,7 +1573,7 @@ const DatasetTestMode = React.forwardRef(
               }}
             >
               <Iconify
-                icon="mdi:table-off"
+                icon="solar:table-linear"
                 width={28}
                 sx={{ color: "text.disabled" }}
               />
@@ -1518,7 +1619,7 @@ const DatasetTestMode = React.forwardRef(
                   startAdornment: (
                     <InputAdornment position="start">
                       <Iconify
-                        icon="mdi:magnify"
+                        icon="solar:magnifier-linear"
                         width={14}
                         sx={{ color: "text.disabled" }}
                       />
@@ -1535,10 +1636,7 @@ const DatasetTestMode = React.forwardRef(
                 display: "flex",
                 px: 1.5,
                 py: 0.5,
-                backgroundColor: (theme) =>
-                  theme.palette.mode === "dark"
-                    ? "rgba(255,255,255,0.03)"
-                    : "#fafafa",
+                backgroundColor: "background.neutral",
                 borderBottom: "1px solid",
                 borderColor: "divider",
               }}
@@ -1595,6 +1693,7 @@ const DatasetTestMode = React.forwardRef(
                       borderColor: "divider",
                       "&:last-child": { borderBottom: "none" },
                       "&:hover": { backgroundColor: "action.hover" },
+                      ...rowHoverSx,
                     }}
                   >
                     {/* Column name */}
@@ -1672,6 +1771,7 @@ const DatasetTestMode = React.forwardRef(
                         </Typography>
                       )}
                     </Box>
+                    {renderRowMapAction(cell.name)}
                   </Box>
                 );
               })}
@@ -1706,7 +1806,10 @@ const DatasetTestMode = React.forwardRef(
                 fontWeight={600}
               >
                 Variable Mapping
-                <Box component="span" sx={{ color: "error.main", ml: 0.25 }}>
+                <Box
+                  component="span"
+                  sx={{ color: "status.danger.fg", ml: 0.25 }}
+                >
                   *
                 </Box>
               </Typography>
@@ -1718,8 +1821,6 @@ const DatasetTestMode = React.forwardRef(
                     label={`${unmapped} unmapped`}
                     size="small"
                     color="warning"
-                    variant="outlined"
-                    sx={{ fontSize: "11px", height: 20 }}
                   />
                 );
               })()}
@@ -1745,7 +1846,7 @@ const DatasetTestMode = React.forwardRef(
                     }}
                   >
                     <Iconify
-                      icon="mdi:code-braces"
+                      icon="solar:code-linear"
                       width={14}
                       sx={{ color: "text.secondary" }}
                     />
@@ -1754,7 +1855,7 @@ const DatasetTestMode = React.forwardRef(
                     </Typography>
                   </Box>
                   <Iconify
-                    icon="mdi:arrow-right"
+                    icon="solar:arrow-right-linear"
                     width={14}
                     sx={{ color: "text.disabled" }}
                   />
@@ -1805,6 +1906,9 @@ const DatasetTestMode = React.forwardRef(
           </Box>
         )}
 
+        {/* Map-from-table menu — shared across mapping surfaces */}
+        {mapMenu}
+
         {/* Result */}
         {result && !isRunning && (
           <EvalResultDisplay
@@ -1812,6 +1916,9 @@ const DatasetTestMode = React.forwardRef(
               ...result,
               ...(errorLocalizerState.status
                 ? { error_localizer_status: errorLocalizerState.status }
+                : {}),
+              ...(errorLocalizerState.message
+                ? { error_localizer_message: errorLocalizerState.message }
                 : {}),
               ...(errorLocalizerState.details
                 ? {
@@ -1835,11 +1942,11 @@ const DatasetTestMode = React.forwardRef(
               p: 1.5,
               borderRadius: "6px",
               border: "1px solid",
-              borderColor: "error.main",
-              backgroundColor: "error.lighter",
+              borderColor: "status.danger.border",
+              backgroundColor: "status.danger.bg",
             }}
           >
-            <Typography variant="caption" color="error.main">
+            <Typography variant="caption" color="status.danger.fg">
               {typeof error === "string" ? error : JSON.stringify(error)}
             </Typography>
           </Box>
@@ -1855,6 +1962,7 @@ DatasetTestMode.propTypes = {
   templateId: PropTypes.string,
   variables: PropTypes.array,
   codeParams: PropTypes.object,
+  runConfig: PropTypes.object,
   onTestResult: PropTypes.func,
   onColumnsLoaded: PropTypes.func,
   initialDatasetId: PropTypes.string,

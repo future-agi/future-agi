@@ -4,12 +4,16 @@ assert response total_rows equals the predicate-derived count.
 The matrix carries placeholder UUIDs for eval_config_id / annotation_label_id;
 we rebind to the real seeded values at parametrize-time inside the test body.
 """
+
 import json
+from dataclasses import replace
+from datetime import timedelta
+from math import fsum
 
 import pytest
 
 from tracer.tests.integration._filter_matrix import all_cases_for
-from tracer.tests.integration._seed import SeededRow
+from tracer.tests.integration._seed import _NOW, SeededRow
 
 pytestmark = [pytest.mark.integration, pytest.mark.slow, pytest.mark.django_db]
 
@@ -22,55 +26,224 @@ ENDPOINTS = {
 }
 
 
+def _is_observe_usage_case(case) -> bool:
+    return (
+        case.target_type == "traces"
+        and case.col_type == "SYSTEM_METRIC"
+        and case.column_id
+        in {"cost", "total_tokens", "prompt_tokens", "completion_tokens"}
+    )
+
+
+def _observe_usage_rows(seeded: list[SeededRow]) -> list[SeededRow]:
+    """Independent whole-trace oracle for this corpus's non-summary spans.
+
+    Observe usage filters now match displayed totals, not the root alone. Keep
+    root identity/time and sum every independent member, including equal calls.
+    This corpus has no repeated Pydantic summaries; their exclusion is exercised
+    separately in test_openrouter_broadcast_list_rollups_ch25.py. Do not import
+    the production aggregator here or change span/voice expectations.
+    """
+    groups: dict[str, list[SeededRow]] = {}
+    for row in seeded:
+        groups.setdefault(row.trace_id, []).append(row)
+    return [
+        replace(
+            next(row for row in rows if row.parent_span_id is None),
+            cost=fsum(row.cost for row in rows),
+            total_tokens=sum(row.total_tokens for row in rows),
+            prompt_tokens=sum(row.prompt_tokens for row in rows),
+            completion_tokens=sum(row.completion_tokens for row in rows),
+        )
+        for rows in groups.values()
+    ]
+
+
 def _expected_count(case, seeded: list[SeededRow]) -> int:
     """Aggregate per-span predicate to the case's target unit."""
-    if case.target_type == "spans":
-        return sum(1 for r in seeded if case.expected_predicate(r))
-    if case.target_type == "voiceCalls":
+    if _is_observe_usage_case(case):
+        return sum(case.expected_predicate(row) for row in _observe_usage_rows(seeded))
+    if case.meta_kind is not None:
+        return _expected_meta_count(case, seeded)
+    if case.aggregate_predicate is not None:
+        return _expected_aggregate_count(case, seeded)
+    if (
+        case.col_type == "SPAN_ATTRIBUTE"
+        and case.filter_op in {"is_null", "is_not_null"}
+        and case.target_type != "spans"
+    ):
+        # Nullness applies to the displayed entity: a missing sibling trace
+        # does not prove that the whole session is missing the attribute.
+        rows_by_entity: dict[str, list[SeededRow]] = {}
+        for row in seeded:
+            entity_id = (
+                row.session_id if case.target_type == "sessions" else row.trace_id
+            )
+            rows_by_entity.setdefault(entity_id, []).append(row)
+        entity_matches = {
+            entity_id
+            for entity_id, entity_rows in rows_by_entity.items()
+            if (
+                all(case.expected_predicate(row) for row in entity_rows)
+                if case.filter_op == "is_null"
+                else any(case.expected_predicate(row) for row in entity_rows)
+            )
+        }
+        if case.target_type == "voiceCalls":
+            voice_trace_ids = {
+                row.trace_id
+                for row in seeded
+                if row.parent_span_id is None and row.observation_type == "conversation"
+            }
+            return len(entity_matches & voice_trace_ids)
+        if case.target_type == "traces":
+            return len(entity_matches)
+        if case.target_type == "sessions":
+            return len(entity_matches)
+    if case.target_type in ("spans", "voiceCalls"):
         return sum(1 for r in seeded if case.expected_predicate(r))
     if case.target_type == "traces":
+        if case.col_type == "SYSTEM_METRIC" and case.filter_type == "datetime":
+            # Trace datetime filters bind to the displayed root timestamp,
+            # not to any child span in the trace.  Counting every matching
+            # child and then de-duplicating trace ids would incorrectly include
+            # a trace whose root is exactly on a strict greater-than boundary.
+            return sum(
+                1
+                for r in seeded
+                if r.parent_span_id is None and case.expected_predicate(r)
+            )
         return len({r.trace_id for r in seeded if case.expected_predicate(r)})
     if case.target_type == "sessions":
         return len({r.session_id for r in seeded if case.expected_predicate(r)})
     raise AssertionError(case.target_type)
 
 
-# We need eval_config_id / annotation_label_id to be filled in for EVAL_METRIC
-# and ANNOTATION cases. Parametrize uses placeholder UUIDs; the fixture
-# rebinds them before each test.
+def _expected_meta_count(case, seeded: list[SeededRow]) -> int:
+    """Roll has_eval / has_annotation up to the requested target grain."""
+    flag = (
+        (lambda r: r.has_eval)
+        if case.meta_kind == "has_eval"
+        else (lambda r: r.has_annotation)
+    )
+    want = bool(case.filter_value)
+    traces_with = {r.trace_id for r in seeded if flag(r)}
+    if case.target_type in ("spans", "voiceCalls"):
+        # Span/voice grids match the exact trace+span pair for both direct-write
+        # eval rows and annotations.  A metric on one child must not pull in its
+        # siblings merely because they share a trace.
+        return sum(1 for r in seeded if flag(r) == want)
+    if case.target_type == "traces":
+        all_ids = {r.trace_id for r in seeded}
+        return len(traces_with if want else all_ids - traces_with)
+    if case.target_type == "sessions":
+        # Backend rolls up at the trace grain (trace_id IN/NOT IN), then to the
+        # session: a session matches has_*=true if it contains a qualifying
+        # trace, and has_*=false if it contains a NON-qualifying trace (e.g.
+        # session 2's extra eval/annotation-free trace).
+        not_with = {r.trace_id for r in seeded} - traces_with
+        target = traces_with if want else not_with
+        return len({r.session_id for r in seeded if r.trace_id in target})
+    raise AssertionError(case.target_type)
+
+
+def _session_aggregate_groups(
+    case, seeded: list[SeededRow]
+) -> dict[str, list[SeededRow]]:
+    """Usage sums independent members; trace count still counts live roots.
+
+    The corpus has no source summaries or replacements. Keep this oracle
+    independent of the production reducer, including equal-valued LLM calls.
+    """
+    groups: dict[str, list[SeededRow]] = {}
+    for row in seeded:
+        if (
+            case.column_id in {"total_cost", "total_tokens"}
+            or row.parent_span_id is None
+        ):
+            groups.setdefault(row.session_id, []).append(row)
+    return groups
+
+
+def _expected_aggregate_count(case, seeded: list[SeededRow]) -> int:
+    return sum(
+        case.aggregate_predicate(rows)
+        for rows in _session_aggregate_groups(case, seeded).values()
+    )
+
+
+# EVAL_METRIC / ANNOTATION / annotator cases carry placeholder ids at
+# parametrize-time; the test body rebinds them to the seeded values before
+# sending. Every placeholder maps to a ``corpus`` attribute of the same name.
 _PLACEHOLDER_EVAL_CFG = "00000000-0000-0000-0000-000000000001"
 _PLACEHOLDER_LABEL = "00000000-0000-0000-0000-000000000002"
 _PLACEHOLDER_CHOICE_CFG = "00000000-0000-0000-0000-000000000003"
-_ALL_CASES = all_cases_for(
-    _PLACEHOLDER_EVAL_CFG, _PLACEHOLDER_LABEL, _PLACEHOLDER_CHOICE_CFG
-)
+_PLACEHOLDER_PF_CFG = "00000000-0000-0000-0000-000000000005"
+_PLACEHOLDER_TEXT_LABEL = "00000000-0000-0000-0000-000000000006"
+_PLACEHOLDER_THUMBS_LABEL = "00000000-0000-0000-0000-000000000007"
+_PLACEHOLDER_CATEGORICAL_LABEL = "00000000-0000-0000-0000-000000000008"
+_PLACEHOLDER_ANNOTATOR = "00000000-0000-0000-0000-000000000009"
+
+# placeholder id -> corpus attribute holding the real seeded id.
+_PLACEHOLDER_ATTR = {
+    _PLACEHOLDER_EVAL_CFG: "eval_config_id",
+    _PLACEHOLDER_LABEL: "annotation_label_id",
+    _PLACEHOLDER_CHOICE_CFG: "choice_eval_config_id",
+    _PLACEHOLDER_PF_CFG: "pf_eval_config_id",
+    _PLACEHOLDER_TEXT_LABEL: "text_label_id",
+    _PLACEHOLDER_THUMBS_LABEL: "thumbs_label_id",
+    _PLACEHOLDER_CATEGORICAL_LABEL: "categorical_label_id",
+    _PLACEHOLDER_ANNOTATOR: "annotator_user_id",
+}
+_ALL_CASES = all_cases_for(_PLACEHOLDER_EVAL_CFG, _PLACEHOLDER_LABEL)
+
+# BaseQueryBuilder.parse_time_range defaults to utcnow()-30d when no created_at
+# bound is present, which drops the fixed-anchor corpus. Mirror the FE, which
+# always appends a date filter, so every request scopes to the corpus window.
+_DEFAULT_WINDOW_FILTER = {
+    "column_id": "created_at",
+    "filter_config": {
+        "filter_type": "datetime",
+        "filter_op": "between",
+        "col_type": "SYSTEM_METRIC",
+        "filter_value": [
+            (_NOW - timedelta(days=1)).isoformat(),
+            (_NOW + timedelta(days=7)).isoformat(),
+        ],
+    },
+}
 
 
-def _rebind_case(case, eval_config_id: str, label_id: str, choice_eval_config_id: str):
-    """If a case targets a placeholder eval_config / label, rewrite the
-    column_id to the real seeded id before sending to the endpoint. The
-    predicate doesn't read column_id, only row fields, so it stays valid."""
-    from tracer.tests.integration._filter_matrix import FilterCase
+def _rebind_case(case, corpus):
+    """Rewrite placeholder ids (eval configs, annotation labels, annotator
+    user) to the real seeded ids — in the column_id, in annotator filter
+    values, and inside any extra_filters — before sending to the endpoint.
+    Predicates read only row fields, so they stay valid. All other FilterCase
+    fields (contract_gap, late_bound, meta_kind, aggregate_predicate,
+    extra_filters) are preserved."""
+    import copy
+    import dataclasses
 
-    new_col_id = case.column_id
-    if case.col_type == "EVAL_METRIC":
-        if case.column_id == _PLACEHOLDER_EVAL_CFG:
-            new_col_id = eval_config_id
-        elif case.column_id == _PLACEHOLDER_CHOICE_CFG:
-            new_col_id = choice_eval_config_id
-    if case.col_type == "ANNOTATION" and case.column_id == _PLACEHOLDER_LABEL:
-        new_col_id = label_id
-    if new_col_id == case.column_id:
-        return case
-    return FilterCase(
-        case_id=case.case_id,
-        target_type=case.target_type,
-        col_type=case.col_type,
-        filter_type=case.filter_type,
-        filter_op=case.filter_op,
+    def _real(pid):
+        attr = _PLACEHOLDER_ATTR.get(pid)
+        return getattr(corpus, attr) if attr else pid
+
+    new_col_id = _real(case.column_id)
+    new_value = case.filter_value
+    if case.filter_type == "annotator" and isinstance(case.filter_value, list):
+        new_value = [_real(v) for v in case.filter_value]
+
+    new_extras = []
+    for f in case.extra_filters:
+        f = copy.deepcopy(f)
+        f["column_id"] = _real(f["column_id"])
+        new_extras.append(f)
+
+    return dataclasses.replace(
+        case,
         column_id=new_col_id,
-        filter_value=case.filter_value,
-        expected_predicate=case.expected_predicate,
+        filter_value=new_value,
+        extra_filters=tuple(new_extras),
     )
 
 
@@ -82,35 +255,107 @@ def test_list_endpoint_total_rows(
     corpus = voice_corpus if case.target_type == "voiceCalls" else seeded_corpus
     project = corpus.project
     seeded = corpus.rows
-    case = _rebind_case(
-        case,
-        corpus.eval_config_id,
-        corpus.annotation_label_id,
-        corpus.choice_eval_config_id,
-    )
+    case = _rebind_case(case, corpus)
+    # ID-only cases carry a corpus-dependent value + predicate resolved now.
+    if case.late_bound is not None:
+        case = _resolve_late_bound(case, seeded)
     expected = _expected_count(case, seeded)
 
-    filter_json = json.dumps(case.to_filter_dict()["filters"])
+    filters = case.to_filter_dict()["filters"]
+    # The UI always sends its explicit date-range filter in addition to any
+    # user-created timestamp predicate. Keep that broad safety window for all
+    # cases so one-sided and complement operators exercise the real request
+    # shape instead of falling back to the backend's rolling 30-day default.
+    filters = filters + [_DEFAULT_WINDOW_FILTER]
+    filter_json = json.dumps(filters)
     url = ENDPOINTS[case.target_type]
+    # list_voice_calls uses a 1-based `page` param; the others use page_number.
+    page_params = (
+        {"page": 1} if case.target_type == "voiceCalls" else {"page_number": 0}
+    )
     resp = auth_client.get(
         url,
         {
             "project_id": str(project.id),
-            "page_number": 0,
+            **page_params,
             "page_size": 100,
             "filters": filter_json,
         },
     )
-    assert resp.status_code == 200, getattr(resp, "content", resp)
-    body = resp.data
-    # success_response wraps payload in {"status":..., "result": <payload>}
-    payload = body.get("result", body)
-    total = payload.get("metadata", {}).get("total_rows")
-    if total is None:
-        # Some endpoints (sessions list) return total_rows at a different
-        # path — fall back to len(table)/data length as a best-effort.
-        table = payload.get("table") or payload.get("data") or []
-        total = len(table)
+    if resp.status_code != 200:
+        # Some contract gaps surface as a CH crash (e.g. is_null on numeric
+        # cost → Code 72). Treat a non-200 on a gap case as the gap.
+        if case.contract_gap:
+            pytest.xfail(case.contract_gap)
+        raise AssertionError(f"{case.case_id}: {getattr(resp, 'content', resp)}")
+    total = _read_total(resp.data)
+    if case.contract_gap:
+        # The gap means the endpoint disagrees with the semantic expectation.
+        # If they now agree, the backend was fixed — fail so we promote the case.
+        assert total != expected, (
+            f"{case.case_id}: contract gap appears resolved "
+            f"(endpoint and predicate both {total}) — promote this case"
+        )
+        pytest.xfail(case.contract_gap)
     assert total == expected, (
         f"{case.case_id}: endpoint returned {total}, predicate expected {expected}"
+    )
+    if _is_observe_usage_case(case):
+        expected_rows = {
+            row.trace_id: row
+            for row in _observe_usage_rows(seeded)
+            if case.expected_predicate(row)
+        }
+        actual_rows = resp.data["result"]["table"]
+        assert sorted(row["trace_id"] for row in actual_rows) == sorted(expected_rows)
+        for row in actual_rows:
+            oracle = expected_rows[row["trace_id"]]
+            assert row["cost"] == pytest.approx(oracle.cost, rel=1e-12, abs=1e-18)
+            assert row["total_tokens"] == oracle.total_tokens
+    if case.target_type == "sessions" and case.aggregate_predicate is not None:
+        expected_groups = {
+            session_id: rows
+            for session_id, rows in _session_aggregate_groups(case, seeded).items()
+            if case.aggregate_predicate(rows)
+        }
+        actual_rows = resp.data["result"]["table"]
+        assert sorted(row["session_id"] for row in actual_rows) == sorted(
+            expected_groups
+        )
+        for row in actual_rows:
+            members = [
+                member for member in seeded if member.session_id == row["session_id"]
+            ]
+            assert row["total_cost"] == pytest.approx(
+                fsum(member.cost for member in members), rel=1e-12, abs=1e-18
+            )
+            assert row["total_tokens"] == sum(member.total_tokens for member in members)
+            assert row["total_traces_count"] == len(
+                {member.trace_id for member in members if member.parent_span_id is None}
+            )
+
+
+def _read_total(body) -> int:
+    # success_response wraps payload in {"status":..., "result": <payload>}
+    payload = body.get("result", body)
+    metadata = payload.get("metadata")
+    total = metadata.get("total_rows") if isinstance(metadata, dict) else None
+    if total is None:
+        # list_voice_calls uses ExtendedPageNumberPagination (DRF), which
+        # reports the total under `count` with rows under `results`.
+        total = payload.get("count")
+    if total is None:
+        table = (
+            payload.get("table") or payload.get("data") or payload.get("results") or []
+        )
+        total = len(table)
+    return total
+
+
+def _resolve_late_bound(case, seeded):
+    import dataclasses
+
+    filter_value, predicate = case.late_bound(seeded)
+    return dataclasses.replace(
+        case, filter_value=filter_value, expected_predicate=predicate
     )

@@ -43,7 +43,13 @@ func newLlamaGuardAdapter(cfg map[string]interface{}) *llamaGuardAdapter {
 }
 
 func (a *llamaGuardAdapter) buildRequest(ctx context.Context, text string) (*http.Request, error) {
-	url := strings.TrimRight(a.endpoint, "/") + "/v1/chat/completions"
+	ep := strings.TrimRight(a.endpoint, "/")
+	var url string
+	if strings.HasSuffix(ep, "/chat/completions") {
+		url = ep
+	} else {
+		url = ep + "/v1/chat/completions"
+	}
 	payload := llamaGuardRequest{
 		Model: a.model,
 		Messages: []llamaGuardMessage{
@@ -58,9 +64,12 @@ func (a *llamaGuardAdapter) buildRequest(ctx context.Context, text string) (*htt
 }
 
 func (a *llamaGuardAdapter) parseResponse(body []byte) *guardrails.CheckResult {
+	if err := validateEnvelope(a, body); err != nil {
+		return guardrails.ExecutionFailure(err.Error())
+	}
 	var resp llamaGuardResponse
 	if err := json.Unmarshal(body, &resp); err != nil {
-		return &guardrails.CheckResult{Pass: false, Score: 1.0, Message: fmt.Sprintf("failed to parse llama guard response: %v", err)}
+		return guardrails.ExecutionFailure(fmt.Sprintf("failed to parse llama guard response: %v", err))
 	}
 
 	if len(resp.Choices) == 0 {

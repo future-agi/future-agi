@@ -55,8 +55,8 @@ class ReadTraceSpanTool(BaseTool):
     input_model = ReadTraceSpanInput
 
     def execute(self, params: ReadTraceSpanInput, context: ToolContext) -> ToolResult:
-        from tracer.models.observation_span import ObservationSpan
         from tracer.models.trace import Trace
+        from tracer.services.clickhouse.v2 import get_reader
 
         # Verify trace access
         try:
@@ -67,34 +67,33 @@ class ReadTraceSpanTool(BaseTool):
         except Trace.DoesNotExist:
             return ToolResult.not_found("Trace", str(params.trace_id))
 
-        # Find span in this trace — try by ID, then by exact name, then partial name
-        all_spans = list(
-            ObservationSpan.objects.filter(
-                trace_id=params.trace_id, deleted=False
-            ).values_list("id", "name")
-        )
-        valid_ids = {str(s[0]) for s in all_spans}
-        valid_names = {s[1]: str(s[0]) for s in all_spans if s[1]}
+        # Read all spans for the trace from CH 25.3 — was
+        # ObservationSpan.objects.filter(trace_id=, deleted=False)
+        # .values_list("id", "name") + multiple subsequent .get() calls.
+        # Loading once and indexing in Python avoids 1-4 extra CH round-trips
+        # for the id/exact-name/case-insensitive-name fallback chain.
+        with get_reader() as reader:
+            ch_spans = reader.list_by_trace(str(params.trace_id))
+        all_spans = [(s.id, s.name) for s in ch_spans]
+        valid_ids = {str(sid) for sid, _ in all_spans}
+        valid_names = {name: str(sid) for sid, name in all_spans if name}
+        by_id = {str(s.id): s for s in ch_spans}
 
         span = None
 
         # 1. Exact ID match
         if params.span_id in valid_ids:
-            span = ObservationSpan.objects.get(
-                id=params.span_id, trace_id=params.trace_id
-            )
+            span = by_id[params.span_id]
 
         # 2. Exact name match
         if not span and params.span_id in valid_names:
-            span = ObservationSpan.objects.get(
-                id=valid_names[params.span_id], trace_id=params.trace_id
-            )
+            span = by_id[valid_names[params.span_id]]
 
         # 3. Case-insensitive name match
         if not span:
             for name, sid in valid_names.items():
                 if params.span_id.lower() == name.lower():
-                    span = ObservationSpan.objects.get(id=sid, trace_id=params.trace_id)
+                    span = by_id[sid]
                     break
 
         # 4. Not found — return error with valid IDs so LLM can self-correct

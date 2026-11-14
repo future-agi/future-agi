@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import PropTypes from "prop-types";
 import { Box, Button, Stack } from "@mui/material";
 import CompactTabs from "./CompactTabs";
@@ -9,12 +9,14 @@ import {
   getLoadingStateWithRespectiveStatus,
   TestRunExecutionStatus,
 } from "src/sections/test-detail/common";
+import { normalizeEvalResult } from "src/sections/develop-detail/DataTab/common";
 import CustomTooltip from "src/components/tooltip/CustomTooltip";
 import CallAnalyticsView from "./CallAnalyticsView";
 import { isLiveKitProvider } from "src/sections/agents/constants";
 import ScoresListSection from "src/components/ScoresListSection/ScoresListSection";
 import { buildVoiceCallScoreSource } from "src/components/voiceAnnotationSources";
 import EvalsTabView from "src/components/traceDetail/EvalsTabView";
+import EvalRollupBreakdown from "src/components/traceDetail/EvalRollupSection/EvalRollupBreakdown";
 import { openFixWithFalcon } from "src/sections/falcon-ai/helpers/openFixWithFalcon";
 import VoiceLogsView from "./VoiceLogsView";
 import LoadingStateComponent from "src/components/CallLogsDetailDrawer/LoadingStateComponent";
@@ -27,6 +29,7 @@ import AttributesTable from "./AttributesTable";
 import MessagesView from "./MessagesView";
 import CallDetailsBar from "./CallDetailsBar";
 import ScenarioView from "./ScenarioView";
+import { isEmptyPersona } from "./persona.utils";
 
 const TABS = {
   ANALYTICS: "analytics",
@@ -49,9 +52,23 @@ const VoiceRightPanel = ({
   data,
   onCompareBaseline,
   onAction,
+  hiddenActionIds = [],
   hideAnnotationTab,
+  showFixWithFalcon = true,
+  initialEvalFocus = false,
 }) => {
   const [currentTab, setCurrentTab] = useState(TABS.ANALYTICS);
+  const evalFocusSeededRef = useRef(false);
+  useEffect(() => {
+    if (!initialEvalFocus) {
+      evalFocusSeededRef.current = false;
+      return;
+    }
+    if (!evalFocusSeededRef.current) {
+      evalFocusSeededRef.current = true;
+      setCurrentTab(TABS.EVALUATIONS);
+    }
+  }, [initialEvalFocus]);
   const isSimulate = data?.module === "simulate";
   // Prefer the conversation root span (where voice-call attributes/raw_log
   // live). `trace.observation_spans.all()` is returned without a guaranteed
@@ -67,6 +84,20 @@ const VoiceRightPanel = ({
       spans[0]
     );
   }, [data?.observation_span]);
+  // Voice detail can receive the trace-detail tree directly or its legacy
+  // flattened root span. Prefer the additive rollup whenever either shape
+  // supplies it; scalar eval outputs remain the compatibility fallback.
+  const evalRollup = useMemo(() => {
+    if (data?.eval_rollup) return data.eval_rollup;
+    const tree = data?.observation_spans || data?.observation_span;
+    if (!Array.isArray(tree)) return null;
+    const root = tree.find(
+      (entry) =>
+        entry?.eval_rollup &&
+        !entry?.observation_span?.parent_span_id,
+    );
+    return root?.eval_rollup || null;
+  }, [data?.eval_rollup, data?.observation_span, data?.observation_spans]);
   const canCompare = isSimulate && !!onCompareBaseline && !!data?.session_id;
 
   const { isCallInProgress, message: loadingMessage } =
@@ -79,7 +110,7 @@ const VoiceRightPanel = ({
     if (Array.isArray(data?.messages)) return data.messages;
     if (Array.isArray(data?.transcript)) {
       return data.transcript.map((t) => ({
-        role: t.speakerRole || t.role,
+        role: t.speaker_role || t.role,
         content: t.message || t.content || t.text,
         ...t,
       }));
@@ -91,10 +122,13 @@ const VoiceRightPanel = ({
   const callLogs = getSpanAttributes(observationSpan)?.callLogs;
   const hasLogs = !!vapiId || !!callLogs || !!data?.id;
 
+  // A call can have a persona with no dataset row behind it (scenario_columns
+  // empty); the Scenario tab is where that persona shows, so keep it.
   const hasScenarioData =
     isSimulate &&
-    !!data?.scenario_columns &&
-    Object.keys(data.scenario_columns).length > 0;
+    ((!!data?.scenario_columns &&
+      Object.keys(data.scenario_columns).length > 0) ||
+      !isEmptyPersona(data?.persona_details));
 
   const tabs = useMemo(() => {
     // Icons match the trace drawer's SpanDetailPane TAB_CONFIG where they
@@ -104,36 +138,36 @@ const VoiceRightPanel = ({
       {
         label: "Call Analytics",
         value: TABS.ANALYTICS,
-        icon: "mdi:chart-line",
+        icon: "solar:graph-up-linear",
       },
       {
         label: "Evals",
         value: TABS.EVALUATIONS,
-        icon: "mdi:checkbox-marked-circle-outline",
+        icon: "solar:check-circle-linear",
       },
       {
         label: "Messages",
         value: TABS.MESSAGES,
-        icon: "mdi:message-text-outline",
+        icon: "solar:chat-round-line-linear",
       },
     ];
     if (hasLogs) {
       t.push({
         label: "Logs",
         value: TABS.LOGS,
-        icon: "mdi:format-list-bulleted",
+        icon: "solar:list-linear",
       });
     }
     t.push({
       label: "Attributes",
       value: TABS.ATTRIBUTES,
-      icon: "mdi:code-json",
+      icon: "solar:code-linear",
     });
     if (!hideAnnotationTab) {
       t.push({
         label: "Annotations",
         value: TABS.ANNOTATIONS,
-        icon: "mdi:pencil-outline",
+        icon: "solar:pen-linear",
       });
     }
 
@@ -141,7 +175,7 @@ const VoiceRightPanel = ({
       t.push({
         label: "Scenario",
         value: TABS.SCENARIO,
-        icon: "mdi:script-text-outline",
+        icon: "solar:document-text-linear",
       });
     }
     return t;
@@ -158,6 +192,7 @@ const VoiceRightPanel = ({
       botWpm: data?.bot_wpm,
       userInterruptionCount: data?.user_interruption_count,
       aiInterruptionCount: data?.ai_interruption_count,
+      avgStopTimeAfterInterruptionMs: data?.avg_stop_time_after_interruption,
     };
 
     if (isSimulate) {
@@ -207,9 +242,12 @@ const VoiceRightPanel = ({
   // field so the trace drawer's traffic-light bucketing kicks in.
   const normalizedEvals = useMemo(() => {
     if (!evalRows) return [];
-    const rows = Array.isArray(evalRows)
-      ? evalRows.map((e, i) => [e?.id || `eval-${i}`, e])
-      : Object.entries(evalRows);
+    // A sub-goal check is the scenario's, not an eval; simulate tags it.
+    const rows = (
+      Array.isArray(evalRows)
+        ? evalRows.map((e, i) => [e?.id || `eval-${i}`, e])
+        : Object.entries(evalRows)
+    ).filter(([, e]) => e?.kind !== "sub_goal");
 
     return rows.map(([id, e], i) => {
       const rawValue = e?.score ?? e?.output ?? e?.value;
@@ -237,10 +275,19 @@ const VoiceRightPanel = ({
           scoreLabel =
             rawValue.length > 24 ? `${rawValue.slice(0, 24)}…` : rawValue;
         }
-      } else if (Array.isArray(rawValue) && rawValue.length > 0) {
-        // Choices-type results surface their selected labels as an array —
-        // keep them as items so the table can render one chip per label.
-        scoreItems = rawValue.map((v) => String(v));
+      } else if (rawValue && typeof rawValue === "object") {
+        const result = normalizeEvalResult(rawValue, e?.type || e?.output_type);
+        if (result?.kind === "choices" && Array.isArray(result.items)) {
+          scoreItems = result.items;
+        } else if (
+          result?.kind === "score" &&
+          typeof result.score === "number"
+        ) {
+          score =
+            result.score <= 1
+              ? Math.round(result.score * 100)
+              : Math.round(result.score);
+        }
       }
 
       return {
@@ -249,17 +296,29 @@ const VoiceRightPanel = ({
         score,
         score_label: scoreLabel,
         score_items: scoreItems,
-        explanation: e?.reason || e?.explanation,
+        explanation: e?.reason || e?.explanation || e?.skipped_reason,
         error: e?.error === true,
-        skipped: e?.skipped === true,
+        skipped: e?.skipped === true || e?.status === "skipped",
+        // Lifecycle status (pending/running/skipped) so EvalsTabView renders a
+        // loading / queued / skipped state for not-yet-completed voice evals.
+        status: e?.status,
+        skipped_reason: e?.skipped_reason,
         // Error localization fields — pulled from whatever key the
         // backend used. Makes the shared EvalsTabView render the
         // dropdown / "Run" UX for failed voice evals.
         cell_id: e?.cell_id || e?.cellId,
+        eval_config_id: e?.id || String(id),
+        custom_eval_config_id: e?.custom_eval_config_id,
+        observation_span_id: e?.observation_span_id,
+        project_version_id: e?.project_version_id,
+        template_type: e?.template_type,
+        error_localizer: e?.error_localizer === true,
         error_analysis:
           e?.error_analysis || e?.errorAnalysis || e?.error_details,
         error_localizer_status:
           e?.error_localizer_status || e?.errorLocalizerStatus,
+        error_localizer_message:
+          e?.error_localizer_message || e?.errorLocalizerMessage,
         selected_input_key: e?.selected_input_key || e?.selectedInputKey,
         datapoint: e?.datapoint || {
           selectedInputKey: e?.selected_input_key || e?.selectedInputKey,
@@ -318,7 +377,11 @@ const VoiceRightPanel = ({
       {/* Call details — chips + tags + Actions button live at the top of
           the right panel, matching the trace drawer's span-detail-pane
           layout. */}
-      <CallDetailsBar data={data} onAction={onAction} />
+      <CallDetailsBar
+        data={data}
+        onAction={onAction}
+        hiddenActionIds={hiddenActionIds}
+      />
 
       <Stack
         direction="row"
@@ -353,13 +416,12 @@ const VoiceRightPanel = ({
                 color="primary"
                 size="small"
                 disabled={data?.status !== TestRunExecutionStatus.COMPLETED}
-                startIcon={<Iconify icon="mdi:swap-horizontal" width={14} />}
+                startIcon={
+                  <Iconify icon="solar:transfer-horizontal-linear" width={14} />
+                }
                 onClick={() => onCompareBaseline(true)}
                 sx={{
                   whiteSpace: "nowrap",
-                  fontSize: 11,
-                  height: 26,
-                  textTransform: "none",
                 }}
               >
                 Compare with baseline
@@ -389,10 +451,13 @@ const VoiceRightPanel = ({
           </ShowComponent>
 
           <ShowComponent condition={currentTab === TABS.EVALUATIONS}>
+            {evalRollup && <EvalRollupBreakdown rollup={evalRollup} />}
             <EvalsTabView
               evals={normalizedEvals}
               emptyMessage="No evaluations for this call"
               showSpanColumn={false}
+              // A host with no Falcon flow wired (environment runs) turns it off.
+              showFixWithFalcon={showFixWithFalcon}
               onFixWithFalcon={({ level, ev, failingEvals, allEvals }) => {
                 const projectId = data?.project_id;
                 const callId = data?.id;
@@ -434,7 +499,7 @@ const VoiceRightPanel = ({
                   },
                 });
               }}
-            />
+              />
           </ShowComponent>
 
           <ShowComponent condition={currentTab === TABS.MESSAGES}>
@@ -460,6 +525,7 @@ const VoiceRightPanel = ({
               sourceId={annotationSources.sourceId}
               secondarySourceType={annotationSources.secondarySourceType}
               secondarySourceId={annotationSources.secondarySourceId}
+              projectId={data?.project_id}
               openQueueItemOnRowClick={!isSimulate}
               title=""
               renderActions={
@@ -467,17 +533,11 @@ const VoiceRightPanel = ({
                   <Button
                     size="small"
                     variant="outlined"
-                    startIcon={<Iconify icon="mingcute:add-line" width={14} />}
+                    startIcon={<Iconify icon="solar:add-linear" width={14} />}
                     onClick={() => onAction("annotate")}
                     sx={{
-                      textTransform: "none",
-                      fontSize: 12,
-                      fontWeight: 500,
                       borderColor: "divider",
                       color: "text.primary",
-                      borderRadius: "4px",
-                      px: 1.5,
-                      py: 0.25,
                     }}
                   >
                     Add Label
@@ -502,7 +562,10 @@ VoiceRightPanel.propTypes = {
   data: PropTypes.object.isRequired,
   onCompareBaseline: PropTypes.func,
   onAction: PropTypes.func,
+  hiddenActionIds: PropTypes.arrayOf(PropTypes.string),
   hideAnnotationTab: PropTypes.bool,
+  showFixWithFalcon: PropTypes.bool,
+  initialEvalFocus: PropTypes.bool,
 };
 
 export default VoiceRightPanel;

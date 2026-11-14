@@ -1,5 +1,5 @@
 import React from "react";
-import { Box, Chip, Skeleton, Typography } from "@mui/material";
+import { Box, Skeleton, Typography } from "@mui/material";
 import PropTypes from "prop-types";
 import { interpolateColorBasedOnScore } from "src/utils/utils";
 import _ from "lodash";
@@ -9,6 +9,8 @@ import { CallExecutionLoadingStatus, TestRunLoadingStatus } from "../common";
 import NumericCell from "../../common/DevelopCellRenderer/EvaluateCellRenderer/NumericCell";
 import { OutputTypes } from "src/sections/common/DevelopCellRenderer/CellRenderers/cellRendererHelper";
 import { normalizeEvalResult } from "src/sections/develop-detail/DataTab/common";
+import EvalStatusIndicator from "src/components/eval/EvalStatusIndicator";
+import { getEvalNonScoreStatus } from "src/utils/evalStatus";
 
 const EvalCellRenderer = ({ value: evalData }) => {
   // Numeric output type keeps its dedicated cell.
@@ -42,32 +44,31 @@ const EvalCellRenderer = ({ value: evalData }) => {
     );
     if (!hasEvalData && (callLoading || runLoading))
       return (
-        <Box
+        <Skeleton
+          variant="rectangular"
+          animation="wave"
           sx={{
-            display: "flex",
-            alignItems: "center",
-            height: "100%",
             width: "100%",
+            height: "100%",
+            minHeight: 20,
+            borderRadius: 0,
+            transform: "none",
           }}
-        >
-          <Skeleton sx={{ width: "100%", height: "20px" }} variant="rounded" />
-        </Box>
+        />
       );
-    if (evalData?.error) {
+    // Non-score states (queued/running/skipped) and errored all render through
+    // the shared EvalStatusIndicator; the wrapper fills the cell so the
+    // "Evaluating…" skeleton covers it like a real result.
+    const indicatorStatus =
+      getEvalNonScoreStatus(evalData?.status) ||
+      (evalData?.error ? "errored" : null);
+    if (indicatorStatus) {
       return (
-        <Box
-          sx={{
-            color: "error.main",
-            opacity: 1,
-            flex: 1,
-            display: "flex",
-            justifyContent: "center",
-            alignItems: "center",
-          }}
-        >
-          <Typography variant="body2" align="center">
-            Error
-          </Typography>
+        <Box sx={{ width: "100%", height: "100%" }}>
+          <EvalStatusIndicator
+            status={indicatorStatus}
+            skippedReason={evalData?.skipped_reason}
+          />
         </Box>
       );
     }
@@ -83,17 +84,9 @@ const EvalCellRenderer = ({ value: evalData }) => {
         return _.capitalize(result.label);
       case "choices":
         return (
-          <Box sx={{ display: "flex", gap: 0.5, flexWrap: "wrap" }}>
-            {result.items.map((item, idx) => (
-              <Chip
-                key={`${item}-${idx}`}
-                color="primary"
-                variant="outlined"
-                size="small"
-                label={_.capitalize(String(item))}
-              />
-            ))}
-          </Box>
+          <Typography variant="body2" color="text.primary">
+            {result.items.map((item) => _.capitalize(String(item))).join(" · ")}
+          </Typography>
         );
       case "empty":
       default:

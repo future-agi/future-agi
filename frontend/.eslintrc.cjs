@@ -3,7 +3,7 @@ module.exports = {
     browser: true,
     es2021: true,
   },
-  ignorePatterns: ["**/*.d.ts"],
+  ignorePatterns: ["**/*.d.ts", "src/generated/**"],
   extends: [
     "eslint:recommended",
     "plugin:react/recommended",
@@ -11,6 +11,24 @@ module.exports = {
     "plugin:storybook/recommended",
   ],
   overrides: [
+    {
+      files: ["**/*.ts", "**/*.tsx"],
+      parser: "@typescript-eslint/parser",
+      extends: ["plugin:@typescript-eslint/eslint-recommended"],
+      plugins: ["@typescript-eslint"],
+      rules: {
+        "no-unused-vars": "off",
+        "@typescript-eslint/no-unused-vars": [
+          "warn",
+          {
+            argsIgnorePattern: "^_",
+            varsIgnorePattern: "^(_|React$)",
+            ignoreRestSiblings: true,
+          },
+        ],
+        "react/prop-types": "off",
+      },
+    },
     {
       env: {
         node: true,

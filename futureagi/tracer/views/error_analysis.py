@@ -3,16 +3,26 @@ from datetime import timedelta
 import humanize
 import structlog
 from django.utils import timezone
+from rest_framework import serializers
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 
 from accounts.models.user import User
-
-logger = structlog.get_logger(__name__)
+from tfc.utils.api_contracts import validated_request
+from tfc.utils.api_serializers import ApiErrorResponseSerializer
 from tfc.utils.general_methods import GeneralMethods
 from tracer.models.project import Project
 from tracer.models.trace_error_analysis_task import TraceErrorTaskStatus
 from tracer.queries.error_analysis import TraceErrorAnalysisDB
+
+logger = structlog.get_logger(__name__)
+
+ERROR_RESPONSES = {
+    400: ApiErrorResponseSerializer,
+    403: ApiErrorResponseSerializer,
+    404: ApiErrorResponseSerializer,
+    500: ApiErrorResponseSerializer,
+}
 
 
 def parse_error_type_and_name(error_type_str: str) -> tuple:
@@ -58,6 +68,28 @@ def parse_error_type_and_name(error_type_str: str) -> tuple:
     return (category, error_name)
 
 
+class TraceErrorAnalysisResultSerializer(serializers.Serializer):
+    analysis_exists = serializers.BooleanField()
+    trace_id = serializers.CharField()
+    message = serializers.CharField(required=False)
+    analysis_id = serializers.UUIDField(required=False)
+    analysis_date = serializers.DateTimeField(required=False)
+    agent_version = serializers.CharField(
+        required=False, allow_null=True, allow_blank=True
+    )
+    memory_enhanced = serializers.BooleanField(required=False)
+    summary = serializers.JSONField(required=False)
+    errors = serializers.ListField(child=serializers.JSONField(), required=False)
+    grouped_errors = serializers.ListField(child=serializers.JSONField(), required=False)
+    scores = serializers.JSONField(required=False)
+    memory_context = serializers.JSONField(required=False)
+
+
+class TraceErrorAnalysisResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField(default=True)
+    result = TraceErrorAnalysisResultSerializer()
+
+
 class TraceErrorAnalysisView(APIView):
     permission_classes = [IsAuthenticated]
     _gm = GeneralMethods()
@@ -66,6 +98,9 @@ class TraceErrorAnalysisView(APIView):
         super().__init__(*args, **kwargs)
         self.db = TraceErrorAnalysisDB()
 
+    @validated_request(
+        responses={200: TraceErrorAnalysisResponseSerializer, **ERROR_RESPONSES},
+    )
     def get(self, request, trace_id):
         """
         Get error analysis for a specific trace
@@ -467,6 +502,48 @@ class ErrorClusterDetailView(APIView):
             )
 
 
+class TraceErrorTaskResponseResultSerializer(serializers.Serializer):
+    project_id = serializers.UUIDField()
+    project_name = serializers.CharField()
+    sampling_rate = serializers.FloatField()
+    status = serializers.ChoiceField(choices=TraceErrorTaskStatus.CHOICES)
+    is_active = serializers.BooleanField(required=False)
+    total_traces_analyzed = serializers.IntegerField(required=False)
+    total_errors_found = serializers.IntegerField(required=False)
+    failed_analyses = serializers.IntegerField(required=False)
+    last_run_at = serializers.DateTimeField(required=False, allow_null=True)
+    created = serializers.BooleanField(required=False)
+
+
+class TraceErrorTaskResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField(default=True)
+    result = TraceErrorTaskResponseResultSerializer()
+
+
+class TraceErrorTaskUpdateRequestSerializer(serializers.Serializer):
+    sampling_rate = serializers.FloatField(min_value=0, max_value=1)
+    status = serializers.ChoiceField(
+        choices=(TraceErrorTaskStatus.WAITING, TraceErrorTaskStatus.PAUSED),
+        required=False,
+    )
+
+
+class TraceErrorTaskUpdateResultSerializer(serializers.Serializer):
+    message = serializers.CharField()
+    project_id = serializers.UUIDField()
+    project_name = serializers.CharField()
+    sampling_rate = serializers.FloatField()
+    status = serializers.ChoiceField(choices=TraceErrorTaskStatus.CHOICES)
+    action = serializers.CharField()
+    old_rate = serializers.FloatField()
+    new_rate = serializers.FloatField()
+
+
+class TraceErrorTaskUpdateResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField(default=True)
+    result = TraceErrorTaskUpdateResultSerializer()
+
+
 class TraceErrorTaskView(APIView):
     """
     API for managing trace error analysis tasks (sampling rate)
@@ -479,6 +556,9 @@ class TraceErrorTaskView(APIView):
         super().__init__(*args, **kwargs)
         self.db = TraceErrorAnalysisDB()
 
+    @validated_request(
+        responses={200: TraceErrorTaskResponseSerializer, **ERROR_RESPONSES},
+    )
     def get(self, request, project_id):
         """
         Get current task configuration for a project
@@ -515,6 +595,10 @@ class TraceErrorTaskView(APIView):
         except Exception as e:
             return self._gm.internal_server_error_response(str(e))
 
+    @validated_request(
+        request_serializer=TraceErrorTaskUpdateRequestSerializer,
+        responses={200: TraceErrorTaskUpdateResponseSerializer, **ERROR_RESPONSES},
+    )
     def post(self, request, project_id):
         """
         Update task configuration for a project
@@ -527,7 +611,7 @@ class TraceErrorTaskView(APIView):
         }
         """
         try:
-            data = request.data
+            data = request.validated_data
             sampling_rate = data.get("sampling_rate")
             status = data.get("status")
             try:
@@ -539,17 +623,7 @@ class TraceErrorTaskView(APIView):
             except Project.DoesNotExist:
                 return self._gm.not_found("Project not found")
 
-            task, created = self.db.get_or_create_task_for_project(project)
-
-            if sampling_rate is None:
-                return self._gm.bad_request("sampling_rate is required")
-
-            try:
-                sampling_rate = float(sampling_rate)
-                if not 0 <= sampling_rate <= 1:
-                    return self._gm.bad_request("sampling_rate must be between 0 and 1")
-            except (TypeError, ValueError):
-                return self._gm.bad_request("Invalid sampling_rate value")
+            task, _created = self.db.get_or_create_task_for_project(project)
 
             old_rate = task.sampling_rate
             task.sampling_rate = sampling_rate
@@ -557,11 +631,6 @@ class TraceErrorTaskView(APIView):
 
             new_status = status
             if new_status:
-                if new_status not in [
-                    TraceErrorTaskStatus.WAITING,
-                    TraceErrorTaskStatus.PAUSED,
-                ]:
-                    return self._gm.bad_request(f"Invalid status: {new_status}")
                 task.status = new_status
                 update_fields.append("status")
 

@@ -1,7 +1,11 @@
 import { endOfToday, sub } from "date-fns";
-import _, { filter } from "lodash";
+import _ from "lodash";
 import { formatDate } from "src/utils/report-utils";
+import { alpha } from "@mui/material/styles";
+import { statusColors } from "src/utils/runStatus";
+import { seriesColor } from "src/theme/data-colors";
 import { getYAxisUnit } from "../LLMTracing/GraphSection/common";
+import { apiFilterHasValue } from "src/sections/annotations/queues/utils/filter-operators";
 
 // Helper function to format y-axis values with proper precision
 const formatYAxisValue = (value) => {
@@ -27,6 +31,82 @@ const formatYAxisValue = (value) => {
 
   // Default: 2 decimal places
   return value.toFixed(2);
+};
+
+export const normalizeAlertFilters = (filters = {}) => {
+  const observationType =
+    filters?.observationType ?? filters?.observation_type ?? [];
+  const spanAttributesFilters =
+    filters?.spanAttributesFilters ?? filters?.span_attributes_filters ?? [];
+
+  return {
+    ...filters,
+    observationType,
+    observation_type: filters?.observation_type ?? observationType,
+    spanAttributesFilters,
+    span_attributes_filters:
+      filters?.span_attributes_filters ?? spanAttributesFilters,
+  };
+};
+
+export const normalizeAlertListRow = (row = {}) => ({
+  ...row,
+  metricType: row?.metricType ?? row?.metric_type,
+  lastTriggered: row?.lastTriggered ?? row?.last_triggered,
+  noOfAlerts: row?.noOfAlerts ?? row?.no_of_alerts ?? 0,
+  isMute: row?.isMute ?? row?.is_mute ?? false,
+  filters: normalizeAlertFilters(row?.filters),
+});
+
+export const normalizeAlertDetail = (detail = {}) => ({
+  ...detail,
+  createdBy: detail?.createdBy ?? detail?.created_by?.name,
+  createdAt: detail?.createdAt ?? detail?.created_at,
+  lastTriggered:
+    detail?.lastTriggered ??
+    detail?.last_triggered_at ??
+    detail?.last_checked_at,
+  metricType: detail?.metricType ?? detail?.metric_type,
+  metricName: detail?.metricName ?? detail?.metric_name,
+  thresholdType: detail?.thresholdType ?? detail?.threshold_type,
+  thresholdOperator: detail?.thresholdOperator ?? detail?.threshold_operator,
+  thresholdMetricValue:
+    detail?.thresholdMetricValue ?? detail?.threshold_metric_value,
+  criticalThresholdValue:
+    detail?.criticalThresholdValue ?? detail?.critical_threshold_value,
+  warningThresholdValue:
+    detail?.warningThresholdValue ?? detail?.warning_threshold_value,
+  alertFrequency: detail?.alertFrequency ?? detail?.alert_frequency,
+  // The span across every fire, aggregated server-side before the issue grid's
+  // type filter and pagination — so it stays put whichever slice is loaded.
+  windowStart: detail?.windowStart ?? detail?.window_start,
+  windowEnd: detail?.windowEnd ?? detail?.window_end,
+  autoThresholdTimeWindow:
+    detail?.autoThresholdTimeWindow ?? detail?.auto_threshold_time_window,
+  notificationEmails: detail?.notificationEmails ?? detail?.notification_emails,
+  slackWebhookUrl: detail?.slackWebhookUrl ?? detail?.slack_webhook_url,
+  slackNotes: detail?.slackNotes ?? detail?.slack_notes,
+  isMute: detail?.isMute ?? detail?.is_mute ?? false,
+  filters: normalizeAlertFilters(detail?.filters),
+});
+
+export const isAlertMuted = (row) => Boolean(row?.isMute ?? row?.is_mute);
+
+export const getAlertFilterValue = (data) => {
+  const filters = [];
+  const normalizedFilters = normalizeAlertFilters(data?.filters);
+  const observationTypes = normalizedFilters.observationType ?? [];
+  if (observationTypes?.length > 0) {
+    filters.push(`Span Type is ${_.toUpper(observationTypes.join(", "))}`);
+  }
+  const spanAttributes = normalizedFilters.spanAttributesFilters ?? [];
+  if (spanAttributes.length > 0) {
+    const customAttributeString = `Custom attribute is ${spanAttributes
+      .map((f) => `(${f.columnId ?? f.column_id})`)
+      .join(",")}`;
+    filters.push(customAttributeString);
+  }
+  return filters;
 };
 
 export const alertTypes = [
@@ -96,6 +176,10 @@ export const notificationOptions = [
     label: "Slack",
     value: "slack",
   },
+  {
+    label: "Webhook",
+    value: "webhook",
+  },
 ];
 
 export const timeOptions = [
@@ -151,7 +235,7 @@ export const getDefaultDateRange = () => {
     return [
       formatDate(
         sub(new Date(), {
-          months: 6,
+          days: 7,
         }),
       ),
       formatDate(endOfToday()),
@@ -160,7 +244,7 @@ export const getDefaultDateRange = () => {
 
   return {
     dateFilter: getDateArray(),
-    dateOption: "6M",
+    dateOption: "7D",
   };
 };
 
@@ -484,14 +568,25 @@ export function transformAlertToConditions(alertObj) {
   return conditions;
 }
 
-const STATUS_COLORS = {
-  HEALTHY: "#4DCC94",
-  WARNING: "#FFCC00",
-  CRITICAL: "#E85858",
-  INSUFFICIENT_DATA: "#9E9E9E",
+// Alert-period status -> role in the one status map; the band colour is
+// resolved from theme.palette.status.
+const ALERT_STATUS_ROLE = {
+  healthy: "success",
+  warning: "warning",
+  critical: "danger",
 };
 
-export function getCompareChartConfig(apiData, customOptions = {}) {
+// Threshold band for the alert chart: tinted fill, solid status edge.
+export function alertThresholdBand(theme, role, fillAlpha) {
+  const solid = statusColors(theme, role).solid;
+  return { fillColor: alpha(solid, fillAlpha), borderColor: solid };
+}
+
+export function getCompareChartConfig(
+  apiData,
+  customOptions = {},
+  { isDark = false, theme } = {},
+) {
   if (!apiData?.result?.graph_data || !apiData?.result?.alert_bar_data) {
     throw new Error("Invalid API data structure");
   }
@@ -511,26 +606,17 @@ export function getCompareChartConfig(apiData, customOptions = {}) {
     const startPercent = ((periodStart - startTime) / totalTimeSpan) * 100;
     const endPercent = ((periodEnd - startTime) / totalTimeSpan) * 100;
 
-    let color;
-    switch (period.status) {
-      case "healthy":
-        color = STATUS_COLORS.HEALTHY;
-        break;
-      case "warning":
-        color = STATUS_COLORS.WARNING;
-        break;
-      case "critical":
-        color = STATUS_COLORS.CRITICAL;
-        break;
-      default:
-        color = STATUS_COLORS.INSUFFICIENT_DATA; // insufficient_data
-    }
+    const color = theme
+      ? statusColors(theme, ALERT_STATUS_ROLE[period.status] || "neutral").solid
+      : undefined;
 
     colorStops.push({ offset: startPercent, color, opacity: 1 });
     if (endPercent !== startPercent) {
       colorStops.push({ offset: endPercent, color, opacity: 1 });
     }
   });
+
+  const lineColor = theme ? seriesColor(theme, 0) : undefined;
 
   const maxY = Math.max(...graphData.map((d) => d.value));
   const alertHeight = maxY * 0.02; // 2% of max
@@ -567,7 +653,7 @@ export function getCompareChartConfig(apiData, customOptions = {}) {
       width: [3, 3],
       curve: "smooth",
     },
-    colors: ["transparent", "#0066FF"], // 🔹 match legend + marker to series
+    colors: ["transparent", lineColor], // 🔹 match legend + marker to series
     dataLabels: {
       enabled: false,
     },
@@ -612,6 +698,7 @@ export function getCompareChartConfig(apiData, customOptions = {}) {
       },
     },
     tooltip: {
+      theme: isDark ? "dark" : "light",
       enabledOnSeries: [1],
       marker: {
         show: true,
@@ -629,7 +716,7 @@ export function getCompareChartConfig(apiData, customOptions = {}) {
         highlightDataSeries: false,
       },
       markers: {
-        fillColors: ["#CC91EA"],
+        fillColors: [lineColor],
       },
     },
   };
@@ -679,9 +766,11 @@ export function transformSimpleLineChart(apiData) {
 export function getSimpleLineChartConfig(
   apiData,
   customOptions = {},
-  { isDark = false } = {},
+  { isDark = false, theme } = {},
 ) {
   const transformed = transformSimpleLineChart(apiData);
+  const axisLabelColor = theme?.palette.text.tertiary;
+  const lineColor = theme ? seriesColor(theme, 0) : undefined;
   const { lineData, metadata } = transformed;
 
   // Determine Y-axis range based on data
@@ -705,7 +794,7 @@ export function getSimpleLineChartConfig(
     stroke: {
       curve: "smooth",
       width: 2,
-      colors: ["#CC91EA"], // Purple
+      colors: [lineColor],
     },
     markers: {
       size: 0,
@@ -718,14 +807,14 @@ export function getSimpleLineChartConfig(
       type: "datetime",
       convertedCatToNumeric: false, // include this explicitly
       labels: {
-        style: { fontSize: "12px", colors: isDark ? "#a1a1aa" : "#666" },
+        style: { fontSize: "12px", colors: axisLabelColor },
       },
     },
     yaxis: {
       min: yAxisMin,
       max: yAxisMax,
       labels: {
-        style: { fontSize: "12px", colors: isDark ? "#a1a1aa" : "#999" },
+        style: { fontSize: "12px", colors: axisLabelColor },
         formatter: formatYAxisValue,
       },
       title: {
@@ -743,10 +832,11 @@ export function getSimpleLineChartConfig(
       position: "top",
       horizontalAlign: "left",
       markers: {
-        fillColors: ["#CC91EA"],
+        fillColors: [lineColor],
       },
     },
     tooltip: {
+      theme: isDark ? "dark" : "light",
       y: {
         formatter: (value) => `${value}`,
       },
@@ -759,8 +849,9 @@ export function getSimpleLineChartConfig(
       yaxis: customOptions.thresholds.map((threshold) => ({
         y: threshold.value || 0,
         y2: threshold.y2 || 0,
-        fillColor: threshold.fillColor || "#00A25108",
-        borderColor: threshold.borderColor || "#00A251",
+        yAxisIndex: 0,
+        fillColor: threshold.fillColor,
+        borderColor: threshold.borderColor,
         strokeDashArray: threshold.strokeDashArray || 4,
         opacity: threshold.opacity || 0.5,
       })),
@@ -779,6 +870,15 @@ export function getSimpleLineChartConfig(
     yaxis: { ...defaultOptions.yaxis, ...customOptions.yaxis },
   };
 
+  if (customOptions?.thresholds && !Array.isArray(options.yaxis)) {
+    options.yaxis = [
+      {
+        ...options.yaxis,
+        seriesName: [customOptions.seriesName || series[0]?.name || ""],
+      },
+    ];
+  }
+
   return { series, options, metadata };
 }
 
@@ -786,7 +886,7 @@ export const convertFiltersToPayload = (filters) => {
   const observation_type = [];
   const span_attributes_filters = [];
 
-  if (filter?.length === 0)
+  if (filters?.length === 0)
     return {
       observation_type,
       span_attributes_filters,
@@ -801,11 +901,13 @@ export const convertFiltersToPayload = (filters) => {
     }
     if (property === "attributes") {
       span_attributes_filters.push({
-        filterConfig: {
-          ...filters[i]?.filterConfig,
-          colType: "SPAN_ATTRIBUTE",
+        column_id: filters[i]?.propertyId,
+        filter_config: {
+          filter_type: filters[i]?.filterConfig?.filterType,
+          filter_op: filters[i]?.filterConfig?.filterOp,
+          filter_value: filters[i]?.filterConfig?.filterValue,
+          col_type: "SPAN_ATTRIBUTE",
         },
-        columnId: filters[i]?.propertyId,
       });
     }
   }
@@ -819,10 +921,29 @@ export const convertFiltersToPayload = (filters) => {
 export const isSpanAttrFilterValid = (spanFilters = []) => {
   if (spanFilters.length === 0) return true;
 
-  return spanFilters.every(
-    (filter) =>
-      filter?.filterConfig?.filterValue !== undefined &&
-      filter?.filterConfig?.filterValue !== null &&
-      filter?.filterConfig?.filterValue !== "",
-  );
+  return spanFilters.every((filter) => apiFilterHasValue(filter));
 };
+
+// FilterPanel `filterFields` for the issues table. `choices` hold the values
+// the API expects; `choiceLabels` map them to what the user sees.
+export const ISSUE_FILTER_FIELDS = [
+  {
+    value: "type",
+    label: "Trigger Type",
+    type: "enum",
+    operators: ["is"],
+    single: true,
+    choices: ["critical", "warning"],
+    choiceLabels: { critical: "Critical", warning: "Warning" },
+  },
+];
+
+// Output types whose alert metric is the share of one chosen label. A Scoring
+// eval may also carry labels, but its metric is the mean score, so it must not
+// offer a choice.
+export const CHOICE_THRESHOLD_OUTPUT_TYPES = ["Pass/Fail", "choices"];
+
+export const evalUsesChoiceThreshold = (evaluation) =>
+  CHOICE_THRESHOLD_OUTPUT_TYPES.includes(evaluation?.output_type) &&
+  Array.isArray(evaluation?.choices) &&
+  evaluation.choices.length > 0;

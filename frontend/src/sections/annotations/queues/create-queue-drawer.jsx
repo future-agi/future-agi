@@ -17,6 +17,7 @@ import {
   Stack,
   TextField,
   Typography,
+  ButtonBase,
 } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { Controller, useForm } from "react-hook-form";
@@ -24,10 +25,17 @@ import { useAuthContext } from "src/auth/hooks";
 import {
   useCreateAnnotationQueue,
   useUpdateAnnotationQueue,
+  useUpdateAnnotationQueueStatus,
 } from "src/api/annotation-queues/annotation-queues";
 import LabelPicker from "./components/label-picker";
 import AnnotatorPicker from "./components/annotator-picker";
-import { QUEUE_ROLES, isQueueAnnotatorRole, queueRoleList } from "./constants";
+import {
+  QUEUE_ROLES,
+  QUEUE_STATUS_TRANSITIONS,
+  isQueueAnnotatorRole,
+  queueRoleList,
+} from "./constants";
+import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
 
 const STATUS_OPTIONS = [
   { value: "draft", label: "Draft" },
@@ -72,7 +80,7 @@ function Section({ title, subtitle, children }) {
       sx={{
         border: "1px solid",
         borderColor: "divider",
-        borderRadius: 0.5,
+        borderRadius: "4px",
         overflow: "hidden",
       }}
     >
@@ -121,16 +129,38 @@ export default function CreateQueueDrawer({
     useCreateAnnotationQueue();
   const { mutate: updateQueue, isPending: isUpdating } =
     useUpdateAnnotationQueue();
-  const isPending = isCreating || isUpdating;
+  const { mutate: updateStatus, isPending: isStatusUpdating } =
+    useUpdateAnnotationQueueStatus();
+  const isPending = isCreating || isUpdating || isStatusUpdating;
   const [advancedOpen, setAdvancedOpen] = useState(false);
 
-  const { control, handleSubmit, reset, setValue, watch } = useForm({
+  // Status lives behind its own state-machine endpoint, so only offer targets
+  // the backend will accept from the queue's current status (plus the current
+  // status itself, so the select can show where it stands). Offering an
+  // unreachable target like "draft" just produces a guaranteed error.
+  const currentStatus = editQueue?.status || "draft";
+  const statusOptions = STATUS_OPTIONS.filter(
+    (opt) =>
+      opt.value === currentStatus ||
+      (QUEUE_STATUS_TRANSITIONS[currentStatus] || []).includes(opt.value),
+  );
+
+  const { control, handleSubmit, reset, setValue, watch, trigger } = useForm({
     defaultValues: DEFAULT_VALUES,
   });
 
-  const labelIds = watch("label_ids");
   const annotators = watch("annotators");
+  const autoAssign = watch("autoAssign");
   const annotatorCount = annotators.filter(isQueueAnnotatorRole).length;
+
+  // RHF only re-runs field validation on user interaction with that field, so
+  // the "Cannot exceed annotator count" error on `annotations_required` would
+  // stay stale when annotators are added/removed or have their roles changed.
+  // Re-trigger whenever the annotator count shifts so the error clears (or
+  // re-appears) in step with the picker.
+  useEffect(() => {
+    trigger("annotations_required");
+  }, [annotatorCount, trigger]);
 
   useEffect(() => {
     if (open && editQueue) {
@@ -158,7 +188,7 @@ export default function CreateQueueDrawer({
       setAdvancedOpen(false);
     } else if (open) {
       // Pre-select the current user as manager for new queues
-      const currentUserId = user?.id || user?.pk;
+      const currentUserId = user?.id;
       reset({
         ...DEFAULT_VALUES,
         annotators: currentUserId
@@ -197,9 +227,29 @@ export default function CreateQueueDrawer({
     };
 
     if (isEdit) {
+      // `status` is read-only on the queue serializer; it only moves through the
+      // dedicated state-machine endpoint. Save settings first, then transition
+      // status separately (and only when it actually changed — a no-op
+      // same-status transition is rejected by the state machine).
+      const statusChanged = formData.status !== currentStatus;
       updateQueue(
-        { id: editQueue.id, ...payload, status: formData.status },
-        { onSuccess: () => onClose() },
+        { id: editQueue.id, ...payload },
+        {
+          onSuccess: () => {
+            if (!statusChanged) {
+              onClose();
+              return;
+            }
+            updateStatus(
+              { id: editQueue.id, status: formData.status },
+              {
+                onSuccess: () => onClose(),
+                // Keep the drawer open on failure so the user can pick a valid
+                // target; the status hook surfaces the backend reason.
+              },
+            );
+          },
+        },
       );
     } else {
       createQueue(payload, {
@@ -212,15 +262,18 @@ export default function CreateQueueDrawer({
     }
   };
 
+  const covered = useDrawerCovered(open);
+
   return (
     <Drawer
+      sx={coveredDrawerSx(covered)}
       anchor="right"
       open={open}
       onClose={onClose}
       PaperProps={{
         sx: {
           width: { xs: "100%", sm: "45vw" },
-          minWidth: 520,
+          minWidth: 640,
           borderRadius: "0 !important",
         },
       }}
@@ -254,7 +307,7 @@ export default function CreateQueueDrawer({
               </Typography>
             </Box>
             <IconButton onClick={onClose} size="small" sx={{ mt: 0.5 }}>
-              <Iconify icon="mingcute:close-line" />
+              <Iconify icon="solar:close-linear" />
             </IconButton>
           </Stack>
         </Box>
@@ -268,7 +321,7 @@ export default function CreateQueueDrawer({
                 <Controller
                   name="name"
                   control={control}
-                  rules={{ required: "Queue name is required" }}
+                  rules={{ required: "Please enter a name for this queue" }}
                   render={({ field, fieldState }) => (
                     <TextField
                       {...field}
@@ -280,13 +333,15 @@ export default function CreateQueueDrawer({
                       error={!!fieldState.error}
                       helperText={
                         fieldState.error?.message ||
-                        "Enter annotation queue name"
+                        "A short, descriptive name annotators will recognize"
                       }
                       inputProps={{ maxLength: 255 }}
                       FormHelperTextProps={{
                         sx: { ml: 0, color: "text.disabled" },
                       }}
-                      sx={{ "& .MuiOutlinedInput-root": { borderRadius: 0.5 } }}
+                      sx={{
+                        "& .MuiOutlinedInput-root": { borderRadius: "4px" },
+                      }}
                     />
                   )}
                 />
@@ -303,7 +358,9 @@ export default function CreateQueueDrawer({
                       multiline
                       rows={2}
                       placeholder="Brief description of this queue's purpose"
-                      sx={{ "& .MuiOutlinedInput-root": { borderRadius: 0.5 } }}
+                      sx={{
+                        "& .MuiOutlinedInput-root": { borderRadius: "4px" },
+                      }}
                     />
                   )}
                 />
@@ -320,10 +377,10 @@ export default function CreateQueueDrawer({
                         size="small"
                         fullWidth
                         sx={{
-                          "& .MuiOutlinedInput-root": { borderRadius: 0.5 },
+                          "& .MuiOutlinedInput-root": { borderRadius: "4px" },
                         }}
                       >
-                        {STATUS_OPTIONS.map((opt) => (
+                        {statusOptions.map((opt) => (
                           <MenuItem key={opt.value} value={opt.value}>
                             {opt.label}
                           </MenuItem>
@@ -340,9 +397,32 @@ export default function CreateQueueDrawer({
               title="Annotation Labels"
               subtitle="Choose labels that annotators will assign to items in this queue."
             >
-              <LabelPicker
-                selectedIds={labelIds}
-                onChange={(ids) => setValue("label_ids", ids)}
+              <Controller
+                name="label_ids"
+                control={control}
+                rules={{
+                  validate: (value) =>
+                    (Array.isArray(value) && value.length > 0) ||
+                    "At least one label is required",
+                }}
+                render={({ field, fieldState }) => (
+                  <>
+                    <LabelPicker
+                      selectedIds={field.value}
+                      onChange={(ids) => field.onChange(ids)}
+                      lockLastSelected={isEdit}
+                    />
+                    {fieldState.error && (
+                      <Typography
+                        variant="caption"
+                        color="error.main"
+                        sx={{ mt: 0.75, display: "block" }}
+                      >
+                        {fieldState.error.message}
+                      </Typography>
+                    )}
+                  </>
+                )}
               />
             </Section>
 
@@ -356,10 +436,9 @@ export default function CreateQueueDrawer({
                   value={annotators}
                   onChange={(a) => setValue("annotators", a)}
                   creatorId={
-                    isEdit
-                      ? editQueue?.created_by
-                      : String(user?.id || user?.pk || "")
+                    isEdit ? editQueue?.created_by : String(user?.id || "")
                   }
+                  highlightAutoAssigned={autoAssign}
                   isManager
                 />
 
@@ -401,10 +480,11 @@ export default function CreateQueueDrawer({
                   rules={{
                     validate: (value) => {
                       const n = Number(value);
-                      if (!value && value !== 0) return "Required";
-                      if (n < 1) return "Must be at least 1";
+                      if (!value && value !== 0)
+                        return "Enter how many submissions each item needs";
+                      if (n < 1) return "Each item needs at least 1 submission";
                       if (annotatorCount > 0 && n > annotatorCount)
-                        return `Cannot exceed annotator count (${annotatorCount})`;
+                        return `Can't be more than the number of annotators added (${annotatorCount})`;
                       return true;
                     },
                   }}
@@ -423,12 +503,14 @@ export default function CreateQueueDrawer({
                       inputProps={{ min: 1, max: 10 }}
                       helperText={
                         fieldState.error?.message ||
-                        "Number of responses should be less than or equal to added annotators"
+                        "How many annotators must label each item — at most the number you've added"
                       }
                       FormHelperTextProps={{
                         sx: { ml: 0, color: "text.disabled" },
                       }}
-                      sx={{ "& .MuiOutlinedInput-root": { borderRadius: 0.5 } }}
+                      sx={{
+                        "& .MuiOutlinedInput-root": { borderRadius: "4px" },
+                      }}
                     />
                   )}
                 />
@@ -453,7 +535,7 @@ export default function CreateQueueDrawer({
                     FormHelperTextProps={{
                       sx: { ml: 0, color: "text.disabled" },
                     }}
-                    sx={{ "& .MuiOutlinedInput-root": { borderRadius: 0.5 } }}
+                    sx={{ "& .MuiOutlinedInput-root": { borderRadius: "4px" } }}
                   />
                 )}
               />
@@ -461,9 +543,12 @@ export default function CreateQueueDrawer({
 
             {/* ── Advanced Settings (collapsible) ──────────── */}
             <Box>
-              <Box
+              <ButtonBase
+                component="div"
                 onClick={() => setAdvancedOpen((v) => !v)}
                 sx={{
+                  justifyContent: "flex-start",
+                  textAlign: "left",
                   display: "flex",
                   alignItems: "center",
                   gap: 0.5,
@@ -475,8 +560,8 @@ export default function CreateQueueDrawer({
                 <Iconify
                   icon={
                     advancedOpen
-                      ? "eva:chevron-down-fill"
-                      : "eva:chevron-right-fill"
+                      ? "solar:alt-arrow-down-linear"
+                      : "solar:alt-arrow-right-linear"
                   }
                   width={20}
                   sx={{ color: "text.secondary" }}
@@ -484,7 +569,7 @@ export default function CreateQueueDrawer({
                 <Typography
                   variant="subtitle2"
                   color="text.secondary"
-                  sx={{ fontSize: 13 }}
+                  sx={{ fontSize: 12 }}
                 >
                   Advanced settings
                 </Typography>
@@ -497,7 +582,7 @@ export default function CreateQueueDrawer({
                     Assignment strategy, reservation timeout, review
                   </Typography>
                 )}
-              </Box>
+              </ButtonBase>
 
               <Collapse in={advancedOpen}>
                 <Box
@@ -505,7 +590,7 @@ export default function CreateQueueDrawer({
                     mt: 1,
                     border: "1px solid",
                     borderColor: "divider",
-                    borderRadius: 0.5,
+                    borderRadius: "4px",
                     p: 1.5,
                   }}
                 >
@@ -514,7 +599,7 @@ export default function CreateQueueDrawer({
                     <FormControl>
                       <FormLabel
                         sx={{
-                          fontSize: 13,
+                          fontSize: 12,
                           mb: 0.5,
                           color: "text.secondary",
                           fontWeight: "fontWeightMedium",
@@ -605,7 +690,7 @@ export default function CreateQueueDrawer({
                             sx: { ml: 0, color: "text.disabled" },
                           }}
                           sx={{
-                            "& .MuiOutlinedInput-root": { borderRadius: 0.5 },
+                            "& .MuiOutlinedInput-root": { borderRadius: "4px" },
                           }}
                         >
                           {RESERVATION_TIMEOUT_OPTIONS.map((opt) => (

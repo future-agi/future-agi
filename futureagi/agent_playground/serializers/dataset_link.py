@@ -60,3 +60,10 @@ class ExecuteRequestSerializer(serializers.Serializer):
         required=False,
         default="tasks_l",
     )
+
+    def validate_row_ids(self, value):
+        if value is not None and not value:
+            raise serializers.ValidationError(
+                "row_ids must include at least one row ID or be omitted."
+            )
+        return value

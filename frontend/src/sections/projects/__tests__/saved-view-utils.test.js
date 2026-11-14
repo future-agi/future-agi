@@ -1,0 +1,194 @@
+import { describe, expect, it } from "vitest";
+
+import {
+  dateBoundsEqual,
+  dateFilterEqual,
+  filtersContentEqual,
+} from "../saved-view-utils";
+
+const filter = (overrides = {}) => ({
+  column_id: "latency_ms",
+  filter_config: {
+    col_type: "SYSTEM_METRIC",
+    filter_type: "number",
+    filter_op: "greater_than",
+    filter_value: 100,
+  },
+  ...overrides,
+});
+
+describe("saved-view-utils", () => {
+  it("compares canonical saved-view filters deeply", () => {
+    expect(filtersContentEqual([filter()], [filter()])).toBe(true);
+    expect(
+      filtersContentEqual(
+        [filter()],
+        [
+          filter({
+            filter_config: { ...filter().filter_config, filter_value: 200 },
+          }),
+        ],
+      ),
+    ).toBe(false);
+  });
+
+  it("does not treat legacy camelCase filter payloads as equivalent", () => {
+    const legacy = {
+      columnId: "latency_ms",
+      filterConfig: {
+        colType: "SYSTEM_METRIC",
+        filterType: "number",
+        filterOp: "greater_than",
+        filterValue: 100,
+      },
+    };
+
+    expect(filtersContentEqual([filter()], [legacy])).toBe(false);
+  });
+
+  it("detects identity-only changes for the same native column", () => {
+    const systemModel = filter({
+      column_id: "model",
+      property_id: "system_attribute:sessions:model",
+    });
+    const customModel = filter({
+      column_id: "model",
+      property_id: "custom_attribute:model",
+    });
+
+    expect(filtersContentEqual([systemModel], [customModel])).toBe(false);
+    expect(filtersContentEqual([systemModel], [{ ...systemModel }])).toBe(true);
+  });
+
+  it("keeps the explicit no-property-id legacy fallback", () => {
+    expect(filtersContentEqual([filter()], [filter()])).toBe(true);
+    expect(
+      filtersContentEqual(
+        [filter()],
+        [filter({ property_id: "system_attribute:traces:latency_ms" })],
+      ),
+    ).toBe(false);
+  });
+
+  describe("filtersContentEqual multi-select values", () => {
+    const listFilter = (filterOp, filterValue, attributeValueTypes) => ({
+      column_id: "status",
+      filter_config: {
+        col_type: "SYSTEM_METRIC",
+        filter_type: "text",
+        filter_op: filterOp,
+        filter_value: filterValue,
+        ...(attributeValueTypes
+          ? { attribute_value_types: attributeValueTypes }
+          : {}),
+      },
+    });
+
+    it("treats the same picked values in a different order as unchanged", () => {
+      expect(
+        filtersContentEqual(
+          [listFilter("in", ["OK", "UNSET", "ERROR"])],
+          [listFilter("in", ["OK", "ERROR", "UNSET"])],
+        ),
+      ).toBe(true);
+    });
+
+    it("still flags a different set of picked values", () => {
+      expect(
+        filtersContentEqual(
+          [listFilter("in", ["OK", "UNSET"])],
+          [listFilter("in", ["OK", "ERROR"])],
+        ),
+      ).toBe(false);
+    });
+
+    it("keeps range bounds ordered", () => {
+      expect(
+        filtersContentEqual(
+          [listFilter("between", [10, 1])],
+          [listFilter("between", [1, 10])],
+        ),
+      ).toBe(false);
+    });
+
+    it("reorders value types together with their values", () => {
+      expect(
+        filtersContentEqual(
+          [listFilter("in", ["1", 1], ["string", "number"])],
+          [listFilter("in", [1, "1"], ["number", "string"])],
+        ),
+      ).toBe(true);
+      expect(
+        filtersContentEqual(
+          [listFilter("in", ["1", 1], ["number", "string"])],
+          [listFilter("in", [1, "1"], ["number", "string"])],
+        ),
+      ).toBe(false);
+    });
+  });
+
+  describe("dateBoundsEqual", () => {
+    const range = ["2026-09-01 00:00:00", "2026-09-10 00:00:00"];
+
+    it("treats identical persisted bounds as equal", () => {
+      expect(dateBoundsEqual(range, [...range])).toBe(true);
+    });
+
+    it("detects an edited start or end bound", () => {
+      expect(dateBoundsEqual(range, ["2026-09-02 00:00:00", range[1]])).toBe(
+        false,
+      );
+      expect(dateBoundsEqual(range, [range[0], "2026-09-12 00:00:00"])).toBe(
+        false,
+      );
+    });
+
+    it("treats missing bounds as an empty pair", () => {
+      expect(dateBoundsEqual(undefined, [])).toBe(true);
+      expect(dateBoundsEqual(null, undefined)).toBe(true);
+      expect(dateBoundsEqual(undefined, range)).toBe(false);
+    });
+  });
+
+  describe("dateFilterEqual", () => {
+    const custom = (dateFilter) => ({ dateOption: "Custom", dateFilter });
+    const range = ["2026-09-01 00:00:00", "2026-09-10 00:00:00"];
+
+    it("is false when the option name differs", () => {
+      expect(dateFilterEqual({ dateOption: "7D" }, custom(range))).toBe(false);
+    });
+
+    it("compares bounds only for a Custom baseline", () => {
+      expect(
+        dateFilterEqual(
+          { dateOption: "7D", dateFilter: range },
+          { dateOption: "7D", dateFilter: ["x", "y"] },
+        ),
+      ).toBe(true);
+      expect(dateFilterEqual(custom(range), custom([...range]))).toBe(true);
+      expect(
+        dateFilterEqual(
+          custom(["2026-09-02 00:00:00", "2026-09-12 00:00:00"]),
+          custom(range),
+        ),
+      ).toBe(false);
+    });
+
+    it("treats a missing filter on both sides as equal", () => {
+      expect(dateFilterEqual(undefined, undefined)).toBe(true);
+      expect(dateFilterEqual(undefined, custom(range))).toBe(false);
+    });
+
+    // Migration 0078 copied legacy filters.dateFilter objects that carried an
+    // option name and no bounds array. The live default always has bounds, so
+    // a stored Custom with no pair must not read as an edit on load.
+    it("treats a Custom baseline with no bounds as equal to any bounds", () => {
+      expect(dateFilterEqual(custom(range), { dateOption: "Custom" })).toBe(
+        true,
+      );
+      expect(dateFilterEqual(custom(range), custom(undefined))).toBe(true);
+      expect(dateFilterEqual(custom(range), custom(null))).toBe(true);
+      expect(dateFilterEqual(custom(range), custom([]))).toBe(true);
+    });
+  });
+});

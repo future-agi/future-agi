@@ -28,6 +28,9 @@ export default function AddFolder({ open, onClose }) {
       queryClient.invalidateQueries({
         queryKey: ["prompt-folders"],
       });
+      queryClient.invalidateQueries({
+        queryKey: ["folder-items", "all"],
+      });
       if (data.data?.result?.id) {
         navigate(`/dashboard/workbench/${data.data?.result?.id}`);
       }
@@ -60,7 +63,7 @@ export default function AddFolder({ open, onClose }) {
       onSubmit={handleSubmit}
       isLoading={isPending}
       actionBtnTitle="Create"
-      modalWidth="500px"
+      modalWidth="560px"
     >
       <Divider
         sx={{

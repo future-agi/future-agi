@@ -1,5 +1,3 @@
-from typing import Optional
-
 import structlog
 
 from tfc.ee_stub import _ee_stub
@@ -11,8 +9,7 @@ try:
 except ImportError:
     SimulationAnalysisAgent = _ee_stub("SimulationAnalysisAgent")
 
-logger = structlog.get_logger(__name__)
-from model_hub.models.develop_dataset import Cell, Column, Row
+from model_hub.models.develop_dataset import Cell, Row
 from simulate.models import (
     AgentDefinition,
     AgentOptimiser,
@@ -22,13 +19,12 @@ from simulate.models import (
     SimulateEvalConfig,
     TestExecution,
 )
-from simulate.models.agent_prompt_optimiser_run_step import (
-    AgentPromptOptimiserRunStep,
-)
 from simulate.utils.eval_explaination_summary import (
     _get_eval_configs,
 )
 from simulate.utils.test_execution import calculate_aggregate_metrics
+
+logger = structlog.get_logger(__name__)
 
 
 def _resolve_simulation_type(
@@ -85,7 +81,9 @@ def _resolve_simulation_type(
     return "voice"
 
 
-def _build_chat_aggregate_metrics(call_executions) -> dict[str, float]:
+def _build_chat_aggregate_metrics(
+    call_executions: list,
+) -> dict[str, float]:
     """
     Build chat aggregate metrics from per-call conversation metrics.
 
@@ -141,7 +139,7 @@ def _build_chat_aggregate_metrics(call_executions) -> dict[str, float]:
 
 
 def _build_fix_your_agent_eval_templates(
-    eval_configs,
+    eval_configs: list,
 ) -> tuple[list[dict], set[str], dict[str, str]]:
     """
     Build a deduplicated eval template list (unique by eval_template_id) for
@@ -172,12 +170,6 @@ def _build_fix_your_agent_eval_templates(
             if isinstance(eval_template_config, dict)
             else None
         )
-        eval_template_eval_type_id = (
-            eval_template_config.get("eval_type_id")
-            if isinstance(eval_template_config, dict)
-            else None
-        )
-
         allowed_choices = None
         raw_choices = getattr(eval_template, "choices", None)
         if isinstance(raw_choices, list):
@@ -232,7 +224,7 @@ def _build_fix_your_agent_eval_templates(
     )
 
 
-def prepare_simulation_analysis_input(test_execution_id: str) -> Optional[dict]:
+def prepare_simulation_analysis_input(test_execution_id: str) -> dict | None:
     """
     Prepare input data for simulation analysis agent.
 
@@ -385,9 +377,9 @@ def prepare_simulation_analysis_input(test_execution_id: str) -> Optional[dict]:
 
 def construct_scenarios_from_calls(
     call_executions,
-    allowed_eval_config_ids: Optional[set[str]] = None,
-    eval_config_id_to_template_id: Optional[dict[str, str]] = None,
-    allowed_eval_template_ids: Optional[set[str]] = None,
+    allowed_eval_config_ids: set[str] | None = None,
+    eval_config_id_to_template_id: dict[str, str] | None = None,
+    allowed_eval_template_ids: set[str] | None = None,
 ) -> list[dict]:
     """
     Construct scenario payloads from call execution data.
@@ -536,7 +528,7 @@ def execute_simulation_analysis(input_data: dict) -> dict:
         eval_templates_list = input_data.get("eval_templates", [])
         test_execution_id = input_data.get("test_execution_id")
         simulation_type = str(
-            ((input_data.get("metadata") or {}).get("simulation_type") or "voice")
+            (input_data.get("metadata") or {}).get("simulation_type") or "voice"
         ).lower()
 
         logger.info(
@@ -603,7 +595,7 @@ def get_or_create_optimiser_for_test_execution(
 
     optimiser = AgentOptimiser.objects.create(
         name=f"Optimiser for {test_execution.run_test.name}",
-        description=f"Simulation analysis optimiser for test execution runs",
+        description="Simulation analysis optimiser for test execution runs",
         configuration={"type": "simulation_analysis"},
     )
 
@@ -652,7 +644,7 @@ def get_latest_optimiser_result(
 
 def create_optimiser_run_for_test_execution(
     test_execution: TestExecution, optimiser: AgentOptimiser
-) -> Optional[AgentOptimiserRun]:
+) -> AgentOptimiserRun | None:
     """
     Create a new optimiser run for a test execution.
 
@@ -682,15 +674,24 @@ def create_optimiser_run_for_test_execution(
 
     from simulate.tasks.agent_optimiser_tasks import execute_optimiser_run
 
-    execute_optimiser_run.delay(str(run.id))
+    try:
+        execute_optimiser_run.delay(str(run.id))
+    except Exception as dispatch_error:
+        run.mark_as_failed({"dispatch_error": str(dispatch_error)})
+        logger.exception(
+            "optimiser_run_dispatch_failed",
+            optimiser_run_id=str(run.id),
+            test_execution_id=str(test_execution.id),
+            error=str(dispatch_error),
+        )
 
     return run
 
 
 def get_agent_definition_prompt(
     agent_definition_id: str,
-    agent_version_id: Optional[str] = None,
-) -> Optional[dict]:
+    agent_version_id: str | None = None,
+) -> dict | None:
     """
     Get the agent definition's prompt/description.
 
@@ -759,7 +760,7 @@ def get_agent_definition_prompt(
         return None
 
 
-def get_call_executions_with_details(test_execution_id: str) -> Optional[list[dict]]:
+def get_call_executions_with_details(test_execution_id: str) -> list[dict] | None:
     """
     Get all call executions with transcripts, scenario data, and evaluations.
 
@@ -789,9 +790,17 @@ def get_call_executions_with_details(test_execution_id: str) -> Optional[list[di
             status__in=status_filter,
         ).select_related("scenario")
 
+        # Fetch eval configs once (not per-call) to avoid N+1.
+        run_test = test_execution.run_test
+        eval_configs = list(
+            SimulateEvalConfig.objects.filter(run_test=run_test).select_related(
+                "eval_template"
+            )
+        )
+
         results = []
         for call in call_executions:
-            call_data = _build_call_execution_data(call, test_execution)
+            call_data = _build_call_execution_data(call, test_execution, eval_configs)
             results.append(call_data)
 
         return results
@@ -807,11 +816,12 @@ def get_call_executions_with_details(test_execution_id: str) -> Optional[list[di
 def _build_call_execution_data(
     call: CallExecution,
     test_execution: TestExecution,
+    eval_configs: list,
 ) -> dict:
     """Build a complete call execution data dict."""
     transcripts = _get_transcripts_for_call(call)
     scenario_data = _get_scenario_data(call)
-    evaluations = _get_evaluations_for_call(call, test_execution)
+    evaluations = _get_evaluations_for_call(call, eval_configs)
 
     return {
         "call_execution_id": str(call.id),
@@ -907,17 +917,8 @@ def _fetch_dataset_row_columns(dataset_id: str, row_id: str) -> dict:
 
 def _get_evaluations_for_call(
     call: CallExecution,
-    test_execution: TestExecution,
+    eval_configs: list,
 ) -> list[dict]:
-    """
-    Get evaluations for a call with inputs filtered into
-    require_audio_inputs and require_text_inputs.
-    """
-    run_test = test_execution.run_test
-    eval_configs = SimulateEvalConfig.objects.filter(run_test=run_test).select_related(
-        "eval_template"
-    )
-
     evaluations = []
     for config in eval_configs:
         eval_data = _build_evaluation_data(config, call)
@@ -1038,7 +1039,35 @@ def _get_transcript_text(call: CallExecution) -> str:
     return "\n".join(transcript_lines)
 
 
-def get_full_test_execution_data(test_execution_id: str) -> Optional[dict]:
+def _get_prompt_from_run_test(run_test) -> dict | None:
+    from model_hub.models.run_prompt import PromptVersion
+
+    if run_test.source_type != "prompt" or not run_test.prompt_version_id:
+        return None
+    try:
+        version = PromptVersion.objects.get(id=run_test.prompt_version_id)
+        snapshot = version.prompt_config_snapshot or {}
+        messages = snapshot.get("messages", [])
+        texts = []
+        for msg in messages:
+            content = msg.get("content", "")
+            if isinstance(content, list):
+                for part in content:
+                    if isinstance(part, dict) and part.get("text"):
+                        texts.append(part["text"])
+            elif isinstance(content, str) and content:
+                texts.append(content)
+        description = "\n".join(texts)
+        return {
+            "description": description,
+            "inbound": True,
+        }
+    except PromptVersion.DoesNotExist:
+        logger.warning(f"Prompt version {run_test.prompt_version_id} not found")
+        return None
+
+
+def get_full_test_execution_data(test_execution_id: str) -> dict | None:
     """
     Get complete test execution data including agent prompts,
     simulator prompt, and all call executions.
@@ -1052,7 +1081,7 @@ def get_full_test_execution_data(test_execution_id: str) -> Optional[dict]:
             "test_execution_id": str,
             "status": str,
             "run_test_name": str,
-            "agent_definition_prompt": dict | None,
+            "agent_definition_prompt": dict,
             "simulator_agent_prompt": dict | None,
             "call_executions": list[dict],
             "metadata": dict,
@@ -1060,22 +1089,26 @@ def get_full_test_execution_data(test_execution_id: str) -> Optional[dict]:
     """
     try:
         test_execution = TestExecution.objects.select_related(
-            "run_test",
+            "run_test__prompt_version",
             "simulator_agent",
             "agent_definition",
             "agent_version",
         ).get(id=test_execution_id)
 
         agent_prompt = get_agent_definition_prompt(
-            test_execution.agent_definition.id, test_execution.agent_version.id
+            test_execution.agent_definition_id, test_execution.agent_version_id
         )
+        if agent_prompt is None:
+            agent_prompt = _get_prompt_from_run_test(
+                test_execution.run_test
+            )
         call_executions = get_call_executions_with_details(test_execution_id)
 
         return {
             "test_execution_id": str(test_execution.id),
             "status": test_execution.status,
             "run_test_name": test_execution.run_test.name,
-            "agent_definition_prompt": agent_prompt,
+            "agent_definition_prompt": agent_prompt or {},
             "call_executions": call_executions or [],
             "metadata": {
                 "total_scenarios": test_execution.total_scenarios,

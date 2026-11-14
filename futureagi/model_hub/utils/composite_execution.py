@@ -23,9 +23,12 @@ from model_hub.utils.composite_aggregation import (
     aggregate_scores,
     aggregate_summaries,
 )
-from model_hub.utils.scoring import determine_pass_fail, normalize_score
+from evaluations.engine.instance import resolve_pass_threshold
+from model_hub.utils.scoring import determine_pass_fail, score_eval_output
 
 logger = logging.getLogger(__name__)
+
+PER_CHILD_ERROR_LOCALIZER_ENABLED = False
 
 
 @dataclass
@@ -59,6 +62,56 @@ def resolve_child_weights(
     return resolved
 
 
+def _link_run_config(link: CompositeEvalChild) -> dict[str, Any]:
+    run_config = (link.config or {}).get("run_config") or {}
+    return run_config if isinstance(run_config, dict) else {}
+
+
+def resolve_child_binding(
+    link: CompositeEvalChild, config: dict[str, Any], model: str | None
+) -> tuple[dict[str, Any], str | None]:
+    """The runtime config and model a composite child runs with.
+
+    The child's pinned version snapshot, then its link config, go over the
+    composite's runtime `config`. Its model is the link's `run_config` → link
+    config → pinned version → child template → `model`.
+    """
+    runtime_config = dict(config) if config else {}
+
+    # Version pinning: if this child is pinned, snapshot overrides the
+    # template's live config/criteria/model for this run only.
+    if link.pinned_version:
+        version = link.pinned_version
+        if version.config_snapshot:
+            runtime_config.update(version.config_snapshot)
+        if version.criteria:
+            runtime_config["criteria"] = version.criteria
+        if version.model:
+            runtime_config["model"] = version.model
+
+    link_config = link.config or {}
+    if link_config:
+        link_params = link_config.get("params")
+        runtime_config.update({k: v for k, v in link_config.items() if k != "params"})
+        if isinstance(link_params, dict):
+            existing_params = runtime_config.get("params")
+            runtime_config["params"] = {
+                **(existing_params if isinstance(existing_params, dict) else {}),
+                **link_params,
+            }
+
+    pinned_model = link.pinned_version.model if link.pinned_version else None
+    effective_model = (
+        _link_run_config(link).get("model")
+        or link_config.get("model")
+        or pinned_model
+        or link.child.model
+        or model
+        or None
+    )
+    return runtime_config, effective_model
+
+
 def _execute_child(
     *,
     child_template: EvalTemplate,
@@ -86,33 +139,14 @@ def _execute_child(
     from model_hub.views.utils.evals import run_eval_func
 
     try:
-        runtime_config = dict(config) if config else {}
-
-        # Version pinning: if this child is pinned, snapshot overrides the
-        # template's live config/criteria/model for this run only.
-        if link.pinned_version:
-            version = link.pinned_version
-            if version.config_snapshot:
-                runtime_config.update(version.config_snapshot)
-            if version.criteria:
-                runtime_config["criteria"] = version.criteria
-            if version.model:
-                runtime_config["model"] = version.model
-
-        link_config = link.config or {}
-        if link_config:
-            link_params = link_config.get("params")
-            runtime_config.update(
-                {k: v for k, v in link_config.items() if k != "params"}
+        runtime_config, effective_model = resolve_child_binding(link, config, model)
+        effective_error_localizer = bool(
+            error_localizer
+            or (
+                PER_CHILD_ERROR_LOCALIZER_ENABLED
+                and _link_run_config(link).get("error_localizer_enabled")
             )
-            if isinstance(link_params, dict):
-                existing_params = runtime_config.get("params")
-                runtime_config["params"] = {
-                    **(existing_params if isinstance(existing_params, dict) else {}),
-                    **link_params,
-                }
-
-        effective_model = model or child_template.model or None
+        )
 
         result = run_eval_func(
             runtime_config,
@@ -120,7 +154,7 @@ def _execute_child(
             child_template,
             org,
             model=effective_model,
-            error_localizer=error_localizer,
+            error_localizer=effective_error_localizer,
             source=source,
             workspace=workspace,
             input_data_types=input_data_types or {},
@@ -129,39 +163,16 @@ def _execute_child(
             trace_context=trace_context,
             session_context=session_context,
             call_context=call_context,
+            # A pinned child ran the snapshot above, so its usage log must be
+            # stamped with the pinned version — not the template default that
+            # run_eval_func would otherwise resolve.
+            resolved_version=link.pinned_version if link.pinned_version else None,
         )
 
-        score: float | None = None
-        _output_type = child_template.output_type_normalized
-        if not _output_type:
-            # Older / code-created templates may not have output_type_normalized
-            # set. Derive it from config["output"] before falling back to a
-            # dumb numeric cast so "Passed"/"Failed" strings score correctly.
-            _config_output = (getattr(child_template, "config", None) or {}).get("output", "")
-            _output_type = {
-                "Pass/Fail": "pass_fail",
-                "score": "percentage",
-                "choices": "choices",
-            }.get(_config_output)
-
-        if _output_type:
-            score = normalize_score(
-                result.get("output"),
-                _output_type,
-                child_template.choice_scores,
-            )
-        else:
-            # Last resort — best-effort numeric fallback.
-            try:
-                raw = result.get("output")
-                if raw is not None:
-                    score = max(0.0, min(1.0, float(raw)))
-            except (ValueError, TypeError):
-                logger.warning(
-                    "Child %s has no output_type_normalized and a non-numeric "
-                    "output — skipping in aggregation",
-                    child_template.name,
-                )
+        # None: unscoreable children fall through to the exclusion branch below.
+        score: float | None = score_eval_output(
+            result.get("output"), child_template, default_score=None
+        )
 
         return CompositeChildResult(
             child_id=str(child_template.id),
@@ -177,13 +188,15 @@ def _execute_child(
         )
 
     except Exception as e:  # noqa: BLE001
+        from tfc.ee_gates import jev_error_message
+
         logger.warning("Child eval %s failed: %s", child_template.name, str(e))
         return CompositeChildResult(
             child_id=str(child_template.id),
             child_name=child_template.name,
             order=link.order,
             status="failed",
-            error=str(e),
+            error=jev_error_message(e) or str(e),
             weight=weight,
         )
 
@@ -262,6 +275,23 @@ def _log_composite_usage(
             "duration": duration,
         }
 
+        # Stamp the parent composite's own version (children stamp theirs
+        # inside run_eval_func).
+        try:
+            from model_hub.models.evals_metric import EvalTemplateVersion
+
+            parent_version = EvalTemplateVersion.objects.get_default(parent)
+            if parent_version:
+                config_payload["version_id"] = str(parent_version.id)
+                config_payload["version_number"] = parent_version.version_number
+        except Exception:
+            # stdlib logger here (not structlog) — no kwargs support.
+            logger.warning(
+                "version_tracking_failed path=composite_parent template_id=%s",
+                parent.id,
+                exc_info=True,
+            )
+
         status = (
             APICallStatusChoices.SUCCESS.value
             if completed > 0
@@ -315,8 +345,17 @@ def execute_composite_children_sync(
     Responsibilities:
     - Execute children in `order` (`child_links` is assumed pre-sorted).
     - Apply per-binding weight overrides if provided.
+    - Resolve each child's model as link `run_config` → link config → pinned
+      version → child template → `model`. A composite has no model of its
+      own, so `model` is a fallback for model-less children (system evals),
+      not an override.
+    - Enable the error localizer for a child from the composite-level
+      `error_localizer` only. The child's own
+      `run_config.error_localizer_enabled` is captured on the link but not
+      honoured — see `PER_CHILD_ERROR_LOCALIZER_ENABLED`.
     - Aggregate only when `parent.aggregation_enabled`; otherwise return
-      raw child results with a null aggregate.
+      raw child results with a null aggregate. The per-child summary is
+      built either way.
     - Defer pass/fail until a numeric aggregate is actually available.
 
     The caller is responsible for:
@@ -357,10 +396,10 @@ def execute_composite_children_sync(
 
     if parent.aggregation_enabled:
         threshold_map = {
-            str(link.child_id): (
-                link.child.pass_threshold
-                if link.child.pass_threshold is not None
-                else 0.5
+            str(link.child_id): resolve_pass_threshold(
+                eval_template=link.child,
+                runtime_config=link.config or {},
+                resolved_version=link.pinned_version,
             )
             for link in child_links
         }
@@ -388,7 +427,10 @@ def execute_composite_children_sync(
             )
             aggregate_pass = determine_pass_fail(aggregate_score, parent_threshold)
 
-        summary = aggregate_summaries(child_results)
+    # Built in both modes: with aggregation off there is no aggregate, and
+    # every caller (tracer span/trace/session, dataset cell, external eval)
+    # stores this summary as the composite's result in its place.
+    summary = aggregate_summaries(child_results)
 
     # Error localizer dict is cheap to compute either way — it is consumed
     # regardless of aggregation mode so the UI can drill into failing

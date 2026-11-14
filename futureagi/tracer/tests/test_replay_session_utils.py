@@ -1,11 +1,17 @@
+import json
 import uuid
+from datetime import datetime
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from model_hub.models.choices import StatusType
+from tracer.services.clickhouse.v2.span_reader import CHSpan
 from tracer.utils.replay_session import (
     _build_trace_query,
+    _chspan_to_legacy_dict,
+    _extract_transcripts_from_spans,
+    _extract_voice_trace_original_config,
     _get_transcripts_from_session_query,
     _get_transcripts_from_trace_query,
     _update_agent_definition,
@@ -155,7 +161,7 @@ class TestGetSystemPrompt:
 class TestGetAgentSuggestions:
     """Tests for get_agent_suggestions function."""
 
-    @patch("tracer.utils.replay_session._get_agent_definition_from_replay_sessions")
+    @patch("tracer.utils.replay_session._resolve_agent_definition_for_project")
     def test_returns_existing_agent_definition(self, mock_get_agent_def_from_sessions):
         """Should return existing agent definition data when found."""
         mock_project = MagicMock()
@@ -188,7 +194,7 @@ class TestGetAgentSuggestions:
         assert "scenario_name" in suggestions
         assert agent_def == mock_agent_def
 
-    @patch("tracer.utils.replay_session._get_agent_definition_from_replay_sessions")
+    @patch("tracer.utils.replay_session._resolve_agent_definition_for_project")
     def test_generates_defaults_when_no_agent_definition(
         self, mock_get_agent_def_from_sessions
     ):
@@ -222,7 +228,7 @@ class TestGetAgentSuggestions:
         assert suggestions["version_name"] is None
         assert agent_def is None
 
-    @patch("tracer.utils.replay_session._get_agent_definition_from_replay_sessions")
+    @patch("tracer.utils.replay_session._resolve_agent_definition_for_project")
     def test_handles_agent_definition_not_found(self, mock_get_agent_def_from_sessions):
         """Should generate defaults when no agent_def is found from replay sessions."""
         mock_project = MagicMock()
@@ -246,7 +252,7 @@ class TestGetAgentSuggestions:
         assert suggestions["agent_description"] == ""
         assert agent_def is None
 
-    @patch("tracer.utils.replay_session._get_agent_definition_from_replay_sessions")
+    @patch("tracer.utils.replay_session._resolve_agent_definition_for_project")
     def test_handles_none_latest_version(self, mock_get_agent_def_from_sessions):
         """Should handle agent_def with no latest_version."""
         mock_project = MagicMock()
@@ -340,7 +346,7 @@ class TestUpdateAgentDefinition:
 class TestGetOrCreateAgentDefinition:
     """Tests for get_or_create_agent_definition function."""
 
-    @patch("tracer.utils.replay_session._get_agent_definition_from_replay_sessions")
+    @patch("tracer.utils.replay_session._resolve_agent_definition_for_project")
     @patch("tracer.utils.replay_session._update_agent_definition")
     def test_returns_existing_and_updates(
         self, mock_update, mock_get_agent_def_from_sessions
@@ -366,7 +372,7 @@ class TestGetOrCreateAgentDefinition:
             voice_config=None,
         )
 
-    @patch("tracer.utils.replay_session._get_agent_definition_from_replay_sessions")
+    @patch("tracer.utils.replay_session._resolve_agent_definition_for_project")
     @patch("tracer.utils.replay_session.AgentDefinition")
     def test_creates_new_when_no_existing(
         self, mock_agent_def_model, mock_get_agent_def_from_sessions
@@ -390,7 +396,7 @@ class TestGetOrCreateAgentDefinition:
         mock_agent_def_model.objects.create.assert_called_once()
         mock_new_agent_def.create_version.assert_called_once()
 
-    @patch("tracer.utils.replay_session._get_agent_definition_from_replay_sessions")
+    @patch("tracer.utils.replay_session._resolve_agent_definition_for_project")
     @patch("tracer.utils.replay_session.AgentDefinition")
     def test_creates_new_with_correct_params(
         self, mock_agent_def_model, mock_get_agent_def_from_sessions
@@ -420,7 +426,7 @@ class TestGetOrCreateAgentDefinition:
             languages=["en"],
         )
 
-    @patch("tracer.utils.replay_session._get_agent_definition_from_replay_sessions")
+    @patch("tracer.utils.replay_session._resolve_agent_definition_for_project")
     @patch("tracer.utils.replay_session.AgentDefinition")
     def test_creates_version_after_agent_def(
         self, mock_agent_def_model, mock_get_agent_def_from_sessions
@@ -603,29 +609,37 @@ class TestGetTranscriptsFromSessionQuery:
     def test_groups_traces_by_session_id(self):
         """Should group traces by session_id."""
         session_id = uuid.uuid4()
+        now = datetime(2025, 1, 1, tzinfo=None)
 
-        mock_queryset = MagicMock()
-        mock_annotate = MagicMock()
-        mock_order = MagicMock()
-
-        mock_queryset.annotate.return_value = mock_annotate
-        mock_annotate.order_by.return_value = mock_order
-        mock_order.values.return_value = [
+        trace_rows = [
             {
                 "id": uuid.uuid4(),
                 "session_id": session_id,
                 "input": "Turn 1 input",
                 "output": "Turn 1 output",
+                "created_at": now,
             },
             {
                 "id": uuid.uuid4(),
                 "session_id": session_id,
                 "input": "Turn 2 input",
                 "output": "Turn 2 output",
+                "created_at": now,
             },
         ]
 
+        mock_queryset = MagicMock()
+        mock_queryset.values.return_value = trace_rows
+
+        mock_reader = MagicMock()
+        mock_reader.per_trace_root_span_start_times.return_value = {}
+        mock_reader.__enter__ = lambda s: s
+        mock_reader.__exit__ = MagicMock(return_value=False)
+
         with patch(
+            "tracer.services.clickhouse.v2.get_reader",
+            return_value=mock_reader,
+        ), patch(
             "tracer.utils.replay_session.trace_ids_with_simulator_call_execution_id",
             return_value=set(),
         ):
@@ -638,29 +652,37 @@ class TestGetTranscriptsFromSessionQuery:
         """Should handle multiple sessions correctly."""
         session_id_1 = uuid.uuid4()
         session_id_2 = uuid.uuid4()
+        now = datetime(2025, 1, 1, tzinfo=None)
 
-        mock_queryset = MagicMock()
-        mock_annotate = MagicMock()
-        mock_order = MagicMock()
-
-        mock_queryset.annotate.return_value = mock_annotate
-        mock_annotate.order_by.return_value = mock_order
-        mock_order.values.return_value = [
+        trace_rows = [
             {
                 "id": uuid.uuid4(),
                 "session_id": session_id_1,
                 "input": "S1 Input",
                 "output": "S1 Output",
+                "created_at": now,
             },
             {
                 "id": uuid.uuid4(),
                 "session_id": session_id_2,
                 "input": "S2 Input",
                 "output": "S2 Output",
+                "created_at": now,
             },
         ]
 
+        mock_queryset = MagicMock()
+        mock_queryset.values.return_value = trace_rows
+
+        mock_reader = MagicMock()
+        mock_reader.per_trace_root_span_start_times.return_value = {}
+        mock_reader.__enter__ = lambda s: s
+        mock_reader.__exit__ = MagicMock(return_value=False)
+
         with patch(
+            "tracer.services.clickhouse.v2.get_reader",
+            return_value=mock_reader,
+        ), patch(
             "tracer.utils.replay_session.trace_ids_with_simulator_call_execution_id",
             return_value=set(),
         ):
@@ -673,30 +695,169 @@ class TestGetTranscriptsFromSessionQuery:
     def test_returns_empty_dict_for_empty_queryset(self):
         """Should return empty dict when queryset is empty."""
         mock_queryset = MagicMock()
-        mock_annotate = MagicMock()
-        mock_order = MagicMock()
-
-        mock_queryset.annotate.return_value = mock_annotate
-        mock_annotate.order_by.return_value = mock_order
-        mock_order.values.return_value = []
+        mock_queryset.values.return_value = []
 
         result = _get_transcripts_from_session_query(mock_queryset)
 
         assert result == {}
 
-    def test_orders_by_span_start_time(self):
-        """Should order traces by span_start_time."""
+    def test_orders_by_root_span_start_time(self):
+        """Should order traces by root span start_time from CH, falling back to created_at."""
+        session_id = uuid.uuid4()
+        trace_id_early = uuid.uuid4()
+        trace_id_late = uuid.uuid4()
+
+        # Intentionally list the late trace first in PG results
+        trace_rows = [
+            {
+                "id": trace_id_late,
+                "session_id": session_id,
+                "input": "Late",
+                "output": "Late out",
+                "created_at": datetime(2025, 1, 2, tzinfo=None),
+            },
+            {
+                "id": trace_id_early,
+                "session_id": session_id,
+                "input": "Early",
+                "output": "Early out",
+                "created_at": datetime(2025, 1, 1, tzinfo=None),
+            },
+        ]
+
         mock_queryset = MagicMock()
-        mock_annotate = MagicMock()
-        mock_order = MagicMock()
+        mock_queryset.values.return_value = trace_rows
 
-        mock_queryset.annotate.return_value = mock_annotate
-        mock_annotate.order_by.return_value = mock_order
-        mock_order.values.return_value = []
+        # CH returns root-span start_times that should drive sort order
+        mock_reader = MagicMock()
+        mock_reader.per_trace_root_span_start_times.return_value = {
+            str(trace_id_early): datetime(2025, 1, 1, 0, 0, 0),
+            str(trace_id_late): datetime(2025, 1, 2, 0, 0, 0),
+        }
+        mock_reader.__enter__ = lambda s: s
+        mock_reader.__exit__ = MagicMock(return_value=False)
 
-        _get_transcripts_from_session_query(mock_queryset)
+        with patch(
+            "tracer.services.clickhouse.v2.get_reader",
+            return_value=mock_reader,
+        ), patch(
+            "tracer.utils.replay_session.trace_ids_with_simulator_call_execution_id",
+            return_value=set(),
+        ):
+            result = _get_transcripts_from_session_query(mock_queryset)
 
-        mock_annotate.order_by.assert_called_once_with("span_start_time")
+        turns = result[str(session_id)]
+        assert turns[0]["input"] == "Early"
+        assert turns[1]["input"] == "Late"
+
+
+# A vapi call payload as the collector stores it: a JSON string in the CH
+# spans row's ``attrs_string`` (dev: every conversation span since July).
+_VAPI_RAW_LOG = {
+    "id": "call-1",
+    "assistantId": "asst-1",
+    "type": "inboundPhoneCall",
+    "phoneCallProvider": "twilio",
+    "phoneNumber": {"number": "+15550100001"},
+    "assistant": {
+        "id": "asst-1",
+        "model": {"model": "gpt-4o", "messages": []},
+    },
+    "messages": [
+        {"role": "system", "message": "You are a clinic receptionist."},
+        {"role": "bot", "message": "Hello, how can I help?"},
+        {"role": "user", "message": "When do you open?"},
+        {"role": "bot", "message": "We open at nine."},
+    ],
+}
+
+
+def _ch_conversation_span(raw_log_json: str) -> CHSpan:
+    return CHSpan(
+        id="0d54f84ac36455d6",
+        project_id=str(uuid.uuid4()),
+        trace_id=str(uuid.uuid4()),
+        parent_span_id="",
+        name="call",
+        observation_type="conversation",
+        operation_name="",
+        start_time=datetime(2026, 9, 22, 16, 27, 36),
+        end_time=None,
+        latency_ms=0,
+        model="",
+        provider="openai",
+        prompt_tokens=0,
+        completion_tokens=0,
+        total_tokens=0,
+        cost=0.0,
+        status="OK",
+        status_message="",
+        org_id=None,
+        project_version_id=None,
+        end_user_id=None,
+        trace_session_id=None,
+        prompt_version_id=None,
+        prompt_label_id=None,
+        custom_eval_config_id=None,
+        input="",
+        output="",
+        tags="[]",
+        span_events="",
+        metadata="{}",
+        resource_attrs="{}",
+        attributes_extra="{}",
+        attrs_string={"raw_log": raw_log_json, "gen_ai.system": "vapi"},
+    )
+
+
+@pytest.mark.unit
+class TestVoiceRawLogFromClickHouse:
+    """Replay reads conversation spans from ClickHouse, where ``raw_log`` is a
+    JSON string, not the dict the PG-era readers expected."""
+
+    def _read_first_span_config(self, span):
+        mock_reader = MagicMock()
+        mock_reader.list_by_trace.return_value = [span]
+        mock_reader.__enter__ = lambda s: s
+        mock_reader.__exit__ = MagicMock(return_value=False)
+        trace_query = MagicMock()
+        trace_query.values_list.return_value.first.return_value = span.trace_id
+
+        with patch(
+            "tracer.services.clickhouse.v2.get_reader", return_value=mock_reader
+        ):
+            return _extract_voice_trace_original_config(trace_query)
+
+    def test_original_config_reads_a_json_string_raw_log(self):
+        span = _ch_conversation_span(json.dumps(_VAPI_RAW_LOG))
+
+        config = self._read_first_span_config(span)
+
+        assert config is not None
+        assert config["assistant_id"] == "asst-1"
+        assert config["inbound"] is True
+        assert config["description"] == "You are a clinic receptionist."
+        assert config["first_message"] == "Hello, how can I help?"
+        assert config["contact_number"] == "+15550100001"
+        assert config["model"] == "gpt-4o"
+
+    def test_unparseable_raw_log_has_no_config(self):
+        span = _ch_conversation_span("{not json")
+
+        assert self._read_first_span_config(span) is None
+
+    def test_transcripts_fall_back_to_a_json_string_raw_log(self):
+        # No provider_transcript / flattened transcript keys on the span: the
+        # turns only exist in raw_log.messages.
+        span = _ch_conversation_span(json.dumps(_VAPI_RAW_LOG))
+
+        transcripts = _extract_transcripts_from_spans([_chspan_to_legacy_dict(span)])
+
+        assert transcripts == {
+            span.trace_id: [
+                {"input": "When do you open?", "output": "We open at nine."}
+            ]
+        }
 
 
 @pytest.mark.unit
@@ -829,3 +990,77 @@ class TestCreateScenario:
 
         call_kwargs = mock_scenarios.objects.create.call_args[1]
         assert call_kwargs["description"] == "Custom description"
+
+
+def _make_agent(project, observability_provider=None, name="Agent"):
+    from simulate.models import AgentDefinition
+
+    return AgentDefinition.objects.create(
+        agent_name=name,
+        agent_type=AgentDefinition.AgentTypeChoices.TEXT,
+        inbound=True,
+        description="test agent",
+        organization=project.organization,
+        workspace=project.workspace,
+        languages=["en"],
+        observability_provider=observability_provider,
+    )
+
+
+@pytest.mark.django_db
+class TestResolveAgentDefinitionForProject:
+    def test_existing_replay_session_returns_agent(self, project):
+        from tracer.models.replay_session import ReplaySession, ReplayType
+        from tracer.utils.replay_session import (
+            _resolve_agent_definition_for_project,
+        )
+
+        agent = _make_agent(project, name="ReplayAgent")
+        ReplaySession.objects.create(
+            project=project,
+            replay_type=ReplayType.SESSION,
+            agent_definition=agent,
+        )
+
+        assert _resolve_agent_definition_for_project(project) == agent
+
+    def test_empty_and_no_providers_returns_none(self, project):
+        from tracer.utils.replay_session import _resolve_agent_definition_for_project
+        result = _resolve_agent_definition_for_project(project)
+        assert result is None
+
+    def test_empty_replay_sessions_returns_newest_provider_agent(self, project):
+        from datetime import UTC, datetime, timedelta
+
+        from simulate.models import AgentDefinition
+        from tracer.models.observability_provider import (
+            ObservabilityProvider,
+            ProviderChoices,
+        )
+        from tracer.utils.replay_session import (
+            _resolve_agent_definition_for_project,
+        )
+
+        # observability_provider is OneToOne, so each agent needs its own provider.
+        prov_old = ObservabilityProvider.objects.create(
+            project=project,
+            provider=ProviderChoices.VAPI,
+            organization=project.organization,
+            workspace=project.workspace,
+        )
+        prov_new = ObservabilityProvider.objects.create(
+            project=project,
+            provider=ProviderChoices.RETELL,
+            organization=project.organization,
+            workspace=project.workspace,
+        )
+        old_agent = _make_agent(project, observability_provider=prov_old, name="Old")
+        new_agent = _make_agent(project, observability_provider=prov_new, name="New")
+        # created_at is auto_now_add; force a deterministic order.
+        now = datetime(2026, 6, 23, tzinfo=UTC)
+        AgentDefinition.objects.filter(id=old_agent.id).update(
+            created_at=now - timedelta(days=1)
+        )
+        AgentDefinition.objects.filter(id=new_agent.id).update(created_at=now)
+
+        assert _resolve_agent_definition_for_project(project) == new_agent

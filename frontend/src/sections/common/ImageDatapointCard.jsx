@@ -12,7 +12,8 @@ import { ShowComponent } from "src/components/show";
 import RunningSkeletonRenderer from "./DevelopCellRenderer/CellRenderers/RunningSkeletonRenderer";
 
 const ImageDatapointCard = ({ value, column }) => {
-  const hasImage = Boolean(value?.cellValue);
+  const cellValue = value?.cell_value;
+  const hasImage = Boolean(cellValue);
   return (
     <Accordion defaultExpanded disableGutters>
       <AccordionSummary
@@ -26,7 +27,7 @@ const ImageDatapointCard = ({ value, column }) => {
         <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
           <SvgColor
             src={`/assets/icons/action_buttons/ic_image.svg`}
-            sx={{ width: 20, height: 20, color: "text.secondary" }}
+            sx={{ width: 16, height: 16, color: "text.secondary" }}
           />
           <Typography
             variant="s1"
@@ -63,7 +64,7 @@ const ImageDatapointCard = ({ value, column }) => {
               {hasImage ? (
                 <Image
                   height="100%"
-                  src={value?.cellValue}
+                  src={cellValue}
                   alt=""
                   style={{
                     cursor: "pointer",

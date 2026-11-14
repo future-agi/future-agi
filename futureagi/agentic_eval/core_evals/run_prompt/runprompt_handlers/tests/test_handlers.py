@@ -2088,3 +2088,151 @@ class TestEdgeCases:
 
         assert params_chirp["model"] == "vertex_ai/chirp"
         assert isinstance(params_chirp["voice"], dict)  # Dict voice for Chirp
+
+
+# =============================================================================
+# Unit Tests - ResponseFormatter output_format parsing
+# =============================================================================
+
+
+@pytest.mark.unit
+class TestResponseFormatterOutputFormat:
+    """format_llm_response parses output_format into a structured value."""
+
+    def _response(self, content):
+        from unittest.mock import Mock
+
+        mock = Mock()
+        mock.choices = [Mock()]
+        mock.choices[0].message = Mock()
+        mock.choices[0].message.content = content
+        mock.choices[0].message.tool_calls = None
+        mock.usage = Mock()
+        mock.usage.prompt_tokens = 10
+        mock.usage.completion_tokens = 20
+        mock.usage.total_tokens = 30
+        mock.model = "gpt-4o"
+        return mock
+
+    def _format(self, content, output_format):
+        from agentic_eval.core_evals.run_prompt.runprompt_handlers.utils.response_formatter import (  # noqa: E501
+            ResponseFormatter,
+        )
+
+        formatted, _ = ResponseFormatter.format_llm_response(
+            response=self._response(content),
+            model="gpt-4o",
+            start_time=time.time(),
+            output_format=output_format,
+        )
+        return formatted
+
+    def test_array_output_format_returns_list(self):
+        """A JSON-array response is parsed to a list, not left as a string."""
+        formatted = self._format('["Paris", "France"]', "array")
+        assert formatted == ["Paris", "France"]
+        assert isinstance(formatted, list)
+
+    def test_array_output_format_strips_code_fence(self):
+        """A fenced ```json array is unwrapped and parsed to a list."""
+        content = '```json\n["Paris", "France"]\n```'
+        formatted = self._format(content, "array")
+        assert formatted == ["Paris", "France"]
+
+    def test_array_output_format_parses_python_literal(self):
+        """Single-quoted array (Python literal, not valid JSON) still parses."""
+        formatted = self._format("['Paris', 'France']", "array")
+        assert formatted == ["Paris", "France"]
+
+    def test_array_output_format_empty_array(self):
+        """An empty array parses to an empty list, not a raw string."""
+        formatted = self._format("[]", "array")
+        assert formatted == []
+        assert isinstance(formatted, list)
+
+    def test_array_output_format_unparseable_falls_back_to_raw(self):
+        """Malformed array content degrades to the raw string, never raises."""
+        formatted = self._format("not an array at all", "array")
+        assert formatted == "not an array at all"
+
+    def test_object_output_format_returns_dict(self):
+        """A JSON-object response is parsed to a dict."""
+        formatted = self._format('{"city": "Paris"}', "object")
+        assert formatted == {"city": "Paris"}
+        assert isinstance(formatted, dict)
+
+    def test_number_output_format_returns_float(self):
+        """A numeric response is parsed to a float."""
+        formatted = self._format("42.5", "number")
+        assert formatted == 42.5
+        assert isinstance(formatted, float)
+
+    def test_string_output_format_passthrough_unchanged(self):
+        """The common string path is unchanged — raw content is returned."""
+        formatted = self._format("This is a plain answer.", "string")
+        assert formatted == "This is a plain answer."
+
+
+@pytest.mark.unit
+class TestCustomModelHandler:
+    """Custom HTTP-endpoint models (provider="custom") saved from AI Providers."""
+
+    def _context(self, org, messages):
+        from agentic_eval.core_evals.run_prompt.runprompt_handlers import (
+            ModelHandlerContext,
+        )
+
+        return ModelHandlerContext(
+            model="my-model", messages=messages, organization_id=org, provider="custom"
+        )
+
+    def test_endpoint_saved_as_api_base_is_used(
+        self, mock_organization_id, simple_messages
+    ):
+        from agentic_eval.core_evals.run_prompt.runprompt_handlers.handlers.custom_model_handler import (
+            CustomModelHandler,
+        )
+
+        url = "https://llm.example.com/v1/chat/completions"
+        with patch("model_hub.models.custom_models.CustomAIModel.objects") as objects:
+            objects.get.return_value = Mock(
+                actual_json={"api_base": url, "headers": {}}
+            )
+            handler = CustomModelHandler(
+                self._context(mock_organization_id, simple_messages)
+            )
+        assert handler._custom_model_config["endpoint_url"] == url
+
+    @pytest.mark.asyncio
+    async def test_streaming_async_builds_handler_off_the_event_loop(
+        self, mock_organization_id, simple_messages
+    ):
+        import asyncio
+
+        from agentic_eval.core_evals.run_prompt.runprompt_handlers.handlers import (
+            LLMHandler,
+        )
+
+        on_loop = []
+
+        class FakeHandler:  # the real __init__ reads the DB, which Django refuses on the loop
+            def __init__(self, context):
+                try:
+                    on_loop.append(bool(asyncio.get_running_loop()))
+                except RuntimeError:
+                    on_loop.append(False)
+
+            async def execute_async(self, streaming=False):
+                return Mock(response="ok", metadata={})
+
+        handler = LLMHandler(self._context(mock_organization_id, simple_messages))
+        with (
+            patch(
+                "agentic_eval.core_evals.run_prompt.runprompt_handlers.handlers.custom_model_handler.CustomModelHandler",
+                FakeHandler,
+            ),
+            patch.object(handler, "_ws_send_running_async", AsyncMock()),
+            patch.object(handler, "_ws_send_completed_async", AsyncMock()),
+        ):
+            await handler._handle_custom_model_streaming_async(Mock(), {}, time.time())
+        assert on_loop == [False]

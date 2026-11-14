@@ -22,13 +22,8 @@ import {
   Tabs,
   ToggleButton,
   Typography,
-  useTheme,
 } from "@mui/material";
 import Iconify from "src/components/iconify";
-import {
-  getAnnotationTabSx,
-  getAnnotationTabIndicatorProps,
-} from "../../view/annotation-tab-styles";
 import {
   annotateKeys,
   annotationQueueKeys,
@@ -38,6 +33,7 @@ import {
   useQueueProgress,
   useRemoveQueueItem,
   useBulkRemoveQueueItems,
+  useBulkReviewItems,
   useAssignQueueItems,
   useDownloadAnnotationQueueExport,
   useUpdateAnnotationQueueStatus,
@@ -53,32 +49,19 @@ import ExportToDatasetDialog from "./export-to-dataset-dialog";
 import AutomationRulesTab from "./automation-rules-tab";
 import { paths } from "src/routes/paths";
 import { enqueueSnackbar } from "src/components/snackbar";
+import { SS_KEY_USER_ID } from "src/utils/sessionKeys";
 import { QUEUE_ROLES, hasQueueRole, isQueueAnnotatorRole } from "../constants";
 import {
   canOpenSubmissionWorkspace,
   resolveQueueItemWorkspaceMode,
 } from "../annotate/annotation-view-mode";
-
-const STATUS_OPTIONS = [
-  { value: "", label: "All Statuses" },
-  { value: "pending", label: "Pending" },
-  { value: "in_progress", label: "In Progress" },
-  { value: "in_review", label: "In Review" },
-  { value: "needs_changes", label: "Needs Changes" },
-  { value: "resubmitted", label: "Resubmitted" },
-  { value: "completed", label: "Completed" },
-  { value: "skipped", label: "Skipped" },
-];
-
-const SOURCE_OPTIONS = [
-  { value: "", label: "All Sources" },
-  { value: "dataset_row", label: "Dataset Row" },
-  { value: "trace", label: "Trace" },
-  { value: "observation_span", label: "Span" },
-  { value: "trace_session", label: "Session" },
-  { value: "prototype_run", label: "Prototype" },
-  { value: "call_execution", label: "Simulation" },
-];
+import {
+  ALL_SOURCE_VALUES,
+  ALL_STATUS_VALUES,
+  ITEM_SOURCE_FILTER_OPTIONS,
+  ITEM_STATUS_FILTER_OPTIONS,
+  buildQueueItemQueryFilters,
+} from "./queue-item-filters";
 
 const REVIEW_STATUS_OPTIONS = [
   { value: "", label: "All Reviews" },
@@ -91,11 +74,10 @@ export default function QueueDetailView() {
   const { queueId } = useParams();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const theme = useTheme();
   const { user } = useAuthContext();
   const [filters, setFilters] = useState({
-    status: "",
-    source_type: "",
+    status: ALL_STATUS_VALUES,
+    source_type: ALL_SOURCE_VALUES,
     assigned_to: "",
     review_status: "",
   });
@@ -110,6 +92,10 @@ export default function QueueDetailView() {
   const gridRef = useRef(null);
 
   const { data: queue } = useAnnotationQueueDetail(queueId);
+  const itemQueryFilters = useMemo(
+    () => buildQueueItemQueryFilters(filters),
+    [filters],
+  );
   const {
     data: itemsData,
     isLoading,
@@ -117,13 +103,15 @@ export default function QueueDetailView() {
     hasNextPage,
     isFetchingNextPage,
   } = useQueueItems(queueId, {
-    ...filters,
+    ...itemQueryFilters,
     ordering: itemOrdering,
     limit: 25,
   });
   const { mutate: removeItem } = useRemoveQueueItem();
   const { mutate: bulkRemove, isPending: isBulkRemoving } =
     useBulkRemoveQueueItems();
+  const { mutate: bulkReview, isPending: isBulkReviewing } =
+    useBulkReviewItems();
   const { mutate: assignItems, isPending: isAssigningItems } =
     useAssignQueueItems();
   const { mutate: downloadExport, isPending: isDownloadingExport } =
@@ -137,11 +125,8 @@ export default function QueueDetailView() {
 
   const currentUserId = String(
     user?.id ||
-      user?.pk ||
-      user?.user_id ||
-      user?.userId ||
       (typeof window !== "undefined"
-        ? window.sessionStorage.getItem("currentUserId")
+        ? window.sessionStorage.getItem(SS_KEY_USER_ID)
         : "") ||
       "",
   );
@@ -179,6 +164,15 @@ export default function QueueDetailView() {
     queueStatus: queue?.status,
   });
 
+  const selectedReviewableItems = useMemo(
+    () =>
+      items.filter(
+        (item) =>
+          selectedIds.has(item.id) && item.review_status === "pending_review",
+      ),
+    [items, selectedIds],
+  );
+
   // Ordered tab labels based on role — items is always 0
   const tabLabels = useMemo(
     () =>
@@ -194,8 +188,24 @@ export default function QueueDetailView() {
 
   const currentTab = tabLabels[activeTab] || "items";
 
+  const handleBack = useCallback(() => {
+    if (currentTab === "settings") {
+      setActiveTab(0);
+      return;
+    }
+    navigate(paths.dashboard.annotations.queues);
+  }, [currentTab, navigate]);
+
   const handleFilterChange = useCallback((field, value) => {
     setFilters((prev) => ({ ...prev, [field]: value, page: 0 }));
+  }, []);
+
+  const handleMultiFilterChange = useCallback((field, value) => {
+    setFilters((prev) => ({
+      ...prev,
+      [field]: Array.isArray(value) ? value : [],
+      page: 0,
+    }));
   }, []);
 
   const handleSelectToggle = useCallback((id) => {
@@ -234,12 +244,29 @@ export default function QueueDetailView() {
     );
   }, [queueId, selectedIds, bulkRemove, clearSelectedItems, isBulkRemoving]);
 
+  const handleBulkApprove = useCallback(() => {
+    if (selectedReviewableItems.length === 0 || isBulkReviewing) return;
+    bulkReview(
+      {
+        queueId,
+        itemIds: selectedReviewableItems.map((item) => item.id),
+        action: "approve",
+      },
+      { onSuccess: clearSelectedItems },
+    );
+  }, [
+    bulkReview,
+    clearSelectedItems,
+    isBulkReviewing,
+    queueId,
+    selectedReviewableItems,
+  ]);
+
   const handleAssign = useCallback(
-    ({ itemIds, userId, userIds, action }) => {
+    ({ itemIds, userIds, action }) => {
       assignItems({
         queueId,
         itemIds,
-        userId,
         userIds,
         action,
         assignees: queueAnnotators,
@@ -323,8 +350,8 @@ export default function QueueDetailView() {
   const isEmpty =
     !isLoading &&
     items.length === 0 &&
-    !filters.status &&
-    !filters.source_type &&
+    filters.status.length === ALL_STATUS_VALUES.length &&
+    filters.source_type.length === ALL_SOURCE_VALUES.length &&
     !filters.assigned_to &&
     !filters.review_status;
 
@@ -348,12 +375,15 @@ export default function QueueDetailView() {
         flexShrink={0}
       >
         <IconButton
-          onClick={() => navigate(paths.dashboard.annotations.queues)}
+          aria-label={
+            currentTab === "settings" ? "Back to queue items" : "Back to queues"
+          }
+          onClick={handleBack}
           size="small"
         >
-          <Iconify icon="eva:arrow-back-fill" />
+          <Iconify icon="solar:arrow-left-linear" />
         </IconButton>
-        <Typography variant="h4" sx={{ minWidth: 0 }} noWrap>
+        <Typography variant="h2" sx={{ minWidth: 0 }} noWrap>
           {queue?.name || "Queue"}
         </Typography>
         {queue?.status && <StatusBadge status={queue.status} />}
@@ -362,7 +392,7 @@ export default function QueueDetailView() {
           <Button
             variant="outlined"
             disabled={isUpdatingStatus}
-            startIcon={<Iconify icon="eva:play-circle-fill" />}
+            startIcon={<Iconify icon="solar:play-circle-linear" />}
             onClick={() => updateStatus({ id: queueId, status: "active" })}
           >
             Activate
@@ -371,8 +401,8 @@ export default function QueueDetailView() {
         <Button
           variant="outlined"
           disabled={totalCount === 0 || isDownloadingExport}
-          startIcon={<Iconify icon="eva:download-fill" />}
-          endIcon={<Iconify icon="eva:arrow-ios-downward-fill" />}
+          startIcon={<Iconify icon="solar:download-minimalistic-linear" />}
+          endIcon={<Iconify icon="solar:alt-arrow-down-linear" />}
           onClick={(event) => setExportMenuAnchor(event.currentTarget)}
         >
           Export
@@ -383,11 +413,11 @@ export default function QueueDetailView() {
           onClose={() => setExportMenuAnchor(null)}
         >
           <MenuItem onClick={handleDownloadExport}>
-            <Iconify icon="eva:download-outline" sx={{ mr: 1 }} />
+            <Iconify icon="solar:download-minimalistic-linear" sx={{ mr: 1 }} />
             Download
           </MenuItem>
           <MenuItem onClick={handleOpenDatasetExport}>
-            <Iconify icon="eva:archive-outline" sx={{ mr: 1 }} />
+            <Iconify icon="solar:archive-linear" sx={{ mr: 1 }} />
             Export to Dataset
           </MenuItem>
         </Menu>
@@ -405,7 +435,7 @@ export default function QueueDetailView() {
           <Button
             variant="contained"
             color="primary"
-            startIcon={<Iconify icon="eva:edit-2-fill" />}
+            startIcon={<Iconify icon="solar:pen-linear" />}
             onClick={() => handleOpenAnnotationWorkspace("annotate")}
           >
             {queue?.status === "completed"
@@ -476,21 +506,20 @@ export default function QueueDetailView() {
       )}
 
       {/* Tabs */}
-      <Tabs
-        value={activeTab}
-        onChange={(_, v) => setActiveTab(v)}
-        TabIndicatorProps={getAnnotationTabIndicatorProps(theme)}
-        sx={{
-          ...getAnnotationTabSx(theme),
-          px: 3,
-        }}
-      >
-        <Tab label="Items" />
-        {isManager && <Tab label="Settings" />}
-        <Tab label="Analytics" />
-        <Tab label="Agreement" />
-        {isManager && <Tab label="Rules" />}
-      </Tabs>
+      {/* Design system tab rail: full-width hairline under the tabs, 12px to the toolbar. */}
+      <Box sx={{ mb: 1.5, px: 3 }}>
+        <Tabs
+          value={activeTab}
+          onChange={(_, v) => setActiveTab(v)}
+          sx={{ boxShadow: "none", borderBottom: "1px solid", borderColor: "divider" }}
+        >
+          <Tab label="Items" />
+          {isManager && <Tab label="Settings" />}
+          <Tab label="Analytics" />
+          <Tab label="Agreement" />
+          {isManager && <Tab label="Rules" />}
+        </Tabs>
+      </Box>
 
       {currentTab === "settings" && (
         <Box sx={{ px: 3, overflow: "auto", flex: 1 }}>
@@ -550,28 +579,38 @@ export default function QueueDetailView() {
                 <FormSearchSelectFieldState
                   size="small"
                   value={filters.status}
-                  onChange={(e) => handleFilterChange("status", e.target.value)}
-                  options={STATUS_OPTIONS.map((o) => ({
+                  onChange={(e) =>
+                    handleMultiFilterChange("status", e.target.value)
+                  }
+                  options={ITEM_STATUS_FILTER_OPTIONS.map((o) => ({
                     label: o.label,
                     value: o.value,
                   }))}
-                  placeholder="All Statuses"
-                  showClear={!!filters.status}
-                  sx={{ minWidth: 140, flex: "1 1 150px" }}
+                  placeholder="All Item Statuses"
+                  multiple
+                  checkbox
+                  selectAll
+                  multipleAllLabel="All Item Statuses"
+                  showClear={false}
+                  sx={{ minWidth: 160, flex: "1 1 170px" }}
                 />
                 <FormSearchSelectFieldState
                   size="small"
                   value={filters.source_type}
                   onChange={(e) =>
-                    handleFilterChange("source_type", e.target.value)
+                    handleMultiFilterChange("source_type", e.target.value)
                   }
-                  options={SOURCE_OPTIONS.map((o) => ({
+                  options={ITEM_SOURCE_FILTER_OPTIONS.map((o) => ({
                     label: o.label,
                     value: o.value,
                   }))}
                   placeholder="All Sources"
-                  showClear={!!filters.source_type}
-                  sx={{ minWidth: 140, flex: "1 1 150px" }}
+                  multiple
+                  checkbox
+                  selectAll
+                  multipleAllLabel="All Sources"
+                  showClear={false}
+                  sx={{ minWidth: 160, flex: "1 1 170px" }}
                 />
                 {queue?.requires_review && (
                   <FormSearchSelectFieldState
@@ -599,12 +638,7 @@ export default function QueueDetailView() {
                     )
                   }
                   size="small"
-                  sx={{
-                    textTransform: "none",
-                    px: 2,
-                    flexShrink: 0,
-                    whiteSpace: "nowrap",
-                  }}
+                  sx={{ flexShrink: 0, whiteSpace: "nowrap" }}
                 >
                   My Items
                 </ToggleButton>
@@ -631,17 +665,15 @@ export default function QueueDetailView() {
               >
                 {isManager && selectedIds.size > 0 && (
                   <>
-                    {isManager && !queue?.auto_assign && (
-                      <LoadingButton
-                        variant="outlined"
-                        size="medium"
-                        onClick={handleOpenBulkAssign}
-                        loading={isAssigningItems}
-                        disabled={isAssigningItems || isBulkRemoving}
-                      >
-                        Assign Selected ({selectedIds.size})
-                      </LoadingButton>
-                    )}
+                    <LoadingButton
+                      variant="outlined"
+                      size="medium"
+                      onClick={handleOpenBulkAssign}
+                      loading={isAssigningItems}
+                      disabled={isAssigningItems || isBulkRemoving}
+                    >
+                      Assign Selected ({selectedIds.size})
+                    </LoadingButton>
                     <LoadingButton
                       color="error"
                       variant="outlined"
@@ -654,11 +686,23 @@ export default function QueueDetailView() {
                     </LoadingButton>
                   </>
                 )}
+                {canViewSubmissions && selectedReviewableItems.length > 0 && (
+                  <LoadingButton
+                    variant="outlined"
+                    size="medium"
+                    color="success"
+                    onClick={handleBulkApprove}
+                    loading={isBulkReviewing}
+                    disabled={isBulkReviewing}
+                  >
+                    Approve Selected ({selectedReviewableItems.length})
+                  </LoadingButton>
+                )}
                 {isManager && (
                   <Button
                     variant="contained"
                     color="primary"
-                    startIcon={<Iconify icon="mingcute:add-line" />}
+                    startIcon={<Iconify icon="solar:add-linear" />}
                     onClick={() => setAddDialogOpen(true)}
                   >
                     Add Items
@@ -698,6 +742,17 @@ export default function QueueDetailView() {
               onSelectAll={handleSelectAll}
               onRemove={isManager ? handleRemove : undefined}
               onItemClick={(item) => {
+                const assignedUsers = item?.assigned_users || [];
+                const assignedToOther =
+                  queue?.auto_assign === false &&
+                  !assignedUsers?.some((a) => String(a.id) === currentUserId);
+                if (assignedToOther && !canViewSubmissions && !isManager) {
+                  enqueueSnackbar(
+                    "You cannot annotate items that are not assigned to you",
+                    { variant: "warning" },
+                  );
+                  return;
+                }
                 if (
                   queue?.status === "active" ||
                   queue?.status === "completed"
@@ -721,6 +776,7 @@ export default function QueueDetailView() {
               onAssign={isManager ? handleAssign : undefined}
               autoAssign={queue?.auto_assign ?? false}
               canManageItems={isManager}
+              canSelectItems={isManager || canViewSubmissions}
               addedSortDirection={
                 itemOrdering === "created_at" ? "asc" : "desc"
               }
@@ -748,7 +804,8 @@ export default function QueueDetailView() {
         onClose={() => {
           if (!isAssigningItems) setBulkAssignOpen(false);
         }}
-        maxWidth="xs"
+        maxWidth={false}
+        PaperProps={{ sx: { maxWidth: 560 } }}
         fullWidth
       >
         <DialogTitle>Assign Selected Items</DialogTitle>

@@ -3,6 +3,7 @@ import PropTypes from "prop-types";
 import { Box, Popover, Stack, Typography } from "@mui/material";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import axios from "src/utils/axios";
+import { apiPath } from "src/api/contracts/api-surface";
 import { enqueueSnackbar } from "notistack";
 import { normalizeTags } from "./tagUtils";
 import TagChip from "./TagChip";
@@ -31,9 +32,9 @@ const AddTagsPopover = ({
   }, [open, currentTags, isBulk]);
 
   const patchTrace = (id, newTags) =>
-    axios.patch(`/tracer/trace/${id}/tags/`, { tags: newTags });
+    axios.patch(apiPath("/tracer/trace/{id}/tags/", { id }), { tags: newTags });
   const patchSpan = (id, newTags) =>
-    axios.post(`/tracer/observation-span/update-tags/`, {
+    axios.post(apiPath("/tracer/observation-span/update-tags/"), {
       span_id: id,
       tags: newTags,
     });
@@ -66,9 +67,9 @@ const AddTagsPopover = ({
         isBulk ? `Tags applied to ${items.length} items` : "Tags updated",
         { variant: "success" },
       );
+      // Refreshes the trace-detail drawer. The LLM tracing grid is AG-Grid
+      // server-side (not React Query), so it relies on onSuccess instead.
       queryClient.invalidateQueries({ queryKey: ["trace-detail"] });
-      queryClient.invalidateQueries({ queryKey: ["traceList"] });
-      queryClient.invalidateQueries({ queryKey: ["spanList"] });
       onSuccess?.();
     },
     onError: () => {
@@ -119,7 +120,7 @@ const AddTagsPopover = ({
       onClose={onClose}
       anchorOrigin={{ vertical: "bottom", horizontal: "right" }}
       transformOrigin={{ vertical: "top", horizontal: "right" }}
-      slotProps={{ paper: { sx: { width: 300, p: 1.5, mt: 0.5 } } }}
+      slotProps={{ paper: { sx: { width: 320, p: 1.5, mt: 0.5 } } }}
     >
       <Typography sx={{ fontSize: 12, fontWeight: 600, mb: 1 }}>
         {isBulk ? `Add tags to ${items.length} items` : "Tags"}
@@ -146,7 +147,7 @@ const AddTagsPopover = ({
         disabled={isPending}
       />
 
-      <Typography sx={{ fontSize: 10, color: "text.disabled", mt: 0.75 }}>
+      <Typography sx={{ fontSize: 12, color: "text.disabled", mt: 0.75 }}>
         {isBulk
           ? "Tags will be added to every selected item"
           : "Double-click name to rename · Click dot to change color"}

@@ -4,24 +4,27 @@ import traceback
 from typing import Any
 from urllib.parse import urlparse
 
-import requests
 from pydantic import BaseModel, Field, field_validator
 
 from tfc.utils.error_codes import get_error_message
+from tfc.utils.ssrf_guard import safe_fetch
 
 
 # Function to check if URL is valid
 def is_valid_url(url):
+    # SSRF-guarded reachability check — safe_fetch resolves + pins IP, blocks
+    # private/link-local hosts (including 169.254.169.254 cloud metadata),
+    # and re-validates each redirect hop.
     try:
-        response = requests.head(url, timeout=5)
+        response = safe_fetch(url, method="HEAD", timeout=5)
         return response.status_code == 200
-    except requests.RequestException:
+    except ValueError:
         return False
 
 
 # Function to download image from URL
 def download_image_from_url(url):
-    response = requests.get(url, stream=True, timeout=30)
+    response = safe_fetch(url, method="GET", timeout=30)
     return response.content
 
 

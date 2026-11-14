@@ -1,24 +1,24 @@
-import {
-  alpha,
-  Box,
-  Button,
-  Chip,
-  IconButton,
-  Popover,
-  Typography,
-} from "@mui/material";
+import { Box, Button, IconButton, Popover, Typography } from "@mui/material";
 import { formatDistanceToNow } from "date-fns";
-import { useCallback, useMemo, useRef, useState } from "react";
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import PropTypes from "prop-types";
 import _ from "lodash";
 import Iconify from "src/components/iconify";
+import EmptyState from "src/components/empty-state";
+import RunStatusBadge from "src/components/status-badge/StatusBadge";
 import FormSearchField from "src/components/FormSearchField/FormSearchField";
 import { DataTable, DataTablePagination } from "src/components/data-table";
 import { useDebounce } from "src/hooks/use-debounce";
 import axios, { endpoints } from "src/utils/axios";
 import { enqueueSnackbar } from "src/components/snackbar";
+import { useAuthContext } from "src/auth/hooks";
+import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
 import DeleteConfirmation from "./DeleteConfirmation";
+import { QUERY_FAILED_RETRY_MESSAGE } from "src/utils/queryReadState";
+import { readEvalTaskListPage } from "./task_list_read";
+import { isResumableTaskStatus } from "./task_status";
+import { compactSamplingLabel } from "src/sections/tasks/components/simpleSamplingPolicy";
 
 const POLL_INTERVAL_MS = 5000;
 
@@ -34,44 +34,21 @@ const shouldPollRow = (row) => {
 // ── Status Config ──
 
 const STATUS_CONFIG = {
-  pending: {
-    paletteColor: "warning",
-    icon: "solar:clock-circle-linear",
-  },
-  running: {
-    paletteColor: "info",
-    icon: "svg-spinners:ring-resize",
-  },
-  completed: {
-    paletteColor: "success",
-    icon: "solar:check-circle-linear",
-  },
-  failed: {
-    paletteColor: "error",
-    icon: "solar:close-circle-linear",
-  },
-  paused: {
-    paletteColor: "default",
-    icon: "solar:pause-circle-linear",
-  },
+  pending: { role: "neutral", icon: "solar:clock-circle-linear" },
+  running: { role: "info", icon: "svg-spinners:ring-resize" },
+  completed: { role: "success", icon: "solar:check-circle-linear" },
+  failed: { role: "danger", icon: "solar:close-circle-linear" },
+  paused: { role: "warning", icon: "solar:pause-circle-linear" },
 };
 
 const StatusBadge = ({ status }) => {
   const config = STATUS_CONFIG[status] || STATUS_CONFIG.pending;
-  const palColor = config.paletteColor;
   return (
-    <Chip
+    <RunStatusBadge
+      status={status}
       label={_.capitalize(status)}
-      size="small"
-      color={palColor}
-      variant="outlined"
+      role={config.role}
       icon={<Iconify icon={config.icon} width={14} />}
-      sx={{
-        fontWeight: 500,
-        fontSize: "12px",
-        height: 24,
-        "& .MuiChip-icon": { ml: 0.5 },
-      }}
     />
   );
 };
@@ -115,24 +92,6 @@ const HoverChipList = ({ items, label, emptyText }) => {
       : items[0].name || items[0].eval_template_name;
   const remaining = items.length - 1;
 
-  const chipStyles = {
-    backgroundColor: (theme) => alpha(theme.palette.primary.main, 0.1),
-    color: "primary.main",
-    borderRadius: "4px",
-    fontWeight: 500,
-    fontSize: "12px",
-    height: 22,
-    "& .MuiChip-label": { px: 0.75 },
-    "&:hover, &.MuiChip-clickable:hover": {
-      backgroundColor: (theme) =>
-        alpha(
-          theme.palette.primary.main,
-          0.1 + theme.palette.action.hoverOpacity,
-        ),
-      color: "primary.main",
-    },
-  };
-
   return (
     <>
       <Box
@@ -140,11 +99,17 @@ const HoverChipList = ({ items, label, emptyText }) => {
         onMouseLeave={scheduleClose}
         sx={{ display: "flex", alignItems: "center", height: "100%", gap: 0.5 }}
       >
-        <Chip label={firstItem} size="small" sx={chipStyles} />
+        <Typography
+          variant="caption"
+          noWrap
+          sx={{ color: "text.primary", fontSize: "12px", fontWeight: 500 }}
+        >
+          {firstItem}
+        </Typography>
         {remaining > 0 && (
           <Typography
             variant="caption"
-            sx={{ color: "text.secondary", fontSize: "12px", pl: 0.5 }}
+            sx={{ color: "text.tertiary", fontSize: "12px", pl: 0.5 }}
           >
             +{remaining} other{remaining > 1 ? "s" : ""}
           </Typography>
@@ -167,9 +132,6 @@ const HoverChipList = ({ items, label, emptyText }) => {
             maxWidth: 320,
             maxHeight: 280,
             overflowY: "auto",
-            boxShadow: "-5px 5px 10px rgba(0,0,0,0.1)",
-            border: "1px solid",
-            borderColor: "divider",
             borderRadius: "8px",
           },
         }}
@@ -188,16 +150,14 @@ const HoverChipList = ({ items, label, emptyText }) => {
                 ? item
                 : item.name || item.eval_template_name || "—";
             return (
-              <Chip
+              <Typography
                 key={idx}
-                label={text}
-                size="small"
-                sx={{
-                  ...chipStyles,
-                  alignSelf: "flex-start",
-                  maxWidth: "100%",
-                }}
-              />
+                variant="caption"
+                noWrap
+                sx={{ color: "text.primary", fontSize: "12px" }}
+              >
+                {text}
+              </Typography>
             );
           })}
         </Box>
@@ -224,37 +184,30 @@ EvalChips.propTypes = {
 
 // ── Filter Chips ──
 
+// Date range and project are intrinsic to every task (project has its own
+// column), so the Filters column shows only the user-applied filters.
 const buildFilterChips = (filtersApplied) => {
   if (!filtersApplied) return [];
   const chips = [];
 
-  if (filtersApplied.dateRange?.length === 2) {
-    const [start, end] = filtersApplied.dateRange;
-    const fmt = (d) => {
-      try {
-        return new Date(d).toLocaleDateString(undefined, {
-          month: "short",
-          day: "numeric",
-          year: "2-digit",
-        });
-      } catch {
-        return d;
-      }
-    };
-    chips.push(`Date: ${fmt(start)} → ${fmt(end)}`);
+  const observationTypes =
+    filtersApplied.observation_type || filtersApplied.observationType;
+  if (observationTypes?.length) {
+    observationTypes.forEach((t) => chips.push(`Type: ${t}`));
   }
-  if (filtersApplied.observationType?.length) {
-    filtersApplied.observationType.forEach((t) => chips.push(`Type: ${t}`));
-  }
-  if (filtersApplied.spanAttributesFilters?.length) {
-    filtersApplied.spanAttributesFilters.forEach((f) => {
+  const spanAttributeFilters =
+    filtersApplied.filters ||
+    filtersApplied.span_attributes_filters ||
+    filtersApplied.spanAttributesFilters;
+  if (spanAttributeFilters?.length) {
+    spanAttributeFilters.forEach((f) => {
       const key = f.columnId || f.column_id;
       if (!key) return;
       const op =
         f.filterConfig?.filterOp || f.filter_config?.filter_op || "equals";
       const rawVal =
         f.filterConfig?.filterValue ?? f.filter_config?.filter_value;
-      const val = Array.isArray(rawVal) ? rawVal.join(", ") : (rawVal ?? "");
+      const val = Array.isArray(rawVal) ? rawVal.join(", ") : rawVal ?? "";
       const isValuelessOp = op === "is_null" || op === "is_not_null";
       chips.push(
         isValuelessOp
@@ -263,9 +216,17 @@ const buildFilterChips = (filtersApplied) => {
       );
     });
   }
-  if (filtersApplied.project_id) {
-    chips.push(`Project: ${filtersApplied.project_id.slice(0, 8)}…`);
-  }
+  [
+    ["trace_id", "Trace"],
+    ["span_id", "Span"],
+    ["session_id", "Session"],
+  ].forEach(([key, label]) => {
+    const values = filtersApplied[key];
+    const arr = Array.isArray(values) ? values : values ? [values] : [];
+    arr.forEach((value) => {
+      chips.push(`${label}: ${String(value).slice(0, 8)}…`);
+    });
+  });
   return chips;
 };
 
@@ -293,6 +254,7 @@ const TaskListView = ({
   _onEditTask,
   refreshKey,
 }) => {
+  const { role } = useAuthContext();
   const [searchQuery, setSearchQuery] = useState("");
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState(25);
@@ -300,31 +262,34 @@ const TaskListView = ({
   const [rowSelection, setRowSelection] = useState({});
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [deleteLoading, setDeleteLoading] = useState(false);
+  const pageScopeRef = useRef(observeId);
+  const queryPage = pageScopeRef.current === observeId ? page : 0;
 
   const debouncedSearch = useDebounce(searchQuery.trim(), 500);
+  const queryClient = useQueryClient();
 
   // Fetch task list
   const apiEndpoint = observeId
     ? endpoints.project.getEvalTaskList
     : endpoints.project.getEvalTasksWithProjectName;
 
-  const { data, isLoading, refetch } = useQuery({
+  const { data, isLoading, isError, refetch } = useQuery({
     queryKey: [
       "eval-tasks",
       observeId,
-      page,
+      queryPage,
       pageSize,
       debouncedSearch,
       sorting,
       refreshKey,
     ],
-    queryFn: async () => {
+    queryFn: async ({ signal }) => {
       const params = {
-        page: page + 1,
+        page_number: queryPage,
         page_size: pageSize,
       };
       if (observeId) params.project_id = observeId;
-      if (debouncedSearch) params.search = debouncedSearch;
+      if (debouncedSearch) params.name = debouncedSearch;
 
       // Map tanstack column IDs (camelCase) → backend column IDs (snake_case).
       // Backend expects snake_case sort keys; the DataTable column IDs are camelCase
@@ -340,13 +305,28 @@ const TaskListView = ({
       const rawSortId = sorting[0]?.id || "created_at";
       const sortField = SORT_FIELD_MAP[rawSortId] || rawSortId;
       const sortDir = sorting[0]?.desc ? "desc" : "asc";
-      params.sort_by = sortField;
-      params.sort_order = sortDir;
+      params.sort_params = JSON.stringify([
+        { column_id: sortField, direction: sortDir },
+      ]);
 
-      const { data: resp } = await axios.get(apiEndpoint(), { params });
-      return resp?.result;
+      return readEvalTaskListPage(
+        ({ signal: requestSignal, timeout }) =>
+          axios.get(apiEndpoint(), {
+            params,
+            signal: requestSignal,
+            timeout,
+          }),
+        signal,
+      );
     },
-    keepPreviousData: true,
+    // Keep a prior page visible only while paginating inside the same
+    // project/workspace scope. A scope switch must never expose rows or totals
+    // from the previous project while the new request is in flight.
+    placeholderData: (previousData, previousQuery) =>
+      previousQuery?.queryKey?.[0] === "eval-tasks" &&
+      previousQuery.queryKey[1] === observeId
+        ? previousData
+        : undefined,
     structuralSharing: false,
     refetchInterval: (query) =>
       (query?.state?.data?.table || []).some(shouldPollRow)
@@ -365,28 +345,76 @@ const TaskListView = ({
     [data],
   );
   const total =
-    data?.metadata?.total_count ||
-    data?.total ||
-    data?.total_count ||
+    data?.metadata?.total_rows ??
+    data?.metadata?.total_count ??
+    data?.total_rows ??
+    data?.total ??
+    data?.total_count ??
     items.length;
 
-  // Pause/Resume mutations
+  useEffect(() => {
+    pageScopeRef.current = observeId;
+    setPage(0);
+  }, [observeId]);
+
+  const lastPage = Math.max(0, Math.ceil(total / pageSize) - 1);
+  // Nothing exists yet (not a search that matched nothing).
+  const isFirstRun = !isLoading && !isError && total === 0 && !debouncedSearch;
+  useEffect(() => {
+    if (page > lastPage) setPage(lastPage);
+  }, [lastPage, page]);
+
+  const handleSortingChange = useCallback((nextSorting) => {
+    setSorting(nextSorting);
+    setPage(0);
+  }, []);
+
+  // Optimistically flip the row's status across every cached eval-tasks page
+  // (the exact key carries page/sort/search) so the badge reacts on click.
+  const optimisticRowStatus = async (taskId, status) => {
+    await queryClient.cancelQueries({ queryKey: ["eval-tasks"] });
+    const prev = queryClient.getQueriesData({ queryKey: ["eval-tasks"] });
+    queryClient.setQueriesData({ queryKey: ["eval-tasks"] }, (old) =>
+      old?.table
+        ? {
+            ...old,
+            table: old.table.map((t) =>
+              t.id === taskId ? { ...t, status } : t,
+            ),
+          }
+        : old,
+    );
+    return { prev };
+  };
+  const rollbackRows = (ctx) =>
+    ctx?.prev?.forEach(([key, data]) => queryClient.setQueryData(key, data));
+
   const { mutate: pauseTask } = useMutation({
-    mutationFn: (taskId) => axios.post(endpoints.project.pauseEvalTask(taskId)),
-    onSuccess: () => refetch(),
+    // {} body required — the request-contract interceptor drops a bodyless POST.
+    mutationFn: (taskId) =>
+      axios.post(endpoints.project.pauseEvalTask(taskId), {}),
+    meta: { errorHandled: true },
+    onMutate: (taskId) => optimisticRowStatus(taskId, "paused"),
+    onError: (_e, _v, ctx) => {
+      rollbackRows(ctx);
+      enqueueSnackbar("Failed to pause task", { variant: "error" });
+    },
+    onSettled: () => refetch(),
   });
 
   const { mutate: resumeTask } = useMutation({
     mutationFn: (taskId) =>
-      axios.post(endpoints.project.resumeEvalTask(taskId)),
+      axios.post(endpoints.project.resumeEvalTask(taskId), {}),
     meta: { errorHandled: true },
-    onSuccess: () => refetch(),
-    onError: () => {
-      refetch();
+    // pending (not running): resume re-queues, so the badge moves forward only.
+    onMutate: (taskId) => optimisticRowStatus(taskId, "pending"),
+    onError: (_e, _v, ctx) => {
+      rollbackRows(ctx);
       enqueueSnackbar("Failed to resume task. It may have already finished.", {
         variant: "error",
       });
     },
+    onSettled: () => refetch(),
   });
 
   // Delete mutation
@@ -439,7 +467,7 @@ const TaskListView = ({
         header: "Project",
         size: 150,
         cell: ({ getValue }) => (
-          <Typography variant="body2" noWrap sx={{ fontSize: "13px" }}>
+          <Typography variant="body2" noWrap sx={{ fontSize: "12px" }}>
             {getValue() || "—"}
           </Typography>
         ),
@@ -467,10 +495,10 @@ const TaskListView = ({
         id: "samplingRate",
         accessorKey: "sampling_rate",
         header: "Sampling",
-        size: 90,
-        cell: ({ getValue }) => (
-          <Typography variant="body2" sx={{ fontSize: "13px" }}>
-            {getValue()}%
+        size: 150,
+        cell: ({ getValue, row }) => (
+          <Typography variant="body2" sx={{ fontSize: "12px" }}>
+            {compactSamplingLabel(row.original.sampling_policy, getValue())}
           </Typography>
         ),
       },
@@ -500,7 +528,7 @@ const TaskListView = ({
                   />
                 </IconButton>
               )}
-              {status === "paused" && (
+              {isResumableTaskStatus(status) && (
                 <IconButton
                   size="small"
                   onClick={(e) => {
@@ -579,16 +607,22 @@ const TaskListView = ({
         minHeight: 0,
       }}
     >
-      {/* Top Controls */}
+      {/* Top Controls — hidden on first run; the empty state has the action */}
       <Box
         sx={{
-          display: "flex",
+          display: isFirstRun ? "none" : "flex",
           justifyContent: "space-between",
           alignItems: "center",
           gap: 1.5,
         }}
       >
-        <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+        <Box
+          sx={{
+            display: isFirstRun ? "none" : "flex",
+            alignItems: "center",
+            gap: 1,
+          }}
+        >
           <FormSearchField
             size="small"
             placeholder="Search tasks..."
@@ -604,7 +638,7 @@ const TaskListView = ({
           />
         </Box>
 
-        <Box sx={{ display: "flex", gap: 1, alignItems: "center" }}>
+        <Box sx={{ display: "flex", gap: 1, alignItems: "center", ml: "auto" }}>
           {selectedItems.length > 0 && (
             <>
               <Typography variant="caption" color="text.secondary">
@@ -618,7 +652,11 @@ const TaskListView = ({
                   <Iconify icon="solar:trash-bin-trash-linear" width={16} />
                 }
                 onClick={() => setDeleteTarget(selectedItems)}
-                sx={{ textTransform: "none", fontSize: "12px", height: 32 }}
+                disabled={
+                  !RolePermission.OBSERVABILITY[PERMISSIONS.ADD_TASKS_ALERTS][
+                    role
+                  ]
+                }
               >
                 Delete
               </Button>
@@ -626,7 +664,6 @@ const TaskListView = ({
                 size="small"
                 variant="outlined"
                 onClick={() => setRowSelection({})}
-                sx={{ textTransform: "none", fontSize: "12px", height: 32 }}
               >
                 Cancel
               </Button>
@@ -636,43 +673,97 @@ const TaskListView = ({
             <Button
               variant="contained"
               color="primary"
-              startIcon={<Iconify icon="mingcute:add-line" width={18} />}
+              startIcon={<Iconify icon="solar:add-linear" width={16} />}
               onClick={onCreateTask}
-              sx={{ px: 2.5, typography: "body2", textTransform: "none" }}
+              disabled={
+                !RolePermission.OBSERVABILITY[PERMISSIONS.ADD_TASKS_ALERTS][
+                  role
+                ]
+              }
             >
-              Create Task
+              Create task
             </Button>
           )}
         </Box>
       </Box>
 
       {/* Table */}
-      <DataTable
-        columns={columns}
-        data={items}
-        isLoading={isLoading}
-        rowCount={total}
-        sorting={sorting}
-        onSortingChange={setSorting}
-        rowSelection={rowSelection}
-        onRowSelectionChange={setRowSelection}
-        onRowClick={(row) => onRowClick?.(row)}
-        getRowId={(row) => row.id}
-        enableSelection
-        emptyMessage="No tasks found"
-      />
+      {isError && (
+        <Box
+          role="alert"
+          sx={{
+            px: 1.5,
+            py: 0.75,
+            color: "warning.main",
+            bgcolor: "warning.lighter",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+          }}
+        >
+          {QUERY_FAILED_RETRY_MESSAGE}
+          <Button size="small" onClick={() => refetch()}>
+            Retry
+          </Button>
+        </Box>
+      )}
+      {isFirstRun ? (
+        <EmptyState
+          icon="solar:checklist-minimalistic-linear"
+          title="No tasks yet"
+          description="A task runs evals on your traces automatically, on new data or on a sample of what's already there."
+          action={
+            <Button
+              variant="contained"
+              color="primary"
+              size="small"
+              startIcon={<Iconify icon="solar:add-linear" width={16} />}
+              onClick={onCreateTask}
+              disabled={
+                !RolePermission.OBSERVABILITY[PERMISSIONS.ADD_TASKS_ALERTS][
+                  role
+                ]
+              }
+            >
+              Create task
+            </Button>
+          }
+          docsHref="https://docs.futureagi.com/docs/observe/features/evals"
+        />
+      ) : (
+        <>
+          <DataTable
+            columns={columns}
+            data={items}
+            isLoading={isLoading}
+            rowCount={total}
+            sorting={sorting}
+            onSortingChange={handleSortingChange}
+            rowSelection={rowSelection}
+            onRowSelectionChange={setRowSelection}
+            onRowClick={(row) => onRowClick?.(row)}
+            getRowId={(row) => row.id}
+            enableSelection
+            emptyMessage={
+              isError
+                ? QUERY_FAILED_RETRY_MESSAGE
+                : `No tasks match “${debouncedSearch}”`
+            }
+          />
 
-      {/* Pagination */}
-      <DataTablePagination
-        page={page}
-        pageSize={pageSize}
-        total={total}
-        onPageChange={setPage}
-        onPageSizeChange={(size) => {
-          setPageSize(size);
-          setPage(0);
-        }}
-      />
+          {/* Pagination */}
+          <DataTablePagination
+            page={queryPage}
+            pageSize={pageSize}
+            total={total}
+            onPageChange={setPage}
+            onPageSizeChange={(size) => {
+              setPageSize(size);
+              setPage(0);
+            }}
+          />
+        </>
+      )}
 
       {/* Delete confirmation */}
       {deleteTarget && (

@@ -28,8 +28,6 @@ function memberName(member) {
 export default function ItemAssignmentPanel({
   item,
   annotators = [],
-  currentUserId,
-  canAnnotate = false,
   canManageAssignments = false,
   onAssign,
   isPending = false,
@@ -40,18 +38,6 @@ export default function ItemAssignmentPanel({
 
   const assignedUsers = item?.assigned_users || [];
   const hasAssignments = assignedUsers.length > 0;
-  const isAssignedToMe = assignedUsers.some(
-    (user) => String(user.id) === String(currentUserId),
-  );
-  const currentMember = annotators.find(
-    (member) => String(memberId(member)) === String(currentUserId),
-  );
-  const canSelfAssign =
-    Boolean(onAssign) &&
-    canAnnotate &&
-    Boolean(currentMember) &&
-    !isAssignedToMe &&
-    !hasAssignments;
   const canAssignToOthers = Boolean(onAssign) && canManageAssignments;
 
   const assignmentLabel = hasAssignments
@@ -79,15 +65,6 @@ export default function ItemAssignmentPanel({
   const closePicker = () => {
     setAnchorEl(null);
     setSearch("");
-  };
-
-  const assignToMe = () => {
-    if (!currentUserId || !item?.id) return;
-    onAssign?.({
-      itemIds: [item.id],
-      userIds: [String(currentUserId)],
-      action: "add",
-    });
   };
 
   const applySelection = () => {
@@ -128,7 +105,6 @@ export default function ItemAssignmentPanel({
           label={hasAssignments ? "Assigned" : "Unassigned"}
           color={hasAssignments ? "default" : "warning"}
           variant={hasAssignments ? "outlined" : "soft"}
-          sx={{ height: 22 }}
         />
         <Tooltip title={assignmentLabel}>
           <Typography
@@ -140,18 +116,6 @@ export default function ItemAssignmentPanel({
           </Typography>
         </Tooltip>
         {isPending && <CircularProgress size={14} />}
-        {canSelfAssign && (
-          <Button
-            size="small"
-            variant="contained"
-            onClick={assignToMe}
-            disabled={isPending}
-            startIcon={<Iconify icon="solar:user-check-rounded-bold" />}
-            sx={{ minHeight: 26, px: 1 }}
-          >
-            Assign to me
-          </Button>
-        )}
         {canAssignToOthers && (
           <Button
             size="small"
@@ -159,7 +123,6 @@ export default function ItemAssignmentPanel({
             onClick={openPicker}
             disabled={isPending}
             startIcon={<Iconify icon="solar:users-group-rounded-bold" />}
-            sx={{ minHeight: 26, px: 1 }}
           >
             Assign
           </Button>
@@ -172,7 +135,7 @@ export default function ItemAssignmentPanel({
         onClose={closePicker}
         anchorOrigin={{ vertical: "bottom", horizontal: "right" }}
         transformOrigin={{ vertical: "top", horizontal: "right" }}
-        slotProps={{ paper: { sx: { width: 280 } } }}
+        slotProps={{ paper: { sx: { width: 320 } } }}
       >
         <Box sx={{ p: 1 }}>
           <TextField
@@ -253,8 +216,6 @@ export default function ItemAssignmentPanel({
 ItemAssignmentPanel.propTypes = {
   item: PropTypes.object,
   annotators: PropTypes.array,
-  currentUserId: PropTypes.string,
-  canAnnotate: PropTypes.bool,
   canManageAssignments: PropTypes.bool,
   onAssign: PropTypes.func,
   isPending: PropTypes.bool,

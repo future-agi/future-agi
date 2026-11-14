@@ -41,8 +41,7 @@ const collectStrings = (val, out) => {
     return;
   }
   if (typeof val === "object") {
-    // `canonicalEntries` strips the camelCase aliases the axios interceptor
-    // adds alongside snake_case keys so a single field doesn't get matched
+    // De-dupe mixed-key local objects so a single field doesn't get matched
     // twice in search.
     canonicalEntries(val).forEach(([k, v]) => {
       out.push(String(k).toLowerCase());
@@ -171,7 +170,7 @@ const Highlight = ({ text, tokens }) => {
         component="span"
         sx={{
           bgcolor: (theme) => alpha(theme.palette.warning.main, 0.28),
-          borderRadius: "2px",
+          borderRadius: "4px",
           px: "1px",
         }}
       >
@@ -203,7 +202,7 @@ const PrimitiveValue = ({ value, tokens }) => {
       <Typography
         component="span"
         sx={{
-          fontSize: 11,
+          fontSize: 12,
           color: "text.disabled",
           fontFamily: "monospace",
         }}
@@ -217,7 +216,7 @@ const PrimitiveValue = ({ value, tokens }) => {
     return (
       <Typography
         component="span"
-        sx={{ fontSize: 11, color: "text.disabled", fontStyle: "italic" }}
+        sx={{ fontSize: 12, color: "text.disabled", fontStyle: "italic" }}
       >
         empty {isArr ? "array" : "object"}
       </Typography>
@@ -231,9 +230,9 @@ const PrimitiveValue = ({ value, tokens }) => {
     <Typography
       component="span"
       sx={{
-        fontSize: 11,
+        fontSize: 12,
         fontFamily: "monospace",
-        color: typeof value === "string" ? "#b5520a" : "text.primary",
+        color: typeof value === "string" ? "syntax.string" : "text.primary",
         overflowWrap: "anywhere",
         whiteSpace: "pre-wrap",
       }}
@@ -263,13 +262,10 @@ const ValueCell = ({ value, tokens }) => {
     startToggleTransition(() => setExpanded((v) => !v));
   };
 
-  const isObj = value != null && typeof value === "object" && !Array.isArray(value);
+  const isObj =
+    value != null && typeof value === "object" && !Array.isArray(value);
   const isArr = Array.isArray(value);
-  const count = isArr
-    ? value.length
-    : isObj
-      ? canonicalKeys(value).length
-      : 0;
+  const count = isArr ? value.length : isObj ? canonicalKeys(value).length : 0;
 
   if ((isObj || isArr) && count > 0) {
     return (
@@ -290,14 +286,18 @@ const ValueCell = ({ value, tokens }) => {
           }}
         >
           <Iconify
-            icon={expanded ? "mdi:chevron-down" : "mdi:chevron-right"}
+            icon={
+              expanded
+                ? "solar:alt-arrow-down-linear"
+                : "solar:alt-arrow-right-linear"
+            }
             width={12}
             sx={{ color: "text.disabled" }}
           />
           <Typography
             component="span"
             sx={{
-              fontSize: 10.5,
+              fontSize: 12,
               color: "text.secondary",
               fontFamily: "monospace",
             }}
@@ -370,14 +370,14 @@ const NestedRow = ({ path, value, tokens, defaultOpen }) => {
         gap: 0.5,
         py: 0.15,
         px: 0.25,
-        borderRadius: "2px",
+        borderRadius: "4px",
         "&:hover": isComplex ? { bgcolor: "action.hover" } : {},
       }}
     >
       <Typography
         onClick={toggleOpen}
         sx={{
-          fontSize: 10.5,
+          fontSize: 12,
           fontWeight: 500,
           fontFamily: "monospace",
           color: "text.secondary",
@@ -405,14 +405,18 @@ const NestedRow = ({ path, value, tokens, defaultOpen }) => {
               }}
             >
               <Iconify
-                icon={open ? "mdi:chevron-down" : "mdi:chevron-right"}
+                icon={
+                  open
+                    ? "solar:alt-arrow-down-linear"
+                    : "solar:alt-arrow-right-linear"
+                }
                 width={12}
                 sx={{ color: "text.disabled" }}
               />
               <Typography
                 component="span"
                 sx={{
-                  fontSize: 10.5,
+                  fontSize: 12,
                   color: "text.secondary",
                   fontFamily: "monospace",
                 }}
@@ -475,13 +479,13 @@ export const FlatMatchRow = ({ path, value, tokens }) => (
       columnGap: 0.75,
       py: 0.15,
       px: 0.25,
-      borderRadius: "2px",
+      borderRadius: "4px",
     }}
   >
     <Typography
       component="span"
       sx={{
-        fontSize: 10.5,
+        fontSize: 12,
         fontWeight: 500,
         fontFamily: "monospace",
         color: "text.secondary",
@@ -540,7 +544,7 @@ const NestedJsonTable = ({
     if (parsed == null) return [];
     if (typeof parsed !== "object") return [["value", parsed]];
     if (Array.isArray(parsed)) return parsed.map((v, i) => [String(i), v]);
-    // Strip camelCase aliases the axios interceptor appends to every
+    // Strip camelCase aliases that may exist in legacy objects to every
     // snake_case key so each field renders once, not twice.
     return canonicalEntries(parsed);
   }, [parsed]);
@@ -576,7 +580,7 @@ const NestedJsonTable = ({
           py: 2,
         }}
       >
-        <Typography sx={{ fontSize: 11, color: "text.disabled" }}>
+        <Typography sx={{ fontSize: 12, color: "text.disabled" }}>
           {emptyMessage}
         </Typography>
       </Box>
@@ -590,7 +594,7 @@ const NestedJsonTable = ({
           {header}
           <Typography
             sx={{
-              fontSize: 10.5,
+              fontSize: 12,
               color: "text.disabled",
               fontStyle: "italic",
               px: 0.5,
@@ -618,7 +622,7 @@ const NestedJsonTable = ({
         {overflow > 0 && (
           <Typography
             sx={{
-              fontSize: 10.5,
+              fontSize: 12,
               color: "text.disabled",
               fontStyle: "italic",
               px: 0.5,

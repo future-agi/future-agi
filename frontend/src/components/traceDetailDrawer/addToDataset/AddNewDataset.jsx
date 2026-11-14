@@ -212,22 +212,6 @@ const AddNewDataset = ({
                     onChange={() => handleCheckboxChange(index)}
                     checked={item.checked}
                     sx={{ marginRight: "5px" }}
-                    icon={
-                      <Iconify
-                        icon="system-uicons:checkbox-empty"
-                        color="text.disabled"
-                        width="20px"
-                        height="20px"
-                      />
-                    }
-                    checkedIcon={
-                      <Iconify
-                        icon="famicons:checkbox"
-                        color="primary.light"
-                        width="20px"
-                        height="20px"
-                      />
-                    }
                   />
                   <TextField
                     fullWidth
@@ -317,8 +301,6 @@ const AddNewDataset = ({
           variant="outlined"
           fullWidth
           sx={{
-            fontSize: "14px",
-            fontWeight: 500,
             color: theme.palette.text.secondary,
             borderColor: theme.palette.divider,
           }}
@@ -334,8 +316,6 @@ const AddNewDataset = ({
           disabled={isSubmitDisabled}
           onClick={handleSubmit}
           sx={{
-            fontSize: "14px",
-            fontWeight: 600,
             "&.Mui-disabled": {
               bgcolor: theme.palette.divider,
               color: theme.palette.background.paper,
@@ -351,7 +331,7 @@ const AddNewDataset = ({
 
 AddNewDataset.propTypes = {
   handleclose: PropTypes.func,
-  selectedNode: PropTypes.object,
+  selectedNode: PropTypes.oneOfType([PropTypes.string, PropTypes.number]),
   observationFields: PropTypes.array,
   selectedTraces: PropTypes.array,
   selectedSpans: PropTypes.array,

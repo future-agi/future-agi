@@ -101,7 +101,12 @@ const UploadFileModal = ({
   };
 
   return (
-    <Dialog open={open} onClose={onCloseClick} maxWidth="sm">
+    <Dialog
+      open={open}
+      onClose={onCloseClick}
+      maxWidth={false}
+      PaperProps={{ sx: { maxWidth: 720 } }}
+    >
       <Box padding={2}>
         <DialogTitle sx={{ padding: 0, margin: 0 }}>
           <Box sx={{ display: "flex", flexDirection: "column", gap: "2px" }}>
@@ -120,7 +125,7 @@ const UploadFileModal = ({
                 Upload a File
               </Typography>
               <IconButton onClick={onCloseClick}>
-                <Iconify icon="mdi:close" color="text.primary" />
+                <Iconify icon="solar:close-linear" color="text.primary" />
               </IconButton>
             </Box>
             <HelperText
@@ -145,7 +150,7 @@ const UploadFileModal = ({
               }}
               onDrop={handleFileChange}
               heading="Choose a file or drag & drop it here"
-              description="Supports JSONL, JSON, and CSV file format up to 10 MB"
+              description="Supports JSONL, JSON, and CSV file format up to 25 MB"
               sx={{
                 flex: 1,
                 display: "flex",
@@ -159,7 +164,6 @@ const UploadFileModal = ({
                   sx={{
                     paddingY: (theme) => theme.spacing(0.75),
                     paddingX: (theme) => theme.spacing(3),
-                    borderRadius: (theme) => theme.spacing(1),
                     background: (theme) => theme.palette.divider,
                     color: "text.primary",
                     borderColor: "text.disabled",

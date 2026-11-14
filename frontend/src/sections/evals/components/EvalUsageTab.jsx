@@ -1,6 +1,6 @@
-/* eslint-disable react/prop-types */
 import {
   Box,
+  Button,
   ButtonBase,
   Chip,
   IconButton,
@@ -10,373 +10,51 @@ import {
   Typography,
   useTheme,
 } from "@mui/material";
-import { alpha } from "@mui/material/styles";
 import PropTypes from "prop-types";
-import React, { useCallback, useMemo, useState } from "react";
+import React, { useCallback, useMemo, useState, useRef } from "react";
+import { useSearchParams } from "react-router-dom";
 import Editor from "@monaco-editor/react";
 import { useQueryClient } from "@tanstack/react-query";
+import { format } from "date-fns";
 import { DataTable, DataTablePagination } from "src/components/data-table";
 import FormSearchField from "src/components/FormSearchField/FormSearchField";
 import Iconify from "src/components/iconify";
 import CustomTooltip from "src/components/tooltip";
 import { useDebounce } from "src/hooks/use-debounce";
-import axios, { endpoints } from "src/utils/axios";
 import DateTimeRangePicker from "src/sections/projects/DateTimeRangePicker";
 import AddEvalsFeedbackDrawer from "src/sections/evals/EvalDetails/EvalsFeedback/AddEvalsFeedbackDrawer";
+import EvalLogSourceHost from "src/sections/evals/EvalDetails/EvalsLog/EvalLogSourceHost";
+import { sourceScopeKey } from "src/sections/evals/EvalDetails/EvalsLog/useEvalLogSourceNavigation";
+import { useOrganization } from "src/contexts/OrganizationContext";
+import { useWorkspace } from "src/contexts/WorkspaceContext";
 
-import PartialInputWarningDetails, {
-  PARTIAL_INPUT_WARNING_TYPE,
-} from "src/sections/common/EvalsTasks/PartialInputWarningDetails";
+import PartialInputWarningDetails from "src/sections/common/EvalsTasks/PartialInputWarningDetails";
 
 import { useEvalUsageChart, useEvalUsageLogs } from "../hooks/useEvalUsage";
 import { isEditableElement } from "src/utils/keyboardUtils";
+import { getStorage, setStorage } from "src/hooks/use-local-storage";
 import UsageChart from "./UsageChart";
-
-// ── Inline stat ──
-const StatPill = ({ label, value, color }) => (
-  <Box sx={{ display: "flex", alignItems: "center", gap: 0.5 }}>
-    <Typography
-      variant="caption"
-      color="text.secondary"
-      sx={{ fontSize: "11px" }}
-    >
-      {label}:
-    </Typography>
-    <Typography
-      variant="caption"
-      fontWeight={700}
-      color={color}
-      sx={{ fontSize: "12px" }}
-    >
-      {value}
-    </Typography>
-  </Box>
-);
-
-// ── Map date option to API period param ──
-const DATE_OPTION_TO_PERIOD = {
-  "30 mins": "30m",
-  "6 hrs": "6h",
-  Today: "1d",
-  Yesterday: "1d",
-  "7D": "7d",
-  "30D": "30d",
-  "3M": "90d",
-  "6M": "180d",
-  "12M": "365d",
-  Custom: "30d",
-};
-
-// ── Score chip ──
-const ScoreCell = ({ value }) => {
-  if (value == null)
-    return (
-      <Typography
-        variant="body2"
-        color="text.disabled"
-        sx={{ fontSize: "12px" }}
-      >
-        —
-      </Typography>
-    );
-  if (typeof value === "number")
-    return (
-      <Chip
-        label={value.toFixed(2)}
-        size="small"
-        color={value >= 0.7 ? "success" : value >= 0.3 ? "warning" : "error"}
-        sx={{ fontSize: "11px", height: 20, fontWeight: 600 }}
-      />
-    );
-  return (
-    <Chip
-      label={String(value)}
-      size="small"
-      color="default"
-      sx={{ fontSize: "11px", height: 20 }}
-    />
-  );
-};
-
-// ── Columns ──
-const useColumns = () =>
-  useMemo(
-    () => [
-      {
-        id: "indicator",
-        accessorKey: "score",
-        header: "",
-        size: 4,
-        enableSorting: false,
-        cell: ({ getValue }) => {
-          const v = getValue();
-          const color =
-            v == null
-              ? "transparent"
-              : typeof v === "number"
-                ? v >= 0.7
-                  ? "success.main"
-                  : v >= 0.3
-                    ? "warning.main"
-                    : "error.main"
-                : v === 1
-                  ? "success.main"
-                  : v === 0
-                    ? "error.main"
-                    : "text.disabled";
-          return (
-            <Box
-              sx={{
-                width: 3,
-                height: 28,
-                borderRadius: 1,
-                backgroundColor: color,
-              }}
-            />
-          );
-        },
-      },
-      {
-        id: "score",
-        accessorKey: "score",
-        header: "Score",
-        size: 80,
-        cell: ({ getValue }) => <ScoreCell value={getValue()} />,
-      },
-      {
-        id: "result",
-        accessorKey: "result",
-        header: "Result",
-        size: 130,
-        cell: ({ getValue, row: tableRow }) => {
-          const v = getValue();
-          const warnings = tableRow.original?.warnings || [];
-          const partial = warnings.find?.(
-            (w) => w?.type === PARTIAL_INPUT_WARNING_TYPE,
-          );
-          const partialBadge = partial ? (
-            <CustomTooltip
-              show
-              arrow
-              title={
-                partial.message ||
-                `Eval ran with some inputs empty: ${(partial.empty_keys || []).join(", ")}`
-              }
-            >
-              <Box
-                sx={(theme) => ({
-                  display: "inline-flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  width: 18,
-                  height: 18,
-                  borderRadius: "50%",
-                  backgroundColor: alpha(
-                    theme.palette.warning.main,
-                    theme.palette.mode === "dark" ? 0.24 : 0.16,
-                  ),
-                  color:
-                    theme.palette.mode === "dark"
-                      ? theme.palette.warning.light
-                      : theme.palette.warning.dark,
-                  cursor: "help",
-                })}
-                data-testid="usage-partial-input-warning"
-              >
-                <Iconify
-                  icon="material-symbols:warning-rounded"
-                  width="14px"
-                  height="14px"
-                />
-              </Box>
-            </CustomTooltip>
-          ) : null;
-
-          if (!v) {
-            if (tableRow.original?.status === "error") {
-              return (
-                <Box sx={{ display: "flex", alignItems: "center", gap: 0.5 }}>
-                  <Chip
-                    label="Error"
-                    size="small"
-                    color="error"
-                    variant="outlined"
-                    sx={{ fontSize: "11px", height: 20 }}
-                  />
-                  {partialBadge}
-                </Box>
-              );
-            }
-            return partialBadge;
-          }
-          const isPassed = v === "Passed" || v === "Pass";
-          const isFailed = v === "Failed" || v === "Fail";
-          return (
-            <Box sx={{ display: "flex", alignItems: "center", gap: 0.5 }}>
-              <Chip
-                label={v}
-                size="small"
-                color={isPassed ? "success" : isFailed ? "error" : "default"}
-                variant="outlined"
-                sx={{ fontSize: "11px", height: 20 }}
-              />
-              {partialBadge}
-            </Box>
-          );
-        },
-      },
-      {
-        id: "input",
-        accessorKey: "input",
-        header: "Input",
-        meta: { flex: 2 },
-        minSize: 200,
-        cell: ({ getValue }) => {
-          const v = getValue();
-          return (
-            <Typography
-              variant="body2"
-              noWrap
-              sx={{
-                fontSize: "12px",
-                color: v ? "text.secondary" : "text.disabled",
-                fontStyle: v ? "normal" : "italic",
-              }}
-            >
-              {v || "No input"}
-            </Typography>
-          );
-        },
-      },
-      {
-        id: "reason",
-        accessorKey: "reason",
-        header: "Reason",
-        meta: { flex: 1.5 },
-        minSize: 150,
-        cell: ({ getValue }) => (
-          <Typography
-            variant="body2"
-            noWrap
-            sx={{
-              fontSize: "12px",
-              color: "text.secondary",
-              fontStyle: "italic",
-            }}
-          >
-            {getValue() || "—"}
-          </Typography>
-        ),
-      },
-      {
-        id: "source",
-        accessorKey: "source",
-        header: "Source",
-        size: 100,
-        cell: ({ getValue }) => {
-          const v = getValue();
-          if (!v) return null;
-          const label =
-            v === "eval_playground" || v === "composite_eval"
-              ? "Playground"
-              : v === "dataset_evaluation" || v === "composite_eval_dataset"
-                ? "Dataset"
-                : v === "tracer_composite"
-                  ? "Tracer"
-                  : v;
-          return (
-            <Chip
-              label={label}
-              size="small"
-              variant="outlined"
-              sx={{ fontSize: "10px", height: 18 }}
-            />
-          );
-        },
-      },
-      {
-        id: "feedback",
-        accessorKey: "feedback",
-        header: "",
-        size: 50,
-        enableSorting: false,
-        cell: ({ row: tableRow }) => {
-          const original = tableRow.original;
-          // Composite logs: show children count instead of feedback
-          if (original.composite) {
-            const childCount =
-              original.detail?.total_children ??
-              original.detail?.children?.length ??
-              0;
-            return (
-              <Tooltip title={`${childCount} child evaluators`}>
-                <Chip
-                  label={`${childCount}`}
-                  size="small"
-                  icon={
-                    <Iconify
-                      icon="mingcute:grid-2-line"
-                      width={12}
-                      sx={{ ml: "4px !important" }}
-                    />
-                  }
-                  variant="outlined"
-                  sx={{ fontSize: "10px", height: 18, fontWeight: 600 }}
-                />
-              </Tooltip>
-            );
-          }
-          // Single evals: show feedback icon
-          const fb = original.feedback;
-          if (!fb) return null;
-          return (
-            <Tooltip title={`Feedback: ${fb.value}`}>
-              <Iconify
-                icon={
-                  fb.value === "passed"
-                    ? "mingcute:thumb-up-2-fill"
-                    : "mingcute:thumb-down-2-fill"
-                }
-                width={14}
-                sx={{
-                  color: fb.value === "passed" ? "success.main" : "error.main",
-                }}
-              />
-            </Tooltip>
-          );
-        },
-      },
-      {
-        id: "createdAt",
-        accessorKey: "created_at",
-        header: "Ran at",
-        size: 140,
-        cell: ({ getValue }) => {
-          const v = getValue();
-          if (!v) return null;
-          const d = new Date(v);
-          return (
-            <Typography
-              variant="body2"
-              noWrap
-              sx={{ fontSize: "11px", color: "text.disabled" }}
-            >
-              {d.toLocaleDateString(undefined, {
-                month: "short",
-                day: "numeric",
-              })}
-              ,{" "}
-              {d.toLocaleTimeString(undefined, {
-                hour: "2-digit",
-                minute: "2-digit",
-              })}
-            </Typography>
-          );
-        },
-      },
-    ],
-    [],
-  );
+import SvgColor from "src/components/svg-color";
+import ColumnDropdown from "src/components/ColumnDropdown/ColumnDropdown";
+import {
+  COLUMN_CONFIG_URL_PARAM,
+  DATE_OPTION_TO_PERIOD,
+  DEFAULT_COLUMN_CONFIG,
+  ScoreCell,
+  StatPill,
+  columnConfigStorageKey,
+  decodeColumnConfig,
+  encodeColumnConfig,
+  normalizeRow,
+  periodForRange,
+  useColumns,
+} from "../Helpers/evalUsageColumns";
+import { useAuthContext } from "src/auth/hooks";
+import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
+import {
+  AGGREGATION_POLLING_PAUSED_MESSAGE,
+  QUERY_FAILED_RETRY_MESSAGE,
+} from "src/utils/queryReadState";
 
 // ── Main ──
 const EvalUsageTab = ({
@@ -387,6 +65,7 @@ const EvalUsageTab = ({
   const theme = useTheme();
   const isDark = theme.palette.mode === "dark";
   const queryClient = useQueryClient();
+  const [searchParams, setSearchParams] = useSearchParams();
 
   const [dateOption, setDateOption] = useState("30D");
   const [dateFilter, setDateFilter] = useState(null);
@@ -394,39 +73,222 @@ const EvalUsageTab = ({
   const [pageSize, setPageSize] = useState(25);
   const [searchQuery, setSearchQuery] = useState("");
   const [detailIndex, setDetailIndex] = useState(null); // index in filteredLogs
+  // The scope (org, workspace, log) whose trace or call the source host
+  // reported open; null once it closes.
+  const [openSourceScope, setOpenSourceScope] = useState(null);
+  const { currentOrganizationId } = useOrganization();
+  const { currentWorkspaceId } = useWorkspace();
   const debouncedSearch = useDebounce(searchQuery.trim(), 400);
+  const columnConfigureRef = useRef(null);
 
-  const period = DATE_OPTION_TO_PERIOD[dateOption] || "30d";
+  const [openColumnConfigure, setOpenColumnConfigure] = useState(false);
+
+  const period = useMemo(() => {
+    if (dateOption === "Custom" && dateFilter?.[0] && dateFilter?.[1]) {
+      return periodForRange(dateFilter[0], dateFilter[1]);
+    }
+    return DATE_OPTION_TO_PERIOD[dateOption] || "30d";
+  }, [dateOption, dateFilter]);
 
   // Split queries
-  const { data: chartData, isLoading: chartLoading } = useEvalUsageChart(
-    templateId,
-    period,
-  );
+  const {
+    data: chartData,
+    isLoading: chartLoading,
+    isFetching: chartFetching,
+    isError: chartError,
+    isPollingPaused: chartPollingPaused,
+    refresh: refreshChart,
+  } = useEvalUsageChart(templateId, period, dateOption, dateFilter);
   const {
     data: logsData,
     isLoading: logsLoading,
     isFetching: logsFetching,
-  } = useEvalUsageLogs(templateId, { page, pageSize, period });
+    isError: logsError,
+    isPollingPaused: logsPollingPaused,
+    refresh: refreshLogs,
+  } = useEvalUsageLogs(templateId, {
+    page,
+    pageSize,
+    period,
+    dateOption,
+    dateFilter,
+  });
 
-  const stats = chartData?.stats || {};
-  const chart = chartData?.chart || [];
-  const logItems = logsData?.items || [];
-  const totalLogs = logsData?.total || 0;
+  const chartSnapshotKey = useMemo(
+    () => JSON.stringify([templateId, period, dateOption, dateFilter]),
+    [dateFilter, dateOption, period, templateId],
+  );
+  const logsSnapshotKey = useMemo(
+    () =>
+      JSON.stringify([
+        templateId,
+        period,
+        dateOption,
+        dateFilter,
+        page,
+        pageSize,
+      ]),
+    [dateFilter, dateOption, page, pageSize, period, templateId],
+  );
+  const [lastExactChart, setLastExactChart] = useState(null);
+  const [lastExactLogs, setLastExactLogs] = useState(null);
+  const currentExactChart =
+    chartData && !chartData.queryPending ? chartData : undefined;
+  const currentExactLogs =
+    logsData && !logsData.queryPending ? logsData : undefined;
+
+  React.useEffect(() => {
+    if (!currentExactChart) return;
+    setLastExactChart({ key: chartSnapshotKey, data: currentExactChart });
+  }, [chartSnapshotKey, currentExactChart]);
+
+  React.useEffect(() => {
+    if (!currentExactLogs) return;
+    setLastExactLogs({ key: logsSnapshotKey, data: currentExactLogs });
+  }, [currentExactLogs, logsSnapshotKey]);
+
+  const displayChartData =
+    currentExactChart ||
+    (lastExactChart?.key === chartSnapshotKey
+      ? lastExactChart.data
+      : undefined);
+  const displayLogsData =
+    currentExactLogs ||
+    (lastExactLogs?.key === logsSnapshotKey ? lastExactLogs.data : undefined);
+  const stats = displayChartData?.stats || {};
+  const chart = displayChartData?.chart || [];
+  const totalLogs = displayLogsData?.pagination?.total || 0;
+  // Empty/zero states are valid only after a complete exact response. Missing,
+  // pending, and failed responses remain neutral preparation states; a prior
+  // exact snapshot for the same query stays visible during refresh/polling.
+  const chartUnavailable = !displayChartData;
+  const logsUnavailable = !displayLogsData;
+  // Retained exact/pending data can still carry query_refreshing=true after
+  // this client has exhausted its bounded transport retries. A terminal hook
+  // error wins over that stale server metadata so Refresh/Retry is available.
+  const chartRefreshing =
+    !chartError && (chartFetching || chartData?.queryRefreshing);
+  const logsRefreshing =
+    !logsError && (logsFetching || logsData?.queryRefreshing);
+  const isRefreshing = chartRefreshing || logsRefreshing;
+  const completedAt = displayChartData?.queryCompletedAt
+    ? new Date(displayChartData.queryCompletedAt)
+    : null;
+  const validCompletedAt =
+    completedAt && !Number.isNaN(completedAt.getTime()) ? completedAt : null;
+  const handleRefresh = useCallback(() => {
+    refreshChart();
+    refreshLogs();
+  }, [refreshChart, refreshLogs]);
+
+  const logItems = useMemo(
+    () => (displayLogsData?.table || []).map(normalizeRow),
+    [displayLogsData?.table],
+  );
+
+  const baseColumnConfig = useMemo(() => {
+    const base = DEFAULT_COLUMN_CONFIG;
+    // Discover input_var_* columns from the row data
+    const seen = new Set(base.map((c) => c.value));
+    const extra = [];
+    (displayLogsData?.table || []).forEach((row) => {
+      Object.keys(row).forEach((k) => {
+        if (k.startsWith("input_var_") && !seen.has(k)) {
+          seen.add(k);
+          extra.push({
+            value: k,
+            label: k.replace("input_var_", ""),
+            enabled: false,
+            is_visible: false,
+            order_index: base.length + extra.length,
+          });
+        }
+      });
+    });
+    return extra.length ? [...base, ...extra] : base;
+  }, [displayLogsData?.table]);
+
+  const storageKey = columnConfigStorageKey(templateId);
+
+  const currentColumnConfig = useMemo(() => {
+    const fromUrl = searchParams.get(COLUMN_CONFIG_URL_PARAM);
+    const decodedUrl = decodeColumnConfig(fromUrl, baseColumnConfig);
+    if (decodedUrl) return decodedUrl;
+    const decodedStorage = decodeColumnConfig(
+      getStorage(storageKey),
+      baseColumnConfig,
+    );
+    if (decodedStorage) return decodedStorage;
+    return baseColumnConfig;
+  }, [searchParams, baseColumnConfig, storageKey]);
+
+  const columnDropdownItems = useMemo(
+    () =>
+      [...currentColumnConfig]
+        .sort((a, b) => (a.order_index ?? 0) - (b.order_index ?? 0))
+        .map((c) => ({
+          id: c.value,
+          name: c.label,
+          isVisible: !!(c.enabled && c.is_visible),
+        })),
+    [currentColumnConfig],
+  );
+
+  const applyColumnConfig = useCallback(
+    (nextColumns) => {
+      const encoded = encodeColumnConfig(nextColumns);
+      setStorage(storageKey, encoded);
+      setSearchParams(
+        (prev) => {
+          const next = new URLSearchParams(prev);
+          next.set(COLUMN_CONFIG_URL_PARAM, encoded);
+          return next;
+        },
+        { replace: true },
+      );
+    },
+    [storageKey, setSearchParams],
+  );
+
+  const handleColumnVisibilityChange = useCallback(
+    (columnId) => {
+      const next = currentColumnConfig.map((c) => {
+        if (c.value !== columnId) return c;
+        const nextVisible = !(c.enabled && c.is_visible);
+        return { ...c, enabled: nextVisible, is_visible: nextVisible };
+      });
+      applyColumnConfig(next);
+    },
+    [currentColumnConfig, applyColumnConfig],
+  );
+
+  const handleColumnReorder = useCallback(
+    (reordered) => {
+      const byValue = new Map(currentColumnConfig.map((c) => [c.value, c]));
+      const next = reordered
+        .map((item, idx) => {
+          const orig = byValue.get(item.id);
+          return orig ? { ...orig, order_index: idx } : null;
+        })
+        .filter(Boolean);
+      applyColumnConfig(next);
+    },
+    [currentColumnConfig, applyColumnConfig],
+  );
 
   const filteredLogs = useMemo(() => {
     if (!debouncedSearch) return logItems;
     const q = debouncedSearch.toLowerCase();
     return logItems.filter(
       (l) =>
-        l.id?.toLowerCase().includes(q) ||
-        l.input?.toLowerCase().includes(q) ||
-        l.result?.toLowerCase().includes(q) ||
-        l.reason?.toLowerCase().includes(q),
+        l.id?.toLowerCase?.().includes(q) ||
+        l.input?.toLowerCase?.().includes(q) ||
+        l.result?.toLowerCase?.().includes(q) ||
+        l.reason?.toLowerCase?.().includes(q),
     );
   }, [logItems, debouncedSearch]);
 
-  const columns = useColumns();
+  const columns = useColumns(currentColumnConfig);
   const handleRowClick = useCallback(
     (row) => {
       const idx = filteredLogs.findIndex((l) => l.id === row.id);
@@ -436,6 +298,20 @@ const EvalUsageTab = ({
   );
 
   const detailRow = detailIndex !== null ? filteredLogs[detailIndex] : null;
+  const detailSourceScope = sourceScopeKey(
+    currentOrganizationId,
+    currentWorkspaceId,
+    detailRow?.id,
+  );
+  // Another log, org or workspace remounts the source host, so a reported
+  // scope that no longer matches belongs to a host that is gone. Forget it
+  // now, so the same log opened again later does not start out "open".
+  if (openSourceScope !== null && openSourceScope !== detailSourceScope) {
+    setOpenSourceScope(null);
+  }
+  // True while the opened log's trace or call covers the page.
+  const sourceOpen =
+    openSourceScope !== null && openSourceScope === detailSourceScope;
 
   const handleFeedbackSubmitted = useCallback(() => {
     queryClient.invalidateQueries({
@@ -448,7 +324,12 @@ const EvalUsageTab = ({
     if (detailIndex === null) return;
     const handler = (e) => {
       if (e.repeat) return;
+      // A key something on the page already handled, such as the open
+      // trace's own Escape (DrawerHeader's document listener), is not ours.
+      if (e.defaultPrevented) return;
       if (isEditableElement(e)) return;
+      // The open trace or call owns the keyboard; its own Escape closes it.
+      if (sourceOpen) return;
       if (e.key === "k") {
         e.preventDefault();
         setDetailIndex((i) => Math.max(0, (i ?? 0) - 1));
@@ -461,7 +342,7 @@ const EvalUsageTab = ({
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [detailIndex, filteredLogs.length]);
+  }, [detailIndex, filteredLogs.length, sourceOpen]);
 
   return (
     <Box
@@ -482,7 +363,7 @@ const EvalUsageTab = ({
           minHeight: 0,
           minWidth: 0,
           marginRight: detailIndex !== null ? "420px" : 0,
-          transition: "margin-right 0.25s",
+          transition: "margin-right 0.2s",
         }}
       >
         {/* Date picker + stats — single row */}
@@ -496,18 +377,58 @@ const EvalUsageTab = ({
             gap: 2,
           }}
         >
-          <Box sx={{ flexShrink: 0 }}>
+          <Box
+            sx={{
+              flexShrink: 0,
+              display: "flex",
+              alignItems: "center",
+              gap: 1,
+            }}
+          >
             <DateTimeRangePicker
               dateOption={dateOption}
               setDateOption={(opt) => {
                 setDateOption(opt);
                 setPage(0);
+                if (opt !== "Custom") setDateFilter(null);
               }}
-              setParentDateFilter={setDateFilter}
+              setParentDateFilter={(nextDateFilter) => {
+                setDateFilter(nextDateFilter);
+                setPage(0);
+              }}
               dateFilter={dateFilter}
             />
+            {validCompletedAt && (
+              <Typography variant="caption" color="text.secondary" noWrap>
+                Last updated {format(validCompletedAt, "MMM d, yyyy, h:mm a")}
+              </Typography>
+            )}
+            <Button
+              size="small"
+              variant="outlined"
+              startIcon={<Iconify icon="solar:refresh-linear" width={16} />}
+              disabled={isRefreshing}
+              onClick={handleRefresh}
+            >
+              {isRefreshing ? "Refreshing" : "Refresh"}
+            </Button>
+            {(chartError ||
+              logsError ||
+              chartPollingPaused ||
+              logsPollingPaused) &&
+              (displayChartData || displayLogsData) && (
+                <Typography
+                  role="status"
+                  variant="caption"
+                  color="text.secondary"
+                >
+                  {chartError || logsError
+                    ? QUERY_FAILED_RETRY_MESSAGE
+                    : AGGREGATION_POLLING_PAUSED_MESSAGE}
+                </Typography>
+              )}
           </Box>
-          {!chartLoading && (
+          {!chartLoading && displayChartData && (
             <Box
               sx={{
                 display: "flex",
@@ -521,31 +442,8 @@ const EvalUsageTab = ({
                 py: 0.5,
               }}
             >
+              {/* Usage counts successful runs only; errors stay in the logs. */}
               <StatPill label="Runs" value={stats.runs_period ?? 0} />
-              <Box
-                sx={{ width: "1px", height: 14, backgroundColor: "divider" }}
-              />
-              <StatPill
-                label="Success"
-                value={stats.success_count ?? 0}
-                color="success.main"
-              />
-              <Box
-                sx={{ width: "1px", height: 14, backgroundColor: "divider" }}
-              />
-              <StatPill
-                label="Errors"
-                value={stats.error_count ?? 0}
-                color="error.main"
-              />
-              <Box
-                sx={{ width: "1px", height: 14, backgroundColor: "divider" }}
-              />
-              <StatPill
-                label="Task Completion Rate"
-                value={`${stats.pass_rate ?? 0}%`}
-                color="info.main"
-              />
             </Box>
           )}
         </Box>
@@ -560,14 +458,36 @@ const EvalUsageTab = ({
             borderColor: "divider",
             p: 1.5,
             mb: 1.5,
-            backgroundColor: (t) =>
-              t.palette.mode === "dark"
-                ? "rgba(255,255,255,0.01)"
-                : "background.default",
+            backgroundColor: "background.neutral",
           }}
         >
           {chartLoading ? (
             <Skeleton variant="rounded" width="100%" height="100%" />
+          ) : chartUnavailable ? (
+            <Box
+              role="status"
+              sx={{
+                display: "flex",
+                flexDirection: "column",
+                justifyContent: "center",
+                alignItems: "center",
+                gap: 1,
+                height: "100%",
+              }}
+            >
+              <Typography variant="caption" color="text.secondary">
+                {chartError
+                  ? QUERY_FAILED_RETRY_MESSAGE
+                  : chartPollingPaused
+                    ? AGGREGATION_POLLING_PAUSED_MESSAGE
+                    : "Loading results…"}
+              </Typography>
+              {!chartRefreshing && (
+                <Button size="small" onClick={handleRefresh}>
+                  Retry
+                </Button>
+              )}
+            </Box>
           ) : chart.length > 0 ? (
             <UsageChart data={chart} outputType={outputType} />
           ) : (
@@ -580,7 +500,8 @@ const EvalUsageTab = ({
               }}
             >
               <Typography variant="caption" color="text.disabled">
-              No data to show for selected period, update filters to view graph/data when no data is available.
+                No data to show for selected period, update filters to view
+                graph/data when no data is available.
               </Typography>
             </Box>
           )}
@@ -617,37 +538,92 @@ const EvalUsageTab = ({
                 </Typography>
               )}
             </Typography>
-            <Box sx={{ width: 200 }}>
+            <Box
+              sx={{ width: 200, display: "flex", alignItems: "center", gap: 1 }}
+            >
+              <CustomTooltip
+                show={true}
+                title={"View Column"}
+                placement="bottom"
+                arrow
+                size="small"
+              >
+                <IconButton
+                  ref={columnConfigureRef}
+                  onClick={() => setOpenColumnConfigure((prev) => !prev)}
+                  size="small"
+                  sx={{ color: "text.secondary" }}
+                >
+                  <SvgColor
+                    src="/assets/icons/action_buttons/ic_column.svg"
+                    sx={{ width: 16, height: 16, color: "text.primary" }}
+                  />
+                </IconButton>
+              </CustomTooltip>
               <FormSearchField
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 placeholder="Search..."
                 size="small"
+                sx={{
+                  minWidth: "120px",
+                  "& .MuiOutlinedInput-root": { height: "30px" },
+                }}
               />
             </Box>
           </Box>
-          <Box sx={{ flex: 1,overflowY: "auto", minHeight: 0 }}>
-            <DataTable
-              columns={columns}
-              data={filteredLogs}
-              isLoading={logsLoading && !logsData}
-              rowCount={totalLogs}
-              onRowClick={handleRowClick}
-              emptyMessage="No evaluation logs for this period"
-            />
+          <Box sx={{ flex: 1, overflowY: "auto", minHeight: 0 }}>
+            {logsUnavailable ? (
+              <Box
+                role="status"
+                sx={{
+                  minHeight: 160,
+                  height: "100%",
+                  display: "flex",
+                  flexDirection: "column",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  gap: 1,
+                }}
+              >
+                <Typography variant="caption" color="text.secondary">
+                  {logsError
+                    ? QUERY_FAILED_RETRY_MESSAGE
+                    : logsPollingPaused
+                      ? AGGREGATION_POLLING_PAUSED_MESSAGE
+                      : "Loading results…"}
+                </Typography>
+                {!logsRefreshing && (
+                  <Button size="small" onClick={() => refreshLogs()}>
+                    Retry
+                  </Button>
+                )}
+              </Box>
+            ) : (
+              <DataTable
+                columns={columns}
+                data={filteredLogs}
+                isLoading={logsLoading && !displayLogsData}
+                rowCount={totalLogs}
+                onRowClick={handleRowClick}
+                emptyMessage="No evaluation logs for this period"
+              />
+            )}
           </Box>
-          <Box sx={{ flexShrink: 0 }}>
-            <DataTablePagination
-              page={page}
-              pageSize={pageSize}
-              total={totalLogs}
-              onPageChange={setPage}
-              onPageSizeChange={(s) => {
-                setPageSize(s);
-                setPage(0);
-              }}
-            />
-          </Box>
+          {!logsUnavailable && (
+            <Box sx={{ flexShrink: 0 }}>
+              <DataTablePagination
+                page={page}
+                pageSize={pageSize}
+                total={totalLogs}
+                onPageChange={setPage}
+                onPageSizeChange={(s) => {
+                  setPageSize(s);
+                  setPage(0);
+                }}
+              />
+            </Box>
+          )}
         </Box>
       </Box>
 
@@ -696,7 +672,7 @@ const EvalUsageTab = ({
                       setDetailIndex((i) => Math.max(0, (i ?? 0) - 1))
                     }
                   >
-                    <Iconify icon="mingcute:arrow-up-line" width={16} />
+                    <Iconify icon="solar:arrow-up-linear" width={16} />
                   </IconButton>
                 </span>
               </Tooltip>
@@ -711,7 +687,7 @@ const EvalUsageTab = ({
                       )
                     }
                   >
-                    <Iconify icon="mingcute:arrow-down-line" width={16} />
+                    <Iconify icon="solar:arrow-down-linear" width={16} />
                   </IconButton>
                 </span>
               </Tooltip>
@@ -729,8 +705,8 @@ const EvalUsageTab = ({
                   sx={{
                     px: 0.5,
                     py: 0.125,
-                    borderRadius: "3px",
-                    fontSize: "9px",
+                    borderRadius: "4px",
+                    fontSize: "12px",
                     fontFamily: "monospace",
                     border: "1px solid",
                     borderColor: "divider",
@@ -744,8 +720,8 @@ const EvalUsageTab = ({
                   sx={{
                     px: 0.5,
                     py: 0.125,
-                    borderRadius: "3px",
-                    fontSize: "9px",
+                    borderRadius: "4px",
+                    fontSize: "12px",
                     fontFamily: "monospace",
                     border: "1px solid",
                     borderColor: "divider",
@@ -762,13 +738,17 @@ const EvalUsageTab = ({
                 <Typography
                   variant="caption"
                   color="text.disabled"
-                  sx={{ fontFamily: "monospace", fontSize: "10px" }}
+                  sx={{ fontFamily: "monospace", fontSize: "12px" }}
                 >
                   {detailRow.id?.slice(0, 12)}
                 </Typography>
               )}
-              <IconButton size="small" onClick={() => setDetailIndex(null)}>
-                <Iconify icon="mingcute:close-line" width={16} />
+              <IconButton
+                size="small"
+                aria-label="Close log"
+                onClick={() => setDetailIndex(null)}
+              >
+                <Iconify icon="solar:close-linear" width={16} />
               </IconButton>
             </Box>
           </Box>
@@ -780,14 +760,27 @@ const EvalUsageTab = ({
               templateId={templateId}
               evalType={evalType}
               onFeedbackSubmitted={handleFeedbackSubmitted}
+              onSourceOpenChange={setOpenSourceScope}
             />
           )}
         </Box>
       </Slide>
+
+      <ColumnDropdown
+        open={openColumnConfigure}
+        onClose={() => setOpenColumnConfigure(false)}
+        anchorEl={columnConfigureRef?.current}
+        columns={columnDropdownItems}
+        onColumnVisibilityChange={handleColumnVisibilityChange}
+        setColumns={handleColumnReorder}
+      />
     </Box>
   );
 };
 
+// Observe evaluations store source "tracer"; only those can lead back to a
+// trace or call, and the server decides whether this one does.
+const isObserveLog = (row) => !row.composite && row.source === "tracer";
 
 // ── Detail panel content with Formatted/JSON tabs + feedback ──
 const DetailPanelContent = ({
@@ -796,7 +789,12 @@ const DetailPanelContent = ({
   templateId,
   evalType = "llm",
   onFeedbackSubmitted,
+  onSourceOpenChange,
 }) => {
+  const { role } = useAuthContext();
+  const canEditEvals = Boolean(
+    RolePermission.EVALS[PERMISSIONS.EDIT_CREATE_DELETE_EVALS]?.[role],
+  );
   const [viewMode, setViewMode] = useState("formatted");
   const [feedbackOpen, setFeedbackOpen] = useState(false);
 
@@ -829,22 +827,14 @@ const DetailPanelContent = ({
             sx={{
               px: 1.5,
               py: 0.375,
-              borderRadius: "5px",
-              fontSize: "11px",
+              borderRadius: "6px",
+              fontSize: "12px",
               fontWeight: viewMode === m ? 600 : 400,
               color: viewMode === m ? "text.primary" : "text.secondary",
               backgroundColor:
-                viewMode === m
-                  ? (t) =>
-                      t.palette.mode === "dark"
-                        ? "rgba(255,255,255,0.08)"
-                        : "action.hover"
-                  : "transparent",
+                viewMode === m ? "action.selected" : "transparent",
               "&:hover": {
-                backgroundColor: (t) =>
-                  t.palette.mode === "dark"
-                    ? "rgba(255,255,255,0.04)"
-                    : "action.hover",
+                backgroundColor: "action.hover",
               },
             }}
           >
@@ -852,6 +842,24 @@ const DetailPanelContent = ({
           </ButtonBase>
         ))}
       </Box>
+
+      {/* View trace / View call for an Observe evaluation, in both views */}
+      {isObserveLog(row) && (
+        <Box
+          sx={{
+            px: 1.5,
+            py: 1,
+            borderBottom: "1px solid",
+            borderColor: "divider",
+            flexShrink: 0,
+          }}
+        >
+          <EvalLogSourceHost
+            logId={row.id}
+            onSourceOpenChange={onSourceOpenChange}
+          />
+        </Box>
+      )}
 
       {/* Scrollable content area */}
       <Box sx={{ flex: 1, minHeight: 0, overflow: "auto" }}>
@@ -898,10 +906,10 @@ const DetailPanelContent = ({
                 color={
                   typeof row.score === "number"
                     ? row.score >= 0.7
-                      ? "success.main"
+                      ? "status.success.fg"
                       : row.score >= 0.3
-                        ? "warning.main"
-                        : "error.main"
+                        ? "status.warning.fg"
+                        : "status.danger.fg"
                     : undefined
                 }
               />
@@ -967,6 +975,17 @@ const DetailPanelContent = ({
                             : row.source || "—"
                 }
               />
+              {row.version != null && row.version !== "" && (
+                <DetailRow
+                  label="Version"
+                  value={
+                    typeof row.version === "number" ||
+                    !String(row.version).startsWith("v")
+                      ? `v${row.version}`
+                      : String(row.version)
+                  }
+                />
+              )}
               {row.created_at && (
                 <DetailRow
                   label="Ran at"
@@ -996,7 +1015,7 @@ const DetailPanelContent = ({
                   </>
                 )}
 
-              {row.reason && (
+              {(row.detail?.output?.reason || row.reason) && (
                 <>
                   <Typography
                     variant="caption"
@@ -1014,7 +1033,7 @@ const DetailPanelContent = ({
                       whiteSpace: "pre-wrap",
                     }}
                   >
-                    {row.reason}
+                    {row.detail?.output?.reason || row.reason}
                   </Typography>
                 </>
               )}
@@ -1077,15 +1096,15 @@ const DetailPanelContent = ({
                         <Iconify
                           icon={
                             row.feedback.value === "passed"
-                              ? "mingcute:thumb-up-2-fill"
-                              : "mingcute:thumb-down-2-fill"
+                              ? "solar:like-bold"
+                              : "solar:dislike-bold"
                           }
                           width={16}
                           sx={{
                             color:
                               row.feedback.value === "passed"
-                                ? "success.main"
-                                : "error.main",
+                                ? "status.success.fg"
+                                : "status.danger.fg",
                           }}
                         />
                         <Chip
@@ -1103,7 +1122,6 @@ const DetailPanelContent = ({
                               : "error"
                           }
                           variant="outlined"
-                          sx={{ fontSize: "11px", height: 20 }}
                         />
                       </Box>
                       <Box
@@ -1117,17 +1135,18 @@ const DetailPanelContent = ({
                           <Typography
                             variant="caption"
                             color="text.disabled"
-                            sx={{ fontSize: "10px" }}
+                            sx={{ fontSize: "12px" }}
                           >
                             {row.feedback.user}
                           </Typography>
                         )}
                         <IconButton
                           size="small"
+                          disabled={!canEditEvals}
                           onClick={() => setFeedbackOpen(true)}
                         >
                           <Iconify
-                            icon="mingcute:edit-line"
+                            icon="solar:pen-linear"
                             width={14}
                             sx={{ color: "text.secondary" }}
                           />
@@ -1157,50 +1176,31 @@ const DetailPanelContent = ({
                         }
                         size="small"
                         variant="outlined"
-                        sx={{ fontSize: "10px", height: 18, mt: 0.75 }}
+                        sx={{ mt: 0.75 }}
                       />
                     )}
                   </Box>
                 ) : null}
 
-                <Box
-                  component="button"
+                <Button
+                  variant="outlined"
+                  size="small"
+                  fullWidth
+                  disabled={!canEditEvals}
                   onClick={() => setFeedbackOpen(true)}
-                  sx={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 1,
-                    px: 2,
-                    py: 0.75,
-                    border: "1px solid",
-                    borderColor: "divider",
-                    borderRadius: "8px",
-                    backgroundColor: "transparent",
-                    color: "text.primary",
-                    cursor: "pointer",
-                    fontSize: "12px",
-                    fontWeight: 500,
-                    width: "100%",
-                    "&:hover": {
-                      borderColor: "primary.main",
-                      backgroundColor: (t) =>
-                        t.palette.mode === "dark"
-                          ? "rgba(124,77,255,0.06)"
-                          : "rgba(124,77,255,0.04)",
-                    },
-                  }}
+                  sx={{ gap: 1, color: "text.primary" }}
                 >
                   <Iconify
                     icon={
                       row.feedback
-                        ? "mingcute:edit-line"
-                        : "mingcute:message-3-line"
+                        ? "solar:pen-linear"
+                        : "solar:chat-round-line-linear"
                     }
                     width={14}
                     sx={{ color: "primary.main" }}
                   />
                   {row.feedback ? "Edit Feedback" : "Add Feedback"}
-                </Box>
+                </Button>
               </Box>
             )}
 
@@ -1213,7 +1213,9 @@ const DetailPanelContent = ({
                   if (submitted) onFeedbackSubmitted?.();
                 }}
                 selectedAddFeedback={{ id: row.id }}
-                output={{ reason: row.reason || "" }}
+                output={{
+                  reason: row.detail?.output?.reason || row.reason || "",
+                }}
                 evalsId={templateId}
                 existingFeedback={row.feedback || null}
               />
@@ -1223,6 +1225,15 @@ const DetailPanelContent = ({
       </Box>
     </Box>
   );
+};
+
+DetailPanelContent.propTypes = {
+  row: PropTypes.object.isRequired,
+  isDark: PropTypes.bool,
+  templateId: PropTypes.string.isRequired,
+  evalType: PropTypes.string,
+  onFeedbackSubmitted: PropTypes.func,
+  onSourceOpenChange: PropTypes.func,
 };
 
 // ── Composite children section in detail panel ──
@@ -1254,7 +1265,6 @@ const CompositeChildrenSection = ({ row }) => {
           label={aggFunction.replace("_", " ")}
           size="small"
           variant="outlined"
-          sx={{ fontSize: "10px", height: 18, textTransform: "capitalize" }}
         />
       </Box>
 
@@ -1300,7 +1310,6 @@ const CompositeChildrenSection = ({ row }) => {
                       size="small"
                       color="error"
                       variant="outlined"
-                      sx={{ fontSize: "10px", height: 18 }}
                     />
                   ) : (
                     <ScoreCell value={child.score} />
@@ -1312,7 +1321,7 @@ const CompositeChildrenSection = ({ row }) => {
                     variant="body2"
                     color="text.secondary"
                     sx={{
-                      fontSize: "11px",
+                      fontSize: "12px",
                       lineHeight: 1.4,
                       mb: 0.75,
                       display: "-webkit-box",
@@ -1335,7 +1344,7 @@ const CompositeChildrenSection = ({ row }) => {
                   <Typography
                     variant="caption"
                     color="text.disabled"
-                    sx={{ fontSize: "10px" }}
+                    sx={{ fontSize: "12px" }}
                   >
                     weight: {child.weight ?? 1}
                     {!isFailed && ` · score: ${scoreDisplay}`}
@@ -1349,10 +1358,9 @@ const CompositeChildrenSection = ({ row }) => {
                           "_blank",
                         )
                       }
-                      sx={{ p: 0.25 }}
                     >
                       <Iconify
-                        icon="mingcute:external-link-line"
+                        icon="solar:arrow-right-up-linear"
                         width={14}
                         sx={{ color: "primary.main" }}
                       />
@@ -1368,7 +1376,10 @@ const CompositeChildrenSection = ({ row }) => {
   );
 };
 
-// ── Detail row ──
+CompositeChildrenSection.propTypes = {
+  row: PropTypes.object.isRequired,
+};
+
 const DetailRow = ({ label, value, color, chip, chipColor, mono }) => (
   <Box
     sx={{
@@ -1409,7 +1420,6 @@ const DetailRow = ({ label, value, color, chip, chipColor, mono }) => (
           size="small"
           color={chipColor || "default"}
           variant="outlined"
-          sx={{ fontSize: "11px", height: 20 }}
         />
       ) : (
         <Typography
@@ -1428,8 +1438,19 @@ const DetailRow = ({ label, value, color, chip, chipColor, mono }) => (
   </Box>
 );
 
+DetailRow.propTypes = {
+  label: PropTypes.string.isRequired,
+  value: PropTypes.node,
+  color: PropTypes.string,
+  chip: PropTypes.bool,
+  chipColor: PropTypes.string,
+  mono: PropTypes.bool,
+};
+
 EvalUsageTab.propTypes = {
   templateId: PropTypes.string.isRequired,
+  outputType: PropTypes.string,
+  evalType: PropTypes.string,
 };
 
 export default EvalUsageTab;

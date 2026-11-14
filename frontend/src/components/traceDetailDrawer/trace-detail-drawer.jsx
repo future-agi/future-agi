@@ -16,13 +16,14 @@ import {
   Stack,
   Link,
 } from "@mui/material";
+import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
 import Iconify from "../iconify";
 import TraceTree from "./trace-tree";
 import DrawerRight from "./drawer-right";
 import DrawerBottom from "./drawer-bottom";
 import PropTypes from "prop-types";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import axios, { endpoints } from "src/utils/axios";
+import axios, { readQuery, endpoints } from "src/utils/axios";
 import { useParams } from "react-router";
 import { ShowComponent } from "../show";
 import { useSelectedNode } from "./useSelectedNode";
@@ -33,12 +34,11 @@ import { TraceDetailContext } from "./TraceDetailContext";
 import AddAnnotationsDrawer from "./add-annotations-drawer";
 import AnnotationSidebarContent from "./AnnotationSidebarContent";
 import AddLabelDrawer from "./AddLabelDrawer";
+import { buildTraceAnnotationSources } from "../voiceAnnotationSources";
 import _ from "lodash";
 import SvgColor from "../svg-color";
 import { useTraceErrorAnalysis } from "./common";
 import ErrorAnalysis from "./ErrorAnalysis";
-import { objectCamelToSnake } from "src/utils/utils";
-import { canonicalizeApiFilterColumnIds } from "src/utils/filter-column-ids";
 import { Events, PropertyName, trackEvent } from "src/utils/Mixpanel";
 import { useUrlState } from "src/routes/hooks/use-url-state";
 
@@ -67,6 +67,9 @@ const TraceDetailDrawerChild = ({
   const [showRightSection] = useState(false);
   const [annotateRunDrawerOpen, setAnnotateRunDrawerOpen] = useState(null);
   const [annotationSidebarOpen, setAnnotationSidebarOpen] = useState(false);
+  const annotationCovered = useDrawerCovered(annotationSidebarOpen, {
+    overlay: true,
+  });
   const [actionToDataset, setActionToDataset] = useState(false);
   const [configureAnnotationsDrawerOpen, setConfigureAnnotationsDrawerOpen] =
     useState(false);
@@ -158,10 +161,19 @@ const TraceDetailDrawerChild = ({
     });
   };
 
+  // Pin the trace and span reads to the page's project: the same ids can
+  // exist in several projects.
+  const projectParams = projectIdToUse
+    ? { params: { project_id: projectIdToUse } }
+    : undefined;
+
   const { data: traceDetail, isLoading } = useQuery({
-    queryKey: ["trace-detail", traceData.trace_id],
+    queryKey: ["trace-detail", traceData.trace_id, projectIdToUse],
     queryFn: () => {
-      return axios.get(endpoints.project.getTrace(traceData.trace_id));
+      return axios.get(
+        endpoints.project.getTrace(traceData.trace_id),
+        projectParams,
+      );
     },
     select: (data) => data.data?.result,
   });
@@ -177,16 +189,12 @@ const TraceDetailDrawerChild = ({
   const { data: previousNextTraceDataPrototype } = useQuery({
     queryKey: ["trace-id-by-index", traceData.trace_id, traceData?.filters],
     queryFn: () => {
-      return axios.get(endpoints.project.getTraceIdByIndex(), {
+      return readQuery(endpoints.project.getTraceIdByIndex(), {
         params: {
           project_version_id: runId,
           trace_id: traceData?.trace_id,
           // only trace filters can be applied to this
-          filters: JSON.stringify(
-            canonicalizeApiFilterColumnIds(
-              objectCamelToSnake(traceData?.filters),
-            ),
-          ),
+          filters: JSON.stringify(traceData?.filters || []),
         },
       });
     },
@@ -201,15 +209,11 @@ const TraceDetailDrawerChild = ({
       traceData?.filters,
     ],
     queryFn: () => {
-      return axios.get(endpoints.project.getTraceIdByIndexObserve(observeId), {
+      return readQuery(endpoints.project.getTraceIdByIndexObserve(observeId), {
         params: {
           trace_id: traceData.trace_id,
           // only trace filters can be applied to this
-          filters: JSON.stringify(
-            canonicalizeApiFilterColumnIds(
-              objectCamelToSnake(traceData?.filters),
-            ),
-          ),
+          filters: JSON.stringify(traceData?.filters || []),
         },
       });
     },
@@ -221,16 +225,12 @@ const TraceDetailDrawerChild = ({
   const { data: previousNextSpanDataPrototype } = useQuery({
     queryKey: ["span-id-by-index", traceData?.span_id, traceData?.filters],
     queryFn: () => {
-      return axios.get(endpoints.project.getTraceIdByIndexSpansAsBase(), {
+      return readQuery(endpoints.project.getTraceIdByIndexSpansAsBase(), {
         params: {
           span_id: traceData?.span_id,
           project_version_id: runId,
           // only span filters can be applied to this
-          filters: JSON.stringify(
-            canonicalizeApiFilterColumnIds(
-              objectCamelToSnake(traceData?.filters),
-            ),
-          ),
+          filters: JSON.stringify(traceData?.filters || []),
         },
       });
     },
@@ -245,17 +245,13 @@ const TraceDetailDrawerChild = ({
       traceData?.filters,
     ],
     queryFn: () => {
-      return axios.get(
+      return readQuery(
         endpoints.project.getTraceIdByIndexSpansAsObserve(observeId),
         {
           params: {
             span_id: traceData?.span_id,
             // only span filters can be applied to this
-            filters: JSON.stringify(
-              canonicalizeApiFilterColumnIds(
-                objectCamelToSnake(traceData?.filters),
-              ),
-            ),
+            filters: JSON.stringify(traceData?.filters || []),
           },
         },
       );
@@ -284,10 +280,13 @@ const TraceDetailDrawerChild = ({
     data: observationSpanWithoutLoadingState,
     isLoading: isLoadingObservationSpan,
   } = useQuery({
-    queryKey: ["observationSpan", selectedNode?.id, fetch],
+    queryKey: ["observationSpan", selectedNode?.id, projectIdToUse, fetch],
     enabled: Boolean(selectedNode?.id) && !showEvalLoadingStates && fetch,
     queryFn: () =>
-      axios.get(endpoints.project.getObservationSpan(selectedNode?.id)),
+      axios.get(
+        endpoints.project.getObservationSpan(selectedNode?.id),
+        projectParams,
+      ),
     select: (data) => data?.data?.result,
   });
 
@@ -295,10 +294,18 @@ const TraceDetailDrawerChild = ({
     data: observationSpanWithLoadingState,
     isLoading: isLoadingDetailedObservationSpan,
   } = useQuery({
-    queryKey: ["observationSpan-loading", selectedNode?.id, fetch],
+    queryKey: [
+      "observationSpan-loading",
+      selectedNode?.id,
+      projectIdToUse,
+      fetch,
+    ],
     enabled: Boolean(selectedNode?.id) && showEvalLoadingStates && fetch,
     queryFn: () =>
-      axios.get(endpoints.project.getObservationSpan(selectedNode?.id)),
+      axios.get(
+        endpoints.project.getObservationSpan(selectedNode?.id),
+        projectParams,
+      ),
     select: (data) => data?.data?.result,
     refetchInterval: (data) => {
       const evalsMetrics = data?.state?.data?.data?.result?.evals_metrics;
@@ -451,7 +458,7 @@ const TraceDetailDrawerChild = ({
             sx={{
               height: `${topSectionHeight}%`,
               ...(dragging === false && {
-                transition: "ease-in-out 0.3s",
+                transition: "ease-in-out 200ms",
               }),
             }}
           >
@@ -466,8 +473,8 @@ const TraceDetailDrawerChild = ({
                   width: "6px",
                 },
                 "&::-webkit-scrollbar-thumb": {
-                  backgroundColor: "rgba(0, 0, 0, 0.3)",
-                  borderRadius: "3px",
+                  backgroundColor: "border.strong",
+                  borderRadius: "4px",
                 },
                 "&::-webkit-scrollbar-track": {
                   backgroundColor: "transparent",
@@ -496,7 +503,7 @@ const TraceDetailDrawerChild = ({
                       <Link
                         href="https://docs.futureagi.com/docs/observe/features/manual-tracing/instrument-with-traceai-helpers"
                         underline="always"
-                        color="blue.500"
+                        color="status.info.fg"
                         target="_blank"
                         rel="noopener noreferrer"
                         fontWeight="fontWeightMedium"
@@ -510,6 +517,7 @@ const TraceDetailDrawerChild = ({
                 <ShowComponent condition={showNavigation}>
                   <Box sx={{ display: "flex", gap: 2 }}>
                     <Button
+                      size="small"
                       variant="outlined"
                       sx={{
                         color: "text.primary",
@@ -517,10 +525,7 @@ const TraceDetailDrawerChild = ({
                         display: "flex",
                         alignItems: "center",
                         gap: 2,
-                        height: "28px",
                         width: "fit-content",
-                        fontWeight: 400,
-                        fontSize: "14px",
                       }}
                       disabled={!previousNextTraceData?.previousTraceId}
                       onClick={() =>
@@ -541,6 +546,7 @@ const TraceDetailDrawerChild = ({
                       />
                     </Button>
                     <Button
+                      size="small"
                       variant="outlined"
                       sx={{
                         color: "text.primary",
@@ -548,10 +554,7 @@ const TraceDetailDrawerChild = ({
                         display: "flex",
                         alignItems: "center",
                         gap: 2,
-                        height: "28px",
                         width: "fit-content",
-                        fontWeight: 400,
-                        fontSize: "14px",
                       }}
                       disabled={!previousNextTraceData?.nextTraceId}
                       onClick={() =>
@@ -592,7 +595,7 @@ const TraceDetailDrawerChild = ({
             sx={{
               height: `${topSectionHeight}%`,
               ...(dragging === false && {
-                transition: "ease-in-out 0.3s",
+                transition: "ease-in-out 200ms",
               }),
             }}
           >
@@ -643,6 +646,7 @@ const TraceDetailDrawerChild = ({
                     showAnnotation={showAnnotation}
                     observationSpan={observationSpan}
                     observationSpanLoading={observationSpanLoading}
+                    projectId={projectIdToUse}
                   />
                 </Box>
               </Box>
@@ -658,7 +662,7 @@ const TraceDetailDrawerChild = ({
                 height: `${bottomSectionHeight}%`,
                 zIndex: 3,
                 ...(dragging === false && {
-                  transition: "ease-in-out 0.3s",
+                  transition: "ease-in-out 200ms",
                 }),
               }}
             >
@@ -674,13 +678,13 @@ const TraceDetailDrawerChild = ({
                     sx={{
                       position: "absolute",
                       left: "91%",
-                      boxShadow: "3",
+                      boxShadow: (theme) => theme.customShadows?.dropdown,
                       borderRadius: "50%",
                       bgcolor: "background.paper",
                       height: "23px",
                       width: "23px",
                       ...(dragging === false && {
-                        transition: "ease-in-out 0.3s",
+                        transition: "ease-in-out 200ms",
                       }),
                       cursor: "pointer",
                       zIndex: 4,
@@ -691,9 +695,9 @@ const TraceDetailDrawerChild = ({
                     onClick={handleCollapse} // Toggle collapse on click
                   >
                     <Iconify
-                      icon="bi:arrows-collapse"
-                      width={15}
-                      height={15}
+                      icon="solar:chevrons-down-up-linear"
+                      width={16}
+                      height={16}
                       color="text.secondary"
                     />
                   </Box>
@@ -701,7 +705,7 @@ const TraceDetailDrawerChild = ({
                 <Box
                   sx={{
                     position: "absolute",
-                    boxShadow: "3",
+                    boxShadow: (theme) => theme.customShadows?.dropdown,
                     borderRadius: "50%", // This makes it a circle
                     backgroundColor: dragging
                       ? "background.neutral"
@@ -710,7 +714,7 @@ const TraceDetailDrawerChild = ({
                     width: "23px",
                     left: "2.5%",
                     ...(dragging === false && {
-                      transition: "ease-in-out 0.3s",
+                      transition: "ease-in-out 200ms",
                     }),
                     cursor: dragging ? "grabbing" : "grab",
                     zIndex: 4,
@@ -748,6 +752,7 @@ const TraceDetailDrawerChild = ({
                   showAnnotation={showAnnotation}
                   observationSpan={observationSpan}
                   observationSpanLoading={observationSpanLoading}
+                  projectId={projectIdToUse}
                 />
               </Box>
             </Grid>
@@ -768,9 +773,10 @@ const TraceDetailDrawerChild = ({
           anchor="right"
           open={annotationSidebarOpen}
           onClose={() => setAnnotationSidebarOpen(false)}
+          sx={coveredDrawerSx(annotationCovered)}
           PaperProps={{
             sx: {
-              width: 420,
+              width: 480,
               backgroundColor: "background.paper",
             },
           }}
@@ -781,12 +787,12 @@ const TraceDetailDrawerChild = ({
           }}
         >
           <AnnotationSidebarContent
-            sources={[
-              {
-                sourceType: "observation_span",
-                sourceId: selectedNode?.id || rootSpanId,
-              },
-            ]}
+            sources={buildTraceAnnotationSources({
+              traceId: traceData?.trace_id,
+              spanId: selectedNode?.id || rootSpanId,
+              sessionId: traceDetail?.trace?.session,
+              projectId: projectIdToUse,
+            })}
             onClose={() => setAnnotationSidebarOpen(false)}
             onAddLabel={() => setAddLabelDrawerOpen(true)}
             onScoresChanged={() => {
@@ -863,18 +869,21 @@ const TraceDetailDrawer = ({
     onClose();
   };
 
+  const covered = useDrawerCovered(open);
+
   return (
     <Drawer
       anchor="right"
       open={open}
       onClose={handleClose}
+      sx={coveredDrawerSx(covered)}
       PaperProps={{
         sx: {
           height: "100vh",
           position: "fixed",
           overflowY: "hidden",
           zIndex: 9999,
-          borderRadius: "10px",
+          borderRadius: "8px",
           backgroundColor: "background.paper",
           width: "95vw",
         },
@@ -887,7 +896,7 @@ const TraceDetailDrawer = ({
     >
       <Box sx={{ position: "absolute", top: 10, right: 10, zIndex: 1 }}>
         <IconButton onClick={handleClose}>
-          <Iconify icon="mingcute:close-line" />
+          <Iconify icon="solar:close-linear" />
         </IconButton>
       </Box>
       {traceData && (

@@ -305,13 +305,37 @@ describe("AnnotationQueueTable", () => {
       const moreButtons = screen
         .getAllByTestId("iconify")
         .filter(
-          (el) => el.getAttribute("data-icon") === "eva:more-vertical-fill",
+          (el) =>
+            el.getAttribute("data-icon") === "solar:menu-dots-vertical-linear",
         );
       await user.click(moreButtons[0].closest("button"));
 
       expect(screen.getByText("Edit")).toBeInTheDocument();
       expect(screen.getByText("Duplicate")).toBeInTheDocument();
       expect(screen.getByText("Archive")).toBeInTheDocument();
+    });
+
+    it("shows only restore actions in archived view", async () => {
+      const user = userEvent.setup();
+      const onRestore = vi.fn();
+      render(
+        <AnnotationQueueTable
+          {...defaultProps}
+          archivedView
+          onRestore={onRestore}
+        />,
+      );
+
+      await user.click(
+        screen.getAllByRole("button", { name: /restore queue/i })[0],
+      );
+
+      expect(screen.getByText("Restore")).toBeInTheDocument();
+      expect(screen.queryByText("Edit")).not.toBeInTheDocument();
+      expect(screen.queryByText("Archive")).not.toBeInTheDocument();
+
+      await user.click(screen.getByText("Restore"));
+      expect(onRestore).toHaveBeenCalledWith(MOCK_QUEUES[0]);
     });
 
     it("uses viewer roles to show manager actions for workspace/org admins", async () => {
@@ -340,7 +364,8 @@ describe("AnnotationQueueTable", () => {
       const moreButtons = screen
         .getAllByTestId("iconify")
         .filter(
-          (el) => el.getAttribute("data-icon") === "eva:more-vertical-fill",
+          (el) =>
+            el.getAttribute("data-icon") === "solar:menu-dots-vertical-linear",
         );
       await user.click(moreButtons[0].closest("button"));
 
@@ -356,7 +381,8 @@ describe("AnnotationQueueTable", () => {
       const moreButtons = screen
         .getAllByTestId("iconify")
         .filter(
-          (el) => el.getAttribute("data-icon") === "eva:more-vertical-fill",
+          (el) =>
+            el.getAttribute("data-icon") === "solar:menu-dots-vertical-linear",
         );
       await user.click(moreButtons[0].closest("button"));
 
@@ -371,7 +397,8 @@ describe("AnnotationQueueTable", () => {
       const moreButtons = screen
         .getAllByTestId("iconify")
         .filter(
-          (el) => el.getAttribute("data-icon") === "eva:more-vertical-fill",
+          (el) =>
+            el.getAttribute("data-icon") === "solar:menu-dots-vertical-linear",
         );
       await user.click(moreButtons[1].closest("button"));
 
@@ -386,7 +413,8 @@ describe("AnnotationQueueTable", () => {
       const moreButtons = screen
         .getAllByTestId("iconify")
         .filter(
-          (el) => el.getAttribute("data-icon") === "eva:more-vertical-fill",
+          (el) =>
+            el.getAttribute("data-icon") === "solar:menu-dots-vertical-linear",
         );
       await user.click(moreButtons[0].closest("button"));
       await user.click(screen.getByText("Edit"));
@@ -407,7 +435,8 @@ describe("AnnotationQueueTable", () => {
       const moreButtons = screen
         .getAllByTestId("iconify")
         .filter(
-          (el) => el.getAttribute("data-icon") === "eva:more-vertical-fill",
+          (el) =>
+            el.getAttribute("data-icon") === "solar:menu-dots-vertical-linear",
         );
       await user.click(moreButtons[0].closest("button"));
       await user.click(screen.getByText("Activate"));

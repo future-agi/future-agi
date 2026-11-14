@@ -1,9 +1,18 @@
+import EmptyState from "src/components/empty-state";
 import React, { useState, useCallback, useMemo } from "react";
 import { useParams } from "react-router";
-import { Alert, Box, CircularProgress, Typography } from "@mui/material";
+import PropTypes from "prop-types";
+import {
+  Alert,
+  Box,
+  Button,
+  Chip,
+  Divider,
+  Stack,
+  Typography,
+} from "@mui/material";
 import { Helmet } from "react-helmet-async";
 import { useResolveSharedLink } from "src/api/shared-links";
-import DrawerToolbar from "src/components/traceDetail/DrawerToolbar";
 import TraceTreeV2 from "src/components/traceDetail/TraceTreeV2";
 import SpanDetailPane from "src/components/traceDetail/SpanDetailPane";
 import {
@@ -12,13 +21,22 @@ import {
   formatCost,
 } from "src/sections/projects/LLMTracing/formatters";
 import Iconify from "src/components/iconify";
-import { enqueueSnackbar } from "notistack";
 import SharedVoiceView from "./SharedVoiceView";
-import { isVoiceCall } from "./sharedViewHelpers";
+import SharedSimulationCallView from "./SharedSimulationCallView";
+import SharedErrorIssueView from "./SharedErrorIssueView";
+import { isVoiceCall, simulationCallKind } from "./sharedViewHelpers";
+import ContentSkeleton from "src/components/content-skeleton";
 
 function getSpan(entry) {
   return entry?.observation_span || entry?.observationSpan || {};
 }
+
+const SHARED_LINK_ERROR_COPY = {
+  401: "Sign in with an account that has access to view this.",
+  403: "Ask the person who shared this to add your email.",
+  404: "This link doesn't exist or the item was deleted.",
+  410: "This link was revoked or has expired.",
+};
 
 export default function SharedView() {
   const { token } = useParams();
@@ -45,6 +63,13 @@ export default function SharedView() {
     () => isTrace && isVoiceCall(resourceData),
     [isTrace, resourceData],
   );
+  const isCallExecution = resourceType === "call_execution";
+  const isErrorIssue = resourceType === "error_feed_issue";
+  // A shared call resolves to the same payload as the in-app call detail.
+  const sharedCall = isCallExecution ? resourceData || null : null;
+  const isChatCall =
+    isCallExecution && simulationCallKind(sharedCall) === "chat";
+  const isVoiceView = isVoice || (isCallExecution && !isChatCall);
 
   // For traces, the resolve endpoint returns full span tree in data
   const spans =
@@ -102,8 +127,9 @@ export default function SharedView() {
 
   // Error states
   if (isError) {
-    const status = error?.response?.status;
-    const msg = error?.response?.data?.error;
+    // The axios interceptor rejects with { ...body, statusCode }, not an
+    // axios error. Server text is never shown, only fixed copy per status.
+    const status = error?.statusCode ?? error?.response?.status;
     return (
       <>
         <Helmet>
@@ -122,10 +148,10 @@ export default function SharedView() {
             <Iconify
               icon={
                 status === 401
-                  ? "mdi:lock-outline"
+                  ? "solar:lock-linear"
                   : status === 403
-                    ? "mdi:shield-lock-outline"
-                    : "mdi:link-off"
+                    ? "solar:shield-keyhole-linear"
+                    : "solar:link-broken-linear"
               }
               width={48}
               sx={{ color: "text.disabled", mb: 2 }}
@@ -138,8 +164,7 @@ export default function SharedView() {
               {![401, 403, 404, 410].includes(status) && "Something went wrong"}
             </Typography>
             <Typography variant="body2" color="text.secondary">
-              {msg ||
-                "This shared link may have been revoked or is no longer available."}
+              {SHARED_LINK_ERROR_COPY[status] ?? "Try again in a moment."}
             </Typography>
             {status === 401 && (
               <Typography
@@ -149,7 +174,7 @@ export default function SharedView() {
                   display: "inline-block",
                   mt: 2,
                   color: "primary.main",
-                  fontSize: 14,
+                  fontSize: 12,
                   fontWeight: 500,
                 }}
               >
@@ -166,11 +191,19 @@ export default function SharedView() {
     <>
       <Helmet>
         <title>
-          {isVoice
+          {isVoiceView
             ? `Shared Voice Call — ${resourceId?.substring(0, 8) || "..."}`
-            : isTrace
-              ? `Shared Trace — ${resourceId?.substring(0, 8) || "..."}`
-              : "Shared Resource"}
+            : isChatCall
+              ? `Shared Chat — ${resourceId?.substring(0, 8) || "..."}`
+              : isErrorIssue
+                ? `Shared Issue — ${resourceData?.issue?.row?.error?.name || resourceId || "..."}`
+                : isTrace
+                  ? `Shared Trace — ${resourceId?.substring(0, 8) || "..."}`
+                  : resourceType === "dashboard"
+                    ? `Shared Dashboard — ${resourceData?.name || resourceId?.substring(0, 8) || "..."}`
+                    : resourceType === "project"
+                      ? `Shared Project — ${resourceData?.name || resourceId?.substring(0, 8) || "..."}`
+                      : "Shared Resource"}
         </title>
       </Helmet>
 
@@ -198,16 +231,36 @@ export default function SharedView() {
         >
           <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
             <Iconify
-              icon={isVoice ? "mdi:phone-outline" : "mdi:share-variant-outline"}
+              icon={
+                isVoiceView
+                  ? "solar:phone-linear"
+                  : isChatCall
+                    ? "solar:chat-round-line-linear"
+                    : isErrorIssue
+                      ? "solar:bug-linear"
+                      : resourceType === "dashboard"
+                        ? "solar:widget-4-linear"
+                        : resourceType === "project"
+                          ? "solar:folder-linear"
+                          : "solar:share-linear"
+              }
               width={20}
               sx={{ color: "primary.main" }}
             />
             <Typography
-              sx={{ fontSize: 14, fontWeight: 600, color: "text.primary" }}
+              sx={{ fontSize: 12, fontWeight: 600, color: "text.primary" }}
             >
-              {isVoice
+              {isVoiceView
                 ? "Shared voice call"
-                : `Shared ${resourceType || "resource"}`}
+                : isChatCall
+                  ? "Shared chat"
+                  : isErrorIssue
+                    ? "Shared issue"
+                    : resourceType === "dashboard"
+                      ? "Shared dashboard"
+                      : resourceType === "project"
+                        ? "Shared project"
+                        : `Shared ${resourceType || "resource"}`}
             </Typography>
             {resourceId && (
               <Typography
@@ -217,7 +270,9 @@ export default function SharedView() {
                   color: "text.disabled",
                 }}
               >
-                {resourceId.substring(0, 12)}...
+                {resourceId.length > 12
+                  ? `${resourceId.substring(0, 12)}...`
+                  : resourceId}
               </Typography>
             )}
           </Box>
@@ -236,8 +291,12 @@ export default function SharedView() {
               justifyContent: "center",
             }}
           >
-            <CircularProgress size={32} />
+            <ContentSkeleton variant="panel" />
           </Box>
+        ) : isErrorIssue ? (
+          <SharedErrorIssueView token={token} data={resourceData} />
+        ) : isCallExecution ? (
+          <SharedSimulationCallView call={sharedCall} />
         ) : isVoice ? (
           /* Voice call view — transcript + audio player, read-only */
           <SharedVoiceView resourceData={resourceData} />
@@ -329,11 +388,11 @@ export default function SharedView() {
                   }}
                 >
                   <Iconify
-                    icon="mdi:cursor-default-click-outline"
+                    icon="solar:cursor-linear"
                     width={40}
                     sx={{ mb: 1, opacity: 0.5 }}
                   />
-                  <Typography variant="body2" fontSize={13}>
+                  <Typography variant="body2" fontSize={12}>
                     Select a span to view details
                   </Typography>
                   {summary && (
@@ -368,8 +427,12 @@ export default function SharedView() {
               )}
             </Box>
           </Box>
+        ) : resourceType === "dashboard" ? (
+          <SharedDashboardView dashboard={resourceData} />
+        ) : resourceType === "project" ? (
+          <SharedProjectView project={resourceData} />
         ) : (
-          /* Non-trace resource — just show the raw data */
+          /* Unsupported resource type — keep a bounded debug payload visible. */
           <Box sx={{ flex: 1, p: 3, overflow: "auto" }}>
             <Alert severity="info" sx={{ mb: 2 }}>
               Viewing shared {resourceType}
@@ -389,3 +452,394 @@ export default function SharedView() {
     </>
   );
 }
+
+function SharedProjectView({ project }) {
+  const projectUrl = project?.url_path || null;
+  const traceType = project?.trace_type || "project";
+  const modelType = project?.model_type || null;
+
+  return (
+    <Box
+      sx={{
+        flex: 1,
+        overflow: "auto",
+        bgcolor: "background.default",
+      }}
+    >
+      <Box sx={{ maxWidth: 900, mx: "auto", px: { xs: 2, md: 4 }, py: 4 }}>
+        <Stack
+          direction={{ xs: "column", sm: "row" }}
+          spacing={2}
+          alignItems={{ xs: "flex-start", sm: "center" }}
+          justifyContent="space-between"
+          sx={{ mb: 3 }}
+        >
+          <Box sx={{ minWidth: 0 }}>
+            <Typography
+              component="h1"
+              sx={{
+                fontSize: { xs: 22, md: 28 },
+                fontWeight: 600,
+                color: "text.primary",
+                wordBreak: "break-word",
+              }}
+            >
+              {project?.name || "Untitled project"}
+            </Typography>
+            <Stack
+              direction="row"
+              spacing={1}
+              useFlexGap
+              flexWrap="wrap"
+              sx={{ mt: 1 }}
+            >
+              <Chip size="small" label={traceType} />
+              {modelType && (
+                <Chip size="small" variant="outlined" label={modelType} />
+              )}
+            </Stack>
+          </Box>
+          {projectUrl && (
+            <Button
+              href={projectUrl}
+              variant="contained"
+              startIcon={
+                <Iconify icon="solar:arrow-right-up-linear" width={16} />
+              }
+              sx={{ flexShrink: 0 }}
+            >
+              Open project
+            </Button>
+          )}
+        </Stack>
+
+        <Box
+          sx={{
+            bgcolor: "background.paper",
+            border: "1px solid",
+            borderColor: "divider",
+            borderRadius: 1,
+            overflow: "hidden",
+          }}
+        >
+          <Box sx={{ p: 2.5 }}>
+            <Typography
+              sx={{ fontSize: 12, fontWeight: 600, color: "text.primary" }}
+            >
+              Project details
+            </Typography>
+          </Box>
+          <Divider />
+          <Box
+            sx={{
+              p: 2.5,
+              display: "grid",
+              gridTemplateColumns: {
+                xs: "1fr",
+                sm: "repeat(2, minmax(0, 1fr))",
+              },
+              gap: 2,
+            }}
+          >
+            <WidgetStat label="Project ID" value={project?.id || "—"} />
+            <WidgetStat label="Workspace" value={project?.workspace || "—"} />
+            <WidgetStat label="Created" value={project?.created_at || "—"} />
+            <WidgetStat label="Updated" value={project?.updated_at || "—"} />
+          </Box>
+        </Box>
+      </Box>
+    </Box>
+  );
+}
+
+function SharedDashboardView({ dashboard }) {
+  const widgets = dashboard?.widgets || [];
+  const widgetCount = dashboard?.widget_count ?? widgets.length;
+
+  return (
+    <Box
+      sx={{
+        flex: 1,
+        overflow: "auto",
+        bgcolor: "background.default",
+      }}
+    >
+      <Box sx={{ maxWidth: 1200, mx: "auto", px: { xs: 2, md: 4 }, py: 3 }}>
+        <Stack
+          direction={{ xs: "column", sm: "row" }}
+          spacing={2}
+          alignItems={{ xs: "flex-start", sm: "center" }}
+          justifyContent="space-between"
+          sx={{ mb: 3 }}
+        >
+          <Box sx={{ minWidth: 0 }}>
+            <Typography
+              component="h1"
+              sx={{
+                fontSize: { xs: 22, md: 28 },
+                fontWeight: 600,
+                color: "text.primary",
+                wordBreak: "break-word",
+              }}
+            >
+              {dashboard?.name || "Untitled dashboard"}
+            </Typography>
+            {dashboard?.description && (
+              <Typography
+                sx={{
+                  mt: 0.75,
+                  fontSize: 12,
+                  color: "text.secondary",
+                  maxWidth: 760,
+                }}
+              >
+                {dashboard.description}
+              </Typography>
+            )}
+          </Box>
+          <Chip
+            size="small"
+            variant="outlined"
+            icon={<Iconify icon="solar:widget-4-linear" width={16} />}
+            label={`${widgetCount} ${widgetCount === 1 ? "widget" : "widgets"}`}
+            sx={{ flexShrink: 0 }}
+          />
+        </Stack>
+
+        {widgets.length ? (
+          <Box
+            sx={{
+              display: "grid",
+              gridTemplateColumns: {
+                xs: "1fr",
+                md: "repeat(2, minmax(0, 1fr))",
+              },
+              gap: 2,
+            }}
+          >
+            {widgets.map((widget) => (
+              <DashboardWidgetPreview key={widget.id} widget={widget} />
+            ))}
+          </Box>
+        ) : (
+          <EmptyState
+            icon="solar:widget-4-linear"
+            title="No widgets yet"
+            description="This dashboard has no widgets."
+            sx={{
+              pt: 6,
+              pb: 6,
+              bgcolor: "background.paper",
+              border: "1px solid",
+              borderColor: "divider",
+              borderRadius: 1,
+            }}
+          />
+        )}
+      </Box>
+    </Box>
+  );
+}
+
+function DashboardWidgetPreview({ widget }) {
+  const chartType = widget?.chart_config?.chart_type || "chart";
+  const metrics = Array.isArray(widget?.query_config?.metrics)
+    ? widget.query_config.metrics
+    : [];
+  const timeRange =
+    widget?.query_config?.time_range?.preset ||
+    widget?.query_config?.timeRange?.preset ||
+    null;
+
+  return (
+    <Box
+      sx={{
+        bgcolor: "background.paper",
+        border: "1px solid",
+        borderColor: "divider",
+        borderRadius: 1,
+        minHeight: 220,
+        display: "flex",
+        flexDirection: "column",
+        overflow: "hidden",
+      }}
+    >
+      <Box sx={{ p: 2 }}>
+        <Stack
+          direction="row"
+          spacing={1.5}
+          alignItems="flex-start"
+          justifyContent="space-between"
+        >
+          <Box sx={{ minWidth: 0 }}>
+            <Typography
+              sx={{
+                fontSize: 12,
+                fontWeight: 600,
+                color: "text.primary",
+                wordBreak: "break-word",
+              }}
+            >
+              {widget?.name || "Untitled widget"}
+            </Typography>
+            {widget?.description && (
+              <Typography
+                sx={{
+                  mt: 0.5,
+                  fontSize: 12,
+                  color: "text.secondary",
+                  wordBreak: "break-word",
+                }}
+              >
+                {widget.description}
+              </Typography>
+            )}
+          </Box>
+          <Chip size="small" label={chartTypeLabel(chartType)} />
+        </Stack>
+      </Box>
+
+      <Divider />
+
+      <Box
+        sx={{
+          p: 2,
+          display: "grid",
+          gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
+          gap: 1,
+        }}
+      >
+        <WidgetStat label="Width" value={widget?.width ?? "—"} />
+        <WidgetStat label="Height" value={widget?.height ?? "—"} />
+        <WidgetStat label="Range" value={timeRange || "—"} />
+      </Box>
+
+      <Box sx={{ px: 2, pb: 2, flex: 1 }}>
+        <Typography
+          sx={{
+            mb: 1,
+            fontSize: 11,
+            fontWeight: 600,
+            color: "text.secondary",
+            textTransform: "none",
+          }}
+        >
+          Metrics
+        </Typography>
+        {metrics.length ? (
+          <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap">
+            {metrics.map((metric, index) => (
+              <Chip
+                key={`${metric.name || metric.id || "metric"}-${index}`}
+                size="small"
+                variant="outlined"
+                label={metricLabel(metric)}
+              />
+            ))}
+          </Stack>
+        ) : (
+          <Typography sx={{ fontSize: 12, color: "text.disabled" }}>
+            No metrics configured
+          </Typography>
+        )}
+      </Box>
+    </Box>
+  );
+}
+
+function WidgetStat({ label, value }) {
+  return (
+    <Box>
+      <Typography
+        sx={{
+          fontSize: 11,
+          fontWeight: 600,
+          color: "text.disabled",
+          textTransform: "none",
+        }}
+      >
+        {label}
+      </Typography>
+      <Typography
+        sx={{
+          fontSize: 12,
+          fontWeight: 600,
+          color: "text.primary",
+          wordBreak: "break-word",
+        }}
+      >
+        {value}
+      </Typography>
+    </Box>
+  );
+}
+
+function chartTypeLabel(value) {
+  return String(value || "chart").replaceAll("_", " ");
+}
+
+function metricLabel(metric) {
+  const name =
+    metric.display_name || metric.displayName || metric.name || metric.id;
+  const aggregation = metric.aggregation;
+  return aggregation ? `${aggregation} ${name}` : name;
+}
+
+const dashboardWidgetShape = PropTypes.shape({
+  id: PropTypes.string,
+  name: PropTypes.string,
+  description: PropTypes.string,
+  width: PropTypes.number,
+  height: PropTypes.number,
+  query_config: PropTypes.shape({
+    metrics: PropTypes.arrayOf(
+      PropTypes.shape({
+        id: PropTypes.string,
+        name: PropTypes.string,
+        display_name: PropTypes.string,
+        displayName: PropTypes.string,
+        aggregation: PropTypes.string,
+      }),
+    ),
+    time_range: PropTypes.shape({
+      preset: PropTypes.string,
+    }),
+    timeRange: PropTypes.shape({
+      preset: PropTypes.string,
+    }),
+  }),
+  chart_config: PropTypes.shape({
+    chart_type: PropTypes.string,
+  }),
+});
+
+SharedProjectView.propTypes = {
+  project: PropTypes.shape({
+    id: PropTypes.string,
+    name: PropTypes.string,
+    trace_type: PropTypes.string,
+    model_type: PropTypes.string,
+    workspace: PropTypes.string,
+    created_at: PropTypes.string,
+    updated_at: PropTypes.string,
+    url_path: PropTypes.string,
+  }),
+};
+
+SharedDashboardView.propTypes = {
+  dashboard: PropTypes.shape({
+    name: PropTypes.string,
+    description: PropTypes.string,
+    widget_count: PropTypes.number,
+    widgets: PropTypes.arrayOf(dashboardWidgetShape),
+  }),
+};
+
+DashboardWidgetPreview.propTypes = {
+  widget: dashboardWidgetShape,
+};
+
+WidgetStat.propTypes = {
+  label: PropTypes.string.isRequired,
+  value: PropTypes.oneOfType([PropTypes.string, PropTypes.number]),
+};
