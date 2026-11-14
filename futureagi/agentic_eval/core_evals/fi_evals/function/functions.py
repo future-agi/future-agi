@@ -4,6 +4,7 @@ import re
 import string
 import subprocess
 import tempfile
+from collections import Counter
 from typing import Any, List
 
 import Levenshtein
@@ -3110,6 +3111,50 @@ def calculate_accuracy(output, expected, **kwargs):
     return {"result": accuracy, "reason": f"Accuracy: {accuracy:.4f} ({correct}/{len(labels)} correct)"}
 
 
+# Explicit conventions, not alphabetical order. Subsets also cover batches where
+# only the negative class appears; those must not become perfect positive scores.
+_CLASSIFICATION_LABEL_PAIRS = (
+    ("yes", "no"),
+    ("true", "false"),
+    ("1", "0"),
+    ("1", "-1"),
+    ("positive", "negative"),
+    ("pass", "fail"),
+    ("passed", "failed"),
+    ("spam", "ham"),
+    ("correct", "incorrect"),
+    ("relevant", "irrelevant"),
+)
+
+
+def _classification_counts(preds, labels, positive_label):
+    """Return per-class (TP, FP, FN) and the binary/macro policy description."""
+    classes = set(preds) | set(labels)
+    if positive_label is not None:
+        positive = str(positive_label).lower()
+    else:
+        positive = next(
+            (pos for pos, neg in _CLASSIFICATION_LABEL_PAIRS if classes <= {pos, neg}),
+            None,
+        )
+    if positive is not None:
+        selected = [positive]
+        policy = f"positive='{positive}'"
+    else:
+        # Include predicted-only classes so an unsupported prediction contributes
+        # zero rather than disappearing from the unweighted mean.
+        selected = sorted(classes)
+        policy = f"macro over {len(selected)} classes"
+    predicted = Counter(preds)
+    actual = Counter(labels)
+    correct = Counter(p for p, label in zip(preds, labels, strict=True) if p == label)
+    counts = [
+        (correct[cls], predicted[cls] - correct[cls], actual[cls] - correct[cls])
+        for cls in selected
+    ]
+    return counts, policy
+
+
 def calculate_precision_score(output, expected, positive_label=None, **kwargs):
     """
     Compute precision for binary/multiclass classification.
@@ -3118,11 +3163,15 @@ def calculate_precision_score(output, expected, positive_label=None, **kwargs):
     Args:
         output: Predicted label(s).
         expected: Expected label(s).
-        positive_label: The label considered as positive (default: auto-detect).
+        positive_label: Explicit one-vs-rest label, including numeric zero. If
+            omitted, resolve a known binary pair; otherwise macro-average over
+            the union of predicted and expected classes. Undefined precision is
+            zero for that class. See _CLASSIFICATION_LABEL_PAIRS for conventions.
 
     Returns:
         dict: {"result": float (0-1), "reason": str}
     """
+
     def _parse(val):
         if val is None:
             return []
@@ -3142,28 +3191,16 @@ def calculate_precision_score(output, expected, positive_label=None, **kwargs):
     labels = _parse(expected)
 
     if len(preds) != len(labels) or not labels:
-        return {"result": 0.0, "reason": f"Invalid input: {len(preds)} preds vs {len(labels)} labels"}
+        return {
+            "result": 0.0,
+            "reason": f"Invalid input: {len(preds)} preds vs {len(labels)} labels",
+        }
 
-    if positive_label is not None:
-        pos = str(positive_label).lower()
-    else:
-        # When the caller does not specify a positive label, pick the
-        # alphabetically-last class. In the most common binary labelling
-        # conventions (yes/no, true/false, 1/0, spam/ham, pass/fail, …) the
-        # positive class sorts last, so this default is correct in 8 of 9
-        # checked conventions. Picking the first (the old default) selected
-        # the negative class in almost every case.
-        unique = set(labels)
-        pos = sorted(unique)[-1] if unique else ""
-
-    tp = sum(1 for p, l in zip(preds, labels) if p == pos and l == pos)
-    fp = sum(1 for p, l in zip(preds, labels) if p == pos and l != pos)
-
-    if tp + fp == 0:
-        return {"result": 0.0, "reason": f"Precision: 0.0 (no positive predictions for label '{pos}')"}
-
-    precision = tp / (tp + fp)
-    return {"result": precision, "reason": f"Precision: {precision:.4f} (TP={tp}, FP={fp}, positive='{pos}')"}
+    counts, policy = _classification_counts(preds, labels, positive_label)
+    precision = sum(tp / (tp + fp) if tp + fp else 0.0 for tp, fp, _ in counts) / len(
+        counts
+    )
+    return {"result": precision, "reason": f"Precision: {precision:.4f} ({policy})"}
 
 
 def calculate_cohen_kappa(output, expected, **kwargs):
@@ -3744,7 +3781,14 @@ def calculate_balanced_accuracy(output, expected, **kwargs):
 
 
 def calculate_f_beta_score(output, expected, beta=1.0, positive_label=None, **kwargs):
-    """Compute F-beta score with configurable beta."""
+    """Compute per-class F-beta, then average using the precision label policy.
+
+    An explicit positive_label (including zero) selects one-vs-rest scoring.
+    Otherwise known binary pairs select their positive class; other label sets
+    use an unweighted mean over predicted and expected classes. A class with
+    no true positives contributes zero, including classes never predicted.
+    """
+
     def _parse(val):
         if isinstance(val, list):
             return [str(v).lower() for v in val]
@@ -3757,26 +3801,20 @@ def calculate_f_beta_score(output, expected, beta=1.0, positive_label=None, **kw
                 pass
             return [val.strip().lower()]
         return [str(val).lower()]
+
     preds = _parse(output)
     labels = _parse(expected)
     if len(preds) != len(labels) or not labels:
         return {"result": 0.0, "reason": "Invalid input"}
     beta = float(beta)
-    # Use `is not None` rather than truthiness so that a caller who explicitly
-    # passes positive_label=0 (a falsy but valid label) is not silently ignored.
-    # Fall back to the alphabetically-last class, which is the positive class in
-    # most binary labelling conventions (yes/no, true/false, 1/0, spam/ham, …).
-    pos = str(positive_label).lower() if positive_label is not None else sorted(set(labels))[-1]
-    tp = sum(1 for p, l in zip(preds, labels) if p == pos and l == pos)
-    fp = sum(1 for p, l in zip(preds, labels) if p == pos and l != pos)
-    fn = sum(1 for p, l in zip(preds, labels) if p != pos and l == pos)
-    precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0
-    recall = tp / (tp + fn) if (tp + fn) > 0 else 0.0
-    if precision + recall == 0:
-        return {"result": 0.0, "reason": f"F{beta}: 0.0 (no TP)"}
-    b2 = beta ** 2
-    fb = (1 + b2) * precision * recall / (b2 * precision + recall)
-    return {"result": fb, "reason": f"F{beta}: {fb:.4f} (P={precision:.4f}, R={recall:.4f})"}
+    counts, policy = _classification_counts(preds, labels, positive_label)
+    b2 = beta**2
+    scores = [
+        (1 + b2) * tp / ((1 + b2) * tp + fp + b2 * fn) if tp else 0.0
+        for tp, fp, fn in counts
+    ]
+    fb = sum(scores) / len(scores)
+    return {"result": fb, "reason": f"F{beta}: {fb:.4f} ({policy})"}
 
 
 def calculate_log_loss(output, expected, **kwargs):
