@@ -21,7 +21,6 @@ from tracer.services.clickhouse import exact_graph_reads
 from tracer.services.clickhouse.query_builders.time_series import (
     TimeSeriesQueryBuilder,
 )
-from tracer.services.clickhouse.trace_name_roots import TraceNameFilterTooBroad
 from tracer.services.clickhouse.v2.query_builders.span_list import (
     SpanListQueryBuilderV2,
 )
@@ -139,27 +138,31 @@ def _classifiers(statements):
 
 def test_span_list_resolves_roots_once_and_answers_the_same(ch):
     page, statements = _span_page(ch, resolve_once=True)
-    old_page, old_statements = _span_page(ch, resolve_once=False)
 
-    assert page.complete and old_page.complete
+    assert page.complete
     ids = sorted(str(row["id"]) for row in page.rows)
-    assert ids == sorted(str(row["id"]) for row in old_page.rows)
     # 6 matching traces x 3 spans.
     assert len(ids) == 3 * (TRACES // EVERY)
-
     classifiers = _classifiers(statements)
     assert len(classifiers) >= 3
     # One resolution statement; no classifier batch reads roots of its own.
     assert sum(sql.lstrip().startswith(RESOLUTION) for sql in statements) == 1
     assert sum(ROOT_LOOKUP in sql for sql in statements) == 1
     assert not any(ROOT_LOOKUP in sql for sql in classifiers)
-    # Per statement (the behaviour before): every batch looked them up again.
+
+    # Per statement (the behaviour before): every batch looked them up again,
+    # and the page was the same.
+    old_page, old_statements = _span_page(ch, resolve_once=False)
+    assert old_page.complete
+    assert ids == sorted(str(row["id"]) for row in old_page.rows)
     old_classifiers = _classifiers(old_statements)
     assert len(old_classifiers) == len(classifiers)
     assert all(ROOT_LOOKUP in sql for sql in old_classifiers)
 
 
 def test_span_list_too_broad_root_set_is_refused(ch):
+    from tracer.services.clickhouse.trace_name_roots import TraceNameFilterTooBroad
+
     executor = LiveExecutor(ch)
     leaf = _leaf("o", op="contains")  # browse and checkout: all 240 roots
     builder = SpanListQueryBuilderV2(
@@ -230,14 +233,16 @@ def _graph(ch, *, resolve_once: bool):
 
 def test_span_graph_resolves_roots_once_and_answers_the_same(ch):
     metrics, query_count, statements = _graph(ch, resolve_once=True)
-    old_metrics, old_count, old_statements = _graph(ch, resolve_once=False)
 
-    assert metrics == old_metrics
     traffic = sum(point["traffic"] for point in metrics["traffic"])
     assert traffic == 3 * (TRACES // EVERY)
     partitions = [sql for sql in statements if not sql.lstrip().startswith(RESOLUTION)]
-    assert len(partitions) == 4 == len(old_statements)
+    assert len(partitions) == 4
     assert sum(sql.lstrip().startswith(RESOLUTION) for sql in statements) == 1
     assert not any(ROOT_LOOKUP in sql for sql in partitions)
+
+    old_metrics, old_count, old_statements = _graph(ch, resolve_once=False)
+    assert metrics == old_metrics
+    assert len(old_statements) == 4
     assert all(ROOT_LOOKUP in sql for sql in old_statements)
     assert query_count == old_count + 1

@@ -26,6 +26,7 @@ and whole-window totals that sit on spans the witness never sees.
 from __future__ import annotations
 
 import uuid
+from contextlib import nullcontext
 from datetime import UTC, datetime, timedelta
 from unittest.mock import patch
 
@@ -500,11 +501,14 @@ def _walk_pages(ch_client, items, *, resolve_once):
 
     pages = []
     cursor = None
-    resolve = (
-        walk._resolve_walk_trace_name_roots if resolve_once else (lambda state: None)
-    )
     with (
-        patch.object(walk, "_resolve_walk_trace_name_roots", resolve),
+        (
+            nullcontext()
+            if resolve_once
+            else patch.object(
+                walk, "_resolve_walk_trace_name_roots", lambda state: None
+            )
+        ),
         patch.object(walk, "USER_LIST_WALK_SLICE_USER_LIMIT", 2),
         patch.object(walk, "USER_LIST_WALK_MAX_STATEMENTS", 64),
         patch.object(walk, "USER_LIST_PAGE_WALL_MS", 120_000),
@@ -525,12 +529,11 @@ def _walk_pages(ch_client, items, *, resolve_once):
 def test_a_trace_name_walk_resolves_its_roots_once_per_page(ch_client, survivor_of_e):
     item = _native("trace_name", "equals", "checkout")
     pages = _walk_pages(ch_client, [item], resolve_once=True)
-    old_pages = _walk_pages(ch_client, [item], resolve_once=False)
 
     def names(walked):
         return [row["user_id"] for table, _statements in walked for row in table]
 
-    assert names(pages) == names(old_pages) == _ordered(survivor_of_e, GPT_MEMBERS)
+    assert names(pages) == _ordered(survivor_of_e, GPT_MEMBERS)
     assert len(pages) >= 2
     for _table, statements in pages:
         # One resolution per request, before its slices; no other statement
@@ -538,6 +541,9 @@ def test_a_trace_name_walk_resolves_its_roots_once_per_page(ch_client, survivor_
         assert sum(s.lstrip().startswith(ROOT_RESOLUTION) for s in statements) == 1
         assert sum(ROOT_LOOKUP in s for s in statements) == 1
         assert len(statements) > 2
-    # Before: every statement with the leaf looked its roots up again.
+    # Before: every statement with the leaf looked its roots up again, and
+    # the pages were the same.
+    old_pages = _walk_pages(ch_client, [item], resolve_once=False)
+    assert names(old_pages) == names(pages)
     for _table, statements in old_pages:
         assert sum(ROOT_LOOKUP in s for s in statements) > 1
