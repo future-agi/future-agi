@@ -21123,6 +21123,36 @@ export const SkillsContextEvidenceSummaryApiAvailability = {
   unavailable: "unavailable",
 } as const;
 
+export type SkillsContextNativeOutcomeResultApi = {
+  /** @minLength 1 */
+  state: string;
+  /** @minLength 1 */
+  reproduction: string;
+  repair_verified: boolean;
+} | null;
+
+export interface SkillsContextNativeCaseOutcomeApi {
+  /** @minLength 1 */
+  case_id: string;
+  title: string;
+  /** @minLength 1 */
+  variant: string;
+  /** @minimum 1 */
+  version: number | null;
+  /** @minimum 0 */
+  repeat_index: number;
+  /** @minLength 1 */
+  status: string;
+  /** @minLength 1 */
+  answer: string;
+  /** @minLength 1 */
+  selection: string;
+  /** @minLength 1 */
+  delivery: string;
+  /** @minLength 1 */
+  tools: string;
+}
+
 export type SkillsContextEvidenceSummaryApiSource =
   (typeof SkillsContextEvidenceSummaryApiSource)[keyof typeof SkillsContextEvidenceSummaryApiSource];
 
@@ -21156,6 +21186,8 @@ export interface SkillsContextEvidenceSummaryApi {
   /** @minLength 1 */
   tools: string;
   availability: SkillsContextEvidenceSummaryApiAvailability;
+  result: SkillsContextNativeOutcomeResultApi | null;
+  cases: SkillsContextNativeCaseOutcomeApi[];
   source: SkillsContextEvidenceSummaryApiSource;
 }
 
@@ -21191,10 +21223,87 @@ export interface SkillsContextReviewTargetApi {
   target: SkillsContextTargetConfigurationApi | null;
 }
 
+export type SkillsContextOptionEvidenceApiSubjectKind =
+  (typeof SkillsContextOptionEvidenceApiSubjectKind)[keyof typeof SkillsContextOptionEvidenceApiSubjectKind];
+
+export const SkillsContextOptionEvidenceApiSubjectKind = {
+  skill: "skill",
+  agent_context: "agent_context",
+} as const;
+
+export type SkillsContextOptionEvidenceApiStatus =
+  (typeof SkillsContextOptionEvidenceApiStatus)[keyof typeof SkillsContextOptionEvidenceApiStatus];
+
+export const SkillsContextOptionEvidenceApiStatus = {
+  completed: "completed",
+  failed: "failed",
+  cancelled: "cancelled",
+  timed_out: "timed_out",
+  interrupted: "interrupted",
+} as const;
+
+export type SkillsContextOptionEvidenceApiVisibility =
+  (typeof SkillsContextOptionEvidenceApiVisibility)[keyof typeof SkillsContextOptionEvidenceApiVisibility];
+
+export const SkillsContextOptionEvidenceApiVisibility = {
+  private: "private",
+  workspace: "workspace",
+} as const;
+
+export type SkillsContextOptionCountsApi = {
+  /** @minimum 0 */
+  graded: number | null;
+  /** @minimum 0 */
+  planned: number | null;
+  /** @minimum 0 */
+  regressed: number | null;
+  /** @minimum 0 */
+  disagreements: number;
+} | null;
+
+export type SkillsContextOptionEvidenceApiSource =
+  (typeof SkillsContextOptionEvidenceApiSource)[keyof typeof SkillsContextOptionEvidenceApiSource];
+
+export const SkillsContextOptionEvidenceApiSource = {
+  skills_text: "skills_text",
+  simulation_native: "simulation_native",
+} as const;
+
+export interface SkillsContextOptionEvidenceApi {
+  /**
+   * @minimum 1
+   * @maximum 1
+   */
+  schema: number;
+  source_id: string;
+  subject_kind: SkillsContextOptionEvidenceApiSubjectKind;
+  subject_id: string;
+  /**
+   * @minLength 1
+   * @pattern ^sha256:[a-f0-9]{64}$
+   */
+  candidate_digest: string;
+  /**
+   * @minLength 1
+   * @pattern ^sha256:[a-f0-9]{64}$
+   */
+  execution_fingerprint: string;
+  status: SkillsContextOptionEvidenceApiStatus;
+  visibility: SkillsContextOptionEvidenceApiVisibility;
+  payload_expires_at: string;
+  configuration: SkillsContextEvidenceConfigurationApi;
+  /** @minimum 0 */
+  annotation_revision: number;
+  /** @minLength 1 */
+  outcome: string | null;
+  counts: SkillsContextOptionCountsApi | null;
+  source: SkillsContextOptionEvidenceApiSource;
+}
+
 export interface SkillsContextReviewOptionsApi {
   recipients: SkillsContextReviewerApi[];
   targets: SkillsContextReviewTargetApi[];
-  evidence: SkillsContextEvidenceRefApi[];
+  evidence: SkillsContextOptionEvidenceApi[];
 }
 
 export interface SkillsReviewOptionsResponseApi {

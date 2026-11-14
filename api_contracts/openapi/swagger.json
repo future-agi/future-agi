@@ -164680,6 +164680,98 @@
                 }
             }
         },
+        "SkillsContextNativeOutcomeResult": {
+            "required": [
+                "state",
+                "reproduction",
+                "repair_verified"
+            ],
+            "type": "object",
+            "properties": {
+                "state": {
+                    "title": "State",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "reproduction": {
+                    "title": "Reproduction",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "repair_verified": {
+                    "title": "Repair verified",
+                    "type": "boolean"
+                }
+            },
+            "x-nullable": true
+        },
+        "SkillsContextNativeCaseOutcome": {
+            "required": [
+                "case_id",
+                "title",
+                "variant",
+                "version",
+                "repeat_index",
+                "status",
+                "answer",
+                "selection",
+                "delivery",
+                "tools"
+            ],
+            "type": "object",
+            "properties": {
+                "case_id": {
+                    "title": "Case id",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "title": {
+                    "title": "Title",
+                    "type": "string"
+                },
+                "variant": {
+                    "title": "Variant",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "version": {
+                    "title": "Version",
+                    "type": "integer",
+                    "minimum": 1,
+                    "x-nullable": true
+                },
+                "repeat_index": {
+                    "title": "Repeat index",
+                    "type": "integer",
+                    "minimum": 0
+                },
+                "status": {
+                    "title": "Status",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "answer": {
+                    "title": "Answer",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "selection": {
+                    "title": "Selection",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "delivery": {
+                    "title": "Delivery",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "tools": {
+                    "title": "Tools",
+                    "type": "string",
+                    "minLength": 1
+                }
+            }
+        },
         "SkillsContextEvidenceSummary": {
             "required": [
                 "source_id",
@@ -164695,6 +164787,8 @@
                 "delivery",
                 "tools",
                 "availability",
+                "result",
+                "cases",
                 "source"
             ],
             "type": "object",
@@ -164770,6 +164864,15 @@
                         "available",
                         "unavailable"
                     ]
+                },
+                "result": {
+                    "$ref": "#/definitions/SkillsContextNativeOutcomeResult"
+                },
+                "cases": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/SkillsContextNativeCaseOutcome"
+                    }
                 },
                 "source": {
                     "title": "Source",
@@ -164874,6 +164977,147 @@
                 }
             }
         },
+        "SkillsContextOptionCounts": {
+            "required": [
+                "graded",
+                "planned",
+                "regressed",
+                "disagreements"
+            ],
+            "type": "object",
+            "properties": {
+                "graded": {
+                    "title": "Graded",
+                    "type": "integer",
+                    "minimum": 0,
+                    "x-nullable": true
+                },
+                "planned": {
+                    "title": "Planned",
+                    "type": "integer",
+                    "minimum": 0,
+                    "x-nullable": true
+                },
+                "regressed": {
+                    "title": "Regressed",
+                    "type": "integer",
+                    "minimum": 0,
+                    "x-nullable": true
+                },
+                "disagreements": {
+                    "title": "Disagreements",
+                    "type": "integer",
+                    "minimum": 0
+                }
+            },
+            "x-nullable": true
+        },
+        "SkillsContextOptionEvidence": {
+            "required": [
+                "schema",
+                "source_id",
+                "subject_kind",
+                "subject_id",
+                "candidate_digest",
+                "execution_fingerprint",
+                "status",
+                "visibility",
+                "payload_expires_at",
+                "configuration",
+                "annotation_revision",
+                "outcome",
+                "counts",
+                "source"
+            ],
+            "type": "object",
+            "properties": {
+                "schema": {
+                    "title": "Schema",
+                    "type": "integer",
+                    "maximum": 1,
+                    "minimum": 1
+                },
+                "source_id": {
+                    "title": "Source id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "subject_kind": {
+                    "title": "Subject kind",
+                    "type": "string",
+                    "enum": [
+                        "skill",
+                        "agent_context"
+                    ]
+                },
+                "subject_id": {
+                    "title": "Subject id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "candidate_digest": {
+                    "title": "Candidate digest",
+                    "type": "string",
+                    "pattern": "^sha256:[a-f0-9]{64}$",
+                    "minLength": 1
+                },
+                "execution_fingerprint": {
+                    "title": "Execution fingerprint",
+                    "type": "string",
+                    "pattern": "^sha256:[a-f0-9]{64}$",
+                    "minLength": 1
+                },
+                "status": {
+                    "title": "Status",
+                    "type": "string",
+                    "enum": [
+                        "completed",
+                        "failed",
+                        "cancelled",
+                        "timed_out",
+                        "interrupted"
+                    ]
+                },
+                "visibility": {
+                    "title": "Visibility",
+                    "type": "string",
+                    "enum": [
+                        "private",
+                        "workspace"
+                    ]
+                },
+                "payload_expires_at": {
+                    "title": "Payload expires at",
+                    "type": "string",
+                    "format": "date-time"
+                },
+                "configuration": {
+                    "$ref": "#/definitions/SkillsContextEvidenceConfiguration"
+                },
+                "annotation_revision": {
+                    "title": "Annotation revision",
+                    "type": "integer",
+                    "minimum": 0
+                },
+                "outcome": {
+                    "title": "Outcome",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "counts": {
+                    "$ref": "#/definitions/SkillsContextOptionCounts"
+                },
+                "source": {
+                    "title": "Source",
+                    "type": "string",
+                    "enum": [
+                        "skills_text",
+                        "simulation_native"
+                    ]
+                }
+            }
+        },
         "SkillsContextReviewOptions": {
             "required": [
                 "recipients",
@@ -164897,7 +165141,7 @@
                 "evidence": {
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/SkillsContextEvidenceRef"
+                        "$ref": "#/definitions/SkillsContextOptionEvidence"
                     }
                 }
             }

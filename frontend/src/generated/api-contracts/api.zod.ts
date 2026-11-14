@@ -44938,6 +44938,8 @@ export const modelHubSkillsReleaseRequestsInspectionCreateResponseResultSummarie
 
 export const modelHubSkillsReleaseRequestsInspectionCreateResponseResultSummariesItemRegressionsMin = 0;
 
+export const modelHubSkillsReleaseRequestsInspectionCreateResponseResultSummariesItemCasesItemRepeatIndexMin = 0;
+
 export const modelHubSkillsReleaseRequestsInspectionCreateResponseResultTargetConfigurationOneCodeCommitRegExp =
   new RegExp("^[a-f0-9]{40,64}$");
 
@@ -45056,6 +45058,32 @@ export const ModelHubSkillsReleaseRequestsInspectionCreateResponse = zod.object(
           delivery: zod.string().min(1),
           tools: zod.string().min(1),
           availability: zod.enum(["available", "unavailable"]),
+          result: zod.union([
+            zod.object({
+              state: zod.string().min(1),
+              reproduction: zod.string().min(1),
+              repair_verified: zod.boolean(),
+            }),
+            zod.null(),
+          ]),
+          cases: zod.array(
+            zod.object({
+              case_id: zod.string().min(1),
+              title: zod.string(),
+              variant: zod.string().min(1),
+              version: zod.number().min(1).nullable(),
+              repeat_index: zod
+                .number()
+                .min(
+                  modelHubSkillsReleaseRequestsInspectionCreateResponseResultSummariesItemCasesItemRepeatIndexMin,
+                ),
+              status: zod.string().min(1),
+              answer: zod.string().min(1),
+              selection: zod.string().min(1),
+              delivery: zod.string().min(1),
+              tools: zod.string().min(1),
+            }),
+          ),
           source: zod.enum(["skills_text", "simulation_native"]),
         }),
       ),
@@ -45604,6 +45632,14 @@ export const modelHubSkillsReleaseRequestsOptionsListResponseResultEvidenceItemC
 
 export const modelHubSkillsReleaseRequestsOptionsListResponseResultEvidenceItemAnnotationRevisionMin = 0;
 
+export const modelHubSkillsReleaseRequestsOptionsListResponseResultEvidenceItemCountsOneGradedMin = 0;
+
+export const modelHubSkillsReleaseRequestsOptionsListResponseResultEvidenceItemCountsOnePlannedMin = 0;
+
+export const modelHubSkillsReleaseRequestsOptionsListResponseResultEvidenceItemCountsOneRegressedMin = 0;
+
+export const modelHubSkillsReleaseRequestsOptionsListResponseResultEvidenceItemCountsOneDisagreementsMin = 0;
+
 export const ModelHubSkillsReleaseRequestsOptionsListResponse = zod.object({
   status: zod.boolean(),
   result: zod.object({
@@ -45884,6 +45920,35 @@ export const ModelHubSkillsReleaseRequestsOptionsListResponse = zod.object({
           .min(
             modelHubSkillsReleaseRequestsOptionsListResponseResultEvidenceItemAnnotationRevisionMin,
           ),
+        outcome: zod.string().min(1).nullable(),
+        counts: zod.union([
+          zod.object({
+            graded: zod
+              .number()
+              .min(
+                modelHubSkillsReleaseRequestsOptionsListResponseResultEvidenceItemCountsOneGradedMin,
+              )
+              .nullable(),
+            planned: zod
+              .number()
+              .min(
+                modelHubSkillsReleaseRequestsOptionsListResponseResultEvidenceItemCountsOnePlannedMin,
+              )
+              .nullable(),
+            regressed: zod
+              .number()
+              .min(
+                modelHubSkillsReleaseRequestsOptionsListResponseResultEvidenceItemCountsOneRegressedMin,
+              )
+              .nullable(),
+            disagreements: zod
+              .number()
+              .min(
+                modelHubSkillsReleaseRequestsOptionsListResponseResultEvidenceItemCountsOneDisagreementsMin,
+              ),
+          }),
+          zod.null(),
+        ]),
         source: zod.enum(["skills_text", "simulation_native"]),
       }),
     ),
