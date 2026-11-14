@@ -1,0 +1,78 @@
+eval_id: 224
+name: noise_sensitivity
+description: 'Lexical noise diagnostic: score is 1 minus the fraction of output tokens present in context but absent from the expected answer (higher is better). Raw sensitivity is included in the reason. Does not measure causal influence or semantic correctness.'
+eval_tags:
+- RAG
+- Retrieval Systems
+- Output Validation
+visible_ui: true
+permissions:
+  allow_edit: false
+  allow_copy: true
+output_type_normalized: percentage
+pass_threshold: 0.5
+config:
+  required_keys:
+  - output
+  - context
+  - expected
+  output: score
+  eval_type_id: CustomCodeEval
+  config: {}
+  config_params_desc:
+    output: Generated response text
+    expected: Ground truth expected answer
+    context: Full retrieved context containing signal and noise
+  code: |
+    def evaluate(input, output, expected, context, **kwargs):
+        import json
+
+        import re
+
+        from collections import Counter
+
+        def lexical_contexts(value):
+            if value is None:
+                return []
+            if isinstance(value, list):
+                return [str(item).strip() for item in value if str(item).strip()]
+            if isinstance(value, str):
+                value = value.strip()
+                if not value:
+                    return []
+                try:
+                    parsed = json.loads(value)
+                except ValueError:
+                    parsed = None
+                if isinstance(parsed, list):
+                    return lexical_contexts(parsed)
+                return [line.strip() for line in value.splitlines() if line.strip()]
+            return [str(value).strip()]
+
+        def lexical_tokens(text):
+            return Counter(re.findall(r"\b\w+\b", text.lower()))
+
+        def calculate_noise_sensitivity(output=None, expected=None, context=None, **kwargs):
+            """Return 1 minus the output-token ratio found only in non-reference context.
+
+            Higher is better, like other catalog scores. The raw sensitivity in the
+            reason is a lexical diagnostic, not evidence that context caused an answer.
+            """
+            output_tokens = lexical_tokens("\n".join(lexical_contexts(output)))
+            expected_tokens = lexical_tokens("\n".join(lexical_contexts(expected)))
+            context_tokens = lexical_tokens("\n".join(lexical_contexts(context)))
+            total = sum(output_tokens.values())
+            noise = sum(
+                min(count, context_tokens[token])
+                for token, count in output_tokens.items()
+                if token not in expected_tokens
+            )
+            sensitivity = noise / total if total else 0.0
+            return {
+                "result": 1.0 - sensitivity,
+                "reason": f"Lexical noise sensitivity={sensitivity:.4f} ({noise}/{total} output tokens in context but absent from reference); score=1-sensitivity, not causal influence",
+            }
+
+        result = calculate_noise_sensitivity(output=output, expected=expected, context=context)
+
+        return {"score": result["result"], "reason": result["reason"]}

@@ -1,0 +1,131 @@
+eval_id: 221
+name: context_precision_score
+description: 'Lexical context precision: rank-weighted token-overlap matches, normalized by matches in the evaluated top K. Not semantic relevance. Use mean_average_precision for exact-item AP or context_relevance for model-judged relevance.'
+eval_tags:
+- RAG
+- Retrieval Systems
+- Output Validation
+visible_ui: true
+permissions:
+  allow_edit: false
+  allow_copy: true
+output_type_normalized: percentage
+pass_threshold: 0.5
+config:
+  required_keys:
+  - hypothesis
+  - reference
+  output: score
+  eval_type_id: CustomCodeEval
+  config: {}
+  function_params_schema:
+    min_token_overlap:
+      type: number
+      default: 0.6
+      minimum: 0
+      maximum: 1
+    k:
+      type: integer
+      default: null
+      nullable: true
+      minimum: 1
+  config_params_desc:
+    min_token_overlap: Minimum lexical token overlap ratio (0 to 1), not semantic similarity
+    hypothesis: Ranked retrieved context chunks (list or JSON string)
+    reference: Ground-truth relevant reference contexts (list or JSON string)
+    k: Optional rank cutoff (int)
+  code: |
+    def evaluate(input, output, expected, context, **kwargs):
+        import json
+
+        import re
+
+        from collections import Counter
+
+        def lexical_contexts(value):
+            if value is None:
+                return []
+            if isinstance(value, list):
+                return [str(item).strip() for item in value if str(item).strip()]
+            if isinstance(value, str):
+                value = value.strip()
+                if not value:
+                    return []
+                try:
+                    parsed = json.loads(value)
+                except ValueError:
+                    parsed = None
+                if isinstance(parsed, list):
+                    return lexical_contexts(parsed)
+                return [line.strip() for line in value.splitlines() if line.strip()]
+            return [str(value).strip()]
+
+        def lexical_tokens(text):
+            return Counter(re.findall(r"\b\w+\b", text.lower()))
+
+        def overlap_threshold(value):
+            try:
+                threshold = float(value)
+            except (TypeError, ValueError) as error:
+                raise ValueError(
+                    "min_token_overlap must be a number between 0 and 1"
+                ) from error
+            if not 0 <= threshold <= 1:
+                raise ValueError("min_token_overlap must be a number between 0 and 1")
+            return threshold
+
+        def calculate_context_precision_score(
+            hypothesis=None, reference=None, k=None, min_token_overlap=0.6, **kwargs
+        ):
+            """Average precision over lexical matches in the evaluated top-k chunks.
+
+            A match has token precision OR recall >= the threshold, or text containment.
+            The denominator is matched retrieved chunks, not all reference chunks. Use
+            the existing mean_average_precision evaluator for exact-item retrieval AP.
+            """
+            threshold = overlap_threshold(min_token_overlap)
+            retrieved = lexical_contexts(
+                hypothesis if hypothesis is not None else kwargs.get("output")
+            )
+            refs = lexical_contexts(
+                reference if reference is not None else kwargs.get("expected")
+            )
+            if not refs or not retrieved:
+                return {
+                    "result": float(not refs and not retrieved),
+                    "reason": "Empty lexical context input",
+                }
+            if k is not None:
+                try:
+                    retrieved = retrieved[: max(1, int(k))]
+                except (ValueError, TypeError):
+                    pass
+            hits = 0
+            total = 0.0
+            for rank, chunk in enumerate(retrieved, 1):
+                chunk_tokens = lexical_tokens(chunk)
+                if not chunk_tokens:
+                    continue
+                for ref in refs:
+                    ref_tokens = lexical_tokens(ref)
+                    if not ref_tokens:
+                        continue
+                    overlap = sum((chunk_tokens & ref_tokens).values())
+                    if (
+                        overlap / sum(chunk_tokens.values()) >= threshold
+                        or overlap / sum(ref_tokens.values()) >= threshold
+                        or ref.lower() in chunk.lower()
+                        or chunk.lower() in ref.lower()
+                    ):
+                        hits += 1
+                        total += hits / rank
+                        break
+            score = total / hits if hits else 0.0
+            return {
+                "result": score,
+                "reason": f"Lexical context precision: {score:.4f} ({hits}/{len(retrieved)} matching chunks); not semantic relevance",
+            }
+
+        result = calculate_context_precision_score(hypothesis=kwargs.get("hypothesis", output), reference=kwargs.get("reference", expected), min_token_overlap=kwargs.get("min_token_overlap", 0.6), output=output, expected=expected, k=kwargs.get("k"))
+
+        return {"score": result["result"], "reason": result["reason"]}

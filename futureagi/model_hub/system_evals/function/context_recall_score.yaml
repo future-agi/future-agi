@@ -1,0 +1,107 @@
+eval_id: 222
+name: context_recall_score
+description: 'Lexical context recall: fraction of references with at least 70% token coverage in one retrieved chunk by default. Not factual coverage or semantic support. Use non_llm_context_recall for exact-context matches.'
+eval_tags:
+- RAG
+- Retrieval Systems
+- Output Validation
+visible_ui: true
+permissions:
+  allow_edit: false
+  allow_copy: true
+output_type_normalized: percentage
+pass_threshold: 0.5
+config:
+  required_keys:
+  - hypothesis
+  - reference
+  output: score
+  eval_type_id: CustomCodeEval
+  config: {}
+  function_params_schema:
+    min_token_overlap:
+      type: number
+      default: 0.7
+      minimum: 0
+      maximum: 1
+  config_params_desc:
+    min_token_overlap: Minimum lexical token overlap ratio (0 to 1), not semantic similarity
+    hypothesis: Retrieved context chunks (list or JSON string)
+    reference: Ground-truth reference contexts (list or JSON string)
+  code: |
+    def evaluate(input, output, expected, context, **kwargs):
+        import json
+
+        import re
+
+        from collections import Counter
+
+        def lexical_contexts(value):
+            if value is None:
+                return []
+            if isinstance(value, list):
+                return [str(item).strip() for item in value if str(item).strip()]
+            if isinstance(value, str):
+                value = value.strip()
+                if not value:
+                    return []
+                try:
+                    parsed = json.loads(value)
+                except ValueError:
+                    parsed = None
+                if isinstance(parsed, list):
+                    return lexical_contexts(parsed)
+                return [line.strip() for line in value.splitlines() if line.strip()]
+            return [str(value).strip()]
+
+        def lexical_tokens(text):
+            return Counter(re.findall(r"\b\w+\b", text.lower()))
+
+        def overlap_threshold(value):
+            try:
+                threshold = float(value)
+            except (TypeError, ValueError) as error:
+                raise ValueError(
+                    "min_token_overlap must be a number between 0 and 1"
+                ) from error
+            if not 0 <= threshold <= 1:
+                raise ValueError("min_token_overlap must be a number between 0 and 1")
+            return threshold
+
+        def calculate_context_recall_score(
+            hypothesis=None, reference=None, min_token_overlap=0.7, **kwargs
+        ):
+            """Fraction of references with lexical coverage in any one retrieved chunk."""
+            threshold = overlap_threshold(min_token_overlap)
+            retrieved = lexical_contexts(
+                hypothesis if hypothesis is not None else kwargs.get("output")
+            )
+            refs = lexical_contexts(
+                reference if reference is not None else kwargs.get("expected")
+            )
+            if not refs or not retrieved:
+                return {
+                    "result": float(not refs and not retrieved),
+                    "reason": "Empty lexical context input",
+                }
+            hits = 0
+            for ref in refs:
+                ref_tokens = lexical_tokens(ref)
+                if not ref_tokens or any(
+                    sum((ref_tokens & lexical_tokens(chunk)).values())
+                    / sum(ref_tokens.values())
+                    >= threshold
+                    or ref.lower() in chunk.lower()
+                    for chunk in retrieved
+                    if lexical_tokens(chunk)
+                ):
+                    hits += 1
+            score = hits / len(refs)
+            return {
+                "result": score,
+                "reason": f"Lexical context recall: {score:.4f} ({hits}/{len(refs)} matching references); not factual coverage",
+            }
+
+        result = calculate_context_recall_score(hypothesis=kwargs.get("hypothesis", output), reference=kwargs.get("reference", expected), min_token_overlap=kwargs.get("min_token_overlap", 0.7), output=output, expected=expected)
+
+        return {"score": result["result"], "reason": result["reason"]}

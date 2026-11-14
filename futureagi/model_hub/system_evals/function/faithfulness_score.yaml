@@ -1,0 +1,89 @@
+eval_id: 223
+name: faithfulness_score
+description: 'Lexical sentence-overlap diagnostic at 70% token coverage. Contradictory statements can score highly; this does not establish semantic support or detect hallucinations. Use the existing groundedness evaluator for model-judged support.'
+eval_tags:
+- RAG
+- NLP Metrics
+- Output Validation
+visible_ui: true
+permissions:
+  allow_edit: false
+  allow_copy: true
+output_type_normalized: percentage
+pass_threshold: 0.5
+config:
+  required_keys:
+  - output
+  - context
+  output: score
+  eval_type_id: CustomCodeEval
+  config: {}
+  config_params_desc:
+    output: Generated answer text
+    context: Retrieved context passage (text or JSON array of strings)
+  code: |
+    def evaluate(input, output, expected, context, **kwargs):
+        import json
+
+        import re
+
+        from collections import Counter
+
+        def lexical_contexts(value):
+            if value is None:
+                return []
+            if isinstance(value, list):
+                return [str(item).strip() for item in value if str(item).strip()]
+            if isinstance(value, str):
+                value = value.strip()
+                if not value:
+                    return []
+                try:
+                    parsed = json.loads(value)
+                except ValueError:
+                    parsed = None
+                if isinstance(parsed, list):
+                    return lexical_contexts(parsed)
+                return [line.strip() for line in value.splitlines() if line.strip()]
+            return [str(value).strip()]
+
+        def lexical_tokens(text):
+            return Counter(re.findall(r"\b\w+\b", text.lower()))
+
+        def calculate_faithfulness_score(output=None, context=None, **kwargs):
+            """Sentence token-overlap diagnostic, not entailment or hallucination detection.
+
+            Contradictions can score 1.0. Use the existing groundedness model judge when
+            the question is whether an answer is semantically supported by its context.
+            """
+            out_text = "\n".join(lexical_contexts(output))
+            ctx_text = "\n".join(lexical_contexts(context))
+            if not out_text or not ctx_text:
+                return {
+                    "result": float(not out_text),
+                    "reason": "Empty lexical overlap input; not semantic support",
+                }
+            sentences = [
+                part.strip()
+                for part in re.split(r"(?<=[.!?])\s+|\n+", out_text)
+                if len(part.strip()) > 3
+            ] or [out_text]
+            context_tokens = lexical_tokens(ctx_text)
+            hits = 0
+            for sentence in sentences:
+                tokens = lexical_tokens(sentence)
+                if (
+                    not tokens
+                    or sum((tokens & context_tokens).values()) / sum(tokens.values()) >= 0.7
+                    or sentence.lower() in ctx_text.lower()
+                ):
+                    hits += 1
+            score = hits / len(sentences)
+            return {
+                "result": score,
+                "reason": f"Lexical sentence overlap: {score:.4f} ({hits}/{len(sentences)} matching sentences); not semantic support",
+            }
+
+        result = calculate_faithfulness_score(output=output, context=context)
+
+        return {"score": result["result"], "reason": result["reason"]}

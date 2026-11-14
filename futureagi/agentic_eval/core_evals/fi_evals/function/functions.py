@@ -11,6 +11,12 @@ import numpy as np
 import requests
 from jinja2.sandbox import SandboxedEnvironment
 
+from agentic_eval.core_evals.fi_evals.function.rag_scores import (
+    calculate_context_precision_score,
+    calculate_context_recall_score,
+    calculate_faithfulness_score,
+    calculate_noise_sensitivity,
+)
 from agentic_eval.core_evals.fi_evals.grounded.similarity import CosineSimilarity
 from agentic_eval.core_evals.fi_utils.exceptions import (
     CodeEvalSetupError,
@@ -4138,6 +4144,10 @@ operations = {
     "WordInfoPreserved": calculate_word_info_preserved,
     "NonLlmContextPrecision": non_llm_context_precision,
     "NonLlmContextRecall": non_llm_context_recall,
+    "ContextPrecisionScore": calculate_context_precision_score,
+    "ContextRecallScore": calculate_context_recall_score,
+    "FaithfulnessScore": calculate_faithfulness_score,
+    "NoiseSensitivity": calculate_noise_sensitivity,
     "DistinctN": calculate_distinct_n,
     "TypeTokenRatio": calculate_type_token_ratio,
     "RepetitionRate": calculate_repetition_rate,
