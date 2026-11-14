@@ -2578,3 +2578,37 @@ def test_failed_change_reason_is_its_first_written_line(user, workspace, storage
     )
 
     assert kept == {"refund-a": "bad check", "refund-b": "it could not be loaded"}
+
+
+def test_a_later_save_of_the_same_environment_keeps_the_cleared_set(
+    user, workspace, storage
+):
+    from simulate.services.hosted_harness_conversation import (
+        failed_changes,
+        record_failed_changes,
+    )
+
+    environment = _built(user, workspace, "d-failed-stale")
+    record_failed_changes(environment, [{"scenario_key": "refund-a", "reason": "bad"}])
+    record_failed_changes(environment, [])
+    # What discard_draft's candidate drop does with the locked row it holds.
+    environment.save(update_fields=["payload", "updated_at"])
+
+    environment.refresh_from_db()
+    assert failed_changes(environment) == {}
+
+
+def test_discard_with_no_suite_draft_clears_a_failed_change(user, workspace, storage):
+    from simulate.services.hosted_harness_conversation import (
+        failed_changes,
+        record_failed_changes,
+    )
+
+    environment = _built(user, workspace, "d-failed-no-draft")
+    record_failed_changes(environment, [{"scenario_key": "refund-a", "reason": "bad"}])
+    assert drafts.open_draft(environment, "suite") is None
+
+    drafts.discard_draft(environment, "suite", user=user)
+
+    environment.refresh_from_db()
+    assert failed_changes(environment) == {}

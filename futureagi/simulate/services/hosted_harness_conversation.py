@@ -1572,6 +1572,8 @@ def record_failed_changes(environment: HostedHarnessJob, failed: Any) -> dict[st
         payload["metadata"] = metadata
         locked.payload = payload
         locked.save(update_fields=["payload", "updated_at"])
+    # The caller's copy too, so a later save of it does not write the old set back.
+    environment.payload = locked.payload
     return kept
 
 

@@ -1443,17 +1443,17 @@ def discard_draft(environment: HostedHarnessJob, piece: str, *, user: Any) -> bo
         locked = lock_environment(environment)
         require_no_rebuild(locked, piece=piece)
         require_chat_idle(locked)
-        draft = open_draft(locked, piece, lock=True)
-        if draft is None:
-            return False
-        discard_version(draft, user=user)
         if piece == "suite":
             from simulate.services.hosted_harness_conversation import (
                 record_failed_changes,
             )
 
-            # A discarded change that could not be applied is no longer pending.
+            # A discarded change that could not be applied is no longer pending, draft or not.
             record_failed_changes(locked, [])
+        draft = open_draft(locked, piece, lock=True)
+        if draft is None:
+            return False
+        discard_version(draft, user=user)
         # Candidates built from these edits go with them.
         discard_candidates(locked)
         transaction.on_commit(lambda: retire_chat_runtime(locked))
