@@ -273,9 +273,8 @@ class AgentFixCandidateSerializer(serializers.ModelSerializer):
         data = super().to_representation(candidate)
         # The checks as the pull request reads them; the stored verdict is unchanged.
         if data["verdict"] is not None:
-            tiers = verdict_tiers(candidate.verdict, candidate.fix_run.request)
             data["verdict"]["tiers"] = AgentFixVerdictTierSerializer(
-                tiers, many=True
+                verdict_tiers(candidate), many=True
             ).data
         return data
 

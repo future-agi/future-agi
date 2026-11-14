@@ -2,6 +2,7 @@
 request on its repository: the candidate's patch, applied to the commit the fix started
 from, on a branch of its own."""
 
+import html
 import re
 import tempfile
 from math import floor
@@ -14,7 +15,12 @@ import structlog
 from django.conf import settings
 
 from simulate.models import AgentFixCandidate, HarnessAgentVersionRuntime
-from simulate.pydantic_schemas.agent_fix import HELD_BACK_VERIFIED_MIN, EvalGrading
+from simulate.pydantic_schemas.agent_fix import (
+    HELD_BACK_VERIFIED_MIN,
+    EvalGrading,
+    VerdictTier,
+    VerdictTierPart,
+)
 from simulate.selectors.agent_fix import (
     eval_review,
     held_back_cases,
@@ -166,7 +172,7 @@ def _evals_note(candidate: AgentFixCandidate) -> str:
             " review them before you merge."
         )
         lines += [
-            f"- {one.name}: {_percent(one.pass_rate)} passed ({one.trials} trials),"
+            f"- {_text(one.name)}: {_percent(one.pass_rate)} passed ({one.trials} trials),"
             f" {_percent(one.base_pass_rate)} on the current version"
             f" ({one.base_trials} trials)"
             for one in review.warnings
@@ -179,8 +185,8 @@ def _evals_note(candidate: AgentFixCandidate) -> str:
 def _must_pass_check(check: str) -> str:
     """A must-pass check, sent as "scenario key: sub-goal", as its case and its check."""
     case, _, sub_goal = check.partition(": ")
-    named = f"Must-pass case “{case}”"
-    return f"{named}: its “{sub_goal}” check" if sub_goal else named
+    named = f"Must-pass case “{_text(case)}”"
+    return f"{named}: its “{_text(sub_goal)}” check" if sub_goal else named
 
 
 def _limited_note(candidate: AgentFixCandidate) -> str:
@@ -204,7 +210,9 @@ def _override_note(candidate: AgentFixCandidate) -> str:
     checks = "\n".join(
         f"- {_must_pass_check(check)}" for check in overridable_regressions(candidate)
     )
-    reason = "\n".join(f"> {line}" for line in candidate.override_reason.splitlines())
+    reason = "\n".join(
+        f"> {_line(line)}" for line in candidate.override_reason.splitlines()
+    )
     return (
         "**Known regression.** Epoch did not accept this change: it broke these"
         f" must-pass checks.\n\n{checks}\n\nIt was opened anyway, for this reason:"
@@ -260,8 +268,36 @@ def _title(
 
 
 def _cell(text: Any) -> str:
-    """A value as one table cell: on one line, with its pipes escaped."""
-    return " ".join(str(text).split()).replace("|", "\\|")
+    """A line as one table cell: on one line, with any pipe not yet escaped escaped."""
+    return re.sub(r"(?<!\\)\|", r"\\|", " ".join(str(text).split()))
+
+
+# What GitHub Markdown reads as inline syntax; HTML's own characters become entities.
+_INLINE_SYNTAX = re.compile(r"([\\`*_\[\]|~])")
+
+
+def _text(value: Any) -> str:
+    """Words the engine, a check or a person wrote, as literal Markdown on one line: never
+    a tag, a link, emphasis or a table cell, and never the end of the page's own markup."""
+    flat = html.escape(" ".join(str(value).split()), quote=False)
+    return _INLINE_SYNTAX.sub(r"\\\1", flat)
+
+
+def _line(value: Any) -> str:
+    """One line as ``_text``, which also cannot start a heading, a list or a rule."""
+    text = _text(value)
+    if numbered := re.match(r"\d+(?=[.)])", text):
+        return f"{numbered[0]}\\{text[numbered.end() :]}"
+    return f"\\{text}" if text[:1] in ("#", "+", "-", "=") and text else text
+
+
+def _code(value: Any) -> str:
+    """A path as inline code in a table cell, literal whatever it holds: fenced with more
+    backticks than it has in a row, its pipes escaped."""
+    flat = " ".join(str(value).split()).replace("|", "\\|")
+    fence = "`" * (max(map(len, re.findall("`+", flat)), default=0) + 1)
+    pad = " " if flat[:1] == "`" or flat[-1:] == "`" else ""
+    return f"{fence}{pad}{flat}{pad}{fence}"
 
 
 # The fix page's words for a check and for the parts of the reply time and cost check
@@ -290,24 +326,24 @@ def _check_label(name: str, request: dict) -> str:
     if name in _CHECK_LABELS:
         return _CHECK_LABELS[name]
     words = re.sub(r"[-_]+", " ", name)
-    return words[:1].upper() + words[1:]
+    return _text(words[:1].upper() + words[1:])
 
 
 def _result(status: str) -> str:
     # A shipped candidate failed no check but must-pass, and ran every check after it,
     # so a skipped check here ran and could not measure.
-    return "Couldn't measure" if status == "skipped" else status.capitalize()
+    return "Couldn't measure" if status == "skipped" else _text(status.capitalize())
 
 
-def _part_line(part: dict, request: dict) -> str:
+def _part_line(part: VerdictTierPart, request: dict) -> str:
     """A part of the reply time and cost check in words: within its limit, or unknown with
     why and what would make it known (fixRunView.js partDetail, unknownWhy)."""
-    status, text = part.get("status"), str(part.get("detail") or "")
+    status, text = part.status, part.detail
     if status == "passed":
         return "Within the limit."
     if status == "failed":
         return "Over the limit."
-    if part.get("name") == "reply latency":
+    if part.name == "reply latency":
         return (
             "The conversations recorded no reply times. Run again; if it repeats, check"
             " that the agent replies within the turn."
@@ -342,12 +378,15 @@ def _conversations(text: str, cause: str) -> str:
     return f"{found[1]} of {found[2]} conversations" if found else "Some conversations"
 
 
-def _part_row(part: dict, request: dict) -> str:
-    name, status = str(part.get("name", "")), str(part.get("status", ""))
-    result = _result(status)
-    if status == "skipped":
-        result = _UNKNOWN_PARTS.get(name, result)
-    label = _cell(_PART_LABELS.get(name, name))
+def _part_label(name: str) -> str:
+    return _PART_LABELS.get(name) or _text(name)
+
+
+def _part_row(part: VerdictTierPart, request: dict) -> str:
+    result = _result(part.status)
+    if part.status == "skipped":
+        result = _UNKNOWN_PARTS.get(part.name, result)
+    label = _cell(_part_label(part.name))
     return f"| ↳ {label} | {result} | {_cell(_part_line(part, request))} |"
 
 
@@ -366,11 +405,11 @@ _PASSED = {
 }
 
 
-def _tier_line(tier: dict, verdict: dict, plan: dict, request: dict) -> str:
+def _tier_line(tier: VerdictTier, verdict: dict, plan: dict, request: dict) -> str:
     """A check's result in plain words from the verdict's own numbers, as the fix page says
     it (fixRunView.js tierLine). A shipped candidate passed every check but must-pass, or
     could not measure one; the parts of one that could not measure say why."""
-    name, passed = tier.get("name"), tier.get("status") == "passed"
+    name, passed = tier.name, tier.status == "passed"
     if name == "target":
         return _rate_line(verdict.get("target_pass_rate"), passed)
     if name == "held-back":
@@ -390,7 +429,7 @@ def _tier_line(tier: dict, verdict: dict, plan: dict, request: dict) -> str:
         models = request.get("allowed_models") or []
         if passed:
             return (
-                f"Called only {', '.join(models)}."
+                f"Called only {', '.join(_text(model) for model in models)}."
                 if models
                 else "Called only allowed models."
             )
@@ -402,7 +441,7 @@ def _tier_line(tier: dict, verdict: dict, plan: dict, request: dict) -> str:
         return f"{sent} The change names no new model."
     if not passed:
         return ""
-    return _PASSED.get(str(name), "Passed.")
+    return _PASSED.get(name, "Passed.")
 
 
 # What measuring an agent's model calls on its own reads (fixRunView.js MEASURED_NOTICE).
@@ -412,25 +451,23 @@ _MEASURED = (
 )
 
 
-def _decided_section(tiers: list[dict], verdict: dict, request: dict) -> str:
+def _decided_section(tiers: list[VerdictTier], verdict: dict, request: dict) -> str:
     """The engine's own account of each check, its statistics included, folded away for a
     reviewer who wants to see how the verdict was reached."""
     lines = []
     for tier in tiers:
-        if tier.get("detail"):
-            label = _check_label(str(tier.get("name", "")), request)
-            lines.append(f"- {label}: {' '.join(str(tier['detail']).split())}")
+        if tier.detail:
+            lines.append(f"- {_check_label(tier.name, request)}: {_text(tier.detail)}")
         lines += [
-            f"  - {_PART_LABELS.get(part.get('name'), part.get('name'))}:"
-            f" {' '.join(str(part['detail']).split())}"
-            for part in tier.get("parts") or []
-            if part.get("detail")
+            f"  - {_part_label(part.name)}: {_text(part.detail)}"
+            for part in tier.parts
+            if part.detail
         ]
     if not lines:
         return ""
     # The engine reports the held-back pass rate from the repeat runs when they ran.
     pooled = verdict.get("held_back_pass_rate") and any(
-        tier.get("name") == "repeats" for tier in tiers
+        tier.name == "repeats" for tier in tiers
     )
     note = (
         "The held-back pass rate above comes from the repeat runs.\n\n"
@@ -441,20 +478,21 @@ def _decided_section(tiers: list[dict], verdict: dict, request: dict) -> str:
     return f"<details><summary>How it was decided</summary>\n\n{note}{listed}\n\n</details>"
 
 
-def _verdict_section(verdict: dict, standing: str, request: dict, plan: dict) -> str:
+def _verdict_section(
+    tiers: list[VerdictTier], verdict: dict, standing: str, request: dict, plan: dict
+) -> str:
     """The verdict's checks in the fix page's words, each part of one on its own row, and
     the engine's statistics folded below them."""
-    tiers = verdict_tiers(verdict, request)
     if not tiers:
         return f"### Verdict: {standing}"
     rows = []
     for tier in tiers:
         rows.append(
-            f"| {_cell(_check_label(str(tier.get('name', '')), request))}"
-            f" | {_result(str(tier.get('status', '')))}"
+            f"| {_cell(_check_label(tier.name, request))}"
+            f" | {_result(tier.status)}"
             f" | {_cell(_tier_line(tier, verdict, plan, request))} |"
         )
-        rows += [_part_row(part, request) for part in tier.get("parts") or []]
+        rows += [_part_row(part, request) for part in tier.parts]
     listed = "\n".join(rows)
     table = f"| Check | Result | Detail |\n|---|---|---|\n{listed}"
     # Only when the platform measured the agent's model calls itself, as the fix page.
@@ -473,7 +511,7 @@ def _files_section(files: list[tuple[str, int, int]]) -> str:
     if not files:
         return ""
     rows = "\n".join(
-        f"| `{_cell(path)}` | +{added} | −{removed} |"
+        f"| {_code(path)} | +{added} | −{removed} |"
         for path, added, removed in files[:_FILES_LISTED]
     )
     more = len(files) - _FILES_LISTED
@@ -501,7 +539,7 @@ def _why_section(candidate: AgentFixCandidate) -> str:
     causes = _causes(candidate)
     if not causes:
         return ""
-    listed = "\n".join(f"- {' '.join(cause.split())}" for cause in causes)
+    listed = "\n".join(f"- {_text(cause)}" for cause in causes)
     return (
         f"### Why\n\nThe diagnosis found these causes of the failing cases:\n\n{listed}"
     )
@@ -520,10 +558,10 @@ def _risks_section(candidate: AgentFixCandidate, verdict: dict) -> str:
     for row in (candidate.fix_run.report or {}).get("flaky_protected") or []:
         flaky.setdefault(str(row.get("key")), []).append(row)
     for key, rows in flaky.items():
-        name = next((row["name"] for row in rows if row.get("name")), key)
+        name = _text(next((row["name"] for row in rows if row.get("name")), key))
         checks = ", ".join(
-            f"its “{row.get('sub_goal')}” check passed {row.get('passed')} of"
-            f" {row.get('runs')} runs"
+            f"its “{_text(row.get('sub_goal'))}” check passed {_text(row.get('passed'))}"
+            f" of {_text(row.get('runs'))} runs"
             for row in rows
         )
         lines.append(
@@ -572,6 +610,11 @@ def _evidence_origin(candidate: AgentFixCandidate) -> str:
     return f"### Evidence\n\nThis epoch started from imported evidence:\n\n{listed}"
 
 
+def _lines(value: str) -> str:
+    """Text of several lines, each as ``_line``; a blank line stays a paragraph break."""
+    return "\n".join(_line(line) for line in value.splitlines())
+
+
 def _notes_section(candidate: AgentFixCandidate) -> str:
     """The engine's own summary, labelled: it describes only the candidate's last change."""
     summary = candidate.summary.strip()
@@ -579,7 +622,7 @@ def _notes_section(candidate: AgentFixCandidate) -> str:
         return ""
     return (
         "<details><summary>Notes from Epoch on the last change of Candidate"
-        f" {candidate.attempt}</summary>\n\n{summary}\n\n</details>"
+        f" {candidate.attempt}</summary>\n\n{_lines(summary)}\n\n</details>"
     )
 
 
@@ -622,6 +665,7 @@ def _description(candidate: AgentFixCandidate, patch: bytes) -> tuple[str, str]:
             _limited_note(candidate) if limited else "",
             f"{proof} by Epoch: {rates}" if rates else "",
             _verdict_section(
+                verdict_tiers(candidate),
                 verdict,
                 standing,
                 candidate.fix_run.request or {},

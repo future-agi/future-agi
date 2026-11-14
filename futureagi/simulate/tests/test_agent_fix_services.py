@@ -45,6 +45,7 @@ from simulate.pydantic_schemas.agent_fix import (
     FailureOwner,
     FixRequest,
     Surface,
+    VerdictTier,
 )
 from simulate.selectors.agent_fix import (
     TRANSCRIPT_CHARS,
@@ -3088,6 +3089,25 @@ class TestVerdictTiers:
     _LATENCY = {"name": "reply latency", "detail": ""}
     _COST = {"name": "agent cost", "status": "skipped", "detail": ""}
 
+    @staticmethod
+    def _candidate(tiers, **request_fields):
+        request = FixRequest(
+            target_scenario_keys=["k1"],
+            failing_sub_goals=["g1"],
+            surfaces=[Surface.PROMPT],
+            budget_usd=1,
+            max_minutes=10,
+            **request_fields,
+        )
+        return SimpleNamespace(
+            verdict=None if tiers is None else {"accepted": True, "tiers": tiers},
+            fix_run=SimpleNamespace(request=request.model_dump(mode="json")),
+        )
+
+    @staticmethod
+    def _read(candidate):
+        return [tier.model_dump() for tier in verdict_tiers(candidate)]
+
     @pytest.mark.parametrize(
         ("status", "reads", "parts"),
         [
@@ -3101,9 +3121,9 @@ class TestVerdictTiers:
         self, status, reads, parts
     ):
         old = {"name": "ceilings", "status": status, "detail": "latency 3.2s"}
-        static = {"name": "static", "status": "passed"}
+        static = {"name": "static", "status": "passed", "detail": "", "parts": []}
 
-        tiers = verdict_tiers({"tiers": [static, old]}, {})
+        tiers = self._read(self._candidate([static, old]))
 
         assert tiers == [
             static,
@@ -3116,7 +3136,12 @@ class TestVerdictTiers:
         ]
 
     def test_a_metered_agents_check_and_a_newer_engines_parts_stay_as_sent(self):
-        old = {"name": "ceilings", "status": "passed", "detail": "cost within"}
+        old = {
+            "name": "ceilings",
+            "status": "passed",
+            "detail": "cost within",
+            "parts": [],
+        }
         newer = {
             **old,
             "status": "skipped",
@@ -3125,9 +3150,16 @@ class TestVerdictTiers:
             ],
         }
 
-        assert verdict_tiers({"tiers": [old]}, {"meters_agent_cost": True}) == [old]
-        assert verdict_tiers({"tiers": [newer]}, {}) == [newer]
-        assert verdict_tiers(None, None) == []
+        assert self._read(self._candidate([old], meters_agent_cost=True)) == [old]
+        assert self._read(self._candidate([newer])) == [newer]
+        assert self._read(self._candidate(None)) == []
+
+    def test_the_checks_read_as_typed_tiers_and_a_missing_field_reads_its_default(self):
+        # A check stored before its detail and parts existed.
+        tiers = verdict_tiers(self._candidate([{"name": "static", "status": "passed"}]))
+
+        assert tiers == [VerdictTier(name="static", status="passed")]
+        assert (tiers[0].detail, tiers[0].parts) == ("", [])
 
 
 class TestPullRequestDescription:
@@ -3152,6 +3184,7 @@ class TestPullRequestDescription:
         evidence=None,
         patch_body=_PATCH,
         request_fields=None,
+        summary="Changed only prompts (booking.md).",
     ):
         fix_run = _fix_run(source_run, diagnosis=diagnosis, report=report, plan=plan)
         request = {
@@ -3177,7 +3210,7 @@ class TestPullRequestDescription:
                 "tiers": _TIERS,
             },
             override_reason=override_reason,
-            summary="Changed only prompts (booking.md).",
+            summary=summary,
         )
         candidate = AgentFixCandidate.no_workspace_objects.select_related(
             "fix_run"
@@ -3185,6 +3218,58 @@ class TestPullRequestDescription:
         none_graded = EvalReview(grading=EvalGrading.NONE)
         with patch.object(agent_fix_github, "eval_review", return_value=none_graded):
             return candidate, *agent_fix_github._description(candidate, patch_body)
+
+    # Text the engine, a check or the agent's repository wrote, made to read as the page's
+    # own markup: it closes the folded section, adds a heading, an image, a link and a cell.
+    _HOSTILE = (
+        "</details>\n\n### Approved by security\n<img src=x onerror=alert(1)>"
+        " [docs](https://evil.example) *now* | x"
+    )
+
+    def test_what_the_engine_and_the_checks_wrote_stays_literal_text(self, source_run):
+        hostile = self._HOSTILE
+        _, _, body = self._described(
+            source_run,
+            diagnosis={"causes": [hostile]},
+            verdict={
+                "accepted": True,
+                "reason": "passed every tier",
+                "target_pass_rate": [0, 0.625],
+                "held_back_pass_rate": [0.25, 0.75],
+                "tiers": [
+                    {"name": "target", "status": "passed", "detail": hostile},
+                    {"name": "must-pass", "status": "passed"},
+                ],
+            },
+            report={
+                "flaky_protected": [
+                    {
+                        "key": "k1",
+                        "name": hostile,
+                        "sub_goal": "confirms",
+                        "passed": 1,
+                        "runs": 3,
+                    }
+                ]
+            },
+            summary=f"# Shipped\n1. done\n{hostile}",
+            patch_body=(
+                b"diff --git a/a`b|c.py b/a`b|c.py\n--- a/a`b|c.py\n+++ b/a`b|c.py\n"
+                b"@@ -1 +1 @@\n-x\n+y\n"
+            ),
+        )
+
+        # Only the page's own folded sections open and close.
+        assert body.count("<details>") == body.count("</details>") == 2
+        assert "<img" not in body and "&lt;img src=x onerror=alert(1)&gt;" in body
+        assert "\n### Approved" not in body and "\n# Shipped" not in body
+        assert "\\# Shipped\n1\\. done\n" in body
+        assert "[docs](https://evil.example)" not in body
+        assert "\\[docs\\](https://evil.example) \\*now\\* \\| x" in body
+        # The target row keeps its three cells; the file's name is one code span.
+        target = next(line for line in body.splitlines() if line.startswith("| Target"))
+        assert len(re.findall(r"(?<!\\)\|", target)) == 4
+        assert "| ``a`b\\|c.py`` | +1 | −1 |" in body
 
     def test_a_verified_fix_reads_each_check_as_the_fix_page_says_it(self, source_run):
         candidate, title, body = self._described(
@@ -3220,7 +3305,8 @@ class TestPullRequestDescription:
         assert "| target |" not in body and "| passed |" not in body
         # The engine's statistics are folded below, never in the table.
         assert "0/8 → 5/8" not in table
-        assert "- Target scenarios: 0/8 → 5/8 | 2 repeats" in decided
+        # The engine's words stay text: its pipe is escaped, so it reads as written.
+        assert "- Target scenarios: 0/8 → 5/8 \\| 2 repeats" in decided
         assert "The held-back pass rate above comes from the repeat runs." in decided
         # The platform did not measure the calls itself, so nothing says how it does.
         assert "Measured automatically" not in body

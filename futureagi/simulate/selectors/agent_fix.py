@@ -76,6 +76,8 @@ from simulate.pydantic_schemas.agent_fix import (
     LaunchSuggested,
     LaunchSurface,
     Surface,
+    VerdictTier,
+    VerdictTierPart,
 )
 from simulate.selectors.runs import user_executions
 from simulate.services.agent_fix_agents import AgentKind, agent_kind
@@ -930,34 +932,40 @@ VERDICT_TIERS = (
 UNVERIFIED_TIERS = frozenset({"ceilings", "model-lock"})
 
 
-def verdict_tiers(verdict: Mapping | None, request: Mapping | None) -> list[dict]:
-    """A verdict's checks as the fix page and the pull request read them. An older engine
-    gave the cost and latency check one status. For an agent whose cost the platform does
-    not meter, that status judged the reply time alone and the cost was never measured. So
-    the check reads as its reply time with that status, a cost unknown, and not verified."""
-    tiers = list((verdict or {}).get("tiers") or [])
-    if (request or {}).get("meters_agent_cost"):
+def verdict_tiers(candidate: AgentFixCandidate) -> list[VerdictTier]:
+    """A candidate's checks as the fix page and the pull request read them, parsed from its
+    stored verdict: a check stored before a field existed reads that field's default.
+
+    An older engine gave the cost and latency check one status. For an agent whose cost the
+    platform does not meter, that status judged the reply time alone and the cost was never
+    measured. So the check reads as its reply time with that status, a cost unknown, and
+    not verified."""
+    tiers = [
+        VerdictTier.model_validate(tier)
+        for tier in (candidate.verdict or {}).get("tiers") or []
+    ]
+    if FixRequest.model_validate(candidate.fix_run.request).meters_agent_cost:
         return tiers
     return [
         _unmetered_ceilings(tier)
-        if tier.get("name") == "ceilings" and not tier.get("parts")
+        if tier.name == "ceilings" and not tier.parts
         else tier
         for tier in tiers
     ]
 
 
-def _unmetered_ceilings(tier: dict) -> dict:
-    status = tier.get("status")
-    cost = {"name": "agent cost", "status": "skipped", "detail": ""}
+def _unmetered_ceilings(tier: VerdictTier) -> VerdictTier:
+    cost = VerdictTierPart(name="agent cost", status="skipped")
     # A skipped tier may not have measured the reply time either, so it says none.
-    if status not in ("passed", "failed"):
-        return {**tier, "parts": [cost]}
-    latency = {"name": "reply latency", "status": status, "detail": ""}
-    return {
-        **tier,
-        "status": "failed" if status == "failed" else "skipped",
-        "parts": [latency, cost],
-    }
+    if tier.status not in ("passed", "failed"):
+        return tier.model_copy(update={"parts": [cost]})
+    latency = VerdictTierPart(name="reply latency", status=tier.status)
+    return tier.model_copy(
+        update={
+            "status": "failed" if tier.status == "failed" else "skipped",
+            "parts": [latency, cost],
+        }
+    )
 
 
 def overridable_regressions(candidate: AgentFixCandidate) -> list[str]:
