@@ -2946,3 +2946,28 @@
 
 - the Simulate menu is exactly Environment, Scenarios, Run Simulation
 - each of those two items opens its page by URL and title, never /404
+
+### SIM-E2E-007 — a run with fewer failing cases than an epoch needs starts one that writes variations first
+
+**Goal:** A developer whose run has fewer failing cases than an epoch needs starts one that first writes variations of them, and the epoch page shows that step
+
+**Spec:** `flows/simulate/epoch-variations-launch.spec.ts:209`
+
+**Tags:** —
+
+**User steps:**
+
+1. open a finished run of the environment
+2. open Debug failures
+3. press Improve
+4. read the Scenarios row of the launch form
+5. press Start improvement
+6. read the epoch page
+
+**Browser observations:**
+
+- the Scenarios row reads "6 failing, and up to 18 variations of them · 6 must keep passing", with the note that an epoch needs 12 failing cases and first writes 3 variations of each
+- the launch POST body is exactly the run id, the 6 failing cases, the 6 passing cases, Instructions only, no locked files, 1,500 credits and 150 minutes
+- the browser lands on the environment's improvements/<id> URL of the epoch the POST returned
+- the epoch page's steps are Variations, Reproduce, Search, Verify and Ready for review, and Variations reads "Writes variations of the 6 failing cases, then keeps those the current version also fails"
+- the drawer reads the finished diagnosis and never queues another (no POST to debug-analysis)

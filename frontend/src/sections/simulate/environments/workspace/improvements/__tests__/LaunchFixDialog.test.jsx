@@ -289,7 +289,7 @@ describe("LaunchFixDialog", () => {
     renderDialog();
     expect(
       await screen.findByText(
-        "A fix needs 12 failing cases. It first writes 3 variations of each, then fixes the ones the current version also fails. With fewer than 6 failing cases it can only end with Limited validation and opens a draft pull request.",
+        "An epoch needs 12 failing cases. It first writes 3 variations of each, then fixes the ones the current version also fails. With fewer than 6 failing cases it can only end with Limited validation and opens a draft pull request.",
       ),
     ).toBeInTheDocument();
     expect(

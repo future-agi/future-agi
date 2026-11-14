@@ -52,7 +52,7 @@ describe("variations", () => {
       "5 failing, and up to 15 variations of them · 1 must keep passing",
     );
     expect(variationsNote(7, FLOOR)).toBe(
-      "A fix needs 12 failing cases. It first writes 3 variations of each, then fixes the ones the current version also fails.",
+      "An epoch needs 12 failing cases. It first writes 3 variations of each, then fixes the ones the current version also fails.",
     );
     expect(variationsNote(12, FLOOR)).toBeNull();
     expect(
@@ -151,7 +151,7 @@ describe("launch checks", () => {
     [{ ...ok, targets: [] }, "Pick at least one failing case to fix."],
     [
       { ...ok, limits: FLOOR },
-      "Needs at least 3 failing cases: with 3 variations of each, they can reach the 12 a fix needs.",
+      "Needs at least 3 failing cases: with 3 variations of each, they can reach the 12 an epoch needs.",
     ],
     [
       { ...ok, targets: Array.from({ length: 201 }, (_, i) => `t${i}`) },
