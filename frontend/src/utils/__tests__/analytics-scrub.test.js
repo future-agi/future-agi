@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   isCredentialLikeKey,
+  isFreeTextKey,
   scrubAnalyticsProperties,
 } from "../analytics-scrub";
 
@@ -39,6 +40,14 @@ describe("scrubAnalyticsProperties", () => {
     "accessKeyId",
     "bearer",
     "bearer_token",
+    "tokenValue",
+    "token_value",
+    "accessTokenValue",
+    "headersValue",
+    "header_values",
+    "api_keys",
+    "apiKeys",
+    "secret_keys",
   ])("drops the credential-like key %s", (key) => {
     expect(isCredentialLikeKey(key)).toBe(true);
     expect(scrubAnalyticsProperties({ [key]: VALUE, kept: 1 })).toEqual({
@@ -62,6 +71,15 @@ describe("scrubAnalyticsProperties", () => {
     "sort_order",
     "form_fields",
     "id",
+    "token_count",
+    "tokens_used",
+    "header_count",
+    "prompt_id",
+    "promptId",
+    "template_id",
+    "message_count",
+    "content_type",
+    "text_length",
   ])("keeps the ordinary key %s", (key) => {
     expect(isCredentialLikeKey(key)).toBe(false);
     expect(scrubAnalyticsProperties({ [key]: "x" })).toEqual({ [key]: "x" });
@@ -140,5 +158,88 @@ describe("scrubAnalyticsProperties", () => {
     properties.self = properties;
 
     expect(scrubAnalyticsProperties(properties)).toEqual({ name: "loop" });
+  });
+
+  it.each([
+    "statement",
+    "prompt",
+    "prompts",
+    "system_prompt",
+    "existing_prompt",
+    "previousPrompt",
+    "newPrompt",
+    "generatedPrompt",
+    "ImprovedPrompt",
+    "prompt_template",
+    "promptTemplate",
+    "template",
+    "messages",
+    "message",
+    "initialMessage",
+    "content",
+    "text",
+    "instructions",
+    "improvementRequirements",
+    "description",
+    "desc",
+    "prop_desc",
+    "notes",
+  ])("drops the free-text key %s", (key) => {
+    expect(isFreeTextKey(key)).toBe(true);
+    expect(
+      scrubAnalyticsProperties({
+        form_fields: {
+          [key]: "Synthetic free text",
+          other: [{ [key]: ["x"] }],
+        },
+        kept: 1,
+      }),
+    ).toEqual({ form_fields: { other: [{}] }, kept: 1 });
+  });
+
+  it("keeps numbers and true/false flags under free-text names", () => {
+    expect(
+      scrubAnalyticsProperties({ prompt: 3, messages: 0, text: true }),
+    ).toEqual({ prompt: 3, messages: 0, text: true });
+  });
+
+  it("reports URL objects as text without link codes or sign-in parameters", () => {
+    const scrubbed = scrubAnalyticsProperties({
+      link: new URL(
+        "https://app.example.test/auth/jwt/verify/synthetic-user-1/SYNTHETIC-LINK-CODE-0d3e",
+      ),
+      landing: new URL(
+        "https://app.example.test/dashboard?sso_token=SYNTHETIC-SSO-0d3e&tab=all",
+      ),
+      page: new URL("https://app.example.test/dashboard/develop?tab=data"),
+    });
+
+    expect(scrubbed).toEqual({
+      link: "https://app.example.test/auth/jwt/verify/:uuid/:token",
+      landing: "https://app.example.test/dashboard?tab=all",
+      page: "https://app.example.test/dashboard/develop?tab=data",
+    });
+  });
+
+  it("keeps dates as they are", () => {
+    const when = new Date("2026-01-02T03:04:05Z");
+
+    expect(scrubAnalyticsProperties({ when }).when).toBe(when);
+  });
+
+  it("drops credential-like keys inside class instances, which are sent field by field", () => {
+    class SyntheticSettings {
+      constructor() {
+        this.provider = "vapi";
+        this.api_key = VALUE;
+      }
+    }
+
+    const scrubbed = scrubAnalyticsProperties({
+      settings: new SyntheticSettings(),
+    });
+
+    expect(scrubbed).toEqual({ settings: { provider: "vapi" } });
+    expect(JSON.stringify(scrubbed)).not.toContain(VALUE);
   });
 });

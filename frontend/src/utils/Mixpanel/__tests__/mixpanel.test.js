@@ -137,7 +137,11 @@ describe("Mixpanel session replay shutdown", () => {
 
     expect(mocks.mixpanel.track).toHaveBeenCalledWith(
       "Client Error : /auth/jwt/invitation/set-password/:uuid/:token",
-      { error: "identify failed" },
+      {
+        error: "identify failed",
+        // The page address is sent by its route pattern too.
+        $current_url: `${window.location.origin}/auth/jwt/invitation/set-password/:uuid/:token`,
+      },
     );
     expect(JSON.stringify(mocks.mixpanel.track.mock.calls)).not.toContain(
       linkCode,

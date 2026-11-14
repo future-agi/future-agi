@@ -1,6 +1,9 @@
+import { analyticsUrl } from "src/utils/analytics-url";
+
 // Analytics events carry descriptive properties only. Credential-like keys
-// (API keys, secrets, tokens, passwords, auth headers, cookies) are dropped at
-// any depth before an event is sent, whatever the caller passes.
+// (API keys, secrets, tokens, passwords, auth headers, cookies) and free-text
+// keys (prompts, messages, descriptions) are dropped at any depth before an
+// event is sent, whatever the caller passes.
 
 // A key is split into lower-case words ("livekitApiKey" -> livekit, api, key).
 // It is credential-like when its last word is one of these...
@@ -33,8 +36,68 @@ const CREDENTIAL_WORD_SUFFIXES = [
   "secretkey",
 ];
 
-// ...or any word contains one of these (e.g. "secret_ref", "passwordHash").
+// ...or any word contains one of these (e.g. "secret_ref", "passwordHash"),
 const CREDENTIAL_WORD_PARTS = ["secret", "password", "authorization", "cookie"];
+
+// ...or any word is one of these (e.g. "tokenValue", "headersValue"), unless
+// the last word says the value is a count, size, id, type or name (e.g.
+// "input_token_cost", "token_count", "headerName").
+const CREDENTIAL_WORDS = new Set([
+  "token",
+  "apikey",
+  "apikeys",
+  "bearer",
+  "header",
+  "headers",
+  "credential",
+  "credentials",
+  "passphrase",
+  "passwd",
+]);
+const DESCRIPTIVE_LAST_WORDS = new Set([
+  "count",
+  "counts",
+  "cost",
+  "costs",
+  "limit",
+  "limits",
+  "used",
+  "usage",
+  "length",
+  "size",
+  "total",
+  "id",
+  "ids",
+  "type",
+  "types",
+  "kind",
+  "name",
+  "names",
+]);
+
+// A key is free text when its last word is one of these (e.g. "statement",
+// "system_prompt", "previousPrompt", "prompt_template", "initialMessage").
+// Ids, counts and types such as "prompt_id" or "message_count" are kept.
+const FREE_TEXT_LAST_WORDS = new Set([
+  "statement",
+  "prompt",
+  "prompts",
+  "template",
+  "templates",
+  "message",
+  "messages",
+  "content",
+  "contents",
+  "text",
+  "texts",
+  "instruction",
+  "instructions",
+  "requirement",
+  "requirements",
+  "description",
+  "desc",
+  "notes",
+]);
 
 const keyWords = (key) =>
   String(key)
@@ -61,10 +124,28 @@ export const isCredentialLikeKey = (key) => {
   ) {
     return true;
   }
-  return words.some((word) =>
-    CREDENTIAL_WORD_PARTS.some((part) => word.includes(part)),
+  if (
+    words.some((word) =>
+      CREDENTIAL_WORD_PARTS.some((part) => word.includes(part)),
+    )
+  ) {
+    return true;
+  }
+  return (
+    !DESCRIPTIVE_LAST_WORDS.has(last) &&
+    words.some((word) => CREDENTIAL_WORDS.has(word))
   );
 };
+
+export const isFreeTextKey = (key) => {
+  const words = keyWords(key);
+  return words.length > 0 && FREE_TEXT_LAST_WORDS.has(words[words.length - 1]);
+};
+
+// Numbers and true/false flags under these names say nothing about the text
+// or credential itself (e.g. "password_match", "prompt": 3), so they are kept.
+const isCountOrFlag = (value) =>
+  typeof value === "boolean" || typeof value === "number";
 
 const isPlainObject = (value) =>
   Object.prototype.toString.call(value) === "[object Object]";
@@ -84,6 +165,7 @@ const scrubValue = (value, ancestors) => {
     ancestors.add(value);
     const result = {};
     Object.entries(value).forEach(([key, item]) => {
+      if (isFreeTextKey(key) && !isCountOrFlag(item)) return;
       // A true/false flag such as "password_match" says nothing about the
       // value itself, so it is kept.
       if (isCredentialLikeKey(key) && typeof item !== "boolean") return;
@@ -93,13 +175,17 @@ const scrubValue = (value, ancestors) => {
     ancestors.delete(value);
     return result;
   }
+  // mixpanel-browser sends a URL object as an empty object; send its address
+  // the way the page URL is sent.
+  if (value instanceof URL) return analyticsUrl(value.href);
   return value;
 };
 
 /**
- * Returns a copy of `properties` without credential-like keys, at any depth
- * (nested objects and arrays included). The input is never modified.
- * Values that are not plain objects or arrays are returned as they are.
+ * Returns a copy of `properties` without credential-like or free-text keys,
+ * at any depth (nested objects and arrays included). The input is never
+ * modified. URL objects become their address as analyticsUrl reports it;
+ * other values that are not plain objects or arrays are returned as they are.
  */
 export const scrubAnalyticsProperties = (properties) =>
   scrubValue(properties, new Set());

@@ -7,6 +7,9 @@ import { Events } from "./EventNames";
 import { MIXPANEL_HOST } from "src/config-global";
 import { isSessionReplayBlockedPath } from "src/utils/sessionReplayPolicy";
 import { scrubAnalyticsProperties } from "src/utils/analytics-scrub";
+import { analyticsUrl, pageViewPath } from "src/utils/analytics-url";
+
+export { pageViewPath };
 
 // Mixpanel is opt-in: skip init entirely on OSS builds where no token
 // is set. mixpanel-browser's init(undefined, ...) silently produces a
@@ -37,6 +40,56 @@ let mixpanelReplayMayBeActive =
 let mixpanelReplayConfigDisabled = false;
 let mixpanelReplayStopScript = null;
 
+// mixpanel-browser adds the page address ($current_url), document.referrer
+// ($referrer) and the first referrer it stored ($initial_referrer) to every
+// event. These are reported as analyticsUrl gives them: link codes replaced by
+// the route pattern, one-time query parameters removed.
+const URL_PROPERTIES = ["$current_url", "$referrer", "$initial_referrer"];
+
+const cleanUrlProperties = (properties) => {
+  if (!properties || typeof properties !== "object") return;
+  URL_PROPERTIES.forEach((name) => {
+    if (typeof properties[name] === "string") {
+      properties[name] = analyticsUrl(properties[name]);
+    }
+  });
+};
+
+// The values the library would add to an event now, where they differ from
+// what analyticsUrl reports. Empty on ordinary pages.
+const urlPropertyOverrides = () => {
+  const current = {
+    $current_url: window.location.href,
+    $referrer: document.referrer,
+    $initial_referrer: mixpanel.get_property?.("$initial_referrer"),
+  };
+  const overrides = {};
+  URL_PROPERTIES.forEach((name) => {
+    const cleaned = analyticsUrl(current[name]);
+    if (cleaned !== current[name]) overrides[name] = cleaned;
+  });
+  return overrides;
+};
+
+// Caller properties are merged after the library's own, so these replace the
+// library's values for this event.
+const withUrlOverrides = (properties) => {
+  const overrides = urlPropertyOverrides();
+  return Object.keys(overrides).length
+    ? { ...properties, ...overrides }
+    : properties;
+};
+
+// The library stores the first referrer once, as is, and sends it with later
+// events and the user profile. Store it as analyticsUrl reports it instead,
+// and clean a value stored earlier.
+const storeCleanReferrer = (instance) => {
+  instance.persistence?.update_referrer_info?.(analyticsUrl(document.referrer));
+  const stored = instance.get_property?.("$initial_referrer");
+  const cleaned = analyticsUrl(stored);
+  if (cleaned !== stored) instance.register({ $initial_referrer: cleaned });
+};
+
 if (MIXPANEL_ENABLED) {
   try {
     mixpanel.init(MIXPANEL_TOKEN, {
@@ -51,6 +104,22 @@ if (MIXPANEL_ENABLED) {
         ? MIXPANEL_SESSION_REPLAY_PERCENT
         : 0,
       record_mask_text_class: ".sensitive",
+      // Page views are tracked by the app through trackEvent.
+      track_pageview: false,
+      loaded: storeCleanReferrer,
+      // Run just before each request is sent, also for events the library
+      // sends itself (such as $identify) and for profile updates.
+      hooks: {
+        before_send_events: (data) => {
+          cleanUrlProperties(data?.properties);
+          return data;
+        },
+        before_send_people: (data) => {
+          cleanUrlProperties(data?.$set);
+          cleanUrlProperties(data?.$set_once);
+          return data;
+        },
+      },
       ...(MIXPANEL_HOST && { api_host: MIXPANEL_HOST }),
     });
   } catch (error) {
@@ -220,9 +289,11 @@ export const trackEvent = (eventName, properties) => {
   try {
     mixpanel.track(
       eventName,
-      eventName === Events.customModelAdded
-        ? customModelEventProperties(properties)
-        : scrubAnalyticsProperties(properties),
+      withUrlOverrides(
+        eventName === Events.customModelAdded
+          ? customModelEventProperties(properties)
+          : scrubAnalyticsProperties(properties),
+      ),
     );
   } catch (error) {
     logger.error("Failed to track event:", error);
@@ -233,8 +304,12 @@ export const trackError = (properties, where) => {
   if (!MIXPANEL_ENABLED) return;
   try {
     mixpanel.track(
-      `Client Error : ${where || pageViewPath(window.location.pathname)}`,
-      scrubAnalyticsProperties(properties),
+      `Client Error : ${
+        where
+          ? analyticsUrl(String(where))
+          : pageViewPath(window.location.pathname)
+      }`,
+      withUrlOverrides(scrubAnalyticsProperties(properties)),
     );
   } catch (error) {
     logger.error("Failed to track error:", error);
@@ -251,8 +326,21 @@ export const identifyUser = (userData = {}) => {
   if (!MIXPANEL_ENABLED) return;
 
   try {
-    // Mixpanel identification
-    mixpanel.identify(id);
+    // Mixpanel identification. identify() can send an $identify event; when
+    // requests are not queued it is sent without the before_send hooks, so the
+    // cleaned URL properties are registered for that call only.
+    const overrides = urlPropertyOverrides();
+    const overrideNames = Object.keys(overrides);
+    if (overrideNames.length) {
+      mixpanel.register(overrides, { persistent: false });
+    }
+    try {
+      mixpanel.identify(id);
+    } finally {
+      overrideNames.forEach((name) =>
+        mixpanel.unregister(name, { persistent: false }),
+      );
+    }
     mixpanel.people.set_once("id", id);
     mixpanel.people.set_once("$email", email);
     mixpanel.people.set_once("$name", userData?.name);
@@ -281,6 +369,8 @@ export const resetUser = () => {
   if (!MIXPANEL_ENABLED) return;
   try {
     mixpanel.reset();
+    // reset() clears the stored first referrer; store it again cleaned.
+    storeCleanReferrer(mixpanel);
   } catch (error) {
     logger.error("Failed to reset user:", error);
   }
@@ -307,21 +397,6 @@ const pathToEventMapper = {
   "/dashboard/settings/ai-providers": Events.customModelPageVisited,
   "/dashboard/workbench": Events.promptManagementPageVisited,
   "/dashboard/keys": Events.apiPageVisited,
-};
-
-// Auth links carry a one-time token in the path; page views and client error
-// names report the route pattern for those instead of the literal path.
-const TOKEN_PAGE_PATTERNS = [
-  "/auth/jwt/invitation/accept/:uuid/:token",
-  "/auth/jwt/invitation/set-password/:uuid/:token",
-  "/auth/jwt/verify/:uuid/:token",
-];
-
-export const pageViewPath = (pathname = "") => {
-  const pattern = TOKEN_PAGE_PATTERNS.find((candidate) =>
-    matchPath({ path: candidate, end: false }, pathname),
-  );
-  return pattern || pathname;
 };
 
 export const getPageViewEvent = (currentPath) => {
