@@ -4,7 +4,7 @@
     "Checked before any tag moves (build-image-multiarch.yml, on release and on the per-image dispatch builds) and on pull requests (standalone-ci.yml). An image without an entry fails the check.",
     "budget_mb = max(measured, projected) + 10% where measured_mb is present (the arm64 measurement can undercount amd64, e.g. Go binaries) (measured 2026-09-25 on a linux/arm64 from-source build of this branch, `docker save | gzip -6`, which tracks the registry's gzip layer sizes); otherwise the docker-size plan's projection (projected_mb) plus ~15% headroom. Lower budgets as further slimming lands. Raise one only in a reviewed pull request that says why.",
     "TH-8685 (PR #3577): add 50 MB only to the slim backend and the standalone image/install that inherit it, for core PyArrow Parquet export and SQLGlot compilation. This preserves existing headroom instead of resetting it to 10%. CI run 39617644021 (2026-10-21, ebba647f0ce709d1806c0f506d6f347371ed35e0) measured +49.9 MB amd64 / +47.5 MB arm64 over :latest-slim after the existing test/stub/debug pruning. Updated measured_mb values below are the larger architecture; per-architecture measurements are in each note. All other budgets and the standalone 10% growth gate are unchanged.",
-    "Dependency refresh (litellm 1.84.10 -> 1.100.4, temporalio 1.21.1 -> 1.36.1): add 20 MB to the slim backend and to the standalone image/install that inherit it, the same layer counted once. -slim leaves out litellm's opt-in Rust extension (docker/slim-site-packages.sh, ~5 MB gzip). Local linux/amd64 builds (`docker save | gzip -6`, 2026-11-14; arm64 not measured): -slim 419.0 -> 427.6 MB, standalone 572.2 -> 580.8 MB, fresh install 922.3 MB (that standalone plus postgres:16 166.2 MB and clickhouse-server:25.3-alpine 175.3 MB from the registry). Standalone growth over :latest (523.8 MB amd64 on 2026-11-14) is +10.9%, over the default 10% growth gate. That gate compares with :latest on every run: the push to dev, every later pull request and the release's standalone leg (which takes no waiver label) all fail until a stable release moves :latest, so STANDALONE_SIZE_BUDGET_PERCENT must be 12 before this lands and can go back to 10 after that release.",
+    "Dependency refresh (litellm 1.84.10 -> 1.100.4, temporalio 1.21.1 -> 1.36.1): add 20 MB to the slim backend and to the standalone image/install that inherit it, the same layer counted once. Local linux/amd64 builds (`docker save | gzip -6`, 2026-11-14; arm64 not measured): -slim 419.0 -> 432.7 MB, standalone 572.2 -> 585.9 MB, fresh install 927.4 MB (that standalone plus postgres:16 166.2 MB and clickhouse-server:25.3-alpine 175.3 MB from the registry). Standalone growth over :latest (523.8 MB amd64 on 2026-11-14) is +11.9%, over the default 10% growth gate. That gate compares with :latest on every run: the push to dev, every later pull request and the release's standalone leg (which takes no waiver label) all fail until a stable release moves :latest, so STANDALONE_SIZE_BUDGET_PERCENT must be 13 before this lands and can go back to 10 after that release.",
     "Before the patches (v1.41, amd64, measured): future-agi 770.5, frontend 89.0, serving 3613 (arm64 650), code-executor 331 (arm64 319), fi-collector 22.6, agentcc-gateway 7.2; postgres:16 160.3, clickhouse-server:25.3-alpine 175.3.",
     "enforce=false: measured and reported, never fails."
   ],
@@ -24,15 +24,15 @@
       "tag_suffix": "-slim",
       "budget_mb": 446,
       "projected_mb": 421,
-      "measured_mb": 427.6,
-      "note": "IMAGE_VARIANT=slim, the base of futureagi/standalone. PR #3577: 376 + 50 MB for PyArrow 22.0.0 and SQLGlot 28.10.1, kept in core so Parquet export and SQL compilation work in both variants (run 39617644021: amd64 420.7 MB, arm64 410.6 MB). No Arrow shared libraries or runtime features are pruned to meet this budget. Dependency refresh (litellm 1.84.10 -> 1.100.4: +33 MB unpacked, temporalio 1.21.1 -> 1.36.1: +12 MB): a local linux/amd64 build measures 427.6 MB with litellm's opt-in Rust extension left out (432.7-434.6 MB with it; 419.0-421.4 MB before the refresh). The budget moves 426 -> 446: the earlier ~5 MB headroom plus room for the next litellm."
+      "measured_mb": 432.7,
+      "note": "IMAGE_VARIANT=slim, the base of futureagi/standalone. PR #3577: 376 + 50 MB for PyArrow 22.0.0 and SQLGlot 28.10.1, kept in core so Parquet export and SQL compilation work in both variants (run 39617644021: amd64 420.7 MB, arm64 410.6 MB). No Arrow shared libraries or runtime features are pruned to meet this budget. Dependency refresh (litellm 1.84.10 -> 1.100.4: +33 MB unpacked, temporalio 1.21.1 -> 1.36.1: +12 MB): local linux/amd64 builds measure 432.7 MB (434.6 MB in an earlier build; 419.0-421.4 MB before the refresh). The budget moves 426 -> 446: the earlier ~5 MB headroom plus room for the next litellm."
     },
     {
       "image": "futureagi/standalone",
       "budget_mb": 619,
       "projected_mb": 573,
-      "measured_mb": 580.8,
-      "note": "PR #3577: 549 + 50 MB, inherited once from the slim backend's Parquet/SQL dependencies (run 39617644021: amd64 573.0 MB, arm64 554.0 MB). Dependency refresh: a local linux/amd64 build measures 580.8 MB (572.2 MB before), +20 MB budget with -slim. Growth over :latest (523.8 MB amd64) is +10.9%, over the default 10% gate; see the dependency-refresh note above for the STANDALONE_SIZE_BUDGET_PERCENT change it needs."
+      "measured_mb": 585.9,
+      "note": "PR #3577: 549 + 50 MB, inherited once from the slim backend's Parquet/SQL dependencies (run 39617644021: amd64 573.0 MB, arm64 554.0 MB). Dependency refresh: a local linux/amd64 build measures 585.9 MB (572.2 MB before), +20 MB budget with -slim. Growth over :latest (523.8 MB amd64) is +11.9%, over the default 10% gate; see the dependency-refresh note above for the STANDALONE_SIZE_BUDGET_PERCENT change it needs."
     },
     {
       "image": "futureagi/frontend",
@@ -97,7 +97,7 @@
     ],
     "budget_mb": 954,
     "projected_mb": 909,
-    "measured_mb": 922.3,
-    "note": "PR #3577: 884 + 50 MB, the same slim-backend dependency layer counted once in the fresh-install total, not a datastore allowance (run 39617644021: amd64 908.6 MB, arm64 877.9 MB). Dependency refresh: 922.3 MB on linux/amd64 (local standalone 580.8 MB plus the registry's postgres:16 166.2 MB, up from 160.3, and clickhouse-server:25.3-alpine 175.3 MB), +20 MB budget with -slim."
+    "measured_mb": 927.4,
+    "note": "PR #3577: 884 + 50 MB, the same slim-backend dependency layer counted once in the fresh-install total, not a datastore allowance (run 39617644021: amd64 908.6 MB, arm64 877.9 MB). Dependency refresh: 927.4 MB on linux/amd64 (local standalone 585.9 MB plus the registry's postgres:16 166.2 MB, up from 160.3, and clickhouse-server:25.3-alpine 175.3 MB), +20 MB budget with -slim."
   }
 }
