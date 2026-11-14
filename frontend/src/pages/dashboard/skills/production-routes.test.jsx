@@ -2,9 +2,9 @@
 import fs from 'node:fs';
 import ts from 'typescript';
 import PropTypes from 'prop-types';
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { MemoryRouter, useRoutes } from 'react-router-dom';
+import { MemoryRouter, useLocation, useRoutes } from 'react-router-dom';
 import { HelmetProvider } from 'react-helmet-async';
 import { ThemeProvider, createTheme } from '@mui/material/styles';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
@@ -17,6 +17,7 @@ import ContextReviewPage from './contexts/ContextReviewPage';
 import ContextCampaignPage from './contexts/ContextCampaignPage';
 import SkillsReviewsPage from './SkillsReviewsPage';
 import ContextTraceCaptureAction from 'src/sections/skills/contexts/ContextTraceCaptureAction';
+import FalconAIFab from 'src/sections/falcon-ai/components/FalconAIFab';
 
 const identity = vi.hoisted(() => ({ workspace: '00000000-0000-4000-8000-000000000001', campaigns: false }));
 vi.mock('src/auth/hooks', () => ({ useAuthContext: () => ({ authenticated: true, user: { id: 'author' } }) }));
@@ -187,6 +188,46 @@ it('shortens the rollouts tab on phones without changing its accessible name, an
     const tablist = screen.getByRole('tablist', { name: 'Skills views' });
     expect(tablist.closest('.MuiTabs-scrollableX')).not.toBeNull();
     expect(screen.getByRole('tab', { name: 'Agent contexts' })).toHaveAttribute('aria-selected', 'true');
+  } finally {
+    window.matchMedia = original;
+  }
+});
+// The assistant on Skills routes (UX iteration 3, SH2): from sm up it sits in the navigation row and
+// nothing floats over content; on a phone the floating button stays but steps aside while a field has focus.
+function Where() { return <output aria-label="Current path">{useLocation().pathname}</output>; }
+const mountWithAssistant = (path) => render(<QueryClientProvider client={client}><HelmetProvider><ThemeProvider theme={theme}><MemoryRouter initialEntries={[path]}><Routes /><FalconAIFab /><Where /></MemoryRouter></ThemeProvider></HelmetProvider></QueryClientProvider>);
+it('puts the assistant in the Skills navigation row instead of a floating button, and keeps Cmd+K', async () => {
+  mountWithAssistant('/dashboard/skills/contexts');
+  await screen.findByRole('button', { name: 'policy-context' });
+  const nav = screen.getByRole('navigation', { name: 'Skills navigation' });
+  const assistant = within(nav).getByRole('button', { name: 'Falcon AI (⌘K)' });
+  // Just left of More.
+  expect(assistant.compareDocumentPosition(within(nav).getByRole('button', { name: 'More Skills pages' })) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(document.querySelector('.MuiFab-root')).toBeNull();
+  // Same action as the floating button: this deployment has no Falcon AI licence, so it opens the full page.
+  fireEvent.click(assistant);
+  await waitFor(() => expect(screen.getByRole('status', { name: 'Current path' })).toHaveTextContent('/dashboard/falcon-ai'));
+  cleanup();
+  mountWithAssistant('/dashboard/skills/contexts');
+  await screen.findByRole('button', { name: 'policy-context' });
+  fireEvent.keyDown(window, { key: 'k', ctrlKey: true });
+  await waitFor(() => expect(screen.getByRole('status', { name: 'Current path' })).toHaveTextContent('/dashboard/falcon-ai'));
+});
+it('keeps the floating assistant on phones, out of the way while a field has focus', async () => {
+  const original = window.matchMedia;
+  window.matchMedia = (query) => ({ matches: /max-width/.test(query), media: query, onchange: null, addListener() {}, removeListener() {}, addEventListener() {}, removeEventListener() {}, dispatchEvent: () => false });
+  try {
+    mountWithAssistant('/dashboard/skills/contexts');
+    await screen.findByRole('button', { name: 'policy-context' });
+    expect(within(screen.getByRole('navigation', { name: 'Skills navigation' })).queryByRole('button', { name: /Falcon AI/ })).not.toBeInTheDocument();
+    await waitFor(() => expect(document.querySelector('.MuiFab-root')).not.toBeNull());
+    const field = document.createElement('input');
+    document.body.appendChild(field);
+    act(() => field.focus());
+    await waitFor(() => expect(document.querySelector('.MuiFab-root')).toBeNull());
+    act(() => field.blur());
+    await waitFor(() => expect(document.querySelector('.MuiFab-root')).not.toBeNull());
+    field.remove();
   } finally {
     window.matchMedia = original;
   }
