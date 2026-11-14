@@ -64,6 +64,7 @@ class FunctionEvalTypeId(Enum):
     READABILITY_SCORE = "ReadabilityScore"
     SENTENCE_COUNT = "SentenceCount"
     TOOL_CALL_ACCURACY = "ToolCallAccuracy"
+    TOOL_CALL_LOOP_REPETITION = "ToolCallLoopRepetition"
     SSIM = "Ssim"
     PSNR = "Psnr"
     IMAGE_PROPERTIES = "ImageProperties"

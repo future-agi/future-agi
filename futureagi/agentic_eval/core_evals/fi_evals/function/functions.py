@@ -25,6 +25,31 @@ from agentic_eval.core_evals.keys.openai_api import OpenAiApiKey
 from agentic_eval.core_evals.llm_services.openai_api import OpenAiService
 
 
+def tool_call_loop_repetition(
+    output,
+    window_size=100,
+    min_repeats=3,
+    max_cycle_length=4,
+    near_duplicate_threshold=0.92,
+    also_compare_results=True,
+    **kwargs,
+):
+    """Score completed tool calls without changing their execution."""
+    from agentic_eval.metrics.tool_call_loop_repetition import (
+        evaluate_tool_call_loop_repetition,
+    )
+
+    result = evaluate_tool_call_loop_repetition(
+        output,
+        window_size=window_size,
+        min_repeats=min_repeats,
+        max_cycle_length=max_cycle_length,
+        near_duplicate_threshold=near_duplicate_threshold,
+        also_compare_results=also_compare_results,
+    )
+    return {"result": result["score"], "reason": result["reason"]}
+
+
 def _standardize_url(url):
     """
     Generate a standardized URL by adding 'http://' if it's missing.
@@ -4106,6 +4131,7 @@ operations = {
     "ReadabilityScore": calculate_readability_score,
     "SentenceCount": sentence_count,
     "ToolCallAccuracy": tool_call_accuracy,
+    "ToolCallLoopRepetition": tool_call_loop_repetition,
     "Ssim": calculate_ssim,
     "Psnr": calculate_psnr,
     "ImageProperties": image_properties,

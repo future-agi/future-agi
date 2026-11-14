@@ -757,6 +757,45 @@ class ToolCallAccuracy(FunctionEvaluator):
         )
 
 
+class ToolCallLoopRepetition(FunctionEvaluator):
+    """Diagnostic evaluation of completed calls, never live Gateway stopping."""
+
+    def __init__(
+        self,
+        min_repeats: int = 3,
+        max_cycle_length: int = 4,
+        near_duplicate_threshold: float = 0.92,
+        also_compare_results: bool = True,
+        display_name: str | None = None,
+        window_size: int = 100,
+    ):
+        self._loop_parameters = {
+            "window_size": window_size,
+            "min_repeats": min_repeats,
+            "max_cycle_length": max_cycle_length,
+            "near_duplicate_threshold": near_duplicate_threshold,
+            "also_compare_results": also_compare_results,
+        }
+        super().__init__(
+            function_name=FunctionEvalTypeId.TOOL_CALL_LOOP_REPETITION.value,
+            function_arguments={},
+            display_name=display_name,
+        )
+
+    def to_config(self) -> dict:
+        # These constructor settings are merged at run time rather than held in
+        # _function_arguments, but still belong in the exported configuration.
+        return dict(self._loop_parameters)
+
+    def _evaluate(self, **kwargs):
+        # API execution supplies schema parameters again at run time. Merge
+        # them once rather than passing duplicate keywords to the operation.
+        return super()._evaluate(**{**self._loop_parameters, **kwargs})
+
+    def is_failure(self, eval_response) -> bool:
+        return eval_response["result"] < 0.5
+
+
 class Ssim(FunctionEvaluator):
     def __init__(self, display_name: str | None = None):
         """Initialize the SSIM evaluator. Structural Similarity Index for images."""
