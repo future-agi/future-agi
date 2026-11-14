@@ -1857,6 +1857,15 @@ _FILED_BY_MODULE: dict[str, dict[str, Filing]] = {
         "layer_b_deep_equal": _MIGRATION_PARITY_CHECK,
     },
     "tracer.services.derived_metrics.backfill": {
+        "_older_history_end": filed(
+            ROW_DRIVEN,
+            why=(
+                "backfill dates the refresh-row project's oldest retained source "
+                "and committed anchor to bound its history sweep; not "
+                "authorization. Depends on the admission repair"
+            ),
+            row="tracer.MetricProjectRefresh",
+        ),
         "_committed_keyset_start": filed(
             NO_SPAN_TABLE,
             why="repair cursor dating reads committed dependency or field anchors",
@@ -1995,6 +2004,16 @@ _FILED_BY_MODULE: dict[str, dict[str, Filing]] = {
         ),
     },
     "tracer.services.derived_metrics.frozen_relations": {
+        "SessionCapture._measure": filed(
+            NO_SPAN_TABLE,
+            why="measures the rows of its own session temporary capture table",
+            table="metric_capture_",
+        ),
+        "SessionCapture.select": filed(
+            NO_SPAN_TABLE,
+            why="selects the rows of its own session temporary capture table",
+            table="metric_capture_",
+        ),
         "FrozenRelations._measure": filed(
             NO_SPAN_TABLE,
             why="hashes connection-local anonymous bucket-part captures",
@@ -2072,6 +2091,17 @@ _FILED_BY_MODULE: dict[str, dict[str, Filing]] = {
         ),
     },
     "tracer.services.derived_metrics.refresh": {
+        "RefreshWriter.scrub_orphans": filed(
+            NO_SPAN_TABLE,
+            why="reaps rows of uncollected attempts from the metric stores",
+            table=(
+                "metric_field_values, metric_field_values_checkpoint, "
+                "metric_bucket_totals, metric_bucket_totals_checkpoint, "
+                "metric_unit_state, metric_source_dependencies, "
+                "metric_bucket_retired_parts, list_current_root_facts, "
+                "list_current_members and list_current_user_activity"
+            ),
+        ),
         "RefreshWriter._span_dirty_keys": filed(
             ROW_DRIVEN,
             why=(
@@ -2119,15 +2149,6 @@ _FILED_BY_MODULE: dict[str, dict[str, Filing]] = {
             ),
             row="tracer.MetricProjectRefresh",
         ),
-        "retirement_plan": filed(
-            ROW_DRIVEN,
-            why=(
-                "builds a privacy checkpoint for the refresh-row project, including "
-                "span_values_select recomputation for expiring span buckets. "
-                "Depends on the same separate hidden-project admission repair"
-            ),
-            row="tracer.MetricProjectRefresh",
-        ),
     },
     "tracer.services.derived_metrics.service": {
         "_preview_evaluated": filed(
@@ -2146,6 +2167,35 @@ _FILED_BY_MODULE: dict[str, dict[str, Filing]] = {
                 "service's concurrency admission and explicit project id do not "
                 "authorize access themselves"
             ),
+        ),
+    },
+    "tracer.services.derived_metrics.span_evidence": {
+        "captured_span_fields": filed(
+            ROW_DRIVEN,
+            why=(
+                "span evidence captures the refresh-row project's dirty span "
+                "buckets into a bounded session table; not authorization. "
+                "Depends on the admission repair"
+            ),
+            row="tracer.MetricProjectRefresh",
+        ),
+        "_created_after_purge": filed(
+            ROW_DRIVEN,
+            why=(
+                "span evidence dates the creation of the refresh-row project's "
+                "unproven captured spans to admit spans created after a retention "
+                "purge; not authorization. Depends on the admission repair"
+            ),
+            row="tracer.MetricProjectRefresh",
+        ),
+        "_span_page_through": filed(
+            ROW_DRIVEN,
+            why=(
+                "span evidence pages the refresh-row project's dirty span "
+                "identities into bounded captures; reads span keys only, not "
+                "authorization. Depends on the admission repair"
+            ),
+            row="tracer.MetricProjectRefresh",
         ),
     },
     "tracer.services.derived_metrics.span_two_step": {
@@ -2203,6 +2253,15 @@ _FILED_BY_MODULE: dict[str, dict[str, Filing]] = {
             ),
             row="tracer.MetricProjectRefresh",
         ),
+        "unit_first_created_select": filed(
+            ROW_DRIVEN,
+            why=(
+                "refresh dates the creation of the requested units' spans for the "
+                "refresh-row project to admit units created after a retention "
+                "purge; not authorization. Depends on the admission repair"
+            ),
+            row="tracer.MetricProjectRefresh",
+        ),
         "unit_source_version_select": filed(
             ROW_DRIVEN,
             why=(
@@ -2247,6 +2306,58 @@ _FILED_BY_MODULE: dict[str, dict[str, Filing]] = {
                 "capture; not authorization. Depends on the admission repair"
             ),
             row="tracer.MetricProjectRefresh",
+        ),
+    },
+    "tracer.services.derived_metrics.erasure": {
+        "_frozen_subjects": filed(
+            NO_SPAN_TABLE,
+            why="erasure expands its subjects through the identity remap tables",
+            table="trace_session_id_remap and end_user_id_remap",
+        ),
+    },
+    "tracer.services.derived_metrics.snapshot_sketches": {
+        "aggregate_select": filed(
+            NO_SPAN_TABLE,
+            why="aggregates a snapshot's frozen input or bucket rows",
+            table="derived_metric_inputs and derived_metric_snapshot_buckets",
+        ),
+        "assert_complete_capture": filed(
+            NO_SPAN_TABLE,
+            why="compares a snapshot's frozen unit and bucket counts",
+            table=(
+                "derived_metric_inputs, derived_metric_snapshot_units "
+                "and derived_metric_snapshot_buckets"
+            ),
+        ),
+        "rebuild_buckets": filed(
+            NO_SPAN_TABLE,
+            why="rebuilds a snapshot's buckets from its frozen unit rows",
+            table="derived_metric_snapshot_units",
+        ),
+    },
+    "tracer.services.derived_metrics.snapshots": {
+        "_rollup_ranges": filed(
+            NO_SPAN_TABLE,
+            why="pages a snapshot's frozen result rows by group",
+            table="derived_metric_inputs and derived_metric_snapshot_buckets",
+        ),
+        "delete_rows": filed(
+            NO_SPAN_TABLE,
+            why="deletes and verifies a snapshot's frozen rows",
+            table=(
+                "derived_metric_results, derived_metric_commits, "
+                "derived_metric_inputs, derived_metric_snapshot_buckets "
+                "and derived_metric_snapshot_units"
+            ),
+        ),
+        "fenced_delete_rows": filed(
+            NO_SPAN_TABLE,
+            why="deletes and verifies a snapshot attempt's frozen rows",
+            table=(
+                "derived_metric_results, derived_metric_commits, "
+                "derived_metric_inputs, derived_metric_snapshot_buckets "
+                "and derived_metric_snapshot_units"
+            ),
         ),
     },
     "tracer.services.derived_metrics.queries": {

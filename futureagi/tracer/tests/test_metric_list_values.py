@@ -309,7 +309,11 @@ def test_sql_pushes_keys_and_exact_allowlist_inside_both_collapses():
     ids = (str(uuid4()), str(uuid4()))
     sql, params = _field_cells_select(scope, definition(), ids, manifest, NOW)
     assert params["field_read_units"] == ids
-    assert sql.count("unit_id IN %(field_read_units)s") == 2
+    # Pushed inside the collapse in every branch: each checkpoint bucket branch
+    # (page reads seek only their own physical tuple) and the delta branch.
+    from tracer.services.derived_metrics.storage import FIELD_CHECKPOINT_BUCKETS
+
+    assert sql.count("unit_id IN %(field_read_units)s") == FIELD_CHECKPOINT_BUCKETS + 1
     assert (
         "attempt_id IN %(field_read_deltas)s" in sql
         and "attempt_id = %(field_read_checkpoint)s" in sql

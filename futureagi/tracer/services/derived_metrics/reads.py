@@ -22,7 +22,11 @@ from tracer.models.derived_metric import (
     MetricProjectRefresh,
     MetricRefreshAttempt,
 )
-from tracer.services.derived_metrics.bounded_reads import KeyRange, committed_branches
+from tracer.services.derived_metrics.bounded_reads import (
+    KeyRange,
+    committed_branches,
+    windowed_rows_select,
+)
 from tracer.services.derived_metrics.errors import MetricInputError
 from tracer.services.derived_metrics.feature_flag import metrics_enabled
 from tracer.services.derived_metrics.parts import (
@@ -222,15 +226,20 @@ def metric_read(metric, *, store=None):
             yield connection, manifest, definition
 
 
-def calculated_through(manifest, definition):
-    """Where a forward-only version's pinned values end, or None if unbounded.
+def _floor15(value):
+    value = value.astimezone(UTC)
+    return value.replace(minute=value.minute // 15 * 15, second=0, microsecond=0)
 
-    The pinned head reflects arrivals up to the project's consumed watermark: a
-    unit starting at or after it cannot have arrived yet. A pending burst sweep
-    has not yet read units starting at or after its floor, which can lie before
-    that watermark. So nothing starting at or after the lesser of the two is in
-    these values, whether passes are merely due or have been failing. A head
-    pinned before the current one also bounds by its own frozen watermark.
+
+def cut_terms(manifest, definition):
+    """(calculated, settled) 15-minute bounds of a forward version's pinned head.
+
+    calculated: the lesser of the consumed watermark and a pending burst
+    sweep's floor (a head pinned before the current one also bounds by its own
+    frozen watermark), floored to its bucket. Nothing starting at or after it
+    is in these values. settled: the same less the settle interval (a span,
+    once ended, settles at once): a unit first arriving within it may not have
+    arrived yet, so its bucket cannot be final either. None for history.
     """
     if (
         manifest is None
@@ -247,6 +256,7 @@ def calculated_through(manifest, definition):
             "watermark_ns",
             "pending_repair",
             "reconciliation_cursor",
+            "settle_minutes",
         )
         .first()
     )
@@ -264,7 +274,124 @@ def calculated_through(manifest, definition):
     if state["pending_repair"] and cursor.get("floor"):
         floor = datetime.fromisoformat(str(cursor["floor"]))
         through = min(through, floor if floor.tzinfo else floor.replace(tzinfo=UTC))
-    return through
+    settle = (
+        0 if getattr(definition, "level", None) == "span" else state["settle_minutes"]
+    )
+    return _floor15(through), _floor15(through - timedelta(minutes=settle))
+
+
+def calculated_through(manifest, definition):
+    """The calculated 15-minute bound (cut_terms), or None for history."""
+    terms = cut_terms(manifest, definition)
+    return None if terms is None else terms[0]
+
+
+def open_buckets(store, metric, definition, manifest, start, end):
+    """Buckets in [start, end) that hold a unit refresh still keeps open.
+
+    Refresh keeps a unit open, and out of every total, until settle_minutes
+    after its LAST arrival, however long ago it started. Only the committed
+    units say which: a bucket holding one is not final. Nominates from raw
+    field history in the range, then collapses complete keys.
+    """
+    fields, params = windowed_rows_select(
+        FIELD_VALUES,
+        manifest,
+        org_id=metric.organization_id,
+        project_id=metric.project_id,
+        predicate="bucket_start >= %(open_start)s AND bucket_start < %(open_end)s",
+        params={"open_start": start, "open_end": end},
+        key_in={
+            "field_id": (definition.metric_id,),
+            "field_version": (definition.version,),
+        },
+        param_prefix="open_fields",
+    )
+    rows = _rows(
+        store,
+        f"SELECT bucket_start, count() AS units FROM ({fields}) "
+        "WHERE is_deleted = 0 AND status = 'open' "
+        "GROUP BY bucket_start ORDER BY bucket_start LIMIT 4096",
+        params,
+    )
+    return {
+        (
+            row["bucket_start"]
+            if row["bucket_start"].tzinfo
+            else row["bucket_start"].replace(tzinfo=UTC)
+        ): row["units"]
+        for row in rows
+    }
+
+
+class Finality:
+    """Which 15-minute buckets of a forward window are final.
+
+    A bucket is final only if it ends at or before ``settled`` and holds no
+    unit refresh still keeps open; ``opened`` maps each bucket holding open
+    units to their count. One long-open unit holds only its own bucket.
+    """
+
+    def __init__(self, calculated, settled, opened):
+        self.calculated, self.settled, self.opened = calculated, settled, opened
+
+    def final(self, bucket):
+        return bucket + QUARTER <= self.settled and bucket not in self.opened
+
+    @staticmethod
+    def buckets(window):
+        at = window["window_start"]
+        while at < window["window_end"]:
+            yield at
+            at += QUARTER
+
+    def nonfinal(self, window):
+        return [b for b in self.buckets(window) if not self.final(b)]
+
+    def complete_through(self, window):
+        """End of the window's contiguous final prefix."""
+        for bucket in self.buckets(window):
+            if not self.final(bucket):
+                return bucket
+        return window["window_end"]
+
+    def reason(self, window):
+        return (
+            "not_calculated"
+            if window["window_start"] >= self.calculated
+            else "settling"
+        )
+
+    def disclosure(self, window):
+        nonfinal = self.nonfinal(window)
+        return {
+            "complete_through": self.complete_through(window),
+            "partial": bool(nonfinal),
+            "nonfinal_buckets": len(nonfinal),
+            "open_units": sum(
+                units
+                for bucket, units in self.opened.items()
+                if window["window_start"] <= bucket < window["window_end"]
+            ),
+        }
+
+
+def read_finality(store, metric, definition, manifest, window):
+    """Finality of a forward window, or None for history (no bound).
+
+    Without ``store`` only the calculated and settle bounds apply.
+    """
+    terms = cut_terms(manifest, definition)
+    if terms is None:
+        return None
+    calculated, settled = terms
+    end = min(window["window_end"], settled)
+    opened = {}
+    if store is not None and window["window_start"] < end:
+        opened = open_buckets(
+            store, metric, definition, manifest, window["window_start"], end
+        )
+    return Finality(calculated, settled, opened)
 
 
 def provenance(manifest, definition, through=None):
@@ -298,7 +425,9 @@ def _rows(store, sql, params):
     return result
 
 
-def bucket_select(metric, definition, manifest, window, *, projection_sql="*"):
+def bucket_select(
+    metric, definition, manifest, window, *, projection_sql="*", exclude=()
+):
     """Collapse before filtering or projecting a compiler-owned read grouping.
 
     Only immutable keys prune branches; tombstones win before being removed.
@@ -337,12 +466,18 @@ def bucket_select(metric, definition, manifest, window, *, projection_sql="*"):
             message="No committed bucket checkpoint is available."
         )
     params["read_workspace"] = str(metric.workspace_id)
+    # Non-final buckets (Finality) never enter a final value.
+    skip = ""
+    if exclude:
+        skip = " AND bucket_start NOT IN %(read_nonfinal)s"
+        params["read_nonfinal"] = tuple(exclude)
     return (
         f"SELECT {projection_sql} FROM (SELECT * FROM ("
         + " UNION ALL ".join(branches)
         + ") ORDER BY generation DESC, version DESC LIMIT 1 BY "
         + ", ".join(BUCKET_TOTALS.logical_key)
-        + ") WHERE is_deleted = 0 AND workspace_id = toUUID(%(read_workspace)s)",
+        + ") WHERE is_deleted = 0 AND workspace_id = toUUID(%(read_workspace)s)"
+        + skip,
         params,
     )
 
@@ -397,12 +532,14 @@ def _aggregate_select(sql, definition, params, *, grouped=False, per_period=Fals
             {group_clause})"""
 
 
-def _aggregate(store, metric, definition, manifest, window):
-    sql, params = bucket_select(metric, definition, manifest, window)
+def _aggregate(store, metric, definition, manifest, window, *, exclude=()):
+    sql, params = bucket_select(metric, definition, manifest, window, exclude=exclude)
     return _rows(store, _aggregate_select(sql, definition, params), params)[0]
 
 
-def _aggregate_periods(store, metric, definition, manifest, current, previous):
+def _aggregate_periods(
+    store, metric, definition, manifest, current, previous, *, exclude=()
+):
     """Compute independent periods without replacing stored cohort/scope keys.
 
     The shared compiler partitions its scope guard and stratum merge by period,
@@ -414,6 +551,7 @@ def _aggregate_periods(store, metric, definition, manifest, current, previous):
         manifest,
         {**current, "window_start": previous["window_start"]},
         projection_sql="*, if(bucket_start >= %(read_current_start)s, 'current', 'previous') AS period_key",
+        exclude=exclude,
     )
     params["read_current_start"] = current["window_start"]
     rows = _rows(
@@ -484,29 +622,62 @@ def window_is_calculated(definition, window):
     return window["window_start"] >= start
 
 
-def require_calculated_window(definition, window, manifest=None):
-    """Reject a window nothing of which is calculated; return calculated_through.
+def _not_calculated_yet(stop, reason, message):
+    return MetricUnavailableError(
+        "window_not_calculated_yet",
+        f"Values are final through {stop.astimezone(UTC):%Y-%m-%d %H:%M} UTC. "
+        + message,
+        calculated_through=stop,
+        reason=reason,
+    )
 
-    A window that starts at or after calculated_through holds no calculated
-    unit at all, so its empty result would claim "no data" while units are
-    simply not calculated yet (for instance while refreshes are failing). A
-    window that only ends after it is answered, with calculated_through in the
-    provenance, so the reader can say where calculated values stop.
+
+def require_calculated_window(
+    definition, window, manifest=None, *, whole=False, store=None, metric=None
+):
+    """Reject a window with no final bucket; return its Finality (or None).
+
+    A window holding no final bucket would claim "no data" (or a partial
+    count) while its units are not calculated or still open, so it is
+    window_not_calculated_yet with the reason and where final values stop. A
+    window holding some is answered over its final buckets only, disclosing
+    the rest. ``whole`` (a durable snapshot) needs every bucket final: it never
+    freezes a partial window.
     """
     if not window_is_calculated(definition, window):
         raise MetricUnavailableError(
             "window_not_calculated",
             "This window predates the completed metric backfill. Choose a later start.",
         )
-    through = calculated_through(manifest, definition)
-    if through is not None and window["window_start"] >= through:
-        raise MetricUnavailableError(
-            "window_not_calculated_yet",
-            f"Values are calculated through {through.astimezone(UTC):%Y-%m-%d %H:%M} UTC. "
-            "This window is not calculated yet.",
-            calculated_through=through,
+    if "window_end" not in window:
+        return None
+    finality = read_finality(store, metric, definition, manifest, window)
+    if finality is None:
+        return None
+    nonfinal = finality.nonfinal(window)
+    if len(nonfinal) == len(list(finality.buckets(window))):
+        # Final values stop at the settled bound or earlier.
+        raise _not_calculated_yet(
+            min(finality.complete_through(window), finality.settled),
+            finality.reason(window),
+            "This window is not final yet.",
         )
-    return through
+    if whole and nonfinal:
+        stop = finality.complete_through(window)
+        raise _not_calculated_yet(
+            stop,
+            "not_calculated" if stop >= finality.calculated else "settling",
+            "A snapshot needs its whole window final: choose an earlier end or "
+            "retry after the next calculation.",
+        )
+    return finality
+
+
+def _disclosure(finality, window):
+    """complete_through, partial and the non-final counts of a window read."""
+    if finality is None:
+        return {"complete_through": None, "partial": False}
+    return finality.disclosure(window)
 
 
 def read_kpi(metric, data, *, store=None):
@@ -518,14 +689,40 @@ def read_kpi(metric, data, *, store=None):
         "window_end": window["window_start"],
     }
     with metric_read(metric, store=store) as (store, manifest, definition):
-        through = require_calculated_window(definition, window, manifest)
-        if window_is_calculated(definition, previous):
+        finality = require_calculated_window(
+            definition, window, manifest, store=store, metric=metric
+        )
+        # The value is over the window's FINAL buckets only: never one past
+        # the calculated or settle bound, nor one holding an open unit (a
+        # long-open session must not freeze the rest of the window).
+        exclude = finality.nonfinal(window) if finality else ()
+        # The previous period is compared only if it is wholly final.
+        previous_final = window_is_calculated(definition, previous) and (
+            finality is None
+            or not open_buckets(
+                store,
+                metric,
+                definition,
+                manifest,
+                previous["window_start"],
+                previous["window_end"],
+            )
+        )
+        if previous_final:
             current_row, previous_row = _aggregate_periods(
-                store, metric, definition, manifest, window, previous
+                store,
+                metric,
+                definition,
+                manifest,
+                window,
+                previous,
+                exclude=exclude,
             )
             prior = point(previous_row, definition)
         else:
-            current_row = _aggregate(store, metric, definition, manifest, window)
+            current_row = _aggregate(
+                store, metric, definition, manifest, window, exclude=exclude
+            )
             prior = None
         current = point(current_row, definition)
         delta = (
@@ -538,8 +735,11 @@ def read_kpi(metric, data, *, store=None):
         if delta is not None and not math.isfinite(delta):
             delta = None
         return {
-            "provenance": provenance(manifest, definition, through),
+            "provenance": provenance(
+                manifest, definition, calculated_through(manifest, definition)
+            ),
             "effective_window": window,
+            **_disclosure(finality, window),
             "current": current,
             "previous": prior,
             "delta": delta,
@@ -564,7 +764,9 @@ def read_trend(metric, data, *, store=None):
     buckets = int((window["window_end"] - window["window_start"]) / QUARTER)
     width = math.ceil(buckets / count)
     with metric_read(metric, store=store) as (store, manifest, definition):
-        through = require_calculated_window(definition, window, manifest)
+        finality = require_calculated_window(
+            definition, window, manifest, store=store, metric=metric
+        )
         group_by = data.get("group_by", "")
         dimensions = list(definition.group_dims or [])
         allowed_groups = dimensions or (
@@ -628,22 +830,36 @@ def read_trend(metric, data, *, store=None):
                         ),
                     }
                 )
-        if through is not None:
-            # A point starting at or after calculated_through holds no
-            # calculated unit: it is not calculated yet, never "no data".
+        if finality is not None:
+            # A point is final only if every bucket in it is; otherwise it is
+            # not_calculated (past the calculated bound) or settling, never a
+            # partial value and never "no data". An open unit holds only its
+            # own bucket.
+            def status(row):
+                if row["window_start"] >= finality.calculated:
+                    return "not_calculated"
+                span = {
+                    "window_start": row["window_start"],
+                    "window_end": row["window_end"],
+                }
+                return "settling" if finality.nonfinal(span) else None
+
             result = [
-                {
+                row
+                if status(row) is None
+                else {
                     **row,
                     **point(empty_row(), definition),
-                    "point_status": "not_calculated",
+                    "point_status": status(row),
                 }
-                if row["window_start"] >= through
-                else row
                 for row in result
             ]
         result.sort(key=lambda row: (row["window_start"], row["group_key"]))
         return {
-            "provenance": provenance(manifest, definition, through),
+            "provenance": provenance(
+                manifest, definition, calculated_through(manifest, definition)
+            ),
+            "partial": bool(finality and finality.nonfinal(window)),
             "effective_window": window,
             "results": result,
         }
@@ -871,11 +1087,14 @@ def read_units(metric, data, *, drivers=False, store=None, retention_days=None):
                 "metric_drivers_unavailable",
                 "Exact leave-one-out drivers cannot be recovered from distinct or percentile sketches.",
             )
-        through = (
-            require_calculated_window(definition, window, manifest)
-            if drivers
-            else calculated_through(manifest, definition)
-        )
+        through = calculated_through(manifest, definition)
+        requested, finality, exclude = window, None, ()
+        if drivers:
+            # Drivers rank units of the window's final buckets only.
+            finality = require_calculated_window(
+                definition, window, manifest, store=store, metric=metric
+            )
+            exclude = finality.nonfinal(window) if finality else ()
         if (
             not drivers
             and data["context"] == "users"
@@ -899,10 +1118,17 @@ def read_units(metric, data, *, drivers=False, store=None, retention_days=None):
         sql, params = _fields_select(
             metric, definition, manifest, window, ids=ids, cutoff=cutoff
         )
+        if exclude:
+            sql = (
+                f"SELECT * FROM ({sql}) WHERE bucket_start NOT IN %(drivers_nonfinal)s"
+            )
+            params["drivers_nonfinal"] = tuple(exclude)
         context = _cursor_context(metric, definition, manifest, window)
         after = data.get("after", "")
         if drivers:
-            total = _aggregate(store, metric, definition, manifest, window)
+            total = _aggregate(
+                store, metric, definition, manifest, window, exclude=exclude
+            )
             if definition.level == "span":
                 # Older manifests may contain span totals without evidence. A
                 # partial backfill must not masquerade as a complete driver list.
@@ -970,7 +1196,8 @@ def read_units(metric, data, *, drivers=False, store=None, retention_days=None):
             results = [_unit_value(by_id.get(unit), unit) for unit in ids]
         return {
             "provenance": provenance(manifest, definition, through),
-            "effective_window": window,
+            "effective_window": requested,
+            **(_disclosure(finality, requested) if drivers else {}),
             "results": results,
             "next_cursor": next_cursor,
         }

@@ -42,6 +42,7 @@ MAX_LIVE_KEY_BYTES = 16 * 1024 * 1024
 MAX_DESCRIPTORS = 256
 SOURCE_SETTINGS = {
     "max_threads": 1,
+    "max_threads_for_indexes": 1,
     "max_memory_usage": 1610612736,
     "max_bytes_before_external_group_by": 0,
     "max_bytes_ratio_before_external_group_by": 0,

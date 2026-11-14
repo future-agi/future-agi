@@ -151,6 +151,61 @@ def test_k1_fairness_for_pending_and_incremental_projects(enabled, state_factory
         assert set(seen[start : start + 3]) == {s.project_id for s in states}
 
 
+def test_failing_projects_never_take_the_slot_from_healthy_ones(enabled, state_factory):
+    """10M: with one slot shared by five projects, projects failing every pass
+    (past their backoff) kept taking turns from a catching-up burst. A healthy
+    eligible project is always admitted first, whatever their admission order;
+    a failing one still runs when no healthy project is eligible."""
+    failing = state_factory(
+        pending_repair=True,
+        consecutive_failures=4,
+        last_error_at=NOW - timedelta(hours=1),
+        last_started_at=NOW - timedelta(hours=2),
+    )
+    healthy = quiet_state(
+        state_factory, pending_repair=True, last_started_at=NOW - timedelta(minutes=1)
+    )
+    (reservation,) = admission.reserve_projects(clock=lambda: NOW)
+    assert reservation.grant.project_id == healthy.project_id
+    release_all([reservation], NOW)
+    MetricProjectRefresh.objects.filter(pk=healthy.pk).update(pending_repair=False)
+    later = NOW + timedelta(seconds=1)
+    (reservation,) = admission.reserve_projects(clock=lambda: later)
+    assert reservation.grant.project_id == failing.project_id
+    release_all([reservation], later)
+
+
+def test_a_tick_refills_a_freed_slot_instead_of_waiting_for_the_next(
+    enabled, state_factory, monkeypatch
+):
+    """10M: dispatch reserved one project per 60 s tick, so the single slot was
+    busy 24% of the time (a ~12 s pass, then a wait). One tick now refills the
+    slot as soon as a pass frees it, within the same K, fair order and lock."""
+    first = quiet_state(
+        state_factory, pending_repair=True, last_started_at=NOW - timedelta(hours=2)
+    )
+    second = quiet_state(
+        state_factory, pending_repair=True, last_started_at=NOW - timedelta(hours=1)
+    )
+    elapsed, enqueued = [0.0], []
+    monkeypatch.setattr(admission, "monotonic", lambda: elapsed[0])
+
+    def sleep(seconds):
+        elapsed[0] += seconds
+        if len(enqueued) == 1:
+            # The first project's pass finishes during the tick.
+            admission.release(admission.Reservation.from_payload(enqueued[0]), now=NOW)
+
+    count = admission.dispatch_until(
+        enqueued.append, clock=lambda: NOW, seconds=10, poll=2, sleep=sleep
+    )
+    assert count == 2
+    assert [p["project_id"] for p in enqueued] == [
+        str(first.project_id),
+        str(second.project_id),
+    ]
+
+
 def test_ninety_chunks_continue_after_recent_success(enabled, state_factory):
     state = quiet_state(state_factory, pending_backfill=True)
     for tick in range(90):
@@ -684,7 +739,8 @@ def test_overflow_preserves_published_repair_checkpoint(
     runner = Mock()
     monkeypatch.setattr(backfill, "BackfillRunner", Mock(return_value=runner))
     admission.run_incremental(writer, object(), scope, state)
-    runner.run_repair_page.assert_called_once_with(skip_incremental=True)
+    # The burst's pages (run_repair_pages loops run_repair_page).
+    runner.run_repair_pages.assert_called_once_with(skip_incremental=True)
     state.refresh_from_db()
     assert state.reconciliation_cursor == checkpoint
     assert state.reconciliation_started_at == started
@@ -993,7 +1049,7 @@ def test_routine_reservation_reaches_native_repair_runner(
     incremental = Mock()
     monkeypatch.setattr(admission, "run_incremental", incremental)
     assert admission.execute_reservation(reservation.payload(), clock=lambda: NOW)
-    runner.run_repair_page.assert_called_once_with()
+    runner.run_repair_pages.assert_called_once_with()
     runner.run_pass.assert_not_called()
     incremental.assert_not_called()
     client.disconnect.assert_called_once_with()

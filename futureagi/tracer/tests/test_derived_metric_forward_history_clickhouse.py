@@ -1153,3 +1153,297 @@ def test_forward_burst_over_a_pending_repair_reads_the_burst_not_the_history(
     assert captures
     # Unbounded, every capture reads the 60,000 spans of history.
     assert max(rows for rows, _ in captures) < 20_000, captures
+
+
+@pytest.mark.django_db(transaction=True)
+def test_dense_quarter_above_the_span_budget_is_paged_with_bounded_memory(
+    live_writer, workspace, observe_project
+):
+    """10M BIG 395: one 15-minute quarter held more spans than the 50,000-row
+    span capture budget, so every pass failed. The quarter is now captured in
+    key-ordered identity pages, each within the budget and well under the
+    512 MiB statement cap, and the bucket counts every span exactly once."""
+    writer = live_writer
+    scope = Scope(writer.org_id, writer.workspace_id, writer.lease.project_id)
+    _version_index(writer)
+    span = span_definition_for(writer, workspace, observe_project)
+    now = datetime.now(UTC).replace(minute=7, second=0, microsecond=0)
+    quarter = now.replace(minute=0) - timedelta(hours=2)
+    dense = 110_000
+    writer.store.execute(
+        "INSERT INTO spans (id, project_id, org_id, trace_id, trace_session_id, "
+        "start_time, end_time, created_at, updated_at, _version, attrs_number, "
+        "attrs_string) "
+        "SELECT concat('dense-', toString(number)), toUUID(%(project_id)s), "
+        "toUUID(%(org_id)s), concat('dense-trace-', toString(intDiv(number, 4))), "
+        "generateUUIDv4(), %(quarter)s + toIntervalMillisecond(number * 8), "
+        "%(quarter)s + toIntervalMillisecond(number * 8 + 500), %(quarter)s, "
+        "%(quarter)s, toUInt64(2), map('resolved', 1), map('region', 'west') "
+        "FROM numbers(%(dense)s)",
+        {**scope.parameters(), "quarter": quarter, "dense": dense},
+    )
+    session, trace = uuid4(), uuid4()
+    at = quarter + timedelta(seconds=1)
+    seed_span_revision(writer, scope, trace, "anchor", session, at, 1, revision=3)
+    dependency = Dependency(
+        str(trace), "anchor", str(session), str(session), "", "", at
+    )
+    since = datetime.now(UTC) - timedelta(seconds=1)
+    head = writer.refresh(
+        change_for(session, dependencies=[dependency]),
+        [span],
+        scope,
+        start=now - timedelta(days=1),
+        end=now,
+        as_of=now,
+    )
+    rows = metric_bucket_rows(writer, head, span)
+    total = dense + 1
+    assert [r[2:] for r in rows] == [(total, float(total), float(total))], rows
+    writer.store.client.execute("SYSTEM FLUSH LOGS")
+    pages = writer.store.client.execute(
+        "SELECT written_rows, memory_usage FROM system.query_log "
+        "WHERE type = 'QueryFinish' "
+        "AND query LIKE 'INSERT INTO metric_span_capture_%%' AND event_time >= %(since)s",
+        {"since": since.replace(tzinfo=None)},
+    )
+    # Unpaged, the single capture of the quarter fails its 50,000-row budget.
+    assert len(pages) >= 3, pages
+    assert sum(r for r, _ in pages) == total, pages
+    assert max(r for r, _ in pages) <= 50_000, pages
+    assert max(m for _, m in pages) < 256 * 1024 * 1024, pages
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.parametrize("mode", ["history", "forward"])
+def test_capture_page_over_many_parts_stays_well_under_the_statement_cap(
+    live_writer, workspace, observe_project, mode
+):
+    """10M Bug 2: one capture page over 773 active spans parts peaked at
+    1.19 GiB (Code 241 at the 512 MiB cap) while reading 34k rows. Parallel
+    primary-key/skip-index analysis keeps untracked per-thread memory
+    proportional to parts x IN-set size; one index-analysis thread bounds it.
+    A ~480-conversation page over ~1,200 parts, captured twice (the second time
+    with its committed preimage pairs), stays well under the cap."""
+    writer = live_writer
+    scope = Scope(workspace.organization_id, workspace.id, observe_project.id)
+    definition = definition_for(writer, workspace, observe_project)
+    now = datetime.now(UTC).replace(microsecond=0)
+    if mode == "forward":
+        definition = _forward(definition, now - timedelta(days=3))
+    at = now - timedelta(hours=2)
+    sessions = [uuid4() for _ in range(480)]
+    traces = {session: uuid4() for session in sessions}
+    spans = [
+        (traces[session], f"{n}-{i}", session, at + timedelta(seconds=n * 5 + i))
+        for n, session in enumerate(sessions)
+        for i in range(5)
+    ]
+    writer.store.execute("SYSTEM STOP MERGES spans")
+    try:
+        for offset in range(0, len(spans), 2):
+            writer.store.execute(
+                "INSERT INTO spans (id, trace_id, project_id, org_id, "
+                "trace_session_id, start_time, end_time, created_at, updated_at, "
+                "attrs_number, attrs_string) VALUES",
+                [
+                    {
+                        "id": span,
+                        "trace_id": str(trace),
+                        "project_id": scope.project,
+                        "org_id": scope.organization,
+                        "trace_session_id": session,
+                        "start_time": start,
+                        "end_time": start + timedelta(seconds=1),
+                        "created_at": start,
+                        "updated_at": start,
+                        "attrs_number": {"resolved": 1.0},
+                        "attrs_string": {"region": "west"},
+                    }
+                    for trace, span, session, start in spans[offset : offset + 2]
+                ],
+            )
+        parts = writer.store.execute(
+            "SELECT count() FROM system.parts WHERE active AND table = 'spans' "
+            "AND database = currentDatabase()"
+        )[0][0]
+        assert parts >= 1_000, parts
+        dependencies = [
+            Dependency(str(trace), span, str(session), str(session), "", "", start)
+            for trace, span, session, start in spans
+        ]
+        since = datetime.now(UTC) - timedelta(seconds=1)
+        for cursor in (1, 2):
+            head = writer.refresh(
+                ChangeBatch(
+                    tuple(SourceKey(d.trace_id, d.span_id) for d in dependencies),
+                    tuple(UnitKey("conversation", str(s)) for s in sessions),
+                    (),
+                    tuple(dependencies),
+                    (),
+                    {"watermark_ns": cursor},
+                ),
+                [definition],
+                scope,
+                start=now - timedelta(days=1),
+                end=now,
+                as_of=now,
+            )
+    finally:
+        writer.store.execute("SYSTEM START MERGES spans")
+    assert len(_version_fields(writer, head, definition)) == len(sessions)
+    writer.store.client.execute("SYSTEM FLUSH LOGS")
+    captures = writer.store.client.execute(
+        "SELECT memory_usage, Settings['max_threads_for_indexes'] FROM "
+        "system.query_log WHERE type = 'QueryFinish' "
+        "AND query_id LIKE 'metric-source-capture-%%' AND event_time >= %(since)s",
+        {"since": since.replace(tzinfo=None)},
+    )
+    assert len(captures) >= 2, captures
+    assert all(setting == "1" for _, setting in captures), captures
+    assert max(memory for memory, _ in captures) < 256 * 1024 * 1024, captures
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.usefixtures("enabled_metrics")
+def test_reads_answer_only_final_buckets_never_partial_or_open_ones(
+    live_writer, workspace, observe_project
+):
+    """10M: an ok bucket must equal its span truth. OVER2's [00:15, 00:30)
+    straddled the burst floor and said ok 377 of 51,515; OVER's 00:15 bucket
+    said ok while it held open units, and its 00:30 bucket said no_data with
+    1,498 open units.
+
+    A bucket is final only if it ends by the settled bound (the calculated cut
+    less settle) and holds no unit refresh still keeps open, however long ago
+    that unit started. Here a conversation L starts in bucket B1 two hours ago
+    and is still receiving spans (open), longer than the gap from its start to
+    the cut; A (earlier) and C (later) are settled. The KPI is computed over
+    the window's final buckets only (A and C, never L's bucket nor any bucket
+    from the settled bound), disclosing complete_through B1, partial, the
+    non-final buckets and the open unit; one open session never freezes the
+    rest of the window. The trend answers A's and C's buckets, marks B1 and
+    every bucket from the settled bound settling and every bucket from the
+    calculated bound not_calculated, and an empty final bucket no_data. Only a
+    window with no final bucket is not final yet; a pending burst floor makes
+    later buckets not_calculated."""
+    writer = live_writer
+    scope = Scope(workspace.organization_id, workspace.id, observe_project.id)
+    now = datetime.now(UTC).replace(microsecond=0)
+
+    def floor15(value):
+        return value.replace(minute=value.minute // 15 * 15, second=0, microsecond=0)
+
+    start = floor15(now) - timedelta(hours=4)
+    b1 = start + timedelta(hours=2)
+    b2 = start + timedelta(hours=3) - timedelta(minutes=30)
+    definition = _forward(
+        definition_for(writer, workspace, observe_project), now - timedelta(days=1)
+    )
+    sessions = {name: uuid4() for name in ("a", "l", "c")}
+    trace = uuid4()
+    dependencies = []
+    for name, session, at, arrival, value in (
+        ("a", sessions["a"], start + timedelta(minutes=5), None, 2),
+        ("l", sessions["l"], b1 + timedelta(minutes=1), None, 4),
+        ("l2", sessions["l"], b1 + timedelta(minutes=2), now - timedelta(minutes=5), 4),
+        ("c", sessions["c"], b2 + timedelta(minutes=1), None, 6),
+    ):
+        seed_span_revision(
+            writer,
+            scope,
+            trace,
+            name,
+            session,
+            at,
+            value,
+            revision=changes.ns(arrival or at),
+            arrival=arrival,
+        )
+        dependencies.append(
+            Dependency(str(trace), name, str(session), str(session), "", "", at)
+        )
+    head = writer.refresh(
+        ChangeBatch(
+            tuple(SourceKey(d.trace_id, d.span_id) for d in dependencies),
+            tuple(UnitKey("conversation", str(s)) for s in sessions.values()),
+            (),
+            tuple(dependencies),
+            (),
+            {"watermark_ns": changes.ns(now)},
+        ),
+        [definition],
+        scope,
+        start=start - timedelta(days=1),
+        end=now,
+        as_of=now,
+    )
+    assert head is not None
+    metric = DerivedMetric.objects.get(id=definition.metric_id)
+    DerivedMetricVersion.objects.filter(id=definition.id).update(
+        backfill_status="complete"
+    )
+    DerivedMetric.activate_version(metric.id, definition.id, expected_active_id=None)
+    metric = DerivedMetric.objects.select_related("project", "active_version").get(
+        pk=metric.id
+    )
+    calculated, settled = floor15(now), floor15(now - timedelta(minutes=30))
+    assert reads.cut_terms(head, definition) == (calculated, settled)
+
+    window = {"window_start": start, "window_end": calculated}
+    kpi = reads.read_kpi(metric, window, store=writer.store)
+    assert kpi["complete_through"] == b1 and kpi["partial"] is True
+    assert kpi["open_units"] == 1
+    # B1 (L, open) and the two settle buckets before the calculated bound.
+    assert kpi["nonfinal_buckets"] == 1 + 2
+    assert kpi["current"]["eligible_count"] == 2  # A and C: never L
+    assert kpi["current"]["value"] == pytest.approx(4.0)
+    # A window starting at L's open bucket still answers its final buckets.
+    later = reads.read_kpi(
+        metric, {"window_start": b1, "window_end": calculated}, store=writer.store
+    )
+    assert later["complete_through"] == b1 and later["partial"] is True
+    assert later["current"]["eligible_count"] == 1  # C
+    assert later["current"]["value"] == pytest.approx(6.0)
+
+    trend = reads.read_trend(metric, {**window, "points": 16}, store=writer.store)
+    statuses = {r["window_start"]: r["point_status"] for r in trend["results"]}
+    counts = {r["window_start"]: r["eligible_count"] for r in trend["results"]}
+    assert trend["partial"] is True
+    assert statuses[start] == "ok" and counts[start] == 1
+    assert statuses[start + timedelta(minutes=15)] == "no_data"
+    assert statuses[b1] == "settling"
+    assert statuses[b2] == "ok" and counts[b2] == 1
+    assert all(
+        status == "settling"
+        for at, status in statuses.items()
+        if settled <= at < calculated
+    )
+    assert "ok" not in {statuses[at] for at in statuses if at >= settled}
+
+    # No final bucket at all: within the settle interval of the cut.
+    with pytest.raises(MetricUnavailableError) as settling:
+        reads.read_kpi(
+            metric,
+            {"window_start": settled, "window_end": calculated},
+            store=writer.store,
+        )
+    assert settling.value.code == "window_not_calculated_yet"
+    assert settling.value.reason == "settling"
+    assert settling.value.calculated_through == settled
+
+    # A burst sweep pending from B2 has not re-read units from there.
+    MetricProjectRefresh.objects.filter(project_id=observe_project.id).update(
+        pending_repair=True,
+        reconciliation_cursor=ReconciliationCheckpoint(
+            started_at=now, floor=b2
+        ).to_dict(),
+    )
+    trend = reads.read_trend(metric, {**window, "points": 16}, store=writer.store)
+    statuses = {r["window_start"]: r["point_status"] for r in trend["results"]}
+    assert statuses[b2] == "not_calculated"
+    with pytest.raises(MetricUnavailableError) as burst:
+        reads.read_kpi(
+            metric, {"window_start": b2, "window_end": calculated}, store=writer.store
+        )
+    assert burst.value.reason == "not_calculated"

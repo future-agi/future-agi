@@ -76926,6 +76926,31 @@ export const OPENAPI_CONTRACT = Object.freeze({
         effective_window: {
           $ref: "#/definitions/MetricEffectiveWindow",
         },
+        complete_through: {
+          title: "Complete through",
+          description:
+            "forward: end of the window's contiguous final prefix. Values are computed over the window's final buckets only (calculated, past the settle interval, holding no open unit)",
+          type: "string",
+          format: "date-time",
+          "x-nullable": true,
+        },
+        partial: {
+          title: "Partial",
+          description: "true when any bucket of the window is not final",
+          type: "boolean",
+        },
+        nonfinal_buckets: {
+          title: "Nonfinal buckets",
+          description: "15-minute buckets of the window left out of the value",
+          type: "integer",
+          minimum: 0,
+        },
+        open_units: {
+          title: "Open units",
+          description: "units in the window refresh still keeps open",
+          type: "integer",
+          minimum: 0,
+        },
         results: {
           type: "array",
           items: {
@@ -76986,6 +77011,31 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         effective_window: {
           $ref: "#/definitions/MetricEffectiveWindow",
+        },
+        complete_through: {
+          title: "Complete through",
+          description:
+            "forward: end of the window's contiguous final prefix. Values are computed over the window's final buckets only (calculated, past the settle interval, holding no open unit)",
+          type: "string",
+          format: "date-time",
+          "x-nullable": true,
+        },
+        partial: {
+          title: "Partial",
+          description: "true when any bucket of the window is not final",
+          type: "boolean",
+        },
+        nonfinal_buckets: {
+          title: "Nonfinal buckets",
+          description: "15-minute buckets of the window left out of the value",
+          type: "integer",
+          minimum: 0,
+        },
+        open_units: {
+          title: "Open units",
+          description: "units in the window refresh still keeps open",
+          type: "integer",
+          minimum: 0,
         },
         current: {
           $ref: "#/definitions/MetricPoint",
@@ -77249,6 +77299,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
         effective_window: {
           $ref: "#/definitions/MetricEffectiveWindow",
         },
+        partial: {
+          title: "Partial",
+          description: "true when any point is not_calculated or settling",
+          type: "boolean",
+        },
         results: {
           type: "array",
           items: {
@@ -77283,9 +77338,16 @@ export const OPENAPI_CONTRACT = Object.freeze({
         calculated_through: {
           title: "Calculated through",
           description:
-            "window_not_calculated_yet: units starting at or after this instant are not calculated yet",
+            "window_not_calculated_yet: the read cut; values are final only before it",
           type: "string",
           format: "date-time",
+        },
+        reason: {
+          title: "Reason",
+          description:
+            "window_not_calculated_yet: not_calculated (past the calculated bound) or settling (calculated, but holding open units)",
+          type: "string",
+          enum: ["not_calculated", "settling"],
         },
       },
     },
@@ -111051,7 +111113,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         calculated_through: {
           title: "Calculated through",
           description:
-            "forward: units starting at or after this instant are not calculated yet (the consumed source cut, or a pending burst sweep's floor)",
+            "forward: nothing starting at or after this 15-minute boundary is calculated yet (the consumed source cut, or a pending burst sweep's floor)",
           type: "string",
           format: "date-time",
           "x-nullable": true,
@@ -111319,6 +111381,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "retention_expired",
             "sampled_inputs_not_supported",
             "not_calculated",
+            "settling",
           ],
         },
         rate_eligible: {
@@ -111430,6 +111493,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "retention_expired",
             "sampled_inputs_not_supported",
             "not_calculated",
+            "settling",
           ],
         },
         rate_eligible: {
@@ -111617,6 +111681,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "retention_expired",
             "sampled_inputs_not_supported",
             "not_calculated",
+            "settling",
           ],
         },
         rate_eligible: {

@@ -399,6 +399,26 @@ def unit_source_version_select(
     return sql, {**scope.parameters(), **params}
 
 
+def unit_first_created_select(
+    scope: Scope, unit_ids, manifest, *, floor
+) -> tuple[str, dict]:
+    """The earliest created_at of any span revision in a requested alias.
+
+    Admission after a retention purge (RefreshWriter._created_after_purge):
+    every alias revision starts at or after ``floor`` (unit_source_floor_select),
+    so this read is bounded by it.
+    """
+    ctes, _, params = _source_plan(scope, _ids(unit_ids), manifest, ())
+    params["unit_created_floor"] = utc_timestamp(floor)
+    sql = (
+        "WITH " + ", ".join(ctes[:3]) + " SELECT minOrNull(created_at) FROM spans "
+        "PREWHERE project_id = %(project_id)s "
+        "AND start_time >= toDateTime64(%(unit_created_floor)s, 6, 'UTC') "
+        "AND trace_session_id IN (SELECT alias_id FROM unit_aliases)"
+    )
+    return sql, {**scope.parameters(), **params}
+
+
 def unit_source_guard_select(
     scope: Scope, unit_ids, manifest, *, floor, version
 ) -> tuple[str, dict]:
@@ -564,7 +584,9 @@ def unit_values_select(
     )
 
 
-def span_values_select(definition, scope, *, start, end, as_of, start_floor=None):
+def span_values_select(
+    definition, scope, *, start, end, as_of, start_floor=None, unit_range=None
+):
     """Transient deduped-span fields for a WHOLE dirty bucket; never persisted.
 
     Mutable start/filter predicates run after immutable source collapse. This
@@ -589,6 +611,13 @@ def span_values_select(definition, scope, *, start, end, as_of, start_floor=None
         if start_floor is None
         else " AND start_time >= toDateTime64(%(span_window_floor)s, 6, 'UTC')"
     )
+    # unit_range (after, through] keeps one page of span identities (by their
+    # unit_id) so a dense window is captured in bounded pages.
+    page = ""
+    if unit_range is not None:
+        page = " AND toJSONString(tuple(toString(trace_id), toString(id))) > %(span_unit_after)s"
+        if unit_range[1] is not None:
+            page += " AND toJSONString(tuple(toString(trace_id), toString(id))) <= %(span_unit_through)s"
     window_keys = (
         """span_window_keys AS (
         SELECT trace_id, id FROM (
@@ -599,7 +628,9 @@ def span_values_select(definition, scope, *, start, end, as_of, start_floor=None
                 SELECT trace_id, id FROM spans
                 PREWHERE project_id = %(project_id)s
                 WHERE (org_id = %(org_id)s OR isNull(org_id))
-                    AND start_time >= %(start)s AND start_time < %(end)s
+                    AND start_time >= %(start)s AND start_time < %(end)s"""
+        + page
+        + """
             )
             WHERE (org_id = %(org_id)s OR isNull(org_id))
                 AND created_at <= %(as_of)s AND updated_at <= %(as_of)s
@@ -627,6 +658,10 @@ def span_values_select(definition, scope, *, start, end, as_of, start_floor=None
     params["unit_settle_minutes"] = 0
     if start_floor is not None:
         params["span_window_floor"] = utc_timestamp(start_floor)
+    if unit_range is not None:
+        params["span_unit_after"] = unit_range[0]
+        if unit_range[1] is not None:
+            params["span_unit_through"] = unit_range[1]
     return _field_projection(
         recipe,
         source,

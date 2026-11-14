@@ -104,7 +104,7 @@ export function metricReadMessage(error, label, definition) {
   if (error?.code === "metric_recalculating" && first)
     return `Not calculated yet. Values from ${formatMetricTime(first)} appear after the next calculation.`;
   if (error?.code === "window_not_calculated_yet")
-    return windowNotCalculatedYetCopy(error.calculated_through);
+    return windowNotCalculatedYetCopy(error.calculated_through, error.reason);
   return (
     unavailableMessages[error?.code] ||
     (error?.statusCode === 403

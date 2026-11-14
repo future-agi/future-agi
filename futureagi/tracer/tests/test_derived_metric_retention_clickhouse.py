@@ -1256,12 +1256,23 @@ def test_physical_expiry_waits_for_delayed_insert_drain_and_final_scrub(
 
 
 @pytest.mark.django_db(transaction=True)
-@pytest.mark.xfail(
-    strict=True,
-    raises=MetricAdmissionUnproven,
-    reason="TH-8975: retired versus new span admission raises MetricAdmissionUnproven",
+@pytest.mark.parametrize(
+    "prior_retirement",
+    [
+        # A genuinely new S after an expiry that retired no live unit: admitted
+        # (no retired evidence exists that it could duplicate).
+        False,
+        pytest.param(
+            True,
+            marks=pytest.mark.xfail(
+                strict=True,
+                raises=MetricAdmissionUnproven,
+                reason="TH-8975: retired versus new span admission raises "
+                "MetricAdmissionUnproven",
+            ),
+        ),
+    ],
 )
-@pytest.mark.parametrize("prior_retirement", [False, True])
 def test_retired_and_new_spans_with_identical_surviving_rows_require_admission_proof(
     live_writer, workspace, observe_project, prior_retirement
 ):
@@ -1892,3 +1903,165 @@ def test_idle_span_expiry_replaces_final_bucket_statistics(
     assert [row[2:] for row in metric_bucket_rows(writer, head, definition)] == [
         (1, 8.0, 1.0)
     ]
+
+
+def _created_span(writer, scope, trace, span, session, start, created, value):
+    """A span revision whose physical creation is ``created``, not its start."""
+    from tracer.services.derived_metrics.changes import ns
+
+    writer.store.execute(
+        "INSERT INTO spans (id, trace_id, project_id, org_id, trace_session_id, "
+        "start_time, end_time, created_at, updated_at, _version, attrs_number, "
+        "attrs_string) VALUES (%(span)s, %(trace)s, %(project_id)s, %(org_id)s, "
+        "%(session)s, %(start)s, %(end)s, %(created)s, %(created)s, %(version)s, "
+        "map('resolved', %(value)s), map('region', 'west'))",
+        {
+            **scope.parameters(),
+            "span": span,
+            "trace": str(trace),
+            "session": str(session),
+            "start": start,
+            "end": start + timedelta(seconds=1),
+            "created": created,
+            "version": ns(created),
+            "value": value,
+        },
+    )
+
+
+def _admission_fixture(writer, workspace, project, level):
+    from tracer.services.derived_metrics.changes import Dependency
+    from tracer.tests.test_derived_metric_refresh_clickhouse import (
+        span_definition_for,
+    )
+
+    definition = (
+        definition_for(writer, workspace, project)
+        if level == "conversation"
+        else span_definition_for(writer, workspace, project)
+    )
+    scope = Scope(writer.org_id, writer.workspace_id, writer.lease.project_id)
+    now = timezone.now()
+
+    def refresh(name, session, trace, start, *, cursor, as_of=now):
+        dependency = Dependency(
+            str(trace), name, str(session), str(session), "", "", start
+        )
+        return writer.refresh(
+            change_for(session, cursor=cursor, dependencies=[dependency]),
+            [definition],
+            scope,
+            start=now - timedelta(days=4),
+            end=as_of,
+            as_of=as_of,
+        )
+
+    return definition, scope, now, refresh
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.parametrize("level", ["conversation", "span"])
+def test_units_arriving_around_a_live_purge_are_admitted_without_proof(
+    live_writer, workspace, observe_project, level
+):
+    """10M B5: after a purge that retired LIVE published evidence, every head
+    inherits a retention floor and refused every unit without a committed
+    anchor, so a project stopped admitting new units for good, and a purge in
+    steady ingest refused every unit still in flight.
+
+    A purge retires only what its head captured, and a capture reads spans
+    created at or before its as_of. So a unit whose spans were all created
+    after that capture (less discovery's 5-minute late-arrival overlap) cannot
+    be retired evidence: units in flight when the purge ran, units created a
+    little before the capture but inserted after it, and fresh units are all
+    admitted. One created well before the capture yet never captured is the
+    R02 shape (TH-8975) and still needs proof."""
+    writer = live_writer
+    definition, scope, now, refresh = _admission_fixture(
+        writer, workspace, observe_project, level
+    )
+    old = now - timedelta(days=3)
+    capture, purge = now - timedelta(hours=2), now - timedelta(hours=1)
+    expired_session, expired_trace = uuid4(), uuid4()
+    _created_span(writer, scope, expired_trace, "expired", expired_session, old, old, 4)
+    refresh("expired", expired_session, expired_trace, old, cursor=1, as_of=capture)
+    expire_project(writer, [definition], retention_days=lambda: 1, now=purge)
+    ceilings = MetricProjectRefresh.for_project(
+        observe_project.id
+    ).head_manifest.published_by.source_ceilings
+    assert ceilings["retention_floor"]
+    writer.retention_days = lambda: 1
+
+    def unit(session, trace, name):
+        return str(session) if level == "conversation" else f'["{trace}","{name}"]'
+
+    admitted = []
+    for name, start, created in (
+        # In flight: created after the capture, before the purge.
+        ("in-flight", capture + timedelta(minutes=20), capture + timedelta(minutes=30)),
+        # Created just before the capture, inserted after it (late arrival).
+        ("late", capture - timedelta(minutes=3), capture - timedelta(minutes=2)),
+        # Created after the purge.
+        ("fresh", now - timedelta(minutes=50), now - timedelta(minutes=30)),
+    ):
+        session, trace = uuid4(), uuid4()
+        _created_span(writer, scope, trace, name, session, start, created, 8)
+        head = refresh(name, session, trace, start, cursor=2 + len(admitted))
+        admitted.append(unit(session, trace, name))
+        live = {row[0] for row in current_fields(writer, head) if not row[2]}
+        assert admitted[-1] in live, name
+    ceilings = head.published_by.source_ceilings
+    assert ceilings["retention_retired_live"] is True
+    assert (
+        ceilings["retention_floor_at"] == (capture - timedelta(minutes=5)).isoformat()
+    )
+
+    # Created well before the capture and never captured: it may be retired
+    # evidence reappearing (R02), so it still needs proof.
+    held_session, held_trace = uuid4(), uuid4()
+    held = capture - timedelta(minutes=20)
+    _created_span(writer, scope, held_trace, "held", held_session, held, held, 6)
+    with pytest.raises(MetricAdmissionUnproven):
+        refresh("held", held_session, held_trace, held, cursor=9)
+
+
+@pytest.mark.django_db(transaction=True)
+def test_an_expiry_that_retires_no_live_published_evidence_requires_no_proof(
+    live_writer, workspace, observe_project
+):
+    """10M B5: BIG's first publication was an expiry compaction that retired
+    nothing published, yet its retention floor made every later unit prove it
+    was not retired evidence, so BIG never admitted another unit. The floor is
+    stamped as before, but admission needs proof only once a purge retired
+    LIVE published units: here only a tombstone expires, so a later unit is
+    admitted."""
+    writer = live_writer
+    definition, scope, now, refresh = _admission_fixture(
+        writer, workspace, observe_project, "conversation"
+    )
+    old = now - timedelta(days=3)
+    gone_session, gone_trace = uuid4(), uuid4()
+    _created_span(writer, scope, gone_trace, "gone", gone_session, old, old, 4)
+    refresh(
+        "gone", gone_session, gone_trace, old, cursor=1, as_of=now - timedelta(hours=2)
+    )
+    writer.store.execute(
+        "ALTER TABLE spans DELETE WHERE id = 'gone' SETTINGS mutations_sync=2"
+    )
+    head = refresh(
+        "gone", gone_session, gone_trace, old, cursor=2, as_of=now - timedelta(hours=2)
+    )
+    assert [row[2] for row in current_fields(writer, head)] == [1]  # a tombstone
+    expire_project(
+        writer, [definition], retention_days=lambda: 1, now=now - timedelta(hours=1)
+    )
+    writer.retention_days = lambda: 1
+    later_session, later_trace = uuid4(), uuid4()
+    started = now - timedelta(minutes=50)
+    _created_span(
+        writer, scope, later_trace, "later", later_session, started, started, 8
+    )
+    head = refresh("later", later_session, later_trace, started, cursor=3)
+    assert str(later_session) in {row[0] for row in current_fields(writer, head)}
+    ceilings = head.published_by.source_ceilings
+    assert ceilings["retention_floor"] and ceilings["retention_retired_live"] is False

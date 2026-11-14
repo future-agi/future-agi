@@ -66,10 +66,8 @@ MetricCoverageLine.propTypes = {
 
 /** Where calculated values stop when the read's window runs past them (a
  * forward metric whose latest calculations are due or failing). */
-export function MetricCalculatedThroughLine({ provenance, window }) {
-  const through = Date.parse(provenance?.calculated_through ?? "");
-  const end = Date.parse(window?.window_end ?? "");
-  if (!Number.isFinite(through) || !Number.isFinite(end) || through >= end)
+export function MetricCalculatedThroughLine({ completeThrough, partial }) {
+  if (!partial || !Number.isFinite(Date.parse(completeThrough ?? "")))
     return null;
   return (
     <Typography
@@ -77,19 +75,20 @@ export function MetricCalculatedThroughLine({ provenance, window }) {
       color="text.secondary"
       data-testid="metric-calculated-through"
     >
-      {calculatedThroughCopy(provenance.calculated_through)}
+      {calculatedThroughCopy(completeThrough)}
     </Typography>
   );
 }
 MetricCalculatedThroughLine.propTypes = {
-  provenance: PropTypes.object,
-  window: PropTypes.object,
+  completeThrough: PropTypes.string,
+  partial: PropTypes.bool,
 };
 
 export default function MetricStatusLine({
   provenance,
   definition,
-  window,
+  completeThrough,
+  partial = false,
   showFreshness = true,
 }) {
   const done = provenance?.backfill_days_done ?? definition?.backfill_days_done;
@@ -107,7 +106,10 @@ export default function MetricStatusLine({
     <Stack spacing={1.5} sx={{ minWidth: 0 }}>
       {/* Started with no history: say where values begin. */}
       <MetricCoverageLine provenance={provenance} definition={definition} />
-      <MetricCalculatedThroughLine provenance={provenance} window={window} />
+      <MetricCalculatedThroughLine
+        completeThrough={completeThrough}
+        partial={partial}
+      />
       {failed && (
         <Alert severity="warning">
           History recalculation failed. Previously committed values have not
@@ -154,6 +156,7 @@ export default function MetricStatusLine({
 MetricStatusLine.propTypes = {
   provenance: PropTypes.object,
   definition: PropTypes.object,
-  window: PropTypes.object,
+  completeThrough: PropTypes.string,
+  partial: PropTypes.bool,
   showFreshness: PropTypes.bool,
 };

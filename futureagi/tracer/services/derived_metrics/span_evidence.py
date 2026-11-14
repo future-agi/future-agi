@@ -198,6 +198,89 @@ def _span_window_floor(store, scope, at, until):
     return min(aware)
 
 
+def _created_after_purge(store, scope, head, unproven, params, floors):
+    """These unproven spans cannot be evidence a retention purge retired.
+
+    A purged span's committed revision started before the retention floor. So
+    a span is exempt from proof (R02, TH-8975) only if it has no physical
+    revision starting before the floor, and every revision in its window
+    (each window's floor bounds those, span_window_floor_select) was created
+    after the latest purge, so none existed when evidence was retired. Older
+    revisions between the two floors start inside retention: never purged.
+    Unknown purge time: nothing is exempt.
+    """
+    at = head.published_by.source_ceilings.get("retention_floor_at")
+    floor = head.published_by.source_ceilings.get("retention_floor")
+    if not at or not floor or not floors:
+        return False
+    keys = (
+        "(trace_id, id) IN (SELECT JSONExtractString(unit_id, 1), "
+        f"JSONExtractString(unit_id, 2) FROM ({unproven}))"
+    )
+    bound = merge_bindings(
+        params,
+        {
+            "created_project": str(scope.project),
+            "created_floor": min(floors.values()),
+            "created_retention_floor": datetime.fromisoformat(str(floor)),
+        },
+    )
+    expired, first = store.execute(
+        "SELECT countIf(start_time < %(created_retention_floor)s), "
+        "minIf(created_at, start_time >= %(created_floor)s) FROM spans "
+        "PREWHERE project_id = toUUID(%(created_project)s) "
+        "AND (start_time < %(created_retention_floor)s "
+        "OR start_time >= %(created_floor)s) "
+        f"WHERE {keys}",
+        bound,
+        query_id="metric-admission-created-" + uuid4().hex,
+    )[0]
+    if expired or first is None:
+        return False
+    first = first if first.tzinfo else first.replace(tzinfo=UTC)
+    return first > datetime.fromisoformat(str(at))
+
+
+def _dirty_buckets(attempt):
+    return sorted(
+        {
+            datetime.fromisoformat(str(entry["bucket_start"]))
+            for chunk in attempt.ledger_chunks.filter(
+                part__in=["dirty_before", "dirty_after"]
+            )
+            for entry in chunk.payload
+            if "bucket_start" in entry
+        }
+    )
+
+
+def _previous_fields(writer, head, definition, dirty, unit_range=None):
+    """Committed span fields in the dirty buckets, optionally one identity page."""
+    predicate = "bucket_start IN %(span_dirty_buckets)s" if dirty else "0"
+    params = {"span_dirty_buckets": tuple(dirty)} if dirty else {}
+    if unit_range is not None:
+        after, through = unit_range
+        predicate += " AND unit_id > %(span_page_after)s"
+        params["span_page_after"] = after
+        if through is not None:
+            predicate += " AND unit_id <= %(span_page_through)s"
+            params["span_page_through"] = through
+    return windowed_rows_select(
+        FIELD_VALUES,
+        head,
+        org_id=writer.org_id,
+        project_id=writer.lease.project_id,
+        predicate=predicate,
+        params=params,
+        key_in={
+            "field_id": (definition.metric_id,),
+            "field_version": (definition.version,),
+            "level": ("span",),
+        },
+        param_prefix="span_previous_fields",
+    )
+
+
 @contextmanager
 def captured_span_fields(
     writer,
@@ -210,33 +293,23 @@ def captured_span_fields(
     cutoff,
     preserve_pruned=False,
     previous_page=None,
+    unit_range=None,
+    floors=None,
 ):
+    """Capture the dirty buckets' span fields into one bounded native table.
+
+    ``unit_range`` (after, through] restricts the capture and the committed
+    preimage to one page of span identities (freeze_span_fields); ``floors``
+    caches each run's start floor across those pages.
+    """
     store = writer.store
-    dirty = sorted(
-        {
-            datetime.fromisoformat(str(entry["bucket_start"]))
-            for chunk in attempt.ledger_chunks.filter(
-                part__in=["dirty_before", "dirty_after"]
-            )
-            for entry in chunk.payload
-            if "bucket_start" in entry
-        }
+    dirty = _dirty_buckets(attempt)
+    if previous_page is not None and unit_range is not None:
+        raise ValueError("a retirement page is already an identity page")
+    previous, previous_params = _previous_fields(
+        writer, head, definition, dirty, unit_range
     )
-    fixed = {
-        "field_id": (definition.metric_id,),
-        "field_version": (definition.version,),
-        "level": ("span",),
-    }
-    previous, previous_params = windowed_rows_select(
-        FIELD_VALUES,
-        head,
-        org_id=writer.org_id,
-        project_id=writer.lease.project_id,
-        predicate="bucket_start IN %(span_dirty_buckets)s" if dirty else "0",
-        params={"span_dirty_buckets": tuple(dirty)} if dirty else {},
-        key_in=fixed,
-        param_prefix="span_previous_fields",
-    )
+    floors = {} if floors is None else floors
     if previous_page is not None:
         # Retirement pages are disjoint immutable identities, not bucket slices:
         # a terminal correction can move into another page's original bucket.
@@ -302,13 +375,16 @@ def captured_span_fields(
             # One compiler execution per run of ADJACENT dirty quarters: their
             # half-open windows tile [at, until) exactly, and sampling ambiguity
             # stays partitioned per quarter, so rows equal the per-quarter union.
+            if (at, until) not in floors:
+                floors[at, until] = _span_window_floor(store, scope, at, until)
             fields, params = span_values_select(
                 definition,
                 scope,
                 start=at,
                 end=until,
                 as_of=as_of,
-                start_floor=_span_window_floor(store, scope, at, until),
+                start_floor=floors[at, until],
+                unit_range=unit_range,
             )
             if preserve_pruned:
                 previous_columns = ", ".join(
@@ -353,15 +429,13 @@ def captured_span_fields(
                 f"SELECT count(), uniqExact(tuple(level, unit_id)), "
                 f"sum(length(formatRow('RowBinary', {columns}))) FROM {name}"
             )[0]
-            if (
-                count != unique
-                or count > SPAN_CAPTURE_ROWS
-                or size > SPAN_CAPTURE_BYTES
-            ):
-                raise MetricVisibilityError(
-                    "span capture is duplicate or exceeds its budget"
-                )
-        if head and head.published_by.source_ceilings.get("retention_floor"):
+            if count != unique:
+                raise MetricVisibilityError("span capture is duplicate")
+            if count > SPAN_CAPTURE_ROWS or size > SPAN_CAPTURE_BYTES:
+                raise MetricVisibilityError("span capture exceeds its budget")
+        from tracer.services.derived_metrics.refresh import admission_requires_proof
+
+        if admission_requires_proof(head):
             from tracer.services.derived_metrics.bounded_reads import KeyRelation
             from tracer.services.derived_metrics.refresh import MetricAdmissionUnproven
 
@@ -381,12 +455,17 @@ def captured_span_fields(
             # backfills can supply it without a redundant dependency row. A
             # retired/tombstoned identity is absent here and still needs proof;
             # raw source presence alone never admits an unknown old span.
-            if store.execute(
-                f"SELECT count() FROM {name} WHERE unit_id NOT IN "
+            unproven = (
+                f"SELECT unit_id FROM {name} WHERE unit_id NOT IN "
                 f"(SELECT toJSONString(tuple(trace_id, span_id)) FROM ({deps}) WHERE is_deleted = 0) "
-                f"AND unit_id NOT IN (SELECT unit_id FROM ({previous}) WHERE is_deleted = 0)",
-                merge_bindings(bound, previous_params),
-            )[0][0]:
+                f"AND unit_id NOT IN (SELECT unit_id FROM ({previous}) WHERE is_deleted = 0)"
+            )
+            unproven_params = merge_bindings(bound, previous_params)
+            if store.execute(f"SELECT count() FROM ({unproven})", unproven_params)[0][
+                0
+            ] and not _created_after_purge(
+                store, scope, head, unproven, unproven_params, floors
+            ):
                 raise MetricAdmissionUnproven("metric_admission_unproven")
         check_session()
         yield f"SELECT {columns} FROM {name}", previous, previous_params, count, size
@@ -525,19 +604,106 @@ def retiring_span_parts(
         )
 
 
+def _span_page_through(writer, head, definition, dirty, after, rows):
+    """The last identity of the next page of at most ``rows`` span identities.
+
+    Identities sort by unit_id, the span's JSON (trace_id, span_id). The page
+    population is every span with a revision in a dirty bucket (all the capture
+    can nominate) plus every committed field there (all it can tombstone), so a
+    page never holds more captured or retracted rows than ``rows``. None when
+    fewer than ``rows`` identities remain: the last page takes the rest.
+    """
+    if not dirty:
+        return None
+    previous, params = _previous_fields(writer, head, definition, dirty)
+    found = writer.store.execute(
+        "SELECT unit_id FROM ("
+        "SELECT toJSONString(tuple(toString(trace_id), toString(id))) AS unit_id "
+        "FROM spans PREWHERE project_id = toUUID(%(span_page_project)s) "
+        "AND start_time >= %(span_page_first)s AND start_time < %(span_page_last)s "
+        "WHERE toStartOfFifteenMinutes(start_time) IN %(span_dirty_buckets)s "
+        "AND (org_id = toUUID(%(span_page_org)s) OR isNull(org_id)) "
+        f"UNION DISTINCT SELECT unit_id FROM ({previous}) WHERE is_deleted = 0"
+        ") WHERE unit_id > %(span_page_from)s ORDER BY unit_id "
+        f"LIMIT 1 OFFSET {int(rows) - 1}",
+        merge_bindings(
+            params,
+            {
+                "span_page_project": str(writer.lease.project_id),
+                "span_page_org": str(writer.org_id),
+                "span_page_first": dirty[0],
+                "span_page_last": dirty[-1] + QUARTER,
+                "span_page_from": after,
+            },
+        ),
+    )
+    return found[0][0] if found else None
+
+
+def _over_budget(exc):
+    from clickhouse_driver.errors import ServerException
+
+    return (
+        isinstance(exc, ServerException) and "metric_span_capture_budget" in str(exc)
+    ) or (isinstance(exc, MetricVisibilityError) and "exceeds" in str(exc))
+
+
 def freeze_span_fields(writer, attempt, head, definition, scope, *, as_of, cutoff):
     """Freeze one replacement per key, including vanished/filtered/moved sources.
 
-    All dirty buckets share a capture. A span moving between two dirty buckets
-    therefore gets exactly one live row, never a later old-bucket tombstone.
-    Bucket reconstruction subsequently consumes these bytes, NOT mutable spans.
+    Pages are disjoint, key-ordered ranges of span identities, each its own
+    bounded native capture of EVERY dirty bucket for those identities. A span
+    moving between two dirty buckets is in exactly one page, so it still gets
+    exactly one live row, never a later old-bucket tombstone. A dense quarter
+    above the row budget is therefore paged, never refused. A page over the byte
+    budget is retried at half the identities; only one identity over the byte
+    budget on its own fails the pass. Bucket reconstruction subsequently
+    consumes these frozen bytes, NOT mutable spans.
     """
-    with (
-        writer.store.compaction_budget(monotonic() + 600),
-        captured_span_fields(
-            writer, attempt, definition, scope, head=head, as_of=as_of, cutoff=cutoff
-        ) as (fields, previous, params, count, size),
-    ):
+    dirty = _dirty_buckets(attempt)
+    after, rows, floors = "", SPAN_CAPTURE_ROWS, {}
+    with writer.store.compaction_budget(monotonic() + 600):
+        while True:
+            writer.lease.keepalive()
+            through = _span_page_through(writer, head, definition, dirty, after, rows)
+            try:
+                _freeze_span_page(
+                    writer,
+                    attempt,
+                    head,
+                    definition,
+                    scope,
+                    as_of=as_of,
+                    cutoff=cutoff,
+                    unit_range=(after, through),
+                    floors=floors,
+                )
+            except Exception as exc:
+                if rows > 1 and _over_budget(exc):
+                    # Nothing of this page was frozen: budgets are checked
+                    # before either freeze. Retry the same start, smaller.
+                    rows = max(1, rows // 2)
+                    continue
+                raise
+            if through is None:
+                return
+            after = through
+
+
+def _freeze_span_page(
+    writer, attempt, head, definition, scope, *, as_of, cutoff, unit_range, floors
+):
+    with captured_span_fields(
+        writer,
+        attempt,
+        definition,
+        scope,
+        head=head,
+        as_of=as_of,
+        cutoff=cutoff,
+        unit_range=unit_range,
+        floors=floors,
+    ) as (fields, previous, params, count, size):
         tombstones = (
             "SELECT * REPLACE(toUInt8(1) AS is_deleted, 'no_value' AS status, "
             "NULL AS value_bool, NULL AS value_number, NULL AS value_text, "
@@ -545,7 +711,7 @@ def freeze_span_fields(writer, attempt, head, definition, scope, *, as_of, cutof
             "map() AS inputs_text) "
             f"FROM ({previous}) WHERE is_deleted = 0 AND unit_id NOT IN (SELECT unit_id FROM ({fields}))"
         )
-        # Retractions count toward the same pass budget. A small/empty new
+        # Retractions count toward the same page budget. A small/empty new
         # source must not turn into an unbounded historical tombstone stream.
         retired_count, retired_bytes = writer.store.execute(
             f"SELECT count(), sum(length(formatRow('RowBinary', {', '.join(FIELD_VALUES.columns)}))) "

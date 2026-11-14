@@ -127,8 +127,13 @@ def test_rechecks_after_eligibility_before_lease(
     state = MetricProjectRefresh.objects.create(project=project)
     real_eligible = admission.eligible_projects
 
+    class Rows(list):
+        # reserve_projects streams the queryset with iterator(chunk_size=...).
+        def iterator(self, chunk_size=None):
+            return iter(self)
+
     def changed(now):
-        candidates = list(real_eligible(now))
+        candidates = Rows(real_eligible(now))
         assert [row.project_id for row in candidates] == [project.pk]
         change_visibility(project, agent, kind)
         return candidates

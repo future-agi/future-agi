@@ -129,28 +129,52 @@ def test_finite_retention_legacy_manifest_upgrades_from_frozen_backfill(
         "WHERE trace_id = %(trace)s AND id = %(span)s",
         {"trace": trace, "span": span},
     )
-    with pytest.raises(MetricAdmissionUnproven, match="metric_admission_unproven"):
-        writer.refresh(
-            ChangeBatch(
-                (SourceKey(trace, "unproven"),), (), (), (), (), {"watermark_ns": 4}
-            ),
-            [definition],
-            Scope(writer.org_id, writer.workspace_id, observe_project.id),
-            start=AT,
-            end=WINDOW["window_end"],
-            as_of=datetime.now(UTC),
-        )
-    assert (
-        MetricProjectRefresh.for_project(observe_project.id).head_manifest_id
-        == refreshed.id
+    # This expiry retired no live unit (retention covered all the data), so
+    # no retired evidence exists that an unknown span could duplicate: it is
+    # admitted (10M B5). Admission proof after a live retirement is covered by
+    # test_units_arriving_around_a_live_purge_are_admitted_without_proof.
+    assert not MetricProjectRefresh.for_project(
+        observe_project.id
+    ).head_manifest.published_by.source_ceilings.get("retention_retired_live")
+    admitted = writer.refresh(
+        ChangeBatch(
+            (SourceKey(trace, "unproven"),), (), (), (), (), {"watermark_ns": 4}
+        ),
+        [definition],
+        Scope(writer.org_id, writer.workspace_id, observe_project.id),
+        start=AT,
+        end=WINDOW["window_end"],
+        as_of=datetime.now(UTC),
     )
+    assert admitted.id != refreshed.id
+    # 'unproven' is a distinct live span id (not a revision of a counted one),
+    # inside retention; the KPI equals the truth computed from the live spans.
+    live = writer.store.execute(
+        "SELECT id, attrs_number['y'] FROM spans WHERE project_id = %(project)s "
+        "AND start_time >= %(start)s AND start_time < %(end)s "
+        "AND mapContains(attrs_number, 'y') ORDER BY id",
+        {
+            "project": str(observe_project.id),
+            "start": WINDOW["window_start"],
+            "end": WINDOW["window_end"],
+        },
+    )
+    ids_live = [row[0] for row in live]
+    assert len(ids_live) == len(set(ids_live)) and "unproven" in ids_live
+    truth = sum(row[1] for row in live) / len(live)
+    assert truth == pytest.approx(10 / 3)  # mean(2, 6, 2)
+    assert reads.read_kpi(metric, WINDOW, store=writer.store)["current"][
+        "value"
+    ] == pytest.approx(truth)
     # The upgraded evidence is also sufficient for later physical retirement.
     writer.store.execute("TRUNCATE TABLE spans")
     writer.retention_days = lambda: 1
     assert expire_project(writer, [definition], retention_days=writer.retention_days)[
         "purged"
     ]
-    assert reads.read_kpi(metric, WINDOW, store=writer.store)["current"]["value"] == 4
+    assert reads.read_kpi(metric, WINDOW, store=writer.store)["current"][
+        "value"
+    ] == pytest.approx(10 / 3)
 
 
 def two_publications(writer, workspace, project):

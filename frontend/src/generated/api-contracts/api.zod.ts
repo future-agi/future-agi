@@ -64657,6 +64657,10 @@ export const tracerDerivedMetricsDriversResponseProvenanceBackfillDaysDoneMin = 
 
 export const tracerDerivedMetricsDriversResponseProvenanceBackfillDaysTotalMin = 0;
 
+export const tracerDerivedMetricsDriversResponseNonfinalBucketsMin = 0;
+
+export const tracerDerivedMetricsDriversResponseOpenUnitsMin = 0;
+
 export const tracerDerivedMetricsDriversResponseResultsItemEligibleCountMin = 0;
 
 export const tracerDerivedMetricsDriversResponseResultsItemEvaluatedCountMin = 0;
@@ -64691,7 +64695,7 @@ export const TracerDerivedMetricsDriversResponse = zod.object({
       .datetime({ offset: true })
       .optional()
       .describe(
-        "forward: units starting at or after this instant are not calculated yet (the consumed source cut, or a pending burst sweep's floor)",
+        "forward: nothing starting at or after this 15-minute boundary is calculated yet (the consumed source cut, or a pending burst sweep's floor)",
       ),
   }),
   effective_window: zod.object({
@@ -64699,6 +64703,27 @@ export const TracerDerivedMetricsDriversResponse = zod.object({
     window_end: zod.string().datetime({ offset: true }),
     rounding: zod.string().min(1).describe("Rounded to 15 minutes"),
   }),
+  complete_through: zod
+    .string()
+    .datetime({ offset: true })
+    .optional()
+    .describe(
+      "forward: end of the window's contiguous final prefix. Values are computed over the window's final buckets only (calculated, past the settle interval, holding no open unit)",
+    ),
+  partial: zod
+    .boolean()
+    .optional()
+    .describe("true when any bucket of the window is not final"),
+  nonfinal_buckets: zod
+    .number()
+    .min(tracerDerivedMetricsDriversResponseNonfinalBucketsMin)
+    .optional()
+    .describe("15-minute buckets of the window left out of the value"),
+  open_units: zod
+    .number()
+    .min(tracerDerivedMetricsDriversResponseOpenUnitsMin)
+    .optional()
+    .describe("units in the window refresh still keeps open"),
   results: zod.array(
     zod.object({
       unit_id: zod.string().min(1),
@@ -65675,6 +65700,10 @@ export const tracerDerivedMetricsKpiResponseProvenanceBackfillDaysDoneMin = 0;
 
 export const tracerDerivedMetricsKpiResponseProvenanceBackfillDaysTotalMin = 0;
 
+export const tracerDerivedMetricsKpiResponseNonfinalBucketsMin = 0;
+
+export const tracerDerivedMetricsKpiResponseOpenUnitsMin = 0;
+
 export const tracerDerivedMetricsKpiResponseCurrentEligibleCountMin = 0;
 
 export const tracerDerivedMetricsKpiResponseCurrentEvaluatedCountMin = 0;
@@ -65731,7 +65760,7 @@ export const TracerDerivedMetricsKpiResponse = zod.object({
       .datetime({ offset: true })
       .optional()
       .describe(
-        "forward: units starting at or after this instant are not calculated yet (the consumed source cut, or a pending burst sweep's floor)",
+        "forward: nothing starting at or after this 15-minute boundary is calculated yet (the consumed source cut, or a pending burst sweep's floor)",
       ),
   }),
   effective_window: zod.object({
@@ -65739,6 +65768,27 @@ export const TracerDerivedMetricsKpiResponse = zod.object({
     window_end: zod.string().datetime({ offset: true }),
     rounding: zod.string().min(1).describe("Rounded to 15 minutes"),
   }),
+  complete_through: zod
+    .string()
+    .datetime({ offset: true })
+    .optional()
+    .describe(
+      "forward: end of the window's contiguous final prefix. Values are computed over the window's final buckets only (calculated, past the settle interval, holding no open unit)",
+    ),
+  partial: zod
+    .boolean()
+    .optional()
+    .describe("true when any bucket of the window is not final"),
+  nonfinal_buckets: zod
+    .number()
+    .min(tracerDerivedMetricsKpiResponseNonfinalBucketsMin)
+    .optional()
+    .describe("15-minute buckets of the window left out of the value"),
+  open_units: zod
+    .number()
+    .min(tracerDerivedMetricsKpiResponseOpenUnitsMin)
+    .optional()
+    .describe("units in the window refresh still keeps open"),
   current: zod.object({
     value: zod.number(),
     point_status: zod.enum([
@@ -65752,6 +65802,7 @@ export const TracerDerivedMetricsKpiResponse = zod.object({
       "retention_expired",
       "sampled_inputs_not_supported",
       "not_calculated",
+      "settling",
     ]),
     rate_eligible: zod.boolean(),
     weighted: zod.boolean(),
@@ -65843,6 +65894,7 @@ export const TracerDerivedMetricsKpiResponse = zod.object({
       "retention_expired",
       "sampled_inputs_not_supported",
       "not_calculated",
+      "settling",
     ]),
     rate_eligible: zod.boolean(),
     weighted: zod.boolean(),
@@ -67321,7 +67373,7 @@ export const TracerDerivedMetricsTrendResponse = zod.object({
       .datetime({ offset: true })
       .optional()
       .describe(
-        "forward: units starting at or after this instant are not calculated yet (the consumed source cut, or a pending burst sweep's floor)",
+        "forward: nothing starting at or after this 15-minute boundary is calculated yet (the consumed source cut, or a pending burst sweep's floor)",
       ),
   }),
   effective_window: zod.object({
@@ -67329,6 +67381,10 @@ export const TracerDerivedMetricsTrendResponse = zod.object({
     window_end: zod.string().datetime({ offset: true }),
     rounding: zod.string().min(1).describe("Rounded to 15 minutes"),
   }),
+  partial: zod
+    .boolean()
+    .optional()
+    .describe("true when any point is not_calculated or settling"),
   results: zod.array(
     zod.object({
       value: zod.number(),
@@ -67343,6 +67399,7 @@ export const TracerDerivedMetricsTrendResponse = zod.object({
         "retention_expired",
         "sampled_inputs_not_supported",
         "not_calculated",
+        "settling",
       ]),
       rate_eligible: zod.boolean(),
       weighted: zod.boolean(),
@@ -67461,6 +67518,10 @@ export const tracerDerivedMetricsUnitValuesResponseProvenanceBackfillDaysDoneMin
 
 export const tracerDerivedMetricsUnitValuesResponseProvenanceBackfillDaysTotalMin = 0;
 
+export const tracerDerivedMetricsUnitValuesResponseNonfinalBucketsMin = 0;
+
+export const tracerDerivedMetricsUnitValuesResponseOpenUnitsMin = 0;
+
 export const tracerDerivedMetricsUnitValuesResponseResultsItemEligibleCountMin = 0;
 
 export const tracerDerivedMetricsUnitValuesResponseResultsItemEvaluatedCountMin = 0;
@@ -67497,7 +67558,7 @@ export const TracerDerivedMetricsUnitValuesResponse = zod.object({
       .datetime({ offset: true })
       .optional()
       .describe(
-        "forward: units starting at or after this instant are not calculated yet (the consumed source cut, or a pending burst sweep's floor)",
+        "forward: nothing starting at or after this 15-minute boundary is calculated yet (the consumed source cut, or a pending burst sweep's floor)",
       ),
   }),
   effective_window: zod.object({
@@ -67505,6 +67566,27 @@ export const TracerDerivedMetricsUnitValuesResponse = zod.object({
     window_end: zod.string().datetime({ offset: true }),
     rounding: zod.string().min(1).describe("Rounded to 15 minutes"),
   }),
+  complete_through: zod
+    .string()
+    .datetime({ offset: true })
+    .optional()
+    .describe(
+      "forward: end of the window's contiguous final prefix. Values are computed over the window's final buckets only (calculated, past the settle interval, holding no open unit)",
+    ),
+  partial: zod
+    .boolean()
+    .optional()
+    .describe("true when any bucket of the window is not final"),
+  nonfinal_buckets: zod
+    .number()
+    .min(tracerDerivedMetricsUnitValuesResponseNonfinalBucketsMin)
+    .optional()
+    .describe("15-minute buckets of the window left out of the value"),
+  open_units: zod
+    .number()
+    .min(tracerDerivedMetricsUnitValuesResponseOpenUnitsMin)
+    .optional()
+    .describe("units in the window refresh still keeps open"),
   results: zod.array(
     zod.object({
       unit_id: zod.string().min(1),
@@ -67561,6 +67643,10 @@ export const tracerDerivedMetricsUnitValuesCreateResponseProvenanceGenerationMin
 export const tracerDerivedMetricsUnitValuesCreateResponseProvenanceBackfillDaysDoneMin = 0;
 
 export const tracerDerivedMetricsUnitValuesCreateResponseProvenanceBackfillDaysTotalMin = 0;
+
+export const tracerDerivedMetricsUnitValuesCreateResponseNonfinalBucketsMin = 0;
+
+export const tracerDerivedMetricsUnitValuesCreateResponseOpenUnitsMin = 0;
 
 export const tracerDerivedMetricsUnitValuesCreateResponseResultsItemEligibleCountMin = 0;
 

@@ -491,6 +491,10 @@ def test_takeover_byte_partition_does_not_partition_live_source_capture(monkeypa
         return [(0,)]
 
     monkeypatch.setattr(refresh, "unit_values_select", source)
+    # The capture's start floor is its own statement, not the source modeled here.
+    monkeypatch.setattr(
+        refresh.RefreshWriter, "_unit_source_floor", lambda *_args: None
+    )
     writer = refresh.RefreshWriter(
         SimpleNamespace(project_id=head.project_id),
         SimpleNamespace(execute=execute),

@@ -128,6 +128,8 @@ class MetricReadBudget(arrivals._ReadBudget):
         self.rows = 0
         self.settings = {
             "max_threads": 2,
+            # See queries.QUERY_SETTINGS: one index-analysis thread.
+            "max_threads_for_indexes": 1,
             "max_memory_usage": max_memory_bytes,
             "max_bytes_to_read": max_read_bytes,
             "max_result_rows": max_rows,

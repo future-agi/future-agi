@@ -258,9 +258,19 @@ def eligible_projects(now: datetime):
             | Q(head_manifest__published_by__source_ceilings__recovery_pending=True)
             | Q(next_due_at__lte=now)
         )
-        # Least recently admitted first, not oldest success: endless chunks and
-        # failing projects must move to the back of the same fair queue.
-        .order_by(Coalesce("last_started_at", "created_at"), "project_id")
+        # Healthy projects first: a project still failing after its backoff
+        # must not take the single slot from projects that make progress (10M:
+        # failing projects kept taking turns from a catching-up burst). Then
+        # least recently admitted first, not oldest success: endless chunks
+        # move to the back of the same fair queue. A failing project still runs
+        # whenever no healthy project is eligible.
+        .order_by(
+            ExpressionWrapper(
+                Q(consecutive_failures__gt=0), output_field=BooleanField()
+            ),
+            Coalesce("last_started_at", "created_at"),
+            "project_id",
+        )
     )
 
 
@@ -484,6 +494,39 @@ def dispatch(enqueue: Callable[[dict], None], *, clock: Callable = timezone.now)
                         reservation, now=clock(), code="metric_dispatch_failed"
                     )
                     _release_queued(reservation)
+    return count
+
+
+# The dispatch activity runs once a minute with a 50 s limit. Reserving only
+# at that tick left the single slot idle 76% of the time on the 10M run (a
+# 12 s pass, then a wait for the next tick), so one tick keeps filling freed
+# slots, polling this often, until it has run this long.
+DISPATCH_TICK_SECONDS = 40
+DISPATCH_POLL_SECONDS = 2
+
+
+def dispatch_until(
+    enqueue: Callable[[dict], None],
+    *,
+    clock: Callable = timezone.now,
+    seconds: float = DISPATCH_TICK_SECONDS,
+    poll: float = DISPATCH_POLL_SECONDS,
+    sleep: Callable[[float], None] | None = None,
+) -> int:
+    """dispatch(), then again whenever a slot frees, until ``seconds`` pass.
+
+    Every round is an ordinary dispatch: the same K slots, eligibility,
+    healthy-first fair order and dispatch lock, so a freed slot is refilled
+    within ``poll`` seconds instead of at the next tick.
+    """
+    from time import sleep as default_sleep
+
+    sleep = sleep or default_sleep
+    deadline = monotonic() + seconds
+    count = dispatch(enqueue, clock=clock)
+    while monotonic() + poll < deadline:
+        sleep(poll)
+        count += dispatch(enqueue, clock=clock)
     return count
 
 
@@ -773,7 +816,7 @@ def run_project_pass(lease: ProjectLease, purpose: str) -> None:
             # incremental sweep. Each chunk still includes incremental discovery.
             runner.run_pass(max_chunks=backfill.MAX_CHUNKS_PER_PASS)
         elif purpose == "repair" and state.pending_repair:
-            runner.run_repair_page()
+            runner.run_repair_pages()
         else:
             run_incremental(writer, analytics, scope, state)
         writer.collect_garbage()
@@ -800,7 +843,7 @@ def run_incremental(writer, analytics, scope, state) -> None:
         backfill.queue_overflow_sweep(
             analytics, writer, state.head_manifest, definitions, now=now
         )
-        backfill.BackfillRunner(writer, analytics, scope).run_repair_page(
+        backfill.BackfillRunner(writer, analytics, scope).run_repair_pages(
             skip_incremental=True
         )
         return

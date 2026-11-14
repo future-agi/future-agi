@@ -385,9 +385,11 @@ def _overflowing_forward_project(runner, observe_project, workspace, monkeypatch
 
 @pytest.mark.django_db
 def test_forward_overflow_sweeps_only_the_burst_never_since_enrollment(
-    setup_runner, observe_project, workspace, monkeypatch
+    setup_runner, observe_project, workspace, monkeypatch, settings
 ):
     """An overflow long after enrollment sweeps from the burst's own starts."""
+    # One page per pass here; test_a_pass_sweeps_burst_pages covers the loop.
+    settings.METRICS_BURST_MAX_PAGES = 1
     runner, clock = setup_runner
     draft, coverage = _overflowing_forward_project(
         runner, observe_project, workspace, monkeypatch
@@ -601,9 +603,11 @@ def test_only_a_discovery_memory_limit_is_classified_as_overflow(
 
 @pytest.mark.django_db
 def test_memory_limited_discovery_makes_one_durable_repair_page_per_pass(
-    setup_runner, observe_project, workspace, monkeypatch
+    setup_runner, observe_project, workspace, monkeypatch, settings
 ):
     """241 -> overflow cannot loop: one discovery and one page per pass."""
+    # One page per pass here; test_a_pass_sweeps_burst_pages covers the loop.
+    settings.METRICS_BURST_MAX_PAGES = 1
     runner, clock = setup_runner
     draft = make_version(observe_project, workspace)
     monkeypatch.setattr(backfill, "history_window_spans", _size(1))
@@ -890,23 +894,33 @@ def test_forward_window_past_the_consumed_cut_is_not_calculated_yet_never_no_dat
     enabled_metrics,
 ):
     """10M BIG: every pass since 22:20 failed, yet KPI [22:15, 22:31) said 200
-    no_data with eligible_count 0 while ~4.6k conversations sat uncalculated.
+    no_data with eligible_count 0 while ~4.6k conversations sat uncalculated;
+    10M OVER2: [00:15, 00:30) said no_data with 5 s calculated and every unit
+    still open.
 
-    The pinned head reflects arrivals up to the consumed watermark, and a
-    pending burst sweep has not re-read units from its floor: nothing starting
-    at or after the lesser is calculated. A window starting there is "not
-    calculated yet" (KPI, trend, drivers, snapshots), a window running past it
-    carries calculated_through, and trend points past it are not_calculated.
+    calculated_through is the lesser of the consumed watermark and a pending
+    burst floor, floored to its 15-minute bucket; the read cut is also at most
+    that less the settle interval (a unit first arriving later may not have
+    arrived), floored (open units are covered with ClickHouse in
+    test_reads_answer_only_final_buckets_never_partial_or_open_ones). A window
+    starting at or after the cut is "not calculated yet" with its reason (KPI,
+    trend, drivers, snapshots); a window running past it is computed up to it
+    with complete_through and partial; trend points past the calculated bound
+    are not_calculated; and a snapshot must end at or before the cut.
     """
     runner, clock = setup_runner
     draft = make_version(observe_project, workspace)
     DerivedMetricVersion.objects.filter(id=draft.id).update(
         created_at=NOW - timedelta(hours=3)
     )
+    MetricProjectRefresh.objects.filter(project_id=observe_project.id).update(
+        settle_minutes=1
+    )
     monkeypatch.setattr(backfill, "history_window_spans", _size(1))
     assert _enter(runner) == {str(draft.id): "forward"}
     clock[0] = NOW + timedelta(seconds=30)
-    cut = NOW - timedelta(minutes=20)
+    cut = NOW - timedelta(minutes=20)  # 11:40
+    through = NOW - timedelta(minutes=30)  # floor15(11:40 - 1 min settle)
     head = _consume(runner, cut)
     metric = DerivedMetric.objects.select_related("active_version", "project").get(
         id=draft.metric_id
@@ -914,8 +928,8 @@ def test_forward_window_past_the_consumed_cut_is_not_calculated_yet_never_no_dat
     definition = metric.active_version
     assert definition.id == draft.id and str(draft.id) in _prepared(head)
 
-    def window(minutes):
-        return {"window_start": NOW - timedelta(minutes=minutes), "window_end": NOW}
+    def window(minutes, end=NOW):
+        return {"window_start": NOW - timedelta(minutes=minutes), "window_end": end}
 
     def pinned(connection, project_id, *, metric_id=None):
         return nullcontext((head, definition))
@@ -942,55 +956,101 @@ def test_forward_window_past_the_consumed_cut_is_not_calculated_yet_never_no_dat
             for action in ("kpi", "trend", "drivers")
         }
 
-    # The wire: a window starting at the consumed cut is the retryable
-    # not-calculated-yet state with where values stop, never 200 no_data.
-    for action, result in wire(15).items():
-        assert result.status_code == 503, (action, result.status_code, result.data)
-        assert result.data["code"] == "window_not_calculated_yet", action
-        assert result.data["retryable"] is True
-        assert datetime.fromisoformat(result.data["calculated_through"]) == cut
+    # The wire: no whole calculated bucket ([11:30, 11:45) holds 10 calculated
+    # minutes, like OVER's [00:15, 00:30)) is the retryable not-calculated-yet
+    # state with where values stop, never 200 no_data.
+    for minutes in (15, 30):
+        for action, result in wire(minutes).items():
+            assert result.status_code == 503, (action, result.status_code, result.data)
+            assert result.data["code"] == "window_not_calculated_yet", action
+            assert result.data["retryable"] is True
+            assert datetime.fromisoformat(result.data["calculated_through"]) == through
 
-    assert reads.calculated_through(head, definition) == cut
+    assert reads.calculated_through(head, definition) == through
+    # Spans settle once ended: no settle interval, the same bucket here.
+    span = SimpleNamespace(history_mode="forward", level="span")
+    assert reads.calculated_through(head, span) == through
     # A history version has no such bound.
     assert (
         reads.calculated_through(head, SimpleNamespace(history_mode="history")) is None
     )
-    assert reads.require_calculated_window(definition, window(60), head) == cut
+    assert (
+        reads.require_calculated_window(definition, window(60), head).complete_through(
+            window(60)
+        )
+        == through
+    )
     with pytest.raises(reads.MetricUnavailableError) as past:
-        reads.require_calculated_window(definition, window(15), head)
+        reads.require_calculated_window(definition, window(30), head)
     assert past.value.code == "window_not_calculated_yet"
-    assert past.value.calculated_through == cut
+    assert past.value.calculated_through == through
     kpi = reads.read_kpi(metric, window(60), store=object())
-    assert kpi["provenance"]["calculated_through"] == cut
+    assert kpi["provenance"]["calculated_through"] == through
     serialized = MetricReadProvenanceSerializer(kpi["provenance"]).data
-    assert serialized["calculated_through"].startswith(cut.strftime("%Y-%m-%dT%H:%M"))
+    assert serialized["calculated_through"].startswith(
+        through.strftime("%Y-%m-%dT%H:%M")
+    )
     trend = reads.read_trend(metric, {**window(60), "points": 4}, store=object())
     assert [p["point_status"] for p in trend["results"]] == [
         "no_data",
         "no_data",
-        "no_data",  # [11:30, 11:45) runs past the cut but holds calculated units
+        "not_calculated",  # [11:30, 11:45): not a whole calculated bucket
         "not_calculated",
     ]
-    assert trend["provenance"]["calculated_through"] == cut
+    assert trend["provenance"]["calculated_through"] == through
+
+    assert kpi["complete_through"] == through and kpi["partial"] is True
+    assert past.value.reason == "not_calculated"
+    # The default 30-minute settle: a unit first arriving after 11:10 may not
+    # have arrived yet, so only buckets before 11:00 can be final (settling).
+    MetricProjectRefresh.objects.filter(project_id=observe_project.id).update(
+        settle_minutes=30
+    )
+    assert reads.cut_terms(head, definition) == (through, NOW - timedelta(hours=1))
+    assert reads.calculated_through(head, definition) == through
+    with pytest.raises(reads.MetricUnavailableError) as settling:
+        reads.require_calculated_window(definition, window(60), head)
+    assert settling.value.reason == "settling"
+    assert settling.value.calculated_through == NOW - timedelta(hours=1)
+    MetricProjectRefresh.objects.filter(project_id=observe_project.id).update(
+        settle_minutes=1
+    )
+
+    # A durable snapshot must never freeze a partial tail: a window that only
+    # ends after calculated_through is answered by reads but refused for a
+    # snapshot, without creating a pin. One ending there is wholly calculated.
+    with pytest.raises(reads.MetricUnavailableError) as partial:
+        snapshots.request_snapshot(
+            metric, {**window(60), "idempotency_key": str(uuid4())}, None
+        )
+    assert partial.value.code == "window_not_calculated_yet"
+    assert partial.value.calculated_through == through
+    assert not MetricGenerationPin.objects.filter(
+        project_id=observe_project.id, consumer_kind="snapshot"
+    ).exists()
+    assert not reads.require_calculated_window(
+        definition, window(60, end=through), head, whole=True
+    ).nonfinal(window(60, end=through))
 
     # A pending burst sweep has not re-read units from its floor, which can
     # lie before the consumed watermark.
-    floor = NOW - timedelta(minutes=50)
+    floor = NOW - timedelta(minutes=50)  # 11:10, so floor15(11:09) = 11:00
     MetricProjectRefresh.objects.filter(project_id=observe_project.id).update(
         pending_repair=True,
         reconciliation_cursor=changes.ReconciliationCheckpoint(
             started_at=NOW, floor=floor
         ).to_dict(),
     )
-    assert reads.calculated_through(head, definition) == floor
+    assert reads.calculated_through(head, definition) == NOW - timedelta(hours=1)
     with pytest.raises(reads.MetricUnavailableError) as burst:
         reads.require_calculated_window(definition, window(45), head)
-    assert burst.value.calculated_through == floor
-
+    assert burst.value.calculated_through == NOW - timedelta(hours=1)
     for action, result in wire(45).items():
         assert result.status_code == 503, (action, result.status_code, result.data)
         assert result.data["code"] == "window_not_calculated_yet", action
-        assert datetime.fromisoformat(result.data["calculated_through"]) == floor
+        assert datetime.fromisoformat(
+            result.data["calculated_through"]
+        ) == NOW - timedelta(hours=1)
     # A snapshot request is refused the same way, without creating a pin.
     with pytest.raises(reads.MetricUnavailableError) as snapshot:
         snapshots.request_snapshot(
@@ -1007,9 +1067,71 @@ def test_forward_window_past_the_consumed_cut_is_not_calculated_yet_never_no_dat
     MetricProjectRefresh.objects.filter(project_id=observe_project.id).update(
         pending_repair=False, reconciliation_cursor=None
     )
-    clock[0] = NOW + timedelta(minutes=1)
-    idle = _consume(runner, NOW - timedelta(minutes=5))
-    assert reads.calculated_through(idle, definition) == NOW - timedelta(minutes=5)
-    assert reads.require_calculated_window(definition, window(15), idle) == (
-        NOW - timedelta(minutes=5)
+    clock[0] = NOW + timedelta(minutes=2)
+    idle = _consume(runner, NOW + timedelta(minutes=1))
+    assert reads.calculated_through(idle, definition) == NOW
+    finality = reads.require_calculated_window(definition, window(15), idle)
+    assert finality.complete_through(window(15)) == NOW and not finality.nonfinal(
+        window(15)
     )
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    "max_pages, budget_spent, pages, done",
+    [(19, False, 3, True), (2, False, 2, False), (19, True, 1, False)],
+)
+def test_a_pass_sweeps_burst_pages_until_done_within_its_budget(
+    setup_runner,
+    observe_project,
+    workspace,
+    monkeypatch,
+    settings,
+    max_pages,
+    budget_spent,
+    pages,
+    done,
+):
+    """10M Bug 5: a burst sweep published one 1,000-key page per pass, so a
+    275k-span backlog needed ~17 h. A pass now keeps publishing burst pages
+    (each its own durable publication, one discovery per pass) until the sweep
+    completes, METRICS_BURST_MAX_PAGES are published, or the pass's soft
+    budget is spent."""
+    settings.METRICS_BURST_MAX_PAGES = max_pages
+    runner, clock = setup_runner
+    _overflowing_forward_project(runner, observe_project, workspace, monkeypatch)
+    calls, heads = [], []
+    monkeypatch.setattr(
+        changes,
+        "arrival_start_floor",
+        _dated(NOW - timedelta(minutes=10)),
+        raising=False,
+    )
+    monkeypatch.setattr(changes, "reconcile_page", _burst_sweep(calls, pages=3))
+    publish = runner.writer.refresh
+
+    def refresh(*args, **kwargs):
+        head = publish(*args, **kwargs)
+        heads.append(head.id)
+        return head
+
+    runner.writer.refresh = refresh
+    compactions = []
+    compact = runner.writer.compact
+
+    def counted():
+        compactions.append(True)
+        return compact()
+
+    runner.writer.compact = counted
+    ticks = iter(range(0, 10_000, 30 if budget_spent else 1))
+    monkeypatch.setattr(backfill, "monotonic", lambda: next(ticks))
+    clock[0] = NOW + timedelta(minutes=1)
+    state = MetricProjectRefresh.for_project(observe_project.id)
+    admission.run_incremental(runner.writer, object(), runner.scope, state)
+    assert len(calls) == pages and len(set(heads)) == pages
+    # One compaction per pass at most (the first page's), never one per page.
+    assert len(compactions) <= 1
+    state = MetricProjectRefresh.for_project(observe_project.id)
+    assert state.pending_repair is not done
+    assert (state.reconciliation_cursor["phase"] == "complete") is done

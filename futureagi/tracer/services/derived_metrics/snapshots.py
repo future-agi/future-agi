@@ -157,8 +157,9 @@ def request_snapshot(metric, data, user):
         head = MetricProjectRefresh.for_project(metric.project_id).head_manifest
         require_forward_definition_published(head, metric.active_version)
         if metric.active_version is not None:
-            # Likewise refuse a window nothing of which is calculated yet.
-            require_calculated_window(metric.active_version, window, head)
+            # Likewise refuse a window not wholly calculated yet: a durable
+            # snapshot must never freeze a partial tail.
+            require_calculated_window(metric.active_version, window, head, whole=True)
         supported, reason = snapshot_support(metric.active_version)
         if not supported:
             raise SnapshotNotSupportedError(reason)
@@ -191,7 +192,9 @@ def request_snapshot(metric, data, user):
                 "snapshot_unavailable",
                 "No usable committed result is available to capture.",
             ) from exc
-        require_calculated_window(pin.definition_version, window, pin.manifest)
+        require_calculated_window(
+            pin.definition_version, window, pin.manifest, whole=True
+        )
         run = DerivedMetricRun.objects.create(
             id=run_id,
             definition=pin.definition_version,
@@ -629,7 +632,16 @@ def capture_select(run, manifest, start, end):
 def _assert_retained(store, run, manifest, policy):
     from tracer.services.derived_metrics.reads import require_calculated_window
 
-    require_calculated_window(run.definition, {"window_start": run.window_start})
+    # At capture the units store is at hand: a durable snapshot must also hold
+    # no unit refresh still keeps open (read_cut), never a partial tail.
+    require_calculated_window(
+        run.definition,
+        {"window_start": run.window_start, "window_end": run.window_end},
+        manifest,
+        whole=True,
+        store=store,
+        metric=run.definition.metric,
+    )
     if not run.pin or not run.pin.is_usable():
         raise MetricStateConflict("expired capture")
     cutoff = retention_cutoff(policy(run.definition.metric.organization_id))

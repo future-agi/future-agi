@@ -701,8 +701,15 @@ class MetricUnavailableSerializer(serializers.Serializer):
     calculated_through = serializers.DateTimeField(
         required=False,
         help_text=(
-            "window_not_calculated_yet: units starting at or after this instant "
-            "are not calculated yet"
+            "window_not_calculated_yet: the read cut; values are final only before it"
+        ),
+    )
+    reason = serializers.ChoiceField(
+        choices=["not_calculated", "settling"],
+        required=False,
+        help_text=(
+            "window_not_calculated_yet: not_calculated (past the calculated "
+            "bound) or settling (calculated, but holding open units)"
         ),
     )
 
@@ -794,8 +801,9 @@ class MetricReadProvenanceSerializer(serializers.Serializer):
         allow_null=True,
         required=False,
         help_text=(
-            "forward: units starting at or after this instant are not calculated "
-            "yet (the consumed source cut, or a pending burst sweep's floor)"
+            "forward: nothing starting at or after this 15-minute boundary is "
+            "calculated yet (the consumed source cut, or a pending burst sweep's "
+            "floor)"
         ),
     )
 
@@ -820,6 +828,7 @@ class MetricPointSerializer(serializers.Serializer):
             "retention_expired",
             "sampled_inputs_not_supported",
             "not_calculated",
+            "settling",
         ]
     )
     rate_eligible = serializers.BooleanField()
@@ -845,9 +854,31 @@ class MetricKpiPreviousPointSerializer(MetricPointSerializer):
         swagger_schema_fields = {"x-nullable": True}
 
 
+_COMPLETE_THROUGH_HELP = (
+    "forward: end of the window's contiguous final prefix. Values are computed "
+    "over the window's final buckets only (calculated, past the settle "
+    "interval, holding no open unit)"
+)
+_PARTIAL_HELP = "true when any bucket of the window is not final"
+
+
 class MetricKpiSerializer(serializers.Serializer):
     provenance = MetricReadProvenanceSerializer()
     effective_window = MetricEffectiveWindowSerializer()
+    complete_through = serializers.DateTimeField(
+        allow_null=True, required=False, help_text=_COMPLETE_THROUGH_HELP
+    )
+    partial = serializers.BooleanField(required=False, help_text=_PARTIAL_HELP)
+    nonfinal_buckets = serializers.IntegerField(
+        min_value=0,
+        required=False,
+        help_text="15-minute buckets of the window left out of the value",
+    )
+    open_units = serializers.IntegerField(
+        min_value=0,
+        required=False,
+        help_text="units in the window refresh still keeps open",
+    )
     current = MetricPointSerializer()
     previous = MetricKpiPreviousPointSerializer(allow_null=True)
     delta = serializers.FloatField(allow_null=True)
@@ -868,6 +899,9 @@ class MetricTrendPointSerializer(MetricPointSerializer):
 class MetricTrendSerializer(serializers.Serializer):
     provenance = MetricReadProvenanceSerializer()
     effective_window = MetricEffectiveWindowSerializer()
+    partial = serializers.BooleanField(
+        required=False, help_text="true when any point is not_calculated or settling"
+    )
     results = MetricTrendPointSerializer(many=True)
 
 
@@ -899,6 +933,20 @@ class MetricUnitValueSerializer(serializers.Serializer):
 class MetricDriversSerializer(serializers.Serializer):
     provenance = MetricReadProvenanceSerializer()
     effective_window = MetricEffectiveWindowSerializer()
+    complete_through = serializers.DateTimeField(
+        allow_null=True, required=False, help_text=_COMPLETE_THROUGH_HELP
+    )
+    partial = serializers.BooleanField(required=False, help_text=_PARTIAL_HELP)
+    nonfinal_buckets = serializers.IntegerField(
+        min_value=0,
+        required=False,
+        help_text="15-minute buckets of the window left out of the value",
+    )
+    open_units = serializers.IntegerField(
+        min_value=0,
+        required=False,
+        help_text="units in the window refresh still keeps open",
+    )
     results = MetricUnitValueSerializer(many=True)
     next_cursor = serializers.CharField(allow_null=True)
 

@@ -41,6 +41,11 @@ MAX_COMPACTION_BYTES = 4 * 1024 * 1024
 WRITE_SETTINGS = {
     "async_insert": 0,
     "max_threads": 2,
+    # Parallel primary-key/skip-index analysis keeps untracked per-thread
+    # memory proportional to parts x IN-set size and charges it at once: one
+    # 1,000-unit page on 773 spans parts peaked at 1.19 GiB (max_threads 2)
+    # versus 102 MB with a single index-analysis thread.
+    "max_threads_for_indexes": 1,
     "max_memory_usage": 512 * 1024 * 1024,
     "max_execution_time": 60,
     "use_query_cache": 0,

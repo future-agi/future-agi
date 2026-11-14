@@ -11,6 +11,7 @@ export const metricCopy = {
   emptyText: "Empty text",
   inProgress: "In progress",
   notCalculated: "Not calculated yet",
+  settling: "Not final yet: conversations still open",
   loading: "Loading metric value…",
   onDemand: "Calculating for this window…",
   stale: "Stale value",
@@ -64,13 +65,20 @@ export const forwardCoverageCopy = (coverageStart) =>
 /** Where a forward metric's calculated values stop, when a window runs past
  * it: nothing starting at or after it is calculated yet. */
 export const calculatedThroughCopy = (through) =>
-  `Calculated through ${formatMetricTime(through)}. Later values are not calculated yet.`;
+  `Final through ${formatMetricTime(through)}. Later values are not calculated yet or still settling.`;
 
-/** A window that starts after a forward metric's calculated values stop. */
-export const windowNotCalculatedYetCopy = (through) =>
-  through
-    ? `Not calculated yet. Values are calculated through ${formatMetricTime(through)}. Choose an earlier window or check back after the next calculation.`
-    : "Not calculated yet. Choose an earlier window or check back after the next calculation.";
+/** A window with no final values yet: past where values are calculated
+ * (not_calculated), or calculated but still holding open conversations
+ * (settling). ``through`` is where final values stop. */
+export const windowNotCalculatedYetCopy = (through, reason) => {
+  const why =
+    reason === "settling"
+      ? "Not final yet: conversations in this window are still open."
+      : "Not calculated yet.";
+  return through
+    ? `${why} Values are final through ${formatMetricTime(through)}. Choose an earlier window or check back after the next calculation.`
+    : `${why} Choose an earlier window or check back after the next calculation.`;
+};
 
 /** A window that holds no whole 15-minute period of a forward metric's values
  * yet (coverageReadableAt says when it will). */

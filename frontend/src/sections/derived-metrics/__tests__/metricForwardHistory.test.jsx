@@ -93,28 +93,30 @@ it("treats a forward window inside the coverage-start bucket as pending", () => 
   });
 });
 
-describe("a forward metric whose latest calculations are due or failing", () => {
-  const through = "2026-11-07T22:14:28.000Z";
+describe("a forward metric whose latest values are not final yet", () => {
+  const through = "2026-11-07T22:15:00.000Z";
 
-  it("says where calculated values stop when the window runs past them", () => {
+  it("says where final values stop when the read is partial", () => {
     render(
       <MetricStatusLine
-        provenance={{ ...provenance, ...forward, calculated_through: through }}
+        provenance={{ ...provenance, ...forward }}
         definition={{ backfill_status: "complete" }}
-        window={window}
+        completeThrough={through}
+        partial
       />,
     );
     expect(screen.getByTestId("metric-calculated-through")).toHaveTextContent(
-      `Calculated through ${formatMetricTime(through)}. Later values are not calculated yet.`,
+      `Final through ${formatMetricTime(through)}. Later values are not calculated yet or still settling.`,
     );
   });
 
-  it("says nothing more when the window ends within calculated values", () => {
+  it("says nothing more when the whole window is final", () => {
     render(
       <MetricStatusLine
-        provenance={{ ...provenance, ...forward, calculated_through: through }}
+        provenance={{ ...provenance, ...forward }}
         definition={{ backfill_status: "complete" }}
-        window={{ ...window, window_end: "2026-11-07T22:00:00.000Z" }}
+        completeThrough={through}
+        partial={false}
       />,
     );
     expect(
@@ -122,22 +124,44 @@ describe("a forward metric whose latest calculations are due or failing", () => 
     ).not.toBeInTheDocument();
   });
 
-  it("never shows a window past them as no data", () => {
+  it("never shows a window without final values as no data", () => {
     expect(
       metricReadMessage(
-        { code: "window_not_calculated_yet", calculated_through: through },
+        {
+          code: "window_not_calculated_yet",
+          calculated_through: through,
+          reason: "not_calculated",
+        },
         "KPI",
         forward,
       ),
     ).toBe(
-      `Not calculated yet. Values are calculated through ${formatMetricTime(through)}. Choose an earlier window or check back after the next calculation.`,
+      `Not calculated yet. Values are final through ${formatMetricTime(through)}. Choose an earlier window or check back after the next calculation.`,
     );
-    const state = pointValueState({
-      point_status: "not_calculated",
-      value: null,
-      value_mode: "materialized",
-    });
-    expect(state.state).toBe("pending");
-    expect(state.label).toBe("Not calculated yet");
+    expect(
+      metricReadMessage(
+        {
+          code: "window_not_calculated_yet",
+          calculated_through: through,
+          reason: "settling",
+        },
+        "KPI",
+        forward,
+      ),
+    ).toBe(
+      `Not final yet: conversations in this window are still open. Values are final through ${formatMetricTime(through)}. Choose an earlier window or check back after the next calculation.`,
+    );
+    for (const [status, label] of [
+      ["not_calculated", "Not calculated yet"],
+      ["settling", "Not final yet: conversations still open"],
+    ]) {
+      const state = pointValueState({
+        point_status: status,
+        value: null,
+        value_mode: "materialized",
+      });
+      expect(state.state).toBe("pending");
+      expect(state.label).toBe(label);
+    }
   });
 });

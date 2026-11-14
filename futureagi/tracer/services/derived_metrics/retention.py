@@ -607,6 +607,64 @@ def retirement_plan(writer, draft, head, definitions, cutoff, *, captures=None):
     return _retirement_plan(writer, draft, head, definitions, cutoff, captures)
 
 
+def _published_live_expiry(writer, head, cutoff, span_dirty):
+    """Whether this expiry retires LIVE unit evidence a previous head published.
+
+    Only that creates the R02 admission ambiguity (TH-8975): a unit whose
+    committed evidence was retired could later reappear looking new. A first
+    publication has no published evidence; tombstones carry no contribution;
+    owner-link, current-fact and payload scrubs retire no unit.
+    """
+    if head is None:
+        return False
+    if span_dirty:
+        return True
+    fields, params = committed_rows_select(
+        FIELD_VALUES, head, org_id=writer.org_id, project_id=writer.lease.project_id
+    )
+    return bool(
+        writer.store.execute(
+            f"SELECT count() FROM ({fields}) WHERE is_deleted = 0 "
+            "AND unit_start < toDateTime64(%(live_expiry_cutoff)s, 6, 'UTC')",
+            {**params, "live_expiry_cutoff": cutoff},
+        )[0][0]
+    )
+
+
+def _floor_ceilings(writer, head, cutoff, span_dirty):
+    """The retention floor (stamped exactly as before) and its admission terms.
+
+    retention_retired_live: whether any purge so far retired live published
+    unit evidence. Only then can a unit without anchor proof be retired
+    evidence reappearing, so only then does admission require proof.
+
+    retention_floor_at: a span created after it cannot be evidence a purge
+    retired. A purge retires only what its head captured, and every capture
+    reads created_at <= its as_of, so this is the purged head's capture
+    high-water less discovery's late-arrival OVERLAP (a span created just
+    before a capture but inserted after it was not captured). None when that
+    high-water is unknown: then nothing is exempt.
+    """
+    from tracer.services.derived_metrics.changes import OVERLAP
+    from tracer.services.derived_metrics.refresh import captured_through
+
+    inherited = head.published_by.source_ceilings if head is not None else {}
+    prior = inherited.get(
+        "retention_retired_live", bool(inherited.get("retention_floor"))
+    )
+    ceilings = {"retention_floor": cutoff}
+    if not _published_live_expiry(writer, head, cutoff, span_dirty):
+        ceilings["retention_retired_live"] = bool(prior)
+        ceilings["retention_floor_at"] = inherited.get("retention_floor_at")
+        return ceilings
+    captured = captured_through(inherited)
+    ceilings["retention_retired_live"] = True
+    ceilings["retention_floor_at"] = (
+        None if captured is None else (captured - OVERLAP).isoformat()
+    )
+    return ceilings
+
+
 def _retirement_plan(writer, draft, head, definitions, cutoff, captures):
     from tracer.services.derived_metrics.span_evidence import (
         require_retirement_evidence,
@@ -719,6 +777,10 @@ def _retirement_plan(writer, draft, head, definitions, cutoff, captures):
     )
     if blocked:
         raise MetricStateConflict("retention proposal lacks complete membership")
+    # Native reads stay outside the lifecycle lock below.
+    floor_terms = (
+        _floor_ceilings(writer, head, cutoff, span_dirty) if logical_expiry else {}
+    )
     with serialized_project(writer.lease.project_id):
         # Classification copied private bytes without a lifecycle lock. A
         # revocation need not change the lease or the head id. Recheck both the
@@ -740,7 +802,7 @@ def _retirement_plan(writer, draft, head, definitions, cutoff, captures):
             purpose="compaction",
             ceilings={
                 **draft.source_ceilings,
-                **({"retention_floor": cutoff} if logical_expiry else {}),
+                **floor_terms,
                 "logical_expiry": logical_expiry,
                 # GC must scrub consumed PG-only drafts even when safe pins stay.
                 "private_cleanup_through": draft.generation,
@@ -1339,6 +1401,8 @@ def expire_project(writer, definitions, *, retention_days, now=None, as_of=None)
         spans=any(d.level == "span" for d in definitions),
     )
     recovery_pending = any(recovery.values())
+    # Native reads stay outside the lifecycle lock below.
+    floor_terms = _floor_ceilings(writer, head, cutoff, span_dirty)
     with serialized_project(project_id):
         # Classification ran without the lifecycle lock. Revocation need not
         # change the head id or lease when there were no open predecessors, so
@@ -1353,7 +1417,7 @@ def expire_project(writer, definitions, *, retention_days, now=None, as_of=None)
             purpose="compaction",
             ceilings={
                 "retention_cutoff": cutoff,
-                "retention_floor": cutoff,
+                **floor_terms,
                 "recovery_pending": recovery_pending,
                 # Expired handoffs are discharged without retaining their ids
                 # or advancing discovery; blocked work keeps only its flag.

@@ -107,6 +107,7 @@ class MetricViewSet(viewsets.GenericViewSet):
                         if exc.calculated_through
                         else {}
                     ),
+                    **({"reason": exc.reason} if exc.reason else {}),
                 },
                 status=503,
             )

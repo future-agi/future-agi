@@ -373,7 +373,8 @@ export default function MetricDrivers({ metric, scope, window }) {
               <MetricStatusLine
                 provenance={query.data.provenance}
                 definition={definition}
-                window={query.data.effective_window}
+                completeThrough={query.data.complete_through}
+                partial={query.data.partial}
               />
             </Box>
           </Stack>

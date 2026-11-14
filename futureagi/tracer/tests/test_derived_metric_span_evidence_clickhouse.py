@@ -101,13 +101,11 @@ def test_span_totals_use_frozen_fields_even_if_source_changes_before_bucket_buil
     assert reads.read_kpi(metric, WINDOW, store=writer.store)["current"]["value"] == 4
 
 
-@pytest.mark.parametrize(
-    "bound,value", [("SPAN_CAPTURE_ROWS", 2), ("SPAN_CAPTURE_BYTES", 1)]
-)
 def test_span_capture_overflow_never_publishes_partial_evidence_or_totals(
-    live_writer, workspace, observe_project, monkeypatch, bound, value
+    live_writer, workspace, observe_project, monkeypatch
 ):
-    monkeypatch.setattr(span_evidence, bound, value)
+    """One identity over the byte budget on its own: paging cannot shrink it."""
+    monkeypatch.setattr(span_evidence, "SPAN_CAPTURE_BYTES", 1)
     with pytest.raises(ServerException, match="metric_span_capture_budget"):
         publish(live_writer, workspace, observe_project)
     assert (
@@ -123,6 +121,31 @@ def test_span_capture_overflow_never_publishes_partial_evidence_or_totals(
     assert live_writer.store.execute(
         "SELECT count() FROM system.tables WHERE is_temporary AND startsWith(name, 'metric_span_capture_')"
     ) == [(0,)]
+
+
+def test_span_capture_above_the_row_budget_is_paged_by_identity_not_refused(
+    live_writer, workspace, observe_project, monkeypatch
+):
+    """Three spans, a row budget of two: two identity pages, the same values,
+    drivers and KPI as one capture, and no page above the budget."""
+    from datetime import timedelta
+
+    monkeypatch.setattr(span_evidence, "SPAN_CAPTURE_ROWS", 2)
+    since = datetime.now(UTC) - timedelta(seconds=1)
+    writer = live_writer
+    metric, _, _, ids = publish(writer, workspace, observe_project)
+    results = unit_values(writer, metric, ids)["results"]
+    assert [r["value_number"] for r in results] == [2, 6, None]
+    assert [r["status"] for r in results] == ["value", "value", "no_value"]
+    assert reads.read_kpi(metric, WINDOW, store=writer.store)["current"]["value"] == 4
+    writer.store.execute("SYSTEM FLUSH LOGS")
+    pages = writer.store.execute(
+        "SELECT written_rows FROM system.query_log WHERE type = 'QueryFinish' "
+        "AND query LIKE 'INSERT INTO metric_span_capture_%%' "
+        "AND event_time >= %(since)s",
+        {"since": since.replace(tzinfo=None)},
+    )
+    assert len(pages) >= 2 and max(rows for (rows,) in pages) <= 2, pages
 
 
 def test_span_retirement_uses_committed_values_after_raw_source_is_gone(
@@ -414,35 +437,40 @@ def test_repeated_partial_bucket_retirement_never_recaptures_already_retired_raw
 def test_span_retractions_share_the_capture_budget(
     live_writer, workspace, observe_project, monkeypatch
 ):
+    """Retractions count toward a page's budget: three retractions with a
+    budget of two are paged by identity, each identity retracted exactly once,
+    never one unbounded tombstone stream and never refused."""
     from tracer.services.derived_metrics.changes import ChangeBatch, SourceKey, UnitKey
-    from tracer.services.derived_metrics.publication import MetricVisibilityError
     from tracer.services.derived_metrics.queries import Scope
     from tracer.tests.test_derived_metric_reads_clickhouse import AT
 
     writer = live_writer
     metric, definition, _, ids = publish(writer, workspace, observe_project)
-    expected = unit_values(writer, metric, ids)["results"]
     writer.store.execute("TRUNCATE TABLE spans")
     monkeypatch.setattr(span_evidence, "SPAN_CAPTURE_ROWS", 2)
     trace, span = json.loads(ids[0])
-    with pytest.raises(MetricVisibilityError, match="replacement exceeds"):
-        writer.refresh(
-            ChangeBatch(
-                (SourceKey(trace, span),),
-                (UnitKey("span", ids[0]),),
-                (),
-                (),
-                (),
-                {"watermark_ns": 2},
-            ),
-            [definition],
-            Scope(writer.org_id, writer.workspace_id, observe_project.id),
-            start=AT,
-            end=WINDOW["window_end"],
-            as_of=datetime.now(UTC),
-        )
-    assert unit_values(writer, metric, ids)["results"] == expected
-    assert MetricProjectRefresh.objects.get(project=observe_project).watermark_ns == 1
+    head = writer.refresh(
+        ChangeBatch(
+            (SourceKey(trace, span),),
+            (UnitKey("span", ids[0]),),
+            (),
+            (),
+            (),
+            {"watermark_ns": 2},
+        ),
+        [definition],
+        Scope(writer.org_id, writer.workspace_id, observe_project.id),
+        start=AT,
+        end=WINDOW["window_end"],
+        as_of=datetime.now(UTC),
+    )
+    assert MetricProjectRefresh.objects.get(project=observe_project).watermark_ns == 2
+    frozen = writer.store.execute(
+        "SELECT unit_id, is_deleted FROM metric_field_values "
+        "WHERE attempt_id = %(attempt)s AND level = 'span' ORDER BY unit_id",
+        {"attempt": str(head.published_by_id)},
+    )
+    assert frozen == [(unit, 1) for unit in sorted(ids)], frozen
 
 
 def test_subject_erasure_drops_unassignable_span_evidence_in_all_revisions(

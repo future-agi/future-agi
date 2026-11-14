@@ -18,7 +18,11 @@ import StatusBadge from "src/components/status-badge";
 import ContentSkeleton from "src/components/content-skeleton";
 import { ROW_HEIGHT } from "src/theme/sizes";
 import { useMetricKpi } from "./api";
-import { forwardPendingCopy } from "./copy";
+import {
+  calculatedThroughCopy,
+  forwardPendingCopy,
+  windowNotCalculatedYetCopy,
+} from "./copy";
 import MetricValueCell from "./MetricValueCell";
 import { firstCalculationBadge } from "./metricCalculationState";
 import { isMetricFirstUse } from "./metricPresentation";
@@ -77,9 +81,18 @@ function MetricReadCell({ metric, scope, window, freshness = false }) {
     params: window && coverageWindow(window, metric.definition),
     enabled: Boolean(metric.definition && window) && !waiting,
   });
-  if (waiting) {
+  // A window past where values are calculated (refreshes due or failing) is
+  // "not calculated yet", never a load error.
+  const notYet =
+    query.error?.code === "window_not_calculated_yet"
+      ? windowNotCalculatedYetCopy(
+          query.error.calculated_through,
+          query.error.reason,
+        )
+      : "";
+  if (waiting || notYet) {
     // Not calculated yet: say when the first values appear, never a load error.
-    const pending = forwardPendingCopy(metric.definition);
+    const pending = notYet || forwardPendingCopy(metric.definition);
     return freshness ? (
       <Tooltip title={pending} placement="top-start">
         <Typography variant="body2" color="text.secondary" sx={line}>
@@ -141,11 +154,15 @@ function MetricReadCell({ metric, scope, window, freshness = false }) {
   const error = !["ready", "loading"].includes(query.readState);
   const data = query.readState === "ready" ? query.data : undefined;
   if (!freshness) {
+    const through = data?.complete_through;
+    const partial = Boolean(data?.partial && through);
     return (
       <Tooltip
         title={
           data?.effective_window
-            ? `Effective window: ${formatMetricWindow(data.effective_window)}`
+            ? `Effective window: ${formatMetricWindow(data.effective_window)}${
+                partial ? `. ${calculatedThroughCopy(through)}` : ""
+              }`
             : ""
         }
         placement="top-start"

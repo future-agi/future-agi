@@ -49,6 +49,11 @@ QUERY_SETTINGS = {
     "max_result_rows": 101,
     "result_overflow_mode": "throw",
     "max_threads": 2,
+    # Parallel primary-key/skip-index analysis keeps untracked per-thread
+    # memory proportional to parts x IN-set size and charges it at once: one
+    # 1,000-unit page on 773 spans parts peaked at 1.19 GiB (max_threads 2)
+    # versus 102 MB with a single index-analysis thread.
+    "max_threads_for_indexes": 1,
     "join_use_nulls": 1,
 }
 

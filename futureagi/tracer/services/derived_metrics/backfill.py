@@ -50,8 +50,59 @@ MAX_CHUNKS_PER_PASS = 3
 PASS_SOFT_SECONDS = 20
 PAGE_SIZE = 1000
 DEFAULT_MAX_BACKFILL_SPANS = 150_000
+# A burst sweep commits one source page per publication. One page per pass
+# could never catch a sustained burst up (10M: 1,000 span keys per ~3.7 min
+# pass against 275k spans of backlog), so a pass keeps sweeping pages while
+# they finish within this soft budget, each page published (committed) on its
+# own so a killed pass keeps its progress. Configurable: METRICS_BURST_*.
+DEFAULT_BURST_PASS_SECONDS = 20
+DEFAULT_BURST_MAX_PAGES = 19  # below MAX_MANIFEST_DELTAS: one compaction a pass
+DEFAULT_BURST_PAGE_KEYS = 5000
 HISTORY = DerivedMetricVersion.HistoryMode.HISTORY
 FORWARD = DerivedMetricVersion.HistoryMode.FORWARD
+
+
+def _positive_setting(name, default, *, maximum):
+    value = getattr(settings, name, default)
+    if type(value) is not int or not 1 <= value <= maximum:
+        raise ImproperlyConfigured(f"{name} must be an integer from 1 to {maximum}")
+    return value
+
+
+def burst_pass_seconds():
+    """Soft wall budget of one pass's burst pages (no page starts after it)."""
+    return _positive_setting(
+        "METRICS_BURST_PASS_SECONDS", DEFAULT_BURST_PASS_SECONDS, maximum=300
+    )
+
+
+def burst_max_pages():
+    """Most burst pages one pass publishes."""
+    return _positive_setting(
+        "METRICS_BURST_MAX_PAGES", DEFAULT_BURST_MAX_PAGES, maximum=200
+    )
+
+
+def burst_page_keys():
+    """Source keys (span rows) per burst page, up to the discovery key cap.
+
+    Every capture statement stays bounded by its own 500-unit batches, so a
+    page's size sets how many statements it runs, not their memory. A larger
+    page amortizes each page's fixed statements (~84, ~3 s at 10M).
+    """
+    return _positive_setting(
+        "METRICS_BURST_PAGE_KEYS", DEFAULT_BURST_PAGE_KEYS, maximum=changes.MAX_KEYS
+    )
+
+
+def burst_pending(project_id):
+    state = MetricProjectRefresh.for_project(project_id)
+    cursor = state.reconciliation_cursor or {}
+    return bool(
+        state.pending_repair
+        and cursor.get("floor")
+        and cursor.get("phase") != "complete"
+    )
 
 
 def max_backfill_spans():
@@ -1920,6 +1971,39 @@ class BackfillRunner:
             publication={"backfills": intents},
         )
 
+    def run_repair_pages(self, *, skip_incremental=False):
+        """Repair pages: one page, then more of a burst sweep within the budget.
+
+        Each page is its own publication, so progress is durable page by page
+        and a pass stopped by its deadline keeps every page it published. Only
+        a forward-only burst sweep continues: a full repair stays one page per
+        pass, as before. Later pages skip discovery (the first page did it; new
+        arrivals are the next pass's).
+        """
+        from tracer.models.derived_metric import MAX_MANIFEST_DELTAS
+
+        started = monotonic()
+        head = self.run_repair_page(skip_incremental=skip_incremental)
+        # Compact once per pass, not per page: the first page compacts the
+        # previous pass's deltas; later pages publish deltas on top of it
+        # (10M: the checkpoint rewrite grew from 1.4 s to 6.4 s per page).
+        previous = getattr(self.writer, "deltas_before_compaction", None)
+        self.writer.deltas_before_compaction = MAX_MANIFEST_DELTAS - 1
+        try:
+            for _ in range(min(burst_max_pages(), MAX_MANIFEST_DELTAS - 1) - 1):
+                if monotonic() - started >= burst_pass_seconds():
+                    break
+                if not burst_pending(self.writer.lease.project_id):
+                    break
+                self.writer.lease.check()
+                head = self.run_repair_page(skip_incremental=True)
+        finally:
+            if previous is None:
+                del self.writer.deltas_before_compaction
+            else:
+                self.writer.deltas_before_compaction = previous
+        return head
+
     def run_repair_page(self, *, skip_incremental=False):
         writer = self.writer
         now = writer.lease.clock()
@@ -1962,7 +2046,12 @@ class BackfillRunner:
                 if cutoff or floor
                 else None,
             ),
-            page_size=self.page_size,
+            # A burst page is sized by METRICS_BURST_PAGE_KEYS unless the
+            # runner was given a smaller page explicitly.
+            page_size=burst_page_keys()
+            if self.page_size == PAGE_SIZE
+            and (state.reconciliation_cursor or {}).get("floor")
+            else self.page_size,
             floor=floor,
         )
         if not discovered:

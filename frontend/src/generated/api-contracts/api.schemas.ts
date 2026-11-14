@@ -28853,6 +28853,17 @@ export const MetricUnavailableApiValueMode = {
   on_demand: "on_demand",
 } as const;
 
+/**
+ * window_not_calculated_yet: not_calculated (past the calculated bound) or settling (calculated, but holding open units)
+ */
+export type MetricUnavailableApiReason =
+  (typeof MetricUnavailableApiReason)[keyof typeof MetricUnavailableApiReason];
+
+export const MetricUnavailableApiReason = {
+  not_calculated: "not_calculated",
+  settling: "settling",
+} as const;
+
 export interface MetricUnavailableApi {
   /** @minLength 1 */
   code: string;
@@ -28860,8 +28871,10 @@ export interface MetricUnavailableApi {
   message: string;
   retryable: boolean;
   value_mode?: MetricUnavailableApiValueMode;
-  /** window_not_calculated_yet: units starting at or after this instant are not calculated yet */
+  /** window_not_calculated_yet: the read cut; values are final only before it */
   calculated_through?: string;
+  /** window_not_calculated_yet: not_calculated (past the calculated bound) or settling (calculated, but holding open units) */
+  reason?: MetricUnavailableApiReason;
 }
 
 export interface MetricDraftPreviewCancelApi {
@@ -28916,7 +28929,7 @@ export interface MetricReadProvenanceApi {
   /** forward: started with no history; values exist from coverage_start */
   history_mode?: MetricReadProvenanceApiHistoryMode;
   coverage_start?: string;
-  /** forward: units starting at or after this instant are not calculated yet (the consumed source cut, or a pending burst sweep's floor) */
+  /** forward: nothing starting at or after this 15-minute boundary is calculated yet (the consumed source cut, or a pending burst sweep's floor) */
   calculated_through?: string;
 }
 
@@ -28933,6 +28946,20 @@ export interface MetricEffectiveWindowApi {
 export interface MetricDriversApi {
   provenance: MetricReadProvenanceApi;
   effective_window: MetricEffectiveWindowApi;
+  /** forward: end of the window's contiguous final prefix. Values are computed over the window's final buckets only (calculated, past the settle interval, holding no open unit) */
+  complete_through?: string;
+  /** true when any bucket of the window is not final */
+  partial?: boolean;
+  /**
+   * 15-minute buckets of the window left out of the value
+   * @minimum 0
+   */
+  nonfinal_buckets?: number;
+  /**
+   * units in the window refresh still keeps open
+   * @minimum 0
+   */
+  open_units?: number;
   results: MetricUnitValueApi[];
   /** @minLength 1 */
   next_cursor: string;
@@ -29208,6 +29235,7 @@ export const MetricPointApiPointStatus = {
   retention_expired: "retention_expired",
   sampled_inputs_not_supported: "sampled_inputs_not_supported",
   not_calculated: "not_calculated",
+  settling: "settling",
 } as const;
 
 export type MetricPointApiValueMode =
@@ -29260,6 +29288,7 @@ export const MetricKpiPreviousPointApiPointStatus = {
   retention_expired: "retention_expired",
   sampled_inputs_not_supported: "sampled_inputs_not_supported",
   not_calculated: "not_calculated",
+  settling: "settling",
 } as const;
 
 export type MetricKpiPreviousPointApiValueMode =
@@ -29318,6 +29347,20 @@ export interface DerivedMetricDeltaUncertaintyApi {
 export interface MetricKpiApi {
   provenance: MetricReadProvenanceApi;
   effective_window: MetricEffectiveWindowApi;
+  /** forward: end of the window's contiguous final prefix. Values are computed over the window's final buckets only (calculated, past the settle interval, holding no open unit) */
+  complete_through?: string;
+  /** true when any bucket of the window is not final */
+  partial?: boolean;
+  /**
+   * 15-minute buckets of the window left out of the value
+   * @minimum 0
+   */
+  nonfinal_buckets?: number;
+  /**
+   * units in the window refresh still keeps open
+   * @minimum 0
+   */
+  open_units?: number;
   current: MetricPointApi;
   previous: MetricKpiPreviousPointApi;
   delta: number;
@@ -29416,6 +29459,7 @@ export const MetricTrendPointApiPointStatus = {
   retention_expired: "retention_expired",
   sampled_inputs_not_supported: "sampled_inputs_not_supported",
   not_calculated: "not_calculated",
+  settling: "settling",
 } as const;
 
 export type MetricTrendPointApiValueMode =
@@ -29460,6 +29504,8 @@ export interface MetricTrendPointApi {
 export interface MetricTrendApi {
   provenance: MetricReadProvenanceApi;
   effective_window: MetricEffectiveWindowApi;
+  /** true when any point is not_calculated or settling */
+  partial?: boolean;
   results: MetricTrendPointApi[];
 }
 

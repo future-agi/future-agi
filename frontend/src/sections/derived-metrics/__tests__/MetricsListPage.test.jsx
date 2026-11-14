@@ -472,3 +472,28 @@ it("a project-catalog failure leaves loaded metrics usable and provides retry", 
   ).toBeVisible();
   expect(screen.getByText("Project name unavailable")).toBeVisible();
 });
+
+it("shows a window past calculated values as not calculated yet, never a load error", async () => {
+  const through = "2026-11-07T22:14:28.000Z";
+  mock.get.mockImplementation(async (url) => {
+    if (url === "/metrics") return { data: list };
+    if (url.endsWith("/kpi"))
+      throw {
+        statusCode: 503,
+        code: "window_not_calculated_yet",
+        retryable: true,
+        calculated_through: through,
+      };
+    throw new Error(`Unexpected read: ${url}`);
+  });
+  mount();
+  const row = await screen.findByRole("button", { name: conversation.name });
+  const cells = within(row.closest('[role="row"]'));
+  expect(
+    (await cells.findAllByText("Not calculated yet")).length,
+  ).toBeGreaterThan(0);
+  expect(cells.queryByText("Values unavailable")).not.toBeInTheDocument();
+  expect(
+    cells.queryByText("Could not load metric value"),
+  ).not.toBeInTheDocument();
+});

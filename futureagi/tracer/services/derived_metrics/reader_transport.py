@@ -86,6 +86,8 @@ class MetricsReadTransport:
             "max_result_bytes": budget.result_bytes,
             "result_overflow_mode": "throw",
             "max_threads": budget.threads,
+            # See queries.QUERY_SETTINGS: one index-analysis thread.
+            "max_threads_for_indexes": 1,
             "max_parallel_replicas": 1,
             "readonly": 0 if control else 2,
             "use_query_cache": 0,

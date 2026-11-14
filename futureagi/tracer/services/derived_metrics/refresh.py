@@ -60,6 +60,7 @@ from tracer.services.derived_metrics.publication import (
     committed_rows_select,
     physical_table,
 )
+from tracer.services.derived_metrics.queries import Scope
 from tracer.services.derived_metrics.storage import (
     BUCKET_TOTALS,
     FIELD_CHECKPOINT,
@@ -72,6 +73,7 @@ from tracer.services.derived_metrics.storage import (
     UNIT_STATE,
 )
 from tracer.services.derived_metrics.unit_reads import (
+    unit_first_created_select,
     unit_source_floor_select,
     unit_source_guard_select,
     unit_source_version_select,
@@ -118,6 +120,33 @@ class MetricAdmissionUnproven(MetricStateConflict):
 
 class MetricRetentionChanged(MetricStateConflict):
     code = "metric_retention_replan"
+
+
+def captured_through(ceilings):
+    """An attempt's capture high-water: its own as_of or the inherited one."""
+    values = [
+        datetime.fromisoformat(str(value))
+        for value in (ceilings.get("captured_through"), ceilings.get("as_of"))
+        if value
+    ]
+    if not values:
+        return None
+    latest = max(v if v.tzinfo else v.replace(tzinfo=UTC) for v in values)
+    return latest
+
+
+def admission_requires_proof(head):
+    """Whether units without committed anchors must prove they are not retired.
+
+    Only once a purge retired live published unit evidence (R02, TH-8975). A
+    floor recorded before that was tracked may have, so it still requires it.
+    """
+    if head is None:
+        return False
+    ceilings = head.published_by.source_ceilings
+    return bool(ceilings.get("retention_floor")) and bool(
+        ceilings.get("retention_retired_live", True)
+    )
 
 
 class RefreshWriter:
@@ -198,11 +227,35 @@ class RefreshWriter:
             ]
             if private_cleanup:
                 ceilings["private_cleanup_through"] = max(private_cleanup)
+            inherited_ceilings = head.published_by.source_ceilings if head else {}
+            captured = [
+                value
+                for value in (
+                    captured_through(inherited_ceilings),
+                    captured_through(ceilings),
+                )
+                if value is not None
+            ]
+            if captured:
+                # Capture high-water (every capture reads created_at <= as_of),
+                # carried through compactions for retention_floor_at.
+                ceilings["captured_through"] = max(captured).isoformat()
             if floors:
                 # Nonidentifying, immutable privacy boundary follows every new
                 # head/checkpoint, so GC and a larger org horizon cannot restore
                 # purged unit evidence via an ordinary incremental refresh.
                 ceilings["retention_floor"] = max(floors).isoformat()
+                # Admission terms (retention._floor_ceilings): a purge that
+                # stamps them decides them; otherwise they are inherited. A
+                # floor recorded without them (stamped before they existed, or
+                # supplied directly) may have retired live units: it requires
+                # proof and exempts nothing.
+                for key, default in (
+                    ("retention_retired_live", True),
+                    ("retention_floor_at", None),
+                ):
+                    if key not in ceilings:
+                        ceilings[key] = inherited_ceilings.get(key, default)
             attempt = MetricRefreshAttempt.prepare(
                 self.lease.project_id,
                 purpose=purpose,
@@ -1319,7 +1372,9 @@ class RefreshWriter:
         head = MetricProjectRefresh.for_project(self.lease.project_id).head_manifest
         if head and head.published_by.source_ceilings.get("recovery_blocked"):
             raise MetricAdmissionUnproven("metric_admission_unproven")
-        if head and len(head.delta_attempt_ids) >= MAX_DELTAS_BEFORE_COMPACTION:
+        if head and len(head.delta_attempt_ids) >= getattr(
+            self, "deltas_before_compaction", MAX_DELTAS_BEFORE_COMPACTION
+        ):
             self.compact()
         with serialized_project(self.lease.project_id):
             self.lease.check()
@@ -1638,14 +1693,18 @@ class RefreshWriter:
                         params = merge_bindings(
                             params, old_params, {"forward_coverage_start": coverage}
                         )
-                    if inherited_floor and self._unproven_source_admission(
-                        head,
-                        source_page,
-                        query,
-                        params,
-                        old_sql,
-                        old_params,
-                        cutoff or inherited_floor,
+                    if (
+                        inherited_floor
+                        and admission_requires_proof(head)
+                        and self._unproven_source_admission(
+                            head,
+                            source_page,
+                            query,
+                            params,
+                            old_sql,
+                            old_params,
+                            cutoff or inherited_floor,
+                        )
                     ):
                         # Unknown or corrected anchors cannot be proven from a
                         # recent raw row alone (TH-8975 remains held).
@@ -1848,7 +1907,35 @@ class RefreshWriter:
             remaining.difference_update(row[0] for row in matched)
             if not remaining:
                 return False
-        return bool(remaining)
+        return not self._created_after_purge(head, remaining)
+
+    def _created_after_purge(self, head, units):
+        """Every span in these conversations was created after the latest purge.
+
+        Such a unit cannot be retired evidence reappearing (R02, TH-8975): every
+        member it has was created after the purge that set the retention floor,
+        so none contributed to what that purge retired. A unit with any member
+        created before it still needs anchor proof. Unknown when the floor
+        predates recording its purge time, so nothing is exempt then.
+        """
+        if head is None or not units:
+            return False
+        at = head.published_by.source_ceilings.get("retention_floor_at")
+        if not at:
+            return False
+        scope = Scope(self.org_id, self.workspace_id, self.lease.project_id)
+        units = tuple(sorted(units))
+        floor = self._unit_source_floor(scope, units, head)
+        if floor is None:
+            return False
+        sql, params = unit_first_created_select(scope, units, head, floor=floor)
+        first = self.store.execute(
+            sql, params, query_id="metric-admission-created-" + uuid4().hex
+        )[0][0]
+        if first is None:
+            return False
+        first = first if first.tzinfo else first.replace(tzinfo=UTC)
+        return first > datetime.fromisoformat(str(at))
 
     def recover_dependencies(self, entries, *, as_of):
         """Recompute frozen preimages, including new owners, before consuming work."""

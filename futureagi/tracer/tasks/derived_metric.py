@@ -27,7 +27,8 @@ def compute_derived_metric(run_id: str) -> None:
     max_retries=0,
 )
 def dispatch_derived_metrics() -> int:
-    return admission.dispatch(_enqueue_refresh)
+    # Keep filling freed slots within the tick, not only at its start.
+    return admission.dispatch_until(_enqueue_refresh)
 
 
 def _enqueue_refresh(payload: dict) -> None:

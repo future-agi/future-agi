@@ -268,7 +268,8 @@ export default function MetricOverview({
               <MetricStatusLine
                 provenance={data.provenance}
                 definition={metric.definition}
-                window={data.effective_window}
+                completeThrough={data.complete_through}
+                partial={data.partial}
               />
             </Box>
           </Stack>

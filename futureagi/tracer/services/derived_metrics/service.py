@@ -676,10 +676,12 @@ class MetricUnavailableError(Exception):
         *,
         value_mode=None,
         calculated_through=None,
+        reason=None,
     ):
         self.code, self.message = code, message
         self.value_mode = value_mode
         self.calculated_through = calculated_through
+        self.reason = reason
         super().__init__(message)
 
 

@@ -209,7 +209,7 @@ def test_previous_period_uses_the_same_pin_and_equal_snapped_duration(saved):
         pinned.append(definition.id)
         yield store, manifest, definition
 
-    def aggregate(_store, _metric, version, head, window):
+    def aggregate(_store, _metric, version, head, window, **_kwargs):
         assert version is definition and head is manifest
         ranges.append(window)
         return {
@@ -220,7 +220,7 @@ def test_previous_period_uses_the_same_pin_and_equal_snapped_duration(saved):
             "valid_count": 3,
         }
 
-    def aggregate_periods(store, metric, version, head, current, previous):
+    def aggregate_periods(store, metric, version, head, current, previous, **_kwargs):
         return (
             aggregate(store, metric, version, head, current),
             aggregate(store, metric, version, head, previous),
