@@ -320,22 +320,88 @@ def test_heartbeat_counts_activity_in_the_window(
 @pytest.mark.integration
 @pytest.mark.django_db
 def test_heartbeat_counts_do_not_depend_on_the_process_timezone(
-    scratch_spans, organization, workspace, user, monkeypatch
+    scratch_spans, organization, workspace, user
 ):
     """The window is UTC whatever TZ the worker runs in."""
     window_start, window_end = _isolated_window()
     _seed_spans(scratch_spans, window_start, window_end)
 
-    monkeypatch.setenv("TZ", "Asia/Kolkata")
+    original_tz = os.environ.get("TZ")
+    os.environ["TZ"] = "Asia/Kolkata"
     time.tzset()
     try:
         counts = collect_counts(window_start, window_end)
     finally:
-        monkeypatch.delenv("TZ")
+        if original_tz is None:
+            del os.environ["TZ"]
+        else:
+            os.environ["TZ"] = original_tz
         time.tzset()
 
     assert counts["traces_count"] == 2
     assert counts["spans_count"] == 3
+
+
+@pytest.mark.integration
+@pytest.mark.django_db
+def test_heartbeat_cycle_sends_the_window_counts(
+    scratch_spans, organization, workspace, user, monkeypatch, tmp_path
+):
+    """The scheduled cycle, end to end: it computes the previous closed UTC
+    window, collects it, buffers and sends a heartbeat carrying its counts."""
+    from django.utils import timezone
+
+    from tfc.deployment_telemetry import sender
+    from tfc.deployment_telemetry.models import DeploymentTelemetryState
+    from tfc.deployment_telemetry.state import get_or_create_telemetry_state
+    from tfc.deployment_telemetry.transport import TelemetryResponse
+
+    window_start, window_end = _isolated_window()
+    _seed_spans(scratch_spans, window_start, window_end)
+    _seed_evaluations(organization, workspace, user, window_start, window_end)
+
+    monkeypatch.setenv("FUTURE_AGI_TELEMETRY_DISABLED", "false")
+    monkeypatch.setenv("FUTURE_AGI_TELEMETRY_BUFFER_DIR", str(tmp_path / "buffer"))
+    state = get_or_create_telemetry_state()
+    state.registered_at = timezone.now()
+    state.registration_kind = DeploymentTelemetryState.RegistrationKind.FULL
+    state.instance_secret = "test-secret"
+    state.save()
+
+    real_window = sender.compute_previous_utc_window
+    # The real window function, run half an hour after the seeded hour closed.
+    monkeypatch.setattr(
+        sender,
+        "compute_previous_utc_window",
+        lambda: real_window(window_end + timedelta(minutes=30), 1),
+    )
+    monkeypatch.setattr(sender, "is_self_hosted_deployment", lambda: True)
+    posted: list[tuple[str, dict]] = []
+
+    def post(_client, path, payload):
+        posted.append((path, payload))
+        return TelemetryResponse(ok=True, data={"instance_secret": "test-secret"})
+
+    monkeypatch.setattr(sender.TelemetryClient, "post", post)
+
+    result = sender.run_telemetry_cycle()
+
+    assert result["sent"] is True, result
+    heartbeats = [
+        payload for path, payload in posted if path == "/telemetry/heartbeat/"
+    ]
+    assert len(heartbeats) == 1
+    heartbeat = heartbeats[0]
+    assert heartbeat["window_start"] == window_start.strftime("%Y-%m-%dT%H:%M:%SZ")
+    assert heartbeat["window_end"] == window_end.strftime("%Y-%m-%dT%H:%M:%SZ")
+    assert heartbeat["traces_count"] == 2
+    assert heartbeat["spans_count"] == 3
+    assert heartbeat["eval_logger_count"] == EVAL_LOGGERS
+    assert heartbeat["model_hub_evaluations_count"] == MODEL_HUB_EVALUATIONS
+    assert heartbeat["dataset_eval_runs_count"] == DATASET_EVAL_RUNS
+    assert heartbeat["total_evaluations_count"] == (
+        EVAL_LOGGERS + MODEL_HUB_EVALUATIONS + DATASET_EVAL_RUNS
+    )
 
 
 @pytest.mark.django_db
