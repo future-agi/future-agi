@@ -2526,12 +2526,21 @@ def _matching_trace_ids(
     predicate_params: dict[str, Any],
     timeout_ms: int,
     settings: dict[str, Any],
+    candidate_param: str = "candidate_trace_ids",
 ) -> set[str]:
+    """Return the batch's traces the predicate selects.
+
+    ``candidate_param`` names the batch parameter. ``candidate_trace_ids`` is
+    also the Tag binder's scope, which is right when the predicate judges each
+    trace on its own. The Users selector judges the whole user over the
+    snapshot window, so that caller passes another name: the binder then
+    scopes each Tag leaf to the window instead of the batch.
+    """
     if not trace_ids:
         return set()
     source = latest_span_membership_source_sql(
         predicate=predicate or "1",
-        identity_scope="AND trace_id IN %(candidate_trace_ids)s",
+        identity_scope=f"AND trace_id IN %({candidate_param})s",
     )
     result = analytics.execute_ch_query(
         f"""
@@ -2546,7 +2555,7 @@ def _matching_trace_ids(
             "end_date": end_date,
             "snapshot_start_date": start_date,
             "snapshot_end_date": end_date,
-            "candidate_trace_ids": trace_ids,
+            candidate_param: trace_ids,
         },
         timeout_ms=timeout_ms,
         settings=settings,
@@ -2674,13 +2683,20 @@ def read_exact_annotation_graph(
         )
 
     settings: dict[str, Any] = {**EXACT_GRAPH_READ_SETTINGS}
+    # The Users selector judges each user over the whole snapshot window and
+    # binds its Tag leaves there; the Score batch must not become their scope.
+    trace_candidate_param = (
+        "aggregate_candidate_trace_ids"
+        if aggregation_context == "user"
+        else "candidate_trace_ids"
+    )
     if aggregation_context == "session":
         session_trace_sql, session_trace_params = _session_trace_membership_sql(
             project_id=str(project_id),
             filters=filters,
             start_date=start_date,
             end_date=end_date,
-            candidate_trace_ids_param="candidate_trace_ids",
+            candidate_trace_ids_param=trace_candidate_param,
         )
         trace_predicate = f"trace_id IN ({session_trace_sql})"
         trace_params = session_trace_params
@@ -2702,7 +2718,7 @@ def read_exact_annotation_graph(
             filters=filters,
             start_date=start_date,
             end_date=end_date,
-            candidate_trace_ids_param="candidate_trace_ids",
+            candidate_trace_ids_param=trace_candidate_param,
             started=started,
             remaining_read_ms=getattr(analytics, "remaining_read_ms", None),
         )
@@ -2800,6 +2816,7 @@ def read_exact_annotation_graph(
                         predicate_params=trace_params,
                         timeout_ms=remaining_statement_timeout_ms(),
                         settings=settings,
+                        candidate_param=trace_candidate_param,
                     )
                     if observe_type == "trace"
                     else set()

@@ -7009,11 +7009,12 @@ class _SessionContextAnalytics(_ExactEntityAnalytics):
                 columns=["version_ceiling"],
             )
         self.main_calls.append((query, dict(params), dict(settings)))
-        if "SELECT DISTINCT trace_id" in query and params.get("candidate_trace_ids"):
+        candidates = params.get("candidate_trace_ids") or params.get(
+            "aggregate_candidate_trace_ids"
+        )
+        if "SELECT DISTINCT trace_id" in query and candidates:
             return SimpleNamespace(
-                data=[
-                    {"trace_id": trace_id} for trace_id in params["candidate_trace_ids"]
-                ],
+                data=[{"trace_id": trace_id} for trace_id in candidates],
                 columns=["trace_id"],
             )
         return SimpleNamespace(
@@ -8274,3 +8275,138 @@ def test_exact_worker_runs_the_users_graph_on_the_graph_thread_budget(monkeypatc
             statement_settings["max_threads"]
             > django_settings.FILTER_SELECTOR_MAX_THREADS
         )
+
+
+class _TagBindingSessionAnalytics(_SessionContextAnalytics):
+    """Runs the real Tag binder, as the request path and the worker do."""
+
+    supports_per_query_read_settings = True
+    read_timeout_ceiling_ms = 30_000
+
+    def __init__(self):
+        super().__init__()
+        self.bound = []
+
+    def execute_ch_query(self, query, params, *, timeout_ms, settings):
+        from tracer.services.clickhouse.read_budget import ReadDeadline
+        from tracer.services.clickhouse.v2.effective_tags import (
+            EffectiveTagRelation,
+            prepare_effective_tag_params,
+        )
+
+        relations = [
+            name
+            for name, value in (params or {}).items()
+            if isinstance(value, EffectiveTagRelation)
+        ]
+        if relations:
+            params = prepare_effective_tag_params(
+                super().execute_ch_query,
+                params,
+                deadline=ReadDeadline.start(timeout_ms, enforce_on_server=True),
+                allow_window_scan=True,
+                window_overlay=True,
+            )
+            self.bound.extend(
+                {
+                    "name": name,
+                    "scoped": params[f"{name}_scoped"],
+                    "traces": params[f"{name}_traces"],
+                    "start": params[f"{name}_start"],
+                    "end": params[f"{name}_end"],
+                }
+                for name in relations
+            )
+        return super().execute_ch_query(
+            query, params, timeout_ms=timeout_ms, settings=settings
+        )
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("trace_count", [1, 600])
+def test_user_annotation_graph_scopes_tag_leaves_to_the_snapshot_window(
+    monkeypatch, trace_count
+):
+    """The Users selector judges each membership flag over every span the
+    user has in the snapshot window, so a Tag leaf must
+    be bound to that window, not to the Score batch's trace ids. Bound to the
+    batch, a user whose tagged trace is not annotated loses the flag, and a
+    partition with more than MAX_TAG_CANDIDATE_TRACES annotated traces fails
+    with tag_candidate_budget_exceeded on every read.
+    """
+    from tracer.services.clickhouse import exact_graph_reads as exact_module
+    from tracer.services.clickhouse.v2 import effective_tags
+
+    overlay_reads = []
+
+    def overlay(**kwargs):
+        overlay_reads.append(kwargs)
+        return effective_tags.TagOverlay()
+
+    monkeypatch.setattr(effective_tags, "read_tag_overlay", overlay)
+    analytics = _TagBindingSessionAnalytics()
+    start = datetime(2026, 1, 1)
+    end = datetime(2026, 1, 10)
+    scores = [
+        {
+            "trace_id": f"44444444-4444-4444-8444-{index:012d}",
+            "observation_span_id": None,
+            "created_at": datetime(2026, 1, 5),
+            "value": {"rating": 4},
+        }
+        for index in range(trace_count)
+    ]
+    assert trace_count <= exact_module.EXACT_GRAPH_MEMBERSHIP_BATCH_SIZE
+    label = SimpleNamespace(name="quality", type="numeric")
+    monkeypatch.setattr(
+        exact_module,
+        "Score",
+        SimpleNamespace(no_workspace_objects=_ScoreListManager(scores)),
+    )
+    monkeypatch.setattr(
+        exact_module,
+        "get_annotation_labels_for_project",
+        lambda _project_id: SimpleNamespace(get=lambda **_kwargs: label),
+    )
+    monkeypatch.setattr(exact_module.transaction, "atomic", nullcontext)
+    monkeypatch.setattr(exact_module, "connection", SimpleNamespace(vendor="sqlite"))
+    tag_filter = {
+        "column_id": "tag",
+        "filter_config": {
+            "col_type": "SYSTEM_METRIC",
+            "filter_type": "text",
+            "filter_op": "equals",
+            "filter_value": "vip",
+        },
+    }
+
+    result = read_exact_annotation_graph(
+        analytics=analytics,
+        project_id="22222222-2222-4222-8222-222222222222",
+        filters=[_time_filter(start, end), tag_filter],
+        interval="day",
+        req_data_config={
+            "id": "55555555-5555-4555-8555-555555555555",
+            "output_type": "float",
+        },
+        observe_type="trace",
+        aggregation_context="user",
+    )
+
+    assert analytics.bound, "the Tag leaf was never bound"
+    for binding in analytics.bound:
+        assert binding["scoped"] == 0, binding["name"]
+        assert binding["start"].replace(tzinfo=None) == start
+        assert binding["end"].replace(tzinfo=None) == end
+    assert overlay_reads and all(
+        read["trace_ids"] is None and read["window_start"] is not None
+        for read in overlay_reads
+    )
+    # The batch still restricts which annotated traces are answered.
+    batches = [
+        params["aggregate_candidate_trace_ids"]
+        for _query, params, _settings in analytics.main_calls
+        if "aggregate_candidate_trace_ids" in params
+    ]
+    assert batches and len(batches[0]) == trace_count
+    assert result["query_complete"] is True
