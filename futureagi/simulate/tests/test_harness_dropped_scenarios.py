@@ -124,6 +124,27 @@ def test_a_removed_scenario_the_harness_dropped_carries_its_stored_reason():
     ]
 
 
+def test_drops_change_the_suite_hash_and_nothing_else_does():
+    from simulate.services.harness_versioning import hashing
+
+    tree = archives.read_archive(_suite_archive([_scenario(NAMES[0])]))
+    plain = hashing.suite_hash(tree)
+    record = {"format": 1, "scenarios": {_key(CANCEL): _record(CANCEL)}}
+    with_drop = hashing.suite_hash({**tree, "dropped.json": json.dumps(record).encode()})
+    same_drop_reordered = hashing.suite_hash(
+        {**tree, "dropped.json": json.dumps(record, sort_keys=True, indent=1).encode()}
+    )
+    failed = {"format": 1, "scenarios": {_key(CANCEL): _record(CANCEL, restore_failed="x")}}
+    other_drop = hashing.suite_hash({**tree, "dropped.json": json.dumps(failed).encode()})
+
+    # Without drops the hash stays ALK's scenario digest.
+    assert plain == hashing.tree_digest(
+        hashing.scenario_files(tree), exclude=hashing._suite_unhashed
+    )
+    assert len({plain, with_drop, other_drop}) == 3
+    assert with_drop == same_drop_reordered
+
+
 def dropped_documents_record():
     return {
         "reason": REASON,
@@ -284,38 +305,25 @@ class TestDropAndRestore:
     def test_a_version_with_the_same_scenarios_but_other_drops_is_not_reused(
         self, user, workspace, storage
     ):
-        environment = self._three(user, workspace, storage, "drop-twin")
+        """v1 {A, C}; v2 adds B; a rebuild drops B for a removed capability: {A, C} again, but with
+        B's record. Reusing v1 would lose the record a later rebuild restores B from."""
+        environment = _versioned(user, workspace, "drop-twin", storage)
+        two = [_scenario(NAMES[0]), _scenario(NAMES[2])]
+        record_authoring(environment, _suite_archive(two), origin="chat")
+        environment.refresh_from_db()
+        first = environment.suite_version
+        record_authoring(
+            environment,
+            _suite_archive([_scenario(one) for one in NAMES]),
+            origin="chat",
+        )
+
+        record_authoring(environment, _with_drops(two, [CANCEL]), origin="nudge")
+        environment.refresh_from_db()
+
         held = environment.suite_version
-        values = {
-            field: getattr(held, field)
-            for field in (
-                "archive_object_key",
-                "archive_layout",
-                "archive_sha256",
-                "archive_size",
-            )
-        }
-
-        same, created_plain = versions._land(
-            HarnessSuiteVersion,
-            environment,
-            hash=held.hash,
-            values={**values, "documents": dict(held.documents)},
-            hash_kind=held.hash_kind,
-        )
-        other, created_with_drops = versions._land(
-            HarnessSuiteVersion,
-            environment,
-            hash=held.hash,
-            values={
-                **values,
-                "documents": {
-                    **held.documents,
-                    "dropped": {_key(CANCEL): dropped_documents_record()},
-                },
-            },
-            hash_kind=held.hash_kind,
-        )
-
-        assert (same.id, created_plain) == (held.id, False)
-        assert created_with_drops is True and other.id != held.id
+        assert held.id != first.id
+        assert held.documents["dropped"][_key(CANCEL)]["reason"] == REASON
+        assert HarnessSuiteVersion._base_manager.get(id=first.id).documents.get(
+            "dropped"
+        ) in (None, {})
