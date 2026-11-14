@@ -148,14 +148,14 @@ def _read_once(object_key: str) -> _Read:
         "harness-readiness-certification:"
         + hashlib.sha256(object_key.encode()).hexdigest()
     )
-    cached: _Read | None = cache.get(cache_key)
+    cached = _cached_read(cache_key)
     if cached is not None:
         return cached
     reading = cache_key + ":reading"
     if not cache.add(reading, 1, timeout=_READING_TTL_SECONDS):
         for _ in range(_WAIT_STEPS):
             time.sleep(_WAIT_STEP_SECONDS)
-            cached = cache.get(cache_key)
+            cached = _cached_read(cache_key)
             if cached is not None:
                 return cached
         raise HostedHarnessError(
@@ -170,6 +170,20 @@ def _read_once(object_key: str) -> _Read:
         return _read_certification_files(object_key, cache_key)
     finally:
         cache.delete(reading)
+
+
+def _cached_read(cache_key: str) -> _Read | None:
+    """A cached reading of the archive; one of another shape, as an earlier release
+    could have stored, is read again rather than trusted."""
+    cached = cache.get(cache_key)
+    if (
+        isinstance(cached, tuple)
+        and len(cached) == 2
+        and isinstance(cached[0], Mapping)
+        and isinstance(cached[1], bool)
+    ):
+        return cached
+    return None
 
 
 def _read_certification_files(object_key: str, cache_key: str) -> _Read:
