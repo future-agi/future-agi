@@ -65,6 +65,31 @@ def character_usage_provider():
     server.server_close()
 
 
+@pytest.mark.parametrize("scenario", ["explicit characters", "tokens only"])
+@pytest.mark.parametrize("text_blocks", [False, True])
+def test_character_provider_fixture_contract(
+    character_usage_provider, scenario, text_blocks
+):
+    """Check the serialized fixture independently of SDK response handling."""
+    provider_url, observed_usage = character_usage_provider
+    content = [{"type": "text", "text": scenario}] if text_blocks else scenario
+    response = requests.post(
+        f"{provider_url}/chat/completions",
+        json={"messages": [{"role": "user", "content": content}]},
+        timeout=5,
+    )
+    assert response.status_code == 200
+    expected = {
+        "prompt_tokens": 10000,
+        "completion_tokens": 2000,
+        "total_tokens": 12000,
+    }
+    if scenario == "explicit characters":
+        expected.update(input_characters=50000, output_characters=10000)
+    assert response.json()["usage"] == expected
+    assert observed_usage == [expected]
+
+
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.parametrize("scenario", ["explicit characters", "tokens only"])
 def test_preview_api_preserves_character_usage_or_labels_estimate(
