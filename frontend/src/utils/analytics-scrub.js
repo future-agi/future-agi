@@ -14,6 +14,7 @@ const CREDENTIAL_LAST_WORDS = new Set([
   "passwd",
   "passphrase",
   "authorization",
+  "bearer",
   "cookie",
   "cookies",
   "headers",
@@ -51,7 +52,15 @@ export const isCredentialLikeKey = (key) => {
   if (CREDENTIAL_WORD_SUFFIXES.some((suffix) => last.endsWith(suffix))) {
     return true;
   }
-  if (words.join("_").includes("api_key")) return true;
+  const joined = words.join("_");
+  // "api_key_value", "aws_access_key_id", "client_secret_key_ref", ...
+  if (
+    ["api_key", "access_key", "secret_key", "private_key"].some((name) =>
+      joined.includes(name),
+    )
+  ) {
+    return true;
+  }
   return words.some((word) =>
     CREDENTIAL_WORD_PARTS.some((part) => word.includes(part)),
   );
@@ -64,11 +73,9 @@ const scrubValue = (value, ancestors) => {
   if (Array.isArray(value)) {
     if (ancestors.has(value)) return undefined;
     ancestors.add(value);
-    const result = [];
-    value.forEach((item) => {
-      const scrubbed = scrubValue(item, ancestors);
-      if (scrubbed !== undefined || item === undefined) result.push(scrubbed);
-    });
+    // Elements keep their positions; a reference back to an enclosing value
+    // becomes undefined.
+    const result = Array.from(value, (item) => scrubValue(item, ancestors));
     ancestors.delete(value);
     return result;
   }

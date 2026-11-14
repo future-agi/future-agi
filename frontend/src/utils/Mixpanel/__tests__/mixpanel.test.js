@@ -124,6 +124,26 @@ describe("Mixpanel session replay shutdown", () => {
     expect(callerProperties.form_fields.api_key).toBe(marker);
   });
 
+  it("names client errors on a token link by the route pattern", async () => {
+    const { trackError } = await loadMixpanel();
+    const linkCode = "SYNTHETIC-LINK-CODE-a41f";
+    window.history.replaceState(
+      {},
+      "",
+      `/auth/jwt/invitation/set-password/user-1/${linkCode}`,
+    );
+
+    trackError({ error: "identify failed", api_key: linkCode });
+
+    expect(mocks.mixpanel.track).toHaveBeenCalledWith(
+      "Client Error : /auth/jwt/invitation/set-password/:uuid/:token",
+      { error: "identify failed" },
+    );
+    expect(JSON.stringify(mocks.mixpanel.track.mock.calls)).not.toContain(
+      linkCode,
+    );
+  });
+
   it("retries configuration after set_config throws", async () => {
     const configError = new Error("config failed");
     mocks.mixpanel.set_config.mockImplementationOnce(() => {

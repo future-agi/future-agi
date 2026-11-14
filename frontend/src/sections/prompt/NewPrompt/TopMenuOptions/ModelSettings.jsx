@@ -10,8 +10,9 @@ import { trackEvent, Events, PropertyName } from "src/utils/Mixpanel";
 import DrawerHeaderbar from "./DrawerHeaderbar";
 
 // Fields sent with the model settings saved event: the model, its numeric
-// options and the ids of the selected tools. Tool definitions are not part of
-// the event.
+// options and the ids of the selected tools (each tool row holds the selected
+// option, whose value is the tool id). Tool definitions are not part of the
+// event.
 const textOrUndefined = (value) =>
   typeof value === "string" ? value : undefined;
 
@@ -28,7 +29,7 @@ const modelSettingsEventFields = (data) => {
       responseFormat: textOrUndefined(config.responseFormat),
       toolChoice: textOrUndefined(config.toolChoice),
       tool_ids: Array.isArray(config.tools)
-        ? config.tools.map((tool) => tool?.id).filter(Boolean)
+        ? config.tools.map((row) => row?.tool?.value).filter(Boolean)
         : [],
     },
   };

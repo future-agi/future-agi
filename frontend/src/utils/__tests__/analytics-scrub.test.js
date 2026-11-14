@@ -35,6 +35,10 @@ describe("scrubAnalyticsProperties", () => {
     "key",
     "private_key",
     "awsSecretAccessKey",
+    "aws_access_key_id",
+    "accessKeyId",
+    "bearer",
+    "bearer_token",
   ])("drops the credential-like key %s", (key) => {
     expect(isCredentialLikeKey(key)).toBe(true);
     expect(scrubAnalyticsProperties({ [key]: VALUE, kept: 1 })).toEqual({
@@ -120,6 +124,15 @@ describe("scrubAnalyticsProperties", () => {
     expect(
       scrubAnalyticsProperties({ a: null, b: undefined, c: 0, d: [1, "x"] }),
     ).toEqual({ a: null, b: undefined, c: 0, d: [1, "x"] });
+  });
+
+  it("keeps each array element at its position", () => {
+    // eslint-disable-next-line no-sparse-arrays
+    const scrubbed = scrubAnalyticsProperties({ values: [, "second", null] });
+
+    expect(scrubbed.values).toHaveLength(3);
+    expect(scrubbed.values[1]).toBe("second");
+    expect(scrubbed.values[2]).toBeNull();
   });
 
   it("stops at a reference back to an enclosing object", () => {

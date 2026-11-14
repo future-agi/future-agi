@@ -57,12 +57,21 @@ describe("model settings saved analytics event", () => {
           frequencyPenalty: 0.4,
           responseFormat: { type: "json_schema", schema: { title: MARK } },
           toolChoice: "auto",
+          // Tool rows as the tool picker stores them: a row id of its own and
+          // the selected option, whose value is the tool's id.
           tools: [
             {
-              id: "tool-1",
-              name: "lookup",
-              description: `Synthetic tool ${MARK}`,
-              config: { endpoint: `https://api.example.test/${MARK}` },
+              id: "row-generated-1",
+              tool: {
+                label: "lookup",
+                value: "tool-1",
+                tool: {
+                  id: "tool-1",
+                  name: "lookup",
+                  description: `Synthetic tool ${MARK}`,
+                  config: { endpoint: `https://api.example.test/${MARK}` },
+                },
+              },
             },
           ],
         }}
@@ -91,7 +100,7 @@ describe("model settings saved analytics event", () => {
     });
     expect(JSON.stringify(mocks.mixpanel.track.mock.calls)).not.toContain(MARK);
     expect(
-      handleModelSettingData.mock.calls[0][0].config.tools[0].config,
+      handleModelSettingData.mock.calls[0][0].config.tools[0].tool.tool.config,
     ).toEqual({ endpoint: `https://api.example.test/${MARK}` });
   });
 });

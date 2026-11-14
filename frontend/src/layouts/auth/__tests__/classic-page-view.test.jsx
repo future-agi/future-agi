@@ -42,10 +42,6 @@ describe("auth layout page view", () => {
       `/auth/jwt/invitation/accept/user-1/${MARK}`,
       "/auth/jwt/invitation/accept/:uuid/:token",
     ],
-    [
-      `/auth/jwt/invitation/set-password/user-1/${MARK}/`,
-      "/auth/jwt/invitation/set-password/:uuid/:token",
-    ],
   ])("reports the route pattern for %s", (path, pattern) => {
     renderAt(path);
 

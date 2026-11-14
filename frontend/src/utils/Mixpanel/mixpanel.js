@@ -233,8 +233,8 @@ export const trackError = (properties, where) => {
   if (!MIXPANEL_ENABLED) return;
   try {
     mixpanel.track(
-      `Client Error : ${where || window.location.pathname}`,
-      properties,
+      `Client Error : ${where || pageViewPath(window.location.pathname)}`,
+      scrubAnalyticsProperties(properties),
     );
   } catch (error) {
     logger.error("Failed to track error:", error);
@@ -309,8 +309,8 @@ const pathToEventMapper = {
   "/dashboard/keys": Events.apiPageVisited,
 };
 
-// Auth links carry a one-time token in the path; page views report the route
-// pattern for those instead of the literal path.
+// Auth links carry a one-time token in the path; page views and client error
+// names report the route pattern for those instead of the literal path.
 const TOKEN_PAGE_PATTERNS = [
   "/auth/jwt/invitation/accept/:uuid/:token",
   "/auth/jwt/invitation/set-password/:uuid/:token",
