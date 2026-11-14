@@ -435,7 +435,10 @@ func decisionOrgPriceNames(rc *models.RequestContext) []string {
 	if rc.ResolvedModel != upstream && rc.ResolvedModel != rc.Model {
 		add(rc.ResolvedModel)
 	}
-	if rc.Provider != "" && upstream != "" && !strings.HasPrefix(upstream, rc.Provider+"/") {
+	if rc.Provider != "" && upstream != "" {
+		// The listing's id is always the provider plus the name sent
+		// upstream, even when that name starts with the provider's own
+		// prefix ("openrouter/openrouter/auto").
 		add(rc.Provider + "/" + upstream)
 	}
 	add(upstream)

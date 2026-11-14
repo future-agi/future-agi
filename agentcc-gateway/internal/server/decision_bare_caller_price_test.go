@@ -26,6 +26,8 @@ func TestDecisionBareCallerChargedTheListedOrgPrice(t *testing.T) {
 		"typesafe":              {provider: "typesafe", entry: "jev-1.13.0", bare: "jev-1.13.0"},
 		"openrouter/unprefixed": {provider: "openrouter", entry: "typesafe/jev-1.13", bare: "typesafe/jev-1.13"},
 		"openrouter/prefixed":   {provider: "openrouter", entry: "openrouter/typesafe/jev-1.13", bare: "typesafe/jev-1.13"},
+		// The upstream name itself starts with the provider's prefix.
+		"openrouter/doubled": {provider: "openrouter", entry: "openrouter/openrouter/auto", bare: "openrouter/auto"},
 	}
 	for setupName, s := range setups {
 		id := s.provider + "/" + s.bare
