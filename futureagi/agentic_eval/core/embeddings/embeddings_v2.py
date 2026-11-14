@@ -5,6 +5,7 @@ from agentic_eval.core.embeddings.embedding_manager import model_manager
 _instance_lock = threading.Lock()
 _client_instance_lock = threading.Lock()
 
+
 def get_embedding_model(input_type="text"):
     """
     Returns an instance of the embedding model based on the input type.
@@ -25,4 +26,6 @@ def get_embedding_model(input_type="text"):
     elif input_type == "check_serving":
         return model_manager._use_serving
     else:
-        raise ValueError("Invalid input type. Expected 'text', 'image', or 'image-text'.")
+        raise ValueError(
+            "Invalid input type. Expected 'text', 'image', or 'image-text'."
+        )

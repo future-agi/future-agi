@@ -795,7 +795,7 @@ async def run_test(ws_uri, conv_id, message, timeout=120):
 
 async def run_level(level_tests, token, level_name):
     results = []
-    suffix = f"-t{random.randint(1000,9999)}"
+    suffix = f"-t{random.randint(1000, 9999)}"
 
     for i, (level, test_id, msg) in enumerate(level_tests):
         # Uniquify resource names
@@ -810,7 +810,7 @@ async def run_level(level_tests, token, level_name):
         msg = msg.replace("test-suite-l1", f"test-suite-l1{suffix}")
         msg = msg.replace("quality-l2", f"quality-l2{suffix}")
 
-        print(f"  [{i+1}/{len(level_tests)}] {test_id}: {msg[:70]}...", flush=True)
+        print(f"  [{i + 1}/{len(level_tests)}] {test_id}: {msg[:70]}...", flush=True)
 
         conv_id = create_conv(token, f"{level_name}-{test_id}")
         ws_uri = f"ws://localhost:8001/ws/falcon-ai/?token={token}"
@@ -838,11 +838,11 @@ def print_summary(results, level_name):
     failed = sum(1 for r in results if "FAIL" in r["status"])
     avg_tools = sum(r["tool_count"] for r in results) / total if total else 0
 
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print(
-        f"{level_name}: {passed}/{total} passed ({passed*100//total}%) | Avg tools/test: {avg_tools:.1f}"
+        f"{level_name}: {passed}/{total} passed ({passed * 100 // total}%) | Avg tools/test: {avg_tools:.1f}"
     )
-    print(f"{'='*60}")
+    print(f"{'=' * 60}")
 
     if failed:
         print("\n❌ FAILURES:")

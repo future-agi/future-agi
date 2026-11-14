@@ -532,9 +532,7 @@ class TestAdminPermissionsAndRestrictions:
 
         client.stop_workspace_injection()
 
-    def test_admin_can_invite_admin(
-        self, api_client, admin_user, workspace_a, org_a
-    ):
+    def test_admin_can_invite_admin(self, api_client, admin_user, workspace_a, org_a):
         """Admin can invite other admins at their own level."""
         from conftest import WorkspaceAwareAPIClient
 
@@ -711,7 +709,10 @@ class TestMemberAndViewerRestrictions:
         response = client.get("/accounts/organization/members/")
 
         # Should fail - members don't have access to member list
-        assert response.status_code in (status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN)
+        assert response.status_code in (
+            status.HTTP_401_UNAUTHORIZED,
+            status.HTTP_403_FORBIDDEN,
+        )
 
         client.stop_workspace_injection()
 

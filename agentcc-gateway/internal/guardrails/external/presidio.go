@@ -58,9 +58,12 @@ func (a *presidioAdapter) buildRequest(ctx context.Context, text string) (*http.
 }
 
 func (a *presidioAdapter) parseResponse(body []byte) *guardrails.CheckResult {
+	if err := validateEnvelope(a, body); err != nil {
+		return guardrails.ExecutionFailure(err.Error())
+	}
 	var entities []presidioEntity
 	if err := json.Unmarshal(body, &entities); err != nil {
-		return &guardrails.CheckResult{Pass: false, Score: 1.0, Message: fmt.Sprintf("failed to parse presidio response: %v", err)}
+		return guardrails.ExecutionFailure(fmt.Sprintf("failed to parse presidio response: %v", err))
 	}
 
 	var detected []string

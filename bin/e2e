@@ -16,12 +16,13 @@ ENV_FILE="$ROOT/e2e/stack/e2e.env"
 COMPOSE=(docker compose --env-file "$ENV_FILE"
   -f "$ROOT/docker-compose.distributed.yml" -f "$ROOT/e2e/stack/docker-compose.e2e.yml"
   -p "${E2E_COMPOSE_PROJECT:-futureagi-e2e}")
-# Trimmed profile: no serving/code-executor; general ALL_QUEUES worker plus
-# dedicated exact-aggregation and SQL workers. The generic worker deliberately
-# excludes both admission-bound queues. PeerDB is included through the same
-# bootstrap graph as OSS. Completed one-shot dependencies gate the application;
-# the harness never recreates failed jobs.
-SERVICES=(frontend backend worker worker-exact-aggregation worker-sql-workbench
+# Dedicated-executor service selection reused from the existing executor harness.
+# No serving; general ALL_QUEUES worker plus dedicated exact-aggregation and SQL
+# workers, and the real sandbox. The generic worker deliberately excludes both
+# admission-bound queues. PeerDB is included through the same bootstrap graph as
+# OSS. Completed one-shot dependencies gate the application; the harness never
+# recreates failed jobs.
+SERVICES=(frontend backend worker worker-exact-aggregation worker-sql-workbench code-executor link-canary link-worker-canary
   postgres clickhouse redis minio
   temporal agentcc-gateway fi-collector fi-property-catalog-consumer mock-llm mock-slack mock-google
   peerdb-server peerdb-flow-worker peerdb-flow-snapshot-worker peerdb-minio)
@@ -33,10 +34,15 @@ if [[ "${E2E_STACK:-distributed}" == standalone ]]; then
   COMPOSE=(docker compose --env-file "$ENV_FILE"
     -f "$ROOT/docker-compose.yml" -f "$ROOT/e2e/stack/docker-compose.standalone-e2e.yml"
     -p futureagi-e2e-standalone)
-  SERVICES=(app postgres clickhouse mock-llm mock-google)
+  SERVICES=(app postgres clickhouse mock-llm mock-google code-executor link-canary link-worker-canary)
 fi
 
-BUILD_TARGETS="backend|frontend|collector|all|standalone|standalone-app"
+# Telemetry registration from an E2E stack always goes to loopback, whatever
+# the caller's shell exports (Compose prefers exported values over the env file).
+export FUTURE_AGI_TELEMETRY_DISABLED=true
+export FUTURE_AGI_TELEMETRY_URL=http://127.0.0.1:9
+
+BUILD_TARGETS="backend|frontend|collector|executor|all|standalone|standalone-app"
 
 backend_port() { grep '^BACKEND_PORT=' "$ENV_FILE" | cut -d= -f2; }
 ch_port() { grep '^CH_HTTP_PORT=' "$ENV_FILE" | cut -d= -f2; }
@@ -86,11 +92,14 @@ build_target() {
                docker build -t futureagi/future-agi:e2e-local --build-arg BASE_TAG=e2e-base -f "$ROOT/e2e/stack/backend/Dockerfile" "$ROOT"
                echo "built. run with: FUTURE_AGI_VERSION=e2e-local bin/e2e up" ;;
     frontend)  docker build -t futureagi/frontend:e2e-local "$ROOT/frontend"
+               docker build --build-arg BASE_TAG=e2e-local -t futureagi/frontend:e2e-local -f "$ROOT/e2e/stack/frontend/Dockerfile" "$ROOT"
                echo "built. run with: FRONTEND_VERSION=e2e-local bin/e2e up" ;;
     collector) docker build -t futureagi/fi-collector:e2e-local "$ROOT/fi-collector"
                echo "built. run with: E2E_FI_COLLECTOR_VERSION=e2e-local bin/e2e up" ;;
-    all)       build_target backend; build_target frontend; build_target collector
-               echo "run with: FUTURE_AGI_VERSION=e2e-local FRONTEND_VERSION=e2e-local E2E_FI_COLLECTOR_VERSION=e2e-local bin/e2e up" ;;
+    executor)  docker build -t futureagi/code-executor:e2e-local "$ROOT/futureagi/code-executor"
+               echo "built. run with: CODE_EXECUTOR_VERSION=e2e-local bin/e2e up" ;;
+    all)       build_target backend; build_target frontend; build_target collector; build_target executor
+               echo "run with: FUTURE_AGI_VERSION=e2e-local FRONTEND_VERSION=e2e-local E2E_FI_COLLECTOR_VERSION=e2e-local CODE_EXECUTOR_VERSION=e2e-local bin/e2e up" ;;
     # The images e2e/stack/standalone-e2e.env runs, tagged with its
     # FUTURE_AGI_VERSION: bin/lib/build-local.sh, the recipe of ./bin/install
     # --from-source (the slim backend, frontend, fi-collector and
@@ -99,7 +108,14 @@ build_target() {
     # built with that tag (CI builds them with its layer cache).
     standalone)
       local tag; tag=$(standalone_tag)
-      (cd "$ROOT" && build_local_images standalone all "$tag")
+      docker build -t "futureagi/future-agi:$tag" --build-arg IMAGE_VARIANT=slim -f "$ROOT/futureagi/Dockerfile.oss" "$ROOT/futureagi"
+      docker build --build-arg BASE_TAG="$tag" -t "futureagi/future-agi:$tag" -f "$ROOT/e2e/stack/backend/Dockerfile" "$ROOT"
+      docker build -t "futureagi/frontend:$tag" "$ROOT/frontend"
+      docker build --build-arg BASE_TAG="$tag" -t "futureagi/frontend:$tag" -f "$ROOT/e2e/stack/frontend/Dockerfile" "$ROOT"
+      docker build -t "futureagi/fi-collector:$tag" "$ROOT/fi-collector"
+      docker build -t "futureagi/agentcc-gateway:$tag" "$ROOT/agentcc-gateway"
+      docker build -t "futureagi/code-executor:$tag" "$ROOT/futureagi/code-executor"
+      (cd "$ROOT" && build_local_standalone_app "$tag")
       echo "built futureagi/standalone:$tag. run with: E2E_STACK=standalone bin/e2e up" ;;
     standalone-app)
       local tag; tag=$(standalone_tag)

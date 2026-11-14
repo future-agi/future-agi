@@ -17,25 +17,35 @@ from simulate.models import (
     HarnessSuiteMember,
     HarnessSuiteVersion,
     HostedHarnessConversationEvent,
+    HostedHarnessConversationLease,
     HostedHarnessConversationMessage,
     HostedHarnessJob,
     HostedHarnessScenario,
 )
-from simulate.pydantic_schemas.agent_fix import FixRequest, FixStep, Surface
+from simulate.pydantic_schemas.agent_fix import (
+    CheckRunRequest,
+    FixRequest,
+    FixStep,
+    Surface,
+)
 from simulate.selectors.agent_fix import (
     VARIATIONS_LABEL,
     engine_brief,
     fix_deadline,
     inventory,
+    variations_blocker,
     variations_minutes,
 )
+from simulate.services import agent_fix_runs
 from simulate.services import agent_fix_variations as variations
 from simulate.services.agent_fix_agents import agent_kind
+from simulate.services.agent_fix_engine import start_check_run
 from simulate.services.agent_fix_runs import (
     close_fix_run,
     launch_fix_run,
     retry_fix_run,
 )
+from simulate.services.agent_fix_sweep import sweep_lost_fix_runs
 from simulate.services.harness_versioning import archives, drafts
 from simulate.services.harness_versioning.read import list_versions
 from simulate.services.harness_versioning.versions import move_default
@@ -51,6 +61,7 @@ from simulate.services.hosted_harness_conversation import (
 from simulate.temporal.types.agent_fix import VariationsStep
 from simulate.tests.test_agent_fix_services import (  # noqa: F401 - fixture
     KEYS,
+    _move_default_suite,
     _receipts,
     _run,
     temporal,
@@ -60,6 +71,7 @@ from simulate.tests.test_harness_amend_archive import NAMES
 from simulate.tests.test_harness_versioning_backfill import (  # noqa: F401 - fixture
     storage as storage,
 )
+from simulate.tests.test_harness_versioning_drafts import _lease
 from simulate.tests.test_harness_versioning_record import _authoring, _scenario
 from simulate.tests.test_hosted_harness_conversation import (
     _put_conversation_checkpoint,
@@ -754,6 +766,188 @@ class TestSettle:
 
         assert variations.advance(str(retried.id)) == VariationsStep.WRITING
         assert _command(retried).payload["_fix_run_id"] == str(retried.id)
+
+
+def _token(environment, fix_run):
+    """The chat workspace's draft basis now: a save from a sandbox holding an older
+    token is refused."""
+    return drafts.compose_workspace(environment, _command(fix_run).conversation).token
+
+
+def _outdated(environment, fix_run, token):
+    environment.refresh_from_db()
+    checkpoint = environment.payload["metadata"]["conversation_checkpoints"][
+        str(_command(fix_run).conversation_id)
+    ]
+    return drafts.expected_for(checkpoint, token) is None
+
+
+def _bound(environment, fix_run):
+    return HostedHarnessScenario._base_manager.filter(
+        job=environment,
+        scenario_key__startswith=f"{PARENT}-fix{fix_run.id.hex[:8]}",
+        scenario__isnull=False,
+    )
+
+
+class TestWhatAFixLeavesBehind:
+    def test_a_fix_stopped_while_its_message_waits_withdraws_it_and_outdates_the_chat(
+        self, environment, fix_run
+    ):
+        token = _token(environment, fix_run)
+
+        # The patch outlives the commit callbacks, which run as the capture ends.
+        with (
+            patch("simulate.tasks.harness_nudges.schedule_sandbox_stop") as stop,
+            TestCase.captureOnCommitCallbacks(execute=True),
+        ):
+            close_fix_run(fix_run.id, AgentFixRun.State.STOPPED)
+
+        assert _command(fix_run).state == HostedHarnessConversationMessage.State.FAILED
+        assert _outdated(environment, fix_run, token)
+        # Not started: no sandbox ran it.
+        stop.assert_not_called()
+
+    def test_a_fix_stopped_while_the_builder_runs_its_turn_ends_that_turn(
+        self, environment, fix_run
+    ):
+        command = _command(fix_run)
+        HostedHarnessConversationMessage.no_workspace_objects.filter(
+            id=command.id
+        ).update(state=HostedHarnessConversationMessage.State.DELIVERED)
+        lease = _lease(command.conversation)
+
+        # The patch outlives the commit callbacks, which run as the capture ends.
+        with (
+            patch("simulate.tasks.harness_nudges.schedule_sandbox_stop") as stop,
+            TestCase.captureOnCommitCallbacks(execute=True),
+        ):
+            close_fix_run(fix_run.id, AgentFixRun.State.STOPPED)
+
+        lease.refresh_from_db()
+        assert lease.state == HostedHarnessConversationLease.State.EXPIRED
+        stop.assert_called_once_with(str(command.conversation_id), lease.provider_ref)
+        assert _command(fix_run).state == HostedHarnessConversationMessage.State.FAILED
+
+    def test_a_failed_builder_turn_outdates_the_chat_s_workspace(
+        self, environment, fix_run
+    ):
+        command = _command(fix_run)
+        token = _token(environment, fix_run)
+        HostedHarnessConversationEvent.no_workspace_objects.create(
+            event_id="turn-failed",
+            conversation=command.conversation,
+            sequence=1,
+            kind="turn_completed",
+            payload={"command_message_id": str(command.id), "outcome": "failed"},
+            digest="sha256:" + "e" * 64,
+            emitted_at=timezone.now(),
+        )
+
+        assert variations.advance(str(fix_run.id)) == VariationsStep.ENDED
+
+        # Whatever it wrote before it failed never reaches a draft.
+        assert _outdated(environment, fix_run, token)
+
+    def test_an_older_fix_s_late_close_leaves_its_retry_s_rows(
+        self, environment, fix_run, storage, user
+    ):
+        _land(fix_run, storage, _builder_save(environment))
+        _finish(_base_run(fix_run), failed=[_named(fix_run, n) for n in (1, 2, 3)])
+        close_fix_run(
+            fix_run.id,
+            AgentFixRun.State.FAILED,
+            failure={"code": "fix_variations_timeout", "message": "m"},
+        )
+        retried = retry_fix_run(
+            AgentFixRun.no_workspace_objects.get(id=fix_run.id), user=user
+        )
+        assert variations.advance(str(retried.id)) == VariationsStep.DONE
+        # The retry runs the same variations: it binds rows of its own.
+        with TestCase.captureOnCommitCallbacks(execute=True):
+            start_check_run(
+                AgentFixRun.no_workspace_objects.get(id=retried.id),
+                CheckRunRequest(
+                    label="screen-1",
+                    agent_version_id=retried.base_agent_version_id,
+                    scenario_keys=[_named(fix_run, n) for n in (1, 2, 3)],
+                    trials=1,
+                ),
+            )
+        rows = {one.dataset_row_id for one in _bound(environment, fix_run)}
+        assert len(rows) == 3
+
+        # The first fix's close runs again, late.
+        close_fix_run(fix_run.id, AgentFixRun.State.FAILED)
+
+        assert {one.dataset_row_id for one in _bound(environment, fix_run)} == rows
+        assert not Row.all_objects.filter(id__in=rows, deleted=True).exists()
+
+    def test_rows_a_failed_cleanup_left_are_dropped_by_the_sweep(
+        self, environment, fix_run, storage
+    ):
+        _land(fix_run, storage, _builder_save(environment))
+        _base_run(fix_run)
+        rows = {one.dataset_row_id for one in _bound(environment, fix_run)}
+        with patch.object(agent_fix_runs, "Row") as row:
+            row.all_objects.filter.side_effect = OperationalError("gone")
+            close_fix_run(fix_run.id, AgentFixRun.State.STOPPED)
+        assert _bound(environment, fix_run).count() == 3
+
+        counts = sweep_lost_fix_runs()
+
+        assert counts["variation_rows_left"] == 0
+        assert not _bound(environment, fix_run).exists()
+        assert Row.all_objects.filter(id__in=rows, deleted=True).count() == 3
+
+
+class TestARunTheEnvironmentMovedOnFrom:
+    def test_is_refused_variations_at_launch(self, environment, source_run, user):
+        _move_default_suite(environment, user)
+
+        refused = variations_blocker(
+            HostedHarnessJob.no_workspace_objects.get(id=source_run.id)
+        )
+
+        assert refused.code == "fix_variations_source_moved"
+
+    def test_ends_a_fix_before_the_builder_is_asked(
+        self, environment, source_run, user
+    ):
+        fix_run = launch_fix_run(
+            source_run,
+            target_scenario_keys=[PARENT],
+            surfaces=[Surface.PROMPT],
+            locked_paths=[],
+            budget_usd=5.0,
+            max_minutes=30,
+            user=user,
+        )
+        _move_default_suite(environment, user)
+
+        assert variations.advance(str(fix_run.id)) == VariationsStep.ENDED
+
+        fix_run.refresh_from_db()
+        assert fix_run.failure["code"] == "fix_variations_source_moved"
+        assert not HostedHarnessConversationMessage.no_workspace_objects.filter(
+            client_request_id=f"fix-{fix_run.id}-variations"
+        ).exists()
+
+    def test_ends_a_fix_whose_environment_moved_while_the_builder_wrote(
+        self, environment, fix_run, storage, user
+    ):
+        body = _builder_save(environment)
+        _move_default_suite(environment, user)
+
+        with TestCase.captureOnCommitCallbacks(execute=True):
+            _land(fix_run, storage, body)
+
+        fix_run.refresh_from_db()
+        assert (fix_run.state, fix_run.suite_version_id) == (
+            AgentFixRun.State.FAILED,
+            None,
+        )
+        assert fix_run.failure["code"] == "fix_variations_source_moved"
 
 
 class TestACaseWithoutVariations:

@@ -20,7 +20,14 @@ import pytest
 from tracer.services.clickhouse.v2.span_reader import CHSpanReader
 
 _TEST_DB = "test_root_trace_candidates"
-_COLS = ["trace_id", "project_id", "parent_span_id", "is_deleted", "start_time", "created_at"]
+_COLS = [
+    "trace_id",
+    "project_id",
+    "parent_span_id",
+    "is_deleted",
+    "start_time",
+    "created_at",
+]
 _UTC = timezone.utc
 
 
@@ -34,9 +41,13 @@ def reader():
     host = os.environ.get("CH25_HOST") or os.environ.get("CH_HOST") or "localhost"
     if host == "clickhouse":
         host = "localhost"
-    port = int(os.environ.get("CH25_HTTP_PORT") or os.environ.get("CH_HTTP_PORT") or 18123)
+    port = int(
+        os.environ.get("CH25_HTTP_PORT") or os.environ.get("CH_HTTP_PORT") or 18123
+    )
     try:
-        admin = clickhouse_connect.get_client(host=host, port=port, username="default", password="")
+        admin = clickhouse_connect.get_client(
+            host=host, port=port, username="default", password=""
+        )
         admin.query("SELECT 1")
     except Exception:
         pytest.skip("ClickHouse not available for integration tests")
@@ -99,7 +110,9 @@ class TestRootTraceCandidates:
             reader,
             [
                 _row(pid, "T", ca=now - timedelta(minutes=30)),  # root
-                _row(pid, "T", ca=now - timedelta(minutes=40), parent="some-parent"),  # child, earlier
+                _row(
+                    pid, "T", ca=now - timedelta(minutes=40), parent="some-parent"
+                ),  # child, earlier
             ],
         )
         got = dict(reader.root_trace_candidates(str(pid), lower, upper))
@@ -114,8 +127,18 @@ class TestRootTraceCandidates:
         _insert(
             reader,
             [
-                _row(pid, "fresh", ca=now - timedelta(minutes=10), st=now - timedelta(minutes=10)),
-                _row(pid, "stale", ca=now - timedelta(minutes=10), st=lower - timedelta(days=8)),
+                _row(
+                    pid,
+                    "fresh",
+                    ca=now - timedelta(minutes=10),
+                    st=now - timedelta(minutes=10),
+                ),
+                _row(
+                    pid,
+                    "stale",
+                    ca=now - timedelta(minutes=10),
+                    st=lower - timedelta(days=8),
+                ),
             ],
         )
         got = dict(reader.root_trace_candidates(str(pid), lower, upper))
@@ -132,7 +155,12 @@ class TestRootTraceCandidates:
             reader,
             [
                 _row(pid, "D", ca=first),
-                _row(pid, "D", ca=now - timedelta(minutes=15), st=now - timedelta(minutes=14)),
+                _row(
+                    pid,
+                    "D",
+                    ca=now - timedelta(minutes=15),
+                    st=now - timedelta(minutes=14),
+                ),
             ],
         )
         got = reader.root_trace_candidates(str(pid), lower, upper)

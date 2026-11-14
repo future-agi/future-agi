@@ -88,7 +88,15 @@ func (s *Server) adminVideoKillSwitch(w http.ResponseWriter, r *http.Request) {
 	videoJSON(w, 200, map[string]any{"enabled": *body.Enabled})
 }
 func (s *Server) adminVideoAttach(w http.ResponseWriter, r *http.Request) {
-	if !s.checkAdminAuth(w, r) || !s.handlers.videoReady(w) {
+	if !s.checkAdminAuth(w, r) {
+		return
+	}
+	// Stored video jobs follow the same global network rules as batch results.
+	if err := s.handlers.resultNetworkAdmission(r, nil); err != nil {
+		models.WriteError(w, err)
+		return
+	}
+	if !s.handlers.videoReady(w) {
 		return
 	}
 	var body struct {
@@ -107,7 +115,15 @@ func (s *Server) adminVideoAttach(w http.ResponseWriter, r *http.Request) {
 	videoJSON(w, 200, j.ToStatusResponse())
 }
 func (s *Server) adminVideoUnsettled(w http.ResponseWriter, r *http.Request) {
-	if !s.checkAdminAuth(w, r) || !s.handlers.videoReady(w) {
+	if !s.checkAdminAuth(w, r) {
+		return
+	}
+	// Stored video jobs follow the same global network rules as batch results.
+	if err := s.handlers.resultNetworkAdmission(r, nil); err != nil {
+		models.WriteError(w, err)
+		return
+	}
+	if !s.handlers.videoReady(w) {
 		return
 	}
 	jobs, e := s.handlers.videoService.Unsettled(r.Context())

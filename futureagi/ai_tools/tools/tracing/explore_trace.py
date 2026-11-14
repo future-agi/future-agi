@@ -182,8 +182,10 @@ class ExploreTraceTool(BaseTool):
 
     def _sort_children(self, node):
         node["children"].sort(
-            key=lambda n: getattr(n["span"], "start_time", None)
-            or getattr(n["span"], "created_at", None)
+            key=lambda n: (
+                getattr(n["span"], "start_time", None)
+                or getattr(n["span"], "created_at", None)
+            )
         )
         for child in node["children"]:
             self._sort_children(child)
@@ -213,8 +215,10 @@ class ExploreTraceTool(BaseTool):
 
         roots = sorted(
             tree.values(),
-            key=lambda n: getattr(n["span"], "start_time", None)
-            or getattr(n["span"], "created_at", None),
+            key=lambda n: (
+                getattr(n["span"], "start_time", None)
+                or getattr(n["span"], "created_at", None)
+            ),
         )
         for i, root in enumerate(roots, start=1):
             walk(root, [i])
@@ -302,8 +306,10 @@ class ExploreTraceTool(BaseTool):
 
         roots = sorted(
             tree.values(),
-            key=lambda n: getattr(n["span"], "start_time", None)
-            or getattr(n["span"], "created_at", None),
+            key=lambda n: (
+                getattr(n["span"], "start_time", None)
+                or getattr(n["span"], "created_at", None)
+            ),
         )
         for i, root in enumerate(roots, start=1):
             walk(root, [i])

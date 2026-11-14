@@ -17,6 +17,71 @@ Harness.propTypes = { defaults: PropTypes.object, isEdit: PropTypes.bool };
 const windowText = () => screen.getByText(/^\(.+\)$/).textContent;
 
 describe("TaskSchedulingSection preset", () => {
+  it.each([
+    ["session", "spans", "conversations"],
+    ["user", "traces", "users"],
+    ["trace", "sessions", "traces"],
+    ["attribute", "spans", "custom IDs"],
+  ])(
+    "describes closed %s cohorts using the selected %s rows",
+    (unit, rowType, units) => {
+      render(
+        <Harness
+          defaults={{
+            runType: "continuous",
+            rowType,
+            samplingPolicy: { mode: "closed", sampling_unit: unit },
+          }}
+        />,
+      );
+      expect(
+        screen.getByText(
+          `Continue evaluating late rows from picked ${units}. New groups are not admitted after membership freezes at first execution.`,
+        ),
+      ).toBeVisible();
+      expect(
+        screen.getByRole("radio", { name: "New incoming data" }),
+      ).toBeChecked();
+      expect(
+        screen.getByText(
+          "Continue evaluating late rows from the selected groups",
+        ),
+      ).toBeVisible();
+      expect(
+        screen.queryByText("Evaluate every new trace as it arrives"),
+      ).not.toBeInTheDocument();
+    },
+  );
+
+  it("keeps live sampling distinct from frozen cohorts", () => {
+    render(
+      <Harness
+        defaults={{
+          runType: "continuous",
+          rowType: "spans",
+          samplingPolicy: { mode: "live", sampling_unit: "session" },
+        }}
+      />,
+    );
+    expect(
+      screen.getByText("New incoming data uses percentages, not fixed counts."),
+    ).toBeVisible();
+    expect(screen.queryByText(/cohort freezes/)).not.toBeInTheDocument();
+  });
+
+  it("describes selected evaluation rows without claiming every trace runs", () => {
+    render(<Harness defaults={{ runType: "continuous", rowType: "spans" }} />);
+    expect(
+      screen.getByText("Evaluate matching spans as they arrive"),
+    ).toBeVisible();
+    fireEvent.click(screen.getByRole("radio", { name: "Historical data" }));
+    expect(
+      screen.getByText(
+        "Evaluate existing matching spans from a past time window",
+      ),
+    ).toBeVisible();
+  });
+
   it("writes the clicked preset into form state", () => {
     render(
       <Harness

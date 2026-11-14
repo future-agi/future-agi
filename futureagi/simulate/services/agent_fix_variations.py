@@ -12,6 +12,7 @@ import re
 import uuid
 from collections.abc import Mapping
 from datetime import timedelta
+from functools import partial
 from pathlib import PurePosixPath
 from typing import Any
 
@@ -44,6 +45,7 @@ from simulate.selectors.agent_fix import (
     VARIATIONS_LABEL,
     scenario_results,
     variations_minutes,
+    variations_source_moved,
     written_variations,
 )
 from simulate.services.agent_fix_engine import start_check_run
@@ -51,6 +53,7 @@ from simulate.services.agent_fix_runs import close_fix_run, split_held_back
 from simulate.services.agent_fix_sandbox import claim
 from simulate.services.harness_scenarios import pair_scenarios
 from simulate.services.harness_versioning import archives, drafts
+from simulate.services.harness_versioning.rebuild import hand_back_chat
 from simulate.services.harness_versioning.versions import _add_members, suite_documents
 from simulate.services.hosted_harness import HostedHarnessError
 from simulate.services.hosted_harness_conversation import (
@@ -206,6 +209,13 @@ def _write(fix_run: AgentFixRun) -> VariationsStep:
         client_request_id=_client_request_id(fix_run),
     ).first()
     if command is None:
+        # The builder writes from the environment as it is now: it must be as it ran.
+        moved = variations_source_moved(
+            HostedHarnessJob.no_workspace_objects.get(id=fix_run.environment_id),
+            fix_run.source_run,
+        )
+        if moved is not None:
+            return _end(fix_run, AgentFixRun.State.FAILED, moved.code, moved.message)
         _ask_builder(fix_run)
         return VariationsStep.WRITING
     turn = HostedHarnessConversationEvent.no_workspace_objects.filter(
@@ -375,6 +385,15 @@ def land(
             )
         )
         if locked.state != AgentFixRun.State.RUNNING or locked.suite_version_id:
+            return
+        # Written from the environment as it was when asked; it may have moved since.
+        moved = variations_source_moved(locked_environment, source_run)
+        if moved is not None:
+            transaction.on_commit(
+                partial(
+                    _end, fix_run, AgentFixRun.State.FAILED, moved.code, moved.message
+                )
+            )
             return
         version = HarnessSuiteVersion.no_workspace_objects.create(
             job=locked_environment,
@@ -620,6 +639,75 @@ def _settle(
         failing=len(failing),
     )
     return VariationsStep.ENDED if too_few else VariationsStep.DONE
+
+
+def stop_writing(fix_run: AgentFixRun) -> None:
+    """For a fix that ended before its variations landed: its message to the builder is
+    withdrawn while it waits, the turn the builder runs for it is ended as a stopped
+    rebuild's is, and the chat's workspace is outdated, so nothing written for the fix
+    reaches the environment's drafts. Fail open: the fix's ending stands."""
+    if fix_run.suite_version_id is not None:
+        return
+    command = (
+        HostedHarnessConversationMessage.no_workspace_objects.select_related(
+            "conversation"
+        )
+        .filter(
+            conversation__job_id=fix_run.environment_id,
+            client_request_id=_client_request_id(fix_run),
+        )
+        .first()
+    )
+    if command is None:
+        return
+    try:
+        # Delivered and not over: the builder's sandbox is running the fix's turn.
+        running = (
+            command.state == HostedHarnessConversationMessage.State.DELIVERED
+            and not HostedHarnessConversationEvent.no_workspace_objects.filter(
+                conversation_id=command.conversation_id,
+                kind__in=("turn_completed", "turn_interrupted"),
+                payload__command_message_id=str(command.id),
+            ).exists()
+        )
+        HostedHarnessConversationMessage.no_workspace_objects.filter(
+            id=command.id,
+            state__in=(
+                HostedHarnessConversationMessage.State.QUEUED,
+                HostedHarnessConversationMessage.State.DELIVERED,
+            ),
+        ).update(
+            state=HostedHarnessConversationMessage.State.FAILED,
+            updated_at=timezone.now(),
+        )
+        _outdate_workspace(fix_run.environment, command.conversation)
+        if running:
+            transaction.on_commit(partial(_hand_back, str(fix_run.environment_id)))
+    except Exception:
+        logger.exception("agent_fix_variations_turn_kept", fix_run=str(fix_run.id))
+
+
+def _hand_back(environment_id: str) -> None:
+    """Stop the builder's sandbox that ran the withdrawn turn, and start one for the
+    messages that wait behind it."""
+    from simulate.tasks.harness_nudges import schedule_sandbox_stop
+    from simulate.tasks.hosted_harness_conversation import (
+        schedule_conversation_runtime,
+    )
+
+    try:
+        handed = hand_back_chat(environment_id)
+        if handed is None:
+            return
+        conversation_id, ref, waiting = handed
+        if ref:
+            schedule_sandbox_stop(conversation_id, ref)
+        if waiting:
+            schedule_conversation_runtime(conversation_id, _public_base_url(None))
+    except Exception:  # noqa: BLE001 - the chat's recovery sweep restarts it
+        logger.exception(
+            "agent_fix_variations_hand_back_failed", environment=environment_id
+        )
 
 
 def _count(number: int, noun: str) -> str:

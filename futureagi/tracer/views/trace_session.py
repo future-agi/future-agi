@@ -811,57 +811,103 @@ def _resolve_end_user_ids_for_user_id(
 
 
 def _soft_delete_trace_session_tree(trace_sessions):
-    now = timezone.now()
-    sessions = list(trace_sessions)
-    if not sessions:
-        return
+    """Delete sessions and their same-project descendants in one transaction."""
+    from django.db.models import Q
 
-    session_ids = [session.id for session in sessions]
-    trace_ids = list(
-        Trace.no_workspace_objects.filter(
-            session_id__in=session_ids,
-            deleted=False,
-        ).values_list("id", flat=True)
-    )
-
-    if trace_ids:
-        ObservationSpan.no_workspace_objects.filter(
-            trace_id__in=trace_ids,
-            deleted=False,
-        ).update(deleted=True, deleted_at=now)
-        soft_delete_eval_results(
-            EvalLogger.no_workspace_objects.filter(
-                trace_id__in=trace_ids,
-                deleted=False,
-            )
-        )
-        Trace.no_workspace_objects.filter(
-            id__in=trace_ids,
-            deleted=False,
-        ).update(deleted=True, deleted_at=now)
-
-    soft_delete_eval_results(
-        EvalLogger.no_workspace_objects.filter(
-            trace_session_id__in=session_ids,
-            deleted=False,
-        )
-    )
-    TraceSession.no_workspace_objects.filter(
-        id__in=session_ids,
-        deleted=False,
-    ).update(deleted=True, deleted_at=now)
     from tracer.services.analysis_retention import retire_analysis_sources
 
-    for project_id in sorted({session.project_id for session in sessions}):
-        selected = [
-            session.id for session in sessions if session.project_id == project_id
-        ]
-        project_trace_ids = Trace._base_manager.filter(
-            project_id=project_id, session_id__in=selected
-        ).values_list("id", flat=True)
-        retire_analysis_sources(
-            project_id=project_id, trace_ids=project_trace_ids, session_ids=selected
+    # Keep the request's project mapping before reading fresh database rows.
+    authorized = {session.pk: session.project_id for session in trace_sessions}
+    if not authorized:
+        return
+
+    with transaction.atomic():
+        # Match project deletion and analysis writers' project-first lock order.
+        list(
+            Project._base_manager.select_for_update(no_key=True)
+            .filter(pk__in=set(authorized.values()))
+            .order_by("pk")
+            .values_list("pk", flat=True)
         )
+        sessions = list(
+            TraceSession.no_workspace_objects.select_for_update()
+            .filter(pk__in=authorized)
+            .order_by("pk")
+        )
+        if {session.pk: session.project_id for session in sessions} != authorized:
+            raise ValidationError("Session ownership changed; refresh and retry.")
+
+        by_project = defaultdict(list)
+        for session in sessions:
+            by_project[session.project_id].append(session.pk)
+        now = timezone.now()
+        for project_id in sorted(by_project, key=str):
+            session_ids = by_project[project_id]
+            traces = Trace.no_workspace_objects.filter(
+                session_id__in=session_ids,
+                project_id=project_id,
+            )
+            trace_ids = list(
+                traces.select_for_update().order_by("pk").values_list("pk", flat=True)
+            )
+            spans = ObservationSpan.no_workspace_objects.filter(
+                trace_id__in=trace_ids,
+                project_id=project_id,
+                trace__project_id=project_id,
+                trace__session_id__in=session_ids,
+            )
+            # Lock children before writing so their parent cannot change
+            # between the project check and update.
+            span_ids = list(
+                spans.select_for_update(of=("self",))
+                .order_by("pk")
+                .values_list("pk", flat=True)
+            )
+            spans.filter(pk__in=span_ids).update(deleted=True, deleted_at=now)
+
+            config_scope = Q(custom_eval_config__isnull=True) | Q(
+                custom_eval_config__project_id=project_id,
+            )
+            # Span references may exist only in ClickHouse. A PostgreSQL span
+            # from another project, even when deleted, is not an absent span.
+            pg_span = ObservationSpan._base_manager.filter(
+                pk=OuterRef("observation_span_id")
+            )
+            owned_span = pg_span.filter(
+                project_id=project_id, trace_id=OuterRef("trace_id")
+            )
+            soft_delete_eval_results(
+                EvalLogger.no_workspace_objects.filter(
+                    config_scope,
+                    ~Exists(pg_span) | Exists(owned_span),
+                    trace_id__in=trace_ids,
+                    trace__project_id=project_id,
+                    trace__session_id__in=session_ids,
+                    trace_session__isnull=True,
+                ).order_by("pk")
+            )
+            traces.filter(pk__in=trace_ids).update(deleted=True, deleted_at=now)
+            soft_delete_eval_results(
+                EvalLogger.no_workspace_objects.filter(
+                    config_scope,
+                    trace_session_id__in=session_ids,
+                    trace_session__project_id=project_id,
+                    trace__isnull=True,
+                    observation_span__isnull=True,
+                ).order_by("pk")
+            )
+            TraceSession.no_workspace_objects.filter(
+                pk__in=session_ids,
+                project_id=project_id,
+            ).update(deleted=True, deleted_at=now)
+            project_trace_ids = Trace._base_manager.filter(
+                project_id=project_id, session_id__in=session_ids
+            ).values_list("id", flat=True)
+            retire_analysis_sources(
+                project_id=project_id,
+                trace_ids=project_trace_ids,
+                session_ids=session_ids,
+            )
 
 
 class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
@@ -1060,18 +1106,36 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
 
         project_id = session_fields["project_id"]
 
-        # Preserve an ID-only PG marker: stale CH spans must not be materialized
-        # into a new analysis after the CH-only session was deleted.
-        TraceSessionOverlay._base_manager.update_or_create(
-            trace_session_id=trace_session_id,
-            defaults={
-                "project_id": project_id,
-                "deleted": True,
-                "deleted_at": timezone.now(),
-                "display_name": None,
-                "bookmarked": False,
-            },
-        )
+        from tracer.services.analysis_retention import retire_analysis_sources
+
+        # Commit the local marker and analysis cleanup together before publishing
+        # the ClickHouse marker. Keep any existing overlay in its original project.
+        with transaction.atomic():
+            list(
+                Project._base_manager.select_for_update(no_key=True)
+                .filter(pk=project_id)
+                .values_list("pk", flat=True)
+            )
+            overlay, _ = TraceSessionOverlay._base_manager.select_for_update(
+                of=("self",)
+            ).get_or_create(
+                trace_session_id=trace_session_id, defaults={"project_id": project_id}
+            )
+            if str(overlay.project_id) != str(project_id):
+                raise ValidationError("Session ownership changed; refresh and retry.")
+            now = timezone.now()
+            TraceSessionOverlay._base_manager.filter(
+                pk=overlay.pk, project_id=project_id
+            ).update(
+                deleted=True,
+                deleted_at=now,
+                display_name=None,
+                bookmarked=False,
+                updated_at=now,
+            )
+            retire_analysis_sources(
+                project_id=project_id, session_ids=[trace_session_id]
+            )
 
         # Mark as deleted in the CH trace_sessions RMT: INSERT a row with
         # is_deleted=1 and a newer version so FINAL picks it up.
@@ -1102,11 +1166,6 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
                 trace_session_id=str(trace_session_id),
                 error=str(e)[:200],
             )
-        # The PG marker is authoritative even if CH is temporarily unavailable.
-        from tracer.services.analysis_retention import retire_analysis_sources
-
-        retire_analysis_sources(project_id=project_id, session_ids=[trace_session_id])
-
         return Response(status=drf_status.HTTP_204_NO_CONTENT)
 
     def perform_destroy(self, instance):
