@@ -638,7 +638,7 @@ export default function JwtLoginView() {
           >
             <Typography
               fontWeight={"fontWeightMedium"}
-              sx={{ fontSize: "13px" }}
+              sx={{ fontSize: "12px" }}
             >
               Sign in with Passkey
             </Typography>
@@ -655,7 +655,7 @@ export default function JwtLoginView() {
             >
               <Typography
                 fontWeight={"fontWeightMedium"}
-                sx={{ fontSize: "13px" }}
+                sx={{ fontSize: "12px" }}
               >
                 Continue with Google
               </Typography>
@@ -682,7 +682,7 @@ export default function JwtLoginView() {
           sx={{
             fontWeight: 500,
             paddingLeft: "10px",
-            fontSize: "13px",
+            fontSize: "12px",
             marginRight: -1.5,
           }}
         >
@@ -704,7 +704,7 @@ export default function JwtLoginView() {
             >
               <Typography
                 fontWeight={"fontWeightMedium"}
-                sx={{ fontSize: "13px", color: "text.primary" }}
+                sx={{ fontSize: "12px", color: "text.primary" }}
               >
                 Continue with Github
               </Typography>
@@ -723,7 +723,7 @@ export default function JwtLoginView() {
             >
               <Typography
                 fontWeight={"fontWeightMedium"}
-                sx={{ fontSize: "13px", marginRight: -1.5 }}
+                sx={{ fontSize: "12px", marginRight: -1.5 }}
               >
                 Continue with SSO/SAML
               </Typography>
@@ -733,7 +733,7 @@ export default function JwtLoginView() {
 
         {/* ✅ Added Create Account Link */}
         <Typography
-          fontSize={"13px"}
+          fontSize={"12px"}
           fontWeight={"fontWeightMedium"}
           color="text.secondary"
           sx={{ textAlign: "center" }}

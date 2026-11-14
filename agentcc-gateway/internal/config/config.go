@@ -16,11 +16,15 @@ import (
 	"strings"
 	"time"
 
+	video "github.com/futureagi/agentcc-gateway/internal/providers/video"
+	"github.com/futureagi/agentcc-gateway/internal/video/capability"
+	"github.com/futureagi/agentcc-gateway/internal/video/tariff"
 	"gopkg.in/yaml.v3"
 )
 
 // Config is the top-level gateway configuration.
 type Config struct {
+	Video         VideoConfig               `yaml:"video" json:"video"`
 	Server        ServerConfig              `yaml:"server" json:"server"`
 	Providers     map[string]ProviderConfig `yaml:"providers" json:"providers"`
 	ModelMap      map[string]string         `yaml:"model_map" json:"model_map"`
@@ -331,6 +335,7 @@ type ServerConfig struct {
 	IdleTimeout           time.Duration `yaml:"idle_timeout" json:"idle_timeout"`
 	ShutdownTimeout       time.Duration `yaml:"shutdown_timeout" json:"shutdown_timeout"`
 	MaxRequestBodySize    int64         `yaml:"max_request_body_size" json:"max_request_body_size"`
+	MaxHeaderBytes        int           `yaml:"max_header_bytes" json:"max_header_bytes"`
 	DefaultRequestTimeout time.Duration `yaml:"default_request_timeout" json:"default_request_timeout"`
 
 	// MaxRequestTimeout is the longest a request may run, whatever a client
@@ -666,7 +671,12 @@ type MirrorConfig struct {
 	CaptureResults   bool         `yaml:"capture_results" json:"capture_results"`
 	MaxStored        int          `yaml:"max_stored" json:"max_stored"`
 	FlushIntervalSec int          `yaml:"flush_interval_sec" json:"flush_interval_sec"`
-	Rules            []MirrorRule `yaml:"rules" json:"rules"`
+	// MaxConcurrent bounds the number of in-flight async mirror requests.
+	// Mirroring is fire-and-forget shadow traffic, so excess is dropped (not
+	// queued) once this budget is exhausted, preventing unbounded goroutine and
+	// upstream-connection growth under load. Defaults to 64 when unset.
+	MaxConcurrent int          `yaml:"max_concurrent" json:"max_concurrent"`
+	Rules         []MirrorRule `yaml:"rules" json:"rules"`
 }
 
 // MirrorRule defines a single traffic mirroring rule.
@@ -991,6 +1001,14 @@ type CORSConfig struct {
 	AllowCredentials bool     `yaml:"allow_credentials" json:"allow_credentials"`
 }
 
+// AllowsAnyOrigin reports whether the CORS middleware treats the origin list
+// as a wildcard: empty, or exactly ["*"]. A "*" alongside other entries is a
+// literal entry, not a wildcard.
+func (c CORSConfig) AllowsAnyOrigin() bool {
+	o := c.AllowedOrigins
+	return len(o) == 0 || (len(o) == 1 && o[0] == "*")
+}
+
 // IPACLConfig controls IP-based access control lists.
 type IPACLConfig struct {
 	Enabled        bool     `yaml:"enabled" json:"enabled"`
@@ -1002,6 +1020,7 @@ type IPACLConfig struct {
 // DefaultConfig returns sensible defaults.
 func DefaultConfig() *Config {
 	return &Config{
+		Video: defaultVideoConfig(),
 		Server: ServerConfig{
 			Port:                  8080,
 			Host:                  "0.0.0.0",
@@ -1011,6 +1030,7 @@ func DefaultConfig() *Config {
 			IdleTimeout:           120 * time.Second,
 			ShutdownTimeout:       30 * time.Second,
 			MaxRequestBodySize:    50 * 1024 * 1024, // 50MB
+			MaxHeaderBytes:        1 << 20,          // 1MB (matches Go's default)
 			DefaultRequestTimeout: 60 * time.Second,
 			// Unset: Load reads it as WriteTimeout, whatever that is set to.
 			MaxRequestTimeout: 0,
@@ -1078,6 +1098,14 @@ func Load(path string) (*Config, error) {
 	}
 
 	loadFromEnv(cfg)
+
+	// Presets must supply required fields before validation, not just at registry creation.
+	for name, provider := range cfg.Providers {
+		before := provider
+		ApplyProviderPreset(&provider)
+		cfg.Providers[name] = provider
+		logPresetDefaults(name, before, provider)
+	}
 
 	// The control plane checks the gateway's calls against the same shared
 	// admin token (Django's AGENTCC_ADMIN_TOKEN), so a gateway told only the
@@ -1219,6 +1247,13 @@ func envInt(name string, dst *int) {
 }
 
 func loadFromEnv(cfg *Config) {
+	for name, target := range map[string]*bool{"AGENTCC_VIDEO_ENABLED": &cfg.Video.Enabled, "AGENTCC_VIDEO_KILL_SWITCH": &cfg.Video.KillSwitch} {
+		if value, ok := os.LookupEnv(name); ok {
+			if b, err := strconv.ParseBool(value); err == nil {
+				*target = b
+			}
+		}
+	}
 	envInt("AGENTCC_PORT", &cfg.Server.Port)
 	if v := os.Getenv("AGENTCC_HOST"); v != "" {
 		cfg.Server.Host = v
@@ -1333,6 +1368,10 @@ func (c *Config) Validate() error {
 		}
 	}
 
+	if err := c.validateVideo(); err != nil {
+		return err
+	}
+
 	if err := c.validateLicenseAuth(); err != nil {
 		return err
 	}
@@ -1340,6 +1379,10 @@ func (c *Config) Validate() error {
 	validLevels := map[string]bool{"debug": true, "info": true, "warn": true, "error": true}
 	if !validLevels[strings.ToLower(c.Logging.Level)] {
 		return fmt.Errorf("logging.level must be one of debug, info, warn, error; got %q", c.Logging.Level)
+	}
+
+	if c.CORS.Enabled && c.CORS.AllowCredentials && c.CORS.AllowsAnyOrigin() {
+		return fmt.Errorf("cors: allow_credentials cannot be combined with a wildcard origin %q (or an empty allowed_origins, which means %q); list explicit origins instead", "*", "*")
 	}
 
 	if err := c.validateOTel(); err != nil {
@@ -1520,4 +1563,281 @@ func normalizePathPrefix(prefix string) string {
 		prefix = "/" + prefix
 	}
 	return prefix
+}
+
+// VideoConfig is opt-in. Runtime kill-switch changes live in Redis; this value
+// is startup-only. Canonical requests are retained as plaintext metadata in v1.
+type VideoConfig struct {
+	Enabled              bool                           `yaml:"enabled" json:"enabled"`
+	KillSwitch           bool                           `yaml:"kill_switch" json:"kill_switch"`
+	Store                string                         `yaml:"store" json:"store"`
+	AllowNonDurableStore bool                           `yaml:"allow_non_durable_store" json:"allow_non_durable_store"`
+	CorrelationSecret    string                         `yaml:"correlation_secret" json:"-"`
+	Submit               VideoSubmitConfig              `yaml:"submit" json:"submit"`
+	Poll                 VideoPollConfig                `yaml:"poll" json:"poll"`
+	Copy                 VideoCopyConfig                `yaml:"copy" json:"copy"`
+	Reconcile            VideoReconcileConfig           `yaml:"reconcile" json:"reconcile"`
+	Media                VideoMediaConfig               `yaml:"media" json:"media"`
+	Artifacts            VideoArtifactsConfig           `yaml:"artifacts" json:"artifacts"`
+	Retention            VideoRetentionConfig           `yaml:"retention" json:"retention"`
+	Limits               VideoLimitsConfig              `yaml:"limits" json:"limits"`
+	Providers            map[string]VideoProviderConfig `yaml:"providers" json:"providers"`
+}
+type VideoSubmitConfig struct {
+	SyncWait                 time.Duration `yaml:"sync_wait" json:"sync_wait"`
+	Deadline                 time.Duration `yaml:"deadline" json:"deadline"`
+	UnknownReconcileDeadline time.Duration `yaml:"unknown_reconcile_deadline" json:"unknown_reconcile_deadline"`
+	LeaseTTL                 time.Duration `yaml:"lease_ttl" json:"lease_ttl"`
+}
+type VideoPollConfig struct {
+	MaxConcurrentTotal       int           `yaml:"max_concurrent_total" json:"max_concurrent_total"`
+	PerProviderMaxConcurrent int           `yaml:"per_provider_max_concurrent" json:"per_provider_max_concurrent"`
+	MaxInterval              time.Duration `yaml:"max_interval" json:"max_interval"`
+	MaxConsecutiveFailures   int           `yaml:"max_consecutive_failures" json:"max_consecutive_failures"`
+	MaxUnknownStatus         int           `yaml:"max_unknown_status" json:"max_unknown_status"`
+	TimeoutReconcileWindow   time.Duration `yaml:"timeout_reconcile_window" json:"timeout_reconcile_window"`
+}
+type VideoCopyConfig struct {
+	Deadline      time.Duration `yaml:"deadline" json:"deadline"`
+	MaxConcurrent int           `yaml:"max_concurrent" json:"max_concurrent"`
+}
+type VideoReconcileConfig struct {
+	AllowAbsentResubmit bool `yaml:"allow_absent_resubmit" json:"allow_absent_resubmit"`
+}
+type VideoMediaConfig struct {
+	MaxInlineBytes      int64         `yaml:"max_inline_bytes" json:"max_inline_bytes"`
+	FetchTimeout        time.Duration `yaml:"fetch_timeout" json:"fetch_timeout"`
+	TotalIngressTimeout time.Duration `yaml:"total_ingress_timeout" json:"total_ingress_timeout"`
+	MaxDecodedPixels    int64         `yaml:"max_decoded_pixels" json:"max_decoded_pixels"`
+}
+type VideoArtifactsConfig struct {
+	Backend  string             `yaml:"backend" json:"backend"`
+	TTL      time.Duration      `yaml:"ttl" json:"ttl"`
+	MaxBytes int64              `yaml:"max_bytes" json:"max_bytes"`
+	Disk     VideoDiskConfig    `yaml:"disk" json:"disk"`
+	S3       VideoS3Config      `yaml:"s3" json:"s3"`
+	Presign  VideoPresignConfig `yaml:"presign" json:"presign"`
+}
+type VideoDiskConfig struct {
+	Root string `yaml:"root" json:"root"`
+}
+type VideoS3Config struct {
+	Bucket    string `yaml:"bucket" json:"bucket"`
+	Prefix    string `yaml:"prefix" json:"prefix"`
+	Region    string `yaml:"region" json:"region"`
+	AccessKey string `yaml:"access_key" json:"-"`
+	SecretKey string `yaml:"secret_key" json:"-"`
+	SSE       string `yaml:"sse" json:"sse"`
+}
+type VideoPresignConfig struct {
+	Enabled bool          `yaml:"enabled" json:"enabled"`
+	TTL     time.Duration `yaml:"ttl" json:"ttl"`
+}
+type VideoRetentionConfig struct {
+	JobMetadata time.Duration `yaml:"job_metadata" json:"job_metadata"`
+	Idempotency time.Duration `yaml:"idempotency" json:"idempotency"`
+}
+type VideoLimitsConfig struct {
+	OrgMaxActiveJobs int `yaml:"org_max_active_jobs" json:"org_max_active_jobs"`
+	OrgSubmitRPM     int `yaml:"org_submit_rpm" json:"org_submit_rpm"`
+}
+type VideoProviderConfig struct {
+	Enabled                 bool                   `yaml:"enabled" json:"enabled"`
+	APIKey                  string                 `yaml:"api_key" json:"-"`
+	CredentialRef           string                 `yaml:"credential_ref" json:"credential_ref"`
+	BaseURL                 string                 `yaml:"base_url" json:"base_url"`
+	Region                  string                 `yaml:"region" json:"region"`
+	AccountRef              string                 `yaml:"account_ref" json:"account_ref"`
+	Models                  []string               `yaml:"models" json:"models"`
+	Limits                  VideoProviderLimits    `yaml:"limits" json:"limits"`
+	Deadlines               VideoProviderDeadlines `yaml:"deadlines" json:"deadlines"`
+	Poll                    VideoProviderPoll      `yaml:"poll" json:"poll"`
+	AllowUnpricedModels     bool                   `yaml:"allow_unpriced_models" json:"allow_unpriced_models"`
+	TariffRevision          string                 `yaml:"tariff_revision" json:"tariff_revision"`
+	SafetyIdentifierMode    string                 `yaml:"safety_identifier_mode" json:"safety_identifier_mode"`
+	ExecutionExpiresAfter   int                    `yaml:"execution_expires_after" json:"execution_expires_after"`
+	AcknowledgePublicOutput bool                   `yaml:"acknowledge_public_output" json:"acknowledge_public_output"`
+	MinTokensWithVideoInput int64                  `yaml:"min_tokens_with_video_input" json:"min_tokens_with_video_input"`
+}
+type VideoProviderLimits struct {
+	SubmitRPM      int `yaml:"submit_rpm" json:"submit_rpm"`
+	PollQPS        int `yaml:"poll_qps" json:"poll_qps"`
+	MaxActiveTasks int `yaml:"max_active_tasks" json:"max_active_tasks"`
+}
+type VideoProviderDeadlines struct {
+	Connect   time.Duration `yaml:"connect" json:"connect"`
+	Read      time.Duration `yaml:"read" json:"read"`
+	Submit    time.Duration `yaml:"submit" json:"submit"`
+	Run       time.Duration `yaml:"run" json:"run"`
+	Reconcile time.Duration `yaml:"reconcile" json:"reconcile"`
+}
+type VideoProviderPoll struct {
+	BaseInterval time.Duration `yaml:"base_interval" json:"base_interval"`
+}
+
+func defaultVideoConfig() VideoConfig {
+	return VideoConfig{
+		Store: "redis", Providers: make(map[string]VideoProviderConfig),
+		Submit:    VideoSubmitConfig{SyncWait: 5 * time.Second, Deadline: 30 * time.Second, UnknownReconcileDeadline: 15 * time.Minute, LeaseTTL: 60 * time.Second},
+		Poll:      VideoPollConfig{MaxConcurrentTotal: 32, PerProviderMaxConcurrent: 8, MaxInterval: 60 * time.Second, MaxConsecutiveFailures: 20, MaxUnknownStatus: 3, TimeoutReconcileWindow: 2 * time.Hour},
+		Copy:      VideoCopyConfig{Deadline: 10 * time.Minute, MaxConcurrent: 8},
+		Media:     VideoMediaConfig{MaxInlineBytes: 20971520, FetchTimeout: 20 * time.Second, TotalIngressTimeout: 60 * time.Second, MaxDecodedPixels: 36000000},
+		Artifacts: VideoArtifactsConfig{Backend: "disk", TTL: 24 * time.Hour, MaxBytes: 2147483648, Disk: VideoDiskConfig{Root: "/var/lib/agentcc/video"}, S3: VideoS3Config{Prefix: "video/", SSE: "AES256"}, Presign: VideoPresignConfig{TTL: 15 * time.Minute}},
+		Retention: VideoRetentionConfig{JobMetadata: 720 * time.Hour, Idempotency: 720 * time.Hour}, Limits: VideoLimitsConfig{OrgMaxActiveJobs: 10, OrgSubmitRPM: 60},
+	}
+}
+func (c *Config) validateVideo() error {
+	v := c.Video
+	if v.Enabled {
+		switch v.Store {
+		case "redis":
+			if !c.Redis.Enabled {
+				return fmt.Errorf("video.store redis requires redis.enabled")
+			}
+		case "memory":
+			if !v.AllowNonDurableStore {
+				return fmt.Errorf("video.store memory requires video.allow_non_durable_store")
+			}
+		default:
+			return fmt.Errorf("video.store must be redis or memory")
+		}
+		durations := map[string]time.Duration{"submit.deadline": v.Submit.Deadline, "submit.unknown_reconcile_deadline": v.Submit.UnknownReconcileDeadline, "submit.lease_ttl": v.Submit.LeaseTTL, "poll.max_interval": v.Poll.MaxInterval, "poll.timeout_reconcile_window": v.Poll.TimeoutReconcileWindow, "copy.deadline": v.Copy.Deadline, "media.fetch_timeout": v.Media.FetchTimeout, "media.total_ingress_timeout": v.Media.TotalIngressTimeout, "artifacts.ttl": v.Artifacts.TTL, "retention.job_metadata": v.Retention.JobMetadata, "retention.idempotency": v.Retention.Idempotency}
+		for k, d := range durations {
+			if d <= 0 {
+				return fmt.Errorf("video.%s must be positive", k)
+			}
+		}
+		if v.Submit.SyncWait < 0 || v.Submit.SyncWait > v.Submit.Deadline {
+			return fmt.Errorf("video.submit.sync_wait must be within submit.deadline")
+		}
+		limits := map[string]int64{"poll.max_concurrent_total": int64(v.Poll.MaxConcurrentTotal), "poll.per_provider_max_concurrent": int64(v.Poll.PerProviderMaxConcurrent), "poll.max_consecutive_failures": int64(v.Poll.MaxConsecutiveFailures), "poll.max_unknown_status": int64(v.Poll.MaxUnknownStatus), "copy.max_concurrent": int64(v.Copy.MaxConcurrent), "media.max_inline_bytes": v.Media.MaxInlineBytes, "media.max_decoded_pixels": v.Media.MaxDecodedPixels, "artifacts.max_bytes": v.Artifacts.MaxBytes, "limits.org_max_active_jobs": int64(v.Limits.OrgMaxActiveJobs), "limits.org_submit_rpm": int64(v.Limits.OrgSubmitRPM)}
+		for k, n := range limits {
+			if n <= 0 {
+				return fmt.Errorf("video.%s must be positive", k)
+			}
+		}
+		switch v.Artifacts.Backend {
+		case "disk":
+			if strings.TrimSpace(v.Artifacts.Disk.Root) == "" {
+				return fmt.Errorf("video.artifacts.disk.root required")
+			}
+		case "s3":
+			if v.Artifacts.S3.Bucket == "" || v.Artifacts.S3.Region == "" {
+				return fmt.Errorf("video.artifacts.s3 bucket and region required")
+			}
+		default:
+			return fmt.Errorf("video.artifacts.backend must be disk or s3")
+		}
+		if v.Artifacts.Presign.Enabled && (v.Artifacts.Backend != "s3" || v.Artifacts.Presign.TTL <= 0 || v.Artifacts.Presign.TTL > 15*time.Minute) {
+			return fmt.Errorf("video.artifacts.presign requires s3 and ttl in (0, 15m]")
+		}
+	}
+	registry := capability.NewRegistry()
+	for name, p := range v.Providers {
+		if !p.Enabled {
+			continue
+		}
+		prefix := "video.providers." + name + "."
+		caps, ok := registry.Service(name)
+		if !ok {
+			return fmt.Errorf("%smodels: unsupported provider", prefix)
+		}
+		key := p.APIKey
+		if p.CredentialRef != "" {
+			ref, ok := strings.CutPrefix(p.CredentialRef, "provider:")
+			if !ok {
+				return fmt.Errorf("%scredential_ref must use provider:<name>", prefix)
+			}
+			inherited, ok := c.Providers[ref]
+			if !ok {
+				return fmt.Errorf("%scredential_ref not found", prefix)
+			}
+			if key == "" {
+				key = inherited.APIKey
+			}
+		}
+		if !videoCredentialValid(key) {
+			return fmt.Errorf("%scredentials required (literal, expanded ENV or supported secret URI)", prefix)
+		}
+		if len(p.Models) == 0 {
+			return fmt.Errorf("%smodels required", prefix)
+		}
+		for _, id := range p.Models {
+			if _, err := registry.Model(name, id); err != nil {
+				return fmt.Errorf("%smodels: %w", prefix, err)
+			}
+		}
+		foundRegion := false
+		for _, region := range caps.Regions {
+			if region == p.Region {
+				foundRegion = true
+			}
+		}
+		if !foundRegion {
+			return fmt.Errorf("%sregion unsupported", prefix)
+		}
+		u, err := url.Parse(p.BaseURL)
+		if err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
+			return fmt.Errorf("%sbase_url must be https without credentials, query or fragment", prefix)
+		}
+		if strings.TrimSpace(p.AccountRef) == "" {
+			return fmt.Errorf("%saccount_ref required", prefix)
+		}
+		for k, n := range map[string]int{"submit_rpm": p.Limits.SubmitRPM, "poll_qps": p.Limits.PollQPS, "max_active_tasks": p.Limits.MaxActiveTasks} {
+			if n <= 0 {
+				return fmt.Errorf("%slimits.%s must be positive", prefix, k)
+			}
+		}
+		for k, d := range map[string]time.Duration{"connect": p.Deadlines.Connect, "read": p.Deadlines.Read, "submit": p.Deadlines.Submit, "run": p.Deadlines.Run, "reconcile": p.Deadlines.Reconcile} {
+			if d <= 0 {
+				return fmt.Errorf("%sdeadlines.%s must be positive", prefix, k)
+			}
+		}
+		if p.Deadlines.Reconcile >= 7*24*time.Hour {
+			return fmt.Errorf("%sdeadlines.reconcile must be below provider retention (7d)", prefix)
+		}
+		if p.Poll.BaseInterval < caps.PollMinInterval {
+			return fmt.Errorf("%spoll.base_interval below provider minimum", prefix)
+		}
+		if p.TariffRevision == "" && !p.AllowUnpricedModels || p.TariffRevision != "" && p.TariffRevision != tariff.RevisionFor(name) {
+			return fmt.Errorf("%stariff_revision must be known or allow_unpriced_models enabled", prefix)
+		}
+		if (caps.OutputACL == video.ACLUnknown || caps.OutputACL == video.ACLPublicDefault || caps.OutputACL == "") && !p.AcknowledgePublicOutput {
+			return fmt.Errorf("%sacknowledge_public_output required for unknown/public output ACL", prefix)
+		}
+		switch p.SafetyIdentifierMode {
+		case "none":
+		case "org_key_hmac":
+			if !videoCredentialValid(v.CorrelationSecret) {
+				return fmt.Errorf("video.correlation_secret required for org_key_hmac")
+			}
+		default:
+			return fmt.Errorf("%ssafety_identifier_mode must be none or org_key_hmac", prefix)
+		}
+		// execution_expires_after is a BytePlus task parameter; other services
+		// have no equivalent and must leave it unset.
+		if name == "byteplus" && (p.ExecutionExpiresAfter < 3600 || p.ExecutionExpiresAfter > 259200 || time.Duration(p.ExecutionExpiresAfter)*time.Second < p.Deadlines.Run) {
+			return fmt.Errorf("%sexecution_expires_after must be in [3600,259200] and cover deadlines.run", prefix)
+		}
+		if name != "byteplus" && p.ExecutionExpiresAfter != 0 {
+			return fmt.Errorf("%sexecution_expires_after is only supported for byteplus", prefix)
+		}
+		if name != "byteplus" && p.MinTokensWithVideoInput != 0 {
+			return fmt.Errorf("%smin_tokens_with_video_input is only supported for byteplus", prefix)
+		}
+		if p.MinTokensWithVideoInput < 0 {
+			return fmt.Errorf("%smin_tokens_with_video_input cannot be negative", prefix)
+		}
+	}
+	return nil
+}
+func videoCredentialValid(s string) bool {
+	if strings.TrimSpace(s) == "" || strings.Contains(s, "${") {
+		return false
+	}
+	scheme, rest, isURI := strings.Cut(s, "://")
+	if !isURI {
+		return true
+	}
+	return rest != "" && (scheme == "vault" || scheme == "aws-sm" || scheme == "gcp-sm" || scheme == "azure-kv")
 }

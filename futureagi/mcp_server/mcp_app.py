@@ -36,6 +36,8 @@ from tfc.middleware.workspace_context import (
     get_current_workspace,
     set_workspace_context,
 )
+from tfc.utils.api_errors import ApiErrorCode
+from tfc.utils.error_codes import get_error_message
 
 logger = structlog.get_logger(__name__)
 
@@ -73,28 +75,52 @@ _transport_security = TransportSecuritySettings(
 )
 
 
+class APIKeyExpired(Exception):
+    """The key pair matched a key whose ``expires_at`` has passed."""
+
+
 def _authenticate_and_set_context(
     api_key: str, secret_key: str
 ) -> MCPRequestContext | None:
-    """Authenticate via API key and set per-request context."""
+    """Authenticate via API key and set per-request context.
+
+    Raises ``APIKeyExpired`` for an expired key so the caller can answer with
+    the same distinct error the REST API gives instead of "Invalid credentials".
+    """
     from accounts.models.user import OrgApiKey, User
     from accounts.models.workspace import Workspace
 
     try:
-        # Use .all() to bypass BaseModelManager workspace filtering
+        # Use .all() to skip BaseModelManager workspace filtering. Not
+        # filtered on enabled: REST auth disables a key once it expires, and
+        # that key must still read as expired here, not as a wrong key.
         org_api_key = (
             OrgApiKey.objects.all()
             .select_related("organization", "workspace")
-            .get(api_key=api_key, secret_key=secret_key, enabled=True)
+            .get(api_key=api_key, secret_key=secret_key)
         )
     except OrgApiKey.DoesNotExist:
         logger.warning("mcp_auth_failed", api_key_prefix=api_key[:8] if api_key else "")
+        return None
+
+    if org_api_key.is_expired:
+        logger.warning("mcp_auth_key_expired", api_key_prefix=api_key[:8])
+        raise APIKeyExpired
+    if not org_api_key.enabled:
+        logger.warning("mcp_auth_failed", api_key_prefix=api_key[:8])
         return None
 
     # An ingest key may only write spans to the collector, even if a user was
     # attached to it.
     if org_api_key.type == "ingest":
         logger.warning("mcp_auth_ingest_key_refused", org=str(org_api_key.organization))
+        return None
+    # A coding agent's key may make only the simulate calls its loop needs, and no
+    # MCP tool is one of them.
+    if org_api_key.type == "coding_agent":
+        logger.warning(
+            "mcp_auth_coding_agent_key_refused", org=str(org_api_key.organization)
+        )
         return None
 
     if org_api_key.type == "system":
@@ -170,8 +196,34 @@ def _authenticate_via_oauth(token: str) -> MCPRequestContext | None:
         )
 
     return _bind_context(
-        MCPRequestContext(user=user, organization=organization, workspace=workspace)
+        MCPRequestContext(
+            user=user,
+            organization=organization,
+            workspace=workspace,
+            oauth_scopes=_parse_oauth_scopes(payload.get("scope")),
+        )
     )
+
+
+def _parse_oauth_scopes(raw) -> frozenset[str]:
+    """The tool groups an access token's ``scope`` claim grants.
+
+    Tokens carry a list of group slugs; a space- or comma-separated string is
+    accepted too. Anything else grants nothing, so a malformed claim fails
+    closed rather than falling back to every group.
+    """
+    if isinstance(raw, str):
+        items = raw.replace(",", " ").split()
+    elif isinstance(raw, (list, tuple, set, frozenset)):
+        items = [item.strip() for item in raw if isinstance(item, str)]
+    else:
+        items = []
+    return frozenset(item for item in items if item)
+
+
+def _tool_in_token_scope(context: MCPRequestContext, tool) -> bool:
+    """Whether the caller's OAuth token, if any, was granted the tool's group."""
+    return context.oauth_scopes is None or tool.group in context.oauth_scopes
 
 
 def _bind_context(context: MCPRequestContext) -> MCPRequestContext:
@@ -207,7 +259,15 @@ def _enabled_tools_for_context(context: MCPRequestContext):
     connection = get_or_create_connection(
         context.user, context.organization, context.workspace
     )
-    return connection, get_enabled_tools(connection)
+    enabled = get_enabled_tools(connection)
+    if context.oauth_scopes is not None:
+        enabled = {
+            name
+            for name in enabled
+            if (tool := registry.get(name)) is not None
+            and _tool_in_token_scope(context, tool)
+        }
+    return connection, enabled
 
 
 def _json_safe(value):
@@ -251,6 +311,13 @@ async def call_generated_tool(name: str, arguments: dict):
     tool = registry.get(name)
     if tool is None:
         return _error_result(f"Tool not found: {name}", code="NOT_FOUND")
+    # Refuse out-of-scope tools before any bookkeeping, rate limiting or dispatch.
+    if not _tool_in_token_scope(context, tool):
+        return _error_result(
+            f"Tool is outside the token's granted scopes: {name}",
+            code="FORBIDDEN",
+            data={"required_scope": tool.group},
+        )
 
     from mcp_server.exceptions import RateLimitExceededError
     from mcp_server.rate_limiter import check_rate_limit, get_rate_limit_tier
@@ -476,9 +543,27 @@ async def _mcp_streamable_with_auth(scope, receive, send):
             await response(scope, receive, send)
             return
 
-        context = await sync_to_async(_authenticate_and_set_context)(
-            api_key, secret_key
-        )
+        try:
+            context = await sync_to_async(_authenticate_and_set_context)(
+                api_key, secret_key
+            )
+        except APIKeyExpired:
+            response = StarletteResponse(
+                content=json.dumps(
+                    {
+                        "error": "invalid_token",
+                        "error_description": get_error_message("API_KEY_EXPIRED"),
+                        "code": ApiErrorCode.API_KEY_EXPIRED.value,
+                    }
+                ),
+                status_code=401,
+                headers={
+                    "Content-Type": "application/json",
+                    "WWW-Authenticate": www_auth,
+                },
+            )
+            await response(scope, receive, send)
+            return
         if not context:
             response = StarletteResponse(
                 content='{"error":"invalid_token","error_description":"Invalid credentials"}',

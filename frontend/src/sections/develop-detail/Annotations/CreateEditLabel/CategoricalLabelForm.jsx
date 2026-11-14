@@ -24,7 +24,7 @@ const CategoricalLabelForm = ({ control }) => {
         fieldPrefix=""
         label={
           <Typography
-            fontSize={13}
+            fontSize={12}
             fontWeight={500}
             sx={{ mb: theme.spacing(1) }}
           >
@@ -48,7 +48,7 @@ const CategoricalLabelForm = ({ control }) => {
         }
         labelPlacement="start"
         label={
-          <Typography fontWeight={600} fontSize={13}>
+          <Typography fontWeight={600} fontSize={12}>
             Multi Choice
             <Typography component="span" color={theme.palette.status.danger.fg}>
               *

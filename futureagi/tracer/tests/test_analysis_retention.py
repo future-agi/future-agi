@@ -469,7 +469,12 @@ def test_ch_only_session_delete_retires_copies_without_a_pg_source(
 def test_cloud_scheduler_uses_trace_entitlement_not_report_creation_time(
     observe_project, monkeypatch, cutoff
 ):
-    from ee.cloud.tasks import retention as cloud_retention
+    # The Cloud scheduler lives in the private ee/cloud tree, which fork CI
+    # does not check out; this test runs wherever that tree exists.
+    cloud_retention = pytest.importorskip(
+        "ee.cloud.tasks.retention",
+        reason="the Cloud retention scheduler ships in the private ee/cloud tree",
+    )
 
     _, run, _ = report(observe_project, cutoff - timedelta(days=1))
     monkeypatch.setattr(

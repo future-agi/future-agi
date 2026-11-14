@@ -38,8 +38,7 @@ import StatusBadge from "src/components/status-badge/StatusBadge";
 import SectionHeader from "../components/SectionHeader";
 import { GATEWAY_ICONS } from "../constants/gatewayIcons";
 import { enqueueSnackbar } from "notistack";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
-import axiosInstance, { endpoints } from "src/utils/axios";
+import { useGatewayHealthCheck } from "../hooks/useGatewayHealthCheck";
 import {
   useGatewayConfig,
   useReloadConfig,
@@ -470,7 +469,7 @@ const BatchJobsTab = ({ config, gatewayId }) => {
                 sx={{
                   "& .MuiInputBase-input": {
                     fontFamily: "monospace",
-                    fontSize: "13px",
+                    fontSize: "12px",
                   },
                 }}
               />
@@ -870,29 +869,13 @@ const GatewaySettingsSection = () => {
     [navigate],
   );
 
-  const queryClient = useQueryClient();
   const { gateway, gatewayId, isLoading: gwLoading } = useGatewayContext();
 
   const { data: config, isLoading: configLoading } =
     useGatewayConfig(gatewayId);
   const reloadMutation = useReloadConfig();
 
-  const healthCheckMutation = useMutation({
-    mutationFn: async (id) => {
-      const { data } = await axiosInstance.post(
-        endpoints.gateway.healthCheck(id),
-        {},
-      );
-      return data.result;
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["agentcc-gateways"] });
-      enqueueSnackbar("Health check complete", { variant: "success" });
-    },
-    onError: () => {
-      enqueueSnackbar("Health check failed", { variant: "error" });
-    },
-  });
+  const healthCheckMutation = useGatewayHealthCheck();
 
   const handleReloadConfig = useCallback(() => {
     reloadMutation.mutate(gatewayId, {

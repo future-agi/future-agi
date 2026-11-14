@@ -90,7 +90,7 @@ func (h *Handlers) internalDecisionTarget(req *models.DecisionRequest, providerK
 	format, known := providers.DecisionDialectFormat(dialect)
 	if !ok || upstream == "" || !known {
 		return nil, models.ErrBadRequest("decision_model_prefix_required",
-			"model must name its vendor: typesafe/<model> or perplexity/<model> for System One, openai/<model> for OpenAI Decisions")
+			"model must name its connection: typesafe/<model>, perplexity/<model> or openrouter/<author>/<model> for System One, openai/<model> for OpenAI Decisions")
 	}
 	if format != req.Format {
 		return nil, errFormatMismatch(req.Model, dialect, format)
@@ -342,6 +342,8 @@ func decisionVendor(model string) string {
 		prefix, bare = "", lower
 	}
 	switch {
+	case prefix == "openrouter":
+		return "OpenRouter"
 	case strings.HasPrefix(prefix, "typesafe") || strings.HasPrefix(bare, "jev-"):
 		return "TypeSafe"
 	case strings.HasPrefix(prefix, "perplexity") || strings.HasPrefix(bare, "pplx-"):

@@ -97,6 +97,9 @@ const UserManagementV2 = lazyWithRetry(
 const BillingPageV2 = lazyWithRetry(
   () => import("src/sections/settings/BillingV2/BillingPage"),
 );
+const HostUpdatesPage = lazyWithRetry(
+  () => import("src/sections/settings/Updates/HostUpdatesPage"),
+);
 const LicensePage = lazyWithRetry(
   () => import("src/sections/settings/License/LicensePage"),
 );
@@ -222,6 +225,9 @@ const IndividualExperimentSummary = lazyWithRetry(
 );
 const PreviewScreen = lazyWithRetry(
   () => import("src/sections/develop-detail/AnnotationsTab/PreviewScreen"),
+);
+const SQLQueryView = lazyWithRetry(
+  () => import("src/sections/projects/SQLQuery/SQLQueryView"),
 );
 const ObserverWrapper = lazyWithRetry(
   () => import("src/pages/dashboard/observe/ObserverWrapper"),
@@ -596,6 +602,9 @@ export const dashboardRoutes = (
       ),
     },
 
+    // The page owns the strict organization/deployment gate, including direct
+    // navigation; workspace-inclusive RoleProtection is not sufficient here.
+    { path: "updates", element: <HostUpdatesPage /> },
     {
       path: "org-settings",
       element: (
@@ -736,8 +745,13 @@ export const dashboardRoutes = (
         </RoleProtection>
       ),
     },
+    // Old address of Connectors (was "Falcon AI Connectors"); keeps saved links working.
     {
       path: "falcon-ai-connectors",
+      element: <Navigate to="/dashboard/settings/connectors" replace />,
+    },
+    {
+      path: "connectors",
       element: (
         <RoleProtection
           allowedRoles={[
@@ -1166,14 +1180,16 @@ export const dashboardRoutes = (
         //   element: <LogsView />,
         // },
         {
+          path: "query",
+          element: <SQLQueryView />,
+        },
+        {
           path: "llm-tracing",
           element: <LLMTracingView />,
         },
         {
           path: "voice",
-          element: (
-            <EmptyContent title="Voice observability coming soon" />
-          ),
+          element: <EmptyContent title="Voice observability coming soon" />,
         },
         {
           path: "sessions",

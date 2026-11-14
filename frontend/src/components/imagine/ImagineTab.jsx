@@ -26,7 +26,7 @@ import SuggestedPrompts from "./SuggestedPrompts";
 import { consolidateAnalysisPrompts } from "./consolidatePrompts";
 
 /**
- * Imagine with Falcon — horizontal split tab inside the trace detail drawer.
+ * Imagine with AI — horizontal split tab inside the trace detail drawer.
  * Left: Widget canvas (rendered visualizations)
  * Right: Falcon chat panel (toggleable)
  */
@@ -204,8 +204,8 @@ export default function ImagineTab({
         />
       </Box>
 
-      <Typography fontSize={13} fontWeight={600} color="text.primary">
-        Imagine with Falcon
+      <Typography fontSize={12} fontWeight={600} color="text.primary">
+        Imagine with AI
       </Typography>
 
       <Typography
@@ -215,7 +215,7 @@ export default function ImagineTab({
         maxWidth={360}
         lineHeight={1.6}
       >
-        Describe what you want to see and Falcon will build interactive
+        Describe what you want to see and AI will build interactive
         visualizations from your trace data — charts, tables, graphs, anything.
       </Typography>
 
@@ -298,7 +298,7 @@ export default function ImagineTab({
           }}
         >
           <Iconify icon="solar:stars-minimalistic-linear" width={14} />
-          Falcon
+          Chat
         </ButtonBase>
       </Box>
 
@@ -388,8 +388,6 @@ export default function ImagineTab({
             sx: {
               width: 320,
               borderRadius: "8px",
-              border: "1px solid",
-              borderColor: "divider",
               p: 1,
               mt: 0.5,
             },
@@ -399,7 +397,7 @@ export default function ImagineTab({
         <Box sx={{ px: 0.5, py: 0.25 }}>
           <Typography
             sx={{
-              fontSize: 13,
+              fontSize: 12,
               fontWeight: 600,
               color: "text.primary",
               fontFamily: "'IBM Plex Sans', sans-serif",
@@ -434,7 +432,7 @@ export default function ImagineTab({
             autoFocus
             InputProps={{
               sx: {
-                fontSize: 13,
+                fontSize: 12,
                 fontFamily: "'IBM Plex Sans', sans-serif",
                 borderRadius: "4px",
               },

@@ -6,6 +6,7 @@ import AgentGraph from "src/sections/projects/LLMTracing/GraphSection/AgentGraph
 import TraceTreeV2 from "./TraceTreeV2";
 import SpanTreeTimeline from "./SpanTreeTimeline";
 import { buildTraceGraph } from "./buildTraceGraph";
+import { withoutTimingSpans } from "./timingSpans";
 
 // Memoized agent graph from span tree — uses buildTraceGraph for grouping.
 // Click cycles through spans belonging to the clicked node.
@@ -80,6 +81,8 @@ const LeftPanelSplit = ({
   showAgentGraph,
   onRefresh,
 }) => {
+  const [showTimingSpans, setShowTimingSpans] = useState(false);
+  const graphSpans = useMemo(() => showTimingSpans ? spans : withoutTimingSpans(spans || []), [spans, showTimingSpans]);
   const [topPercent, setTopPercent] = useState(showAgentGraph ? 50 : 100);
   const containerRef = useRef(null);
 
@@ -151,6 +154,8 @@ const LeftPanelSplit = ({
                 : undefined
             }
             onRefresh={onRefresh}
+            showTimingSpans={showTimingSpans}
+            onTimingVisibilityChange={setShowTimingSpans}
           />
         ) : (
           <SpanTreeTimeline
@@ -195,7 +200,7 @@ const LeftPanelSplit = ({
             flexShrink: 0,
           }}
         >
-          <TraceAgentGraph spans={spans} onSelectSpan={onSelectSpan} />
+          <TraceAgentGraph spans={graphSpans} onSelectSpan={onSelectSpan} />
         </Box>
       )}
     </Box>

@@ -13,7 +13,7 @@ from tracer.services.clickhouse.query_builders.trace_usage import (
 )
 
 _LIVE_SESSION_SPANS = f"""
-    SELECT *, {usage_coverage_sql(attrs="spans.attrs_string", prefix="spans.")} AS usage_coverage,
+    SELECT *, {usage_coverage_sql(attrs="spans.attrs_string", prefix="spans.", include_summary=True)} AS usage_coverage,
         {source_summary_sql(attrs="spans.attrs_string")} AS source_summary_present
     FROM spans FINAL
     PREWHERE project_id = %(project_id)s

@@ -31,3 +31,23 @@ futureagi/bin/test                  text eol=lf
 # Container and SQL inputs read by Linux tooling.
 Dockerfile*     text eol=lf
 *.sql           text eol=lf
+
+# bin/update compares these files byte for byte with the digests a release
+# signs (deploy/update/deployment-files.txt), and runs bin/update with bash:
+# keep them LF on every checkout, including a Windows clone used from WSL.
+bin/update text eol=lf
+deploy/update/** text eol=lf
+docker-compose.yml text eol=lf
+docker-compose.distributed.yml text eol=lf
+deploy/docker-compose.production.yml text eol=lf
+deploy/docker-compose.host-status.standalone.yml text eol=lf
+deploy/docker-compose.host-status.distributed.yml text eol=lf
+.env.example text eol=lf
+deploy/.env.production.example text eol=lf
+agentcc-gateway/config.example.yaml text eol=lf
+deploy/clickhouse/users.d/** text eol=lf
+deploy/standalone/clickhouse/** text eol=lf
+futureagi/.ci/clickhouse-storage-policy.xml text eol=lf
+futureagi/config/peerdb/temporal-dynamicconfig.yaml text eol=lf
+futureagi/scripts/property_catalog_oss/** text eol=lf
+futureagi/tracer/services/clickhouse/v2/observed_catalog/** text eol=lf

@@ -33,6 +33,13 @@ class CallExecutionRerunSerializer(serializers.Serializer):
         default=False,
         help_text="Whether to rerun all call executions in the test execution",
     )
+    unfinished_only = serializers.BooleanField(
+        default=False,
+        help_text=(
+            "Resume an interrupted run: re-run only the calls that did not finish, as a "
+            "new attempt of the same run. Takes no call ids and no select_all."
+        ),
+    )
 
     environment_values = serializers.DictField(
         child=serializers.CharField(
@@ -60,10 +67,14 @@ class CallExecutionRerunSerializer(serializers.Serializer):
             raise serializers.ValidationError(
                 f"invalid environment variable names or values: {', '.join(invalid)}"
             )
-        if len(value) > 256 or sum(
-            len(str(name).encode()) + len(item.encode())
-            for name, item in value.items()
-        ) > 262_144:
+        if (
+            len(value) > 256
+            or sum(
+                len(str(name).encode()) + len(item.encode())
+                for name, item in value.items()
+            )
+            > 262_144
+        ):
             raise serializers.ValidationError(
                 "uploaded rerun environment exceeds the 256 variable / 256 KiB limit"
             )
@@ -71,6 +82,20 @@ class CallExecutionRerunSerializer(serializers.Serializer):
 
     def validate(self, data):
         """Validate that either call_execution_ids or select_all is provided"""
+        if data.get("unfinished_only"):
+            if data.get("select_all") or data.get("call_execution_ids"):
+                raise serializers.ValidationError(
+                    "'unfinished_only' chooses the calls itself; send no call ids and no select_all"
+                )
+            if data.get("rerun_type") != "call_and_eval":
+                raise serializers.ValidationError(
+                    "'unfinished_only' runs the calls again, so it needs rerun_type 'call_and_eval'"
+                )
+            if data.get("environment_values"):
+                raise serializers.ValidationError(
+                    "'unfinished_only' resumes inside the same run, which takes no environment_values"
+                )
+            return data
         if not data.get("select_all") and not data.get("call_execution_ids"):
             raise serializers.ValidationError(
                 "Either 'select_all' must be True or 'call_execution_ids' must be provided"

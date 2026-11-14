@@ -4,6 +4,34 @@ import django.db.models.deletion
 from django.db import migrations, models
 
 
+UPDATE_SAFETY = {
+    "schema_version": 1,
+    "risk_classes": ["data_migration"],
+    "tables": [
+        "postgres:tracer_instant_eval_answer",
+        "postgres:tracer_instant_eval_row",
+        "postgres:tracer_instant_eval_run",
+        "postgres:tracer_eval_task",
+    ],
+    "mitigation": (
+        "Keep the original atomic Django DDL, indexes, constraints, SQL and "
+        "reverse SQL unchanged. Create the answer table, add run fields and "
+        "answer relations, then set analyze reloptions only on the new answer "
+        "table. There is no task backfill; qualification still includes the "
+        "EvalTask relation target despite db_constraint=False. Seed at least "
+        "100,000 representative non-runnable source tasks with real relationships, "
+        "verify payloads, and independently measure actual rows and bytes. "
+        "Measure normal bootstrap lock/storage/time costs and cold restore; "
+        "fresh tables do not imply zero cost. Refuse unknown or oversized host "
+        "measurements. Recovery restores the sealed source snapshot, not reverse "
+        "migration execution."
+    ),
+    "reviewer": "nik13",
+    "review": "https://github.com/future-agi/future-agi/pull/3289#discussion_r4465601408",
+    "large_volume_rehearsal": True,
+}
+
+
 class Migration(migrations.Migration):
 
     dependencies = [

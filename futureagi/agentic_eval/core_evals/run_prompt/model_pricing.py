@@ -341,6 +341,13 @@ def get_model_pricing(model_name: str) -> Optional[dict]:
 
         Returns None if model not found or pricing not available
     """
+    from evaluations.decision_models import is_decision_model
+
+    if is_decision_model(model_name):
+        from evaluations.decision_pricing import calculate_decision_cost
+
+        cost = calculate_decision_cost(model_name, {"input_tokens": 1000000})
+        return {"input_per_1M_tokens": cost["total_cost"], "output_per_1M_tokens": 0.0}
     model_info = get_model_info(model_name)
     if model_info and "pricing" in model_info:
         return model_info["pricing"].copy()  # Return a copy to prevent mutations

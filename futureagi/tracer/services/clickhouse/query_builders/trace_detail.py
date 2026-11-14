@@ -23,7 +23,7 @@ from typing import TYPE_CHECKING, Any, NotRequired, TypedDict
 from tracer.services.clickhouse.query_builders.trace_usage import (
     CaptureCoverage,
     capture_coverage_from_counts,
-    is_repeated_usage_summary,
+    repeated_usage_summary_ids,
 )
 
 if TYPE_CHECKING:
@@ -88,15 +88,10 @@ def compute_trace_summary_and_graph(
         for entry in entries:
             span = entry.get("observation_span") or entry.get("observationSpan") or {}
             span_id = span.get("id", "")
-            child_spans = [
-                child.get("observation_span") or child.get("observationSpan") or {}
-                for child in entry.get("children", [])
-            ]
             all_spans.append(
                 {
                     "span": span,
                     "parent_id": parent_id,
-                    "usage_summary": is_repeated_usage_summary(span, child_spans),
                 }
             )
             graph_nodes.append(
@@ -117,6 +112,12 @@ def compute_trace_summary_and_graph(
 
     walk(spans_tree)
 
+    usage_rows = [
+        {**item["span"], "parent_span_id": item["parent_id"] or ""}
+        for item in all_spans
+    ]
+    repeated_ids = repeated_usage_summary_ids(usage_rows)
+
     total_tokens = 0
     total_prompt = 0
     total_completion = 0
@@ -129,7 +130,9 @@ def compute_trace_summary_and_graph(
     for item in all_spans:
         sp = item["span"]
         attrs = sp.get("span_attributes") or {}
-        if not item["usage_summary"] and attrs.get("fi.usage.contribution") != "none":
+        if (
+            sp.get("observation_type") == "llm" or sp.get("id") not in repeated_ids
+        ) and attrs.get("fi.usage.contribution") != "none":
             total_tokens += sp.get("total_tokens") or 0
             total_prompt += sp.get("prompt_tokens") or 0
             total_completion += sp.get("completion_tokens") or 0

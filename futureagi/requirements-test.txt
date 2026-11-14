@@ -251,8 +251,6 @@ drf-yasg==1.21.10
     # via core-backend (pyproject.toml)
 e2b==2.37.1
     # via core-backend (pyproject.toml)
-ecdsa==0.19.1
-    # via python-jose
 elementpath==4.8.0
     # via xmlschema
 et-xmlfile==2.0.0
@@ -805,7 +803,6 @@ psycopg-pool==3.2.6
 pyasn1==0.6.4
     # via
     #   pyasn1-modules
-    #   python-jose
     #   rsa
     #   webauthn
 pyasn1-modules==0.4.2
@@ -894,8 +891,6 @@ python-engineio==4.14.0
     # via python-socketio
 python-ipware==3.0.0
     # via django-ipware
-python-jose==3.5.0
-    # via core-backend (pyproject.toml)
 python-levenshtein==0.27.1
     # via core-backend (pyproject.toml)
 python-multipart==0.0.32
@@ -973,9 +968,7 @@ rpds-py==0.26.0
     #   jsonschema
     #   referencing
 rsa==4.9.1
-    # via
-    #   google-auth
-    #   python-jose
+    # via google-auth
 s3transfer==0.13.0
     # via boto3
 scikit-learn==1.7.0
@@ -994,7 +987,6 @@ simple-websocket==1.1.0
     # via python-engineio
 six==1.17.0
     # via
-    #   ecdsa
     #   mixpanel
     #   python-dateutil
     #   rouge-score

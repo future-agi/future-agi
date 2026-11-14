@@ -19,8 +19,8 @@ function recorder(body = '{}', status = 200) {
   const calls: { url: string; wire: string }[] = [];
   const req = { post: async (url: string, options: { data: unknown }) => {
     // Deliberately never retain or print authentication/header values.
-    calls.push({ url, wire: JSON.stringify(options.data) });
-    return { status: () => status, text: async () => body };
+    calls.push({ url, wire: options.data as string });
+    return { status: () => status, text: async () => body, headers: () => ({}), dispose: async () => {} };
   } } as unknown as APIRequestContext;
   return { req, calls };
 }

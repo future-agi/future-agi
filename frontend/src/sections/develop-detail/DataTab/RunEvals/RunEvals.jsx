@@ -4,6 +4,7 @@ import axios, { endpoints } from "src/utils/axios";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useParams } from "react-router";
 import { AgGridReact } from "ag-grid-react";
+import "src/utils/ag-grid-setup";
 import PropTypes from "prop-types";
 import { useAgThemeWithoutGridWith } from "src/hooks/use-ag-theme";
 import { AG_THEME_OVERRIDES } from "src/theme/ag-theme";

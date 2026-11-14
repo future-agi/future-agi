@@ -175,7 +175,7 @@ export default function ActionBar({ items = [], setSortConfig, sortConfig }) {
               <ListItemText
                 primary={sortOption.label}
                 primaryTypographyProps={{
-                  fontSize: 13,
+                  fontSize: 12,
                   fontWeight: isSelected ? 500 : 400,
                 }}
               />

@@ -316,7 +316,7 @@ instead, set `FI_OBSERVED_CATALOG_KAFKA_BROKERS` in `fiCollector.extraEnv`;
 | | Supported: tested in CI, fixed in patch releases | Community: expected to work, not tested in CI | Not supported today |
 | --- | --- | --- | --- |
 | Cluster | Kubernetes 1.27 to 1.37; kind | GKE, EKS, AKS ([`examples/cloud/`](examples/cloud)); OpenShift (`global.compatibility.openshift`); k3s, Docker Desktop, OrbStack | the code sandbox in a `baseline` or `restricted` Pod Security namespace (it is privileged) |
-| Helm and GitOps | Helm 3.22, Helm 4.3 | older Helm 3 from 3.10; Argo CD; Flux | |
+| Helm and GitOps | Helm 3.22, Helm 4.3; Argo CD 3.6.1 and Flux 2.10.0 controller acceptance (scope below) | older Helm 3 from 3.10; other Argo CD / Flux versions | |
 | PostgreSQL | 16 (11 or newer works), direct connection, password auth | PgBouncer in transaction mode (`postgres.pooler`); a read replica | IAM database authentication |
 | ClickHouse | 25.3 or newer, single node, with the `tiered` storage policy | an operator-managed single-node server (Altinity) | TLS-only endpoints (ClickHouse Cloud); replicated clusters |
 | Redis | 6 or newer, databases 0 to 4, plain or TLS for the app | managed Redis (ElastiCache, Memorystore, Azure Cache) | TLS for the LLM gateway (it has no Redis TLS) and for fi-collector |
@@ -347,7 +347,7 @@ contract an external datastore has to meet:
   `server_reset_query_always=1`,
   `ignore_startup_parameters=extra_float_digits,search_path`); the bootstrap
   job always connects directly. `postgres.readReplica` routes opted-in reads
-  to a replica.
+  to a replica (see [Read replica](#read-replica)).
 - Connections: every backend thread and every worker activity slot may hold
   one. Keep `max_connections` above
   `backend pods × backend.granian.workers × backend.granian.threads` plus,
@@ -382,6 +382,61 @@ fiCollector:
   extraVolumes: *pgCaVolume
   extraVolumeMounts: *pgCaMount
 ```
+
+#### Read replica
+
+`postgres.readReplica` adds a streaming replica, or a pooler in front of one,
+as a second database for the backend and workers. Nothing reads from it until
+`optIn` (`READ_REPLICA_OPT_IN`) names something:
+
+- A `feature:` key moves one listing (projects, dashboards, datasets, saved
+  views and the like; each app's `db_routing.py` declares its keys) to the
+  replica.
+- A model class name moves every read the app does not pin for that model,
+  including a re-read of a row written a moment ago. A `transaction.atomic()`
+  block does not keep reads on the primary, and an `on_commit` callback can run
+  before the replica has the commit, so code that reads its own write of an
+  opted-in model has to read the primary (`.using("default")`). Only list
+  models whose code has been checked for that.
+
+The models checked and tested this way (TH-3119), with the feature keys, are
+the rollout candidate below. Try it in staging before production. Watch the
+error tracker, and also check that a new eval task and an Instant eval run
+produce results: a read that misses a fresh write can finish work with
+nothing to do and raise no error. List and detail pages can show data a few
+seconds old while the replica catches up. Reads that must see a fresh write
+stay on the primary, so they shed no load. This is not a complete list; the
+main eval paths are: the eval-task logs, the eval-task engine, the span
+evaluation scan and the experiment eval runner it starts, an eval config
+opened, edited, deleted or re-run (and the evaluation that re-run starts), the
+SDK's eval config check, a task's eval list on its detail page, the Ask page's
+list of a project's eval configs, an Instant eval task's questions when the
+run is started or read, feedback on an eval result and its recalculate, and
+the config check in front of an eval result's details, and the error
+localizer's write-back onto an eval result. Span and trace ingestion, tag and
+annotation writes (including the SDK's bulk annotation update), monitors,
+project versions, demo trace publication and the dataset copy of eval results
+also read their fresh rows from the primary.
+
+```yaml
+postgres:
+  readReplica:
+    enabled: true
+    host: pgbouncer-read
+    optIn: [ObservationSpan, Trace, EvalLogger, EndUser, CustomEvalConfig,
+      ErrorMemory, TraceAnnotation, EvalTaskLogger, TraceErrorAnalysisTask,
+      "feature:project_list", "feature:org_config_bulk",
+      "feature:eval_group_list", "feature:dashboard_list",
+      "feature:saved_view_list", "feature:dataset_list",
+      "feature:replay_session_list", "feature:custom_eval_config_list",
+      "feature:project_version_ids"]
+```
+
+Pods read the value when they start, so a change takes effect as the backend
+and worker pods restart. To roll back, set `optIn` to the previous list (the
+feature keys only), or to `[]` (or `enabled: false`) to read everything from
+the primary again. Other model names, and the user, organization and
+membership models in particular, need the same review first.
 
 ### ClickHouse
 
@@ -476,9 +531,18 @@ means migrating the data yourself (`pg_dump`, `clickhouse-backup`,
 `mc mirror`).
 
 When any datastore is bundled, the bootstrap job runs after the release's
-resources (`post-install`) because it has to reach them; the API answers
-`/health/` meanwhile, the Temporal workers wait until the job's migrations
-are applied, and Helm returns only once the job has finished.
+resources (`post-install`) because it has to reach them. Pod Ready and
+`/health/` mean process health, not installation completion. The Helm API's
+`STARTUP_SCHEMA_GUARD_ENABLED=true` makes Django application requests return a
+retryable HTTP 503 with `Retry-After` until this image's migrations are applied
+on the default database; health probes and OPTIONS preflight remain available.
+The check is read-only and does not cover replica lag or non-Django routes
+(MCP and WebSockets). Database connection errors pass through to existing
+diagnostics, including setup-checks. The guard defaults off outside Helm and,
+with a ready schema, stays ready even when newer-image migrations are present.
+Temporal workers also wait for migrations.
+Installation is complete only when bootstrap finishes, including ClickHouse,
+seeding and first-admin creation; Helm waits for that job to finish.
 
 ### Install-time settings
 
@@ -779,10 +843,17 @@ changes.
 Chart and platform versions move together: chart `X.Y.Z` runs images
 `vX.Y.Z`.
 
-- **Supported paths:** any patch within a minor, and from the previous minor
-  (N-1 to N). Going further, upgrade one minor at a time.
-- **Migrations** are expand then contract across one release, so the old
-  pods keep serving while the bootstrap job migrates.
+Start with the [verified Kubernetes upgrade runbook](UPGRADING.md): authenticate
+and pin the chart, review the exact migration path, and establish recovery before
+changing the release. The chart does not inherit Compose's automatic-update
+qualification.
+
+- **Supported paths:** follow the release-specific migration and chart upgrade
+  notes. A patch or adjacent minor version is not itself proof of compatibility.
+- **Migrations:** existing pods can keep serving while the bootstrap job runs.
+  Establish that old writers tolerate the target schema; otherwise use a planned
+  maintenance outage. The chart cannot infer expand/contract safety for arbitrary
+  Django or ClickHouse migrations.
 - **Renamed values** keep working for two minors with a `DEPRECATED` line in
   the install notes; a removed one fails the render and names its
   replacement. A change that alters a StatefulSet or a PersistentVolumeClaim
@@ -793,8 +864,9 @@ Chart and platform versions move together: chart `X.Y.Z` runs images
 
 ```sh
 NEW=X.Y.Z
-helm upgrade futureagi oci://ghcr.io/future-agi/charts/futureagi --version "$NEW" \
-  -n futureagi -f my-values.yaml --timeout 20m --rollback-on-failure   # Helm 3: --atomic
+# First prepare and verify this exact release as described in UPGRADING.md.
+helm upgrade futureagi "$HOME/futureagi-release-$NEW/futureagi-$NEW.tgz" \
+  --kube-context CONTEXT -n futureagi -f my-values.yaml --wait --timeout 20m
 ```
 
 **Always pass your values file; never `--reuse-values` across versions.**
@@ -803,7 +875,9 @@ and changed defaults in the new chart are silently dropped. Within one
 version, or when you do not have the file, `--reset-then-reuse-values`
 (Helm 3.14 or newer, Helm 4) takes the new chart's defaults and applies your
 previous overrides over them. Helm 4 renamed `--atomic` to
-`--rollback-on-failure`.
+`--rollback-on-failure`; neither is a database restore. Enable automatic
+image/configuration rollback only after establishing that the exact migration
+path permits it. The documented default leaves a failed rollout for diagnosis.
 
 The bootstrap job runs first (`pre-upgrade`) with the new image:
 migrations, seeds, ClickHouse schema, CDC and schedules, all idempotent.
@@ -814,10 +888,13 @@ A failed bootstrap stops the upgrade before any Deployment is rolled:
 `kubectl -n futureagi logs job/futureagi-bootstrap` says why. The chart's
 Secret is written before the job (the job reads it), so a changed password or
 key is already in place, and a pod that restarts meanwhile starts with it.
-Fix the cause and run the upgrade again, or go back with
-`helm rollback futureagi -n futureagi`, which puts back the previous
-revision's Deployments and Secret. A job still running after Helm's
-`--timeout` must finish before you retry: a new run replaces it mid-way.
+Inspect the failure before retrying or choosing recovery. Where the schema is
+known to remain compatible, `helm rollback futureagi -n futureagi` puts back the
+previous revision's Deployments and chart-managed Secret; it does not restore
+external Secrets or database state. For GitOps, pause the owning controller and
+follow [the recovery procedure](UPGRADING.md#failed-rollout-and-recovery) first.
+A job still running after Helm's `--timeout` must finish before you retry: a new
+run replaces it mid-way.
 `bootstrap.activeDeadlineSeconds` (18 minutes) stops it before the
 documented `--timeout 20m`.
 
@@ -888,22 +965,26 @@ restored database cannot be decrypted. Export it once:
 kubectl -n futureagi get secret futureagi-secrets -o yaml > futureagi-secrets.backup.yaml
 ```
 
-To restore:
+Restore using the tested procedure for your actual datastore operators,
+snapshots and storage layout; see [failed rollout and recovery](UPGRADING.md#failed-rollout-and-recovery):
 
-1. Scale the application down, so nothing writes meanwhile:
-   `kubectl -n futureagi scale deploy -l app.kubernetes.io/instance=futureagi --replicas=0`.
-2. Restore PostgreSQL, then ClickHouse from a backup taken at or after the
-   same point, then the bucket.
-3. Put back the application Secret (or your `secrets.existingSecret`).
-4. Run `helm upgrade` with the same chart version and values: the bootstrap
-   job re-applies the schema, CDC and Temporal schedules, and the
-   Deployments come back. Autoscaled Deployments stay at 0 (an autoscaler
-   does not scale up from 0): scale them to 1 yourself.
-5. Verify: `helm test futureagi -n futureagi`, sign in, open a recent trace
-   and download a file.
+1. Pause the deployment owner in its source of truth and wait for active
+   operations and bootstrap Jobs to finish. Stop all application writers and
+   prevent reconciliation or autoscaling from recreating them during recovery.
+2. Restore PostgreSQL, ClickHouse, object storage, Temporal persistence and
+   application keys to a coordinated recovery point. A later ClickHouse backup
+   is not automatically consistent with an earlier PostgreSQL backup.
+3. Choose the application/chart revision compatible with the restored data.
+   Preserve the original encryption key and externally managed Secrets. Set
+   that revision and the complete values files in the deployment owner's
+   desired state before resuming it; do not bypass GitOps with direct Helm.
+4. Verify bootstrap and rollouts, sign in, open a retained trace/evaluation and
+   download a retained file. With direct Helm or Flux, check Helm test results
+   too; Argo does not run those Helm test hooks.
 
-For bundled datastores, Velero (or your volume snapshots) covers the
-PersistentVolumeClaims; stop the application first for a consistent copy.
+For bundled datastores, use a tested PersistentVolumeClaim backup/restore
+process such as Velero or storage snapshots. Snapshot creation alone does not
+prove application-consistent recovery.
 
 ## Observability
 
@@ -923,38 +1004,44 @@ PersistentVolumeClaims; stop the application first for a consistent copy.
 
 ## GitOps: Argo CD and Flux
 
-[`examples/gitops/`](examples/gitops) has an Argo CD Application and a Flux
-OCIRepository with a HelmRelease for the published chart.
+Follow the [verified GitOps upgrade runbook](UPGRADING.md), including the
+release review, backup and failed-rollout procedures. [`examples/gitops/`](examples/gitops)
+contains a digest-pinned Argo CD OCI Application with an AppProject boundary,
+and a Flux OCIRepository/HelmRelease with namespace-scoped reconciler RBAC.
+These controller resources are applied by the platform operator, not by the chart.
 
-- **Argo CD** renders the chart with `helm template`, so Helm's `lookup`
-  returns nothing and generated secrets would change on every sync. Set
-  `secrets.existingSecret` to a Secret with all seven application keys
-  ([Secrets](#secrets)), `AGENTCC_WEBHOOK_SECRET` included, and give bundled
-  datastores explicit passwords (`postgres.password`, ...) or existing
-  Secrets. Register `ghcr.io/future-agi/charts` as a Helm repository with
-  `enableOCI: "true"` if your version asks for it. Argo CD cannot tell an
-  install from an upgrade, so it runs every Helm install and upgrade hook on
-  every sync: the Secret and the bootstrap ServiceAccount in PreSync. The
-  bootstrap job carries Argo CD's own hook, which takes precedence: PreSync
-  when it is a pre-install hook (every datastore external); otherwise a Sync
-  hook in wave -1, which runs once the bundled datastores (wave -2) are ready
-  and before the rest of the release (wave 0), on the first sync and every
-  later one. Helm and Flux ignore these annotations.
-- **Flux**'s helm-controller runs Helm against the live cluster, so `lookup`
-  works and generated secrets stay put; `existingSecret` values are still
-  the cleaner choice for GitOps. The OCIRepository verifies the chart's
-  cosign signature before every install and upgrade:
+- **Argo CD** uses a native OCI source with `path: .` and a verified digest in
+  `targetRevision`. Verify the exact release-tag cosign identity before approving
+  the digest in Git: Argo does not perform that signature check itself. Use
+  existing Secrets, because `helm template` cannot preserve generated keys via
+  `lookup`. Bootstrap is PreSync for external stores, or Sync wave -1 after
+  bundled datastores in wave -2. Existing old pods are not quiesced by this ordering.
+  Automatic pruning, self-heal and failed-sync retries are off in the example;
+  never use selective sync to bypass bootstrap hooks.
+- **Flux** pins `OCIRepository.spec.ref.digest` and verifies cosign against the
+  exact release-tag identity before exposing the chart artifact. Its HelmRelease
+  runs under the dedicated namespace-scoped reconciler and enables Helm tests.
+  Install/upgrade remediation has zero retries and no last-failure remediation:
+  a failed migration is not an instruction to uninstall or blindly roll back.
 
-  ```yaml
-  verify:
-    provider: cosign
-    matchOIDCIdentity:
-      - issuer: ^https://token\.actions\.githubusercontent\.com$
-        subject: ^https://github\.com/future-agi/future-agi/\.github/workflows/helm-release\.yml@refs/tags/v.*$
-  ```
+`hack/prepare-release.py` authenticates the chart and produces both controllers'
+source fields. Replace digest and identity together in a reviewed change. Never
+use a floating semver range, skip verification, or treat image rollback as data
+restoration. Status must describe the current desired/observed digest and
+operation, not a stale Ready condition.
 
-Pin `targetRevision` (Argo CD) or `ref.semver` (Flux) to an exact version,
-and upgrade by changing it, following [Upgrading](#upgrading).
+**Controller acceptance scope.** CI installs pinned Argo CD 3.6.1 and Flux 2.10.0
+controllers on separate disposable kind clusters, using four source-built product
+images and bundled datastores. It checks digest immutability, missing-artifact and
+wrong-key refusals (external verification for Argo, native verification for Flux),
+failed bootstrap, explicit forward repair and reviewed image/configuration rollback.
+Synthetic PostgreSQL/ClickHouse rows, an S3 object, migration inventory, application
+keys and PVC identities must survive. A real Chromium login/profile check runs
+after install, repair and rollback. The fixture uses test signing keys and the
+same application source across synthetic chart versions: it does **not** qualify
+arbitrary cross-version migrations, production-volume restore, optional serving or
+code-executor, external-store operators, or the full trace/evaluation browser flows.
+See [Testing](../../../TESTING.md#helm-gitops-controller-acceptance) to reproduce it.
 
 ## Security
 
@@ -1176,7 +1263,7 @@ the [configuration reference](https://docs.futureagi.com/docs/self-hosting/confi
 | `postgres.readReplica.host` | `""` | [PGBOUNCER_READ_HOST] host of the replica, or of its pooler. Same user and password as the primary. |
 | `postgres.readReplica.port` | `5432` | [PGBOUNCER_READ_PORT] |
 | `postgres.readReplica.database` | `""` | [PG_READ_DB] database on the replica. Empty: `postgres.database`. |
-| `postgres.readReplica.optIn` | `[]` | [READ_REPLICA_OPT_IN] model class names (e.g. `Dashboard`) and `feature:` keys routed to the replica. Empty: nothing reads from it. |
+| `postgres.readReplica.optIn` | `[]` | [READ_REPLICA_OPT_IN] `feature:` keys and model class names routed to the replica. Empty: nothing reads from it. A model name sends every ordinary read of that model there, so list only models whose read-after-write paths read the primary; the chart README's "Read replica" section has the tested list. |
 | `postgres.bundled.image.registry` | `"docker.io"` | Registry of the bundled PostgreSQL image. |
 | `postgres.bundled.image.repository` | `"library/postgres"` | Repository of the bundled PostgreSQL image. Debian-based, like the compose setups, so data directories are interchangeable. |
 | `postgres.bundled.image.tag` | `"16.15-trixie"` | Tag of the bundled PostgreSQL image: an exact 16.x release on Debian (the compose setups run `postgres:16`, also Debian). |

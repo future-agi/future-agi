@@ -118,7 +118,7 @@ function CitationCard({ n, unitId }) {
               variant="body2"
               color="text.secondary"
               sx={{
-                fontSize: 13,
+                fontSize: 12,
                 display: "-webkit-box",
                 WebkitLineClamp: 4,
                 WebkitBoxOrient: "vertical",

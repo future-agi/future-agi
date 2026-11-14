@@ -60,7 +60,7 @@ import { buildSegments, resultTops } from "./insightsDistribution";
 import { formatCount, runOutcome, runReadAny } from "./insightsFormat";
 import { useCancellable } from "./insightsHooks";
 import { isRunActive, lensFor, unitTitle } from "./insightsLenses";
-import { reportMetaParts } from "./insightsReport";
+import { reportMetaParts, summaryIncomplete } from "./insightsReport";
 import { shownScopeLabel } from "./insightsScope";
 import { ReportProvider, useReportModel } from "./reportContext";
 import { ErrorState } from "./parts";
@@ -254,6 +254,13 @@ function ReportHeader({
               title="What this run read"
             />
           )}
+          {summaryIncomplete(run) && (
+            <HeaderChip
+              label="Partial report"
+              icon="mdi:alert-outline"
+              title="Analysis is complete, but the summary did not finish or pass verification."
+            />
+          )}
           {run && (
             <Box
               component="button"
@@ -412,7 +419,7 @@ function ReportBody({ config, run, lens, methodOpen, onMethod }) {
         <Typography
           variant="body2"
           color="text.secondary"
-          sx={{ mt: 0.5, fontSize: 13, fontVariantNumeric: "tabular-nums" }}
+          sx={{ mt: 0.5, fontSize: 12, fontVariantNumeric: "tabular-nums" }}
         >
           {meta.join(" · ")}
         </Typography>
@@ -434,7 +441,7 @@ function ReportBody({ config, run, lens, methodOpen, onMethod }) {
               <Typography
                 variant="body2"
                 color="text.secondary"
-                sx={{ fontSize: 13 }}
+                sx={{ fontSize: 12 }}
               >
                 None of the {formatCount(run.sample_size)} sampled matched the
                 question. Try a wider window, a different lens, or remove an

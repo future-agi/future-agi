@@ -1,0 +1,50 @@
+# Operator-owned Argo CD boundary for argocd-application.yaml.
+# This is not a chart resource and must not be placed in the application chart.
+# The operator creates the futureagi namespace before the first sync.
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: futureagi
+  namespace: argocd
+spec:
+  description: Future AGI in one existing namespace, from a verified OCI chart
+  sourceRepos:
+    - oci://ghcr.io/future-agi/charts/futureagi
+  destinations:
+    - server: https://kubernetes.default.svc
+      namespace: futureagi
+  # No Namespace, CRD, ClusterRole or ClusterRoleBinding in the application.
+  clusterResourceWhitelist: []
+  namespaceResourceWhitelist:
+    - group: ""
+      kind: Service
+    - group: ""
+      kind: Secret
+    - group: ""
+      kind: ConfigMap
+    - group: ""
+      kind: ServiceAccount
+    - group: ""
+      kind: PersistentVolumeClaim
+    - group: ""
+      kind: Pod
+    - group: apps
+      kind: Deployment
+    - group: apps
+      kind: StatefulSet
+    - group: batch
+      kind: Job
+    - group: autoscaling
+      kind: HorizontalPodAutoscaler
+    - group: policy
+      kind: PodDisruptionBudget
+    - group: networking.k8s.io
+      kind: Ingress
+    - group: networking.k8s.io
+      kind: NetworkPolicy
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+    - group: gateway.networking.k8s.io
+      kind: GRPCRoute
+    - group: external-secrets.io
+      kind: ExternalSecret

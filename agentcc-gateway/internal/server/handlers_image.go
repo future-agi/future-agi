@@ -52,6 +52,7 @@ func (h *Handlers) CreateImage(w http.ResponseWriter, r *http.Request) {
 	rc.Model = req.Model
 	rc.ImageRequest = &req
 
+	rc.Metadata["client_ip"] = h.clientIP(r)
 	setAuthMetadataFromRequest(rc, r)
 	applyCallerMetadata(rc, r, nil)
 

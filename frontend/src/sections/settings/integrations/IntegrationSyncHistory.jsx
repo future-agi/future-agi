@@ -5,6 +5,7 @@ import { Box, Typography } from "@mui/material";
 import StatusBadge from "src/components/status-badge/StatusBadge";
 import { LoadingScreen } from "src/components/loading-screen";
 import { AgGridReact } from "ag-grid-react";
+import "src/utils/ag-grid-setup";
 import { useSyncLogs } from "src/api/integrations";
 import { fDateTime } from "src/utils/format-time";
 import { useAgTheme } from "src/hooks/use-ag-theme";

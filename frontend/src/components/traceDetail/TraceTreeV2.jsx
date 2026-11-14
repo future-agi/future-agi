@@ -6,7 +6,14 @@ import React, {
   useRef,
 } from "react";
 import PropTypes from "prop-types";
-import { Box, Collapse, IconButton, Stack, Typography } from "@mui/material";
+import {
+  Box,
+  Button,
+  Collapse,
+  IconButton,
+  Stack,
+  Typography,
+} from "@mui/material";
 import { alpha } from "@mui/material/styles";
 import Iconify from "src/components/iconify";
 import SvgColor from "src/components/svg-color";
@@ -22,6 +29,7 @@ import {
 // ---------------------------------------------------------------------------
 import { getTypeConfig } from "./spanTypeConfig";
 import { getOwnEvalScores } from "./evalScores";
+import { timingSpanIds, withoutTimingSpans } from "./timingSpans";
 
 function getSpan(entry) {
   return entry?.observation_span || {};
@@ -389,7 +397,7 @@ const TreeNodeRow = ({
           <Typography
             noWrap
             sx={{
-              fontSize: 13,
+              fontSize: 12,
               fontWeight: isSelected ? 600 : 500,
               lineHeight: "16px",
               color: "text.primary",
@@ -687,8 +695,21 @@ const TraceTreeV2 = ({
   visibleMetrics,
   onToggleMetrics: onToggleMetricsProp,
   onRefresh,
+  showTimingSpans: showTimingProp,
+  onTimingVisibilityChange,
 }) => {
   const [searchQuery, setSearchQuery] = useState("");
+  const [showTimingLocal, setShowTimingLocal] = useState(false);
+  const showTimingSpans = showTimingProp ?? showTimingLocal;
+  const setShowTimingSpans = useCallback((show) => {
+    setShowTimingLocal(show);
+    onTimingVisibilityChange?.(show);
+  }, [onTimingVisibilityChange]);
+  const timingIds = useMemo(() => timingSpanIds(spans || []), [spans]);
+  const visibleSpans = useMemo(
+    () => (showTimingSpans ? spans : withoutTimingSpans(spans || [])),
+    [spans, showTimingSpans],
+  );
   const [showMetricsLocal, setShowMetricsLocal] = useState(true);
   // Use prop if provided, otherwise use local state
   const showMetrics =
@@ -712,8 +733,14 @@ const TraceTreeV2 = ({
     if (spans) {
       setExpandedSet(collectAllIds(spans));
       setSearchQuery("");
+      setShowTimingSpans(false);
     }
   }, [spansKey]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Direct navigation to a timing span must reveal it, not strand selection.
+  useEffect(() => {
+    if (timingIds.has(selectedSpanId)) setShowTimingSpans(true);
+  }, [selectedSpanId, timingIds, spansKey, setShowTimingSpans]);
 
   const handleCollapseAll = useCallback(() => setExpandedSet(new Set()), []);
   const handleExpandAll = useCallback(
@@ -741,6 +768,8 @@ const TraceTreeV2 = ({
 
   return (
     <Box
+      role="region"
+      aria-label="Trace Tree"
       sx={{
         display: "flex",
         flexDirection: "column",
@@ -758,13 +787,31 @@ const TraceTreeV2 = ({
         showMetrics={showMetrics}
         onToggleMetrics={handleToggleMetrics}
       />
+      {timingIds.size > 0 && (
+        <Button
+          size="small"
+          color="inherit"
+          aria-pressed={showTimingSpans}
+          onClick={() => setShowTimingSpans(!showTimingSpans)}
+          startIcon={<Iconify icon="solar:clock-circle-linear" width={14} />}
+          sx={{
+            alignSelf: "flex-start",
+            mx: 1,
+            my: 0.5,
+            color: "text.secondary",
+          }}
+        >
+          {showTimingSpans ? "Hide" : "Show"} {timingIds.size} timing{" "}
+          {timingIds.size === 1 ? "span" : "spans"}
+        </Button>
+      )}
       <Box sx={{ flex: 1, overflow: "auto" }}>
-        {spans.map((entry, idx) => (
+        {visibleSpans.map((entry, idx) => (
           <TreeNodeRow
             key={getSpan(entry).id || idx}
             entry={entry}
             depth={0}
-            isLast={idx === spans.length - 1}
+            isLast={idx === visibleSpans.length - 1}
             selectedSpanId={selectedSpanId}
             onSelect={onSelectSpan}
             expandedSet={expandedSet}
@@ -788,6 +835,8 @@ TraceTreeV2.propTypes = {
   visibleMetrics: PropTypes.object,
   onToggleMetrics: PropTypes.func,
   onRefresh: PropTypes.func,
+  showTimingSpans: PropTypes.bool,
+  onTimingVisibilityChange: PropTypes.func,
 };
 
 export default React.memo(TraceTreeV2);

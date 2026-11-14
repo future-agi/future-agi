@@ -10,6 +10,7 @@ server:
   idle_timeout: 120s
   shutdown_timeout: 30s
   max_request_body_size: 10485760 # 10MB
+  max_header_bytes: 1048576 # request header cap; 0 or unset = 1MB
   default_request_timeout: 60s
   # The one ceiling on a request, over any x-agentcc-timeout header or
   # per-model timeout. It may be longer than write_timeout, which then applies
@@ -275,6 +276,12 @@ providers:
   #     - openai/gpt-4o
   #     - anthropic/claude-3.5-sonnet
 
+  # telnyx:
+  #   api_key: "${TELNYX_API_KEY}"
+  #   type: "telnyx"
+  #   models:
+  #     - MiniMaxAI/MiniMax-M3-MXFP8
+
 # Explicit model-to-provider mapping (overrides provider-level models).
 # model_map:
 #   gpt-4o: openai
@@ -331,6 +338,7 @@ providers:
 #     claude-3-opus-20240229: 120s
 #   mirror:                                 # Traffic mirroring for shadow testing
 #     enabled: true
+#     max_concurrent: 64                    # In-flight mirrors; beyond this, mirrors are dropped (default 64)
 #     rules:
 #       - source_model: "gpt-4o"            # Mirror gpt-4o requests
 #         target_provider: "anthropic"       # Send copy to Anthropic
@@ -429,12 +437,17 @@ logging:
 #   allowed_headers: ["Authorization", "Content-Type"]
 #   exposed_headers: []
 #   max_age: 86400
-#   allow_credentials: false
+#   allow_credentials: false              # cannot be true while allowed_origins is ["*"] or empty (rejected at startup)
 
 # Restrict inbound traffic by IP / CIDR.
 # ip_acl:
 #   enabled: true
-#   trusted_proxies: 1                    # hops of X-Forwarded-For to trust
+#   # Proxy hops in front of the gateway that append to X-Forwarded-For. The
+#   # client address (ip_acl, per-key allowed_ips, audit) is the entry this many
+#   # hops from the right; X-Forwarded-For is ignored when 0 (the default) and
+#   # X-Real-IP is never trusted.
+#   # Google Cloud external Application Load Balancer: 2. One nginx hop: 1.
+#   trusted_proxies: 1
 #   allow: ["10.0.0.0/8", "192.168.1.0/24"]
 #   deny:  ["203.0.113.7"]                # deny takes precedence over allow
 
@@ -799,3 +812,86 @@ logging:
 #         - id: "web-search"
 #           name: "Web Search"
 #           description: "Search the open web"
+
+# Durable video generation is opt-in. Redis requires AOF appendfsync everysec
+# or RDB snapshots, and maxmemory-policy noeviction. No automatic memory fallback.
+# Explicit development-only memory storage requires allow_non_durable_store: true.
+# Credentials use ${ENV}, vault://, aws-sm://, gcp-sm:// or azure-kv://.
+# Credential rotation requires a restart; disabled routes return 501 not_configured.
+# Runtime kill switch: <video namespace>killswitch via admin /-/admin/video/.
+# The default Redis prefix (agentcc: or empty) retains video:v1:. Custom Redis
+# prefixes use <redis.prefix>video:v1: for every video queue, limit and sweeper.
+# Before upgrading an existing custom-prefix installation, drain its legacy
+# video:v1: jobs with the previous gateway release and the same configuration.
+# Legacy shared jobs cannot be safely attributed/migrated between installations.
+# Kill switch config is startup-only; use the admin endpoint at runtime.
+# Canonical requests are stored plain in Redis under the metadata retention.
+# video:
+#   enabled: false
+#   kill_switch: false
+#   store: redis
+#   allow_non_durable_store: false
+#   correlation_secret: "${VIDEO_CORRELATION_SECRET}" # Required for org_key_hmac.
+#   submit:
+#     sync_wait: 5s
+#     deadline: 30s
+#     unknown_reconcile_deadline: 15m
+#     lease_ttl: 60s
+#   poll:
+#     max_concurrent_total: 32
+#     per_provider_max_concurrent: 8
+#     max_interval: 60s
+#     max_consecutive_failures: 20
+#     max_unknown_status: 3
+#     timeout_reconcile_window: 2h
+#   copy: { deadline: 10m, max_concurrent: 8 }
+#   reconcile: { allow_absent_resubmit: false }
+#   media:
+#     max_inline_bytes: 20971520
+#     fetch_timeout: 20s
+#     total_ingress_timeout: 60s
+#     max_decoded_pixels: 36000000
+#   artifacts:
+#     backend: disk
+#     ttl: 24h
+#     max_bytes: 2147483648
+#     disk: { root: /var/lib/agentcc/video }
+#     s3: { bucket: "", prefix: "video/", region: "", access_key: "${AWS_ACCESS_KEY_ID}", secret_key: "${AWS_SECRET_ACCESS_KEY}", sse: "AES256" }
+#     presign: { enabled: false, ttl: 15m } # Phase 1 content is streamed by the gateway.
+#   retention: { job_metadata: 720h, idempotency: 720h }
+#   limits: { org_max_active_jobs: 10, org_submit_rpm: 60 }
+#   providers:
+#     byteplus:
+#       enabled: false
+#       api_key: "${ARK_API_KEY}"  # Also vault://, aws-sm://, gcp-sm://, azure-kv://.
+#       # credential_ref: provider:byteplus  # Optional existing provider key; api_key takes precedence.
+#       base_url: https://ark.ap-southeast.bytepluses.com/api/v3
+#       region: ap-southeast-1
+#       account_ref: byteplus-main
+#       models: [dreamina-seedance-2-5-260628, dreamina-seedance-2-0-260128]
+#       limits: { submit_rpm: 10, poll_qps: 10, max_active_tasks: 5 }
+#       deadlines: { connect: 10s, read: 30s, submit: 30s, run: 2h, reconcile: 15m }
+#       poll: { base_interval: 5s }
+#       allow_unpriced_models: false
+#       tariff_revision: byteplus-2026-10-02
+#       safety_identifier_mode: org_key_hmac
+#       execution_expires_after: 7200
+#       acknowledge_public_output: false  # Enablement blocked until explicitly acknowledged.
+#       min_tokens_with_video_input: 0    # Operator-asserted minimum; zero rejects video-input estimates.
+#     openrouter:  # Aggregator route: proves the OpenRouter path, not the model vendor's native API.
+#       enabled: false
+#       api_key: "${OPENROUTER_API_KEY}"
+#       base_url: https://openrouter.ai/api/v1
+#       region: global
+#       account_ref: openrouter-main
+#       # Request as "openrouter/<vendor>/<model>". Pinned to the 2026-11-06 public catalog.
+#       models: [bytedance/seedance-1-5-pro, google/veo-3.1-lite, kwaivgi/kling-v3.0-std, alibaba/wan-3.0, minimax/hailuo-3-max, runway/gen-4.5, x-ai/grok-imagine-video-1.5-lite]
+#       limits: { submit_rpm: 10, poll_qps: 2, max_active_tasks: 4 }
+#       deadlines: { connect: 10s, read: 30s, submit: 60s, run: 30m, reconcile: 5m }
+#       poll: { base_interval: 10s }
+#       allow_unpriced_models: false
+#       tariff_revision: openrouter-2026-11-06  # Upper-bound reservation; settles OpenRouter usage.cost in USD.
+#       safety_identifier_mode: none            # org_key_hmac sends a keyed HMAC as `user`.
+#       # No execution_expires_after, acknowledge_public_output or min_tokens_with_video_input:
+#       # those are BytePlus-only. Outputs are copied through OpenRouter's authenticated
+#       # content endpoint; there is no upstream cancel, idempotency key or job lookup.

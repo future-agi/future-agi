@@ -13,6 +13,7 @@ import Section from "src/components/section";
 import { useTheme } from "@mui/material/styles";
 import Chart from "react-apexcharts";
 import { useAnalyticsUsage } from "./hooks/useAnalyticsUsage";
+import { monoSeriesColors } from "src/theme/data-colors";
 import { REQUEST_DIMENSION_OPTIONS } from "../constants/requestTags";
 
 // ---------------------------------------------------------------------------
@@ -39,17 +40,6 @@ function computeGranularity(start, end) {
 // Chart option builders
 // ---------------------------------------------------------------------------
 
-function groupPalette(theme) {
-  return [
-    theme.palette.primary.main,
-    theme.palette.secondary.main,
-    theme.palette.warning.main,
-    theme.palette.info.main,
-    theme.palette.success.main,
-    theme.palette.error.main,
-  ];
-}
-
 function buildRequestChartOptions(theme, _series) {
   return {
     chart: {
@@ -58,7 +48,7 @@ function buildRequestChartOptions(theme, _series) {
       zoom: { enabled: false },
       fontFamily: theme.typography.fontFamily,
     },
-    colors: groupPalette(theme),
+    colors: monoSeriesColors(theme),
     dataLabels: { enabled: false },
     stroke: { curve: "smooth", width: 2 },
     fill: {
@@ -109,7 +99,7 @@ function buildRequestChartOptions(theme, _series) {
   };
 }
 
-function buildTokenChartOptions(theme, isGrouped) {
+function buildTokenChartOptions(theme) {
   return {
     chart: {
       type: "area",
@@ -118,9 +108,7 @@ function buildTokenChartOptions(theme, isGrouped) {
       zoom: { enabled: false },
       fontFamily: theme.typography.fontFamily,
     },
-    colors: isGrouped
-      ? groupPalette(theme)
-      : [theme.palette.info.main, theme.palette.warning.main],
+    colors: monoSeriesColors(theme),
     dataLabels: { enabled: false },
     stroke: { curve: "smooth", width: 2 },
     fill: {
@@ -274,8 +262,8 @@ const UsageCharts = ({ start, end, gatewayId }) => {
   );
 
   const tokenChartOptions = useMemo(
-    () => buildTokenChartOptions(theme, isGrouped),
-    [theme, isGrouped],
+    () => buildTokenChartOptions(theme),
+    [theme],
   );
 
   const handleGroupByChange = (_event, newValue) => {

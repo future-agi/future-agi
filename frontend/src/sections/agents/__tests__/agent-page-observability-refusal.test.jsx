@@ -9,6 +9,7 @@ import {
   fireEvent,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { FormProvider, useForm } from "react-hook-form";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ThemeProvider, createTheme } from "@mui/material/styles";
 import { palette } from "src/theme/palette";
@@ -56,6 +57,9 @@ vi.mock(
 
 const { default: axios, endpoints } = await import("src/utils/axios");
 const { useAgentDetailsStore } = await import("../store/agentDetailsStore");
+const { default: AgentVoiceForm } = await import(
+  "../CreateNewAgent/AgentConfigurationStep/AgentVoiceForm"
+);
 const { default: AgentConfigurationView } = await import(
   "../AgentConfiguration/AgentConfigurationView"
 );
@@ -328,3 +332,130 @@ describe.each(MOUNTS)("observability refusal on $name", ({ mount, save }) => {
     expect(switchBox()).toBeChecked();
   });
 });
+
+// The key is only shown while entering it; field masking must not change the
+// value passed to react-hook-form or make the non-secret assistant ID hidden.
+describe("provider credential fields", () => {
+  it.each(["vapi", "retell", "elevenlabs", "bland"])(
+    "masks the %s key on the existing agent page",
+    async (provider) => {
+      useAgentDetailsStore.setState({
+        agentDetails: {
+          ...HOSTED_VAPI,
+          configuration_snapshot: {
+            ...HOSTED_VAPI.configuration_snapshot,
+            provider,
+          },
+        },
+        selectedVersion: "v1",
+      });
+      MOUNTS[0].mount();
+      const key = await screen.findByLabelText(/Provider API Key/);
+      expect(key).toHaveAttribute("type", "password");
+      expect(screen.getByLabelText(/Assistant ID/)).toHaveAttribute(
+        "type",
+        "text",
+      );
+      fireEvent.change(key, { target: { value: "synthetic-new-key" } });
+      expect(key).toHaveValue("synthetic-new-key");
+    },
+  );
+
+  it("masks the key in the new-version drawer", async () => {
+    useAgentDetailsStore.setState({
+      agentDetails: HOSTED_VAPI,
+      selectedVersion: "v1",
+    });
+    MOUNTS[1].mount();
+    expect(await screen.findByLabelText(/Provider API Key/)).toHaveAttribute(
+      "type",
+      "password",
+    );
+  });
+
+  it("masks newly entered keys on the create-agent form without changing the value", async () => {
+    function CreateVoiceForm() {
+      const methods = useForm({
+        defaultValues: {
+          agentType: "voice",
+          agentName: "Test agent",
+          provider: "vapi",
+          authenticationMethod: "api_key",
+          apiKey: "",
+          assistantId: "",
+          inbound: false,
+          observabilityEnabled: false,
+          headers: [],
+        },
+      });
+      return (
+        <FormProvider {...methods}>
+          <AgentVoiceForm />
+          <output data-testid="key-value">{methods.watch("apiKey")}</output>
+        </FormProvider>
+      );
+    }
+    render(
+      <Providers>
+        <CreateVoiceForm />
+      </Providers>,
+    );
+    const key = await screen.findByLabelText(/Provider API Key/);
+    expect(key).toHaveAttribute("type", "password");
+    fireEvent.change(key, { target: { value: "synthetic-new-key" } });
+    expect(screen.getByTestId("key-value")).toHaveTextContent(
+      "synthetic-new-key",
+    );
+  });
+});
+
+describe.each(["livekit", "livekit_bridge"])(
+  "%s provider key inputs",
+  (provider) => {
+    it.each(MOUNTS)("masks the key in $name", async ({ mount }) => {
+      useAgentDetailsStore.setState({
+        agentDetails: versionDetail({
+          kind: "hosted",
+          agent_type: "voice",
+          provider,
+          livekit_api_key: "synthetic-livekit-key",
+          livekit_api_secret: "synthetic-livekit-secret",
+        }),
+        selectedVersion: "v1",
+      });
+      mount();
+      expect(await screen.findByLabelText(/LiveKit API Key/)).toHaveAttribute(
+        "type",
+        "password",
+      );
+    });
+
+    it("masks the key in the create form", async () => {
+      function CreateLivekitForm() {
+        const methods = useForm({
+          defaultValues: {
+            agentType: "voice",
+            provider,
+            authenticationMethod: "api_key",
+            languages: ["en"],
+            livekitApiKey: "synthetic-livekit-key",
+            livekitApiSecret: "synthetic-livekit-secret",
+          },
+        });
+        return (
+          <FormProvider {...methods}>
+            <AgentVoiceForm />
+          </FormProvider>
+        );
+      }
+      render(
+        <Providers>
+          <CreateLivekitForm />
+        </Providers>,
+      );
+      const input = await screen.findByLabelText(/LiveKit API Key/);
+      expect(input).toHaveAttribute("type", "password");
+      expect(input).toHaveValue("synthetic-livekit-key");
+    });
+  },
+);

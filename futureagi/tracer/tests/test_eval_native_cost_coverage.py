@@ -13,12 +13,20 @@ import pytest
 import model_hub.tasks  # noqa: F401 -- break the existing eval/task import cycle
 from tracer.models.trace import Trace
 from tracer.serializers.usage_coverage import CostCoverageSerializer
+from tracer.services.clickhouse.query_builders.trace_detail import (
+    compute_trace_summary_and_graph,
+)
 from tracer.services.clickhouse.v2.span_reader import (
     _DATA_KEYS,
     CHSpanReader,
     _row_to_chspan,
 )
-from tracer.utils.eval import build_session_context, build_span_context
+from tracer.tests._copilot_usage_capture import captured_usage_rows, usage_tree
+from tracer.utils.eval import (
+    build_session_context,
+    build_span_context,
+    build_trace_context,
+)
 from tracer.utils.normalization import normalize_attributes
 
 START = datetime(2026, 10, 20, 12, tzinfo=UTC)
@@ -307,6 +315,113 @@ def test_repeated_pydantic_parent_is_excluded_not_equal_valued_siblings(monkeypa
     assert context["total_tokens"] == 360
     _assert_coverage(context, "partial", 2.5, 2, 1)
     _assert_coverage(context["traces"][0], "complete", 2.5, 2, 0)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("parent_only", [False, True])
+def test_genai_context_proves_descendants_within_each_trace(monkeypatch, parent_only):
+    spans = [
+        _span(
+            id="parent",
+            observation_type="agent",
+            cost=1.25,
+            attrs_string={"gen_ai.operation.name": "invoke_agent"},
+        ),
+        _span(
+            id="loop",
+            parent_span_id="parent",
+            observation_type="chain",
+            total_tokens=0,
+            prompt_tokens=0,
+            completion_tokens=0,
+            cost=0,
+        ),
+        # Matching IDs in another trace must not prove this summary.
+        _span(trace_id="trace-2", parent_span_id="loop", cost=1.25),
+    ]
+    if not parent_only:
+        spans.append(_span(parent_span_id="loop", cost=1.25))
+    context = _context(monkeypatch, spans)
+    assert context["total_tokens"] == 240
+    assert context["total_cost"] == 2.5
+    _assert_coverage(context, "complete", 2.5, 2, 0)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "shape,expected",
+    [
+        ("legacy-capture", 88073),
+        ("normalized-capture", 88073),
+        ("retried-capture", 88073),
+        ("parent-only", 120),
+        ("unequal", 241),
+        ("independent", 240),
+        ("pydantic", 120),
+        ("explicit-nonadditive", 120),
+    ],
+)
+def test_trace_session_and_detail_token_parity(monkeypatch, shape, expected):
+    if shape.endswith("capture"):
+        legacy = captured_usage_rows()
+        normalized = captured_usage_rows(normalized=True)
+        if shape == "retried-capture":
+            # FINAL retains both kinds, while unchanged physical keys replace.
+            live = {(row["id"], row["observation_type"]): row for row in legacy}
+            live.update(
+                {(row["id"], row["observation_type"]): row for row in normalized}
+            )
+            rows = list(live.values())
+            assert len(rows) == 164
+        else:
+            rows = legacy if shape == "legacy-capture" else normalized
+            assert len(rows) == 91
+        spans = [_span(**row) for row in rows]
+    else:
+        attrs = {"gen_ai.operation.name": "invoke_agent"}
+        if shape == "explicit-nonadditive":
+            attrs["fi.usage.contribution"] = "none"
+        spans = [
+            _span(
+                id="parent",
+                name="pydantic_ai.agent.run" if shape == "pydantic" else "invoke_agent",
+                observation_type="agent",
+                attrs_string=attrs,
+                total_tokens=121 if shape == "unequal" else 120,
+            )
+        ]
+        if shape != "parent-only":
+            spans.append(
+                _span(parent_span_id="" if shape == "independent" else "parent")
+            )
+    session = _context(monkeypatch, spans)
+    from tracer.services.clickhouse.v2 import get_reader
+
+    reader = get_reader()
+    reader.list_by_trace.return_value = spans
+    trace = build_trace_context(
+        SimpleNamespace(id="trace-1", project_id="project-1"), anchor_span_id="anchor"
+    )
+    detail, graph = compute_trace_summary_and_graph(
+        usage_tree([vars(span) for span in spans])
+    )
+    assert (
+        trace["total_tokens"]
+        == session["total_tokens"]
+        == detail["total_tokens"]
+        == expected
+    )
+    assert session["traces"][0]["total_tokens"] == expected
+    assert (
+        trace["span_count"]
+        == session["total_spans"]
+        == detail["total_spans"]
+        == len(spans)
+    )
+    assert len(trace["spans"]) == len(graph["nodes"]) == len(spans)
+    assert [span["id"] for span in trace["spans"]] == [span.id for span in spans]
+    assert trace["span_id"] == "anchor"
+    reader.list_by_trace.assert_called_once_with("trace-1", project_id="project-1")
 
 
 @pytest.mark.unit

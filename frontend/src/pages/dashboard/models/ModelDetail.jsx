@@ -9,6 +9,7 @@ import { DatasetContext } from "./DatasetContext";
 import Label from "src/components/label";
 import { useGetModelDetail } from "src/api/model/model";
 import { useGetOptimization } from "src/api/model/optimize";
+import { LoadingScreen } from "src/components/loading-screen";
 
 function CustomTabPanel(props) {
   const { children, value, panelValue, loading, ...other } = props;
@@ -125,7 +126,7 @@ const ModelDetail = () => {
   function renderOutlet(condition) {
     if (condition) return <></>;
 
-    return loadingModelDetails ? <LinearProgress /> : <Outlet />;
+    return loadingModelDetails ? <LoadingScreen /> : <Outlet />;
   }
 
   return (
@@ -148,7 +149,8 @@ const ModelDetail = () => {
           <Box
             sx={{ borderBottom: 1, borderColor: "divider", paddingLeft: 2.5 }}
           >
-            <Tabs sx={{ boxShadow: "none" }}
+            <Tabs
+              sx={{ boxShadow: "none" }}
               value={selectedTab}
               onChange={handleChange}
               aria-label="basic tabs example"

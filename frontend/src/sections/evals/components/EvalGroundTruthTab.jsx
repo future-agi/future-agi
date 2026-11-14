@@ -29,6 +29,7 @@ import React, {
 import { useDropzone } from "react-dropzone";
 import { useSnackbar } from "notistack";
 import { AgGridReact } from "ag-grid-react";
+import "src/utils/ag-grid-setup";
 import { useAgTheme } from "src/hooks/use-ag-theme";
 import Iconify from "src/components/iconify";
 import RunStatusBadge from "src/components/status-badge/StatusBadge";
@@ -60,6 +61,7 @@ import {
 import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
 import { ROW_HEIGHT } from "src/theme/sizes";
 import ContentSkeleton from "src/components/content-skeleton";
+import { LoadingScreen } from "src/components/loading-screen";
 
 // ═══════════════════════════════════════════════════════════════
 // Status Badge
@@ -786,11 +788,7 @@ export const UploadDrawer = ({
                 gap: 1,
               }}
             >
-              {datasetsLoading && (
-                <Box sx={{ display: "flex", justifyContent: "center", py: 4 }}>
-                  <CircularProgress size={20} />
-                </Box>
-              )}
+              {datasetsLoading && <LoadingScreen compact />}
 
               {!datasetsLoading && datasets.length === 0 && (
                 <Typography
@@ -2103,8 +2101,8 @@ const EvalGroundTruthTab = ({ templateId, onSwitchToDetails }) => {
                   pagination
                   paginationPageSize={50}
                   paginationPageSizeSelector={[25, 50, 100]}
-                  overlayNoRowsTemplate="<span style='font-size:13px;opacity:0.5'>No data</span>"
-                  overlayLoadingTemplate="<span style='font-size:13px;opacity:0.5'>Loading...</span>"
+                  overlayNoRowsTemplate="<span style='font-size:12px;opacity:0.5'>No data</span>"
+                  overlayLoadingTemplate="<span style='font-size:12px;opacity:0.5'>Loading...</span>"
                   loading={!previewData}
                 />
               </Box>

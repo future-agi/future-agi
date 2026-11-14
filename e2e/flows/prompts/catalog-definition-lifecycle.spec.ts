@@ -13,6 +13,10 @@ const UI_READY = 60_000;
 // WorkbenchProvider: 10s socket fallback, then native 120s status poll.
 const PROMPT_RUN = 130_000;
 
+declare global {
+  interface Window { promptSocketConstructions: { url: string; at: number }[] }
+}
+
 interface EvalResult { status: string; output: unknown; value: unknown;
   meta: { reason: string; failure: boolean; token_count: number } }
 interface VersionRow { id: string; original_template_id: string; template_version: string; updated_at: Date;
@@ -37,12 +41,12 @@ test('PROMPT-E2E-001: a mock-run prompt exposes its current evaluation configura
     id: 'PROMPT-E2E-001', area: 'prompts',
     userGoal: 'Run a synthetic prompt through the local mock, then discover, edit and remove its current evaluation configuration through supported UI',
     steps: ['create and name a prompt from scratch and select the local mock model',
-      'Run Prompt and wait for real stored output before opening the Evaluation tab',
+      'immediately Run Prompt after selecting the model while autosave is held, then release it and open Evaluation after real stored output',
       'Add Evaluation mapped to model_output and inspect its current catalog choices',
       'edit mapping to model_input with the same binding ID and name and wait for completion',
       'delete the binding and reload to verify current discovery excludes it'],
     backendChecks: [
-      'real mock output and the prompt evaluation binding retain exact parent, actor scope and model with terminal stored results',
+      'no prompt-run WebSocket is constructed before the selected model save responds; real mock output and the evaluation binding retain exact parent, actor scope and model with terminal stored results',
       'current prompt catalog identifies the exact binding and its two configured choices',
       'mapping edit preserves binding ID/name, completes, and deletion removes it from UI and current discovery',
     ],
@@ -65,6 +69,24 @@ test('PROMPT-E2E-001: a mock-run prompt exposes its current evaluation configura
     workspaceId: actor.workspaceId, modelId: mockModel.id, promptName, bindingName, input, alpha, beta, verdict };
   const requests: { path: string; body: unknown }[] = [];
   const socketFrames: unknown[] = [];
+  type SocketRecord = { url: string; at: number };
+  let socketConstructions: SocketRecord[] = [];
+  let savedAt = 0;
+  let releaseModelSave!: () => void;
+  const modelSaveGate = new Promise<void>(resolve => { releaseModelSave = resolve; });
+  await page.addInitScript(() => {
+    performance.setResourceTimingBufferSize(10_000);
+    const records: { url: string; at: number }[] = [];
+    window.promptSocketConstructions = records;
+    window.WebSocket = new Proxy(window.WebSocket, {
+      construct(Target, args) {
+        const url = new URL(String(args[0]), window.location.href);
+        // Query strings contain auth tokens; construction timing needs only the path.
+        records.push({ url: `${url.origin}${url.pathname}`, at: performance.now() });
+        return Reflect.construct(Target, args);
+      },
+    });
+  });
   const assertMockOnly = mockModel.assertReady;
   const readVersion = async () => {
     const versions = await probe.pg<VersionRow>(
@@ -118,10 +140,13 @@ test('PROMPT-E2E-001: a mock-run prompt exposes its current evaluation configura
     // Do not attach the socket URL: its query includes the auth token.
     ws.on('framesent', frame => socketFrames.push(JSON.parse(String(frame.payload))));
   });
-  // WorkbenchProvider:967 uses the actual autosave payload for HTTP fallback.
-  // Do not force that transport. WS references the stored version checked before Run.
+  // Hold persistence, not a fabricated response, so slow browsers still exercise the race.
   await page.route('**/run_template/', async route => {
     const body = route.request().postDataJSON();
+    if (new URL(route.request().url()).pathname === `${PROMPTS}${ids.promptId}/run_template/` &&
+        body.is_run === false && body.prompt_config?.[0].configuration.model === MODEL) {
+      await modelSaveGate;
+    }
     if (body.is_run) {
       const safe = new URL(route.request().url()).origin === new URL(E2E.apiUrl).origin &&
         new URL(route.request().url()).pathname === `${PROMPTS}${ids.promptId}/run_template/` &&
@@ -189,21 +214,44 @@ test('PROMPT-E2E-001: a mock-run prompt exposes its current evaluation configura
       // PromptCard/PromptEditor uses Quill. The default cards are system, user.
       await expect(page.locator('.ql-editor[contenteditable="true"]')).toHaveCount(2, { timeout: UI_READY });
       await page.locator('.ql-editor[contenteditable="true"]').nth(1).fill(input);
+      await assertMockOnly();
+      const isModelSave = (r: import('@playwright/test').Request) =>
+        new URL(r.url()).pathname === `${PROMPTS}${ids.promptId}/run_template/` &&
+        r.method() === 'POST' && r.postDataJSON().is_run === false &&
+        r.postDataJSON().prompt_config?.[0].configuration.model === MODEL;
+      const modelSave = page.waitForRequest(isModelSave, { timeout: UI_READY });
+      const modelSaved = page.waitForResponse(r => isModelSave(r.request()), { timeout: UI_READY });
       await page.getByText('Select Model', { exact: true }).click();
       await page.getByPlaceholder('Select model', { exact: true }).fill(MODEL);
       await page.getByText(MODEL, { exact: true }).click();
-      await expect.poll(async () => {
-        const v = await readVersion();
-        return { model: v.prompt_config_snapshot.configuration.model,
-          user: v.prompt_config_snapshot.messages.filter(m => m.role === 'user') };
-      }, POLL.ASYNC_JOB).toEqual({ model: MODEL,
-        user: [{ role: 'user', content: [{ type: 'text', text: serializedInput }] }] });
+      // ModelContainer applies selection after model-params resolves; this is local state, not persistence.
+      await expect(page.getByText('Select Model', { exact: true })).toHaveCount(0, { timeout: UI_READY });
+      await page.getByRole('button', { name: 'Run Prompt', exact: true }).click();
+      await modelSave;
+      await expect(page.getByRole('button', { name: 'Stop Generating', exact: true })).toBeVisible({ timeout: UI_READY });
+      expect(await page.evaluate(() => window.promptSocketConstructions
+        .filter(s => new URL(s.url).pathname === '/ws/prompt-stream/'))).toEqual([]);
+      expect(socketFrames).toEqual([]);
+      const savePath = `${PROMPTS}${ids.promptId}/run_template/`;
+      const earlierSaves = await page.evaluate(path => performance.getEntriesByType('resource')
+        .filter(entry => new URL(entry.name).pathname === path).length, savePath);
+      releaseModelSave();
+      const saveResponse = await modelSaved;
+      expect(saveResponse.status()).toBe(200);
+      await saveResponse.finished();
+      // Resource timing and construction timestamps share the browser's monotonic clock.
+      await page.waitForFunction(({ path, count }) => performance.getEntriesByType('resource')
+        .filter(entry => new URL(entry.name).pathname === path).length > count,
+      { path: savePath, count: earlierSaves }, { timeout: UI_READY });
+      savedAt = await page.evaluate(path => {
+        const saves = performance.getEntriesByType('resource')
+          .filter(entry => new URL(entry.name).pathname === path) as PerformanceResourceTiming[];
+        return saves[saves.length - 1].responseEnd;
+      }, savePath);
+      expect(savedAt).toBeGreaterThan(0);
     });
 
-    await test.step('UI: Run Prompt produces real stored output and enables normal Evaluation tab', async () => {
-      await assertMockOnly();
-      expect((await readVersion()).prompt_config_snapshot.configuration.model).toBe(MODEL);
-      await page.getByRole('button', { name: 'Run Prompt', exact: true }).click();
+    await test.step('UI: immediate Run Prompt produces real stored output and enables normal Evaluation tab', async () => {
       // replace_variables preserves content blocks; mock server JSON-stringifies them.
       const output = `echo: ${JSON.stringify([{ type: 'text', text: serializedInput }])}`;
       await expect.poll(async () => {
@@ -211,6 +259,14 @@ test('PROMPT-E2E-001: a mock-run prompt exposes its current evaluation configura
         return { output: v.output, is_draft: v.is_draft };
       }, { timeout: PROMPT_RUN, intervals: [1000, 2500] }).toEqual({ output: [output], is_draft: false });
       const version = await readVersion();
+      socketConstructions = await page.evaluate(() => window.promptSocketConstructions
+        .filter(s => new URL(s.url).pathname === '/ws/prompt-stream/'));
+      expect(socketConstructions).toHaveLength(1);
+      expect(socketConstructions[0].at).toBeGreaterThanOrEqual(savedAt);
+      expect(socketFrames).toEqual([{ type: 'run_template', template_id: ids.promptId, version: 'v1', is_run: 'prompt' }]);
+      expect(version.prompt_config_snapshot.configuration.model).toBe(MODEL);
+      expect(version.prompt_config_snapshot.messages.filter(m => m.role === 'user'))
+        .toEqual([{ role: 'user', content: [{ type: 'text', text: serializedInput }] }]);
       ids.versionId = version.id;
       expect(version.metadata).toHaveLength(1);
       expect(Object.keys(version.metadata[0] as object).length).toBeGreaterThan(0);
@@ -342,8 +398,9 @@ test('PROMPT-E2E-001: a mock-run prompt exposes its current evaluation configura
         body: JSON.stringify({ ids, configBeforeDeletion: config, remaining, catalog, removedValues }) });
     });
   } finally {
+    releaseModelSave();
     await testInfo.attach('prompt-lifecycle-ids-and-wire', { contentType: 'application/json',
-      body: JSON.stringify({ ids, requests, socketFrames }) });
+      body: JSON.stringify({ ids, requests, socketFrames, socketConstructions, savedAt }) });
     if (ids.promptId) {
       await testInfo.attach('final-persisted-prompt-version', { contentType: 'application/json',
         body: JSON.stringify(await readVersion()) });

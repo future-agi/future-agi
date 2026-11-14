@@ -17,6 +17,9 @@ const (
 	keyTypeIngest = "ingest"
 	// KeyTypeIngest is the type of a sandbox key.
 	KeyTypeIngest = keyTypeIngest
+	// keyTypeCodingAgent is a coding agent's key: it makes only its fix loop's
+	// API calls and never sends traces.
+	keyTypeCodingAgent = "coding_agent"
 
 	// resourceMarkKey is written on every routed resource so that downstream
 	// conversion treats the spans as simulated; its value is resourceMarkValue.

@@ -161,7 +161,13 @@ def test_repeated_summary_all_graph_consumers(
     assert bundle["cost"][0]["value"] == mean
     assert bundle["cost"][0]["cost_coverage"] == coverage
     assert bundle["traffic"][0]["traffic"] == traffic
-    assert bundle["tokens"][0]["value"] == 120 * traffic  # non-money unchanged
+    # Traffic retains wrappers; usage counts only their additive contribution.
+    repeated_wrapper = (
+        len(spans) == 2
+        and any(span.get("parent") for span in spans)
+        and not wrapper_facts
+    )
+    assert bundle["tokens"][0]["value"] == 120 * (traffic - int(repeated_wrapper))
     for observe_type in ("span", "trace"):
         shared = exact_graph_reads.read_exact_system_graph(
             analytics=analytics,

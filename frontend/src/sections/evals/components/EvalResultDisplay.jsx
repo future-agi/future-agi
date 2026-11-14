@@ -50,7 +50,8 @@ const EvalResultDisplay = ({ result }) => {
       metadata = null;
     }
   }
-  const jev = metadata?.jev || result.jev;
+  const decision = metadata?.decision || result.decision;
+  const jev = decision || metadata?.jev || result.jev;
 
   const hasLegacyOutput = result.output != null;
   const hasCodeScore =
@@ -97,7 +98,11 @@ const EvalResultDisplay = ({ result }) => {
       {viewMode === "json" ? (
         <JsonView data={result} />
       ) : jev ? (
-        <JevResultDisplay result={result} jev={jev} />
+        <JevResultDisplay
+          result={result}
+          jev={jev}
+          modelLabel={decision ? "This decision model" : "Jev"}
+        />
       ) : (
         <FormattedResult result={result} />
       )}

@@ -107,9 +107,7 @@ check_package() {
     fi
 }
 
-check_package "black" "black (formatter)"
-check_package "isort" "isort (import sorter)"
-check_package "ruff" "ruff (linter)"
+# ruff is not needed in the venv: make lint/format and the hooks fetch ruff 0.17.3 themselves.
 check_package "bandit" "bandit (security)"
 check_package "mypy" "mypy (type checker)"
 check_package "django" "Django"

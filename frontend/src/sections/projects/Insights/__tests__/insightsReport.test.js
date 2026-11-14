@@ -10,6 +10,7 @@ import {
   askHistory,
   engineLabel,
   normalizeAnswer,
+  summaryIncomplete,
   ASK_INTERRUPTED,
   readAskThread,
   settleAskTurn,
@@ -189,10 +190,87 @@ describe("Ask helpers", () => {
     ]);
     expect(normalizeAnswer(null)).toEqual({
       answer: [],
+      unverifiedAnswer: [],
+      verification: null,
+      error: "The analysis service returned no usable answer. Try again.",
       followUps: [],
       dropped: 0,
     });
     expect(normalizeAnswer({ answer: [], dropped: 2 }).dropped).toBe(2);
+  });
+
+  it("preserves an unverified answer without presenting it as verified", () => {
+    const verification = {
+      status: "failed",
+      reason: "answer_validation_failed",
+      validation: {
+        stage: "backend",
+        rejected_paragraphs: { unsupported_number: 2 },
+      },
+    };
+    const result = normalizeAnswer({
+      answer: [],
+      unverified_answer: [{ text: "An unverified draft.", unit_ids: ["u1"] }],
+      verification,
+      dropped: 2,
+    });
+    expect(result.answer).toEqual([]);
+    expect(result.unverifiedAnswer[0].text).toBe("An unverified draft.");
+    expect(result.verification).toEqual(verification);
+    expect(result.error).toMatch(/could not be verified/);
+    expect(result.dropped).toBe(2);
+  });
+
+  it("fails closed if an incomplete reply puts draft text in answer", () => {
+    const result = normalizeAnswer({
+      answer: [{ text: "Still unverified." }],
+      verification: { status: "incomplete", reason: "claims_unjudged" },
+    });
+    expect(result.answer).toEqual([]);
+    expect(result.unverifiedAnswer[0].text).toBe("Still unverified.");
+    expect(result.error).toMatch(/could not be verified/);
+  });
+
+  it("does not treat an empty verified reply as a successful answer", () => {
+    const result = normalizeAnswer({
+      answer: [],
+      verification: { status: "verified" },
+    });
+    expect(result.error).toMatch(/no usable answer/);
+  });
+
+  it("marks incomplete summaries in both list and detail responses", () => {
+    expect(
+      summaryIncomplete({
+        status: "completed",
+        error_code: "summary_unavailable",
+      }),
+    ).toBe(true);
+    expect(
+      summaryIncomplete({
+        status: "completed",
+        result: { summary: { error: "unavailable" } },
+      }),
+    ).toBe(true);
+    expect(
+      summaryIncomplete({
+        status: "completed",
+        result: { report_status: "partial" },
+      }),
+    ).toBe(true);
+    expect(
+      summaryIncomplete({
+        status: "completed",
+        result: { summary: { verification: { status: "incomplete" } } },
+      }),
+    ).toBe(true);
+    expect(
+      summaryIncomplete({
+        status: "completed",
+        result: { summary: { status: "complete" } },
+      }),
+    ).toBe(false);
+    expect(summaryIncomplete({ status: "running" })).toBe(false);
   });
 
   it("sends only finished turns as history", () => {

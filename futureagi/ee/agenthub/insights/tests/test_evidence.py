@@ -202,10 +202,12 @@ class FakeClickHouse:
         since, until = params.get("evidence_since"), params.get("evidence_until")
         roots = self._latest(
             params,
-            lambda r: r["trace_id"] in candidates
-            and not r["parent_span_id"]
-            and (since is None or r["start_time"] >= since)
-            and (until is None or r["start_time"] <= until),
+            lambda r: (
+                r["trace_id"] in candidates
+                and not r["parent_span_id"]
+                and (since is None or r["start_time"] >= since)
+                and (until is None or r["start_time"] <= until)
+            ),
         )
         live = [r for r in roots if not r["is_deleted"] and str(r.get(column)) in ids]
         live.sort(key=lambda r: (r["start_time"], r["trace_id"]), reverse=True)
@@ -1352,8 +1354,9 @@ class TestRendering:
         rows = [span("T1", "orphan", at=0, parent="gone"), span("T1", "root", at=1)]
         snapshot = build(rows, kind="trace")
 
-        assert snapshot.manifest["traces"][0]["root_span"] == (
-            spans_by_name(snapshot)["root"]["alias"]
+        assert (
+            snapshot.manifest["traces"][0]["root_span"]
+            == (spans_by_name(snapshot)["root"]["alias"])
         )
 
     def test_message_metadata_is_kept_as_a_meta_line(self):

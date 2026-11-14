@@ -1,7 +1,7 @@
 import { Box, IconButton, Skeleton } from "@mui/material";
 import React, { useState } from "react";
 import CustomAgentTabs from "src/sections/agents/CustomAgentTabs";
-import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
+import SyntaxHighlighter from "src/utils/snippet-syntax-highlighter";
 import EmptyLayout from "src/components/EmptyLayout/EmptyLayout";
 import SvgColor from "src/components/svg-color";
 import { primaryFont } from "src/theme/typography";

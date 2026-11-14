@@ -39,7 +39,7 @@ def build_usage_events(evaluator, *, org_id, cell_or_run_id, amount):
                 event_type=BillingEventType.JEV_EVALUATOR.value,
                 amount=amount if success else 0,
                 properties={
-                    "provider": JEV_PROVIDER,
+                    "provider": getattr(evaluator, "connection", JEV_PROVIDER),
                     "service": JEV_SERVICE,
                     "requested_model": evaluator._model,
                     "actual_model": actual.get("actual_model") if success else None,

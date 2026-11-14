@@ -25,6 +25,7 @@ func TestSharedRegistryAndVectors(t *testing.T) {
 		t.Fatal(err)
 	}
 	var vectors []struct {
+		SpanName             string `json:"span_name"`
 		Name                 string
 		Scope                struct{ Name, Version string }
 		Attributes, Expected map[string]any
@@ -39,11 +40,11 @@ func TestSharedRegistryAndVectors(t *testing.T) {
 			scope.SetVersion(v.Scope.Version)
 			attrs := pcommon.NewMap()
 			_ = attrs.FromRaw(v.Attributes)
-			Normalize(attrs, ProfileFor(scope))
+			Normalize(attrs, ProfileFor(scope), v.SpanName)
 			if !reflect.DeepEqual(attrs.AsRaw(), v.Expected) {
 				t.Fatalf("got %#v; want %#v", attrs.AsRaw(), v.Expected)
 			}
-			Normalize(attrs, ProfileFor(scope))
+			Normalize(attrs, ProfileFor(scope), v.SpanName)
 			if !reflect.DeepEqual(attrs.AsRaw(), v.Expected) {
 				t.Fatal("normalization not idempotent")
 			}

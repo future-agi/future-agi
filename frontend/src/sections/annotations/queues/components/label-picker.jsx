@@ -191,7 +191,7 @@ export default function LabelPicker({
                   />
                 </Box>
               </CustomTooltip>
-              <Typography noWrap sx={{ fontSize: 13, fontWeight: 500 }}>
+              <Typography noWrap sx={{ fontSize: 12, fontWeight: 500 }}>
                 {label.name}
               </Typography>
             </Box>

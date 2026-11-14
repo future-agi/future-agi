@@ -86,7 +86,7 @@ const OptimizingAgentSteps = ({ status, optimizationId }) => {
             sx={{ width: 16 }}
             src="/assets/icons/navbar/ic_optimize.svg"
           />
-          <Typography variant="body1" fontWeight={500} fontSize="13px">
+          <Typography variant="body1" fontWeight={500} fontSize="12px">
             Optimization Steps
           </Typography>
         </Box>
@@ -193,7 +193,7 @@ const OptimizingAgentSteps = ({ status, optimizationId }) => {
                         <Typography
                           variant="body2"
                           color="text.secondary"
-                          fontSize="13px"
+                          fontSize="12px"
                         >
                           {description}
                         </Typography>
@@ -211,7 +211,7 @@ const OptimizingAgentSteps = ({ status, optimizationId }) => {
                         <Typography
                           variant="caption"
                           color="text.disabled"
-                          fontSize="13px"
+                          fontSize="12px"
                         >
                           {formattedUpdatedAt}
                         </Typography>

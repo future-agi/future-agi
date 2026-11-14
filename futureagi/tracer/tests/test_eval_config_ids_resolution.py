@@ -457,6 +457,34 @@ class TestEvalReadSelectors:
             "trace_id": "00000000-0000-0000-0000-000000000001",
         }
 
+    @pytest.mark.parametrize(
+        "metadata, expected",
+        [
+            (
+                '{"error_analysis": {"input_1": []}}',
+                {"error_analysis": {"input_1": []}},
+            ),
+            ({"selected_input_key": "output"}, {"selected_input_key": "output"}),
+            ("not-json", {}),
+            ("[]", {}),
+            ("null", {}),
+            (None, None),
+        ],
+    )
+    def test_eval_detail_decodes_localization_metadata(self, metadata, expected):
+        from tracer.services.clickhouse.query_service import AnalyticsQueryService
+
+        svc = AnalyticsQueryService()
+        svc.execute_ch_query = mock.Mock(
+            side_effect=[
+                _Result([{"trace_id": "00000000-0000-0000-0000-000000000001"}]),
+                _Result([{"output_bool": 0, "output_metadata": metadata}]),
+            ]
+        )
+        row = svc.get_eval_detail_ch("span-1", "cfg-1", project_id="project-1")
+        assert row["output_metadata"] == expected
+        assert row["output_bool"] == 0
+
     def test_eval_detail_returns_none_when_absent(self):
         svc, _ = _capturing_service([])
         assert svc.get_eval_detail_ch("span-1", "cfg-1", project_id="project-1") is None

@@ -3,6 +3,35 @@ import { useState } from "react";
 import { Box, Stack, Typography, Button, TextField, Checkbox } from "@mui/material";
 import Iconify from "src/components/iconify";
 
+import ChatMarkdown from "./ChatMarkdown";
+
+// Prompts are the model's free text. Plain questions must show exactly as written,
+// so one stray signal like `# of rooms` or a single `code` span is not enough: it
+// takes two, or a table's `|---|---|` row (not just any line with a pipe in it).
+const MARKDOWN_SIGNAL = /^(#{1,6} |[-*+] |\d+[.)] |> |```)|\*\*[^*\s][^*]*\*\*|`[^`\n]+`/gm;
+const TABLE_DIVIDER = /^\s*\|?\s*:?-+:?\s*\|[\s|:-]*$/m;
+const looksLikeMarkdown = (text = "") =>
+  TABLE_DIVIDER.test(text) || (text.match(MARKDOWN_SIGNAL) || []).length >= 2;
+
+function Prompt({ text, sx }) {
+  if (looksLikeMarkdown(text)) {
+    // The opening line reads as the question; anything after it, like a full
+    // design to approve, stays regular weight.
+    return (
+      <ChatMarkdown
+        text={text}
+        sx={{ typography: "s1", "& > p:first-of-type": { fontWeight: 500 }, ...sx }}
+      />
+    );
+  }
+  return (
+    <Typography sx={{ typography: "s1", fontWeight: 500, whiteSpace: "pre-wrap", color: "text.primary", ...sx }}>
+      {text}
+    </Typography>
+  );
+}
+Prompt.propTypes = { text: PropTypes.string, sx: PropTypes.object };
+
 /**
  * Claude-style AskUserQuestion card, ported for use inside the
  * workspace chat when the builder is in Guided mode.
@@ -110,9 +139,7 @@ export default function AskUserQuestionCard({
         >
           {question.step}/{question.total}
         </Box>
-        <Typography sx={{ typography: "s1", fontWeight: 500, flex: 1, minWidth: 0 }}>
-          {question.prompt}
-        </Typography>
+        <Prompt text={question.prompt} sx={{ flex: 1, minWidth: 0 }} />
       </Stack>
 
       {/* options */}
@@ -263,9 +290,7 @@ function ResolvedSummary({ question, answer, text }) {
         px: 2, py: 1.5,
       }}
     >
-      <Typography sx={{ typography: "s1", fontWeight: 500, color: "text.primary" }}>
-        {question.prompt}
-      </Typography>
+      <Prompt text={question.prompt} />
       <Stack direction="row" alignItems="center" spacing={0.75} sx={{ mt: 0.75 }}>
         <Iconify
           icon={answer.skipped ? "solar:close-circle-linear" : "solar:check-circle-bold"}

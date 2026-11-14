@@ -27,6 +27,35 @@ providers:
       - o1
       - o1-mini
       - turing_flash
+      - gpt-6-luna
+
+  # Typed decision connections remain on the same isolated deterministic mock.
+  typesafe:
+    base_url: "http://mock-llm:8080"
+    api_key: "e2e-mock"
+    api_format: "systemone"
+    default_timeout: 60s
+    max_concurrent: 100
+    conn_pool_size: 100
+    models: [jev-latest, jev-1.13.0, jev-1.14.0]
+
+  perplexity:
+    base_url: "http://mock-llm:8080"
+    api_key: "e2e-mock"
+    api_format: "systemone"
+    default_timeout: 60s
+    max_concurrent: 100
+    conn_pool_size: 100
+    models: [pplx-decider-v1.2, pplx-decider-flash-v1.2]
+
+  openrouter:
+    base_url: "http://mock-llm:8080"
+    api_key: "e2e-mock"
+    api_format: "systemone"
+    default_timeout: 60s
+    max_concurrent: 100
+    conn_pool_size: 100
+    models: [openai/gpt-6-luna-decisions, typesafe/jev-1.13, typesafe/jev-1.14, "~typesafe/jev-latest"]
 
   # anthropic:
   #   base_url: "https://api.anthropic.com"
@@ -363,8 +392,13 @@ logging:
   #   include_bodies: false      # Include full request/response bodies (default: false)
   #   buffer_size: 4096          # Async buffer size (default: 4096)
   #   workers: 2                 # Number of log worker goroutines (default: 2)
-# guardrails:
-#   enabled: true
+# Exercise org-configured checks; no static rules are installed for other flows.
+# The deliberately permissive global value must not opt any tenant in.
+guardrails:
+  enabled: true
+  fail_open: true
+  default_timeout: 5s
+# Example static rules:
 #   fail_open: true                     # If a guardrail times out or errors, allow the request (default: true)
 #   default_timeout: 5s                 # Default per-guardrail timeout
 #   rules:

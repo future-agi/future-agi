@@ -30,6 +30,7 @@ from sdk.utils.helpers import (
 )
 from tfc.constants.api_calls import APICallStatusChoices
 from tfc.ee_gates import jev_error_message
+from tfc.routers import force_primary, primary_required
 from tfc.temporal import temporal_activity
 from tfc.utils.case import to_camel_case, to_snake_case
 from tracer.models.custom_eval_config import CustomEvalConfig, EvalOutputType
@@ -437,6 +438,9 @@ def build_trace_context(trace, *, anchor_span_id: str | None = None) -> dict:
         # Count(filter=Q(status='ERROR')) shape without a new reader method.
         # Per-trace span count is bounded (UI/agent already caps display at
         # 200) so a single pass over the rows is cheap.
+        from tracer.services.clickhouse.query_builders.trace_usage import (
+            repeated_usage_summary_ids,
+        )
         from tracer.services.clickhouse.v2 import get_reader
 
         trace_id = getattr(trace, "id", None)
@@ -451,7 +455,13 @@ def build_trace_context(trace, *, anchor_span_id: str | None = None) -> dict:
                 )
             _span_count = len(_ch_spans)
             _error_count = sum(1 for s in _ch_spans if s.status == "ERROR")
-            _total_tokens = sum((s.total_tokens or 0) for s in _ch_spans)
+            repeated_ids = repeated_usage_summary_ids([vars(s) for s in _ch_spans])
+            _total_tokens = sum(
+                s.total_tokens or 0
+                for s in _ch_spans
+                if s.attrs_string.get("fi.usage.contribution") != "none"
+                and (s.observation_type == "llm" or s.id not in repeated_ids)
+            )
             _total_latency = sum((s.latency_ms or 0) for s in _ch_spans)
             _agg = {
                 "span_count": _span_count,
@@ -522,8 +532,7 @@ def build_session_context(session) -> dict | None:
     try:
         from tracer.models.trace import Trace
         from tracer.services.clickhouse.query_builders.trace_usage import (
-            SUMMARY_NAME,
-            is_repeated_usage_summary,
+            repeated_usage_summary_ids,
         )
         from tracer.services.clickhouse.v2 import get_reader
 
@@ -591,19 +600,15 @@ def build_session_context(session) -> dict | None:
                     project_id=(str(project_id) if project_id is not None else None),
                 )
 
-        # Reuse the trace usage rule on the rows already needed for context.
-        # Index children only for candidate Pydantic wrappers, by trace AND span
-        # identity: no extra read, raw-attribute copy, or per-span tree scan.
-        summary_children = {
-            (s.trace_id, s.id): []
-            for s in _ch_spans
-            if s.name == SUMMARY_NAME and s.observation_type != "llm"
+        # Scope the proof to each trace, including descendant LLMs under
+        # tokenless event-loop spans. Reuse the already-selected live rows.
+        usage_by_trace: dict = {}
+        for s in _ch_spans:
+            usage_by_trace.setdefault(s.trace_id, []).append(vars(s))
+        repeated_by_trace = {
+            trace_id: repeated_usage_summary_ids(rows)
+            for trace_id, rows in usage_by_trace.items()
         }
-        if summary_children:
-            for s in _ch_spans:
-                children = summary_children.get((s.trace_id, s.parent_span_id))
-                if children is not None:
-                    children.append(vars(s))
 
         _start_time = None
         _end_time = None
@@ -624,9 +629,8 @@ def build_session_context(session) -> dict | None:
                 _error_count += 1
             attrs = s.attrs_string
             additive = attrs.get("fi.usage.contribution") != "none" and not (
-                is_repeated_usage_summary(
-                    vars(s), summary_children.get((s.trace_id, s.id), [])
-                )
+                s.observation_type != "llm"
+                and s.id in repeated_by_trace.get(s.trace_id, set())
             )
             # Same billable predicate as usage_coverage_sql; None alone does not
             # invent unknown pricing for unmarked legacy or tokenless activity.
@@ -1196,7 +1200,9 @@ def _execute_composite_on_span(
                 ),
                 project_id=project_id,
             )
-        custom_eval_config = CustomEvalConfig.objects.get(
+        # Primary: the config may have been created or edited a moment ago,
+        # and an eval-task run stamps the primary config's hash.
+        custom_eval_config = CustomEvalConfig.objects.using("default").get(
             id=custom_eval_config_id, deleted=False
         )
     except EvalTelemetryReadError:
@@ -1587,7 +1593,9 @@ def _execute_evaluation(
                 project_id=project_id,
             )
 
-        custom_eval_config = CustomEvalConfig.objects.get(
+        # Primary: the config may have been created or edited a moment ago,
+        # and an eval-task run stamps the primary config's hash.
+        custom_eval_config = CustomEvalConfig.objects.using("default").get(
             id=custom_eval_config_id, deleted=False
         )
     except EvalTelemetryReadError:
@@ -1669,6 +1677,7 @@ def _execute_evaluation(
         "reference_id": observation_span.id,
         "is_futureagi_eval": futureagi_eval,
         "custom_eval_config_id": str(custom_eval_config.id),
+        "project_id": str(observation_span.project_id),
         "mappings": run_params,
         "required_keys": list(run_params.keys()) if run_params else [],
         "span_id": str(observation_span.id),
@@ -1865,15 +1874,21 @@ def _execute_evaluation(
             eval_log = _persist_eval_logger(logger_kwargs)
         else:
             try:
-                eval_log = EvalLogger.objects.select_related(
-                    "observation_span",
-                    "observation_span__project",
-                    "observation_span__project__organization",
-                    "observation_span__project__workspace",
-                ).get(
-                    eval_task_id=eval_task_id,
-                    observation_span=observation_span,
-                    custom_eval_config=custom_eval_config,
+                # Primary: whether this result already has a row decides
+                # between updating it and creating one.
+                eval_log = (
+                    EvalLogger.objects.using("default")
+                    .select_related(
+                        "observation_span",
+                        "observation_span__project",
+                        "observation_span__project__organization",
+                        "observation_span__project__workspace",
+                    )
+                    .get(
+                        eval_task_id=eval_task_id,
+                        observation_span=observation_span,
+                        custom_eval_config=custom_eval_config,
+                    )
                 )
                 # Set each attribute from logger_kwargs
                 for key, value in logger_kwargs.items():
@@ -1883,31 +1898,43 @@ def _execute_evaluation(
 
             except EvalLogger.DoesNotExist:
                 eval_log = EvalLogger.objects.create(**logger_kwargs)
-                eval_log = EvalLogger.objects.select_related(
-                    "observation_span",
-                    "observation_span__project",
-                    "observation_span__project__organization",
-                    "observation_span__project__workspace",
-                ).get(pk=eval_log.pk)
+                # Primary: the row was written a moment ago.
+                eval_log = (
+                    EvalLogger.objects.using("default")
+                    .select_related(
+                        "observation_span",
+                        "observation_span__project",
+                        "observation_span__project__organization",
+                        "observation_span__project__workspace",
+                    )
+                    .get(pk=eval_log.pk)
+                )
 
         from model_hub.services.error_localizer_service import (
             error_localizer_enabled,
         )
 
-        if error_localizer_enabled(custom_eval_config):
+        if eval_log is not None and error_localizer_enabled(custom_eval_config):
             from model_hub.tasks.user_evaluation import (
                 trigger_error_localization_for_span,
             )
 
-            trigger_error_localization_for_span(
-                eval_template=eval_model,
-                eval_logger=eval_log,
-                mapping=raw_mapping,
-                eval_explanation=logger_kwargs.get("eval_explanation", ""),
-                value=value,
-                log_id=str(log_id),
-                eval_config=getattr(custom_eval_config, "config", None),
-            )
+            # Primary: the localizer reads the result's span, which may have
+            # been ingested moments ago, and the result's eval config, which
+            # may have been created moments ago. The non-engine branch above
+            # already loaded the span from the primary; the engine's entry
+            # loads it lazily.
+            with force_primary():
+                trigger_error_localization_for_span(
+                    eval_template=eval_model,
+                    eval_logger=eval_log,
+                    observation_span=observation_span,
+                    mapping=raw_mapping,
+                    eval_explanation=logger_kwargs.get("eval_explanation", ""),
+                    value=value,
+                    log_id=str(log_id),
+                    eval_config=getattr(custom_eval_config, "config", None),
+                )
 
         if type == EXPERIMENT:
             # updating project version config
@@ -2029,6 +2056,10 @@ def _create_error_eval_logger(
     time_limit=3600,
     queue="tasks_s",
 )
+# Primary for the whole run: run_evaluation dispatches this for a config it has
+# just found on the primary, which may be seconds old, and the result this run
+# saves checks that config again (EvalLogger.save runs full_clean).
+@primary_required
 def evaluate_observation_span(
     observation_span_id=None,
     custom_eval_config_id=None,
@@ -2182,11 +2213,17 @@ def evaluate_observation_span_observe(
             f"ObservationSpan with id {observation_span_id} does not exist."
         ) from None
 
-    if EvalLogger.objects.filter(
-        observation_span_id=observation_span_id,
-        custom_eval_config_id=custom_eval_config_id,
-        eval_task_id=eval_task_id,
-    ).exists():
+    # Primary: feedback re-evaluation retires the old result just before
+    # calling this; the replica may still show it live.
+    if (
+        EvalLogger.objects.using("default")
+        .filter(
+            observation_span_id=observation_span_id,
+            custom_eval_config_id=custom_eval_config_id,
+            eval_task_id=eval_task_id,
+        )
+        .exists()
+    ):
         # ``EvalLogger.objects`` is BaseModelManager — soft-deleted rows are
         # already excluded, so an explicit ``deleted=False`` would be a
         # tautology.
@@ -2244,39 +2281,11 @@ def evaluate_observation_span_observe(
 
         return True
     except ValueError as e:
-        # Expected validation failure (missing/invalid eval input). Persisted as
-        # a failed span below; WARNING keeps it out of the Sentry issue stream.
+        # Expected validation failure (missing/invalid eval input). WARNING
+        # keeps it out of the Sentry issue stream.
         logger.warning(
             f"Error during evaluation in evaluate_observation_span_observe: {e}"
         )
-        if eval_task_id:
-            try:
-                with transaction.atomic():
-                    eval_task = EvalTask.objects.select_for_update().get(
-                        id=eval_task_id
-                    )
-                    failed_spans = (
-                        eval_task.failed_spans if eval_task.failed_spans else []
-                    )
-
-                    failed_spans.append(
-                        {
-                            "observation_span_id": observation_span_id,
-                            "custom_eval_config_id": custom_eval_config_id,
-                            "error": str(e),
-                        }
-                    )
-
-                    eval_task.failed_spans = failed_spans
-                    eval_task.save(update_fields=["failed_spans", "updated_at"])
-            except EvalTask.DoesNotExist:
-                # Expected race: the EvalTask was deleted before this async task
-                # ran. Nothing to update; downgrade to warning.
-                logger.warning(f"EvalTask with id {eval_task_id} does not exist.")
-            except Exception as e:
-                logger.error(
-                    f"Error during updating failed spans in exception handling evaluate_observation_span_observe: {e}"
-                )
         _create_error_eval_logger(observation_span, custom_eval_config, eval_task_id, e)
 
         return False
@@ -2295,7 +2304,12 @@ def evaluate_observation_span_observe(
     time_limit=3600,
     queue="tasks_s",
 )
+# Primary for the whole run: the scheduler (run_evals_on_spans) finds the span
+# on the primary and dispatches it at once, so the span, its eval configs and
+# the rows this run writes may not be on the replica yet.
+@primary_required
 def eval_observation_span_runner(observation_span_id, eval_tags):
+    observation_span = None
     try:
         # Goes via CH 25.3 when EVAL_SPAN_READ_SOURCE=clickhouse (CH 25.3
         # span point-read replaces the heavy JSONB select on tracer_observation_span);
@@ -2355,6 +2369,10 @@ def eval_observation_span_runner(observation_span_id, eval_tags):
     except Exception as e:
         traceback.print_exc()
         logger.error(f"Error during evaluation in eval_observation_span_runner: {e}")
+        if observation_span is None:
+            # The span did not load, so there is nothing to mark failed. Raise
+            # the load error so the activity retries it.
+            raise
         observation_span.eval_status = StatusType.FAILED.value
         observation_span.save()
 
@@ -3797,6 +3815,7 @@ def _execute_evaluation_for_trace(
         "reference_id": str(trace.id),
         "is_futureagi_eval": futureagi_eval,
         "custom_eval_config_id": str(custom_eval_config.id),
+        "project_id": str(trace.project_id),
         "mappings": run_params,
         "required_keys": list(run_params.keys()) if run_params else [],
         "trace_id": str(trace.id),
@@ -4055,6 +4074,7 @@ def _execute_evaluation_for_session(
         "reference_id": str(trace_session.id),
         "is_futureagi_eval": futureagi_eval,
         "custom_eval_config_id": str(custom_eval_config.id),
+        "project_id": str(trace_session.project_id),
         "mappings": run_params,
         "required_keys": list(run_params.keys()) if run_params else [],
         "session_id": str(trace_session.id),

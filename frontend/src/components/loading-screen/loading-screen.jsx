@@ -6,7 +6,7 @@ import { useLocation } from "react-router";
 import { alpha, useTheme } from "@mui/material/styles";
 
 import LoadingTemplate from "../../sections/workbench/LoadingTemplate";
-import ContentSkeleton from "../content-skeleton";
+import Loader from "./loader";
 
 // ----------------------------------------------------------------------
 
@@ -23,17 +23,16 @@ export default function LoadingScreen({
     return <LoadingTemplate sx={{ mt: "46px" }} />;
   }
 
-  // Design system: loading keeps the layout — a skeleton of the page (or of
-  // a few rows when compact), never a spinner or mascot. `variant` is kept for
-  // callers; every variant renders the same skeleton.
+  // Design system: a page or panel that is loading shows the simple loader.
+  // A skeleton is only used where it copies the real layout, and that is
+  // written by the screen itself. `variant` is kept for callers; every
+  // variant renders the same loader.
   return (
-    <ContentSkeleton
-      variant={compact ? "rows" : "page"}
-      rows={compact ? 4 : undefined}
+    <Loader
       label={messageOverride || "Loading"}
-      role="status"
+      minHeight={compact ? 120 : "60vh"}
       data-variant={variant}
-      sx={{ flexGrow: 1, minHeight: compact ? 0 : 1, ...sx }}
+      sx={sx}
       {...other}
     />
   );

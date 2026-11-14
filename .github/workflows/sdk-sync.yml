@@ -7,9 +7,11 @@ name: sdk-sync
 # (docs/sdk-reference, all from that one pinned contract), pins the release in
 # sdkgen/contracts/BACKEND_VERSION, and opens a pull request on the SDK's dev
 # branch that merges itself once the SDK's CI and E2E (against this very release
-# image) pass. From there the SDK's promote and release-please workflows take it
-# to main, PyPI and npm, and the SDK's publish workflow tells future-agi/docs to
-# open the reference PR for the published versions (sdk-reference-sync.yml there).
+# image) pass. Promotion from dev to main is reviewed separately; main's guarded
+# release-please/publish workflows then release the packages to PyPI and npm.
+# Once the SDK docs-dispatch changes are promoted to main and the docs receiver
+# is deployed, publication also requests a reference PR in future-agi/docs
+# (sdk-reference-sync.yml there), using the published SDK commit, not dev.
 # The SDK catalog is the allowlist: an endpoint without a catalog entry becomes
 # neither a method nor a page, and an endpoint this release removed while the
 # catalog still lists it fails this job with the operations named (a breaking

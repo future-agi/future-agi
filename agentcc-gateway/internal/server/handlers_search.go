@@ -60,6 +60,7 @@ func (h *Handlers) Search(w http.ResponseWriter, r *http.Request) {
 	// explicitly in rc.SearchRequest and passed to resolveProvider() below.
 	rc.SearchRequest = &req
 
+	rc.Metadata["client_ip"] = h.clientIP(r)
 	setAuthMetadataFromRequest(rc, r)
 	applyCallerMetadata(rc, r, nil)
 

@@ -17,8 +17,8 @@ const config: SendTraceConfig = {
 unit('OTLP tree extension preserves the default two-span wire and typed extra members', async () => {
   const payloads: any[] = [];
   const req = { post: async (_url: string, options: { data: unknown }) => {
-    payloads.push(options.data);
-    return { status: () => 200, text: async () => '{}' };
+    payloads.push(JSON.parse(options.data as string));
+    return { status: () => 200, text: async () => '{}', headers: () => ({}), dispose: async () => {} };
   } } as unknown as APIRequestContext;
   const defaults = await sendTrace(req, config);
   expect(defaults.spanIds).toEqual([root, child]);

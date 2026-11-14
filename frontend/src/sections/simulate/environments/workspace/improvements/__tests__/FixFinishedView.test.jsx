@@ -145,7 +145,7 @@ describe("FixVerdict", () => {
     expect(screen.getByText("Limited validation")).toBeInTheDocument();
     expect(
       await screen.findByText(
-        "Too few to tell · Fixed 1 of 2 failing scenarios it never saw",
+        "Too few to tell · Fixed 1 of 2 failing scenarios it never saw — it takes 4 or more to tell.",
       ),
     ).toBeInTheDocument();
     unmount();

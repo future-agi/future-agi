@@ -108,7 +108,7 @@ export default function EditableAccordion({
               overflow: "hidden",
               textOverflow: "ellipsis",
             }}
-            fontSize={13}
+            fontSize={12}
             fontWeight={400}
           >
             {/* {!isExpanded ? detailsText : labelText} */}
@@ -138,7 +138,7 @@ export default function EditableAccordion({
             color="primary"
             size="small"
             sx={{
-              fontSize: 13,
+              fontSize: 12,
               fontWeight: theme.typography.fontWeightRegular,
               lineHeight: 1.6,
               height: "100%",

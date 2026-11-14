@@ -25,7 +25,14 @@ import {
   useFeatureDenied,
 } from "src/hooks/useCapabilities";
 import { useErrorLocalizationAvailable } from "src/hooks/useErrorLocalization";
-import { FAGI_MODEL_VALUES, JEV_MODEL_VALUES } from "./ModelSelector";
+import { FAGI_MODEL_VALUES } from "./ModelSelector";
+import useDecisionModels from "src/api/evaluations/decision-models";
+import {
+  findDecisionGroup,
+  isDecisionModel,
+  isJevDecisionModel,
+  isNativeJevModel,
+} from "../utils/decisionModels";
 import JevOutputConfig from "./JevOutputConfig";
 import {
   buildJevMapping,
@@ -442,9 +449,18 @@ const EvalCreatePage = () => {
   const autoSaveTimer = useRef(null);
   const autoSaveErrorRef = useRef(null);
   const autoSaveSkipFirst = useRef(!!urlDraftId); // skip first trigger when loading existing draft
-  const isJevModel = JEV_MODEL_VALUES.has(model);
+  // The existing mapping/editor props retain their legacy names on the wire.
+  const isJevModel = isDecisionModel(model);
+  const decisionCatalog = useDecisionModels(isJevModel);
+  const decisionGroup = findDecisionGroup(decisionCatalog.data || [], model);
+  const decisionLabel = isNativeJevModel(model)
+    ? "Jev"
+    : decisionGroup?.label || "This decision model";
+  const decisionLocked = isJevDecisionModel(model) && jevLocked;
   const jevErrors = isJevModel
     ? getJevValidationErrors({
+        modelLabel: decisionLabel,
+        modelGroup: decisionGroup,
         mapping: buildJevMapping(outputType, choiceScores, jevMapping),
         config: {
           check_internet: checkInternet,
@@ -804,7 +820,7 @@ const EvalCreatePage = () => {
   const jevBlockedReason =
     isJevModel && evalType !== "code"
       ? jevErrors[0] ||
-        (jevLocked ? "Jev models aren't included in your plan." : "")
+        (decisionLocked ? "Jev models aren't included in your plan." : "")
       : "";
   const canSaveSingle =
     !!name.trim() &&
@@ -1021,6 +1037,8 @@ const EvalCreatePage = () => {
                       model={model}
                       onModelChange={setModel}
                       openModelMenuSignal={openModelMenuSignal}
+                      outputType={outputType}
+                      choiceCount={Object.keys(choiceScores || {}).length}
                       placeholder="You are a helpful assistant"
                       templateFormat={templateFormat}
                       onTemplateFormatChange={setTemplateFormat}
@@ -1053,6 +1071,8 @@ const EvalCreatePage = () => {
                           bar, matching the agent InstructionEditor. */}
                       <LLMPromptEditor
                         openModelMenuSignal={openModelMenuSignal}
+                        outputType={outputType}
+                        choiceCount={Object.keys(choiceScores || {}).length}
                         messages={messages}
                         onMessagesChange={(msgs) => {
                           setMessages(msgs);
@@ -1070,6 +1090,7 @@ const EvalCreatePage = () => {
                       {/* Few-shot examples — dataset selector */}
                       <FewShotExamples
                         isJevModel={isJevModel}
+                        modelLabel={decisionLabel}
                         selectedDatasets={fewShotExamples}
                         onChange={setFewShotExamples}
                       />
@@ -1151,6 +1172,7 @@ const EvalCreatePage = () => {
                       multiChoice={multiChoice}
                       onMultiChoiceChange={setMultiChoice}
                       isJevModel={isJevModel}
+                      modelLabel={decisionLabel}
                     />
                   )}
 
@@ -1162,7 +1184,8 @@ const EvalCreatePage = () => {
                       onChange={setJevMapping}
                       errors={jevErrors}
                       hasExtraMessages={hasExtraJevMessages(messages)}
-                      locked={jevLocked}
+                      locked={decisionLocked}
+                      modelLabel={decisionLabel}
                     />
                   )}
 
@@ -1593,8 +1616,8 @@ const EvalCreatePage = () => {
           setConfirmLeave(false);
           navigate("/dashboard/evaluations");
         }}
-        title="Leave without the Jev settings?"
-        message={`The Jev settings can't be saved yet: ${jevNotSavedReason}. If you leave now, they are lost.`}
+        title={`Leave without the ${isNativeJevModel(model) ? "Jev" : "decision model"} settings?`}
+        message={`The ${isNativeJevModel(model) ? "Jev" : "decision model"} settings can't be saved yet: ${jevNotSavedReason}. If you leave now, they are lost.`}
         confirmLabel="Leave"
       />
       <UnsavedChangesDialog

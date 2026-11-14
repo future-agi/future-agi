@@ -31,7 +31,6 @@ def test_invalid_intervals_fall_back_to_six(monkeypatch, interval):
     assert get_telemetry_interval_hours() == 6
 
 
-
 def test_default_jitter_is_thirty_minutes(monkeypatch):
     monkeypatch.delenv("FUTURE_AGI_TELEMETRY_JITTER_SECONDS", raising=False)
     assert get_telemetry_jitter_seconds() == 1800

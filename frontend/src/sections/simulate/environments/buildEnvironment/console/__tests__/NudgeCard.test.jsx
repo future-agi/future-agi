@@ -5,7 +5,6 @@ import userEvent from "@testing-library/user-event";
 import { nudgeFromApi } from "src/api/simulate-environments/versions";
 import { Turn } from "../ConsoleTurn";
 import BuilderConsole from "../BuilderConsole";
-import { CONSOLE_COPY } from "../../build.constants";
 import NudgeCard from "../NudgeCard";
 
 const FACTS = {
@@ -344,7 +343,7 @@ describe("Turn with a system turn", () => {
 });
 
 describe("BuilderConsole with a nudge turn", () => {
-  it("renders the card as the last turn and keeps the working indicator", () => {
+  it("renders the card as the last turn", () => {
     Element.prototype.scrollIntoView = vi.fn();
     render(
       <BuilderConsole
@@ -354,7 +353,6 @@ describe("BuilderConsole with a nudge turn", () => {
       />,
     );
     expect(card()).toBeInTheDocument();
-    expect(screen.getByText(CONSOLE_COPY.workingDot)).toBeInTheDocument();
   });
 
   it("follows the transcript as it grows, not when a card changes", () => {

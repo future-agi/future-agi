@@ -1,0 +1,499 @@
+# The signed release manifest bin/update consumes (deploy/update/README.md).
+#
+# release-images.yml calls this once a vX.Y.Z release's images and its Helm
+# chart are published. Every run, however it started, signs an image only
+# when it was built from the release tag's commit: the image's
+# org.opencontainers.image.revision label (build-image-multiarch.yml sets it
+# to the commit it built) must be that commit on every platform, or the run
+# fails before anything is signed.
+#
+# To retry a failed run:
+#   - Rerun the failed jobs of that release-images.yml run. The rerun also
+#     checks every image against the digest its build pushed, as the first
+#     attempt did. When only update-manifest failed, this works for 30 days
+#     (the release-build-digests artifact). When a build failed too, its
+#     build-digests job runs again and reads the digests_* artifacts of the
+#     build legs, which are kept for a day: after that it fails, so use the
+#     next way.
+#   - At any time, run it from the tag: dispatch release-images.yml from the
+#     tag vX.Y.Z with components `update-manifest`, or start this workflow by
+#     hand (Actions > release-update-manifest > Run workflow, "Use workflow
+#     from" the tag vX.Y.Z, version vX.Y.Z). Such a run built nothing, so no
+#     build digest is compared: each image's revision label must be the tag's
+#     commit, and each image the chart's images lock names must have its
+#     locked digest. An image the lock does not name is signed with a warning
+#     that only its revision label vouches for it.
+# bin/update trusts exactly one signer, this file at the release tag, so a
+# run from any other ref is refused before it signs.
+#
+#   generate  resolves every image digest of the release (read-only, no
+#             registry login), cross-checks each against the digest its build
+#             pushed in the calling release-images.yml run (its build-digests
+#             job) and against the chart's images lock, checks that each image
+#             was built from the tag's commit (its revision label), hashes the
+#             tag's deployment files and writes the manifest
+#   publish   signs it with cosign keyless (GitHub OIDC), verifies the
+#             signature with the identity bin/update pins, and attaches the
+#             bundle, then the manifest, to the GitHub Release
+#
+# The manifest goes up last, in its own upload: bin/update reads the
+# manifest first and its bundle next, so a release that has the manifest has
+# the bundle too. (One `gh release upload` of both sends them concurrently,
+# in no fixed order.)
+#
+# A published manifest is never replaced. A rerun regenerates it from the
+# same tag (deterministic: published_at is the tag commit's time); identical
+# bytes with a valid signature are left as they are. A run that stopped
+# between the two uploads left only the bundle: when that bundle verifies the
+# regenerated manifest, the rerun attaches the manifest. Anything else fails.
+#
+# Only future-agi/future-agi runs it. This is a reusable workflow, and Fulcio
+# names the called workflow file in the certificate whoever calls it: a run
+# called from another repository would get the identity bin/update pins. So
+# both jobs are skipped in any other repository, the checkouts take this
+# repository at the release tag (never the caller's code), and hosts also pin
+# the certificate's workflow repository and ref (deploy/update/trust.py
+# workflow_claims), as the verify step here does.
+name: release-update-manifest
+
+on:
+  workflow_call:
+    inputs:
+      version:
+        description: Stable or beta/rc platform tag whose images and versioned chart are published
+        required: true
+        type: string
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Stable or beta/rc platform tag (run the workflow from that same tag)
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-update-manifest-${{ inputs.version }}
+  cancel-in-progress: false
+
+env:
+  OIDC_ISSUER: https://token.actions.githubusercontent.com
+
+jobs:
+  generate:
+    name: resolve and generate
+    if: github.repository == 'future-agi/future-agi'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - name: Release version
+        env:
+          VERSION: ${{ inputs.version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [ "$GITHUB_REPOSITORY" = future-agi/future-agi ] || exit 1
+          if [[ ! "$VERSION" =~ ^v(0|[1-9][0-9]{0,17})\.(0|[1-9][0-9]{0,17})\.(0|[1-9][0-9]{0,17})(-(beta|rc)\.(0|[1-9][0-9]{0,17}))?$ ]]; then
+            echo "::error::'$VERSION' is not a platform tag (vX.Y.Z, vX.Y.Z-beta.N or vX.Y.Z-rc.N)"
+            exit 1
+          fi
+          # The signature's identity is this workflow at the release tag.
+          if [ "$GITHUB_REF" != "refs/tags/$VERSION" ]; then
+            echo "::error::run this workflow from the tag $VERSION (Use workflow from: $VERSION), not $GITHUB_REF"
+            exit 1
+          fi
+
+      - name: Release metadata
+        env:
+          VERSION: ${{ inputs.version }}
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          prerelease=false
+          case "$VERSION" in *-beta.* | *-rc.*) prerelease=true ;; esac
+          gh release view "$VERSION" --repo "$GITHUB_REPOSITORY" --json tagName,isDraft,isPrerelease |
+            jq -e --arg version "$VERSION" --argjson prerelease "$prerelease" \
+              '.tagName == $version and .isDraft == false and .isPrerelease == $prerelease' >/dev/null
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: future-agi/future-agi
+          ref: refs/tags/${{ inputs.version }}
+          persist-credentials: false
+
+      - name: Install ORAS
+        uses: ./.github/actions/setup-helm-tools
+        with:
+          oras: "true"
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+
+      # What the calling release-images.yml run's builds pushed (its
+      # build-digests job): component=digest lines. A run started by hand, or
+      # one that built nothing, has none: the pattern then matches nothing.
+      - name: This release run's build digests
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: release-build-digests
+          path: ${{ runner.temp }}/build
+          merge-multiple: true
+
+      - name: Resolve release digests
+        id: digests
+        env:
+          VERSION: ${{ inputs.version }}
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          resolve() { # image reference -> its index digest, retried for transient registry errors
+            local digest
+            for attempt in 1 2 3 4 5; do
+              if digest=$(docker buildx imagetools inspect "$1" --format '{{json .Manifest}}' | jq -er '.digest') \
+                && [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+                printf '%s' "$digest"
+                return 0
+              fi
+              sleep $((attempt * 10))
+            done
+            echo "::error::cannot resolve $1: is it published?" >&2
+            return 1
+          }
+          declare -A images=(
+            [standalone]=docker.io/futureagi/standalone:$VERSION
+            [backend]=docker.io/futureagi/future-agi:$VERSION
+            [frontend]=docker.io/futureagi/frontend:$VERSION
+            [fi_collector]=docker.io/futureagi/fi-collector:$VERSION
+            [agentcc_gateway]=docker.io/futureagi/agentcc-gateway:$VERSION
+            [serving]=docker.io/futureagi/serving:$VERSION
+            [serving_gpu]=docker.io/futureagi/serving:$VERSION-gpu
+            [code_executor]=docker.io/futureagi/code-executor:$VERSION
+            [simulation_runner]=docker.io/futureagi/future-agi-simulation-runner:$VERSION
+          )
+          # The digest each image's build pushed in the calling release run
+          # (release-images.yml build-digests): what is signed must be exactly
+          # that, so an image its tag was moved to afterwards is never signed.
+          declare -A built=()
+          build_digests="$RUNNER_TEMP/build/build-digests.txt"
+          if [ -f "$build_digests" ]; then
+            while IFS= read -r line || [ -n "$line" ]; do
+              case "$line" in '' | '#'*) continue ;; esac
+              name=${line%%=*} digest=${line#*=}
+              if [[ ! "$name" =~ ^[a-z_]+$ ]] || [ -z "${images[$name]:-}" ] || [ -n "${built[$name]:-}" ] \
+                || [[ ! "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+                echo "::error::the release run's build digests have an unexpected line: $line"
+                exit 1
+              fi
+              built[$name]=$digest
+            done < "$build_digests"
+          fi
+          # The chart's images lock was resolved by helm-release.yml at its own
+          # time: every image both name must have the same digest.
+          gh release download "$VERSION" --repo "$GITHUB_REPOSITORY" --pattern "futureagi-images-${VERSION#v}.txt" \
+            --output "$RUNNER_TEMP/images-lock.txt"
+          : > "$RUNNER_TEMP/components.txt"
+          for name in "${!images[@]}"; do
+            image=${images[$name]}
+            digest=$(resolve "$image")
+            locked=$(awk -F@ -v i="$image" '$1 == i {print $2}' "$RUNNER_TEMP/images-lock.txt")
+            if [ -n "$locked" ] && [ "$locked" != "$digest" ]; then
+              echo "::error::$image is $digest now but $locked in the chart's images lock"
+              exit 1
+            fi
+            if [ -n "${built[$name]:-}" ]; then
+              if [ "${built[$name]}" != "$digest" ]; then
+                echo "::error::$image is $digest now, but this release run's build pushed ${built[$name]}"
+                exit 1
+              fi
+            elif [ "${GITHUB_EVENT_NAME:-}" = push ]; then
+              # A tag push builds every image: each has the digest its build pushed.
+              echo "::error::this release run built $image, but its build digest did not reach this job (release-images.yml build-digests): rerun the failed jobs of this run, or, once its artifacts have expired, dispatch release-images.yml from the tag $VERSION with components update-manifest"
+              exit 1
+            elif [ -z "$locked" ]; then
+              echo "::warning::$image is signed as $digest, the digest its tag has now: this run did not build it and the chart's images lock does not name it, so only its revision label (checked before signing) vouches for it"
+            fi
+            printf '%s=%s@%s\n' "$name" "$image" "$digest" >> "$RUNNER_TEMP/components.txt"
+          done
+          chart_digest=$(oras resolve "ghcr.io/future-agi/charts/futureagi:${VERSION#v}")
+          [[ "$chart_digest" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "::error::unexpected chart digest '$chart_digest'"; exit 1; }
+          echo "chart=$chart_digest" >> "$GITHUB_OUTPUT"
+
+      # Every image about to be signed was built from this tag's commit: the
+      # org.opencontainers.image.revision label of each of its platforms (the
+      # commit build-image-multiarch.yml built, which it checks on each leg) is
+      # the commit checked out here. This holds whatever vouched for the digest
+      # above, so a run started after the build artifacts expired, which can
+      # compare no build digest, still signs only images built from the tag.
+      - name: Every image was built from the tag
+        env:
+          VERSION: ${{ inputs.version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          commit=$(git rev-parse HEAD)
+          if [[ ! "$commit" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::unexpected commit '$commit' for the tag $VERSION"
+            exit 1
+          fi
+          # image@digest -> {"<platform>": "<its revision label>", ...}, retried for transient registry errors.
+          # buildx prints one image's configuration, or a platform -> configuration map for an index of several.
+          # Slurp requires exactly one JSON value even on jq 1.6; explicit entries avoid its map_values/try bug.
+          revisions() {
+            local config
+            for attempt in 1 2 3 4 5; do
+              if config=$(docker buildx imagetools inspect "$1" --format '{{json .Image}}') \
+                && jq -sce 'if length != 1 then error("not one image") else .[0] end
+                  | if type != "object" then error("not an image")
+                  elif has("config") or has("rootfs") or has("architecture") then {("\(.os)/\(.architecture)"): .}
+                  else . end
+                  | to_entries | map({key, value: (try .value.config.Labels["org.opencontainers.image.revision"] catch null)})
+                  | from_entries' <<<"$config"; then
+                return 0
+              fi
+              sleep $((attempt * 10))
+            done
+            echo "::error::cannot read the image configuration of $1" >&2
+            return 1
+          }
+          while IFS= read -r line <&3; do
+            reference=${line#*=}
+            found=$(revisions "$reference")
+            if ! jq -e --arg commit "$commit" 'length > 0 and all(.[]; . == $commit)' <<<"$found" >/dev/null; then
+              echo "::error::$reference was not built from $VERSION: the org.opencontainers.image.revision label of each of its platforms must be $commit, the tag's commit, but it is $found. Nothing was signed: find out what pushed that image to its tag"
+              exit 1
+            fi
+            echo "${line%%=*}: $reference was built from $commit"
+          done 3< "$RUNNER_TEMP/components.txt"
+
+      # Freeze ONE resolved candidate. The called rehearsal job reads this
+      # artifact; it never resolves target tags again or accepts evidence from
+      # an external run. The default candidate is deliberately uncertified.
+      - name: Generate the manifest
+        id: manifest
+        env:
+          VERSION: ${{ inputs.version }}
+          CHART_DIGEST: ${{ steps.digests.outputs.chart }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          channel=stable
+          case "$VERSION" in *-beta.* | *-rc.*) channel=beta ;; esac
+          components=()
+          while IFS= read -r line; do components+=(--component "$line"); done < "$RUNNER_TEMP/components.txt"
+          mkdir -p "$RUNNER_TEMP/out"
+          python3 scripts/generate_update_manifest.py \
+            --schema-version 2 \
+            --version "$VERSION" --channel "$channel" \
+            --source-sha "$(git rev-parse HEAD)" \
+            --published-at "$(TZ=UTC git show -s --format=%cd --date=format-local:%Y-%m-%dT%H:%M:%SZ HEAD)" \
+            "${components[@]}" \
+            --helm-chart oci://ghcr.io/future-agi/charts/futureagi \
+            --helm-digest "$CHART_DIGEST" \
+            --signature-identity "https://github.com/${GITHUB_REPOSITORY}/.github/workflows/release-update-manifest.yml@refs/tags/${VERSION}" \
+            --signature-issuer "$OIDC_ISSUER" \
+            --output "$RUNNER_TEMP/out/future-agi-update-manifest.json"
+          cat "$RUNNER_TEMP/out/future-agi-update-manifest.json"
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: update-candidate
+          path: ${{ runner.temp }}/out/future-agi-update-manifest.json
+          if-no-files-found: error
+          # Matches release-images.yml: a failed sign-and-attach can be rerun for 30 days.
+          retention-days: 30
+
+  rehearse:
+    name: exact-image compatibility rehearsal
+    needs: generate
+    if: github.repository == 'future-agi/future-agi'
+    permissions:
+      contents: read
+    uses: ./.github/workflows/update-compatibility-proof.yml
+    with:
+      produce: true
+
+  publish:
+    name: sign and attach
+    needs: [generate, rehearse]
+    if: github.repository == 'future-agi/future-agi'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write # the GitHub Release assets
+      id-token: write # cosign keyless
+    env:
+      VERSION: ${{ inputs.version }}
+      CERT_IDENTITY: https://github.com/${{ github.repository }}/.github/workflows/release-update-manifest.yml@refs/tags/${{ inputs.version }}
+      # The certificate's workflow repository and ref claims, which bin/update
+      # pins too: the identity alone names the file, not who ran it.
+      CERT_REPOSITORY: ${{ github.repository }}
+      CERT_REF: refs/tags/${{ inputs.version }}
+      MANIFEST: future-agi-update-manifest.json
+      BUNDLE: future-agi-update-manifest.sigstore.json
+    steps:
+      - name: Release version
+        shell: bash
+        run: |
+          set -euo pipefail
+          [ "$GITHUB_REPOSITORY" = future-agi/future-agi ] || exit 1
+          if [[ ! "$VERSION" =~ ^v(0|[1-9][0-9]{0,17})\.(0|[1-9][0-9]{0,17})\.(0|[1-9][0-9]{0,17})(-(beta|rc)\.(0|[1-9][0-9]{0,17}))?$ ]]; then
+            echo "::error::'$VERSION' is not a platform tag (vX.Y.Z, vX.Y.Z-beta.N or vX.Y.Z-rc.N)"
+            exit 1
+          fi
+          # The signature's identity is this workflow at the release tag.
+          if [ "$GITHUB_REF" != "refs/tags/$VERSION" ]; then
+            echo "::error::run this workflow from the tag $VERSION (Use workflow from: $VERSION), not $GITHUB_REF"
+            exit 1
+          fi
+      - name: Release metadata
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          prerelease=false
+          case "$VERSION" in *-beta.* | *-rc.*) prerelease=true ;; esac
+          gh release view "$VERSION" --repo "$GITHUB_REPOSITORY" --json tagName,isDraft,isPrerelease |
+            jq -e --arg version "$VERSION" --argjson prerelease "$prerelease" \
+              '.tagName == $version and .isDraft == false and .isPrerelease == $prerelease' >/dev/null
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: future-agi/future-agi
+          ref: refs/tags/${{ inputs.version }}
+          persist-credentials: false
+          sparse-checkout: |
+            .github/actions
+            bin/update
+            deploy/update
+            deploy/standalone
+            scripts
+
+      - name: Install cosign
+        uses: ./.github/actions/setup-helm-tools
+        with:
+          cosign: "true"
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: update-manifest
+          path: ${{ runner.temp }}/new
+
+      - name: Original frozen candidate
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: update-candidate
+          path: ${{ runner.temp }}/frozen
+
+      - name: Compatibility proof from generation
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: update-compatibility-proof
+          path: ${{ runner.temp }}/new
+          merge-multiple: true
+
+      - name: Validate proof before signing
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+          from deploy.update.compatibility import PROOF_ASSET, decode_document, validate_release_proof
+          from deploy.update.manifest import validate_manifest
+          from scripts.build_update_compatibility_proof import read_bytes, implementation_inventory, inventory_hash
+          root = Path(os.environ["RUNNER_TEMP"]) / "new"
+          target = validate_manifest(decode_document(read_bytes(root / os.environ["MANIFEST"])))
+          frozen = validate_manifest(decode_document(read_bytes(root.parent / "frozen" / os.environ["MANIFEST"])))
+          # Qualification derives only eligibility, NEVER legacy migration or image inputs.
+          derived = {"compatibility"}
+          assert {k: v for k, v in target.items() if k not in derived} == {k: v for k, v in frozen.items() if k not in derived}
+          assert target["source_sha"] == os.environ["GITHUB_SHA"]
+          assert target["version"] == os.environ["VERSION"]
+          assert os.environ["GITHUB_REF"] == "refs/tags/" + target["version"]
+          proof = root / PROOF_ASSET
+          validation = target.get("compatibility", {}).get("validation")
+          if validation is not None:
+              assert validation["run_id"] == int(os.environ["GITHUB_RUN_ID"])
+              validated = validate_release_proof(read_bytes(proof), target, repository=os.environ["GITHUB_REPOSITORY"])
+              if validated['schema_version'] == 2:
+                  expected_executor = inventory_hash(implementation_inventory())
+                  assert all(row['executor_sha256'] == expected_executor for row in validated['predecessors'])
+          else:
+              assert not proof.exists(), "unexpected proof on uncertified release"
+          PY
+
+      - name: Sign, verify and attach (never replace)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP"
+          present=$(gh release view "$VERSION" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name')
+          has() { grep -qx "$1" <<<"$present"; }
+          verify() { cosign verify-blob --bundle "$2" --certificate-identity "$CERT_IDENTITY" \
+            --certificate-oidc-issuer "$OIDC_ISSUER" --certificate-github-workflow-repository "$CERT_REPOSITORY" \
+            --certificate-github-workflow-ref "$CERT_REF" "$1" >/dev/null; }
+          attach_proof() {
+            local proof=future-agi-update-compatibility.json
+            [ -f "new/$proof" ] || return 0
+            if has "$proof"; then
+              mkdir -p old
+              gh release download "$VERSION" --repo "$GITHUB_REPOSITORY" --dir old --pattern "$proof"
+              cmp -s "old/$proof" "new/$proof" || { echo '::error::published proof differs; never replace'; exit 1; }
+            elif has "$MANIFEST"; then
+              echo '::error::published manifest is missing its pinned proof'; exit 1
+            else
+              gh release upload "$VERSION" "new/$proof" --repo "$GITHUB_REPOSITORY"
+            fi
+          }
+          summary() {
+            {
+              echo "### bin/update manifest $VERSION"
+              echo "Signed by \`$CERT_IDENTITY\`, attached as \`$MANIFEST\` and \`$BUNDLE\`."
+            } >> "$GITHUB_STEP_SUMMARY"
+          }
+          if has "$MANIFEST"; then
+            if ! has "$BUNDLE"; then
+              echo "::error::the $VERSION release has only one of $MANIFEST and $BUNDLE: it has $MANIFEST, and hosts cannot verify it without $BUNDLE. Delete it (gh release delete-asset $VERSION $MANIFEST --repo $GITHUB_REPOSITORY --yes) and rerun"
+              exit 1
+            fi
+            mkdir -p old
+            gh release download "$VERSION" --repo "$GITHUB_REPOSITORY" --dir old --pattern "$MANIFEST" --pattern "$BUNDLE"
+            if ! cmp -s "old/$MANIFEST" "new/$MANIFEST"; then
+              echo "::error::the $VERSION release already carries a different $MANIFEST. A published manifest is never replaced; ship a fix in the next release"
+              exit 1
+            fi
+            verify "old/$MANIFEST" "old/$BUNDLE"
+            attach_proof
+            echo "::notice::$MANIFEST for $VERSION is already published and verifies against $CERT_IDENTITY"
+            exit 0
+          fi
+          if has "$BUNDLE"; then
+            # A run that stopped after uploading the bundle: its signature
+            # covers exactly the regenerated manifest, or this rerun stops.
+            mkdir -p old
+            gh release download "$VERSION" --repo "$GITHUB_REPOSITORY" --dir old --pattern "$BUNDLE"
+            if ! verify "new/$MANIFEST" "old/$BUNDLE"; then
+              echo "::error::the $VERSION release has only one of $MANIFEST and $BUNDLE: it has $BUNDLE, which does not verify the regenerated $MANIFEST against $CERT_IDENTITY. Delete it (gh release delete-asset $VERSION $BUNDLE --repo $GITHUB_REPOSITORY --yes) and rerun"
+              exit 1
+            fi
+            attach_proof
+            gh release upload "$VERSION" "new/$MANIFEST" --repo "$GITHUB_REPOSITORY"
+            echo "::notice::$BUNDLE for $VERSION was already published and verifies the regenerated $MANIFEST: attached $MANIFEST"
+            summary
+            exit 0
+          fi
+          cosign sign-blob --yes --bundle "new/$BUNDLE" "new/$MANIFEST"
+          verify "new/$MANIFEST" "new/$BUNDLE"
+          # Proof before bundle, manifest last, one upload each. Never replace.
+          attach_proof
+          gh release upload "$VERSION" "new/$BUNDLE" --repo "$GITHUB_REPOSITORY"
+          gh release upload "$VERSION" "new/$MANIFEST" --repo "$GITHUB_REPOSITORY"
+          summary

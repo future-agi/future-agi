@@ -1,18 +1,17 @@
-import hashlib
 import traceback
 from math import ceil
 
-import redis
 import structlog
-from django.conf import settings
 from django.utils import timezone
 from drf_yasg.utils import swagger_auto_schema
 from rest_framework.decorators import action
+from rest_framework.exceptions import APIException
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework.viewsets import ViewSet
 
+from accounts.key_cache import publish_key_revocation as _publish_key_revocation
 from accounts.models import OrgApiKey
 from accounts.permissions import RequiresIndependentAuth
 from accounts.serializers.contracts import (
@@ -39,22 +38,17 @@ from tfc.utils.error_codes import get_error_message
 from tfc.utils.general_methods import GeneralMethods
 
 logger = structlog.get_logger(__name__)
-FI_AUTH_REVOKE_CHANNEL = "fi:auth:revoke"
 
 
-def _publish_key_revocation(api_key: str, secret_key: str) -> None:
-    """
-    Publish a cache-bust to fi-collector so revoked keys are evicted immediately.
-    """
-    try:
-        cache_key = hashlib.sha256(f"{api_key}:{secret_key}".encode()).hexdigest()
-        r = redis.Redis.from_url(
-            getattr(settings, "REDIS_URL", "redis://localhost:6379/0"),
-            decode_responses=True,
-        )
-        r.publish(FI_AUTH_REVOKE_CHANNEL, cache_key)
-    except Exception:
-        logger.warning("fi_auth_revoke_publish_failed", exc_info=True)
+def _managed_keys(organization):
+    """The keys a member manages from any workspace: those the workspace sees, and
+    every coding agent key of the organization, which is bound to its environment's
+    workspace but must stay revocable from anywhere."""
+    return OrgApiKey.objects.filter(
+        organization=organization
+    ) | OrgApiKey.no_workspace_objects.filter(
+        organization=organization, type="coding_agent"
+    )
 
 
 class GetKeysView(APIView):
@@ -113,6 +107,8 @@ class SecretKeyAPIViewSet(ViewSet):
         "created_by": "user__name",
         "enabled": "enabled",
         "type": "type",
+        "expiresAt": "expires_at",
+        "expires_at": "expires_at",
     }
 
     @swagger_auto_schema(
@@ -145,9 +141,10 @@ class SecretKeyAPIViewSet(ViewSet):
             # Build base queryset with select_related to avoid N+1 queries
             # Sandbox ingest keys belong to the platform, not to the user.
             apiKeys = (
-                OrgApiKey.objects.filter(organization=user_organization, deleted=False)
+                _managed_keys(user_organization)
+                .filter(deleted=False)
                 .exclude(type="ingest")
-                .select_related("user")
+                .select_related("user", "minted_by")
                 .order_by(order_by)
             )
 
@@ -180,10 +177,12 @@ class SecretKeyAPIViewSet(ViewSet):
                     "key_name": key.name,
                     "api_key": mask_key(key.api_key),
                     "secret_key": mask_key(key.secret_key),
-                    "created_by": key.user.name if key.user else None,
+                    "created_by": getattr(key.user or key.minted_by, "name", None),
                     "created_at": key.created_at,
                     "enabled": key.enabled,
                     "type": key.type,
+                    "expires_at": key.expires_at,
+                    "is_expired": key.is_expired,
                 }
                 for key in paginated_keys
             ]
@@ -219,13 +218,16 @@ class SecretKeyAPIViewSet(ViewSet):
                 return self._gm.bad_request(get_error_message("KEY_ID_REQUIRED"))
 
             try:
-                apikey = OrgApiKey.objects.get(
-                    id=key_id,
-                    organization=getattr(request, "organization", None)
-                    or request.user.organization,
-                )
+                apikey = _managed_keys(
+                    getattr(request, "organization", None) or request.user.organization
+                ).get(id=key_id)
                 if apikey.enabled:
                     return self._gm.bad_request(get_error_message("API_KEY_ENABLED"))
+                if apikey.is_expired:
+                    # Auth would disable it again on its next use.
+                    return self._gm.bad_request(
+                        get_error_message("API_KEY_EXPIRED_CANNOT_ENABLE")
+                    )
                 apikey.enabled = True
                 apikey.save(update_fields=["enabled"])
 
@@ -253,11 +255,9 @@ class SecretKeyAPIViewSet(ViewSet):
                 return self._gm.bad_request(get_error_message("KEY_ID_REQUIRED"))
 
             try:
-                apikey = OrgApiKey.objects.get(
-                    id=key_id,
-                    organization=getattr(request, "organization", None)
-                    or request.user.organization,
-                )
+                apikey = _managed_keys(
+                    getattr(request, "organization", None) or request.user.organization
+                ).get(id=key_id)
                 if not apikey.enabled:
                     return self._gm.bad_request(get_error_message("API_KEY_DISABLED"))
                 apikey.enabled = False
@@ -290,12 +290,36 @@ class SecretKeyAPIViewSet(ViewSet):
             ).exists():
                 return self._gm.bad_request(get_error_message("KEY_NAME_EXISTS"))
 
+            key_type = request.validated_data["type"]
+            environment_id = request.validated_data.get("simulation_environment_id")
+            workspace = None
+            if key_type == "coding_agent":
+                # Imported here: accounts cannot depend on simulate at load.
+                from simulate.authentication import bindable_environment
+
+                environment = bindable_environment(request, environment_id)
+                if environment is None:
+                    return self._gm.not_found("Environment not found")
+                # The key's workspace outranks any header, so its calls always
+                # see the environment's workspace.
+                workspace = environment.workspace
+
+            # A coding agent key acts as its minter but names no user, so builds
+            # that predate it refuse it instead of acting as that person.
+            owner = (
+                {"minted_by": request.user}
+                if key_type == "coding_agent"
+                else {"user": request.user}
+            )
             org_key = OrgApiKey.objects.create(
                 name=key_name,
                 organization=getattr(request, "organization", None)
                 or request.user.organization,
-                type="user",
-                user=request.user,
+                type=key_type,
+                workspace=workspace,
+                simulation_environment_id=environment_id,
+                **owner,
+                expires_at=request.validated_data.get("expires_at"),
             )
             try:
                 from tfc.deployment_telemetry.events import record_event
@@ -316,8 +340,13 @@ class SecretKeyAPIViewSet(ViewSet):
                 "masked_api_key": mask_key(org_key.api_key),
                 "secret_key": org_key.secret_key,
                 "masked_secret_key": mask_key(org_key.secret_key),
+                "expires_at": org_key.expires_at,
             }
             return self._gm.success_response(response)
+        except APIException:
+            # A refusal with its own status and code, such as an environment a coding
+            # agent key cannot be bound to.
+            raise
         except Exception:
             traceback.print_exc()
             return self._gm.bad_request(get_error_message("UNABLE_TO_GENERATE_KEY"))
@@ -353,11 +382,9 @@ class SecretKeyAPIViewSet(ViewSet):
             key_id = request.validated_data.get("key_id")
             if not key_id:
                 return self._gm.bad_request(get_error_message("KEY_ID_REQUIRED"))
-            org_key = OrgApiKey.objects.get(
-                id=key_id,
-                organization=getattr(request, "organization", None)
-                or request.user.organization,
-            )
+            org_key = _managed_keys(
+                getattr(request, "organization", None) or request.user.organization
+            ).get(id=key_id)
             org_key.deleted = True
             org_key.deleted_at = timezone.now()
             org_key.save(update_fields=["deleted", "deleted_at"])

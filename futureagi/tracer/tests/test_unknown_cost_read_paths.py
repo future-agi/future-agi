@@ -141,7 +141,10 @@ def test_session_list_cost_is_nullable_in_all_query_shapes(cls, attrs_column):
         assert "GROUP BY project_id, member_session_id, trace_id" in sql
         assert "NOT tupleElement(s.9, 1)" in sql
         assert "arrayExists(s -> tupleElement(s.9, 2), billable_usage_spans)" in sql
-        assert "if(usage_cost_unknown, CAST(NULL, 'Nullable(Float64)')" in sql
+        assert "if(cost_unknown, CAST(NULL, 'Nullable(Float64)')" in sql
+        assert "usage_metrics.1 AS usage_cost_unknown" in sql
+        assert "usage_metrics.2 AS usage_cost" in sql
+        assert "ARRAY JOIN trace_usage_metrics AS usage_metrics" in sql
         assert "countIf(isNull(usage_cost)) > 0" in sql
     for sql in filtered_queries:
         assert "HAVING total_cost IS NULL" in sql

@@ -85,7 +85,7 @@ const AccessOption = ({
       />
     </Box>
     <Box sx={{ flex: 1 }}>
-      <Typography sx={{ fontSize: 13, fontWeight: 500, color: "text.primary" }}>
+      <Typography sx={{ fontSize: 12, fontWeight: 500, color: "text.primary" }}>
         {label}
       </Typography>
       <Typography
@@ -266,7 +266,7 @@ const ShareDialog = ({ open, onClose, resourceType, resourceId }) => {
               />
             </Box>
             <Typography
-              sx={{ fontSize: 13, fontWeight: 600, color: "text.primary" }}
+              sx={{ fontSize: 12, fontWeight: 600, color: "text.primary" }}
             >
               Share
             </Typography>
@@ -437,7 +437,7 @@ const ShareDialog = ({ open, onClose, resourceType, resourceId }) => {
               onKeyDown={handleKeyDown}
               InputProps={{
                 sx: {
-                  fontSize: 13,
+                  fontSize: 12,
                   borderRadius: "8px",
                   bgcolor: "background.paper",
                 },

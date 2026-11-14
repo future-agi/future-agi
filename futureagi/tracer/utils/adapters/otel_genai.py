@@ -36,6 +36,7 @@ _OPERATION_KIND_MAP = {
     "embeddings": "EMBEDDING",
     "rerank": "RERANKER",
     "execute_tool": "TOOL",
+    "invoke_agent": "AGENT",
 }
 
 # gen_ai.system values → normalized provider name

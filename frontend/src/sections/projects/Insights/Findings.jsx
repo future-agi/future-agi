@@ -117,7 +117,7 @@ function Finding({ finding, index }) {
               m: 0,
               mt: 0.5,
               pl: 2,
-              fontSize: 13,
+              fontSize: 12,
               lineHeight: "20px",
               color: "text.secondary",
             }}
@@ -141,7 +141,7 @@ function Finding({ finding, index }) {
               component="p"
               sx={{
                 m: 0,
-                fontSize: 13,
+                fontSize: 12,
                 lineHeight: "20px",
                 color: "text.primary",
               }}
@@ -191,8 +191,9 @@ export default function Findings({ summary }) {
   if (!summary || summary.error)
     return (
       <Typography variant="body2" color="text.secondary">
-        The summary is unavailable for this run. The categories and statistics
-        below are complete.
+        Analysis is complete, but the summary could not be written. This is a
+        partial report; the categories, statistics and evidence remain
+        available.
       </Typography>
     );
   const findings = normalizeFindings(summary);

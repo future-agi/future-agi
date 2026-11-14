@@ -26,7 +26,9 @@ def _raise_masked_api_key_error():
 
 def _raise_generic_wrapper_api_key_error():
     try:
-        raise Exception("Authentication failed because the configured API key is invalid")
+        raise Exception(
+            "Authentication failed because the configured API key is invalid"
+        )
     except Exception as exc:
         raise RuntimeError("runprompt provider call failed") from exc
 
@@ -54,6 +56,95 @@ def test_handle_api_error_uses_api_signal_not_exact_wrapper_text():
         message = handle_api_error(exc, DummyLogger())
 
     assert message == "Authentication failed because the configured API key is invalid"
+
+
+@pytest.mark.unit
+def test_handle_api_error_preserves_catalog_error_with_suppressed_context():
+    from agentic_eval.core_evals.run_prompt.error_handler import handle_api_error
+    from model_hub.models.custom_models import CustomAIModel
+
+    catalog_message = (
+        "Model '' is not available in the current model catalog. "
+        "It may be deprecated or retired. Please select a supported model from the latest available models list."
+    )
+    logger = CapturingLogger()
+
+    with pytest.raises(ValueError) as exc_info:
+        try:
+            raise CustomAIModel.DoesNotExist(
+                "CustomAIModel matching query does not exist."
+            )
+        except CustomAIModel.DoesNotExist:
+            raise ValueError(catalog_message) from None
+
+    assert exc_info.value.__suppress_context__ is True
+    assert isinstance(exc_info.value.__context__, CustomAIModel.DoesNotExist)
+    assert handle_api_error(exc_info.value, logger) == catalog_message
+    assert logger.fields["error_type"] == "ValueError"
+    assert logger.fields["raw_error"] == catalog_message
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("suppress_context", [True, False])
+def test_iter_exception_chain_prefers_explicit_cause(suppress_context):
+    from agentic_eval.core_evals.run_prompt.error_handler import _iter_exception_chain
+
+    cause = ValueError("Model selection is invalid")
+    wrapper = RuntimeError("runprompt provider call failed")
+    wrapper.__cause__ = cause
+    wrapper.__context__ = RuntimeError("An unrelated authentication failure")
+    wrapper.__suppress_context__ = suppress_context
+
+    assert list(_iter_exception_chain(wrapper)) == [wrapper, cause]
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("chain_attribute", ["__cause__", "__context__"])
+def test_handle_api_error_unwraps_chained_provider_error(chain_attribute):
+    import litellm
+
+    from agentic_eval.core_evals.run_prompt.error_handler import (
+        _iter_exception_chain,
+        handle_api_error,
+    )
+
+    provider_error = litellm.AuthenticationError(
+        message="Incorrect API key provided",
+        model="gpt-4o",
+        llm_provider="openai",
+    )
+    wrapper = TypeError("instance exception may not have a separate value")
+    setattr(wrapper, chain_attribute, provider_error)
+    logger = CapturingLogger()
+
+    assert list(_iter_exception_chain(wrapper)) == [wrapper, provider_error]
+    assert handle_api_error(wrapper, logger) == "Incorrect API key provided"
+    assert logger.fields["provider"] == "openai"
+    assert logger.fields["status_code"] == 401
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("chain_attribute", ["__cause__", "__context__"])
+def test_iter_exception_chain_stops_at_cycles(chain_attribute):
+    from agentic_eval.core_evals.run_prompt.error_handler import _iter_exception_chain
+
+    outer = RuntimeError("outer")
+    inner = RuntimeError("inner")
+    setattr(outer, chain_attribute, inner)
+    setattr(inner, chain_attribute, outer)
+
+    assert list(_iter_exception_chain(outer)) == [outer, inner]
+
+
+@pytest.mark.unit
+def test_iter_exception_chain_limits_depth():
+    from agentic_eval.core_evals.run_prompt.error_handler import _iter_exception_chain
+
+    chain = [RuntimeError(f"wrapper {index}") for index in range(25)]
+    for outer, inner in zip(chain, chain[1:], strict=False):
+        outer.__cause__ = inner
+
+    assert list(_iter_exception_chain(chain[0])) == chain[:20]
 
 
 @pytest.mark.unit

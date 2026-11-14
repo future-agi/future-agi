@@ -108,7 +108,7 @@ function Thinking({ startedAt, reading, hint }) {
     <Stack spacing={0.75} sx={{ maxWidth: 520 }}>
       <Stack direction="row" spacing={1} alignItems="center">
         <CircularProgress size={12} thickness={5} />
-        <Typography variant="body2" sx={{ fontSize: 13 }}>
+        <Typography variant="body2" sx={{ fontSize: 12 }}>
           Reading {reading}…
         </Typography>
         <Typography
@@ -149,7 +149,7 @@ function Answer({ turn, refs, reading, hint, onFollowUp, onRetry, disabled }) {
           width={18}
           sx={{ color: "text.secondary", mt: "1px", flexShrink: 0 }}
         />
-        <Typography variant="body2" fontWeight={600} sx={{ fontSize: 13 }}>
+        <Typography variant="body2" fontWeight={600} sx={{ fontSize: 12 }}>
           {turn.question}
         </Typography>
       </Stack>
@@ -161,7 +161,7 @@ function Answer({ turn, refs, reading, hint, onFollowUp, onRetry, disabled }) {
             <Typography
               variant="body2"
               color="error.main"
-              sx={{ fontSize: 13 }}
+              sx={{ fontSize: 12 }}
             >
               <ErrorText message={turn.error} billing={turn.billing} />
             </Typography>
@@ -186,7 +186,7 @@ function Answer({ turn, refs, reading, hint, onFollowUp, onRetry, disabled }) {
                   <Typography
                     variant="body2"
                     component="p"
-                    sx={{ m: 0, fontSize: 13, lineHeight: "21px" }}
+                    sx={{ m: 0, fontSize: 12, lineHeight: "21px" }}
                   >
                     {paragraph.text}
                     {paragraph.unit_ids.length > 0 && (
@@ -237,7 +237,7 @@ function Answer({ turn, refs, reading, hint, onFollowUp, onRetry, disabled }) {
               <Typography
                 variant="body2"
                 color="text.secondary"
-                sx={{ fontSize: 13 }}
+                sx={{ fontSize: 12 }}
               >
                 No answer came back. Try rephrasing the question.
               </Typography>
@@ -389,8 +389,8 @@ export default function AskPanel({ run, lens }) {
           { question: q, history },
           own.signal,
         );
-        const { answer, followUps, dropped } = normalizeAnswer(result);
-        return { status: "done", answer, followUps, dropped };
+        const answer = normalizeAnswer(result);
+        return { status: answer.error ? "error" : "done", ...answer };
       } catch (error) {
         if (own.signal.aborted) return null;
         return {
@@ -451,7 +451,7 @@ export default function AskPanel({ run, lens }) {
               borderColor: "divider",
             }}
           >
-            <Typography variant="subtitle2" sx={{ flex: 1, fontSize: 13 }}>
+            <Typography variant="subtitle2" sx={{ flex: 1, fontSize: 12 }}>
               Ask about this report
             </Typography>
             <Button

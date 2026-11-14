@@ -46,7 +46,7 @@ const CompareExperimentRightSection = ({
           renderValue={(value) => (
             <Typography
               color="text.primary"
-              fontSize="13px"
+              fontSize="12px"
               lineHeight={"22px"}
               fontWeight={400}
             >
@@ -79,7 +79,7 @@ const CompareExperimentRightSection = ({
             renderValue={(value) => (
               <Typography
                 color="text.primary"
-                fontSize="13px"
+                fontSize="12px"
                 lineHeight={"22px"}
                 fontWeight={400}
               >
@@ -100,7 +100,7 @@ const CompareExperimentRightSection = ({
             setIsTraceOpen((v) => !v);
             if (!isTraceOpen) setIsAnnotateOpen(false);
           }}
-          sx={{ padding: "5px 24px", color: "text.primary", fontWeight: "400", fontSize: "13px", backgroundColor: isTraceOpen ? "divider" : "" }}
+          sx={{ padding: "5px 24px", color: "text.primary", fontWeight: "400", fontSize: "12px", backgroundColor: isTraceOpen ? "divider" : "" }}
         >
           Trace
         </OutlinedButton>
@@ -111,7 +111,7 @@ const CompareExperimentRightSection = ({
             setIsAnnotateOpen((v) => !v);
             if (!isAnnotateOpen) setIsTraceOpen(false);
           }}
-          sx={{ padding: "5px 24px", color: "text.primary", fontWeight: "400", fontSize: "13px", backgroundColor: isAnnotateOpen ? "divider" : "" }}
+          sx={{ padding: "5px 24px", color: "text.primary", fontWeight: "400", fontSize: "12px", backgroundColor: isAnnotateOpen ? "divider" : "" }}
         >
           Annotate
         </OutlinedButton>

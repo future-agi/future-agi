@@ -10,9 +10,7 @@ def _repo_root():
 
 
 def _swagger():
-    with (
-        _repo_root() / "api_contracts" / "openapi" / "swagger.json"
-    ).open() as f:
+    with (_repo_root() / "api_contracts" / "openapi" / "swagger.json").open() as f:
         return json.load(f)
 
 
@@ -625,17 +623,13 @@ def test_model_hub_ai_writer_and_custom_model_apis_stay_out_of_contract_debt():
     assert protected_paths.isdisjoint(response_gaps)
 
 
-@pytest.mark.parametrize(
-    "method,path,body", _model_hub_ai_custom_metric_guard_cases()
-)
+@pytest.mark.parametrize("method,path,body", _model_hub_ai_custom_metric_guard_cases())
 def test_model_hub_ai_custom_metric_routes_reject_anonymous_before_work(
     api_client, method, path, body
 ):
     request = getattr(api_client, method)
     response = (
-        request(path, data=body, format="json")
-        if body is not None
-        else request(path)
+        request(path, data=body, format="json") if body is not None else request(path)
     )
 
     assert response.status_code in {
@@ -647,17 +641,13 @@ def test_model_hub_ai_custom_metric_routes_reject_anonymous_before_work(
     assert response.data["code"] == "not_authenticated"
 
 
-@pytest.mark.parametrize(
-    "method,path,body", _model_hub_prompt_workbench_guard_cases()
-)
+@pytest.mark.parametrize("method,path,body", _model_hub_prompt_workbench_guard_cases())
 def test_model_hub_prompt_workbench_routes_reject_anonymous_before_work(
     api_client, method, path, body
 ):
     request = getattr(api_client, method)
     response = (
-        request(path, data=body, format="json")
-        if body is not None
-        else request(path)
+        request(path, data=body, format="json") if body is not None else request(path)
     )
 
     assert response.status_code in {
@@ -669,17 +659,13 @@ def test_model_hub_prompt_workbench_routes_reject_anonymous_before_work(
     assert response.data["code"] == "not_authenticated"
 
 
-@pytest.mark.parametrize(
-    "method,path,body", _model_hub_prompt_library_guard_cases()
-)
+@pytest.mark.parametrize("method,path,body", _model_hub_prompt_library_guard_cases())
 def test_model_hub_prompt_library_routes_reject_anonymous_before_work(
     api_client, method, path, body
 ):
     request = getattr(api_client, method)
     response = (
-        request(path, data=body, format="json")
-        if body is not None
-        else request(path)
+        request(path, data=body, format="json") if body is not None else request(path)
     )
 
     assert response.status_code in {
@@ -691,17 +677,13 @@ def test_model_hub_prompt_library_routes_reject_anonymous_before_work(
     assert response.data["code"] == "not_authenticated"
 
 
-@pytest.mark.parametrize(
-    "method,path,body", _model_hub_feedback_score_guard_cases()
-)
+@pytest.mark.parametrize("method,path,body", _model_hub_feedback_score_guard_cases())
 def test_model_hub_feedback_score_routes_reject_anonymous_before_work(
     api_client, method, path, body
 ):
     request = getattr(api_client, method)
     response = (
-        request(path, data=body, format="json")
-        if body is not None
-        else request(path)
+        request(path, data=body, format="json") if body is not None else request(path)
     )
 
     assert response.status_code in {
@@ -713,17 +695,13 @@ def test_model_hub_feedback_score_routes_reject_anonymous_before_work(
     assert response.data["code"] == "not_authenticated"
 
 
-@pytest.mark.parametrize(
-    "method,path,body", _model_hub_provider_asset_guard_cases()
-)
+@pytest.mark.parametrize("method,path,body", _model_hub_provider_asset_guard_cases())
 def test_model_hub_provider_asset_routes_reject_anonymous_before_work(
     api_client, method, path, body
 ):
     request = getattr(api_client, method)
     response = (
-        request(path, data=body, format="json")
-        if body is not None
-        else request(path)
+        request(path, data=body, format="json") if body is not None else request(path)
     )
 
     assert response.status_code in {
@@ -741,9 +719,7 @@ def test_model_hub_org_user_routes_reject_anonymous_before_work(
 ):
     request = getattr(api_client, method)
     response = (
-        request(path, data=body, format="json")
-        if body is not None
-        else request(path)
+        request(path, data=body, format="json") if body is not None else request(path)
     )
 
     assert response.status_code in {
@@ -763,9 +739,7 @@ def test_model_hub_queue_review_discussion_routes_reject_anonymous_before_work(
 ):
     request = getattr(api_client, method)
     response = (
-        request(path, data=body, format="json")
-        if body is not None
-        else request(path)
+        request(path, data=body, format="json") if body is not None else request(path)
     )
 
     assert response.status_code in {
@@ -785,9 +759,7 @@ def test_model_hub_eval_experiment_utility_routes_reject_anonymous_before_work(
 ):
     request = getattr(api_client, method)
     response = (
-        request(path, data=body, format="json")
-        if body is not None
-        else request(path)
+        request(path, data=body, format="json") if body is not None else request(path)
     )
 
     assert response.status_code in {
@@ -805,9 +777,7 @@ def test_model_hub_knowledge_base_routes_reject_anonymous_before_work(
 ):
     request = getattr(api_client, method)
     response = (
-        request(path, data=body, format="json")
-        if body is not None
-        else request(path)
+        request(path, data=body, format="json") if body is not None else request(path)
     )
 
     assert response.status_code in {
@@ -825,9 +795,7 @@ def test_model_hub_optimisation_routes_reject_anonymous_before_work(
 ):
     request = getattr(api_client, method)
     response = (
-        request(path, data=body, format="json")
-        if body is not None
-        else request(path)
+        request(path, data=body, format="json") if body is not None else request(path)
     )
 
     assert response.status_code in {
@@ -847,9 +815,7 @@ def test_model_hub_legacy_optimize_dataset_routes_reject_anonymous_before_work(
 ):
     request = getattr(api_client, method)
     response = (
-        request(path, data=body, format="json")
-        if body is not None
-        else request(path)
+        request(path, data=body, format="json") if body is not None else request(path)
     )
 
     assert response.status_code in {
@@ -869,9 +835,7 @@ def test_model_hub_performance_and_eval_routes_reject_anonymous_before_work(
 ):
     request = getattr(api_client, method)
     response = (
-        request(path, data=body, format="json")
-        if body is not None
-        else request(path)
+        request(path, data=body, format="json") if body is not None else request(path)
     )
 
     assert response.status_code in {
@@ -892,15 +856,9 @@ def test_model_hub_ai_writer_and_custom_model_mutations_have_request_contracts()
         ("POST", "/model-hub/cells/{cell_id}/run-error-localizer/"): (
             "ModelHubEmptyRequest"
         ),
-        ("POST", "/model-hub/custom-models/{id}/"): (
-            "CustomAIModelUpdateRequest"
-        ),
-        ("POST", "/model-hub/custom_models/create/"): (
-            "CustomAIModelCreateRequest"
-        ),
-        ("DELETE", "/model-hub/custom_models/delete/"): (
-            "CustomAIModelDeleteRequest"
-        ),
+        ("POST", "/model-hub/custom-models/{id}/"): ("CustomAIModelUpdateRequest"),
+        ("POST", "/model-hub/custom_models/create/"): ("CustomAIModelCreateRequest"),
+        ("DELETE", "/model-hub/custom_models/delete/"): ("CustomAIModelDeleteRequest"),
         ("PATCH", "/model-hub/custom_models/edit/"): "CustomAIModelEditRequest",
         ("POST", "/model-hub/custom_models/update-baseline/{id}/"): (
             "CustomAIModelBaselineRequest"
@@ -908,13 +866,9 @@ def test_model_hub_ai_writer_and_custom_model_mutations_have_request_contracts()
         ("POST", "/model-hub/custom_models/update-metric/{id}/"): (
             "CustomAIModelDefaultMetricRequest"
         ),
-        ("POST", "/model-hub/custom-metric/create/"): (
-            "CustomMetricMutationRequest"
-        ),
+        ("POST", "/model-hub/custom-metric/create/"): ("CustomMetricMutationRequest"),
         ("POST", "/model-hub/custom-metric/test/"): "CustomMetricTestRequest",
-        ("POST", "/model-hub/custom-metric/update/"): (
-            "CustomMetricMutationRequest"
-        ),
+        ("POST", "/model-hub/custom-metric/update/"): ("CustomMetricMutationRequest"),
         ("POST", "/model-hub/datasets/{dataset_id}/add-api-column/"): (
             "AddApiColumnRequest"
         ),
@@ -945,9 +899,7 @@ def test_model_hub_ai_writer_and_custom_model_mutations_have_request_contracts()
         ("POST", "/model-hub/datasets/{dataset_id}/duplicate/"): (
             "DuplicateDatasetRequest"
         ),
-        ("POST", "/model-hub/datasets/{dataset_id}/merge/"): (
-            "MergeDatasetRequest"
-        ),
+        ("POST", "/model-hub/datasets/{dataset_id}/merge/"): ("MergeDatasetRequest"),
         ("POST", "/model-hub/datasets/{dataset_id}/conditional-column/"): (
             "ConditionalColumnRequest"
         ),
@@ -975,15 +927,9 @@ def test_model_hub_ai_writer_and_custom_model_mutations_have_request_contracts()
         ("POST", "/model-hub/develops/create-dataset-from-huggingface/"): (
             "HuggingFaceDatasetCreateRequest"
         ),
-        ("POST", "/model-hub/develops/add-as-new/"): (
-            "AddAsNewDatasetRequest"
-        ),
-        ("POST", "/model-hub/develops/add_rows_from_file/"): (
-            "AddRowsFromFileRequest"
-        ),
-        ("POST", "/model-hub/develops/add_run_prompt_column/"): (
-            "AddRunPrompt"
-        ),
+        ("POST", "/model-hub/develops/add-as-new/"): ("AddAsNewDatasetRequest"),
+        ("POST", "/model-hub/develops/add_rows_from_file/"): ("AddRowsFromFileRequest"),
+        ("POST", "/model-hub/develops/add_run_prompt_column/"): ("AddRunPrompt"),
         ("POST", "/model-hub/develops/clone-dataset/{dataset_id}/"): (
             "CloneDatasetRequest"
         ),
@@ -1002,12 +948,8 @@ def test_model_hub_ai_writer_and_custom_model_mutations_have_request_contracts()
         ("POST", "/model-hub/develops/edit_run_prompt_column/"): (
             "EditRunPromptColumn"
         ),
-        ("POST", "/model-hub/develops/get-cell-data/"): (
-            "DatasetCellDataRequest"
-        ),
-        ("POST", "/model-hub/develops/get-row-diff/"): (
-            "DatasetRowDiffRequest"
-        ),
+        ("POST", "/model-hub/develops/get-cell-data/"): ("DatasetCellDataRequest"),
+        ("POST", "/model-hub/develops/get-row-diff/"): ("DatasetRowDiffRequest"),
         ("POST", "/model-hub/develops/get-huggingface-dataset-config/"): (
             "HuggingFaceDatasetConfigRequest"
         ),
@@ -1136,19 +1078,11 @@ def test_model_hub_ai_writer_and_custom_model_mutations_have_request_contracts()
         ),
         ("POST", "/model-hub/experiments/"): "ExperimentsTable",
         ("PUT", "/model-hub/experiments/"): "ExperimentsTableUpdate",
-        ("POST", "/model-hub/experiments/re-run/"): (
-            "ExperimentRerunRequest"
-        ),
+        ("POST", "/model-hub/experiments/re-run/"): ("ExperimentRerunRequest"),
         ("POST", "/model-hub/experiments/v2/"): "ExperimentCreateV2",
-        ("POST", "/model-hub/experiments/v2/re-run/"): (
-            "ExperimentRerunRequest"
-        ),
-        ("POST", "/model-hub/experiments/v2/row-diff/"): (
-            "DatasetRowDiffRequest"
-        ),
-        ("PUT", "/model-hub/experiments/v2/{experiment_id}/"): (
-            "ExperimentUpdateV2"
-        ),
+        ("POST", "/model-hub/experiments/v2/re-run/"): ("ExperimentRerunRequest"),
+        ("POST", "/model-hub/experiments/v2/row-diff/"): ("DatasetRowDiffRequest"),
+        ("PUT", "/model-hub/experiments/v2/{experiment_id}/"): ("ExperimentUpdateV2"),
         (
             "POST",
             "/model-hub/experiments/v2/{experiment_id}/compare-experiments/",
@@ -1176,9 +1110,7 @@ def test_model_hub_ai_writer_and_custom_model_mutations_have_request_contracts()
         ("POST", "/model-hub/get-column-values/"): "ColumnValuesRequest",
         ("PATCH", "/model-hub/get-eval-logs"): "UpdateColumnConfig",
         ("POST", "/model-hub/get-eval-metrics"): "EvalMetricRequest",
-        ("POST", "/model-hub/get-eval-template-names"): (
-            "EvalTemplateNamesRequest"
-        ),
+        ("POST", "/model-hub/get-eval-template-names"): ("EvalTemplateNamesRequest"),
         ("POST", "/model-hub/get-eval-templates"): "LegacyEvalTemplatesRequest",
         ("POST", "/model-hub/ground-truth/{ground_truth_id}/embed/"): (
             "ModelHubEmptyRequest"
@@ -1190,12 +1122,8 @@ def test_model_hub_ai_writer_and_custom_model_mutations_have_request_contracts()
         ("POST", "/model-hub/kb/"): "KnowledgeBaseCreate",
         ("PUT", "/model-hub/kb/{id}/"): "KnowledgeBase",
         ("PATCH", "/model-hub/kb/{id}/"): "KnowledgeBase",
-        ("POST", "/model-hub/knowledge-base/"): (
-            "LegacyKnowledgeBaseMutationRequest"
-        ),
-        ("PATCH", "/model-hub/knowledge-base/"): (
-            "LegacyKnowledgeBaseMutationRequest"
-        ),
+        ("POST", "/model-hub/knowledge-base/"): ("LegacyKnowledgeBaseMutationRequest"),
+        ("PATCH", "/model-hub/knowledge-base/"): ("LegacyKnowledgeBaseMutationRequest"),
         ("POST", "/model-hub/knowledge-base/files/"): (
             "LegacyKnowledgeBaseFilesRequest"
         ),
@@ -1232,12 +1160,8 @@ def test_model_hub_ai_writer_and_custom_model_mutations_have_request_contracts()
         ("PUT", "/model-hub/optimisation/create/"): "OptimizationDataset",
         ("POST", "/model-hub/optimisation/update/{id}/"): "OptimizationDataset",
         ("PUT", "/model-hub/optimisation/update/{id}/"): "OptimizationDataset",
-        ("POST", "/model-hub/performance/detail/{id}/"): (
-            "PerformanceDetailsRequest"
-        ),
-        ("POST", "/model-hub/performance/export/{id}/"): (
-            "PerformanceExportRequest"
-        ),
+        ("POST", "/model-hub/performance/detail/{id}/"): ("PerformanceDetailsRequest"),
+        ("POST", "/model-hub/performance/export/{id}/"): ("PerformanceExportRequest"),
         ("POST", "/model-hub/performance/report/{model_id}/"): (
             "PerformanceReportCreate"
         ),
@@ -1268,7 +1192,7 @@ def test_model_hub_ai_writer_and_custom_model_endpoints_have_response_contracts(
         ("POST", "/model-hub/ai-eval-writer/"): "AIEvalWriterResponse",
         ("GET", "/model-hub/api/model_parameters/"): "ModelParametersResponse",
         ("GET", "/model-hub/api/model_voices/"): "LiteLLMModelVoicesResponse",
-        ("GET", "/model-hub/api/models_list/"): "ModelHubPaginatedResponse",
+        ("GET", "/model-hub/api/models_list/"): "ModelListResponse",
         ("GET", "/model-hub/columns/{column_id}/operation-config/"): (
             "OperationConfigResponse"
         ),
@@ -1285,9 +1209,7 @@ def test_model_hub_ai_writer_and_custom_model_endpoints_have_response_contracts(
         ("GET", "/model-hub/custom-models/list/"): "ModelHubPaginatedResponse",
         ("GET", "/model-hub/custom-models/{id}/"): "CustomAIModel",
         ("POST", "/model-hub/custom-models/{id}/"): "CustomAIModel",
-        ("POST", "/model-hub/custom_models/create/"): (
-            "CustomAIModelCreateResponse"
-        ),
+        ("POST", "/model-hub/custom_models/create/"): ("CustomAIModelCreateResponse"),
         ("DELETE", "/model-hub/custom_models/delete/"): (
             "ModelHubStringResultResponse"
         ),
@@ -1410,9 +1332,7 @@ def test_model_hub_ai_writer_and_custom_model_endpoints_have_response_contracts(
         ("POST", "/model-hub/create_custom_evals/"): (
             "CustomEvalTemplateCreateResponse"
         ),
-        ("POST", "/model-hub/delete-eval-template/"): (
-            "ModelHubStringResultResponse"
-        ),
+        ("POST", "/model-hub/delete-eval-template/"): ("ModelHubStringResultResponse"),
         ("POST", "/model-hub/duplicate-eval-template/"): (
             "DuplicateEvalTemplateResponse"
         ),
@@ -1425,9 +1345,7 @@ def test_model_hub_ai_writer_and_custom_model_endpoints_have_response_contracts(
         ("GET", "/model-hub/eval-summary-templates/"): (
             "EvalSummaryTemplateListResponse"
         ),
-        ("POST", "/model-hub/eval-summary-templates/"): (
-            "EvalSummaryTemplateResponse"
-        ),
+        ("POST", "/model-hub/eval-summary-templates/"): ("EvalSummaryTemplateResponse"),
         ("PUT", "/model-hub/eval-summary-templates/{template_id}/"): (
             "EvalSummaryTemplateResponse"
         ),
@@ -1491,9 +1409,7 @@ def test_model_hub_ai_writer_and_custom_model_endpoints_have_response_contracts(
             "PUT",
             "/model-hub/eval-templates/{template_id}/versions/{version_id}/set-default/",
         ): "EvalTemplateVersionResponse",
-        ("POST", "/model-hub/eval-template/create/"): (
-            "ModelHubStringResultResponse"
-        ),
+        ("POST", "/model-hub/eval-template/create/"): ("ModelHubStringResultResponse"),
         ("POST", "/model-hub/eval-user-template/create/"): (
             "ModelHubStringResultResponse"
         ),
@@ -1520,9 +1436,7 @@ def test_model_hub_ai_writer_and_custom_model_endpoints_have_response_contracts(
         ("GET", "/model-hub/get-eval-logs-details"): "EvalApiLogTableResponse",
         ("GET", "/model-hub/get-eval-metrics"): "EvalMetricResponse",
         ("POST", "/model-hub/get-eval-metrics"): "EvalMetricResponse",
-        ("POST", "/model-hub/get-eval-template-names"): (
-            "EvalTemplateNamesResponse"
-        ),
+        ("POST", "/model-hub/get-eval-template-names"): ("EvalTemplateNamesResponse"),
         ("POST", "/model-hub/get-eval-templates"): "LegacyEvalTemplatesResponse",
         ("DELETE", "/model-hub/ground-truth/{ground_truth_id}/"): (
             "GroundTruthDeleteResponse"
@@ -1547,24 +1461,16 @@ def test_model_hub_ai_writer_and_custom_model_endpoints_have_response_contracts(
         ("GET", "/model-hub/kb/{id}/"): "KnowledgeBaseResponse",
         ("PUT", "/model-hub/kb/{id}/"): "KnowledgeBaseResponse",
         ("PATCH", "/model-hub/kb/{id}/"): "KnowledgeBaseResponse",
-        ("GET", "/model-hub/knowledge-base/"): (
-            "LegacyKnowledgeBaseSdkCodeResponse"
-        ),
-        ("POST", "/model-hub/knowledge-base/"): (
-            "LegacyKnowledgeBaseCreateResponse"
-        ),
+        ("GET", "/model-hub/knowledge-base/"): ("LegacyKnowledgeBaseSdkCodeResponse"),
+        ("POST", "/model-hub/knowledge-base/"): ("LegacyKnowledgeBaseCreateResponse"),
         ("PATCH", "/model-hub/knowledge-base/"): (
             "LegacyKnowledgeBaseMutationResponse"
         ),
         ("POST", "/model-hub/knowledge-base/files/"): (
             "LegacyKnowledgeBaseFilesResponse"
         ),
-        ("GET", "/model-hub/knowledge-base/get/"): (
-            "LegacyKnowledgeBaseTableResponse"
-        ),
-        ("GET", "/model-hub/knowledge-base/list/"): (
-            "LegacyKnowledgeBaseListResponse"
-        ),
+        ("GET", "/model-hub/knowledge-base/get/"): ("LegacyKnowledgeBaseTableResponse"),
+        ("GET", "/model-hub/knowledge-base/list/"): ("LegacyKnowledgeBaseListResponse"),
         ("GET", "/model-hub/metrics/by-column/"): "MetricsByColumnResponse",
         ("GET", "/model-hub/optimize-dataset/kb/{optim_id}/"): (
             "OptimizeDatasetKnowledgeBaseDetailResponse"
@@ -1609,11 +1515,12 @@ def test_model_hub_ai_writer_and_custom_model_endpoints_have_response_contracts(
         ),
         ("POST", "/model-hub/optimisation/create/"): "ModelHubStringResultResponse",
         ("PUT", "/model-hub/optimisation/create/"): "ModelHubStringResultResponse",
-        ("POST", "/model-hub/optimisation/update/{id}/"): "ModelHubStringResultResponse",
+        (
+            "POST",
+            "/model-hub/optimisation/update/{id}/",
+        ): "ModelHubStringResultResponse",
         ("PUT", "/model-hub/optimisation/update/{id}/"): "ModelHubStringResultResponse",
-        ("POST", "/model-hub/performance/detail/{id}/"): (
-            "PerformanceDetailsResponse"
-        ),
+        ("POST", "/model-hub/performance/detail/{id}/"): ("PerformanceDetailsResponse"),
         ("GET", "/model-hub/performance/options/{model_id}/"): (
             "PerformanceOptionsResponse"
         ),
@@ -1625,7 +1532,10 @@ def test_model_hub_ai_writer_and_custom_model_endpoints_have_response_contracts(
         ),
         ("GET", "/model-hub/overview/"): "ModelHubOverviewResponse",
         ("GET", "/model-hub/prompt/metrics/"): "PromptMetricsResponse",
-        ("GET", "/model-hub/prompt/metrics/empty-screen"): "PromptMetricsEmptyScreenResponse",
+        (
+            "GET",
+            "/model-hub/prompt/metrics/empty-screen",
+        ): "PromptMetricsEmptyScreenResponse",
         ("GET", "/model-hub/prompt/span-metrics/"): "PromptMetricsResponse",
         ("POST", "/model-hub/prompt-templates/derived-variables/preview/"): (
             "DerivedVariableDetailResponse"
@@ -1641,9 +1551,7 @@ def test_model_hub_ai_writer_and_custom_model_endpoints_have_response_contracts(
             "GET",
             "/model-hub/prompt-templates/{prompt_id}/derived-variables/{column_name}/schema/",
         ): "DerivedVariableDetailResponse",
-        ("POST", "/model-hub/run-prompt-for-rows/"): (
-            "ModelHubSuccessMessageResponse"
-        ),
+        ("POST", "/model-hub/run-prompt-for-rows/"): ("ModelHubSuccessMessageResponse"),
         ("POST", "/model-hub/run-prompt/"): "ModelHubStringResultResponse",
         ("POST", "/model-hub/test-evaluation/"): "EvalExecutionResponse",
         ("POST", "/model-hub/update-eval-template/"): (
@@ -1654,6 +1562,36 @@ def test_model_hub_ai_writer_and_custom_model_endpoints_have_response_contracts(
 
     for (method, path), definition_name in expected.items():
         assert _response_ref(_operation(path, method)) == definition_name
+
+
+def test_model_list_publishes_typed_decision_rows_without_narrowing_provider_metadata():
+    schema = _swagger()
+    operation = schema["paths"]["/model-hub/api/models_list/"]["get"]
+    assert operation["x-runtime-request-validation"] is True
+    definitions = schema["definitions"]
+    assert definitions["ModelListResponse"]["properties"]["results"]["items"] == {
+        "$ref": "#/definitions/ModelListEntry"
+    }
+    row = definitions["ModelListEntry"]["properties"]
+    assert row["connections"]["items"] == {"$ref": "#/definitions/DecisionConnection"}
+    assert row["question_types"]["items"]["type"] == "string"
+    assert row["max_state_bytes"]["minimum"] == 1
+    assert row["unavailable_reason"]["x-nullable"] is True
+    assert set(definitions["DecisionConnection"]["required"]) == {
+        "model_name",
+        "provider",
+        "label",
+        "is_available",
+    }
+    for field in (
+        "best_for",
+        "use_case",
+        "cutoff",
+        "rate_limits",
+        "latency",
+        "pricing",
+    ):
+        assert row[field]["x-json-value"] is True
 
 
 def test_model_hub_performance_endpoints_with_dynamic_payloads_have_response_contracts():
@@ -1676,7 +1614,9 @@ def test_model_hub_performance_endpoints_with_dynamic_payloads_have_response_con
 
 
 def test_model_hub_performance_report_detail_exposes_supported_methods_only():
-    assert set(_swagger()["paths"]["/model-hub/performance/report/{model_id}/{report_id}/"]) == {
+    assert set(
+        _swagger()["paths"]["/model-hub/performance/report/{model_id}/{report_id}/"]
+    ) == {
         "delete",
         "parameters",
     }

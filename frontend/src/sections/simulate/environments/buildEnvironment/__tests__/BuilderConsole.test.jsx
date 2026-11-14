@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeAll, afterEach } from "vitest";
+import { describe, it, expect, vi, beforeAll, beforeEach, afterEach } from "vitest";
 import { act } from "@testing-library/react";
 import { render, screen, fireEvent, waitFor } from "src/utils/test-utils";
 
@@ -40,10 +40,11 @@ describe("BuilderConsole", () => {
     expect(screen.getByText(CONSOLE_COPY.empty)).toBeInTheDocument();
   });
 
-  it("shows the working header and the working row while running", () => {
-    render(<BuilderConsole turns={[]} running />);
+  it("shows the working header and a disabled Stop with the orbit during a send", () => {
+    render(<BuilderConsole turns={[]} running onStop={vi.fn()} />);
     expect(screen.getByText(CONSOLE_COPY.working)).toBeInTheDocument();
-    expect(screen.getByText(CONSOLE_COPY.workingDot)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Stop" })).toBeDisabled();
+    expect(screen.getByTestId("builder-console-stop-orbit")).toBeInTheDocument();
   });
 
   it("shows the working cue while a turn is in flight (canStop) but keeps the composer usable", () => {
@@ -56,7 +57,7 @@ describe("BuilderConsole", () => {
       />,
     );
     // waiting-for-reply indicator is visible even though the POST already returned
-    expect(screen.getByText(CONSOLE_COPY.workingDot)).toBeInTheDocument();
+    expect(screen.getByTestId("builder-console-stop-orbit")).toBeInTheDocument();
     expect(screen.getByText(CONSOLE_COPY.working)).toBeInTheDocument();
     // ...and the user can still type an interjection (not blocked)
     expect(screen.getByPlaceholderText(CONSOLE_COPY.placeholder)).not.toBeDisabled();
@@ -73,8 +74,24 @@ describe("BuilderConsole", () => {
       />,
     );
     expect(screen.getByText(CONSOLE_COPY.idle)).toBeInTheDocument();
-    expect(screen.queryByText(CONSOLE_COPY.workingDot)).not.toBeInTheDocument();
+    expect(screen.queryByTestId("builder-console-stop-orbit")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Stop" })).toBeEnabled();
+  });
+
+  it("swaps Stop for Send while the user has typed something", () => {
+    const onSend = vi.fn();
+    render(<BuilderConsole turns={[userTurn]} running={false} canStop onStop={vi.fn()} onSend={onSend} />);
+    expect(screen.queryByRole("button", { name: "Send" })).not.toBeInTheDocument();
+
+    const input = screen.getByPlaceholderText(CONSOLE_COPY.placeholder);
+    fireEvent.change(input, { target: { value: "try again" } });
+    expect(screen.queryByRole("button", { name: "Stop" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    expect(onSend).toHaveBeenCalledWith("try again");
+
+    // Sending clears the draft, so Stop is back while the turn is still in flight.
+    expect(screen.getByRole("button", { name: "Stop" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Send" })).not.toBeInTheDocument();
   });
 
   it("disables Stop while a Stop is on its way", () => {
@@ -88,6 +105,137 @@ describe("BuilderConsole", () => {
       />,
     );
     expect(screen.getByRole("button", { name: "Stop" })).toBeDisabled();
+    expect(screen.getByText(CONSOLE_COPY.stopping)).toBeInTheDocument();
+  });
+
+  describe("scrolling", () => {
+    const toolTurn = (steps) => ({
+      id: "t1",
+      role: "builder",
+      steps: Array.from({ length: steps }, (_, i) => ({ id: `s${i}`, kind: "tool", label: "read" })),
+    });
+    const withNote = (turn) => ({ ...turn, steps: [...turn.steps, { id: "n1", kind: "note", text: "Done" }] });
+    const jump = (name) => screen.queryByRole("button", { name });
+    let scrollTo;
+    let original;
+
+    // jsdom has no layout, so give the list one and fire the event a browser would.
+    const scrollList = (scrollTop, scrollHeight = 2000) => {
+      const list = screen.getByTestId("builder-console-list");
+      Object.defineProperties(list, {
+        scrollHeight: { configurable: true, value: scrollHeight },
+        clientHeight: { configurable: true, value: 500 },
+        scrollTop: { configurable: true, writable: true, value: scrollTop },
+      });
+      fireEvent.scroll(list);
+    };
+    const renderScrolledUp = (props) => {
+      const view = render(<BuilderConsole turns={[toolTurn(1)]} running={false} canStop {...props} />);
+      scrollList(1500);
+      scrollList(100);
+      scrollTo.mockClear();
+      return view;
+    };
+
+    beforeEach(() => {
+      original = window.HTMLElement.prototype.scrollTo;
+      scrollTo = vi.fn();
+      window.HTMLElement.prototype.scrollTo = scrollTo;
+    });
+    afterEach(() => {
+      window.HTMLElement.prototype.scrollTo = original;
+    });
+
+    it("follows new events at the bottom", () => {
+      const { rerender } = render(<BuilderConsole turns={[toolTurn(1)]} running={false} canStop />);
+      scrollList(1500);
+      scrollTo.mockClear();
+      rerender(<BuilderConsole turns={[toolTurn(2)]} running={false} canStop />);
+      expect(scrollTo).toHaveBeenCalledTimes(1);
+      expect(jump(CONSOLE_COPY.jumpWorking)).not.toBeInTheDocument();
+    });
+
+    it("keeps following when a big event leaves the list far from the bottom", () => {
+      const { rerender } = render(<BuilderConsole turns={[toolTurn(1)]} running={false} canStop />);
+      scrollList(100);
+      scrollList(400);
+      scrollTo.mockClear();
+      rerender(<BuilderConsole turns={[toolTurn(2)]} running={false} canStop />);
+      expect(scrollTo).toHaveBeenCalledTimes(1);
+    });
+
+    it("stops following after a small scroll up, while reading the last rows", () => {
+      const { rerender } = render(<BuilderConsole turns={[toolTurn(1)]} running={false} canStop />);
+      scrollList(1500);
+      scrollList(1440);
+      scrollTo.mockClear();
+      rerender(<BuilderConsole turns={[toolTurn(2)]} running={false} canStop />);
+      expect(scrollTo).not.toHaveBeenCalled();
+    });
+
+    it("keeps following when text rewraps and moves the list", () => {
+      const { rerender } = render(<BuilderConsole turns={[toolTurn(1)]} running={false} canStop />);
+      scrollList(1500);
+      scrollList(1200, 2600);
+      scrollTo.mockClear();
+      rerender(<BuilderConsole turns={[toolTurn(2)]} running={false} canStop />);
+      expect(scrollTo).toHaveBeenCalledTimes(1);
+    });
+
+    it("stays put when scrolled up, for new events and for Stop appearing or going", () => {
+      const { rerender } = renderScrolledUp();
+      rerender(<BuilderConsole turns={[toolTurn(2)]} running={false} canStop />);
+      rerender(<BuilderConsole turns={[toolTurn(2)]} running={false} canStop={false} />);
+      expect(scrollTo).not.toHaveBeenCalled();
+    });
+
+    it("shows the ship for tool rows, then the ping for a message", () => {
+      const { rerender } = renderScrolledUp();
+      rerender(<BuilderConsole turns={[toolTurn(2)]} running={false} canStop />);
+      expect(jump(CONSOLE_COPY.jumpWorking)).toBeInTheDocument();
+
+      rerender(<BuilderConsole turns={[withNote(toolTurn(2))]} running={false} canStop />);
+      expect(jump(CONSOLE_COPY.jumpWorking)).not.toBeInTheDocument();
+      expect(jump(CONSOLE_COPY.jumpNewMessage)).toBeInTheDocument();
+      // Screen readers hear it too, not only the changed button label.
+      expect(screen.getByText(CONSOLE_COPY.newMessage, { selector: '[role="status"]' })).toBeInTheDocument();
+    });
+
+    it("pings for a system card, which has no steps, even when idle", () => {
+      const { rerender } = renderScrolledUp({ canStop: false });
+      const card = { id: "r1", role: "system", kind: "reapply", text: "The edits that went live with v2 were rolled back." };
+      rerender(<BuilderConsole turns={[toolTurn(1), card]} running={false} canStop={false} />);
+      expect(jump(CONSOLE_COPY.jumpNewMessage)).toBeInTheDocument();
+    });
+
+    it("shows no button when scrolled up with nothing happening", () => {
+      renderScrolledUp({ canStop: false });
+      expect(jump(CONSOLE_COPY.jumpWorking)).not.toBeInTheDocument();
+    });
+
+    it("jumps down and resumes following from the button", () => {
+      const { rerender } = renderScrolledUp();
+      rerender(<BuilderConsole turns={[withNote(toolTurn(1))]} running={false} canStop />);
+      fireEvent.click(jump(CONSOLE_COPY.jumpNewMessage));
+      expect(scrollTo).toHaveBeenCalledTimes(1);
+      expect(jump(CONSOLE_COPY.jumpNewMessage)).not.toBeInTheDocument();
+
+      rerender(<BuilderConsole turns={[withNote(toolTurn(2))]} running={false} canStop />);
+      expect(scrollTo).toHaveBeenCalledTimes(2);
+    });
+
+    it("clears the new message once the user scrolls back down", () => {
+      const { rerender } = renderScrolledUp();
+      rerender(<BuilderConsole turns={[withNote(toolTurn(1))]} running={false} canStop />);
+      scrollList(1500);
+      expect(jump(CONSOLE_COPY.jumpNewMessage)).not.toBeInTheDocument();
+    });
+
+    it("returns to the latest turn on a send", () => {
+      const { rerender } = renderScrolledUp();
+      rerender(<BuilderConsole turns={[toolTurn(1)]} running canStop />);
+      expect(scrollTo).toHaveBeenCalled();
+    });
   });
 
   it("shows no collapse button unless onCollapse is given", () => {

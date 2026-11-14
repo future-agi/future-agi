@@ -67,8 +67,6 @@ OPENAI_MODEL_ENCODINGS = {
 }
 
 
-
-
 def get_prompt_tokens_openai_chat_completion(
     prompt: list[dict[str, Any]], language_model_id: str
 ):
@@ -209,6 +207,12 @@ def calculate_total_cost(
             - pricing_source (str): "available_models", "fallback", or "default"
     """
     from agentic_eval.core_evals.run_prompt.model_pricing import get_model_pricing
+    from evaluations.decision_models import is_decision_model
+
+    if is_decision_model(model_name):
+        from evaluations.decision_pricing import calculate_decision_cost
+
+        return calculate_decision_cost(model_name, token_usage)
 
     # Try to get pricing from available_models.py
     pricing = get_model_pricing(model_name)

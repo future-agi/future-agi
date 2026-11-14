@@ -661,6 +661,14 @@ def check_render(name: str, docs: list[dict]) -> list[str]:
                         failed.append(
                             f"{where}: {entry['name']} references $({ref}) before it is defined"
                         )
+            api_deployment = doc["kind"] == "Deployment" and component(doc) == "backend"
+            guard = values.get("STARTUP_SCHEMA_GUARD_ENABLED")
+            if (api_deployment and guard != "true") or (
+                not api_deployment and guard is not None
+            ):
+                failed.append(
+                    f"{where}/{container['name']}: STARTUP_SCHEMA_GUARD_ENABLED must be true on the API Deployment only"
+                )
             if "NO_STARTUP_DB_MUTATIONS" not in values:
                 continue
             # Only the bootstrap job may change the databases.

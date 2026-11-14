@@ -45,6 +45,7 @@ import {
   runReadAny,
 } from "./insightsFormat";
 import { useCancellable } from "./insightsHooks";
+import { summaryIncomplete } from "./insightsReport";
 import {
   STAGES,
   TEMPLATES,
@@ -393,6 +394,11 @@ function ReportCard({ config, selected, onOpen, onRerun, onDelete }) {
         </Stack>
       ) : null}
 
+      {summaryIncomplete(run) && (
+        <Typography variant="caption" color="text.secondary">
+          Partial report · summary incomplete
+        </Typography>
+      )}
       {run?.status === "completed" && (
         <Typography
           variant="caption"
@@ -451,7 +457,7 @@ function RailTemplates({ onNew }) {
             width={16}
             sx={{ color: "text.secondary", flexShrink: 0 }}
           />
-          <Typography variant="body2" sx={{ fontSize: 13 }}>
+          <Typography variant="body2" sx={{ fontSize: 12 }}>
             {template.title}
           </Typography>
         </Stack>

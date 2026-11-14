@@ -159,14 +159,14 @@ export default function MethodNote({ run, config, open, onToggle }) {
                 component="dt"
                 variant="body2"
                 color="text.secondary"
-                sx={{ fontSize: 13 }}
+                sx={{ fontSize: 12 }}
               >
                 {label}
               </Typography>
               <Typography
                 component="dd"
                 variant="body2"
-                sx={{ m: 0, fontSize: 13, overflowWrap: "anywhere" }}
+                sx={{ m: 0, fontSize: 12, overflowWrap: "anywhere" }}
               >
                 {value}
               </Typography>

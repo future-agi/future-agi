@@ -1,10 +1,12 @@
 import { ROW_HEIGHT } from "src/theme/sizes";
 import { Box } from "@mui/material";
 import { AgGridReact } from "ag-grid-react";
+import "src/utils/ag-grid-setup";
 import React, { useMemo, forwardRef, useRef, useEffect } from "react";
 import { useAgThemeWith } from "src/hooks/use-ag-theme";
 import { AG_THEME_OVERRIDES } from "src/theme/ag-theme";
 import { TitleCell } from "./knowledge-cells";
+import DownloadFileCell from "./download-file-cell";
 import { ProcessingStatusCell } from "../KnowledgeBaseData/CellRenderer";
 import PropTypes from "prop-types";
 import axios from "src/utils/axios";
@@ -115,8 +117,16 @@ const SheetTableView = forwardRef((props, ref) => {
         flex: 1,
         columnId: "updated_by",
       },
+      {
+        headerName: "Download",
+        colId: "download",
+        sortable: false,
+        cellStyle: cellCenterStyle,
+        cellRenderer: ({ data }) =>
+          data ? <DownloadFileCell file={data} knowledgeId={knowledgeId} /> : null,
+      },
     ],
-    [],
+    [knowledgeId],
   );
 
   const defaultColDef = useMemo(

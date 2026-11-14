@@ -48,6 +48,7 @@ const FIXED_TABS = [
     shortcut: "2",
   },
   { key: "users", label: "Users", icon: "solar:user-linear", shortcut: "3" },
+  { key: "query", label: "Query", icon: "mdi:database-search-outline" },
   // Letter shortcut so the digit shortcuts of saved views don't shift.
   // Insights is Enterprise: without it the tab is marked and opens its gate.
   {
@@ -134,7 +135,7 @@ const ObserveTabBar = ({
   // Hide Sessions/Users tabs for voice (simulator) projects
   const visibleFixedTabs = useMemo(() => {
     if (projectSource === "simulator") {
-      return FIXED_TABS.filter((t) => t.key === "traces");
+      return FIXED_TABS.filter((t) => t.key === "traces" || t.key === "query");
     }
     return FIXED_TABS;
   }, [projectSource]);
@@ -289,7 +290,10 @@ const ObserveTabBar = ({
       if (isNaN(num) || num < 1 || num > 9) return;
 
       if (num <= 3) {
-        onTabChange(visibleFixedTabs[num - 1]?.key);
+        const fixedTab = visibleFixedTabs.find(
+          (tab) => tab.shortcut === String(num),
+        );
+        if (fixedTab) onTabChange(fixedTab.key);
       } else {
         const idx = num - 4;
         if (idx < allCustomTabs.length) {
@@ -454,10 +458,10 @@ const ObserveTabBar = ({
           </DndContext>
         </Box>
 
-        {/* Create view button — pinned after scrollable area. Insights and
+        {/* Create view button — pinned after scrollable area. Insights, Query and
             pages without a list (canSaveView false) have no list config to
             save as a view. */}
-        {canSaveView && activeTab !== "insights" && (
+        {canSaveView && !["insights", "query"].includes(activeTab) && (
           <CustomTooltip
             show
             title="Create new view"

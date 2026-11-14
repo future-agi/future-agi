@@ -35,15 +35,16 @@ import { useFeatureLocked, CAPABILITY } from "src/hooks/useCapabilities";
 import { useCreateEval } from "src/sections/evals/hooks/useCreateEval";
 import { useUpdateEval } from "src/sections/evals/hooks/useEvalDetail";
 import { useCreateCompositeEval } from "src/sections/evals/hooks/useCompositeEval";
-import ModelSelector, {
-  FAGI_MODEL_VALUES,
-} from "src/sections/evals/components/ModelSelector";
+import { FAGI_MODEL_VALUES } from "src/sections/evals/components/ModelSelector";
 import InstructionEditor from "src/sections/evals/components/InstructionEditor";
 import { extractJinjaVariables } from "src/utils/jinjaVariables";
 import LLMPromptEditor from "src/sections/evals/components/LLMPromptEditor";
 import CodeEvalEditor from "src/sections/evals/components/CodeEvalEditor";
 import OutputTypeConfig from "src/sections/evals/components/OutputTypeConfig";
 import FewShotExamples from "src/sections/evals/components/FewShotExamples";
+import JevOutputConfig from "src/sections/evals/components/JevOutputConfig";
+import { hasExtraJevMessages } from "src/sections/evals/utils/jevMapping";
+import useDecisionBinding from "./useDecisionBinding";
 import CompositeDetailPanel from "src/sections/evals/components/CompositeDetailPanel";
 import TestPlayground from "src/sections/evals/components/TestPlayground";
 import { useCompositeChildrenUnionKeys } from "src/sections/evals/hooks/useCompositeChildrenKeys";
@@ -154,6 +155,8 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
   const [outputType, setOutputType] = useState("pass_fail");
   const [passThreshold, setPassThreshold] = useState(0.5);
   const [choiceScores, setChoiceScores] = useState({});
+  const [decisionMapping, setDecisionMapping] = useState({});
+  const [agentMode, setAgentMode] = useState("agent");
   const [description, setDescription] = useState("");
   const [tags, setTags] = useState([]);
   const [fewShotExamples, setFewShotExamples] = useState([]);
@@ -307,6 +310,25 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
     })();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
+  const decision = useDecisionBinding({
+    model,
+    evalType,
+    outputType,
+    choiceScores,
+    mapping: decisionMapping,
+    messages: evalType === "llm" ? messages : [],
+    isComposite: mode === "composite",
+    config: {
+      few_shot_examples: fewShotExamples,
+      ...(evalType === "agent"
+        ? {
+            agent_mode: agentMode,
+            data_injection: dataInjectionFromContextOptions(contextOptions),
+          }
+        : {}),
+    },
+  });
+
   // Auto-save to draft
   const buildPayload = useCallback(
     () => ({
@@ -325,6 +347,8 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
           ? fewShotExamples.map((ds) => ({ id: ds.id, name: ds.name }))
           : undefined,
       template_format: templateFormat,
+      ...(decision.active ? decision.payload : {}),
+      mode: evalType === "agent" ? agentMode : undefined,
       data_injection:
         evalType === "agent"
           ? dataInjectionFromContextOptions(contextOptions)
@@ -343,13 +367,17 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
       fewShotExamples,
       templateFormat,
       contextOptions,
+      agentMode,
+      decision.active,
+      decision.payload,
     ],
   );
 
   const autoSaveTimer = useRef(null);
   const skipFirst = useRef(true);
   useEffect(() => {
-    if (!draftId) return;
+    // Do not autosave a half-authored rubric or incompatible typed setup.
+    if (!draftId || decision.blockedReason) return;
     if (skipFirst.current) {
       skipFirst.current = false;
       return;
@@ -361,10 +389,14 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
     return () => {
       if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current);
     };
-  }, [draftId, buildPayload]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [draftId, buildPayload, decision.blockedReason]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Test
   const handleTestEvaluation = useCallback(async () => {
+    if (decision.blockedReason) {
+      enqueueSnackbar(decision.blockedReason, { variant: "error" });
+      return;
+    }
     if (fagiLocked && evalType !== "code" && !model) {
       enqueueSnackbar("Please select a model.", { variant: "error" });
       setOpenModelMenuSignal((n) => n + 1);
@@ -393,6 +425,7 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
     updateDraft,
     handleTestResult,
     enqueueSnackbar,
+    decision.blockedReason,
   ]);
 
   const hasDataInjection = useMemo(
@@ -523,6 +556,10 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
 
   // Save & Add
   const handleSaveAndAdd = useCallback(async () => {
+    if (decision.blockedReason) {
+      enqueueSnackbar(decision.blockedReason, { variant: "error" });
+      return;
+    }
     if (agentEvalLocked && evalType === "agent") {
       enqueueSnackbar(
         "Agent evaluations aren't enabled for this workspace. Use LLM-as-a-Judge or Code evaluations instead.",
@@ -585,6 +622,13 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
         evalType,
         outputType,
         instructions,
+        ...(decision.active
+          ? {
+              ...decision.payload,
+              config: { model, ...decision.payload },
+              agent_mode: "quick",
+            }
+          : {}),
         data_injection:
           evalType === "agent"
             ? dataInjectionFromContextOptions(contextOptions)
@@ -619,6 +663,9 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
     source,
     onFiltersChange,
     localFilterForm,
+    decision.active,
+    decision.payload,
+    decision.blockedReason,
   ]);
 
   // Save & Add — composite branch. Composite templates are created via
@@ -710,13 +757,15 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
 
   const canSave = isComposite
     ? !!name.trim() && selectedChildren.length > 0
-    : name.trim() &&
+    : !decision.blockedReason &&
+      name.trim() &&
       (evalType === "code"
         ? code.trim()
         : instructions.trim() && !needsTemplateVariable) &&
       (source === "composite" || sourceReady || hasDataInjection);
 
   const getDisabledReason = () => {
+    if (!isComposite && decision.blockedReason) return decision.blockedReason;
     if (!name.trim()) return "Name is required";
     if (isComposite) {
       if (selectedChildren.length === 0) {
@@ -975,6 +1024,8 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
                 <>
                   <InstructionEditor
                     openModelMenuSignal={openModelMenuSignal}
+                    outputType={outputType}
+                    choiceCount={Object.keys(choiceScores || {}).length}
                     value={instructions}
                     onChange={handleInstructionsChange}
                     model={model}
@@ -984,6 +1035,8 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
                     datasetColumns={datasetColumns}
                     datasetJsonSchemas={datasetJsonSchemas}
                     mappedVariables={sourceMapping}
+                    mode={agentMode}
+                    onModeChange={setAgentMode}
                     activeContextOptions={contextOptions}
                     onActiveContextOptionsChange={setContextOptions}
                   />
@@ -998,15 +1051,12 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
               {/* LLM type */}
               {!isComposite && evalType === "llm" && (
                 <>
-                  <ModelSelector
+                  <LLMPromptEditor
                     model={model}
                     onModelChange={setModel}
-                    showMode={false}
-                    showPlus={false}
                     openModelMenuSignal={openModelMenuSignal}
-                  />
-                  <LLMPromptEditor
-                    openModelMenuSignal={openModelMenuSignal}
+                    outputType={outputType}
+                    choiceCount={Object.keys(choiceScores || {}).length}
                     messages={messages}
                     onMessagesChange={(msgs) => {
                       setMessages(msgs);
@@ -1019,6 +1069,8 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
                     datasetJsonSchemas={datasetJsonSchemas}
                   />
                   <FewShotExamples
+                    isJevModel={decision.active}
+                    modelLabel={decision.label}
                     selectedDatasets={fewShotExamples}
                     onChange={setFewShotExamples}
                   />
@@ -1091,6 +1143,8 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
                 ) : (
                   <>
                     <OutputTypeConfig
+                      isJevModel={decision.active}
+                      modelLabel={decision.label}
                       outputType={outputType}
                       onOutputTypeChange={handleOutputTypeChange}
                       choiceScores={choiceScores}
@@ -1110,6 +1164,31 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
                     )}
                   </>
                 ))}
+
+              {decision.active && (
+                <>
+                  <JevOutputConfig
+                    outputType={outputType}
+                    choiceScores={choiceScores}
+                    mapping={decisionMapping}
+                    onChange={setDecisionMapping}
+                    errors={decision.errors}
+                    locked={decision.locked}
+                    modelLabel={decision.label}
+                    hasExtraMessages={hasExtraJevMessages(
+                      evalType === "llm" ? messages : [],
+                    )}
+                  />
+                  {hasDataInjection && (
+                    <Button
+                      size="small"
+                      onClick={() => setContextOptions(["variables_only"])}
+                    >
+                      Use only mapped variables
+                    </Button>
+                  )}
+                </>
+              )}
 
               {/* Description — CompositeDetailPanel already has its own */}
               {!isComposite && (
@@ -1150,7 +1229,7 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
                 <Typography
                   variant="body2"
                   fontWeight={600}
-                  sx={{ fontSize: "13px" }}
+                  sx={{ fontSize: "12px" }}
                 >
                   {`${SOURCE_LABELS[source] || "Preview"} — ${isComposite ? "Composite Test" : "Variable Mapping"}`}
                 </Typography>
@@ -1199,7 +1278,7 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
                     ref={sourceRef}
                     templateId={draftId}
                     variables={isComposite ? compositeUnionKeys : variables}
-                    model={model}
+                    model={evalType === "code" ? "" : model}
                     onTestResult={handleTestResult}
                     onColumnsLoaded={handleColumnsLoaded}
                     initialDatasetId={sourceId}
@@ -1215,6 +1294,7 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
                   <TracingTestMode
                     ref={sourceRef}
                     templateId={draftId}
+                    model={evalType === "code" ? "" : model}
                     variables={isComposite ? compositeUnionKeys : variables}
                     onTestResult={handleTestResult}
                     onColumnsLoaded={handleColumnsLoaded}
@@ -1232,6 +1312,7 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
                   <TracingTestMode
                     ref={sourceRef}
                     templateId={draftId}
+                    model={evalType === "code" ? "" : model}
                     variables={isComposite ? compositeUnionKeys : variables}
                     onTestResult={handleTestResult}
                     onColumnsLoaded={handleColumnsLoaded}
@@ -1248,6 +1329,7 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
                   <SimulationTestMode
                     ref={sourceRef}
                     templateId={draftId}
+                    model={evalType === "code" ? "" : model}
                     variables={isComposite ? compositeUnionKeys : variables}
                     onTestResult={handleTestResult}
                     onColumnsLoaded={handleColumnsLoaded}

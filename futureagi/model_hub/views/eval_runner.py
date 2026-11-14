@@ -269,7 +269,7 @@ def bulk_update_or_create_cells(
     return len(cells_to_update), len(cells_to_create)
 
 
-def _is_knowledge_base_uuid(uuid_value):
+def _is_knowledge_base_uuid(uuid_value, dataset):
     """
     Check if a UUID value belongs to a KnowledgeBaseFile.
 
@@ -288,7 +288,17 @@ def _is_knowledge_base_uuid(uuid_value):
 
     # Check if it exists in KnowledgeBaseFile
     try:
-        return KnowledgeBaseFile.objects.filter(id=str(uuid_value)).exists()
+        workspace_scope = models.Q(workspace_id=dataset.workspace_id)
+        if dataset.workspace_id is None or dataset.workspace.is_default:
+            workspace_scope |= models.Q(workspace__isnull=True) | models.Q(
+                workspace__is_default=True,
+                workspace__organization_id=dataset.organization_id,
+            )
+        return KnowledgeBaseFile.no_workspace_objects.filter(
+            workspace_scope,
+            id=str(uuid_value),
+            organization_id=dataset.organization_id,
+        ).exists()
     except Exception:
         return False
 
@@ -388,7 +398,7 @@ def _resolve_column_reference(column_ref, dataset_id):
     """
     # Try as UUID first
     try:
-        return Column.objects.get(id=column_ref)
+        return Column.objects.get(id=column_ref, dataset_id=dataset_id)
     except (Column.DoesNotExist, ValueError):
         pass
 
@@ -536,7 +546,13 @@ def _resolve_special_value(value, row, runner):
         if not output_col:
             return None
         try:
-            cell = Cell.objects.get(column=output_col, row=row, deleted=False)
+            cell = Cell.objects.get(
+                column=output_col,
+                row=row,
+                deleted=False,
+                dataset_id=row.dataset_id,
+                column__dataset_id=row.dataset_id,
+            )
             if cell.status == CellStatus.ERROR.value:
                 raise ValueError(get_error_message("EVALUATION_NOT_FOR_ERROR_CELL"))
             return cell.value
@@ -635,14 +651,14 @@ def process_mapping(
                 if _is_special_mapping_value(item):
                     continue
                 data = item if str(item) != str(replace_column_id) else column_id
-                if data and not _is_knowledge_base_uuid(data):
+                if data and not _is_knowledge_base_uuid(data, row.dataset):
                     base_col_id, _ = _extract_column_id_and_path(str(data))
                     column_ids_to_fetch.add(str(base_col_id))
         else:
             if _is_special_mapping_value(value):
                 continue
             data = value if str(value) != str(replace_column_id) else column_id
-            if data and not _is_knowledge_base_uuid(data):
+            if data and not _is_knowledge_base_uuid(data, row.dataset):
                 base_col_id, _ = _extract_column_id_and_path(str(data))
                 column_ids_to_fetch.add(str(base_col_id))
 
@@ -650,7 +666,10 @@ def process_mapping(
     cells_by_column = {}
     if column_ids_to_fetch:
         cells = Cell.objects.filter(
-            column__id__in=column_ids_to_fetch, row=row
+            column__id__in=column_ids_to_fetch,
+            row=row,
+            column__dataset_id=row.dataset_id,
+            dataset_id=row.dataset_id,
         ).select_related("column")
         cells_by_column = {str(cell.column_id): cell for cell in cells}
 
@@ -673,7 +692,7 @@ def process_mapping(
                 try:
                     if data:
                         # Check if it's a KnowledgeBaseFile UUID
-                        if _is_knowledge_base_uuid(data):
+                        if _is_knowledge_base_uuid(data, row.dataset):
                             # Pass through UUID unchanged
                             data_list.append(str(data))
                         else:
@@ -722,12 +741,16 @@ def process_mapping(
                 eval_template_name == "prompt_instruction_adherence"
                 and key == "prompt"
                 and data
-                and not _is_knowledge_base_uuid(data)
+                and not _is_knowledge_base_uuid(data, row.dataset)
             ):
                 try:
                     base_col_id, _ = _extract_column_id_and_path(str(data))
-                    prompt_column = Column.objects.get(id=base_col_id)
-                    run_prompter = RunPrompter.objects.get(id=prompt_column.source_id)
+                    prompt_column = Column.objects.get(
+                        id=base_col_id, dataset_id=row.dataset_id
+                    )
+                    run_prompter = RunPrompter.objects.get(
+                        id=prompt_column.source_id, dataset_id=row.dataset_id
+                    )
 
                     system_messages = [
                         msg
@@ -753,7 +776,7 @@ def process_mapping(
             try:
                 if data:
                     # Check if it's a KnowledgeBaseFile UUID
-                    if _is_knowledge_base_uuid(data):
+                    if _is_knowledge_base_uuid(data, row.dataset):
                         # Pass through UUID unchanged
                         mapping.append(str(data))
                         required_field.append(key)
@@ -781,11 +804,13 @@ def process_mapping(
             if run_prompt_column:
                 if key == "output" and not mappings.get("input"):
                     # Skip if value is a KnowledgeBaseFile UUID
-                    if not _is_knowledge_base_uuid(value):
+                    if not _is_knowledge_base_uuid(value, row.dataset):
                         try:
-                            output_column = Column.objects.get(id=value)
+                            output_column = Column.objects.get(
+                                id=value, dataset_id=row.dataset_id
+                            )
                             prompt_column = RunPrompter.objects.get(
-                                id=output_column.source_id
+                                id=output_column.source_id, dataset_id=row.dataset_id
                             )
                             # Get the user prompt from messages
                             prompt = "\n".join(
@@ -845,6 +870,8 @@ class EvaluationRunner:
         self.cancel_event = cancel_event
         self.futureagi_eval = futureagi_eval
         self.dataset_feedback_groups = {}
+        self._optimizer_feedback_scope: tuple | None = None
+        self._optimizer_feedback_ids: list[str] = []
         self.df = None
         self.protect = protect
         self.protect_flash = protect_flash
@@ -876,12 +903,48 @@ class EvaluationRunner:
         Returns:
             List of processed few-shot examples
         """
-        # get_fewshots = RAG()
+        if self.eval_template is None:
+            return []
+        feedback_ids: list[str] | None = None
+        organization_id = self.organization_id
+        workspace_id = None
+        if self.optimize is not None:
+            from model_hub.utils.optimization_scope import optimization_feedback_ids
+
+            dataset = self.optimize.dataset
+            scope = (
+                dataset.id,
+                dataset.organization_id,
+                dataset.workspace_id,
+                dataset.deleted,
+                self.eval_template.id,
+            )
+            # One eligibility snapshot per runner. Feedback recalculation creates
+            # a new runner, so submitted corrections are included immediately.
+            if self._optimizer_feedback_scope != scope:
+                self._optimizer_feedback_ids = optimization_feedback_ids(
+                    dataset, self.eval_template.id
+                )
+                self._optimizer_feedback_scope = scope
+            feedback_ids = self._optimizer_feedback_ids
+            if not feedback_ids:
+                return []
+            organization_id = dataset.organization_id
+            # Eligible IDs include legacy default-workspace records. Private
+            # workspaces also retain the exact vector workspace predicate.
+            if dataset.workspace_id and not dataset.workspace.is_default:
+                workspace_id = dataset.workspace_id
         embedding_manager = EmbeddingManager()
+        if feedback_ids is not None:
+            from model_hub.utils.optimization_feedback import DatasetFeedbackVectorDB
+
+            # Searches return only vectors of this dataset's eligible feedback.
+            embedding_manager.db_client.close()
+            embedding_manager.db_client = DatasetFeedbackVectorDB(feedback_ids)
 
         all_examples = []
         try:
-            if not self.organization_id:
+            if not organization_id:
                 logger.warning(
                     "No organization_id available for filtering in get_few_shot_examples - returning empty examples"
                 )
@@ -893,9 +956,8 @@ class EvaluationRunner:
                 eval_id=self.eval_template.id,
                 inputs=mapping,
                 input_cols=required_field,
-                organization_id=self.organization_id,
-                # Feedback retrieval is org-scoped; writes still tag workspace_id.
-                workspace_id=None,
+                organization_id=organization_id,
+                workspace_id=workspace_id,
             )
             end_time = datetime.now()
             elapsed_time = (end_time - start_time).total_seconds()
@@ -1306,9 +1368,9 @@ class EvaluationRunner:
                     if base_col_id:
                         base_column_ids.append(base_col_id)
 
-            cols = Column.objects.filter(id__in=base_column_ids).values(
-                "id", "data_type"
-            )
+            cols = Column.objects.filter(
+                id__in=base_column_ids, dataset_id=row.dataset_id
+            ).values("id", "data_type")
             col_map = {str(col["id"]): col["data_type"] for col in cols}
             api_call_log_row = self._handle_api_call(row, mappings, config)
             (
@@ -1397,7 +1459,11 @@ class EvaluationRunner:
                 )
 
                 cell = Cell.objects.filter(
-                    column__id=self.replace_column_id, row=row, deleted=False
+                    column__id=self.replace_column_id,
+                    row=row,
+                    deleted=False,
+                    dataset_id=row.dataset_id,
+                    column__dataset_id=row.dataset_id,
                 ).first()
 
                 trigger_error_localization_for_column(
@@ -1656,8 +1722,12 @@ class EvaluationRunner:
         can_infer_prompt = False
         if run_prompt_column and col_ids:
             try:
-                output_col = Column.objects.get(id=col_ids[0])
-                RunPrompter.objects.get(id=output_col.source_id)
+                output_col = Column.objects.get(
+                    id=col_ids[0], dataset_id=self.user_eval_metric.dataset_id
+                )
+                RunPrompter.objects.get(
+                    id=output_col.source_id, dataset_id=self.user_eval_metric.dataset_id
+                )
                 can_infer_prompt = True
             except (Column.DoesNotExist, RunPrompter.DoesNotExist):
                 pass
@@ -1959,7 +2029,12 @@ class EvaluationRunner:
                                     f"Column '{column_ref}' not found in dataset"
                                 )
 
-                            cell = Cell.objects.get(column=column, row=row)
+                            cell = Cell.objects.get(
+                                column=column,
+                                row=row,
+                                dataset_id=row.dataset_id,
+                                column__dataset_id=row.dataset_id,
+                            )
                             if cell.status == CellStatus.ERROR.value:
                                 raise ValueError(
                                     get_error_message("EVALUATION_NOT_FOR_ERROR_CELL")
@@ -2177,7 +2252,7 @@ class EvaluationRunner:
             for item in items:
                 if not item:
                     continue
-                if _is_knowledge_base_uuid(item):
+                if _is_knowledge_base_uuid(item, row.dataset):
                     return True
                 base_col_id, _ = _extract_column_id_and_path(str(item))
                 if _resolve_column_reference(base_col_id, dataset_id):
@@ -2327,7 +2402,9 @@ class EvaluationRunner:
         binding_config = (
             self.user_eval_metric.config
             if self.user_eval_metric
-            else config if isinstance(config, dict) else None
+            else config
+            if isinstance(config, dict)
+            else None
         )
         _mapped = merge_code_eval_kwargs(_mapped, self.eval_template, binding_config)
 
@@ -2487,7 +2564,10 @@ class EvaluationRunner:
         # Batch fetch all cells in a single query with select_related
         if column_ids:
             cells = Cell.objects.filter(
-                column__id__in=column_ids, row=row
+                column__id__in=column_ids,
+                row=row,
+                dataset_id=row.dataset_id,
+                column__dataset_id=row.dataset_id,
             ).select_related("column")
             cells_by_column = {str(cell.column_id): cell for cell in cells}
 
@@ -2550,6 +2630,13 @@ class EvaluationRunner:
         if runtime_config is None and self.user_eval_metric:
             runtime_config = self.user_eval_metric.config
 
+        organization_id = self.organization_id
+        workspace_id = self.workspace_id
+        dataset = self.optimize.dataset if self.optimize is not None else self.dataset
+        if dataset is not None:
+            organization_id = dataset.organization_id
+            workspace_id = dataset.workspace_id
+
         instance, criteria = create_eval_instance(
             eval_class=self.eval_class,
             eval_template=self.eval_template,
@@ -2557,8 +2644,8 @@ class EvaluationRunner:
             model=model,
             kb_id=kb_id,
             runtime_config=runtime_config,
-            organization_id=str(self.organization_id) if self.organization_id else None,
-            workspace_id=str(self.workspace_id) if self.workspace_id else None,
+            organization_id=str(organization_id) if organization_id else None,
+            workspace_id=str(workspace_id) if workspace_id else None,
             version_number=self.version_number,
             is_futureagi=self.futureagi_eval,
         )
@@ -2631,12 +2718,16 @@ class EvaluationRunner:
             config["organization_id"] = (
                 str(self.eval_template.organization.id)
                 if self.eval_template.organization
-                else str(self.organization_id) if self.organization_id else None
+                else str(self.organization_id)
+                if self.organization_id
+                else None
             )
             config["workspace_id"] = (
                 str(self.eval_template.workspace.id)
                 if getattr(self.eval_template, "workspace", None)
-                else str(self.workspace_id) if self.workspace_id else None
+                else str(self.workspace_id)
+                if self.workspace_id
+                else None
             )
 
         elif eval_type_id == "CustomPromptEvaluator":

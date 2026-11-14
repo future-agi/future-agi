@@ -54,7 +54,10 @@ class AgentFixLaunchSerializer(serializers.Serializer):
     )
     # The fix's limit in credits; it covers the engine's model calls and the check runs.
     budget_credits = serializers.IntegerField(min_value=1, max_value=BUDGET_CREDITS_MAX)
-    max_minutes = serializers.IntegerField(min_value=1, max_value=MAX_MINUTES_MAX)
+    # Left out, the fix gets the run's launch-options defaults.max_minutes.
+    max_minutes = serializers.IntegerField(
+        min_value=1, max_value=MAX_MINUTES_MAX, required=False
+    )
 
 
 class AgentFixListQuerySerializer(serializers.Serializer):
@@ -427,6 +430,15 @@ class AgentFixEngineReportSerializer(serializers.Serializer):
     summary = serializers.CharField(required=False, allow_blank=True, default="")
     failure = AgentFixEngineFailureSerializer(required=False, allow_null=True)
     winner_candidate_id = serializers.UUIDField(required=False, allow_null=True)
+    lost_models = serializers.ListField(
+        child=serializers.CharField(max_length=200),
+        max_length=50,
+        required=False,
+        default=list,
+    )
+    last_error = serializers.CharField(
+        required=False, allow_null=True, allow_blank=True
+    )
 
 
 class AgentFixEngineStateSerializer(serializers.Serializer):

@@ -2308,7 +2308,9 @@ def test_exact_refresh_has_a_dedicated_minimal_temporal_queue():
         _ACTIVITY_WRAPPERS,
     )
     from tfc.temporal.drop_in.workflow import TaskRunnerWorkflow
+    from tfc.temporal.sql_workbench import SQLExecutionWorkflow, SQLRetentionWorkflow
     from tracer.services import exact_aggregation_cache as cache_module
+    from tracer.sql_workbench.tasks import execute_sql, purge_expired_sql_results
     from tracer.tasks.exact_aggregation import (
         EXACT_AGGREGATION_TASK_QUEUE,
         refresh_exact_aggregation_snapshot,
@@ -2334,10 +2336,25 @@ def test_exact_refresh_has_a_dedicated_minimal_temporal_queue():
         metadata["schedule_to_start_timeout"] + metadata["time_limit"]
     )
     assert "tracer.tasks" in TEMPORAL_ACTIVITY_MODULES
-    assert get_workflows_for_queue(EXACT_AGGREGATION_TASK_QUEUE) == [TaskRunnerWorkflow]
-    assert get_activities_for_queue(EXACT_AGGREGATION_TASK_QUEUE) == [
-        _ACTIVITY_WRAPPERS[refresh_exact_aggregation_snapshot.name]
-    ]
+    assert set(get_workflows_for_queue(EXACT_AGGREGATION_TASK_QUEUE)) == {
+        TaskRunnerWorkflow,
+        SQLExecutionWorkflow,
+        SQLRetentionWorkflow,
+    }
+    # SQL workflows use this control queue but never its single scan slot.
+    admitted_tasks = (refresh_exact_aggregation_snapshot,)
+    registered_activities = get_activities_for_queue(EXACT_AGGREGATION_TASK_QUEUE)
+    admitted_activities = {_ACTIVITY_WRAPPERS[task.name] for task in admitted_tasks}
+    assert {_ACTIVITY_REGISTRY[task.name]["queue"] for task in admitted_tasks} == {
+        EXACT_AGGREGATION_TASK_QUEUE
+    }
+    assert set(registered_activities) == admitted_activities
+    assert _ACTIVITY_WRAPPERS[execute_sql.name] in get_activities_for_queue(
+        "sql_workbench"
+    )
+    assert _ACTIVITY_WRAPPERS[
+        purge_expired_sql_results.name
+    ] in get_activities_for_queue("tasks_s")
     # Keep the activity registered on the former generic queue during rollout
     # so already-scheduled workflows can finish on an old queue worker. New
     # dispatches are asserted above to target only the admitted queue.
@@ -2351,9 +2368,7 @@ def test_exact_refresh_has_a_dedicated_minimal_temporal_queue():
         "agent_compass",
         "trace_ingestion",
     ):
-        assert _ACTIVITY_WRAPPERS[
-            refresh_exact_aggregation_snapshot.name
-        ] not in get_activities_for_queue(generic_queue)
+        assert admitted_activities.isdisjoint(get_activities_for_queue(generic_queue))
     assert (
         cache_module._refresh_dispatch_seconds()
         > EXACT_AGGREGATION_SCHEDULE_TO_START_TIMEOUT_SECONDS
