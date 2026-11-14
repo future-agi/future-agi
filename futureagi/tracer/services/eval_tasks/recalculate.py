@@ -585,24 +585,27 @@ def drop_pending_entries(entries) -> int:
     config and revalidation drops — so a requeued replacement dropped by any
     of them gets the same put-back rule (``put_back_dropped_replacements``)
     rather than finalizing the previous result's retirement. Runs in the
-    caller's transaction. Returns how many entries it retired."""
+    caller's transaction. Returns how many entries it retired.
+
+    Only the replacements (a handful: the open recalculations) are read into
+    Python; the rest stays one filtered soft delete, so a task-wide drop
+    does not become id lists of every entry."""
     # Primary: a lagging replica may not show a just-requeued replacement.
-    ids = list(entries.using("default").values_list("pk", flat=True))
-    if not ids:
-        return 0
-    # Replacements are finished by put_back_dropped_replacements alone, even
-    # when it skips one (claimed, or its row held elsewhere).
-    journaled = set(
+    entries = entries.using("default")
+    journaled = list(
         _journal()
-        .filter(replacement_id__in=ids)
+        .filter(replacement_id__in=entries.values("pk"))
         .values_list("replacement_id", flat=True)
     )
-    retired = put_back_dropped_replacements(ids)
-    rest = [pk for pk in ids if pk not in journaled]
-    # Still PENDING: an entry the drain claimed since it was chosen runs on.
-    return retired + soft_delete_eval_results(
-        _rows().filter(pk__in=rest, deleted=False, status=EvalEntryStatus.PENDING)
+    retired = put_back_dropped_replacements(journaled) if journaled else 0
+    # Replacements are finished by put_back_dropped_replacements alone, even
+    # when it skips one (claimed, or its row held elsewhere): each statement
+    # leaves out any entry that has an EvalRecalculation row. Still PENDING:
+    # an entry the drain claimed since it was chosen runs on.
+    rest = entries.filter(deleted=False, status=EvalEntryStatus.PENDING).exclude(
+        Exists(_journal().filter(replacement_id=OuterRef("pk")))
     )
+    return retired + soft_delete_eval_results(rest)
 
 
 # -- results with no eval task ------------------------------------------------

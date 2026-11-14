@@ -2170,6 +2170,82 @@ def test_reconcile_drop_leaves_entries_the_drain_claimed_meanwhile(
     assert _recalculation_rows().count() == 1
 
 
+def test_task_wide_drop_is_one_filtered_delete_not_id_lists(
+    replica,
+    auth_client,
+    user,
+    observation_span,
+    custom_eval_config,
+    eval_task,
+    monkeypatch,
+):
+    """A task-wide drop (the sampling reconcile's policy-version drop) of
+    many pending entries, one of them a requeued Recalculate replacement:
+    the replacement's previous result comes back and every other entry is
+    retired, without any statement listing the dropped entries' ids."""
+    from django.db import connections, transaction
+    from django.test.utils import CaptureQueriesContext
+
+    from tracer.models.observation_span import ObservationSpan as Span
+    from tracer.services.eval_tasks.recalculate import drop_pending_entries
+
+    previous, replacement_id, _issue, member = _crashed_recalculation(
+        monkeypatch,
+        auth_client,
+        user,
+        replica,
+        eval_task,
+        observation_span,
+        custom_eval_config,
+    )
+    EvalLogger.objects.using("default").filter(pk=replacement_id).update(
+        status=EvalEntryStatus.PENDING, attempts=1
+    )
+    pending = [
+        _task_result(
+            eval_task,
+            Span.objects.using("default").create(
+                id=f"{observation_span.id}-p{i}",
+                project=observation_span.project,
+                trace=observation_span.trace,
+                name=f"pending span {i}",
+                observation_type="llm",
+            ),
+            custom_eval_config,
+            status=EvalEntryStatus.PENDING,
+        )
+        for i in range(12)
+    ]
+
+    with (
+        CaptureQueriesContext(connections["default"]) as queries,
+        transaction.atomic(),
+    ):
+        dropped = drop_pending_entries(
+            EvalLogger.objects.filter(
+                eval_task_id=str(eval_task.id), status=EvalEntryStatus.PENDING
+            )
+        )
+
+    assert dropped == len(pending) + 1
+    assert all(_stored(entry.pk).deleted for entry in pending)
+    assert _stored(replacement_id).deleted is True
+    assert [row.pk for row in _live(observation_span, custom_eval_config)] == [
+        previous.pk
+    ]
+    assert _membership(member).deleted is False
+    assert not _recalculation_rows().exists()
+    listed = [
+        entry.pk
+        for entry in pending
+        if any(
+            str(entry.pk) in q["sql"] or entry.pk.hex in q["sql"]
+            for q in queries.captured_queries
+        )
+    ]
+    assert listed == []
+
+
 # -- round 9: Recalculate on a result with no eval task -------------------------
 
 
