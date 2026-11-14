@@ -44,6 +44,10 @@ class AgentccWebhook(BaseModel):
     delivery_lease_until = models.DateTimeField(null=True, blank=True)
     # A run that stopped on failures pauses the webhook's next run until then.
     next_delivery_at = models.DateTimeField(null=True, blank=True)
+    # When the dispatcher last started a delivery run for it. Slots rotate by
+    # it (least recently served first), and a run releases its lease only
+    # while this still names its own start.
+    last_run_started_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         db_table = "agentcc_webhook"
@@ -110,6 +114,9 @@ class AgentccWebhookEvent(BaseModel):
     last_response_code = models.IntegerField(null=True, blank=True)
     last_error = models.TextField(blank=True, default="")
     next_retry_at = models.DateTimeField(null=True, blank=True)
+    # When it was last queued again by hand (Retry). The pending age limit
+    # counts from the later of this and created_at.
+    requeued_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         db_table = "agentcc_webhook_event"

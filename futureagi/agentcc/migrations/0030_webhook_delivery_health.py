@@ -53,6 +53,16 @@ class Migration(migrations.Migration):
             name="next_delivery_at",
             field=models.DateTimeField(blank=True, null=True),
         ),
+        migrations.AddField(
+            model_name="agentccwebhook",
+            name="last_run_started_at",
+            field=models.DateTimeField(blank=True, null=True),
+        ),
+        migrations.AddField(
+            model_name="agentccwebhookevent",
+            name="requeued_at",
+            field=models.DateTimeField(blank=True, null=True),
+        ),
         migrations.AlterField(
             model_name="agentccwebhookevent",
             name="status",

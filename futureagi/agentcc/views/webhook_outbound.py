@@ -87,10 +87,18 @@ class AgentccWebhookViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
             if not serializer.is_valid():
                 return self._gm.bad_request(serializer.errors)
             was_active = instance.is_active
+            receiver_before = (instance.url, instance.secret, instance.headers)
             # Saves only the fields the request set: the health counters
             # change concurrently in delivery runs and must not be written
             # back from the copy read at the start of this request.
             webhook = serializer.save()
+            if (webhook.url, webhook.secret, webhook.headers) != receiver_before:
+                # The receiver was fixed: a failing run's pause is over, and
+                # the next tick delivers to it.
+                AgentccWebhook.all_objects.filter(pk=webhook.pk).update(
+                    next_delivery_at=None
+                )
+                webhook.refresh_from_db()
             if webhook.is_active and not was_active:
                 # Turned back on: the failure streak, its reason and any pause
                 # are history. Its pending events go out on the next tick.
@@ -268,15 +276,21 @@ class AgentccWebhookEventViewSet(
             if not webhook.is_active:
                 return self._gm.bad_request("Enable the webhook before retrying")
 
+            now = timezone.now()
             instance.status = AgentccWebhookEvent.PENDING
             instance.attempts = 0
-            instance.next_retry_at = None
+            # Due now, and the pending age limit counts from this re-queue: an
+            # event retried after the limit is delivered (and backed off on a
+            # failure), not expired.
+            instance.next_retry_at = now
+            instance.requeued_at = now
             instance.last_error = ""
             instance.save(
                 update_fields=[
                     "status",
                     "attempts",
                     "next_retry_at",
+                    "requeued_at",
                     "last_error",
                     "updated_at",
                 ]

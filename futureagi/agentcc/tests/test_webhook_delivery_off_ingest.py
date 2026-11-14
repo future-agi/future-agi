@@ -408,9 +408,14 @@ class TestDispatcher:
         _events(due_b, 1)
         _events(later, 2, next_retry_at=timezone.now() + timedelta(minutes=5))
 
-        with patch.object(
-            webhook_delivery.deliver_webhook_activity, "apply_async"
-        ) as start:
+        from django.test import override_settings
+
+        with (
+            override_settings(AGENTCC_WEBHOOK_MAX_CONCURRENT_DELIVERIES_PER_ORG=0),
+            patch.object(
+                webhook_delivery.deliver_webhook_activity, "apply_async"
+            ) as start,
+        ):
             result = dispatch_webhook_deliveries_activity._original_func()
 
         assert result == {"webhooks": 2, "started": 2, "running": 0, "waiting": 0}
@@ -426,10 +431,15 @@ class TestDispatcher:
         _events(first, 1)
         _events(second, 1)
 
-        with patch.object(
-            webhook_delivery.deliver_webhook_activity,
-            "apply_async",
-            side_effect=[RuntimeError("temporal down"), None],
+        from django.test import override_settings
+
+        with (
+            override_settings(AGENTCC_WEBHOOK_MAX_CONCURRENT_DELIVERIES_PER_ORG=0),
+            patch.object(
+                webhook_delivery.deliver_webhook_activity,
+                "apply_async",
+                side_effect=[RuntimeError("temporal down"), None],
+            ),
         ):
             result = dispatch_webhook_deliveries_activity._original_func()
 
@@ -759,7 +769,10 @@ class TestDeliveryConcurrencyCap:
         for i, hook in enumerate(hooks):
             _events(hook, 2, start_minutes_ago=60 - i)
 
-        with override_settings(AGENTCC_WEBHOOK_MAX_CONCURRENT_DELIVERIES=2):
+        with override_settings(
+            AGENTCC_WEBHOOK_MAX_CONCURRENT_DELIVERIES=2,
+            AGENTCC_WEBHOOK_MAX_CONCURRENT_DELIVERIES_PER_ORG=0,
+        ):
             first, started = self._dispatch()
             # Oldest waiting events first.
             assert started == [str(hooks[0].pk), str(hooks[1].pk)]
@@ -778,7 +791,9 @@ class TestDeliveryConcurrencyCap:
             assert started == [str(hooks[2].pk)]
             assert third["running"] == 1
 
-    def test_webhooks_that_are_not_failing_go_first(self, organization):
+    def test_a_failure_streak_does_not_put_a_webhook_last(self, organization):
+        """Round 3: a failing webhook out of its pause takes its turn like any
+        other (here its event waited longest); only the pause throttles it."""
         from django.test import override_settings
 
         failing = _webhook(
@@ -791,7 +806,7 @@ class TestDeliveryConcurrencyCap:
         with override_settings(AGENTCC_WEBHOOK_MAX_CONCURRENT_DELIVERIES=1):
             _, started = self._dispatch()
 
-        assert started == [str(healthy.pk)]
+        assert started == [str(failing.pk)]
 
     def test_paused_inactive_and_deleted_webhooks_get_no_run(self, organization):
         paused = _webhook(
@@ -914,3 +929,286 @@ class TestARunStopsWhenItDisablesTheWebhook:
         assert result["failed"] == 1
         webhook.refresh_from_db()
         assert webhook.is_active is False
+
+
+@pytest.mark.integration
+class TestFairDeliverySlots:
+    """Round 3: slots rotate across orgs and webhooks, one org cannot hold
+    them all, a failing webhook still gets its turn, and a run that ends
+    hands its slot on at once."""
+
+    def _dispatch(self):
+        with patch.object(
+            webhook_delivery.deliver_webhook_activity, "apply_async"
+        ) as start:
+            dispatch_webhook_deliveries_activity._original_func()
+        return [c.kwargs["args"][0] for c in start.call_args_list]
+
+    def _run(self, webhook_id, status_by_url):
+        with patch(SESSION, return_value=_session(status_by_url)), patch(URL_CHECK):
+            deliver_webhook(webhook_id, release_lease=True)
+
+    def test_a_failing_webhook_gets_a_run_while_healthy_ones_stay_busy(
+        self, organization
+    ):
+        from django.test import override_settings
+
+        failing_url, healthy_url = "https://a.example.com/x", "https://b.example.com/x"
+        failing = _webhook(organization, "failing", failing_url, consecutive_failures=1)
+        healthy = _webhook(organization, "healthy", healthy_url)
+        _events(failing, 1, start_minutes_ago=30)
+        dispatched = []
+        with override_settings(AGENTCC_WEBHOOK_MAX_CONCURRENT_DELIVERIES=1):
+            for _tick in range(4):
+                # The healthy webhook has a new event at every tick.
+                _events(healthy, 1, start_minutes_ago=0)
+                started = self._dispatch()
+                dispatched += started
+                for webhook_id in started:
+                    self._run(webhook_id, {failing_url: 502, healthy_url: 200})
+
+        assert str(failing.pk) in dispatched
+
+    def test_one_org_with_slow_backlogged_webhooks_cannot_take_every_slot(
+        self, organization
+    ):
+        from accounts.models.organization import Organization
+
+        other_org = Organization.objects.create(name="Other org")
+        slow = [
+            _webhook(organization, f"slow-{i}", f"https://slow{i}.example.com/x")
+            for i in range(3)
+        ]
+        for hook in slow:
+            _events(hook, 5, start_minutes_ago=120)
+        waiting = _webhook(other_org, "waiting", "https://other.example.com/x")
+        _events(waiting, 1, start_minutes_ago=1)
+        slow_ids = {str(hook.pk) for hook in slow}
+
+        started = self._dispatch()  # the default cap: 3 in all, 1 per org
+
+        assert str(waiting.pk) in started
+        assert len(slow_ids & set(started)) == 1
+        # The slow org's run still holds its slot: the next tick gives that
+        # org no second run.
+        assert not slow_ids & set(self._dispatch())
+
+    def test_a_run_rotates_to_the_webhook_that_waited_since_its_last_run(
+        self, organization
+    ):
+        from django.test import override_settings
+
+        url_a, url_b = "https://a.example.com/x", "https://b.example.com/x"
+        busy = _webhook(organization, "busy", url_a)
+        other = _webhook(organization, "other", url_b)
+        _events(busy, 1, start_minutes_ago=120)
+        _events(other, 1, start_minutes_ago=5)
+        with override_settings(AGENTCC_WEBHOOK_MAX_CONCURRENT_DELIVERIES=1):
+            assert self._dispatch() == [str(busy.pk)]
+            self._run(busy.pk, {url_a: 200})
+            # Its backlog is refilled with events older than the other's.
+            _events(busy, 3, start_minutes_ago=110)
+
+            assert self._dispatch() == [str(other.pk)]
+
+    def test_a_run_that_ends_starts_the_next_waiting_webhook(self, organization):
+        from django.test import override_settings
+
+        url_a, url_b = "https://a.example.com/x", "https://b.example.com/x"
+        first = _webhook(organization, "first", url_a)
+        second = _webhook(organization, "second", url_b)
+        _events(first, 1, start_minutes_ago=30)
+        _events(second, 1, start_minutes_ago=20)
+        with override_settings(
+            AGENTCC_WEBHOOK_MAX_CONCURRENT_DELIVERIES=1,
+            AGENTCC_WEBHOOK_MAX_CONCURRENT_DELIVERIES_PER_ORG=0,
+        ):
+            assert self._dispatch() == [str(first.pk)]
+            with (
+                patch(SESSION, return_value=_session({url_a: 200})),
+                patch(URL_CHECK),
+                patch.object(
+                    webhook_delivery.deliver_webhook_activity, "apply_async"
+                ) as start,
+            ):
+                webhook_delivery.deliver_webhook_activity._original_func(str(first.pk))
+
+        assert [c.kwargs["args"][0] for c in start.call_args_list] == [str(second.pk)]
+
+    def test_the_per_org_cap_and_run_budget_are_settings(self, organization):
+        from django.conf import settings
+        from django.test import override_settings
+
+        assert settings.AGENTCC_WEBHOOK_MAX_CONCURRENT_DELIVERIES_PER_ORG == 1
+        assert settings.AGENTCC_WEBHOOK_RUN_BUDGET_SECONDS == 60
+        hooks = [
+            _webhook(organization, f"h-{i}", f"https://h{i}.example.com/x")
+            for i in range(3)
+        ]
+        for hook in hooks:
+            _events(hook, 1)
+        with override_settings(AGENTCC_WEBHOOK_MAX_CONCURRENT_DELIVERIES_PER_ORG=0):
+            assert len(self._dispatch()) == 3
+
+    @patch(URL_CHECK)
+    @patch(SESSION)
+    def test_a_run_uses_the_run_budget_setting(
+        self, mock_session, _mock_url_check, organization
+    ):
+        from django.test import override_settings
+
+        url = "https://hooks.example.com/slowish"
+        mock_session.return_value = _session({url: 200}, sleep_by_url={url: 0.4})
+        webhook = _webhook(organization, "budgeted", url)
+        _events(webhook, 10)
+
+        with override_settings(AGENTCC_WEBHOOK_RUN_BUDGET_SECONDS=1):
+            result = deliver_webhook(webhook.pk)
+
+        assert 1 <= result["delivered"] < 10
+
+
+@pytest.mark.integration
+def test_a_stale_run_does_not_free_a_newer_runs_lease(organization):
+    """Round 3: a run that outlived its lease while the webhook was
+    dispatched again holds a stale token; ending it leaves the newer run's
+    lease alone."""
+    url = "https://hooks.example.com/ok"
+    webhook = _webhook(organization, "re-dispatched", url)
+    _events(webhook, 1)
+    stale = timezone.now() - timedelta(minutes=5)
+    newer = timezone.now()
+    newer_until = newer + timedelta(seconds=100)
+    AgentccWebhook.all_objects.filter(pk=webhook.pk).update(
+        last_run_started_at=newer, delivery_lease_until=newer_until
+    )
+
+    with (
+        patch(SESSION, return_value=_session({url: 200})),
+        patch(URL_CHECK),
+        patch.object(webhook_delivery.deliver_webhook_activity, "apply_async"),
+    ):
+        webhook_delivery.deliver_webhook_activity._original_func(
+            str(webhook.pk), stale.isoformat()
+        )
+
+    webhook.refresh_from_db()
+    assert webhook.delivery_lease_until == newer_until
+
+
+@pytest.mark.integration
+def test_a_stale_run_does_not_change_a_newer_runs_pause(organization):
+    """Round 3 review: a run that outlived its lease and ends after a newer
+    run paused the webhook neither clears that pause nor sets its own."""
+    url = "https://hooks.example.com/ok"
+    webhook = _webhook(organization, "re-dispatched", url)
+    _events(webhook, 1)
+    stale = timezone.now() - timedelta(minutes=5)
+    newer_pause = timezone.now() + timedelta(minutes=3)
+    AgentccWebhook.all_objects.filter(pk=webhook.pk).update(
+        last_run_started_at=timezone.now(), next_delivery_at=newer_pause
+    )
+
+    with patch(SESSION, return_value=_session({url: 200})), patch(URL_CHECK):
+        deliver_webhook(webhook.pk, release_lease=True, run_token=stale)
+
+    webhook.refresh_from_db()
+    assert webhook.next_delivery_at == newer_pause
+
+
+@pytest.mark.integration
+def test_a_run_against_the_old_receiver_does_not_pause_the_fixed_one(organization):
+    """Round 3 review: the owner fixes the URL while a run is still posting
+    to the old one; that run's failure does not pause the fixed receiver."""
+    old_url, new_url = "https://old.example.com/x", "https://new.example.com/x"
+    webhook = _webhook(organization, "being-fixed", old_url)
+    _events(webhook, 1)
+
+    def post(*args, **kwargs):
+        # The PATCH lands while this POST is in flight.
+        AgentccWebhook.all_objects.filter(pk=webhook.pk).update(
+            url=new_url, next_delivery_at=None
+        )
+        raise webhook_delivery.http_requests.ConnectionError("refused")
+
+    http = MagicMock()
+    http.post.side_effect = post
+    with patch(SESSION, return_value=http), patch(URL_CHECK):
+        deliver_webhook(webhook.pk)
+
+    webhook.refresh_from_db()
+    assert webhook.next_delivery_at is None
+
+
+@pytest.mark.integration
+def test_a_finishing_run_does_not_redispatch_its_own_webhook(organization):
+    """Round 3 review: the redispatch at the end of a run happens while its
+    workflow still exists, so the fixed workflow id would reuse it and strand
+    a fresh lease. It leaves its own webhook to the next tick and starts the
+    next other one."""
+    from django.test import override_settings
+
+    url_a, url_b = "https://a.example.com/x", "https://b.example.com/x"
+    busy = _webhook(organization, "busy", url_a)
+    other = _webhook(organization, "other", url_b)
+    _events(busy, 5, start_minutes_ago=30)
+    _events(other, 1, start_minutes_ago=20)
+    with override_settings(
+        AGENTCC_WEBHOOK_MAX_CONCURRENT_DELIVERIES=2,
+        AGENTCC_WEBHOOK_MAX_CONCURRENT_DELIVERIES_PER_ORG=0,
+    ):
+        with (
+            patch.object(
+                webhook_delivery.deliver_webhook_activity, "apply_async"
+            ) as start,
+            # A run that ends on its budget with "busy" still holding due
+            # events: it only ends the run and releases its lease.
+            patch.object(
+                webhook_delivery,
+                "deliver_webhook",
+                side_effect=lambda webhook_id, release_lease, run_token: (
+                    webhook_delivery._end_run(webhook_id, False, True, run_token) and {}
+                ),
+            ),
+        ):
+            webhook_delivery.deliver_webhook_activity._original_func(str(busy.pk))
+
+    started = [c.kwargs["args"][0] for c in start.call_args_list]
+    assert started == [str(other.pk)]
+    busy.refresh_from_db()
+    assert busy.delivery_lease_until is None
+
+
+@pytest.mark.integration
+def test_nul_in_a_logged_request_still_creates_its_webhook_event_and_session(
+    organization,
+):
+    """Round 3 review: the webhook payload and the session are built from the
+    cleaned entry too, so a NUL from the caller costs neither."""
+    from agentcc.models import AgentccSession
+
+    webhook = _webhook(organization, "nul", "https://hooks.example.com/x")
+    AgentccAPIKey.objects.create(
+        gateway_key_id="nul-key", name="nul-key", organization=organization
+    )
+
+    stored = ingest_request_logs(
+        [
+            {
+                "request_id": "nul-req",
+                "model": "gpt-4o",
+                "status_code": 200,
+                "auth_key_id": "nul-key",
+                "error_message": "bad\x00byte",
+                "session_id": "sess\x00ion",
+                "metadata": {"note": "a\x00b"},
+            }
+        ]
+    )
+
+    assert stored == 1
+    (event,) = AgentccWebhookEvent.all_objects.filter(webhook=webhook)
+    assert "\x00" not in str(event.payload)
+    assert AgentccSession.no_workspace_objects.filter(
+        organization=organization, session_id="session"
+    ).exists()

@@ -1789,9 +1789,16 @@ With Prometheus enabled, monitor
 
 Outbound gateway webhooks are delivered by the background Temporal schedule
 `agentcc-webhook-delivery` about every 10 seconds, not during log ingest.
-A failing webhook delays only its own events. Delivery runs share the
-worker's `default` queue with evals, experiments and alert emails, so at most
-`AGENTCC_WEBHOOK_MAX_CONCURRENT_DELIVERIES` run at once. A run goes on past a
+Delivery runs share the worker's `default` queue with evals, experiments and
+alert emails, so at most `AGENTCC_WEBHOOK_MAX_CONCURRENT_DELIVERIES` run at
+once across the install, and at most
+`AGENTCC_WEBHOOK_MAX_CONCURRENT_DELIVERIES_PER_ORG` of one organization's.
+Free slots go round robin over organizations, then over each organization's
+webhooks, the least recently served first, so one tenant's slow or
+backlogged receivers cannot hold every slot. A failing webhook waits out its
+pause and then takes its turn. A run yields its slot after
+`AGENTCC_WEBHOOK_RUN_BUDGET_SECONDS`, and a run that ends starts the next
+waiting webhook's run at once. A run goes on past a
 failed attempt (that event retries after 30 s, doubling, and is dead-lettered
 after 5 attempts) and stops when the receiver looks down: no HTTP answer, or 3
 failures in a row. That webhook's next run then waits 10 seconds, doubling
@@ -1937,6 +1944,18 @@ and those older than `AGENTCC_WEBHOOK_PENDING_MAX_AGE_HOURS` expire.
     default = "`3`"
     setups = ["S", "D", "H"]
     text = "Worker: most gateway webhook delivery runs in flight at once, across all webhooks; they share the `default` queue's activity slots (`TEMPORAL_MAX_CONCURRENT_ACTIVITIES`) with other background work. `0` means no limit. Helm: `config.extraEnv`."
+
+    [[part.section.row]]
+    keys = ["AGENTCC_WEBHOOK_MAX_CONCURRENT_DELIVERIES_PER_ORG"]
+    default = "`1`"
+    setups = ["S", "D", "H"]
+    text = "Worker: most gateway webhook delivery runs in flight at once for one organization's webhooks, within `AGENTCC_WEBHOOK_MAX_CONCURRENT_DELIVERIES`, so one tenant cannot hold every delivery slot. `0` means no per-organization limit. Helm: `config.extraEnv`."
+
+    [[part.section.row]]
+    keys = ["AGENTCC_WEBHOOK_RUN_BUDGET_SECONDS"]
+    default = "`60`"
+    setups = ["S", "D", "H"]
+    text = "Worker: seconds one webhook delivery run keeps starting POSTs before it yields its slot to the next webhook in turn; a POST in flight then takes at most 13 seconds more. `1` to `90`. Helm: `config.extraEnv`."
 
     [[part.section.row]]
     keys = ["APP_VERSION"]

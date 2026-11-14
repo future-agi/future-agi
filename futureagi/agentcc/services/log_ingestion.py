@@ -4,7 +4,7 @@ from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 
 import structlog
-from django.db import DatabaseError, InterfaceError, OperationalError, transaction
+from django.db import DataError, IntegrityError, transaction
 
 from agentcc.models import AgentccAPIKey, AgentccRequestLog, AgentccSession
 
@@ -193,9 +193,27 @@ def _parse_datetime(value):
         return None
 
 
+def _strip_nul(value):
+    """``value`` without NUL characters, in every string of a JSON value.
+
+    PostgreSQL text and jsonb cannot hold NUL, and the gateway copies some
+    fields and the bodies from the caller unchecked: a NUL there would make
+    the database refuse the request's row (and with it its metering and
+    webhooks).
+    """
+    if isinstance(value, str):
+        return value.replace("\x00", "") if "\x00" in value else value
+    if isinstance(value, dict):
+        return {_strip_nul(k): _strip_nul(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_strip_nul(item) for item in value]
+    return value
+
+
 def _truncate_json(value, max_size=MAX_BODY_SIZE):
     if value is None:
         return None
+    value = _strip_nul(value)
     serialized = json.dumps(value)
     if len(serialized) <= max_size:
         return value
@@ -206,6 +224,7 @@ def _sanitize_session_id(sid):
     """Return the session ID unchanged, or empty string if it exceeds the DB column length."""
     if not sid:
         return ""
+    sid = _strip_nul(str(sid))
     if len(sid) > MAX_SESSION_ID_LEN:
         logger.warning(
             "session_id_too_long_in_request_log",
@@ -224,13 +243,13 @@ def _bounded(value, max_length):
     """
     if value is None:
         return ""
-    value = str(value)
-    return value[:max_length]
+    return _strip_nul(str(value))[:max_length]
 
 
 def _sanitize_headers(headers):
     if not headers or not isinstance(headers, dict):
-        return headers
+        return _strip_nul(headers)
+    headers = _strip_nul(headers)
     sensitive_keys = {"authorization", "x-api-key", "api-key", "x-auth-token"}
     return {k: "***" if k.lower() in sensitive_keys else v for k, v in headers.items()}
 
@@ -327,16 +346,24 @@ def _compute_cost(entry):
     return 0
 
 
+# A refused chunk this small is tried one row at a time instead of halved.
+ROW_BY_ROW_AT_MOST = 8
+
+
 def _store_request_logs(objects):
     """Insert the rows, skipping only the ones the database refuses.
 
     A row the database refuses (a value too long for its column, a NUL byte
     in text, a duplicate key outside ``ignore_conflicts``) fails the whole
-    INSERT. The batch is then split in halves until each refused row is on
-    its own, so one bad entry costs only itself, not every org's rows in the
-    gateway batch. A lost connection or other operational error is not a
-    row's fault: it propagates, and the gateway sends the batch again.
-    Returns the number of rows refused.
+    INSERT. The batch is then split in halves, and a chunk of at most
+    ``ROW_BY_ROW_AT_MOST`` rows is tried one row at a time, until each
+    refused row is on its own, so one bad entry costs only itself, not every
+    org's rows in the gateway batch. Only errors about a row's values split the batch
+    (DataError, IntegrityError, and a value Django cannot adapt). Any other
+    database error (a lost connection, a permission or read-only failure, a
+    schema mismatch) would hit every row: it propagates once, and the
+    gateway sends the batch again. Returns the number of rows refused; each
+    is logged by request ID and error type, never its content.
     """
     try:
         with transaction.atomic():
@@ -344,17 +371,19 @@ def _store_request_logs(objects):
                 objects, ignore_conflicts=True
             )
         return 0
-    except (OperationalError, InterfaceError):
-        raise
-    except (DatabaseError, ValueError, TypeError) as exc:
+    except (DataError, IntegrityError, ValueError, TypeError) as exc:
         if len(objects) == 1:
+            # The error text can quote the row's values: log only its type.
             logger.warning(
                 "request_log_entry_refused",
                 request_id=str(objects[0].request_id)[:255],
                 error_type=type(exc).__name__,
-                error=str(exc)[:300],
             )
             return 1
+        if len(objects) <= ROW_BY_ROW_AT_MOST:
+            # Halving all the way down costs 2n-1 INSERTs when every row is
+            # refused; a small chunk is cheaper one row at a time.
+            return sum(_store_request_logs([obj]) for obj in objects)
         middle = len(objects) // 2
         return _store_request_logs(objects[:middle]) + _store_request_logs(
             objects[middle:]
@@ -377,10 +406,14 @@ def _ingest_org_logs(org, logs):
     objects = []
     entries = []
     for entry in logs:
+        # Everything built from the entry (its row, webhook payloads, alerts,
+        # sessions) uses the cleaned copy: PostgreSQL text and jsonb refuse
+        # NUL, and a refused webhook insert would abort the rest.
+        entry = _strip_nul(entry)
         try:
             obj = AgentccRequestLog(
                 organization=org,
-                request_id=entry.get("request_id", ""),
+                request_id=_strip_nul(entry.get("request_id", "")),
                 model=_bounded(entry.get("model", ""), 255),
                 provider=_bounded(entry.get("provider", ""), 255),
                 resolved_model=_bounded(entry.get("resolved_model", ""), 255),
@@ -400,7 +433,7 @@ def _ingest_org_logs(org, logs):
                 is_stream=bool(entry.get("is_stream", False)),
                 is_error=bool(entry.get("is_error", False))
                 or int(entry.get("status_code", 0)) >= 400,
-                error_message=entry.get("error_message", ""),
+                error_message=_strip_nul(str(entry.get("error_message") or "")),
                 cache_hit=bool(entry.get("cache_hit", False)),
                 fallback_used=bool(entry.get("fallback_used", False)),
                 guardrail_triggered=bool(entry.get("guardrail_triggered", False)),
@@ -410,12 +443,12 @@ def _ingest_org_logs(org, logs):
                 user_id=_bounded(entry.get("user_id", ""), 255),
                 session_id=_sanitize_session_id(entry.get("session_id", "")),
                 routing_strategy=_bounded(entry.get("routing_strategy", ""), 100),
-                metadata=entry.get("metadata") or {},
+                metadata=_strip_nul(entry.get("metadata") or {}),
                 request_body=_truncate_json(entry.get("request_body")),
                 response_body=_truncate_json(entry.get("response_body")),
                 request_headers=_sanitize_headers(entry.get("request_headers")),
-                response_headers=entry.get("response_headers"),
-                guardrail_results=entry.get("guardrail_results"),
+                response_headers=_strip_nul(entry.get("response_headers")),
+                guardrail_results=_strip_nul(entry.get("guardrail_results")),
             )
             objects.append(obj)
             entries.append(entry)
@@ -429,7 +462,14 @@ def _ingest_org_logs(org, logs):
             )
 
     if objects:
-        _store_request_logs(objects)
+        refused = _store_request_logs(objects)
+        if refused:
+            logger.warning(
+                "request_log_entries_refused",
+                org_id=str(org.id),
+                refused=refused,
+                parsed=len(objects),
+            )
         # The gateway resends a batch whose response it did not get in time, so a
         # batch can hold rows saved already. The unique request ID skips those;
         # only the rows saved now go on to webhooks and metering.

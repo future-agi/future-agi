@@ -60,6 +60,15 @@ def _events():
     return AgentccWebhookEvent.all_objects
 
 
+def within_pending_age(cutoff):
+    """Events still young enough to send: created at or after ``cutoff``, or
+    queued again by hand (Retry stamps ``requeued_at``) since then. An
+    automatic backoff never makes an event young again, and a hand-retried
+    event keeps its new age through its own backoffs. The maintenance run
+    expires exactly the others."""
+    return Q(created_at__gte=cutoff) | Q(requeued_at__gte=cutoff)
+
+
 def in_flight(now):
     """Pending events a delivery run has claimed and not yet recorded.
 
@@ -310,11 +319,9 @@ def expire_pending_events(budget_ends=None):
     now = timezone.now()
     count, per_webhook = _batched_update(
         _events()
-        .filter(
-            status=AgentccWebhookEvent.PENDING,
-            deleted=False,
-            created_at__lt=now - timedelta(hours=hours),
-        )
+        .filter(status=AgentccWebhookEvent.PENDING, deleted=False)
+        # The age counts from the later of creation and a manual re-queue.
+        .exclude(within_pending_age(now - timedelta(hours=hours)))
         .exclude(in_flight(now)),
         budget_ends=budget_ends,
         status=AgentccWebhookEvent.EXPIRED,
