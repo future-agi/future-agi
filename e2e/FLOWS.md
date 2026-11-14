@@ -1629,6 +1629,30 @@
 - enabling it stores is_active true with the failure streak and reason cleared
 - after the delete none of its events is pending, failed or dead-lettered; all five are cancelled
 
+### GW-E2E-008 — an admin keeps one day of Request Logs and older rows are removed while logging continues
+
+**Goal:** An organization admin chooses to keep one day of Request Logs, and the cleanup removes older rows without interrupting logging
+
+**Spec:** `flows/gateway/request-log-retention.spec.ts:30`
+
+**Tags:** —
+
+**User steps:**
+
+1. seed request logs three days old and an hour old for the admin's organization, and three days old for a second organization at the default
+2. soft-delete one old row of the admin's organization
+3. open Gateway Settings, choose Delete after 1 day and save
+4. read the next cleanup time and the estimate of rows to remove
+5. run the retention purge in the backend while new log batches keep arriving
+6. reload Settings and read the last run
+
+**Backend state verified:**
+
+- the saved retention reads back as 1 day with an estimate equal to the old rows, soft-deleted included
+- every log batch posted during the purge answers 2xx and its rows land in PG agentcc_request_log
+- after the purge the organization's old rows, live and soft-deleted, are gone and its recent rows remain; the list endpoint agrees
+- the second organization, which kept the default, still has all its old rows
+
 ## knowledge-base
 
 ### KB-E2E-001 — a workspace reader downloads an owned knowledge-base file
