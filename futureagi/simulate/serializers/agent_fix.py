@@ -1,3 +1,5 @@
+import math
+
 from drf_yasg.utils import swagger_serializer_method
 from rest_framework import serializers
 
@@ -82,8 +84,8 @@ class AgentFixLaunchSerializer(serializers.Serializer):
     cost_limit_usd = serializers.FloatField(required=False, allow_null=True)
 
     def validate_cost_limit_usd(self, value):
-        if value is not None and value <= 0:
-            raise serializers.ValidationError("must be more than 0")
+        if value is not None and not (math.isfinite(value) and value > 0):
+            raise serializers.ValidationError("must be a number more than 0")
         return value
 
 

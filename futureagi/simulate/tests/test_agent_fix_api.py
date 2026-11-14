@@ -1064,6 +1064,8 @@ class TestUserApi:
         ("field", "refused", "taken"),
         [
             ("cost_limit_usd", 0, 0.01),
+            ("cost_limit_usd", "Infinity", 0.01),
+            ("cost_limit_usd", "NaN", 0.01),
             ("reply_latency_margin_pct", 1001, 1000),
             ("cost_margin_pct", -1, 0),
             ("allowed_models", ["m" * 201], ["m" * 200]),
