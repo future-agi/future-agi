@@ -14,8 +14,9 @@ that makes a stranded task visible at all.
 Per tick, bounded and idempotent:
 
 * share ``EVAL_TASK_SWEEP_MAX_TASKS`` between tasks with undrained entries
-  (oldest activity first) and idle continuous tasks (a rotating liveness check)
-  (``tracer.selectors.eval_tasks.stranded``);
+  (oldest activity first) and idle continuous tasks whose cursor is missing or
+  has not moved for ``STALE_CONTINUOUS_CURSOR`` (a rotating liveness check),
+  each task at most once per tick (``tracer.selectors.eval_tasks.stranded``);
 * ask Temporal whether a workflow is progressing, and leave that task alone if
   one is — a healthy task costs one describe and nothing else;
 * for the rest, reclaim entries stuck ``running`` past

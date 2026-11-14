@@ -22,6 +22,16 @@ _SWEEPABLE = (EvalTaskStatus.RUNNING, EvalTaskStatus.PENDING)
 
 _UNDRAINED = (EvalEntryStatus.PENDING, EvalEntryStatus.RUNNING)
 
+# Every reconcile pass of a live continuous workflow parks its cursor
+# ``CONTINUOUS_CURSOR_OVERLAP`` (5 min) behind now. For a RUNNING task, a cursor
+# newer than six times that proves a workflow polled recently, so the idle
+# check skips it. A PENDING task's cursor may belong to an execution that
+# ended before a Resume or rerun asked for a new one, so it proves nothing. An
+# older or missing cursor proves nothing either way (a live workflow can be
+# parked on read-budget or database deferrals, or draining a long backlog), so
+# Temporal's describe still decides.
+STALE_CONTINUOUS_CURSOR = timedelta(minutes=30)
+
 
 def sweepable_statuses() -> list[str]:
     statuses = list(_SWEEPABLE)
@@ -40,10 +50,25 @@ def find_stranded_tasks(
     after the previous tick's last check. Old live idle tasks must not occupy
     every tick forever. With a one-slot cap, the caller alternates groups.
 
-    No cursor-age test: a never-dispatched PENDING task has no cursor, and a
-    healthy idle workflow can legitimately have an old one. Only Temporal's
-    describe can establish liveness. Drained historical tasks stay excluded.
-    Both managers exclude soft-deleted rows and ignore ambient workspace scope.
+    Cursor age only rules a task *out*: an idle continuous task is checked
+    when it is not RUNNING (PENDING after a Resume, rerun or create, or FAILED
+    when opted in), when its cursor is NULL (no reconcile has parked one yet),
+    or when the cursor is older than ``STALE_CONTINUOUS_CURSOR``. A fresher
+    cursor on a RUNNING task shows that its workflow polled within that window,
+    so describing it would only spend the budget; a workflow that died is
+    checked at most that long after its last poll. A PENDING task is always
+    checked, because its cursor may predate the start it is waiting for. A stale cursor is never taken as proof of death: a healthy idle
+    workflow can legitimately have one, and only Temporal's describe
+    establishes liveness. The idle ring is ordered by id, not by cursor age,
+    so live tasks with old cursors cannot hold the head slots on every tick.
+    Drained historical tasks stay excluded. Both managers exclude soft-deleted
+    rows and ignore ambient workspace scope.
+
+    One rule set for every candidate, whichever group found it: each task
+    appears at most once per tick (a task with undrained entries is backlog,
+    never also idle), its lifecycle is rechecked here and again under a row
+    lock in ``recover_task``, and a restart coalesces onto any live execution
+    rather than replacing it.
     """
     limit = limit if limit is not None else int(settings.EVAL_TASK_SWEEP_MAX_TASKS)
     if limit <= 0:
@@ -74,6 +99,11 @@ def find_stranded_tasks(
     )
     idle = (
         tasks.filter(run_type=RunType.CONTINUOUS)
+        .filter(
+            ~Q(status=EvalTaskStatus.RUNNING)
+            | Q(continuous_cursor__isnull=True)
+            | Q(continuous_cursor__lt=timezone.now() - STALE_CONTINUOUS_CURSOR)
+        )
         .exclude(id__in=backlog_ids)
         .filter(~Exists(undrained))
         .order_by("id")
@@ -94,9 +124,11 @@ def find_stranded_tasks(
     # Recheck lifecycle after the candidate reads, not just inside the cap.
     by_id = {str(task.id): task for task in tasks.filter(id__in=[i for i, _ in chosen])}
     result = []
+    # The two groups are disjoint by construction (idle excludes any task with
+    # undrained entries); popping keeps a task from being swept twice anyway.
     for task_id, kind in chosen:
-        if task_id in by_id:
-            task = by_id[task_id]
+        task = by_id.pop(task_id, None)
+        if task is not None:
             task.sweep_candidate_kind = kind
             result.append(task)
     return result
@@ -125,6 +157,7 @@ def only_unreclaimable_claims_remain(
 
 
 __all__ = [
+    "STALE_CONTINUOUS_CURSOR",
     "find_stranded_tasks",
     "only_unreclaimable_claims_remain",
     "sweepable_statuses",

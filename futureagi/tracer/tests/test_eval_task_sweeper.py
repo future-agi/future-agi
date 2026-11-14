@@ -323,6 +323,40 @@ class TestStaleContinuousCursor:
         assert sweeper.find_stranded_tasks() == []
 
     @pytest.mark.parametrize(
+        "cursor_age,candidate",
+        [(timedelta(minutes=25), False), (timedelta(minutes=35), True)],
+    )
+    def test_the_idle_check_starts_once_the_cursor_is_thirty_minutes_old(
+        self, make_task, cursor_age, candidate
+    ):
+        task = _continuous(make_task(), cursor_age=cursor_age)
+
+        found = [str(t.id) for t in sweeper.find_stranded_tasks()]
+
+        assert found == ([str(task.id)] if candidate else [])
+
+    def test_a_pending_task_is_checked_whatever_its_cursor_says(self, make_task):
+        """Resume and rerun keep the cursor of the execution that ended; if
+        their start failed, the task must not wait for that cursor to age."""
+        task = _continuous(
+            make_task(status=EvalTaskStatus.PENDING), cursor_age=timedelta(minutes=6)
+        )
+
+        assert [str(t.id) for t in sweeper.find_stranded_tasks()] == [str(task.id)]
+
+    def test_a_fresh_cursor_does_not_hide_undrained_entries(
+        self, make_task, make_entry
+    ):
+        task = _continuous(make_task(), cursor_age=timedelta(minutes=6))
+        make_entry(task)
+
+        found = sweeper.find_stranded_tasks()
+
+        assert [(str(t.id), t.sweep_candidate_kind) for t in found] == [
+            (str(task.id), "backlog")
+        ]
+
+    @pytest.mark.parametrize(
         "status", [EvalTaskStatus.PAUSED, EvalTaskStatus.DELETED, EvalTaskStatus.FAILED]
     )
     def test_a_frozen_cursor_does_not_override_the_status_rules(
@@ -338,14 +372,40 @@ class TestStaleContinuousCursor:
 
         assert [str(t.id) for t in sweeper.find_stranded_tasks()] == [str(task.id)]
 
-    def test_both_kinds_share_one_cap_stillest_first(self, make_task, make_entry):
+    def test_both_kinds_share_one_cap(self, make_task, make_entry):
+        """A frozen cursor gets the idle group's share of the cap; with one
+        slot the groups alternate, so neither waits more than one tick."""
         frozen = _continuous(make_task(), cursor_age=timedelta(days=2))
         recent = make_task()
         make_entry(recent, age_seconds=60)
 
-        found = sweeper.find_stranded_tasks(limit=1)
+        assert [str(t.id) for t in sweeper.find_stranded_tasks(limit=2)] == [
+            str(frozen.id),
+            str(recent.id),
+        ]
+        assert [str(t.id) for t in sweeper.find_stranded_tasks(limit=1)] == [
+            str(recent.id)
+        ]
+        assert [
+            str(t.id) for t in sweeper.find_stranded_tasks(limit=1, idle_first=True)
+        ] == [str(frozen.id)]
 
-        assert [str(t.id) for t in found] == [str(frozen.id)]
+    def test_a_live_frozen_cursor_cannot_hold_the_idle_slot(
+        self, make_task, temporal, settings
+    ):
+        """Cursor age gates entry to the idle ring but does not order it, so a
+        live task parked on deferrals is not described ahead of the rest on
+        every tick."""
+        parked = _continuous(make_task(), cursor_age=timedelta(days=30))
+        others = [
+            _continuous(make_task(), cursor_age=timedelta(hours=1)) for _ in range(2)
+        ]
+        temporal["verdict"] = client_progressing()
+        settings.EVAL_TASK_SWEEP_MAX_TASKS = 1
+        for _ in range(6):
+            sweeper.sweep_stranded_eval_tasks._original_func()
+
+        assert {str(t.id) for t in [parked, *others]} <= set(temporal["described"])
 
     def test_the_sweep_restarts_a_continuous_task_whose_workflow_died(
         self, make_task, temporal
