@@ -332,11 +332,17 @@ func parseDecisionUsage(raw json.RawMessage) DecisionUsage {
 }
 
 // UpstreamErrorMessage is the message a vendor's non-200 answer passes on.
-// Only a 400 or 422 shows the vendor's text (DecisionUpstreamError), so only
-// those parse the reply and check it against the request (up to 32 MB);
-// every other status gets the fallback without that work.
+// Only a rejected 4xx shows the vendor's text (DecisionUpstreamError), so
+// only those parse the reply and check it against the request (up to 32 MB);
+// other statuses get the fallback without that work.
 func (r *DecisionRequest) UpstreamErrorMessage(status int, body []byte, apiKey, fallback string) string {
-	if status != http.StatusBadRequest && status != http.StatusUnprocessableEntity {
+	if status < 400 || status >= 500 {
+		return fallback
+	}
+	switch status {
+	case http.StatusUnauthorized, http.StatusPaymentRequired, http.StatusForbidden,
+		http.StatusNotFound, http.StatusRequestTimeout, http.StatusRequestEntityTooLarge,
+		http.StatusTooManyRequests:
 		return fallback
 	}
 	return r.SafeUpstreamMessage(body, apiKey, fallback)
@@ -490,7 +496,7 @@ func retryAfter(header http.Header) string {
 // DecisionUpstreamError maps a decision vendor's non-200 answer onto the
 // gateway's error table. The gateway does not retry; Retry-After is passed on
 // where the vendor set one. message is the vendor's own text, already through
-// SafeUpstreamMessage; only a 400 or 422 carries it to the caller.
+// SafeUpstreamMessage; only rejected 4xx statuses carry it to the caller.
 func DecisionUpstreamError(vendor string, status int, header http.Header, message string) *APIError {
 	e := &APIError{UpstreamStatus: status}
 	switch status {
@@ -521,8 +527,13 @@ func DecisionUpstreamError(vendor string, status int, header http.Header, messag
 		e.Status, e.Type, e.Code = status, ErrTypeInvalidRequest, "upstream_rejected"
 		e.Message = message
 	default:
-		e.Status, e.Type, e.Code = http.StatusBadGateway, ErrTypeUpstream, "upstream_error"
-		e.Message = vendor + " request failed."
+		if status >= 400 && status < 500 {
+			e.Status, e.Type, e.Code = status, ErrTypeInvalidRequest, "upstream_rejected"
+			e.Message = message
+		} else {
+			e.Status, e.Type, e.Code = http.StatusBadGateway, ErrTypeUpstream, "upstream_error"
+			e.Message = vendor + " request failed."
+		}
 	}
 	return e
 }

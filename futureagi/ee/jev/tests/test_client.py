@@ -243,7 +243,9 @@ GATEWAY_ERRORS = [
     (402, "provider_payment_required", "JEV_PROVIDER_ERROR", False),
     (403, "decision_provider_wrong_format", "JEV_PROVIDER_ERROR", False),
     (404, "model_not_found", "JEV_PROVIDER_ERROR", False),
+    (409, "upstream_rejected", "JEV_PROVIDER_ERROR", False),
     (413, "request_too_large", "JEV_PROVIDER_ERROR", False),
+    (415, "upstream_rejected", "JEV_PROVIDER_ERROR", False),
     (422, "upstream_rejected", "JEV_PROVIDER_ERROR", False),
     (422, "format_mismatch", "JEV_PROVIDER_ERROR", False),
     # Code before status: a refusal stays final whatever status carries it.
