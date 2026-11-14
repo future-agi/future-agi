@@ -96,7 +96,7 @@ function EvidenceContent({ skillId, candidate, onSelectRun, selectedRunId }) {
             >
               {runs.map((run) => (
                 <MenuItem key={run.runId} value={run.runId}>
-                  {fDateTime(run.createdAt)} · {run.selectedCases} examples ·{" "}
+                  {fDateTime(run.createdAt)} · {run.selectedCases} test cases ·{" "}
                   {run.status} · {run.visibility}
                 </MenuItem>
               ))}
@@ -107,7 +107,7 @@ function EvidenceContent({ skillId, candidate, onSelectRun, selectedRunId }) {
                   <StatusBadge status={row.status} />
                   <Typography variant="s1">
                     {row.currentness.content
-                      ? `Checked this exact content · ${row.suiteCases === null ? `${row.selectedCases} ad hoc examples` : `${row.selectedCases} of ${row.suiteCases} saved examples`}`
+                      ? `Checked this exact content · ${row.suiteCases === null ? `${row.selectedCases} ad hoc test cases` : `${row.selectedCases} of ${row.suiteCases} saved test cases`}`
                       : "The draft changed after this check."}
                   </Typography>
                 </Stack>
@@ -120,7 +120,7 @@ function EvidenceContent({ skillId, candidate, onSelectRun, selectedRunId }) {
                 </Typography>
                 {row.validity === "diagnostic" && (
                   <Alert severity="warning">
-                    Diagnostic evidence. Reused or bundled examples may
+                    Diagnostic evidence. Reused or bundled test cases may
                     influence these results.
                   </Alert>
                 )}
@@ -140,7 +140,7 @@ function EvidenceContent({ skillId, candidate, onSelectRun, selectedRunId }) {
                 )}
                 {row.currentness.suite === false && (
                   <Typography variant="s3">
-                    Saved examples changed after this run.
+                    Saved test cases changed after this run.
                   </Typography>
                 )}
                 {row.currentness.competitors === false && (

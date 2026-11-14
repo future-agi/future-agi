@@ -46,6 +46,14 @@ it('shows regression cases, application verification and whole-context tests in 
   expect(screen.getByText('Testing v4')).toBeVisible();
   expect(screen.getByRole('button', { name: 'Preview whole-context test' })).toBeInTheDocument();
 });
+it('names the answer check "Check answers" on screen while its accessible name still starts with that text', () => {
+  mount();
+  const radio = screen.getByRole('radio', { name: /^Check answers with this context/ });
+  // The visible words are the start of the accessible name (WCAG 2.5.3); the rest is for screen readers only.
+  expect(radio.closest('label').querySelector('.MuiTypography-s1').firstChild.textContent).toBe('Check answers');
+  fireEvent.click(radio);
+  expect(screen.getByText('Check answers', { exact: true })).toBeVisible();
+});
 it('keeps application verification when whole-context testing is unavailable', () => {
   h.optionsError = true;
   h.targets = registered;
