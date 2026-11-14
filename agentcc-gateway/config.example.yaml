@@ -319,6 +319,30 @@ providers:
 #     failure_threshold: 5             # Consecutive failures to open circuit (default: 5)
 #     success_threshold: 2             # Successes in half-open to close (default: 2)
 #     cooldown: 30s                    # Time before half-open test (default: 30s)
+#     half_open_max_probes: 1          # Current-generation recovery admissions (default: 1)
+#     # Unset, zero and negative probe limits use 1. Closed traffic is not capped.
+#     # Applies to chat JSON/streams and native, translated and streamed legacy
+#     # completions, including direct/no-router calls and configured fallbacks.
+#     # Other modalities and background workers are not covered by this gate.
+#     # One admitted provider attempt holds one slot across sequential retries;
+#     # a stream keeps it until the upstream finishes, not just its first chunk.
+#     # Disconnects and local stream aborts release capacity without recovery;
+#     # actual deadlines and raw transport failures count as provider failures.
+#     # Upstream HTTP errors still follow on_status_codes. Org credentials also
+#     # count 401/403, without changing operator, retry or failover status lists.
+#     # Direct refusals return 503/circuit_open. Selection/all-refused exhaustion
+#     # returns 503/all_providers_unavailable, unless an upstream error came first.
+#     # Requests do not queue: configured eligible alternatives may be selected.
+#     # Changing models on the same provider does not create another probe slot.
+#     # No-router upstream-error fallback eligibility is unchanged.
+#     # Org state uses the bounded (org, configured provider ID) store; rebuilding
+#     # an adapter or rotating credentials does not reset a retained scope.
+#     # State is process-local and resets on reload/restart or scoped eviction.
+#     # Older in-flight work can outlive its generation, reload or eviction, so
+#     # this is not an absolute cap on all live upstream work. Late completions
+#     # and old cooldown callbacks cannot change a newer recovery cycle.
+#     # Shared health views remain operator-only. Existing router health filters
+#     # remain in routed traversal; independent org/direct admission is separate.
 #   retry:
 #     enabled: true                    # Auto-retry on same provider (default: true when routing)
 #     max_retries: 2                   # Max retries per provider (default: 2)

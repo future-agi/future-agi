@@ -59,6 +59,20 @@ func closedStreamError(ctx context.Context, errCh <-chan error) (apiErr *models.
 	return nil, true
 }
 
+// closedStreamOutcome retains raw transport/context provenance for accounting.
+// Presentation conversion must happen only after the provider outcome is recorded.
+func closedStreamOutcome(ctx context.Context, errCh <-chan error) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	select {
+	case err := <-errCh:
+		return err
+	default:
+		return nil
+	}
+}
+
 // pendingStreamError is the error waiting on a provider's error channel, or
 // nil when there is none. It never blocks.
 func pendingStreamError(errCh <-chan error) *models.APIError {

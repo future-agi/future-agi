@@ -308,8 +308,12 @@ func (h *Handlers) ReloadRouting(cfg *config.Config, registry *providers.Registr
 	}
 
 	var cbReg *routing.CircuitBreakerRegistry
-	if cfg.Routing.CircuitBreaker.Enabled && registry.Router() != nil {
-		cbReg = routing.NewCircuitBreakerRegistry(cfg.Routing.CircuitBreaker, registry.Router().SetHealthy)
+	if cfg.Routing.CircuitBreaker.Enabled {
+		var onChange func(string, bool)
+		if router := registry.Router(); router != nil {
+			onChange = router.SetHealthy
+		}
+		cbReg = routing.NewCircuitBreakerRegistry(cfg.Routing.CircuitBreaker, onChange)
 	}
 	// Observe the same breakers that the failover chain updates.
 	h.healthMonitor.SetCircuitBreakerRegistry(cbReg)
@@ -459,12 +463,16 @@ func (h *Handlers) resolveOrgProvider(orgID string, orgCfg *tenant.OrgConfig, mo
 // When every match fails to build, it returns the first failure and that
 // provider's ID instead.
 func (h *Handlers) orgProviderFor(orgID string, orgCfg *tenant.OrgConfig, model string) (providers.Provider, string, string, error) {
+	return h.orgProviderForExcluding(orgID, orgCfg, model, nil)
+}
+
+func (h *Handlers) orgProviderForExcluding(orgID string, orgCfg *tenant.OrgConfig, model string, excluded map[string]bool) (providers.Provider, string, string, error) {
 	if orgCfg == nil || h.orgProviderCache == nil {
 		return nil, "", "", nil
 	}
 	ids := make([]string, 0, len(orgCfg.Providers))
 	for providerID, pcfg := range orgCfg.Providers {
-		if pcfg != nil && pcfg.Enabled && pcfg.HasCredentials() {
+		if pcfg != nil && pcfg.Enabled && pcfg.HasCredentials() && !excluded[providerID] {
 			ids = append(ids, providerID)
 		}
 	}
@@ -516,24 +524,29 @@ func (h *Handlers) effectiveFailover(orgCfg *tenant.OrgConfig) *routing.Failover
 	return h.failover.Load()
 }
 
-func (h *Handlers) resolveFallbackProvider(orgID string, orgCfg *tenant.OrgConfig, rc *models.RequestContext, fallbackModel string) (providers.Provider, string, string, bool) {
-	if orgProvider, orgProviderID := h.resolveOrgProvider(orgID, orgCfg, fallbackModel); orgProvider != nil {
-		return orgProvider, orgProviderID, fallbackModel, true
+func (h *Handlers) resolveFallbackProviderExcluding(ctx context.Context, orgID string, orgCfg *tenant.OrgConfig, rc *models.RequestContext, model string, excluded map[string]bool) (providers.Provider, string, string, bool) {
+	if ctx.Err() != nil {
+		return nil, "", model, false
 	}
-
-	fbResult, fbErr := h.registry.ResolveWithRouting(fallbackModel)
-	if fbErr != nil {
-		return nil, "", fallbackModel, false
+	if p, id, upstream, _ := h.orgProviderForExcluding(orgID, orgCfg, model, excluded); p != nil {
+		return p, id, upstream, true
 	}
-	fbProvider := fbResult.Provider
-	if shouldApplyOrgProviderOverride(rc) {
-		fbProvider = h.applyOrgProviderOverride(orgID, orgCfg, fbResult.Provider.ID(), fbResult.Provider)
+	// A fallback model does not grant another credential source.
+	if h.orgProvidersOnly(ctx, rc) || ctx.Err() != nil {
+		return nil, "", model, false
 	}
-	resolvedModel := fallbackModel
-	if fbResult.ModelOverride != "" {
-		resolvedModel = fbResult.ModelOverride
+	result, err := h.registry.ResolveExcluding(model, excluded)
+	if err != nil {
+		return nil, "", model, false
 	}
-	return fbProvider, fbResult.Provider.ID(), resolvedModel, true
+	p := result.Provider
+	if rc.Metadata["key_type"] != "internal" {
+		p = h.applyOrgProviderOverride(orgID, orgCfg, p.ID(), p)
+	}
+	if result.ModelOverride != "" {
+		model = result.ModelOverride
+	}
+	return p, result.Provider.ID(), model, true
 }
 
 // applyOrgRoutingOverrides applies per-org routing config to the request context.
@@ -1394,22 +1407,26 @@ func (h *Handlers) resolveProvider(ctx context.Context, rc *models.RequestContex
 	}
 
 	if effectiveFallbacks != nil && effectiveFallbacks.HasFallbacks(model) {
+		var orgCfg *tenant.OrgConfig
+		if h.tenantStore != nil {
+			orgCfg = h.tenantStore.Get(rc.Metadata["org_id"])
+		}
 		for _, fbModel := range effectiveFallbacks.GetChain(model) {
-			fbResult, fbErr := h.registry.ResolveWithRouting(fbModel)
-			if fbErr == nil {
-				rc.Provider = fbResult.Provider.ID()
+			p, id, upstream, ok := h.resolveFallbackProviderExcluding(ctx, rc.Metadata["org_id"], orgCfg, rc, fbModel, nil)
+			if ok {
+				rc.Provider = id
 				rc.Flags.FallbackUsed = true
 				rc.Metadata["original_model"] = model
-				rc.Metadata["fallback_model"] = fbModel
-				if fbResult.StrategyName != "" {
-					rc.Metadata["routing_strategy"] = fbResult.StrategyName
+				rc.Metadata["fallback_model"] = upstream
+				if base, exists := h.registry.GetProvider(id); !exists || base != p {
+					rc.Metadata["org_provider_model_match"] = fbModel
 				}
-				if fbResult.ModelOverride != "" {
-					return fbResult.Provider, fbResult.ModelOverride, nil
-				}
-				return fbResult.Provider, fbModel, nil
+				return p, upstream, nil
 			}
 		}
+	}
+	if router := h.registry.Router(); router != nil && router.TargetCount(model) > 0 {
+		return nil, "", models.ErrServiceUnavailable(fmt.Sprintf("all providers for model %q are unavailable", model))
 	}
 
 	return nil, "", err
@@ -1424,52 +1441,24 @@ func (h *Handlers) handleNonStream(ctx context.Context, w http.ResponseWriter, r
 		return
 	}
 
-	// Resolve model fallback chain (org-level first, then global).
-	var modelChain []string
-	if len(rc.OrgModelFallbacks) > 0 {
-		modelChain = rc.OrgModelFallbacks[rc.Model]
-	} else if mf := h.modelFallbacks.Load(); mf != nil {
-		modelChain = mf.GetChain(rc.Model)
-	}
-
-	originalModel := rc.Request.Model
-	orgID := rc.Metadata["org_id"]
+	registry := h.healthMonitor.CircuitBreakerRegistry()
 	servingProvider := provider
-
 	providerCall := func(ctx context.Context, rc *models.RequestContext) error {
-		resp, err := h.callChatProvider(ctx, provider, rc.Request)
-		if err == nil {
-			rc.Response = resp
-			rc.ResolvedModel = resp.Model
-			return nil
+		call := func(p providers.Provider) error {
+			return h.callProvider(ctx, registry, rc, p, func() error {
+				resp, err := h.callChatProvider(ctx, p, rc.Request)
+				if err == nil {
+					servingProvider = p
+					rc.Response = resp
+					rc.ResolvedModel = resp.Model
+				}
+				return err
+			})
 		}
-
-		if len(modelChain) == 0 || effectiveFailover == nil || !effectiveFailover.ShouldFailover(err) {
-			return err
+		if err := call(provider); err != nil {
+			return h.callModelFallbacks(ctx, rc, orgCfg, err, effectiveFailover != nil && effectiveFailover.ShouldFailover(err), call)
 		}
-
-		for _, fbModel := range modelChain {
-			fbProvider, fbProviderID, resolvedModel, ok := h.resolveFallbackProvider(orgID, orgCfg, rc, fbModel)
-			if !ok {
-				continue
-			}
-
-			rc.Provider = fbProviderID
-			rc.Request.Model = resolvedModel
-
-			fbResp, fbCallErr := h.callChatProvider(ctx, fbProvider, rc.Request)
-			if fbCallErr == nil {
-				servingProvider = fbProvider
-				rc.Response = fbResp
-				rc.ResolvedModel = fbResp.Model
-				rc.Flags.FallbackUsed = true
-				rc.Metadata["original_model"] = originalModel
-				rc.Metadata["fallback_model"] = resolvedModel
-				return nil
-			}
-		}
-
-		return err
+		return nil
 	}
 
 	if err := h.engine.Process(ctx, rc, providerCall); err != nil {
@@ -1490,7 +1479,7 @@ func (h *Handlers) handleNonStream(ctx context.Context, w http.ResponseWriter, r
 
 func (h *Handlers) handleNonStreamWithFailover(ctx context.Context, w http.ResponseWriter, rc *models.RequestContext, fo *routing.Failover, orgCfg *tenant.OrgConfig) {
 	originalModel := rc.Request.Model
-	orgID := rc.Metadata["org_id"]
+	registry := fo.CircuitBreakers()
 	var servingProvider providers.Provider
 
 	// Wrap the failover loop inside engine.Process so pre-plugins run once,
@@ -1518,42 +1507,17 @@ func (h *Handlers) handleNonStreamWithFailover(ctx context.Context, w http.Respo
 		})
 
 		if err != nil {
-			// Provider failover exhausted — try model fallback chain.
-			// A chain is configured under the name the caller asked for, so it
-			// is looked up by rc.Model. originalModel is the model to send
-			// upstream, which a target's model_override has already rewritten
-			// — indexing the chain with that found nothing and failed the
-			// request instead of falling back.
-			var modelChain []string
-			if len(rc.OrgModelFallbacks) > 0 {
-				modelChain = rc.OrgModelFallbacks[rc.Model]
-			} else if mf := h.modelFallbacks.Load(); mf != nil {
-				modelChain = mf.GetChain(rc.Model)
-			}
-
-			for _, fbModel := range modelChain {
-				// Resolve fallback model: check org providers first, then global registry.
-				fbProvider, fbProviderID, resolvedModel, ok := h.resolveFallbackProvider(orgID, orgCfg, rc, fbModel)
-				if !ok {
-					continue
-				}
-
-				rc.Provider = fbProviderID
-				rc.Request.Model = resolvedModel
-
-				fbResp, fbCallErr := h.callChatProvider(ctx, fbProvider, rc.Request)
-				if fbCallErr == nil {
-					servingProvider = fbProvider
-					rc.Response = fbResp
-					rc.ResolvedModel = fbResp.Model
-					rc.Flags.FallbackUsed = true
-					rc.Metadata["original_model"] = originalModel
-					rc.Metadata["fallback_model"] = resolvedModel
-					return nil
-				}
-			}
-
-			return err
+			return h.callModelFallbacks(ctx, rc, orgCfg, err, true, func(p providers.Provider) error {
+				return h.callProvider(ctx, registry, rc, p, func() error {
+					resp, callErr := h.callChatProvider(ctx, p, rc.Request)
+					if callErr == nil {
+						servingProvider = p
+						rc.Response = resp
+						rc.ResolvedModel = resp.Model
+					}
+					return callErr
+				})
+			})
 		}
 
 		// Record failover metadata.
@@ -1599,12 +1563,22 @@ func (h *Handlers) handleStream(ctx context.Context, w http.ResponseWriter, rc *
 	// Time to the serving attempt's first chunk: the routing latency signal,
 	// as before per-attempt sampling, rather than the whole stream's length.
 	var firstChunkLatency time.Duration
+	var lease *routing.ProbeLease
+	defer func() { lease.Abandon() }()
 	defer func() {
 		if upstreamStreamCancel != nil {
 			upstreamStreamCancel()
 		}
 	}()
 	effectiveFailover := h.effectiveFailover(orgCfg)
+	registry := h.healthMonitor.CircuitBreakerRegistry()
+	if effectiveFailover != nil {
+		registry = effectiveFailover.CircuitBreakers()
+	}
+	finish := func(err error) {
+		lease.Complete(ctx, err)
+		h.recordProviderOutcome(ctx, servingProvider, firstChunkLatency, err)
+	}
 
 	// callCtx bounds an attempt only until its first chunk. The stream itself
 	// lives on the request context: failover cancels callCtx as soon as the
@@ -1639,57 +1613,40 @@ func (h *Handlers) handleStream(ctx context.Context, w http.ResponseWriter, rc *
 		return nil
 	}
 
+	// Direct/model fallback calls own their admission; routed startup retries
+	// are already admitted by executeProviderFailover.
+	openAdmittedStream := func(callCtx context.Context, p providers.Provider) error {
+		admitted, err := h.admitProvider(callCtx, registry, rc, rc.Provider, p)
+		if err != nil {
+			return err
+		}
+		err = openStream(callCtx, p)
+		if err != nil {
+			admitted.Complete(callCtx, err)
+		} else {
+			lease = admitted
+		}
+		return err
+	}
+
 	providerCall := func(ctx context.Context, rc *models.RequestContext) error {
 		originalModel := rc.Request.Model
-		orgID := rc.Metadata["org_id"]
-
 		tryModelFallbacks := func(firstErr error) error {
-			if effectiveFailover == nil || !effectiveFailover.ShouldFailover(firstErr) {
-				return firstErr
-			}
-
-			// A chain is configured under the name the caller asked for, so it
-			// is looked up by rc.Model. originalModel is the model to send
-			// upstream, which a target's model_override has already rewritten
-			// — indexing the chain with that found nothing and failed the
-			// request instead of falling back.
-			var modelChain []string
-			if len(rc.OrgModelFallbacks) > 0 {
-				modelChain = rc.OrgModelFallbacks[rc.Model]
-			} else if mf := h.modelFallbacks.Load(); mf != nil {
-				modelChain = mf.GetChain(rc.Model)
-			}
-
-			for _, fbModel := range modelChain {
-				fallbackModel := fbModel
-				fbProvider, fbProviderID, resolvedModel, ok := h.resolveFallbackProvider(orgID, orgCfg, rc, fallbackModel)
-				if !ok {
-					continue
-				}
-
-				rc.Provider = fbProviderID
-				rc.Request.Model = resolvedModel
-				if err := openStream(ctx, fbProvider); err == nil {
-					rc.Flags.FallbackUsed = true
-					rc.Metadata["original_model"] = originalModel
-					rc.Metadata["fallback_model"] = resolvedModel
-					return nil
-				}
-			}
-
-			rc.Request.Model = originalModel
-			return firstErr
+			return h.callModelFallbacks(ctx, rc, orgCfg, firstErr, effectiveFailover != nil && effectiveFailover.ShouldFailover(firstErr), func(p providers.Provider) error {
+				return openAdmittedStream(ctx, p)
+			})
 		}
 
 		if effectiveFailover != nil && effectiveFailover.IsEnabled() && h.registry.Router() != nil && h.registry.Router().HasTargets(rc.Model) {
-			result, err := h.executeProviderFailover(ctx, rc, effectiveFailover, orgCfg, func(callCtx context.Context, _ string, p providers.Provider, modelOverride string) error {
+			result, err := h.executeProviderFailover(ctx, rc, effectiveFailover, orgCfg, func(callCtx context.Context, id string, p providers.Provider, modelOverride string) error {
+				rc.Provider = id
 				if modelOverride != "" {
 					rc.Request.Model = modelOverride
 				} else {
 					rc.Request.Model = originalModel
 				}
 				return openStream(callCtx, p)
-			})
+			}, &lease)
 			if err != nil {
 				return tryModelFallbacks(err)
 			}
@@ -1710,7 +1667,7 @@ func (h *Handlers) handleStream(ctx context.Context, w http.ResponseWriter, rc *
 			return nil
 		}
 
-		if err := openStream(ctx, provider); err != nil {
+		if err := openAdmittedStream(ctx, provider); err != nil {
 			return tryModelFallbacks(err)
 		}
 		return nil
@@ -1841,16 +1798,17 @@ func (h *Handlers) handleStream(ctx context.Context, w http.ResponseWriter, rc *
 		select {
 		case chunk, ok := <-chunks:
 			if !ok {
-				if apiErr, finished := closedStreamError(ctx, errCh); !finished {
+				raw := closedStreamOutcome(ctx, errCh)
+				finish(raw)
+				if raw != nil {
+					apiErr := streamEndError(ctx, raw)
 					if apiErr != nil {
-						h.recordProviderOutcome(ctx, servingProvider, firstChunkLatency, apiErr)
 						rc.AddError(apiErr)
 						sseWriter.WriteError(apiErr)
 					}
 					finalizeStream(ctx.Err() != nil)
 					return
 				}
-				h.recordProviderOutcome(ctx, servingProvider, firstChunkLatency, nil)
 				// Stream complete — run final guardrail check.
 				if streamChecker != nil {
 					if res := streamChecker.Finish(streamCtx); res.Blocked {
@@ -1912,8 +1870,12 @@ func (h *Handlers) handleStream(ctx context.Context, w http.ResponseWriter, rc *
 			}
 
 		case err, ok := <-errCh:
-			if ok && err != nil {
-				h.recordProviderOutcome(ctx, servingProvider, firstChunkLatency, err)
+			if !ok {
+				errCh = nil
+				continue
+			}
+			if err != nil {
+				finish(err)
 				apiErr, isAPI := err.(*models.APIError)
 				if !isAPI {
 					apiErr = models.ErrInternal(err.Error())
@@ -1925,12 +1887,12 @@ func (h *Handlers) handleStream(ctx context.Context, w http.ResponseWriter, rc *
 			}
 
 		case <-ctx.Done():
+			finish(ctx.Err())
 			// The client left, or the request reached its deadline; only the
 			// second has anyone to tell. streamCancel() in defer stops the
 			// guardrail goroutines. Drain remaining chunks to unblock the
 			// provider goroutine.
 			if apiErr := streamEndError(ctx, ctx.Err()); apiErr != nil {
-				h.recordProviderOutcome(ctx, servingProvider, firstChunkLatency, ctx.Err())
 				rc.AddError(apiErr)
 				sseWriter.WriteError(apiErr)
 			}
@@ -1976,8 +1938,8 @@ func waitForFirstStreamChunk(ctx context.Context, chunks <-chan models.StreamChu
 			if !ok {
 				// A provider sends its error before it closes chunks, and
 				// sends none once ctx is done; see closedStreamError.
-				if apiErr := pendingStreamError(errCh); apiErr != nil {
-					return nil, apiErr
+				if raw := closedStreamOutcome(ctx, errCh); raw != nil {
+					return nil, raw
 				}
 				if err := ctx.Err(); err != nil {
 					return nil, err

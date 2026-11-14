@@ -145,8 +145,12 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 
 	// Create circuit breaker registry.
 	var cbReg *routing.CircuitBreakerRegistry
-	if cfg.Routing.CircuitBreaker.Enabled && registry.Router() != nil {
-		cbReg = routing.NewCircuitBreakerRegistry(cfg.Routing.CircuitBreaker, registry.Router().SetHealthy)
+	if cfg.Routing.CircuitBreaker.Enabled {
+		var onChange func(string, bool)
+		if router := registry.Router(); router != nil {
+			onChange = router.SetHealthy
+		}
+		cbReg = routing.NewCircuitBreakerRegistry(cfg.Routing.CircuitBreaker, onChange)
 		slog.Info("circuit breaker enabled",
 			"failure_threshold", cfg.Routing.CircuitBreaker.FailureThreshold,
 			"cooldown", cfg.Routing.CircuitBreaker.Cooldown,

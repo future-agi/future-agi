@@ -23,9 +23,9 @@ func TestFailoverCircuitBreakerFilter(t *testing.T) {
 			registry := NewCircuitBreakerRegistry(config.CircuitBreakerConfig{Enabled: true, FailureThreshold: 2, Cooldown: time.Hour}, nil)
 			breaker := registry.Get("shared")
 			failure := errors.New("synthetic operator failure")
-			breaker.RecordFailure(failure)
+			recordAdmittedFailure(t, breaker, failure)
 			if outcome == "open-admission" {
-				breaker.RecordFailure(failure)
+				recordAdmittedFailure(t, breaker, failure)
 			}
 			global := NewFailover(config.FailoverConfig{Enabled: true, MaxAttempts: 1}, router, nil, registry)
 			filterCalls, providerCalls := 0, 0
@@ -50,7 +50,7 @@ func TestFailoverCircuitBreakerFilter(t *testing.T) {
 				if breaker.State() != StateClosed {
 					t.Fatal("org failure opened operator breaker")
 				}
-				breaker.RecordFailure(failure)
+				recordAdmittedFailure(t, breaker, failure)
 			}
 			if breaker.State() != StateOpen {
 				t.Fatal("org success reset operator failures")

@@ -123,7 +123,12 @@ func (r *Router) Select(model string) (*RoutingResult, error) {
 // that preserve the requested model name, when any target does. When every
 // target overrides it, the name is an alias and the overrides serve it.
 func (r *Router) SelectExactModel(model string) (*RoutingResult, error) {
-	return r.selectMatching(model, nil, true)
+	return r.SelectExactModelExcluding(model, nil)
+}
+
+// SelectExactModelExcluding preserves exact model matching when retrying selection.
+func (r *Router) SelectExactModelExcluding(model string, exclude map[string]bool) (*RoutingResult, error) {
+	return r.selectMatching(model, exclude, true)
 }
 
 func (r *Router) selectMatching(model string, exclude map[string]bool, requireExactModel bool) (*RoutingResult, error) {

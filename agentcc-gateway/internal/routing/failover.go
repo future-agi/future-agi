@@ -22,6 +22,7 @@ type Failover struct {
 	cbReg             *CircuitBreakerRegistry
 	codes             map[int]bool
 	useCircuitBreaker func(string) bool
+	admit             func(context.Context, string) (*ProbeLease, error)
 	// orgBreakers holds BYOK breakers keyed by (org, provider). breakerScope is
 	// the org a request-scoped copy records into; empty means no org breaker.
 	orgBreakers  *ScopedCircuitBreakerRegistry
@@ -102,6 +103,14 @@ func (f *Failover) circuitBreakerFor(providerID string) *CircuitBreaker {
 	return f.orgBreakers.Get(f.breakerScope, providerID)
 }
 
+// WithAdmission resolves the selected candidate and acquires its lease once,
+// before the retry group. Only an explicit local refusal skips the attempt.
+func (f *Failover) WithAdmission(admit func(context.Context, string) (*ProbeLease, error)) *Failover {
+	scoped := *f
+	scoped.admit = admit
+	return &scoped
+}
+
 // IsEnabled returns true if failover is enabled and a router is available.
 func (f *Failover) IsEnabled() bool {
 	return f != nil && f.cfg.Enabled && f.router != nil
@@ -134,6 +143,17 @@ func (f *Failover) ShouldFailover(err error) bool {
 
 // Execute runs the failover loop, trying providers until one succeeds or all fail.
 func (f *Failover) Execute(ctx context.Context, model string, call FailoverCallFunc) (*FailoverResult, error) {
+	result, _, err := f.execute(ctx, model, call, false)
+	return result, err
+}
+
+// ExecuteStream transfers the successful attempt's lease to the stream consumer.
+// Failed startup retries share a lease and complete only their final outcome.
+func (f *Failover) ExecuteStream(ctx context.Context, model string, call FailoverCallFunc) (*FailoverResult, *ProbeLease, error) {
+	return f.execute(ctx, model, call, true)
+}
+
+func (f *Failover) execute(ctx context.Context, model string, call FailoverCallFunc, transfer bool) (*FailoverResult, *ProbeLease, error) {
 	excluded := make(map[string]bool)
 	var lastErr error
 	var originalProvider string
@@ -144,9 +164,9 @@ func (f *Failover) Execute(ctx context.Context, model string, call FailoverCallF
 	for attempt < f.cfg.MaxAttempts {
 		if err := ctx.Err(); err != nil {
 			if lastErr != nil {
-				return nil, lastErr
+				return nil, nil, lastErr
 			}
-			return nil, err
+			return nil, nil, err
 		}
 		// Select a target, excluding already-tried providers.
 		var result *RoutingResult
@@ -158,23 +178,44 @@ func (f *Failover) Execute(ctx context.Context, model string, call FailoverCallF
 		}
 		if err != nil {
 			if lastErr != nil {
-				return nil, lastErr // Return the actual provider error, not "no targets"
+				return nil, nil, lastErr // Return the actual provider error, not "no targets"
 			}
 			if len(excluded) > 0 || f.router.TargetCount(model) > 0 {
-				return nil, models.ErrServiceUnavailable(fmt.Sprintf("all providers for model %q are unavailable", model))
+				return nil, nil, ProvidersUnavailableError(fmt.Sprintf("all providers for model %q are unavailable", model))
 			}
-			return nil, err
+			return nil, nil, err
 		}
 
 		if originalProvider == "" {
 			originalProvider = result.Target.ProviderID
 		}
 
-		// Check circuit breaker before calling.
-		cb := f.circuitBreakerFor(result.Target.ProviderID)
-		if cb != nil && !cb.Allow() {
-			excluded[result.Target.ProviderID] = true
-			continue
+		// Resolve and admit before retrying; refusal is explicit local provenance.
+		var lease *ProbeLease
+		var admissionErr error
+		if f.admit != nil {
+			lease, admissionErr = f.admit(ctx, result.Target.ProviderID)
+		} else {
+			cb := f.circuitBreakerFor(result.Target.ProviderID)
+			if ctx.Err() != nil {
+				admissionErr = ctx.Err()
+			} else {
+				var allowed bool
+				lease, allowed = cb.Acquire()
+				if !allowed {
+					admissionErr = CircuitOpenError()
+				}
+			}
+		}
+		if admissionErr != nil {
+			if IsCircuitOpen(admissionErr) {
+				excluded[result.Target.ProviderID] = true
+				continue
+			}
+			if lastErr != nil {
+				return nil, nil, lastErr
+			}
+			return nil, nil, admissionErr
 		}
 
 		// Create per-attempt timeout if configured so later attempts get full time.
@@ -186,26 +227,32 @@ func (f *Failover) Execute(ctx context.Context, model string, call FailoverCallF
 
 		// Call the provider (with retry if configured).
 		attempt++
-		var callErr error
+		var callErr, previousErr error
+		invoke := func() error {
+			if err := attemptCtx.Err(); err != nil {
+				if previousErr != nil {
+					return previousErr
+				}
+				return err
+			}
+			previousErr = call(attemptCtx, result.Target.ProviderID, result.Target.ModelOverride)
+			return previousErr
+		}
 		if f.retryer.IsEnabled() {
-			_, callErr = f.retryer.Execute(attemptCtx, func() error {
-				return call(attemptCtx, result.Target.ProviderID, result.Target.ModelOverride)
-			})
+			_, callErr = f.retryer.Execute(attemptCtx, invoke)
 		} else {
-			callErr = call(attemptCtx, result.Target.ProviderID, result.Target.ModelOverride)
+			callErr = invoke()
+		}
+		if callErr == nil && attemptCtx.Err() != nil {
+			callErr = attemptCtx.Err()
 		}
 
+		// Classify before canceling the short-lived startup/attempt context.
+		if callErr != nil || !transfer {
+			lease.Complete(attemptCtx, callErr)
+		}
 		if attemptCancel != nil {
 			attemptCancel()
-		}
-
-		// Record result in circuit breaker.
-		if cb != nil {
-			if callErr == nil {
-				cb.RecordSuccess()
-			} else {
-				cb.RecordFailure(callErr)
-			}
 		}
 
 		if callErr == nil {
@@ -216,7 +263,7 @@ func (f *Failover) Execute(ctx context.Context, model string, call FailoverCallF
 				OriginalProvider: originalProvider,
 				FallbackUsed:     result.Target.ProviderID != originalProvider,
 				StrategyName:     result.StrategyName,
-			}, nil
+			}, lease, nil
 		}
 
 		lastErr = callErr
@@ -224,16 +271,16 @@ func (f *Failover) Execute(ctx context.Context, model string, call FailoverCallF
 
 		// Check if we should failover.
 		if !f.ShouldFailover(callErr) {
-			return nil, callErr
+			return nil, nil, callErr
 		}
 
 		// Check context cancellation.
 		if ctx.Err() != nil {
-			return nil, lastErr
+			return nil, nil, lastErr
 		}
 	}
 
-	return nil, lastErr
+	return nil, nil, lastErr
 }
 
 // isTimeoutError checks if an error is a timeout.
