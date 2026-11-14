@@ -175,7 +175,7 @@ test('SKILLS-E2E-022: verify a context repair on the real application and hold f
 
     // Plan: the recorded v4 reference and the captured failure (historical) are preselected; the responder
     // widens it to candidate v7, production v6 and the neighboring cases.
-    await expect(page.getByLabel('Was failing on')).toContainText('v4');
+    await expect(page.getByLabel('Was failing on', { exact: true })).toContainText('v4');
     const group = page.getByRole('group', { name: 'Examples to run' });
     await expect(group.getByRole('checkbox', { name: /^Was failing on v/ }).last()).toBeChecked();
     await page.getByLabel('Test version').click(); await page.getByRole('option', { name: 'v7' }).click();

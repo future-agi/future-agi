@@ -265,11 +265,10 @@ export default function TestRunSetup({
   const spend = useSkillsSpendPolicy();
   const access = useSkillsAccess();
   const spendRefused = error.includes("administrator must enable");
-  // Mirrors the server's admission rule for text runs: an allowance must exist (revision 0 means
-  // none was ever set) and be on. Unlike application runs, a text run needs no monthly limit.
-  const policyOff =
-    Boolean(spend?.data) &&
-    (spend.data.revision === 0 || !spend.data.enabled);
+  // Mirrors the server's admission rule for text runs: they run unless an admin has turned the
+  // workspace allowance off. With no allowance yet the server opens an unlimited one, and unlike
+  // application runs a text run needs no monthly limit.
+  const policyOff = Boolean(spend?.data) && spend.data.enabled === false;
   // A refusal while the policy is unknown also disables the run; once the re-read policy says an
   // allowance exists, the reviewer may retry and the server checks again.
   const allowanceOff = policyOff || (spendRefused && !spend?.data);
