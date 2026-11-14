@@ -2,6 +2,16 @@ import django.db.models.deletion
 from django.conf import settings
 from django.db import migrations, models
 
+UPDATE_SAFETY = {
+    "schema_version": 1,
+    "risk_classes": ["data_migration"],
+    "tables": ["postgres:simulate_harness_suite_version"],
+    "mitigation": (
+        "Only nullable or defaulted columns and one index are added. The data step sets lifecycle_legacy on the "
+        "active and candidate suite versions, a small per-environment table, in one UPDATE."
+    ),
+}
+
 
 def mark_legacy(apps, schema_editor):
     """Suites active or candidate at deploy were validated before proofs were recorded."""
