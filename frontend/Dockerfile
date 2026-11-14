@@ -10,7 +10,7 @@
 #     nginx:alpine (amd64, Docker Hub, 2026-09-25). nginx.conf uses only core
 #     http directives (gzip, expires, add_header, try_files) and
 #     docker-entrypoint.sh and the healthcheck use busybox sh/printenv/sed/
-#     cat/md5sum/sleep/wget/nc (plus the base image's ssl_client for HTTPS), so
+#     cat/md5sum/sleep/kill/wget (plus the base image's ssl_client for HTTPS), so
 #     none of the modules alpine-slim leaves out (njs, geoip, image-filter,
 #     xslt, acme) nor nginx:alpine's curl are used.
 ARG NODE_IMAGE=futureagi/frontend-base:v1.1.0-dev@sha256:bc90d2229b7155ed6ba69c47f3e5a634a0cd85fafab1e8f6c6609f0c1762e2ad
@@ -96,8 +96,8 @@ EXPOSE 443
 USER root
 # nginx: SIGQUIT finishes the requests in flight, SIGTERM drops them.
 STOPSIGNAL SIGQUIT
-# Probe HTTP if available, otherwise HTTPS (-Y off bypasses proxy env vars).
-# For a private CA not trusted by BusyBox, the script falls back to TCP liveness.
+# Probes the HTTP listener, or the HTTPS one when HTTP is off
+# (FRONTEND_HTTP_ENABLED=false); see frontend-healthcheck.sh.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
     CMD ["/usr/local/bin/frontend-healthcheck"]
 ENTRYPOINT ["/docker-entrypoint.sh"]
