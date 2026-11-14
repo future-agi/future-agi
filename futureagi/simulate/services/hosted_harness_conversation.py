@@ -1545,10 +1545,55 @@ def _suite_snapshot(job: HostedHarnessJob) -> dict[str, tuple[int | None, str, s
     }
 
 
+FAILED_CHANGES_KEY = "failed_scenario_changes"
+
+
+def record_failed_changes(environment: HostedHarnessJob, failed: Any) -> dict[str, str]:
+    """Keep which scenarios the builder's last save could not apply, by key with the first line of
+    why; each save replaces the set, so a fixed case leaves it."""
+    kept = {
+        str(one.get("scenario_key"))[:255]: str(one.get("reason") or "").splitlines()[
+            0
+        ][:300]
+        if str(one.get("reason") or "").strip()
+        else "it could not be loaded"
+        for one in failed or []
+        if isinstance(one, dict) and str(one.get("scenario_key") or "").strip()
+    }
+    with transaction.atomic():
+        locked = HostedHarnessJob.no_workspace_objects.select_for_update().get(
+            id=environment.id
+        )
+        payload = dict(locked.payload or {})
+        metadata = dict(payload.get("metadata") or {})
+        if kept:
+            metadata[FAILED_CHANGES_KEY] = kept
+        else:
+            metadata.pop(FAILED_CHANGES_KEY, None)
+        payload["metadata"] = metadata
+        locked.payload = payload
+        locked.save(update_fields=["payload", "updated_at"])
+    return kept
+
+
+def failed_changes(environment: HostedHarnessJob) -> dict[str, str]:
+    """The scenarios the builder's last save could not apply, by key."""
+    found = ((environment.payload or {}).get("metadata") or {}).get(FAILED_CHANGES_KEY)
+    return (
+        {str(key): str(why) for key, why in found.items()}
+        if isinstance(found, dict)
+        else {}
+    )
+
+
 def publish_conversation_workspace(
-    conversation: HostedHarnessConversation, *, digest: str
+    conversation: HostedHarnessConversation,
+    *,
+    digest: str,
+    failed_scenarios: Any = None,
 ) -> dict[str, Any]:
-    """Publish the chat's latest checkpoint now and say exactly what changed, or why it did not."""
+    """Publish the chat's latest checkpoint now and say exactly what changed, or why it did not.
+    ``failed_scenarios`` are the cases the builder could not apply; the rest still save."""
     conversation = HostedHarnessConversation.no_workspace_objects.get(
         id=conversation.id
     )
@@ -1573,11 +1618,15 @@ def publish_conversation_workspace(
         }
     from simulate.services.harness_versioning import drafts
 
+    failed = record_failed_changes(environment, failed_scenarios)
     if drafts.drafts_apply(environment):
         # Saved to the unsaved changes: nothing is live until the person presses Save.
         return {
             "applied": True,
             "draft": True,
+            "failed": [
+                {"scenario_key": key, "reason": why} for key, why in failed.items()
+            ],
             "revision": str(
                 ((published.payload or {}).get("metadata") or {}).get(
                     "authoring_revision"
@@ -1601,6 +1650,7 @@ def publish_conversation_workspace(
 
     return {
         "applied": True,
+        "failed": [{"scenario_key": key, "reason": why} for key, why in failed.items()],
         "revision": str(
             ((published.payload or {}).get("metadata") or {}).get("authoring_revision")
             or ""

@@ -46,6 +46,7 @@ REASON_TEXTS = {
     "answer_leaked": 'What the {who} sees gives the answer away: {field} repeats "{excerpt}" from {grader_field}.',
     "source_unresolved": "A cited source is not in this environment: {kind} {ref}.",
     "policy_conflict": "Its expected outcome contradicts a cited rule: {why}",
+    "apply_failed": "This change could not be applied: {why}. Fix it in the builder chat or discard it.",
     "archived": "Archived on {date}: {archive_reason}",
     "validation_unavailable": "Validation is not available on this installation; this case runs unvalidated.",
 }
@@ -384,6 +385,9 @@ def scenario_lifecycle(
         stored={key: list(row.get("sources") or []) for key, row in rows.items()},
     )
     changed = source_changed(environment_version, contents)
+    from simulate.services.hosted_harness_conversation import failed_changes
+
+    failed = failed_changes(environment) if default else {}
     good: LifecycleState = "active" if default else "validated"
     views: dict[str, LifecycleView] = {}
     for key in contents:
@@ -469,6 +473,14 @@ def scenario_lifecycle(
                     kind=bad["kind"],
                     ref=bad["ref"] or bad["label"],
                 ),
+                warning=None,
+                warning_text=None,
+            )
+        if default and key in failed:
+            view.update(
+                state="draft",
+                reason="apply_failed",
+                reason_text=reason_text("apply_failed", {"why": failed[key]}),
                 warning=None,
                 warning_text=None,
             )

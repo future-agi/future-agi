@@ -28,11 +28,13 @@ vi.mock("src/api/harness/scenarios", () => ({
 }));
 
 const saveDrafts = vi.hoisted(() => vi.fn());
+const discardDraft = vi.hoisted(() => vi.fn());
 vi.mock("src/api/simulate-environments/versions", () => ({
   useDrafts: () => ({
     data: { any: true, pieces: ["suite"], suite: { parentId: "s1", revision: 3 } },
   }),
   useSaveDrafts: () => ({ mutate: saveDrafts, isPending: false }),
+  useDiscardDraft: () => ({ mutate: discardDraft, isPending: false }),
   useActors: () => ({ data: { knowledge_sources: { records: [{ store: "db", collection: "refills" }] } } }),
 }));
 
@@ -222,5 +224,23 @@ describe("ScenarioDetail missing record", () => {
         },
       ],
     });
+  });
+});
+
+describe("ScenarioDetail failed change", () => {
+  it("offers to discard a change the builder could not apply", async () => {
+    const user = userEvent.setup();
+    render(
+      <ScenarioDetailBody
+        jobId="env-1"
+        row={{
+          id: "r1",
+          name: "refund",
+          lifecycle: { state: "draft", reason: "apply_failed", reason_text: "This change could not be applied: bad check.", sources: [], proof: null },
+        }}
+      />,
+    );
+    await user.click(screen.getByTestId("discard-failed-change"));
+    expect(discardDraft).toHaveBeenCalledWith(["suite"]);
   });
 });

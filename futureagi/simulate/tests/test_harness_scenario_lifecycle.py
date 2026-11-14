@@ -612,3 +612,40 @@ def test_unrun_control_is_not_a_wrong_result():
             {"a": _workflow_view("active", controls=controls)}, contents
         )[0]
         assert row["wrong_result"] == 0 and "wrong_result" in row["missing"]
+
+
+def test_apply_failed_reads_draft_with_reason(user, workspace, storage):
+    from simulate.services.harness_scenario_lifecycle import runnable
+    from simulate.services.hosted_harness_conversation import record_failed_changes
+
+    environment = _environment(user, workspace, storage, "lc-apply-failed")
+    _suite(environment, _ten())
+    _proofs(environment, dict.fromkeys(KEYS, PROVED))
+    record_failed_changes(
+        environment,
+        [
+            {
+                "scenario_key": REFUND_KEYS[0],
+                "reason": "check refunded_once: invalid syntax\nTraceback",
+            }
+        ],
+    )
+    environment.refresh_from_db()
+
+    views = _views(environment)
+
+    assert (views[REFUND_KEYS[0]]["state"], views[REFUND_KEYS[0]]["reason"]) == (
+        "draft",
+        "apply_failed",
+    )
+    assert views[REFUND_KEYS[0]]["reason_text"] == (
+        "This change could not be applied: check refunded_once: invalid syntax. "
+        "Fix it in the builder chat or discard it."
+    )
+    # Only that case is held back; the rest stay runnable.
+    assert runnable(views[REFUND_KEYS[0]]) is False
+    assert all(runnable(views[key]) for key in KEYS if key != REFUND_KEYS[0])
+    # The next save that applies it clears it.
+    record_failed_changes(environment, [])
+    environment.refresh_from_db()
+    assert _views(environment)[REFUND_KEYS[0]]["state"] == "active"

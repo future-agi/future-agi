@@ -2514,3 +2514,32 @@ class TestChatReads:
         settings.HARNESS_VERSIONING_ENABLED = False
 
         assert "drafts" not in conversation_overview(conversation)
+
+
+def test_failed_change_blocks_only_its_key(user, workspace, storage, auth_client):
+    from unittest.mock import patch
+
+    from simulate.services import hosted_harness_conversation as conversation_service
+
+    environment = _built(user, workspace, "d-failed-change")
+    conversation = _conversation(environment)
+    conversation_service.HostedHarnessConversation.no_workspace_objects.filter(
+        id=conversation.id
+    ).update(latest_workspace_digest="sha256:abc")
+    with (
+        patch.object(
+            conversation_service, "promote_latest_checkpoint", return_value=environment
+        ),
+        patch.object(drafts, "drafts_apply", return_value=True),
+        patch.object(drafts, "draft_changes", return_value={}),
+    ):
+        said = conversation_service.publish_conversation_workspace(
+            conversation,
+            digest="sha256:abc",
+            failed_scenarios=[{"scenario_key": "refund-a", "reason": "bad check"}],
+        )
+
+    assert said["applied"] is True
+    assert said["failed"] == [{"scenario_key": "refund-a", "reason": "bad check"}]
+    environment.refresh_from_db()
+    assert conversation_service.failed_changes(environment) == {"refund-a": "bad check"}
