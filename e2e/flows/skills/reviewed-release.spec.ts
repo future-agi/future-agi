@@ -117,11 +117,11 @@ test('SKILLS-E2E-002: review a policy repair and deliberately release its exact 
       ownerId: owner.userId, memberId: member.userId, workspaceId: member.workspaceId, fixtureHash: fake.fixtureHash }), contentType: 'application/json' });
     await test.step('Open the member draft and its Tests tab', async () => {
       await page.goto(`${UI}/${id}?tab=tests`);
-      await expect(page.getByRole('button', { name: 'Add first example', exact: true })).toBeVisible({ timeout: UI_READY });
+      await expect(page.getByRole('button', { name: 'Add first test case', exact: true })).toBeVisible({ timeout: UI_READY });
     }, { timeout: UI_READY });
     for (let index = 0; index < 3; index++) {
       await test.step(`Author and review ${titles[index]}`, async () => {
-        await page.getByRole('button', { name: index ? 'Add example' : 'Add first example', exact: true }).click();
+        await page.getByRole('button', { name: index ? 'Add test case' : 'Add first test case', exact: true }).click();
         const dialog = page.getByRole('dialog');
         await dialog.getByRole('textbox', { name: 'Title', exact: true }).fill(titles[index]);
         await dialog.getByRole('textbox', { name: 'Request', exact: true }).fill(prompts[index]);

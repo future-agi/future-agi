@@ -1,11 +1,11 @@
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import ContextTestsPanel from './ContextTestsPanel';
 
 // One Tests panel carries regression cases, application verification and whole-context tests.
 // Each section owns its loading and error states; neither hides the other.
-const h = vi.hoisted(() => ({ optionsError: false, suiteError: false, runtime: true, retry: () => {}, targets: [], answerRuns: [], run: {}, results: {} }));
+const h = vi.hoisted(() => ({ optionsError: false, suiteError: false, runtime: true, retry: () => {}, targets: [], answerRuns: [], run: {}, results: {}, preview: null }));
 const idle = vi.hoisted(() => () => ({ mutate: () => {}, mutateAsync: async () => {}, reset: () => {}, isPending: false }));
 vi.mock('src/api/skills/r3-spend', () => ({ useSkillsSpendPolicy: () => ({}) }));
 vi.mock('src/api/skills/testing', () => ({
@@ -17,7 +17,7 @@ vi.mock('src/api/skills/context-testing', () => ({
   useContextTestSuite: () => (h.suiteError ? { isError: true, refetch: () => {} } : { data: { revision: 1, cases: [{ id: 'refund', title: 'Refund failure', prompt: 'Refund order 7', reviewed: true, checks: [{}] }] } }),
   useSaveContextTestSuite: idle,
   contextTestCandidate: (draft) => ({ kind: 'draft', revision: draft.revision, digest: draft.digest }),
-  usePreviewContextTest: idle, useCreateContextTest: idle, useCancelContextTest: idle,
+  usePreviewContextTest: () => ({ mutate: () => {}, mutateAsync: async () => h.preview, reset: () => {}, isPending: false }), useCreateContextTest: idle, useCancelContextTest: idle,
   useContextTestRuns: () => ({ data: { results: h.answerRuns } }), useContextTestRun: () => h.run, useContextTestResults: () => h.results, useContextTestAttempt: () => ({}),
   useNativeTargets: () => ({ data: { runtime: { available: h.runtime, runtime: 'container', evidenceClass: 'synthetic fixture' }, targets: h.targets } }),
   useNativeRuns: () => ({ data: [] }), useNativeRun: () => ({}), useRuntimeConfiguration: () => ({}),
@@ -29,14 +29,14 @@ const digest = `sha256:${'a'.repeat(64)}`;
 const version = { id: 'v4', number: 4, digest };
 const mount = (props = {}) => render(<MemoryRouter><ContextTestsPanel contextId="context" version={version} versions={[version]} canWrite {...props} /></MemoryRouter>);
 const registered = [{ bindingId: 'binding', name: 'support-app', revision: 1, qualified: false }];
-beforeEach(() => { h.optionsError = false; h.suiteError = false; h.runtime = true; h.targets = []; h.answerRuns = []; h.run = {}; h.results = {}; window.localStorage.clear(); });
+beforeEach(() => { h.optionsError = false; h.suiteError = false; h.runtime = true; h.targets = []; h.answerRuns = []; h.run = {}; h.results = {}; h.preview = null; window.localStorage.clear(); });
 afterEach(cleanup);
 
 it('shows regression cases, application verification and whole-context tests in one panel', () => {
   h.targets = registered;
   mount();
   expect(screen.getByText('Test cases')).toBeVisible();
-  expect(screen.getByRole('link', { name: 'Add case from a trace' })).toHaveAttribute('href', '/dashboard/observe');
+  expect(screen.getByRole('link', { name: 'Add test case from a trace' })).toHaveAttribute('href', '/dashboard/observe');
   expect(screen.getByRole('table', { name: 'Context regression cases' })).toHaveTextContent('Refund failure');
   expect(screen.getByText('Application target')).toBeVisible();
   expect(screen.getByRole('radio', { name: /^Verify on the application/ })).toBeChecked();
@@ -144,13 +144,18 @@ it('reads answer grades in plain words and offers the release review for a passi
   expect(screen.getByText('Not graded')).toBeVisible();
   expect(screen.queryByText(/Answer: /)).not.toBeInTheDocument();
   expect(screen.queryByText('Whole-context result')).not.toBeInTheDocument();
-  expect(screen.getByRole('button', { name: 'Inspect support-agent v4 attempt 1' })).toHaveClass('MuiButton-outlined');
+  expect(screen.getByRole('button', { name: 'Inspect v4 (testing) attempt 1' })).toHaveClass('MuiButton-outlined');
+  // The payload's ad hoc case title is shown as the result heading, never as a "regression".
+  expect(screen.getByRole('heading', { name: 'Answer check · v4 vs v3', level: 2 })).toBeVisible();
+  expect(screen.queryByText('Reviewed context regression')).not.toBeInTheDocument();
   const request = screen.getByRole('link', { name: 'Request release review for v4' });
   expect(request).toHaveClass('MuiButton-contained');
   const params = new URL(request.href).searchParams;
   expect(params.get('evidence')).toBe('skills_text:answer-run');
   expect(params.get('candidate')).toBe('v4');
-  expect(screen.getByRole('button', { name: 'Verify v4 on the application' })).toHaveClass('MuiButton-outlined');
+  // No application is registered, so the release review leads and setting one up is the secondary.
+  expect(screen.queryByRole('button', { name: 'Verify v4 on the application' })).not.toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Set up application verification' })).toHaveClass('MuiButton-outlined');
   // The result carries the one primary until the reviewer opens the setup; then the setup leads.
   expect([...document.querySelectorAll('.MuiButton-contained')].map((el) => el.textContent)).toEqual(['Request release review for v4']);
   fireEvent.click(screen.getByRole('button', { name: 'Show setup' }));
@@ -169,4 +174,77 @@ it('moves focus into the application form without scrolling the page when the an
   await waitFor(() => expect(screen.getByRole('combobox', { name: /^Test version/ })).toHaveFocus());
   expect(scrollIntoView).not.toHaveBeenCalled();
   delete Element.prototype.scrollIntoView;
+});
+
+const answerResult = ({ reference = 3, candidate = 'pass', baseline = 'fail', status = 'completed', attemptStatus = 'completed' } = {}) => {
+  h.answerRuns = [{ id: 'answer-run', status, created_at: '2026-11-13T12:00:00Z', candidate: { kind: 'version', version: 4, digest } }];
+  h.run = { data: { status, created_at: '2026-11-13T12:00:00Z', candidate: { kind: 'version', version: 4, digest }, reference: reference ? { version: reference, digest } : null } };
+  const attempt = (id, verdict) => ({ id, status: attemptStatus, answer_verdict: verdict, repeat_index: 0 });
+  h.results = { data: { total_pages: 1, results: [{ case_id: 'c1', title: 'Reviewed context regression', variants: [{ variant: 'candidate', attempts: [attempt('a1', candidate)] }, { variant: 'reference', attempts: [attempt('a2', baseline)] }] }] } };
+};
+it('confirms a passing version that is already in production instead of linking to a request the composer refuses', () => {
+  answerResult();
+  const versions = [version, { id: 'v3', number: 3, digest }];
+  render(<MemoryRouter><ContextTestsPanel contextId="context" contextName="support-agent" version={version} versions={versions} productionVersion={4} canWrite /></MemoryRouter>);
+  expect(screen.getByText('Answer check passed for v4 on 1 of 1 case.')).toBeVisible();
+  expect(screen.getByText('Already in production')).toBeVisible();
+  expect(screen.getByText('v4 is already in production. This result confirms the release.')).toBeVisible();
+  expect(screen.queryByRole('link', { name: /Request release review/ })).not.toBeInTheDocument();
+  expect(document.querySelector('a[href*="/review"]')).toBeNull();
+  expect(screen.queryByText('Ready for release review')).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Verify v4 on the application' })).not.toBeInTheDocument();
+  expect(screen.getByRole('link', { name: 'View release history' })).toHaveAttribute('href', '/dashboard/skills/contexts/context?tab=versions');
+  // Nothing in the result claims the page's primary; the setup can take it.
+  expect([...document.querySelectorAll('.MuiButton-contained')].filter((el) => !el.closest('[hidden]')).map((el) => el.textContent)).not.toContain('View release history');
+});
+it('offers a newer draft to test when production already serves the tested version', () => {
+  answerResult();
+  render(<MemoryRouter><ContextTestsPanel contextId="context" version={version} versions={[version]} productionVersion={4} canWrite source={{ testingDraft: false, draftAvailable: true, releaseAvailable: true, onSelect: () => {} }} /></MemoryRouter>);
+  expect(screen.getByRole('link', { name: 'Test a newer draft' })).toHaveAttribute('href', '/dashboard/skills/contexts/context/edit');
+  expect(screen.queryByRole('link', { name: 'View release history' })).not.toBeInTheDocument();
+});
+it('names the comparison row as the production baseline, in a neutral tone, and the failure being fixed', () => {
+  answerResult();
+  render(<MemoryRouter><ContextTestsPanel contextId="context" version={version} versions={[version, { id: 'v3', number: 3, digest }]} productionVersion={3} canWrite /></MemoryRouter>);
+  const result = screen.getByRole('region', { name: 'Latest result' });
+  expect(within(result).getByText('v4 (testing)')).toBeVisible();
+  expect(within(result).getByText('v3 (production)')).toBeVisible();
+  expect(within(result).getByText('· the failure you’re fixing')).toBeVisible();
+  // The badge label stays exactly "Answer failed"; only the version under test is coloured.
+  expect(within(result).getByText('Answer failed', { exact: true })).toBeVisible();
+  expect(screen.queryByText(/^Compared with/)).not.toBeInTheDocument();
+});
+it('leads with application verification when an application is registered', () => {
+  h.targets = [{ ...registered[0], qualified: true, configurationDigest: digest }];
+  answerResult();
+  mount();
+  expect(screen.getByRole('button', { name: 'Verify v4 on the application' })).toHaveClass('MuiButton-contained');
+  expect(screen.getByRole('link', { name: 'Request release review for v4' })).toHaveClass('MuiButton-outlined');
+  expect([...document.querySelectorAll('.MuiButton-contained')].filter((el) => !el.closest('[hidden]')).map((el) => el.textContent)).toEqual(['Verify v4 on the application']);
+});
+it('marks ungraded attempts as not started while the run is live, never "Not graded"', () => {
+  answerResult({ status: 'running', candidate: 'not_graded', baseline: 'not_graded', attemptStatus: 'not_started' });
+  mount();
+  expect(screen.getAllByText('Not started')).toHaveLength(2);
+  expect(screen.queryByText('Not graded')).not.toBeInTheDocument();
+});
+it('groups the three answer-check acknowledgments under one heading without merging or pre-ticking them', async () => {
+  h.preview = { fingerprint: 'sha256:preview', attemptCount: 2, estimate: { upperBoundUsd: '0.10' }, providerDisclosure: { taskProvider: 'openai' }, inventory: [], outboundFindings: [] };
+  mount();
+  fireEvent.change(screen.getByRole('textbox', { name: 'Test request' }), { target: { value: 'Refund order 7' } });
+  fireEvent.change(screen.getByRole('textbox', { name: 'Expected answer contains' }), { target: { value: '$25' } });
+  fireEvent.click(screen.getByRole('checkbox', { name: 'I reviewed this request and its expected answer.' }));
+  fireEvent.change(screen.getByRole('textbox', { name: 'Maximum estimated cost (USD)' }), { target: { value: '1' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Preview whole-context test' }));
+  const group = await screen.findByRole('group', { name: 'Before this runs' });
+  const names = ['The files sent to the model contain no answer keys or grading material.', 'I reviewed every file and input that will be sent to the model.', 'I acknowledge provider processing of this reviewed context and test request.'];
+  const boxes = within(group).getAllByRole('checkbox');
+  expect(boxes.map((box) => box.closest('label').textContent)).toEqual(names);
+  for (const box of boxes) expect(box).not.toBeChecked();
+  fireEvent.click(boxes[2]);
+  expect(boxes[2]).toBeChecked();
+  expect(boxes[0]).not.toBeChecked();
+  expect(boxes[1]).not.toBeChecked();
+  expect(screen.getByRole('button', { name: 'Run whole-context test' })).toBeDisabled();
+  expect(screen.getByRole('button', { name: 'About this preview' })).toBeInTheDocument();
 });

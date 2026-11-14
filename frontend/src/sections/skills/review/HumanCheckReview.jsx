@@ -58,7 +58,9 @@ function AnnotationForm({
                   : "Disagree"}{" "}
               · {item.actor?.name ?? item.actorId ?? "Attributed reviewer"}
             </Typography>
-            <When value={item.createdAt} />
+            <Typography variant="s3" color="text.secondary">
+              <When value={item.createdAt} />
+            </Typography>
             <Typography
               variant="s1"
               component="blockquote"
