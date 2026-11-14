@@ -86,6 +86,9 @@ class Evidence:
     covers_suite: bool | None = None
     # The certification archive could not be read, so its rows read as unmeasured.
     unreadable: bool = False
+    # The world door's sealed `door.json` and `permissions.json`; None when absent or not read.
+    door: Mapping[str, Any] | None = None
+    worker_permissions: Mapping[str, Any] | None = None
 
 
 def pair_bundle(pairing: Pairing) -> HarnessAssembledBundle | None:
@@ -109,6 +112,14 @@ def certified(bundle: HarnessAssembledBundle | None) -> bool:
 
 
 _FILES = ("tools", "actions", "routed", "unobserved")
+# Read by key, never through `_items`: each is a mapping or None.
+_DOOR_FILES = ("door", "worker_permissions")
+# Kept rows and cached reads from before the door files were read lack them, so they are read once more.
+_FILES_VERSION = 2
+
+
+def _mapping(value: Any) -> Mapping[str, Any] | None:
+    return value if isinstance(value, Mapping) else None
 
 
 def _certification_files(
@@ -119,8 +130,15 @@ def _certification_files(
     already; an older row has its archive read once, and keeps what was read. An
     archive that cannot be read is marked ``unreadable``."""
     kept = row.certification_files
-    if isinstance(kept, Mapping) and kept.get("object_key") == object_key:
-        return {name: _items(kept, name) for name in _FILES}
+    if (
+        isinstance(kept, Mapping)
+        and kept.get("object_key") == object_key
+        and kept.get("files_version") == _FILES_VERSION
+    ):
+        return {
+            **{name: _items(kept, name) for name in _FILES},
+            **{name: _mapping(kept.get(name)) for name in _DOOR_FILES},
+        }
     files, readable = _read_once(object_key)
     if not readable:
         return {**files, "unreadable": True}
@@ -130,7 +148,11 @@ def _certification_files(
         else "archive_object_key"
     )
     type(row)._base_manager.filter(id=row.id, **{key_field: object_key}).update(
-        certification_files={"object_key": object_key, **files}
+        certification_files={
+            "object_key": object_key,
+            "files_version": _FILES_VERSION,
+            **files,
+        }
     )
     return files
 
@@ -142,7 +164,7 @@ def _read_once(object_key: str) -> _Read:
     when it does not come in time. An archive that cannot be read reads as holding
     neither, for a few minutes."""
     cache_key = (
-        "harness-readiness-certification:"
+        f"harness-readiness-certification:v{_FILES_VERSION}:"
         + hashlib.sha256(object_key.encode()).hexdigest()
     )
     cached: _Read | None = cache.get(cache_key)
@@ -173,7 +195,13 @@ def _read_certification_files(object_key: str, cache_key: str) -> _Read:
     try:
         found = archives.stream_members(
             object_key,
-            {TOOL_CERTIFICATION, ACTION_CERTIFICATION, TOOL_ROUTING},
+            {
+                TOOL_CERTIFICATION,
+                ACTION_CERTIFICATION,
+                TOOL_ROUTING,
+                assembly.DOOR_FILE_PATH,
+                assembly.PERMISSIONS_FILE_PATH,
+            },
             _MAX_CERTIFICATION_BYTES,
         )
     except Exception as exc:  # noqa: BLE001 - storage, network or a truncated archive
@@ -182,11 +210,23 @@ def _read_certification_files(object_key: str, cache_key: str) -> _Read:
             object_key=object_key,
             error=type(exc).__name__,
         )
-        unreadable: _Read = ({name: [] for name in _FILES}, False)
+        unreadable: _Read = (
+            {
+                **{name: [] for name in _FILES},
+                **dict.fromkeys(_DOOR_FILES),
+            },
+            False,
+        )
         cache.set(cache_key, unreadable, timeout=_UNREADABLE_TTL_SECONDS)
         return unreadable
     kept = assembly.certification_files(found, object_key)
-    read = ({name: kept[name] for name in _FILES}, True)
+    read = (
+        {
+            **{name: kept[name] for name in _FILES},
+            **{name: kept.get(name) for name in _DOOR_FILES},
+        },
+        True,
+    )
     cache.set(cache_key, read, timeout=_FILES_TTL_SECONDS)
     return read
 
@@ -234,6 +274,8 @@ def read_evidence(pairing: Pairing, bundle: HarnessAssembledBundle | None) -> Ev
             routed=kept.get("tools") or files.get("routed", []),
             unobserved=kept.get("unobserved") or files.get("unobserved", []),
             unreadable=bool(files.get("unreadable")),
+            door=_mapping(files.get("door")),
+            worker_permissions=_mapping(files.get("worker_permissions")),
         )
     version = _certified_version(pairing.environment_version)
     data = _build_certification(version) if version is not None else None
@@ -259,6 +301,8 @@ def read_evidence(pairing: Pairing, bundle: HarnessAssembledBundle | None) -> Ev
         made_for=None if version.id == pairing.environment_version.id else version,
         covers_suite=_covers_suite(version, pairing.suite_version),
         unreadable=bool(files.get("unreadable")),
+        door=_mapping(files.get("door")),
+        worker_permissions=_mapping(files.get("worker_permissions")),
     )
 
 
