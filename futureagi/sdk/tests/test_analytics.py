@@ -986,6 +986,16 @@ class TestSimulationAnalyticsView:
             ),
             (
                 [
+                    ("eval-first", "Tone", "score", 10.0, None, 0),
+                    ("x__y", "Tone", "score", 20.0, None, 0),
+                    ("eval-other", "Tone__x", "score", 30.0, None, 0),
+                    ("y", "Tone__x", "score", 40.0, None, 0),
+                ],
+                '{"avg_tone":10.0,"avg_tone__x__y":20.0,'
+                '"avg_tone__x":30.0,"avg_tone__x__y_":40.0}',
+            ),
+            (
+                [
                     ("eval-first", "Tone", "score", 75.0, None, None),
                     ("eval-second", "tone", "score", 65.0, None, None),
                 ],
@@ -997,6 +1007,52 @@ class TestSimulationAnalyticsView:
                     ("eval-choice", "Sentiment", "choices", None, "positive", 4),
                 ],
                 '{"avg_tone":75.0,"sentiment":{"positive":4}}',
+            ),
+            (
+                [
+                    ("eval-category", "Avg Tone", "choices", None, "positive", 2),
+                    ("eval-numeric", "Tone", "choices", 4.0, None, 0),
+                ],
+                '{"avg_tone":4.0,"avg_tone__eval-category":{"positive":2}}',
+            ),
+            (
+                [
+                    ("eval-numeric", "Tone", "choices", 4.0, None, 0),
+                    ("eval-category", "Avg Tone", "choices", None, "positive", 2),
+                ],
+                '{"avg_tone":4.0,"avg_tone__eval-category":{"positive":2}}',
+            ),
+            (
+                [
+                    ("eval-choice", "Avg Tone", "choices", None, "positive", 2),
+                    ("eval-empty", "Empty", "choices", None, None, 0),
+                    ("eval-score", "Tone", "score", 75.0, None, 0),
+                ],
+                '{"avg_tone":75.0,"avg_tone__eval-choice":{"positive":2}}',
+            ),
+            (
+                [
+                    ("eval-shared", "Tone", "Pass/Fail", 66.7, None, 0),
+                    ("eval-shared", "Tone", "score", None, None, 0),
+                    ("eval-other", "Accuracy", "score", 82.5, None, 0),
+                ],
+                '{"avg_tone":0,"avg_accuracy":82.5}',
+            ),
+            (
+                [
+                    ("eval-shared", "Tone", "score", None, None, 0),
+                    ("eval-shared", "Tone", "Pass/Fail", 66.7, None, 0),
+                    ("eval-other", "Accuracy", "score", 82.5, None, 0),
+                ],
+                '{"avg_tone":66.7,"avg_accuracy":82.5}',
+            ),
+            (
+                [
+                    ("eval-category", "Avg Tone", "choices", None, "positive", 2),
+                    ("eval-shared", "Tone", "score", None, None, 0),
+                    ("eval-shared", "Tone", "Pass/Fail", 66.7, None, 0),
+                ],
+                '{"avg_tone":66.7,"avg_tone__eval-category":{"positive":2}}',
             ),
         ],
     )
@@ -1034,7 +1090,7 @@ class TestSimulationAnalyticsView:
             ]
         ),
     )
-    def test_execution_id_repeated_metric_names_keep_every_average(
+    def test_execution_id_repeated_metric_names_keep_prior_value(
         self, sdk_client, test_execution, call_execution, eval_rows
     ):
         with (
@@ -1056,12 +1112,9 @@ class TestSimulationAnalyticsView:
 
         assert response.status_code == status.HTTP_200_OK
         averages = response.json()["result"]["eval_averages"]
-        assert set(averages) == {
-            "avg_tone",
-            "avg_tone__eval-shared",
-            "avg_tone__eval-shared_",
-        }
-        assert set(averages.values()) == {75.0, 65.0, 55.0}
+        assert json.dumps(averages, separators=(",", ":")) == json.dumps(
+            {"avg_tone": eval_rows[-1][3]}, separators=(",", ":")
+        )
 
     def test_execution_id_system_summary_populated(
         self, sdk_client, test_execution, call_execution
