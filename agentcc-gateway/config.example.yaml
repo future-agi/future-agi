@@ -741,6 +741,19 @@ logging:
 #   webhook_secret: "${CONTROL_PLANE_WEBHOOK_SECRET}"
 #   sync_on_startup: true
 #   sync_interval: 5m                  # 0 = disabled
+#   log_flush:
+#     interval: 5s                     # AGENTCC_LOG_FLUSH_INTERVAL
+#     timeout: 15s                     # AGENTCC_LOG_FLUSH_TIMEOUT
+#     max_batch: 5000                  # AGENTCC_LOG_FLUSH_MAX_BATCH; buffer cap is 2x
+#     max_retries: 3                   # AGENTCC_LOG_FLUSH_MAX_RETRIES
+#     retry_backoff: 5s               # AGENTCC_LOG_FLUSH_RETRY_BACKOFF; doubles
+#     max_retry_backoff: 60s          # AGENTCC_LOG_FLUSH_MAX_RETRY_BACKOFF
+#   # After an initial failure plus max_retries further failed sends, the batch
+#   # is discarded and counted
+#   # under max_retries. A 4xx drops immediately under client_error. A timed-out
+#   # send may still finish on the backend, which dedupes by request ID. Every
+#   # dropped record is counted locally even with Prometheus disabled; when on,
+#   # see agentcc_request_log_records_dropped_total by reason. No disk spill.
 
 # Providers orgs add through the control plane (Gateway > Providers).
 # org_providers:

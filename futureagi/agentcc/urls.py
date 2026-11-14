@@ -15,6 +15,7 @@ from agentcc.views.org_config import AgentccOrgConfigViewSet
 from agentcc.views.org_config_bulk import OrgConfigBulkView
 from agentcc.views.provider_credential import AgentccProviderCredentialViewSet
 from agentcc.views.request_log import AgentccRequestLogViewSet
+from agentcc.views.request_log_retention import RequestLogRetentionView
 from agentcc.views.routing_policy import AgentccRoutingPolicyViewSet
 from agentcc.views.session import AgentccSessionViewSet
 from agentcc.views.shadow_experiments import (
@@ -95,5 +96,10 @@ urlpatterns = [
     ),
     path("api-keys/bulk/", APIKeyBulkView.as_view(), name="agentcc-api-key-bulk"),
     path("spend-summary/", SpendSummaryView.as_view(), name="agentcc-spend-summary"),
+    path(
+        "request-log-retention/",
+        RequestLogRetentionView.as_view(),
+        name="agentcc-request-log-retention",
+    ),
     *router.urls,
 ]

@@ -2,6 +2,7 @@ import React from "react";
 import { describe, expect, it, vi } from "vitest";
 import { render, screen, userEvent, within } from "src/utils/test-utils";
 import WebhookEventLog from "./WebhookEventLog";
+import { runStatusOf } from "src/utils/runStatus";
 
 const mockUseWebhookEvents = vi.hoisted(() => vi.fn());
 const mockRetryMutate = vi.hoisted(() => vi.fn());
@@ -54,5 +55,32 @@ describe("WebhookEventLog", () => {
         onError: expect.any(Function),
       }),
     );
+  });
+
+  it("never offers Retry for terminal cancelled, expired or dropped events", () => {
+    mockUseWebhookEvents.mockReturnValue({
+      data: ["cancelled", "expired", "dropped"].map((status) => ({
+        id: status,
+        event_type: `event.${status}`,
+        status,
+        attempts: 0,
+        max_attempts: 5,
+      })),
+      isLoading: false,
+      error: null,
+    });
+
+    render(<WebhookEventLog />);
+    const table = within(screen.getByRole("table"));
+    expect(
+      table.queryByRole("button", { name: /retry/i }),
+    ).not.toBeInTheDocument();
+    expect(table.getByText("Cancelled")).toBeInTheDocument();
+    expect(table.getByText("Expired")).toBeInTheDocument();
+    expect(table.getByText("Dropped")).toBeInTheDocument();
+    expect(runStatusOf("dropped")).toEqual({
+      role: "warning",
+      label: "Dropped",
+    });
   });
 });

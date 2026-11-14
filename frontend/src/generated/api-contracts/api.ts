@@ -177,6 +177,7 @@ import type {
   AgentccRequestLogApi,
   AgentccRequestLogDetailApi,
   AgentccRequestLogMetadataValuesResponseApi,
+  AgentccRequestLogRetentionListParams,
   AgentccRequestLogsExport200,
   AgentccRequestLogsExportParams,
   AgentccRequestLogsList200,
@@ -1092,6 +1093,8 @@ import type {
   RenewGroupingFeatureApi,
   ReplaySessionApi,
   ReplaySessionListApi,
+  RequestLogRetentionResponseApi,
+  RequestLogRetentionUpdateApi,
   RerunCallsResponseApi,
   RerunOperationRequestApi,
   RerunOperationResponseApi,
@@ -16519,6 +16522,138 @@ export const agentccProviderCredentialsRotate = async (
   );
 };
 
+export type agentccRequestLogRetentionListResponse200 = {
+  data: RequestLogRetentionResponseApi;
+  status: 200;
+};
+
+export type agentccRequestLogRetentionListResponse400 = {
+  data: AgentccErrorResponseApi;
+  status: 400;
+};
+
+export type agentccRequestLogRetentionListResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 400>;
+};
+
+export type agentccRequestLogRetentionListResponseSuccess =
+  agentccRequestLogRetentionListResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type agentccRequestLogRetentionListResponseError = (
+  | agentccRequestLogRetentionListResponse400
+  | agentccRequestLogRetentionListResponseDefault
+) & {
+  headers: ApiResponseHeaders;
+};
+
+export type agentccRequestLogRetentionListResponse =
+  | agentccRequestLogRetentionListResponseSuccess
+  | agentccRequestLogRetentionListResponseError;
+
+export const getAgentccRequestLogRetentionListUrl = (
+  params?: AgentccRequestLogRetentionListParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/agentcc/request-log-retention/?${stringifiedParams}`
+    : `/agentcc/request-log-retention/`;
+};
+
+/**
+ * GET for any member; ``?retention_days=N`` previews the next run for N.
+PUT for organization admins: ``{"retention_days": N}`` or null to keep
+forever, never shorter than the longest budget period in use.
+ * @summary How long the organization keeps gateway Request Logs.
+ */
+export const agentccRequestLogRetentionList = async (
+  params?: AgentccRequestLogRetentionListParams,
+  options?: RequestInit,
+): Promise<agentccRequestLogRetentionListResponse> => {
+  return apiMutator<agentccRequestLogRetentionListResponse>(
+    getAgentccRequestLogRetentionListUrl(params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type agentccRequestLogRetentionUpdateResponse200 = {
+  data: RequestLogRetentionResponseApi;
+  status: 200;
+};
+
+export type agentccRequestLogRetentionUpdateResponse400 = {
+  data: AgentccErrorResponseApi;
+  status: 400;
+};
+
+export type agentccRequestLogRetentionUpdateResponse403 = {
+  data: AgentccErrorResponseApi;
+  status: 403;
+};
+
+export type agentccRequestLogRetentionUpdateResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 403>;
+};
+
+export type agentccRequestLogRetentionUpdateResponseSuccess =
+  agentccRequestLogRetentionUpdateResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type agentccRequestLogRetentionUpdateResponseError = (
+  | agentccRequestLogRetentionUpdateResponse400
+  | agentccRequestLogRetentionUpdateResponse403
+  | agentccRequestLogRetentionUpdateResponseDefault
+) & {
+  headers: ApiResponseHeaders;
+};
+
+export type agentccRequestLogRetentionUpdateResponse =
+  | agentccRequestLogRetentionUpdateResponseSuccess
+  | agentccRequestLogRetentionUpdateResponseError;
+
+export const getAgentccRequestLogRetentionUpdateUrl = () => {
+  return `/agentcc/request-log-retention/`;
+};
+
+/**
+ * GET for any member; ``?retention_days=N`` previews the next run for N.
+PUT for organization admins: ``{"retention_days": N}`` or null to keep
+forever, never shorter than the longest budget period in use.
+ * @summary How long the organization keeps gateway Request Logs.
+ */
+export const agentccRequestLogRetentionUpdate = async (
+  requestLogRetentionUpdateApi: RequestLogRetentionUpdateApi,
+  options?: RequestInit,
+): Promise<agentccRequestLogRetentionUpdateResponse> => {
+  return apiMutator<agentccRequestLogRetentionUpdateResponse>(
+    getAgentccRequestLogRetentionUpdateUrl(),
+    {
+      ...options,
+      method: "PUT",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(requestLogRetentionUpdateApi),
+    },
+  );
+};
+
 export type agentccRequestLogsListResponse200 = {
   data: AgentccRequestLogsList200;
   status: 200;
@@ -18460,9 +18595,14 @@ export type agentccWebhookLogsCreateResponse400 = {
   status: 400;
 };
 
+export type agentccWebhookLogsCreateResponse503 = {
+  data: AgentccErrorResponseApi;
+  status: 503;
+};
+
 export type agentccWebhookLogsCreateResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 200 | 400>;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 503>;
 };
 
 export type agentccWebhookLogsCreateResponseSuccess =
@@ -18471,6 +18611,7 @@ export type agentccWebhookLogsCreateResponseSuccess =
   };
 export type agentccWebhookLogsCreateResponseError = (
   | agentccWebhookLogsCreateResponse400
+  | agentccWebhookLogsCreateResponse503
   | agentccWebhookLogsCreateResponseDefault
 ) & {
   headers: ApiResponseHeaders;

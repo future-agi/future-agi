@@ -902,6 +902,20 @@ agentccGateway:
     control_plane:
       # Replicas re-read keys and org settings from the backend this often.
       sync_interval: 60s
+      # Request-log flush tuning; equivalents are AGENTCC_LOG_FLUSH_* in extraEnv.
+      # Buffer cap is 2x max_batch; failed sends back off and double to the cap.
+      # After the initial failure and max_retries further failures, discard and count the
+      # batch under max_retries; a 4xx drops immediately under client_error.
+      # The backend may finish a timed-out send and dedupes by request ID.
+      # Counts always exist locally; Prometheus exposes
+      # agentcc_request_log_records_dropped_total by reason when enabled.
+      # log_flush:
+      #   interval: 5s
+      #   timeout: 15s
+      #   max_batch: 5000
+      #   max_retries: 3
+      #   retry_backoff: 5s
+      #   max_retry_backoff: 60s
     logging:
       level: info
   # -- Pull keys and org settings from the backend on start [AGENTCC_CONTROL_PLANE_URL, AGENTCC_SYNC_ON_STARTUP], so every replica and a restarted pod serve the same keys.

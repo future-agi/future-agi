@@ -507,16 +507,21 @@ func main() {
 	plugins = append(plugins, loggingPlugin)
 
 	// Start log flusher if control plane URL is configured.
+	var logFlusher *loggingplugin.LogFlusher
 	if cfg.ControlPlane.URL != "" && cfg.Logging.RequestLogging.Enabled {
-		flushInterval := 5 * time.Second
-		maxBuffered := 5000
+		flush := cfg.ControlPlane.LogFlush
 		webhookURL := loggingplugin.FormatLogsWebhookURL(cfg.ControlPlane.URL)
-		logFlusher := loggingplugin.NewLogFlusher(webhookURL, cfg.ControlPlane.WebhookSecret, flushInterval, maxBuffered)
+		logFlusher = loggingplugin.NewLogFlusher(webhookURL, cfg.ControlPlane.WebhookSecret, flush.Interval, flush.MaxBatch, flush)
 		loggingPlugin.SetFlusher(logFlusher)
 		go logFlusher.Run(context.Background())
 		slog.Info("log flusher enabled",
-			"flush_interval", flushInterval.String(),
-			"max_buffered", maxBuffered,
+			"flush_interval", flush.Interval.String(),
+			"timeout", flush.Timeout.String(),
+			"max_batch", flush.MaxBatch,
+			"max_buffered", 2*flush.MaxBatch,
+			"max_retries", flush.MaxRetries,
+			"retry_backoff", flush.RetryBackoff.String(),
+			"max_retry_backoff", flush.MaxRetryBackoff.String(),
 			"webhook_url", webhookURL,
 			"webhook_secret_set", cfg.ControlPlane.WebhookSecret != "",
 		)
@@ -561,6 +566,9 @@ func main() {
 		metricsRegistry = metrics.NewRegistry()
 		plugins = append(plugins, promplugin.New(metricsRegistry, true))
 		slog.Info("prometheus metrics enabled")
+	}
+	if logFlusher != nil {
+		logFlusher.SetMetrics(metricsRegistry)
 	}
 
 	// Create OTel plugin.

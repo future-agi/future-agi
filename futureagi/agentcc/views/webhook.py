@@ -2,6 +2,13 @@ import hmac
 import os
 
 import structlog
+from django.db import (
+    InterfaceError,
+    InternalError,
+    NotSupportedError,
+    OperationalError,
+    ProgrammingError,
+)
 from rest_framework.permissions import AllowAny
 from rest_framework.views import APIView
 
@@ -29,6 +36,7 @@ class GatewayWebhookView(APIView):
         responses={
             200: WebhookIngestResponseSerializer,
             400: AgentccErrorResponseSerializer,
+            503: AgentccErrorResponseSerializer,
         },
         reject_unknown_fields=True,
     )
@@ -47,6 +55,25 @@ class GatewayWebhookView(APIView):
         try:
             count = ingest_request_logs(logs)
             return self._gm.success_response({"ingested": count})
+        except (
+            OperationalError,
+            InterfaceError,
+            ProgrammingError,
+            InternalError,
+            NotSupportedError,
+        ) as e:
+            # The database is unreachable, went away, or refuses every row
+            # (permissions, a read-only transaction, a schema mismatch): not
+            # the batch's fault. 503 makes the gateway send it again; ingest
+            # is replay-safe, keyed on request id.
+            logger.exception("webhook_ingestion_unavailable", error=str(e))
+            return self._gm.custom_error_response(
+                503, "Log ingest is unavailable; retry the batch"
+            )
         except Exception as e:
+            # Anything else would fail the same way on every resend, and the
+            # gateway holds a 503'd batch ahead of every record behind it. A
+            # 400 makes it drop this batch now. Rows the database refuses one
+            # by one are skipped inside ingest and never get here.
             logger.exception("webhook_ingestion_error", error=str(e))
-            return self._gm.bad_request(str(e))
+            return self._gm.bad_request("Log batch could not be ingested")

@@ -19,6 +19,7 @@ from agentcc.services.url_safety import (
     build_ssrf_safe_session,
     ensure_public_http_url,
 )
+from agentcc.services.webhook_hygiene import cancel_events_for_webhook
 from tfc.utils.base_viewset import BaseModelViewSetMixinWithUserOrg
 from tfc.utils.general_methods import GeneralMethods
 
@@ -85,7 +86,30 @@ class AgentccWebhookViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
             )
             if not serializer.is_valid():
                 return self._gm.bad_request(serializer.errors)
+            was_active = instance.is_active
+            receiver_before = (instance.url, instance.secret, instance.headers)
+            # Saves only the fields the request set: the health counters
+            # change concurrently in delivery runs and must not be written
+            # back from the copy read at the start of this request.
             webhook = serializer.save()
+            if (webhook.url, webhook.secret, webhook.headers) != receiver_before:
+                # The receiver was fixed: a failing run's pause is over, and
+                # the next tick delivers to it.
+                AgentccWebhook.all_objects.filter(pk=webhook.pk).update(
+                    next_delivery_at=None
+                )
+                webhook.refresh_from_db()
+            if webhook.is_active and not was_active:
+                # Turned back on: the failure streak, its reason and any pause
+                # are history. Its pending events go out on the next tick.
+                AgentccWebhook.all_objects.filter(pk=webhook.pk).update(
+                    consecutive_failures=0,
+                    failing_since=None,
+                    disabled_reason="",
+                    disabled_at=None,
+                    next_delivery_at=None,
+                )
+                webhook.refresh_from_db()
             return self._gm.success_response(AgentccWebhookSerializer(webhook).data)
         except Exception as e:
             logger.exception("webhook_update_error", error=str(e))
@@ -101,6 +125,13 @@ class AgentccWebhookViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
             instance.deleted = True
             instance.deleted_at = timezone.now()
             instance.save(update_fields=["deleted", "deleted_at", "updated_at"])
+            # A soft delete cascades nothing: without this its pending events
+            # would wait in the delivery queue for ever. Only the pending ones,
+            # which the pending cap bounds, in short batches of their own; the
+            # maintenance run cancels its failed and dead-lettered history.
+            cancel_events_for_webhook(
+                instance.id, statuses=(AgentccWebhookEvent.PENDING,)
+            )
             return self._gm.success_response({"deleted": True})
         except Exception as e:
             logger.exception("webhook_delete_error", error=str(e))
@@ -235,16 +266,31 @@ class AgentccWebhookEventViewSet(
             instance = self.get_object()
             if instance.status == AgentccWebhookEvent.DELIVERED:
                 return self._gm.bad_request("Event already delivered")
+            if instance.status in AgentccWebhookEvent.NOT_RETRYABLE:
+                return self._gm.bad_request(
+                    f"A {instance.status} event cannot be retried"
+                )
+            webhook = AgentccWebhook.all_objects.filter(pk=instance.webhook_id).first()
+            if webhook is None or webhook.deleted:
+                return self._gm.bad_request("Webhook was deleted")
+            if not webhook.is_active:
+                return self._gm.bad_request("Enable the webhook before retrying")
 
+            now = timezone.now()
             instance.status = AgentccWebhookEvent.PENDING
             instance.attempts = 0
-            instance.next_retry_at = None
+            # Due now, and the pending age limit counts from this re-queue: an
+            # event retried after the limit is delivered (and backed off on a
+            # failure), not expired.
+            instance.next_retry_at = now
+            instance.requeued_at = now
             instance.last_error = ""
             instance.save(
                 update_fields=[
                     "status",
                     "attempts",
                     "next_retry_at",
+                    "requeued_at",
                     "last_error",
                     "updated_at",
                 ]

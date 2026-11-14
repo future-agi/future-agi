@@ -82,6 +82,10 @@ vi.mock("./EmailAlertsCard", () => ({
   default: () => <div>Email alerts card</div>,
 }));
 
+vi.mock("./RequestLogRetentionCard", () => ({
+  default: () => <div>Request Logs retention card</div>,
+}));
+
 vi.mock("./hooks/useBatchJobs", () => ({
   useSubmitBatch: () => ({ mutate: vi.fn(), isPending: false }),
   useBatchStatus: () => ({ data: [], isLoading: false }),

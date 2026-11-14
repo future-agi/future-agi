@@ -3513,6 +3513,37 @@ export interface AgentccProviderCredentialApi {
   readonly updated_at?: string;
 }
 
+export interface RequestLogRetentionLastRunApi {
+  started_at: string;
+  finished_at: string;
+  deleted_rows: number;
+  error: string;
+}
+
+export interface RequestLogRetentionApi {
+  retention_days: number;
+  min_retention_days: number;
+  keep_forever_required: boolean;
+  effective_cutoff: string;
+  next_run_at: string;
+  estimated_rows: number;
+  estimate_capped: boolean;
+  last_run: RequestLogRetentionLastRunApi;
+}
+
+export interface RequestLogRetentionResponseApi {
+  status: boolean;
+  result: RequestLogRetentionApi;
+}
+
+export interface RequestLogRetentionUpdateApi {
+  /**
+   * @minimum 1
+   * @maximum 36500
+   */
+  retention_days: number;
+}
+
 export interface AgentccRequestLogMetadataValuesApi {
   application: string[];
   service: string[];
@@ -3754,6 +3785,9 @@ export const AgentccWebhookEventApiStatus = {
   delivered: "delivered",
   failed: "failed",
   dead_letter: "dead_letter",
+  cancelled: "cancelled",
+  expired: "expired",
+  dropped: "dropped",
 } as const;
 
 export interface AgentccWebhookEventApi {
@@ -3823,6 +3857,12 @@ export interface AgentccWebhookApi {
   is_active?: boolean;
   headers?: AgentccWebhookApiHeaders;
   description?: string;
+  readonly consecutive_failures?: number;
+  /** @minLength 1 */
+  readonly disabled_reason?: string;
+  readonly disabled_at?: string;
+  readonly dropped_events_total?: number;
+  readonly last_dropped_at?: string;
   readonly created_at?: string;
   readonly updated_at?: string;
 }
@@ -38311,6 +38351,14 @@ export type AgentccProviderCredentialsList200 = {
   next?: string;
   previous?: string;
   results: AgentccProviderCredentialApi[];
+};
+
+export type AgentccRequestLogRetentionListParams = {
+  /**
+   * @minimum 1
+   * @maximum 36500
+   */
+  retention_days?: number;
 };
 
 export type AgentccRequestLogsListParams = {

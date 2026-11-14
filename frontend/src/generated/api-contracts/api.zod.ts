@@ -7536,6 +7536,75 @@ export const AgentccProviderCredentialsRotateBody = zod.object({
   last_rotated_at: zod.string().datetime({ offset: true }).optional(),
 });
 
+/**
+ * GET for any member; ``?retention_days=N`` previews the next run for N.
+PUT for organization admins: ``{"retention_days": N}`` or null to keep
+forever, never shorter than the longest budget period in use.
+ * @summary How long the organization keeps gateway Request Logs.
+ */
+export const agentccRequestLogRetentionListQueryRetentionDaysMax = 36500;
+
+export const AgentccRequestLogRetentionListQueryParams = zod.object({
+  retention_days: zod
+    .number()
+    .min(1)
+    .max(agentccRequestLogRetentionListQueryRetentionDaysMax)
+    .optional(),
+});
+
+export const AgentccRequestLogRetentionListResponse = zod.object({
+  status: zod.boolean(),
+  result: zod.object({
+    retention_days: zod.number(),
+    min_retention_days: zod.number(),
+    keep_forever_required: zod.boolean(),
+    effective_cutoff: zod.string().datetime({ offset: true }),
+    next_run_at: zod.string().datetime({ offset: true }),
+    estimated_rows: zod.number(),
+    estimate_capped: zod.boolean(),
+    last_run: zod.object({
+      started_at: zod.string().datetime({ offset: true }),
+      finished_at: zod.string().datetime({ offset: true }),
+      deleted_rows: zod.number(),
+      error: zod.string(),
+    }),
+  }),
+});
+
+/**
+ * GET for any member; ``?retention_days=N`` previews the next run for N.
+PUT for organization admins: ``{"retention_days": N}`` or null to keep
+forever, never shorter than the longest budget period in use.
+ * @summary How long the organization keeps gateway Request Logs.
+ */
+export const agentccRequestLogRetentionUpdateBodyRetentionDaysMax = 36500;
+
+export const AgentccRequestLogRetentionUpdateBody = zod.object({
+  retention_days: zod
+    .number()
+    .min(1)
+    .max(agentccRequestLogRetentionUpdateBodyRetentionDaysMax),
+});
+
+export const AgentccRequestLogRetentionUpdateResponse = zod.object({
+  status: zod.boolean(),
+  result: zod.object({
+    retention_days: zod.number(),
+    min_retention_days: zod.number(),
+    keep_forever_required: zod.boolean(),
+    effective_cutoff: zod.string().datetime({ offset: true }),
+    next_run_at: zod.string().datetime({ offset: true }),
+    estimated_rows: zod.number(),
+    estimate_capped: zod.boolean(),
+    last_run: zod.object({
+      started_at: zod.string().datetime({ offset: true }),
+      finished_at: zod.string().datetime({ offset: true }),
+      deleted_rows: zod.number(),
+      error: zod.string(),
+    }),
+  }),
+});
+
 export const agentccRequestLogsListQueryApiKeyIdMax = 255;
 
 export const AgentccRequestLogsListQueryParams = zod.object({
@@ -9103,7 +9172,15 @@ export const AgentccWebhookEventsListResponse = zod.object({
       event_type: zod.string().min(1).optional(),
       payload: zod.object({}).passthrough().optional(),
       status: zod
-        .enum(["pending", "delivered", "failed", "dead_letter"])
+        .enum([
+          "pending",
+          "delivered",
+          "failed",
+          "dead_letter",
+          "cancelled",
+          "expired",
+          "dropped",
+        ])
         .optional(),
       attempts: zod.number().optional(),
       max_attempts: zod.number().optional(),
@@ -9134,7 +9211,15 @@ export const AgentccWebhookEventsReadResponse = zod.object({
   event_type: zod.string().min(1).optional(),
   payload: zod.object({}).passthrough().optional(),
   status: zod
-    .enum(["pending", "delivered", "failed", "dead_letter"])
+    .enum([
+      "pending",
+      "delivered",
+      "failed",
+      "dead_letter",
+      "cancelled",
+      "expired",
+      "dropped",
+    ])
     .optional(),
   attempts: zod.number().optional(),
   max_attempts: zod.number().optional(),
@@ -9229,6 +9314,11 @@ export const AgentccWebhooksListResponse = zod.object({
       is_active: zod.boolean().optional(),
       headers: zod.object({}).passthrough().optional(),
       description: zod.string().optional(),
+      consecutive_failures: zod.number().optional(),
+      disabled_reason: zod.string().min(1).optional(),
+      disabled_at: zod.string().datetime({ offset: true }).optional(),
+      dropped_events_total: zod.number().optional(),
+      last_dropped_at: zod.string().datetime({ offset: true }).optional(),
       created_at: zod.string().datetime({ offset: true }).optional(),
       updated_at: zod.string().datetime({ offset: true }).optional(),
     }),
@@ -9280,6 +9370,11 @@ export const AgentccWebhooksReadResponse = zod.object({
   is_active: zod.boolean().optional(),
   headers: zod.object({}).passthrough().optional(),
   description: zod.string().optional(),
+  consecutive_failures: zod.number().optional(),
+  disabled_reason: zod.string().min(1).optional(),
+  disabled_at: zod.string().datetime({ offset: true }).optional(),
+  dropped_events_total: zod.number().optional(),
+  last_dropped_at: zod.string().datetime({ offset: true }).optional(),
   created_at: zod.string().datetime({ offset: true }).optional(),
   updated_at: zod.string().datetime({ offset: true }).optional(),
 });
@@ -9326,6 +9421,11 @@ export const AgentccWebhooksUpdateResponse = zod.object({
   is_active: zod.boolean().optional(),
   headers: zod.object({}).passthrough().optional(),
   description: zod.string().optional(),
+  consecutive_failures: zod.number().optional(),
+  disabled_reason: zod.string().min(1).optional(),
+  disabled_at: zod.string().datetime({ offset: true }).optional(),
+  dropped_events_total: zod.number().optional(),
+  last_dropped_at: zod.string().datetime({ offset: true }).optional(),
   created_at: zod.string().datetime({ offset: true }).optional(),
   updated_at: zod.string().datetime({ offset: true }).optional(),
 });
@@ -9382,6 +9482,11 @@ export const AgentccWebhooksPartialUpdateResponse = zod.object({
   is_active: zod.boolean().optional(),
   headers: zod.object({}).passthrough().optional(),
   description: zod.string().optional(),
+  consecutive_failures: zod.number().optional(),
+  disabled_reason: zod.string().min(1).optional(),
+  disabled_at: zod.string().datetime({ offset: true }).optional(),
+  dropped_events_total: zod.number().optional(),
+  last_dropped_at: zod.string().datetime({ offset: true }).optional(),
   created_at: zod.string().datetime({ offset: true }).optional(),
   updated_at: zod.string().datetime({ offset: true }).optional(),
 });

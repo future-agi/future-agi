@@ -1,5 +1,3 @@
-from datetime import UTC, datetime, timedelta
-
 import structlog
 from django.db.models import DecimalField, Sum, Value
 from django.db.models.functions import Coalesce
@@ -13,27 +11,11 @@ from agentcc.serializers.contracts import (
     SpendSummaryQuerySerializer,
     SpendSummaryResponseSerializer,
 )
+from agentcc.services.budget_periods import period_start
 from tfc.utils.api_contracts import validated_request
 from tfc.utils.general_methods import GeneralMethods
 
 logger = structlog.get_logger(__name__)
-
-
-def _period_start(period):
-    """Calculate the start of the current budget period (UTC)."""
-    now = datetime.now(UTC)
-    if period == "daily":
-        return now.replace(hour=0, minute=0, second=0, microsecond=0)
-    elif period == "weekly":
-        days_since_monday = now.weekday()
-        start = now - timedelta(days=days_since_monday)
-        return start.replace(hour=0, minute=0, second=0, microsecond=0)
-    elif period == "monthly":
-        return now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-    elif period == "total":
-        return datetime.min.replace(tzinfo=UTC)
-    # default monthly
-    return now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
 
 
 class SpendSummaryView(APIView):
@@ -77,7 +59,7 @@ class SpendSummaryView(APIView):
     def get(self, request):
         try:
             period = request.validated_query_data.get("period", "monthly")
-            start = _period_start(period)
+            start = period_start(period)
 
             logs = AgentccRequestLog.no_workspace_objects.filter(
                 started_at__gte=start,

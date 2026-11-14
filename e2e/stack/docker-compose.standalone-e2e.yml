@@ -39,6 +39,10 @@ services:
       SQL_WORKBENCH_CH_PASSWORD: e2e-sql-workbench-password-for-tests
       # Simulate cutoff (#3502): every org a run signs up is after it; lib/existing-customer.ts dates one before it.
       RESTRICT_SIMULATE_TO_ENVIRONMENTS_CUTOFF: "2026-10-01T00:00:00Z"
+      # gateway.e2e.yaml defines no budgets, so Request Logs retention need
+      # not keep the current month and week for them (GW-E2E-008 purges
+      # 3-day-old rows here). docker-compose.e2e.yml sets it for Distributed.
+      AGENTCC_GATEWAY_YAML_HAS_NO_BUDGETS: "true"
     volumes:
       - google-fixture-tls:/run/google-fixture-tls:ro
       - ./e2e/stack/backend/e2e_google.py:/app/backend/tfc/views/e2e_google.py:ro

@@ -1655,6 +1655,22 @@ del _runtime_numeric_settings
 # tracer/services/clickhouse/v2/schema/011_eval_logger_v2.sql + docs/CH25_MIGRATION.md.
 CH25_EVAL_LOGGER_TABLE = os.getenv("CH25_EVAL_LOGGER_TABLE", "tracer_eval_logger")
 
+# Request Logs retention: whether the gateway YAML has budgets of its own.
+from .agentcc_request_logs import (  # noqa: E402,F401
+    AGENTCC_GATEWAY_YAML_HAS_NO_BUDGETS,
+)
+
+# Gateway outbound webhook event housekeeping limits.
+from .agentcc_webhooks import (  # noqa: E402,F401
+    AGENTCC_WEBHOOK_DISABLE_AFTER_FAILURES,
+    AGENTCC_WEBHOOK_DISABLE_AFTER_MINUTES,
+    AGENTCC_WEBHOOK_MAX_CONCURRENT_DELIVERIES,
+    AGENTCC_WEBHOOK_MAX_CONCURRENT_DELIVERIES_PER_ORG,
+    AGENTCC_WEBHOOK_MAX_PENDING_PER_WEBHOOK,
+    AGENTCC_WEBHOOK_PENDING_MAX_AGE_HOURS,
+    AGENTCC_WEBHOOK_RUN_BUDGET_SECONDS,
+)
+
 # Operational SQL workbench budgets, not edition/pricing entitlements.
 from .sql_workbench import (  # noqa: E402,F401
     SQL_WORKBENCH_AUDIT_RETENTION_DAYS,

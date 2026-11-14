@@ -5,7 +5,7 @@
 export const OPENAPI_CONTRACT = Object.freeze({
   generatedFrom: "api_contracts/openapi/swagger.json",
   swaggerVersion: "2.0",
-  endpointCount: 1142,
+  endpointCount: 1143,
   endpoints: {
     "/accounts/2fa/recovery-codes/": {
       get: {
@@ -7305,6 +7305,58 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    "/agentcc/request-log-retention/": {
+      get: {
+        operationId: "agentcc_request-log-retention_list",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {
+          retention_days: {
+            required: false,
+            schema: {
+              type: "integer",
+              minimum: 1,
+              maximum: 36500,
+            },
+          },
+        },
+        responses: {
+          200: {
+            $ref: "#/definitions/RequestLogRetentionResponse",
+          },
+          400: {
+            $ref: "#/definitions/AgentccErrorResponse",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+      put: {
+        operationId: "agentcc_request-log-retention_update",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/RequestLogRetentionUpdate",
+        },
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/RequestLogRetentionResponse",
+          },
+          400: {
+            $ref: "#/definitions/AgentccErrorResponse",
+          },
+          403: {
+            $ref: "#/definitions/AgentccErrorResponse",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
     "/agentcc/request-logs/": {
       get: {
         operationId: "agentcc_request-logs_list",
@@ -8504,6 +8556,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
             $ref: "#/definitions/WebhookIngestResponse",
           },
           400: {
+            $ref: "#/definitions/AgentccErrorResponse",
+          },
+          503: {
             $ref: "#/definitions/AgentccErrorResponse",
           },
           default: {
@@ -53998,6 +54053,36 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Description",
           type: "string",
         },
+        consecutive_failures: {
+          title: "Consecutive failures",
+          type: "integer",
+          readOnly: true,
+        },
+        disabled_reason: {
+          title: "Disabled reason",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+        },
+        disabled_at: {
+          title: "Disabled at",
+          type: "string",
+          format: "date-time",
+          readOnly: true,
+          "x-nullable": true,
+        },
+        dropped_events_total: {
+          title: "Dropped events total",
+          type: "integer",
+          readOnly: true,
+        },
+        last_dropped_at: {
+          title: "Last dropped at",
+          type: "string",
+          format: "date-time",
+          readOnly: true,
+          "x-nullable": true,
+        },
         created_at: {
           title: "Created at",
           type: "string",
@@ -54053,7 +54138,15 @@ export const OPENAPI_CONTRACT = Object.freeze({
         status: {
           title: "Status",
           type: "string",
-          enum: ["pending", "delivered", "failed", "dead_letter"],
+          enum: [
+            "pending",
+            "delivered",
+            "failed",
+            "dead_letter",
+            "cancelled",
+            "expired",
+            "dropped",
+          ],
           readOnly: true,
         },
         attempts: {
@@ -81464,6 +81557,32 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "string",
           format: "date-time",
           readOnly: true,
+        },
+      },
+    },
+    RequestLogRetentionResponse: {
+      required: ["status", "result"],
+      type: "object",
+      properties: {
+        status: {
+          title: "Status",
+          type: "boolean",
+        },
+        result: {
+          $ref: "#/definitions/RequestLogRetention",
+        },
+      },
+    },
+    RequestLogRetentionUpdate: {
+      required: ["retention_days"],
+      type: "object",
+      properties: {
+        retention_days: {
+          title: "Retention days",
+          type: "integer",
+          maximum: 36500,
+          minimum: 1,
+          "x-nullable": true,
         },
       },
     },
@@ -111796,6 +111915,57 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    RequestLogRetention: {
+      required: [
+        "retention_days",
+        "min_retention_days",
+        "keep_forever_required",
+        "effective_cutoff",
+        "next_run_at",
+        "estimated_rows",
+        "estimate_capped",
+        "last_run",
+      ],
+      type: "object",
+      properties: {
+        retention_days: {
+          title: "Retention days",
+          type: "integer",
+          "x-nullable": true,
+        },
+        min_retention_days: {
+          title: "Min retention days",
+          type: "integer",
+          "x-nullable": true,
+        },
+        keep_forever_required: {
+          title: "Keep forever required",
+          type: "boolean",
+        },
+        effective_cutoff: {
+          title: "Effective cutoff",
+          type: "string",
+          format: "date-time",
+          "x-nullable": true,
+        },
+        next_run_at: {
+          title: "Next run at",
+          type: "string",
+          format: "date-time",
+        },
+        estimated_rows: {
+          title: "Estimated rows",
+          type: "integer",
+        },
+        estimate_capped: {
+          title: "Estimate capped",
+          type: "boolean",
+        },
+        last_run: {
+          $ref: "#/definitions/RequestLogRetentionLastRun",
+        },
+      },
+    },
     FailedRerunItem: {
       required: ["call_execution_id", "error"],
       type: "object",
@@ -127756,6 +127926,32 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Emitted at",
           type: "string",
           format: "date-time",
+        },
+      },
+    },
+    RequestLogRetentionLastRun: {
+      required: ["started_at", "finished_at", "deleted_rows", "error"],
+      type: "object",
+      properties: {
+        started_at: {
+          title: "Started at",
+          type: "string",
+          format: "date-time",
+          "x-nullable": true,
+        },
+        finished_at: {
+          title: "Finished at",
+          type: "string",
+          format: "date-time",
+          "x-nullable": true,
+        },
+        deleted_rows: {
+          title: "Deleted rows",
+          type: "integer",
+        },
+        error: {
+          title: "Error",
+          type: "string",
         },
       },
     },

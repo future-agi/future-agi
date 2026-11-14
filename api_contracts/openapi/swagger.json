@@ -13169,6 +13169,95 @@
                 }
             ]
         },
+        "/agentcc/request-log-retention/": {
+            "get": {
+                "operationId": "agentcc_request-log-retention_list",
+                "summary": "How long the organization keeps gateway Request Logs.",
+                "description": "GET for any member; ``?retention_days=N`` previews the next run for N.\nPUT for organization admins: ``{\"retention_days\": N}`` or null to keep\nforever, never shorter than the longest budget period in use.",
+                "parameters": [
+                    {
+                        "name": "retention_days",
+                        "in": "query",
+                        "required": false,
+                        "type": "integer",
+                        "maximum": 36500,
+                        "minimum": 1
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/RequestLogRetentionResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/AgentccErrorResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "agentcc"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "put": {
+                "operationId": "agentcc_request-log-retention_update",
+                "summary": "How long the organization keeps gateway Request Logs.",
+                "description": "GET for any member; ``?retention_days=N`` previews the next run for N.\nPUT for organization admins: ``{\"retention_days\": N}`` or null to keep\nforever, never shorter than the longest budget period in use.",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/RequestLogRetentionUpdate"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/RequestLogRetentionResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/AgentccErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/AgentccErrorResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "agentcc"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": []
+        },
         "/agentcc/request-logs/": {
             "get": {
                 "operationId": "agentcc_request-logs_list",
@@ -14988,6 +15077,12 @@
                         }
                     },
                     "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/AgentccErrorResponse"
+                        }
+                    },
+                    "503": {
                         "description": "",
                         "schema": {
                             "$ref": "#/definitions/AgentccErrorResponse"
@@ -94910,6 +95005,119 @@
                 }
             }
         },
+        "RequestLogRetentionLastRun": {
+            "required": [
+                "started_at",
+                "finished_at",
+                "deleted_rows",
+                "error"
+            ],
+            "type": "object",
+            "properties": {
+                "started_at": {
+                    "title": "Started at",
+                    "type": "string",
+                    "format": "date-time",
+                    "x-nullable": true
+                },
+                "finished_at": {
+                    "title": "Finished at",
+                    "type": "string",
+                    "format": "date-time",
+                    "x-nullable": true
+                },
+                "deleted_rows": {
+                    "title": "Deleted rows",
+                    "type": "integer"
+                },
+                "error": {
+                    "title": "Error",
+                    "type": "string"
+                }
+            }
+        },
+        "RequestLogRetention": {
+            "required": [
+                "retention_days",
+                "min_retention_days",
+                "keep_forever_required",
+                "effective_cutoff",
+                "next_run_at",
+                "estimated_rows",
+                "estimate_capped",
+                "last_run"
+            ],
+            "type": "object",
+            "properties": {
+                "retention_days": {
+                    "title": "Retention days",
+                    "type": "integer",
+                    "x-nullable": true
+                },
+                "min_retention_days": {
+                    "title": "Min retention days",
+                    "type": "integer",
+                    "x-nullable": true
+                },
+                "keep_forever_required": {
+                    "title": "Keep forever required",
+                    "type": "boolean"
+                },
+                "effective_cutoff": {
+                    "title": "Effective cutoff",
+                    "type": "string",
+                    "format": "date-time",
+                    "x-nullable": true
+                },
+                "next_run_at": {
+                    "title": "Next run at",
+                    "type": "string",
+                    "format": "date-time"
+                },
+                "estimated_rows": {
+                    "title": "Estimated rows",
+                    "type": "integer"
+                },
+                "estimate_capped": {
+                    "title": "Estimate capped",
+                    "type": "boolean"
+                },
+                "last_run": {
+                    "$ref": "#/definitions/RequestLogRetentionLastRun"
+                }
+            }
+        },
+        "RequestLogRetentionResponse": {
+            "required": [
+                "status",
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean"
+                },
+                "result": {
+                    "$ref": "#/definitions/RequestLogRetention"
+                }
+            }
+        },
+        "RequestLogRetentionUpdate": {
+            "required": [
+                "retention_days"
+            ],
+            "type": "object",
+            "properties": {
+                "retention_days": {
+                    "title": "Retention days",
+                    "type": "integer",
+                    "maximum": 36500,
+                    "minimum": 1,
+                    "x-nullable": true
+                }
+            }
+        },
         "AgentccRequestLogMetadataValues": {
             "required": [
                 "application",
@@ -95574,7 +95782,10 @@
                         "pending",
                         "delivered",
                         "failed",
-                        "dead_letter"
+                        "dead_letter",
+                        "cancelled",
+                        "expired",
+                        "dropped"
                     ],
                     "readOnly": true
                 },
@@ -95736,6 +95947,36 @@
                 "description": {
                     "title": "Description",
                     "type": "string"
+                },
+                "consecutive_failures": {
+                    "title": "Consecutive failures",
+                    "type": "integer",
+                    "readOnly": true
+                },
+                "disabled_reason": {
+                    "title": "Disabled reason",
+                    "type": "string",
+                    "readOnly": true,
+                    "minLength": 1
+                },
+                "disabled_at": {
+                    "title": "Disabled at",
+                    "type": "string",
+                    "format": "date-time",
+                    "readOnly": true,
+                    "x-nullable": true
+                },
+                "dropped_events_total": {
+                    "title": "Dropped events total",
+                    "type": "integer",
+                    "readOnly": true
+                },
+                "last_dropped_at": {
+                    "title": "Last dropped at",
+                    "type": "string",
+                    "format": "date-time",
+                    "readOnly": true,
+                    "x-nullable": true
                 },
                 "created_at": {
                     "title": "Created at",

@@ -70,7 +70,10 @@ export function useDeleteWebhook() {
       );
       return data.result;
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: [WH_KEY] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: [WH_KEY] });
+      qc.invalidateQueries({ queryKey: [WH_EVENT_KEY] });
+    },
   });
 }
 
