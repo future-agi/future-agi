@@ -2157,6 +2157,17 @@ def calculate_agreement(queue):
     }
 
 
+def _casefold_judge_human_value(value):
+    """Fold categorical elements before sorting, without changing human-human keys."""
+    if isinstance(value, str):
+        return value.casefold()
+    if isinstance(value, list):
+        return [_casefold_judge_human_value(item) for item in value]
+    if isinstance(value, dict):
+        return {key: _casefold_judge_human_value(item) for key, item in value.items()}
+    return value
+
+
 def _normalize_eval_output(row, output_type):
     """Extract and normalise an EvalLogger row value into a human-readable string
     so it can be compared against annotation scores.
@@ -2188,7 +2199,7 @@ def _normalize_eval_output(row, output_type):
         if str_list:
             if len(str_list) == 1:
                 return str_list[0]
-            return str(sorted(str_list))
+            return _normalize_value(_casefold_judge_human_value(str_list))
         val = row.get("output_str")
         if val is not None:
             if isinstance(val, str) and val[:1] in ("{", "["):
@@ -2205,7 +2216,11 @@ def _normalize_eval_output(row, output_type):
                         return (
                             choices[0]
                             if len(choices) == 1
-                            else str(sorted(c for c in choices if isinstance(c, str)))
+                            else _normalize_value(
+                                _casefold_judge_human_value(
+                                    [c for c in choices if isinstance(c, str)]
+                                )
+                            )
                         )
             return val
         return None
@@ -2216,12 +2231,9 @@ def _majority_value(values):
     or ``None`` when there is a tie (no annotator value appears more often
     than the others).
 
-    Normalises each value through ``_normalize_value`` first so dicts,
-    lists and scalars all compare consistently; strings count
-    case-insensitively so ``"Pass"``/``"pass"``/``"PASS"`` votes pool
-    instead of manufacturing a tie.  Returns the *original* value (not the
-    normalised form) so the caller can pass it through
-    ``_normalize_value`` for comparison like any other annotation value.
+    Case-folds categorical elements before normalizing dicts, lists and scalars,
+    so equivalent judge-human votes pool regardless of casing or selection order.
+    Returns the original winning value for the label-specific normalization step.
     """
     if not values:
         return None
@@ -2231,13 +2243,9 @@ def _majority_value(values):
     if len(values) == 1:
         return values[0]
 
-    def _vote_key(v):
-        norm = _normalize_value(v)
-        if isinstance(norm, str):
-            return norm.casefold()
-        return norm
-
-    normalized = [_vote_key(v) for v in values]
+    normalized = [
+        _normalize_value(_casefold_judge_human_value(value)) for value in values
+    ]
     top_two = Counter(normalized).most_common(2)
     # A plurality (for example 2/5 votes) is not a strict majority.
     if top_two[0][1] * 2 <= len(values):
@@ -2636,7 +2644,7 @@ def _normalize_human_score_value(raw_value, label_type, output_type):
             if len(scalar) == 1:
                 scalar = scalar[0]
             else:
-                return str(sorted(scalar))
+                return _normalize_value(_casefold_judge_human_value(scalar))
 
         # Align with the judge side: a percentage output rounds to 2 decimals,
         # so the human value must be rounded identically before comparison.

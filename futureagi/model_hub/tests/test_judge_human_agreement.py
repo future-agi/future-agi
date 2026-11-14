@@ -73,7 +73,7 @@ class TestNormalizeEvalOutput(unittest.TestCase):
                 {"output_str_list": ["B", "A", "C"]},
                 "deterministic",
             )
-            == "['A', 'B', 'C']"
+            == "['a', 'b', 'c']"
         )
 
     def test_deterministic_json_payload_choice_extracted(self):
@@ -98,7 +98,7 @@ class TestNormalizeEvalOutput(unittest.TestCase):
                 {"output_str": '{"choices": ["B", "A"]}', "output_str_list": []},
                 "deterministic",
             )
-            == "['A', 'B']"
+            == "['a', 'b']"
         )
 
     def test_deterministic_malformed_json_passes_through(self):
@@ -190,7 +190,7 @@ class TestNormalizeHumanScoreValue(unittest.TestCase):
             _normalize_human_score_value(
                 {"selected": ["B", "A"]}, "categorical", "deterministic"
             )
-            == "['A', 'B']"
+            == "['a', 'b']"
         )
 
     def test_numeric_percentage_rounds_to_two_decimals(self):

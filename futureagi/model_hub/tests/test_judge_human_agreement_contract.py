@@ -16,6 +16,7 @@ from model_hub.tests.test_judge_human_agreement_integration import (
     _make_queue_item,
     _make_span,
     _make_trace,
+    _make_user,
 )
 from model_hub.utils import annotation_queue_helpers as helpers
 from model_hub.utils.annotation_queue_helpers import (
@@ -202,3 +203,95 @@ def test_nullable_config_uses_declared_template_metadata(
     assert result["overall_agreement"] == expected
     assert result["total_comparisons"] == (1 if expected is not None else 0)
     assert result["labels"][str(label.id)]["comparable"] is (expected is not None)
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("json_output", [False, True])
+@pytest.mark.parametrize(
+    "multi_choice,judge,votes,expected",
+    [
+        (True, ["alpha", "Beta"], [["Alpha", "beta"]], 1.0),
+        (False, ["alpha"], [["Alpha"]], 1.0),
+        (True, ["alpha", "Beta"], [["Alpha"]], 0.0),
+        (
+            True,
+            ["alpha", "Beta"],
+            [["Alpha", "beta"], ["Beta", "alpha"], ["beta"]],
+            1.0,
+        ),
+        (True, ["alpha", "Beta"], [["Alpha", "beta"], ["beta"]], None),
+    ],
+)
+def test_categorical_casefold_before_sorting_through_agreement_api(
+    organization,
+    workspace,
+    user,
+    auth_client,
+    json_output,
+    multi_choice,
+    judge,
+    votes,
+    expected,
+):
+    import json
+
+    project = _make_project(organization, workspace)
+    trace = _make_trace(project)
+    span = _make_span(project, trace)
+    template = _make_eval_template(
+        organization,
+        workspace,
+        output_type_normalized="deterministic",
+        choices=["alpha", "Beta"],
+        multi_choice=multi_choice,
+    )
+    config = _make_custom_eval_config(project, template)
+    queue = _make_queue(organization, workspace, project, created_by=user)
+    item = _make_queue_item(queue, span, organization)
+    label = _make_label(
+        organization,
+        workspace,
+        settings={
+            "options": [{"label": "Alpha"}, {"label": "beta"}],
+            "multi_choice": multi_choice,
+            "auto_annotate": False,
+            "rule_prompt": "",
+            "strategy": None,
+        },
+    )
+    AnnotationQueueLabel.objects.create(queue=queue, label=label)
+    output = (
+        {"output_str": json.dumps({"choices": judge})}
+        if json_output
+        else {"output_str_list": judge}
+    )
+    _make_eval_row(span, trace, config, status="completed", **output)
+    for index, selection in enumerate(votes):
+        Score.objects.create(
+            queue_item=item,
+            label=label,
+            organization=organization,
+            annotator=user if index == 0 else _make_user(organization),
+            value={"selected": selection},
+        )
+    url = f"/model-hub/annotation-queues/{queue.pk}/agreement/"
+    before = auth_client.get(url)
+    assert before.status_code == 200, before.data
+    human_only = before.data["result"]
+    assert human_only.pop("judge_vs_human") is None
+    if len(votes) > 1:
+        # Human-human scoring remains case-sensitive, even when judge votes pool.
+        assert human_only["overall_agreement"] == 0.0
+        assert all(
+            pair["agreement_pct"] == 0.0 for pair in human_only["annotator_pairs"]
+        )
+
+    queue.custom_eval_config = config
+    queue.save(update_fields=["custom_eval_config"])
+    response = auth_client.get(url)
+    assert response.status_code == 200, response.data
+    result = response.data["result"].pop("judge_vs_human")
+    assert response.data["result"] == human_only
+    assert result["labels"][str(label.pk)]["comparable"] is True
+    assert result["total_comparisons"] == (0 if expected is None else 1)
+    assert result["overall_agreement"] == expected
