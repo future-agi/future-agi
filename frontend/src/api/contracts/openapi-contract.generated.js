@@ -68016,6 +68016,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
           maxLength: 128,
           minLength: 1,
         },
+        failed_scenarios: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/HarnessConversationFailedScenario",
+          },
+          maxItems: 200,
+        },
       },
     },
     HarnessConversationRead: {
@@ -105349,6 +105356,23 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "string",
           pattern: "^sha256:[0-9a-f]{64}$",
           minLength: 1,
+        },
+      },
+    },
+    HarnessConversationFailedScenario: {
+      required: ["scenario_key"],
+      type: "object",
+      properties: {
+        scenario_key: {
+          title: "Scenario key",
+          type: "string",
+          maxLength: 255,
+          minLength: 1,
+        },
+        reason: {
+          title: "Reason",
+          type: "string",
+          maxLength: 2000,
         },
       },
     },
