@@ -26,7 +26,7 @@ import SuggestedPrompts from "./SuggestedPrompts";
 import { consolidateAnalysisPrompts } from "./consolidatePrompts";
 
 /**
- * Imagine with Falcon — horizontal split tab inside the trace detail drawer.
+ * Imagine with AI — horizontal split tab inside the trace detail drawer.
  * Left: Widget canvas (rendered visualizations)
  * Right: Falcon chat panel (toggleable)
  */
@@ -197,11 +197,15 @@ export default function ImagineTab({
           opacity: 0.8,
         }}
       >
-        <Iconify icon="mdi:creation" width={32} sx={{ color: "#fff" }} />
+        <Iconify
+          icon="solar:stars-minimalistic-linear"
+          width={32}
+          sx={{ color: "common.white" }}
+        />
       </Box>
 
-      <Typography fontSize={15} fontWeight={600} color="text.primary">
-        Imagine with Falcon
+      <Typography fontSize={12} fontWeight={600} color="text.primary">
+        Imagine with AI
       </Typography>
 
       <Typography
@@ -211,7 +215,7 @@ export default function ImagineTab({
         maxWidth={360}
         lineHeight={1.6}
       >
-        Describe what you want to see and Falcon will build interactive
+        Describe what you want to see and AI will build interactive
         visualizations from your trace data — charts, tables, graphs, anything.
       </Typography>
 
@@ -259,7 +263,7 @@ export default function ImagineTab({
             borderRadius: "4px",
             border: "1px solid",
             borderColor: "border.hover",
-            fontSize: 11,
+            fontSize: 12,
             fontWeight: 500,
             color: widgets.length ? "text.primary" : "text.disabled",
             "&:hover": {
@@ -268,7 +272,7 @@ export default function ImagineTab({
             },
           }}
         >
-          <Iconify icon="mdi:content-save-outline" width={14} />
+          <Iconify icon="solar:diskette-linear" width={14} />
           {isSaving ? "Saving..." : "Save View"}
         </ButtonBase>
 
@@ -284,17 +288,17 @@ export default function ImagineTab({
             borderRadius: "4px",
             border: "1px solid",
             borderColor: showChat ? "primary.main" : "divider",
-            fontSize: 11,
+            fontSize: 12,
             fontWeight: 500,
             color: showChat ? "primary.main" : "text.secondary",
-            bgcolor: showChat ? "rgba(123,86,219,0.04)" : "transparent",
+            bgcolor: showChat ? "action.hover" : "transparent",
             "&:hover": {
-              bgcolor: showChat ? "rgba(123,86,219,0.08)" : "action.hover",
+              bgcolor: showChat ? "action.selected" : "action.hover",
             },
           }}
         >
-          <Iconify icon="mdi:creation" width={14} />
-          Falcon
+          <Iconify icon="solar:stars-minimalistic-linear" width={14} />
+          Chat
         </ButtonBase>
       </Box>
 
@@ -382,11 +386,8 @@ export default function ImagineTab({
         slotProps={{
           paper: {
             sx: {
-              width: 280,
-              borderRadius: "4px",
-              border: "1px solid",
-              borderColor: "divider",
-              boxShadow: "1px 1px 12px 10px rgba(0,0,0,0.04)",
+              width: 320,
+              borderRadius: "8px",
               p: 1,
               mt: 0.5,
             },
@@ -396,7 +397,7 @@ export default function ImagineTab({
         <Box sx={{ px: 0.5, py: 0.25 }}>
           <Typography
             sx={{
-              fontSize: 14,
+              fontSize: 12,
               fontWeight: 600,
               color: "text.primary",
               fontFamily: "'IBM Plex Sans', sans-serif",
@@ -406,7 +407,7 @@ export default function ImagineTab({
           </Typography>
           <Typography
             sx={{
-              fontSize: 11,
+              fontSize: 12,
               color: "text.secondary",
               fontFamily: "'IBM Plex Sans', sans-serif",
               mt: 0.25,
@@ -431,7 +432,7 @@ export default function ImagineTab({
             autoFocus
             InputProps={{
               sx: {
-                fontSize: 13,
+                fontSize: 12,
                 fontFamily: "'IBM Plex Sans', sans-serif",
                 borderRadius: "4px",
               },
@@ -455,14 +456,8 @@ export default function ImagineTab({
             variant="outlined"
             onClick={() => setSaveAnchorEl(null)}
             sx={{
-              textTransform: "none",
-              fontSize: 12,
-              fontWeight: 500,
               borderColor: "divider",
               color: "text.primary",
-              borderRadius: "2px",
-              px: 2,
-              py: 0.25,
             }}
           >
             Cancel
@@ -473,13 +468,7 @@ export default function ImagineTab({
             onClick={handleSaveConfirm}
             disabled={!saveName.trim() || isSaving}
             sx={{
-              textTransform: "none",
-              fontSize: 12,
-              fontWeight: 500,
               fontFamily: "'IBM Plex Sans', sans-serif",
-              borderRadius: "2px",
-              px: 2,
-              py: 0.25,
               ...(saveName.trim()
                 ? {}
                 : {

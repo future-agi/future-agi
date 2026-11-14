@@ -1,9 +1,10 @@
 // MetricsContent.jsx
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import "src/styles/clean-data-table.css";
-import { Box, Skeleton } from "@mui/material";
+import { Box, Button, Skeleton } from "@mui/material";
 import MetricsHeaderSection from "../MetricsHeaderSection";
 import { AgGridReact } from "ag-grid-react";
+import "src/utils/ag-grid-setup";
 import { useAgThemeWith } from "src/hooks/use-ag-theme";
 import { AG_THEME_OVERRIDES } from "src/theme/ag-theme";
 import { getMetricsListColumnDefs, normalizeFilters } from "../common";
@@ -19,6 +20,10 @@ import {
 import { getRandomId } from "src/utils/utils";
 import CustomTraceGroupHeaderRenderer from "src/sections/projects/LLMTracing/Renderers/CustomTraceGroupHeaderRenderer";
 import MetricEmptyState from "../MetricEmptyState";
+import { getZeroBasedGridPage } from "src/utils/agGridPagination";
+import { QUERY_FAILED_RETRY_MESSAGE } from "src/utils/queryReadState";
+import { readPromptMetricsGridPage } from "../prompt_metrics_grid_read";
+import { ROW_HEIGHT } from "src/theme/sizes";
 
 const LoadingHeader = () => {
   return <Skeleton variant="text" width={100} height={20} />;
@@ -34,6 +39,7 @@ const MetricsContent = () => {
   const [isLoading, setIsLoading] = useState(false);
   const [hasInitialLoad, setHasInitialLoad] = useState(false);
   const [showEmptyState, setShowEmptyState] = useState(false);
+  const [readError, setReadError] = useState(null);
   const { id } = useParams();
 
   const hasActiveFiltersOrSearch = useMemo(() => {
@@ -161,43 +167,42 @@ const MetricsContent = () => {
       getRows: async (params) => {
         try {
           setIsLoading(true);
+          const { pageNumber, pageSize } = getZeroBasedGridPage(
+            params.request,
+            10,
+          );
           const validFilters = filters?.filter((f) => f.column_id);
           // --- API Request ---
-          const response = await axios.get(
-            endpoints.develop.runPrompt.getPromptMetrics(),
-            {
+          const page = await readPromptMetricsGridPage(({ signal, timeout }) =>
+            axios.get(endpoints.develop.runPrompt.getPromptMetrics(), {
+              signal,
+              timeout,
               params: {
                 prompt_template_id: id,
+                page_number: pageNumber,
+                page_size: pageSize,
                 ...(validFilters?.length
                   ? { filters: JSON.stringify(normalizeFilters(filters)) }
                   : {}),
               },
-            },
+            }),
           );
-
-          const res = response?.data?.result || {};
-
-          const cols = res?.config?.map((o) => ({
+          const cols = page.columns.map((o) => ({
             ...o,
           }));
           setColumns(cols);
-
-          const rowData = res?.table || [];
-          const totalRows = res?.metadata?.total_rows || 0;
+          const { rowData, totalRows } = page;
           setHasData(totalRows > 0);
           setHasInitialLoad(true);
+          setReadError(null);
 
           params.success({
             rowData,
             rowCount: totalRows,
           });
-        } catch (error) {
-          setHasData(false);
-          setHasInitialLoad(true);
-          params.success({
-            rowData: [],
-            rowCount: 0,
-          });
+        } catch {
+          setReadError(QUERY_FAILED_RETRY_MESSAGE);
+          params.fail();
         } finally {
           setIsLoading(false);
         }
@@ -226,6 +231,34 @@ const MetricsContent = () => {
   return (
     <Box sx={{ height: "100%", display: "flex", flexDirection: "column" }}>
       <MetricsHeaderSection />
+      {readError && (
+        <Box
+          role="alert"
+          sx={{
+            px: 1.5,
+            py: 0.75,
+            fontSize: 12,
+            color: "warning.main",
+            bgcolor: "warning.lighter",
+            borderBottom: "1px solid",
+            borderColor: "warning.light",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+          }}
+        >
+          {readError}
+          <Button
+            size="small"
+            onClick={() => {
+              setReadError(null);
+              gridApiRef.current?.api?.refreshServerSide({ purge: false });
+            }}
+          >
+            Retry
+          </Button>
+        </Box>
+      )}
       <Box sx={{ flex: 1, minHeight: 0 }}>
         <AgGridReact
           className="clean-data-table"
@@ -235,7 +268,7 @@ const MetricsContent = () => {
           columnDefs={columnDefs}
           rowModelType="serverSide"
           serverSideDatasource={dataSource}
-          rowHeight={40}
+          rowHeight={ROW_HEIGHT.default}
           theme={agTheme}
           rowSelection="single"
           paginationPageSizeSelector={false}
@@ -253,7 +286,7 @@ const MetricsContent = () => {
           getMainMenuItems={(params) =>
             params.defaultItems.filter((item) => item !== "columnChooser")
           }
-          headerHeight={40}
+          headerHeight={32}
           groupHeaderHeight={40}
           overlayNoRowsTemplate={"No metrics found."}
           tooltipShowDelay={0}
@@ -266,7 +299,6 @@ const MetricsContent = () => {
         filterData={openQuickFilter}
         onClose={() => setOpenQuickFilter(null)}
         setFilters={setFilters}
-        setFilterOpen={setIsFilterDrawerOpen}
       />
     </Box>
   );

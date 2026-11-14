@@ -92,7 +92,7 @@ const CustomViewTab = ({
         }}
       >
         <Iconify
-          icon="mdi:eye-outline"
+          icon="solar:eye-linear"
           width={14}
           sx={{ color: "text.primary", flexShrink: 0 }}
         />
@@ -108,14 +108,14 @@ const CustomViewTab = ({
             size="small"
             sx={{
               width: 100,
-              "& .MuiInput-input": { fontSize: 13, py: 0 },
+              "& .MuiInput-input": { fontSize: 12, py: 0 },
             }}
             InputProps={{ disableUnderline: false }}
           />
         ) : (
           <Typography
             sx={{
-              fontSize: 13,
+              fontSize: 12,
               fontWeight: 500,
               fontFamily: "'IBM Plex Sans', sans-serif",
               color: "text.primary",
@@ -132,7 +132,7 @@ const CustomViewTab = ({
         {!isRenaming && (
           <Iconify
             className="close-btn"
-            icon="mdi:close"
+            icon="solar:close-linear"
             width={12}
             onClick={(e) => {
               e.stopPropagation();

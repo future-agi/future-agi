@@ -1,12 +1,4 @@
-import {
-  Box,
-  InputAdornment,
-  LinearProgress,
-  Tab,
-  Tabs,
-  TextField,
-  useTheme,
-} from "@mui/material";
+import { Box, InputAdornment, Tab, Tabs, TextField } from "@mui/material";
 import React, { useState } from "react";
 import PropTypes from "prop-types";
 import Label from "src/components/label";
@@ -17,10 +9,9 @@ import Iconify from "src/components/iconify";
 import JobListTable from "./JobListTable";
 import JobDetailDrawer from "./JobDetailDrawer";
 import DeleteJobModal from "./DeleteJobModal";
+import { LoadingScreen } from "src/components/loading-screen";
 
 const JobStatusView = () => {
-  const theme = useTheme();
-
   const [searchQuery, setSearchQuery] = useState("");
 
   const [selectedTab, setSelectedTab] = useState("all");
@@ -59,7 +50,7 @@ const JobStatusView = () => {
   });
 
   if (isLoadingCount) {
-    return <LinearProgress />;
+    return <LoadingScreen />;
   }
 
   return (
@@ -73,16 +64,11 @@ const JobStatusView = () => {
         }}
       >
         <Tabs
-          sx={{ borderBottom: 1, borderColor: "divider" }}
+          sx={{ boxShadow: "none", borderBottom: 1, borderColor: "divider" }}
           value={selectedTab}
           onChange={handleChange}
           aria-label="basic tabs example"
           textColor="primary"
-          TabIndicatorProps={{
-            style: {
-              backgroundColor: theme.palette.primary.main,
-            },
-          }}
         >
           <Tab
             label="All"
@@ -128,7 +114,8 @@ const JobStatusView = () => {
               startAdornment: (
                 <InputAdornment position="start">
                   <Iconify
-                    icon="eva:search-fill"
+                    icon="solar:magnifier-linear"
+                    width={16}
                     sx={{ color: "text.disabled" }}
                   />
                 </InputAdornment>
@@ -173,7 +160,7 @@ function CustomTabPanel(props) {
       role="tabpanel"
       {...other}
     >
-      {loading ? <LinearProgress /> : null}
+      {loading ? <LoadingScreen compact /> : null}
       {value === panelValue && !loading && children}
     </div>
   );

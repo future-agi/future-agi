@@ -1,3 +1,5 @@
+import PropTypes from "prop-types";
+
 // Shared constants for the voice detail drawer.
 
 // Display labels for the talk-ratio legend (matches the search filter tabs,
@@ -8,3 +10,10 @@ export const DEFAULT_ROLE_LABELS = {
   system: "System",
   tool: "Tool",
 };
+
+export const LEFT_PANEL_TAB_SHAPE = PropTypes.shape({
+  label: PropTypes.string.isRequired,
+  value: PropTypes.string.isRequired,
+  icon: PropTypes.string,
+  content: PropTypes.node,
+});
