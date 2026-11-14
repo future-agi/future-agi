@@ -49,6 +49,10 @@ SENSITIVE_BODY_PATH_PREFIXES = (
     "/simulate/api/harness-jobs/secret-files/",
     # Signed over its raw bytes and may carry committer emails; never read early.
     "/simulate/api/harness/github/webhook/",
+    # A builder chat's guest calls carry chat text and tool results.
+    "/simulate/api/harness/conversations/",
+    # The fix engine's model calls and callbacks carry the agent's source and transcripts.
+    "/simulate/api/agent-fix-engine/",
 )
 
 
