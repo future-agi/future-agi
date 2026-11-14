@@ -7,20 +7,17 @@ import {
   Stack,
   Tooltip,
   Typography,
-  alpha,
-  useTheme,
 } from "@mui/material";
 import PropTypes from "prop-types";
 import Iconify from "src/components/iconify";
+import StatusBadge from "src/components/status-badge/StatusBadge";
 import { useVoiceCallDetail } from "src/sections/agents/helper";
-import { error as errorPalette, success } from "src/theme/palette";
+import ContentSkeleton from "src/components/content-skeleton";
 
-// Module-scoped (used outside component bodies), so read the palette export
-// rather than the theme hook.
-const FAIL_COLOR = errorPalette.main;
-const PASS_COLOR = success.main;
-// Amber marker pin — not a 1:1 palette token yet, kept local.
-const AMBER_COLOR = "#F5A623";
+// Marker pin tokens (status roles index theme.palette.status).
+const FAIL_COLOR = "status.danger.solid";
+const PASS_COLOR = "status.success.solid";
+const AMBER_COLOR = "status.warning.solid";
 
 // Deterministic decorative waveform — seeded from trace id for stable bars.
 function waveformBars(seed = "default", count = 80) {
@@ -46,8 +43,6 @@ const fmtTime = (s) => {
 
 // ── Audio scrubber ──────────────────────────────────────────────────────────
 function Scrubber({ duration, currentTime, markers, onSeek, seed, dense }) {
-  const theme = useTheme();
-  const isDark = theme.palette.mode === "dark";
   const bars = useMemo(
     () => waveformBars(seed, dense ? 60 : 80),
     [seed, dense],
@@ -73,7 +68,7 @@ function Scrubber({ duration, currentTime, markers, onSeek, seed, dense }) {
         userSelect: "none",
         borderRadius: "6px",
         overflow: "hidden",
-        bgcolor: isDark ? alpha("#fff", 0.04) : alpha("#000", 0.04),
+        bgcolor: "action.hover",
         display: "flex",
         alignItems: "center",
         px: 0.5,
@@ -99,11 +94,7 @@ function Scrubber({ duration, currentTime, markers, onSeek, seed, dense }) {
                 flex: 1,
                 height: `${h * 100}%`,
                 borderRadius: "2px",
-                bgcolor: played
-                  ? "#7857FC"
-                  : isDark
-                    ? alpha("#fff", 0.22)
-                    : alpha("#000", 0.22),
+                bgcolor: played ? "status.discovery.solid" : "text.disabled",
               }}
             />
           );
@@ -118,7 +109,8 @@ function Scrubber({ duration, currentTime, markers, onSeek, seed, dense }) {
           bottom: 0,
           left: `${progress * 100}%`,
           width: 0,
-          borderLeft: "2px solid #7857FC",
+          borderLeft: "2px solid",
+          borderLeftColor: "status.discovery.solid",
           pointerEvents: "none",
         }}
       />
@@ -153,7 +145,7 @@ function Scrubber({ duration, currentTime, markers, onSeek, seed, dense }) {
                   borderRadius: "50%",
                   bgcolor: color,
                   border: "2px solid",
-                  borderColor: isDark ? "#161618" : "#ffffff",
+                  borderColor: "background.paper",
                   cursor: "pointer",
                 }}
               />
@@ -252,16 +244,18 @@ function useAudioPlayer({
             disabled={!src}
             sx={{
               width: 32,
-              height: 32,
-              borderRadius: "50%",
-              bgcolor: "#7857FC",
-              color: "#fff",
-              "&:hover": { bgcolor: "#6845E8" },
+              aspectRatio: "1",
+              bgcolor: "status.discovery.solid",
+              color: "status.discovery.onSolid",
+              "&:hover": { bgcolor: "status.discovery.solid", opacity: 0.9 },
               "&.Mui-disabled": { bgcolor: "action.disabledBackground" },
               flexShrink: 0,
             }}
           >
-            <Iconify icon={playing ? "mdi:pause" : "mdi:play"} width={16} />
+            <Iconify
+              icon={playing ? "solar:pause-linear" : "solar:play-linear"}
+              width={16}
+            />
           </IconButton>
           <Box sx={{ flex: 1, minWidth: 0 }}>
             <Scrubber
@@ -274,7 +268,7 @@ function useAudioPlayer({
             />
           </Box>
           <Typography
-            fontSize="11px"
+            fontSize="12px"
             fontWeight={600}
             color="text.secondary"
             sx={{
@@ -294,8 +288,6 @@ function useAudioPlayer({
 
 // ── Transcript ───────────────────────────────────────────────────────────────
 function Transcript({ lines, currentTime, onSeek, dense }) {
-  const theme = useTheme();
-  const isDark = theme.palette.mode === "dark";
   const scrollerRef = useRef(null);
 
   // Find active line: latest line whose t <= currentTime.
@@ -324,7 +316,7 @@ function Transcript({ lines, currentTime, onSeek, dense }) {
         border: "1px solid",
         borderColor: "divider",
         borderRadius: "8px",
-        bgcolor: isDark ? alpha("#fff", 0.015) : "background.paper",
+        bgcolor: "background.paper",
         maxHeight: dense ? 240 : 320,
         overflowY: "auto",
       }}
@@ -346,21 +338,15 @@ function Transcript({ lines, currentTime, onSeek, dense }) {
                 borderBottom: "1px solid",
                 borderColor: "divider",
                 cursor: line.t != null ? "pointer" : "default",
-                bgcolor: isActive
-                  ? alpha("#7857FC", isDark ? 0.14 : 0.07)
-                  : "transparent",
+                bgcolor: isActive ? "status.discovery.bg" : "transparent",
                 "&:last-of-type": { borderBottom: "none" },
                 "&:hover": {
-                  bgcolor: isActive
-                    ? alpha("#7857FC", isDark ? 0.16 : 0.09)
-                    : isDark
-                      ? alpha("#fff", 0.03)
-                      : alpha("#000", 0.025),
+                  bgcolor: isActive ? "status.discovery.bg" : "action.hover",
                 },
               }}
             >
               <Typography
-                fontSize="10.5px"
+                fontSize="12px"
                 color="text.disabled"
                 sx={{
                   fontFamily: "ui-monospace, SFMono-Regular, monospace",
@@ -373,19 +359,19 @@ function Transcript({ lines, currentTime, onSeek, dense }) {
               </Typography>
               <Box sx={{ flex: 1, minWidth: 0 }}>
                 <Typography
-                  fontSize="10px"
-                  fontWeight={700}
+                  fontSize="12px"
+                  fontWeight={600}
                   sx={{
                     color: isAgent ? "accent.brand" : "text.secondary",
-                    textTransform: "uppercase",
-                    letterSpacing: "0.06em",
+                    textTransform: "none",
+                    letterSpacing: 0,
                     mb: 0.2,
                   }}
                 >
                   {isAgent ? "Agent" : "Caller"}
                 </Typography>
                 <Typography
-                  fontSize={dense ? "11.5px" : "12px"}
+                  fontSize="12px"
                   color="text.primary"
                   sx={{ lineHeight: 1.55 }}
                 >
@@ -408,10 +394,6 @@ Transcript.propTypes = {
 
 // ── Judge reason card (mirrors EvalIOPanel's card) ──────────────────────────
 function JudgeReasonCard({ reason, score }) {
-  const theme = useTheme();
-  const isDark = theme.palette.mode === "dark";
-  const failed = score != null && score < 1;
-  const scoreColor = failed ? FAIL_COLOR : PASS_COLOR;
   return (
     <Box
       sx={{
@@ -419,48 +401,36 @@ function JudgeReasonCard({ reason, score }) {
         borderColor: "divider",
         borderRadius: "8px",
         p: 1.5,
-        bgcolor: isDark ? alpha("#fff", 0.02) : alpha("#000", 0.02),
+        bgcolor: "action.hover",
       }}
     >
       <Stack direction="row" alignItems="center" gap={0.75} sx={{ mb: 0.75 }}>
         <Iconify
-          icon="mdi:scale-balance"
-          width={13}
+          icon="solar:scale-linear"
+          width={14}
           sx={{ color: "text.secondary" }}
         />
         <Typography
-          fontSize="10.5px"
-          fontWeight={700}
+          fontSize="12px"
+          fontWeight={600}
           color="text.secondary"
-          sx={{ textTransform: "uppercase", letterSpacing: "0.06em" }}
+          sx={{ textTransform: "none", letterSpacing: 0 }}
         >
           Evaluator reasoning
         </Typography>
         <Box sx={{ flex: 1 }} />
+        {/* Anything short of a full score is a fail, as before the design system. */}
         {score != null && (
-          <Box
-            sx={{
-              px: 0.75,
-              py: 0.15,
-              borderRadius: "4px",
-              bgcolor: alpha(scoreColor, isDark ? 0.16 : 0.12),
-            }}
-          >
-            <Typography
-              fontSize="10.5px"
-              fontWeight={700}
-              sx={{ color: scoreColor, fontFeatureSettings: "'tnum'" }}
-            >
-              {score.toFixed(2)} / 1.00
-            </Typography>
-          </Box>
+          <StatusBadge
+            role={score < 1 ? "danger" : "success"}
+            label={`${score.toFixed(2)} / 1.00`}
+            variant="badge"
+            dot={false}
+            size="sm"
+          />
         )}
       </Stack>
-      <Typography
-        fontSize="12.5px"
-        color="text.primary"
-        sx={{ lineHeight: 1.6 }}
-      >
+      <Typography fontSize="12px" color="text.primary" sx={{ lineHeight: 1.6 }}>
         {reason}
       </Typography>
     </Box>
@@ -497,8 +467,11 @@ function toTranscriptLines(detail) {
     }));
 }
 
-function useVoiceCallData(traceId) {
-  const { data: detail, isLoading } = useVoiceCallDetail(traceId, !!traceId);
+function useVoiceCallData(traceId, projectId) {
+  const { data: detail, isLoading } = useVoiceCallDetail(traceId, {
+    enabled: !!traceId,
+    projectId,
+  });
   const lines = useMemo(() => toTranscriptLines(detail), [detail]);
   const recordingUrl =
     detail?.recording_url ||
@@ -543,12 +516,12 @@ function CallColumn({
           }}
         />
         <Typography
-          fontSize="11px"
-          fontWeight={700}
+          fontSize="12px"
+          fontWeight={600}
           sx={{
             color: accentColor,
-            textTransform: "uppercase",
-            letterSpacing: "0.06em",
+            textTransform: "none",
+            letterSpacing: 0,
           }}
         >
           {title}
@@ -563,7 +536,7 @@ function CallColumn({
           {call.recordingUrl ? (
             player.render
           ) : (
-            <Typography fontSize="11px" color="text.disabled">
+            <Typography fontSize="12px" color="text.disabled">
               No recording available — transcript only.
             </Typography>
           )}
@@ -598,14 +571,22 @@ CallColumn.propTypes = {
 };
 
 // ── Main VoiceEvalPanel ──────────────────────────────────────────────────────
-export default function VoiceEvalPanel({ trace, evalScore, successTraceId }) {
+export default function VoiceEvalPanel({
+  trace,
+  evalScore,
+  successTraceId,
+  projectId,
+}) {
   const traceSeed = trace?.id ?? "default";
   const [splitView, setSplitView] = useState(false);
   const [activeSide, setActiveSide] = useState("fail");
 
-  const failCall = useVoiceCallData(trace?.id);
+  const failCall = useVoiceCallData(trace?.id, projectId);
   // Only fetched once the user opens the comparison.
-  const passCall = useVoiceCallData(splitView ? successTraceId : null);
+  const passCall = useVoiceCallData(
+    splitView ? successTraceId : null,
+    projectId,
+  );
 
   const evidence = trace?.evidence ?? {};
   const judgeReason = evidence.judge_reason ?? null;
@@ -623,7 +604,7 @@ export default function VoiceEvalPanel({ trace, evalScore, successTraceId }) {
   if (failCall.isLoading) {
     return (
       <Stack alignItems="center" justifyContent="center" sx={{ py: 6 }}>
-        <CircularProgress size={22} />
+        <ContentSkeleton variant="panel" />
       </Stack>
     );
   }
@@ -637,7 +618,7 @@ export default function VoiceEvalPanel({ trace, evalScore, successTraceId }) {
         sx={{ py: 5 }}
       >
         <Iconify
-          icon="mdi:phone-off-outline"
+          icon="solar:end-call-linear"
           width={20}
           sx={{ color: "text.disabled" }}
         />
@@ -661,19 +642,14 @@ export default function VoiceEvalPanel({ trace, evalScore, successTraceId }) {
               <Iconify
                 icon={
                   splitView
-                    ? "mdi:view-sequential-outline"
-                    : "mdi:compare-horizontal"
+                    ? "solar:list-linear"
+                    : "solar:transfer-horizontal-linear"
                 }
-                width={13}
+                width={14}
               />
             }
             onClick={() => setSplitView((v) => !v)}
             sx={{
-              height: 28,
-              fontSize: "11.5px",
-              fontWeight: 600,
-              borderRadius: "6px",
-              textTransform: "none",
               borderColor: "divider",
               color: splitView ? "text.secondary" : "text.primary",
             }}
@@ -688,7 +664,7 @@ export default function VoiceEvalPanel({ trace, evalScore, successTraceId }) {
           {failCall.recordingUrl ? (
             singlePlayer.render
           ) : (
-            <Typography fontSize="11px" color="text.disabled">
+            <Typography fontSize="12px" color="text.disabled">
               No recording available — transcript only.
             </Typography>
           )}
@@ -739,4 +715,5 @@ VoiceEvalPanel.propTypes = {
   trace: PropTypes.object,
   evalScore: PropTypes.number,
   successTraceId: PropTypes.string,
+  projectId: PropTypes.string,
 };

@@ -3,6 +3,30 @@
 // edits (same column, new filter value), so the Save view button stayed
 // hidden after legitimate changes.
 
+const RANGE_OPS = new Set(["between", "not_between"]);
+
+// Comparison key for a filter_config. Multi-select values are a set, so the
+// same values picked in a different order are not an edit; range bounds keep
+// their [min, max] order. attribute_value_types is index-aligned with
+// filter_value, so each value is keyed together with its type.
+const filterConfigKey = (config) => {
+  const value = config?.filter_value;
+  if (!Array.isArray(value) || RANGE_OPS.has(config.filter_op)) {
+    return JSON.stringify(config ?? null);
+  }
+  const types = Array.isArray(config.attribute_value_types)
+    ? config.attribute_value_types
+    : null;
+  const members = value
+    .map((v, i) => JSON.stringify([v, types ? types[i] : null]))
+    .sort();
+  return JSON.stringify({
+    ...config,
+    filter_value: members,
+    attribute_value_types: undefined,
+  });
+};
+
 // Deep equality for an extraFilters / structural-filter array. Saved-view
 // filters are stored and compared in the canonical API shape.
 export const filtersContentEqual = (a, b) => {
@@ -12,12 +36,51 @@ export const filtersContentEqual = (a, b) => {
   if (aArr.length === 0) return true;
   for (let i = 0; i < aArr.length; i += 1) {
     if (aArr[i]?.column_id !== bArr[i]?.column_id) return false;
+    // column_id is the native execution field, not a globally unique
+    // property identity. A system field and a custom attribute may share it
+    // (for example `model`), so an identity-only edit must still mark the
+    // saved view dirty. Missing IDs remain equal for legacy saved views.
+    if ((aArr[i]?.property_id ?? null) !== (bArr[i]?.property_id ?? null)) {
+      return false;
+    }
     if (
-      JSON.stringify(aArr[i]?.filter_config ?? null) !==
-      JSON.stringify(bArr[i]?.filter_config ?? null)
+      filterConfigKey(aArr[i]?.filter_config) !==
+      filterConfigKey(bArr[i]?.filter_config)
     ) {
       return false;
     }
   }
   return true;
+};
+
+// A Custom date range keeps dateOption "Custom" while its [start, end]
+// bounds change, so comparing the option name alone misses edited dates.
+// Bounds are persisted as "yyyy-MM-dd HH:mm:ss" strings; compare them as
+// strings so a hydrated saved view equals its own stored pair. A missing
+// pair compares equal to an empty one for legacy views without bounds.
+export const dateBoundsEqual = (a, b) => {
+  const aArr = Array.isArray(a) ? a : [];
+  const bArr = Array.isArray(b) ? b : [];
+  if (aArr.length !== bArr.length) return false;
+  for (let i = 0; i < aArr.length; i += 1) {
+    if (String(aArr[i] ?? "") !== String(bArr[i] ?? "")) return false;
+  }
+  return true;
+};
+
+// Date filter equality for saved-view dirty checks: option name first, then
+// the custom bounds when the option is "Custom". A stored Custom with no
+// bounds array is a legacy row (migration 0078 copied option-only date
+// filters), and the live default always carries bounds, so that shape is not
+// an edit.
+export const dateFilterEqual = (current, baseline) => {
+  const currentOption = current?.dateOption ?? null;
+  const baselineOption = baseline?.dateOption ?? null;
+  if (currentOption !== baselineOption) return false;
+  if (baselineOption !== "Custom") return true;
+  const baselineBounds = baseline?.dateFilter;
+  if (!Array.isArray(baselineBounds) || baselineBounds.length === 0) {
+    return true;
+  }
+  return dateBoundsEqual(current?.dateFilter, baselineBounds);
 };

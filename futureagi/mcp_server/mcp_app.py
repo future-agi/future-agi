@@ -1,33 +1,55 @@
-"""MCP Server application that wraps ai_tools as MCP tools.
+"""Python MCP server backed by OpenAPI-generated Django API tools.
 
-Creates a FastMCP server exposing all registered ai_tools via Streamable HTTP transport.
 Authentication: API key or OAuth Bearer token on each request.
 
 Streamable HTTP uses a single /mcp endpoint (stateless) — no persistent connections,
 no session affinity, survives server restarts, horizontally scalable.
 """
 
+import json
 import os
 import time
+from contextvars import ContextVar
 
 import structlog
-from mcp.server.fastmcp import FastMCP
+from asgiref.sync import ThreadSensitiveContext, sync_to_async
+from django.conf import settings
+from mcp.server import Server
+from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 from mcp.server.transport_security import TransportSecuritySettings
+from mcp.types import CallToolResult, TextContent
+from starlette.applications import Starlette
+from starlette.routing import Route
 
-from ai_tools.base import ToolContext
-from ai_tools.registry import registry as ai_registry
+from mcp_server.api_executor import (
+    APIExecutionError,
+    MCPRequestContext,
+    ensure_urlconf_loaded,
+    executor,
+)
+from mcp_server.generated_registry import registry
+from mcp_server.response_limits import ResponseTooLargeError, bounded_response
 from tfc.middleware.workspace_context import (
+    clear_workspace_context,
     get_current_organization,
     get_current_user,
     get_current_workspace,
     set_workspace_context,
 )
+from tfc.utils.api_errors import ApiErrorCode
+from tfc.utils.error_codes import get_error_message
 
 logger = structlog.get_logger(__name__)
 
+# The exact tenant each request authenticated as. Kept separately from the
+# workspace context so the executor also receives the OrgApiKey that granted it.
+_request_context: ContextVar[MCPRequestContext | None] = ContextVar(
+    "mcp_request_context", default=None
+)
+
 # Build allowed hosts from MCP_SERVER_BASE_URL for DNS rebinding protection.
 _mcp_base_url = os.environ.get("MCP_SERVER_BASE_URL", "")
-_allowed_hosts: list[str] = []
+_allowed_hosts = ["localhost", "localhost:*", "127.0.0.1", "127.0.0.1:*"]
 if _mcp_base_url:
     from urllib.parse import urlparse
 
@@ -37,37 +59,68 @@ if _mcp_base_url:
         if _parsed.port:
             _allowed_hosts.append(f"{_parsed.hostname}:{_parsed.port}")
 
-# Create the MCP server (stateless Streamable HTTP)
-mcp = FastMCP(
-    name="Future AGI",
+# Create the low-level MCP server so inputSchema comes directly from OpenAPI.
+mcp = Server(
+    "Future AGI",
     instructions=(
         "You are connected to the Future AGI platform. "
         "Use the available tools to explore evaluations, datasets, traces, "
         "and other resources in your workspace."
     ),
-    stateless_http=True,
-    json_response=True,
-    transport_security=TransportSecuritySettings(
-        enable_dns_rebinding_protection=True,
-        allowed_hosts=_allowed_hosts,
-    ),
+)
+
+_transport_security = TransportSecuritySettings(
+    enable_dns_rebinding_protection=True,
+    allowed_hosts=_allowed_hosts,
 )
 
 
-def _authenticate_and_set_context(api_key: str, secret_key: str) -> ToolContext | None:
-    """Authenticate via API key and set per-request context."""
+class APIKeyExpired(Exception):
+    """The key pair matched a key whose ``expires_at`` has passed."""
+
+
+def _authenticate_and_set_context(
+    api_key: str, secret_key: str
+) -> MCPRequestContext | None:
+    """Authenticate via API key and set per-request context.
+
+    Raises ``APIKeyExpired`` for an expired key so the caller can answer with
+    the same distinct error the REST API gives instead of "Invalid credentials".
+    """
     from accounts.models.user import OrgApiKey, User
     from accounts.models.workspace import Workspace
 
     try:
-        # Use .all() to bypass BaseModelManager workspace filtering
+        # Use .all() to skip BaseModelManager workspace filtering. Not
+        # filtered on enabled: REST auth disables a key once it expires, and
+        # that key must still read as expired here, not as a wrong key.
         org_api_key = (
             OrgApiKey.objects.all()
             .select_related("organization", "workspace")
-            .get(api_key=api_key, secret_key=secret_key, enabled=True)
+            .get(api_key=api_key, secret_key=secret_key)
         )
     except OrgApiKey.DoesNotExist:
         logger.warning("mcp_auth_failed", api_key_prefix=api_key[:8] if api_key else "")
+        return None
+
+    if org_api_key.is_expired:
+        logger.warning("mcp_auth_key_expired", api_key_prefix=api_key[:8])
+        raise APIKeyExpired
+    if not org_api_key.enabled:
+        logger.warning("mcp_auth_failed", api_key_prefix=api_key[:8])
+        return None
+
+    # An ingest key may only write spans to the collector, even if a user was
+    # attached to it.
+    if org_api_key.type == "ingest":
+        logger.warning("mcp_auth_ingest_key_refused", org=str(org_api_key.organization))
+        return None
+    # A coding agent's key may make only the simulate calls its loop needs, and no
+    # MCP tool is one of them.
+    if org_api_key.type == "coding_agent":
+        logger.warning(
+            "mcp_auth_coding_agent_key_refused", org=str(org_api_key.organization)
+        )
         return None
 
     if org_api_key.type == "system":
@@ -97,12 +150,17 @@ def _authenticate_and_set_context(api_key: str, secret_key: str) -> ToolContext 
         .first()
     )
 
-    set_workspace_context(workspace=workspace, organization=organization, user=user)
+    return _bind_context(
+        MCPRequestContext(
+            user=user,
+            organization=organization,
+            workspace=workspace,
+            api_key=org_api_key,
+        )
+    )
 
-    return ToolContext(user=user, organization=organization, workspace=workspace)
 
-
-def _authenticate_via_oauth(token: str) -> ToolContext | None:
+def _authenticate_via_oauth(token: str) -> MCPRequestContext | None:
     """Authenticate via OAuth Bearer token and set per-request context."""
     from accounts.models.user import User
     from accounts.models.workspace import Workspace
@@ -137,162 +195,193 @@ def _authenticate_via_oauth(token: str) -> ToolContext | None:
             .first()
         )
 
-    set_workspace_context(workspace=workspace, organization=organization, user=user)
+    return _bind_context(
+        MCPRequestContext(
+            user=user,
+            organization=organization,
+            workspace=workspace,
+            oauth_scopes=_parse_oauth_scopes(payload.get("scope")),
+        )
+    )
 
-    return ToolContext(user=user, organization=organization, workspace=workspace)
 
+def _parse_oauth_scopes(raw) -> frozenset[str]:
+    """The tool groups an access token's ``scope`` claim grants.
 
-def _register_ai_tools():
-    """Register all ai_tools as MCP tools on the FastMCP server.
-
-    Each tool handler gets a proper ``__signature__`` derived from the tool's
-    Pydantic input_model so that FastMCP generates the correct JSON Schema
-    for MCP clients.  At runtime, ``**kwargs`` still captures the actual
-    arguments and passes them through to ``tool.run()``.
+    Tokens carry a list of group slugs; a space- or comma-separated string is
+    accepted too. Anything else grants nothing, so a malformed claim fails
+    closed rather than falling back to every group.
     """
-    import inspect
-
-    from asgiref.sync import sync_to_async
-
-    for tool in ai_registry.list_all():
-
-        def make_handler(t):
-            def _sync_run(kwargs_dict):
-                from mcp_server.constants import CATEGORY_TO_GROUP
-                from mcp_server.exceptions import RateLimitExceededError
-                from mcp_server.rate_limiter import (
-                    check_rate_limit,
-                    get_rate_limit_tier,
-                )
-                from mcp_server.usage_helpers import (
-                    record_usage,
-                    update_session_counters,
-                )
-
-                org = get_current_organization()
-                ws = get_current_workspace()
-                usr = get_current_user()
-
-                # If context vars not set (OAuth flow), try auth context
-                if not org or not usr:
-                    try:
-                        from mcp.server.auth.middleware.auth_context import (
-                            get_access_token,
-                        )
-
-                        from mcp_server.oauth_provider import FutureAGIAccessToken
-
-                        access = get_access_token()
-                        if isinstance(access, FutureAGIAccessToken):
-                            from accounts.models.user import User
-                            from accounts.models.workspace import Workspace
-
-                            usr = (
-                                User.objects.all()
-                                .select_related("organization")
-                                .get(id=access.user_id)
-                            )
-                            org = usr.organization
-                            ws = (
-                                Workspace.objects.all()
-                                .filter(id=access.workspace_id)
-                                .first()
-                                if access.workspace_id
-                                else None
-                            )
-                            set_workspace_context(
-                                workspace=ws, organization=org, user=usr
-                            )
-                    except Exception:
-                        pass
-
-                if not org or not usr:
-                    return "Error: Not authenticated."
-
-                # Rate limit check
-                tier = get_rate_limit_tier(org)
-                try:
-                    check_rate_limit(str(org.id), tier)
-                except RateLimitExceededError as e:
-                    return f"Error: {e} (retry after {e.retry_after}s)"
-
-                context = ToolContext(user=usr, organization=org, workspace=ws)
-
-                start = time.time()
-                result = t.run(kwargs_dict, context)
-                latency_ms = int((time.time() - start) * 1000)
-
-                # Record usage (get or create a session for this user)
-                try:
-                    from mcp_server.usage_helpers import (
-                        get_or_create_connection,
-                        get_or_create_session,
-                    )
-
-                    connection = get_or_create_connection(usr, org, ws)
-                    session = get_or_create_session(
-                        connection, transport="streamable_http"
-                    )
-                    tool_group = CATEGORY_TO_GROUP.get(t.category, "")
-                    is_error = result.is_error
-                    record_usage(
-                        session=session,
-                        tool_name=t.name,
-                        tool_group=tool_group,
-                        params=kwargs_dict,
-                        status="error" if is_error else "success",
-                        error_msg=result.content if is_error else "",
-                        latency_ms=latency_ms,
-                    )
-                    update_session_counters(session, is_error)
-                except Exception:
-                    logger.exception("usage_recording_failed", tool=t.name)
-
-                if result.is_error:
-                    code = result.error_code or "INTERNAL_ERROR"
-                    return f"Error [{code}]: {result.content}"
-                return result.content
-
-            async def handler(**kwargs) -> str:
-                return await sync_to_async(_sync_run)(kwargs)
-
-            handler.__name__ = t.name
-            handler.__doc__ = t.description
-
-            # Build a proper inspect.Signature from the tool's Pydantic model
-            # so FastMCP generates the correct input schema for MCP clients.
-            params = []
-            for field_name, field_info in t.input_model.model_fields.items():
-                default = (
-                    field_info.default
-                    if field_info.default is not None
-                    else inspect.Parameter.empty
-                )
-                if not field_info.is_required():
-                    default = field_info.default
-                else:
-                    default = inspect.Parameter.empty
-
-                params.append(
-                    inspect.Parameter(
-                        field_name,
-                        inspect.Parameter.KEYWORD_ONLY,
-                        default=default,
-                        annotation=field_info.annotation,
-                    )
-                )
-
-            handler.__signature__ = inspect.Signature(params, return_annotation=str)
-
-            return handler
-
-        mcp.tool(name=tool.name, description=tool.description)(make_handler(tool))
+    if isinstance(raw, str):
+        items = raw.replace(",", " ").split()
+    elif isinstance(raw, (list, tuple, set, frozenset)):
+        items = [item.strip() for item in raw if isinstance(item, str)]
+    else:
+        items = []
+    return frozenset(item for item in items if item)
 
 
-_register_ai_tools()
+def _tool_in_token_scope(context: MCPRequestContext, tool) -> bool:
+    """Whether the caller's OAuth token, if any, was granted the tool's group."""
+    return context.oauth_scopes is None or tool.group in context.oauth_scopes
+
+
+def _bind_context(context: MCPRequestContext) -> MCPRequestContext:
+    set_workspace_context(
+        workspace=context.workspace,
+        organization=context.organization,
+        user=context.user,
+    )
+    _request_context.set(context)
+    return context
+
+
+def _clear_context() -> None:
+    _request_context.set(None)
+    clear_workspace_context()
+
+
+def _current_context() -> MCPRequestContext | None:
+    context = _request_context.get()
+    if context is not None:
+        return context
+    organization = get_current_organization()
+    workspace = get_current_workspace()
+    user = get_current_user()
+    if not organization or not user:
+        return None
+    return MCPRequestContext(user=user, organization=organization, workspace=workspace)
+
+
+def _enabled_tools_for_context(context: MCPRequestContext):
+    from mcp_server.usage_helpers import get_enabled_tools, get_or_create_connection
+
+    connection = get_or_create_connection(
+        context.user, context.organization, context.workspace
+    )
+    enabled = get_enabled_tools(connection)
+    if context.oauth_scopes is not None:
+        enabled = {
+            name
+            for name in enabled
+            if (tool := registry.get(name)) is not None
+            and _tool_in_token_scope(context, tool)
+        }
+    return connection, enabled
+
+
+def _json_safe(value):
+    return json.loads(json.dumps(value, default=str))
+
+
+def _error_result(message: str, *, code: str, data=None) -> CallToolResult:
+    payload = {"error": {"code": code, "message": message[:2000]}}
+    if data is not None:
+        try:
+            payload["error"]["details"] = bounded_response(_json_safe(data))
+        except ResponseTooLargeError:
+            payload["error"]["details"] = "Error details exceeded the MCP size limit."
+    return CallToolResult(
+        content=[
+            TextContent(type="text", text=json.dumps(payload, ensure_ascii=False))
+        ],
+        structuredContent=payload,
+        isError=True,
+    )
+
+
+@mcp.list_tools()
+async def list_generated_tools():
+    context = _current_context()
+    if context is None:
+        return []
+    _, enabled_names = await sync_to_async(_enabled_tools_for_context)(context)
+    return [
+        tool.to_mcp_tool() for tool in registry.list_all() if tool.name in enabled_names
+    ]
+
+
+# The executor validates with a cached validator on its Django worker thread.
+@mcp.call_tool(validate_input=False)
+async def call_generated_tool(name: str, arguments: dict):
+    context = _current_context()
+    if context is None:
+        return _error_result("Not authenticated", code="UNAUTHENTICATED")
+
+    tool = registry.get(name)
+    if tool is None:
+        return _error_result(f"Tool not found: {name}", code="NOT_FOUND")
+    # Refuse out-of-scope tools before any bookkeeping, rate limiting or dispatch.
+    if not _tool_in_token_scope(context, tool):
+        return _error_result(
+            f"Tool is outside the token's granted scopes: {name}",
+            code="FORBIDDEN",
+            data={"required_scope": tool.group},
+        )
+
+    from mcp_server.exceptions import RateLimitExceededError
+    from mcp_server.rate_limiter import check_rate_limit, get_rate_limit_tier
+    from mcp_server.usage_helpers import (
+        get_or_create_session,
+        record_usage,
+        update_session_counters,
+    )
+
+    connection, enabled_names = await sync_to_async(_enabled_tools_for_context)(context)
+    if name not in enabled_names:
+        return _error_result(f"Tool is disabled: {name}", code="FORBIDDEN")
+
+    try:
+        tier = await sync_to_async(get_rate_limit_tier)(context.organization)
+        await sync_to_async(check_rate_limit)(str(context.organization.id), tier)
+    except RateLimitExceededError as exc:
+        return _error_result(str(exc), code="RATE_LIMITED")
+
+    session = await sync_to_async(get_or_create_session)(
+        connection, transport="streamable_http"
+    )
+    started_at = time.time()
+    try:
+        data = await executor.execute(tool, arguments, context)
+        payload = _json_safe(data if isinstance(data, dict) else {"result": data})
+        is_error = False
+        error_message = ""
+        result = CallToolResult(
+            content=[
+                TextContent(type="text", text=json.dumps(payload, ensure_ascii=False))
+            ],
+            structuredContent=payload,
+            isError=False,
+        )
+    except APIExecutionError as exc:
+        is_error = True
+        error_message = str(exc)
+        result = _error_result(str(exc), code=f"HTTP_{exc.status_code}", data=exc.data)
+    except Exception as exc:
+        logger.exception("mcp_generated_tool_failed", tool=name)
+        is_error = True
+        error_message = str(exc)
+        result = _error_result(str(exc), code="INTERNAL_ERROR")
+
+    latency_ms = int((time.time() - started_at) * 1000)
+    try:
+        await sync_to_async(record_usage)(
+            session=session,
+            tool_name=name,
+            tool_group=tool.group,
+            params=arguments,
+            status="error" if is_error else "success",
+            error_msg=error_message,
+            latency_ms=latency_ms,
+        )
+        await sync_to_async(update_session_counters)(session, is_error)
+    except Exception:
+        logger.exception("usage_recording_failed", tool=name)
+    return result
 
 
 _streamable_app = None
+_session_manager = None
 _oauth_app = None
 
 
@@ -322,12 +411,8 @@ def get_mcp_oauth_app():
         from mcp_server.oauth_provider import FutureAGIOAuthProvider
 
         base_url = os.environ.get("MCP_SERVER_BASE_URL", "http://localhost:8000")
-        frontend_url = os.environ.get(
-            "FRONTEND_URL",
-            f"http://{os.environ.get('APP_URL', 'localhost:3031')}",
-        )
 
-        provider = FutureAGIOAuthProvider(frontend_url=frontend_url)
+        provider = FutureAGIOAuthProvider()
 
         auth_routes = create_auth_routes(
             provider=provider,
@@ -356,13 +441,50 @@ def get_mcp_streamable_app():
     Returns a Starlette app with a single /mcp route.
     Stateless mode — no persistent sessions, survives restarts.
     """
-    global _streamable_app
+    global _session_manager, _streamable_app
     if _streamable_app is None:
-        _streamable_app = mcp.streamable_http_app()
+        _session_manager = StreamableHTTPSessionManager(
+            app=mcp,
+            event_store=None,
+            json_response=True,
+            stateless=True,
+            security_settings=_transport_security,
+            # MCP 1.30 defaults this to 4 MiB, which 413s tool calls carrying
+            # inline base64 media (e.g. add_dataset_rows cells) that the rest
+            # of the ingress path already accepts; match the same ceiling
+            # Django and nginx enforce everywhere else (DATA_UPLOAD_MAX_MEMORY_SIZE).
+            max_request_body_size=settings.DATA_UPLOAD_MAX_MEMORY_SIZE,
+        )
+
+        class StreamableHTTPASGIApp:
+            async def __call__(self, scope, receive, send):
+                await _session_manager.handle_request(scope, receive, send)
+
+        _streamable_app = Starlette(
+            routes=[Route("/mcp", endpoint=StreamableHTTPASGIApp())],
+            lifespan=lambda app: _session_manager.run(),
+        )
     return _streamable_app
 
 
 async def mcp_streamable_with_auth(scope, receive, send):
+    """Keep each MCP request's synchronous work off other clients' executor."""
+    from django.db import close_old_connections
+
+    async with ThreadSensitiveContext():
+        _clear_context()
+        await sync_to_async(close_old_connections)()
+        # Import view modules before this request's workspace is bound; see
+        # ensure_urlconf_loaded for why the order matters on a cold worker.
+        await sync_to_async(ensure_urlconf_loaded)()
+        try:
+            await _mcp_streamable_with_auth(scope, receive, send)
+        finally:
+            _clear_context()
+            await sync_to_async(close_old_connections)()
+
+
+async def _mcp_streamable_with_auth(scope, receive, send):
     """ASGI middleware that authenticates every request before delegating to MCP.
 
     Unlike SSE (which authenticated once on connect), Streamable HTTP is stateless
@@ -421,9 +543,27 @@ async def mcp_streamable_with_auth(scope, receive, send):
             await response(scope, receive, send)
             return
 
-        context = await sync_to_async(_authenticate_and_set_context)(
-            api_key, secret_key
-        )
+        try:
+            context = await sync_to_async(_authenticate_and_set_context)(
+                api_key, secret_key
+            )
+        except APIKeyExpired:
+            response = StarletteResponse(
+                content=json.dumps(
+                    {
+                        "error": "invalid_token",
+                        "error_description": get_error_message("API_KEY_EXPIRED"),
+                        "code": ApiErrorCode.API_KEY_EXPIRED.value,
+                    }
+                ),
+                status_code=401,
+                headers={
+                    "Content-Type": "application/json",
+                    "WWW-Authenticate": www_auth,
+                },
+            )
+            await response(scope, receive, send)
+            return
         if not context:
             response = StarletteResponse(
                 content='{"error":"invalid_token","error_description":"Invalid credentials"}',

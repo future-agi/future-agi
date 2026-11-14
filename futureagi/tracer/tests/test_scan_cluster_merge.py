@@ -51,7 +51,7 @@ def _ch(rows):
     issue category, which the merge refuses to cross.
     """
     db = MagicMock()
-    db.return_value.client.execute.return_value = rows
+    db.return_value.execute_read.return_value = rows
     return db
 
 
@@ -142,7 +142,8 @@ class TestMergeDuplicateClusters:
     def test_no_op_below_two_centroids(self, project):
         pid = project.id
         _cluster(pid, "C1", members=3, traces=[])
-        with patch("tracer.queries.scan_clustering.ClickHouseVectorDB", _ch([("C1", NEAR_A, 3, CAT)])), \
+        rows = [("C1", NEAR_A, 3, CAT)]
+        with patch("tracer.queries.scan_clustering.ClickHouseVectorDB", _ch(rows)), \
              patch("tracer.queries.scan_clustering.ensure_centroid_table"), \
              patch("tracer.queries.scan_clustering._absorb_centroid"), \
              patch("tracer.queries.scan_clustering.delete_centroid"):

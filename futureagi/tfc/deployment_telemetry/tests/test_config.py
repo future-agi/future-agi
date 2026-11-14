@@ -6,6 +6,7 @@ from tfc.deployment_telemetry.config import (
     detect_deployment_type,
     get_telemetry_interval_hours,
     get_telemetry_jitter_seconds,
+    get_event_flush_seconds,
     get_version,
     is_self_hosted_deployment,
     telemetry_is_disabled,
@@ -48,6 +49,18 @@ def test_invalid_jitter_falls_back_to_thirty_minutes(monkeypatch, value):
     assert get_telemetry_jitter_seconds() == 1800
 
 
+@pytest.mark.parametrize("value", ["30", "60", "900"])
+def test_valid_event_flush_interval(monkeypatch, value):
+    monkeypatch.setenv("FUTURE_AGI_TELEMETRY_EVENT_FLUSH_SECONDS", value)
+    assert get_event_flush_seconds() == int(value)
+
+
+@pytest.mark.parametrize("value", ["bad", "0", "29", "901"])
+def test_invalid_event_flush_interval_falls_back_to_one_minute(monkeypatch, value):
+    monkeypatch.setenv("FUTURE_AGI_TELEMETRY_EVENT_FLUSH_SECONDS", value)
+    assert get_event_flush_seconds() == 60
+
+
 def test_version_fallback_chain(monkeypatch):
     monkeypatch.delenv("FUTURE_AGI_VERSION", raising=False)
     monkeypatch.delenv("SERVICE_VERSION", raising=False)
@@ -59,6 +72,27 @@ def test_version_fallback_chain(monkeypatch):
 
     monkeypatch.setenv("FUTURE_AGI_VERSION", "release-version")
     assert get_version() == "release-version"
+
+
+@pytest.mark.parametrize("placeholder", ["unknown", "latest", "", "  "])
+def test_version_placeholders_do_not_hide_a_baked_version(monkeypatch, placeholder):
+    """Compose passes FUTURE_AGI_VERSION=unknown (and the image tag defaults
+    to latest) when .env leaves it blank; a version baked into the image must
+    still be reported."""
+    monkeypatch.setenv("FUTURE_AGI_VERSION", placeholder)
+    monkeypatch.setenv("SERVICE_VERSION", "1.8.0")
+    monkeypatch.delenv("GIT_SHA", raising=False)
+    assert get_version() == "1.8.0"
+
+
+def test_version_keeps_a_placeholder_when_nothing_better_exists(monkeypatch):
+    monkeypatch.setenv("FUTURE_AGI_VERSION", "latest")
+    monkeypatch.delenv("SERVICE_VERSION", raising=False)
+    monkeypatch.delenv("GIT_SHA", raising=False)
+    assert get_version() == "latest"
+
+    monkeypatch.delenv("FUTURE_AGI_VERSION")
+    assert get_version() == "unknown"
 
 
 def test_deployment_detection(monkeypatch):

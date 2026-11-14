@@ -1,4 +1,4 @@
-import { Box, IconButton, Typography, useTheme } from "@mui/material";
+import { Box, IconButton, Typography } from "@mui/material";
 import React from "react";
 import PropTypes from "prop-types";
 import { copyToClipboard } from "../../../../../utils/utils";
@@ -6,7 +6,6 @@ import { enqueueSnackbar } from "src/components/snackbar";
 import SvgColor from "../../../../../components/svg-color";
 
 const PromptPanelHeader = ({ title, prompt }) => {
-  const theme = useTheme();
   return (
     <Box
       sx={{
@@ -28,8 +27,6 @@ const PromptPanelHeader = ({ title, prompt }) => {
           });
         }}
         sx={{
-          padding: theme.spacing(0.5),
-          borderRadius: "4px",
           border: "1px solid",
           borderColor: "divider",
         }}
