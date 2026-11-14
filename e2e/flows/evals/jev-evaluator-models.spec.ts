@@ -14,13 +14,17 @@ import { flowAnnotation } from '../../lib/flow-meta';
 // are the stack's own.
 //
 // EVAL-E2E-008..010 save real jev-latest templates with one fake, in one helper:
-//   FAKE stubTypesafeKeyOnFile  the browser's provider-status read says a TypeSafe
+//   FAKE stubTypesafeKeyOnFile  the browser's decision-catalog read says a TypeSafe
 //                               key is on file, because the picker selects Jev only
 //                               then. No key is stored, so EVAL-E2E-007 (same worker
 //                               org) still sees none, and nothing calls TypeSafe.
 
-// frontend/src/sections/evals/components/ModelSelector.jsx JEV_MODELS and row copy.
-const JEV_LABELS = ['Jev 1.13 (pinned)', 'Jev latest'];
+// evaluations/decision_models.py native Jev routes, in the catalog's curated order
+// (selectors/decision_models.py keeps it after readiness); DecisionModelSection.jsx row labels.
+const JEV_LABELS = ['Jev 1.14', 'Jev 1.13', 'Jev latest'];
+const JEV_IDS = ['jev-1.14.0', 'jev-1.13.0', 'jev-latest'];
+// evaluations/decision_models.py groups native/OpenRouter routes; useDecisionModels uses this endpoint.
+const DECISION_CATALOG = '/model-hub/api/models_list/';
 const JEV_MODEL = 'jev-latest';
 const NO_KEY = 'Add your TypeSafe API key';
 // The tooltip a plan-locked row shows (EvaluatorModelRow). MUI puts a tooltip's
@@ -41,6 +45,12 @@ const PROMPT = 'Judge whether {{output}} answers the request.';
 // README's browser first-paint ceiling, not the default 10-second expect budget.
 const UI_READY = 60_000;
 const ui = expect.configure({ timeout: UI_READY });
+
+// These page-owned routes are this spec's decision-catalog fake. Drain its
+// fetch/JSON/fulfill work on success and failure, before the page fixture closes.
+test.afterEach(async ({ page }) => {
+  await page.unrouteAll({ behavior: 'wait' });
+});
 
 interface Created { result: { id: string } }
 interface Capabilities { features: Record<string, { allowed: boolean; reason_code: string | null }> }
@@ -78,14 +88,18 @@ async function fulfillEdited(route: Route, response: APIResponse, json: unknown)
   await route.fulfill({ status: response.status(), headers, json });
 }
 
-/** FAKE: the browser's provider-status read shows a TypeSafe key on file,
+/** FAKE: the browser's decision-catalog read shows a TypeSafe key on file,
  * because the picker selects Jev only then. No key is stored and nothing in
  * these flows calls TypeSafe. */
 async function stubTypesafeKeyOnFile(page: Page): Promise<void> {
-  await page.route(url => url.pathname === PROVIDER_STATUS, async route => {
+  await page.route(url => url.pathname === DECISION_CATALOG && url.searchParams.get('model_type') === 'decision', async route => {
     const response = await route.fetch();
-    const body = await response.json() as ProviderStatus;
-    Object.assign(typesafe(body), { has_key: true, masked_key: 'e2e-****' });
+    const body = await response.json() as { results: { connections: { provider: string; is_available: boolean }[] }[] };
+    for (const group of body.results) {
+      for (const connection of group.connections) {
+        if (connection.provider === 'typesafe') connection.is_available = true;
+      }
+    }
     await fulfillEdited(route, response, body);
   });
 }
@@ -104,12 +118,34 @@ async function openJudgeEditor(page: Page): Promise<string> {
 }
 
 async function openModelPicker(page: Page): Promise<Locator> {
-  // Turing is denied on this stack too, so the create page clears its seeded
-  // turing_large and the pill starts empty (EvalCreatePage fagiModelsDenied).
-  await page.getByText('Select model', { exact: true }).first().click();
-  const search = page.getByPlaceholder('Search models...');
-  await ui(search).toBeVisible();
-  return page.locator('.MuiPopover-paper').filter({ has: search });
+  return test.step('open the picker and settle the ordinary-model Jev search', async () => {
+    // Turing is denied on this stack too, so the create page clears its seeded
+    // turing_large and the pill starts empty (EvalCreatePage fagiModelsDenied).
+    await page.getByRole('button', { name: 'Evaluation model: Select model', exact: true }).click();
+    const search = page.getByPlaceholder('Search models...');
+    await ui(search).toBeVisible();
+    // Decision rows filter immediately; this separate request starts after the
+    // real 400ms debounce. Match errors too so a 500 fails as a 500, not a timeout.
+    const searched = page.waitForResponse(response => {
+      const url = new URL(response.url());
+      return response.request().method() === 'GET' && url.pathname === DECISION_CATALOG &&
+        url.searchParams.get('model_type') === 'llm' && url.searchParams.get('search') === 'Jev' &&
+        url.searchParams.get('page') === '1';
+    }, { timeout: UI_READY });
+    await search.fill('Jev');
+    const response = await searched;
+    expect(response.status()).toBe(200);
+    expect(await response.finished()).toBeNull();
+    const picker = page.locator('.MuiPopover-paper').filter({ has: search });
+    await ui(picker.getByRole('progressbar')).toHaveCount(0);
+    const connection = picker.getByRole('combobox', { name: 'Connection for Jev 1.14', exact: true });
+    await ui(connection).toBeVisible();
+    await ui(connection).toBeEnabled();
+    const latest = jevRows(picker).filter({ hasText: /^Jev latest/ });
+    await ui(latest).toBeVisible();
+    await ui(latest).toBeEnabled();
+    return picker;
+  }, { timeout: UI_READY });
 }
 
 const jevRows = (picker: Locator) => picker.getByRole('menuitem').filter({ hasText: /^Jev / });
@@ -125,8 +161,8 @@ async function authorJevEvaluator(page: Page, name: string,
   await page.locator('.ql-editor[contenteditable="true"]').first().fill(PROMPT);
   const picker = await openModelPicker(page);
   const latest = jevRows(picker).filter({ hasText: /^Jev latest/ });
-  // With a key on file the row shows its model id instead of the key prompt.
-  await ui(latest.getByText(JEV_MODEL, { exact: true })).toBeVisible();
+  // Catalog readiness, not the legacy provider-status list, controls this row.
+  await ui(latest.getByText('Key configured', { exact: true })).toBeVisible();
   await latest.click();
   await ui(page.getByPlaceholder('Search models...')).toBeHidden();
   await ui(page.getByText('Jev latest', { exact: true })).toBeVisible();
@@ -184,8 +220,8 @@ test('EVAL-E2E-011: Jev models are listed and saved on a Community stack without
       'create-v2 with jev-latest answers 200 and stores one row with model jev-latest',
     ],
     browserChecks: [
-      'the picker lists exactly Jev 1.13 (pinned) then Jev latest, below FutureAGI Models',
-      'both Jev rows are enabled, prompt for a TypeSafe API key and carry an empty plan tooltip (a locked row carries "Not included in your plan")',
+      'searching Jev lists exactly Jev 1.14, Jev 1.13 and Jev latest, in catalog order, with native TypeSafe selected; the Decision models group follows Future AGI',
+      'all three Jev rows are enabled, prompt for a TypeSafe API key and have no plan-denied label (a locked row carries "Not included in your plan")',
     ],
   }),
 }, async ({ page, actor, probe }, testInfo) => {
@@ -205,7 +241,7 @@ test('EVAL-E2E-011: Jev models are listed and saved on a Community stack without
     expect(row).toMatchObject({ display_name: 'TypeSafe', has_key: false, masked_key: null });
   });
 
-  await test.step('UI: the picker lists both Jev models, selectable, under FutureAGI Models', async () => {
+  await test.step('UI: the picker lists three Jev models, selectable, in Decision models', async () => {
     const draftId = await openJudgeEditor(page);
     await testInfo.attach('draft-template', { contentType: 'application/json',
       body: JSON.stringify({ draftId, organizationId: actor.organizationId }) });
@@ -217,12 +253,12 @@ test('EVAL-E2E-011: Jev models are listed and saved on a Community stack without
       await ui(row.getByText(label, { exact: true })).toBeVisible();
       await ui(row.getByText(NO_KEY, { exact: true })).toBeVisible();
       await ui(row).toBeEnabled();
-      // An enabled row's tooltip has no title, so hovering it opens nothing.
-      await ui(row.locator('xpath=..')).toHaveAttribute('aria-label', '');
+      await ui(picker.getByRole('combobox', { name: `Connection for ${label}`, exact: true })).toHaveValue(JEV_IDS[index]);
     }
-    const turingTop = (await picker.getByText('FutureAGI Models', { exact: true }).boundingBox())!.y;
-    const jevTop = (await picker.getByText('Jev models', { exact: true }).boundingBox())!.y;
-    expect(jevTop).toBeGreaterThan(turingTop);
+    await picker.getByPlaceholder('Search models...').fill('');
+    const turingTop = (await picker.getByText('Future AGI', { exact: true }).boundingBox())!.y;
+    const decisionTop = (await picker.getByText('Decision models', { exact: true }).boundingBox())!.y;
+    expect(decisionTop).toBeGreaterThan(turingTop);
     await testInfo.attach('community-picker', { body: await page.screenshot(), contentType: 'image/png' });
     await ui(picker.getByLabel(LOCKED, { exact: true })).toHaveCount(0);
   });
@@ -277,7 +313,7 @@ test('EVAL-E2E-007: choosing a Jev model without a TypeSafe key opens the keys d
       'the provider-status API reports no TypeSafe key before and after, and the drawer sent no API-key write',
     ],
     browserChecks: [
-      'both Jev rows are enabled and prompt for a TypeSafe API key',
+      'all three Jev rows are enabled and prompt for a TypeSafe API key',
       'choosing Jev latest closes the picker and opens the keys drawer with TypeSafe as its first provider',
       'the drawer takes input (Add enables) and the evaluator model stays unselected',
     ],
@@ -294,7 +330,7 @@ test('EVAL-E2E-007: choosing a Jev model without a TypeSafe key opens the keys d
   expect(typesafe(await actor.api.get<ProviderStatus>(PROVIDER_STATUS)).has_key).toBe(false);
 
   let picker: Locator | undefined;
-  await test.step('UI: both Jev rows are selectable and ask for a TypeSafe key', async () => {
+  await test.step('UI: all three Jev rows are selectable and ask for a TypeSafe key', async () => {
     const draftId = await openJudgeEditor(page);
     await testInfo.attach('draft-template', { contentType: 'application/json',
       body: JSON.stringify({ draftId, organizationId: actor.organizationId }) });
@@ -342,7 +378,7 @@ test('EVAL-E2E-008: a Jev pass/fail evaluator keeps its model, output type and c
   annotation: flowAnnotation({
     id: 'EVAL-E2E-008', area: 'evals',
     userGoal: 'Author a Jev pass/fail evaluator in the UI and find its model, output type and criteria intact after reload (TypeSafe key faked in the browser)',
-    steps: ['FAKE: the browser\'s provider-status read shows a TypeSafe key on file, so the picker selects Jev; no key is stored and nothing calls TypeSafe',
+    steps: ['FAKE: the browser\'s decision-catalog read shows a TypeSafe key on file, so the picker selects Jev; no key is stored and nothing calls TypeSafe',
       'author an LLM-As-A-Judge evaluator and choose Jev latest', 'keep Pass/fail and describe a pass and a fail',
       'save the evaluation', 'reload its detail page'],
     backendChecks: [
@@ -397,7 +433,7 @@ test('EVAL-E2E-009: a Jev choices evaluator keeps its authored label order and s
   annotation: flowAnnotation({
     id: 'EVAL-E2E-009', area: 'evals',
     userGoal: 'Author a Jev choices evaluator whose labels are not shortest-first and find their order and scores intact after reload (TypeSafe key faked in the browser)',
-    steps: ['FAKE: the browser\'s provider-status read shows a TypeSafe key on file, so the picker selects Jev; no key is stored and nothing calls TypeSafe',
+    steps: ['FAKE: the browser\'s decision-catalog read shows a TypeSafe key on file, so the picker selects Jev; no key is stored and nothing calls TypeSafe',
       'author an LLM-As-A-Judge evaluator and choose Jev latest',
       'choose Choices and enter Resolved (Pass), Escalated (Neutral), No (Fail), describing Escalated',
       'save the evaluation', 'reload its detail page'],
@@ -476,7 +512,7 @@ test('EVAL-E2E-010: a Jev scoring evaluator keeps its four ordered levels after 
   annotation: flowAnnotation({
     id: 'EVAL-E2E-010', area: 'evals',
     userGoal: 'Author a Jev scoring evaluator with four ordered rubric levels and find them intact after reload (TypeSafe key faked in the browser)',
-    steps: ['FAKE: the browser\'s provider-status read shows a TypeSafe key on file, so the picker selects Jev; no key is stored and nothing calls TypeSafe',
+    steps: ['FAKE: the browser\'s decision-catalog read shows a TypeSafe key on file, so the picker selects Jev; no key is stored and nothing calls TypeSafe',
       'author an LLM-As-A-Judge evaluator and choose Jev latest', 'choose Scoring and add four ordered levels',
       'save the evaluation', 'reload its detail page'],
     backendChecks: [

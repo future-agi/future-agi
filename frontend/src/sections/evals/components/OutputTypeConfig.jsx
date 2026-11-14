@@ -35,6 +35,7 @@ const OutputTypeConfig = ({
   // switching the fundamental output shape while still letting them tune it.
   categoryLocked = false,
   isJevModel = false,
+  modelLabel = "Jev",
 }) => {
   // Category radio is locked if either the whole component is disabled OR
   // categoryLocked is explicitly set.
@@ -211,7 +212,7 @@ const OutputTypeConfig = ({
                     placeholder="Choice name"
                     sx={{
                       flex: 1,
-                      "& .MuiInputBase-root": { fontSize: "13px", height: 30 },
+                      "& .MuiInputBase-root": { fontSize: "12px", height: 30 },
                     }}
                   />
                   <Typography
@@ -356,7 +357,7 @@ const OutputTypeConfig = ({
                   placeholder="Choice name"
                   sx={{
                     flex: 1,
-                    "& .MuiInputBase-root": { fontSize: "13px", height: 30 },
+                    "& .MuiInputBase-root": { fontSize: "12px", height: 30 },
                   }}
                 />
                 <Typography
@@ -377,7 +378,7 @@ const OutputTypeConfig = ({
                       [label]: map[e.target.value] ?? 0.5,
                     });
                   }}
-                  sx={{ minWidth: 120, fontSize: "13px", height: 30 }}
+                  sx={{ minWidth: 120, fontSize: "12px", height: 30 }}
                   renderValue={(val) => (
                     <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
                       <Box
@@ -486,8 +487,8 @@ const OutputTypeConfig = ({
             />
             {isJevModel && (
               <Typography variant="caption" color="text.secondary">
-                Jev selects one choice only. Your multi-choice setting is
-                preserved.
+                {modelLabel} selects one choice only. Your multi-choice setting
+                is preserved.
               </Typography>
             )}
           </Box>
@@ -509,6 +510,7 @@ OutputTypeConfig.propTypes = {
   disabled: PropTypes.bool,
   categoryLocked: PropTypes.bool,
   isJevModel: PropTypes.bool,
+  modelLabel: PropTypes.string,
 };
 
 export default OutputTypeConfig;

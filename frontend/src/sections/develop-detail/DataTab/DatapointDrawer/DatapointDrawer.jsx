@@ -15,6 +15,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import Iconify from "src/components/iconify";
 import DatapointCard from "../../../common/DatapointCard";
 import { AgGridReact } from "ag-grid-react";
+import "src/utils/ag-grid-setup";
 import { useAgThemeWith } from "src/hooks/use-ag-theme";
 import ErrorLocalizeCard from "src/sections/common/ErrorLocalizeCard";
 import { useMutation } from "@tanstack/react-query";
@@ -70,7 +71,7 @@ const StatusCellRenderer = (data) => {
         sx={{
           marginLeft: theme.spacing(1),
           color: theme.palette.error.main,
-          fontSize: "13px",
+          fontSize: "12px",
         }}
       >
         Error
@@ -233,7 +234,8 @@ const DatapointDrawerChild = ({
 
   useEffect(() => {
     setLoading(true);
-    setTimeout(() => setLoading(false), 300);
+    const timeout = setTimeout(() => setLoading(false), 300);
+    return () => clearTimeout(timeout);
   }, [datapoint]);
 
   const audioColumnIds = allColumns
@@ -645,13 +647,13 @@ const DatapointDrawerChild = ({
                 marginBottom: "25px",
               }}
             >
-              <Typography fontWeight={500} fontSize={13} color="text.primary">
+              <Typography fontWeight={500} fontSize={12} color="text.primary">
                 Score
               </Typography>
               <Box>
                 {runEval?.status === "error" ? (
                   <Box
-                    sx={{ color: theme.palette.error.main, fontSize: "13px" }}
+                    sx={{ color: theme.palette.error.main, fontSize: "12px" }}
                   >
                     Error
                   </Box>
@@ -733,7 +735,7 @@ const DatapointDrawerChild = ({
                 overflowWrap: "break-word",
               }}
             >
-              <Typography fontWeight={500} fontSize={13} color="text.primary">
+              <Typography fontWeight={500} fontSize={12} color="text.primary">
                 Explanation
               </Typography>
               <Box

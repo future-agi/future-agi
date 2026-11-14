@@ -1,7 +1,13 @@
 /* eslint-disable react/prop-types */
 import { useCallback, useEffect, useMemo, useRef } from "react";
-import { DataGrid } from "@mui/x-data-grid";
-import { Box, useTheme } from "@mui/material";
+import PropTypes from "prop-types";
+import {
+  DataGrid,
+  gridVisibleColumnDefinitionsSelector,
+  useGridApiContext,
+  useGridSelector,
+} from "@mui/x-data-grid";
+import { Box, Skeleton, useTheme } from "@mui/material";
 import EmptyContent from "src/components/empty-content";
 import { ROW_HEIGHT, TABLE_HEADER_HEIGHT } from "src/theme/sizes";
 
@@ -9,6 +15,52 @@ import { ROW_HEIGHT, TABLE_HEADER_HEIGHT } from "src/theme/sizes";
  * DataTable — thin wrapper on MUI X DataGrid (already in the project).
  * Server-side pagination, sorting, selection. No virtualization white flash.
  */
+// First-load skeleton (no rows yet): one bar per visible column, at that column's real
+// width, under the real headers (the checkbox column gets none).
+const SKELETON_ROW_COUNT = 8;
+function SkeletonRowsOverlay({ rowHeight }) {
+  const apiRef = useGridApiContext();
+  const columns = useGridSelector(apiRef, gridVisibleColumnDefinitionsSelector);
+  return (
+    <Box
+      role="progressbar"
+      aria-label="Loading"
+      aria-busy="true"
+      sx={{ height: 1, bgcolor: "background.paper", overflow: "hidden" }}
+    >
+      {Array.from({ length: SKELETON_ROW_COUNT }, (_, row) => (
+        <Box
+          // eslint-disable-next-line react/no-array-index-key
+          key={row}
+          sx={{
+            display: "flex",
+            alignItems: "center",
+            height: rowHeight,
+            borderBottom: 1,
+            borderColor: "divider",
+          }}
+        >
+          {columns.map((col, i) => (
+            <Box
+              key={col.field}
+              sx={{ width: col.computedWidth, flexShrink: 0, px: "10px" }}
+            >
+              {col.field !== "__check__" && (
+                <Skeleton
+                  variant="rounded"
+                  height={10}
+                  width={`${[70, 45, 55, 35][(i + row) % 4]}%`}
+                />
+              )}
+            </Box>
+          ))}
+        </Box>
+      ))}
+    </Box>
+  );
+}
+SkeletonRowsOverlay.propTypes = { rowHeight: PropTypes.number };
+
 export default function DataTable({
   columns,
   data,
@@ -188,11 +240,26 @@ export default function DataTable({
         disableDensitySelector
         // Styling
         localeText={{ noRowsLabel: emptyMessage }}
-        // Design system empty state instead of the grid's bare text.
+        // Design system empty state instead of the grid's bare text, and
+        // skeleton rows under the real headers on first load (the layout is
+        // known, so rows copy the content) instead of the grid's spinner.
         slots={{
           noRowsOverlay: () => (
             <EmptyContent title={emptyMessage} sx={{ height: 1 }} />
           ),
+          // A refetch over rows already shown only dims them, so paging,
+          // search and refocus never wipe the table back to skeleton.
+          loadingOverlay: () =>
+            data?.length ? (
+              <Box
+                role="progressbar"
+                aria-label="Loading"
+                aria-busy="true"
+                sx={{ height: 1, bgcolor: "background.paper", opacity: 0.5 }}
+              />
+            ) : (
+              <SkeletonRowsOverlay rowHeight={rowHeight} />
+            ),
         }}
         sx={{
           border: "none",
