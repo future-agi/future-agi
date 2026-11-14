@@ -56,6 +56,8 @@ export const getDefaultNodeData = (nodeType, id, extraData = {}) => {
   }
 };
 
+// Only the editable Flow Builder renders this store, so a new graph's start
+// node is in edit mode like the nodes dropped onto it.
 const getInitialNodes = () => {
   const randomId = getRandomId();
 
@@ -66,7 +68,9 @@ const getInitialNodes = () => {
       position: { x: 250, y: 50 },
       deletable: false,
       data: {
-        ...getDefaultNodeData(NODE_TYPES.CONVERSATION, randomId),
+        ...getDefaultNodeData(NODE_TYPES.CONVERSATION, randomId, {
+          editMode: true,
+        }),
         isStart: true,
       },
     },
@@ -159,6 +163,38 @@ export const useGraphStore = create((set, get) => ({
           : node,
       ),
     });
+  },
+  // A node's id is its saved name and edges point at it by id, so a rename
+  // moves the id, the edges and the selection together. Returns false when
+  // another node already uses the name.
+  renameNode: (nodeId, newName) => {
+    const { nodes, edges, activeNodeId } = get();
+    if (!nodes.some((node) => node.id === nodeId)) return true;
+    const isTaken = nodes.some(
+      (node) =>
+        node.id !== nodeId &&
+        (node.id === newName || node.data?.name === newName),
+    );
+    if (isTaken) return false;
+
+    set({
+      nodes: nodes.map((node) =>
+        node.id === nodeId
+          ? { ...node, id: newName, data: { ...node.data, name: newName } }
+          : node,
+      ),
+      edges: edges.map((edge) =>
+        edge.source === nodeId || edge.target === nodeId
+          ? {
+              ...edge,
+              source: edge.source === nodeId ? newName : edge.source,
+              target: edge.target === nodeId ? newName : edge.target,
+            }
+          : edge,
+      ),
+      activeNodeId: activeNodeId === nodeId ? newName : activeNodeId,
+    });
+    return true;
   },
   updateNode: (nodeId, newData) => {
     set({

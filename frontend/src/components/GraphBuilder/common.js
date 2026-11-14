@@ -265,6 +265,11 @@ const getBaseColorsBasedOnNodeType = (nodeType) => {
   }
 };
 
+// Class on a node's delete/duplicate buttons, which show while the node is
+// hovered. It is fixed, not built from the node id: the id is the node's
+// editable name and can hold spaces or CSS punctuation.
+export const NODE_ACTIONS_CLASS_NAME = "graph-node-actions";
+
 export const getNodeColors = (isStart, isHighlighted, isActive, nodeType) => {
   const baseColors = getBaseColorsBasedOnNodeType(nodeType);
   if (isHighlighted === "success") {

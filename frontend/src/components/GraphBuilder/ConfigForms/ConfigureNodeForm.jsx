@@ -55,7 +55,9 @@ const ConfigureNodeForm = ({ onClose, node, onChange }) => {
             onChange(node?.id, (existingNode) => ({
               ...existingNode,
               type: newNodeType,
-              data: getDefaultNodeData(newNodeType),
+              data: getDefaultNodeData(newNodeType, undefined, {
+                editMode: existingNode.data?.editMode,
+              }),
             }));
           }}
           options={Object.values(NODE_TYPES).map((value) => ({
