@@ -24,7 +24,7 @@ export default function ModelSelectionRow({
         <Box
           display="flex"
           flexDirection="row"
-          borderRadius={0.5}
+          borderRadius="4px"
           gap={1}
           ref={modelContainerRef}
           sx={{
@@ -57,7 +57,7 @@ export default function ModelSelectionRow({
                   buttonTitle="Select Model"
                   buttonIcon={
                     <Iconify
-                      icon="radix-icons:box-model"
+                      icon="solar:graph-linear"
                       width="16px"
                       height="16px"
                       sx={{ cursor: "pointer", color: "text.primary" }}
@@ -99,29 +99,17 @@ export default function ModelSelectionRow({
             arrow
             componentsProps={{
               tooltip: {
-                sx: {
-                  bgcolor: "black.900",
-                  color: "common.white",
-                  fontSize: "12px",
-                  fontWeight: 500,
-                  px: 1.5,
-                  py: 0.75,
-                  borderRadius: 0.5,
-                },
+                sx: {},
               },
               arrow: {
-                sx: {
-                  color: "black.900",
-                },
+                sx: {},
               },
             }}
           >
             <span>
               <IconButton
+                size="small"
                 sx={{
-                  height: "24px",
-                  borderRadius: "4px",
-                  padding: "2px",
                   pr: 1,
                   opacity: isModelSelected ? 1 : 0.5,
                   "&:disabled": {

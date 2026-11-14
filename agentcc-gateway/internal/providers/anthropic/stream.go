@@ -2,6 +2,7 @@ package anthropic
 
 import (
 	"encoding/json"
+	"net/http"
 	"strings"
 	"time"
 
@@ -61,9 +62,9 @@ type messageDeltaData struct {
 }
 
 type contentBlockStartData struct {
-	Type  string `json:"type"`
-	ID    string `json:"id,omitempty"`
-	Name  string `json:"name,omitempty"`
+	Type string `json:"type"`
+	ID   string `json:"id,omitempty"`
+	Name string `json:"name,omitempty"`
 }
 
 // parseSSELine parses a single SSE data line and returns a StreamChunk if one should be emitted.
@@ -94,7 +95,10 @@ func (s *streamState) parseSSELine(eventType, data string) (*models.StreamChunk,
 	case "ping":
 		return nil, false, nil
 	case "error":
-		return nil, false, nil
+		// The upstream failed mid-stream. Returned as an APIError so the read
+		// loop ends the stream with it; skipped, the stream would read as a
+		// finished one.
+		return nil, false, parseAnthropicError(http.StatusBadGateway, []byte(data))
 	}
 
 	return nil, false, nil
@@ -164,7 +168,7 @@ func (s *streamState) handleContentBlockStart(event streamEvent) (*models.Stream
 								Index: idx,
 								ID:    block.ID,
 								Type:  "function",
-								Function: &models.FunctionCall{
+								Function: &models.FunctionCallDelta{
 									Name:      block.Name,
 									Arguments: "",
 								},
@@ -211,6 +215,15 @@ func (s *streamState) handleContentBlockDelta(event streamEvent) (*models.Stream
 	// Try input_json_delta (tool use arguments streaming).
 	var ijd inputJSONDelta
 	if err := json.Unmarshal(event.Delta, &ijd); err == nil && ijd.Type == "input_json_delta" {
+		// Only a client tool_use block streams arguments the caller must act
+		// on. A server_tool_use block streams its own input the same way — the
+		// web search query — and Anthropic has already run it. Forwarding that
+		// as tool-call arguments either invents a nameless tool call the caller
+		// never saw start, or appends the query onto a real tool call still in
+		// flight and corrupts its arguments into invalid JSON.
+		if !s.blockIsToolUse {
+			return nil, false, nil
+		}
 		// Use the tracked tool call index (0-based among tool_use blocks),
 		// not the Anthropic content block index which counts all block types.
 		tcIdx := s.toolCallIndex - 1
@@ -229,7 +242,7 @@ func (s *streamState) handleContentBlockDelta(event streamEvent) (*models.Stream
 						ToolCalls: []models.ToolCallDelta{
 							{
 								Index: tcIdx,
-								Function: &models.FunctionCall{
+								Function: &models.FunctionCallDelta{
 									Arguments: ijd.PartialJSON,
 								},
 							},
@@ -271,6 +284,11 @@ func (s *streamState) handleMessageDelta(event streamEvent) (*models.StreamChunk
 
 	// Include usage if available.
 	if event.Usage != nil {
+		// Compatible providers can defer the input count until message_delta.
+		// Native streams report it in message_start and omit it here.
+		if event.Usage.InputTokens > 0 {
+			s.inputTokens = event.Usage.InputTokens
+		}
 		chunk.Usage = &models.Usage{
 			PromptTokens:     s.inputTokens,
 			CompletionTokens: event.Usage.OutputTokens,

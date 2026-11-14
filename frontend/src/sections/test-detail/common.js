@@ -677,6 +677,13 @@ const IGNORED_KEYS = [
   "scenario_graphs",
   "calls_attempted",
   "failed_calls",
+  // Left out of all three buckets, next to its sibling `failed_calls`. It has
+  // no label, icon or filter mapping, so routing it into `callDetails` would
+  // paint an iconless card on the product's run-detail page that looks
+  // clickable and filters nothing; letting it fall through to `evalMetrics`
+  // would paint a phantom eval. The simulate harness reads
+  // `kpis.completed_calls` directly and never comes through here.
+  "completed_calls",
   "avg_response",
   "avg_user_interruption_count",
   "avg_ai_interruption_rate",
@@ -889,12 +896,22 @@ export const columnOptions = [
 
 // tabs.ts
 
-export const getTabsBasedOnAgentType = ({ agentType, testId, executionId }) => {
+export const getTabsBasedOnAgentType = ({
+  agentType,
+  testId,
+  executionId,
+  basePath,
+}) => {
+  // Default keeps the legacy absolute prefix so the standalone
+  // `/simulate/test/**` route is byte-for-byte unchanged; when the execution
+  // detail is mounted elsewhere (the environment workspace) the caller passes
+  // its own base so the tab links stay inside that shell.
+  const base = basePath ?? `/dashboard/simulate/test/${testId}/${executionId}`;
   const tabs = [
     {
       id: "runs",
       title: agentType === AGENT_TYPES.CHAT ? "Chat Details" : "Call Details",
-      path: `/dashboard/simulate/test/${testId}/${executionId}/call-details`,
+      path: `${base}/call-details`,
       icon:
         agentType === AGENT_TYPES.CHAT
           ? "/assets/icons/ic_chat_single.svg"
@@ -903,13 +920,13 @@ export const getTabsBasedOnAgentType = ({ agentType, testId, executionId }) => {
     {
       id: "analytics",
       title: "Analytics",
-      path: `/dashboard/simulate/test/${testId}/${executionId}/analytics`,
+      path: `${base}/analytics`,
       icon: "/assets/icons/usage-summary/ic_bar_signal.svg",
     },
     {
       id: "optimization_runs",
       title: "Optimization Runs",
-      path: `/dashboard/simulate/test/${testId}/${executionId}/optimization_runs`,
+      path: `${base}/optimization_runs`,
       icon: "/assets/icons/navbar/ic_optimize.svg",
     },
   ];
