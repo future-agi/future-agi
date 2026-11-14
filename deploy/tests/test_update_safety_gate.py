@@ -546,21 +546,24 @@ class ClickHouseRegistryTests(unittest.TestCase):
 class InspectedNonClickHousePinsTests(unittest.TestCase):
     """Exact inspected blobs, not filename or SQL-dialect exemptions.
 
-    These pins cover the benchmark fixtures and the dev blobs in its CI merge.
-    Their before blobs were also inspected: three additions, and error_codes.py
-    previously contained the same display text. A matching after pin skips the
-    whole change, so a pin must never be added without that before-blob review.
+    These pins cover benchmark fixtures, dev blobs and PostgreSQL request-log
+    retention. Their before blobs were also inspected: four additions, and
+    error_codes.py previously contained the same display text. A matching after
+    pin skips the whole change, so a pin must never be added without that
+    before-blob review.
     """
 
     pins = {
         'fi-collector/pkg/ingestbench/bench_test.go':
-            ('2863c35e9934d5fe3cf3f0403fff2fac077a821ca5f94ad40fc43cc63bb445b0', 'DROP TABLE', 51),
+            ('2863c35e9934d5fe3cf3f0403fff2fac077a821ca5f94ad40fc43cc63bb445b0', 'DROP TABLE', (51,)),
         'fi-collector/pkg/ingestbench/integration_test.go':
-            ('3cbb292f8fdadcd6fa35039c97953ebe204a40d1035a642c95405f1438058ae9', 'CREATE TABLE', 159),
+            ('3cbb292f8fdadcd6fa35039c97953ebe204a40d1035a642c95405f1438058ae9', 'CREATE TABLE', (159,)),
         'futureagi/tfc/utils/error_codes.py':
-            ('a2a7302cd7c94823b460af4faf16a103e78e9fe0bf290ef5681cc35e85559b40', 'CREATE USER', 353),
+            ('a2a7302cd7c94823b460af4faf16a103e78e9fe0bf290ef5681cc35e85559b40', 'CREATE USER', (353,)),
         'futureagi/tracer/services/instant_eval_answers.py':
-            ('2bc88346e3d762a1f6fb9fdf3d8de38f81e820bb049300c5f4b242faa9caf80c', 'DELETE FROM', 173),
+            ('2bc88346e3d762a1f6fb9fdf3d8de38f81e820bb049300c5f4b242faa9caf80c', 'DELETE FROM', (173,)),
+        'futureagi/agentcc/services/request_log_retention.py':
+            ('114cbcf182879253038dc49c7a5e8fe505fa463cbc0cab058e9fad22d95ebcc8', 'DELETE FROM', (75, 78, 89, 92)),
     }
 
     def setUp(self):
@@ -585,7 +588,7 @@ class InspectedNonClickHousePinsTests(unittest.TestCase):
                 self.sources if sources is None else sources, self.reviews, registry())
 
     def test_each_exact_pin_is_scoped_to_its_inspected_blob_and_path(self):
-        for path, (digest, keyword, line) in self.pins.items():
+        for path, (digest, keyword, lines) in self.pins.items():
             with self.subTest(path=path):
                 blob = (ROOT / path).read_bytes()
                 entries = [row for row in self.sources['exclusions'] if row['pattern'] == path]
@@ -593,7 +596,8 @@ class InspectedNonClickHousePinsTests(unittest.TestCase):
                 self.assertEqual(entries[0]['sha256'], digest)
                 self.assertEqual(gate.content_sha(blob), digest)
                 # The conservative alarm remains intact; only the registry pin applies.
-                self.assertEqual(gate.schema_statements(blob), [{'keyword': keyword, 'line': line}])
+                self.assertEqual(gate.schema_statements(blob),
+                                 [{'keyword': keyword, 'line': line} for line in lines])
                 self.assertTrue(gate.excluded_source(path, self.sources['exclusions'], blob))
                 self.assertEqual(self.check(path, None, blob), [])
                 self.assertEqual(gate.check_source_coverage(self.root, self.sources, [path]), [])
