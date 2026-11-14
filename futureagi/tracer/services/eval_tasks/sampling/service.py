@@ -616,10 +616,8 @@ def _freeze_closed(
 def reconcile_policy(task: EvalTask) -> ReconcileResult:
     from tracer.models.observation_span import EvalEntryStatus, EvalLogger
     from tracer.selectors.eval_tasks.row_resolver import ResolvedRowSet
-    from tracer.services.eval_tasks.entries import (
-        materialize_pending,
-        soft_delete_eval_results,
-    )
+    from tracer.services.eval_tasks.entries import materialize_pending
+    from tracer.services.eval_tasks.recalculate import drop_pending_entries
     from tracer.services.eval_tasks.reconciler import (
         ReconcileResult,
         _continuous_requires_full_reclassification,
@@ -652,7 +650,9 @@ def reconcile_policy(task: EvalTask) -> ReconcileResult:
                 )
                 | ~Q(output_metadata___task_selection__sampling__policy_version=version)
             )
-            result = ReconcileResult(dropped=soft_delete_eval_results(stale))
+            # A dropped Recalculate replacement puts its previous result back,
+            # as on every other reconciler drop path.
+            result = ReconcileResult(dropped=drop_pending_entries(stale))
         witnesses = TraceWitnessReader(task)
         live_windows = (
             prepare_live_members(
@@ -682,11 +682,18 @@ def reconcile_policy(task: EvalTask) -> ReconcileResult:
                         member, policy, version, frozen_at=cohort.frozen_at
                     )
             trace_witnesses = witnesses.read(metadata.keys())
-            materialize_options = {"sampling_metadata": metadata}
-            if trace_witnesses:
-                materialize_options["trace_filter_witnesses"] = trace_witnesses
             with fence.write() as locked:
-                materialize_pending(locked, metadata.keys(), **materialize_options)
+                if trace_witnesses:
+                    materialize_pending(
+                        locked,
+                        metadata.keys(),
+                        sampling_metadata=metadata,
+                        trace_filter_witnesses=trace_witnesses,
+                    )
+                else:
+                    materialize_pending(
+                        locked, metadata.keys(), sampling_metadata=metadata
+                    )
                 requeued, dropped = _requeue_and_drop(
                     locked,
                     resolved=ResolvedRowSet(tuple(candidates), tuple(metadata), full),
@@ -696,7 +703,7 @@ def reconcile_policy(task: EvalTask) -> ReconcileResult:
             result.dropped += dropped
         with fence.write() as locked:
             current_evals = locked.evals.values_list("id", flat=True)
-            result.dropped += soft_delete_eval_results(
+            result.dropped += drop_pending_entries(
                 EvalLogger.objects.filter(
                     eval_task_id=str(locked.id), status=EvalEntryStatus.PENDING
                 ).exclude(custom_eval_config_id__in=current_evals)
