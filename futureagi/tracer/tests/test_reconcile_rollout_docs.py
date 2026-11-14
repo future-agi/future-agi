@@ -120,6 +120,24 @@ def test_upgrade_entry_points_explain_the_manual_handoff():
     assert "../README.md#upgrading-a-production-install" in production
 
 
+def test_production_compose_handoff_orders_both_applies_around_rollout():
+    section = (
+        (ROOT / "deploy/README.md")
+        .read_text()
+        .split("### Upgrading a production install", 1)[1]
+        .split("### ", 1)[0]
+    )
+    _in_order(
+        section,
+        (
+            "--entrypoint python backend manage.py reconcile_legacy_trace_tags --dry-run",
+            "--entrypoint python backend manage.py reconcile_legacy_trace_tags\n",
+            "$COMPOSE up -d",
+            "--entrypoint python backend manage.py reconcile_legacy_trace_tags\n",
+        ),
+    )
+
+
 def test_rollout_guides_do_not_claim_the_editor_is_gated():
     for path in (
         "deploy/README.md",
@@ -153,6 +171,16 @@ def test_helm_failed_dry_run_resumes_as_dry_run_and_wait_is_bounded():
     assert "SECONDS >= deadline" in bash
     assert "last cursor:" in bash
     assert "return 1" in bash
+    # A failed logs call must not suppress the timeout diagnostic.
+    assert "2>&1) || logs_status=$?" in bash
+    _in_order(
+        bash,
+        (
+            "logs=$(kubectl",
+            'if [ "$timed_out" = true ]; then',
+            "if (( logs_status != 0 )); then",
+        ),
+    )
     assert "\nset -e\n" not in bash
 
 
@@ -161,7 +189,10 @@ def test_distributed_handoff_uses_the_installer_compose_file_and_backend():
     assert "  backend:" in compose
     assert "  app:" not in compose
     installer = (ROOT / "bin/install").read_text()
-    assert "docker-compose.distributed.yml" in installer
+    assert (
+        "docker-compose.distributed.yml:docker-compose.override.yml" in installer
+        or ('distributed_setting+=":docker-compose.override.yml"' in installer)
+    )
     installation = (
         (ROOT / "INSTALLATION.md")
         .read_text()
@@ -174,22 +205,31 @@ def test_distributed_handoff_uses_the_installer_compose_file_and_backend():
         .split("**One-time trace/span tag-editor transition:**", 1)[1]
         .split("`check` changes nothing.", 1)[0]
     )
-    for section in (installation, update):
+    for section, rollout in (
+        (installation, "./bin/update apply    # complete the staged update"),
+        (update, "./bin/update apply    # complete the staged update"),
+    ):
         assert "--distributed" in section
         assert "COMPOSE_FILE=docker-compose.distributed.yml" in section
-        assert "docker compose -f docker-compose.distributed.yml" in section
+        assert "docker-compose.override.yml" in section
+        assert "docker compose -f docker-compose.distributed.yml" not in section
+        assert "docker compose pull" not in section
         _in_order(
             section,
             (
                 "--entrypoint python backend manage.py reconcile_legacy_trace_tags --dry-run",
                 "--entrypoint python backend manage.py reconcile_legacy_trace_tags\n",
+                rollout,
                 "--entrypoint python backend manage.py reconcile_legacy_trace_tags\n",
             ),
         )
+        assert section.count("docker compose run --rm --no-deps") == 3
         assert (
             "-e SERVICE_TYPE=bootstrap -e STARTUP_DB_MUTATION_MODE=operator" in section
         )
         assert "--rm --no-deps" in section
+    assert "could not write after the first apply" in " ".join(update.split())
+    assert "stopped before its last write" not in update
 
 
 def test_changed_during_scan_after_resume_requires_full_pass():

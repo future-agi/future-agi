@@ -134,7 +134,7 @@ container["command"] = ["python", "manage.py", "reconcile_legacy_trace_tags"]
 container["args"] = sys.argv[1:]
 yaml.safe_dump(job, sys.stdout)
 ' "$@" | kubectl --context CONTEXT -n futureagi create -f - || return 1
-  local complete=false timed_out=false logs last_cursor
+  local complete=false timed_out=false logs last_cursor logs_status=0
   local deadline=$((SECONDS + wait_seconds))
   while :; do
     if (( SECONDS >= deadline )); then
@@ -151,14 +151,15 @@ yaml.safe_dump(job, sys.stdout)
       break
     fi
   done
-  if ! logs=$(kubectl --context CONTEXT -n futureagi logs job/futureagi-reconcile-legacy-tags 2>&1); then
-    printf '%s\n' "$logs" >&2
-    return 1
-  fi
+  logs=$(kubectl --context CONTEXT -n futureagi logs job/futureagi-reconcile-legacy-tags 2>&1) || logs_status=$?
   printf '%s\n' "$logs"
   last_cursor=$(printf '%s\n' "$logs" | sed -nE 's/.*resume with --after-id ([[:xdigit:]-]{36}).*/\1/p' | tail -n 1)
   if [ "$timed_out" = true ]; then
     echo "Reconcile Job wait timed out; last cursor: ${last_cursor:-none}. Job may still be running; inspect or stop it before retrying." >&2
+    return 1
+  fi
+  if (( logs_status != 0 )); then
+    echo "Could not read Reconcile Job logs; inspect the Job before retrying." >&2
     return 1
   fi
   if [ "$complete" != true ]; then

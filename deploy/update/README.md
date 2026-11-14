@@ -155,26 +155,29 @@ tags without this step; notify/download modes do not apply a release.
 
 For a **non-production Distributed** install (`./bin/install --distributed`),
 use `backend` instead of Standalone's `app`. The installer records
-`COMPOSE_FILE=docker-compose.distributed.yml` in `.env`; the explicit
-`docker compose -f docker-compose.distributed.yml` below selects that file
-and reads the root `.env`, not the production env file/overlay. After staging
-with `./bin/update apply --stage`, review any schema prerequisites and run the
-dry-run and first apply on the staged new backend image while the old backend
-serves. Finish the update, then run the second apply immediately after rollout
-(omit it only if the old backend was stopped before its last write). Review
-counts and rerun any pass with rows changed during its scan.
+`COMPOSE_FILE=docker-compose.distributed.yml` in `.env`, including
+`docker-compose.override.yml` when an installer override exists. From the
+repository root, with no conflicting `COMPOSE_FILE` in the shell, plain
+`docker compose` uses that same file set (not the production overlay).
+After staging with `./bin/update apply --stage`, review any schema
+prerequisites and run the dry-run and first apply on the staged new backend
+image while the old backend serves. Finish the update, then run the second
+apply immediately after rollout (omit it only if the old backend could not
+write after the first apply, for example when it was cold-stopped before the
+first apply). Review counts and rerun any pass with rows changed during its
+scan.
 
 ```bash
-docker compose -f docker-compose.distributed.yml run --rm --no-deps \
+docker compose run --rm --no-deps \
   -e SERVICE_TYPE=bootstrap -e STARTUP_DB_MUTATION_MODE=operator \
   --entrypoint python backend manage.py reconcile_legacy_trace_tags --dry-run
 # Review the dry-run count before applying.
-docker compose -f docker-compose.distributed.yml run --rm --no-deps \
+docker compose run --rm --no-deps \
   -e SERVICE_TYPE=bootstrap -e STARTUP_DB_MUTATION_MODE=operator \
   --entrypoint python backend manage.py reconcile_legacy_trace_tags
 ./bin/update apply    # complete the staged update
 # Catch old-backend edits made between the first pass and rollout.
-docker compose -f docker-compose.distributed.yml run --rm --no-deps \
+docker compose run --rm --no-deps \
   -e SERVICE_TYPE=bootstrap -e STARTUP_DB_MUTATION_MODE=operator \
   --entrypoint python backend manage.py reconcile_legacy_trace_tags
 ```
