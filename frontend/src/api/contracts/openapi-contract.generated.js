@@ -9300,6 +9300,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           403: {
             $ref: "#/definitions/FalconErrorResponse",
           },
+          503: {
+            $ref: "#/definitions/FalconErrorResponse",
+          },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
           },
