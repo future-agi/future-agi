@@ -472,13 +472,19 @@ cover all organizations. Tune `--batch-size` (default 5000) and
 `--sleep-seconds` (default 0.1) for the database load. The command refuses to
 run without at least one selector; it never deletes live pending rows.
 
+Like the other operator commands, it runs only with the explicit operator
+authorization (`SERVICE_TYPE=bootstrap`, `STARTUP_DB_MUTATION_MODE=operator`,
+`NO_STARTUP_DB_MUTATIONS=false`) set for that one command; Django's startup
+guard refuses it otherwise.
+
 **Standalone** (from the repository root):
 
 ```bash
-docker compose exec app python manage.py purge_agentcc_webhook_events \
+OPERATOR="-e SERVICE_TYPE=bootstrap -e STARTUP_DB_MUTATION_MODE=operator -e NO_STARTUP_DB_MUTATIONS=false"
+docker compose exec $OPERATOR app python manage.py purge_agentcc_webhook_events \
   --delivered-older-than-days 30 --terminal-older-than-days 30 \
   --deleted-webhooks --batch-size 5000 --sleep-seconds 0.1 --dry-run
-docker compose exec app python manage.py purge_agentcc_webhook_events \
+docker compose exec $OPERATOR app python manage.py purge_agentcc_webhook_events \
   --delivered-older-than-days 30 --terminal-older-than-days 30 \
   --deleted-webhooks --batch-size 5000 --sleep-seconds 0.1
 ```
@@ -487,14 +493,15 @@ docker compose exec app python manage.py purge_agentcc_webhook_events \
 for a non-production Distributed install):
 
 ```bash
+OPERATOR="-e SERVICE_TYPE=bootstrap -e STARTUP_DB_MUTATION_MODE=operator -e NO_STARTUP_DB_MUTATIONS=false"
 docker compose --env-file deploy/.env.production \
   -f docker-compose.distributed.yml -f deploy/docker-compose.production.yml \
-  exec backend python manage.py purge_agentcc_webhook_events \
+  exec $OPERATOR backend python manage.py purge_agentcc_webhook_events \
   --delivered-older-than-days 30 --terminal-older-than-days 30 \
   --deleted-webhooks --batch-size 5000 --sleep-seconds 0.1 --dry-run
 docker compose --env-file deploy/.env.production \
   -f docker-compose.distributed.yml -f deploy/docker-compose.production.yml \
-  exec backend python manage.py purge_agentcc_webhook_events \
+  exec $OPERATOR backend python manage.py purge_agentcc_webhook_events \
   --delivered-older-than-days 30 --terminal-older-than-days 30 \
   --deleted-webhooks --batch-size 5000 --sleep-seconds 0.1
 ```
@@ -503,10 +510,12 @@ docker compose --env-file deploy/.env.production \
 
 ```bash
 kubectl -n <namespace> exec deploy/<release>-backend -c backend -- \
+  env SERVICE_TYPE=bootstrap STARTUP_DB_MUTATION_MODE=operator NO_STARTUP_DB_MUTATIONS=false \
   python manage.py purge_agentcc_webhook_events \
   --delivered-older-than-days 30 --terminal-older-than-days 30 \
   --deleted-webhooks --batch-size 5000 --sleep-seconds 0.1 --dry-run
 kubectl -n <namespace> exec deploy/<release>-backend -c backend -- \
+  env SERVICE_TYPE=bootstrap STARTUP_DB_MUTATION_MODE=operator NO_STARTUP_DB_MUTATIONS=false \
   python manage.py purge_agentcc_webhook_events \
   --delivered-older-than-days 30 --terminal-older-than-days 30 \
   --deleted-webhooks --batch-size 5000 --sleep-seconds 0.1
@@ -517,8 +526,9 @@ command for your setup with just `--deleted-webhooks`: preview first, then
 apply, for example on Standalone:
 
 ```bash
-docker compose exec app python manage.py purge_agentcc_webhook_events --deleted-webhooks --dry-run
-docker compose exec app python manage.py purge_agentcc_webhook_events --deleted-webhooks
+OPERATOR="-e SERVICE_TYPE=bootstrap -e STARTUP_DB_MUTATION_MODE=operator -e NO_STARTUP_DB_MUTATIONS=false"
+docker compose exec $OPERATOR app python manage.py purge_agentcc_webhook_events --deleted-webhooks --dry-run
+docker compose exec $OPERATOR app python manage.py purge_agentcc_webhook_events --deleted-webhooks
 ```
 
 Deleted rows free PostgreSQL space for reuse after autovacuum. Returning disk
@@ -526,8 +536,8 @@ space to the OS requires `VACUUM FULL agentcc_webhook_event` (an exclusive
 lock, so schedule a maintenance window) or `pg_repack`; the purge command does
 not run either for you.
 
-**Upgrade:** run migrations, then re-run the bootstrap job or run
-`python manage.py register_temporal_schedules` in the backend so the new
+**Upgrade:** run migrations, then re-run the bootstrap job (it runs
+`python manage.py register_temporal_schedules`) so the new
 `agentcc-webhook-delivery` and `agentcc-webhook-event-maintenance` Temporal
 schedules exist. Normal service startup does not register them. Then preview
 and run the one-off deleted-webhook cleanup above if the install already has
