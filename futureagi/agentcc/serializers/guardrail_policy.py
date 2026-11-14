@@ -161,7 +161,8 @@ class AgentccGuardrailPolicySerializer(serializers.ModelSerializer):
             reasons = "; ".join(str(d) for d in e.detail)
             # Apply only accepts assignments, so checks must be saved separately.
             guidance = (
-                "PATCH the policy with corrected checks, then retry apply."
+                "PATCH the policy with corrected checks, scope='key', "
+                "and intended applied_keys, then retry apply."
                 if getattr(self.context.get("view"), "action", None) == "apply"
                 else "Send corrected checks with this save."
             )

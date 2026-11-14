@@ -85,20 +85,36 @@ def test_apply_advertises_patch_then_retry_and_keeps_checks_out_of_apply(
             == []
         )
         assert first.json() == _error_envelope(
-            "PATCH the policy with corrected checks, then retry apply."
+            "PATCH the policy with corrected checks, scope='key', "
+            "and intended applied_keys, then retry apply."
         )
 
         corrected = auth_client.patch(
-            detail_url, {"checks": GOOD_CHECKS}, format="json"
+            detail_url,
+            {
+                "checks": GOOD_CHECKS,
+                "scope": "key",
+                "applied_keys": [str(target_key.id)],
+            },
+            format="json",
         )
         assert corrected.status_code == 200, corrected.json()
         assert corrected.json()["result"]["runs_on_gateway"] is True
         policy.refresh_from_db()
         assert policy.checks == GOOD_CHECKS
-        assert policy.applied_keys == [str(original_key.id)]
-        assert pushed_payloads[-1]["guardrails"]["key_policies"][0]["key_ids"] == [
-            original_key.gateway_key_id
-        ]
+        assert (policy.scope, policy.applied_keys, policy.runs_on_gateway) == (
+            "key",
+            [str(target_key.id)],
+            True,
+        )
+        assert len(pushed_payloads) == 1
+        first_live = pushed_payloads[0]["guardrails"]["key_policies"]
+        assert len(first_live) == 1
+        assert first_live[0]["id"] == str(policy.id)
+        assert first_live[0]["key_ids"] == [target_key.gateway_key_id]
+        assert (
+            first_live[0]["checks"]["secret-detection"]["confidence_threshold"] == 0.5
+        )
 
         applied = auth_client.post(
             apply_url, {"key_ids": [str(target_key.id)]}, format="json"
