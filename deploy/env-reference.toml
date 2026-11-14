@@ -1773,6 +1773,23 @@ database, override `PG_HOST`, `PGBOUNCER_HOST` or `CH_HOST` in a
 
   [[part.section]]
   heading = "Application behaviour"
+  body = '''
+The gateway keeps request logs in memory until it flushes them to the backend;
+there is no disk spill. After `AGENTCC_LOG_FLUSH_MAX_RETRIES` consecutive failed
+sends (connection errors, timeouts or HTTP 5xx, with backoff between attempts),
+it discards the batch in hand from gateway memory under reason `max_retries`.
+The backend may already have stored some records if a timed-out request finished
+server-side; ingest dedupes on request id. An HTTP 4xx drops the batch at once
+under `client_error`. Every drop is logged at ERROR and counted by reason.
+With Prometheus enabled, monitor
+`agentcc_request_log_records_dropped_total{reason}`:
+`max_retries`, `client_error`, `encode_error`, `buffer_full`,
+`requeue_overflow`, `closed` and `shutdown`.
+
+Outbound gateway webhooks are delivered by the background Temporal schedule
+`agentcc-webhook-delivery` about every 10 seconds, not during log ingest.
+A failing webhook delays only its own events.
+'''
 
     [[part.section.row]]
     keys = ["ENV_TYPE"]
@@ -1839,6 +1856,60 @@ database, override `PG_HOST`, `PGBOUNCER_HOST` or `CH_HOST` in a
     default = "`60s` (Helm: `60s`, from `agentccGateway.config.control_plane.sync_interval`)"
     setups = ["S", "D", "H"]
     text = "A Go duration (`60s`, `5m`): the gateway also re-reads keys and org settings from the app this often, so a gateway that started before the app (Distributed on a slow host) or several gateway replicas catch up. A gateway from before this setting ignores it and syncs only on start: its `control plane sync enabled` log line shows an `interval` of `0s`. Helm sets it in the gateway's config file, which every gateway reads."
+
+    [[part.section.row]]
+    keys = ["AGENTCC_LOG_FLUSH_INTERVAL"]
+    default = "`5s`"
+    setups = ["S", "D", "H"]
+    text = "How often the gateway sends buffered request logs. Helm: `agentccGateway.config.control_plane.log_flush.interval` or `agentccGateway.extraEnv`."
+
+    [[part.section.row]]
+    keys = ["AGENTCC_LOG_FLUSH_TIMEOUT"]
+    default = "`15s`"
+    setups = ["S", "D", "H"]
+    text = "Timeout for sending one gateway request-log batch to the backend. Helm: `agentccGateway.config.control_plane.log_flush.timeout` or `agentccGateway.extraEnv`."
+
+    [[part.section.row]]
+    keys = ["AGENTCC_LOG_FLUSH_MAX_BATCH"]
+    default = "`5000`"
+    setups = ["S", "D", "H"]
+    text = "Most records per send; the in-memory gateway buffer holds up to twice this number (10000 by default). Helm: `agentccGateway.config.control_plane.log_flush.max_batch` or `agentccGateway.extraEnv`."
+
+    [[part.section.row]]
+    keys = ["AGENTCC_LOG_FLUSH_MAX_RETRIES"]
+    default = "`3`"
+    setups = ["S", "D", "H"]
+    text = "Consecutive failed sends before the gateway discards and counts the batch; see the drop behaviour above. Helm: `agentccGateway.config.control_plane.log_flush.max_retries` or `agentccGateway.extraEnv`."
+
+    [[part.section.row]]
+    keys = ["AGENTCC_LOG_FLUSH_RETRY_BACKOFF"]
+    default = "`5s`"
+    setups = ["S", "D", "H"]
+    text = "Initial wait after a failed send; doubles after each failure up to the maximum below. The gateway does not send while backing off. Helm: `agentccGateway.config.control_plane.log_flush.retry_backoff` or `agentccGateway.extraEnv`."
+
+    [[part.section.row]]
+    keys = ["AGENTCC_LOG_FLUSH_MAX_RETRY_BACKOFF"]
+    default = "`60s`"
+    setups = ["S", "D", "H"]
+    text = "Longest wait between gateway request-log retry attempts. Helm: `agentccGateway.config.control_plane.log_flush.max_retry_backoff` or `agentccGateway.extraEnv`."
+
+    [[part.section.row]]
+    keys = ["AGENTCC_WEBHOOK_PENDING_MAX_AGE_HOURS"]
+    default = "`24`"
+    setups = ["S", "D", "H"]
+    text = "Backend and worker: expire pending gateway webhook events after this many hours. `0` means never expire. Helm: `config.extraEnv`."
+
+    [[part.section.row]]
+    keys = ["AGENTCC_WEBHOOK_MAX_PENDING_PER_WEBHOOK"]
+    default = "`10000`"
+    setups = ["S", "D", "H"]
+    text = "Backend and worker: cap pending events for each gateway webhook; oldest events are dropped first and counted. `0` means no cap. Helm: `config.extraEnv`."
+
+    [[part.section.row]]
+    keys = ["AGENTCC_WEBHOOK_DISABLE_AFTER_FAILURES"]
+    default = "`100`"
+    setups = ["S", "D", "H"]
+    text = "Backend and worker: auto-disable a gateway webhook after this many consecutive failed delivery attempts. `0` means never auto-disable. Helm: `config.extraEnv`."
 
     [[part.section.row]]
     keys = ["APP_VERSION"]
