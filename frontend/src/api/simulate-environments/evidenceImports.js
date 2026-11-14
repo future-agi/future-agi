@@ -157,6 +157,10 @@ export function useCreateEvidenceImport() {
     meta: { errorHandled: true },
     mutationFn: ({ envId, ...body }) => createEvidenceImport(envId, body),
     onSuccess: (data, { envId }) => {
+      // A new import can change another's cases, as a retry supersedes an
+      // earlier import's blocked case. Ask again for every review first, then
+      // set this one, so its own bundle is not read again.
+      refreshReviews(queryClient, envId);
       queryClient.setQueryData(evidenceImportKey(envId, data.id), data);
       refreshImports(queryClient, envId);
     },

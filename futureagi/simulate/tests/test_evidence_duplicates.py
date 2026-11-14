@@ -10,23 +10,25 @@ import uuid
 from unittest.mock import patch
 
 import pytest
-from django.db import connection, transaction
+from django.db import IntegrityError, connection, transaction
 from rest_framework import status
 
-from simulate.models import EvidenceImportCase, HostedHarnessJob
+from simulate.models import EvidenceImport, EvidenceImportCase, HostedHarnessJob
+from simulate.selectors.evidence_import import RETRIED_LATER
 from simulate.services import evidence_import as evidence_import_service
 from simulate.services.evidence_import import (
     TranscriptInput,
     create_transcript_import,
     discard_evidence_import,
 )
+from tracer.selectors.observe_evidence import Turn
 
 from .test_evidence_datasets import CHAT, EXPECTED, _column, _mapping, _row
 from .test_evidence_datasets import _create as _create_rows
 from .test_evidence_datasets import _read as _read_rows
 from .test_evidence_datasets import columns as columns
 from .test_evidence_datasets import dataset as dataset
-from .test_evidence_import_api import ENVIRONMENTS, SESSION, _evidence, _observe
+from .test_evidence_import_api import ENVIRONMENTS, SESSION, T0, _evidence, _observe
 from .test_evidence_import_api import _create as _create_sessions
 from .test_evidence_import_api import client as client
 from .test_evidence_import_api import environment as environment
@@ -200,6 +202,178 @@ class TestDataset:
         ).json()
 
         assert [one["status"] for one in made["cases"]] == ["pending", "pending"]
+
+
+BLOCKED_BECAUSE = "The draft changed the environment beyond new checks."
+
+
+def _block(made):
+    EvidenceImportCase.objects.filter(evidence_import_id=made["id"]).update(
+        status=EvidenceImportCase.Status.BLOCKED, reason=BLOCKED_BECAUSE
+    )
+
+
+class TestRetry:
+    """A blocked case is retried by importing its source again; the new case
+    supersedes it, so one source shows one row."""
+
+    def test_a_retry_supersedes_the_blocked_case(self, client, environment, project):
+        found = {SESSION: _evidence()}
+        first = _sessions(client, environment, project, found, [SESSION])
+        _block(first)
+
+        again = _sessions(client, environment, project, found, [SESSION])
+
+        [case] = again["cases"]
+        assert case["status"] == "pending"
+        [old] = _stored(first)
+        assert (old.status, old.reason) == ("discarded", RETRIED_LATER)
+        # Only the retry is left to finish.
+        assert [one["id"] for one in _list(client, environment)] == [again["id"]]
+        # The old import's review says why, not that a person discarded it.
+        [shown] = _review(client, environment, first, found)["cases"]
+        assert (shown["status"], shown["reason"]) == ("discarded", RETRIED_LATER)
+
+    def test_the_same_conversation_retries_a_blocked_transcript(
+        self, client, environment
+    ):
+        first = _post_transcripts(client, environment, _transcript()).json()
+        _block(first)
+
+        again = _post_transcripts(
+            client, environment, _transcript(name="Same chat, new name")
+        ).json()
+
+        assert [one["status"] for one in again["cases"]] == ["pending"]
+        [old] = _stored(first)
+        assert (old.status, old.reason) == ("discarded", RETRIED_LATER)
+
+    def test_a_retry_that_fails_to_save_leaves_the_blocked_case(
+        self, environment, user
+    ):
+        chat = "User: Where is my parcel?\nAgent: It left the depot today."
+        first = create_transcript_import(
+            environment=environment,
+            transcripts=[TranscriptInput("first", "text", chat)],
+            production=True,
+            user=user,
+        )
+        first.cases.update(
+            status=EvidenceImportCase.Status.BLOCKED, reason=BLOCKED_BECAUSE
+        )
+
+        with (
+            patch.object(
+                EvidenceImportCase.objects,
+                "bulk_create",
+                side_effect=IntegrityError("refused"),
+            ),
+            pytest.raises(IntegrityError),
+        ):
+            create_transcript_import(
+                environment=environment,
+                transcripts=[TranscriptInput("retry", "text", chat)],
+                production=True,
+                user=user,
+            )
+
+        [old] = first.cases.all()
+        assert (old.status, old.reason) == ("blocked", BLOCKED_BECAUSE)
+        assert (
+            EvidenceImport.no_workspace_objects.filter(environment=environment).count()
+            == 1
+        )
+
+    def test_a_retried_call_supersedes_its_blocked_case(
+        self, client, environment, project
+    ):
+        found = {SESSION: _evidence()}
+
+        def calls():
+            with _observe(found):
+                response = _create_sessions(
+                    client, environment, project, ids=[SESSION], source_kind="call"
+                )
+            assert response.status_code == status.HTTP_201_CREATED, response.data
+            return response.json()
+
+        first = calls()
+        _block(first)
+        again = calls()
+
+        assert [one["status"] for one in again["cases"]] == ["pending"]
+        [old] = _stored(first)
+        assert (old.status, old.reason) == ("discarded", RETRIED_LATER)
+
+    def test_a_retried_dataset_row_supersedes_its_blocked_case(
+        self, client, environment, dataset, columns
+    ):
+        row = _row(dataset, 0, {columns["chat"]: CHAT, columns["expected"]: EXPECTED})
+        first = _create_rows(client, environment, dataset, [row], columns).json()
+        _block(first)
+
+        again = _create_rows(client, environment, dataset, [row], columns).json()
+
+        assert [one["status"] for one in again["cases"]] == ["pending"]
+        [old] = _stored(first)
+        assert (old.status, old.reason) == ("discarded", RETRIED_LATER)
+
+    def test_the_cases_that_repeated_a_blocked_case_repeat_its_retry(
+        self, client, environment, project
+    ):
+        found = {SESSION: _evidence()}
+        first = _sessions(client, environment, project, found, [SESSION])
+        # Imported again while the first was still waiting: a duplicate of it.
+        repeat = _sessions(client, environment, project, found, [SESSION])
+        _block(first)
+
+        retry = _sessions(client, environment, project, found, [SESSION])
+
+        [kept] = _stored(retry)
+        [repeated] = _stored(repeat)
+        assert (repeated.status, repeated.duplicate_of_id) == ("duplicate", kept.id)
+        [case] = _review(client, environment, retry, found)["cases"]
+        assert (case["status"], case["also_from"]) == ("pending", 1)
+
+    def test_a_transcript_of_the_same_conversation_retries_a_blocked_session(
+        self, client, environment, project
+    ):
+        # One key for repeats and retries: the source where one exists, else the
+        # conversation, whatever kind of source holds it.
+        turns = (
+            Turn("user", "Where is my parcel?", False, "t", T0),
+            Turn("agent", "It left the depot today.", False, "t", T0),
+        )
+        found = {SESSION: _evidence(turns=turns)}
+        first = _sessions(client, environment, project, found, [SESSION])
+        _block(first)
+
+        again = _post_transcripts(
+            client,
+            environment,
+            _transcript(
+                text="User: Where is my parcel?\nAgent: It left the depot today."
+            ),
+        ).json()
+
+        assert [one["status"] for one in again["cases"]] == ["pending"]
+        [old] = _stored(first)
+        assert (old.status, old.reason) == ("discarded", RETRIED_LATER)
+
+    def test_a_blocked_case_of_another_source_stays_blocked(
+        self, client, environment, project
+    ):
+        found = {
+            SESSION: _evidence(),
+            OTHER: _evidence(OTHER, turns=_evidence().turns[:1]),
+        }
+        first = _sessions(client, environment, project, found, [SESSION])
+        _block(first)
+
+        _sessions(client, environment, project, found, [OTHER])
+
+        [old] = _stored(first)
+        assert (old.status, old.reason) == ("blocked", BLOCKED_BECAUSE)
 
 
 class TestAcrossSources:

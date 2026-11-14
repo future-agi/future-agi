@@ -86,6 +86,9 @@ TRANSCRIPT_STATE_MISSING = (
     "records to the scenario after drafting."
 )
 ROW_UNAVAILABLE = "The row or its dataset was deleted."
+# A blocked case whose source a later import of the environment brought in again:
+# that import's case is the one to draft now.
+RETRIED_LATER = "Retried in a later import."
 ROW_NOT_FOUND = "No row with this id in the dataset."
 ROW_NO_TOOLS = "A dataset row carries no tool calls."
 ROW_NO_LABELS = "No label column was picked, or this row's label cells are empty."
