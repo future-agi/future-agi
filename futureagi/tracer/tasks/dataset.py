@@ -58,7 +58,12 @@ def _chspan_field_value(span, field_name):
         strings on CHSpan; decode them so callers see Python dicts/lists
         (matching the prior Django JSONField behavior).
     """
-    if field_name in ("model_parameters", "input_images", "eval_input", "eval_attributes"):
+    if field_name in (
+        "model_parameters",
+        "input_images",
+        "eval_input",
+        "eval_attributes",
+    ):
         from tracer.services.clickhouse.v2.span_reader import CHSpanReader
 
         extra = CHSpanReader.attributes_extra_as_dict(span)
@@ -76,7 +81,12 @@ def _chspan_field_value(span, field_name):
         merged.update(span.attrs_number or {})
         merged.update(span.attrs_bool or {})
         for k, v in extra.items():
-            if k not in ("model_parameters", "input_images", "eval_input", "eval_attributes"):
+            if k not in (
+                "model_parameters",
+                "input_images",
+                "eval_input",
+                "eval_attributes",
+            ):
                 merged[k] = v
         return merged
     if field_name == "metadata":
@@ -186,7 +196,9 @@ def _mapped_span_fields(column_span_mapping_data):
     return fields
 
 
-def _export_span_rows(reader, span_ids, mapped_span_fields, project_id=None, org_id=None):
+def _export_span_rows(
+    reader, span_ids, mapped_span_fields, project_id=None, org_id=None
+):
     if not span_ids:
         return {}
 

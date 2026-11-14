@@ -22,6 +22,7 @@ Design:
   • Flag-gated. Enabled whenever the CDC chain is dropped (its replacement) or
     when CH25_TRACE_DUAL_WRITE is explicitly set.
 """
+
 from __future__ import annotations
 
 import json
@@ -34,6 +35,7 @@ from typing import Any, Iterable
 import structlog
 
 from tracer.services.clickhouse.v2 import get_v2_config
+
 # Reuse the span adapter's coercers so trace JSON is serialized identically
 # (and we don't reintroduce the double-encode bug fixed on the span path).
 from tracer.services.clickhouse.v2.adapter import (
@@ -46,9 +48,22 @@ log = structlog.get_logger("ch25.trace_writer")
 
 # Column order for the INSERT — must match the `traces` table (schema 015).
 _TRACE_COLUMNS: tuple[str, ...] = (
-    "id", "project_id", "project_version_id", "name", "session_id",
-    "external_id", "tags", "metadata", "input", "output", "error",
-    "error_analysis_status", "created_at", "updated_at", "is_deleted", "_version",
+    "id",
+    "project_id",
+    "project_version_id",
+    "name",
+    "session_id",
+    "external_id",
+    "tags",
+    "metadata",
+    "input",
+    "output",
+    "error",
+    "error_analysis_status",
+    "created_at",
+    "updated_at",
+    "is_deleted",
+    "_version",
 )
 
 _client = None
@@ -56,7 +71,9 @@ _client_lock = threading.Lock()
 
 
 def _truthy(v: str | None) -> bool:
-    return str(v).strip().lower() in ("1", "true", "yes", "on") if v is not None else False
+    return (
+        str(v).strip().lower() in ("1", "true", "yes", "on") if v is not None else False
+    )
 
 
 def dual_write_enabled() -> bool:
@@ -78,11 +95,15 @@ def _get_client():
     with _client_lock:
         if _client is None:
             import clickhouse_connect
+
             cfg = get_v2_config()
             _client = clickhouse_connect.get_client(
-                host=cfg["host"], port=cfg["http_port"],
-                username=cfg["user"], password=cfg["password"] or "",
-                database=cfg["database"], send_receive_timeout=15,
+                host=cfg["host"],
+                port=cfg["http_port"],
+                username=cfg["user"],
+                password=cfg["password"] or "",
+                database=cfg["database"],
+                send_receive_timeout=15,
             )
     return _client
 
@@ -117,7 +138,11 @@ def _trace_to_row(t, *, version_from_updated_at: bool = False) -> list[Any]:
     updated = t.updated_at
     if updated.tzinfo is None:
         updated = updated.replace(tzinfo=timezone.utc)
-    version_ns = int(updated.timestamp() * 1_000_000_000) if version_from_updated_at else time.time_ns()
+    version_ns = (
+        int(updated.timestamp() * 1_000_000_000)
+        if version_from_updated_at
+        else time.time_ns()
+    )
     return [
         str(t.id),
         str(t.project_id),
@@ -125,7 +150,9 @@ def _trace_to_row(t, *, version_from_updated_at: bool = False) -> list[Any]:
         t.name,
         _as_uuid_str(t.session_id),
         t.external_id or None,
-        json.dumps(t.tags if t.tags is not None else [], default=str, ensure_ascii=False),
+        json.dumps(
+            t.tags if t.tags is not None else [], default=str, ensure_ascii=False
+        ),
         _to_json_text(t.metadata),
         _value_or_empty_json(t.input),
         _value_or_empty_json(t.output),
@@ -152,6 +179,7 @@ def mirror_traces_to_clickhouse(trace_ids: Iterable[Any]) -> None:
         return
     try:
         from tracer.models.trace import Trace
+
         # all_objects: include soft-deleted so a deletion mirrors as is_deleted=1
         # (default `objects` excludes deleted → a delete would never propagate).
         manager = getattr(Trace, "all_objects", Trace.objects)
