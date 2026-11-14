@@ -146,16 +146,18 @@ replace the digest in every file it lists in one pull request.
 images are built outside this repository, `FROM futureagi/future-agi:<version>`
 as published, followed by `uv pip install --system -r ee/requirements.txt`
 (every dependency group except `dev`). That install needs the default
-variant's `uv`, and those images rely at run time on its git, ffmpeg (the
-minimal LGPL build, not Debian's package: an overlay that needs other codecs
-installs them itself or builds the base with `FFMPEG_FLAVOR=debian`), NLTK
-packages and Google API discovery documents. A `-slim` base has none of
-them: the install fails with `uv: not found`. The default variant's build
-checks all of these (`futureagi/docker/runtime_smoke.py`), the release checks
-`uv`, git, the dependency groups and that ffmpeg is the minimal build again
-before it moves any tag
-(`release-images.yml`), and `scripts/verify-image-contents.sh` checks them on
-a published image. An image built `FROM` another keeps the parent's labels
+variant's `uv`, and those images rely at run time on its git, NLTK packages
+and Google API discovery documents. A `-slim` base has none of them: the
+install fails with `uv: not found`. They also use the base's ffmpeg, which
+both variants ship as the same minimal LGPL build, not Debian's package. An
+overlay that needs codecs outside that build installs Debian's `ffmpeg` and
+deletes `/usr/local/bin/ffmpeg` and `/usr/local/bin/ffprobe`, which come
+first on `PATH` and would otherwise still be the ones the app runs. The
+default variant's build checks all of these
+(`futureagi/docker/runtime_smoke.py`), the release checks `uv`, git, the
+dependency groups and that ffmpeg is the minimal build again before it moves
+any tag (`release-images.yml`), and `scripts/verify-image-contents.sh` checks
+them on a published image. An image built `FROM` another keeps the parent's labels
 until it sets its own: such an overlay should declare `VERSION`, `REVISION`
 and `CREATED` and set every `org.opencontainers.image.*` label, with its own
 title and licenses. It also inherits the backend's user (root), `HEALTHCHECK`,
@@ -230,10 +232,12 @@ in `images-ci.yml`, with `test_image_size_budget.py`. Its workflow tests need
 PyYAML and are skipped without it. To check a built backend image's contents,
 `scripts/verify-image-contents.sh` takes `OSS_VARIANT=standard|slim` (a tag
 ending in `-slim` means slim). Standalone builds by `./bin/install --from-source`
-and `./bin/dev` are slim, so pass `OSS_VARIANT=slim` for them. It expects the
-minimal ffmpeg build; pass `OSS_FFMPEG_FLAVOR=debian` (or `none`) for an image
-built with that `FFMPEG_FLAVOR`, including standard tags up to v1.56, which
-shipped Debian's ffmpeg.
+and `./bin/dev` are slim, so pass `OSS_VARIANT=slim` for them. It expects
+Debian's ffmpeg in standard tags up to v1.58 (every standard release before
+the minimal build became the default shipped it) and the minimal build in
+every other tag; a tag without a version, such as `latest`, is judged by the
+image's `org.opencontainers.image.version` label. For an image built with
+another `FFMPEG_FLAVOR`, pass `OSS_FFMPEG_FLAVOR=minimal|debian|none`.
 
 The Helm chart has its own checks (they need `helm`, `kubeconform` and Python
 with PyYAML; the kind smoke test also needs `kind`, `kubectl` and images built

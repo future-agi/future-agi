@@ -14,8 +14,11 @@ set -euo pipefail
 #   --from-source, ./bin/dev) are slim: pass OSS_VARIANT=slim;
 #   ./bin/install --distributed --from-source builds standard.
 #   OSS_FFMPEG_FLAVOR: the FFMPEG_FLAVOR OSS_IMAGE was built with (minimal,
-#   the default of both variants; debian; none). Standard tags up to v1.56
-#   shipped Debian's ffmpeg: check them with OSS_FFMPEG_FLAVOR=debian.
+#   the default of both variants; debian; none). Default: debian for a
+#   standard tag up to v1.58 (LAST_DEBIAN_FFMPEG_RELEASE below: every
+#   standard release up to it shipped Debian's ffmpeg), else minimal. A tag
+#   without a version (latest, a local build) is read from the image's
+#   org.opencontainers.image.version label.
 
 VERSION="${1:-latest}"
 FLAVOR="${2:-all}"
@@ -32,6 +35,36 @@ case "$OSS_VARIANT" in
   standard|slim) ;;
   *) echo "OSS_VARIANT must be standard or slim, not '${OSS_VARIANT}'" >&2; exit 2 ;;
 esac
+# The last release whose standard image shipped Debian's ffmpeg package; the
+# releases after it ship the minimal build.
+LAST_DEBIAN_FFMPEG_RELEASE="1.58"
+
+# The vMAJOR.MINOR of OSS_IMAGE: from its tag, else from its version label.
+oss_image_version() {
+  local ref="${OSS_IMAGE%%@*}" tag=""
+  [[ "${ref##*/}" == *:* ]] && tag="${ref##*:}"
+  if [[ ! "$tag" =~ ^v?[0-9]+\.[0-9]+ ]]; then
+    tag="$(docker image inspect -f '{{ index .Config.Labels "org.opencontainers.image.version" }}' "$OSS_IMAGE" 2>/dev/null \
+      || { docker pull -q "$OSS_IMAGE" >/dev/null 2>&1 \
+        && docker image inspect -f '{{ index .Config.Labels "org.opencontainers.image.version" }}' "$OSS_IMAGE" 2>/dev/null; } \
+      || true)"
+  fi
+  [[ "$tag" =~ ^v?([0-9]+)\.([0-9]+) ]] && echo "${BASH_REMATCH[1]} ${BASH_REMATCH[2]}"
+}
+
+default_ffmpeg_flavor() {
+  local major minor last_major="${LAST_DEBIAN_FFMPEG_RELEASE%%.*}" last_minor="${LAST_DEBIAN_FFMPEG_RELEASE#*.}"
+  if [[ "$OSS_VARIANT" == standard ]] && read -r major minor < <(oss_image_version) \
+    && (( major < last_major || (major == last_major && minor <= last_minor) )); then
+    echo debian
+  else
+    echo minimal
+  fi
+}
+
+if [[ -z "${OSS_FFMPEG_FLAVOR:-}" && ( "$FLAVOR" == oss || "$FLAVOR" == all ) ]]; then
+  OSS_FFMPEG_FLAVOR="$(default_ffmpeg_flavor)"
+fi
 OSS_FFMPEG_FLAVOR="${OSS_FFMPEG_FLAVOR:-minimal}"
 case "$OSS_FFMPEG_FLAVOR" in
   minimal|debian|none) ;;

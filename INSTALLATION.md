@@ -670,7 +670,7 @@ value you pass wins. Every image's build arguments are in
 
 | Build argument | Default: standard / slim | What it changes |
 | --- | --- | --- |
-| `FFMPEG_FLAVOR` | `minimal` / `minimal` | `minimal`: a small LGPL `ffmpeg`/`ffprobe` build with the formats the app handles (WAV, MP3, Ogg/Opus, FLAC, AAC/M4A, AMR, WMA, WebM, MP4, H.264/HEVC/VP8/VP9, and more); an upload in an exotic codec (AV1, WavPack, ProRes) fails with "Decoder not found". `debian`: Debian's ffmpeg package and its dependencies (about 145 MB and 189 system packages more), for those codecs (the default backend shipped it up to v1.56). `none`: no ffmpeg; the features in [Media features and the backend image](#media-features-and-the-backend-image) fail with an `ffmpeg is not installed in this backend image` error |
+| `FFMPEG_FLAVOR` | `minimal` / `minimal` | `minimal`: a small LGPL `ffmpeg`/`ffprobe` build with the formats the app handles (WAV, MP3, Ogg/Opus, FLAC, AAC/M4A, AMR, WMA, WebM, MP4, H.264/HEVC/VP8/VP9, and more); an upload in an exotic codec (AV1, WavPack, ProRes) fails with "Decoder not found". `debian`: Debian's ffmpeg package and its dependencies (about 145 MB and 189 system packages more), for those codecs (standard images up to v1.58 shipped it). `none`: no ffmpeg; the features in [Media features and the backend image](#media-features-and-the-backend-image) fail with an `ffmpeg is not installed in this backend image` error |
 | `WITH_GIT` | `true` / `false` | git (about 29 MB). Hosted agent runs from a GitHub source need it and otherwise answer `501 git_unavailable` |
 | `SLIM_SITE_PACKAGES` | `0` / `1` | `1` drops package test suites, type stubs, debug symbols and the Google API discovery documents the app does not call (about 63 MB); keep `0` for code that calls other Google APIs through `googleapiclient` |
 | `NLTK_DATA_PROFILE` | `full` / `minimal` | `minimal`: the English NLTK data the app loads. `full`: every language and the legacy packages (about 100 MB more) |
@@ -678,19 +678,20 @@ value you pass wins. Every image's build arguments are in
 
 ### Media features and the backend image
 
-Both backend variants ship the same minimal `ffmpeg`/`ffprobe` build, so the
-media features below work in Distributed, Helm and Standalone without a
-rebuild. Features that decode audio in Python need the `audio` extra on top.
+Both backend variants ship the same minimal `ffmpeg`/`ffprobe` build, so no
+image needs a rebuild for ffmpeg itself. Some of the features below also need
+an extra (the "Needs" column); [Optional feature extras](#optional-feature-extras)
+lists which images have it.
 
 | Feature | Needs | Default (`minimal`) | `FFMPEG_FLAVOR=debian` | `FFMPEG_FLAVOR=none` |
 | --- | --- | --- | --- | --- |
 | Audio in trace spans and simulation call recordings: format detection, stored with a matching file type | `ffmpeg` | Yes | Yes | Original value kept; the log names ffmpeg |
-| Prompt audio inputs given as a URL | `ffmpeg` | Yes | Yes | Input dropped; the log names ffmpeg |
+| Prompt audio inputs given as a URL (prompt workbench, run-prompt columns, agent playground prompt nodes) | `ffmpeg` | Yes | Yes | The run fails with an error naming ffmpeg |
 | Video thumbnails for video in trace spans | `ffmpeg` | Yes | Yes | Video stored without a thumbnail; the log names ffmpeg |
 | Deepgram speech-to-text | `ffmpeg`, `ffprobe` (pydub) | Yes | Yes | Error naming ffmpeg |
 | Other speech-to-text providers: converting unusual formats | `ffmpeg` | Yes | Yes | Audio sent unconverted; the log names ffmpeg |
-| LiveKit call recordings: per-speaker tracks | `ffmpeg` | Yes | Yes | Stereo recording kept; per-speaker tracks fail with an error naming ffmpeg |
-| Error localization on audio | `ffmpeg`, `ffprobe` (pydub) | Yes | Yes | Skipped or failed with an error naming ffmpeg |
+| LiveKit call recordings: per-speaker tracks | `voice` extra, `ffmpeg` | With the `voice` extra | Same | Stereo recording kept; per-speaker tracks fail with an error naming ffmpeg |
+| Error localization on audio | `ffmpeg`, `ffprobe` (pydub); simulation call audio also needs the `localizer` extra | Yes; simulation call audio in Distributed and Helm, or with the `localizer` extra | Same | Skipped or failed with an error naming ffmpeg |
 | Codecs the minimal build leaves out (AV1, WavPack, ProRes, ...) | Debian's ffmpeg | "Decoder not found" | Yes | Error naming ffmpeg |
 | Dataset audio cells (upload, import, edit): duration and conversion | `audio` extra, then `ffmpeg` | Error naming the `audio` extra | Same | With the `audio` extra: `400` naming ffmpeg |
 | Waveform audio evaluations and audio-quality metrics | `audio` extra (librosa, soundfile) | Error naming the `audio` extra | Same | Same |
