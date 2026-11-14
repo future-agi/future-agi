@@ -1539,6 +1539,15 @@ def _run_pairs(
         not_run=run_compare.suite_members(older_suite, newer.keys() - older.keys()),
         against_is_newer=against_is_newer,
     )
+    changed = run_compare.changed_tests(
+        current_suite,
+        previous_suite,
+        environments[0],
+        environments[1],
+        current_trials.keys() & previous_trials.keys(),
+    )
+    for pair in pairs:
+        pair["changed_test"] = pair["scenario_key"] in changed
     return {
         "pairs": pairs,
         "summary": summary,

@@ -570,6 +570,8 @@ export const COMPARE_COPY = {
     return reason ? reason.charAt(0).toUpperCase() + reason.slice(1) : null;
   },
   criteriaHint: (names) => `Sub-goal changed: ${names.join(", ")}`,
+  changedTest: "Changed test",
+  changedTestHint: "This case changed between the two runs; compare with care.",
   columns: {
     scenario: "Scenario",
     current: "This run",
