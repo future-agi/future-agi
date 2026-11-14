@@ -2066,7 +2066,8 @@ class ClickHouseFilterBuilder:
                     f"SELECT project_id, trace_id FROM spans FINAL "
                     f"PREWHERE {project_pred}"
                     f"{self._trace_name_root_scope_sql()} "
-                    f"WHERE is_deleted = 0 "
+                    f"WHERE is_deleted = 0"
+                    f"{self._trace_name_root_exact_window_sql()} "
                     f"AND (parent_span_id IS NULL OR parent_span_id = '') "
                     f"AND ({inner}))"
                 )
@@ -2143,6 +2144,21 @@ class ClickHouseFilterBuilder:
             )
         terms.append(f"({candidates})" if candidates else TRACE_NAME_ROOT_TRACES_MARKER)
         return "".join(f" AND {term}" for term in terms)
+
+    def _trace_name_root_exact_window_sql(self) -> str:
+        """The exact [start - lookback, end) cut on the live root, after FINAL.
+
+        PREWHERE keeps whole storage hours so FINAL sees every version; WHERE
+        runs after FINAL, on the live version, and applies the exact window.
+        """
+
+        if self.trace_name_root_window is None:
+            return ""
+        start, end = self.trace_name_root_window
+        return (
+            f" AND start_time >= %({start})s - {TRACE_ROOT_LOOKBACK}"
+            f" AND start_time < %({end})s"
+        )
 
     def _span_attr_key_sql(self, attribute_key: str) -> str:
         """Render attribute data without relaxing SQL identifier validation."""

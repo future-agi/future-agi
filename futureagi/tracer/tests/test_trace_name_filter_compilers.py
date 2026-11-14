@@ -56,7 +56,11 @@ def test_span_mode_resolves_root_without_accepting_child_name():
         in sql
     )
     assert "toStartOfHour(start_time) <= %(end_date)s" in sql
-    assert "start_time >= %(start_date)s" not in sql
+    # ...and the exact window on the live root only after FINAL (WHERE).
+    prewhere, where = sql.split("WHERE is_deleted = 0", 1)
+    assert "start_time >= %(start_date)s" not in prewhere
+    assert "AND start_time >= %(start_date)s - INTERVAL 1 DAY" in where
+    assert "AND start_time < %(end_date)s" in where
     assert f"lowerUTF8(toString({TRACE_NAME_SQL}))" in sql
     assert params["col_1"] == "root name"
 

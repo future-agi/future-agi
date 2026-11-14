@@ -187,3 +187,72 @@ def test_users_walk_slice_of_the_child_hour_finds_its_earlier_root(ch):
         limit=10,
     )
     assert USER in {str(value) for row in ch.execute(query, params) for value in row}
+
+
+@pytest.mark.parametrize(
+    ("root_offset", "matches"),
+    [
+        # Exactly the one-day lookback: in.
+        (timedelta(days=-1), True),
+        # Five minutes earlier, same storage hour as an in-window root: out.
+        (timedelta(days=-1, minutes=-5), False),
+        # Five minutes after the exclusive end, same storage hour: out.
+        (timedelta(minutes=35), False),
+    ],
+)
+def test_root_window_is_exact_after_the_whole_hour_prewhere(ch, root_offset, matches):
+    """PREWHERE cuts whole hours (before FINAL); the live root's exact time
+    must still fall in [start - 1 day, end)."""
+    from tracer.services.clickhouse.v2.query_builders.filters import (
+        ClickHouseFilterBuilderV2,
+    )
+
+    project = str(uuid.uuid4())
+    trace = str(uuid.uuid4())
+    window_start = START + timedelta(hours=12, minutes=30)
+    window_end = window_start + timedelta(minutes=30)
+    root = uuid.uuid4().hex
+    child = uuid.uuid4().hex
+    columns = (
+        "project_id, observation_type, service_name, start_time, trace_id, "
+        "id, parent_span_id, name"
+    )
+    ch.execute(
+        f"INSERT INTO spans ({columns}) VALUES",
+        [
+            (
+                uuid.UUID(project),
+                "span",
+                "svc",
+                window_start + root_offset,
+                trace,
+                root,
+                "",
+                NAME,
+            ),
+            (
+                uuid.UUID(project),
+                "span",
+                "svc",
+                window_start + timedelta(minutes=1),
+                trace,
+                child,
+                root,
+                "step",
+            ),
+        ],
+    )
+    builder = ClickHouseFilterBuilderV2(project_id=project, query_mode="span")
+    predicate, values = builder.translate([_leaf()])
+    rows = ch.execute(
+        "SELECT id FROM spans WHERE project_id = toUUID(%(project_id)s) "
+        "AND start_time >= %(start_date)s AND start_time < %(end_date)s AND "
+        + predicate,
+        {
+            "project_id": project,
+            "start_date": window_start,
+            "end_date": window_end,
+            **values,
+        },
+    )
+    assert ({row[0] for row in rows} == {child}) is matches
