@@ -324,6 +324,7 @@ def initialize(writer, *, scope_id, body, key):
             "deletion_generation": scope.deletion_generation,
         }
         now = timezone.now()
+        # Unbound deadline only; bind_retention replaces it with the source's.
         occurrence_expiry = now + timedelta(hours=24)
         horizon = min(occurrence_expiry, now + timedelta(seconds=UPLOAD_SECONDS))
         expiry = min(_capability_expiry(session), horizon)

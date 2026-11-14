@@ -108,7 +108,14 @@ def bind_retention(*, scope_id, occurrence_id, source):
         source.expires_at,
         source.generation,
     )
-    row.expires_at = min(row.expires_at, source.expires_at)
+    # The creator's ``now + 24 h`` is the UNBOUND deadline: the window in which
+    # ingestion must observe the parent (checked above). Once bound, the
+    # occurrence lives exactly as long as its authoritative source (design
+    # section 8). ``min(row.expires_at, ...)`` here kept the pending deadline,
+    # so every bound attachment was tombstoned and erased one day after upload.
+    # The source expiry is never extended later: a rebind with a different
+    # ``source.expires_at`` is fenced above.
+    row.expires_at = source.expires_at
     row.save(
         update_fields=[
             "bound_at",
