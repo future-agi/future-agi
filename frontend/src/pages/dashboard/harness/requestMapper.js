@@ -24,47 +24,6 @@ const normalizeEgressDomain = (value) =>
     ? value.trim().toLowerCase().replace(/\.$/, "")
     : "";
 
-const isPrivateOrReservedHost = (host) => {
-  const unbracketedHost = host.replace(/^\[|\]$/g, "");
-  return (
-    unbracketedHost === "localhost" ||
-    unbracketedHost === "host.docker.internal" ||
-    unbracketedHost === "::1" ||
-    unbracketedHost === "0:0:0:0:0:0:0:1" ||
-    /^fe[89ab][0-9a-f]:/i.test(unbracketedHost) ||
-    /^127(?:\.|$)/.test(unbracketedHost) ||
-    unbracketedHost.startsWith("10.") ||
-    unbracketedHost.startsWith("192.168.") ||
-    unbracketedHost.startsWith("169.254.") ||
-    /^172\.(1[6-9]|2\d|3[01])\./.test(unbracketedHost)
-  );
-};
-
-/**
- * Derive publicly routable hostnames from URL-valued environment/config values.
- * Non-URL values and localhost/private/link-local hosts are ignored.
- */
-export function deriveEgressDomains(...maps) {
-  const hosts = new Set();
-  for (const map of maps) {
-    for (const value of Object.values(map || {})) {
-      if (typeof value !== "string") continue;
-      const trimmed = value.trim();
-      if (!/^(?:wss?|https?):\/\//i.test(trimmed)) continue;
-
-      let host = "";
-      try {
-        host = normalizeEgressDomain(new URL(trimmed).hostname);
-      } catch {
-        continue;
-      }
-      if (!host || isPrivateOrReservedHost(host)) continue;
-      hosts.add(host);
-    }
-  }
-  return Array.from(hosts).sort();
-}
-
 /**
  * Parse comma/newline-separated customer egress hostnames.
  * Schemes, paths, and other obviously malformed values are ignored; backend validation remains
@@ -78,24 +37,6 @@ export function parseEgressDomains(input) {
     const domain = normalizeEgressDomain(value);
     if (!domain || domain.length > 253 || !EGRESS_HOSTNAME_PATTERN.test(domain)) continue;
     domains.add(domain);
-  }
-  return Array.from(domains).sort();
-}
-
-/**
- * Merge derived and customer-declared egress hostnames into a stable exact-deduped list.
- */
-export function mergeEgressDomains(...domainLists) {
-  const domains = new Set();
-  for (const domainList of domainLists) {
-    const values =
-      typeof domainList === "string"
-        ? parseEgressDomains(domainList)
-        : domainList || [];
-    for (const value of values) {
-      const domain = normalizeEgressDomain(value);
-      if (domain) domains.add(domain);
-    }
   }
   return Array.from(domains).sort();
 }
