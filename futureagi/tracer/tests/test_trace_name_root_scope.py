@@ -166,6 +166,59 @@ def test_span_list_classifier_reads_only_its_candidates_roots(full_state):
         assert ("start_date" in scope) is not full_state
 
 
+def test_full_state_classifier_bounds_its_root_lookup_by_its_candidates():
+    """Round 3: full-state classification has no read window, so its root
+    lookup is bounded by the batch's own start times (whole hours), which
+    lets partition and primary-key pruning apply instead of reading the
+    project's whole history per batch."""
+    builder = SpanListQueryBuilderV2(
+        project_id=PROJECT, filters=[], bounded_identity_only=True
+    )
+    builder.filters = [_leaf()]
+    sql, params = builder.build_filter_match_query(
+        ["a" * 32, "b" * 32], candidate_full_state=True
+    )
+    _assert_bound(sql, params)
+    for scope in _root_scopes(sql):
+        span = (
+            "(SELECT (min(start_time), max(start_time)) FROM "
+            "resolved_annotation_candidates)"
+        )
+        assert (
+            f"toStartOfHour(start_time) > tupleElement({span}, 1) "
+            "- INTERVAL 1 DAY - INTERVAL 1 HOUR"
+        ) in scope
+        assert (
+            f"toStartOfHour(start_time) <= tupleElement({span}, 2) + INTERVAL 1 HOUR"
+        ) in scope
+
+
+def test_cluster_rca_root_lookup_is_bounded_by_its_traces_rows():
+    """Round 3: the cluster's traces bound the root lookup in time through
+    their traces rows (a primary-key read), not the project's history."""
+    captured = {}
+
+    class Client:
+        def execute_read(self, query, params, **_):
+            captured.update(query=query, params=params)
+            return [("t-1",)], [], 1
+
+    with (
+        mock.patch.object(
+            span_attribute_lookups, "is_clickhouse_enabled", return_value=True
+        ),
+        mock.patch.object(span_attribute_lookups, "ClickHouseClient", Client),
+    ):
+        span_attribute_lookups.scoped_trace_ids(PROJECT, ["t-1", "t-2"], [_leaf()])
+    _assert_bound(captured["query"], captured["params"])
+    (scope,) = _root_scopes(captured["query"])
+    assert (
+        "toStartOfHour(start_time) > ifNull((SELECT minOrNull(created_at) FROM "
+        "traces WHERE project_id = %(_pid)s AND id IN %(_tids)s)"
+    ) in scope
+    assert "maxOrNull(created_at)" in scope
+
+
 def test_exact_graph_partition_reads_only_its_partitions_roots():
     builder = TimeSeriesQueryBuilder(
         project_id=PROJECT,
@@ -239,3 +292,13 @@ def test_root_lookup_is_whole_hours_and_needs_a_window_or_candidates():
     )
     with pytest.raises(UnsupportedFilterShapeError):
         unbounded.translate([_leaf()])
+    # Candidate traces alone no longer suffice: without a window the lookup
+    # needs their time range too, or it would read the project's history.
+    traces_only = ClickHouseFilterBuilderV2(
+        project_id=PROJECT,
+        query_mode="span",
+        trace_name_root_window=None,
+        trace_name_root_traces_sql="trace_id IN %(_tids)s",
+    )
+    with pytest.raises(UnsupportedFilterShapeError):
+        traces_only.translate([_leaf()])

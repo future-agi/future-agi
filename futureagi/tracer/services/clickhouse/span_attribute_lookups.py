@@ -338,9 +338,19 @@ def scoped_trace_ids(
         project_id=str(project_id),
         score_date_scope=False,
         # No read window here: a trace_name leaf resolves the live roots of
-        # exactly these traces, through the trace_id bloom index.
+        # exactly these traces, bounded in time by their traces rows (a
+        # primary-key read: traces is ordered by (project_id, id)). A trace
+        # with no traces row yet leaves that side unbounded.
         trace_name_root_window=None,
         trace_name_root_traces_sql="trace_id IN %(_tids)s",
+        trace_name_root_range_sql=(
+            "ifNull((SELECT minOrNull(created_at) FROM traces "
+            "WHERE project_id = %(_pid)s AND id IN %(_tids)s), "
+            "toDateTime64(0, 6, 'UTC'))",
+            "ifNull((SELECT maxOrNull(created_at) FROM traces "
+            "WHERE project_id = %(_pid)s AND id IN %(_tids)s), "
+            "now64(6, 'UTC'))",
+        ),
     )
     where, params = fb.translate(filters)
     params = dict(params)

@@ -839,6 +839,7 @@ class ClickHouseFilterBuilder:
         eval_count_mode: bool = False,
         trace_name_root_traces_sql: str | None = None,
         trace_name_root_window: tuple[str, str] | None = ("start_date", "end_date"),
+        trace_name_root_range_sql: tuple[str, str] | None = None,
     ) -> None:
         # Observe lists opt into newest-completed tiles. Session/user/dashboard
         # consumers retain matching across all live attempts by default.
@@ -924,6 +925,14 @@ class ClickHouseFilterBuilder:
         # that relation's traces. A lookup needs at least one of the two.
         self.trace_name_root_traces_sql = trace_name_root_traces_sql
         self.trace_name_root_window = trace_name_root_window
+        # Without a read window the root lookup is still bounded in time, so
+        # partition and primary-key pruning apply (``trace_id`` is in
+        # neither, and the bloom index is off under FINAL with
+        # use_skip_indexes_if_final=0). ``trace_name_root_range_sql`` is a
+        # code-owned pair of scalar SQL expressions (earliest, latest) for
+        # the candidates' start times; with a resolved candidate relation it
+        # defaults to that relation's own min/max start_time.
+        self.trace_name_root_range_sql = trace_name_root_range_sql
         if resolved_candidate_sessions_table is not None and (
             re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", resolved_candidate_sessions_table)
             is None
@@ -2135,15 +2144,42 @@ class ClickHouseFilterBuilder:
                 f"%({start})s - {TRACE_ROOT_LOOKBACK} - INTERVAL 1 HOUR"
             )
             terms.append(f"toStartOfHour(start_time) <= %({end})s")
+        else:
+            earliest, latest = self._trace_name_root_range()
+            # A root starts at most TRACE_ROOT_LOOKBACK before its earliest
+            # candidate span and, allowing an hour of clock skew between
+            # spans, no later than the latest one. Scalar subqueries are
+            # constants to ClickHouse, so this prunes partitions and the
+            # primary key like a bound window does.
+            terms.append(
+                "toStartOfHour(start_time) > "
+                f"{earliest} - {TRACE_ROOT_LOOKBACK} - INTERVAL 1 HOUR"
+            )
+            terms.append(f"toStartOfHour(start_time) <= {latest} + INTERVAL 1 HOUR")
         candidates = self.trace_name_root_traces_sql
         if candidates is None and self.resolved_candidate_spans_table is not None:
             candidates = f"trace_id IN (SELECT trace_id FROM {self.resolved_candidate_spans_table})"
-        if candidates is None and self.trace_name_root_window is None:
-            raise _unsupported_filter_shape(
-                "a span trace_name filter needs a read window or candidate traces"
-            )
         terms.append(f"({candidates})" if candidates else TRACE_NAME_ROOT_TRACES_MARKER)
         return "".join(f" AND {term}" for term in terms)
+
+    def _trace_name_root_range(self) -> tuple[str, str]:
+        """The (earliest, latest) candidate start times bounding a root
+        lookup that has no read window."""
+
+        if self.trace_name_root_range_sql is not None:
+            return self.trace_name_root_range_sql
+        if self.resolved_candidate_spans_table is not None:
+            # One scalar subquery for both bounds: ClickHouse evaluates an
+            # identical scalar once per query, and the candidate relation is
+            # an inlined CTE, so two different ones would resolve it twice.
+            span = (
+                "(SELECT (min(start_time), max(start_time)) "
+                f"FROM {self.resolved_candidate_spans_table})"
+            )
+            return (f"tupleElement({span}, 1)", f"tupleElement({span}, 2)")
+        raise _unsupported_filter_shape(
+            "a span trace_name filter needs a read window or a candidate time range"
+        )
 
     def _trace_name_root_exact_window_sql(self) -> str:
         """The exact [start - lookback, end) cut on the live root, after FINAL.
