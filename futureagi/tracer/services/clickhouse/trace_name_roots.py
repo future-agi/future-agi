@@ -50,6 +50,7 @@ __all__ = [
     "TraceNameRootSets",
     "bind_trace_name_root_sets",
     "has_trace_name_leaf",
+    "trace_name_leaf_count",
     "resolve_trace_name_root_sets",
     "tagged_trace_name_root_lookups",
     "trace_name_root_set_params",
@@ -91,6 +92,12 @@ def _trace_name_leaves(filters: Iterable[dict[str, Any]] | None) -> list[dict]:
 
 def has_trace_name_leaf(filters: Iterable[dict[str, Any]] | None) -> bool:
     return bool(_trace_name_leaves(filters))
+
+
+def trace_name_leaf_count(filters: Iterable[dict[str, Any]] | None) -> int:
+    """At most this many resolution statements (one per distinct leaf)."""
+
+    return len(_trace_name_leaves(filters))
 
 
 def _group_roots(rows: Iterable[Any]) -> TraceNameRootSet:
@@ -135,8 +142,9 @@ def resolve_trace_name_root_sets(
     reader's own executor and settings and returns its rows, as
     ``(project_id, trace_id)`` sequences or mappings with those keys.
 
-    Raises ``TraceNameFilterTooBroad`` when a leaf matches more roots than
-    one request may bind. Returns ``{}`` when the filters have no such leaf.
+    Raises ``TraceNameFilterTooBroad`` when the leaves together match more
+    roots than one request may bind. Returns ``{}`` when the filters have no
+    such leaf.
     """
 
     leaves = _trace_name_leaves(filters)
@@ -174,7 +182,11 @@ def resolve_trace_name_root_sets(
         ):
             lookups.setdefault(key, (subquery, params))
 
+    # The cap holds for the request's sets together: a statement carrying
+    # several leaves binds all of them, and it must still parse.
     resolved: dict[str, TraceNameRootSet] = {}
+    total_roots = 0
+    total_bytes = 0
     for key, (subquery, params) in lookups.items():
         rows = execute(
             # A code-owned lookup over bound parameters.
@@ -182,11 +194,13 @@ def resolve_trace_name_root_sets(
             f"FROM ({subquery}) LIMIT {TRACE_NAME_ROOT_SET_MAX_ROOTS + 1}",
             {**params, **scope, "start_date": start, "end_date": end},
         )
-        rows = list(rows or ())
-        if len(rows) > TRACE_NAME_ROOT_SET_MAX_ROOTS:
-            raise TraceNameFilterTooBroad()
-        roots = _group_roots(rows)
-        if _rendered_bytes(roots) > TRACE_NAME_ROOT_SET_MAX_BYTES:
+        roots = _group_roots(list(rows or ()))
+        total_roots += sum(len(trace_ids) for _project, trace_ids in roots)
+        total_bytes += _rendered_bytes(roots)
+        if (
+            total_roots > TRACE_NAME_ROOT_SET_MAX_ROOTS
+            or total_bytes > TRACE_NAME_ROOT_SET_MAX_BYTES
+        ):
             raise TraceNameFilterTooBroad()
         resolved[key] = roots
     return resolved

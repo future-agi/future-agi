@@ -525,3 +525,79 @@ def test_the_annotation_span_graph_resolves_roots_once_for_all_its_batches(
     # The resolution reads under the graph's own settings, one row over the cap.
     assert analytics.calls[0][2]["max_result_rows"] == TRACE_NAME_ROOT_SET_MAX_ROOTS + 1
     assert result["query_complete"] is True
+
+
+def test_the_cap_holds_for_all_leaves_of_a_request_together():
+    # Each leaf alone is under the cap; a statement binds them all.
+    half = TRACE_NAME_ROOT_SET_MAX_ROOTS // 2 + 1
+
+    def execute(sql, params):
+        return [(PROJECT, f"{len(sql)}-{n:030x}") for n in range(half)]
+
+    with pytest.raises(TraceNameFilterTooBroad):
+        resolve_trace_name_root_sets(
+            [_leaf("checkout"), _leaf("browse")],
+            start=START,
+            end=END,
+            execute=execute,
+            project_id=PROJECT,
+        )
+
+
+def test_a_statement_with_several_leaves_at_the_shared_cap_still_parses():
+    leaves = [_leaf(f"name-{n}") for n in range(4)]
+    per_leaf = TRACE_NAME_ROOT_SET_MAX_ROOTS // len(leaves)
+    sets = {
+        _key(leaf): ((PROJECT, tuple(f"{i:02x}{n:030x}" for n in range(per_leaf))),)
+        for i, leaf in enumerate(leaves)
+    }
+    builder = TimeSeriesQueryBuilder(
+        project_id=PROJECT,
+        filters=leaves,
+        interval="hour",
+        observe_type="span",
+        start_date=START,
+        end_date=END,
+        exact_snapshot=True,
+        resolve_span_versions=True,
+    )
+    builder.trace_name_root_sets = sets
+    sql, params = builder.build_exact_span_partition(
+        partition_start=START + timedelta(days=3),
+        partition_end=START + timedelta(days=3, hours=1),
+    )
+    assert ROOT_LOOKUP not in sql
+    assert len(_render(sql, params).encode("utf-8")) < MAX_QUERY_SIZE
+
+
+def test_the_users_walk_charges_one_statement_per_trace_name_leaf(monkeypatch):
+    from tracer.services import users_matching_walk as walk
+
+    taken = []
+
+    class Budget:
+        deadline = SimpleNamespace(remaining_ms=lambda: 1_000)
+        exhausted_by = None
+
+        def take(self, statements):
+            taken.append(statements)
+            return True
+
+    builder = SimpleNamespace(project_ids=[PROJECT], project_id=None)
+    manager = SimpleNamespace(
+        filters=[_date(), _leaf("checkout"), _leaf("browse")],
+        use_trace_name_root_sets=lambda *_a, **_k: None,
+    )
+    monkeypatch.setattr(
+        walk, "resolve_trace_name_root_sets", lambda *_a, **_k: {"k": ()}
+    )
+    state = SimpleNamespace(
+        manager=manager,
+        builder=builder,
+        budget=Budget(),
+        window_start=START,
+        window_end=END,
+    )
+    walk._resolve_walk_trace_name_roots(state)
+    assert taken == [2]
+    assert builder.trace_name_root_sets == {"k": ()}

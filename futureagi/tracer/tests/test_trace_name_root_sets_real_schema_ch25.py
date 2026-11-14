@@ -105,7 +105,7 @@ def ch():
         yield client
 
 
-def _span_page(ch, *, resolve_once: bool):
+def _span_page(ch, *, resolve_once: bool, max_query_count=None):
     executor = LiveExecutor(ch)
     builder = SpanListQueryBuilderV2(
         project_id=PROJECT, filters=[_date(), _leaf()], page_size=50
@@ -128,6 +128,7 @@ def _span_page(ch, *, resolve_once: bool):
             page_number=0,
             page_size=50,
             deadline_ms=60_000,
+            max_query_count=max_query_count,
         )
     return page, executor.statements
 
@@ -246,3 +247,19 @@ def test_span_graph_resolves_roots_once_and_answers_the_same(ch):
     assert len(old_statements) == 4
     assert all(ROOT_LOOKUP in sql for sql in old_statements)
     assert query_count == old_count + 1
+
+
+def test_root_resolution_never_takes_a_statement_from_the_page_budget(ch):
+    """The resolution replaces a lookup every batch repeated: with exactly the
+    statement budget the per-statement page needed, the page still completes."""
+
+    old_page, old_statements = _span_page(ch, resolve_once=False)
+    assert old_page.complete
+    page, statements = _span_page(
+        ch, resolve_once=True, max_query_count=len(old_statements)
+    )
+    assert page.complete, page.error_code
+    assert len(statements) == len(old_statements) + 1
+    assert sorted(str(r["id"]) for r in page.rows) == sorted(
+        str(r["id"]) for r in old_page.rows
+    )

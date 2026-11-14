@@ -232,8 +232,8 @@ from tracer.services.clickhouse.read_budget import (
     is_read_budget_error,
 )
 from tracer.services.clickhouse.trace_name_roots import (
-    has_trace_name_leaf,
     resolve_trace_name_root_sets,
+    trace_name_leaf_count,
 )
 from tracer.services.clickhouse.trace_name_sql import TRACE_NAME_ROOT_SET_MAX_ROOTS
 from tracer.services.clickhouse.v2.id_remap_sql import NIL_UUID
@@ -1917,7 +1917,9 @@ def _resolve_walk_trace_name_roots(state: _WalkState) -> None:
 
     manager = state.manager
     builder = state.builder
-    if not has_trace_name_leaf(manager.filters) or not state.budget.take(1):
+    # One statement per distinct leaf, at most.
+    statements = trace_name_leaf_count(manager.filters)
+    if not statements or not state.budget.take(statements):
         return
     try:
         timeout_ms = state.budget.deadline.remaining_ms()
