@@ -61,7 +61,11 @@ def test_absent_and_explicit_zero_character_controls(organization, metadata, exp
 @pytest.mark.django_db
 @pytest.mark.parametrize(
     ("input_count", "output_count", "expected"),
-    [("50000", "10000", "0.420000"), (0, 10000, "0.070000")],
+    [
+        (50000, 10000, "0.420000"),
+        ("50000", "10000", "0.420000"),
+        (0, 10000, "0.070000"),
+    ],
 )
 def test_character_amount_matches_independent_catalog_arithmetic(
     organization, input_count, output_count, expected
@@ -77,8 +81,6 @@ def test_character_amount_matches_independent_catalog_arithmetic(
             organization,
             {"input_characters": input_count, "output_characters": output_count},
             expected_source="available_models",
-            prompt_tokens=0,
-            completion_tokens=0,
         )
         == amount
     )
