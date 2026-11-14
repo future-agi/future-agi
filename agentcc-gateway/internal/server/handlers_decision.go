@@ -209,8 +209,17 @@ func (h *Handlers) serveDecision(w http.ResponseWriter, r *http.Request, routeFo
 }
 
 func decisionGuardrailRewritten(rc *models.RequestContext, original json.RawMessage) bool {
-	return rc.GuardrailRequest == nil || len(rc.GuardrailRequest.Messages) != 1 ||
-		!bytes.Equal(rc.GuardrailRequest.Messages[0].Content, original)
+	if rc.GuardrailRequest == nil || len(rc.GuardrailRequest.Messages) != 1 {
+		return true
+	}
+	content := rc.GuardrailRequest.Messages[0].Content
+	if bytes.Equal(content, original) {
+		return false
+	}
+	// A re-encoding (for example HTML escaping) is not a rewrite: compare the
+	// text, only on this slow path.
+	var got, want string
+	return json.Unmarshal(content, &got) != nil || json.Unmarshal(original, &want) != nil || got != want
 }
 
 func decisionRedactionError() *models.APIError {
