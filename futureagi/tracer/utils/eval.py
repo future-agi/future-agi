@@ -2091,9 +2091,8 @@ def evaluate_observation_span(
         return False
 
     except Exception as e:
-        # Same handling as the ValueError branch above: an unevaluated span
-        # with no eval row at all is invisible to retry/reconcile, unlike a
-        # recorded failure (see #2334).
+        # Keep unexpected failures visible, just like validation failures.
+        # Recording the result does not schedule an automatic retry.
         logger.exception(
             f"Exception during evaluation in evaluate_observation_span: {e}"
         )
