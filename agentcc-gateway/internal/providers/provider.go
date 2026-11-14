@@ -94,8 +94,9 @@ type ResponsesProvider interface {
 
 // ChatViaResponsesProvider is implemented by providers that can carry a chat
 // request over the Responses API, for a model that refuses it on chat
-// completions. Routes that translate their own dialect into a chat request use
-// it; /v1/chat/completions forwards the caller's request as sent.
+// completions. Every route that sends a chat request upstream uses it, the
+// caller's own /v1/chat/completions included; the caller still gets a chat
+// completion back.
 type ChatViaResponsesProvider interface {
 	// ChatNeedsResponses reports whether req must go to the Responses API.
 	ChatNeedsResponses(req *models.ChatCompletionRequest) bool

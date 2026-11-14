@@ -41,6 +41,27 @@ func toolTurnRequest(model string) *models.ChatCompletionRequest {
 	}
 }
 
+// withEffort is toolTurnRequest with reasoning_effort set to the raw JSON value.
+func withEffort(model, effort string) *models.ChatCompletionRequest {
+	req := toolTurnRequest(model)
+	req.Extra = map[string]json.RawMessage{"reasoning_effort": json.RawMessage(effort)}
+	return req
+}
+
+// NeedsResponses is the rule without the host check; ChatNeedsResponses adds
+// the official-API check on top.
+func TestNeedsResponsesIgnoresTheHost(t *testing.T) {
+	if !NeedsResponses(toolTurnRequest("gpt-5.6-terra")) {
+		t.Error("NeedsResponses(gpt-5.6-terra with tools) = false, want true")
+	}
+	if NeedsResponses(withEffort("gpt-5.6-terra", `"none"`)) {
+		t.Error(`NeedsResponses(reasoning_effort "none") = true, want false`)
+	}
+	if NeedsResponses(nil) {
+		t.Error("NeedsResponses(nil) = true, want false")
+	}
+}
+
 func TestChatNeedsResponses(t *testing.T) {
 	withTools := toolTurnRequest("gpt-5.6-terra")
 	noTools := toolTurnRequest("gpt-5.6-terra")
@@ -58,6 +79,15 @@ func TestChatNeedsResponses(t *testing.T) {
 		{"gpt-5.5 takes tools on chat completions", true, toolTurnRequest("gpt-5.5"), false},
 		{"a longer version number is another family", true, toolTurnRequest("gpt-5.60"), false},
 		{"another OpenAI-format upstream may not serve /v1/responses", false, withTools, false},
+		{"reasoning_effort none keeps tools on chat completions", true, withEffort("gpt-5.6-terra", `"none"`), false},
+		{"reasoning_effort low still reasons", true, withEffort("gpt-5.6-terra", `"low"`), true},
+		{"reasoning_effort high still reasons", true, withEffort("gpt-5.6-terra", `"high"`), true},
+		{"reasoning_effort null is not none", true, withEffort("gpt-5.6-terra", `null`), true},
+		{"reasoning_effort that is not a string is not none", true, withEffort("gpt-5.6-terra", `0`), true},
+		{"gpt-5.6-luna", true, toolTurnRequest("gpt-5.6-luna"), true},
+		{"gpt-5.6-sol", true, toolTurnRequest("gpt-5.6-sol"), true},
+		{"gpt-5.6-cyber", true, toolTurnRequest("gpt-5.6-cyber"), true},
+		{"reasoning_effort none on another upstream", false, withEffort("gpt-5.6-terra", `"none"`), false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -130,6 +160,65 @@ func TestToResponsesRequest(t *testing.T) {
 	choice := got["tool_choice"].(map[string]any)
 	if choice["type"] != "function" || choice["name"] != "get_weather" {
 		t.Errorf("tool_choice = %v, want the function named at the top level", choice)
+	}
+}
+
+// A caller who asked chat completions for a JSON schema gets the same schema on
+// the Responses API, where the fields sit one level up under text.format.
+func TestToResponsesRequestCarriesResponseFormat(t *testing.T) {
+	tests := []struct {
+		name   string
+		format *models.ResponseFormat
+		want   string // text.format as JSON; empty means no text field
+	}{
+		{"none", nil, ""},
+		{"json_object", &models.ResponseFormat{Type: "json_object"}, `{"type":"json_object"}`},
+		{"text", &models.ResponseFormat{Type: "text"}, `{"type":"text"}`},
+		{
+			"json_schema strict",
+			&models.ResponseFormat{Type: "json_schema", JSONSchema: json.RawMessage(`{"name":"weather","description":"A forecast","schema":{"type":"object","properties":{"city":{"type":"string"}},"required":["city"],"additionalProperties":false},"strict":true}`)},
+			`{"type":"json_schema","name":"weather","description":"A forecast","schema":{"type":"object","properties":{"city":{"type":"string"}},"required":["city"],"additionalProperties":false},"strict":true}`,
+		},
+		{
+			"json_schema without strict stays non-strict, as on chat completions",
+			&models.ResponseFormat{Type: "json_schema", JSONSchema: json.RawMessage(`{"name":"weather","schema":{"type":"object"}}`)},
+			`{"type":"json_schema","name":"weather","schema":{"type":"object"},"strict":false}`,
+		},
+		{"an unknown type is not sent", &models.ResponseFormat{Type: "grammar"}, ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := toolTurnRequest("gpt-5.6-terra")
+			req.ResponseFormat = tt.format
+			body, err := json.Marshal(toResponsesRequest(req, false))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var got struct {
+				ResponseFormat json.RawMessage `json:"response_format"`
+				Text           *struct {
+					Format json.RawMessage `json:"format"`
+				} `json:"text"`
+			}
+			if err := json.Unmarshal(body, &got); err != nil {
+				t.Fatal(err)
+			}
+			if got.ResponseFormat != nil {
+				t.Errorf("response_format is not a Responses field but was sent: %s", got.ResponseFormat)
+			}
+			if tt.want == "" {
+				if got.Text != nil {
+					t.Errorf("text = %s, want none", got.Text.Format)
+				}
+				return
+			}
+			if got.Text == nil {
+				t.Fatalf("text missing from %s", body)
+			}
+			if string(got.Text.Format) != tt.want {
+				t.Errorf("text.format = %s, want %s", got.Text.Format, tt.want)
+			}
+		})
 	}
 }
 

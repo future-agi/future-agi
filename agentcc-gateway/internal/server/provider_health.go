@@ -35,9 +35,12 @@ func (h *Handlers) recordProviderOutcome(ctx context.Context, provider providers
 	h.healthMonitor.RecordSuccess(provider.ID())
 }
 
+// callChatProvider makes one non-streaming chat call and records its outcome.
+// The route is chosen per call, for the model and tools this attempt sends:
+// pre-plugins, failover and model fallbacks can each change them.
 func (h *Handlers) callChatProvider(ctx context.Context, provider providers.Provider, req *models.ChatCompletionRequest) (*models.ChatCompletionResponse, error) {
 	start := time.Now()
-	resp, err := provider.ChatCompletion(ctx, req)
+	resp, err := translatedChatCompletion(ctx, provider, req)
 	h.recordProviderOutcome(ctx, provider, time.Since(start), err)
 	return resp, err
 }

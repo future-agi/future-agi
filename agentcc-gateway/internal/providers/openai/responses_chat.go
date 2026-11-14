@@ -19,19 +19,28 @@ import (
 // Some OpenAI models take function tools on chat completions only with
 // reasoning off: gpt-5.6 answers 400 "Function tools with reasoning_effort are
 // not supported ... use /v1/responses or set reasoning_effort to 'none'".
-// Gateway routes that translate their own dialect into a chat request, such as
-// /v1/messages, send such a request to /v1/responses instead and translate the
-// answer back, so the model keeps its tools and its reasoning.
+// Every gateway route that sends a chat request upstream — /v1/chat/completions
+// itself, and the routes that translate their own dialect into a chat request,
+// such as /v1/messages — sends such a request to /v1/responses instead and
+// translates the answer back, so the model keeps its tools and its reasoning.
 
 // responsesToolModels are the model families that take function tools on chat
 // completions only with reasoning off.
 var responsesToolModels = []string{"gpt-5.6"}
 
-// ChatNeedsResponses reports whether req must go to the Responses API: it
-// carries tools, for a model that takes them on chat completions only without
-// reasoning. Only the official API serves both endpoints.
+// ChatNeedsResponses reports whether req must go to the Responses API: the
+// official API is the only upstream that serves both endpoints, and req is one
+// that NeedsResponses refuses on chat completions.
 func (p *Provider) ChatNeedsResponses(req *models.ChatCompletionRequest) bool {
-	if !p.openAIAPI || len(req.Tools) == 0 {
+	return p.openAIAPI && NeedsResponses(req)
+}
+
+// NeedsResponses reports whether chat completions refuse req, whatever the
+// host: it carries tools, for a model that takes them on chat completions only
+// without reasoning, and the caller has not turned reasoning off. A caller who
+// sends reasoning_effort "none" gets tools on chat completions as asked.
+func NeedsResponses(req *models.ChatCompletionRequest) bool {
+	if req == nil || len(req.Tools) == 0 || reasoningOff(req) {
 		return false
 	}
 	model := resolveModelName(req.Model)
@@ -41,6 +50,16 @@ func (p *Provider) ChatNeedsResponses(req *models.ChatCompletionRequest) bool {
 		}
 	}
 	return false
+}
+
+// reasoningOff reports whether the caller set reasoning_effort to "none".
+func reasoningOff(req *models.ChatCompletionRequest) bool {
+	raw, ok := req.Extra["reasoning_effort"]
+	if !ok {
+		return false
+	}
+	var effort string
+	return json.Unmarshal(raw, &effort) == nil && effort == "none"
 }
 
 // ChatCompletionViaResponses serves a chat request on the Responses API.
@@ -147,6 +166,7 @@ type responsesRequest struct {
 	Temperature       *float64            `json:"temperature,omitempty"`
 	TopP              *float64            `json:"top_p,omitempty"`
 	Reasoning         *responsesReasoning `json:"reasoning,omitempty"`
+	Text              *responsesText      `json:"text,omitempty"`
 	User              string              `json:"user,omitempty"`
 	ServiceTier       string              `json:"service_tier,omitempty"`
 	// Store is sent as false: chat completions store nothing by default, and
@@ -157,6 +177,23 @@ type responsesRequest struct {
 
 type responsesReasoning struct {
 	Effort string `json:"effort"`
+}
+
+// responsesText carries the output format, chat's response_format.
+type responsesText struct {
+	Format json.RawMessage `json:"format"`
+}
+
+// responsesJSONSchemaFormat is a json_schema text format. The Responses API
+// takes chat's json_schema fields one level up.
+type responsesJSONSchemaFormat struct {
+	Type        string          `json:"type"`
+	Name        string          `json:"name"`
+	Description string          `json:"description,omitempty"`
+	Schema      json.RawMessage `json:"schema,omitempty"`
+	// Strict is always sent, as on function tools: chat completions default it
+	// to false, and the Responses API makes json_schema strict by default.
+	Strict bool `json:"strict"`
 }
 
 type responsesMessage struct {
@@ -196,7 +233,9 @@ type responsesFunctionTool struct {
 }
 
 // toResponsesRequest translates a chat request into a Responses API request.
-// stop has no Responses equivalent and is not sent.
+// stop has no Responses equivalent and is not sent; neither are n, seed,
+// presence/frequency penalties, logit_bias, logprobs, modalities, audio or
+// other unknown fields.
 func toResponsesRequest(req *models.ChatCompletionRequest, stream bool) *responsesRequest {
 	out := &responsesRequest{
 		Model:       resolveModelName(req.Model),
@@ -230,7 +269,47 @@ func toResponsesRequest(req *models.ChatCompletionRequest, stream bool) *respons
 		out.Tools = append(out.Tools, responsesTool(t))
 	}
 	out.ToolChoice = responsesToolChoice(req.ToolChoice)
+	if format := responsesTextFormat(req.ResponseFormat); format != nil {
+		out.Text = &responsesText{Format: format}
+	}
 	return out
+}
+
+// responsesTextFormat translates a chat response_format into a Responses text
+// format. A type the Responses API does not take is not sent.
+func responsesTextFormat(rf *models.ResponseFormat) json.RawMessage {
+	if rf == nil {
+		return nil
+	}
+	switch rf.Type {
+	case "text", "json_object":
+		b, _ := json.Marshal(struct {
+			Type string `json:"type"`
+		}{rf.Type})
+		return b
+	case "json_schema":
+		var js struct {
+			Name        string          `json:"name"`
+			Description string          `json:"description"`
+			Schema      json.RawMessage `json:"schema"`
+			Strict      *bool           `json:"strict"`
+		}
+		if len(rf.JSONSchema) > 0 {
+			_ = json.Unmarshal(rf.JSONSchema, &js)
+		}
+		if string(js.Schema) == "null" {
+			js.Schema = nil
+		}
+		b, _ := json.Marshal(responsesJSONSchemaFormat{
+			Type:        "json_schema",
+			Name:        js.Name,
+			Description: js.Description,
+			Schema:      js.Schema,
+			Strict:      js.Strict != nil && *js.Strict,
+		})
+		return b
+	}
+	return nil
 }
 
 // responsesInput translates one chat message into Responses input items.

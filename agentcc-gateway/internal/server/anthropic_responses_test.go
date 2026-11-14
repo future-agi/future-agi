@@ -20,18 +20,30 @@ import (
 
 // officialOpenAI is a real OpenAI provider pointed at a fake upstream. Only the
 // official API host turns the Responses route on, and a test server cannot
-// have that host, so this answers ChatNeedsResponses as the official API does.
+// have that host, so this answers ChatNeedsResponses as the official API does:
+// with the provider's own host-independent rule.
 type officialOpenAI struct{ *openaiprov.Provider }
 
 func (p officialOpenAI) ChatNeedsResponses(req *models.ChatCompletionRequest) bool {
-	return len(req.Tools) > 0 && strings.HasPrefix(req.Model, "gpt-5.6")
+	return openaiprov.NeedsResponses(req)
 }
 
+// bridgeUsage is the usage both fake routes report, so a call carried over the
+// Responses API can be compared with the same call on chat completions.
+const (
+	bridgeChatUsage      = `{"prompt_tokens":120,"prompt_tokens_details":{"cached_tokens":0},"completion_tokens":40,"completion_tokens_details":{"reasoning_tokens":16},"total_tokens":160}`
+	bridgeResponsesUsage = `{"input_tokens":120,"input_tokens_details":{"cached_tokens":0},"output_tokens":40,"output_tokens_details":{"reasoning_tokens":16},"total_tokens":160}`
+)
+
 // openAIUpstream fakes OpenAI for tool calls: chat completions refuse function
-// tools on gpt-5.6 and serve them on other models; /v1/responses serves them.
+// tools on gpt-5.6 unless reasoning_effort is "none", and serve them on other
+// models; /v1/responses serves them. Both stream and both report bridge usage.
 type openAIUpstream struct {
-	mu   sync.Mutex
-	hits map[string]int
+	mu     sync.Mutex
+	hits   map[string]int
+	bodies map[string][]byte // the last request body per path
+	// failResponses answers /v1/responses with a 503, as an outage would.
+	failResponses bool
 }
 
 func (u *openAIUpstream) count(path string) int {
@@ -40,28 +52,62 @@ func (u *openAIUpstream) count(path string) int {
 	return u.hits[path]
 }
 
+func (u *openAIUpstream) body(path string) []byte {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	return u.bodies[path]
+}
+
 func (u *openAIUpstream) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	raw, _ := io.ReadAll(r.Body)
 	u.mu.Lock()
 	u.hits[r.URL.Path]++
+	if u.bodies == nil {
+		u.bodies = map[string][]byte{}
+	}
+	u.bodies[r.URL.Path] = raw
+	failResponses := u.failResponses
 	u.mu.Unlock()
 
 	var req struct {
-		Model  string            `json:"model"`
-		Stream bool              `json:"stream"`
-		Tools  []json.RawMessage `json:"tools"`
+		Model           string            `json:"model"`
+		Stream          bool              `json:"stream"`
+		Tools           []json.RawMessage `json:"tools"`
+		ReasoningEffort *string           `json:"reasoning_effort"`
 	}
-	json.NewDecoder(r.Body).Decode(&req)
+	json.Unmarshal(raw, &req)
 
 	switch r.URL.Path {
 	case "/v1/chat/completions":
-		if strings.HasPrefix(req.Model, "gpt-5.6") && len(req.Tools) > 0 {
+		reasons := req.ReasoningEffort == nil || *req.ReasoningEffort != "none"
+		if strings.HasPrefix(req.Model, "gpt-5.6") && len(req.Tools) > 0 && reasons {
 			w.WriteHeader(http.StatusBadRequest)
 			fmt.Fprintf(w, `{"error":{"message":"Function tools with reasoning_effort are not supported for %s in /v1/chat/completions. To use function tools, use /v1/responses or set reasoning_effort to 'none'.","type":"invalid_request_error","param":"tools","code":null}}`, req.Model)
 			return
 		}
-		io.WriteString(w, `{"id":"chatcmpl-1","object":"chat.completion","created":1761580000,"model":"`+req.Model+`","choices":[{"index":0,"message":{"role":"assistant","content":null,"tool_calls":[{"id":"call_9","type":"function","function":{"name":"get_weather","arguments":"{\"city\":\"Paris\"}"}}]},"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":20,"completion_tokens":5,"total_tokens":25}}`)
+		if !req.Stream {
+			io.WriteString(w, `{"id":"chatcmpl-1","object":"chat.completion","created":1761580000,"model":"`+req.Model+`","choices":[{"index":0,"message":{"role":"assistant","content":null,"tool_calls":[{"id":"call_9","type":"function","function":{"name":"get_weather","arguments":"{\"city\":\"Paris\"}"}}]},"finish_reason":"tool_calls"}],"usage":`+bridgeChatUsage+`}`)
+			return
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		head := `{"id":"chatcmpl-1","object":"chat.completion.chunk","created":1761580000,"model":"` + req.Model + `",`
+		for _, data := range []string{
+			head + `"choices":[{"index":0,"delta":{"role":"assistant","content":null,"tool_calls":[{"index":0,"id":"call_9","type":"function","function":{"name":"get_weather","arguments":""}}]},"finish_reason":null}]}`,
+			head + `"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\"city\":"}}]},"finish_reason":null}]}`,
+			head + `"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\"Paris\"}"}}]},"finish_reason":null}]}`,
+			head + `"choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}`,
+			head + `"choices":[],"usage":` + bridgeChatUsage + `}`,
+			`[DONE]`,
+		} {
+			fmt.Fprintf(w, "data: %s\n\n", data)
+		}
 	case "/v1/responses":
-		final := `{"id":"resp_1","object":"response","created_at":1761580000,"status":"completed","model":"` + req.Model + `","output":[{"id":"rs_1","type":"reasoning","summary":[]},{"id":"fc_1","type":"function_call","status":"completed","call_id":"call_2","name":"get_weather","arguments":"{\"city\":\"Paris\"}"}],"usage":{"input_tokens":120,"input_tokens_details":{"cached_tokens":0},"output_tokens":40,"output_tokens_details":{"reasoning_tokens":16},"total_tokens":160}}`
+		if failResponses {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			io.WriteString(w, `{"error":{"message":"The server is overloaded.","type":"server_error","param":null,"code":null}}`)
+			return
+		}
+		final := `{"id":"resp_1","object":"response","created_at":1761580000,"status":"completed","model":"` + req.Model + `","output":[{"id":"rs_1","type":"reasoning","summary":[]},{"id":"fc_1","type":"function_call","status":"completed","call_id":"call_2","name":"get_weather","arguments":"{\"city\":\"Paris\"}"}],"usage":` + bridgeResponsesUsage + `}`
 		if !req.Stream {
 			io.WriteString(w, final)
 			return
@@ -88,13 +134,33 @@ func (u *openAIUpstream) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// bridgeModels are the models the bridge test server registers.
+var bridgeModels = []string{"gpt-5.6-terra", "gpt-5.6-sol", "gpt-5.6-luna", "gpt-5.5"}
+
+// bridgeServerOptions vary the bridge test server.
+type bridgeServerOptions struct {
+	// plain registers the provider as it is, an OpenAI-format upstream that
+	// is not the official API, so the Responses route stays off.
+	plain     bool
+	configure func(*config.Config)
+	plugins   []pipeline.Plugin
+}
+
 func newResponsesBridgeServer(t *testing.T) (*Server, *openAIUpstream) {
+	t.Helper()
+	return newResponsesBridgeServerWith(t, bridgeServerOptions{})
+}
+
+func newResponsesBridgeServerWith(t *testing.T, opts bridgeServerOptions) (*Server, *openAIUpstream) {
 	t.Helper()
 	upstream := &openAIUpstream{hits: map[string]int{}}
 	ts := httptest.NewServer(upstream)
 	t.Cleanup(ts.Close)
 
 	cfg := config.DefaultConfig()
+	if opts.configure != nil {
+		opts.configure(cfg)
+	}
 	registry, err := providers.NewRegistry(cfg)
 	if err != nil {
 		t.Fatalf("creating registry: %v", err)
@@ -103,10 +169,19 @@ func newResponsesBridgeServer(t *testing.T) (*Server, *openAIUpstream) {
 	if err != nil {
 		t.Fatalf("creating provider: %v", err)
 	}
-	registry.RegisterProvider("openai", officialOpenAI{p}, []string{"gpt-5.6-terra", "gpt-5.5"})
+	var provider providers.Provider = officialOpenAI{p}
+	if opts.plain {
+		provider = p
+	}
+	registry.RegisterProvider("openai", provider, bridgeModels)
 
-	srv := New(cfg, "", registry, pipeline.NewEngine(), nil, nil, nil, nil, testModelDBPtr(), nil, nil)
+	srv := New(cfg, "", registry, pipeline.NewEngine(opts.plugins...), nil, nil, nil, nil, testModelDBPtr(), nil, nil)
 	srv.ready.Store(true)
+	t.Cleanup(func() {
+		if srv.asyncWorker != nil {
+			srv.asyncWorker.Stop()
+		}
+	})
 	return srv, upstream
 }
 

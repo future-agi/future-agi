@@ -950,9 +950,13 @@ func (h *Handlers) handleAnthropicStreamViaCanonical(
 	}
 }
 
-// translatedChatCompletion calls provider with a request translated from
-// another dialect: over the Responses API when the model refuses the request on
-// chat completions, as gpt-5.6 refuses function tools while it reasons.
+// translatedChatCompletion calls provider with a chat request: over the
+// Responses API when the model refuses the request on chat completions, as
+// gpt-5.6 refuses function tools while it reasons. Every chat call path uses
+// it — /v1/chat/completions (non-stream, failover, model fallbacks and async
+// jobs), and the /v1/messages and GenAI routes that translate their own
+// dialect into a chat request. Call it once per attempt, after pre-plugins,
+// so the decision sees the model and tools that attempt sends.
 func translatedChatCompletion(ctx context.Context, provider providers.Provider, req *models.ChatCompletionRequest) (*models.ChatCompletionResponse, error) {
 	if rp, ok := provider.(providers.ChatViaResponsesProvider); ok && rp.ChatNeedsResponses(req) {
 		return rp.ChatCompletionViaResponses(ctx, req)
@@ -960,7 +964,9 @@ func translatedChatCompletion(ctx context.Context, provider providers.Provider, 
 	return provider.ChatCompletion(ctx, req)
 }
 
-// translatedStreamChatCompletion is translatedChatCompletion for a stream.
+// translatedStreamChatCompletion is translatedChatCompletion for a stream. The
+// Responses stream ends as a chat stream does: a chunk with the finish reason,
+// then a usage chunk with no choices.
 func translatedStreamChatCompletion(ctx context.Context, provider providers.Provider, req *models.ChatCompletionRequest) (<-chan models.StreamChunk, <-chan error) {
 	if rp, ok := provider.(providers.ChatViaResponsesProvider); ok && rp.ChatNeedsResponses(req) {
 		return rp.StreamChatCompletionViaResponses(ctx, req)
