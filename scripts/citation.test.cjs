@@ -30,7 +30,22 @@ test("citation credits the organisation and names the repository", () => {
     citation["repository-code"],
     "https://github.com/future-agi/future-agi",
   );
-  assert.equal(citation.license, "Apache-2.0");
+  assert.equal(Object.hasOwn(citation, "license"), false);
+  assert.match(source, /# See LICENSE and LICENSE-EE[^\n]*\nrepository-code:/);
+  assert.deepEqual(citation.keywords, [
+    "AI agents",
+    "self-improving agents",
+    "agent evaluation",
+    "agent simulation",
+    "LLM observability",
+    "OpenTelemetry",
+    "guardrails",
+    "LLM gateway",
+  ]);
+  assert.equal(
+    citation.abstract,
+    "Future AGI is open-source infrastructure for self-improving AI agents. It traces and evaluates agent runs, tests agents against simulated users and scenarios, and uses the results to optimize prompts, so each round of runs is used to improve the agent. It also includes guardrails and an OpenAI-compatible model gateway, and can be self-hosted.",
+  );
 });
 
 test("citation identifies the current release and its changelog date", () => {

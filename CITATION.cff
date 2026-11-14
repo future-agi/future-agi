@@ -8,18 +8,20 @@ title: "Future AGI"
 # release-please refreshes both when preparing a release; do not pin them manually.
 version: 1.56.1 # x-release-please-version
 date-released: 2026-10-28 # x-release-please-date
+# See LICENSE and LICENSE-EE for the repository's dual licensing terms.
 repository-code: "https://github.com/future-agi/future-agi"
-license: "Apache-2.0"
 keywords:
   - "AI agents"
-  - "evaluation"
-  - "observability"
-  - "LLM"
+  - "self-improving agents"
+  - "agent evaluation"
+  - "agent simulation"
+  - "LLM observability"
+  - "OpenTelemetry"
   - "guardrails"
-  - "optimization"
-  - "tracing"
+  - "LLM gateway"
 abstract: >-
-  Future AGI is an open-source end‑to‑end platform for building, evaluating,
-  observing, and improving AI agents. It provides simulation, 50+ evaluation metrics,
-  built‑in guardrails, OpenTelemetry tracing, an OpenAI‑compatible gateway,
-  and prompt optimization algorithms—all in a self‑hostable package.
+  Future AGI is open-source infrastructure for self-improving AI agents. It traces
+  and evaluates agent runs, tests agents against simulated users and scenarios,
+  and uses the results to optimize prompts, so each round of runs is used to
+  improve the agent. It also includes guardrails and an OpenAI-compatible model
+  gateway, and can be self-hosted.
