@@ -1761,6 +1761,19 @@ class BackfillRunner:
                 queue_bulk_change(writer.lease.project_id, now=now)
             incremental = changes.ChangeBatch((), (), (), (), (), {})
             overflowed = True
+        # Bound the chunk to what one pass can capture (bug 6): its history
+        # page by the allowance, and arrivals too many to fit beside it are
+        # left unconsumed for the incremental lane, which pages them.
+        allowance = pass_unit_allowance(
+            definitions, MetricProjectRefresh.for_project(writer.lease.project_id)
+        )
+        page_size = self.page_size
+        if allowance is not None:
+            page_size = max(1, min(page_size, allowance))
+            if _conversation_units(incremental) > allowance - page_size and (
+                serving_versions(writer.lease.project_id).exists()
+            ):
+                incremental = changes.ChangeBatch((), (), (), (), (), {})
         if cursor["phase"] == "coverage":
             coverage = version_coverage_page(
                 self.analytics,
@@ -1768,7 +1781,7 @@ class BackfillRunner:
                 head,
                 cursor,
                 now=now,
-                page_size=self.page_size,
+                page_size=page_size,
                 cutoff=cutoff,
             )
             batch = replace(coverage.changes, cursor_updates={})
@@ -1788,7 +1801,7 @@ class BackfillRunner:
                 writer,
                 head,
                 cursor,
-                page_size=self.page_size,
+                page_size=page_size,
                 cutoff=cutoff,
             )
         batch = merge_changes(batch, incremental)

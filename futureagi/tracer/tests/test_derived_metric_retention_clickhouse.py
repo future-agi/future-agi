@@ -437,7 +437,7 @@ def test_a_paused_project_still_retires_expired_units(
     )
     before = MetricProjectRefresh.for_project(observe_project.id)
     writer.retention_days = lambda: 1
-    admission.run_paused_expiry(writer)
+    admission.run_expiry_pass(writer)
     head = MetricProjectRefresh.for_project(observe_project.id).head_manifest
     assert head.id != before.head_manifest_id
     assert head.published_by.source_ceilings.get("logical_expiry")
@@ -447,6 +447,44 @@ def test_a_paused_project_still_retires_expired_units(
         MetricProjectRefresh.for_project(observe_project.id).watermark_ns
         == before.watermark_ns
     )
+
+
+@pytest.mark.django_db(transaction=True)
+def test_a_due_expiry_runs_as_its_own_pass_and_only_when_due(
+    live_writer, workspace, observe_project
+):
+    """A scheduled pass whose head holds a row past the physical cutoff does
+    the expiry rewrite and nothing else; once retired, it is no longer due."""
+    from tracer.models.derived_metric import DerivedMetricVersion
+    from tracer.services.derived_metrics import admission
+
+    writer = live_writer
+    definition = definition_for(writer, workspace, observe_project)
+    template = numeric_definition(definition.metric_id)
+    DerivedMetricVersion.objects.filter(id=definition.id).update(
+        formula=template.formula, inputs=template.inputs
+    )
+    definition.refresh_from_db()
+    now = timezone.now()
+    old, live = str(uuid4()), str(uuid4())
+    seed_fields_and_buckets(
+        writer,
+        definition,
+        [
+            (old, now - timedelta(days=2), 4, ""),
+            (live, now - timedelta(hours=1), 6, ""),
+        ],
+    )
+
+    def head():
+        return MetricProjectRefresh.for_project(observe_project.id).head_manifest
+
+    writer.retention_days = lambda: 0
+    assert admission.run_due_expiry(writer, head()) is False  # unlimited
+    writer.retention_days = lambda: 1
+    assert admission.run_due_expiry(writer, head()) is True
+    assert [r[0] for r in current_fields(writer, head()) if not r[2]] == [live]
+    assert admission.run_due_expiry(writer, head()) is False
 
 
 @pytest.mark.django_db(transaction=True)

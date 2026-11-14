@@ -827,7 +827,15 @@ def run_project_pass(lease: ProjectLease, purpose: str) -> None:
 
         if purpose == "expiry" or state.paused_reason:
             # Paused as too large: privacy work only, never new calculation.
-            run_paused_expiry(writer)
+            run_expiry_pass(writer)
+            writer.collect_garbage()
+            return
+        if state.head_manifest_id is not None and run_due_expiry(
+            writer, state.head_manifest
+        ):
+            # Physical expiry is due (about once an expiry interval): this pass
+            # rewrites the head and does nothing else, so a capture budget and
+            # a head-sized rewrite never share one pass's deadline.
             writer.collect_garbage()
             return
         if state.head_manifest_id is None and size_cap.pause_at_enrollment(
@@ -872,8 +880,16 @@ def run_project_pass(lease: ProjectLease, purpose: str) -> None:
         client.disconnect()
 
 
-def run_paused_expiry(writer) -> None:
-    """A paused project's pass: physical expiry only, nothing new calculated."""
+def run_due_expiry(writer, head) -> bool:
+    """Run an expiry-only pass when the head holds a row past the physical cutoff."""
+    if head is None or not writer._head_holds_expired_rows(head):
+        return False
+    run_expiry_pass(writer)
+    return True
+
+
+def run_expiry_pass(writer) -> None:
+    """Physical expiry only, nothing new calculated (paused or expiry due)."""
     from tracer.services.derived_metrics import backfill
     from tracer.services.derived_metrics.retention import expire_project
 

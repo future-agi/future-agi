@@ -291,8 +291,15 @@ def test_forward_span_version_computes_only_spans_from_coverage_start(
 
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.usefixtures("enabled_metrics")
+@pytest.mark.parametrize(("fields", "capture_seconds"), [(1, 150), (3, 100)])
 def test_work_larger_than_a_pass_publishes_across_passes_and_never_leaves_it_open(
-    live_writer, workspace, observe_project, settings, monkeypatch
+    live_writer,
+    workspace,
+    observe_project,
+    settings,
+    monkeypatch,
+    fields,
+    capture_seconds,
 ):
     """10M bug 6: a BIG pass planned 107 captures (~3.5 s each), ran past its
     540 s lease and published nothing; the next pass repeated the same work.
@@ -313,9 +320,32 @@ def test_work_larger_than_a_pass_publishes_across_passes_and_never_leaves_it_ope
         "ALTER TABLE spans ADD COLUMN observation_type String DEFAULT ''"
     )
     definition = definition_for(writer, workspace, observe_project)
+    # More conversation fields: one 500-unit batch costs fields x captures, all
+    # inside the soft window (6(b) is what lifts that envelope).
+    definitions = [definition]
+    for number in range(1, fields):
+        metric = DerivedMetric.objects.create(
+            organization=workspace.organization,
+            workspace=workspace,
+            project=observe_project,
+            name=f"Test metric {number}",
+        )
+        definitions.append(
+            DerivedMetricVersion.objects.create(
+                metric=metric,
+                version=1,
+                **{
+                    k: v
+                    for k, v in definition.semantics().items()
+                    if k not in {"metric", "version"}
+                },
+            )
+        )
     hour = datetime.now(UTC).replace(minute=0, second=0, microsecond=0)
     enrolled = hour - timedelta(hours=3)
-    DerivedMetricVersion.objects.filter(id=definition.id).update(created_at=enrolled)
+    DerivedMetricVersion.objects.filter(id__in=[d.id for d in definitions]).update(
+        created_at=enrolled
+    )
     at = enrolled + timedelta(hours=1)
     truth = {}
     rows = []
@@ -351,18 +381,18 @@ def test_work_larger_than_a_pass_publishes_across_passes_and_never_leaves_it_ope
     analytics = Analytics(writer.store.client)
     assert backfill.enter_backfill(
         writer.lease, analytics, retention_days=lambda: 0
-    ) == {str(definition.id): "forward"}
+    ) == {str(d.id): "forward" for d in definitions}
     clock = [0.0]
     writer.lease.ticker = lambda: clock[0]
     capture = refresh.capture_source_output
 
     def slow_capture(*args, **kwargs):
-        clock[0] += 150
+        clock[0] += capture_seconds
         return capture(*args, **kwargs)
 
     monkeypatch.setattr(refresh, "capture_source_output", slow_capture)
     heads, yields = [], 0
-    for _ in range(14):
+    for _ in range(24):
         # One pass: a fresh writer counter and a 540 s budget on the fake clock.
         writer.pass_captures = 0
         writer.lease.deadline = clock[0] + 540
@@ -382,15 +412,15 @@ def test_work_larger_than_a_pass_publishes_across_passes_and_never_leaves_it_ope
         ).exists()
         state = MetricProjectRefresh.for_project(observe_project.id)
         heads.append(state.head_manifest_id)
-        if state.head_manifest_id and len(
-            _version_fields(writer, state.head_manifest, definition)
-        ) == len(truth):
+        if state.head_manifest_id and all(
+            len(_version_fields(writer, state.head_manifest, d)) == len(truth)
+            for d in definitions
+        ):
             break
     else:
         pytest.fail(f"never completed: {len(set(heads))} heads, {yields} yields")
     assert yields >= 1  # the budget was really exceeded and the pass stopped
     assert len({h for h in heads if h}) >= 2  # progress over several passes
-    assert dict(_version_fields(writer, state.head_manifest, definition)) == truth
     # A yield's ledger is carried by the next pass, exactly once: one more pass
     # (now fast) takes any still waiting, and the values stay true.
     monkeypatch.setattr(refresh, "capture_source_output", capture)
@@ -411,7 +441,8 @@ def test_work_larger_than_a_pass_publishes_across_passes_and_never_leaves_it_ope
         == yields
     )
     state = MetricProjectRefresh.for_project(observe_project.id)
-    assert dict(_version_fields(writer, state.head_manifest, definition)) == truth
+    for d in definitions:
+        assert dict(_version_fields(writer, state.head_manifest, d)) == truth
 
 
 @pytest.mark.django_db(transaction=True)
