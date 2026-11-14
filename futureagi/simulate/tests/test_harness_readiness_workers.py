@@ -10,6 +10,8 @@ import pytest
 from simulate.services.harness_readiness import evidence as evidence_module
 from simulate.services.harness_readiness import workers
 from simulate.services.harness_readiness.evidence import Evidence
+from simulate.tests.test_harness_readiness import readiness_on as readiness_on  # noqa: F401
+from simulate.tests.test_harness_readiness import storage as storage  # noqa: F401
 
 CONTRACT = {
     "tool_entrypoints": [
@@ -65,6 +67,10 @@ def _evidence(**fields):
     )
 
 
+# The real reader, kept before the module's fixture stubs it for the row tests.
+_READ_BYPASSES = workers._bypasses
+
+
 @pytest.fixture(autouse=True)
 def no_bypasses(monkeypatch):
     monkeypatch.setattr(workers, "_bypasses", lambda _pairing, _runs: {})
@@ -106,7 +112,8 @@ def test_shared_worker_reads_unavailable_not_enforced():
             for one in CONTRACT["workers"]
         ],
     }
-    row = _rows(_pairing(shared), _evidence(worker_permissions={}))["refund"]
+    # Even with an allow-list sealed for it, a shared worker's calls carry no channel, so nothing is held.
+    row = _rows(_pairing(shared), _evidence())["refund"]
     assert (row["status"], row["reason_code"]) == ("unavailable", "shared_binding")
     assert set(_boundaries(row).values()) == {"not_enforced"}
 
@@ -145,10 +152,28 @@ def test_a_bypass_in_a_run_blocks_that_worker_with_a_fix(monkeypatch):
 
 
 @pytest.mark.django_db
-def test_a_bypass_with_another_agent_version_does_not_block():
-    # `_runs(pairing)` reads only the pairing's own agent and environment version, so a bypass on another agent
-    # version's run never reaches `_bypasses`: with no runs there is nothing to read.
-    assert workers._bypasses(_pairing(), []) == {}
+@pytest.mark.django_db
+def test_a_bypass_with_another_agent_version_does_not_block(
+    user, workspace, storage, django_capture_on_commit_callbacks
+):
+    """A run of agent v1 whose call says the refund worker bypassed its channel blocks the refund worker for v1's
+    pairing only: the pairing of v2 never reads v1's runs."""
+    from simulate.models import CallExecution
+    from simulate.services.hosted_harness_ingestion import TRIAL_STATE_KEY
+    from simulate.tests import test_harness_readiness as base
+
+    environment, a2 = base._with_a2(user, workspace, storage, "rw-bypass-agent")
+    base._certify(environment, storage)
+    run = base._committed_run(environment, django_capture_on_commit_callbacks)
+    notice = {"code": workers.BYPASS_CODE, "workers": ["refund"]}
+    calls = CallExecution.objects.filter(test_execution_id=run.test_execution_id)
+    assert calls.exists()
+    calls.update(call_metadata={TRIAL_STATE_KEY: {"notices": [notice]}})
+
+    v1 = base._pairing(environment)
+    assert set(_READ_BYPASSES(v1, evidence_module._runs(v1))) == {"refund"}
+    v2 = base._pairing(environment, a2)
+    assert _READ_BYPASSES(v2, evidence_module._runs(v2)) == {}
 
 
 def test_an_unreadable_archive_reads_untested():
