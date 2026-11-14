@@ -409,7 +409,9 @@ def _ingest_org_logs(org, logs):
             )
 
     if objects:
-        AgentccRequestLog.no_workspace_objects.bulk_create(objects, ignore_conflicts=True)
+        AgentccRequestLog.no_workspace_objects.bulk_create(
+            objects, ignore_conflicts=True
+        )
         # The gateway resends a batch whose response it did not get in time, so a
         # batch can hold rows saved already. The unique request ID skips those;
         # only the rows saved now go on to webhooks and metering.

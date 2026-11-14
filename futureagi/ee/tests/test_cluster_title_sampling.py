@@ -39,8 +39,8 @@ class TestSpread:
         items = list(range(1000))
         picked = _spread([str(i) for i in items], 25)
         gaps = [int(b) - int(a) for a, b in zip(picked, picked[1:])]
-        assert min(gaps) > 0                      # strictly increasing, no repeats
-        assert max(gaps) - min(gaps) <= 1         # evenly spaced
+        assert min(gaps) > 0  # strictly increasing, no repeats
+        assert max(gaps) - min(gaps) <= 1  # evenly spaced
 
     def test_is_deterministic(self):
         """A cluster recomputes its title at several growth points; a random

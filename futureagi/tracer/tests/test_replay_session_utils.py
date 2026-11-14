@@ -211,11 +211,14 @@ class TestGetAgentSuggestions:
 
         mock_get_agent_def_from_sessions.return_value = None
 
-        with patch(
-            "tracer.utils.replay_session._get_next_replay_scenario_version",
-            return_value=1,
-        ), patch(
-            "tracer.utils.replay_session._is_voice_trace_query", return_value=False
+        with (
+            patch(
+                "tracer.utils.replay_session._get_next_replay_scenario_version",
+                return_value=1,
+            ),
+            patch(
+                "tracer.utils.replay_session._is_voice_trace_query", return_value=False
+            ),
         ):
             exists, suggestions, agent_def = get_agent_suggestions(
                 mock_project, "trace", [str(uuid.uuid4())], False
@@ -238,11 +241,14 @@ class TestGetAgentSuggestions:
 
         mock_get_agent_def_from_sessions.return_value = None
 
-        with patch(
-            "tracer.utils.replay_session._get_next_replay_scenario_version",
-            return_value=1,
-        ), patch(
-            "tracer.utils.replay_session._is_voice_trace_query", return_value=False
+        with (
+            patch(
+                "tracer.utils.replay_session._get_next_replay_scenario_version",
+                return_value=1,
+            ),
+            patch(
+                "tracer.utils.replay_session._is_voice_trace_query", return_value=False
+            ),
         ):
             exists, suggestions, agent_def = get_agent_suggestions(
                 mock_project, "trace", [], False
@@ -636,12 +642,15 @@ class TestGetTranscriptsFromSessionQuery:
         mock_reader.__enter__ = lambda s: s
         mock_reader.__exit__ = MagicMock(return_value=False)
 
-        with patch(
-            "tracer.services.clickhouse.v2.get_reader",
-            return_value=mock_reader,
-        ), patch(
-            "tracer.utils.replay_session.trace_ids_with_simulator_call_execution_id",
-            return_value=set(),
+        with (
+            patch(
+                "tracer.services.clickhouse.v2.get_reader",
+                return_value=mock_reader,
+            ),
+            patch(
+                "tracer.utils.replay_session.trace_ids_with_simulator_call_execution_id",
+                return_value=set(),
+            ),
         ):
             result = _get_transcripts_from_session_query(mock_queryset)
 
@@ -679,12 +688,15 @@ class TestGetTranscriptsFromSessionQuery:
         mock_reader.__enter__ = lambda s: s
         mock_reader.__exit__ = MagicMock(return_value=False)
 
-        with patch(
-            "tracer.services.clickhouse.v2.get_reader",
-            return_value=mock_reader,
-        ), patch(
-            "tracer.utils.replay_session.trace_ids_with_simulator_call_execution_id",
-            return_value=set(),
+        with (
+            patch(
+                "tracer.services.clickhouse.v2.get_reader",
+                return_value=mock_reader,
+            ),
+            patch(
+                "tracer.utils.replay_session.trace_ids_with_simulator_call_execution_id",
+                return_value=set(),
+            ),
         ):
             result = _get_transcripts_from_session_query(mock_queryset)
 
@@ -737,12 +749,15 @@ class TestGetTranscriptsFromSessionQuery:
         mock_reader.__enter__ = lambda s: s
         mock_reader.__exit__ = MagicMock(return_value=False)
 
-        with patch(
-            "tracer.services.clickhouse.v2.get_reader",
-            return_value=mock_reader,
-        ), patch(
-            "tracer.utils.replay_session.trace_ids_with_simulator_call_execution_id",
-            return_value=set(),
+        with (
+            patch(
+                "tracer.services.clickhouse.v2.get_reader",
+                return_value=mock_reader,
+            ),
+            patch(
+                "tracer.utils.replay_session.trace_ids_with_simulator_call_execution_id",
+                return_value=set(),
+            ),
         ):
             result = _get_transcripts_from_session_query(mock_queryset)
 
@@ -1026,6 +1041,7 @@ class TestResolveAgentDefinitionForProject:
 
     def test_empty_and_no_providers_returns_none(self, project):
         from tracer.utils.replay_session import _resolve_agent_definition_for_project
+
         result = _resolve_agent_definition_for_project(project)
         assert result is None
 

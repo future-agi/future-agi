@@ -196,9 +196,9 @@ class TestPersonaStructure:
 
         for persona in ENGLISH_PERSONAS:
             for field in required_fields:
-                assert (
-                    field in persona
-                ), f"Missing field '{field}' in persona: {persona.get('name', 'unknown')}"
+                assert field in persona, (
+                    f"Missing field '{field}' in persona: {persona.get('name', 'unknown')}"
+                )
 
     def test_hindi_personas_have_required_fields(self):
         """Hindi personas should have all required fields."""
@@ -206,9 +206,9 @@ class TestPersonaStructure:
 
         for persona in HINDI_PERSONAS:
             for field in required_fields:
-                assert (
-                    field in persona
-                ), f"Missing field '{field}' in persona: {persona.get('name', 'unknown')}"
+                assert field in persona, (
+                    f"Missing field '{field}' in persona: {persona.get('name', 'unknown')}"
+                )
 
     def test_english_personas_have_diverse_genders(self):
         """English personas should include both male and female genders."""
@@ -235,14 +235,14 @@ class TestPersonaStructure:
     def test_personas_have_unique_names(self):
         """Personas within each language should have unique names."""
         english_names = [p["name"] for p in ENGLISH_PERSONAS]
-        assert len(english_names) == len(
-            set(english_names)
-        ), "English personas should have unique names"
+        assert len(english_names) == len(set(english_names)), (
+            "English personas should have unique names"
+        )
 
         hindi_names = [p["name"] for p in HINDI_PERSONAS]
-        assert len(hindi_names) == len(
-            set(hindi_names)
-        ), "Hindi personas should have unique names"
+        assert len(hindi_names) == len(set(hindi_names)), (
+            "Hindi personas should have unique names"
+        )
 
     def test_personas_have_valid_age_groups(self):
         """Personas should have valid age group formats."""
@@ -254,6 +254,6 @@ class TestPersonaStructure:
             is_valid = (
                 age_group in valid_age_patterns or "-" in age_group or "+" in age_group
             )
-            assert (
-                is_valid
-            ), f"Invalid age_group '{age_group}' for persona: {persona.get('name')}"
+            assert is_valid, (
+                f"Invalid age_group '{age_group}' for persona: {persona.get('name')}"
+            )

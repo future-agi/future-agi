@@ -857,7 +857,7 @@ async def run_batch(batch_tests, token, batch_name="batch"):
     results = []
     for i, (cat, sub, msg, expected) in enumerate(batch_tests):
         test_id = f"{cat}/{sub}"
-        print(f"  [{i+1}/{len(batch_tests)}] {test_id}: {msg[:60]}...", flush=True)
+        print(f"  [{i + 1}/{len(batch_tests)}] {test_id}: {msg[:60]}...", flush=True)
 
         # Each test gets a fresh conversation to avoid context bleed
         test_conv_id = create_conv(token, f"test-{test_id}")
@@ -885,9 +885,9 @@ def print_summary(all_results):
     warned = sum(1 for r in all_results if "WARN" in r["status"])
     failed = sum(1 for r in all_results if "FAIL" in r["status"])
 
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print(f"RESULTS: {passed}/{total} passed, {warned} warnings, {failed} failed")
-    print(f"{'='*60}")
+    print(f"{'=' * 60}")
 
     if failed:
         print("\n❌ FAILURES:")
@@ -913,7 +913,7 @@ def uniquify_test_messages(cases):
     """Add a unique suffix to test messages that create resources to avoid name collisions."""
     import random
 
-    suffix = f"-t{random.randint(1000,9999)}"
+    suffix = f"-t{random.randint(1000, 9999)}"
     uniquified = []
     for cat, sub, msg, expected in cases:
         # Replace hardcoded resource names with unique ones
