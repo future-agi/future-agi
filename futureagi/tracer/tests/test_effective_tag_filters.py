@@ -449,6 +449,61 @@ def test_direct_count_uses_same_effective_relation(stores, monkeypatch):
     assert all(call[1]["server_execution_cap_ms"] > 0 for call in calls)
 
 
+def test_exact_refresh_worker_binds_effective_tag_relations(stores, monkeypatch):
+    """The exact-refresh worker's executor binds a Tag leaf, as the request
+    path does: the Users graph's worker read compiles one through
+    ClickHouseFilterBuilderV2, unbound."""
+    from tracer.services.clickhouse import v2 as v2_module
+    from tracer.services.clickhouse.query_service import AnalyticsQueryService
+    from tracer.tasks import exact_aggregation
+
+    seed(stores, "alpha", attrs_string={"tag.tags": '["sdk"]'})
+    seed(stores, "beta")
+    manual("alpha", ["ui"])
+    monkeypatch.setattr(
+        v2_module,
+        "get_v2_config",
+        lambda: {
+            "host": "127.0.0.1",
+            "tcp_port": 9,
+            "http_port": 9,
+            "user": "default",
+            "password": "",
+            "database": "test_th7275_worker",
+            "server_enforced_readonly": False,
+        },
+    )
+    sent = []
+
+    def execute(_self, sql, params=None, **kwargs):
+        # The base service's read, run on chdb: only what reaches ClickHouse.
+        sent.append(params)
+        return stores.analytics.execute_ch_query(sql, params, **kwargs)
+
+    monkeypatch.setattr(AnalyticsQueryService, "execute_ch_query", execute)
+    condition, params = ClickHouseFilterBuilderV2(project_id=PROJECT).translate(
+        [leaf("tag", "ui")]
+    )
+    params.update(project_id=PROJECT, start_date=BEGIN, end_date=END)
+    with exact_aggregation._exact_observe_analytics() as analytics:
+        result = analytics.execute_ch_query(
+            "SELECT count() AS count FROM spans FINAL WHERE project_id = %(project_id)s "
+            "AND start_time >= %(start_date)s AND start_time < %(end_date)s AND ("
+            + condition
+            + ")",
+            params,
+            timeout_ms=10000,
+        )
+    assert result.data == [{"count": 1}]
+    from tracer.services.clickhouse.v2.effective_tags import EffectiveTagRelation
+
+    assert not any(
+        isinstance(value, EffectiveTagRelation)
+        for bound in sent
+        for value in (bound or {}).values()
+    )
+
+
 @pytest.mark.parametrize(
     "column,value,operation", [("tag", "ui", "equals"), ("tags", ["ui"], "contains")]
 )

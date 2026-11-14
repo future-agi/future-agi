@@ -51,18 +51,14 @@ def reset_v2_query_client() -> None:
         _client = None
 
 
-class V2AnalyticsQueryService(AnalyticsQueryService):
-    """Run generic read SQL against the configured direct-write CH25 cluster."""
+class EffectiveTagBindingMixin:
+    """Bind effective-tag relations before a read is sent to ClickHouse.
 
-    def __init__(self, *, read_timeout_ceiling_ms: int | None = None) -> None:
-        # Individual calls and ordinary service instances retain the normal
-        # 30-second application ceiling. A higher explicit value only lets a
-        # reviewed graph/dashboard fail-safe request up to 180 seconds instead
-        # of being silently clamped back to 30 seconds.
-        super().__init__(
-            ch_client=get_v2_query_client(),
-            read_timeout_ceiling_ms=read_timeout_ceiling_ms,
-        )
+    A compiled Tag leaf carries an unbound ``EffectiveTagRelation`` in its
+    params; every executor that can receive one (the request path and the
+    exact-refresh worker alike) must bind it, or the statement references
+    placeholders it never got.
+    """
 
     def execute_ch_query(
         self,
@@ -113,6 +109,26 @@ class V2AnalyticsQueryService(AnalyticsQueryService):
             timeout_ms=timeout_ms,
             settings=settings,
             server_execution_cap_ms=server_execution_cap_ms,
+        )
+
+
+class EffectiveTagAnalyticsQueryService(
+    EffectiveTagBindingMixin, AnalyticsQueryService
+):
+    """``AnalyticsQueryService`` on a caller-owned client that binds Tag leaves."""
+
+
+class V2AnalyticsQueryService(EffectiveTagBindingMixin, AnalyticsQueryService):
+    """Run generic read SQL against the configured direct-write CH25 cluster."""
+
+    def __init__(self, *, read_timeout_ceiling_ms: int | None = None) -> None:
+        # Individual calls and ordinary service instances retain the normal
+        # 30-second application ceiling. A higher explicit value only lets a
+        # reviewed graph/dashboard fail-safe request up to 180 seconds instead
+        # of being silently clamped back to 30 seconds.
+        super().__init__(
+            ch_client=get_v2_query_client(),
+            read_timeout_ceiling_ms=read_timeout_ceiling_ms,
         )
 
     @staticmethod
