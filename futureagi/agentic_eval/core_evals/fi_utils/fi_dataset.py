@@ -86,8 +86,7 @@ class Dataset:
             batch = rows[i : i + batch_size]
             # Convert DatasetRow objects to dictionaries
             batch_dicts: list[dict[Any, Any]] = [
-                {k: v for k, v in vars(row).items() if v is not None}
-                for row in batch
+                {k: v for k, v in vars(row).items() if v is not None} for row in batch
             ]
             try:
                 FiApiService.add_dataset_rows(dataset_id, batch_dicts)
@@ -107,4 +106,3 @@ class Dataset:
     @staticmethod
     def dataset_link(dataset_id: str):
         return f"https://app.fi.ai/develop/{dataset_id}"
-

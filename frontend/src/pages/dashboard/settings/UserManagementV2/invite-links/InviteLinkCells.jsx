@@ -4,7 +4,7 @@ import { Stack, Typography, IconButton } from "@mui/material";
 import { enqueueSnackbar } from "notistack";
 import Iconify from "src/components/iconify";
 import CustomTooltip from "src/components/tooltip";
-import { copyToClipboard } from "src/utils/utils";
+import { copyToClipboard } from "src/utils/copyToClipboard";
 
 export function InviteLinkCell({ data }) {
   const [copied, setCopied] = useState(false);

@@ -23,7 +23,9 @@ class TestHappyPath:
 def evaluate(output, expected, **kwargs):
     return output == expected
 """
-        result = execute_restricted_python(code, {"output": "hello", "expected": "hello"})
+        result = execute_restricted_python(
+            code, {"output": "hello", "expected": "hello"}
+        )
         assert result["status"] == "success"
         assert result["data"] is True
 
@@ -32,7 +34,9 @@ def evaluate(output, expected, **kwargs):
 def evaluate(output, expected, **kwargs):
     return output == expected
 """
-        result = execute_restricted_python(code, {"output": "hello", "expected": "world"})
+        result = execute_restricted_python(
+            code, {"output": "hello", "expected": "world"}
+        )
         assert result["status"] == "success"
         assert result["data"] is False
 
@@ -133,7 +137,9 @@ def evaluate(output, expected, **kwargs):
     ratio = difflib.SequenceMatcher(None, output, expected).ratio()
     return ratio
 """
-        result = execute_restricted_python(code, {"output": "hello", "expected": "hallo"})
+        result = execute_restricted_python(
+            code, {"output": "hello", "expected": "hallo"}
+        )
         assert result["status"] == "success"
         assert isinstance(result["data"], float)
         assert result["data"] > 0.5
@@ -160,7 +166,10 @@ def evaluate(**kwargs):
 """
         result = execute_restricted_python(code, {})
         assert result["status"] == "error"
-        assert "not allowed" in result["data"].lower() or "import" in result["data"].lower()
+        assert (
+            "not allowed" in result["data"].lower()
+            or "import" in result["data"].lower()
+        )
 
     def test_import_subprocess_blocked(self):
         code = """

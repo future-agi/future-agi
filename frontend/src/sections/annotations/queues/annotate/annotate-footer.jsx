@@ -102,7 +102,7 @@ export default function AnnotateFooter({
             minWidth: 80,
             textAlign: "center",
             userSelect: "none",
-            fontSize: 13,
+            fontSize: 12,
             fontWeight: 600,
             color: "text.primary",
             lineHeight: 1,

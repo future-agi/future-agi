@@ -175,7 +175,7 @@ export default function WidgetRenderer({ widget, traceData, onRunAnalysis }) {
                 fontStyle: "italic",
               }}
             >
-              Falcon is analyzing this trace...
+              Analyzing this trace...
             </Typography>
           </Box>
         ) : (
