@@ -121,6 +121,8 @@ export const SCENARIOS_COPY = {
     `Cited by ${keys.length === 1 ? "1 case" : `${keys.length} cases`}: ${keys.join(", ")}`,
   addMissingCases: "Add missing cases",
   uncoveredTitle: "Planned levels no scenario covers yet",
+  requestedTitle: "Asked for, not written yet",
+  requestedGuidance: (lines) => `Write these cases you were asked for and have not written yet: ${lines.join("; ")}`,
   workflowTitle: "Release checks per workflow",
   workflowColumn: "Workflow",
   workflowKinds: { success: "Success", refusal: "Refusal", wrong_result: "Wrong result" },

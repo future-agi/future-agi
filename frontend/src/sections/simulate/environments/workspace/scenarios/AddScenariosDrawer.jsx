@@ -2,6 +2,7 @@ import PropTypes from "prop-types";
 import { useState } from "react";
 import {
   Alert,
+  Autocomplete,
   Button,
   Link,
   Stack,
@@ -18,13 +19,17 @@ import {
   harnessIdempotencyKey,
   sendHarnessConversationMessage,
 } from "src/api/harness/harness";
-import { uploadEnvironmentFile } from "src/api/simulate-environments/versions";
+import {
+  uploadEnvironmentFile,
+  useActors,
+} from "src/api/simulate-environments/versions";
 import { harnessScenariosListKey } from "src/api/simulate-environments/scenariosHooks";
 import { paths } from "src/routes/paths";
 import {
   ADD_COPY,
   ADD_ROUTES,
-  DESCRIBE_PREFIX,
+  describeMessage,
+  groundingSuffix,
   MAX_COUNT,
   POLICY_TYPES,
   RECORD_TYPES,
@@ -68,6 +73,21 @@ export default function AddScenariosDrawer({
   const [error, setError] = useState(null);
   const queryClient = useQueryClient();
   const jobId = env?.id;
+  // What the person may ground new cases in: the cast, the environment's rules and its files.
+  const cast = useActors(jobId, { enabled: Boolean(open && jobId) });
+  const actorNames = (cast.data?.actors ?? [])
+    .map((one) => one?.name || one?.id)
+    .filter(Boolean);
+  const ruleOptions = env?.rules ?? [];
+  const fileOptions = cast.data?.knowledge_sources?.files ?? [];
+  const [actors, setActors] = useState([]);
+  const [grounding, setGrounding] = useState([]);
+  const suffix = () =>
+    groundingSuffix(
+      actors,
+      grounding.filter((one) => one.kind === "rule").map((one) => one.value),
+      grounding.filter((one) => one.kind === "file").map((one) => one.value),
+    );
 
   const close = () => {
     setState("idle");
@@ -88,14 +108,15 @@ export default function AddScenariosDrawer({
     try {
       const n = clampCount(count);
       if (route === "generate") {
+        const asked = `${guidance.trim()}${suffix()}`.trim();
         await extendHarnessJob(jobId, {
           count: n,
-          ...(guidance.trim() ? { guidance: guidance.trim() } : {}),
+          ...(asked ? { guidance: asked } : {}),
         });
       } else if (route === "describe") {
         await sendHarnessConversationMessage(
           jobId,
-          message(`${DESCRIBE_PREFIX} ${description.trim()}`),
+          message(`${describeMessage(description)}${suffix()}`),
         );
       } else if (route === "file" || route === "records") {
         const { path, text } = await upload();
@@ -103,7 +124,7 @@ export default function AddScenariosDrawer({
           route === "file"
             ? fileMessage(n, path, text)
             : recordsMessage(n, path, text);
-        await sendHarnessConversationMessage(jobId, message(content));
+        await sendHarnessConversationMessage(jobId, message(`${content}${suffix()}`));
       }
       queryClient.invalidateQueries({
         queryKey: harnessScenariosListKey(jobId),
@@ -186,6 +207,35 @@ export default function AddScenariosDrawer({
             value={description}
             onChange={(e) => setDescription(e.target.value)}
           />
+        )}
+        {["generate", "describe", "file"].includes(route) && (
+          <>
+            <Autocomplete
+              multiple
+              size="small"
+              options={actorNames}
+              value={actors}
+              onChange={(_, value) => setActors(value)}
+              renderInput={(params) => <TextField {...params} label={ADD_COPY.actors} />}
+              data-testid="add-actors"
+            />
+            <Autocomplete
+              multiple
+              size="small"
+              options={[
+                ...ruleOptions.map((value) => ({ kind: "rule", value })),
+                ...fileOptions.map((value) => ({ kind: "file", value })),
+              ]}
+              value={grounding}
+              isOptionEqualToValue={(a, b) => a.kind === b.kind && a.value === b.value}
+              getOptionLabel={(one) =>
+                one.kind === "rule" ? ADD_COPY.ruleOption(one.value) : ADD_COPY.fileOption(one.value)
+              }
+              onChange={(_, value) => setGrounding(value)}
+              renderInput={(params) => <TextField {...params} label={ADD_COPY.groundIn} />}
+              data-testid="add-ground-in"
+            />
+          </>
         )}
         {(route === "file" || route === "records") && (
           <Stack spacing={0.5}>

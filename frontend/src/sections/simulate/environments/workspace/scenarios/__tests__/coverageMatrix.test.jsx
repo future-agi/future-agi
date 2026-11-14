@@ -129,3 +129,15 @@ describe("WorkflowChecks", () => {
     expect(screen.queryByTestId("coverage-workflows")).toBeNull();
   });
 });
+
+describe("RequestedUncovered", () => {
+  it("lists what was asked for and not written, and asks for it", async () => {
+    const { RequestedUncovered } = await import("../CoverageMatrix");
+    const onAddMissing = vi.fn();
+    render(<RequestedUncovered lines={["a refund after 30 days"]} onAddMissing={onAddMissing} />);
+    expect(screen.getByTestId("coverage-requested")).toHaveTextContent("Asked for, not written yet");
+    expect(screen.getByTestId("coverage-requested")).toHaveTextContent("a refund after 30 days");
+    fireEvent.click(screen.getByRole("button", { name: "Add missing cases" }));
+    expect(onAddMissing).toHaveBeenCalledWith(["a refund after 30 days"]);
+  });
+});

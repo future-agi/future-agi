@@ -13,8 +13,10 @@ vi.mock("src/api/harness/harness", () => ({
     sendHarnessConversationMessage(...args),
   harnessIdempotencyKey: () => "req-1",
 }));
+const cast = vi.hoisted(() => ({ data: { actors: [], knowledge_sources: { files: [] } } }));
 vi.mock("src/api/simulate-environments/versions", () => ({
   uploadEnvironmentFile: (...args) => uploadEnvironmentFile(...args),
+  useActors: () => cast,
 }));
 
 const { default: AddScenariosDrawer } = await import("../AddScenariosDrawer");
@@ -55,7 +57,7 @@ describe("AddScenariosDrawer routes", () => {
     );
     await user.click(screen.getByRole("button", { name: "Write scenarios" }));
     const [, body] = sendHarnessConversationMessage.mock.calls[0];
-    expect(body.content).toBe(`${DESCRIBE_PREFIX} a 20-day refund`);
+    expect(body.content).toBe(`${DESCRIBE_PREFIX}\nRequested case 1: a 20-day refund`);
     expect(body.kind).toBe("user_message");
   });
 
@@ -87,5 +89,48 @@ describe("AddScenariosDrawer routes", () => {
 
   it("no longer reads the fixture pool", () => {
     expect(constantsSource).not.toContain("generatedPool");
+  });
+});
+
+describe("AddScenariosDrawer grounding", () => {
+  beforeEach(() => {
+    extendHarnessJob.mockClear();
+    sendHarnessConversationMessage.mockClear();
+    cast.data = {
+      actors: [{ id: "dana", name: "Dana Brooks" }],
+      knowledge_sources: { files: ["knowledge/policy.md"] },
+    };
+  });
+
+  it("selected actors and sources appear in the sent message", async () => {
+    const user = userEvent.setup();
+    renderWithClient(
+      <AddScenariosDrawer open onClose={vi.fn()} env={{ id: "env-1", rules: ["Refund within 14 days."] }} />,
+    );
+    await user.click(screen.getByRole("button", { name: "Describe a case" }));
+    await user.type(
+      screen.getByLabelText("What should the agent face, and what should it do?"),
+      "a late refund{enter}a second refund",
+    );
+    await user.click(screen.getByLabelText("Actors to include"));
+    await user.click(await screen.findByRole("option", { name: "Dana Brooks" }));
+    await user.click(screen.getByLabelText("Ground in"));
+    await user.click(await screen.findByRole("option", { name: "Rule: Refund within 14 days." }));
+    await user.click(screen.getByLabelText("Ground in"));
+    await user.click(await screen.findByRole("option", { name: "File: knowledge/policy.md" }));
+    await user.click(screen.getByRole("button", { name: "Write scenarios" }));
+
+    const [, body] = sendHarnessConversationMessage.mock.calls[0];
+    expect(body.content).toBe(
+      `${DESCRIBE_PREFIX}\nRequested case 1: a late refund\nRequested case 2: a second refund` +
+        ' Include these actors: Dana Brooks. Cite these sources: rule "Refund within 14 days."; file knowledge/policy.md.',
+    );
+  });
+
+  it("nothing added when none chosen", async () => {
+    const user = userEvent.setup();
+    renderWithClient(<AddScenariosDrawer open onClose={vi.fn()} env={{ id: "env-1" }} initialCount={2} />);
+    await user.click(screen.getByRole("button", { name: "Write scenarios" }));
+    expect(extendHarnessJob).toHaveBeenCalledWith("env-1", { count: 2 });
   });
 });

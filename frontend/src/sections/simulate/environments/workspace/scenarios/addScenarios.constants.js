@@ -18,6 +18,10 @@ export const ADD_COPY = {
   recordsHint: "CSV or JSON rows, at most 1 MB.",
   tooLarge: "The file is larger than 1 MB.",
   transcriptLink: "Add a transcript on the Scenarios tab",
+  actors: "Actors to include",
+  groundIn: "Ground in",
+  ruleOption: (text) => `Rule: ${text}`,
+  fileOption: (path) => `File: ${path}`,
   productionLink: "Open Observe and use Create environment test",
   routes: {
     generate: {
@@ -57,7 +61,31 @@ export const POLICY_TYPES = ".md,.txt";
 export const RECORD_TYPES = ".csv,.json";
 
 export const DESCRIBE_PREFIX =
-  "Add one scenario from this description, cite it as a requirement in the person's words, and add a negative control:";
+  "Add one scenario for each requested case below. Cite each as a requirement source whose quote is that request's line exactly, and add a negative control to each:";
+
+// Each non-empty line of a description is its own numbered request, so a case the builder has
+// not written yet can be found by its line.
+export const requestedLines = (description) =>
+  String(description || "")
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+export const describeMessage = (description) =>
+  `${DESCRIBE_PREFIX}\n${requestedLines(description)
+    .map((line, at) => `Requested case ${at + 1}: ${line}`)
+    .join("\n")}`;
+
+// The actors and sources a person picked, said to the builder; nothing when none were picked.
+export const groundingSuffix = (actors = [], rules = [], files = []) => {
+  const parts = [];
+  if (actors.length) parts.push(` Include these actors: ${actors.join(", ")}.`);
+  const cited = [
+    ...rules.map((rule) => `rule "${rule}"`),
+    ...files.map((path) => `file ${path}`),
+  ];
+  if (cited.length) parts.push(` Cite these sources: ${cited.join("; ")}.`);
+  return parts.join("");
+};
 
 // Until the builder reads uploaded files itself, the message carries the file's text.
 // "Add ... new" and "keep the existing ones": asked only to "write" scenarios, the builder answered by

@@ -91,6 +91,42 @@ def source_problems(value: object, *, require_one: bool = False) -> list[str]:
     return problems
 
 
+REQUESTED_LINE = re.compile(r"^Requested case \d+: (.+)$", re.MULTILINE)
+REQUESTED_MESSAGES = 20
+
+
+def requested_uncovered(environment: Any) -> list[str]:
+    """The lines a person asked for in the builder chat ("Requested case N: ...", the last 20
+    messages) that no scenario of the suite being edited cites by quote yet."""
+    from simulate.models import HarnessSuiteMember
+    from simulate.services.harness_versioning.drafts import open_draft
+
+    messages = list(
+        HostedHarnessConversationMessage.no_workspace_objects.filter(
+            conversation__job_id=environment.id, role="user"
+        )
+        .order_by("-sequence")
+        .values_list("content", flat=True)[:REQUESTED_MESSAGES]
+    )
+    lines: list[str] = []
+    for content in reversed(messages):
+        for line in REQUESTED_LINE.findall(content or ""):
+            if line.strip() and line.strip() not in lines:
+                lines.append(line.strip())
+    if not lines:
+        return []
+    suite = open_draft(environment, "suite") or environment.suite_version
+    quotes = {
+        normalise(source.get("quote"))
+        for content in HarnessSuiteMember.no_workspace_objects.filter(
+            suite_version=suite
+        ).values_list("content", flat=True)
+        for source in (content or {}).get("sources") or []
+        if isinstance(source, Mapping) and source.get("quote")
+    }
+    return [line for line in lines if normalise(line) not in quotes]
+
+
 def _sub_goal_names(sub_goals: object) -> set[str]:
     return {
         str(one.get("name") if isinstance(one, Mapping) else one)
