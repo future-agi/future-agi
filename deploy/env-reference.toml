@@ -1898,7 +1898,7 @@ database, override `PG_HOST`, `PGBOUNCER_HOST` or `CH_HOST` in a
     keys = ["FRONTEND_TLS_ENABLED"]
     default = "`false`; Helm: `frontend.tls.enabled`"
     setups = ["D", "H"]
-    text = "Serve the dashboard over HTTPS. A missing certificate or key fails startup rather than falling back to HTTP."
+    text = "Serve the dashboard over HTTPS. A missing certificate or key, or an expired or unreadable certificate, fails startup rather than falling back to HTTP."
 
     [[part.section.row]]
     keys = ["FRONTEND_TLS_PORT"]
@@ -1922,7 +1922,7 @@ database, override `PG_HOST`, `PGBOUNCER_HOST` or `CH_HOST` in a
     keys = ["FRONTEND_TLS_RELOAD_INTERVAL"]
     default = "`30` seconds; Helm: `frontend.tls.reloadInterval`"
     setups = ["D", "H"]
-    text = "Seconds between certificate content checks. On change nginx reloads without dropping active connections; a bad pair keeps the previous certificate in use."
+    text = "Seconds between certificate content checks. On change nginx reloads without dropping active connections; an expired certificate is not loaded, and a bad pair keeps the previous certificate in use."
 
     [[part.section.row]]
     keys = ["AGENTCC_SYNC_INTERVAL"]

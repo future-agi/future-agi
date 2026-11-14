@@ -90,6 +90,72 @@ reload_interval=${FRONTEND_TLS_RELOAD_INTERVAL:-30}
 cert_file=${FRONTEND_TLS_CERT_FILE:-}
 key_file=${FRONTEND_TLS_KEY_FILE:-}
 
+# Prints why the first certificate in a PEM file must not be served, or
+# nothing when it may be. The image has no openssl, so this walks the DER with
+# busybox base64, od and awk only as far as Validity.notAfter (UTCTime or
+# GeneralizedTime). An expired leaf would fail every verifying client: the
+# gateway refuses one too, at startup and on reload.
+tls_cert_problem() {
+  not_after=$(
+    awk '/^-----BEGIN [A-Z0-9 ]*CERTIFICATE-----/ { pem = 1; next }
+         /^-----END / { if (pem) exit }
+         pem' "$1" |
+      tr -d ' \t\r\n' | base64 -d 2>/dev/null | od -An -v -tu1 |
+      awk '
+        function bad() { failed = 1; exit 1 }
+        # Header length of the TLV at p (0 when malformed); its length in len.
+        function header(p,   first, count, i) {
+          if (p + 1 > n) return 0
+          first = b[p + 1]
+          if (first < 128) { len = first; return 2 }
+          count = first - 128
+          if (count < 1 || count > 3 || p + 1 + count > n) return 0
+          len = 0
+          for (i = 1; i <= count; i++) len = len * 256 + b[p + 1 + i]
+          return 2 + count
+        }
+        function enter(p, tag,   size) {
+          if (b[p] != tag || !(size = header(p))) bad()
+          return p + size
+        }
+        function skip(p,   size) {
+          if (!(size = header(p))) bad()
+          return p + size + len
+        }
+        { for (i = 1; i <= NF; i++) b[++n] = $i + 0 }
+        END {
+          if (failed) exit 1
+          p = enter(1, 48)                 # Certificate
+          p = enter(p, 48)                 # TBSCertificate
+          if (b[p] == 160) p = skip(p)     # [0] version
+          p = skip(p)                      # serialNumber
+          p = skip(p)                      # signature
+          p = skip(p)                      # issuer
+          p = enter(p, 48)                 # validity
+          if (b[p] != 23 && b[p] != 24) bad()
+          p = skip(p)                      # notBefore
+          tag = b[p]
+          if ((tag != 23 && tag != 24) || !(size = header(p)) || p + size + len - 1 > n) bad()
+          t = ""
+          for (i = p + size; i < p + size + len; i++) t = t sprintf("%c", b[i])
+          if (t !~ /^[0-9]+Z$/) bad()
+          if (tag == 23 && length(t) == 13) t = (substr(t, 1, 2) + 0 < 50 ? "20" : "19") t
+          else if (tag != 24 || length(t) != 15) bad()
+          print substr(t, 1, 14)
+        }'
+  ) || not_after=
+  if [ -z "$not_after" ]; then
+    echo "cannot read the certificate in $1: expected a PEM certificate"
+    return 0
+  fi
+  now=$(date -u +%Y%m%d%H%M%S)
+  # Both are 14 digits, so comparing them as strings compares the times.
+  if awk -v now="$now" -v end="$not_after" 'BEGIN { exit !(now "" > end "") }'; then
+    echo "TLS certificate $1 expired at $(echo "$not_after" |
+      sed 's/\(....\)\(..\)\(..\)\(..\)\(..\)\(..\)/\1-\2-\3T\4:\5:\6Z/')"
+  fi
+}
+
 case "$http_enabled:$tls_enabled" in
   true:true|true:false|false:true) ;;
   false:false) echo '[entrypoint] HTTP and TLS cannot both be disabled' >&2; exit 1 ;;
@@ -130,6 +196,11 @@ if [ "$tls_enabled" = true ]; then
       exit 1
     fi
   done
+  problem=$(tls_cert_problem "$cert_file")
+  if [ -n "$problem" ]; then
+    echo "[entrypoint] $problem" >&2
+    exit 1
+  fi
 fi
 
 # /tmp is writable even in the Helm read-only-root deployment. Its ConfigMap
@@ -165,7 +236,13 @@ if [ "$tls_enabled" = true ] && [ "${1:-}" = nginx ]; then
       fi
       new_hash=$(cat "$cert_file" "$key_file" | md5sum)
       if [ "$new_hash" != "$last_hash" ]; then
+        # Logged once per content; a later change is checked again.
         last_hash=$new_hash
+        problem=$(tls_cert_problem "$cert_file")
+        if [ -n "$problem" ]; then
+          echo "[tls-reload] $problem; keeping current configuration" >&2
+          continue
+        fi
         echo '[tls-reload] certificate files changed; signalling nginx master' >&2
         kill -HUP "$nginx_pid" 2>/dev/null || exit 0
       fi

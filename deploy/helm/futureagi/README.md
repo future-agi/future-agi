@@ -707,7 +707,9 @@ verification; application clients must trust the CA).
 Mounted Secret contents update without restarting the pods. The gateway
 polls every 30s by default, and the frontend polls every 30 seconds; new
 connections get the rotated chain while in-flight requests stay connected,
-and a bad renewal preserves the last good certificate. Kubernetes kubelet Secret
+and a bad renewal preserves the last good certificate. Both services refuse
+an expired certificate: at startup they exit with the file named, and on
+rotation they log it and keep serving the previous one. Kubernetes kubelet Secret
 propagation may add about 60-90 seconds on top of the poll interval; measure
 from the time files change *inside the pod*, not merely when cert-manager
 updates the Secret. Do not configure stakater Reloader to watch these TLS

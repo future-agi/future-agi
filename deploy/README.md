@@ -492,8 +492,9 @@ calls public providers;
 the gateway certificate needs the `agentcc-gateway` DNS name. For an HTTPS-only
 gateway set `HEALTHCHECK_URL=https://127.0.0.1:8443/healthz` in the override;
 the frontend image healthcheck selects HTTPS automatically. Both services
-retain their last good certificate on a bad renewal and poll for replacements
-(every 30s by default); confirm rotation with no container restart.
+refuse an expired certificate at startup, retain their last good certificate
+on a bad or expired renewal and poll for replacements (every 30s by default);
+confirm rotation with no container restart.
 
 ## Reverse proxy + TLS
 

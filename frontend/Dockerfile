@@ -10,7 +10,8 @@
 #     nginx:alpine (amd64, Docker Hub, 2026-09-25). nginx.conf uses only core
 #     http directives (gzip, expires, add_header, try_files) and
 #     docker-entrypoint.sh and the healthcheck use busybox sh/printenv/sed/
-#     cat/md5sum/sleep/kill/wget (plus the base image's ssl_client for HTTPS), so
+#     cat/md5sum/sleep/kill/wget, and awk/tr/base64/od/date to read a
+#     certificate's expiry (plus the base image's ssl_client for HTTPS), so
 #     none of the modules alpine-slim leaves out (njs, geoip, image-filter,
 #     xslt, acme) nor nginx:alpine's curl are used.
 ARG NODE_IMAGE=futureagi/frontend-base:v1.1.0-dev@sha256:bc90d2229b7155ed6ba69c47f3e5a634a0cd85fafab1e8f6c6609f0c1762e2ad
