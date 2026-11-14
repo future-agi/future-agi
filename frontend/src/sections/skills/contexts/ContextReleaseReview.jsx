@@ -8,10 +8,8 @@ import {
   FormControlLabel,
   Stack,
   TextField,
-  Tab,
   Typography,
 } from "@mui/material";
-import { CustomTabs } from "src/components/tabs/tabs";
 import ObjectHeader from "../components/ObjectHeader";
 import ActionReason, { reasonProps } from '../components/ActionReason';
 import IdentityChip from "../components/IdentityChip";
@@ -189,7 +187,7 @@ function DraftPublication({
           </TechnicalDetails>
         </Stack>
       </Section>
-      <TechnicalDetails title="Permissions comparison"><CapabilityChanges changes={draftReview.capabilities} /></TechnicalDetails>
+      <TechnicalDetails title="Permissions comparison"><CapabilityChanges changes={draftReview.capabilities} summary /></TechnicalDetails>
       <Section id="review-checks" title="Checks">
         {draftReview.checks ? (
           <ChecksList checks={draftReview.checks} />
@@ -199,7 +197,7 @@ function DraftPublication({
           </Alert>
         )}
       </Section>
-      <Section id="review-publication" title="Version note">
+      <Box id="review-publication">
         <Stack spacing={1.5}>
           <TextField
             size="small"
@@ -210,6 +208,7 @@ function DraftPublication({
             onChange={(event) => setNote(event.target.value)}
             disabled={locked}
             inputProps={{ maxLength: 2000 }}
+            helperText="Optional"
           />
           <FormControlLabel
             control={
@@ -241,9 +240,6 @@ function DraftPublication({
               label="I acknowledge the static warnings for this exact candidate."
             />
           )}
-          <Typography variant="s3">
-            Publishing doesn&apos;t attach or share test results. You choose the evidence when you request a release review.
-          </Typography>
           <OperationFeedback operation={operation} />
           {oneStep !== operation && <OperationFeedback operation={oneStep} />}
           {operation.result && (
@@ -253,80 +249,80 @@ function DraftPublication({
               moved.
             </Alert>
           )}
-          <Typography variant="s3" color="text.secondary">Publish version saves v{(draftReview.expectedHeadVersion ?? 0) + 1} without requesting release. Confirm the review first.</Typography>
-          <Stack direction={{ xs: "column", sm: "row" }} spacing={1} alignItems={{ sm: 'center' }}>
-            {onRefresh && <Button disabled={operation.busy || operation.uncertain} onClick={onRefresh} sx={{ mr: { sm: 'auto' } }}>Reload draft</Button>}
-            <Box sx={{ minWidth: { sm: 120 }, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-            {draftReview.headAcknowledged ? <Typography variant="s3" role="status">Review confirmed</Typography> : (
-              <Button
-                variant="outlined"
-                color="primary"
-                disabled={
-                  !ready ||
-                  !onAcknowledgeHead ||
-                  (draftReview.baseVersion !==
-                    draftReview.expectedHeadVersion &&
-                    !draftReview.headChanges)
-                }
-                onClick={() =>
-                  operation.run(async (input) => {
-                    const acknowledged = await onAcknowledgeHead(input);
-                    // Recorded before the review reloads and remounts for the same candidate.
-                    onCarry({
-                      reviewed,
-                      note,
-                      warned: warnings,
-                      candidateDigest: draftReview.candidateDigest,
-                      baseVersion: draftReview.baseVersion,
-                      expectedHeadVersion: draftReview.expectedHeadVersion,
-                      headDigest: draftReview.headDigest,
-                      warnings: draftReview.checks?.summary.warnings ?? null,
-                    });
-                    return acknowledged;
-                  }, fields)
-                }
-              >
-                Confirm review
-              </Button>
-            )}
-            </Box>
-            <Stack spacing={0.5}>
-              <Button variant="outlined" {...reasonProps('publish-review-reason', !draftReview.headAcknowledged && 'Confirm the review first')} disabled={!draftReview.headAcknowledged || !ready || !onPublish}
-                onClick={() => operation.run(onPublish, { ...fields, baseVersion: draftReview.baseVersion, note, acknowledgeWarnings: warnings })}>
-                Publish version
-              </Button>
-              <ActionReason id="publish-review-reason" reason={!draftReview.headAcknowledged && 'Confirm the review first'} />
+          <Box>
+            {/* One reason, above the row, while the publish actions wait for the review confirmation. */}
+            <ActionReason id="publish-review-reason" reason={!draftReview.headAcknowledged && 'Confirm the review first'} sx={{ display: 'block', mb: 1 }} />
+            <Stack direction={{ xs: "column", sm: "row" }} spacing={1} alignItems={{ xs: 'stretch', sm: 'center' }}>
+              {onRefresh && <Button disabled={operation.busy || operation.uncertain} onClick={onRefresh} sx={{ ml: { sm: -1 }, alignSelf: { xs: 'flex-start', sm: 'center' } }}>Reload draft</Button>}
+              <Stack direction={{ xs: "column", sm: "row" }} spacing={1} alignItems={{ xs: 'stretch', sm: 'center' }} sx={{ ml: { sm: 'auto' } }}>
+                {draftReview.headAcknowledged ? <Typography variant="s3" role="status" sx={{ px: { sm: 1 } }}>Review confirmed</Typography> : (
+                  <Button
+                    variant="outlined"
+                    color="primary"
+                    disabled={
+                      !ready ||
+                      !onAcknowledgeHead ||
+                      (draftReview.baseVersion !==
+                        draftReview.expectedHeadVersion &&
+                        !draftReview.headChanges)
+                    }
+                    onClick={() =>
+                      operation.run(async (input) => {
+                        const acknowledged = await onAcknowledgeHead(input);
+                        // Recorded before the review reloads and remounts for the same candidate.
+                        onCarry({
+                          reviewed,
+                          note,
+                          warned: warnings,
+                          candidateDigest: draftReview.candidateDigest,
+                          baseVersion: draftReview.baseVersion,
+                          expectedHeadVersion: draftReview.expectedHeadVersion,
+                          headDigest: draftReview.headDigest,
+                          warnings: draftReview.checks?.summary.warnings ?? null,
+                        });
+                        return acknowledged;
+                      }, fields)
+                    }
+                  >
+                    Confirm review
+                  </Button>
+                )}
+                <Button variant="outlined" {...reasonProps('publish-review-reason', !draftReview.headAcknowledged && 'Confirm the review first')} disabled={!draftReview.headAcknowledged || !ready || !onPublish}
+                  onClick={() => operation.run(onPublish, { ...fields, baseVersion: draftReview.baseVersion, note, acknowledgeWarnings: warnings })}>
+                  Publish version
+                </Button>
+                {/* J4 one-step path: the same reviewed identity acknowledges the
+                    head when needed, publishes the immutable candidate and opens
+                    the release-review request with it carried forward. Production
+                    is not moved; sharing and submission stay explicit. */}
+                {onPublishAndRequest && (
+                  <Button
+                    variant="contained"
+                    color="primary"
+                    disabled={
+                      !ready ||
+                      (draftReview.baseVersion !==
+                        draftReview.expectedHeadVersion &&
+                        !draftReview.headChanges)
+                    }
+                    onClick={() =>
+                      oneStep.run(onPublishAndRequest, {
+                        ...fields,
+                        headAcknowledged: draftReview.headAcknowledged === true,
+                        baseVersion: draftReview.baseVersion,
+                        note,
+                        acknowledgeWarnings: warnings,
+                      })
+                    }
+                  >
+                    Publish and request review
+                  </Button>
+                )}
+              </Stack>
             </Stack>
-            {/* J4 one-step path: the same reviewed identity acknowledges the
-                head when needed, publishes the immutable candidate and opens
-                the release-review request with it carried forward. Production
-                is not moved; sharing and submission stay explicit. */}
-            {onPublishAndRequest && (
-              <Button
-                variant="contained"
-                color="primary"
-                disabled={
-                  !ready ||
-                  (draftReview.baseVersion !==
-                    draftReview.expectedHeadVersion &&
-                    !draftReview.headChanges)
-                }
-                onClick={() =>
-                  oneStep.run(onPublishAndRequest, {
-                    ...fields,
-                    headAcknowledged: draftReview.headAcknowledged === true,
-                    baseVersion: draftReview.baseVersion,
-                    note,
-                    acknowledgeWarnings: warnings,
-                  })
-                }
-              >
-                Publish and request review
-              </Button>
-            )}
-          </Stack>
+          </Box>
         </Stack>
-      </Section>
+      </Box>
     </Stack>
   );
 }
@@ -354,7 +350,6 @@ export default function ContextReleaseReview({
   // Held above the publication review so the acknowledgements survive the head acknowledgment,
   // which reloads the review (and remounts it) for the same candidate bytes.
   const [carried, setCarried] = useState(null);
-  const [section, setSection] = useState("review-files");
   return (
     <Box sx={{ px: { xs: 2, sm: 3 }, py: 2, minWidth: 0 }}>
       <ObjectHeader
@@ -364,31 +359,6 @@ export default function ContextReleaseReview({
         title={draftReview ? `Publish ${name || "agent context"} v${(draftReview.expectedHeadVersion ?? 0) + 1}` : name ? `Review ${name}` : "Review agent context"}
         purpose={draftReview ? "Review the saved changes and linked skills before publishing a version. Production stays unchanged until a separate release review." : "Inspect the changes before making a release decision. Production stays unchanged until released."}
       />
-      {scopeKey && state === "ready" && !props.receipt && (
-        <Box
-          component="nav"
-          aria-label="Review sections"
-          sx={{
-            position: "sticky",
-            top: 0,
-            zIndex: 1,
-            bgcolor: "background.paper",
-            py: 1,
-            mb: 2,
-            borderBottom: 1,
-            borderColor: "divider",
-          }}
-        >
-          <Typography variant="s3" sx={{ overflowWrap: "anywhere" }}>
-            {draftReview ? "Your saved draft" : `Candidate v${props.preview?.packet.transition.version ?? "unknown"}`}
-          </Typography>
-          <CustomTabs value={section} onChange={(_, value) => setSection(value)} variant="scrollable" scrollButtons="auto" aria-label="Publication sections">
-            <Tab component="a" href="#review-files" value="review-files" label="Changes" />
-            <Tab component="a" href="#review-dependencies" value="review-dependencies" label="Linked skills" />
-            {draftReview ? [<Tab key="checks" component="a" href="#review-checks" value="review-checks" label="Checks" />, <Tab key="note" component="a" href="#review-publication" value="review-publication" label="Version note" />] : [<Tab key="evidence" component="a" href="#review-evidence" value="review-evidence" label="Evidence" />, <Tab key="impact" component="a" href="#review-impact" value="review-impact" label="Who is affected" />]}
-          </CustomTabs>
-        </Box>
-      )}
       {!scopeKey || state !== "ready" ? (
         <ReviewState
           state={!scopeKey ? "forbidden" : state}

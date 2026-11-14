@@ -21,7 +21,8 @@ import EvidenceSummary from '../components/EvidenceSummary';
 import TechnicalDetails from '../components/TechnicalDetails';
 import { suggestedEvidence } from './evidenceSuggestions';
 import { useStickyFooterHeight } from '../components/stickyFooter';
-import { configurationDate, counted, responsiveEvidenceSx } from './reviewPresentation';
+import { counted, responsiveEvidenceSx } from './reviewPresentation';
+import { skillsRouteSx } from '../components/routeGutter';
 
 // Intent: choose immutable records by name, inspect a frozen packet, then assign
 // an independent reviewer. Existing page/section/form tokens; no identity entry.
@@ -58,14 +59,15 @@ export function ShareAllEvidence({ packet, evidence, selected = [], onShare, onS
       title={`Share ${shareable.length} private results with the workspace?`}
       content={<Stack spacing={1}>
         <Typography variant="s1">Workspace members will be able to see {shareable.length === 1 ? 'this test result' : `these ${shareable.length} test results`}, including the inputs, model answers and files used. Sharing doesn&apos;t extend their 30-day expiry. You&apos;ll review the request before it&apos;s sent.</Typography>
-        {/* Every record this decision shares or attaches is named here with its visibility and short ID,
-            so the author confirms the exact set without opening anything else. */}
+        {/* Every record this decision shares or attaches is named here by title with its visibility, so the
+            author confirms the exact set without reading identifiers; the IDs sit under Details. */}
         {all.map((ref) => <Stack key={`${ref.source}:${ref.sourceId}`} data-evidence-id={ref.sourceId} spacing={0.5} sx={{ minWidth: 0 }}>
-          <Typography variant="s1" sx={{ overflowWrap: 'anywhere' }}>{evidenceTitle(ref, candidateNumber, ref.baselineNumber ?? baselineNumber)}</Typography>
-          <StatusBadge {...(evidenceOutcome(ref) || { status: 'not_recorded', label: 'Not recorded', role: 'neutral' })} />
-          <Typography variant="s3" color="text.secondary">{evidenceCoverage(ref.counts)}</Typography>
-          <Stack direction="row" gap={1} alignItems="center" flexWrap="wrap">{ref.visibility === 'private' ? <StatusBadge status="private" /> : <Typography variant="s3" color="text.secondary">Already shared</Typography>}<IdentityChip value={ref.sourceId} kind="id" /></Stack>
+          <Stack direction="row" gap={1} alignItems="center" flexWrap="wrap"><Typography variant="s1" sx={{ overflowWrap: 'anywhere' }}>{evidenceTitle(ref, candidateNumber, ref.baselineNumber ?? baselineNumber)}</Typography>{ref.visibility === 'private' ? <StatusBadge status="private" /> : <Typography variant="s3" color="text.secondary">Already shared</Typography>}</Stack>
+          <Stack direction="row" gap={1} alignItems="center" flexWrap="wrap"><StatusBadge {...(evidenceOutcome(ref) || { status: 'not_recorded', label: 'Not recorded', role: 'neutral' })} /><Typography variant="s3" color="text.secondary">{evidenceCoverage(ref.counts)}</Typography></Stack>
         </Stack>)}
+        <TechnicalDetails title="Details">
+          <Stack spacing={0.5}>{all.map((ref) => <IdentityChip key={`${ref.source}:${ref.sourceId}`} label={evidenceTitle(ref, candidateNumber, ref.baselineNumber ?? baselineNumber)} value={ref.sourceId} kind="id" />)}</Stack>
+        </TechnicalDetails>
       </Stack>}
       action={<Button variant="contained" color="primary" disabled={busy} onClick={async () => {
         setBusy(true);
@@ -78,6 +80,22 @@ export function ShareAllEvidence({ packet, evidence, selected = [], onShare, onS
   </Stack>;
 }
 ShareAllEvidence.propTypes = { packet: PropTypes.object.isRequired, evidence: PropTypes.array.isRequired, onShare: PropTypes.func.isRequired, onShared: PropTypes.func.isRequired, selected: PropTypes.array, row: PropTypes.bool, candidateNumber: PropTypes.number, baselineNumber: PropTypes.number };
+
+// Two numbered steps; the current one is bold and marked for assistive technology.
+function RequestSteps({ step }) {
+  const steps = ['Choose', 'Confirm'];
+  return <Stack component="ol" direction="row" alignItems="center" gap={1.5} aria-label="Request steps" sx={{ m: 0, p: 0, listStyle: 'none' }}>
+    {steps.map((name, index) => {
+      const current = index + 1 === step;
+      return <Stack component="li" key={name} direction="row" alignItems="center" gap={1} aria-current={current ? 'step' : undefined}>
+        {index > 0 && <Box aria-hidden="true" sx={{ width: 24, height: '1px', bgcolor: 'divider' }} />}
+        <Box component="span" aria-hidden="true" sx={{ width: 20, height: 20, borderRadius: '50%', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', typography: 's3', fontWeight: 600, bgcolor: current ? 'primary.main' : 'transparent', color: current ? 'primary.contrastText' : 'text.secondary', border: 1, borderColor: current ? 'primary.main' : 'divider' }}>{index + 1}</Box>
+        <Typography component="span" variant="s3" sx={{ fontWeight: current ? 600 : 400, color: current ? 'text.primary' : 'text.secondary' }}>{name}</Typography>
+      </Stack>;
+    })}
+  </Stack>;
+}
+RequestSteps.propTypes = { step: PropTypes.number.isRequired };
 
 function ComposerActions({ children }) {
   const footer = useRef(null);
@@ -143,7 +161,15 @@ export default function ReleaseRequestComposer({ scopeKey, renewal, prefill, sta
     setSuggested(refs.map(evidenceKey));
     setInspecting(null);
   }, [scopeKey, kind, resourceId, candidateId, targetId, target, candidate, options.data, options.isFetching, renewal, carried, prefill?.evidence]);
-  const fromTest = carried ? selected.filter((ref) => prefill?.evidence?.includes(evidenceKey(ref))) : [];
+  // The run the author came from is marked and listed first whatever its visibility or selection.
+  const carriedKeys = new Set(carried ? prefill?.evidence || [] : []);
+  const fromTest = selected.filter((ref) => carriedKeys.has(evidenceKey(ref)));
+  const evidenceItems = (options.data?.evidence || []);
+  // Available = a settled result for this exact content that could be attached now (a private one after sharing).
+  const availableRefs = candidate ? evidenceItems.filter((ref) => evidenceProblems(ref, packet).every((reason) => reason.startsWith('Private'))) : [];
+  const passingUnattached = availableRefs.filter((ref) => ['pass', 'passed'].includes(evidenceOutcome(ref)?.status) && !selected.some((item) => evidenceKey(item) === evidenceKey(ref)));
+  const evidenceSection = useRef(null);
+  const attachResults = () => { evidenceSection.current?.scrollIntoView({ block: 'center', behavior: 'smooth' }); evidenceSection.current?.focus({ preventScroll: true }); };
   const pipelineComplete = !pipelineUrl && !pipelineConfig && !pipelineDecision || /^https:\/\//.test(pipelineUrl) && pipelineConfig.trim() && pipelineDecision.trim();
   const refresh = () => { subjects.refetch(); if (resourceId) versions.refetch(); if (candidateId) options.refetch(); };
   const labelValid = /^[a-z0-9][a-z0-9-]{0,39}$/.test(label);
@@ -161,14 +187,14 @@ export default function ReleaseRequestComposer({ scopeKey, renewal, prefill, sta
   };
   const header = <ObjectHeader crumbs={prefill?.kind === 'agent_context' ? [{ label: 'Agent contexts', to: paths.dashboard.skills.contexts }, { label: prefill.name || 'Agent context', to: paths.dashboard.skills.contextDetail(prefill.subjectId) }, { label: 'Request release review' }] : [{ label: 'Reviews', to: paths.dashboard.skills.reviews }, { label: 'New request' }]} title={renewal ? 'Renew release review' : 'Request release review'} purpose="Choose a reviewer and inspect the changes. Production stays unchanged until approval and release." />;
   const formState = state && state !== 'ready' ? state : failed ? 'error' : subjects.isLoading ? 'loading' : resourceId && !carried && versions.data?.results.length === 0 ? 'empty' : null;
-  if (formState) return <Stack spacing={3} sx={{ px: { xs: 2, md: 3 }, py: 2, width: 1 }}>{header}{formState === 'loading' ? <ContentSkeleton variant="panel" label="Loading request form" rows={4} /> : formState === 'error' ? <ErrorState title="Couldn't load the request form." onRetry={refresh} /> : formState === 'empty' ? <EmptyState title="No published versions yet" description="Publish a version before requesting a review." secondaryAction={<Button variant="contained" color="primary" href={paths.dashboard.skills.root}>Go to Skills</Button>} /> : <ReviewState state={formState} onRetry={refresh} />}</Stack>;
+  if (formState) return <Stack spacing={3} sx={{ ...skillsRouteSx, width: 1 }}>{header}{formState === 'loading' ? <ContentSkeleton variant="panel" label="Loading request form" rows={4} /> : formState === 'error' ? <ErrorState title="Couldn't load the request form." onRetry={refresh} /> : formState === 'empty' ? <EmptyState title="No published versions yet" description="Publish a version before requesting a review." secondaryAction={<Button variant="contained" color="primary" href={paths.dashboard.skills.root}>Go to Skills</Button>} /> : <ReviewState state={formState} onRetry={refresh} />}</Stack>;
   const testsUrl = resourceId ? `${kind === 'agent_context' ? paths.dashboard.skills.contextDetail(resourceId) : paths.dashboard.skills.detail(resourceId)}?version=${candidate?.number}&tab=tests` : paths.dashboard.skills.root;
-  return <Stack spacing={3} sx={{ px: { xs: 2, sm: 3 }, py: 2, minWidth: 0, width: 1, ...responsiveEvidenceSx }}>
+  return <Stack spacing={3} sx={{ ...skillsRouteSx, width: 1, ...responsiveEvidenceSx }}>
     {header}
-    <Typography variant="s3" aria-label="Request steps">{prepared ? '1 Choose · 2 Confirm (current)' : '1 Choose (current) · 2 Confirm'}</Typography>
+    <RequestSteps step={prepared ? 2 : 1} />
     {renewal && <Alert severity="info">Renew request revision {renewal.revision}. Select and inspect current evidence explicitly; previous approval will not carry forward.</Alert>}
     {prepared ? <ReleaseRequestPanel scopeKey={scopeKey} state="ready" {...prepared}
-      initialRecipientId={recipientId} recipients={options.data?.recipients || []} recipientsLoading={options.isFetching} recipientsError={options.error} onRetryRecipients={options.refetch} permissions={{ canSubmit: true }}
+      availableEvidence={availableRefs.length} initialRecipientId={recipientId} recipients={options.data?.recipients || []} recipientsLoading={options.isFetching} recipientsError={options.error} onRetryRecipients={options.refetch} permissions={{ canSubmit: true }}
       onEdit={() => setPrepared(null)} onCancel={() => navigate(paths.dashboard.skills.reviews)}
       onRefresh={() => { setPrepared(null); refresh(); }}
       onSubmit={async (input) => {
@@ -178,12 +204,12 @@ export default function ReleaseRequestComposer({ scopeKey, renewal, prefill, sta
       }} /> : <>
       {failed && <ReviewState state="error" onRetry={refresh} />}
       {error && <Alert severity="error">{error}</Alert>}
-      <Section title="Release candidate"><Stack spacing={1.5}>
+      <Section title="Version to release"><Stack spacing={1.5}>
         <Box sx={{ display: 'grid', gridTemplateColumns: { xs: 'minmax(0, 1fr)', sm: 'minmax(0, 1fr) minmax(0, 2fr) minmax(0, 1fr)' }, gap: 1.5 }}>
           <TextField select size="small" label="Type" value={kind} disabled={busy || Boolean(renewal) || Boolean(prefill)} onChange={(event) => { setKind(event.target.value); changeResource(''); setSubjectPage(1); }}>
             <MenuItem value="skill">Skill</MenuItem><MenuItem value="agent_context">Agent context</MenuItem>
           </TextField>
-          {prefill || renewal ? <TextField size="small" label="Name" value={prefill?.name || subject?.name || 'Selected resource'} InputProps={{ readOnly: true }} /> : <Autocomplete size="small" options={subjects.data?.results || []} getOptionLabel={(item) => item.name} isOptionEqualToValue={(a, b) => a.id === b.id} filterOptions={(items) => items} loading={subjects.isFetching} value={subjects.data?.results.find((item) => item.id === resourceId) || null} onChange={(_, item) => changeResource(item?.id || '')} onInputChange={(_, value, reason) => { if (reason === 'input') { setSubjectSearch(value); setSubjectPage(1); } }} renderInput={(params) => <TextField {...params} label="Name" />} />}
+          {prefill || renewal ? <TextField size="small" label="Name" value={prefill?.name || subject?.name || 'Selected resource'} InputProps={{ readOnly: true }} /> : <Autocomplete size="small" sx={{ '& .MuiOutlinedInput-root.MuiInputBase-sizeSmall': { py: 0, pr: '30px' }, '& .MuiAutocomplete-input': { py: '4px !important' } }} options={subjects.data?.results || []} getOptionLabel={(item) => item.name} isOptionEqualToValue={(a, b) => a.id === b.id} filterOptions={(items) => items} loading={subjects.isFetching} value={subjects.data?.results.find((item) => item.id === resourceId) || null} onChange={(_, item) => changeResource(item?.id || '')} onInputChange={(_, value, reason) => { if (reason === 'input') { setSubjectSearch(value); setSubjectPage(1); } }} renderInput={(params) => <TextField {...params} label="Name" />} />}
           <TextField size="small" label="Label" value={label} disabled={busy} onChange={(event) => setLabel(event.target.value)} inputProps={{ maxLength: 40 }} />
         </Box>
         {!prefill && !renewal && subjects.data?.total_pages > 1 && <PageButtons query={subjects} page={subjectPage} setPage={(value) => { setSubjectPage(value); changeResource(''); }} label="matches" />}
@@ -200,7 +226,7 @@ export default function ReleaseRequestComposer({ scopeKey, renewal, prefill, sta
           </Stack>}
           {options.data && <TextField select size="small" label="Application target" SelectProps={{ displayEmpty: true }} InputLabelProps={{ shrink: true }} value={targetId} disabled={busy} onChange={(event) => { targetTouched.current = true; setTargetId(event.target.value); setSelected([]); }}>
             <MenuItem value="">No application target — text-only decision</MenuItem>
-            {options.data.targets.map((item) => <MenuItem key={item.target.bindingId} value={item.target.bindingId}>{item.name} · {configurationDate(item)}</MenuItem>)}
+            {options.data.targets.map((item) => <MenuItem key={item.target.bindingId} value={item.target.bindingId}>Application target · {item.name}</MenuItem>)}
           </TextField>}
         </Box>
         {options.isFetching && !options.data && <ReviewState state="loading" />}
@@ -209,7 +235,7 @@ export default function ReleaseRequestComposer({ scopeKey, renewal, prefill, sta
         {alreadyCurrent && <Typography variant="s1" role="status">{currentReason}</Typography>}
       </Stack></Section>
       {candidate && <PeoplePicker label="Assigned reviewer" people={options.data?.recipients || []} value={recipientId} onChange={setRecipientId} loading={options.isFetching} error={options.error} onRetry={options.refetch} disabled={busy} helperText="An independent reviewer approves this release." />}
-      {candidate && options.data && <Section title="Evidence to share and attach">
+      {candidate && options.data && <Box ref={evidenceSection} tabIndex={-1} sx={{ outline: 'none', scrollMarginTop: 16 }}><Section title="Evidence to share and attach">
         <Stack spacing={1.5}>
           <ShareAllEvidence candidateNumber={candidate.number} baselineNumber={previousVersion} packet={packet} evidence={options.data.evidence} selected={selected} onShare={(input) => share.mutateAsync(input)}
             onShared={async (refs) => {
@@ -223,9 +249,9 @@ export default function ReleaseRequestComposer({ scopeKey, renewal, prefill, sta
               if (attached.length && pipelineComplete && labelValid) await preparePacket(attached);
             }} />
           {fromTest.length > 0 && <Typography variant="s3" role="status">{counted(fromTest.length, 'result')} attached from your test</Typography>}
-          <EvidenceSummary items={options.data.evidence.map((ref) => ({
+          <EvidenceSummary items={[...options.data.evidence].sort((a, b) => Number(carriedKeys.has(evidenceKey(b))) - Number(carriedKeys.has(evidenceKey(a)))).map((ref) => ({
             id: ref.sourceId, source: ref.source, kind: ref.source === 'skills_text' ? 'text_comparison' : 'application_verification',
-            title: evidenceTitle(ref, candidate.number, ref.baselineNumber ?? previousVersion), origin: fromTest.some((item) => evidenceKey(item) === evidenceKey(ref)) ? 'from_test' : undefined, suggested: suggested.includes(evidenceKey(ref)), outcome: ref.outcome, counts: ref.counts,
+            title: evidenceTitle(ref, candidate.number, ref.baselineNumber ?? previousVersion), origin: carriedKeys.has(evidenceKey(ref)) ? 'from_test' : undefined, suggested: suggested.includes(evidenceKey(ref)), outcome: ref.outcome, counts: ref.counts,
             status: ref.status, visibility: ref.visibility, expiresAt: ref.payloadExpiresAt,
             candidateNumber: candidate.number, completedAt: ref.completedAt,
             targetMatch: ref.source === 'simulation_native' ? ref.configuration?.digest === target?.configurationDigest : undefined,
@@ -244,11 +270,11 @@ export default function ReleaseRequestComposer({ scopeKey, renewal, prefill, sta
                 else { setError(''); setSelected([...selected, evidenceSelection(ref)]); }
               }
             }} />
-          {!options.data.evidence.length && <Button href={testsUrl} sx={{ alignSelf: 'flex-start' }}>Run tests</Button>}
+          {!options.data.evidence.length && <Button href={testsUrl} sx={{ alignSelf: 'flex-start', ml: -1 }}>Run tests</Button>}
           {inspecting && <TypedEvidenceList packet={packet} evidence={options.data.evidence.filter((ref) => evidenceKey(ref) === inspecting)} selected={[]} />}
           {selected.filter((ref) => !options.data.evidence.some((item) => evidenceKey(item) === evidenceKey(ref))).map((ref) => <Alert key={evidenceKey(ref)} severity="warning">Selected evidence {ref.sourceId} is unavailable. Refresh and review again.</Alert>)}
         </Stack>
-      </Section>}
+      </Section></Box>}
       <TechnicalDetails title="External pipeline (optional)"><Stack spacing={1.5}>
         <Typography variant="s3">Operator-recorded, not a verified Hub verdict. Leave all three fields empty if no external pipeline applies.</Typography>
         <TextField size="small" label="Pipeline result URL" value={pipelineUrl} onChange={(event) => setPipelineUrl(event.target.value)} disabled={busy} inputProps={{ maxLength: 2000 }} />
@@ -256,7 +282,12 @@ export default function ReleaseRequestComposer({ scopeKey, renewal, prefill, sta
         <TextField size="small" label="Recorded pipeline decision" value={pipelineDecision} onChange={(event) => setPipelineDecision(event.target.value)} disabled={busy} inputProps={{ maxLength: 2000 }} />
       </Stack></TechnicalDetails>
       <ComposerActions><Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} alignItems={{ sm: 'center' }} justifyContent="space-between">
-      <Typography variant="s3" color="text.secondary">{alreadyCurrent ? currentReason : !candidate ? 'Choose a published candidate to continue.' : !pipelineComplete ? 'Complete all three pipeline fields or leave them empty.' : 'Next, inspect the changes and confirm before sending.'}</Typography>
+      {passingUnattached.length > 0 && !alreadyCurrent && candidate && pipelineComplete
+        ? <Stack direction="row" alignItems="center" flexWrap="wrap" columnGap={1} role="status" sx={{ minWidth: 0 }}>
+          <Typography variant="s3" sx={{ color: 'warning.dark' }}>{counted(passingUnattached.length, 'passing result')} {passingUnattached.length === 1 ? "isn't" : "aren't"} attached. The reviewer will see no test evidence.</Typography>
+          <Button size="small" onClick={attachResults}>Attach results</Button>
+        </Stack>
+        : <Typography variant="s3" color="text.secondary">{alreadyCurrent ? currentReason : !candidate ? 'Choose a published version to continue.' : !pipelineComplete ? 'Complete all three pipeline fields or leave them empty.' : 'Next, inspect the changes and confirm before sending.'}</Typography>}
       <Stack direction="row" spacing={1}>
         <Button variant="outlined" disabled={busy} onClick={() => navigate(paths.dashboard.skills.reviews)}>Cancel</Button>
         <Button variant="contained" color="primary" disabled={alreadyCurrent || busy || failed || options.isFetching || !candidate || (Boolean(targetId) && !target) || !options.data || !pipelineComplete || !labelValid} onClick={() => preparePacket()}>Prepare review</Button>

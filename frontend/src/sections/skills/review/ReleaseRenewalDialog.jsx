@@ -196,7 +196,7 @@ export default function ReleaseRenewalDialog({
               {value.changes.map((row) => <Typography key={row.item} variant="s3" component="code" display="block" sx={{ fontFamily: 'monospace', overflowWrap: 'anywhere' }}>{row.item}</Typography>)}
               <Typography component="pre" variant="s3" sx={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{JSON.stringify(value.changes, null, 2)}</Typography>
             </TechnicalDetails>
-            <Typography variant="s3">Approving creates revision {value.revision + 1} of this request.</Typography>
+            <Typography variant="s3">Approving records a new approval for this request.</Typography>
             <FormControlLabel
               control={
                 <Checkbox

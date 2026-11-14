@@ -101,3 +101,25 @@ it('keeps publication actions in place while confirming the CAS-bound review', a
   expect(screen.getByRole('button', { name: 'Publish version' })).toBeEnabled();
   expect(screen.getByRole('button', { name: 'Publish and request review' })).toBeVisible();
 });
+
+it('shows one action row and one reason line above it, with no anchor tabs, no repeated sentences and no Version note heading', () => {
+  const props = { scopeKey: 'scope', state: 'ready', canPublish: true, onAcknowledgeHead: vi.fn(), onPublish: vi.fn(), onPublishAndRequest: vi.fn(), onRefresh: vi.fn() };
+  render(<MemoryRouter><ContextReleaseReview {...props} draftReview={{ ...draftReview, headAcknowledged: false }} /></MemoryRouter>);
+  expect(screen.queryByRole('navigation', { name: 'Review sections' })).not.toBeInTheDocument();
+  expect(screen.queryByRole('tablist', { name: 'Publication sections' })).not.toBeInTheDocument();
+  expect(screen.queryByRole('heading', { name: 'Version note' })).not.toBeInTheDocument();
+  expect(screen.getByRole('textbox', { name: 'Version note' })).toBeVisible();
+  expect(screen.queryByText(/without requesting release/)).not.toBeInTheDocument();
+  expect(screen.queryByText(/Publishing doesn.t attach or share test results/)).not.toBeInTheDocument();
+  // One reason, above the row, keeping its id.
+  const reason = screen.getByText('Confirm the review first');
+  expect(screen.getAllByText('Confirm the review first')).toHaveLength(1);
+  expect(reason).toHaveAttribute('id', 'publish-review-reason');
+  const row = ['Reload draft', 'Confirm review', 'Publish version', 'Publish and request review'].map((name) => screen.getByRole('button', { name }));
+  expect(row[0].parentElement.parentElement).toBe(row[3].parentElement.parentElement.parentElement);
+  row.forEach((button, index) => {
+    if (index) expect(row[index - 1].compareDocumentPosition(button) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+  expect(reason.compareDocumentPosition(row[0]) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(screen.getByRole('button', { name: 'Reload draft' })).toHaveClass('MuiButton-text');
+});

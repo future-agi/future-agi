@@ -334,7 +334,7 @@ describe("exact decisions and retry safety", () => {
       target: { value: "Inspect the new target." },
     });
     click("Request changes");
-    await screen.findByText(/This changed since you opened it/);
+    await screen.findByText(/Approval no longer applies/);
     expect(screen.getByRole("textbox", { name: "Review comment" })).toHaveValue(
       "Inspect the new target.",
     );
@@ -379,7 +379,7 @@ describe("exact decisions and retry safety", () => {
         onDecide={decide}
       />,
     );
-    expect(screen.getByText(/This changed since you opened it/)).toBeVisible();
+    expect(screen.getByText(/Approval no longer applies/)).toBeVisible();
     expect(
       screen.getByRole("button", { name: "Approve release" }),
     ).toBeDisabled();
@@ -754,4 +754,25 @@ it('puts pending reviews first and reserves the unread marker and Review action 
   fireEvent.click(screen.getByRole('button', { name: 'Review', exact: true }));
   expect(onOpen).toHaveBeenCalledWith(pending);
   expect(screen.getByRole('combobox', { name: 'Request status' })).toHaveTextContent('All');
+});
+
+it('names what the tab counts, shows Review only to the assigned reviewer and Open to everyone else', () => {
+  const pending = { ...inbox.results[0], id: 'pending', name: 'Pending review', status: 'pending', authorId: 'author', recipients: [{ id: 'reviewer', name: 'Maya Chen' }] };
+  const released = { ...inbox.results[0], id: 'released', name: 'Released review', status: 'released', unread: false, authorId: 'author' };
+  const props = { scopeKey: 'scope', state: 'ready', onStatusChange: vi.fn(), onPageChange: vi.fn(), onOpen: vi.fn(), onToggleAuthored: vi.fn() };
+  const data = { ...inbox, pendingCount: 1, results: [released, pending] };
+  const { rerender } = render(<ReleaseInbox {...props} data={data} currentUserId="reviewer" />);
+  expect(screen.getByText('Review changes before they reach production.')).toBeVisible();
+  expect(screen.getByRole('tab', { name: 'Assigned to me · 1 waiting' })).toBeVisible();
+  expect(screen.getByRole('tab', { name: 'My requests' })).toBeVisible();
+  expect(screen.getByRole('button', { name: 'Review', exact: true })).toBeVisible();
+  expect(screen.getAllByRole('button', { name: 'Open', exact: true })).toHaveLength(1);
+  // The requester opens their own request; they are never offered "Review".
+  rerender(<ReleaseInbox {...props} data={data} currentUserId="author" />);
+  expect(screen.queryByRole('button', { name: 'Review', exact: true })).not.toBeInTheDocument();
+  expect(screen.getAllByRole('button', { name: 'Open', exact: true })).toHaveLength(2);
+  rerender(<ReleaseInbox {...props} data={data} currentUserId="reviewer" authored />);
+  expect(screen.queryByRole('button', { name: 'Review', exact: true })).not.toBeInTheDocument();
+  rerender(<ReleaseInbox {...props} data={{ ...data, pendingCount: 0 }} currentUserId="reviewer" />);
+  expect(screen.getByRole('tab', { name: 'Assigned to me' })).toBeVisible();
 });

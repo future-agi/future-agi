@@ -28,6 +28,8 @@ import { ConfirmDialog } from "src/components/custom-dialog";
 import TextDiff from "../components/TextDiff";
 import ChecksList from "../components/ChecksList";
 import CapabilityChanges from "./CapabilityChanges";
+import SummaryTable from "./SummaryTable";
+import VersionLabel from "../components/VersionLabel";
 import { counted, responsiveEvidenceSx } from "./reviewPresentation";
 
 const TERMINAL = new Set([
@@ -446,6 +448,7 @@ export default function ReleaseReviewBody({
   summaries,
   moreChanges = false,
   onLoadMore,
+  availableEvidence,
 }) {
   const [inspecting, setInspecting] = useState(null);
   const ordered = [...(changes || [])].sort((a, b) =>
@@ -457,61 +460,31 @@ export default function ReleaseReviewBody({
           a.path.localeCompare(b.path),
   );
   const checksEmpty = checks && checks.items?.length === 0 && checks.summary?.errors === 0 && checks.summary?.warnings === 0 && capabilities?.changes.length === 0 && !packet.externalPipeline;
-  const permissions = <CapabilityChanges changes={capabilities} onOpenFile={onOpenFile} />;
-  const otherChecks = <>
-    <Section title="Static checks">
-      {checks ? <ChecksList checks={checks} /> : <Typography variant="s3">Checks unavailable. This is not a successful check.</Typography>}
-    </Section>
-    <Section title="CI results">{packet.externalPipeline ? <ExternalPipeline reference={packet.externalPipeline} /> : <Typography variant="s3" color="text.secondary">None attached</Typography>}</Section>
-  </>;
+  const isContext = packet.subjectKind === 'agent_context';
+  const changedFiles = changes ? changes.filter((file) => file.status !== 'unchanged').length : null;
+  // The summary table states each fact once; everything below it is detail the table cannot hold.
+  const evidenceFact = evidence.length ? `${counted(evidence.length, 'test result')} attached`
+    : availableEvidence > 0 ? `No test results attached (${availableEvidence} available).`
+      : availableEvidence === 0 ? 'No matching test evidence. Not tested is not a pass.'
+        : 'No test results attached. Not tested is not a pass.';
+  const filesFact = changedFiles == null ? 'File changes not loaded'
+    : `${counted(changedFiles, 'file')} changed${isContext ? ` · ${dependencyChanges ? `${counted(dependencyChanges.length, 'linked skill')} changed` : 'Linked skills not loaded'}` : ''}`;
   return (
     <Stack spacing={3} sx={{ minWidth: 0, ...responsiveEvidenceSx }}>
-      <Box sx={{ border: 1, borderColor: 'divider', borderRadius: 1, p: 1.5 }}>
-        <Stack spacing={1}>
-          <Typography variant="s1" sx={{ fontWeight: 600 }}>{packet.transition.label.charAt(0).toUpperCase() + packet.transition.label.slice(1)} moves {packet.transition.expectedVersion == null ? 'from no release' : `v${packet.transition.expectedVersion}`} → v{packet.transition.version} · {changes ? counted(changes.filter((file) => file.status !== 'unchanged').length, 'file') : 'File changes not loaded'} · {dependencyChanges ? counted(dependencyChanges.length, 'linked skill') : 'Linked skills not loaded'} · {counted(evidence.length, 'test result')} attached</Typography>
-          <Typography variant="s3"><Typography component="span" variant="s3" sx={{ fontWeight: 600 }}>Evidence:</Typography> {evidence.length ? `${counted(evidence.length, 'result')} attached; inspect coverage below.` : 'No test results attached. Not tested is not a pass.'}</Typography>
-          <Typography variant="s3"><Typography component="span" variant="s3" sx={{ fontWeight: 600 }}>Who is affected:</Typography> {impact ? impactSentence(impact) : 'Application impact has not been measured.'}</Typography>
-          {capabilities ? <Typography variant="s3"><Typography component="span" variant="s3" sx={{ fontWeight: 600 }}>Permissions:</Typography> {capabilities.changes.length ? counted(capabilities.changes.length, 'change') : 'No permission changes found.'}</Typography> : <Alert severity="warning">Permission comparison unavailable. Review the file changes before deciding.</Alert>}
+      <Stack spacing={1.5} sx={{ minWidth: 0 }}>
+        <Stack spacing={0.5}>
+          <Typography variant="s1" sx={{ fontWeight: 600 }}>{packet.transition.label.charAt(0).toUpperCase() + packet.transition.label.slice(1)} moves {packet.transition.expectedVersion == null ? 'from no release' : `v${packet.transition.expectedVersion}`} → v{packet.transition.version}</Typography>
           <Typography variant="s3" color="text.secondary">Production stays unchanged until approval and release. Check Consumers to confirm delivery.</Typography>
-          {packet.target && <Stack direction="row" gap={1} alignItems="center" flexWrap="wrap"><Typography variant="s3" color="text.secondary">Application configuration r{packet.target.revision}</Typography><IdentityChip inline label="Configuration" value={packet.target.configurationDigest} /></Stack>}
-          <TechnicalDetails title="Release identities">
-          <IdentityValue
-            label="Candidate version ID"
-            value={packet.candidateVersionId}
-          />
-          <IdentityValue
-            label="Candidate digest"
-            value={packet.candidateDigest}
-          />
-          <Typography variant="s3">
-            Release r{packet.transition.expectedReleaseRevision} · security r
-            {packet.transition.expectedSecurityRevision}
-          </Typography>
-          {packet.target ? (
-            <>
-              <IdentityValue
-                label="Target binding or environment"
-                value={packet.target.bindingId ?? packet.target.environmentId}
-              />
-              <IdentityValue
-                label={`Target configuration r${packet.target.revision}`}
-                value={packet.target.configurationDigest}
-              />
-              {targetConfiguration ? <TechnicalDetails title="Reviewed application configuration">
-                <Typography component="pre" variant="s3" sx={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{JSON.stringify(targetConfiguration, null, 2)}</Typography>
-              </TechnicalDetails> : <Alert severity="warning">The application configuration has not loaded. A digest alone does not establish applicability.</Alert>}
-            </>
-          ) : (
-            <Typography variant="s3">
-              No application target selected. Native applicability cannot be
-              established.
-            </Typography>
-          )}
-          </TechnicalDetails>
-
         </Stack>
-      </Box>
-      <Section id="review-evidence" title="Evidence">
+        <SummaryTable label="Release summary" rows={[
+          { label: 'Evidence', value: evidenceFact },
+          { label: 'Who is affected', value: impact ? impactSentence(impact) : 'Application impact has not been measured.' },
+          { label: 'Permissions', value: capabilities ? (capabilities.changes.length ? counted(capabilities.changes.length, 'change') : 'No permission changes found.') : 'Comparison unavailable. Review the file changes before deciding.' },
+          { label: 'Files', value: filesFact },
+          packet.target && { label: 'Application target', value: `Application configuration r${packet.target.revision}` },
+        ]} />
+      </Stack>
+      {(evidence.length > 0 || selected.some((ref) => !evidence.some((item) => evidenceKey(item) === evidenceKey(ref)))) && <Section id="review-evidence" title="Test results">
         <EvidenceSummary items={evidence.map((ref) => {
           const summary = summaries?.find((item) => evidenceKey(item) === evidenceKey(ref));
           return { id: ref.sourceId, source: ref.source, resultState: ref.resultState, title: evidenceTitle(ref, packet.transition.version, packet.transition.expectedVersion), outcome: ref.outcome || (ref.source === 'skills_text' ? summary?.answer : undefined), results: ref.source === 'simulation_native' && summary ? ['answer', 'selection', 'delivery', 'tools'].map((key) => ({ label: key.charAt(0).toUpperCase() + key.slice(1), status: summary[key] })) : undefined, status: ref.status, visibility: ref.visibility, expiresAt: ref.payloadExpiresAt, counts: ref.counts || (summary && { graded: summary.graded, planned: summary.planned, regressed: summary.regressions, disagreements: summary.disagreements }) };
@@ -527,9 +500,7 @@ export default function ReleaseReviewBody({
         }} onInspect={(item) => { setInspecting(`${item.source}:${item.id}`); onInspect?.(evidence.find((ref) => evidenceKey(ref) === `${item.source}:${item.id}`)); }} />
         {selected.filter((ref) => !evidence.some((item) => evidenceKey(item) === evidenceKey(ref))).map((ref) => <Alert key={evidenceKey(ref)} severity="warning">Selected evidence {ref.sourceId} is unavailable. It will not be silently dropped.</Alert>)}
         {inspecting && <TechnicalDetails title="Inspected result" defaultOpen><TypedEvidenceList {...{ packet, onShare, summaries }} selected={selected.filter((ref) => evidenceKey(ref) === inspecting)} onSelectionChange={onSelectionChange ? (refs) => onSelectionChange([...selected.filter((ref) => evidenceKey(ref) !== inspecting), ...refs]) : undefined} evidence={evidence.filter((ref) => evidenceKey(ref) === inspecting)} /></TechnicalDetails>}
-      </Section>
-      <Box sx={{ display: 'grid', gridTemplateColumns: { xs: 'minmax(0, 1fr)', md: 'minmax(0, 2fr) minmax(0, 1fr)' }, gap: 3, alignItems: 'start' }}>
-        <Stack spacing={3} sx={{ minWidth: 0, ...responsiveEvidenceSx }}>
+      </Section>}
       <Section id="review-files" title="What changes">
         <Stack spacing={1.5}>
           {!ordered.length && (
@@ -545,7 +516,7 @@ export default function ReleaseReviewBody({
               <ReviewFileDiff file={file} />
             </TechnicalDetails>
           ))}
-          {ordered.some((file) => file.path === '.futureagi/context.json') && <TechnicalDetails title="Generated files">
+          {ordered.some((file) => file.path === '.futureagi/context.json') && <TechnicalDetails title="Other files">
             {ordered.filter((file) => file.path === '.futureagi/context.json').map((file) => <Stack key={file.path} spacing={1}><Typography variant="s3">{file.path} · {file.status}</Typography><ReviewFileDiff file={file} /></Stack>)}
           </TechnicalDetails>}
           {moreChanges && (
@@ -565,60 +536,84 @@ export default function ReleaseReviewBody({
         </Stack>
       </Section>
       <Section id="review-dependencies" title="Linked skills">
-        {packet.subjectKind !== 'agent_context' ? <Typography variant="s3">Not available for skills</Typography>
+        {!isContext ? <Typography variant="s3">Not available for skills</Typography>
           : dependencyError || !dependencyChanges ? <ErrorState title="Couldn't load the linked-skill comparison" onRetry={onRetryDependencies} />
             : !dependencyChanges.length ? <Typography variant="s3">No linked-skill changes</Typography>
               : <TableContainer><Table size="small" aria-label="Linked-skill changes" sx={{ '& thead': { display: { xs: 'none', sm: 'table-header-group' } }, '& tbody': { display: { xs: 'block', sm: 'table-row-group' } }, '& tbody tr': { display: { xs: 'grid', sm: 'table-row' }, gridTemplateColumns: 'minmax(0, 1fr)' }, '& td, & th': { minWidth: 0, whiteSpace: { xs: 'normal', sm: 'nowrap' }, overflowWrap: 'normal', wordBreak: 'normal' } }}>
-                <TableHead><TableRow sx={{ height: TABLE_HEADER_HEIGHT.default }}><TableCell>Skill</TableCell><TableCell>Policy</TableCell><TableCell>Version change</TableCell><TableCell>Digest</TableCell></TableRow></TableHead>
+                <TableHead><TableRow sx={{ height: TABLE_HEADER_HEIGHT.default }}><TableCell>Skill</TableCell><TableCell>Policy</TableCell><TableCell>Version</TableCell></TableRow></TableHead>
                 <TableBody>{dependencyChanges.map((item) => <TableRow key={item.mount} hover sx={{ height: { xs: 'auto', sm: ROW_HEIGHT.default } }}>
                   <TableCell><Typography variant="s1">{mountName(item.mount)}</Typography><TechnicalDetails title="Technical details"><Typography variant="s3" component="code">{item.mount}</Typography></TechnicalDetails></TableCell>
                   <TableCell>{(item.after || item.before)?.requested?.label ? `Follows ${(item.after || item.before).requested.label}` : `Pinned to v${(item.after || item.before)?.requested?.version}`}</TableCell>
-                  <TableCell>{item.before ? `v${item.before.version}` : 'Not linked'} → {item.after ? `v${item.after.version}` : 'Removed'}</TableCell>
-                  <TableCell><IdentityChip label="Locked digest" value={(item.after || item.before)?.digest} /></TableCell>
+                  <TableCell>{item.before ? `v${item.before.version}` : 'Not linked'} → {item.after ? <VersionLabel number={item.after.version} digest={item.after.digest} label="locked skill version" /> : 'Removed'}</TableCell>
                 </TableRow>)}</TableBody>
               </Table></TableContainer>}
-
       </Section>
-        </Stack>
-        <Stack spacing={3} sx={{ minWidth: 0, ...responsiveEvidenceSx }}>
-      <Section id="review-impact" title="Who is affected">
-        {impact ? (
+      {/* What the summary sentences cannot hold stays one click away: changed permission declarations and the
+          compared fingerprints, the per-app counts with their caveat, and the version identities. */}
+      <Stack spacing={1} sx={{ minWidth: 0 }}>
+        <CapabilityChanges changes={capabilities} onOpenFile={onOpenFile} />
+        {impact && <TechnicalDetails title="Counts by app">
           <Stack spacing={1}>
-            <Typography variant="s1">
-              {impactSentence(impact)}
+            <Typography variant="s3">
+              {counted(impact.following, 'follower')} · {counted(impact.pinned, 'intentional pin')} ·{" "}
+              {impact.unobserved} applications without observations
             </Typography>
-            <TechnicalDetails title="Impact counts">
-              <Typography variant="s3">
-                {counted(impact.following, 'follower')} · {counted(impact.pinned, 'intentional pin')} ·{" "}
-                {impact.unobserved} applications without observations
-              </Typography>
-              <IdentityValue
-                label="Reviewed impact fingerprint"
-                value={packet.transition.expectedImpactFingerprint}
-              />
-            </TechnicalDetails>
             <Typography variant="s3">
               Only registered applications you can access are counted.{" "}
               {impact.moreAvailable
                 ? "Additional impact rows require inspection."
                 : "Offline and unregistered copies remain unknown."}
             </Typography>
+            <IdentityValue
+              label="Reviewed impact fingerprint"
+              value={packet.transition.expectedImpactFingerprint}
+            />
           </Stack>
-        ) : (
-          <Typography variant="s3">
-            Application impact has not been measured.
-          </Typography>
-        )}
-      </Section>
-          {/* Permissions stay visible with their compared fingerprints; only empty static checks and
-              pipeline results fold into "Other checks". */}
-          {permissions}
-          {checksEmpty ? <Stack spacing={1}>
-            <Typography variant="m3">Other checks: nothing to review</Typography>
-            <TechnicalDetails title="Other checks">{otherChecks}</TechnicalDetails>
-          </Stack> : otherChecks}
-        </Stack>
-      </Box>
+        </TechnicalDetails>}
+        <TechnicalDetails title="Version details">
+          <Stack spacing={1}>
+            <IdentityValue
+              label="Candidate version ID"
+              value={packet.candidateVersionId}
+            />
+            <IdentityValue
+              label="Candidate digest"
+              value={packet.candidateDigest}
+            />
+            <Typography variant="s3">
+              Release r{packet.transition.expectedReleaseRevision} · security r
+              {packet.transition.expectedSecurityRevision}
+            </Typography>
+            {packet.target ? (
+              <>
+                <IdentityValue
+                  label="Target binding or environment"
+                  value={packet.target.bindingId ?? packet.target.environmentId}
+                />
+                <IdentityValue
+                  label={`Target configuration r${packet.target.revision}`}
+                  value={packet.target.configurationDigest}
+                />
+                {targetConfiguration ? <TechnicalDetails title="Reviewed application configuration">
+                  <Typography component="pre" variant="s3" sx={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{JSON.stringify(targetConfiguration, null, 2)}</Typography>
+                </TechnicalDetails> : <Alert severity="warning">The application configuration has not loaded. A digest alone does not establish applicability.</Alert>}
+              </>
+            ) : (
+              <Typography variant="s3">
+                No application target selected. Native applicability cannot be
+                established.
+              </Typography>
+            )}
+          </Stack>
+        </TechnicalDetails>
+        {/* Static checks and pipeline results appear only when there is something to review. */}
+        {!checksEmpty && <>
+          <Section title="Static checks">
+            {checks ? <ChecksList checks={checks} /> : <Typography variant="s3">Checks unavailable. This is not a successful check.</Typography>}
+          </Section>
+          <Section title="CI results">{packet.externalPipeline ? <ExternalPipeline reference={packet.externalPipeline} /> : <Typography variant="s3" color="text.secondary">None attached</Typography>}</Section>
+        </>}
+      </Stack>
     </Stack>
   );
 }
@@ -641,4 +636,5 @@ ReleaseReviewBody.propTypes = {
   summaries: PropTypes.array,
   moreChanges: PropTypes.bool,
   onLoadMore: PropTypes.func,
+  availableEvidence: PropTypes.number,
 };

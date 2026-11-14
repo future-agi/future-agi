@@ -35,6 +35,7 @@ import Iconify from "src/components/iconify";
 import StatusBadge from "src/components/status-badge";
 import { DataTablePagination } from "src/components/data-table";
 import { ROW_HEIGHT, TABLE_HEADER_HEIGHT } from "src/theme/sizes";
+import { skillsRouteSx } from "../components/routeGutter";
 import { ReviewState } from "./ReleaseReviewBody";
 import { OperationFeedback, useReviewedOperation } from "./ReleaseRequestPanel";
 
@@ -46,12 +47,20 @@ function InboxRows({
   onOpen,
   onSeen,
   authored,
+  currentUserId,
 }) {
   const mobile = useMediaQuery((theme) => theme.breakpoints.down('sm'));
   const [menu, setMenu] = useState(null);
   const operation = useReviewedOperation();
   const row = data.results.find((item) => item.id === menu?.id);
   const rows = [...data.results].sort((a, b) => Number(b.status === 'pending') - Number(a.status === 'pending'));
+  // "Review" is for the assigned reviewer of a waiting request; everyone else, including the requester, opens it.
+  const canReview = (item) => item.status === 'pending' && !authored && (!currentUserId || item.authorId !== currentUserId)
+    && (!item.recipients?.length || !currentUserId || item.recipients.some((person) => person.id === currentUserId));
+  const action = (item) => canReview(item)
+    ? <Button size="small" variant="outlined" onClick={() => onOpen(item)}>Review</Button>
+    : <Button size="small" onClick={() => onOpen(item)}>Open</Button>;
+  const settled = (item) => item.status !== 'pending';
   return (
     <Stack spacing={1}>
       <Typography variant="s1" role="status">
@@ -93,13 +102,13 @@ function InboxRows({
           {mobile ? <Stack aria-label="Assigned release reviews">{rows.map((item) => <Stack key={item.id} direction="row" gap={1} alignItems="center" sx={{ py: 1.5, borderBottom: 1, borderColor: 'divider' }}>
             <ButtonBase aria-label={item.name} onClick={() => onOpen(item)} sx={{ minWidth: 0, flex: 1, textAlign: 'left', justifyContent: 'flex-start', borderRadius: 1, '&.Mui-focusVisible': { outline: '2px solid', outlineColor: 'primary.main', outlineOffset: 2 } }}>
               <Stack spacing={0.5} sx={{ minWidth: 0 }}>
-                <Stack direction="row" gap={1} alignItems="center">{item.unread && item.status === 'pending' && <><Box component="span" aria-hidden="true" sx={{ width: 8, height: 8, borderRadius: '50%', bgcolor: 'primary.main', flexShrink: 0, mr: 1 }} /><Box component="span" sx={visuallyHidden}>Unread</Box></>}<Typography variant="s1" sx={{ fontWeight: item.unread ? 600 : 400, overflowWrap: 'anywhere' }}>{item.name}</Typography></Stack>
-                {item.transition && <Typography variant="s1">{releaseTitle(item.transition)}</Typography>}
+                <Stack direction="row" gap={1} alignItems="center">{item.unread && item.status === 'pending' && <><Box component="span" aria-hidden="true" sx={{ width: 8, height: 8, borderRadius: '50%', bgcolor: 'primary.main', flexShrink: 0, mr: 1 }} /><Box component="span" sx={visuallyHidden}>Unread</Box></>}<Typography variant="s1" color={settled(item) ? 'text.secondary' : undefined} sx={{ fontWeight: item.unread ? 600 : 400, overflowWrap: 'anywhere' }}>{item.name}</Typography></Stack>
+                {item.transition && <Typography variant="s1" color={settled(item) ? 'text.secondary' : undefined}>{releaseTitle(item.transition)}</Typography>}
                 {item.status === 'pending' && <Typography variant="s3" color="text.secondary">Waiting on {item.recipients?.map((person) => reviewPersonName(person.name)).join(', ') || 'the assigned reviewer'}</Typography>}
                 <Typography variant="s3" color="text.secondary">Requested by {reviewPersonName(item.authorName)} · {item.subjectKind === 'agent_context' ? 'Agent context' : 'Skill'} · <When value={item.updatedAt} fallback="Time not reported" /></Typography>
               </Stack>
             </ButtonBase>
-            {item.status === 'pending' && <Button size="small" variant="outlined" onClick={() => onOpen(item)}>Review</Button>}
+            {action(item)}
             <Stack alignItems="flex-end" spacing={0.5}><StatusBadge status={item.status === 'pending' ? 'in_review' : item.status === 'changes_requested' ? 'needs_changes' : item.status} /><IconButton size="small" aria-label={`Actions for ${item.name}`} onClick={(event) => setMenu({ id: item.id, anchor: event.currentTarget })}><Iconify icon="solar:menu-dots-bold" width={16} /></IconButton></Stack>
           </Stack>)}</Stack> : <TableContainer sx={{ maxWidth: 1 }}>
             <Table size="small" aria-label="Assigned release reviews">
@@ -129,6 +138,7 @@ function InboxRows({
                         <Typography
                           variant="s1"
                           noWrap
+                          color={settled(item) ? 'text.secondary' : undefined}
                           sx={{
                             maxWidth: { xs: "16ch", sm: "40ch" },
                             fontWeight: item.unread ? 600 : 400,
@@ -150,7 +160,7 @@ function InboxRows({
                     </TableCell>
                     <TableCell sx={{ color: 'text.secondary', width: { xs: '70%', sm: 'auto' }, pt: { xs: 0, sm: 1 } }}><When value={item.updatedAt} fallback="Time not reported" /></TableCell>
                     <TableCell align="right" sx={{ whiteSpace: 'nowrap' }}>
-                      {item.status === 'pending' && <Button size="small" variant="outlined" onClick={() => onOpen(item)}>Review</Button>}
+                      {action(item)}
                       <IconButton
                         size="small"
                         aria-label={`Actions for ${item.name}`}
@@ -221,6 +231,7 @@ InboxRows.propTypes = {
   onOpen: PropTypes.func.isRequired,
   onSeen: PropTypes.func,
   authored: PropTypes.bool,
+  currentUserId: PropTypes.string,
 };
 
 export default function ReleaseInbox({
@@ -236,22 +247,23 @@ export default function ReleaseInbox({
   onCompose,
   onToggleAuthored,
   authored = false,
+  currentUserId,
 }) {
   return (
-    <Box sx={{ px: { xs: 2, sm: 3 }, py: 2, minWidth: 0 }}>
+    <Box sx={skillsRouteSx}>
       <PageHeader
         title="Reviews"
-        description="Review candidates before they reach production."
+        description="Review changes before they reach production."
         sx={{ mb: 1.5, flexDirection: { xs: 'column', sm: 'row' }, gap: 1.5, '& > .MuiStack-root + .MuiStack-root': { ml: { xs: 0, sm: 2 } } }}
         actions={scopeKey && !["off", "denied", "forbidden", "unavailable"].includes(state) && <>
           {onCompose && <Button variant="contained" color="primary" onClick={onCompose}>Request review</Button>}
         </>}
       />
-      {scopeKey && !['off', 'denied', 'forbidden', 'unavailable'].includes(state) && onToggleAuthored && <CustomTabs value={authored ? 'mine' : 'assigned'} onChange={(_, value) => { if ((value === 'mine') !== authored) onToggleAuthored(); }} aria-label="Review inbox views" sx={{ mb: 1.5 }}><Tab value="assigned" label={data?.pendingCount == null ? 'Assigned to me' : `Assigned to me (${data.pendingCount})`} /><Tab value="mine" label="My requests" /></CustomTabs>}
+      {scopeKey && !['off', 'denied', 'forbidden', 'unavailable'].includes(state) && onToggleAuthored && <CustomTabs value={authored ? 'mine' : 'assigned'} onChange={(_, value) => { if ((value === 'mine') !== authored) onToggleAuthored(); }} aria-label="Review inbox views" sx={{ mb: 1.5 }}><Tab value="assigned" label={data?.pendingCount ? `Assigned to me · ${data.pendingCount} waiting` : 'Assigned to me'} /><Tab value="mine" label="My requests" /></CustomTabs>}
       {!scopeKey || ['denied', 'forbidden'].includes(state) ? <CapabilityNotice title="You don't have access to reviews." description="Ask a workspace admin for reviewer access." /> : state === 'loading' ? <ContentSkeleton variant="rows" rows={5} label="Loading reviews" /> : state === 'error' ? <ErrorState title="Couldn't load reviews." onRetry={onRetry} /> : state === 'empty' || (state === 'ready' && data && !data.results.length) ? <EmptyState title={authored ? 'No requests sent yet' : 'No reviews waiting for you'} description={authored ? 'Requests you send appear here.' : 'Requests assigned to you appear here.'} secondaryAction={!authored && onToggleAuthored ? <Button onClick={onToggleAuthored}>View my requests</Button> : undefined} /> : scopeKey && state === "ready" && data ? (
         <InboxRows
           key={scopeKey}
-          {...{ data, status, onStatusChange, onPageChange, onOpen, onSeen, authored }}
+          {...{ data, status, onStatusChange, onPageChange, onOpen, onSeen, authored, currentUserId }}
         />
       ) : (
         <ReviewState
@@ -275,4 +287,5 @@ ReleaseInbox.propTypes = {
   onCompose: PropTypes.func,
   onToggleAuthored: PropTypes.func,
   authored: PropTypes.bool,
+  currentUserId: PropTypes.string,
 };
