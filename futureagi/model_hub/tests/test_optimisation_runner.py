@@ -49,7 +49,7 @@ def _stored_status(row):
 )
 def test_optional_model_settings_in_runner(optimization, settings, temp, tokens):
     optimization.model_config = {"model_name": "gpt-4o-mini", **settings}
-    optimization.messages = [dict(role="user", content=[dict(type="text", text="Hi")])]
+    optimization.messages = [{"role": "user", "content": [{"type": "text", "text": "Hi"}]}]
     optimization.save()
     view = "model_hub.views.develop_optimiser"
     with (
@@ -61,16 +61,17 @@ def test_optional_model_settings_in_runner(optimization, settings, temp, tokens)
     ):
         model_manager.return_value.get_provider.return_value = "openai"
         result = prompt_optimizer.return_value.get_optimized_prompt
-        result.return_value = [dict(instruction_template="Better", train_score=1.0)]
+        result.return_value = [{"instruction_template": "Better", "train_score": 1.0}]
         process_optimization(optimization)
 
+    assert _stored_status(optimization) == StatusType.COMPLETED.value
+    prompt_optimizer.assert_called_once()
     assert prompt_optimizer.call_args.kwargs["temperature"] == temp
     assert prompt_optimizer.call_args.kwargs["max_tokens"] == tokens
     for key, default in (("temperature", 0.7), ("max_tokens", 1000)):
         assert llm.call_args.kwargs[key] == (
             default if settings.get(key) is None else settings[key]
         )
-    assert _stored_status(optimization) == StatusType.COMPLETED.value
     optimization.refresh_from_db()
     assert optimization.model_config == {"model_name": "gpt-4o-mini", **settings}
 
