@@ -287,8 +287,15 @@ go run ./cmd/agentcc --config config.yaml
 ```
 
 The `--config` flag explicitly loads the file you just copied. Alternatively,
-set `AGENTCC_CONFIG_FILE` to its path. Once the server starts, the example
-configuration listens on `http://localhost:8080`.
+set `AGENTCC_CONFIG_FILE` to its path. The example binds to `0.0.0.0:8080`
+(all network interfaces); for a local-only server, set `server.host` to
+`127.0.0.1` in `config.yaml` before starting it. Once it starts, check it with:
+
+```bash
+curl --fail http://localhost:8080/healthz
+```
+
+This health check does not call a model provider.
 
 </details>
 
@@ -1310,7 +1317,7 @@ bin/loadtest -c 10 -n 50 -models gpt-4o-mini
 
 ## 🤝 Contributing
 
-Agent Command Center is part of the [Future AGI monorepo](../../README.md). See the top-level [CONTRIBUTING.md](../../CONTRIBUTING.md) for setup, CLA, and PR conventions. Gateway-specific tips in [`cmd/server/README.md`](./cmd/server).
+Agent Command Center is part of the [Future AGI monorepo](../README.md). See the top-level [CONTRIBUTING.md](../CONTRIBUTING.md) for setup, CLA, and PR conventions. The gateway entrypoint is [`cmd/agentcc/main.go`](./cmd/agentcc/main.go).
 
 ---
 
