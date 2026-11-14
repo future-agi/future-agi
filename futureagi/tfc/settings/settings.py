@@ -164,7 +164,8 @@ REDIS_CACHE_SOCKET_TIMEOUT_SECONDS = float(
 
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = os.getenv("DEBUG", "True" if _IS_LOCAL else "False").lower() in (
+# Technical error pages require an explicit DEBUG opt-in in every environment.
+DEBUG = os.getenv("DEBUG", "False").lower() in (
     "true",
     "1",
     "t",
@@ -305,7 +306,7 @@ MIDDLEWARE = [
     "django.middleware.csrf.CsrfViewMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
     "tfc.telemetry.middleware.OTelContextMiddleware",  # OpenTelemetry context enrichment (after auth)
-    "django_structlog.middlewares.RequestMiddleware",  # Structured logging - adds request_id, ip, etc.
+    "tfc.logging.middleware.CallbackRequestMiddleware",  # Request-event formatting for OAuth callbacks.
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
     # 'tfc.middleware.debug_middleware.DebugMiddleware',
@@ -1441,6 +1442,7 @@ AUTH0_ALGORITHM = "RS256"
 GITHUB_API_ENDPOINT = "https://api.github.com"
 GITHUB_OAUTH_URL = "https://github.com/login/oauth"
 GOOGLE_USERINFO_API = "https://www.googleapis.com/oauth2/v1/userinfo"
+GOOGLE_OAUTH_JWKS_URL = "https://www.googleapis.com/oauth2/v3/certs"
 MICROSOFT_OAUTH_URL = "https://login.microsoftonline.com/common/oauth2/v2.0"
 MICROSOFT_GRAPH_API = "https://graph.microsoft.com/v1.0"
 

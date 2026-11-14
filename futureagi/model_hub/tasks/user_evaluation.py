@@ -16,6 +16,7 @@ from django.db import (
 from django.db.models import Q
 
 from model_hub.services.localization_errors import LocalizationFailure
+from tfc.utils.media_tools import MediaToolUnavailable
 
 logger = structlog.get_logger(__name__)
 try:
@@ -108,6 +109,8 @@ def _mark_cells_usage_limit_error(user_eval_metric, usage_check):
                 source=SourceChoices.EXPERIMENT_EVALUATION.value,
                 source_id__endswith=f"-sourceid-{user_eval_metric.id}",
             ),
+            dataset_id=user_eval_metric.dataset_id,
+            dataset__organization_id=user_eval_metric.organization_id,
             deleted=False,
         )
         eval_column_ids = list(eval_columns.values_list("id", flat=True))
@@ -121,6 +124,8 @@ def _mark_cells_usage_limit_error(user_eval_metric, usage_check):
             Column.objects.filter(
                 source=SourceChoices.EVALUATION_REASON.value,
                 source_id__endswith=f"-sourceid-{user_eval_metric.id}",
+                dataset_id=user_eval_metric.dataset_id,
+                dataset__organization_id=user_eval_metric.organization_id,
                 deleted=False,
             ).values_list("id", flat=True)
         )
@@ -1502,6 +1507,8 @@ def process_single_error_localization(task_id):
             failure_code = (
                 e.code.value
                 if isinstance(e, LocalizationFailure)
+                else e.code
+                if isinstance(e, MediaToolUnavailable)
                 else "unexpected_error"
             )
             logger.error(
@@ -1511,7 +1518,11 @@ def process_single_error_localization(task_id):
                 failure_code=failure_code,
                 error_type=type(e).__name__,
             )
-            task.mark_as_failed(f"Error localization failed ({failure_code}).")
+            reason = f"Error localization failed ({failure_code})."
+            if isinstance(e, MediaToolUnavailable):
+                # Our own text (tool, feature, image to use); no case content.
+                reason = f"{reason} {e}"
+            task.mark_as_failed(reason)
             if refund_cost_for_api_call is not None:
                 refund_cost_for_api_call(api_call_log_row)
             return
@@ -1646,7 +1657,9 @@ def process_single_error_localization(task_id):
 
         elif task.source == ErrorLocalizerSource.OBSERVE:
             try:
-                eval_logger = EvalLogger.objects.get(id=task.source_id)
+                # Primary: the result may have been written or re-scored a
+                # moment ago, and this merge saves its metadata back whole.
+                eval_logger = EvalLogger.objects.using("default").get(id=task.source_id)
                 output_metadata = eval_logger.output_metadata or {}
                 output_metadata.update(
                     {
@@ -1658,7 +1671,12 @@ def process_single_error_localization(task_id):
                 )
 
                 eval_logger.output_metadata = output_metadata
-                eval_logger.save(update_fields=["output_metadata"])
+                # Primary: save() validates the result's config (full_clean),
+                # which a lagging replica may not have when the eval is new.
+                from tfc.routers import force_primary
+
+                with force_primary():
+                    eval_logger.save(update_fields=["output_metadata"])
 
                 metadata = task.metadata
                 if metadata.get("log_id", None) and APICallLog is not None:

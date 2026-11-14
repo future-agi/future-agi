@@ -1,10 +1,7 @@
-import hashlib
 import traceback
 from math import ceil
 
-import redis
 import structlog
-from django.conf import settings
 from django.utils import timezone
 from drf_yasg.utils import swagger_auto_schema
 from rest_framework.decorators import action
@@ -14,6 +11,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework.viewsets import ViewSet
 
+from accounts.key_cache import publish_key_revocation as _publish_key_revocation
 from accounts.models import OrgApiKey
 from accounts.permissions import RequiresIndependentAuth
 from accounts.serializers.contracts import (
@@ -40,22 +38,6 @@ from tfc.utils.error_codes import get_error_message
 from tfc.utils.general_methods import GeneralMethods
 
 logger = structlog.get_logger(__name__)
-FI_AUTH_REVOKE_CHANNEL = "fi:auth:revoke"
-
-
-def _publish_key_revocation(api_key: str, secret_key: str) -> None:
-    """
-    Publish a cache-bust to fi-collector so revoked keys are evicted immediately.
-    """
-    try:
-        cache_key = hashlib.sha256(f"{api_key}:{secret_key}".encode()).hexdigest()
-        r = redis.Redis.from_url(
-            getattr(settings, "REDIS_URL", "redis://localhost:6379/0"),
-            decode_responses=True,
-        )
-        r.publish(FI_AUTH_REVOKE_CHANNEL, cache_key)
-    except Exception:
-        logger.warning("fi_auth_revoke_publish_failed", exc_info=True)
 
 
 def _managed_keys(organization):
@@ -125,6 +107,8 @@ class SecretKeyAPIViewSet(ViewSet):
         "created_by": "user__name",
         "enabled": "enabled",
         "type": "type",
+        "expiresAt": "expires_at",
+        "expires_at": "expires_at",
     }
 
     @swagger_auto_schema(
@@ -197,6 +181,8 @@ class SecretKeyAPIViewSet(ViewSet):
                     "created_at": key.created_at,
                     "enabled": key.enabled,
                     "type": key.type,
+                    "expires_at": key.expires_at,
+                    "is_expired": key.is_expired,
                 }
                 for key in paginated_keys
             ]
@@ -237,6 +223,11 @@ class SecretKeyAPIViewSet(ViewSet):
                 ).get(id=key_id)
                 if apikey.enabled:
                     return self._gm.bad_request(get_error_message("API_KEY_ENABLED"))
+                if apikey.is_expired:
+                    # Auth would disable it again on its next use.
+                    return self._gm.bad_request(
+                        get_error_message("API_KEY_EXPIRED_CANNOT_ENABLE")
+                    )
                 apikey.enabled = True
                 apikey.save(update_fields=["enabled"])
 
@@ -328,6 +319,7 @@ class SecretKeyAPIViewSet(ViewSet):
                 workspace=workspace,
                 simulation_environment_id=environment_id,
                 **owner,
+                expires_at=request.validated_data.get("expires_at"),
             )
             try:
                 from tfc.deployment_telemetry.events import record_event
@@ -348,6 +340,7 @@ class SecretKeyAPIViewSet(ViewSet):
                 "masked_api_key": mask_key(org_key.api_key),
                 "secret_key": org_key.secret_key,
                 "masked_secret_key": mask_key(org_key.secret_key),
+                "expires_at": org_key.expires_at,
             }
             return self._gm.success_response(response)
         except APIException:

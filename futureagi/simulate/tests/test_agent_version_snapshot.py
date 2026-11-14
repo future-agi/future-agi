@@ -165,9 +165,7 @@ class TestAgentVersionSnapshot:
         obs_value = snapshot.get("observability_enabled", False)
         assert obs_value is False
 
-    def test_snapshot_observability_flag_of_a_live_link(
-        self, organization, workspace
-    ):
+    def test_snapshot_observability_flag_of_a_live_link(self, organization, workspace):
         agent = _agent_with_row(organization, workspace, enabled=True)
         version = agent.create_version(
             description="Test",
