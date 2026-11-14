@@ -111,6 +111,7 @@ export const scenarioFromApi = (row = {}) => {
     branchCategory: row.branch,
     subTasks: Array.isArray(row.sub_goals) ? row.sub_goals : [],
     callActors: Array.isArray(row.actors) ? row.actors : [],
+    faults: Array.isArray(row.faults) ? row.faults : [],
     persona: persona
       ? {
           name: persona.name,

@@ -10,6 +10,12 @@ import {
   effectiveTrigger,
 } from "./callActorLabels";
 import { SCENARIO_SHAPE } from "./scenarios.shapes";
+import { ACTORS_COPY } from "../actors/actors.constants";
+import {
+  TEST_CONDITIONS_COPY,
+  needsAMissingDoor,
+  testConditionLine,
+} from "./testConditions.constants";
 
 // One scenario, opened from its table row, laid out as the designer's
 // ScenarioDrawer: the name (the table's Scenario column) and Edit in the
@@ -87,7 +93,11 @@ export default function ScenarioDrawer({
 
 ScenarioDrawer.propTypes = {
   row: SCENARIO_SHAPE,
-  env: PropTypes.shape({ callActors: PropTypes.array }),
+  env: PropTypes.shape({
+    callActors: PropTypes.array,
+    doorReach: PropTypes.object,
+    toolEntrypoints: PropTypes.array,
+  }),
   onClose: PropTypes.func.isRequired,
   onEdit: PropTypes.func,
   locked: PropTypes.bool,
@@ -102,6 +112,8 @@ function ScenarioSheet({ row, env }) {
     Object.values(listed).map((one) => [one.id, one.name || one.id]),
   );
   const goals = normaliseSubTasks(row.subTasks);
+  // The scenario needs the world's door where this agent has none: said under its actors or test conditions.
+  const noDoor = needsAMissingDoor(row, env);
   // The same fields the table's Situation and Ideal outcome cells read.
   const situation = row.situation || row.task;
   const idealOutcome = row.outcome || row.expected;
@@ -193,8 +205,42 @@ function ScenarioSheet({ row, env }) {
                   {one.instruction || listed[one.id]?.goal}
                 </Typography>
               )}
+              {(one.actions || []).map((step, index) => (
+                <Typography
+                  key={`${step.action}-${index}`}
+                  className="sd-val"
+                  sx={{ color: "text.secondary" }}
+                >
+                  {ACTORS_COPY.scenarioActions.takes(step.action)}
+                  {step.trigger?.kind === "after_seconds" &&
+                  step.trigger?.seconds
+                    ? ACTORS_COPY.scenarioActions.after(step.trigger.seconds)
+                    : ""}
+                </Typography>
+              ))}
             </Box>
           ))}
+          {noDoor && (
+            <Typography className="sd-val" sx={{ color: "warning.main" }}>
+              {TEST_CONDITIONS_COPY.noDoor}
+            </Typography>
+          )}
+        </Stack>
+      </Row>
+    ),
+    row.faults?.length > 0 && (
+      <Row key="conditions" label={TEST_CONDITIONS_COPY.heading}>
+        <Stack spacing={0.5} sx={{ maxWidth: 760 }}>
+          {row.faults.map((fault, index) => (
+            <Typography key={`${fault.action}-${index}`} className="sd-val">
+              {testConditionLine(fault)}
+            </Typography>
+          ))}
+          {noDoor && !row.callActors?.length && (
+            <Typography className="sd-val" sx={{ color: "warning.main" }}>
+              {TEST_CONDITIONS_COPY.noDoor}
+            </Typography>
+          )}
         </Stack>
       </Row>
     ),
@@ -229,7 +275,11 @@ function ScenarioSheet({ row, env }) {
 
 ScenarioSheet.propTypes = {
   row: SCENARIO_SHAPE,
-  env: PropTypes.shape({ callActors: PropTypes.array }),
+  env: PropTypes.shape({
+    callActors: PropTypes.array,
+    doorReach: PropTypes.object,
+    toolEntrypoints: PropTypes.array,
+  }),
 };
 
 function Row({ label, children }) {

@@ -2,6 +2,11 @@ import { ACTOR_CHANNEL_LABELS } from "src/components/VoiceDetailDrawerV2/constan
 
 // Every copy string on the Actors tab, so nothing is inlined in the JSX.
 export const ACTORS_COPY = {
+  // What an actor does in one scenario's world, under its line in the scenario drawer.
+  scenarioActions: {
+    takes: (action) => `Takes ${action}`,
+    after: (seconds) => ` after ${seconds} s`,
+  },
   limits: {
     title: "Limits",
     subtitle:
@@ -144,7 +149,7 @@ export const ACTORS_COPY = {
       moreDetails: "More details",
       lessDetails: "Hide more details",
       moreDetailsHelp:
-        "Given to them as background whenever they speak or decide in the moment. Someone who only takes the actions each scenario lists does not use them, and \"Brought in by\" is for reading only.",
+        'Given to them as background whenever they speak or decide in the moment. Someone who only takes the actions each scenario lists does not use them, and "Brought in by" is for reading only.',
       editTitle: (name) => `Edit ${name}`,
       id: "Id",
       // The rule's words are the schema's own, when it sends them.
@@ -169,7 +174,12 @@ export const ACTORS_COPY = {
       tooLong: (over) =>
         `This actor is ${over.toLocaleString()} characters too long to save. Shorten what they know or their other long fields.`,
       kind: "Kind (optional)",
-      kinds: { person: "A person", agent: "Another agent", system: "A system" },
+      kinds: {
+        person: "A person",
+        approver: "An approver",
+        agent: "Another agent",
+        system: "A system",
+      },
       parent: "Brought in by (optional)",
       parentHelp: "Someone already in the world who brings them in, if anyone",
       nobody: "No one",

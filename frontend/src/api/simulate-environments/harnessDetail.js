@@ -154,6 +154,8 @@ export function harnessDetailToEnvironment(detail) {
     // from source. Empty for provider agents, which have neither.
     dataSchema: contract?.data_schema || null,
     toolEntrypoints: contract?.tool_entrypoints || null,
+    // Per tool: whether the world's door stands in front of it, so actors can take it and faults apply.
+    doorReach: contract?.door_reach || null,
     systemPromptExcerpt: contract?.system_prompt_excerpt || null,
     counts: {
       flows: overview.flows_count ?? null,

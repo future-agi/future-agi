@@ -10,6 +10,7 @@ import {
   runnableScenarioKey,
 } from "src/api/simulate-environments/scenarioSelection";
 import { useAmendScenarios } from "src/api/simulate-environments/scenariosHooks";
+import { errorMessage } from "src/pages/dashboard/harness/harnessShared";
 import { useActors } from "src/api/simulate-environments/versions";
 import EmptyState from "../../components/EmptyState";
 import { withCast } from "../actors/actorUtils";
@@ -451,16 +452,28 @@ export default function ScenariosStep({
   // Edits route through the amend route as set_field / set_persona ops (the
   // editor emits only the changed writable fields). A refused receipt surfaces
   // its `why`; a success invalidates the list + coverage so the row updates.
-  const saveScenario = ({ changes, rework }) => {
-    if (!changes?.length) return;
-    amend.mutate(
-      { rework, changes },
-      {
-        onSuccess: (data) => surfaceReceipts(data, "Saved"),
-        onError: () =>
-          enqueueSnackbar("Couldn't save. Try again", { variant: "error" }),
-      },
-    );
+  // Answers the editor with what was refused, so a refused test condition is shown where it was set.
+  const saveScenario = async ({ changes, rework }) => {
+    if (!changes?.length) return undefined;
+    try {
+      const data = await amend.mutateAsync({ rework, changes });
+      surfaceReceipts(data, "Saved");
+      const refused = (data?.receipts || [])
+        .filter((one) => one.outcome === "refused")
+        .map((one) => ({
+          ...one,
+          // The server names a refused test condition in its why.
+          field: /test condition/i.test(one.why || "") ? "faults" : one.field,
+        }));
+      return { refused };
+    } catch (error) {
+      const code = error?.response?.data?.code || error?.code;
+      if (code === "scenario_faults_invalid") {
+        return { error: { message: errorMessage(error) } };
+      }
+      enqueueSnackbar("Couldn't save. Try again", { variant: "error" });
+      return undefined;
+    }
   };
 
   return (
@@ -657,6 +670,7 @@ export default function ScenariosStep({
         scenarioEditing={pageData.scenarioEditing}
         noiseOptions={noiseOptions}
         levelLabels={pageData.levelLabels}
+        env={envWithCast}
       />
       <ConfirmDialog
         open={!!pendingDelete}

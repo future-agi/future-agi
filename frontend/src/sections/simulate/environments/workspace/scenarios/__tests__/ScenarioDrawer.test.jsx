@@ -171,8 +171,12 @@ describe("ScenarioDrawer actors", () => {
     expect(
       screen.getByText(/approves refunds · When the agent contacts them/),
     ).toBeInTheDocument();
-    expect(screen.queryByText(/Present from the start/)).not.toBeInTheDocument();
-    expect(screen.getByText("Waits 60 s, then it declines")).toBeInTheDocument();
+    expect(
+      screen.queryByText(/Present from the start/),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByText("Waits 60 s, then it declines"),
+    ).toBeInTheDocument();
   });
 
   it("keeps the environment's own actors when there is no cast", () => {
@@ -183,5 +187,72 @@ describe("ScenarioDrawer actors", () => {
   it("has no actors row for a scenario that includes none", () => {
     open();
     expect(screen.queryByText("Actors")).not.toBeInTheDocument();
+  });
+
+  it("lists the actions an actor takes in the scenario", () => {
+    const cast = { actors: [{ id: "approver", name: "Avery Stone" }] };
+    open(
+      {
+        ...API_ROW,
+        actors: [
+          {
+            id: "approver",
+            actions: [
+              { action: "approvals.put" },
+              {
+                action: "tickets.change",
+                trigger: { kind: "after_seconds", seconds: 20 },
+              },
+            ],
+          },
+        ],
+      },
+      { env: withCast({ id: "env-1" }, cast) },
+    );
+    expect(screen.getByText("Takes approvals.put")).toBeInTheDocument();
+    expect(
+      screen.getByText("Takes tickets.change after 20 s"),
+    ).toBeInTheDocument();
+  });
+
+  it("lists a scenario's test conditions", () => {
+    open({
+      ...API_ROW,
+      faults: [
+        {
+          action: "orders.refund",
+          mode: "timeout_after_commit",
+          on_call: 1,
+          delay_seconds: 5,
+        },
+        { action: "inventory.reserve", mode: "unavailable", on_call: 2 },
+      ],
+    });
+    expect(screen.getByText("Test conditions")).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "orders.refund: Runs, then the answer is lost on call 1 after 5 s",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("inventory.reserve: Unavailable on call 2"),
+    ).toBeInTheDocument();
+  });
+
+  it("says actors cannot act and faults cannot be set when the agent runs its tools inside it", () => {
+    const env = {
+      doorReach: { refund: false },
+      toolEntrypoints: [{ tool: "refund", mode: "unreachable" }],
+    };
+    open(
+      {
+        ...API_ROW,
+        faults: [{ action: "refund", mode: "unavailable", on_call: 1 }],
+      },
+      { env },
+    );
+    expect(
+      screen.getByText(/Actors cannot act and faults cannot be set here/),
+    ).toBeInTheDocument();
   });
 });

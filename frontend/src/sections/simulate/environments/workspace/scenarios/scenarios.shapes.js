@@ -41,6 +41,18 @@ export const SCENARIO_SHAPE = PropTypes.shape({
       id: PropTypes.string,
       instruction: PropTypes.string,
       trigger: PropTypes.object,
+      actions: PropTypes.arrayOf(PropTypes.object),
+    }),
+  ),
+  // The scenario's test conditions, as its `faults` carry them.
+  faults: PropTypes.arrayOf(
+    PropTypes.shape({
+      action: PropTypes.string,
+      mode: PropTypes.string,
+      on_call: PropTypes.number,
+      delay_seconds: PropTypes.number,
+      status: PropTypes.number,
+      message: PropTypes.string,
     }),
   ),
   conversationBranch: PropTypes.oneOfType([
