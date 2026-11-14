@@ -2780,3 +2780,31 @@
 - the report reads validation failed with a plain reason naming issue_refund, answer blocked, and tool routing Blocked on the failed action
 - the run answers 409 pair_failed, not retryable, with the reason code and a reason naming issue_refund, carries no internal text, and creates no run job
 - recheck answers 202 with a new validating job, and the bundle is pending again
+
+### SIM-E2E-008 — each scenario shows its lifecycle and only validated cases run
+
+**Goal:** A developer sees which scenarios are proved, kept as written, not validated or archived, and knows which ones a run will hold back
+
+**Spec:** `flows/simulate/scenario-lifecycle.spec.ts:24`
+
+**Tags:** —
+
+**User steps:**
+
+1. seed an Environment of four cases: one proved, one kept as written, one with no proof, one archived (e2e/lib/harness_environment_seed.py proofs and archived options)
+2. read the Scenarios list with its lifecycle
+3. read the archived cases through the filter
+4. read the cases readiness holds back (GET capabilities/cases?bucket=blocked)
+5. open the Scenarios tab
+
+**Backend state verified:**
+
+- the list reads Active, Active kept as written and Draft "Not validated on these versions yet."
+- the archived case appears only under lifecycle=archived
+- lifecycle_counts reads 1 proved, 1 kept as written, 1 not proved
+- readiness holds back the unproved case for not_validated and the archived one for scenario_archived
+
+**Browser observations:**
+
+- the counts line reads "1 proved · 1 kept as written · 1 not proved"
+- the rows carry Active, Kept as written and Draft badges
