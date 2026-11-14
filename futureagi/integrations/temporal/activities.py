@@ -18,16 +18,24 @@ EXPORT_PLATFORMS = {"datadog", "posthog", "mixpanel", "cloud_storage", "message_
 @temporal_activity(time_limit=120, queue="tasks_s")
 def poll_active_integrations():
     """Find integration connections due for sync and dispatch sync activities."""
-    from integrations.models import ConnectionStatus, IntegrationConnection, IntegrationPlatform
+    from integrations.models import (
+        ConnectionStatus,
+        IntegrationConnection,
+        IntegrationPlatform,
+    )
 
     now = datetime.now(timezone.utc)
 
-    connections = IntegrationConnection.no_workspace_objects.filter(
-        status=ConnectionStatus.ACTIVE,
-        deleted=False,
-    ).exclude(platform=IntegrationPlatform.SLACK).filter(
-        Q(last_synced_at__isnull=True)
-        | Q(last_synced_at__lte=now - timedelta(seconds=60))
+    connections = (
+        IntegrationConnection.no_workspace_objects.filter(
+            status=ConnectionStatus.ACTIVE,
+            deleted=False,
+        )
+        .exclude(platform=IntegrationPlatform.SLACK)
+        .filter(
+            Q(last_synced_at__isnull=True)
+            | Q(last_synced_at__lte=now - timedelta(seconds=60))
+        )
     )
 
     dispatched = 0

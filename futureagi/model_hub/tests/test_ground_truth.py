@@ -18,7 +18,6 @@ from model_hub.models.evals_metric import (
 from tfc.constants.roles import OrganizationRoles
 
 
-
 @pytest.fixture
 def eval_template(organization, workspace):
     return EvalTemplate.no_workspace_objects.create(
@@ -327,9 +326,7 @@ class TestGroundTruthListAPI:
     def test_list_does_not_mark_stale_during_processing(
         self, auth_client, eval_template, ground_truth
     ):
-        ground_truth.embedding_status = (
-            EvalGroundTruth.EmbeddingStatus.PROCESSING
-        )
+        ground_truth.embedding_status = EvalGroundTruth.EmbeddingStatus.PROCESSING
         ground_truth.embedded_row_count = 2
         ground_truth.save(
             update_fields=[
@@ -474,9 +471,7 @@ class TestGroundTruthSetupAPI:
         if expected_message_substring is not None:
             assert expected_message_substring in response.data["message"].lower()
 
-    def test_setup_rejects_unauthenticated_request(
-        self, api_client, ground_truth
-    ):
+    def test_setup_rejects_unauthenticated_request(self, api_client, ground_truth):
         # Kept separate: uses api_client (no auth) instead of auth_client, so
         # can't share the mutator harness above.
         response = api_client.put(
@@ -555,10 +550,7 @@ class TestGroundTruthSetupAPI:
             self._setup_url(ground_truth.id), payload, format="json"
         )
         assert response.status_code == 200
-        assert (
-            response.data["result"]["embeddings_stale"]
-            is expected_embeddings_stale
-        )
+        assert response.data["result"]["embeddings_stale"] is expected_embeddings_stale
         if expected_final_status is not None:
             ground_truth.refresh_from_db()
             assert ground_truth.embedding_status == getattr(
@@ -663,9 +655,7 @@ class TestGroundTruthStatusAPI:
     def test_status_does_not_mark_stale_during_processing(
         self, auth_client, ground_truth
     ):
-        ground_truth.embedding_status = (
-            EvalGroundTruth.EmbeddingStatus.PROCESSING
-        )
+        ground_truth.embedding_status = EvalGroundTruth.EmbeddingStatus.PROCESSING
         ground_truth.embedded_row_count = 1
         ground_truth.save(
             update_fields=[
@@ -766,9 +756,7 @@ class TestGroundTruthDeleteAPI:
         assert ground_truth.is_active is True
         assert ground_truth.deleted is False
 
-    def test_delete_active_upload_clears_active_flag(
-        self, auth_client, ground_truth
-    ):
+    def test_delete_active_upload_clears_active_flag(self, auth_client, ground_truth):
         ground_truth.is_active = True
         ground_truth.save(update_fields=["is_active", "updated_at"])
 
@@ -824,7 +812,9 @@ class TestGroundTruthEmbedWithoutModelServing:
         assert response.data["message"] == SERVING_UNAVAILABLE_MESSAGE
         assert calls == []
         ground_truth.refresh_from_db()
-        assert ground_truth.embedding_status == EvalGroundTruth.EmbeddingStatus.COMPLETED
+        assert (
+            ground_truth.embedding_status == EvalGroundTruth.EmbeddingStatus.COMPLETED
+        )
 
 
 @pytest.mark.e2e
@@ -851,9 +841,7 @@ class TestGroundTruthEmbedAPI:
         assert response.status_code == 400
         assert response.data["message"] == "No data rows to embed."
 
-    def test_embed_rejects_empty_variable_mapping(
-        self, auth_client, ground_truth
-    ):
+    def test_embed_rejects_empty_variable_mapping(self, auth_client, ground_truth):
         ground_truth.variable_mapping = {}
         ground_truth.save(update_fields=["variable_mapping", "updated_at"])
         response = auth_client.post(self._url(ground_truth.id), {}, format="json")
@@ -866,7 +854,9 @@ class TestGroundTruthEmbedAPI:
 
         response = auth_client.post(self._url(ground_truth.id), {}, format="json")
         assert response.status_code == 400
-        assert response.data["message"] == "Embedding generation is already in progress."
+        assert (
+            response.data["message"] == "Embedding generation is already in progress."
+        )
 
     def test_embed_resets_status_and_triggers_workflow(
         self, auth_client, ground_truth, monkeypatch

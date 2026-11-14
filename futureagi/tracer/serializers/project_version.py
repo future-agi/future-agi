@@ -50,7 +50,9 @@ class ProjectVersionSerializer(serializers.ModelSerializer):
             if getattr(workspace, "is_default", False):
                 project_scope &= (
                     Q(workspace=workspace)
-                    | Q(workspace__is_default=True, workspace__organization=organization)
+                    | Q(
+                        workspace__is_default=True, workspace__organization=organization
+                    )
                     | Q(workspace__isnull=True)
                 )
             else:

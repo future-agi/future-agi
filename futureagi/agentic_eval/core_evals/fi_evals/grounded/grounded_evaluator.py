@@ -17,7 +17,6 @@ from .similarity import (
 
 
 class GroundedEvaluator(BaseEvaluator):
-
     _comparator: Comparator
     _failure_threshold = None
 

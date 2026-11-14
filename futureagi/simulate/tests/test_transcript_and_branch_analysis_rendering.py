@@ -203,9 +203,7 @@ class TestCallTranscriptRendering:
         assert transcripts[1]["speaker_role"] == "user"
         assert "Simulator reply" in transcripts[1]["content"]
 
-    def test_livekit_transcripts_pass_through_roles(
-        self, auth_client, livekit_call
-    ):
+    def test_livekit_transcripts_pass_through_roles(self, auth_client, livekit_call):
         # LiveKit rows are normalised at the worker; the read boundary
         # must not re-swap them regardless of direction.
         _seed_transcripts(
@@ -227,9 +225,7 @@ class TestCallTranscriptRendering:
         assert transcripts[1]["speaker_role"] == "user"
         assert "Simulator line" in transcripts[1]["content"]
 
-    def test_empty_transcripts_returns_empty_list(
-        self, auth_client, vapi_inbound_call
-    ):
+    def test_empty_transcripts_returns_empty_list(self, auth_client, vapi_inbound_call):
         response = auth_client.get(
             f"/simulate/call-executions/{vapi_inbound_call.id}/transcripts/"
         )
@@ -298,8 +294,7 @@ class TestTestExecutionTranscriptRendering:
         )
 
         response = auth_client.get(
-            f"/simulate/test-executions/{livekit_call.test_execution_id}"
-            "/transcripts/"
+            f"/simulate/test-executions/{livekit_call.test_execution_id}/transcripts/"
         )
 
         assert response.status_code == 200
@@ -394,22 +389,25 @@ class TestCallBranchAnalysisRendering:
             "deviation_count": 1,
         }
 
-        with patch(
-            "simulate.views.call_transcript.BranchDeviationAnalyzer"
-            ".analyze_call_execution_branch",
-            return_value=fake_analysis,
-        ), patch(
-            "simulate.views.call_transcript.BranchDeviationAnalyzer"
-            "._get_scenario_graph",
-            return_value=scenario_graph,
-        ), patch(
-            "simulate.views.call_transcript.BranchDeviationAnalyzer"
-            ".create_deviation_nodes_and_edges",
-            return_value=fake_deviation,
+        with (
+            patch(
+                "simulate.views.call_transcript.BranchDeviationAnalyzer"
+                ".analyze_call_execution_branch",
+                return_value=fake_analysis,
+            ),
+            patch(
+                "simulate.views.call_transcript.BranchDeviationAnalyzer"
+                "._get_scenario_graph",
+                return_value=scenario_graph,
+            ),
+            patch(
+                "simulate.views.call_transcript.BranchDeviationAnalyzer"
+                ".create_deviation_nodes_and_edges",
+                return_value=fake_deviation,
+            ),
         ):
             response = auth_client.post(
-                f"/simulate/call-executions/{vapi_inbound_call.id}"
-                "/branch-analysis/",
+                f"/simulate/call-executions/{vapi_inbound_call.id}/branch-analysis/",
                 {},
                 format="json",
             )

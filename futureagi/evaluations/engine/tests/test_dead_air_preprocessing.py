@@ -50,8 +50,8 @@ def _synth_wav_bytes(duration_sec=2.0, sr=8000, silence_segments=None):
     n = int(duration_sec * sr)
     t = np.linspace(0, duration_sec, n, endpoint=False)
     y = 0.5 * np.sin(2 * math.pi * 440 * t).astype("float32")
-    for (s, e) in silence_segments or []:
-        y[int(s * sr):int(e * sr)] = 0.0
+    for s, e in silence_segments or []:
+        y[int(s * sr) : int(e * sr)] = 0.0
     buf = io.BytesIO()
     sf.write(buf, y, sr, format="WAV")
     return buf.getvalue()

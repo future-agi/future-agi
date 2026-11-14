@@ -34,6 +34,7 @@ If this test ever fails:
     we have typed Maps (`attrs_string`/`attrs_number`/`attrs_bool`) for
     queryable attribute access.
 """
+
 from __future__ import annotations
 
 import json
@@ -123,10 +124,18 @@ _FIXTURES: dict[str, dict] = {
         "output": {
             "value": {
                 "logprobs": [
-                    {"token": "Hi", "logprob": -0.0008923, "top_5": [-0.01, -0.5, -1.2]},
+                    {
+                        "token": "Hi",
+                        "logprob": -0.0008923,
+                        "top_5": [-0.01, -0.5, -1.2],
+                    },
                     {"token": ".", "logprob": -2.7e-05, "top_5": [-0.001]},
                 ],
-                "usage": {"prompt_tokens": 47, "completion_tokens": 138, "total_tokens": 185},
+                "usage": {
+                    "prompt_tokens": 47,
+                    "completion_tokens": 138,
+                    "total_tokens": 185,
+                },
             },
         },
     },
@@ -173,7 +182,7 @@ _FIXTURES: dict[str, dict] = {
     # Large 64-bit integers that JS-serialization could lossy-convert.
     "large_ints": {
         "ts_ms": [1773816575961, 1773816575962, 1773816575963],
-        "ids":   [9007199254740992, -9007199254740992],
+        "ids": [9007199254740992, -9007199254740992],
     },
 }
 
@@ -296,9 +305,9 @@ _EXPECTED_SPANS_TYPES = {
     # column: (kind, matcher) where matcher is either:
     #   "exact" — type string must match `expected` exactly
     #   "prefix" — type string must start with `expected`
-    "attributes_extra": ("exact",  "String"),
-    "resource_attrs":   ("prefix", "JSON("),
-    "metadata":         ("prefix", "JSON("),
+    "attributes_extra": ("exact", "String"),
+    "resource_attrs": ("prefix", "JSON("),
+    "metadata": ("prefix", "JSON("),
 }
 
 
@@ -346,7 +355,9 @@ def test_spans_table_typed_json_contract(ch_client):
         "WHERE database = %(db)s AND name = 'spans'",
         parameters={"db": CH_DATABASE},
     ).result_rows
-    assert ddl_rows, f"spans table missing from system.tables in database {CH_DATABASE!r}"
+    assert ddl_rows, (
+        f"spans table missing from system.tables in database {CH_DATABASE!r}"
+    )
     ddl = ddl_rows[0][0]
     # Be tolerant of CH's DDL canonicalization (whitespace, quoting) but pin
     # both substrings — if either is missing, the column was re-created

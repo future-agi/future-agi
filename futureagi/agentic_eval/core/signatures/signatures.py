@@ -125,7 +125,7 @@ def update_signature(signature: Signature, kwargs):
 
 
 def get_signature_object(signature: Signature):
-    final_obj = {}  
+    final_obj = {}
     for key, value in signature.model_fields.items():
         if value.json_schema_extra.get("tfc_field_type") == "input":
             if final_obj.get("input"):

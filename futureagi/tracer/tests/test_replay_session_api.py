@@ -218,10 +218,12 @@ def test_replay_session_generate_scenario_links_agent_and_scenario(
     )
     monkeypatch.setattr(
         "tracer.views.replay_session.start_create_graph_scenario_workflow_sync",
-        lambda validated_data, scenario_id: workflow_calls.append(
-            {"validated_data": validated_data, "scenario_id": scenario_id}
-        )
-        or "workflow-test",
+        lambda validated_data, scenario_id: (
+            workflow_calls.append(
+                {"validated_data": validated_data, "scenario_id": scenario_id}
+            )
+            or "workflow-test"
+        ),
     )
 
     response = auth_client.post(
