@@ -78,6 +78,10 @@ type Server struct {
 	httpsServer    *http.Server
 	certs          *certReloader
 	stopCertReload context.CancelFunc
+	// lifecycle orders Start's setup against a Shutdown that arrives while
+	// it runs (a signal during startup); shuttingDown records that one did.
+	lifecycle    sync.Mutex
+	shuttingDown bool
 	// listenAddrs is each open listener's address by name ("http",
 	// "https"), set before ready.
 	listenAddrs map[string]string
@@ -1075,6 +1079,14 @@ func (s *Server) Start() error {
 	if err != nil {
 		return err
 	}
+	s.lifecycle.Lock()
+	if s.shuttingDown {
+		s.lifecycle.Unlock()
+		for _, l := range lns {
+			l.ln.Close()
+		}
+		return nil
+	}
 	s.listenAddrs = make(map[string]string, len(lns))
 	for _, l := range lns {
 		s.listenAddrs[l.name] = l.ln.Addr().String()
@@ -1088,6 +1100,7 @@ func (s *Server) Start() error {
 		go s.certs.Run(ctx)
 	}
 	s.ready.Store(true)
+	s.lifecycle.Unlock()
 
 	// Start cluster heartbeat if enabled.
 	if s.clusterMgr != nil {
@@ -1137,8 +1150,12 @@ func (s *Server) Shutdown(ctx context.Context) error {
 		s.asyncWorker.Stop()
 	}
 
-	if s.stopCertReload != nil {
-		s.stopCertReload()
+	s.lifecycle.Lock()
+	s.shuttingDown = true
+	stopCertReload := s.stopCertReload
+	s.lifecycle.Unlock()
+	if stopCertReload != nil {
+		stopCertReload()
 	}
 	err := s.shutdownListeners(ctx)
 	// Send the shadow results captured so far with what is left of ctx; if
@@ -1169,6 +1186,28 @@ func (s *Server) Shutdown(ctx context.Context) error {
 
 	slog.Info("gateway shut down cleanly")
 	return nil
+}
+
+// servingInfo describes the listeners for /-/config: port and scheme are the
+// active listener's (the HTTP one while it is on, as before), with both
+// listeners' own settings beside them.
+func servingInfo(cfg *config.Config) map[string]interface{} {
+	info := map[string]interface{}{
+		"port":         cfg.Server.Port,
+		"scheme":       "http",
+		"host":         cfg.Server.Host,
+		"http_enabled": cfg.Server.HTTPOn(),
+		"http_port":    cfg.Server.Port,
+		"tls_enabled":  cfg.Server.TLS.Enabled,
+	}
+	if cfg.Server.TLS.Enabled {
+		info["tls_port"] = cfg.Server.TLS.Port
+		if !cfg.Server.HTTPOn() {
+			info["port"] = cfg.Server.TLS.Port
+			info["scheme"] = "https"
+		}
+	}
+	return info
 }
 
 // shutdownListeners shuts down both servers at once, within ctx.
@@ -1271,13 +1310,7 @@ func (s *Server) configHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"server": map[string]interface{}{
-			"port":         s.cfg.Server.Port,
-			"host":         s.cfg.Server.Host,
-			"http_enabled": s.cfg.Server.HTTPOn(),
-			"tls_enabled":  s.cfg.Server.TLS.Enabled,
-			"tls_port":     s.cfg.Server.TLS.Port,
-		},
+		"server":          servingInfo(s.cfg),
 		"providers_count": s.registry.ProviderCount(),
 		"models_count":    len(s.cfg.ModelMap),
 		"plugins_count":   s.engine.PluginCount(),

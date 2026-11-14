@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"crypto/tls"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -446,5 +447,77 @@ func TestStartWithoutTLSOpensOnlyHTTP(t *testing.T) {
 	}
 	if err := <-errc; err != nil {
 		t.Errorf("Start after shutdown = %v, want nil", err)
+	}
+}
+
+// /-/config reports the listener that answers: the HTTPS one when HTTP is off.
+func TestConfigReportsTheActiveListener(t *testing.T) {
+	off := false
+	for _, httpOn := range []bool{true, false} {
+		g := startTLSGateway(t, "", func(c *config.Config) {
+			c.Admin.Token = "synthetic-admin-token"
+			if !httpOn {
+				c.Server.HTTPEnabled = &off
+			}
+		})
+		req, _ := http.NewRequest(http.MethodGet, g.httpsURL+"/-/config", nil)
+		req.Header.Set("Authorization", "Bearer synthetic-admin-token")
+		resp, err := g.client(false).Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var body struct {
+			Server map[string]any `json:"server"`
+		}
+		json.NewDecoder(resp.Body).Decode(&body)
+		resp.Body.Close()
+		cfg := g.srv.cfg.Server
+		wantPort, wantScheme := cfg.Port, "http"
+		if !httpOn {
+			wantPort, wantScheme = cfg.TLS.Port, "https"
+		}
+		if body.Server["port"] != float64(wantPort) || body.Server["scheme"] != wantScheme ||
+			body.Server["http_enabled"] != httpOn || body.Server["tls_port"] != float64(cfg.TLS.Port) {
+			t.Errorf("http_enabled=%v: server = %v, want port %d scheme %s", httpOn, body.Server, wantPort, wantScheme)
+		}
+	}
+}
+
+// A shutdown that arrives while Start is still setting up (a signal during
+// startup) stops it cleanly: Start returns, nothing keeps listening, and the
+// certificate poller is not left running. Run with -race.
+func TestShutdownDuringStartup(t *testing.T) {
+	for i := 0; i < 20; i++ {
+		pki := newTestPKI(t)
+		cert, key := pki.issue(t, 1)
+		certFile, keyFile := writePair(t, t.TempDir(), cert, key)
+		cfg := config.DefaultConfig()
+		cfg.Server.Host = "127.0.0.1"
+		cfg.Server.Port = freePort(t)
+		cfg.Server.TLS = config.ServerTLSConfig{Enabled: true, Port: freePort(t), CertFile: certFile, KeyFile: keyFile, MinVersion: "1.2", ReloadInterval: time.Second}
+		registry, err := providers.NewRegistry(cfg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		srv := New(cfg, "", registry, pipeline.NewEngine(), nil, nil, nil, nil, testModelDBPtr(), nil, nil)
+		errc := make(chan error, 1)
+		go func() { errc <- srv.Start() }()
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		srv.Shutdown(ctx)
+		cancel()
+		select {
+		case err := <-errc:
+			if err != nil {
+				t.Fatalf("Start = %v after a shutdown during startup", err)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatal("Start still running after Shutdown")
+		}
+		for _, addr := range []string{cfg.Addr(), cfg.TLSAddr()} {
+			if conn, err := net.DialTimeout("tcp", addr, time.Second); err == nil {
+				conn.Close()
+				t.Fatalf("%s still accepts connections after shutdown", addr)
+			}
+		}
 	}
 }

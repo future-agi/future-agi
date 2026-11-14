@@ -100,6 +100,12 @@ func (r *certReloader) reload(force bool) (bool, error) {
 		}
 		cert.Leaf = leaf
 	}
+	// An expired certificate fails every verifying client: refuse it at
+	// startup, and keep the previous one rather than rotate to it.
+	if now := r.now(); now.After(leaf.NotAfter) {
+		return false, r.failed(force, sum, fmt.Errorf("server.tls: %s expired at %s",
+			r.certFile, leaf.NotAfter.UTC().Format(time.RFC3339)))
+	}
 	r.sum = sum
 	r.cert.Store(&cert)
 
@@ -112,9 +118,7 @@ func (r *certReloader) reload(force bool) (bool, error) {
 		"sha256", strings.ToUpper(hex.EncodeToString(fingerprint[:])),
 		"chain_length", len(cert.Certificate),
 	}
-	if r.now().After(leaf.NotAfter) {
-		slog.Warn("TLS certificate loaded, but it has expired", attrs...)
-	} else if force {
+	if force {
 		slog.Info("TLS certificate loaded", attrs...)
 	} else {
 		slog.Info("TLS certificate reloaded", attrs...)

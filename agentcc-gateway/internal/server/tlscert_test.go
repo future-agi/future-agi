@@ -112,6 +112,31 @@ func (p *testPKI) issue(t *testing.T, serial int64) (certPEM, keyPEM []byte) {
 	return certPEM, pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: keyDER})
 }
 
+// issueExpired is issue for a certificate that expired an hour ago.
+func (p *testPKI) issueExpired(t *testing.T, serial int64) (certPEM, keyPEM []byte) {
+	t.Helper()
+	key := mustKey(t)
+	tmpl := &x509.Certificate{
+		SerialNumber: big.NewInt(serial),
+		Subject:      pkix.Name{CommonName: "localhost"},
+		DNSNames:     []string{"localhost"},
+		NotBefore:    time.Now().Add(-48 * time.Hour),
+		NotAfter:     time.Now().Add(-time.Hour),
+		KeyUsage:     x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, p.inter, key.Public(), p.interKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	keyDER, err := x509.MarshalPKCS8PrivateKey(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return append(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), p.interPEM...),
+		pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: keyDER})
+}
+
 // writePair writes a cert and key into dir as tls.crt and tls.key.
 func writePair(t *testing.T, dir string, certPEM, keyPEM []byte) (certFile, keyFile string) {
 	t.Helper()
@@ -421,3 +446,31 @@ func TestCertReloaderStartupErrorsNameTheFile(t *testing.T) {
 
 // tlsVersionName is for test messages.
 func tlsVersionName(v uint16) string { return tls.VersionName(v) }
+
+// An expired certificate fails every verifying client, so it is refused at
+// startup and never rotated to.
+func TestCertReloaderRefusesAnExpiredCertificate(t *testing.T) {
+	pki := newTestPKI(t)
+	expiredCert, expiredKey := pki.issueExpired(t, 7)
+
+	certFile, keyFile := writePair(t, t.TempDir(), expiredCert, expiredKey)
+	err := newCertReloader(certFile, keyFile, time.Minute).Load()
+	if err == nil || !strings.Contains(err.Error(), certFile+" expired at") {
+		t.Fatalf("Load of an expired certificate = %v, want an error naming the file", err)
+	}
+
+	dir := t.TempDir()
+	cert, key := pki.issue(t, 1)
+	certFile, keyFile = writePair(t, dir, cert, key)
+	r := newCertReloader(certFile, keyFile, time.Minute)
+	if err := r.Load(); err != nil {
+		t.Fatal(err)
+	}
+	writePair(t, dir, expiredCert, expiredKey)
+	if changed, err := r.reload(false); changed || err == nil {
+		t.Fatalf("rotation to an expired certificate: changed=%v err=%v", changed, err)
+	}
+	if got := servedSerial(t, r); got != 1 {
+		t.Errorf("serial = %d, want the previous 1", got)
+	}
+}
