@@ -1,15 +1,12 @@
 import asyncio
 import json
-import os
 import random
-import shutil
 import time
 import traceback
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import numpy as np
 import structlog
-from django.conf import settings
 
 from accounts.models.organization import Organization
 
@@ -48,9 +45,6 @@ from model_hub.utils.kb_helpers import is_kb_deleted_or_cancelled
 from model_hub.utils.kb_indexer import KB_TABLE_NAME, KBIndexer
 from model_hub.utils.synthetic_task_manager import SyntheticTaskManager
 from tfc.temporal import temporal_activity
-from tfc.utils.storage import (
-    delete_compare_folder,
-)
 from tfc.constants.api_calls import APICallStatusChoices, APICallTypeChoices
 
 try:
@@ -890,22 +884,20 @@ def remove_kb_files(files, org, kb_id):
         return None
 
 
-@temporal_activity(time_limit=60, queue="default")
+# The remote sweep stops starting deletions two minutes before the time limit.
+_COMPARE_REMOTE_SWEEP_SECONDS = 8 * 60
+
+
+@temporal_activity(time_limit=10 * 60, queue="default")
 def delete_unused_compare_folder():
-    try:
-        compare_folder_path = os.path.join(settings.BASE_DIR, "compare")
-        for folder in os.listdir(compare_folder_path):
-            folder_path = os.path.join(compare_folder_path, folder)
-            if os.path.isdir(folder_path):
-                creation_time = os.path.getctime(folder_path)
-                if (time.time() - creation_time) > 7200:
-                    try:
-                        delete_compare_folder(folder)
-                    except Exception as e:
-                        logger.error(
-                            f"Error deleting compare folder {folder}: {str(e)}"
-                        )
-                    shutil.rmtree(folder_path)
-                    logger.info(f"Deleted folder: {folder_path}")
-    except Exception as e:
-        logger.error(f"Error deleting unused compare folder: {str(e)}")
+    """Remove comparisons past their age limit: the local folders under this
+    worker's compare root, then any expired objects left in the private
+    compare bucket, whichever replica built them."""
+    from model_hub.utils.compare_storage import (
+        sweep_local_compare_root,
+        sweep_remote_compare_objects,
+    )
+
+    deadline = time.monotonic() + _COMPARE_REMOTE_SWEEP_SECONDS
+    sweep_local_compare_root()
+    sweep_remote_compare_objects(deadline=deadline)

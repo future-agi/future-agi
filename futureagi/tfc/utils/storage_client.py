@@ -14,6 +14,8 @@ URL routing:
 import ipaddress
 import json
 import os
+import threading
+import time
 from urllib.parse import urlparse
 
 import certifi
@@ -322,3 +324,202 @@ def ensure_bucket(client: Minio, bucket_name: str) -> None:
     if STORAGE_BACKEND == "minio" and bucket_name not in _checked_bucket_policies:
         _checked_bucket_policies.add(bucket_name)
         _tighten_existing_bucket_policy(client, bucket_name)
+
+
+class PrivateBucketRefused(Exception):
+    """A bucket meant for server-only data that may be readable by others."""
+
+    def __init__(self, bucket_name: str, message: str | None = None):
+        super().__init__(message or f"bucket {bucket_name} is not known to be private")
+        self.bucket_name = bucket_name
+
+
+class PrivateBucketMissing(PrivateBucketRefused):
+    """A private bucket that has to be created in advance and does not exist."""
+
+    def __init__(self, bucket_name: str):
+        super().__init__(
+            bucket_name,
+            f"compare bucket {bucket_name} does not exist; create it private",
+        )
+
+
+# Answers to a policy read that mean the bucket has no policy: none is set,
+# or the service has no bucket policies at all. Anything else, AccessDenied
+# included, leaves the bucket unchecked and refused.
+_NO_POLICY_CODES = ("NoSuchBucketPolicy", "NotImplemented")
+# Only a bucket these credentials already own may be reused after a creation
+# race. BucketAlreadyExists means another account owns that name.
+_BUCKET_ALREADY_CREATED_CODES = ("BucketAlreadyOwnedByYou",)
+
+# How long a bucket found private is used before its policy is read again,
+# so that a bucket whose policy is later opened up is refused.
+PRIVATE_BUCKET_RECHECK_SECONDS = 5 * 60
+
+# Private buckets this process has checked: name -> time.monotonic() of the
+# check.
+_checked_private_buckets: dict[str, float] = {}
+# Refusals per bucket name: every check that does not find the bucket private
+# counts. A check that finds a bucket private is used and remembered only if no
+# other check refused the bucket while it ran; otherwise it is refused too, so
+# a slower check that read the policy before it was opened cannot overwrite a
+# newer refusal.
+_private_bucket_refusals: dict[str, int] = {}
+_private_bucket_lock = threading.Lock()
+
+
+def _refuse_private_bucket(bucket_name: str) -> None:
+    with _private_bucket_lock:
+        _private_bucket_refusals[bucket_name] = (
+            _private_bucket_refusals.get(bucket_name, 0) + 1
+        )
+        _checked_private_buckets.pop(bucket_name, None)
+
+
+def _remember_private_bucket(bucket_name: str, refusals_before: int) -> bool:
+    """Remember a bucket found private, unless another check refused it while
+    this one ran. Returns whether it was remembered."""
+    with _private_bucket_lock:
+        if _private_bucket_refusals.get(bucket_name, 0) != refusals_before:
+            return False
+        _checked_private_buckets[bucket_name] = time.monotonic()
+        return True
+
+
+def policy_allows_anyone(policy: str) -> bool:
+    """Whether a bucket policy may allow anyone at all to do anything. A policy
+    that cannot be read as a list of statements counts as allowing anyone, as
+    does an Allow for everyone but some principals (NotPrincipal)."""
+    try:
+        document = json.loads(policy)
+    except (TypeError, ValueError):
+        return True
+    if not isinstance(document, dict):
+        return True
+    statements = document.get("Statement", [])
+    if isinstance(statements, dict):
+        statements = [statements]
+    if not isinstance(statements, list):
+        return True
+    for statement in statements:
+        if not isinstance(statement, dict):
+            return True
+        if statement.get("Effect") == "Allow" and (
+            "NotPrincipal" in statement or _is_anonymous(statement.get("Principal"))
+        ):
+            return True
+    return False
+
+
+def ensure_private_bucket(client: Minio, bucket_name: str) -> None:
+    """Check that the bucket exists with no bucket policy that lets anyone in,
+    so only the backend's own credentials reach its objects. A bucket whose
+    policy may let anyone in, or whose policy these credentials may not read,
+    raises PrivateBucketRefused and is asked again on the next call. A bucket
+    found private is checked again after PRIVATE_BUCKET_RECHECK_SECONDS. A
+    check that another check refused while it ran raises PrivateBucketRefused
+    as well.
+
+    On MinIO a missing bucket is created, with no policy. On S3 it must be
+    created in advance: the S3 client cannot send ExpectedBucketOwner on the
+    bucket and object calls, so it cannot confirm that a bucket of that name
+    belongs to this account, and does not create one. GCS buckets are
+    created in advance, private, with IAM; their access is not a bucket policy,
+    so a GCS bucket is used only if it exists and is listed among the
+    credentials' project's buckets. A missing S3 or GCS bucket raises
+    PrivateBucketMissing.
+    """
+    with _private_bucket_lock:
+        checked_at = _checked_private_buckets.get(bucket_name)
+        if (
+            checked_at is not None
+            and time.monotonic() - checked_at < PRIVATE_BUCKET_RECHECK_SECONDS
+        ):
+            return
+        # Not used while it is being checked again.
+        _checked_private_buckets.pop(bucket_name, None)
+        refusals_before = _private_bucket_refusals.get(bucket_name, 0)
+    try:
+        _check_private_bucket(client, bucket_name)
+    except Exception:
+        # Any check that does not find the bucket private counts as a refusal,
+        # so that a slower check that started earlier is not used either.
+        _refuse_private_bucket(bucket_name)
+        raise
+    if not _remember_private_bucket(bucket_name, refusals_before):
+        # Another check refused the bucket while this one ran, so this check
+        # may have read a state that no longer holds.
+        logger.error("storage_private_bucket_refused_during_check", bucket=bucket_name)
+        raise PrivateBucketRefused(bucket_name)
+
+
+def _require_project_bucket(client: Minio, bucket_name: str) -> None:
+    """Raise PrivateBucketRefused unless the bucket is listed for these
+    credentials. Over the GCS XML API with HMAC keys, the listing holds the
+    buckets of the key's service account's project."""
+    try:
+        listed = {bucket.name for bucket in client.list_buckets()}
+    except Exception as exc:
+        error = PrivateBucketRefused(
+            bucket_name,
+            f"compare bucket {bucket_name} could not be checked against this "
+            "project's buckets; the storage credentials need to list them",
+        )
+        logger.error(
+            "storage_private_bucket_project_unknown",
+            bucket=bucket_name,
+            error=type(exc).__name__,
+        )
+        raise error from exc
+    if bucket_name not in listed:
+        error = PrivateBucketRefused(
+            bucket_name, f"compare bucket {bucket_name} is not in this project"
+        )
+        logger.error(
+            "storage_private_bucket_not_in_project",
+            bucket=bucket_name,
+            error=str(error),
+        )
+        raise error
+
+
+def _check_private_bucket(client: Minio, bucket_name: str) -> None:
+    """One check of ensure_private_bucket. Raises when the bucket is not
+    known to be private."""
+    exists = client.bucket_exists(bucket_name)
+    if not exists and STORAGE_BACKEND in ("s3", "gcs"):
+        error = PrivateBucketMissing(bucket_name)
+        logger.error(
+            "storage_private_bucket_missing", bucket=bucket_name, error=str(error)
+        )
+        raise error
+    if STORAGE_BACKEND == "gcs":
+        # GCS bucket access is IAM, not a bucket policy the S3 API can read.
+        # Existence alone does not show which project a GCS bucket is in, so
+        # it is used only if it is listed among the credentials' project's
+        # buckets.
+        _require_project_bucket(client, bucket_name)
+        return
+    if not exists:
+        try:
+            client.make_bucket(bucket_name)
+        except Exception as exc:
+            if getattr(exc, "code", None) not in _BUCKET_ALREADY_CREATED_CODES:
+                raise
+    # Checked even right after creating it: another process may have created
+    # the bucket first with a policy of its own, and some services answer a
+    # repeated creation with success.
+    try:
+        policy = client.get_bucket_policy(bucket_name)
+    except Exception as exc:
+        code = getattr(exc, "code", None)
+        if code == "AccessDenied":
+            # Whether anyone else may read it cannot be told: do not use it.
+            logger.error("storage_private_bucket_policy_unreadable", bucket=bucket_name)
+            raise PrivateBucketRefused(bucket_name) from exc
+        if code not in _NO_POLICY_CODES:
+            raise
+        policy = None
+    if policy and policy_allows_anyone(policy):
+        logger.error("storage_private_bucket_public", bucket=bucket_name)
+        raise PrivateBucketRefused(bucket_name)

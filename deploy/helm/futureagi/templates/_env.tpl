@@ -158,6 +158,7 @@ is only port-forwarded). */ -}}
       "STORAGE_BACKEND" $storage
       "MINIO_URL" (include "futureagi.url.objects" $root)
       "UPLOAD_BUCKET_NAME" $v.objectStorage.bucket
+      "COMPARE_BUCKET_NAME" ($v.objectStorage.compareBucket | default (printf "%s-compare" $v.objectStorage.bucket))
       "S3_REGION" $v.objectStorage.region
       "AWS_DEFAULT_REGION" $v.objectStorage.region
       "TEMPORAL_HOST" (include "futureagi.temporal.address" $root)

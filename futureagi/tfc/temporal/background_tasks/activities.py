@@ -85,15 +85,9 @@ def delete_compare_folder_activity(compare_id: str):
     """
     Delete compare folder and associated files.
     """
-    import os
-    import shutil
+    from model_hub.utils.compare_storage import remove_compare
 
-    from tfc.utils.storage import delete_compare_folder, get_compare_local_dir
-
-    compare_dir = get_compare_local_dir(compare_id)
-    if os.path.isdir(compare_dir):
-        shutil.rmtree(compare_dir)
-    delete_compare_folder(compare_id)
+    remove_compare(compare_id)
 
 
 @temporal_activity(time_limit=3600, queue="tasks_l")
@@ -114,7 +108,7 @@ def prepare_compare_dataset_activity(
     """
     Prepare compare dataset JSON files.
 
-    This replicates the CompareDatasetsView.prepare_compare_dataset method.
+    Runs the same page writer as CompareDatasetsView.post.
     """
     from model_hub.views.develop_dataset import _prepare_compare_dataset_impl
 

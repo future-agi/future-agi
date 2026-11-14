@@ -512,6 +512,33 @@ reads of an object by its URL; no listing, no writes). Browsers download
 stored files by plain object URLs, so the bucket's endpoint must be
 reachable from your users' browsers.
 
+Dataset comparison data goes to a second, private bucket
+(`objectStorage.compareBucket`, default `<bucket>-compare`) that only the
+backend reads with its credentials. On MinIO and S3, a bucket whose policy
+lets anyone in is refused. On GCS the backend checks that the bucket exists
+and is in the same project as the storage credentials, not who may read it:
+keep it private with IAM (no `allUsers` or `allAuthenticatedUsers`).
+
+- S3: create it in advance; the app does not create it. The storage
+  credentials need `s3:ListBucket`, `s3:GetObject`, `s3:PutObject`,
+  `s3:DeleteObject` and `s3:GetBucketPolicy` on it.
+- GCS (HMAC keys): create it in advance as a private bucket in the same
+  project as the key's service account, and set `objectStorage.compareBucket`
+  explicitly. The service account needs to list the project's buckets
+  (`storage.buckets.list`), bucket metadata read (`storage.buckets.get`) and
+  object get, create, delete and list on it.
+- MinIO and other S3-compatible services: the app creates it on first use
+  with no bucket policy, or create it yourself. Credentials scoped to the
+  bucket (rather than root credentials) need `s3:ListBucket`,
+  `s3:GetObject`, `s3:PutObject`, `s3:DeleteObject` and `s3:GetBucketPolicy`
+  on it, plus `s3:CreateBucket` if the app is to create it.
+- MinIO and S3 with `objectStorage.region` set to empty: the credentials
+  also need `s3:GetBucketLocation` on it, since the client then looks up
+  the bucket's region.
+
+Without these permissions, building a comparison fails with a generic 400
+error.
+
 ### Bundled datastores
 
 | Datastore | External: set | Bundled: runs | Bundled image |
@@ -1342,6 +1369,7 @@ the [configuration reference](https://docs.futureagi.com/docs/self-hosting/confi
 | `objectStorage.mode` | `"external"` | `external` (AWS S3, GCS or any S3-compatible service) or `bundled` (one MinIO, for evaluation). |
 | `objectStorage.backend` | `"s3"` | [STORAGE_BACKEND] `s3` (AWS), `gcs` (Google Cloud Storage with HMAC keys) or `minio` (any other S3-compatible endpoint). Bundled always uses `minio`. |
 | `objectStorage.bucket` | `"futureagi"` | [UPLOAD_BUCKET_NAME] bucket for uploads, datasets and exports. Created on the first upload (not on GCS) with a public-read policy. |
+| `objectStorage.compareBucket` | `""` | [COMPARE_BUCKET_NAME] private bucket for dataset comparison data, read only with the storage credentials. On S3 and GCS create it in advance, private; with `minio` it is created on first use with no bucket policy. On MinIO and S3 a bucket whose policy lets anyone read is refused; on GCS it must be in the same project as the storage credentials (set it explicitly there) and only that is checked, so keep it private with IAM (no `allUsers` or `allAuthenticatedUsers`). S3 permissions on it: `s3:ListBucket`, `s3:GetObject`, `s3:PutObject`, `s3:DeleteObject`, `s3:GetBucketPolicy`; external MinIO with credentials scoped to the bucket: the same, plus `s3:CreateBucket` if it is created on first use; on MinIO and S3 with `region` empty, also `s3:GetBucketLocation`; GCS: listing the project's buckets (`storage.buckets.list`), bucket metadata read (`storage.buckets.get`) and object get, create, delete and list. Without them, building a comparison fails with a generic 400. Empty: `bucket` followed by `-compare`. |
 | `objectStorage.region` | `"us-east-1"` | [S3_REGION, AWS_DEFAULT_REGION] bucket region. |
 | `objectStorage.accessKey` | `""` | [S3_ACCESS_KEY, or GCS_HMAC_ACCESS_KEY for gcs]. External: required unless `existingSecret`. Bundled: empty generates one. |
 | `objectStorage.secretKey` | `""` | [S3_SECRET_KEY, or GCS_HMAC_SECRET_KEY for gcs]. External: required unless `existingSecret`. Bundled: empty generates one. |

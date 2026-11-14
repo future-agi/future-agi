@@ -1,7 +1,6 @@
 import base64
 import binascii
 import io
-import json
 import os
 import subprocess
 
@@ -1151,72 +1150,6 @@ def image_bytes_from_url_or_base64(img_str):
             return img_bytes
         except Exception as e:
             raise ValueError(f"Failed to decode base64 string: {e}")  # noqa: B904
-
-
-def delete_compare_folder(compare_id, bucket_name=os.getenv("MINIO_BUCKET_NAME")):
-    # delete the compare folder from s3 bucket
-    bucket_name = UPLOAD_BUCKET_NAME
-    minio_client = get_storage_client()
-    try:
-        # if the folder exists in the bucket, delete it
-        if minio_client.bucket_exists(bucket_name):
-            # List all objects in the bucket with the specified prefix
-            objects = minio_client.list_objects(
-                bucket_name, prefix=f"compare/{compare_id}/", recursive=True
-            )
-            for obj in objects:
-                minio_client.remove_object(bucket_name, obj.object_name)
-
-        return True
-
-    except Exception as e:
-        logger.exception(f"Error deleting compare folder: {str(e)}")
-        raise ValueError(get_error_message("ERROR_FOLDER_DELETE").format(str(e))) from e
-
-
-def upload_compare_json_to_s3(
-    compare_json, compare_id, page_name, bucket_name=os.getenv("MINIO_BUCKET_NAME")
-):
-    # upload the compare files which is json to s3 bucket
-    bucket_name = UPLOAD_BUCKET_NAME
-    minio_client = get_storage_client()
-    ensure_bucket(minio_client, bucket_name)
-
-    try:
-        # compare_json is a dictionary, convert it to bytes
-        file_bytes = json.dumps(compare_json).encode("utf-8")
-        if not page_name:
-            return None
-        object_key = f"compare/{compare_id}/{page_name}"
-        # Upload the file bytes to S3
-        minio_client.put_object(
-            bucket_name=bucket_name,
-            object_name=object_key,
-            data=BytesIO(file_bytes),  # Wrap bytes in BytesIO for streaming
-            length=len(file_bytes),
-            content_type="application/json",
-        )
-
-        url = get_object_url(bucket_name, object_key)
-        return url
-
-    except Exception as e:
-        logger.exception(f"Error uploading file to S3: {str(e)}")
-        raise ValueError(get_error_message("ERROR_FILE_UPLOAD").format(str(e))) from e
-
-
-def download_json_from_s3(object_key, bucket_name=os.getenv("MINIO_BUCKET_NAME")):
-    bucket_name = UPLOAD_BUCKET_NAME
-    # Download the JSON file from S3 and return its content as a dictionary
-    minio_client = get_storage_client()
-
-    try:
-        response = minio_client.get_object(bucket_name, object_key)
-        json_data = response.read()
-        return json.loads(json_data.decode("utf-8"))
-    except Exception as e:
-        logger.exception(f"Error downloading JSON from S3: {str(e)}")
-        raise ValueError(get_error_message("ERROR_FILE_DOWNLOAD").format(str(e))) from e
 
 
 def upload_file_to_s3(

@@ -5,6 +5,7 @@ import "src/utils/ag-grid-setup";
 import React, {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -23,10 +24,16 @@ import CustomExperimentGroupHeader from "src/sections/experiment-detail/Experime
 import ExperimentStatusBar from "src/sections/experiment-detail/ExperimentData/ExperimentStatusBar";
 import { getEachCompareColumnDef } from "./compareTableConfig";
 import CompareDatasetDetailDrawer from "./CompareDatasetDetailDrawer/CompareDatasetDetailDrawer";
-import { useDeleteCompare } from "src/api/develop/dataset-compare";
+import {
+  COMPARE_NOT_FOUND_CODE,
+  COMPARE_STORAGE_UNAVAILABLE_MESSAGE,
+  isCompareStorageUnavailable,
+  useDeleteCompare,
+} from "src/api/develop/dataset-compare";
+import { enqueueSnackbar } from "src/components/snackbar";
 import { useDevelopDetailContext } from "src/pages/dashboard/Develop/Context/DevelopDetailContext";
 import { AudioPlaybackProvider } from "src/components/custom-audio/context-provider/AudioPlaybackContext";
-import { APP_CONSTANTS } from "src/utils/constants";
+import { APP_CONSTANTS, RESPONSE_CODES } from "src/utils/constants";
 import CompositeEvalDialog from "src/sections/common/DevelopCellRenderer/EvaluateCellRenderer/CompositeEvalDialog";
 
 // Define status types that require refreshing
@@ -89,6 +96,21 @@ const CompareData = ({
 
   const { mutate: deleteCompare } = useDeleteCompare();
 
+  // A compare_id is only valid for the selection that created it. Each new
+  // selection (datasets or base column) gets its own token; the id is stored
+  // with the token it belongs to, and responses for an older token are dropped.
+  const selection = useMemo(
+    () => ({ selectedDatasetsValues, baseColumn }),
+    [selectedDatasetsValues, baseColumn],
+  );
+  const activeSelectionRef = useRef(selection);
+  const compareIdSelectionRef = useRef(null);
+  // The selection whose expired comparison was already rebuilt once.
+  const restartedSelectionRef = useRef(null);
+  useLayoutEffect(() => {
+    activeSelectionRef.current = selection;
+  }, [selection]);
+
   React.useEffect(() => {
     diffModeRef.current = diffMode;
     gridApiRef?.current?.api?.refreshCells({ force: true });
@@ -127,17 +149,18 @@ const CompareData = ({
     };
   }, [isRefreshingColumns, refreshGrid]); // Dependency on pending items
 
-  // Add effect to refresh grid when selectedDatasetsValues changes
+  // Drop the previous selection's comparison and reload when the selection changes
   React.useEffect(() => {
-    if (compareId?.current) {
+    if (compareId?.current && compareIdSelectionRef.current !== selection) {
       deleteCompare(compareId.current);
       compareId.current = null;
+      compareIdSelectionRef.current = null;
     }
     if (gridApiRef.current && gridApiRef.current.api) {
       gridApiRef.current.api.refreshServerSide({ route: [] });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedDatasetsValues]);
+  }, [selection]);
 
   function filterColumnDef(columnDefs, selectedColumns) {
     if (columnDefs?.length < 1) return;
@@ -299,6 +322,12 @@ const CompareData = ({
         // request has startRow and endRow get next page number and each page has 10 rows
         const selectedDatasets = selectedDatasetsValues.slice(1);
         const pageNumber = Math.floor(request.startRow / 10);
+        // Only reuse an id that was created for this selection.
+        const requestCompareId =
+          compareIdSelectionRef.current === selection
+            ? compareId?.current ?? null
+            : null;
+        const isStale = () => activeSelectionRef.current !== selection;
 
         try {
           const { data } = await axios.post(
@@ -308,11 +337,24 @@ const CompareData = ({
               base_column_name: baseColumn,
               page_size: 10,
               current_page_index: pageNumber,
-              compare_id: compareId?.current,
+              compare_id: requestCompareId,
             },
           );
 
-          compareId.current = data?.result?.metadata?.compareId;
+          const responseCompareId = data?.result?.metadata?.compare_id;
+          if (isStale()) {
+            // The selection changed while this request was in flight. A fresh
+            // comparison it created is orphaned, so remove it; a reused id
+            // was already removed by the selection-change effect.
+            if (!requestCompareId && responseCompareId) {
+              deleteCompare(responseCompareId);
+            }
+            params.fail?.();
+            return;
+          }
+
+          compareId.current = responseCompareId;
+          compareIdSelectionRef.current = selection;
 
           // Check if data is empty or doesn't have required structure
           if (!data?.result?.table || data.result.table.length === 0) {
@@ -326,9 +368,9 @@ const CompareData = ({
 
           resetDLabels();
           setHasData(true);
-          setCommonColumn(data?.result?.metadata?.commonColumnNames);
-          setDatasetInfo(data?.result?.metadata?.datasetInfo);
-          const columns = data?.result?.columnConfig;
+          setCommonColumn(data?.result?.metadata?.common_column_names);
+          setDatasetInfo(data?.result?.metadata?.dataset_info);
+          const columns = data?.result?.column_config;
 
           setColumnConfig(columns);
 
@@ -457,11 +499,11 @@ const CompareData = ({
             col.children
               ? col.children.filter(
                   (child) =>
-                    child?.col?.averageScore !== null &&
-                    child?.col?.averageScore !== undefined,
+                    child?.col?.average_score !== null &&
+                    child?.col?.average_score !== undefined,
                 )
-              : col?.col?.averageScore !== null &&
-                  col?.col?.averageScore !== undefined
+              : col?.col?.average_score !== null &&
+                  col?.col?.average_score !== undefined
                 ? [col]
                 : [],
           );
@@ -469,7 +511,7 @@ const CompareData = ({
           const pinnedRow = {};
           filteredColumns.forEach((col) => {
             if (col.field) {
-              const avgValue = `${col.col.averageScore.toFixed(2)}%`;
+              const avgValue = `${col.col.average_score.toFixed(2)}%`;
               pinnedRow[col.field] = `Average: ${avgValue}`;
             }
           });
@@ -477,7 +519,7 @@ const CompareData = ({
           setPinnedBottomRowData([pinnedRow]);
 
           const averages = Object.entries(
-            data?.result?.metadata?.averageScore || {},
+            data?.result?.metadata?.average_score || {},
           ).map(([id, value]) => ({
             id,
             value,
@@ -485,6 +527,41 @@ const CompareData = ({
 
           setColumnAvgs(averages);
         } catch (error) {
+          if (isStale()) {
+            params.fail?.();
+            return;
+          }
+          if (isCompareStorageUnavailable(error)) {
+            // The comparison could not be read just now, but may still
+            // exist: keep it and the rows already shown, and ask the user to
+            // try again rather than rebuilding it.
+            enqueueSnackbar(COMPARE_STORAGE_UNAVAILABLE_MESSAGE, {
+              variant: "error",
+            });
+            params.fail?.();
+            return;
+          }
+          // Only a comparison the server reports unknown or expired is
+          // rebuilt; any other 404 (e.g. a deleted dataset) is a failure.
+          const comparisonGone =
+            requestCompareId &&
+            error?.statusCode === RESPONSE_CODES.NOT_FOUND &&
+            error?.code === COMPARE_NOT_FOUND_CODE;
+          if (comparisonGone && requestCompareId !== compareId.current) {
+            // Another block already started over with a fresh comparison.
+            params.fail?.();
+            return;
+          }
+          if (comparisonGone && restartedSelectionRef.current !== selection) {
+            // The comparison expired. Start over once with a fresh one, from
+            // the first block, so every block comes from the same comparison.
+            restartedSelectionRef.current = selection;
+            compareId.current = null;
+            compareIdSelectionRef.current = null;
+            params.fail?.();
+            gridApiRef.current?.api?.refreshServerSide({ purge: true });
+            return;
+          }
           setHasData(false);
           isRefreshingColumns.current = null;
           params.success({
@@ -496,9 +573,12 @@ const CompareData = ({
       getRowId: (data) => data.rowId,
     }),
     [
+      selection,
       selectedDatasetsValues,
       baseColumn,
       compareId,
+      gridApiRef,
+      deleteCompare,
       setCommonColumn,
       setDatasetInfo,
       setColumns,
@@ -639,8 +719,8 @@ const CompareData = ({
               }
 
               if (
-                params.event.target.closest(
-                  ".ag-cell[col-id=APP_CONSTANTS.AG_GRID_SELECTION_COLUMN]",
+                target?.closest(
+                  `.ag-cell[col-id="${APP_CONSTANTS.AG_GRID_SELECTION_COLUMN}"]`,
                 )
               ) {
                 const selected = params.node.isSelected();

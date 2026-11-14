@@ -47,6 +47,9 @@ objectStorage:
   mode: external
   backend: gcs
   bucket: futureagi-uploads-example
+  # On GCS, name the private comparison bucket explicitly: one created in
+  # advance, private, in the same project as the storage credentials.
+  # compareBucket: futureagi-uploads-example-compare
   region: us-central1
   existingSecret: futureagi-gcs
 # The GKE Gateway controller: a global external Application Load Balancer with

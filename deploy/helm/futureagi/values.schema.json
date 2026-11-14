@@ -1162,6 +1162,10 @@
           "type": "string",
           "description": "[UPLOAD_BUCKET_NAME] bucket for uploads, datasets and exports. Created on the first upload (not on GCS) with a public-read policy."
         },
+        "compareBucket": {
+          "type": "string",
+          "description": "[COMPARE_BUCKET_NAME] private bucket for dataset comparison data, read only with the storage credentials. On S3 and GCS create it in advance, private; with `minio` it is created on first use with no bucket policy. On MinIO and S3 a bucket whose policy lets anyone read is refused; on GCS it must be in the same project as the storage credentials (set it explicitly there) and only that is checked, so keep it private with IAM (no `allUsers` or `allAuthenticatedUsers`). S3 permissions on it: `s3:ListBucket`, `s3:GetObject`, `s3:PutObject`, `s3:DeleteObject`, `s3:GetBucketPolicy`; external MinIO with credentials scoped to the bucket: the same, plus `s3:CreateBucket` if it is created on first use; on MinIO and S3 with `region` empty, also `s3:GetBucketLocation`; GCS: listing the project's buckets (`storage.buckets.list`), bucket metadata read (`storage.buckets.get`) and object get, create, delete and list. Without them, building a comparison fails with a generic 400. Empty: `bucket` followed by `-compare`."
+        },
         "region": {
           "type": "string",
           "description": "[S3_REGION, AWS_DEFAULT_REGION] bucket region."

@@ -29,14 +29,16 @@ export default function CompareDatasetDetailDrawer({
     select: (d) => d.data?.result,
   });
 
-  const nextRowId = data?.nextRowId;
-  const prevRowId = data?.prevRowId;
+  // GetCompareDatasetRow and the compare grid rows use snake_case ids.
+  const nextRowId = data?.next_row_id;
+  const prevRowId = data?.prev_row_id;
+  const clickedRowId = row?.row_id;
 
   useEffect(() => {
-    if (row?.rowId) {
-      setCurrentRowId(row?.rowId);
+    if (clickedRowId) {
+      setCurrentRowId(clickedRowId);
     }
-  }, [row?.rowId]);
+  }, [clickedRowId]);
 
   const handleFetchNextRow = () => {
     if (nextRowId) {

@@ -1293,6 +1293,13 @@ MINIO_URL = os.getenv(
 UPLOAD_BUCKET_NAME = os.getenv(
     "UPLOAD_BUCKET_NAME", "fi-content-dev" if _is_local else "fi-content"
 )
+# Private bucket for dataset comparison pages and metadata, read only by the
+# backend's own credentials. Created without a bucket policy on first use on
+# MinIO; on S3 and GCS create it, private, in advance. Never the upload
+# bucket, whose objects are readable by URL.
+COMPARE_BUCKET_NAME = (
+    os.getenv("COMPARE_BUCKET_NAME", "").strip() or f"{UPLOAD_BUCKET_NAME}-compare"
+)
 
 # Storage backend: "s3" (default/US), "gcs" (EU via S3-interop HMAC keys),
 # or "minio" (self-hosted OSS local stack)

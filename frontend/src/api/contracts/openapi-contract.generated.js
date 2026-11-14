@@ -14547,6 +14547,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           500: {
             $ref: "#/definitions/ModelHubErrorResponse",
           },
+          503: {
+            $ref: "#/definitions/ModelHubErrorResponse",
+          },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
           },
@@ -14575,6 +14578,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
             $ref: "#/definitions/ModelHubErrorResponse",
           },
           500: {
+            $ref: "#/definitions/ModelHubErrorResponse",
+          },
+          503: {
             $ref: "#/definitions/ModelHubErrorResponse",
           },
           default: {
@@ -14707,6 +14713,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           500: {
             $ref: "#/definitions/ModelHubErrorResponse",
           },
+          503: {
+            $ref: "#/definitions/ModelHubErrorResponse",
+          },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
           },
@@ -14735,6 +14744,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
             $ref: "#/definitions/ModelHubErrorResponse",
           },
           500: {
+            $ref: "#/definitions/ModelHubErrorResponse",
+          },
+          503: {
             $ref: "#/definitions/ModelHubErrorResponse",
           },
           default: {
@@ -14941,6 +14953,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           500: {
             $ref: "#/definitions/ModelHubErrorResponse",
           },
+          503: {
+            $ref: "#/definitions/ModelHubErrorResponse",
+          },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
           },
@@ -15007,6 +15022,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
             $ref: "#/definitions/ModelHubErrorResponse",
           },
           500: {
+            $ref: "#/definitions/ModelHubErrorResponse",
+          },
+          503: {
             $ref: "#/definitions/ModelHubErrorResponse",
           },
           default: {

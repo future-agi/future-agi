@@ -288,6 +288,11 @@ const DevelopDetailView = () => {
         <CompareDataRightSection
           compareId={compareId}
           refreshGrid={refreshGrid}
+          onComparisonExpired={() => {
+            // Build a fresh comparison for the same selection.
+            compareId.current = null;
+            compareGridApiRef.current?.api?.refreshServerSide({ purge: true });
+          }}
           onRunEvaluation={() =>
             !hideScenarioFeatures && setOpenRunCompareEvaluation(true)
           }
