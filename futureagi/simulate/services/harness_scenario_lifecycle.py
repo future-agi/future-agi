@@ -545,6 +545,33 @@ def uncaptured(
     }
 
 
+def must_pass_failures(execution: Any) -> list[str]:
+    """Names of the must-pass cases of a run's suite version whose call in this run failed."""
+    from simulate.models import CallExecution
+
+    job = getattr(execution, "hosted_harness_job", None)
+    if job is None or not getattr(job, "suite_version_id", None):
+        return []
+    must = {
+        key: str((content or {}).get("name") or key)
+        for key, content in HarnessSuiteMember.no_workspace_objects.filter(
+            suite_version_id=job.suite_version_id
+        ).values_list("scenario_key", "content")
+        if isinstance(content, Mapping) and content.get("must_pass") is True
+    }
+    if not must:
+        return []
+    failed: set[str] = set()
+    for metadata in CallExecution.objects.filter(test_execution=execution).values_list(
+        "call_metadata", flat=True
+    ):
+        metadata = metadata if isinstance(metadata, Mapping) else {}
+        key = (metadata.get("hosted_harness_receipt") or {}).get("scenario_key")
+        if key in must and metadata.get("harness_outcome_status") == "failed":
+            failed.add(must[key])
+    return sorted(failed)
+
+
 def in_draft_view() -> LifecycleView:
     return _view("draft", reason="in_draft")
 
