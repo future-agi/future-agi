@@ -13,7 +13,7 @@ from django.db import transaction
 
 from tracer.models.eval_sampling import EvalSamplingMember
 from tracer.models.observation_span import EvalEntryStatus, EvalLogger
-from tracer.services.eval_tasks.entries import soft_delete_eval_results
+from tracer.services.eval_tasks.recalculate import drop_pending_entries
 from tracer.services.eval_tasks.sampling.query import (
     BATCH_SIZE,
     SamplingQuery,
@@ -144,7 +144,7 @@ def _revalidate_page(
             entry.output_metadata = metadata
             changed.append(entry)
     if excluded:
-        state["dropped"] += soft_delete_eval_results(
+        state["dropped"] += drop_pending_entries(
             EvalLogger.objects.filter(pk__in=excluded, status=EvalEntryStatus.PENDING)
         )
     if changed:
