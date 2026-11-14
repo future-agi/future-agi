@@ -12,12 +12,18 @@ self-hosted instance reports its total activity for the window.
 Each function raises on CH error rather than returning 0, so the caller
 (``collectors._safe_count``) can record the metric as *unknown* (null)
 instead of masking a CH outage as genuine zero usage.
+
+Window bounds are sent as UTC text and read with ``toDateTime64(..., 6, 'UTC')``.
+clickhouse-driver renders an aware datetime parameter in the *server's*
+timezone as a bare ``'YYYY-MM-DD HH:MM:SS'``, which ClickHouse then reads in
+``start_time``'s timezone (UTC): on a server not running in UTC the counted
+window would shift by its UTC offset.
 """
 
 from __future__ import annotations
 
 import threading
-from datetime import datetime
+from datetime import UTC, datetime
 
 _QUERY_TIMEOUT_MS = 15000
 
@@ -48,8 +54,21 @@ def _get_ch25_client():
             user=cfg["user"],
             password=cfg["password"],
             database=cfg["database"],
+            server_enforced_readonly=cfg["server_enforced_readonly"],
         )
         return _ch25_client
+
+
+def _window_params(window_start: datetime, window_end: datetime) -> dict[str, str]:
+    """The window as UTC text, independent of the server's timezone."""
+    for moment in (window_start, window_end):
+        if moment.tzinfo is None:
+            # A naive bound has no defined instant; never guess the local zone.
+            raise ValueError("telemetry count windows must be timezone-aware")
+    return {
+        "start": window_start.astimezone(UTC).strftime("%Y-%m-%d %H:%M:%S.%f"),
+        "end": window_end.astimezone(UTC).strftime("%Y-%m-%d %H:%M:%S.%f"),
+    }
 
 
 def _scalar(query: str, params: dict) -> int:
@@ -76,11 +95,11 @@ def count_spans(window_start: datetime, window_end: datetime) -> int:
         """
         SELECT count()
         FROM spans FINAL
-        WHERE start_time >= %(start)s
-          AND start_time < %(end)s
+        WHERE start_time >= toDateTime64(%(start)s, 6, 'UTC')
+          AND start_time < toDateTime64(%(end)s, 6, 'UTC')
           AND is_deleted = 0
         """,
-        {"start": window_start, "end": window_end},
+        _window_params(window_start, window_end),
     )
 
 
@@ -95,11 +114,11 @@ def count_traces(window_start: datetime, window_end: datetime) -> int:
         """
         SELECT uniqExact(trace_id)
         FROM spans FINAL
-        WHERE start_time >= %(start)s
-          AND start_time < %(end)s
+        WHERE start_time >= toDateTime64(%(start)s, 6, 'UTC')
+          AND start_time < toDateTime64(%(end)s, 6, 'UTC')
           AND is_deleted = 0
         """,
-        {"start": window_start, "end": window_end},
+        _window_params(window_start, window_end),
     )
 
 
@@ -116,11 +135,11 @@ def ingesting_project_ids(
         """
         SELECT DISTINCT project_id
         FROM spans FINAL
-        WHERE start_time >= %(start)s
-          AND start_time < %(end)s
+        WHERE start_time >= toDateTime64(%(start)s, 6, 'UTC')
+          AND start_time < toDateTime64(%(end)s, 6, 'UTC')
           AND is_deleted = 0
         """,
-        {"start": window_start, "end": window_end},
+        _window_params(window_start, window_end),
         timeout_ms=_QUERY_TIMEOUT_MS,
     )
     return [str(row[0]) for row in rows if row[0] is not None]
