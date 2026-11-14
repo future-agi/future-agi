@@ -1,16 +1,23 @@
 import React from "react";
-import { render, waitFor } from "@testing-library/react";
+import { act, render, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import SessionsView from "../Sessions-view";
+import {
+  EVIDENCE_ACTION_ID,
+  EVIDENCE_COPY,
+} from "src/sections/simulate/environments/evidence/evidence.constants";
+import { MAX_EVIDENCE_SOURCES } from "src/api/simulate-environments/evidenceImports";
 
 // Replaying sessions creates scenarios and a Run Simulation run, which an org
 // restricted to Environments cannot open, so Sessions drops "Replay Sessions"
-// from its bulk actions for such an org.
+// from its bulk actions for such an org. "Create environment test" builds a
+// test through an environment, so every org keeps it.
 
 const harness = vi.hoisted(() => ({
   toolbarProps: [],
   user: {},
+  grid: { toggledNodes: [], selectAll: false },
   observeHeader: {
     activeViewConfig: null,
     registerGetViewConfig: vi.fn(),
@@ -97,8 +104,17 @@ vi.mock("src/sections/projects/SessionsView/ReplaySessions/store", () => ({
     { getState: () => ({ setToggledNodes: vi.fn() }) },
   ),
   useSessionsGridStoreShallow: (selector) =>
-    selector({ toggledNodes: [], selectAll: false, setToggledNodes: vi.fn() }),
+    selector({ ...harness.grid, setToggledNodes: vi.fn() }),
 }));
+vi.mock(
+  "src/sections/simulate/environments/evidence/CreateEnvironmentTestDialog",
+  () => ({
+    default: (props) => {
+      harness.evidenceDialogProps = props;
+      return null;
+    },
+  }),
+);
 vi.mock("src/api/project/replay-sessions", () => ({
   useCreateReplaySessions: () => ({ mutate: vi.fn(), isPending: false }),
 }));
@@ -123,25 +139,93 @@ const renderView = () =>
     </QueryClientProvider>,
   );
 
-const lastBulkActionIds = async () => {
+const lastBulkActions = async () => {
   await waitFor(() => expect(harness.toolbarProps.length).toBeGreaterThan(0));
-  return harness.toolbarProps.at(-1).bulkActions.map((action) => action.id);
+  return harness.toolbarProps.at(-1).bulkActions;
 };
+const lastBulkActionIds = async () =>
+  (await lastBulkActions()).map((action) => action.id);
+const evidenceAction = async () =>
+  (await lastBulkActions()).find((action) => action.id === EVIDENCE_ACTION_ID);
 
 describe("Sessions replay for an org restricted to Environments", () => {
   beforeEach(() => {
     harness.toolbarProps = [];
+    harness.grid = { toggledNodes: [], selectAll: false };
   });
 
   it("drops Replay Sessions from a restricted org's bulk actions", async () => {
     harness.user = { restrict_simulate_to_environments: true };
     renderView();
-    expect(await lastBulkActionIds()).toEqual(["annotation-queue"]);
+    expect(await lastBulkActionIds()).toEqual([
+      "annotation-queue",
+      EVIDENCE_ACTION_ID,
+    ]);
   });
 
   it("keeps Replay Sessions for other orgs", async () => {
     harness.user = { restrict_simulate_to_environments: false };
     renderView();
-    expect(await lastBulkActionIds()).toEqual(["replay", "annotation-queue"]);
+    expect(await lastBulkActionIds()).toEqual([
+      "replay",
+      "annotation-queue",
+      EVIDENCE_ACTION_ID,
+    ]);
+  });
+});
+
+describe("Sessions create environment test", () => {
+  beforeEach(() => {
+    harness.toolbarProps = [];
+    harness.user = { restrict_simulate_to_environments: true };
+  });
+
+  it("takes picked sessions", async () => {
+    harness.grid = { toggledNodes: ["s1", "s2"], selectAll: false };
+    renderView();
+    expect(await evidenceAction()).toMatchObject({
+      disabled: false,
+      disabledReason: null,
+    });
+  });
+
+  it("refuses select-all: its ids are the ones left out", async () => {
+    harness.grid = { toggledNodes: ["s1"], selectAll: true };
+    renderView();
+    expect(await evidenceAction()).toMatchObject({
+      disabled: true,
+      disabledReason: EVIDENCE_COPY.actionAll,
+    });
+  });
+
+  it("refuses more sessions than one import takes", async () => {
+    harness.grid = {
+      toggledNodes: Array.from(
+        { length: MAX_EVIDENCE_SOURCES + 1 },
+        (_, i) => `s${i}`,
+      ),
+      selectAll: false,
+    };
+    renderView();
+    expect(await evidenceAction()).toMatchObject({
+      disabled: true,
+      disabledReason: EVIDENCE_COPY.actionTooMany,
+    });
+  });
+
+  it("opens the dialog with this project's picked sessions", async () => {
+    harness.grid = { toggledNodes: ["s1", null, "s2"], selectAll: false };
+    harness.evidenceDialogProps = null;
+    renderView();
+    await evidenceAction();
+    act(() => harness.toolbarProps.at(-1).onBulkAction(EVIDENCE_ACTION_ID));
+    await waitFor(() =>
+      expect(harness.evidenceDialogProps).toMatchObject({
+        open: true,
+        projectId: "project-1",
+        sourceKind: "session",
+        ids: ["s1", "s2"],
+      }),
+    );
   });
 });

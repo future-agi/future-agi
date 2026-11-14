@@ -1,6 +1,7 @@
 """Tests for tracer.utils.pii_scrubber."""
 
 import json
+from itertools import pairwise
 from unittest import mock
 
 import pytest
@@ -159,6 +160,103 @@ class TestScrubPiiInString:
         result = scrub_pii_in_string("test@example.com")
         assert result == "test@example.com"
         pii_scrubber._analyzer.analyze = original_analyze
+
+
+# ---------------------------------------------------------------------------
+# find_pii — the redaction preview; it never fails open
+# ---------------------------------------------------------------------------
+class TestFindPii:
+    def test_finds_each_value_with_its_place_and_token(self):
+        from tracer.utils.pii_scrubber import find_pii
+
+        text = "Mail john@example.com or call 555-123-4567"
+        (found,) = find_pii([text])
+
+        emails = [f for f in found if f.entity == "EMAIL_ADDRESS"]
+        assert [(f.value, f.replacement) for f in emails] == [
+            ("john@example.com", "<EMAIL_ADDRESS>")
+        ]
+        assert all(text[f.start : f.end] == f.value for f in found)
+        assert [f.start for f in found] == sorted(f.start for f in found)
+
+    def test_one_list_of_findings_per_text_in_order(self):
+        from tracer.utils.pii_scrubber import find_pii
+
+        found = find_pii(["nothing here", "", "write to a@b.co"])
+
+        assert [len(hits) for hits in found[:2]] == [0, 0]
+        assert [f.value for f in found[2]] == ["a@b.co"]
+
+    def test_finds_names_though_ingestion_keeps_them(self):
+        from tracer.utils.pii_scrubber import find_pii
+
+        (found,) = find_pii(["My name is Riley Shaw."])
+
+        assert any(f.entity == "PERSON" and "Riley" in f.value for f in found)
+
+    def test_findings_never_overlap(self):
+        from tracer.utils.pii_scrubber import find_pii
+
+        (found,) = find_pii(
+            ["Contact jane.doe@example.com at 10.0.0.1 or 555-123-4567"]
+        )
+
+        assert all(a.end <= b.start for a, b in pairwise(found))
+
+    def test_nothing_to_find(self):
+        from tracer.utils.pii_scrubber import find_pii
+
+        assert find_pii(["Hello, this is a normal sentence."]) == [[]]
+        assert find_pii([]) == []
+
+    def test_no_engines_is_none_not_nothing_found(self):
+        from tracer.utils import pii_scrubber
+        from tracer.utils.pii_scrubber import find_pii
+
+        with mock.patch.object(pii_scrubber, "_ensure_engines", return_value=False):
+            assert find_pii(["john@example.com"]) is None
+
+    def test_a_failed_analysis_is_none_not_nothing_found(self):
+        from tracer.utils.pii_scrubber import find_pii
+
+        with mock.patch(
+            "presidio_analyzer.BatchAnalyzerEngine.analyze_iterator",
+            side_effect=RuntimeError("boom"),
+        ):
+            assert find_pii(["john@example.com"]) is None
+
+
+# ---------------------------------------------------------------------------
+# find_pii_basic — the fixed-shape stand-in for a server without Presidio
+# ---------------------------------------------------------------------------
+class TestFindPiiBasic:
+    def _entities(self, text):
+        from tracer.utils.pii_scrubber import find_pii_basic
+
+        (found,) = find_pii_basic([text])
+        assert all(text[f.start : f.end] == f.value for f in found)
+        return [(f.entity, f.value) for f in found]
+
+    def test_fixed_shape_values(self):
+        assert self._entities(
+            "jane.doe@example.com, +1 415-555-0134, 123-45-6789, 10.0.0.12, "
+            "sk-live-abcdefghijklmnopqrstuvwx"
+        ) == [
+            ("EMAIL_ADDRESS", "jane.doe@example.com"),
+            ("PHONE_NUMBER", "+1 415-555-0134"),
+            ("US_SSN", "123-45-6789"),
+            ("IP_ADDRESS", "10.0.0.12"),
+            ("API_KEY", "sk-live-abcdefghijklmnopqrstuvwx"),
+        ]
+
+    def test_a_card_number_must_pass_the_luhn_check(self):
+        assert self._entities("card 4111 1111 1111 1111") == [
+            ("CREDIT_CARD", "4111 1111 1111 1111")
+        ]
+        assert self._entities("order 4111 1111 1111 1112") == []
+
+    def test_it_finds_no_names(self):
+        assert self._entities("My name is Riley Shaw.") == []
 
 
 # ---------------------------------------------------------------------------

@@ -119,8 +119,10 @@ class HostedHarnessConversationViewSet(viewsets.ViewSet):
     )
     @action(detail=True, methods=["post"])
     def adjust(self, request, pk=None):
+        from simulate.services.evidence_drafts import refuse_for_drafting_job
         from simulate.services.hosted_harness_gateway import HostedHarnessGateway
 
+        refuse_for_drafting_job(self._conversation.job)
         body = request.validated_data
         job = HostedHarnessGateway().adjust(self._conversation.job, body)
         adjustments = ((job.payload or {}).get("metadata") or {}).get(
@@ -146,10 +148,12 @@ class HostedHarnessConversationViewSet(viewsets.ViewSet):
     @action(detail=True, methods=["post"])
     @swagger_auto_schema(responses={202: HarnessConversationRunStatusSerializer})
     def rerun(self, request, pk=None):
+        from simulate.services.evidence_drafts import refuse_for_drafting_job
         from simulate.services.harness_provider import get_harness_provider
         from simulate.services.harness_versioning.drafts import drafts_apply
 
         job = self._conversation.job
+        refuse_for_drafting_job(job)
         try:
             promote_latest_checkpoint(self._conversation)
         except HostedHarnessError as exc:

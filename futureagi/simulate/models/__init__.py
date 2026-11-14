@@ -15,11 +15,12 @@ from .call_log_entry import CallLogEntry
 from .chat_message import ChatMessageModel
 from .chat_simulator import ChatSimulatorAssistant, ChatSimulatorSession
 from .component_evaluation import ComponentEvaluation
+from .eval_config import SimulateEvalConfig
+from .evidence_import import EvidenceImport, EvidenceImportCase
 from .harness_environment_credentials import (
     HarnessCredentialFile,
     HarnessEnvironmentCredentials,
 )
-from .eval_config import SimulateEvalConfig
 from .harness_versioning import (
     HarnessAgentVersionRuntime,
     HarnessAssembledBundle,
@@ -39,9 +40,9 @@ from .hosted_harness import (
     HostedHarnessConversationMessage,
     HostedHarnessConversationTranscript,
     HostedHarnessEvent,
+    HostedHarnessExecution,
     HostedHarnessJob,
     HostedHarnessManifest,
-    HostedHarnessExecution,
     HostedHarnessReceipt,
     HostedHarnessScenario,
     HostedHarnessSecret,
@@ -65,6 +66,8 @@ from .trial_item_result import TrialItemResult
 __all__ = [
     "AgentFixCandidate",
     "AgentFixRun",
+    "EvidenceImport",
+    "EvidenceImportCase",
     "Scenarios",
     "AgentDefinition",
     "ProviderCredentials",

@@ -488,6 +488,11 @@ import type {
   EvalTemplateVersionRestoreResponseApi,
   EvalUsageStatsResponseApi,
   EvalUserTemplateApi,
+  EvidenceImportAddApi,
+  EvidenceImportAddResponseApi,
+  EvidenceImportApi,
+  EvidenceImportCreateApi,
+  EvidenceImportDraftApi,
   ExecutePromptSimulationRequestApi,
   ExecutePromptSimulationResponseApi,
   ExecuteRequestApi,
@@ -60552,6 +60557,217 @@ export const simulateApiHarnessEnvironmentsRemoveEvaluation = async (
     },
   );
 };
+
+export type simulateApiHarnessEnvironmentsEvidenceImportsResponse201 = {
+  data: EvidenceImportApi;
+  status: 201;
+};
+
+export type simulateApiHarnessEnvironmentsEvidenceImportsResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 201>;
+};
+
+export type simulateApiHarnessEnvironmentsEvidenceImportsResponseSuccess =
+  simulateApiHarnessEnvironmentsEvidenceImportsResponse201 & {
+    headers: ApiResponseHeaders;
+  };
+export type simulateApiHarnessEnvironmentsEvidenceImportsResponseError =
+  simulateApiHarnessEnvironmentsEvidenceImportsResponseDefault & {
+    headers: ApiResponseHeaders;
+  };
+
+export type simulateApiHarnessEnvironmentsEvidenceImportsResponse =
+  | simulateApiHarnessEnvironmentsEvidenceImportsResponseSuccess
+  | simulateApiHarnessEnvironmentsEvidenceImportsResponseError;
+
+export const getSimulateApiHarnessEnvironmentsEvidenceImportsUrl = (
+  id: string,
+) => {
+  return `/simulate/api/harness-environments/${id}/evidence-imports/`;
+};
+
+/**
+ * Freeze Observe sessions or calls as evidence for this environment's
+tests; returns what each holds and lacks, and what redaction would
+replace. Nothing is drafted or run.
+ */
+export const simulateApiHarnessEnvironmentsEvidenceImports = async (
+  id: string,
+  evidenceImportCreateApi: EvidenceImportCreateApi,
+  options?: RequestInit,
+): Promise<simulateApiHarnessEnvironmentsEvidenceImportsResponse> => {
+  return apiMutator<simulateApiHarnessEnvironmentsEvidenceImportsResponse>(
+    getSimulateApiHarnessEnvironmentsEvidenceImportsUrl(id),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(evidenceImportCreateApi),
+    },
+  );
+};
+
+export type simulateApiHarnessEnvironmentsEvidenceImportResponse200 = {
+  data: EvidenceImportApi;
+  status: 200;
+};
+
+export type simulateApiHarnessEnvironmentsEvidenceImportResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type simulateApiHarnessEnvironmentsEvidenceImportResponseSuccess =
+  simulateApiHarnessEnvironmentsEvidenceImportResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type simulateApiHarnessEnvironmentsEvidenceImportResponseError =
+  simulateApiHarnessEnvironmentsEvidenceImportResponseDefault & {
+    headers: ApiResponseHeaders;
+  };
+
+export type simulateApiHarnessEnvironmentsEvidenceImportResponse =
+  | simulateApiHarnessEnvironmentsEvidenceImportResponseSuccess
+  | simulateApiHarnessEnvironmentsEvidenceImportResponseError;
+
+export const getSimulateApiHarnessEnvironmentsEvidenceImportUrl = (
+  id: string,
+  importId: string,
+) => {
+  return `/simulate/api/harness-environments/${id}/evidence-imports/${importId}/`;
+};
+
+/**
+ * One evidence import, read from Observe again: a source deleted since
+reads as unavailable, and a changed one says so.
+ */
+export const simulateApiHarnessEnvironmentsEvidenceImport = async (
+  id: string,
+  importId: string,
+  options?: RequestInit,
+): Promise<simulateApiHarnessEnvironmentsEvidenceImportResponse> => {
+  return apiMutator<simulateApiHarnessEnvironmentsEvidenceImportResponse>(
+    getSimulateApiHarnessEnvironmentsEvidenceImportUrl(id, importId),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type simulateApiHarnessEnvironmentsEvidenceImportsAddEvidenceCasesResponse200 =
+  {
+    data: EvidenceImportAddResponseApi;
+    status: 200;
+  };
+
+export type simulateApiHarnessEnvironmentsEvidenceImportsAddEvidenceCasesResponseDefault =
+  {
+    data: ManagementAPIErrorResponseApi;
+    status: Exclude<HTTPStatusCodes, 200>;
+  };
+
+export type simulateApiHarnessEnvironmentsEvidenceImportsAddEvidenceCasesResponseSuccess =
+  simulateApiHarnessEnvironmentsEvidenceImportsAddEvidenceCasesResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type simulateApiHarnessEnvironmentsEvidenceImportsAddEvidenceCasesResponseError =
+  simulateApiHarnessEnvironmentsEvidenceImportsAddEvidenceCasesResponseDefault & {
+    headers: ApiResponseHeaders;
+  };
+
+export type simulateApiHarnessEnvironmentsEvidenceImportsAddEvidenceCasesResponse =
+
+    | simulateApiHarnessEnvironmentsEvidenceImportsAddEvidenceCasesResponseSuccess
+    | simulateApiHarnessEnvironmentsEvidenceImportsAddEvidenceCasesResponseError;
+
+export const getSimulateApiHarnessEnvironmentsEvidenceImportsAddEvidenceCasesUrl =
+  (id: string, importId: string) => {
+    return `/simulate/api/harness-environments/${id}/evidence-imports/${importId}/add/`;
+  };
+
+/**
+ * Add an import's drafted cases to the suite: saved with them when the
+review saw no unsaved changes, else beside those changes in the draft.
+ */
+export const simulateApiHarnessEnvironmentsEvidenceImportsAddEvidenceCases =
+  async (
+    id: string,
+    importId: string,
+    evidenceImportAddApi: EvidenceImportAddApi,
+    options?: RequestInit,
+  ): Promise<simulateApiHarnessEnvironmentsEvidenceImportsAddEvidenceCasesResponse> => {
+    return apiMutator<simulateApiHarnessEnvironmentsEvidenceImportsAddEvidenceCasesResponse>(
+      getSimulateApiHarnessEnvironmentsEvidenceImportsAddEvidenceCasesUrl(
+        id,
+        importId,
+      ),
+      {
+        ...options,
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...options?.headers },
+        body: JSON.stringify(evidenceImportAddApi),
+      },
+    );
+  };
+
+export type simulateApiHarnessEnvironmentsEvidenceImportsDraftEvidenceCasesResponse202 =
+  {
+    data: EvidenceImportApi;
+    status: 202;
+  };
+
+export type simulateApiHarnessEnvironmentsEvidenceImportsDraftEvidenceCasesResponseDefault =
+  {
+    data: ManagementAPIErrorResponseApi;
+    status: Exclude<HTTPStatusCodes, 202>;
+  };
+
+export type simulateApiHarnessEnvironmentsEvidenceImportsDraftEvidenceCasesResponseSuccess =
+  simulateApiHarnessEnvironmentsEvidenceImportsDraftEvidenceCasesResponse202 & {
+    headers: ApiResponseHeaders;
+  };
+export type simulateApiHarnessEnvironmentsEvidenceImportsDraftEvidenceCasesResponseError =
+  simulateApiHarnessEnvironmentsEvidenceImportsDraftEvidenceCasesResponseDefault & {
+    headers: ApiResponseHeaders;
+  };
+
+export type simulateApiHarnessEnvironmentsEvidenceImportsDraftEvidenceCasesResponse =
+
+    | simulateApiHarnessEnvironmentsEvidenceImportsDraftEvidenceCasesResponseSuccess
+    | simulateApiHarnessEnvironmentsEvidenceImportsDraftEvidenceCasesResponseError;
+
+export const getSimulateApiHarnessEnvironmentsEvidenceImportsDraftEvidenceCasesUrl =
+  (id: string, importId: string) => {
+    return `/simulate/api/harness-environments/${id}/evidence-imports/${importId}/draft/`;
+  };
+
+/**
+ * Ask the environment's builder to draft a scenario for each of an import's
+waiting cases. The turn runs in a chat of the import's own; nothing it does
+reaches the environment until a person adds the drafted cases.
+ */
+export const simulateApiHarnessEnvironmentsEvidenceImportsDraftEvidenceCases =
+  async (
+    id: string,
+    importId: string,
+    evidenceImportDraftApi: EvidenceImportDraftApi,
+    options?: RequestInit,
+  ): Promise<simulateApiHarnessEnvironmentsEvidenceImportsDraftEvidenceCasesResponse> => {
+    return apiMutator<simulateApiHarnessEnvironmentsEvidenceImportsDraftEvidenceCasesResponse>(
+      getSimulateApiHarnessEnvironmentsEvidenceImportsDraftEvidenceCasesUrl(
+        id,
+        importId,
+      ),
+      {
+        ...options,
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...options?.headers },
+        body: JSON.stringify(evidenceImportDraftApi),
+      },
+    );
+  };
 
 export type simulateApiHarnessEnvironmentsNudgesResponse200 = {
   data: HarnessNudgeApi[];

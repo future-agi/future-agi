@@ -201,10 +201,11 @@ def rebuild_running(piece: str | None) -> HostedHarnessError:
 
 
 def _conversations(environment: HostedHarnessJob):
-    """The environment's chat and its runs' chats, which publish into it."""
+    """The environment's chat and its runs' chats, which publish into it. An
+    evidence import's drafting chat never publishes, so it holds up no Save."""
     return HostedHarnessConversation.no_workspace_objects.filter(
         Q(job_id=environment.id) | Q(job__environment_id=environment.id)
-    )
+    ).exclude(job__evidence_drafting__isnull=False)
 
 
 def _awaiting_answer(conversation: HostedHarnessConversation) -> bool:

@@ -2946,3 +2946,29 @@
 
 - the Simulate menu is exactly Environment, Scenarios, Run Simulation
 - each of those two items opens its page by URL and title, never /404
+
+### SIM-E2E-003 — an environment-only org turns Observe sessions into an environment test import through the reviewed bridge
+
+**Goal:** An environment-only organisation turns production sessions from Observe into a draft regression import for one of its environments, through the reviewed bridge and never legacy Replay, and sees what the evidence holds and lacks
+
+**Spec:** `flows/simulate/evidence-import-from-observe.spec.ts:37`
+
+**Tags:** —
+
+**User steps:**
+
+1. seed two sessions in a minted Observe project; one user turn carries a minted ask and a minted email
+2. seed a built, versioned environment in the actor workspace (lib/environment-seed.ts)
+3. open the project's Sessions and select the two seeded rows
+4. open Actions and read the menu
+5. choose Create environment test, pick the seeded environment and import
+6. land on the environment's Scenarios tab with the import's review open
+
+**Backend state verified:**
+
+- both seeded sessions are stored for the minted project in ClickHouse trace_sessions (FINAL)
+- the Actions menu is exactly "Add to annotation queue" and "Create environment test": no Replay for an environment-only org
+- from the Actions click on, the only mutating /simulate/ request is one POST to the environment evidence-imports route, answered 201, and no request names replay
+- simulate_evidence_import has one row for the actor org, the seeded environment and the minted project, with two pending cases whose source ids are the seeded sessions
+- the import's bundle re-reads Observe: each case's transcript holds its minted ask, and redaction reports the minted email as an EMAIL_ADDRESS finding
+- the review shows both cases waiting, the transcript present, the starting state missing, and that the test is not an exact replay

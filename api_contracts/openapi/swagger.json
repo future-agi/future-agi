@@ -52121,6 +52121,186 @@
                 }
             ]
         },
+        "/simulate/api/harness-environments/{id}/evidence-imports/": {
+            "post": {
+                "operationId": "simulate_api_harness-environments_evidence_imports",
+                "description": "Freeze Observe sessions or calls as evidence for this environment's\ntests; returns what each holds and lacks, and what redaction would\nreplace. Nothing is drafted or run.",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/EvidenceImportCreate"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/EvidenceImport"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
+        "/simulate/api/harness-environments/{id}/evidence-imports/{import_id}/": {
+            "get": {
+                "operationId": "simulate_api_harness-environments_evidence_import",
+                "description": "One evidence import, read from Observe again: a source deleted since\nreads as unavailable, and a changed one says so.",
+                "parameters": [],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/EvidenceImport"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ],
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                },
+                {
+                    "name": "import_id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
+        "/simulate/api/harness-environments/{id}/evidence-imports/{import_id}/add/": {
+            "post": {
+                "operationId": "simulate_api_harness-environments_evidence-imports_add_evidence_cases",
+                "description": "Add an import's drafted cases to the suite: saved with them when the\nreview saw no unsaved changes, else beside those changes in the draft.",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/EvidenceImportAdd"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/EvidenceImportAddResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                },
+                {
+                    "name": "import_id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
+        "/simulate/api/harness-environments/{id}/evidence-imports/{import_id}/draft/": {
+            "post": {
+                "operationId": "simulate_api_harness-environments_evidence-imports_draft_evidence_cases",
+                "description": "Ask the environment's builder to draft a scenario for each of an import's\nwaiting cases. The turn runs in a chat of the import's own; nothing it does\nreaches the environment until a person adds the drafted cases.",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/EvidenceImportDraft"
+                        }
+                    }
+                ],
+                "responses": {
+                    "202": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/EvidenceImport"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                },
+                {
+                    "name": "import_id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
         "/simulate/api/harness-environments/{id}/nudges/": {
             "get": {
                 "operationId": "simulate_api_harness-environments_nudges",
@@ -142684,6 +142864,723 @@
                     "title": "Editable",
                     "type": "boolean",
                     "readOnly": true
+                }
+            }
+        },
+        "EvidenceImportCreate": {
+            "required": [
+                "project_id",
+                "source_kind",
+                "ids"
+            ],
+            "type": "object",
+            "properties": {
+                "project_id": {
+                    "title": "Project id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "source_kind": {
+                    "title": "Source kind",
+                    "type": "string",
+                    "enum": [
+                        "session",
+                        "call"
+                    ]
+                },
+                "ids": {
+                    "description": "Session ids, or the trace ids of calls, in the order picked.",
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "format": "uuid"
+                    },
+                    "maxItems": 20,
+                    "minItems": 1
+                }
+            }
+        },
+        "EvidenceNewCheck": {
+            "description": "Checks this case adds to the environment when it is added: each one is new, never a change to an existing check.",
+            "required": [
+                "name",
+                "what"
+            ],
+            "type": "object",
+            "properties": {
+                "name": {
+                    "title": "Name",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "what": {
+                    "title": "What",
+                    "type": "string"
+                }
+            }
+        },
+        "EvidenceTurn": {
+            "required": [
+                "role",
+                "text",
+                "truncated",
+                "trace_id",
+                "at"
+            ],
+            "type": "object",
+            "properties": {
+                "role": {
+                    "title": "Role",
+                    "type": "string",
+                    "enum": [
+                        "user",
+                        "agent"
+                    ]
+                },
+                "text": {
+                    "title": "Text",
+                    "type": "string"
+                },
+                "truncated": {
+                    "title": "Truncated",
+                    "type": "boolean"
+                },
+                "trace_id": {
+                    "title": "Trace id",
+                    "description": "Blank for a turn no trace recorded.",
+                    "type": "string"
+                },
+                "at": {
+                    "title": "At",
+                    "type": "string",
+                    "format": "date-time",
+                    "x-nullable": true
+                }
+            }
+        },
+        "EvidenceTranscript": {
+            "required": [
+                "status",
+                "reason",
+                "turns"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "string",
+                    "enum": [
+                        "present",
+                        "partial",
+                        "truncated",
+                        "missing",
+                        "unreadable"
+                    ]
+                },
+                "reason": {
+                    "title": "Reason",
+                    "type": "string"
+                },
+                "turns": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/EvidenceTurn"
+                    }
+                }
+            }
+        },
+        "EvidenceToolCall": {
+            "required": [
+                "span_id",
+                "trace_id",
+                "name",
+                "at",
+                "failed",
+                "error",
+                "input",
+                "output",
+                "input_truncated",
+                "output_truncated"
+            ],
+            "type": "object",
+            "properties": {
+                "span_id": {
+                    "title": "Span id",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "trace_id": {
+                    "title": "Trace id",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "name": {
+                    "title": "Name",
+                    "type": "string"
+                },
+                "at": {
+                    "title": "At",
+                    "type": "string",
+                    "format": "date-time"
+                },
+                "failed": {
+                    "title": "Failed",
+                    "type": "boolean"
+                },
+                "error": {
+                    "title": "Error",
+                    "type": "string"
+                },
+                "input": {
+                    "title": "Input",
+                    "type": "string"
+                },
+                "output": {
+                    "title": "Output",
+                    "type": "string"
+                },
+                "input_truncated": {
+                    "title": "Input truncated",
+                    "type": "boolean"
+                },
+                "output_truncated": {
+                    "title": "Output truncated",
+                    "type": "boolean"
+                }
+            }
+        },
+        "EvidenceToolCalls": {
+            "required": [
+                "status",
+                "reason",
+                "calls"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "string",
+                    "enum": [
+                        "present",
+                        "partial",
+                        "truncated",
+                        "missing",
+                        "unreadable"
+                    ]
+                },
+                "reason": {
+                    "title": "Reason",
+                    "type": "string"
+                },
+                "calls": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/EvidenceToolCall"
+                    }
+                }
+            }
+        },
+        "EvidencePart": {
+            "description": "Whether the tool calls recorded their inputs.",
+            "required": [
+                "status",
+                "reason"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "string",
+                    "enum": [
+                        "present",
+                        "partial",
+                        "truncated",
+                        "missing",
+                        "unreadable"
+                    ]
+                },
+                "reason": {
+                    "title": "Reason",
+                    "type": "string"
+                }
+            }
+        },
+        "EvidenceLabel": {
+            "required": [
+                "name",
+                "kind",
+                "value",
+                "notes",
+                "target"
+            ],
+            "type": "object",
+            "properties": {
+                "name": {
+                    "title": "Name",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "kind": {
+                    "title": "Kind",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "value": {
+                    "title": "Value",
+                    "description": "As the annotator recorded it: input evidence, not a verdict.",
+                    "type": "object"
+                },
+                "notes": {
+                    "title": "Notes",
+                    "type": "string"
+                },
+                "target": {
+                    "title": "Target",
+                    "type": "string",
+                    "enum": [
+                        "session",
+                        "trace",
+                        "span"
+                    ]
+                }
+            }
+        },
+        "EvidenceLabels": {
+            "required": [
+                "status",
+                "reason",
+                "labels"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "string",
+                    "enum": [
+                        "present",
+                        "partial",
+                        "truncated",
+                        "missing",
+                        "unreadable"
+                    ]
+                },
+                "reason": {
+                    "title": "Reason",
+                    "type": "string"
+                },
+                "labels": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/EvidenceLabel"
+                    }
+                }
+            }
+        },
+        "EvidenceImportCase": {
+            "required": [
+                "id",
+                "source_id",
+                "status",
+                "reason",
+                "source_available",
+                "scenario_key",
+                "scenario_name",
+                "new_checks",
+                "changed_since_import",
+                "trace_ids",
+                "started_at",
+                "ended_at",
+                "transcript",
+                "tool_calls",
+                "tool_inputs",
+                "tool_outputs",
+                "starting_state",
+                "labels"
+            ],
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "source_id": {
+                    "title": "Source id",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "status": {
+                    "title": "Status",
+                    "type": "string",
+                    "enum": [
+                        "pending",
+                        "unavailable",
+                        "drafted",
+                        "blocked",
+                        "added"
+                    ]
+                },
+                "reason": {
+                    "title": "Reason",
+                    "type": "string"
+                },
+                "source_available": {
+                    "title": "Source available",
+                    "description": "False once Observe no longer holds the source: its provenance is unavailable, though what became of the case stands.",
+                    "type": "boolean"
+                },
+                "scenario_key": {
+                    "title": "Scenario key",
+                    "description": "The drafted scenario's key, once drafted.",
+                    "type": "string"
+                },
+                "scenario_name": {
+                    "title": "Scenario name",
+                    "description": "The drafted scenario's title, once drafted; blank when the builder gave none.",
+                    "type": "string"
+                },
+                "new_checks": {
+                    "description": "Checks this case adds to the environment when it is added: each one is new, never a change to an existing check.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/EvidenceNewCheck"
+                    }
+                },
+                "changed_since_import": {
+                    "title": "Changed since import",
+                    "description": "Null when unknown: the source is gone, or part of it could not be read now or when the import was made.",
+                    "type": "boolean",
+                    "x-nullable": true
+                },
+                "trace_ids": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    }
+                },
+                "started_at": {
+                    "title": "Started at",
+                    "type": "string",
+                    "format": "date-time",
+                    "x-nullable": true
+                },
+                "ended_at": {
+                    "title": "Ended at",
+                    "type": "string",
+                    "format": "date-time",
+                    "x-nullable": true
+                },
+                "transcript": {
+                    "$ref": "#/definitions/EvidenceTranscript"
+                },
+                "tool_calls": {
+                    "$ref": "#/definitions/EvidenceToolCalls"
+                },
+                "tool_inputs": {
+                    "$ref": "#/definitions/EvidencePart"
+                },
+                "tool_outputs": {
+                    "$ref": "#/definitions/EvidencePart"
+                },
+                "starting_state": {
+                    "$ref": "#/definitions/EvidencePart"
+                },
+                "labels": {
+                    "$ref": "#/definitions/EvidenceLabels"
+                }
+            }
+        },
+        "EvidenceRedactionFinding": {
+            "required": [
+                "case_id",
+                "part",
+                "index",
+                "field",
+                "entity",
+                "start",
+                "end",
+                "value",
+                "replacement"
+            ],
+            "type": "object",
+            "properties": {
+                "case_id": {
+                    "title": "Case id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "part": {
+                    "title": "Part",
+                    "type": "string",
+                    "enum": [
+                        "transcript",
+                        "tool_calls",
+                        "labels"
+                    ]
+                },
+                "index": {
+                    "title": "Index",
+                    "type": "integer",
+                    "minimum": 0
+                },
+                "field": {
+                    "title": "Field",
+                    "type": "string",
+                    "enum": [
+                        "text",
+                        "input",
+                        "output",
+                        "error",
+                        "notes",
+                        "value"
+                    ]
+                },
+                "entity": {
+                    "title": "Entity",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "start": {
+                    "title": "Start",
+                    "type": "integer",
+                    "minimum": 0
+                },
+                "end": {
+                    "title": "End",
+                    "type": "integer",
+                    "minimum": 0
+                },
+                "value": {
+                    "title": "Value",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "replacement": {
+                    "title": "Replacement",
+                    "type": "string",
+                    "minLength": 1
+                }
+            }
+        },
+        "EvidenceRedaction": {
+            "required": [
+                "method",
+                "reason",
+                "findings",
+                "total"
+            ],
+            "type": "object",
+            "properties": {
+                "method": {
+                    "title": "Method",
+                    "description": "basic: a fixed-shape match, for a server without Presidio; it finds no names or addresses.",
+                    "type": "string",
+                    "enum": [
+                        "presidio",
+                        "basic"
+                    ]
+                },
+                "reason": {
+                    "title": "Reason",
+                    "type": "string"
+                },
+                "findings": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/EvidenceRedactionFinding"
+                    }
+                },
+                "total": {
+                    "title": "Total",
+                    "description": "Every finding, including those past the listed ones.",
+                    "type": "integer",
+                    "minimum": 0
+                }
+            }
+        },
+        "EvidenceImport": {
+            "required": [
+                "id",
+                "environment_id",
+                "project_id",
+                "agent_version_id",
+                "source_kind",
+                "created_at",
+                "simulated",
+                "drafting",
+                "cases",
+                "redaction"
+            ],
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "environment_id": {
+                    "title": "Environment id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "project_id": {
+                    "title": "Project id",
+                    "description": "The Observe project; null for evidence from outside Observe.",
+                    "type": "string",
+                    "format": "uuid",
+                    "x-nullable": true
+                },
+                "agent_version_id": {
+                    "title": "Agent version id",
+                    "type": "string",
+                    "format": "uuid",
+                    "x-nullable": true
+                },
+                "source_kind": {
+                    "title": "Source kind",
+                    "type": "string",
+                    "enum": [
+                        "session",
+                        "call"
+                    ]
+                },
+                "created_at": {
+                    "title": "Created at",
+                    "type": "string",
+                    "format": "date-time"
+                },
+                "simulated": {
+                    "title": "Simulated",
+                    "description": "True when the sources come from a Simulator project: simulated conversations, not production evidence.",
+                    "type": "boolean"
+                },
+                "drafting": {
+                    "title": "Drafting",
+                    "description": "True while the environment's builder is drafting cases.",
+                    "type": "boolean"
+                },
+                "cases": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/EvidenceImportCase"
+                    }
+                },
+                "redaction": {
+                    "$ref": "#/definitions/EvidenceRedaction"
+                }
+            }
+        },
+        "EvidenceDraftRef": {
+            "required": [
+                "id",
+                "revision"
+            ],
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "type": "string",
+                    "format": "uuid",
+                    "x-nullable": true
+                },
+                "revision": {
+                    "title": "Revision",
+                    "type": "integer",
+                    "minimum": 0
+                }
+            }
+        },
+        "EvidenceExpectedDrafts": {
+            "description": "The unsaved changes the review saw (GET drafts); none means the suite is saved with the cases.",
+            "required": [
+                "environment",
+                "suite"
+            ],
+            "type": "object",
+            "properties": {
+                "environment": {
+                    "$ref": "#/definitions/EvidenceDraftRef"
+                },
+                "suite": {
+                    "$ref": "#/definitions/EvidenceDraftRef"
+                }
+            }
+        },
+        "EvidenceImportAdd": {
+            "required": [
+                "case_ids",
+                "expected_drafts",
+                "idempotency_key"
+            ],
+            "type": "object",
+            "properties": {
+                "case_ids": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "format": "uuid"
+                    },
+                    "maxItems": 20,
+                    "minItems": 1
+                },
+                "expected_drafts": {
+                    "$ref": "#/definitions/EvidenceExpectedDrafts"
+                },
+                "idempotency_key": {
+                    "title": "Idempotency key",
+                    "type": "string",
+                    "maxLength": 128,
+                    "minLength": 1
+                }
+            }
+        },
+        "EvidenceImportAddResponse": {
+            "required": [
+                "saved",
+                "evidence_import"
+            ],
+            "type": "object",
+            "properties": {
+                "saved": {
+                    "title": "Saved",
+                    "description": "True: the suite was saved with the cases. False: they joined the unsaved changes beside other edits.",
+                    "type": "boolean"
+                },
+                "evidence_import": {
+                    "$ref": "#/definitions/EvidenceImport"
+                }
+            }
+        },
+        "EvidenceImportDraft": {
+            "required": [
+                "case_ids"
+            ],
+            "type": "object",
+            "properties": {
+                "case_ids": {
+                    "description": "The import's waiting cases the environment's builder drafts.",
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "format": "uuid"
+                    },
+                    "maxItems": 20,
+                    "minItems": 1
+                },
+                "shows": {
+                    "title": "Shows",
+                    "description": "What the person says each case records, by case id.",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string",
+                        "enum": [
+                            "failure",
+                            "success",
+                            "partial"
+                        ]
+                    },
+                    "default": {}
                 }
             }
         },

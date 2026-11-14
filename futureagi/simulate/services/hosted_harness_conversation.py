@@ -685,7 +685,7 @@ def issue_conversation_capability(
         return None
     base = endpoint_base_url.rstrip("/")
     prefix = f"{base}/simulate/api/harness/conversations/{conversation.id}"
-    document = {
+    document: dict[str, Any] = {
         "schema_version": CONVERSATION_SCHEMA_VERSION,
         "conversation_id": str(conversation.id),
         "job_id": str(conversation.job_id),
@@ -713,6 +713,11 @@ def issue_conversation_capability(
             "overview": f"{prefix}/overview/",
         },
     }
+    from simulate.services import evidence_drafts
+
+    if evidence_drafts.is_drafting_job(conversation.job):
+        for name in evidence_drafts.UNOFFERED_ENDPOINTS:
+            document["endpoints"].pop(name, None)
     return ConversationCapability(
         lease=lease, token=token, fence=fence, document=document
     )
@@ -1232,6 +1237,17 @@ def _project_event(
         ):
             conversation.state = HostedHarnessConversation.State.WARM_IDLE
         conversation.active_invocation_id = None
+        if command_id:
+            from simulate.services import evidence_drafts
+
+            transaction.on_commit(
+                partial(
+                    evidence_drafts.turn_ended,
+                    str(conversation.id),
+                    str(command_id),
+                    str(payload.get("outcome") or ""),
+                )
+            )
         # Only a finished turn leaves a complete suite; checkpoints taken mid-turn are scratch.
         if payload.get("outcome") == "success":
             conversation_id, sequence = str(conversation.id), event["sequence"]
@@ -1686,10 +1702,13 @@ def start_conversation_run(
     operation_id: str = "",
 ) -> dict[str, Any]:
     """Run the scenarios the chat names by tab number, the way the Scenarios tab does."""
+    from simulate.services.evidence_drafts import refuse_run
     from simulate.services.harness_usage import require_harness_call_usage
+    from simulate.services.harness_versioning.rebuild import turn_command
     from simulate.services.hosted_harness import create_selected_harness_run
     from simulate.temporal.client import start_hosted_harness_gateway_workflow
 
+    refuse_run(turn_command(conversation))
     job = conversation.job
     environment = job.environment or job
     wanted = _numbers_meant(numbers, ranges)
@@ -1975,6 +1994,13 @@ def promote_conversation_checkpoint(
             status_code=409,
         )
     archive = _authoring_archive(checkpoint)
+    from simulate.services import evidence_drafts
+
+    if command is not None and evidence_drafts.is_evidence_command(command):
+        # An evidence turn read untrusted production text: its saves never reach
+        # the environment; its scenarios become proposals on the import.
+        evidence_drafts.land(environment, conversation, archive, command)
+        return environment
     content_revision = authoring_content_digest(archive)
     checkpoint_basis = authoring_basis(checkpoint)
     outputs = {

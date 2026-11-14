@@ -8,6 +8,9 @@ the configured Presidio engines cannot be initialized.
 """
 
 import json
+import re
+from collections.abc import Sequence
+from dataclasses import dataclass
 from typing import Any
 
 import structlog
@@ -55,7 +58,6 @@ def _ensure_engines() -> bool:
     try:
         from presidio_analyzer import AnalyzerEngine, Pattern, PatternRecognizer
         from presidio_anonymizer import AnonymizerEngine
-        from presidio_anonymizer.entities import OperatorConfig
 
         # Custom recognizer for API keys (sk-live-..., pk_test-..., etc.)
         api_key_recognizer = PatternRecognizer(
@@ -207,6 +209,130 @@ def scrub_pii_in_string(text: str) -> str:
     except Exception:
         logger.warning("pii_scrub_string_failed", exc_info=True)
         return text
+
+
+# Names and places are personal data once a conversation becomes test text,
+# though ingestion's opt-in scrubbing leaves them in the trace.
+_FINDABLE_ENTITIES = (*_ENTITY_OPERATORS, "PERSON", "LOCATION")
+
+# What find_pii_basic recognises when Presidio is not installed: values with a
+# fixed shape, earlier patterns winning an overlap. Names and addresses have no
+# fixed shape, so it cannot find them.
+_BASIC_PATTERNS = (
+    ("EMAIL_ADDRESS", re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+")),
+    (
+        "API_KEY",
+        re.compile(r"\b(?:sk|pk)[-_](?:live|test|prod)[-_][A-Za-z0-9]{20,}\b"),
+    ),
+    ("CREDIT_CARD", re.compile(r"(?<!\d)(?:\d[ -]?){12,18}\d(?!\d)")),
+    ("US_SSN", re.compile(r"(?<!\d)\d{3}-\d{2}-\d{4}(?!\d)")),
+    (
+        "IP_ADDRESS",
+        re.compile(
+            r"(?<![\d.])(?:(?:25[0-5]|2[0-4]\d|1?\d?\d)\.){3}(?:25[0-5]|2[0-4]\d|1?\d?\d)(?![\d.])"
+        ),
+    ),
+    (
+        "PHONE_NUMBER",
+        re.compile(
+            r"(?<![\w+])(?:\+\d{1,3}[ .-]?)?(?:\(\d{3}\)|\d{3})[ .-]?\d{3}[ .-]?\d{4}(?!\w)"
+        ),
+    ),
+)
+
+
+@dataclass(frozen=True)
+class PiiFinding:
+    """One value redaction would replace: where it sits in the text, what kind
+    of value it is, and the token that would replace it."""
+
+    entity: str
+    start: int
+    end: int
+    value: str
+    replacement: str
+
+
+def find_pii(texts: Sequence[str]) -> list[list[PiiFinding]] | None:
+    """The personal data Presidio finds in each of *texts*, in order and
+    without overlaps (the likelier reading of a span wins), analysed in one
+    batch. ``None`` when nothing could look: the engines are missing or the
+    analysis failed. Unlike the scrubbers, this does not fail open, so a caller
+    can tell "nothing found" from "not looked at"."""
+    if not any(texts):
+        return [[] for _ in texts]
+    if not _ensure_engines():
+        return None
+    try:
+        from presidio_analyzer import BatchAnalyzerEngine
+
+        results = list(
+            BatchAnalyzerEngine(analyzer_engine=_analyzer).analyze_iterator(
+                list(texts),
+                language="en",
+                entities=list(_FINDABLE_ENTITIES),
+                batch_size=64,
+            )
+        )
+    except Exception:
+        logger.exception(
+            "pii_find_failed", values=len(texts), chars=sum(len(t) for t in texts)
+        )
+        return None
+    return [
+        _without_overlaps(
+            text, ((r.entity_type, r.start, r.end, r.score) for r in found)
+        )
+        for text, found in zip(texts, results, strict=True)
+    ]
+
+
+def find_pii_basic(texts: Sequence[str]) -> list[list[PiiFinding]]:
+    """What a fixed-shape match finds in each of *texts*: emails, API keys,
+    card numbers (that pass the Luhn check), US SSNs, IP addresses and phone
+    numbers. For a server without Presidio; it finds no names or addresses."""
+    found = []
+    for text in texts:
+        hits = []
+        for rank, (entity, pattern) in enumerate(reversed(_BASIC_PATTERNS)):
+            for match in pattern.finditer(text or ""):
+                if entity == "CREDIT_CARD" and not _luhn(match.group()):
+                    continue
+                hits.append((entity, match.start(), match.end(), float(rank)))
+        found.append(_without_overlaps(text or "", hits))
+    return found
+
+
+def redact(text: str, findings: Sequence[PiiFinding]) -> str:
+    """``text`` with each finding replaced by its token."""
+    for finding in sorted(findings, key=lambda f: f.start, reverse=True):
+        text = text[: finding.start] + finding.replacement + text[finding.end :]
+    return text
+
+
+def _luhn(number: str) -> bool:
+    digits = [int(d) for d in number if d.isdigit()]
+    checksum = sum(digits[-1::-2]) + sum(sum(divmod(2 * d, 10)) for d in digits[-2::-2])
+    return checksum % 10 == 0
+
+
+def _without_overlaps(text: str, hits) -> list[PiiFinding]:
+    """``(entity, start, end, score)`` hits as findings, the higher score
+    winning where two overlap."""
+    kept: list[PiiFinding] = []
+    for entity, start, end, _ in sorted(hits, key=lambda h: (-h[3], h[1], h[2])):
+        if any(start < f.end and f.start < end for f in kept):
+            continue
+        kept.append(
+            PiiFinding(
+                entity=entity,
+                start=start,
+                end=end,
+                value=text[start:end],
+                replacement=_TOKEN_NAMES.get(entity, f"<{entity}>"),
+            )
+        )
+    return sorted(kept, key=lambda f: f.start)
 
 
 _MEDIA_PREFIXES = (

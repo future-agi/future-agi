@@ -20001,6 +20001,337 @@ export interface SimulateEvalConfigResponseApi {
   readonly editable?: boolean;
 }
 
+export type EvidenceImportCreateApiSourceKind =
+  (typeof EvidenceImportCreateApiSourceKind)[keyof typeof EvidenceImportCreateApiSourceKind];
+
+export const EvidenceImportCreateApiSourceKind = {
+  session: "session",
+  call: "call",
+} as const;
+
+export interface EvidenceImportCreateApi {
+  project_id: string;
+  source_kind: EvidenceImportCreateApiSourceKind;
+  /**
+   * Session ids, or the trace ids of calls, in the order picked.
+   * @minItems 1
+   * @maxItems 20
+   */
+  ids: string[];
+}
+
+export type EvidenceImportApiSourceKind =
+  (typeof EvidenceImportApiSourceKind)[keyof typeof EvidenceImportApiSourceKind];
+
+export const EvidenceImportApiSourceKind = {
+  session: "session",
+  call: "call",
+} as const;
+
+export type EvidenceImportCaseApiStatus =
+  (typeof EvidenceImportCaseApiStatus)[keyof typeof EvidenceImportCaseApiStatus];
+
+export const EvidenceImportCaseApiStatus = {
+  pending: "pending",
+  unavailable: "unavailable",
+  drafted: "drafted",
+  blocked: "blocked",
+  added: "added",
+} as const;
+
+/**
+ * Checks this case adds to the environment when it is added: each one is new, never a change to an existing check.
+ */
+export interface EvidenceNewCheckApi {
+  /** @minLength 1 */
+  name: string;
+  what: string;
+}
+
+export type EvidenceTranscriptApiStatus =
+  (typeof EvidenceTranscriptApiStatus)[keyof typeof EvidenceTranscriptApiStatus];
+
+export const EvidenceTranscriptApiStatus = {
+  present: "present",
+  partial: "partial",
+  truncated: "truncated",
+  missing: "missing",
+  unreadable: "unreadable",
+} as const;
+
+export type EvidenceTurnApiRole =
+  (typeof EvidenceTurnApiRole)[keyof typeof EvidenceTurnApiRole];
+
+export const EvidenceTurnApiRole = {
+  user: "user",
+  agent: "agent",
+} as const;
+
+export interface EvidenceTurnApi {
+  role: EvidenceTurnApiRole;
+  text: string;
+  truncated: boolean;
+  /** Blank for a turn no trace recorded. */
+  trace_id: string;
+  at: string;
+}
+
+export interface EvidenceTranscriptApi {
+  status: EvidenceTranscriptApiStatus;
+  reason: string;
+  turns: EvidenceTurnApi[];
+}
+
+export type EvidenceToolCallsApiStatus =
+  (typeof EvidenceToolCallsApiStatus)[keyof typeof EvidenceToolCallsApiStatus];
+
+export const EvidenceToolCallsApiStatus = {
+  present: "present",
+  partial: "partial",
+  truncated: "truncated",
+  missing: "missing",
+  unreadable: "unreadable",
+} as const;
+
+export interface EvidenceToolCallApi {
+  /** @minLength 1 */
+  span_id: string;
+  /** @minLength 1 */
+  trace_id: string;
+  name: string;
+  at: string;
+  failed: boolean;
+  error: string;
+  input: string;
+  output: string;
+  input_truncated: boolean;
+  output_truncated: boolean;
+}
+
+export interface EvidenceToolCallsApi {
+  status: EvidenceToolCallsApiStatus;
+  reason: string;
+  calls: EvidenceToolCallApi[];
+}
+
+export type EvidencePartApiStatus =
+  (typeof EvidencePartApiStatus)[keyof typeof EvidencePartApiStatus];
+
+export const EvidencePartApiStatus = {
+  present: "present",
+  partial: "partial",
+  truncated: "truncated",
+  missing: "missing",
+  unreadable: "unreadable",
+} as const;
+
+/**
+ * Whether the tool calls recorded their inputs.
+ */
+export interface EvidencePartApi {
+  status: EvidencePartApiStatus;
+  reason: string;
+}
+
+export type EvidenceLabelsApiStatus =
+  (typeof EvidenceLabelsApiStatus)[keyof typeof EvidenceLabelsApiStatus];
+
+export const EvidenceLabelsApiStatus = {
+  present: "present",
+  partial: "partial",
+  truncated: "truncated",
+  missing: "missing",
+  unreadable: "unreadable",
+} as const;
+
+export type EvidenceLabelApiTarget =
+  (typeof EvidenceLabelApiTarget)[keyof typeof EvidenceLabelApiTarget];
+
+export const EvidenceLabelApiTarget = {
+  session: "session",
+  trace: "trace",
+  span: "span",
+} as const;
+
+/**
+ * As the annotator recorded it: input evidence, not a verdict.
+ */
+export type EvidenceLabelApiValue = { [key: string]: unknown };
+
+export interface EvidenceLabelApi {
+  /** @minLength 1 */
+  name: string;
+  /** @minLength 1 */
+  kind: string;
+  /** As the annotator recorded it: input evidence, not a verdict. */
+  value: EvidenceLabelApiValue;
+  notes: string;
+  target: EvidenceLabelApiTarget;
+}
+
+export interface EvidenceLabelsApi {
+  status: EvidenceLabelsApiStatus;
+  reason: string;
+  labels: EvidenceLabelApi[];
+}
+
+export interface EvidenceImportCaseApi {
+  id: string;
+  /** @minLength 1 */
+  source_id: string;
+  status: EvidenceImportCaseApiStatus;
+  reason: string;
+  /** False once Observe no longer holds the source: its provenance is unavailable, though what became of the case stands. */
+  source_available: boolean;
+  /** The drafted scenario's key, once drafted. */
+  scenario_key: string;
+  /** The drafted scenario's title, once drafted; blank when the builder gave none. */
+  scenario_name: string;
+  /** Checks this case adds to the environment when it is added: each one is new, never a change to an existing check. */
+  new_checks: EvidenceNewCheckApi[];
+  /** Null when unknown: the source is gone, or part of it could not be read now or when the import was made. */
+  changed_since_import: boolean;
+  trace_ids: string[];
+  started_at: string;
+  ended_at: string;
+  transcript: EvidenceTranscriptApi;
+  tool_calls: EvidenceToolCallsApi;
+  tool_inputs: EvidencePartApi;
+  tool_outputs: EvidencePartApi;
+  starting_state: EvidencePartApi;
+  labels: EvidenceLabelsApi;
+}
+
+/**
+ * basic: a fixed-shape match, for a server without Presidio; it finds no names or addresses.
+ */
+export type EvidenceRedactionApiMethod =
+  (typeof EvidenceRedactionApiMethod)[keyof typeof EvidenceRedactionApiMethod];
+
+export const EvidenceRedactionApiMethod = {
+  presidio: "presidio",
+  basic: "basic",
+} as const;
+
+export type EvidenceRedactionFindingApiPart =
+  (typeof EvidenceRedactionFindingApiPart)[keyof typeof EvidenceRedactionFindingApiPart];
+
+export const EvidenceRedactionFindingApiPart = {
+  transcript: "transcript",
+  tool_calls: "tool_calls",
+  labels: "labels",
+} as const;
+
+export type EvidenceRedactionFindingApiField =
+  (typeof EvidenceRedactionFindingApiField)[keyof typeof EvidenceRedactionFindingApiField];
+
+export const EvidenceRedactionFindingApiField = {
+  text: "text",
+  input: "input",
+  output: "output",
+  error: "error",
+  notes: "notes",
+  value: "value",
+} as const;
+
+export interface EvidenceRedactionFindingApi {
+  case_id: string;
+  part: EvidenceRedactionFindingApiPart;
+  /** @minimum 0 */
+  index: number;
+  field: EvidenceRedactionFindingApiField;
+  /** @minLength 1 */
+  entity: string;
+  /** @minimum 0 */
+  start: number;
+  /** @minimum 0 */
+  end: number;
+  /** @minLength 1 */
+  value: string;
+  /** @minLength 1 */
+  replacement: string;
+}
+
+export interface EvidenceRedactionApi {
+  /** basic: a fixed-shape match, for a server without Presidio; it finds no names or addresses. */
+  method: EvidenceRedactionApiMethod;
+  reason: string;
+  findings: EvidenceRedactionFindingApi[];
+  /**
+   * Every finding, including those past the listed ones.
+   * @minimum 0
+   */
+  total: number;
+}
+
+export interface EvidenceImportApi {
+  id: string;
+  environment_id: string;
+  /** The Observe project; null for evidence from outside Observe. */
+  project_id: string;
+  agent_version_id: string;
+  source_kind: EvidenceImportApiSourceKind;
+  created_at: string;
+  /** True when the sources come from a Simulator project: simulated conversations, not production evidence. */
+  simulated: boolean;
+  /** True while the environment's builder is drafting cases. */
+  drafting: boolean;
+  cases: EvidenceImportCaseApi[];
+  redaction: EvidenceRedactionApi;
+}
+
+export interface EvidenceDraftRefApi {
+  id: string;
+  /** @minimum 0 */
+  revision: number;
+}
+
+/**
+ * The unsaved changes the review saw (GET drafts); none means the suite is saved with the cases.
+ */
+export interface EvidenceExpectedDraftsApi {
+  environment: EvidenceDraftRefApi;
+  suite: EvidenceDraftRefApi;
+}
+
+export interface EvidenceImportAddApi {
+  /**
+   * @minItems 1
+   * @maxItems 20
+   */
+  case_ids: string[];
+  expected_drafts: EvidenceExpectedDraftsApi;
+  /**
+   * @minLength 1
+   * @maxLength 128
+   */
+  idempotency_key: string;
+}
+
+export interface EvidenceImportAddResponseApi {
+  /** True: the suite was saved with the cases. False: they joined the unsaved changes beside other edits. */
+  saved: boolean;
+  evidence_import: EvidenceImportApi;
+}
+
+/**
+ * What the person says each case records, by case id.
+ */
+export type EvidenceImportDraftApiShows = {
+  [key: string]: "failure" | "success" | "partial";
+};
+
+export interface EvidenceImportDraftApi {
+  /**
+   * The import's waiting cases the environment's builder drafts.
+   * @minItems 1
+   * @maxItems 20
+   */
+  case_ids: string[];
+  /** What the person says each case records, by case id. */
+  shows?: EvidenceImportDraftApiShows;
+}
+
 export type HarnessNudgeApiTarget =
   (typeof HarnessNudgeApiTarget)[keyof typeof HarnessNudgeApiTarget];
 
