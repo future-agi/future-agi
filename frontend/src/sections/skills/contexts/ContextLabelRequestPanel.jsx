@@ -16,6 +16,7 @@ export default function ContextLabelRequestPanel({ contextId, version }) {
   return <Section title="Request release review">
     {detail.isError ? <ErrorState title="Couldn't load the release details." onRetry={detail.refetch} />
       : !detail.data ? <ContentSkeleton variant="panel" />
+        : production != null && version?.number === production ? <Typography variant="s1">v{production} is in production.</Typography>
         : <Stack spacing={1.5}>
           <Typography variant="s1">{production != null ? `Production is v${production}.` : 'Production is not assigned.'} An independent reviewer approves moving it to {version?.number != null ? `v${version.number}` : 'the viewed version'}.</Typography>
           <Stack direction="row"><Button variant="contained" color="primary" disabled={!version?.id || !version?.digest || version?.number == null}

@@ -8,8 +8,10 @@ import {
   FormControlLabel,
   Stack,
   TextField,
+  Tab,
   Typography,
 } from "@mui/material";
+import { CustomTabs } from "src/components/tabs/tabs";
 import ObjectHeader from "../components/ObjectHeader";
 import IdentityChip from "../components/IdentityChip";
 import TechnicalDetails from "../components/TechnicalDetails";
@@ -125,7 +127,7 @@ function DraftPublication({
           </TechnicalDetails>
         </Stack>
       </Section>
-      <Section id="review-files" title="Changes from content origin">
+      <Section id="review-files" title={draftReview.baseVersion == null ? "Changes in your draft" : `Changes since v${draftReview.baseVersion}`}>
         <Stack spacing={1.5}>
           {/* Files people read come first; the machine descriptor's exact diff is one click away. */}
           {draftReview.changes.filter((file) => file.path !== DESCRIPTOR_FILE).map((file) => (
@@ -133,25 +135,25 @@ function DraftPublication({
               <Typography variant="m3" sx={{ overflowWrap: "anywhere" }}>
                 {file.path}
               </Typography>
-              <ReviewFileDiff file={file} />
+              <ReviewFileDiff file={file} fromTitle={draftReview.baseVersion == null ? "New context" : `v${draftReview.baseVersion}`} toTitle="Your draft" />
             </Box>
           ))}
           {draftReview.changes.filter((file) => file.path === DESCRIPTOR_FILE).map((file) => (
             <TechnicalDetails key={file.path} title={`Raw ${file.path} change`}>
-              <ReviewFileDiff file={file} />
+              <ReviewFileDiff file={file} fromTitle={draftReview.baseVersion == null ? "New context" : `v${draftReview.baseVersion}`} toTitle="Your draft" />
             </TechnicalDetails>
           ))}
         </Stack>
       </Section>
       {draftReview.baseVersion !== draftReview.expectedHeadVersion && (
-        <Section title="Candidate versus current head">
+        <Section title="Changes against the current published version">
           <Stack spacing={1.5}>
             {draftReview.headChanges?.map((file) => (
               <Box key={file.path}>
                 <Typography variant="m3" sx={{ overflowWrap: "anywhere" }}>
                   {file.path}
                 </Typography>
-                <ReviewFileDiff file={file} />
+                <ReviewFileDiff file={file} fromTitle={`v${draftReview.expectedHeadVersion}`} toTitle="Your draft" />
               </Box>
             ))}
             {!draftReview.headChanges && (
@@ -186,8 +188,8 @@ function DraftPublication({
           </TechnicalDetails>
         </Stack>
       </Section>
-      <CapabilityChanges changes={draftReview.capabilities} />
-      <Section title="Static checks">
+      <TechnicalDetails title="Permissions comparison"><CapabilityChanges changes={draftReview.capabilities} /></TechnicalDetails>
+      <Section id="review-checks" title="Checks">
         {draftReview.checks ? (
           <ChecksList checks={draftReview.checks} />
         ) : (
@@ -196,7 +198,7 @@ function DraftPublication({
           </Alert>
         )}
       </Section>
-      <Section id="review-publication" title="Publication note">
+      <Section id="review-publication" title="Version note">
         <Stack spacing={1.5}>
           <TextField
             size="small"
@@ -220,7 +222,7 @@ function DraftPublication({
                 }
               />
             }
-            label="I reviewed the saved candidate against its content origin and current publication head."
+            label="I reviewed these changes against the current published version."
           />
           {draftReview.checks?.summary.warnings > 0 && (
             <FormControlLabel
@@ -250,10 +252,11 @@ function DraftPublication({
               moved.
             </Alert>
           )}
+          {!draftReview.headAcknowledged && <Typography variant="s3" color="text.secondary">Confirm review, then publish without requesting a release review.</Typography>}
           <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
             {draftReview.headAcknowledged ? (
               <Button
-                variant={onPublishAndRequest ? "outlined" : "contained"}
+                variant="outlined"
                 color="primary"
                 disabled={!ready || !onPublish}
                 onClick={() =>
@@ -269,7 +272,7 @@ function DraftPublication({
               </Button>
             ) : (
               <Button
-                variant={onPublishAndRequest ? "outlined" : "contained"}
+                variant="outlined"
                 color="primary"
                 disabled={
                   !ready ||
@@ -296,7 +299,7 @@ function DraftPublication({
                   }, fields)
                 }
               >
-                Acknowledge reviewed head
+                Confirm review
               </Button>
             )}
             {/* J4 one-step path: the same reviewed identity acknowledges the
@@ -364,14 +367,15 @@ export default function ContextReleaseReview({
   // Held above the publication review so the acknowledgements survive the head acknowledgment,
   // which reloads the review (and remounts it) for the same candidate bytes.
   const [carried, setCarried] = useState(null);
+  const [section, setSection] = useState("review-files");
   return (
     <Box sx={{ px: { xs: 2, sm: 3 }, py: 2, minWidth: 0 }}>
       <ObjectHeader
         crumbs={draftReview?.subjectId
-          ? [{ label: "Agent contexts", to: paths.dashboard.skills.contexts }, { label: name || "Agent context", to: paths.dashboard.skills.contextDetail(draftReview.subjectId) }, { label: "Review" }]
+          ? [{ label: "Agent contexts", to: paths.dashboard.skills.contexts }, { label: name || "Agent context", to: paths.dashboard.skills.contextDetail(draftReview.subjectId) }, { label: "Publish" }]
           : [{ label: "Reviews", to: paths.dashboard.skills.reviews }, { label: name || "Agent context" }]}
-        title={name ? `Review ${name}` : "Review agent context"}
-        purpose="Inspect the changes before making a release decision. Production stays unchanged until released."
+        title={draftReview ? `Publish ${name || "agent context"} v${(draftReview.expectedHeadVersion ?? 0) + 1}` : name ? `Review ${name}` : "Review agent context"}
+        purpose={draftReview ? "Review the saved changes and linked skills before publishing a version. Production stays unchanged until a separate release review." : "Inspect the changes before making a release decision. Production stays unchanged until released."}
       />
       {scopeKey && state === "ready" && !props.receipt && (
         <Box
@@ -391,28 +395,11 @@ export default function ContextReleaseReview({
           <Typography variant="s3" sx={{ overflowWrap: "anywhere" }}>
             {draftReview ? "Your saved draft" : `Candidate v${props.preview?.packet.transition.version ?? "unknown"}`}
           </Typography>
-          <Stack direction="row" flexWrap="wrap" gap={0.5}>
-            <Button size="small" href="#review-files">
-              Files
-            </Button>
-            <Button size="small" href="#review-dependencies">
-              Dependencies
-            </Button>
-            {draftReview ? (
-              <Button size="small" href="#review-publication">
-                Publish
-              </Button>
-            ) : (
-              <>
-                <Button size="small" href="#review-evidence">
-                  Evidence
-                </Button>
-                <Button size="small" href="#review-impact">
-                  Impact
-                </Button>
-              </>
-            )}
-          </Stack>
+          <CustomTabs value={section} onChange={(_, value) => setSection(value)} variant="scrollable" scrollButtons="auto" aria-label="Publication sections">
+            <Tab component="a" href="#review-files" value="review-files" label="Changes" />
+            <Tab component="a" href="#review-dependencies" value="review-dependencies" label="Linked skills" />
+            {draftReview ? [<Tab key="checks" component="a" href="#review-checks" value="review-checks" label="Checks" />, <Tab key="note" component="a" href="#review-publication" value="review-publication" label="Version note" />] : [<Tab key="evidence" component="a" href="#review-evidence" value="review-evidence" label="Evidence" />, <Tab key="impact" component="a" href="#review-impact" value="review-impact" label="Who is affected" />]}
+          </CustomTabs>
         </Box>
       )}
       {!scopeKey || state !== "ready" ? (

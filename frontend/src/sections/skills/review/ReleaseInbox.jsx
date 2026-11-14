@@ -16,14 +16,17 @@ import {
   TableRow,
   TextField,
   Typography,
-  Tooltip,
+  Tab,
   useMediaQuery,
 } from "@mui/material";
 import ContentSkeleton from 'src/components/content-skeleton';
 import ErrorState from 'src/components/error-state';
 import { visuallyHidden } from '@mui/utils';
 import CapabilityNotice from '../components/CapabilityNotice';
-import { relativeReviewTime, reviewPersonName } from '../utils/review-display';
+import { CustomTabs } from 'src/components/tabs/tabs';
+import When from './When';
+import { releaseTitle, counted } from './reviewPresentation';
+import { reviewPersonName } from '../utils/review-display';
 import PageHeader from "src/components/page-header";
 import ListToolbar from "src/components/list-toolbar";
 import EmptyState from "src/components/empty-state";
@@ -50,7 +53,7 @@ function InboxRows({
   return (
     <Stack spacing={1}>
       <Typography variant="s1" role="status">
-        {authored ? 'Requests you authored. Open a request to inspect its status and decision.' : `${data.unreadCount} ${data.unreadCount === 1 ? 'request' : 'requests'} waiting for you`}
+        {authored ? 'Requests you authored. Open a request to inspect its status and decision.' : data.pendingCount == null ? 'Assigned requests. Open a request to inspect its status and decision.' : `${counted(data.pendingCount, 'request')} waiting for your decision`}
       </Typography>
       <ListToolbar>
         <TextField
@@ -62,7 +65,7 @@ function InboxRows({
           SelectProps={{ displayEmpty: true }}
           onChange={(event) => onStatusChange(event.target.value)}
         >
-          <MenuItem value="">All statuses</MenuItem>
+          <MenuItem value="">All</MenuItem>
           {[
             ["pending", "Pending"],
             ["approved", "Approved"],
@@ -88,9 +91,10 @@ function InboxRows({
           {mobile ? <Stack aria-label="Assigned release reviews">{data.results.map((item) => <Stack key={item.id} direction="row" gap={1} alignItems="center" sx={{ py: 1.5, borderBottom: 1, borderColor: 'divider' }}>
             <Button color="inherit" aria-label={item.name} onClick={() => onOpen(item)} sx={{ p: 0, minWidth: 0, flex: 1, textAlign: 'left', justifyContent: 'flex-start' }}>
               <Stack spacing={0.5} sx={{ minWidth: 0 }}>
-                <Stack direction="row" gap={1} alignItems="center">{item.unread && <><Box aria-hidden="true" sx={{ width: 6, height: 6, flexShrink: 0, borderRadius: '50%', bgcolor: 'text.primary' }} /><Box component="span" sx={visuallyHidden}>Unread</Box></>}<Typography variant="s1" sx={{ fontWeight: item.unread ? 600 : 400, overflowWrap: 'anywhere' }}>{item.name}</Typography></Stack>
-                {item.transition && <Typography variant="s1">{item.transition.label} {item.transition.expectedVersion == null ? 'unassigned' : `v${item.transition.expectedVersion}`} → v{item.transition.version}</Typography>}
-                <Typography variant="s3" color="text.secondary">Requested by {reviewPersonName(item.authorName)} · {item.subjectKind === 'agent_context' ? 'Agent context' : 'Skill'} · {relativeReviewTime(item.updatedAt) || 'Update time unavailable'}</Typography>
+                <Stack direction="row" gap={1} alignItems="center">{item.unread && <><StatusBadge status="unknown" label="New" /><Box component="span" sx={visuallyHidden}>Unread</Box></>}<Typography variant="s1" sx={{ fontWeight: item.unread ? 600 : 400, overflowWrap: 'anywhere' }}>{item.name}</Typography></Stack>
+                {item.transition && <Typography variant="s1">{releaseTitle(item.transition)}</Typography>}
+                {item.status === 'pending' && <Typography variant="s3" color="text.secondary">Waiting on {item.recipients?.map((person) => reviewPersonName(person.name)).join(', ') || 'the assigned reviewer'}</Typography>}
+                <Typography variant="s3" color="text.secondary">Requested by {reviewPersonName(item.authorName)} · {item.subjectKind === 'agent_context' ? 'Agent context' : 'Skill'} · <When value={item.updatedAt} /></Typography>
               </Stack>
             </Button>
             {item.unread && <Box component="span" sx={visuallyHidden}>Unread</Box>}
@@ -119,7 +123,7 @@ function InboxRows({
                         onClick={() => onOpen(item)}
                         sx={{ maxWidth: 1, p: 0, justifyContent: 'flex-start' }}
                       >
-                        {item.unread && <><Box component="span" aria-hidden="true" sx={{ width: 6, height: 6, flexShrink: 0, borderRadius: '50%', bgcolor: 'text.primary', mr: 1 }} /><Box component="span" sx={visuallyHidden}>Unread</Box></>}
+                        {item.unread && <><StatusBadge status="unknown" label="New" /><Box component="span" sx={visuallyHidden}>Unread</Box></>}
                         <Typography
                           variant="s1"
                           noWrap
@@ -128,21 +132,22 @@ function InboxRows({
                             fontWeight: item.unread ? 600 : 400,
                           }}
                         >
-                          {item.name}{item.transition && ` · ${item.transition.label} ${item.transition.expectedVersion == null ? 'unassigned' : `v${item.transition.expectedVersion}`} → v${item.transition.version}`}
+                          {item.name}{item.transition && ` · ${releaseTitle(item.transition)}`}
                         </Typography>
                       </Button>
                       {item.unread && <Box component="span" sx={visuallyHidden}>Unread</Box>}
                       <Typography variant="s3" display="block">
                         Requested by {reviewPersonName(item.authorName)} · {item.subjectKind === "agent_context"
                           ? "Agent context"
-                          : "Skill"} · Revision {item.revision}
+                          : "Skill"}
 
                       </Typography>
+                      {item.status === 'pending' && <Typography variant="s3" color="text.secondary">Waiting on {item.recipients?.map((person) => reviewPersonName(person.name)).join(', ') || 'the assigned reviewer'}</Typography>}
                     </TableCell>
                     <TableCell>
                       <StatusBadge status={item.status === "pending" ? "in_review" : item.status === "changes_requested" ? "needs_changes" : item.status} label={item.status === "changes_requested" ? "Changes requested" : undefined} />
                     </TableCell>
-                    <TableCell sx={{ color: 'text.secondary', width: { xs: '70%', sm: 'auto' }, pt: { xs: 0, sm: 1 } }}><Tooltip title={item.updatedAt || ''}><Typography component="span" variant="s3">{relativeReviewTime(item.updatedAt) || 'Update time unavailable'}</Typography></Tooltip></TableCell>
+                    <TableCell sx={{ color: 'text.secondary', width: { xs: '70%', sm: 'auto' }, pt: { xs: 0, sm: 1 } }}><When value={item.updatedAt} /></TableCell>
                     <TableCell align="right">
                       <IconButton
                         size="small"
@@ -237,11 +242,11 @@ export default function ReleaseInbox({
         description="Review candidates before they reach production."
         sx={{ mb: 1.5, flexDirection: { xs: 'column', sm: 'row' }, gap: 1.5, '& > .MuiStack-root + .MuiStack-root': { ml: { xs: 0, sm: 2 } } }}
         actions={scopeKey && !["off", "denied", "forbidden", "unavailable"].includes(state) && <>
-          {onToggleAuthored && <Button variant="outlined" onClick={onToggleAuthored}>{authored ? 'Assigned to me' : 'My requests'}</Button>}
           {onCompose && <Button variant="contained" color="primary" onClick={onCompose}>Request review</Button>}
         </>}
       />
-      {!scopeKey || ['denied', 'forbidden'].includes(state) ? <CapabilityNotice title="You don't have access to reviews in this workspace." description="Ask an admin." /> : state === 'loading' ? <ContentSkeleton variant="rows" rows={5} label="Loading reviews" /> : state === 'error' ? <ErrorState title="Couldn't load reviews." onRetry={onRetry} /> : state === 'empty' || (state === 'ready' && data && !data.results.length) ? <EmptyState title={authored ? 'No requests sent yet' : 'No reviews waiting for you'} description={authored ? 'Requests you send appear here.' : 'Requests assigned to you appear here.'} secondaryAction={!authored && onToggleAuthored ? <Button onClick={onToggleAuthored}>View my requests</Button> : undefined} /> : scopeKey && state === "ready" && data ? (
+      {scopeKey && !['off', 'denied', 'forbidden', 'unavailable'].includes(state) && onToggleAuthored && <CustomTabs value={authored ? 'mine' : 'assigned'} onChange={(_, value) => { if ((value === 'mine') !== authored) onToggleAuthored(); }} aria-label="Review inbox views" sx={{ mb: 1.5 }}><Tab value="assigned" label={data?.pendingCount == null ? 'Assigned to me' : `Assigned to me (${data.pendingCount})`} /><Tab value="mine" label="My requests" /></CustomTabs>}
+      {!scopeKey || ['denied', 'forbidden'].includes(state) ? <CapabilityNotice title="You don't have access to reviews." description="Ask a workspace admin for reviewer access." /> : state === 'loading' ? <ContentSkeleton variant="rows" rows={5} label="Loading reviews" /> : state === 'error' ? <ErrorState title="Couldn't load reviews." onRetry={onRetry} /> : state === 'empty' || (state === 'ready' && data && !data.results.length) ? <EmptyState title={authored ? 'No requests sent yet' : 'No reviews waiting for you'} description={authored ? 'Requests you send appear here.' : 'Requests assigned to you appear here.'} secondaryAction={!authored && onToggleAuthored ? <Button onClick={onToggleAuthored}>View my requests</Button> : undefined} /> : scopeKey && state === "ready" && data ? (
         <InboxRows
           key={scopeKey}
           {...{ data, status, onStatusChange, onPageChange, onOpen, onSeen, authored }}

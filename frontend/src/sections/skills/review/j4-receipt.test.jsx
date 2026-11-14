@@ -36,3 +36,9 @@ it('does not expose a receipt without the active scope', () => {
   render(<ReleaseRequestPanel state="ready" receipt={receipt} />);
   expect(screen.queryByText('Release receipt')).not.toBeInTheDocument();
 });
+
+it('links to delivery observations without claiming the release was delivered', () => {
+  render(<ReleaseRequestPanel scopeKey="org:workspace:reviewer" state="ready" receipt={{ ...receipt, subjectKind: 'agent_context', subjectId: 'context-id' }} />);
+  expect(screen.getByRole('link', { name: 'Watch delivery' })).toHaveAttribute('href', expect.stringContaining('context-id?tab=consumers'));
+  expect(screen.queryByText(/New conversations get|delivered to/)).not.toBeInTheDocument();
+});

@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import PropTypes from "prop-types";
 import {
   Alert,
+  Box,
   Button,
   Checkbox,
   FormControlLabel,
@@ -27,6 +28,7 @@ import { ConfirmDialog } from "src/components/custom-dialog";
 import TextDiff from "../components/TextDiff";
 import ChecksList from "../components/ChecksList";
 import CapabilityChanges from "./CapabilityChanges";
+import { releaseTitle, counted, responsiveEvidenceSx } from "./reviewPresentation";
 
 const TERMINAL = new Set([
   "completed",
@@ -148,7 +150,7 @@ export function ReviewState({ state, onRetry }) {
 }
 ReviewState.propTypes = { state: PropTypes.string, onRetry: PropTypes.func };
 
-export function ReviewFileDiff({ file }) {
+export function ReviewFileDiff({ file, fromTitle = "Production", toTitle = "This release" }) {
   if (file.fromText === undefined || file.toText === undefined)
     return (
       <Alert severity="info">
@@ -156,9 +158,9 @@ export function ReviewFileDiff({ file }) {
         revision-bound diff.
       </Alert>
     );
-  return <TextDiff fromText={file.fromText} toText={file.toText} fromTitle="Before" toTitle="Candidate" />;
+  return <TextDiff fromText={file.fromText} toText={file.toText} fromTitle={fromTitle} toTitle={toTitle} />;
 }
-ReviewFileDiff.propTypes = { file: PropTypes.object.isRequired };
+ReviewFileDiff.propTypes = { file: PropTypes.object.isRequired, fromTitle: PropTypes.string, toTitle: PropTypes.string };
 
 export function TypedEvidenceList({
   packet,
@@ -454,17 +456,20 @@ export default function ReleaseReviewBody({
         : (a.status === "unchanged") - (b.status === "unchanged") ||
           a.path.localeCompare(b.path),
   );
+  const checksEmpty = checks && checks.items?.length === 0 && checks.summary?.errors === 0 && checks.summary?.warnings === 0 && capabilities?.changes.length === 0 && !packet.externalPipeline;
+  const otherChecks = <>
+    <CapabilityChanges changes={capabilities} onOpenFile={onOpenFile} />
+    <Section title="Static checks">
+      {checks ? <ChecksList checks={checks} /> : <Typography variant="s3">Checks unavailable. This is not a successful check.</Typography>}
+    </Section>
+    <Section title="Retained regression pipeline"><ExternalPipeline reference={packet.externalPipeline} /></Section>
+  </>;
   return (
-    <Stack spacing={3} sx={{ minWidth: 0 }}>
-      <Section title="Release">
+    <Stack spacing={3} sx={{ minWidth: 0, ...responsiveEvidenceSx }}>
+      <Box sx={{ border: 1, borderColor: 'divider', borderRadius: 1, p: 1.5 }}>
         <Stack spacing={1}>
-          <Typography variant="m3">
-            Move {packet.transition.label} from{" "}
-            {packet.transition.expectedVersion === null
-              ? "unassigned"
-              : `v${packet.transition.expectedVersion}`}{" "}
-            to v{packet.transition.version}
-          </Typography>
+          <Typography variant="m1">{releaseTitle(packet.transition)}</Typography>
+          <Typography variant="s1" color="text.secondary">Production stays unchanged until this request is approved and released. Delivery is checked separately in Consumers.</Typography>
           {packet.target && <Stack direction="row" gap={1} alignItems="center" flexWrap="wrap"><Typography variant="s3" color="text.secondary">Application configuration r{packet.target.revision}</Typography><IdentityChip inline label="Configuration" value={packet.target.configurationDigest} /></Stack>}
           <TechnicalDetails title="Release identities">
           <IdentityValue
@@ -502,7 +507,7 @@ export default function ReleaseReviewBody({
           </TechnicalDetails>
 
         </Stack>
-      </Section>
+      </Box>
       <Section id="review-evidence" title="Evidence">
         <EvidenceSummary items={evidence.map((ref) => {
           const summary = summaries?.find((item) => evidenceKey(item) === evidenceKey(ref));
@@ -514,13 +519,15 @@ export default function ReleaseReviewBody({
           return <Stack spacing={0.25} sx={{ minWidth: 0 }}>
             <NativeOutcomes summary={summary} />
             <IdentityChip inline kind="id" label="Evidence" value={item.id} />
-            {summary && <Typography variant="s3" color="text.secondary">{`${summary.graded ?? 'Unknown'}/${summary.planned ?? 'Unknown'} attempts graded · ${summary.incomplete ?? 'Unknown'} incomplete · ${summary.regressions ?? 'Unknown'} regressions`}</Typography>}
+            {summary && <Typography variant="s3" color="text.secondary">{`${summary.graded ?? 'Unknown'}/${summary.planned ?? 'Unknown'} attempts graded · ${summary.incomplete ?? 'Unknown'} incomplete · ${counted(summary.regressions ?? 'Unknown', 'regression')}`}</Typography>}
           </Stack>;
         }} onInspect={(item) => { setInspecting(`${item.source}:${item.id}`); onInspect?.(evidence.find((ref) => evidenceKey(ref) === `${item.source}:${item.id}`)); }} />
         {selected.filter((ref) => !evidence.some((item) => evidenceKey(item) === evidenceKey(ref))).map((ref) => <Alert key={evidenceKey(ref)} severity="warning">Selected evidence {ref.sourceId} is unavailable. It will not be silently dropped.</Alert>)}
         {inspecting && <TechnicalDetails title="Inspected result" defaultOpen><TypedEvidenceList {...{ packet, onShare, summaries }} selected={selected.filter((ref) => evidenceKey(ref) === inspecting)} onSelectionChange={onSelectionChange ? (refs) => onSelectionChange([...selected.filter((ref) => evidenceKey(ref) !== inspecting), ...refs]) : undefined} evidence={evidence.filter((ref) => evidenceKey(ref) === inspecting)} /></TechnicalDetails>}
       </Section>
-      <Section id="review-files" title="File changes">
+      <Box sx={{ display: 'grid', gridTemplateColumns: { xs: 'minmax(0, 1fr)', md: 'minmax(0, 2fr) minmax(0, 1fr)' }, gap: 3, alignItems: 'start' }}>
+        <Stack spacing={3} sx={{ minWidth: 0, ...responsiveEvidenceSx }}>
+      <Section id="review-files" title="What changes">
         <Stack spacing={1.5}>
           {!ordered.length && (
             <Typography variant="s3">No file changes loaded.</Typography>
@@ -554,13 +561,13 @@ export default function ReleaseReviewBody({
           )}
         </Stack>
       </Section>
-      <Section id="review-dependencies" title="Accepted dependencies">
+      <Section id="review-dependencies" title="Linked skills">
         {packet.subjectKind !== 'agent_context' ? <Typography variant="s3">Not available for skills</Typography>
           : dependencyError || !dependencyChanges ? <ErrorState title="Couldn't load the linked-skill comparison" onRetry={onRetryDependencies} />
             : !dependencyChanges.length ? <Typography variant="s3">No linked-skill changes</Typography>
-              : <TableContainer><Table size="small" aria-label="Linked-skill changes">
-                <TableHead><TableRow sx={{ height: TABLE_HEADER_HEIGHT.default }}><TableCell>Skill (mount)</TableCell><TableCell>Policy</TableCell><TableCell>Production → Candidate</TableCell><TableCell>Digest</TableCell></TableRow></TableHead>
-                <TableBody>{dependencyChanges.map((item) => <TableRow key={item.mount} hover sx={{ height: ROW_HEIGHT.default }}>
+              : <TableContainer><Table size="small" aria-label="Linked-skill changes" sx={{ '& thead': { display: { xs: 'none', sm: 'table-header-group' } }, '& tbody': { display: { xs: 'block', sm: 'table-row-group' } }, '& tbody tr': { display: { xs: 'grid', sm: 'table-row' }, gridTemplateColumns: 'minmax(0, 1fr)' }, '& td': { minWidth: 0, overflowWrap: 'anywhere' } }}>
+                <TableHead><TableRow sx={{ height: TABLE_HEADER_HEIGHT.default }}><TableCell>Skill</TableCell><TableCell>Policy</TableCell><TableCell>Production → This release</TableCell><TableCell>Digest</TableCell></TableRow></TableHead>
+                <TableBody>{dependencyChanges.map((item) => <TableRow key={item.mount} hover sx={{ height: { xs: 'auto', sm: ROW_HEIGHT.default } }}>
                   <TableCell>{item.mount}</TableCell>
                   <TableCell>{(item.after || item.before)?.requested?.label ? `Follows ${(item.after || item.before).requested.label}` : `Pinned to v${(item.after || item.before)?.requested?.version}`}</TableCell>
                   <TableCell>{item.before ? `v${item.before.version}` : 'Not linked'} → {item.after ? `v${item.after.version}` : 'Removed'}</TableCell>
@@ -569,20 +576,9 @@ export default function ReleaseReviewBody({
               </Table></TableContainer>}
 
       </Section>
-      <CapabilityChanges changes={capabilities} onOpenFile={onOpenFile} />
-      <Section title="Static checks">
-        {checks ? (
-          <ChecksList checks={checks} />
-        ) : (
-          <Typography variant="s3">
-            Checks unavailable. This is not a successful check.
-          </Typography>
-        )}
-      </Section>
-      <Section title="Retained regression pipeline">
-        <ExternalPipeline reference={packet.externalPipeline} />
-      </Section>
-      <Section id="review-impact" title="Known impact">
+        </Stack>
+        <Stack spacing={3} sx={{ minWidth: 0, ...responsiveEvidenceSx }}>
+      <Section id="review-impact" title="Who is affected">
         {impact ? (
           <Stack spacing={1}>
             <Typography variant="s1">
@@ -590,8 +586,8 @@ export default function ReleaseReviewBody({
             </Typography>
             <TechnicalDetails title="Impact counts">
               <Typography variant="s3">
-                {impact.following} followers · {impact.pinned} intentional pins ·{" "}
-                {impact.unobserved} unobserved bindings
+                {counted(impact.following, 'follower')} · {counted(impact.pinned, 'intentional pin')} ·{" "}
+                {impact.unobserved} applications without observations
               </Typography>
               <IdentityValue
                 label="Reviewed impact fingerprint"
@@ -599,7 +595,7 @@ export default function ReleaseReviewBody({
               />
             </TechnicalDetails>
             <Typography variant="s3">
-              Only authorized declared bindings are counted.{" "}
+              Only registered applications you can access are counted.{" "}
               {impact.moreAvailable
                 ? "Additional impact rows require inspection."
                 : "Offline and unregistered copies remain unknown."}
@@ -611,6 +607,12 @@ export default function ReleaseReviewBody({
           </Typography>
         )}
       </Section>
+          {checksEmpty ? <Stack spacing={1}>
+            <Typography variant="m3">Other checks: nothing to review</Typography>
+            <TechnicalDetails title="Other checks">{otherChecks}</TechnicalDetails>
+          </Stack> : otherChecks}
+        </Stack>
+      </Box>
     </Stack>
   );
 }

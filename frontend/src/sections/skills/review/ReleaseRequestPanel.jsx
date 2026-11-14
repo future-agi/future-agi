@@ -19,6 +19,7 @@ import { reviewPersonName, relativeReviewTime } from '../utils/review-display';
 import PeoplePicker from "../components/PeoplePicker";
 import { ConfirmDialog } from "src/components/custom-dialog";
 import ReleaseReceipt from './ReleaseReceipt';
+import { counted } from './reviewPresentation';
 import ReleaseReviewBody, {
   ReviewState,
   evidenceKey,
@@ -148,6 +149,7 @@ function PacketActions({
     initialRecipientId || (recipients.length === 1 ? recipients[0].id : ""),
   );
   const [comment, setComment] = useState("");
+  const [commentFocused, setCommentFocused] = useState(false);
   const [confirm, setConfirm] = useState(false);
   const packet = preview.packet;
   const fingerprint = preview.fingerprint;
@@ -235,22 +237,22 @@ function PacketActions({
       {request && <Stack spacing={1}>
         <Stack direction={{ xs: 'column', sm: 'row' }} gap={1.5} alignItems={{ sm: 'center' }} aria-label="Release progress">
           <Typography variant="s3">Submitted by {reviewPersonName(request.authorName)}{request.createdAt && ` · ${relativeReviewTime(request.createdAt)}`}</Typography>
-          <Typography variant="s3" color="text.secondary" aria-hidden="true">→</Typography>
-          <Typography variant="s3" color={request.status === 'approved' ? 'text.primary' : 'text.secondary'}>{request.status === 'approved' || closed ? `Approved by ${reviewPersonName(request.decidedByName)}${request.decidedAt ? ` · ${relativeReviewTime(request.decidedAt)}` : ''}` : `Approval pending${request.recipients?.length ? ` · ${request.recipients.map((person) => reviewPersonName(person.name)).join(', ')}` : ''}`}</Typography>
-          <Typography variant="s3" color="text.secondary" aria-hidden="true">→</Typography>
+          <Typography variant="s3" color="text.secondary" aria-hidden="true" sx={{ display: { xs: 'none', sm: 'block' } }}>→</Typography>
+          <Typography variant="s3" color={request.status === 'approved' ? 'text.primary' : 'text.secondary'}>{request.status === 'approved' || closed ? `Approved by ${reviewPersonName(request.decidedByName)}${request.decidedAt ? ` · ${relativeReviewTime(request.decidedAt)}` : ''}` : `Waiting for ${request.recipients?.length ? request.recipients.map((person) => reviewPersonName(person.name)).join(', ') : 'the assigned reviewer'}'s approval`}</Typography>
+          <Typography variant="s3" color="text.secondary" aria-hidden="true" sx={{ display: { xs: 'none', sm: 'block' } }}>→</Typography>
           <StatusBadge status={!current && !closed ? 'stale' : closed ? 'released' : 'not_started'} label={!current && !closed ? 'Release paused' : closed ? 'Released' : 'Not released'} />
-          <Typography variant="s3" color="text.secondary">Revision {request.revision}</Typography>
+          {request.status === 'pending' && <StatusBadge status="in_review" />}
         </Stack>
       </Stack>}
       {!finalReceipt && <>
-        <Typography variant="s1">Candidate v{packet.transition.version} · {review?.changes ? `${review.changes.filter((file) => file.status !== 'unchanged').length} files changed` : 'File changes not loaded'} · {review?.dependencyChanges ? `${review.dependencyChanges.length} linked-skill changes` : 'Linked-skill comparison not loaded'} · {packet.transition.label} stays {packet.transition.expectedVersion == null ? 'unassigned' : `v${packet.transition.expectedVersion}`} until released.</Typography>
+        <Typography variant="s1">Candidate v{packet.transition.version} · {review?.changes ? `${counted(review.changes.filter((file) => file.status !== 'unchanged').length, 'file')} changed` : 'File changes not loaded'} · {review?.dependencyChanges ? counted(review.dependencyChanges.length, 'linked-skill change') : 'Linked-skill comparison not loaded'} · {packet.transition.label} stays {packet.transition.expectedVersion == null ? 'without a release' : `v${packet.transition.expectedVersion}`} until released.</Typography>
         <Typography variant="s3" color="text.secondary">{!current ? 'Release is paused. Refresh and inspect what changed.' : request?.status === 'approved' ? permissions.canExecute ? 'Approved. You can release this.' : 'Approved. Ask a workspace releaser to release this; your account does not have release access.' : request ? permissions.canDecide ? 'Review the evidence and changes, then make your decision.' : 'Waiting for the assigned reviewer’s decision.' : 'Review the evidence and changes before sending.'}</Typography>
         <ReleaseReviewBody {...review} packet={packet} onRetryDependencies={refresh} />
       </>}
       {!closed && (
-        <Box sx={{ position: { md: 'sticky' }, bottom: 0, zIndex: 1, bgcolor: 'background.default', borderTop: 1, borderColor: 'divider', py: 1.5 }}>
+        <Box data-sticky-footer sx={{ position: 'sticky', bottom: 0, zIndex: 2, bgcolor: 'background.paper', borderTop: 1, borderColor: 'divider', p: 1.5 }}>
         <Section title={request?.status === "approved" ? "Release" : request ? "Review decision" : "Send for review"}>
-          <Stack spacing={1.5}>
+          <Stack direction={{ xs: 'column', md: 'row' }} spacing={1.5} alignItems={{ md: 'center' }} flexWrap="wrap">
             {!request && (
               <PeoplePicker label="Assigned reviewer" people={recipients} value={recipientId} loading={recipientsLoading} error={recipientsError} onRetry={onRetryRecipients}
                 onChange={setRecipientId} disabled={locked || !permissions.canSubmit}
@@ -259,7 +261,10 @@ function PacketActions({
             {request && request.status !== "approved" && (
               <TextField
                 multiline
-                minRows={2}
+                minRows={commentFocused ? 3 : 1}
+                onFocus={() => setCommentFocused(true)}
+                onBlur={() => setCommentFocused(false)}
+                sx={{ flex: 1, minWidth: { md: 200 } }}
                 size="small"
                 label="Review comment"
                 value={comment}
@@ -268,7 +273,7 @@ function PacketActions({
                 disabled={locked || !canRequestChanges}
               />
             )}
-            <FormControlLabel
+            <FormControlLabel sx={{ flex: 1, minWidth: { md: 240 } }}
               control={
                 <Checkbox
                   checked={reviewed}
@@ -290,7 +295,9 @@ function PacketActions({
                 acknowledgment.
               </Alert>
             )}
-            <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
+            <Stack spacing={1} sx={{ minWidth: 0 }}>
+              {request && <StatusBadge status={!current ? 'stale' : request.status === 'pending' ? 'in_review' : request.status} />}
+              <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
               {!request && (
                 <Button
                   variant="contained" color="primary" sx={{ '&.Mui-disabled': { bgcolor: 'primary.main', color: 'primary.contrastText', opacity: 0.5 } }}
@@ -356,8 +363,11 @@ function PacketActions({
                   </Button>}
                 </>
               )}
+              </Stack>
+              {request?.status === 'pending' && !reviewed && current && <Typography variant="s3" color="text.secondary">Tick the acknowledgment to approve</Typography>}
+              {request && request.status !== 'approved' && !comment.trim() && canRequestChanges && <Typography variant="s3" color="text.secondary">Add a comment to request changes</Typography>}
             </Stack>
-            {!reviewed && current && <Typography variant="s3" color="text.secondary">Confirm that you reviewed the candidate and release consequence to continue.</Typography>}
+            {!request && !reviewed && current && <Typography variant="s3" color="text.secondary">Confirm that you reviewed the candidate and release consequence to continue.</Typography>}
             {request && request.status !== 'pending' && !canExecute && <Typography variant="s3" color="text.secondary">Only a pending request can be approved. Releasing requires a current approval and release access.</Typography>}
             {request && !permissions.canExecute && (
               <Typography variant="s3">
@@ -378,7 +388,7 @@ function PacketActions({
         }}
         closeDisabled={operation.busy}
         title={`Move ${packet.transition.label} to v${packet.transition.version}?`}
-        content={`${packet.transition.label[0].toUpperCase()}${packet.transition.label.slice(1)} for ${request?.name || "this resource"} moves from ${packet.transition.expectedVersion == null ? "no version" : `v${packet.transition.expectedVersion}`} to v${packet.transition.version}${packet.target ? `, the version verified on the application (configuration r${packet.target.revision})` : ""}. New conversations get v${packet.transition.version}; conversations already running and installed copies keep their version until they update. The approval is checked again before the move.`}
+        content={`${packet.transition.label[0].toUpperCase()}${packet.transition.label.slice(1)} for ${request?.name || "this resource"} will point to v${packet.transition.version}. Apps that follow ${packet.transition.label} pick it up the next time they fetch it; check Consumers to confirm delivery. Running conversations aren't changed. Approval is checked again before the move.`}
         action={
           <Button
             variant="contained" color="primary"

@@ -51,3 +51,9 @@ it('only permits approval of pending requests while preserving release of an app
   expect(screen.queryByRole('button', { name: 'Approve release' })).not.toBeInTheDocument();
   expect(screen.getByRole('button', { name: 'Release to production' })).toBeEnabled();
 });
+
+it('does not offer a release request for the production version', () => {
+  render(<MemoryRouter><ContextLabelRequestPanel contextId="context" version={{ id: 'v1', number: 1, digest: 'digest' }} /></MemoryRouter>);
+  expect(screen.getByText('v1 is in production.')).toBeVisible();
+  expect(screen.queryByRole('button', { name: 'Request release review' })).not.toBeInTheDocument();
+});

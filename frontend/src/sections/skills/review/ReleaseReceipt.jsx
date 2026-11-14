@@ -27,6 +27,7 @@ export default function ReleaseReceipt({ receipt, request }) {
       <Stack direction="row" flexWrap="wrap" gap={1}>
         <Button variant="contained" color="primary" href={resourceUrl ? `${resourceUrl}?version=${after.version}` : undefined} disabled={!resourceUrl}>View version</Button>
         <Button variant="outlined" href={resourceUrl ? `${resourceUrl}?tab=versions` : undefined} disabled={!resourceUrl}>View release history</Button>
+        {kind === 'agent_context' && <Button variant="outlined" href={resourceUrl ? `${resourceUrl}?tab=consumers` : undefined} disabled={!resourceUrl}>Watch delivery</Button>}
         <Button onClick={async () => {
           try { await navigator.clipboard.writeText(new URL(receiptUrl, window.location.origin).href); setCopyError(false); enqueueSnackbar('Copied'); }
           catch { setCopyError(true); }
