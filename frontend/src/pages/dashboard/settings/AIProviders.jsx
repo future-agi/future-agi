@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import PageHeader from "src/components/page-header";
 import { Helmet } from "react-helmet-async";
+import { useSearchParams } from "react-router-dom";
 import { Events, trackEvent } from "src/utils/Mixpanel";
 
 import { Box, Button, Typography, useTheme } from "@mui/material";
@@ -64,7 +65,12 @@ const ConfigureProviders = () => {
   const { role } = useAuthContext();
   const theme = useTheme();
   const [showCreateModal, setShowCreateModal] = useState(false);
-  const [searchQuery, setSearchQuery] = useState("");
+  // `?provider=typesafe` (a link from a feature that needs that key) opens
+  // the list already searched to that provider.
+  const [searchParams] = useSearchParams();
+  const [searchQuery, setSearchQuery] = useState(
+    () => searchParams.get("provider") || "",
+  );
   const { data, isLoading, isFetching } = useQuery({
     queryKey: ["api-key-status"],
     queryFn: () => axios.get(endpoints.develop.apiKey.status),

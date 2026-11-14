@@ -40,19 +40,19 @@ const MORE_PAGE = 50;
 const ALL = "__all__";
 
 const DIMENSION_ICON = {
-  day: "mdi:calendar-blank-outline",
-  window: "mdi:clock-outline",
-  weekday: "mdi:calendar-week-outline",
-  weekpart: "mdi:calendar-weekend-outline",
-  tod: "mdi:clock-time-four-outline",
-  user: "mdi:account-outline",
-  users: "mdi:account-multiple-outline",
-  consistent: "mdi:account-multiple-check-outline",
-  model: "mdi:chip",
-  modelsince: "mdi:chip",
-  turns: "mdi:message-reply-text-outline",
-  error: "mdi:alert-circle-outline",
-  question: "mdi:help-circle-outline",
+  day: "solar:calendar-linear",
+  window: "solar:clock-circle-linear",
+  weekday: "solar:calendar-date-linear",
+  weekpart: "solar:calendar-mark-linear",
+  tod: "solar:clock-square-linear",
+  user: "solar:user-linear",
+  users: "solar:users-group-rounded-linear",
+  consistent: "solar:users-group-two-rounded-linear",
+  model: "solar:cpu-linear",
+  modelsince: "solar:cpu-linear",
+  turns: "solar:chat-round-line-linear",
+  error: "solar:danger-circle-linear",
+  question: "solar:question-circle-linear",
 };
 
 const qText = (q) =>
@@ -133,7 +133,7 @@ function PatternRow({
       }}
     >
       <Iconify
-        icon={DIMENSION_ICON[pattern.dimension] || "mdi:shape-outline"}
+        icon={DIMENSION_ICON[pattern.dimension] || "solar:widget-linear"}
         width={dense ? 14 : 16}
         sx={{ color: "text.secondary", flexShrink: 0 }}
       />
@@ -245,8 +245,8 @@ function ConsistencyRow({ line, color, showSwatch, onSelect }) {
           title={`More users than chance alone would give (${qText(line.q)}). Users with at least ${MIN_CONSISTENT_SESSIONS} sessions answered count; a tier counts when its share is surely above the run's.`}
         >
           <Typography
-            variant="body2"
-            sx={{ fontSize: 12, fontVariantNumeric: "tabular-nums" }}
+            variant="body1"
+            sx={{ fontVariantNumeric: "tabular-nums" }}
           >
             {showSwatch && (
               <Swatch
@@ -426,7 +426,7 @@ export default function AskPatterns({
   let body;
   if (tooFew)
     body = (
-      <Typography variant="body2" color="text.secondary" sx={{ fontSize: 12 }}>
+      <Typography variant="body1" color="text.secondary">
         {running
           ? `Patterns appear once ${MIN_ANSWERED} rows are answered (${formatCount(result.answered)} so far).`
           : `Too few answers to compare groups (${formatCount(result.answered)}).`}
@@ -434,7 +434,7 @@ export default function AskPatterns({
     );
   else if (!patterns.length)
     body = (
-      <Typography variant="body2" color="text.secondary" sx={{ fontSize: 12 }}>
+      <Typography variant="body1" color="text.secondary">
         {consistency.length ? "Nothing else stands out" : "Nothing stands out"}
         {running ? " yet" : ""}: no day, time, user, model, turn count, error or
         other answer has a clearly different share of{" "}
@@ -483,7 +483,9 @@ export default function AskPatterns({
                   color="inherit"
                   aria-expanded={moreShown > 0}
                   onClick={() => setMoreShown((shown) => shown + MORE_PAGE)}
-                  startIcon={<Iconify icon="mdi:chevron-down" width={16} />}
+                  startIcon={
+                    <Iconify icon="solar:alt-arrow-down-linear" width={16} />
+                  }
                   sx={{ color: "text.secondary" }}
                 >
                   {moreShown === 0
@@ -496,7 +498,9 @@ export default function AskPatterns({
                   size="small"
                   color="inherit"
                   onClick={() => setMoreShown(0)}
-                  startIcon={<Iconify icon="mdi:chevron-up" width={16} />}
+                  startIcon={
+                    <Iconify icon="solar:alt-arrow-up-linear" width={16} />
+                  }
                   sx={{ color: "text.secondary" }}
                 >
                   Top {formatCount(patterns.length)} only
@@ -532,7 +536,7 @@ export default function AskPatterns({
                     minWidth: 0,
                     px: 1,
                     border: "1px solid",
-                    borderColor: active ? "text.primary" : "divider",
+                    borderColor: active ? "border.selected" : "divider",
                     color: active ? "text.primary" : "text.secondary",
                   }}
                 >

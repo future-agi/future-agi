@@ -1,18 +1,10 @@
 import Section from "src/components/section";
 import React from "react";
 import PropTypes from "prop-types";
-import {
-  Alert,
-  Box,
-  Button,
-  Chip,
-  Link,
-  Stack,
-  Tooltip,
-  Typography,
-} from "@mui/material";
+import { Box, Chip, Link, Stack, Tooltip, Typography } from "@mui/material";
 import { alpha, useTheme } from "@mui/material/styles";
 import { Link as RouterLink } from "react-router-dom";
+import SharedErrorState from "src/components/error-state";
 import Iconify from "src/components/iconify";
 import { paths } from "src/routes/paths";
 import { formatCount, formatPercent } from "./insightsFormat";
@@ -132,7 +124,7 @@ export function SectionCard({
         >
           <Box sx={{ minWidth: 0 }}>
             {title && (
-              <Typography variant="subtitle1" component="h2">
+              <Typography variant="m3" component="h2" fontWeight={500}>
                 {title}
               </Typography>
             )}
@@ -193,16 +185,16 @@ export function CategoryLink({ category, color, onClick, maxWidth = 260 }) {
           px: 0.75,
           border: "1px solid",
           borderColor: "divider",
-          borderRadius: 0.75,
+          borderRadius: "4px",
           bgcolor: "background.paper",
           color: "text.primary",
           font: "inherit",
-          fontSize: 12,
+          typography: "s1",
           cursor: "pointer",
-          "&:hover": { borderColor: "text.disabled" },
+          "&:hover": { borderColor: "border.hover" },
           "&:focus-visible": {
             outline: "2px solid",
-            outlineColor: "primary.main",
+            outlineColor: "border.focus",
             outlineOffset: 1,
           },
         }}
@@ -230,22 +222,16 @@ CategoryLink.propTypes = {
   maxWidth: PropTypes.number,
 };
 
-// The theme's warning yellow is unreadable as text on a light surface, so the
-// borderline tone uses its darker icon step there.
-export const cautionColor = (theme) =>
-  theme.palette.mode === "dark"
-    ? theme.palette.warning.light
-    : theme.palette.warning.icon ||
-      theme.palette.warning.darker ||
-      theme.palette.warning.dark;
+// The borderline tone: the warning role's text colour, readable in both modes.
+export const cautionColor = (theme) => theme.palette.status.warning.fg;
 
 export const toneColor = (theme, tone) =>
   ({
-    worse: theme.palette.error.main,
+    worse: theme.palette.status.danger.fg,
     borderline: cautionColor(theme),
-    better: theme.palette.success.dark,
-    bad: theme.palette.error.main,
-    good: theme.palette.success.dark,
+    better: theme.palette.status.success.fg,
+    bad: theme.palette.status.danger.fg,
+    good: theme.palette.status.success.fg,
   })[tone] || theme.palette.text.secondary;
 
 export function ToneChip({ label, tone = "neutral", icon, title, sx }) {
@@ -285,9 +271,9 @@ ToneChip.propTypes = {
 };
 
 const DIRECTION_ICON = {
-  worse: "mdi:arrow-top-right",
-  better: "mdi:arrow-bottom-right",
-  neutral: "mdi:swap-horizontal",
+  worse: "solar:arrow-right-up-linear",
+  better: "solar:arrow-right-down-linear",
+  neutral: "solar:transfer-horizontal-linear",
 };
 
 const noteTone = (note) => {
@@ -300,7 +286,9 @@ const noteTone = (note) => {
 const directionIcon = (note) => {
   const direction = notableDirection(note);
   if (direction === "neutral") return DIRECTION_ICON.neutral;
-  return note.value > note.rest ? "mdi:arrow-up" : "mdi:arrow-down";
+  return note.value > note.rest
+    ? "solar:arrow-up-linear"
+    : "solar:arrow-down-linear";
 };
 
 /** A notable difference as a compact chip ("Unresolved 0% vs 59%"). */
@@ -347,18 +335,22 @@ export function NotableLine({ note }) {
 
 NotableLine.propTypes = { note: PropTypes.object.isRequired };
 
+// An item's facets as a line of text, each in its tone's colour.
 export function FacetChips({ facets, dense }) {
+  const theme = useTheme();
   const chips = facetChips(facets);
   if (!chips.length) return null;
   return (
-    <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap">
+    <Stack direction="row" columnGap={1.5} rowGap={0.25} flexWrap="wrap">
       {chips.map((chip) => (
-        <ToneChip
+        <Typography
           key={chip.key}
-          label={chip.label}
-          tone={chip.tone}
-          sx={dense ? { height: 20, fontSize: 11 } : undefined}
-        />
+          variant={dense ? "caption" : "body2"}
+          component="span"
+          sx={{ color: toneColor(theme, chip.tone) }}
+        >
+          {chip.label}
+        </Typography>
       ))}
     </Stack>
   );
@@ -379,8 +371,8 @@ export function AttributePills({ attributes }) {
             alignItems: "center",
             border: "1px solid",
             borderColor: "divider",
-            borderRadius: 10,
-            fontSize: 11,
+            borderRadius: "4px",
+            typography: "s2",
             lineHeight: "18px",
             overflow: "hidden",
           }}
@@ -398,11 +390,11 @@ export function AttributePills({ attributes }) {
               fontWeight: 600,
               bgcolor:
                 pill.tone === "on"
-                  ? "success.lighter"
+                  ? "action.selected"
                   : pill.tone === "off"
                     ? "background.neutral"
                     : "action.hover",
-              color: pill.tone === "on" ? "success.darker" : "text.primary",
+              color: "text.primary",
             }}
           >
             {pill.value}
@@ -536,20 +528,15 @@ Legend.propTypes = {
   dense: PropTypes.bool,
 };
 
+// The shared error state, sized for a panel and announced as an alert.
 export function ErrorState({ message, onRetry }) {
   return (
-    <Alert
-      severity="error"
-      action={
-        onRetry && (
-          <Button color="inherit" size="small" onClick={onRetry}>
-            Retry
-          </Button>
-        )
-      }
-    >
-      {message}
-    </Alert>
+    <SharedErrorState
+      role="alert"
+      title={message}
+      onRetry={onRetry}
+      sx={{ py: 4 }}
+    />
   );
 }
 

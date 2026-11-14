@@ -14,12 +14,11 @@ import {
   Box,
   Button,
   Link,
-  Stack,
   ToggleButton,
   ToggleButtonGroup,
-  Typography,
   useMediaQuery,
 } from "@mui/material";
+import EmptyState from "src/components/empty-state";
 import { paths } from "src/routes/paths";
 import { actionErrorMessage } from "src/sections/projects/requestErrors";
 import { UNITS } from "src/sections/projects/observePopulation";
@@ -167,25 +166,26 @@ RunPane.propTypes = {
 
 function Welcome({ onNew }) {
   return (
-    <Box sx={{ px: 3, pt: 6, maxWidth: 640, mx: "auto" }}>
-      <Typography variant="m1" component="h1" sx={{ fontWeight: 600 }}>
-        Ask Jev a question about each row
-      </Typography>
-      <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
-        Open Traces, Sessions or Users, narrow the view to the rows you care
-        about, then choose Evaluate → Ask a question. Jev answers for each row
-        it reads, a sample of the view or every row. The first answers come in
-        seconds and land on a timeline where the patterns show.
-      </Typography>
-      <Stack direction="row" spacing={1} sx={{ mt: 2.5 }}>
-        <Button variant="contained" onClick={() => onNew("sessions")}>
+    <EmptyState
+      icon="solar:chat-round-line-linear"
+      title="Ask Jev a question about each row"
+      description="Open Traces, Sessions or Users, narrow the view to the rows you care about, then choose Evaluate → Ask a question. Jev answers for each row it reads, a sample of the view or every row. The first answers come in seconds and land on a timeline where the patterns show."
+      action={
+        <Button
+          variant="contained"
+          color="primary"
+          size="small"
+          onClick={() => onNew("sessions")}
+        >
           Ask about recent sessions
         </Button>
-        <Button variant="outlined" onClick={() => onNew("traces")}>
+      }
+      secondaryAction={
+        <Button variant="outlined" size="small" onClick={() => onNew("traces")}>
           Ask about recent traces
         </Button>
-      </Stack>
-    </Box>
+      }
+    />
   );
 }
 

@@ -107,13 +107,13 @@ function ShareCell({ stats, color }) {
       </Box>
       <Typography
         variant="body2"
-        sx={{ fontSize: 12, fontVariantNumeric: "tabular-nums" }}
+        sx={{ typography: "m3", fontVariantNumeric: "tabular-nums" }}
       >
         {formatPercent(share)}
         {Number.isFinite(stats?.count) && (
           <Box
             component="span"
-            sx={{ ml: 0.75, color: "text.secondary", fontSize: 12 }}
+            sx={{ ml: 0.75, color: "text.secondary", typography: "s1" }}
           >
             {formatCount(stats.count)}
           </Box>
@@ -145,8 +145,8 @@ function ChangeCell({ change }) {
         size="small"
         label="New"
         sx={{
-          color: "info.dark",
-          bgcolor: "info.lighter",
+          color: "text.secondary",
+          bgcolor: "action.selected",
         }}
       />
     );
@@ -154,10 +154,10 @@ function ChangeCell({ change }) {
   const strong = change.significant && Math.abs(change.delta) >= 0.005;
   const icon =
     change.delta > 0
-      ? "mdi:arrow-up"
+      ? "solar:arrow-up-linear"
       : change.delta < 0
-        ? "mdi:arrow-down"
-        : "mdi:minus";
+        ? "solar:arrow-down-linear"
+        : "solar:minus-linear";
   return (
     <Tooltip
       arrow
@@ -201,7 +201,7 @@ function Muted({ children }) {
       variant="body2"
       component="span"
       color="text.disabled"
-      sx={{ fontSize: 12 }}
+      sx={{ typography: "m3" }}
     >
       {children}
     </Typography>
@@ -244,9 +244,9 @@ function cellValue(column, category, ctx) {
               title={`Mostly one user: ${formatPercent(stats.top_user_share)} of this category comes from a single user.`}
             >
               <Iconify
-                icon="mdi:account-alert-outline"
+                icon="solar:user-block-linear"
                 width={15}
-                sx={{ color: "warning.dark" }}
+                sx={{ color: "status.warning.fg" }}
                 aria-label="Mostly one user"
               />
             </Tooltip>
@@ -333,13 +333,13 @@ function CategoryRow({
         bgcolor: child ? "background.neutral" : undefined,
         "& > td": {
           color: muted ? "text.secondary" : undefined,
-          fontSize: 12,
+          typography: "m3",
           py: 1.25,
         },
         "&:hover .open-hint": { opacity: 1 },
         "&:focus-visible": {
           outline: "2px solid",
-          outlineColor: "primary.main",
+          outlineColor: "border.focus",
           outlineOffset: -2,
         },
       }}
@@ -356,7 +356,11 @@ function CategoryRow({
             }}
           >
             <Iconify
-              icon={expanded ? "mdi:chevron-down" : "mdi:chevron-right"}
+              icon={
+                expanded
+                  ? "solar:alt-arrow-down-linear"
+                  : "solar:alt-arrow-right-linear"
+              }
               width={18}
             />
           </IconButton>
@@ -376,7 +380,7 @@ function CategoryRow({
                 variant="body2"
                 title={category.name}
                 sx={{
-                  fontSize: 12,
+                  typography: "m3",
                   fontWeight: child ? 500 : 600,
                   display: "-webkit-box",
                   WebkitLineClamp: 2,
@@ -396,8 +400,8 @@ function CategoryRow({
                     size="small"
                     label="New"
                     sx={{
-                      color: "info.dark",
-                      bgcolor: "info.lighter",
+                      color: "text.secondary",
+                      bgcolor: "action.selected",
                     }}
                   />
                 </Tooltip>
@@ -417,7 +421,7 @@ function CategoryRow({
           </Box>
           <Iconify
             className="open-hint"
-            icon="mdi:arrow-top-right"
+            icon="solar:arrow-right-up-linear"
             width={14}
             sx={{ color: "text.disabled", opacity: 0, flexShrink: 0 }}
           />
@@ -456,7 +460,7 @@ function ColumnsMenu({ columns, prefs, onChange }) {
         size="small"
         variant="outlined"
         color="inherit"
-        startIcon={<Iconify icon="mdi:view-column-outline" width={16} />}
+        startIcon={<Iconify icon="solar:columns-3-linear" width={16} />}
         onClick={(event) => setAnchor(event.currentTarget)}
         aria-haspopup="menu"
       >
@@ -581,9 +585,9 @@ export default function CategoryTable({ reportId, run, attributes }) {
       >
         <Typography
           id="insights-categories-title"
-          variant="subtitle1"
+          variant="m3"
           component="h2"
-          sx={{ fontSize: 15 }}
+          fontWeight={500}
         >
           Categories
         </Typography>
@@ -608,7 +612,7 @@ export default function CategoryTable({ reportId, run, attributes }) {
         sx={{
           border: "1px solid",
           borderColor: "divider",
-          borderRadius: 1,
+          borderRadius: "8px",
           overflowX: "auto",
         }}
       >
@@ -625,7 +629,7 @@ export default function CategoryTable({ reportId, run, attributes }) {
             "& thead th": {
               bgcolor: "background.neutral",
               color: "text.secondary",
-              fontSize: 12,
+              typography: "s1",
               fontWeight: 500,
               py: 0.75,
               whiteSpace: "nowrap",
@@ -709,7 +713,7 @@ export default function CategoryTable({ reportId, run, attributes }) {
                 "& td": {
                   borderBottom: 0,
                   color: "text.secondary",
-                  fontSize: 12,
+                  typography: "s1",
                   fontVariantNumeric: "tabular-nums",
                   whiteSpace: "nowrap",
                   py: 1,

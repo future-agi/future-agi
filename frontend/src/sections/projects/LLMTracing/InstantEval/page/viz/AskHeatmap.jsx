@@ -123,8 +123,8 @@ function TimeGrid({ grid, question, answer, onSelect, unit, sample, running }) {
   const inkOn = (level, small) =>
     !small &&
     level >= 3 &&
-    getContrastRatio(ramp[level], theme.palette.common.white) >= 3
-      ? theme.palette.common.white
+    getContrastRatio(ramp[level], theme.palette.status.neutral.onSolid) >= 3
+      ? theme.palette.status.neutral.onSolid
       : theme.palette.text.primary;
   const overallShare = grid.overall.answered
     ? (grid.overall.byLabel.get(answer) || 0) / grid.overall.answered
@@ -317,7 +317,7 @@ function TimeGrid({ grid, question, answer, onSelect, unit, sample, running }) {
                     height: 6,
                     ml: 1.5,
                     borderRadius: "50%",
-                    bgcolor: "error.main",
+                    bgcolor: "status.danger.solid",
                   }}
                 />
                 <Typography variant="caption" color="text.disabled">
@@ -447,7 +447,7 @@ function Panel({
           variant="caption"
           noWrap
           title={label}
-          sx={{ fontWeight: 600, fontSize: 12, minWidth: 0, flex: 1 }}
+          sx={{ fontWeight: 600, typography: "s1", minWidth: 0, flex: 1 }}
         >
           {label}
         </Typography>
@@ -455,7 +455,6 @@ function Panel({
           variant="caption"
           color="text.secondary"
           sx={{
-            fontSize: 11.5,
             flexShrink: 0,
             fontVariantNumeric: "tabular-nums",
           }}
@@ -522,11 +521,7 @@ function Panel({
             sx={{ width: 10, height: 6, borderRadius: "1px", bgcolor: step }}
           />
         ))}
-        <Typography
-          variant="caption"
-          color="text.disabled"
-          sx={{ fontSize: 10.5 }}
-        >
+        <Typography variant="caption" color="text.disabled">
           {flat
             ? `near usual (${pct(overallShare)}) · no cell clearly more`
             : `near usual (${pct(overallShare)}) → clearly more`}
@@ -768,11 +763,7 @@ export default function AskHeatmap({
   if (kind === "time") {
     if (!grid?.rows.length)
       body = (
-        <Typography
-          variant="body2"
-          color="text.secondary"
-          sx={{ fontSize: 12 }}
-        >
+        <Typography variant="body1" color="text.secondary">
           No {plural} to place yet.
         </Typography>
       );
@@ -801,7 +792,7 @@ export default function AskHeatmap({
       );
   } else if (!matrix?.rows.length || !matrix.rows.some((r) => r.answered))
     body = (
-      <Typography variant="body2" color="text.secondary" sx={{ fontSize: 12 }}>
+      <Typography variant="body1" color="text.secondary">
         No {plural} answered yet.
       </Typography>
     );

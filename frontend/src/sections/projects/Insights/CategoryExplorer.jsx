@@ -110,7 +110,7 @@ function TreeItem({
         "&:hover": { bgcolor: selected ? "action.selected" : "action.hover" },
         "&:focus-visible": {
           outline: "2px solid",
-          outlineColor: "primary.main",
+          outlineColor: "border.focus",
           outlineOffset: -2,
         },
       }}
@@ -129,7 +129,11 @@ function TreeItem({
               sx={{ p: 0.25 }}
             >
               <Iconify
-                icon={expanded ? "mdi:chevron-down" : "mdi:chevron-right"}
+                icon={
+                  expanded
+                    ? "solar:alt-arrow-down-linear"
+                    : "solar:alt-arrow-right-linear"
+                }
                 width={16}
               />
             </IconButton>
@@ -144,7 +148,7 @@ function TreeItem({
         sx={{
           flex: 1,
           minWidth: 0,
-          fontSize: 12,
+          typography: "m3",
           fontWeight: selected ? 600 : depth ? 400 : 500,
         }}
       >
@@ -189,8 +193,9 @@ function CategoryTree({ categoryId }) {
   return (
     <Box component="nav" aria-label="Categories">
       <Typography
-        variant="overline"
+        variant="s3"
         color="text.secondary"
+        fontWeight="fontWeightMedium"
         sx={{ display: "block", px: 0.5, mb: 0.5 }}
       >
         Categories
@@ -237,11 +242,11 @@ function Kpi({ label, value, compare, tone }) {
   return (
     <Box
       sx={{
-        px: 1.25,
-        py: 0.75,
+        px: 1.5,
+        py: 1,
         border: "1px solid",
         borderColor: "divider",
-        borderRadius: 1,
+        borderRadius: "8px",
         minWidth: 0,
       }}
     >
@@ -272,7 +277,7 @@ function Kpi({ label, value, compare, tone }) {
               ml: 0.5,
               fontWeight: 400,
               color: "text.secondary",
-              fontSize: 12,
+              typography: "s1",
             }}
           >
             {compare}
@@ -428,14 +433,14 @@ function DailyBars({ daily, reportDaily, color }) {
         <Typography
           variant="caption"
           color="text.secondary"
-          sx={{ fontSize: 11 }}
+          sx={{ typography: "s2" }}
         >
           {formatDay(`${days[0].key}T12:00:00Z`)}
         </Typography>
         <Typography
           variant="caption"
           color="text.secondary"
-          sx={{ fontSize: 11 }}
+          sx={{ typography: "s2" }}
         >
           {formatDay(`${days[days.length - 1].key}T12:00:00Z`)}
         </Typography>
@@ -472,7 +477,9 @@ function NotableSentences({ notes }) {
               alignItems="flex-start"
             >
               <Iconify
-                icon={higher ? "mdi:arrow-up" : "mdi:arrow-down"}
+                icon={
+                  higher ? "solar:arrow-up-linear" : "solar:arrow-down-linear"
+                }
                 width={14}
                 sx={{
                   mt: "3px",
@@ -480,7 +487,7 @@ function NotableSentences({ notes }) {
                   color: toneColor(theme, notableDirection(note)),
                 }}
               />
-              <Typography variant="body2" sx={{ fontSize: 12 }}>
+              <Typography variant="body2" sx={{ typography: "m3" }}>
                 {notableText(note)}
               </Typography>
             </Stack>
@@ -500,7 +507,7 @@ function RootCause({ insight }) {
     <Box
       sx={{
         p: 1.5,
-        borderRadius: 1,
+        borderRadius: "8px",
         border: "1px solid",
         borderColor: "divider",
         bgcolor: "background.neutral",
@@ -514,7 +521,7 @@ function RootCause({ insight }) {
         Root cause
       </Typography>
       <Box>
-        <Typography variant="body2" sx={{ fontSize: 12, lineHeight: "20px" }}>
+        <Typography variant="body2" sx={{ typography: "s1_2" }}>
           {insight.root_cause}
         </Typography>
         {quote && (
@@ -534,7 +541,7 @@ function RootCause({ insight }) {
           <Typography variant="caption" fontWeight={600} sx={{ pt: "2px" }}>
             Fix
           </Typography>
-          <Typography variant="body2" sx={{ fontSize: 12, lineHeight: "20px" }}>
+          <Typography variant="body2" sx={{ typography: "s1_2" }}>
             {insight.fix}
           </Typography>
         </>
@@ -601,7 +608,7 @@ function Pager({ offset, count, total, onOffset }) {
         disabled={offset === 0}
         onClick={() => onOffset(Math.max(0, offset - UNITS_PAGE))}
       >
-        <Iconify icon="mdi:chevron-left" width={18} />
+        <Iconify icon="solar:alt-arrow-left-linear" width={18} />
       </IconButton>
       <IconButton
         size="small"
@@ -609,7 +616,7 @@ function Pager({ offset, count, total, onOffset }) {
         disabled={last >= total}
         onClick={() => onOffset(offset + UNITS_PAGE)}
       >
-        <Iconify icon="mdi:chevron-right" width={18} />
+        <Iconify icon="solar:alt-arrow-right-linear" width={18} />
       </IconButton>
     </Stack>
   );
@@ -628,12 +635,12 @@ const tableSx = {
   "& thead th": {
     bgcolor: "background.neutral",
     color: "text.secondary",
-    fontSize: 12,
+    typography: "s1",
     fontWeight: 500,
     py: 0.75,
     whiteSpace: "nowrap",
   },
-  "& tbody td": { fontSize: 12, verticalAlign: "top", py: 1 },
+  "& tbody td": { typography: "m3", verticalAlign: "top", py: 1 },
   "& tbody tr": { cursor: "pointer" },
 };
 
@@ -682,7 +689,7 @@ function SummariesTable({ units, onOpen }) {
               sx={{
                 "&:focus-visible": {
                   outline: "2px solid",
-                  outlineColor: "primary.main",
+                  outlineColor: "border.focus",
                   outlineOffset: -2,
                 },
               }}
@@ -698,7 +705,7 @@ function SummariesTable({ units, onOpen }) {
                   <Box>
                     <Typography
                       variant="body2"
-                      sx={{ fontSize: 12, ...clamp(2) }}
+                      sx={{ typography: "m3", ...clamp(2) }}
                     >
                       {unit.summary || unit.label || unit.excerpt}
                     </Typography>
@@ -719,7 +726,7 @@ function SummariesTable({ units, onOpen }) {
                   <ToneChip
                     label={humanizeValue(facets.outcome)}
                     tone={OUTCOME_TONE[facets.outcome] || "neutral"}
-                    sx={{ height: 20, fontSize: 11 }}
+                    sx={{ height: 20, typography: "s2" }}
                   />
                 ) : (
                   "–"
@@ -737,7 +744,7 @@ function SummariesTable({ units, onOpen }) {
                 <Typography
                   variant="body2"
                   color={facets.failure_mode ? "text.primary" : "text.disabled"}
-                  sx={{ fontSize: 12, ...clamp(2) }}
+                  sx={{ typography: "s1", ...clamp(2) }}
                 >
                   {facets.failure_mode
                     ? humanizeValue(facets.failure_mode)
@@ -798,10 +805,10 @@ function ItemsTable({ units, unit, onOpen }) {
                 if (event.key === "Enter") onOpen(row);
               }}
               sx={{
-                "&:hover .go": { color: "primary.main" },
+                "&:hover .go": { color: "text.primary" },
                 "&:focus-visible": {
                   outline: "2px solid",
-                  outlineColor: "primary.main",
+                  outlineColor: "border.focus",
                   outlineOffset: -2,
                 },
                 "& td": { fontVariantNumeric: "tabular-nums" },
@@ -814,14 +821,17 @@ function ItemsTable({ units, unit, onOpen }) {
                 <Typography
                   variant="body2"
                   noWrap
-                  sx={{ fontSize: 12, maxWidth: 140 }}
+                  sx={{ typography: "m3", maxWidth: 140 }}
                   title={row.user_id}
                 >
                   {row.user_id || "–"}
                 </Typography>
               </TableCell>
               <TableCell>
-                <Typography variant="body2" sx={{ fontSize: 12, ...clamp(1) }}>
+                <Typography
+                  variant="body2"
+                  sx={{ typography: "m3", ...clamp(1) }}
+                >
                   {row.excerpt || row.label || "–"}
                 </Typography>
               </TableCell>
@@ -834,14 +844,16 @@ function ItemsTable({ units, unit, onOpen }) {
               </TableCell>
               <TableCell
                 align="right"
-                sx={{ color: metrics.errors > 0 ? "error.main" : undefined }}
+                sx={{
+                  color: metrics.errors > 0 ? "status.danger.fg" : undefined,
+                }}
               >
                 {formatCount(metrics.errors)}
               </TableCell>
               <TableCell padding="none">
                 <Iconify
                   className="go"
-                  icon="mdi:arrow-top-right"
+                  icon="solar:arrow-right-up-linear"
                   width={16}
                   sx={{ color: "text.disabled", mt: "10px" }}
                 />
@@ -876,7 +888,7 @@ function MoreMenu({ disabled, busy, onPatterns, onGrid, canGrid }) {
         {busy ? (
           <CircularProgress size={16} thickness={5} />
         ) : (
-          <Iconify icon="mdi:dots-horizontal" width={18} />
+          <Iconify icon="solar:menu-dots-bold" width={18} />
         )}
       </IconButton>
       <Menu
@@ -893,7 +905,7 @@ function MoreMenu({ disabled, busy, onPatterns, onGrid, canGrid }) {
           }}
         >
           <ListItemIcon>
-            <Iconify icon="mdi:file-tree-outline" width={18} />
+            <Iconify icon="solar:structure-linear" width={18} />
           </ListItemIcon>
           <ListItemText
             primary="Find patterns inside"
@@ -909,7 +921,7 @@ function MoreMenu({ disabled, busy, onPatterns, onGrid, canGrid }) {
             }}
           >
             <ListItemIcon>
-              <Iconify icon="mdi:table-large" width={18} />
+              <Iconify icon="solar:list-linear" width={18} />
             </ListItemIcon>
             <ListItemText
               primary="Open all in grid"
@@ -972,7 +984,7 @@ export default function CategoryExplorer({
           size="small"
           color="inherit"
           onClick={onBack}
-          startIcon={<Iconify icon="mdi:arrow-left" width={16} />}
+          startIcon={<Iconify icon="solar:arrow-left-linear" width={16} />}
         >
           Back to report
         </Button>
@@ -1059,7 +1071,7 @@ export default function CategoryExplorer({
           size="small"
           color="inherit"
           onClick={onBack}
-          startIcon={<Iconify icon="mdi:arrow-left" width={16} />}
+          startIcon={<Iconify icon="solar:arrow-left-linear" width={16} />}
           sx={{ mb: 1.5, color: "text.secondary" }}
         >
           Back to report
@@ -1094,7 +1106,6 @@ export default function CategoryExplorer({
               sx={{
                 color: "text.secondary",
                 fontWeight: 400,
-                fontSize: 15,
                 whiteSpace: "nowrap",
               }}
             >
@@ -1146,7 +1157,7 @@ export default function CategoryExplorer({
           <Typography
             variant="body2"
             color="text.secondary"
-            sx={{ mt: 0.75, fontSize: 12, maxWidth: 820 }}
+            sx={{ mt: 0.75, typography: "s1_2", maxWidth: 820 }}
           >
             {category.description}
           </Typography>
@@ -1195,7 +1206,7 @@ export default function CategoryExplorer({
                 <Typography
                   variant="body2"
                   color="text.secondary"
-                  sx={{ fontSize: 12 }}
+                  sx={{ typography: "m3" }}
                 >
                   Nothing here differs clearly from the rest of the report once
                   every comparison is accounted for.
@@ -1249,7 +1260,9 @@ export default function CategoryExplorer({
             <Button
               size="small"
               variant="outlined"
-              startIcon={<Iconify icon="mdi:creation-outline" width={16} />}
+              startIcon={
+                <Iconify icon="solar:magic-stick-3-linear" width={16} />
+              }
               endIcon={askDenied ? <EnterpriseMark compact /> : undefined}
               onClick={measure}
             >
@@ -1274,7 +1287,7 @@ export default function CategoryExplorer({
           sx={{
             border: "1px solid",
             borderColor: "divider",
-            borderRadius: 1,
+            borderRadius: "8px",
             overflow: "hidden",
           }}
         >

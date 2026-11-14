@@ -212,7 +212,7 @@ export default function CellGrid({
           cursor: "pointer",
           outline: "none",
           "&:focus-visible": {
-            outline: `2px solid ${theme.palette.primary.main}`,
+            outline: `2px solid ${theme.palette.border.focus}`,
             outlineOffset: 2,
             borderRadius: "4px",
           },
@@ -324,7 +324,7 @@ export default function CellGrid({
         {layers.dots && (
           <path
             d={layers.dots}
-            fill={theme.palette.error.main}
+            fill={theme.palette.status.danger.solid}
             stroke={theme.palette.background.paper}
             strokeWidth={1}
             data-errors
@@ -341,7 +341,7 @@ export default function CellGrid({
                 x={svgWidth}
                 y={yOf(r) + cellH / 2 + 3.5}
                 textAnchor="end"
-                fontSize={11}
+                fontSize={theme.typography.s2.fontSize}
                 fill={theme.palette.text.secondary}
                 fontFamily={font}
                 style={{ fontVariantNumeric: "tabular-nums" }}
@@ -402,9 +402,7 @@ export default function CellGrid({
               boxShadow: (t) => t.customShadows?.dropdown,
             }}
           >
-            <Typography variant="body2" sx={{ fontSize: 12.5 }}>
-              {words(shown)}
-            </Typography>
+            <Typography variant="body2">{words(shown)}</Typography>
           </Section>
         )}
       </Popper>

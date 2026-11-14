@@ -213,7 +213,7 @@
       <section class="doc" id="status-colors">
         <header>
           <h2>Status and data colours</h2>
-          <p class="muted">Six status roles, each with a tint, a border, readable text, a solid fill and a label colour for that fill. Chart and category colours are a separate set of eight, so a chart series never reads as “failed”. <code>dataMono</code> is a quieter set of eight purple shades for charts that read better in one colour family, such as cost by group.</p>
+          <p class="muted">Six status roles, each with a tint, a border, readable text, a solid fill and a label colour for that fill. Chart and category colours are a separate set of eight, so a chart series never reads as “failed”. <code>dataMono</code> is a quieter set of eight purple shades for charts that read better in one colour family, such as cost by group. <code>dataBrand</code> is the brand set of four (purple, then the guide's green, red and amber) for category and answer charts that should read in the product's own colours, such as Insights and Instant eval.</p>
         </header>
         <div class="demo" data-demo>
           <div class="stack">
@@ -221,6 +221,7 @@
             <div class="row"><span class="ds-badge ds-badge--solid ds-badge--success">Success</span><span class="ds-badge ds-badge--solid ds-badge--warning">Warning</span><span class="ds-badge ds-badge--solid ds-badge--danger">Danger</span><span class="ds-badge ds-badge--solid ds-badge--info">Info</span><span class="ds-badge ds-badge--solid ds-badge--discovery">Discovery</span></div>
             <div class="row" data-fill="data"></div>
             <div class="row" data-fill="dataMono"></div>
+            <div class="row" data-fill="dataBrand" data-count="4"></div>
           </div>
         </div>
         <div class="tscroll"><table class="spec" id="statusTable"><thead><tr><th>Role</th><th>Means</th><th>Light · fg / bg / solid</th><th>Dark · fg / bg / solid</th></tr></thead><tbody></tbody></table></div>

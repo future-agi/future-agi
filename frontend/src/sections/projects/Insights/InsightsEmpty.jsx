@@ -6,22 +6,25 @@ import { TEMPLATES } from "./insightsLenses";
 
 const STEPS = [
   [
-    "mdi:file-document-outline",
+    "solar:document-text-linear",
     "Reads a sample of your traces, sessions or users",
   ],
-  ["mdi:shape-outline", "Groups them into categories and subcategories"],
+  ["solar:widget-linear", "Groups them into categories and subcategories"],
   [
-    "mdi:chart-box-outline",
+    "solar:chart-square-linear",
     "Measures each one: how many, which users, how they end",
   ],
-  ["mdi:format-quote-open", "Cites the conversations behind every finding"],
+  [
+    "solar:chat-square-like-linear",
+    "Cites the conversations behind every finding",
+  ],
 ];
 
 /** The right pane before the first report: what a report does, and the lenses. */
 export default function InsightsEmpty({ onNew }) {
   return (
     <Box sx={{ px: 4, py: 5, maxWidth: 920 }}>
-      <Typography variant="l3" component="h2" fontWeight={600}>
+      <Typography variant="m1" component="h2" fontWeight={600}>
         What do you want to learn about your traffic?
       </Typography>
       <Typography
@@ -79,7 +82,7 @@ export default function InsightsEmpty({ onNew }) {
               minHeight: 132,
               border: "1px solid",
               borderColor: "divider",
-              borderRadius: 1,
+              borderRadius: "8px",
               bgcolor: "background.paper",
               textAlign: "left",
               font: "inherit",
@@ -88,11 +91,11 @@ export default function InsightsEmpty({ onNew }) {
               display: "flex",
               flexDirection: "column",
               gap: 1,
-              "&:hover": { borderColor: "text.disabled" },
-              "&:hover .go": { color: "primary.main" },
+              "&:hover": { borderColor: "border.hover" },
+              "&:hover .go": { color: "text.primary" },
               "&:focus-visible": {
                 outline: "2px solid",
-                outlineColor: "primary.main",
+                outlineColor: "border.focus",
                 outlineOffset: 2,
               },
             }}
@@ -109,7 +112,7 @@ export default function InsightsEmpty({ onNew }) {
             >
               <Iconify icon={template.icon} width={18} />
             </Box>
-            <Typography variant="subtitle2" sx={{ fontSize: 15 }}>
+            <Typography variant="m3" fontWeight={500}>
               {template.title}
             </Typography>
             <Typography variant="caption" color="text.secondary">
@@ -126,7 +129,7 @@ export default function InsightsEmpty({ onNew }) {
               <Typography variant="caption" fontWeight={600} color="inherit">
                 Start
               </Typography>
-              <Iconify icon="mdi:arrow-right" width={14} />
+              <Iconify icon="solar:arrow-right-linear" width={14} />
             </Stack>
           </Box>
         ))}

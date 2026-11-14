@@ -275,7 +275,7 @@ function AxisLayer({ marks, dayTicks, colW, x0, baseY, theme }) {
           y={dayLabelY}
           textAnchor={label.anchor}
           fill={theme.palette.text.secondary}
-          fontSize={11}
+          fontSize={theme.typography.s2.fontSize}
           fontFamily={theme.typography.fontFamily}
         >
           {label.text}
@@ -419,7 +419,7 @@ const svgSx = (theme, drag) => ({
     "& path.part": { transition: "none" },
   },
   "&:focus-visible": {
-    outline: `2px solid ${theme.palette.primary.main}`,
+    outline: `2px solid ${theme.palette.border.focus}`,
     outlineOffset: 2,
     borderRadius: "4px",
   },
@@ -560,12 +560,13 @@ function SquaresPlot({
       }
       if (item.state === "failed")
         return {
-          fill: alpha(theme.palette.error.main, 0.12),
-          stroke: theme.palette.error.main,
+          fill: alpha(theme.palette.status.danger.solid, 0.12),
+          stroke: theme.palette.status.danger.solid,
         };
-      if (item.state === "skipped") return { fill: theme.palette.grey[300] };
+      if (item.state === "skipped")
+        return { fill: alpha(theme.palette.status.neutral.solid, 0.45) };
       if (item.state === "reading")
-        return { fill: alpha(theme.palette.primary.main, 0.3) };
+        return { fill: alpha(theme.palette.status.info.solid, 0.3) };
       return {
         fill: theme.palette.background.paper,
         stroke: alpha(theme.palette.text.disabled, 0.55),
@@ -674,8 +675,8 @@ function SquaresPlot({
               y={TOP - 4}
               width={(band.to - band.from + 1) * colW}
               height={plotH + 4}
-              fill={alpha(theme.palette.primary.main, 0.08)}
-              stroke={alpha(theme.palette.primary.main, 0.5)}
+              fill={theme.palette.action.selected}
+              stroke={theme.palette.border.strong}
               strokeWidth={1}
               rx={3}
             />
@@ -700,7 +701,7 @@ function SquaresPlot({
                   width={w}
                   height={RUG}
                   rx={1}
-                  fill={theme.palette.error.main}
+                  fill={theme.palette.status.danger.solid}
                 >
                   <title>{`${formatCount(column.errors)} had a trace error`}</title>
                 </rect>
@@ -738,9 +739,9 @@ function SquaresPlot({
                   x={cx}
                   y={y + 9.5}
                   textAnchor="middle"
-                  fill={theme.palette.common.white}
+                  fill={theme.palette.status.neutral.onSolid}
                   fontSize={9.5}
-                  fontWeight={700}
+                  fontWeight={theme.typography.fontWeightSemiBold}
                   fontFamily={theme.typography.fontFamily}
                 >
                   {text}
@@ -811,7 +812,7 @@ function SquaresPlot({
             <Typography variant="caption" color="text.secondary">
               {rangeText(hoverColumn.start, hoverColumn.end)}
             </Typography>
-            <Typography variant="body2" sx={{ fontSize: 12, mt: 0.25 }}>
+            <Typography variant="body1" sx={{ mt: 0.25 }}>
               {columnSummary(hoverColumn, unit)}
             </Typography>
             <Typography
@@ -1099,14 +1100,14 @@ function DensityPlot({
               <rect
                 width={4}
                 height={4}
-                fill={alpha(theme.palette.error.main, 0.1)}
+                fill={alpha(theme.palette.status.danger.solid, 0.1)}
               />
               <line
                 x1={0}
                 y1={0}
                 x2={0}
                 y2={4}
-                stroke={theme.palette.error.main}
+                stroke={theme.palette.status.danger.solid}
                 strokeWidth={1.5}
               />
             </pattern>
@@ -1163,8 +1164,8 @@ function DensityPlot({
               y={TOP - 4}
               width={(band.to - band.from + 1) * colW}
               height={baseY - TOP + 4}
-              fill={alpha(theme.palette.primary.main, 0.08)}
-              stroke={alpha(theme.palette.primary.main, 0.5)}
+              fill={theme.palette.action.selected}
+              stroke={theme.palette.border.strong}
               strokeWidth={1}
               rx={3}
             />
@@ -1230,7 +1231,7 @@ function DensityPlot({
               <path
                 key={`errors-${ERROR_STEPS[i]}`}
                 d={d}
-                fill={theme.palette.error.main}
+                fill={theme.palette.status.danger.solid}
                 opacity={ERROR_STEPS[i]}
               />
             ) : null,
@@ -1328,9 +1329,8 @@ function ColumnCard({ column, question, colorOf, unit, sample }) {
         sx={{ width: 10, height: 2, borderRadius: 1, bgcolor: color }}
       />
       <Typography
-        variant="body2"
+        variant="body1"
         sx={{
-          fontSize: 12,
           fontWeight: 600,
           minWidth: 40,
           fontVariantNumeric: "tabular-nums",
@@ -1338,7 +1338,7 @@ function ColumnCard({ column, question, colorOf, unit, sample }) {
       >
         {formatCount(value)}
       </Typography>
-      <Typography variant="body2" color="text.secondary" sx={{ fontSize: 12 }}>
+      <Typography variant="body1" color="text.secondary">
         {text}
       </Typography>
     </Stack>
@@ -1348,7 +1348,7 @@ function ColumnCard({ column, question, colorOf, unit, sample }) {
       <Typography variant="caption" color="text.secondary">
         {rangeText(column.start, column.end)}
       </Typography>
-      <Typography variant="body2" sx={{ fontSize: 12, mb: 0.75 }}>
+      <Typography variant="body1" sx={{ mb: 0.75 }}>
         {formatCount(column.n)} {rowsNoun(unit, sample, column.n)}
       </Typography>
       <Stack spacing={0.25}>
@@ -1362,7 +1362,7 @@ function ColumnCard({ column, question, colorOf, unit, sample }) {
         )}
         {column.failed + column.skipped > 0 &&
           line(
-            theme.palette.error.main,
+            theme.palette.status.danger.solid,
             column.failed + column.skipped,
             "couldn't be answered",
             "failed",
@@ -1376,7 +1376,7 @@ function ColumnCard({ column, question, colorOf, unit, sample }) {
           )}
         {column.errors > 0 &&
           line(
-            theme.palette.error.main,
+            theme.palette.status.danger.solid,
             column.errors,
             "had a trace error",
             "errors",
@@ -1442,7 +1442,7 @@ function LegendItem({ item, active, faded, onClick, quiet }) {
         variant="caption"
         sx={{
           color: quiet ? "text.secondary" : "text.primary",
-          fontSize: quiet ? 11.5 : 12,
+          typography: "s1",
         }}
       >
         {item.label}
@@ -1450,7 +1450,7 @@ function LegendItem({ item, active, faded, onClick, quiet }) {
       <Typography
         variant="caption"
         color="text.secondary"
-        sx={{ fontVariantNumeric: "tabular-nums", fontSize: quiet ? 11.5 : 12 }}
+        sx={{ fontVariantNumeric: "tabular-nums", typography: "s1" }}
       >
         {item.share !== null && item.share !== undefined
           ? `${formatShare(item.share)} · ${formatCount(item.count)}`
@@ -1478,7 +1478,7 @@ function LegendItem({ item, active, faded, onClick, quiet }) {
         py: 0.25,
         ml: -0.75,
         border: "1px solid",
-        borderColor: active ? "text.primary" : "transparent",
+        borderColor: active ? "border.selected" : "transparent",
         borderRadius: 1,
         bgcolor: "transparent",
         font: "inherit",
@@ -1486,7 +1486,7 @@ function LegendItem({ item, active, faded, onClick, quiet }) {
         opacity: faded ? 0.5 : 1,
         "&:hover": { bgcolor: "action.hover" },
         "&:focus-visible": {
-          outline: `2px solid ${theme.palette.primary.main}`,
+          outline: `2px solid ${theme.palette.border.focus}`,
         },
       }}
     >
@@ -1584,11 +1584,11 @@ export default function AskTimeline({
       key: "failed",
       label: "Couldn't answer",
       count: run.failed + run.skipped,
-      color: theme.palette.error.main,
+      color: theme.palette.status.danger.solid,
       ...(squares
         ? { hollow: true }
         : {
-            background: `repeating-linear-gradient(135deg, ${theme.palette.error.main} 0 1.5px, ${alpha(theme.palette.error.main, 0.1)} 1.5px 4px)`,
+            background: `repeating-linear-gradient(135deg, ${theme.palette.status.danger.solid} 0 1.5px, ${alpha(theme.palette.status.danger.solid, 0.1)} 1.5px 4px)`,
           }),
     },
     ...(counts
@@ -1597,7 +1597,7 @@ export default function AskTimeline({
             key: "reading",
             label: "Reading",
             count: reading,
-            color: alpha(theme.palette.primary.main, 0.3),
+            color: alpha(theme.palette.status.info.solid, 0.3),
           },
           (running || run.pending > reading) && {
             key: "waiting",
@@ -1620,7 +1620,7 @@ export default function AskTimeline({
       key: "errors",
       label: "Trace had an error",
       count: errors,
-      color: theme.palette.error.main,
+      color: theme.palette.status.danger.solid,
       swatch: { width: 12, height: RUG, borderRadius: "1px" },
     },
     unsure > 0 && {
@@ -1753,7 +1753,7 @@ export default function AskTimeline({
         <Typography
           variant="caption"
           color="text.disabled"
-          sx={{ ml: "auto", fontSize: 12 }}
+          sx={{ ml: "auto", typography: "s1" }}
         >
           {explicit
             ? `Showing ${quoted(focusAnswer)}. Click it again to show all.`
@@ -1806,10 +1806,9 @@ function SquareCard({ item, question, colorOf }) {
       </Typography>
       {(record.label || record.excerpt) && (
         <Typography
-          variant="body2"
+          variant="body1"
           sx={{
             mt: 0.5,
-            fontSize: 12,
             display: "-webkit-box",
             WebkitLineClamp: 2,
             WebkitBoxOrient: "vertical",
@@ -1842,7 +1841,7 @@ function SquareCard({ item, question, colorOf }) {
       {record.facets?.error === true && (
         <Typography
           variant="caption"
-          color="error.main"
+          color="status.danger.fg"
           component="p"
           sx={{ m: 0, mt: 0.5 }}
         >

@@ -1258,7 +1258,9 @@ describe("InsightsView", () => {
     );
     renderAt(`?report=${CONFIG_ID}&run=${RUN_ID}`);
     const shown = await screen.findAllByText("Oct 22–23 · 1 filter");
-    expect(shown.some((label) => label.closest(".MuiChip-root"))).toBe(true);
+    expect(
+      shown.some((label) => label.closest('[data-testid="report-meta"]')),
+    ).toBe(true);
     expect(screen.queryByText(/Custom range/)).toBeNull();
   });
 
@@ -1562,6 +1564,25 @@ describe("InsightsView", () => {
       ).toBeInTheDocument();
       expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument();
     });
+  });
+
+  it("still says a run keeps going when the scope can't be counted", async () => {
+    mocks.post.mockImplementation((url) =>
+      url === "/tracer/insights/estimate/"
+        ? Promise.reject({ statusCode: 503 })
+        : ok({ run_id: RUN_ID, config_id: CONFIG_ID }),
+    );
+    renderAt("?new=1&lens=failures");
+    expect(
+      await screen.findByText(
+        "The scope and report cost could not be checked.",
+      ),
+    ).toBeInTheDocument();
+    // The line under Run report keeps its note rather than going blank.
+    expect(
+      screen.getByText(/it keeps running if you leave/),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/^Counting the /)).toBeNull();
   });
 
   it("guides a new report and starts it on the scope the server reads", async () => {

@@ -1,3 +1,4 @@
+import PageHeader from "src/components/page-header";
 import Section from "src/components/section";
 import React, { useEffect, useMemo, useState } from "react";
 import PropTypes from "prop-types";
@@ -135,7 +136,7 @@ function autoName(draft, scopeText) {
 
 function Step({ number, title, subtitle, children, action }) {
   return (
-    <Section variant="panel" sx={{ p: 2.5 }}>
+    <Section variant="panel">
       <Stack direction="row" spacing={1.5} alignItems="flex-start">
         <Box
           aria-hidden
@@ -148,7 +149,7 @@ function Step({ number, title, subtitle, children, action }) {
             borderColor: "divider",
             display: "grid",
             placeItems: "center",
-            fontSize: 12,
+            typography: "s1",
             fontWeight: 600,
             flexShrink: 0,
             mt: "1px",
@@ -165,7 +166,7 @@ function Step({ number, title, subtitle, children, action }) {
             sx={{ mb: children ? 2 : 0 }}
           >
             <Box>
-              <Typography variant="subtitle1" component="h2">
+              <Typography variant="m3" component="h2" fontWeight={500}>
                 {title}
               </Typography>
               {subtitle && (
@@ -243,18 +244,18 @@ function LensPicker({ value, onChange, disabled }) {
               color: "text.primary",
               bgcolor: active ? "action.selected" : "background.paper",
               border: "1px solid",
-              borderColor: active ? "primary.main" : "divider",
-              borderRadius: 1.5,
+              borderColor: active ? "border.selected" : "divider",
+              borderRadius: "8px",
               cursor: disabled ? "default" : "pointer",
               display: "flex",
               flexDirection: "column",
               gap: 0.5,
               "&:hover": disabled
                 ? undefined
-                : { borderColor: active ? "primary.main" : "text.disabled" },
+                : { borderColor: active ? "border.selected" : "border.hover" },
               "&:focus-visible": {
                 outline: "2px solid",
-                outlineColor: "primary.main",
+                outlineColor: "border.focus",
                 outlineOffset: 2,
               },
             }}
@@ -315,6 +316,15 @@ export default function NewReport({
     !touched.unit && !lensFor(draft.lens).unit,
   );
   const defaultUnit = hasSessions.data === false ? "traces" : "sessions";
+  // Until then, and until the effect above has moved the unit, the unit may
+  // still change: counting sessions first would cost an estimate that is
+  // thrown away.
+  const unitSettling =
+    !fixed &&
+    (hasSessions.isLoading ||
+      (!touched.unit &&
+        hasSessions.data === false &&
+        draft.unit === "sessions"));
   useEffect(() => {
     if (touched.unit || fixed || hasSessions.data !== false) return;
     setDraft((current) =>
@@ -362,7 +372,7 @@ export default function NewReport({
     projectId,
     scope: settledScope,
     sampleSize: draft.sampleSize,
-    enabled: !fixed,
+    enabled: !fixed && !unitSettling,
   });
   // Rows handed over have nothing to count: the server only prices them.
   const handedCost = usePopulationCount({
@@ -384,7 +394,10 @@ export default function NewReport({
   // read again on its own and needn't hold anything up.
   const counting =
     !fixed &&
-    (count.isLoading || count.isPlaceholderData || settledScope !== countScope);
+    (unitSettling ||
+      count.isLoading ||
+      count.isPlaceholderData ||
+      settledScope !== countScope);
   // A handed-over population's cost for a new sample size, likewise.
   const costing =
     fixed && (handedCost.isLoading || handedCost.isPlaceholderData);
@@ -573,33 +586,25 @@ export default function NewReport({
 
   return (
     <Stack spacing={2} sx={{ maxWidth: 880, mx: "auto" }}>
-      <Stack direction="row" alignItems="flex-start" spacing={2}>
-        <Box sx={{ flex: 1 }}>
-          <Typography variant="m2" component="h1" fontWeight={600}>
-            New report
-          </Typography>
-          <Typography
-            variant="body2"
-            color="text.secondary"
-            sx={{ fontSize: 12 }}
+      <PageHeader
+        title="New report"
+        description="Pick what to learn and which traffic to read. A report samples it, summarises every item, groups them and measures each group."
+        actions={
+          <IconButton
+            aria-label="Close new report"
+            onClick={onCancel}
+            size="small"
           >
-            Pick what to learn and which traffic to read. A report samples it,
-            summarises every item, groups them and measures each group.
-          </Typography>
-        </Box>
-        <IconButton
-          aria-label="Close new report"
-          onClick={onCancel}
-          size="small"
-        >
-          <Iconify icon="mdi:close" width={18} />
-        </IconButton>
-      </Stack>
+            <Iconify icon="solar:close-linear" width={18} />
+          </IconButton>
+        }
+        sx={{ mb: 0 }}
+      />
 
       {seed?.source && (
         <Alert
           severity="info"
-          icon={<Iconify icon="mdi:link-variant" width={20} />}
+          icon={<Iconify icon="solar:link-linear" width={20} />}
         >
           From {seed.source}
           {seed.label ? ` · ${seed.label}` : ""}
@@ -677,7 +682,7 @@ export default function NewReport({
                 gap: 1.25,
               }}
             >
-              <Iconify icon="mdi:format-list-checks" width={18} />
+              <Iconify icon="solar:checklist-minimalistic-linear" width={18} />
               <Typography variant="body2">
                 <strong>
                   {formatCount(fixedPopulation.length)}{" "}
@@ -790,7 +795,9 @@ export default function NewReport({
               severity="error"
               action={
                 <Button
+                  variant="outlined"
                   color="inherit"
+                  size="small"
                   onClick={() => (fixed ? handedCost : count).refetch()}
                 >
                   Retry cost check
@@ -817,7 +824,7 @@ export default function NewReport({
         </Stack>
       </Step>
 
-      <Section variant="panel" sx={{ p: 2 }}>
+      <Section variant="panel">
         <NewReportTune
           open={tuneOpen}
           onToggle={() => setTuneOpen((value) => !value)}
@@ -853,7 +860,7 @@ export default function NewReport({
                       size="small"
                       variant="outlined"
                       startIcon={
-                        <Iconify icon="mdi:creation-outline" width={16} />
+                        <Iconify icon="solar:magic-stick-3-linear" width={16} />
                       }
                       onClick={draftWithAI}
                       disabled={
@@ -903,7 +910,7 @@ export default function NewReport({
         />
       </Section>
 
-      <Section variant="panel" sx={{ p: 2 }}>
+      <Section variant="panel">
         <Stack
           direction="row"
           alignItems="center"
@@ -931,7 +938,7 @@ export default function NewReport({
             <Button
               size="small"
               variant="outlined"
-              startIcon={<Iconify icon="mdi:eye-outline" width={16} />}
+              startIcon={<Iconify icon="solar:eye-linear" width={16} />}
               onClick={() =>
                 preview(
                   previewState.status === "done" && !previewStale
@@ -963,7 +970,10 @@ export default function NewReport({
           </Alert>
         )}
         {previewState.status === "busy" && (
-          <LinearProgress sx={{ borderRadius: 1 }} />
+          <LinearProgress
+            color="secondary"
+            sx={{ height: 4, borderRadius: "4px", bgcolor: "background.muted" }}
+          />
         )}
         {previewState.status === "done" && (
           <Stack spacing={1}>
@@ -1013,7 +1023,7 @@ export default function NewReport({
                 startedAt={starting.state.startedAt}
               />
             ) : starting.state.status === "error" ? (
-              <Typography variant="body2" color="error.main">
+              <Typography variant="body2" color="status.danger.fg">
                 <ErrorText
                   message={starting.state.error}
                   billing={starting.state.billing}
@@ -1030,7 +1040,13 @@ export default function NewReport({
                     message={blocker}
                     billing={blocker === creditBlocker && !credits.unavailable}
                   />
+                ) : !sentence && (counting || costing) ? (
+                  // While the scope is counted, a sentence of its own rather
+                  // than the tail of one.
+                  `Counting the ${UNITS[draft.unit].plural}…`
                 ) : (
+                  // Without a count (it failed), the estimate and the note
+                  // that it keeps running still show.
                   [
                     sentence,
                     estimate,
@@ -1043,11 +1059,18 @@ export default function NewReport({
               </Typography>
             )}
           </Box>
-          <Button color="inherit" onClick={onCancel}>
+          <Button
+            size="small"
+            variant="outlined"
+            color="inherit"
+            onClick={onCancel}
+          >
             Cancel
           </Button>
           <Button
+            size="small"
             variant="contained"
+            color="primary"
             onClick={runReport}
             // While a new scope or sample size is costed, the shown cost is
             // the previous one: Run waits for the server's figure.
@@ -1059,7 +1082,7 @@ export default function NewReport({
               costing ||
               (fixed ? handedCost.isError : count.isError)
             }
-            startIcon={<Iconify icon="mdi:play" width={16} />}
+            startIcon={<Iconify icon="solar:play-linear" width={16} />}
           >
             Run report
           </Button>

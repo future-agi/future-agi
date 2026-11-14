@@ -139,9 +139,9 @@ function AnswerCell({ record, question, isUser }) {
         >
           <Box component="span" sx={{ display: "inline-flex" }}>
             <Iconify
-              icon="mdi:help-circle-outline"
+              icon="solar:question-circle-linear"
               width={14}
-              sx={{ color: "warning.main" }}
+              sx={{ color: "status.warning.solid" }}
               aria-label="Jev was unsure"
             />
           </Box>
@@ -175,6 +175,7 @@ export default function AskRowsTable({
   total,
   runTotal,
   loading,
+  waiting = false,
   error,
   onRetry,
   hasMore,
@@ -199,7 +200,7 @@ export default function AskRowsTable({
       sx={{
         border: "1px solid",
         borderColor: "divider",
-        borderRadius: 1,
+        borderRadius: "8px",
         bgcolor: "background.paper",
       }}
     >
@@ -209,7 +210,7 @@ export default function AskRowsTable({
         spacing={1}
         sx={{ px: 2, pt: 1.75, pb: 1.25 }}
       >
-        <Typography variant="subtitle2" component="h2" sx={{ fontSize: 15 }}>
+        <Typography variant="m3" component="h2" fontWeight={500}>
           {meta.title}
         </Typography>
         <Typography
@@ -233,7 +234,7 @@ export default function AskRowsTable({
           <Button
             size="small"
             color="inherit"
-            startIcon={<Iconify icon="mdi:download-outline" width={16} />}
+            startIcon={<Iconify icon="solar:download-linear" width={16} />}
             onClick={() => onExport()}
             disabled={!count}
             title={isUser ? "A line per user" : undefined}
@@ -245,7 +246,7 @@ export default function AskRowsTable({
           <Button
             size="small"
             color="inherit"
-            startIcon={<Iconify icon="mdi:download-outline" width={16} />}
+            startIcon={<Iconify icon="solar:download-linear" width={16} />}
             onClick={() => onExport({ sessions: true })}
             disabled={!count}
             title="A line per session read, for these users"
@@ -361,7 +362,7 @@ export default function AskRowsTable({
           role="alert"
           sx={{ px: 2, py: 2.5, display: "flex", alignItems: "center", gap: 1 }}
         >
-          <Typography variant="body2" color="error.main">
+          <Typography variant="body2" color="status.danger.fg">
             These {meta.plural} couldn&apos;t be loaded.
           </Typography>
           {onRetry && (
@@ -375,9 +376,12 @@ export default function AskRowsTable({
         <Typography
           variant="body2"
           color="text.secondary"
+          role={waiting ? "status" : undefined}
           sx={{ px: 2, py: 2.5 }}
         >
-          No {meta.plural} match.
+          {waiting
+            ? `Answers will appear here as Jev reads each ${meta.noun}.`
+            : `No ${meta.plural} match.`}
         </Typography>
       )}
       {hasMore && !full && (
@@ -423,6 +427,8 @@ AskRowsTable.propTypes = {
   total: PropTypes.number,
   runTotal: PropTypes.number,
   loading: PropTypes.bool,
+  // The run hasn't finished: no rows yet means none read so far.
+  waiting: PropTypes.bool,
   error: PropTypes.bool,
   onRetry: PropTypes.func,
   hasMore: PropTypes.bool,

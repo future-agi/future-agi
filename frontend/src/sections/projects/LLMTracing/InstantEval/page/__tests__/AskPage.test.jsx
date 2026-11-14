@@ -16,6 +16,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { palette } from "src/theme/palette";
 import axios, { endpoints } from "src/utils/axios";
 import { askLink, readHandoff } from "src/sections/projects/observeHandoff";
+import { EXAMPLES } from "../askExamples";
 
 const fakes = vi.hoisted(() => ({
   startAskRun: vi.fn(),
@@ -356,7 +357,7 @@ const KEY_MISSING = {
   error_code: "JEV_KEY_MISSING",
   settings_path: "/dashboard/settings/ai-providers",
 };
-const AI_PROVIDERS = "/dashboard/settings/ai-providers";
+const AI_PROVIDERS = "/dashboard/settings/ai-providers?provider=typesafe";
 
 const ESTIMATE = {
   population: 104233,
@@ -601,6 +602,26 @@ function focusRing(element) {
     ),
   );
 }
+
+describe("the example questions", () => {
+  it("stay in place once one is picked, so the Ask button doesn't move", async () => {
+    renderAt(askLink(PROJECT, { unit: "sessions" }));
+    await screen.findByText(/104,233 sessions in the Sessions view/);
+    const [first, second] = EXAMPLES.sessions;
+    fireEvent.click(screen.getByRole("button", { name: first.question }));
+    expect(screen.getByRole("textbox", { name: "Question 1" })).toHaveValue(
+      first.question,
+    );
+    // Still shown: the one asked can't be added twice, the others still can.
+    expect(screen.getByText("Try one")).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: first.question }),
+    ).toHaveAttribute("aria-disabled", "true");
+    expect(
+      screen.getByRole("button", { name: second.question }),
+    ).not.toHaveAttribute("aria-disabled");
+  });
+});
 
 describe("the Ask page", () => {
   it("reads a sample of a big view by default and opens the run", async () => {
@@ -1290,24 +1311,24 @@ describe("the Ask page", () => {
     renderAt(
       `/dashboard/observe/${PROJECT}/ask?run=task-sessions&unit=sessions&tab=sessions`,
     );
-    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    fireEvent.click(screen.getByRole("button", { name: "Stop" }));
     expect(fakes.control).not.toHaveBeenCalled();
     const ask = screen
       .getByText(
-        "Cancel this run? The 8 answers so far are kept; it can't be resumed.",
+        "Stop this run? The 8 answers so far are kept; it can't be resumed.",
       )
       .closest("[role='alert']");
     // Back keeps it running.
     fireEvent.click(within(ask).getByRole("button", { name: "Back" }));
-    expect(screen.queryByText(/Cancel this run\?/)).toBeNull();
+    expect(screen.queryByText(/Stop this run\?/)).toBeNull();
     expect(fakes.control).not.toHaveBeenCalled();
 
-    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    fireEvent.click(screen.getByRole("button", { name: "Stop" }));
     await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: "Cancel run" }));
+      fireEvent.click(screen.getByRole("button", { name: "Stop run" }));
     });
     expect(fakes.control).toHaveBeenCalledExactlyOnceWith("cancel", {});
-    expect(screen.queryByText(/Cancel this run\?/)).toBeNull();
+    expect(screen.queryByText(/Stop this run\?/)).toBeNull();
   });
 
   it("pauses at once, without asking", async () => {
@@ -1324,7 +1345,7 @@ describe("the Ask page", () => {
       fireEvent.click(screen.getByRole("button", { name: "Pause" }));
     });
     expect(fakes.control).toHaveBeenCalledExactlyOnceWith("pause", {});
-    expect(screen.queryByText(/Cancel this run\?/)).toBeNull();
+    expect(screen.queryByText(/Stop this run\?/)).toBeNull();
   });
 
   it("says a pause is draining, and when a run waits for its workers", () => {
@@ -2623,6 +2644,39 @@ describe("a sample size typed in", () => {
   });
 
   describe("on a view too small for the fixed sizes", () => {
+    it("holds the size choices' place while the view is counted", async () => {
+      fakes.estimate.mockImplementation(() => new Promise(() => {}));
+      renderAt(askLink(PROJECT, { unit: "sessions" }));
+      expect(
+        await screen.findByTestId("scope-choices-loading"),
+      ).toBeInTheDocument();
+      expect(
+        screen.queryByRole("radiogroup", { name: "How many to read" }),
+      ).toBeNull();
+    });
+
+    it("offers a sample from inside the every-row card, adding no row", async () => {
+      fakes.estimate.mockImplementation(costed(smallEstimate(42)));
+      renderAt(askLink(PROJECT, { unit: "sessions" }));
+      const all = await screen.findByRole("radio", {
+        name: /Every one of the 42/,
+      });
+      expect(screen.queryByTestId("scope-choices-loading")).toBeNull();
+      // In the card, but outside the radio: its own control, never dimmed
+      // with a choice that can't run.
+      const link = within(all.parentElement).getByRole("button", {
+        name: "Read a sample instead",
+      });
+      expect(all).not.toContainElement(link);
+      fireEvent.click(link);
+      expect(
+        screen.getByRole("spinbutton", { name: "Custom sample size" }),
+      ).toBeInTheDocument();
+      expect(
+        screen.queryByRole("button", { name: "Read a sample instead" }),
+      ).toBeNull();
+    });
+
     it("reads every row by default, or a sample typed in", async () => {
       fakes.estimate.mockImplementation(costed(smallEstimate(108)));
       fakes.startAskRun.mockResolvedValue({

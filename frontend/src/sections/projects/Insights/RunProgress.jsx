@@ -13,6 +13,7 @@ import { keyframes } from "@mui/material/styles";
 import { useQueryClient } from "@tanstack/react-query";
 import ConfirmDialog from "src/components/custom-dialog/confirm-dialog";
 import Iconify from "src/components/iconify";
+import StatusBadge from "src/components/status-badge";
 import { useDeploymentMode } from "src/hooks/useDeploymentMode";
 import { UNITS } from "src/sections/projects/observePopulation";
 import { useCanStartRuns } from "src/sections/projects/runPermission";
@@ -51,26 +52,37 @@ function StageRail({ current }) {
             spacing={0.75}
             sx={{ flex: 1, minWidth: 0 }}
           >
+            {/* Design system progress: accent.solid on the bg.muted track,
+                4px; the stage under way is a lighter step of the accent. */}
             <Box
               sx={{
                 height: 4,
-                borderRadius: 2,
-                bgcolor: done || active ? "primary.main" : "action.hover",
-                opacity: active ? 0.55 : 1,
+                borderRadius: "4px",
+                bgcolor: done
+                  ? "secondary.main"
+                  : active
+                    ? "secondary.light"
+                    : "background.muted",
               }}
             />
             <Stack direction="row" spacing={0.5} alignItems="center">
               {done && (
                 <Iconify
-                  icon="mdi:check"
+                  icon="solar:check-read-linear"
                   width={14}
-                  sx={{ color: "primary.main" }}
+                  sx={{ color: "text.secondary" }}
                 />
               )}
               <Typography
                 variant="caption"
-                fontWeight={active ? 600 : 400}
-                color={done || active ? "text.primary" : "text.secondary"}
+                fontWeight={active ? 500 : 400}
+                color={
+                  active
+                    ? "text.primary"
+                    : done
+                      ? "text.secondary"
+                      : "text.tertiary"
+                }
                 noWrap
               >
                 {stage.label}
@@ -124,8 +136,8 @@ function StopRun({ run }) {
       <Button
         size="small"
         variant="outlined"
-        color="inherit"
-        startIcon={<Iconify icon="mdi:stop" width={16} />}
+        color="error"
+        startIcon={<Iconify icon="solar:stop-circle-linear" width={16} />}
         onClick={() => setOpen(true)}
         disabled={!canRun}
       >
@@ -202,7 +214,7 @@ export default function RunProgress({ run }) {
   const recent = [...(progress.recent || [])].reverse();
 
   return (
-    <Section variant="panel" sx={{ p: 3 }}>
+    <Section variant="panel">
       <Stack spacing={2.5}>
         <Stack
           direction="row"
@@ -210,7 +222,7 @@ export default function RunProgress({ run }) {
           alignItems="baseline"
         >
           <Box>
-            <Typography variant="subtitle1" component="h2">
+            <Typography variant="m3" component="h2" fontWeight={500}>
               {run.status === "pending" ? "Queued" : `${meta.label}…`}
             </Typography>
             <Typography variant="body2" color="text.secondary">
@@ -220,9 +232,11 @@ export default function RunProgress({ run }) {
             </Typography>
           </Box>
           <Stack direction="row" spacing={1.5} alignItems="center">
-            <Typography variant="caption" color="text.secondary">
-              Running for {formatSpan(elapsed)}
-            </Typography>
+            <StatusBadge
+              variant="dot"
+              status={run.status === "pending" ? "queued" : "running"}
+              label={`${run.status === "pending" ? "Queued" : "Running"} for ${formatSpan(elapsed)}`}
+            />
             <StopRun run={run} />
           </Stack>
         </Stack>
@@ -231,15 +245,17 @@ export default function RunProgress({ run }) {
           <LinearProgress
             variant="determinate"
             value={Math.min(100, (done / total) * 100)}
-            sx={{ height: 6, borderRadius: 3 }}
+            color="secondary"
+            sx={{ height: 4, borderRadius: "4px", bgcolor: "background.muted" }}
             aria-label={`${done} of ${total} ${plural}`}
           />
         )}
         {recent.length > 0 && (
           <Box>
             <Typography
-              variant="overline"
+              variant="s3"
               color="text.secondary"
+              fontWeight="fontWeightMedium"
               sx={{ display: "block", mb: 1 }}
             >
               Just read
@@ -257,7 +273,7 @@ export default function RunProgress({ run }) {
                   sx={{
                     pl: 1.5,
                     borderLeft: "2px solid",
-                    borderColor: index === 0 ? "primary.main" : "divider",
+                    borderColor: index === 0 ? "border.selected" : "divider",
                     animation: `${arrive} 300ms ease-out`,
                     opacity: Math.max(0.45, 1 - index * 0.12),
                   }}
@@ -270,7 +286,7 @@ export default function RunProgress({ run }) {
         )}
         <Typography
           variant="caption"
-          color={note.stalled ? "warning.dark" : "text.secondary"}
+          color={note.stalled ? "status.warning.fg" : "text.secondary"}
         >
           {note.text}
         </Typography>

@@ -140,7 +140,7 @@ export function AttributesEditor({ attributes, onChange, disabled, compact }) {
               disabled={disabled}
               sx={{ mt: 0.5 }}
             >
-              <Iconify icon="mdi:close" width={16} />
+              <Iconify icon="solar:close-linear" width={16} />
             </IconButton>
           </Stack>
         );
@@ -149,7 +149,7 @@ export function AttributesEditor({ attributes, onChange, disabled, compact }) {
         <Button
           size="small"
           color="inherit"
-          startIcon={<Iconify icon="mdi:plus" width={14} />}
+          startIcon={<Iconify icon="solar:add-linear" width={14} />}
           onClick={() => onChange([...attributes, emptyAttribute()])}
           disabled={disabled || attributes.length >= MAX_ATTRIBUTES}
         >
@@ -192,7 +192,11 @@ export default function NewReportTune({
           aria-expanded={open}
           startIcon={
             <Iconify
-              icon={open ? "mdi:chevron-down" : "mdi:chevron-right"}
+              icon={
+                open
+                  ? "solar:alt-arrow-down-linear"
+                  : "solar:alt-arrow-right-linear"
+              }
               width={18}
             />
           }

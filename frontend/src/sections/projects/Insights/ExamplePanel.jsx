@@ -11,7 +11,6 @@ import {
   Stack,
   Typography,
 } from "@mui/material";
-import { alpha } from "@mui/material/styles";
 import { useNavigate } from "react-router";
 import Iconify from "src/components/iconify";
 import { UNITS } from "src/sections/projects/observePopulation";
@@ -63,9 +62,10 @@ function metricParts(metrics = {}, unit) {
 function Label({ children }) {
   return (
     <Typography
-      variant="overline"
+      variant="s3"
       color="text.secondary"
       component="h3"
+      fontWeight="fontWeightMedium"
       sx={{ display: "block", mb: 0.5, lineHeight: "18px" }}
     >
       {children}
@@ -95,8 +95,8 @@ function withSpeakers(text, brokeAt) {
           title={broke ? "The turn where it broke" : undefined}
           sx={
             broke
-              ? { color: "error.main", fontSize: 12, fontWeight: 600 }
-              : { color: "text.disabled", fontSize: 12 }
+              ? { color: "status.danger.fg", typography: "s1", fontWeight: 600 }
+              : { color: "text.disabled", typography: "s1" }
           }
         >
           {match[2]}
@@ -155,18 +155,17 @@ function HighlightedContent({ content, evidence, brokeAt }) {
         p: 1.5,
         border: "1px solid",
         borderColor: "divider",
-        borderRadius: 1,
+        borderRadius: "8px",
         bgcolor: "background.neutral",
-        fontSize: 12,
+        typography: "s1_2",
         lineHeight: 1.7,
         whiteSpace: "pre-wrap",
         overflowWrap: "anywhere",
         "& mark": {
           color: "inherit",
-          bgcolor: (theme) => alpha(theme.palette.warning.main, 0.3),
+          bgcolor: "action.selected",
           borderRadius: "3px",
-          boxShadow: (theme) =>
-            `0 0 0 2px ${alpha(theme.palette.warning.main, 0.3)}`,
+          boxShadow: (theme) => `0 0 0 2px ${theme.palette.action.selected}`,
         },
       }}
     >
@@ -219,7 +218,7 @@ function CitedImage({ runId, unitId, item }) {
             maxWidth: "100%",
             border: "1px solid",
             borderColor: "divider",
-            borderRadius: 1,
+            borderRadius: "8px",
             overflow: "hidden",
             bgcolor: "background.neutral",
             cursor: "zoom-in",
@@ -245,7 +244,7 @@ function CitedImage({ runId, unitId, item }) {
             border: "1px dashed",
             borderColor: "divider",
             borderRadius: 1,
-            fontSize: 12,
+            typography: "s1",
             color: "text.secondary",
           }}
         >
@@ -301,7 +300,7 @@ function CitedImage({ runId, unitId, item }) {
           {caption && (
             <Typography
               variant="body2"
-              sx={{ mt: 1, maxWidth: 640, fontSize: 12 }}
+              sx={{ mt: 1, maxWidth: 640, typography: "s1_2" }}
             >
               {caption}
             </Typography>
@@ -386,14 +385,15 @@ export default function ExamplePanel({ open, unitId, onClose }) {
           }}
         >
           <Typography
-            variant="overline"
+            variant="s3"
             color="text.secondary"
+            fontWeight="fontWeightMedium"
             sx={{ flex: 1 }}
           >
             Example {noun}
           </Typography>
           <IconButton aria-label="Close example" onClick={onClose} size="small">
-            <Iconify icon="mdi:close" width={18} />
+            <Iconify icon="solar:close-linear" width={18} />
           </IconButton>
         </Stack>
         <Box sx={{ flex: 1, overflowY: "auto", px: 2.5, py: 2 }}>
@@ -417,13 +417,10 @@ export default function ExamplePanel({ open, unitId, onClose }) {
             <Stack spacing={2.25}>
               <Box>
                 <Typography
-                  variant="subtitle1"
+                  variant="m1"
                   component="h2"
-                  sx={{
-                    fontSize: 16,
-                    lineHeight: 1.4,
-                    wordBreak: "break-word",
-                  }}
+                  fontWeight={600}
+                  sx={{ wordBreak: "break-word" }}
                 >
                   {title}
                 </Typography>
@@ -444,7 +441,7 @@ export default function ExamplePanel({ open, unitId, onClose }) {
                       <React.Fragment key={category.id}>
                         {index > 0 && (
                           <Iconify
-                            icon="mdi:chevron-right"
+                            icon="solar:alt-arrow-right-linear"
                             width={14}
                             sx={{ color: "text.disabled" }}
                           />
@@ -476,10 +473,7 @@ export default function ExamplePanel({ open, unitId, onClose }) {
               </Box>
 
               {data.summary && (
-                <Typography
-                  variant="body2"
-                  sx={{ fontSize: 12, lineHeight: "21px" }}
-                >
+                <Typography variant="body2" sx={{ typography: "s1_2" }}>
                   {data.summary}
                 </Typography>
               )}
@@ -493,7 +487,7 @@ export default function ExamplePanel({ open, unitId, onClose }) {
                   }}
                 >
                   <Label>Answer to the report&apos;s question</Label>
-                  <Typography variant="body2" sx={{ fontSize: 12 }}>
+                  <Typography variant="body2" sx={{ typography: "m3" }}>
                     {data.lens_answer}
                   </Typography>
                 </Box>
@@ -580,9 +574,9 @@ export default function ExamplePanel({ open, unitId, onClose }) {
                       p: 1.5,
                       border: "1px solid",
                       borderColor: "divider",
-                      borderRadius: 1,
+                      borderRadius: "8px",
                       bgcolor: "background.neutral",
-                      fontSize: 12,
+                      typography: "s1_2",
                       lineHeight: 1.7,
                       whiteSpace: "pre-wrap",
                       overflowWrap: "anywhere",
@@ -634,7 +628,10 @@ export default function ExamplePanel({ open, unitId, onClose }) {
             )}
             <Button
               variant="contained"
-              endIcon={<Iconify icon="mdi:arrow-top-right" width={16} />}
+              color="primary"
+              endIcon={
+                <Iconify icon="solar:arrow-right-up-linear" width={16} />
+              }
               onClick={() => navigate(link.href)}
             >
               {link.label}

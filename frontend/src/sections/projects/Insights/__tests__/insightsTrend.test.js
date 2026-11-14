@@ -58,7 +58,7 @@ describe("buildAreaSeries", () => {
     ]);
   });
 
-  it("preserves eight named identities with three hues before folding the tail", () => {
+  it("preserves eight named identities with four hues before folding the tail", () => {
     const many = Array.from({ length: 10 }, (_, i) => ({
       category_id: `c${i}`,
       name: `C${i}`,
@@ -80,8 +80,8 @@ describe("buildAreaSeries", () => {
       "c7",
       OTHER_ID,
     ]);
-    expect(result.series.slice(3, 8).map((entry) => entry.color)).toEqual(
-      Array(5).fill(OTHER_COLOR.light),
+    expect(result.series.slice(4, 8).map((entry) => entry.color)).toEqual(
+      Array(4).fill(OTHER_COLOR.light),
     );
     expect(result.rows[0].counts.c3).toBe(1);
     expect(result.rows[0].counts[OTHER_ID]).toBe(2);

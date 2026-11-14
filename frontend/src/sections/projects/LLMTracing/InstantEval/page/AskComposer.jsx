@@ -9,6 +9,7 @@ import {
   CircularProgress,
   Link,
   MenuItem,
+  Radio,
   Skeleton,
   Stack,
   TextField,
@@ -58,6 +59,9 @@ import { scopeWords } from "./askFormat";
 const asDraft = (entry) => draftsFromQuestions([entry])[0];
 
 const ALL = "all";
+// A size choice's height (padding, title row and its one-line cost), held
+// while the view is counted.
+const CHOICE_CARD_HEIGHT = 64;
 // A sample size typed in rather than picked from the menu.
 const CUSTOM = "custom";
 
@@ -69,20 +73,22 @@ function ChoiceCard({
   note,
   noteIsReason,
   disabled,
+  aside,
   children,
 }) {
   // The note sits outside the radio, at full opacity: it can say why the
   // choice can't run (in full contrast) and hold the way forward (a smaller
-  // sample, billing), which stays usable when the choice is not.
+  // sample, billing), which stays usable when the choice is not. `aside` is
+  // a way forward too, so it sits outside the radio, in the card's corner.
   return (
     <Section
       variant="panel"
       sx={{
+        position: "relative",
         flex: 1,
         minWidth: 240,
         p: 1.5,
-
-        borderColor: selected ? "primary.main" : "divider",
+        borderColor: selected ? "border.selected" : "divider",
       }}
     >
       <Box
@@ -106,35 +112,26 @@ function ChoiceCard({
           opacity: disabled ? 0.55 : 1,
           "&:focus-visible": {
             outline: "2px solid",
-            outlineColor: "primary.main",
+            outlineColor: "border.focus",
             outlineOffset: 4,
           },
         }}
       >
-        <Stack direction="row" spacing={1} alignItems="center">
-          <Box
-            aria-hidden
-            sx={{
-              width: 14,
-              height: 14,
-              borderRadius: "50%",
-              border: "2px solid",
-              borderColor: selected ? "primary.main" : "text.disabled",
-              display: "grid",
-              placeItems: "center",
-              flexShrink: 0,
-            }}
-          >
-            {selected && (
-              <Box
-                sx={{
-                  width: 6,
-                  height: 6,
-                  borderRadius: "50%",
-                  bgcolor: "primary.main",
-                }}
-              />
-            )}
+        <Stack
+          direction="row"
+          spacing={1}
+          alignItems="center"
+          sx={{ pr: aside ? 16 : 0 }}
+        >
+          {/* The card is the radio; the themed box only shows its state. */}
+          <Box aria-hidden sx={{ display: "flex", flexShrink: 0 }}>
+            <Radio
+              checked={selected}
+              disabled={disabled}
+              tabIndex={-1}
+              disableRipple
+              sx={{ p: 0 }}
+            />
           </Box>
           <Typography
             variant="body2"
@@ -150,11 +147,14 @@ function ChoiceCard({
           variant="caption"
           color="text.secondary"
           component="p"
-          sx={{ mt: 0.5, pl: 3, fontVariantNumeric: "tabular-nums" }}
+          sx={{ mt: 0.5, pl: 3.25, fontVariantNumeric: "tabular-nums" }}
         >
           {detail}
         </Typography>
       </Box>
+      {aside && (
+        <Box sx={{ position: "absolute", top: 12, right: 12 }}>{aside}</Box>
+      )}
       {note && (
         <Typography
           variant="caption"
@@ -178,6 +178,8 @@ ChoiceCard.propTypes = {
   // The note says why the choice can't run, not just a hint.
   noteIsReason: PropTypes.bool,
   disabled: PropTypes.bool,
+  // A link beside the choice, kept out of the radio.
+  aside: PropTypes.node,
   children: PropTypes.node,
 };
 
@@ -276,7 +278,7 @@ function SampleSizeBox({ custom, plural }) {
           width: 96,
           "& .MuiInput-input": {
             py: 0,
-            fontSize: 14,
+            typography: "s1",
             fontWeight: 600,
             fontVariantNumeric: "tabular-nums",
           },
@@ -376,15 +378,15 @@ function ScopeCard({
     <Section variant="panel" sx={{ p: 2 }}>
       <Stack direction="row" spacing={1.5} alignItems="flex-start">
         <Iconify
-          icon="mdi:table-eye"
+          icon="solar:eye-scan-linear"
           width={20}
           sx={{ color: "text.secondary", mt: 0.25, flexShrink: 0 }}
         />
         <Box sx={{ flex: 1, minWidth: 0 }}>
           {population.isLoading ? (
-            <Skeleton variant="text" width={300} />
+            <Skeleton variant="text" width={300} height={18} />
           ) : population.isError ? (
-            <Typography variant="body2" color="error.main">
+            <Typography variant="body2" color="status.danger.fg">
               The {meta.plural} in that view couldn&apos;t be counted.{" "}
               <Link
                 component="button"
@@ -459,6 +461,26 @@ function ScopeCard({
           )}
         </Box>
       </Stack>
+      {population.isLoading && !estimate && (
+        // Holds the size choices' place while the view is counted, so the
+        // question box and suggestions below don't jump when they land.
+        <Stack
+          direction={{ xs: "column", sm: "row" }}
+          spacing={1.25}
+          aria-hidden
+          data-testid="scope-choices-loading"
+          sx={{ mt: 1.75 }}
+        >
+          {[0, 1].map((key) => (
+            <Skeleton
+              key={key}
+              variant="rounded"
+              height={CHOICE_CARD_HEIGHT}
+              sx={{ flex: 1, minWidth: 240, borderRadius: "8px" }}
+            />
+          ))}
+        </Stack>
+      )}
       {estimate && count > 0 && (
         <Stack
           direction={{ xs: "column", sm: "row" }}
@@ -525,7 +547,10 @@ function ScopeCard({
                   renderValue: () => "Change",
                   inputProps: { "aria-label": "Sample size" },
                 }}
-                sx={{ minWidth: 64, "& .MuiInput-input": { fontSize: 12 } }}
+                sx={{
+                  minWidth: 64,
+                  "& .MuiInput-input": { typography: "s1" },
+                }}
               >
                 {sizes.map((size) => (
                   <MenuItem key={size} value={size}>
@@ -561,71 +586,73 @@ function ScopeCard({
                 )
               ) : null
             }
-          />
-        </Stack>
-      )}
-      {estimate && count > 1 && custom.small && (
-        <Box sx={{ mt: 1.25, pl: 0.5 }}>
-          {custom.shown ? (
-            <>
-              <Stack
-                direction="row"
-                spacing={1.5}
-                alignItems="center"
-                flexWrap="wrap"
-                useFlexGap
-              >
-                <Typography variant="body2" component="div" fontWeight={600}>
-                  <SampleSizeBox custom={custom} plural={meta.plural} />
-                </Typography>
+            aside={
+              count > 1 && custom.small && !custom.shown ? (
+                // On a view too small for the fixed sizes, the way to a
+                // typed sample sits in the card, so it adds no row once
+                // counted.
                 <Link
                   component="button"
                   type="button"
                   variant="caption"
-                  onClick={custom.onClose}
+                  onClick={custom.onOpen}
                 >
-                  Read every one instead
+                  Read a sample instead
                 </Link>
-              </Stack>
-              <Typography
-                variant="caption"
-                color={custom.problem ? "text.primary" : "text.secondary"}
-                component="p"
-                sx={{ mt: 0.5, fontVariantNumeric: "tabular-nums" }}
-              >
-                {custom.problem ? (
-                  <SizeProblem problem={custom.problem} onUse={custom.onText} />
-                ) : custom.coversAll ? (
-                  `That is every one of the ${count.toLocaleString()}, so Jev reads every one.`
-                ) : sampleCost ? (
-                  `${costLine(sampleCost, unit, custom.estimate)}. Picked at random; the same rows each time.`
-                ) : null}
-              </Typography>
-              {sampled && sampleCost?.creditLimited && (
-                <Typography
-                  variant="caption"
-                  color="text.primary"
-                  component="p"
-                  sx={{ mt: 0.5 }}
-                >
-                  <CreditNote
-                    cost={sampleCost}
-                    estimate={estimate}
-                    unit={unit}
-                    onChoose={(size) => custom.onText(String(size))}
-                  />
-                </Typography>
-              )}
-            </>
-          ) : (
+              ) : null
+            }
+          />
+        </Stack>
+      )}
+      {estimate && count > 1 && custom.small && custom.shown && (
+        <Box sx={{ mt: 1.25, pl: 0.5 }}>
+          <Stack
+            direction="row"
+            spacing={1.5}
+            alignItems="center"
+            flexWrap="wrap"
+            useFlexGap
+          >
+            <Typography variant="body2" component="div" fontWeight={600}>
+              <SampleSizeBox custom={custom} plural={meta.plural} />
+            </Typography>
             <Link
               component="button"
               type="button"
               variant="caption"
-              onClick={custom.onOpen}
+              onClick={custom.onClose}
             >
-              Read a sample instead
+              Read every one instead
             </Link>
+          </Stack>
+          <Typography
+            variant="caption"
+            color={custom.problem ? "text.primary" : "text.secondary"}
+            component="p"
+            sx={{ mt: 0.5, fontVariantNumeric: "tabular-nums" }}
+          >
+            {custom.problem ? (
+              <SizeProblem problem={custom.problem} onUse={custom.onText} />
+            ) : custom.coversAll ? (
+              `That is every one of the ${count.toLocaleString()}, so Jev reads every one.`
+            ) : sampleCost ? (
+              `${costLine(sampleCost, unit, custom.estimate)}. Picked at random; the same rows each time.`
+            ) : null}
+          </Typography>
+          {sampled && sampleCost?.creditLimited && (
+            <Typography
+              variant="caption"
+              color="text.primary"
+              component="p"
+              sx={{ mt: 0.5 }}
+            >
+              <CreditNote
+                cost={sampleCost}
+                estimate={estimate}
+                unit={unit}
+                onChoose={(size) => custom.onText(String(size))}
+              />
+            </Typography>
           )}
         </Box>
       )}
@@ -930,7 +957,14 @@ export default function AskComposer({
     : "";
   const questionWords = `${filled} question${filled === 1 ? "" : "s"}`;
 
-  const showExamples = !questions.some((question) => question.question.trim());
+  // The examples stay put once a question has text, so the Ask button below
+  // doesn't move; one already asked, or with no room left, is disabled.
+  const askedKeys = new Set(
+    questions.map((question) => question.question.trim().toLowerCase()),
+  );
+  const roomForExample =
+    questions.length < MAX_QUESTIONS ||
+    questions.some((question) => !question.question.trim());
   const recent = (saved.items || []).slice(0, 6);
   const nothingInView =
     !population.isLoading &&
@@ -957,7 +991,13 @@ export default function AskComposer({
           severity="info"
           action={
             jev.settingsPath && (
-              <Button size="small" component={RouterLink} to={jev.settingsPath}>
+              <Button
+                size="small"
+                variant="outlined"
+                color="inherit"
+                component={RouterLink}
+                to={jev.settingsPath}
+              >
                 Open AI Providers
               </Button>
             )
@@ -1022,7 +1062,8 @@ export default function AskComposer({
         <Stack direction="row" alignItems="center" spacing={1}>
           <Button
             size="small"
-            startIcon={<Iconify icon="mdi:plus" width={16} />}
+            variant="outlined"
+            startIcon={<Iconify icon="solar:add-linear" width={16} />}
             disabled={questions.length >= MAX_QUESTIONS}
             onClick={() => setQuestions((prev) => [...prev, emptyDraft()])}
           >
@@ -1034,31 +1075,34 @@ export default function AskComposer({
         </Stack>
       </Stack>
 
-      {showExamples && (
-        <Box>
-          <Typography
-            variant="overline"
-            color="text.secondary"
-            component="h2"
-            sx={{ display: "block", mb: 0.75 }}
-          >
-            Try one
-          </Typography>
-          <Stack direction="row" gap={0.75} flexWrap="wrap">
-            {(EXAMPLES[unit] || EXAMPLES.traces).map((example) => (
-              <Chip
-                key={example.question}
-                size="small"
-                variant="outlined"
-                label={example.question}
-                title={example.question}
-                onClick={() => addQuestion(example)}
-                sx={{ maxWidth: "100%" }}
-              />
-            ))}
-          </Stack>
-        </Box>
-      )}
+      <Box>
+        <Typography
+          variant="s3"
+          color="text.secondary"
+          component="h2"
+          fontWeight="fontWeightMedium"
+          sx={{ display: "block", mb: 0.75 }}
+        >
+          Try one
+        </Typography>
+        <Stack direction="row" gap={0.75} flexWrap="wrap">
+          {(EXAMPLES[unit] || EXAMPLES.traces).map((example) => (
+            <Chip
+              key={example.question}
+              size="small"
+              variant="outlined"
+              label={example.question}
+              title={example.question}
+              disabled={
+                askedKeys.has(example.question.trim().toLowerCase()) ||
+                !roomForExample
+              }
+              onClick={() => addQuestion(example)}
+              sx={{ maxWidth: "100%" }}
+            />
+          ))}
+        </Stack>
+      </Box>
 
       <Box sx={{ maxWidth: 432 }}>
         <TextField
@@ -1103,16 +1147,21 @@ export default function AskComposer({
       {confirming && cost && (
         <Alert
           severity="warning"
-          icon={<Iconify icon="mdi:cash-check" width={20} />}
+          icon={<Iconify icon="solar:wallet-money-linear" width={20} />}
           action={
             <Stack direction="row" spacing={1}>
-              <Button size="small" onClick={() => setConfirming(false)}>
+              <Button
+                size="small"
+                variant="outlined"
+                color="inherit"
+                onClick={() => setConfirming(false)}
+              >
                 Back
               </Button>
               <Button
                 size="small"
                 variant="contained"
-                color="warning"
+                color="primary"
                 disabled={starting}
                 onClick={() => ask(true)}
               >
@@ -1131,7 +1180,7 @@ export default function AskComposer({
       {serverConfirm && (
         <Alert
           severity="warning"
-          icon={<Iconify icon="mdi:cash-check" width={20} />}
+          icon={<Iconify icon="solar:wallet-money-linear" width={20} />}
           action={
             <Stack direction="row" spacing={1}>
               <Button size="small" onClick={onServerConfirmCancel}>
@@ -1140,7 +1189,7 @@ export default function AskComposer({
               <Button
                 size="small"
                 variant="contained"
-                color="warning"
+                color="primary"
                 disabled={starting}
                 onClick={onServerConfirm}
               >
@@ -1160,8 +1209,9 @@ export default function AskComposer({
 
       <Box>
         <Button
-          size="large"
+          size="small"
           variant="contained"
+          color="primary"
           disabled={
             !canRun ||
             !jev.available ||
@@ -1178,7 +1228,7 @@ export default function AskComposer({
           sx={{
             "&:focus-visible": {
               outline: "2px solid",
-              outlineColor: "primary.main",
+              outlineColor: "border.focus",
               outlineOffset: 2,
             },
           }}
@@ -1186,7 +1236,7 @@ export default function AskComposer({
             starting ? (
               <CircularProgress size={16} color="inherit" />
             ) : (
-              <Iconify icon="mdi:creation-outline" width={18} />
+              <Iconify icon="solar:magic-stick-3-linear" width={18} />
             )
           }
         >
@@ -1221,9 +1271,10 @@ export default function AskComposer({
       {recent.length > 0 && (
         <Box>
           <Typography
-            variant="overline"
+            variant="s3"
             color="text.secondary"
             component="h2"
+            fontWeight="fontWeightMedium"
             sx={{ display: "block", mb: 0.75 }}
           >
             Recent questions
@@ -1234,7 +1285,7 @@ export default function AskComposer({
                 key={item.configId}
                 size="small"
                 variant="outlined"
-                icon={<Iconify icon="mdi:history" width={14} />}
+                icon={<Iconify icon="solar:history-linear" width={14} />}
                 label={item.question}
                 title={item.question}
                 onClick={() => {
