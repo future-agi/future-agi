@@ -224,6 +224,54 @@ def test_default_limit_is_150000_and_invalid_setting_fails_closed(settings):
         backfill.max_backfill_spans()
 
 
+@pytest.mark.parametrize(
+    ("name", "accessor", "default", "maximum"),
+    [
+        ("METRICS_MAX_DELTAS_BEFORE_COMPACTION", "deltas_before_compaction", 19, 19),
+        ("METRICS_BURST_PASS_SECONDS", "burst_pass_seconds", 20, 300),
+        ("METRICS_BURST_MAX_PAGES", "burst_max_pages", 19, 200),
+        ("METRICS_BURST_PAGE_KEYS", "burst_page_keys", 5_000, 10_000),
+    ],
+)
+def test_compaction_and_burst_settings_load_bounded_from_the_environment(
+    settings, name, accessor, default, maximum
+):
+    from django.core.exceptions import ImproperlyConfigured
+
+    from tfc.settings.runtime_setting_specs import (
+        RUNTIME_NUMERIC_SETTING_SPECS,
+        load_numeric_settings,
+    )
+    from tracer.services.derived_metrics import refresh
+
+    module = refresh if accessor == "deltas_before_compaction" else backfill
+    read = getattr(module, accessor)
+    # The deployment loader and the code agree on the default and the range.
+    assert load_numeric_settings(RUNTIME_NUMERIC_SETTING_SPECS, source={})[name] == (
+        default
+    )
+    assert (
+        load_numeric_settings(
+            RUNTIME_NUMERIC_SETTING_SPECS, source={name: str(maximum)}
+        )[name]
+        == maximum
+    )
+    for invalid in (0, maximum + 1):
+        with pytest.raises(ValueError):
+            load_numeric_settings(
+                RUNTIME_NUMERIC_SETTING_SPECS, source={name: str(invalid)}
+            )
+    if hasattr(settings, name):
+        delattr(settings, name)
+    assert read() == default
+    setattr(settings, name, maximum)
+    assert read() == maximum
+    for invalid in (0, maximum + 1, "19"):
+        setattr(settings, name, invalid)
+        with pytest.raises(ImproperlyConfigured):
+            read()
+
+
 @pytest.mark.django_db
 def test_forward_version_is_served_from_its_first_computing_publication_without_history(
     setup_runner, observe_project, workspace, monkeypatch

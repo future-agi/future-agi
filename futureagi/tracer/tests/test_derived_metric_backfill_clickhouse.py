@@ -1348,8 +1348,6 @@ def retained_values(steps, units=10):
 def test_steady_aging_backfill_activates_and_collects_superseded_draft(
     history_writer, workspace, observe_project
 ):
-    from tracer.services.derived_metrics.refresh import MAX_DELTAS_BEFORE_COMPACTION
-
     writer = history_writer
     runner, old, step = steady_aging(writer, workspace, observe_project)
     draft = make_version(
@@ -1399,7 +1397,7 @@ def test_steady_aging_backfill_activates_and_collects_superseded_draft(
     )
     # Retention checkpoints reset the delta chain every pass; the abandoned draft
     # was still omitted and fenced, by the pending-omission trigger.
-    assert max(item[4] for item in trail) < MAX_DELTAS_BEFORE_COMPACTION
+    assert max(item[4] for item in trail) == 0, trail
     draft.refresh_from_db()
     assert draft.pins_revoked_at is not None and draft.activated_at is None
     assert fields(writer, head, draft) == []

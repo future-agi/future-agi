@@ -17,12 +17,15 @@ from datetime import UTC, datetime
 from time import monotonic
 from uuid import UUID, uuid4
 
+from django.conf import settings
+from django.core.exceptions import ImproperlyConfigured
 from django.db import connection, transaction
 from django.db.models import BigIntegerField, Count, Max, Q, Sum
 from django.db.models.functions import Cast
 
 from tracer.models.derived_metric import (
     LEDGER_CHUNK_MAX_KEYS,
+    MAX_MANIFEST_DELTAS,
     MetricAttemptBatch,
     MetricAttemptLedgerChunk,
     MetricLedgerConflict,
@@ -81,7 +84,31 @@ from tracer.services.derived_metrics.unit_reads import (
 )
 
 MAX_PASS_UNITS = 50_000
-MAX_DELTAS_BEFORE_COMPACTION = 1
+# A head carries at most this many deltas: a pass compacts once it reaches it,
+# before beginning its own attempt, so that attempt publishes at most this many.
+# Every delta publication passes that trigger (retention and erasure publish
+# checkpoints), so 19 keeps one spare under MAX_MANIFEST_DELTAS.
+DEFAULT_DELTAS_BEFORE_COMPACTION = 19
+
+
+def deltas_before_compaction():
+    """Deltas a head may carry before the next pass compacts it.
+
+    Configurable: METRICS_MAX_DELTAS_BEFORE_COMPACTION, 1 to 19.
+    """
+    value = getattr(
+        settings,
+        "METRICS_MAX_DELTAS_BEFORE_COMPACTION",
+        DEFAULT_DELTAS_BEFORE_COMPACTION,
+    )
+    maximum = MAX_MANIFEST_DELTAS - 1
+    if type(value) is not int or not 1 <= value <= maximum:
+        raise ImproperlyConfigured(
+            f"METRICS_MAX_DELTAS_BEFORE_COMPACTION must be an integer from 1 to {maximum}"
+        )
+    return value
+
+
 # Reserve two memberships for the fixed metric/version. Existing physical
 # capture caps remain unchanged; overflowing sets split before any output.
 BUCKET_WINDOWS_PER_FOLD = MAX_KEY_IN_ITEMS - 2
@@ -1372,8 +1399,9 @@ class RefreshWriter:
         head = MetricProjectRefresh.for_project(self.lease.project_id).head_manifest
         if head and head.published_by.source_ceilings.get("recovery_blocked"):
             raise MetricAdmissionUnproven("metric_admission_unproven")
-        if head and len(head.delta_attempt_ids) >= getattr(
-            self, "deltas_before_compaction", MAX_DELTAS_BEFORE_COMPACTION
+        threshold = getattr(self, "deltas_before_compaction", None)
+        if head and len(head.delta_attempt_ids) >= (
+            threshold or deltas_before_compaction()
         ):
             self.compact()
         with serialized_project(self.lease.project_id):

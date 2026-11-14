@@ -800,9 +800,11 @@ def test_expiry_publication_revokes_recent_anchor_pin_and_queued_snapshot_before
             paused.append(manifest)
             # The previous PRIVATE row still exists with its misleading recent
             # anchor, but cannot be delivered or used to complete a queued copy.
+            # It is a delta row or, once a compaction ran, a checkpoint row.
             assert (
                 w.store.execute(
-                    "SELECT count() FROM metric_field_values_checkpoint WHERE unit_id = %(unit)s",
+                    "SELECT (SELECT count() FROM metric_field_values WHERE unit_id = %(unit)s)"
+                    " + (SELECT count() FROM metric_field_values_checkpoint WHERE unit_id = %(unit)s)",
                     {"unit": str(session)},
                 )[0][0]
                 > 0

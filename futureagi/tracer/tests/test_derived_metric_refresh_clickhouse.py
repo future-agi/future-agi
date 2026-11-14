@@ -197,6 +197,78 @@ def test_real_source_refresh_fields_and_user_metrics_have_zero_buckets(
 
 
 @pytest.mark.django_db(transaction=True)
+@pytest.mark.parametrize("configured", [None, 1, 4])
+def test_a_head_compacts_only_once_it_carries_the_configured_deltas(
+    live_writer, workspace, observe_project, settings, configured
+):
+    from tracer.models.derived_metric import MAX_MANIFEST_DELTAS
+    from tracer.services.derived_metrics.refresh import (
+        DEFAULT_DELTAS_BEFORE_COMPACTION,
+    )
+
+    if configured is None:
+        if hasattr(settings, "METRICS_MAX_DELTAS_BEFORE_COMPACTION"):
+            del settings.METRICS_MAX_DELTAS_BEFORE_COMPACTION
+        threshold = DEFAULT_DELTAS_BEFORE_COMPACTION
+    else:
+        settings.METRICS_MAX_DELTAS_BEFORE_COMPACTION = configured
+        threshold = configured
+    writer = live_writer
+    scope = Scope(workspace.organization_id, workspace.id, observe_project.id)
+    definition = definition_for(writer, workspace, observe_project)
+    session, user, trace = uuid4(), uuid4(), uuid4()
+    at = datetime.now(UTC).replace(microsecond=0) - timedelta(hours=2)
+    seed_span(
+        writer.store.client,
+        scope,
+        "span-a",
+        session,
+        user,
+        at,
+        resolved=4,
+        trace_id=trace,
+    )
+    dependency = Dependency(
+        str(trace), "span-a", str(session), str(session), str(user), str(user), at
+    )
+    compactions = []
+    compact = writer.compact
+
+    def counted(*args, **kwargs):
+        compactions.append(
+            len(
+                MetricProjectRefresh.for_project(
+                    observe_project.id
+                ).head_manifest.delta_attempt_ids
+            )
+        )
+        return compact(*args, **kwargs)
+
+    writer.compact = counted
+    chain, expected, carried = [], [], 0
+    for cursor in range(1, threshold + 3):
+        head = writer.refresh(
+            change_for(session, cursor=cursor, dependencies=[dependency]),
+            [definition],
+            scope,
+            start=at - timedelta(days=1),
+            end=at + timedelta(days=1),
+            as_of=at + timedelta(hours=1),
+        )
+        chain.append(len(head.delta_attempt_ids))
+        carried = (0 if carried >= threshold else carried) + 1
+        expected.append(carried)
+        values = current_fields(writer, head)
+        assert len(values) == 1 and values[0][1] == 4
+    # Each pass compacts only once the head holds the threshold, before its own
+    # attempt begins, so no head ever carries more than the threshold.
+    assert chain == expected, chain
+    assert max(chain) == threshold <= MAX_MANIFEST_DELTAS - 1
+    assert compactions == [threshold] * (2 if threshold == 1 else 1), compactions
+    assert head.checkpoint_attempt_id is not None
+
+
+@pytest.mark.django_db(transaction=True)
 @pytest.mark.parametrize(
     "old_start,new_start",
     [

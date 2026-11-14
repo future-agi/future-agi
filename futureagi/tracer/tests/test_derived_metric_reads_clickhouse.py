@@ -524,14 +524,18 @@ def test_sketch_buckets_merge_real_states_and_empty_is_not_zero(
 
 
 @pytest.mark.django_db(transaction=True)
-@pytest.mark.parametrize("days", [1, 7, 30, 90])
+@pytest.mark.parametrize(
+    ("days", "deltas"), [(1, 4), (7, 4), (30, 4), (90, 4), (90, 19)]
+)
 def test_m10_complete_service_budget_with_retired_parts(
-    live_writer, workspace, observe_project, days
+    live_writer, workspace, observe_project, days, deltas
 ):
     """Real PG pins, current PLUS previous, and genuinely dimension-grouped trend.
 
     This is a compacted read-path gate, not the separate 10M source/refresh gate.
     The repeated fixture buckets contain real live+retired sufficient statistics.
+    19 deltas is the most a head carries before its next pass compacts it
+    (METRICS_MAX_DELTAS_BEFORE_COMPACTION's default), under the same budget.
     """
     from tracer.services.derived_metrics.publication import committed_rows_select
     from tracer.services.derived_metrics.retention import expire_project
@@ -643,7 +647,7 @@ def test_m10_complete_service_budget_with_retired_parts(
     source = f"SELECT * FROM ({source}) WHERE group_key = 'region-a'"
     # The original, unencoded fixture group is outside this dimension grid.
     # Tombstone it in the first bounded delta (after collapse it must not count).
-    for index in range(4):
+    for index in range(deltas):
         attempt = writer.begin(versions=[{"id": definition.id, "metric_id": metric.id}])
         replacement = (
             f"SELECT * REPLACE(toUInt8(1) AS is_deleted) FROM ({source})"
@@ -720,7 +724,7 @@ def test_m10_complete_service_budget_with_retired_parts(
                 "days": days,
                 "buckets": size,
                 "dimension_values": 2,
-                "deltas": 4,
+                "deltas": deltas,
                 "retired_parts_verified": True,
                 **measurements,
             }

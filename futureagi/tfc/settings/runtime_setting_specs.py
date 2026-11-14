@@ -806,10 +806,18 @@ INTERACTIVE_READ_SETTING_SPECS = {
 # METRICS_BACKFILL_MAX_SPANS is the largest project (spans in the 90-day
 # history window) that still gets a history backfill for a new metric version;
 # larger projects start with no history and fill forward from enrollment.
+# METRICS_MAX_DELTAS_BEFORE_COMPACTION is how many deltas a project's committed
+# head carries before its next pass compacts it (the chain's limit is 20).
+# METRICS_BURST_* bound one pass of a forward-only burst sweep: its wall budget,
+# its page count and the source keys per page.
 METRICS_FEATURE_SETTING_SPECS = _specs(
     (
         ("METRICS_ENABLED", 0, 0, 1),
         ("METRICS_BACKFILL_MAX_SPANS", 150_000, 1, 10_000_000),
+        ("METRICS_MAX_DELTAS_BEFORE_COMPACTION", 19, 1, 19),
+        ("METRICS_BURST_PASS_SECONDS", 20, 1, 300),
+        ("METRICS_BURST_MAX_PAGES", 19, 1, 200),
+        ("METRICS_BURST_PAGE_KEYS", 5_000, 1, 10_000),
     )
 )
 

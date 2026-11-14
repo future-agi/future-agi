@@ -1984,9 +1984,10 @@ class BackfillRunner:
 
         started = monotonic()
         head = self.run_repair_page(skip_incremental=skip_incremental)
-        # Compact once per pass, not per page: the first page compacts the
-        # previous pass's deltas; later pages publish deltas on top of it
-        # (10M: the checkpoint rewrite grew from 1.4 s to 6.4 s per page).
+        # Compact at most once per pass, not per page: only the first page
+        # uses the configured threshold; later pages publish deltas on top of
+        # it until the chain's own limit (10M: the checkpoint rewrite grew from
+        # 1.4 s to 6.4 s per page).
         previous = getattr(self.writer, "deltas_before_compaction", None)
         self.writer.deltas_before_compaction = MAX_MANIFEST_DELTAS - 1
         try:
