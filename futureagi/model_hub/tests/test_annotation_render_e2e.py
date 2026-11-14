@@ -647,9 +647,9 @@ def test_call_execution_rule_creates_voice_and_chat_items_with_detail_payloads(
     listed_items = _list_results(response.data)
     listed_by_id = {item["id"]: item for item in listed_items}
     assert listed_by_id[str(voice_item.id)]["source_preview"] == voice_preview
-    assert listed_by_id[str(chat_item.id)]["source_preview"]["simulation_call_type"] == (
-        "text"
-    )
+    assert listed_by_id[str(chat_item.id)]["source_preview"][
+        "simulation_call_type"
+    ] == ("text")
 
     detail = _annotate_detail(auth_client, seed["queue"], voice_item)
     content = detail["item"]["source_content"]
@@ -668,7 +668,9 @@ def test_call_execution_rule_creates_voice_and_chat_items_with_detail_payloads(
         "Your order is being prepared now.",
     ]
 
-    chat_response = auth_client.get(f"/simulate/call-executions/{seed['chat_call'].id}/")
+    chat_response = auth_client.get(
+        f"/simulate/call-executions/{seed['chat_call'].id}/"
+    )
     assert chat_response.status_code == status.HTTP_200_OK, chat_response.data
     assert chat_response.data["simulation_call_type"] == "text"
     assert chat_response.data["transcript"][0]["messages"] == ["Do you have fries?"]

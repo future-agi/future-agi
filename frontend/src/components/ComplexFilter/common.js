@@ -9,7 +9,7 @@ import {
   STRUCTURED_SPAN_ATTRIBUTE_ALLOWED_OPS,
 } from "src/api/contracts/filter-contract.generated";
 import { FilterTypeMapper } from "src/utils/constants";
-import { formatISOCustom } from "src/utils/utils";
+import { formatISOCustom } from "src/utils/formatISOCustom";
 import { z } from "zod";
 
 const AllowedOperators = Array.from(

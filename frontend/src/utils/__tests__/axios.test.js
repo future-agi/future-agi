@@ -154,6 +154,62 @@ describe("axios response shape", () => {
     });
   });
 
+  it.each([
+    ["14", 14],
+    ["0", 0],
+    [14, 14],
+    [" 12 ", 12],
+    [undefined, undefined],
+    ["", undefined],
+    ["-1", undefined],
+    ["1.5", undefined],
+    ["1e3", undefined],
+    ["Infinity", undefined],
+    ["9007199254740992", undefined],
+    ["<script>14</script>", undefined],
+    ["Wed, 21 Oct 2026 07:28:00 GMT", undefined],
+    [["14", "15"], undefined],
+  ])(
+    "preserves only validated Retry-After seconds from 429 headers (%s)",
+    async (header, seconds) => {
+      const rejected = axiosInstance.interceptors.response.handlers.find(
+        (handler) => handler.rejected,
+      ).rejected;
+      const error = {
+        config: { url: "/tracer/eval-task/sampling_preview/", method: "post" },
+        response: {
+          status: 429,
+          headers: { "retry-after": header },
+          data: { detail: "Throttled", retryAfterSeconds: "untrusted body" },
+        },
+      };
+      await expect(rejected(error)).rejects.toMatchObject({
+        statusCode: 429,
+        retryAfterSeconds: seconds,
+      });
+    },
+  );
+
+  it("leaves non-throttle error envelopes unchanged even with Retry-After", async () => {
+    const rejected = axiosInstance.interceptors.response.handlers.find(
+      (handler) => handler.rejected,
+    ).rejected;
+    await expect(
+      rejected({
+        config: { url: "/tracer/eval-task/sampling_preview/", method: "post" },
+        response: {
+          status: 503,
+          headers: { "retry-after": "14" },
+          data: { detail: "Unavailable" },
+        },
+      }),
+    ).rejects.toEqual({
+      statusCode: 503,
+      transportCode: undefined,
+      detail: "Unavailable",
+    });
+  });
+
   it("preserves errors raised before a request receives a response", async () => {
     const rejected = axiosInstance.interceptors.response.handlers.find(
       (handler) => handler.rejected,

@@ -255,6 +255,7 @@ export const projectSchema = z.object({
     .min(1, { message: "Project Name cannot be empty" })
     .trim(),
   samplingRate: z.number().min(0).max(100).optional(),
+  samplingContactAttribute: z.string().max(200).optional(),
 });
 
 export const getFilterExtraProperties = (val) => {

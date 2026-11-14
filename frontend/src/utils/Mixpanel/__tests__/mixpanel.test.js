@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { Events } from "../EventNames";
 
 const mocks = vi.hoisted(() => ({
   logger: {
@@ -10,6 +11,7 @@ const mocks = vi.hoisted(() => ({
     init: vi.fn(),
     set_config: vi.fn(),
     stop_session_recording: vi.fn(),
+    track: vi.fn(),
   },
 }));
 
@@ -34,6 +36,7 @@ describe("Mixpanel session replay shutdown", () => {
     mocks.mixpanel.init.mockReset();
     mocks.mixpanel.set_config.mockReset();
     mocks.mixpanel.stop_session_recording.mockReset();
+    mocks.mixpanel.track.mockReset();
     mocks.mixpanel._recorder = {};
   });
 
@@ -43,6 +46,106 @@ describe("Mixpanel session replay shutdown", () => {
       .forEach((script) => script.remove());
     delete window.__FUTURE_AGI_CONFIG__;
     vi.unstubAllEnvs();
+  });
+
+  it.each([
+    "openai",
+    "bedrock",
+    "sagemaker",
+    "azure",
+    "vertex_ai",
+    "custom",
+    "unknown",
+  ])(
+    "sends only provider and operation for custom-model events, whatever the caller passes (%s)",
+    async (provider) => {
+      const { trackEvent } = await loadMixpanel();
+      const marker = "SYNTHETIC_PROVIDER_VALUE_" + provider;
+      const callerProperties = {
+        model_provider: provider,
+        operation: "edit",
+        form_fields: { payload: { config_json: { arbitrary: marker } } },
+        config_json: "{malformed:" + marker,
+        api_key: marker,
+      };
+
+      trackEvent(Events.customModelAdded, callerProperties);
+      expect(mocks.mixpanel.track).toHaveBeenCalledTimes(1);
+      expect(mocks.mixpanel.track.mock.calls[0][0]).toBe(
+        Events.customModelAdded,
+      );
+      const properties = mocks.mixpanel.track.mock.calls[0][1];
+      expect(JSON.stringify(properties)).not.toContain(marker);
+      expect(JSON.stringify(properties)).not.toContain("config_json");
+      expect(properties).toEqual({
+        model_provider: provider === "unknown" ? "other" : provider,
+        operation: "edit",
+      });
+    },
+  );
+
+  it("passes other events' properties through unchanged", async () => {
+    const { trackEvent } = await loadMixpanel();
+    trackEvent("unrelated", { count: 2 });
+    expect(mocks.mixpanel.track).toHaveBeenCalledWith("unrelated", {
+      count: 2,
+    });
+  });
+
+  it("sends events without credential-like keys at any depth and keeps ordinary ones", async () => {
+    const { trackEvent } = await loadMixpanel();
+    const marker = "SYNTHETIC_CREDENTIAL_VALUE";
+    const callerProperties = {
+      id: "agent-1",
+      form_fields: {
+        agent_type: "voice",
+        provider: "vapi",
+        api_key: marker,
+        headers: [{ key: "Authorization", value: marker }],
+        livekit: { livekit_api_secret: marker, livekit_url: "wss://x.test" },
+        steps: [{ name: "first", token: marker }],
+      },
+    };
+
+    trackEvent(Events.createAgentDefClicked, callerProperties);
+
+    expect(mocks.mixpanel.track).toHaveBeenCalledTimes(1);
+    const properties = mocks.mixpanel.track.mock.calls[0][1];
+    expect(JSON.stringify(properties)).not.toContain(marker);
+    expect(properties).toEqual({
+      id: "agent-1",
+      form_fields: {
+        agent_type: "voice",
+        provider: "vapi",
+        livekit: { livekit_url: "wss://x.test" },
+        steps: [{ name: "first" }],
+      },
+    });
+    expect(callerProperties.form_fields.api_key).toBe(marker);
+  });
+
+  it("names client errors on a token link by the route pattern", async () => {
+    const { trackError } = await loadMixpanel();
+    const linkCode = "SYNTHETIC-LINK-CODE-a41f";
+    window.history.replaceState(
+      {},
+      "",
+      `/auth/jwt/invitation/set-password/user-1/${linkCode}`,
+    );
+
+    trackError({ error: "identify failed", api_key: linkCode });
+
+    expect(mocks.mixpanel.track).toHaveBeenCalledWith(
+      "Client Error : /auth/jwt/invitation/set-password/:uuid/:token",
+      {
+        error: "identify failed",
+        // The page address is sent by its route pattern too.
+        $current_url: `${window.location.origin}/auth/jwt/invitation/set-password/:uuid/:token`,
+      },
+    );
+    expect(JSON.stringify(mocks.mixpanel.track.mock.calls)).not.toContain(
+      linkCode,
+    );
   });
 
   it("retries configuration after set_config throws", async () => {

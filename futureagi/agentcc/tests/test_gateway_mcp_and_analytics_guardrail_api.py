@@ -34,9 +34,7 @@ class TestGatewayMCPStatus:
             mcp={},
         )
 
-        response = auth_client.get(
-            f"/agentcc/gateways/{gateway_id}/mcp-status/"
-        )
+        response = auth_client.get(f"/agentcc/gateways/{gateway_id}/mcp-status/")
         assert response.status_code == 200
         assert response.json()["result"]["enabled"] is False
 
@@ -59,9 +57,7 @@ class TestGatewayMCPStatus:
         }
         mock_get_client.return_value = mock_client
 
-        response = auth_client.get(
-            f"/agentcc/gateways/{gateway_id}/mcp-status/"
-        )
+        response = auth_client.get(f"/agentcc/gateways/{gateway_id}/mcp-status/")
         assert response.status_code == 200
         server_ids = {s["id"] for s in response.json()["result"]["servers"]}
         assert server_ids == {"server-a"}
@@ -73,9 +69,7 @@ class TestGatewayMCPTools:
     def test_mcp_tools_empty_when_no_configured_servers(
         self, auth_client, gateway_id, user
     ):
-        response = auth_client.get(
-            f"/agentcc/gateways/{gateway_id}/mcp-tools/"
-        )
+        response = auth_client.get(f"/agentcc/gateways/{gateway_id}/mcp-tools/")
         assert response.status_code == 200
         assert response.json()["result"] == []
 
@@ -91,9 +85,7 @@ class TestGatewayMCPTools:
         ]
         mock_get_client.return_value = mock_client
 
-        response = auth_client.get(
-            f"/agentcc/gateways/{gateway_id}/mcp-tools/"
-        )
+        response = auth_client.get(f"/agentcc/gateways/{gateway_id}/mcp-tools/")
         assert response.status_code == 200
         names = {t["name"] for t in response.json()["result"]}
         assert names == {"tool-1"}
@@ -173,9 +165,7 @@ class TestGatewayMCPUpdates:
 @pytest.mark.api
 class TestGatewayMCPTest:
     @patch("agentcc.views.gateway.get_gateway_client")
-    def test_test_mcp_tool_happy(
-        self, mock_get_client, auth_client, gateway_id, user
-    ):
+    def test_test_mcp_tool_happy(self, mock_get_client, auth_client, gateway_id, user):
         _seed_mcp_config(user, servers={"server-a": {"url": "http://mcp"}})
         mock_client = MagicMock()
         mock_client.mcp_test_tool.return_value = {"ok": True, "result": "hi"}
@@ -189,9 +179,7 @@ class TestGatewayMCPTest:
         assert response.status_code == 200, response.json()
         mock_client.mcp_test_tool.assert_called_once()
 
-    def test_test_mcp_tool_rejects_missing_tool_name(
-        self, auth_client, gateway_id
-    ):
+    def test_test_mcp_tool_rejects_missing_tool_name(self, auth_client, gateway_id):
         response = auth_client.post(
             f"/agentcc/gateways/{gateway_id}/test-mcp-tool/",
             {},
@@ -214,9 +202,7 @@ class TestGatewayMCPReadonly:
         ]
         mock_get_client.return_value = mock_client
 
-        response = auth_client.get(
-            f"/agentcc/gateways/{gateway_id}/mcp-resources/"
-        )
+        response = auth_client.get(f"/agentcc/gateways/{gateway_id}/mcp-resources/")
         assert response.status_code == 200
 
     @patch("agentcc.views.gateway.get_gateway_client")
@@ -230,9 +216,7 @@ class TestGatewayMCPReadonly:
         ]
         mock_get_client.return_value = mock_client
 
-        response = auth_client.get(
-            f"/agentcc/gateways/{gateway_id}/mcp-prompts/"
-        )
+        response = auth_client.get(f"/agentcc/gateways/{gateway_id}/mcp-prompts/")
         assert response.status_code == 200
 
 

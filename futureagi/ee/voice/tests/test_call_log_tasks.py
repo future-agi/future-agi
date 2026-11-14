@@ -186,9 +186,10 @@ class TestIngestCallLogsHelper:
 
 @pytest.mark.django_db
 def test_ingest_call_logs_task_delegates_to_helper(call_execution):
-    with patch(
-        "tfc.temporal.drop_in.decorator.close_old_connections"
-    ), patch("ee.voice.tasks.call_log_tasks.VoiceServiceManager") as MockVSM:
+    with (
+        patch("tfc.temporal.drop_in.decorator.close_old_connections"),
+        patch("ee.voice.tasks.call_log_tasks.VoiceServiceManager") as MockVSM,
+    ):
         MockVSM.return_value.iter_call_logs.return_value = iter([])
         ok = ingest_call_logs_task(
             str(call_execution.id),

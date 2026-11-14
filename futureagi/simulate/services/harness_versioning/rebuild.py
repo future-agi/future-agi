@@ -501,50 +501,64 @@ def _start_runtime(conversation_id: str) -> None:
     schedule_conversation_runtime(conversation_id, _public_base_url(None))
 
 
-def _after_close(environment_id: str, *, dispatched: bool) -> None:
-    """Hand the chat back: its sandbox stops, and it restarts for waiting messages."""
+def hand_back_chat(environment_id: str) -> tuple[str, str, bool] | None:
+    """End the turn the environment's chat is running for a platform message that was
+    withdrawn: its sandbox lease expires, so the sandbox can post nothing more, and the
+    reply it was streaming is closed. The conversation's id, the sandbox's provider ref
+    (blank without one) and whether other messages wait for a new sandbox; None without a
+    conversation. The caller stops the sandbox and starts one for the waiting messages."""
     from simulate.services.hosted_harness_conversation import (
         _ACTIVE_CONVERSATION_STATES,
         _unacked_commands,
         settle_interrupted_turn,
     )
+
+    with transaction.atomic():
+        conversation = (
+            HostedHarnessConversation.no_workspace_objects.select_for_update()
+            .filter(job_id=environment_id)
+            .first()
+        )
+        if conversation is None:
+            return None
+        ref = _expire_chat_lease(conversation)
+        waiting = _unacked_commands(conversation).exists()
+        if conversation.state in _ACTIVE_CONVERSATION_STATES:
+            # The withdrawn message's turn (or its sandbox's start) is over.
+            settle_interrupted_turn(conversation)
+            conversation.state = (
+                HostedHarnessConversation.State.STARTING
+                if waiting
+                else HostedHarnessConversation.State.COLD
+            )
+            conversation.active_invocation_id = None
+            conversation.save(
+                update_fields=["state", "active_invocation_id", "updated_at"]
+            )
+    return str(conversation.id), ref, waiting
+
+
+def _after_close(environment_id: str, *, dispatched: bool) -> None:
+    """Hand the chat back: its sandbox stops, and it restarts for waiting messages."""
     from simulate.tasks import harness_nudges as tasks
 
     try:
         if dispatched:
-            with transaction.atomic():
-                conversation = (
-                    HostedHarnessConversation.no_workspace_objects.select_for_update()
-                    .filter(job_id=environment_id)
-                    .first()
-                )
-                if conversation is None:
-                    return
-                ref = _expire_chat_lease(conversation)
-                waiting = _unacked_commands(conversation).exists()
-                if conversation.state in _ACTIVE_CONVERSATION_STATES:
-                    # The rebuild's turn (or its sandbox's start) is over.
-                    settle_interrupted_turn(conversation)
-                    conversation.state = (
-                        HostedHarnessConversation.State.STARTING
-                        if waiting
-                        else HostedHarnessConversation.State.COLD
-                    )
-                    conversation.active_invocation_id = None
-                    conversation.save(
-                        update_fields=["state", "active_invocation_id", "updated_at"]
-                    )
+            handed = hand_back_chat(environment_id)
+            if handed is None:
+                return
+            conversation_id, ref, waiting = handed
             if ref:
-                tasks.schedule_sandbox_stop(str(conversation.id), ref)
+                tasks.schedule_sandbox_stop(conversation_id, ref)
             if nudges._head(environment_id) is None:
                 return
             if waiting:
                 try:
-                    _start_runtime(str(conversation.id))
+                    _start_runtime(conversation_id)
                 except Exception:  # noqa: BLE001 - the recovery sweep starts it
                     logger.exception(
                         "harness_nudge_runtime_schedule_failed conversation=%s",
-                        conversation.id,
+                        conversation_id,
                     )
         if nudges._head(environment_id) is not None:
             tasks.schedule_nudge_check_task(environment_id)
@@ -1426,7 +1440,9 @@ def _report(
         secret_texts,
         [
             len(text) >= cap + CREDENTIAL_VALUE_MAX_CHARS
-            for text, (_part, _at, _text, cap) in zip(secret_texts, secret_parts)
+            for text, (_part, _at, _text, cap) in zip(
+                secret_texts, secret_parts, strict=False
+            )
         ],
     )
     report: dict[str, Any] = {

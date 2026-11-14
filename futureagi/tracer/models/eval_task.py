@@ -63,6 +63,7 @@ class EvalTask(BaseModel):
     name = models.CharField(max_length=255, blank=True, null=True)
     filters = models.JSONField(default=dict, blank=True, null=True)
     sampling_rate = models.FloatField(default=100.0, blank=True, null=True)
+    sampling_policy = models.JSONField(default=None, blank=True, null=True)
     last_run = models.DateTimeField(blank=True, null=True)
     spans_limit = models.IntegerField(default=1000, blank=True, null=True)
     run_type = models.CharField(
@@ -82,9 +83,7 @@ class EvalTask(BaseModel):
     # Eval-config revision (see ``reconciler._evals_revision``) that the last
     # cursor-less full reclassification pass covered. A continuous task runs one
     # full pass per revision; while this matches, every poll is a cheap delta.
-    reclassified_evals_revision = models.CharField(
-        max_length=64, blank=True, null=True
-    )
+    reclassified_evals_revision = models.CharField(max_length=64, blank=True, null=True)
     evals_details = models.JSONField(default=list, blank=True, null=True)
     evals = models.ManyToManyField(
         CustomEvalConfig, related_name="eval_tasks", blank=True, null=True

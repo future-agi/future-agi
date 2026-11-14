@@ -7,6 +7,7 @@ from django.utils import timezone
 from temporalio.common import WorkflowIDConflictPolicy
 
 from accounts.models.demo_seed import DemoSeedRequest, DemoTracePublication
+from tfc.routers import force_primary
 
 logger = structlog.get_logger(__name__)
 
@@ -45,7 +46,10 @@ def publish_pending_demo_trace(trace_id):
 
     if not dual_write_enabled():
         return  # Keep the intent if an operator temporarily disables CH writes.
-    with transaction.atomic():
+    # Primary: the trace and its spans were seeded moments ago, so a lagging
+    # replica may lack some or all of them, and a publication that read them
+    # there would publish a partial trace and still mark itself done.
+    with force_primary(), transaction.atomic():
         pending = (
             DemoTracePublication.objects.select_for_update()
             .filter(trace_id=trace_id, completed_at__isnull=True)

@@ -403,6 +403,7 @@ export default function AgentVoiceForm() {
           <FormTextFieldV2
             control={control}
             fieldName="apiKey"
+            fieldType="password"
             label="Provider API Key"
             placeholder="Enter your provider’s API key to authenticate the agent"
             required={observabilityEnabled || keysRequired}
@@ -526,6 +527,7 @@ export default function AgentVoiceForm() {
           <FormTextFieldV2
             control={control}
             fieldName="livekitApiKey"
+            type="password"
             placeholder="APIxxxxxxxxxxxxxxxx"
             label="LiveKit API Key"
             required

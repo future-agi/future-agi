@@ -151,8 +151,10 @@ class AgentccProviderCredentialViewSet(BaseModelViewSetMixinWithUserOrg, ModelVi
         return self.partial_update(request, *args, **kwargs)
 
     def partial_update(self, request, *args, **kwargs):
+        # Let DRF retain the 404 for missing or out-of-organization objects.
+        # The mutation error handler below must not turn it into a 400.
+        instance = self.get_object()
         try:
-            instance = self.get_object()
             serializer = AgentccProviderCredentialUpdateSerializer(
                 instance, data=request.data
             )

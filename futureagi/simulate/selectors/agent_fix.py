@@ -1286,6 +1286,9 @@ def variations_blocker(source_run: HostedHarnessJob) -> HostedHarnessError | Non
             "The environment isn't ready; variations can't be written now",
             status_code=409,
         )
+    moved = variations_source_moved(environment, source_run)
+    if moved is not None:
+        return moved
     if HostedHarnessConversation.no_workspace_objects.filter(
         job=environment, state=HostedHarnessConversation.State.RETIRED
     ).exists():
@@ -1307,6 +1310,26 @@ def variations_blocker(source_run: HostedHarnessJob) -> HostedHarnessError | Non
             status_code=409,
         )
     return None
+
+
+def variations_source_moved(
+    environment: HostedHarnessJob, source_run: HostedHarnessJob
+) -> HostedHarnessError | None:
+    """Why variations can't be written from this run now, if its environment's scenarios
+    or setup moved since it ran: the builder writes them from the environment as it is,
+    and the fix's suite holds the run's cases as they ran, so both must be one basis."""
+    if (environment.suite_version_id, environment.environment_version_id) == (
+        source_run.suite_version_id,
+        source_run.environment_version_id,
+    ):
+        return None
+    return HostedHarnessError(
+        "fix_variations_source_moved",
+        "The environment's scenarios or setup changed since this run. Run the"
+        " environment again and start the epoch from that run: its variations are"
+        " written from the cases as they ran.",
+        status_code=409,
+    )
 
 
 def _kind_or_none(environment: HostedHarnessJob) -> AgentKind | None:

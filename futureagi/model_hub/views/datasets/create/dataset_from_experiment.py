@@ -71,7 +71,9 @@ def _request_experiment_dataset_queryset(request):
     fk_scope = Q(experiment__dataset__organization=organization) & (
         _request_workspace_filter(request, field_name="experiment__dataset__workspace")
     )
-    legacy_scope = Q(experiments_datasets_created__dataset__organization=organization) & (
+    legacy_scope = Q(
+        experiments_datasets_created__dataset__organization=organization
+    ) & (
         _request_workspace_filter(
             request, field_name="experiments_datasets_created__dataset__workspace"
         )

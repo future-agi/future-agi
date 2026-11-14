@@ -165,6 +165,7 @@ class TestTransformGuardrailsProviderDefaults:
                 },
             },
             "fail_open": False,
+            "pipeline_mode": "parallel",
         }
         assert guardrails_data == original
         assert _transform_guardrails(result) == result

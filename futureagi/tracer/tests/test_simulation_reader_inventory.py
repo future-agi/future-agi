@@ -865,15 +865,25 @@ _FILED_BY_MODULE: dict[str, dict[str, Filing]] = {
     "model_hub.selectors.eval_usage": {
         "_latest_usage_slice": filed(
             NO_SPAN_TABLE,
-            ROW_DRIVEN,
+            PROJECT_SET,
             why=(
-                "the eval usage page reads the API call log through the project scope "
-                "of each run's trace, for the projects of the eval configs of the "
-                "template (a join through the config's project, which uses no "
-                "manager)"
+                "the eval usage page reads the API call log and lists a run's trace "
+                "log by the project the log recorded; an older log, which recorded "
+                "none, by the projects holding a config of the template. Both stay "
+                "within the project ids its view passes in (the caller's readable "
+                "projects, from the project manager in readable_source_projects)"
             ),
             table="usage_apicalllog",
-            row="tracer.CustomEvalConfig",
+        ),
+    },
+    "model_hub.utils.optimization_feedback": {
+        "_FEEDBACK_VECTOR_IDS_QUERY": filed(
+            NO_SPAN_TABLE,
+            why=(
+                "looks up the feedback vector ids of an explicit set of feedback "
+                "rows, for one eval, before a similarity search limited to them"
+            ),
+            table="feedbacks",
         ),
     },
     "model_hub.utils.clickhouse": {
@@ -1349,6 +1359,34 @@ _FILED_BY_MODULE: dict[str, dict[str, Filing]] = {
                 "scoped by the list view's project ids; shared by filtering and hydration"
             ),
         ),
+        "SessionListQueryBuilder._member_trace_usage_select": filed(
+            PROJECT_SET,
+            why=(
+                "per-trace usage reducer over the latest live member rows a caller "
+                "supplies (the list's physical replay or the sampling snapshot); "
+                "adds no read, and groups every row by its project"
+            ),
+        ),
+        "SessionListQueryBuilder._session_usage_rollup_select": filed(
+            PROJECT_SET,
+            why=(
+                "session roll-up over per-trace usage rows a caller supplies; "
+                "adds no read, and groups every row by its project"
+            ),
+        ),
+        "SessionListQueryBuilder._snapshot_session_usage_select": filed(
+            PROJECT_SET,
+            ROW_DRIVEN,
+            why=(
+                "child-aware session usage over the sampling snapshot; only "
+                "SamplingQuery._source reaches it, through the session builder it "
+                "creates for the previewed or stored EvalTask's project. Task "
+                "creation resolves Project.objects, which excludes hidden projects, "
+                "and simulation creates no EvalTask. The read is fenced by the "
+                "builder's project_where like every list read"
+            ),
+            row="tracer.EvalTask",
+        ),
         "SessionListQueryBuilder.build_filter_anchor_probe": _SESSION_OR_USER,
         "SessionListQueryBuilder.build_filter_seed_page": _SESSION_OR_USER,
         "SessionListQueryBuilder.build_page_hydration_query": _SESSION_OR_USER,
@@ -1550,6 +1588,7 @@ _FILED_BY_MODULE: dict[str, dict[str, Filing]] = {
     "tracer.services.clickhouse.trace_project_scope": {
         "latest_live_project_traces_sql": _TRACE_PROJECT_SCOPE,
         "latest_live_trace_projects_sql": _TRACE_PROJECT_SCOPE,
+        "live_trace_project_sets_sql": _TRACE_PROJECT_SCOPE,
     },
     "tracer.services.clickhouse.v2.backfill": {
         "_process_window": filed(
@@ -1868,6 +1907,43 @@ _FILED_BY_MODULE: dict[str, dict[str, Filing]] = {
         "_backfill_status": _EVAL_LOG_BACKFILL,
         "backfill_blank_completed_status": _EVAL_LOG_BACKFILL,
     },
+    "tracer.services.eval_tasks.sampling.query": {
+        "SamplingQuery._source": filed(
+            PROJECT_SET,
+            ROW_DRIVEN,
+            CHILDREN_SPAN_EVAL_TASKS,
+            why=(
+                "shared sampling source: preview builds an unsaved EvalTask from "
+                "Project.objects through the scoped project queryset; reconciliation, "
+                "pending proofs and frozen audit populations use the stored EvalTask's "
+                "project. Task creation resolves Project.objects, which excludes "
+                "hidden projects, and simulation creates no EvalTask. The audit also "
+                "rechecks the visible project manager before reading. Span tasks "
+                "include children; query parameters always bind that task's project"
+            ),
+            row="tracer.EvalTask",
+        ),
+        "live_scan_windows": filed(
+            ROW_DRIVEN,
+            why=(
+                "arrival-day discovery called only by reconcile_policy for the "
+                "stored EvalTask's project; simulation never creates that task row"
+            ),
+            row="tracer.EvalTask",
+        ),
+    },
+    "tracer.services.eval_tasks.sampling.unit_scope": {
+        "physical_unit_scope": filed(
+            ROW_DRIVEN,
+            why=(
+                "member expansion and first-admission proof fragments of "
+                "SamplingQuery._source, used only with persisted cohort members or "
+                "live candidates of an EvalTask. The caller binds sp_project from "
+                "that task, never from a unit id; simulation makes no EvalTask"
+            ),
+            row="tracer.EvalTask",
+        ),
+    },
     "tracer.services.grouping.feature_store": {
         "GroupingFeatureStore.read_vectors": _GROUPING_STORE,
         "GroupingFeatureStore.write_and_verify": _GROUPING_STORE,
@@ -2050,11 +2126,16 @@ _RUN_USAGE_CALLERS = frozenset(
 # The entry points that hand those readers their project ids, pinned the same
 # way so that a new route to a builder fails here too.
 ENTRY_POINTS = {
+    # Evaluation Logs source navigation reads one project from
+    # tracer.views.trace._project_queryset_for_request, a manager that leaves
+    # out simulation projects, and takes no run scope, so it never opens a
+    # hidden project.
     "read_trace_detail": (
         None,
         frozenset(
             {
                 _DETAIL_FILE,
+                "model_hub/services/eval_log_source_navigation.py",
                 "tracer/services/clickhouse/v2/query_builders/trace_detail.py",
                 "tracer/views/trace.py",
             }

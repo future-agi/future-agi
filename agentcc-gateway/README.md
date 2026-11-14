@@ -17,7 +17,7 @@ Route · cache · govern · guard · observe. Single Go binary. Drop-in OpenAI A
 
 <p>
   <a href="https://github.com/future-agi/future-agi/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-Apache%202.0-blue?style=flat-square" alt="Apache 2.0"></a>
-  <a href="../../LICENSE"><img src="https://img.shields.io/badge/built%20with-Go%201.23-00ADD8?style=flat-square&logo=go" alt="Go 1.23"></a>
+  <a href="../LICENSE"><img src="https://img.shields.io/badge/built%20with-Go%201.25-00ADD8?style=flat-square&logo=go" alt="Go 1.25"></a>
   <a href="https://docs.futureagi.com/docs/prism"><img src="https://img.shields.io/badge/docs-docs.futureagi.com-fafafa?style=flat-square" alt="Docs"></a>
   <a href="https://discord.com/invite/n2tCUKBkAw"><img src="https://img.shields.io/badge/community-Discord-5865F2?style=flat-square" alt="Discord"></a>
 </p>
@@ -276,14 +276,26 @@ curl http://localhost:8080/v1/chat/completions \
   }'
 ```
 
-<details><summary><b>Run from source (Go 1.23+)</b></summary>
+<details><summary><b>Run from source (Go 1.25+)</b></summary>
 
 ```bash
 git clone https://github.com/future-agi/future-agi.git
 cd future-agi/agentcc-gateway
 cp config.example.yaml config.yaml
-go run ./cmd/server
+# Set OPENAI_API_KEY in your environment, or configure another provider in config.yaml.
+go run ./cmd/agentcc --config config.yaml
 ```
+
+The `--config` flag explicitly loads the file you just copied. Alternatively,
+set `AGENTCC_CONFIG_FILE` to its path. The example binds to `0.0.0.0:8080`
+(all network interfaces); for a local-only server, set `server.host` to
+`127.0.0.1` in `config.yaml` before starting it. Once it starts, check it with:
+
+```bash
+curl --fail http://localhost:8080/healthz
+```
+
+This health check does not call a model provider.
 
 </details>
 
@@ -469,7 +481,7 @@ Every modality below has dedicated routes in the gateway. The **specific models*
 | Image generation | `/v1/images/generations` |
 | Speech-to-text | `/v1/audio/transcriptions` · `/v1/audio/translations` · streaming: `/deepgram/v1/listen` · `/cartesia/stt/websocket` |
 | Text-to-speech (+ streaming) | `/v1/audio/speech` · `/v1/audio/speech/stream` · streaming: `/deepgram/v1/speak` · `/cartesia/tts/websocket` |
-| Realtime voice + text (WebSocket) | `/v1/realtime` |
+| Generic realtime (not supported) | `/v1/realtime` returns 501; use a vendor speech route |
 | [Video generation](#-video-generation) | `/v1/videos` · `/v1/videos/{id}` · `/v1/videos/{id}/content` · `/v1/videos/{id}/cancel` |
 | Embeddings | `/v1/embeddings` |
 | Reranking | `/v1/rerank` |
@@ -481,6 +493,69 @@ Every modality below has dedicated routes in the gateway. The **specific models*
 | Assistants + threads | `/v1/assistants` · `/v1/threads` · `/v1/threads/{id}/{messages,runs,runs/{id}/steps}` |
 | Vector stores (RAG) | `/v1/vector_stores` · `/v1/vector_stores/{id}/{files,file_batches,search}` |
 | Batch (async) | `/-/batches` |
+
+### Streaming speech guardrail contract
+
+Speech routes authenticate server-side SDK clients; browser origins remain refused.
+Each session binds the authenticated organization's managed checks and static rules,
+then applies the key policy and authorized `X-Guardrail-Policy` override using the
+same precedence as chat. Reconnect after a policy change. Configured blocking checks
+must be available before the session connects to the vendor. Missing evaluation credentials,
+missing/duplicate evaluation IDs and an invalid webhook URL return HTTP 503 with
+error type `guardrail_error` and code `guardrail_unavailable` before vendor dial:
+these are unavailable supported checkers, not unsupported speech directions.
+External-provider adapters are unsupported for blocking speech checks until they
+implement the realtime verdict contract.
+Malformed or missing expressions and validation patterns that cannot compile are
+also unsupported for blocking speech checks: admission returns HTTP 403
+`realtime_guardrail_unsupported`, with no vendor dial. Legacy HTTP checker behavior
+is unchanged by these realtime readiness checks.
+
+| Protocol | Inspectable direction and boundary |
+|---|---|
+| Deepgram `/v1/speak` | Pre-stage: buffer `Speak.text` messages until `Flush`; `Clear`/`Close` discard pending text |
+| Cartesia `/tts/websocket` | Pre-stage: accumulate `transcript` per `context_id` until `continue` is false (or omitted); checks see `request.model` as `cartesia/<model_id>` for each model the context's requests name (a request without `model_id` uses the last one named on the connection); a `cancel` without `transcript` discards only that context's pending text and is forwarded |
+| Deepgram `/v1/listen` | Post-stage: suppress interim hypotheses; accumulate final alternatives per channel until `speech_final` or canonical `UtteranceEnd.channel` |
+| Cartesia `/stt/websocket` | Post-stage: suppress interim hypotheses; inspect the complete `is_final` transcript |
+
+A blocking pre-stage check on transcription cannot inspect the incoming audio. A
+blocking post-stage check on synthesis cannot inspect the outgoing audio. These
+sessions, and Cartesia `/stt/turns/websocket` with a blocking post-stage check, return
+HTTP 403 with code `realtime_guardrail_unsupported` before any vendor connection.
+`/v1/realtime` remains unsupported and returns 501 `realtime_not_supported`; use a
+documented vendor speech route.
+
+Supported text units are checked synchronously before any held frame is released.
+Pre-stage checks see the text as a request message; post-stage checks see it once,
+as the response, with the model on the request. Checks that read only request
+messages (topic restriction, instruction-override detection, language detection and
+system prompt protection) see post-stage text as a request message.
+Execution failure is separate from the score: a checker HTTP error, malformed or
+missing verdict, incomplete evaluation results or invalid score cannot approve
+speech, even with a threshold of 1. A genuine scored decision still follows the
+configured threshold. Webhook verdicts require one exact boolean `pass` key and an
+optional finite numeric `score` in [0,1]. Duplicate keys, case aliases and oversized
+envelopes are unavailable verdicts, not approvals.
+A blocking content decision closes with WebSocket 1008 and reason
+`realtime_guardrail_blocked`. Checker execution failures (including timeouts, panics,
+missing results and unapplied wire rewrites) close with 1008 and reason
+`guardrail_unavailable`, never a content-denial classification. An already-upgraded
+connection cannot return an HTTP 503; both connections terminate without releasing
+unchecked content. Realtime
+blocking checks fail closed even when ordinary chat is configured fail-open or the
+rule is marked asynchronous. Warning/log decisions do not block approved protocol
+units. Audio-only warning/log checks are not evaluated.
+
+Pending text plus frames are limited to 1 MiB and 1024 frames per session across all
+contexts. Exceeding either bound, malformed protected content, an unsupported event
+shape, or a changing alternative count closes with 1008
+`realtime_guardrail_unsupported`. Duplicate JSON keys and case aliases of protected
+protocol keys are rejected before checking or forwarding the original bytes.
+Deepgram final alternatives are checked both individually and as word-separated
+utterances; cross-segment concatenation checks are retained too. Incomplete units are discarded on disconnect,
+never flushed unchecked. These boundaries add latency: incremental transcripts and
+unapproved synthesis text are not streamed through. Checks are per completed unit,
+not across separate utterances/contexts, and do not claim to classify raw audio.
 
 ### 🎬 Video generation
 
@@ -653,7 +728,7 @@ Migration and release commit footer: [migration notes](docs/video-generation/mig
 <tr>
 <td><b>Realtime (WebSocket)</b></td>
 <td><code>GET /v1/realtime</code></td>
-<td>OpenAI Realtime voice + text · WebSocket passthrough with per-frame plugins</td>
+<td>Not supported: returns 501 <code>realtime_not_supported</code> without dispatch</td>
 </tr>
 <tr>
 <td><b>Streaming speech (WebSocket)</b></td>
@@ -1242,7 +1317,7 @@ bin/loadtest -c 10 -n 50 -models gpt-4o-mini
 
 ## 🤝 Contributing
 
-Agent Command Center is part of the [Future AGI monorepo](../../README.md). See the top-level [CONTRIBUTING.md](../../CONTRIBUTING.md) for setup, CLA, and PR conventions. Gateway-specific tips in [`cmd/server/README.md`](./cmd/server).
+Agent Command Center is part of the [Future AGI monorepo](../README.md). See the top-level [CONTRIBUTING.md](../CONTRIBUTING.md) for setup, CLA, and PR conventions. The gateway entrypoint is [`cmd/agentcc/main.go`](./cmd/agentcc/main.go).
 
 ---
 
