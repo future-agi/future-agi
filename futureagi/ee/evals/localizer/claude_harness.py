@@ -27,6 +27,7 @@ from model_hub.services.localization_errors import (
     LocalizationFailure,
     LocalizationFailureCode,
 )
+from tfc.utils.media_tools import MediaToolUnavailable
 
 if TYPE_CHECKING:
     from claude_agent_sdk import ResultMessage
@@ -122,6 +123,10 @@ def _text(value: Any) -> dict:
 
 class LocalizationCase:
     """Owns immutable source locations and the record of inspected evidence."""
+
+    # Set when a tool needed ffmpeg and the image has none; reported instead
+    # of "missing findings" if the agent cannot finish without it.
+    media_tool_error: MediaToolUnavailable | None = None
 
     def __init__(self, localizer: ErrorLocalizer, media: MediaRegistry):
         self.localizer = localizer
@@ -372,6 +377,11 @@ class LocalizationCase:
             async def guarded(args):
                 try:
                     return await handler(args)
+                except MediaToolUnavailable as exc:
+                    # Names a missing binary and the image to use, never case
+                    # contents, so the agent may see it.
+                    self.media_tool_error = exc
+                    return {"is_error": True, "content": [_text({"error": str(exc)})]}
                 except (ValueError, KeyError, TypeError, ValidationError):
                     # Validation errors may contain input/media values. Keep the
                     # feedback bounded and never echo arbitrary case contents.
@@ -496,6 +506,8 @@ class ClaudeAgentLocalizer(ErrorLocalizer):
                         if failure_code is not None:
                             raise LocalizationFailure(failure_code)
                         if case.result is None:
+                            if case.media_tool_error is not None:
+                                raise case.media_tool_error
                             raise LocalizationFailure(
                                 LocalizationFailureCode.MISSING_FINDINGS
                             )
