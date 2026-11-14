@@ -7,6 +7,7 @@ restart — live in ``tracer.services.eval_tasks.recovery``.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from datetime import timedelta
 
 from django.conf import settings
@@ -41,7 +42,12 @@ def sweepable_statuses() -> list[str]:
 
 
 def find_stranded_tasks(
-    *, limit: int | None = None, idle_after: str | None = None, idle_first: bool = False
+    *,
+    limit: int | None = None,
+    idle_after: str | None = None,
+    idle_first: bool = False,
+    held_ids: Iterable[str] = (),
+    held_failed_ids: Iterable[str] = (),
 ) -> list[EvalTask]:
     """Bounded liveness checks for backlog and idle continuous tasks.
 
@@ -69,11 +75,23 @@ def find_stranded_tasks(
     never also idle), its lifecycle is rechecked here and again under a row
     lock in ``recover_task``, and a restart coalesces onto any live execution
     rather than replacing it.
+
+    ``held_ids`` are tasks Temporal reported live within the hold window, and
+    ``held_failed_ids`` failed tasks the sweep already restarted as often as it
+    may; both are left out before the cap is applied, so a task the describe
+    would skip, or a failure that repeats deterministically, never takes a
+    slot from one that needs recovery. ``held_failed_ids`` applies only while
+    the task is still FAILED.
     """
     limit = limit if limit is not None else int(settings.EVAL_TASK_SWEEP_MAX_TASKS)
     if limit <= 0:
         return []
-    tasks = EvalTask.no_workspace_objects.filter(status__in=sweepable_statuses())
+    tasks = EvalTask.no_workspace_objects.filter(
+        status__in=sweepable_statuses()
+    ).exclude(id__in=list(held_ids))
+    held_failed_ids = list(held_failed_ids)
+    if held_failed_ids:
+        tasks = tasks.exclude(status=EvalTaskStatus.FAILED, id__in=held_failed_ids)
     # EvalLogger's task id is text, not a FK. Never cast arbitrary logger ids
     # to UUID: legacy rows can contain blank or invalid ids.
     sweepable_task_ids = (

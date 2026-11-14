@@ -335,6 +335,64 @@ class TestStaleContinuousCursor:
 
         assert found == ([str(task.id)] if candidate else [])
 
+    def test_a_running_task_without_a_cursor_is_checked(self, make_task):
+        """No reconcile has parked a cursor yet: nothing shows it polled."""
+        task = make_task(run_type=RunType.CONTINUOUS)
+        EvalTask.objects.filter(id=task.id).update(
+            created_at=timezone.now() - timedelta(days=2)
+        )
+
+        assert [str(t.id) for t in sweeper.find_stranded_tasks()] == [str(task.id)]
+
+    def test_a_live_task_does_not_take_the_slot_again_within_the_hold(
+        self, make_task, make_entry, temporal, settings, monkeypatch
+    ):
+        """A live workflow parked on deferrals leaves its oldest entries
+        untouched, so it sorts first on every tick; once described live it is
+        held, and the dead task behind it is recovered on the next tick."""
+        from tfc.temporal.eval_tasks import client
+
+        live = _continuous(make_task(), cursor_age=timedelta(days=1))
+        make_entry(live, age_seconds=86_400)
+        dead = _continuous(make_task(), cursor_age=timedelta(hours=2))
+        make_entry(dead, age_seconds=3_600)
+
+        def describe(task_id):
+            temporal["described"].append(str(task_id))
+            return (
+                client.WF_PROGRESSING
+                if str(task_id) == str(live.id)
+                else client.WF_CLOSED
+            )
+
+        monkeypatch.setattr(client, "describe_eval_task_workflow_sync", describe)
+        settings.EVAL_TASK_SWEEP_MAX_TASKS = 1
+        first = sweeper.sweep_stranded_eval_tasks._original_func()
+        second = sweeper.sweep_stranded_eval_tasks._original_func()
+
+        assert (first["progressing"], first["restarted"]) == (1, 0)
+        assert (second["progressing"], second["restarted"]) == (0, 1)
+        assert temporal["described"] == [str(live.id), str(dead.id)]
+        assert temporal["started"] == [(str(dead.id), _SWEEP_RESTART)]
+
+    def test_a_deterministically_failing_task_is_restarted_a_bounded_number_of_times(
+        self, make_task, temporal, settings
+    ):
+        from tracer.services.eval_tasks.recovery import MAX_FAILED_RESTARTS
+
+        settings.EVAL_TASK_SWEEP_RECOVER_FAILED = True
+        task = _continuous(
+            make_task(status=EvalTaskStatus.FAILED), cursor_age=timedelta(hours=2)
+        )
+        restarts = 0
+        for _ in range(MAX_FAILED_RESTARTS + 3):
+            restarts += sweeper.sweep_stranded_eval_tasks._original_func()["restarted"]
+            # The restarted run fails the same way before the next tick.
+            EvalTask.objects.filter(id=task.id).update(status=EvalTaskStatus.FAILED)
+
+        assert restarts == MAX_FAILED_RESTARTS
+        assert len(temporal["started"]) == MAX_FAILED_RESTARTS
+
     def test_a_pending_task_is_checked_whatever_its_cursor_says(self, make_task):
         """Resume and rerun keep the cursor of the execution that ended; if
         their start failed, the task must not wait for that cursor to age."""
@@ -1141,9 +1199,10 @@ class TestIdleContinuousRecovery:
         for _ in idle:
             result = sweeper.sweep_stranded_eval_tasks._original_func()
             assert result["candidates"] <= 2
-            if backlog:
-                assert result["backlog_candidates"] == 1
         assert {str(t.id) for t in idle} <= set(temporal["described"])
+        if backlog:
+            # Described live once, then held: it no longer takes a slot.
+            assert temporal["described"].count(str(backlog.id)) == 1
 
     def test_one_slot_budget_alternates_idle_and_backlog(
         self, make_task, make_entry, temporal, settings

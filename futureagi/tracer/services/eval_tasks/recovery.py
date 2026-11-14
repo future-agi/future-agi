@@ -6,7 +6,7 @@ is the policy. Candidates come from ``tracer.selectors.eval_tasks.stranded``.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import structlog
 from django.core.cache import cache
@@ -16,6 +16,7 @@ from django.utils import timezone
 from tfc.temporal.eval_tasks.types import ReapInput
 from tracer.models.eval_task import EvalTask, EvalTaskStatus, RunType
 from tracer.selectors.eval_tasks.stranded import (
+    STALE_CONTINUOUS_CURSOR,
     find_stranded_tasks,
     only_unreclaimable_claims_remain,
     sweepable_statuses,
@@ -30,6 +31,37 @@ logger = structlog.get_logger(__name__)
 
 # A scheduling hint only; losing it restarts the idle ring, never changes safety.
 _SWEEP_POSITION_KEY = "eval-task-sweep:position:v1"
+
+# Hints kept beside the ring position (all lost together, never unsafe):
+# * ``live``: a task Temporal just reported progressing is not described again
+#   for ``LIVE_RECHECK_AFTER``, so live tasks (for example ones parked on
+#   ClickHouse read-budget deferrals, whose cursors stay old) cannot take the
+#   cap from tasks that need recovery on every tick. A workflow that dies
+#   right after its describe is rechecked at most that much later, the same
+#   bound the idle cursor rule gives.
+# * ``failed_restarts``: with ``EVAL_TASK_SWEEP_RECOVER_FAILED`` on, a failed
+#   task is restarted at most ``MAX_FAILED_RESTARTS`` times per
+#   ``FAILED_RESTART_WINDOW``. A task that fails deterministically (an empty
+#   continuous task whose selection is rejected, say) would otherwise be made
+#   runnable and fail again on every tick, for ever. Losing the hint allows at
+#   most that many more restarts.
+LIVE_RECHECK_AFTER = STALE_CONTINUOUS_CURSOR
+MAX_FAILED_RESTARTS = 3
+FAILED_RESTART_WINDOW = timedelta(hours=24)
+
+
+def _unexpired(entries, now: datetime) -> dict:
+    """Drop malformed or expired ``{task_id: [count, until_iso]}`` hints."""
+    kept = {}
+    for task_id, value in (entries or {}).items():
+        try:
+            count, until = value
+            if datetime.fromisoformat(until) > now:
+                kept[str(task_id)] = [int(count), until]
+        except (TypeError, ValueError):
+            continue
+    return kept
+
 
 # Same poison cap the workflow's own reap uses (``ReapInput.max_attempts``), so
 # a row that keeps dying is failed after the same number of reclaims however it
@@ -269,10 +301,19 @@ def recover_stranded_tasks(*, limit: int, stale_running_seconds: int) -> dict:
     except Exception:
         logger.warning("eval_task_sweep_position_read_failed", exc_info=True)
         position = {}
+    now = timezone.now()
+    live = _unexpired(position.get("live"), now)
+    failed_restarts = _unexpired(position.get("failed_restarts"), now)
     tasks = find_stranded_tasks(
         limit=limit,
         idle_after=position.get("idle_after"),
         idle_first=position.get("idle_first", False),
+        held_ids=list(live),
+        held_failed_ids=[
+            task_id
+            for task_id, (count, _) in failed_restarts.items()
+            if count >= MAX_FAILED_RESTARTS
+        ],
     )
     counts = {
         "backlog_candidates": 0,
@@ -314,12 +355,21 @@ def recover_stranded_tasks(*, limit: int, stale_running_seconds: int) -> dict:
             )
             continue
         counts["skipped"] += int(outcome["skipped"])
+        if outcome["progressing"]:
+            live[str(task.id)] = [1, (now + LIVE_RECHECK_AFTER).isoformat()]
+        if outcome["restarted"] and task.status == EvalTaskStatus.FAILED:
+            count, until = failed_restarts.get(
+                str(task.id), [0, (now + FAILED_RESTART_WINDOW).isoformat()]
+            )
+            failed_restarts[str(task.id)] = [count + 1, until]
         counts["progressing"] += int(outcome["progressing"])
         counts["restarted"] += int(outcome["restarted"])
         counts["deferred"] += int(outcome["deferred"])
         counts["entries_requeued"] += outcome["requeued"]
         counts["entries_poisoned"] += outcome["failed"]
     position["idle_first"] = not position.get("idle_first", False)
+    position["live"] = live
+    position["failed_restarts"] = failed_restarts
     try:
         cache.set(_SWEEP_POSITION_KEY, position, timeout=None)
     except Exception:
