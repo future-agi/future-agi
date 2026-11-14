@@ -101,7 +101,7 @@ func TestChatNeedsResponses(t *testing.T) {
 }
 
 func TestToResponsesRequest(t *testing.T) {
-	body, err := json.Marshal(toResponsesRequest(toolTurnRequest("gpt-5.6-terra"), false))
+	body, err := json.Marshal(mustResponsesRequest(t, toolTurnRequest("gpt-5.6-terra")))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -190,7 +190,7 @@ func TestToResponsesRequestCarriesResponseFormat(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			req := toolTurnRequest("gpt-5.6-terra")
 			req.ResponseFormat = tt.format
-			body, err := json.Marshal(toResponsesRequest(req, false))
+			body, err := json.Marshal(mustResponsesRequest(t, req))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -557,5 +557,212 @@ func TestChatCompletionTakesTheResponsesRouteItself(t *testing.T) {
 				t.Errorf("hits = %v, want %d /v1/responses and %d /v1/chat/completions", hits, wantResponses, wantChat)
 			}
 		})
+	}
+}
+
+// mustResponsesRequest translates req for a non-streaming call, failing the
+// test on a translation error.
+func mustResponsesRequest(t *testing.T, req *models.ChatCompletionRequest) *responsesRequest {
+	t.Helper()
+	out, err := toResponsesRequest(req, false)
+	if err != nil {
+		t.Fatalf("toResponsesRequest: %v", err)
+	}
+	return out
+}
+
+// A chat file part goes over as a Responses input_file, by data or by id.
+func TestToResponsesRequestCarriesFileParts(t *testing.T) {
+	req := toolTurnRequest("gpt-5.6-terra")
+	req.Messages = []models.Message{{Role: "user", Content: json.RawMessage(`[
+		{"type":"text","text":"Summarize these."},
+		{"type":"file","file":{"file_data":"data:application/pdf;base64,JVBERi0=","filename":"synthetic.pdf"}},
+		{"type":"file","file":{"file_id":"file-synthetic"}}]`)}}
+	got := mustResponsesRequest(t, req)
+	msg, ok := got.Input[0].(responsesMessage)
+	if !ok || len(msg.Content) != 3 {
+		t.Fatalf("input = %+v, want one message with three parts", got.Input)
+	}
+	want := []responsesContent{
+		{Type: "input_text", Text: "Summarize these."},
+		{Type: "input_file", FileData: "data:application/pdf;base64,JVBERi0=", Filename: "synthetic.pdf"},
+		{Type: "input_file", FileID: "file-synthetic"},
+	}
+	for i := range want {
+		if msg.Content[i] != want[i] {
+			t.Errorf("part %d = %+v, want %+v", i, msg.Content[i], want[i])
+		}
+	}
+}
+
+// An assistant turn keeps its text and its refusal.
+func TestToResponsesRequestCarriesAssistantRefusals(t *testing.T) {
+	req := toolTurnRequest("gpt-5.6-terra")
+	req.Messages = []models.Message{
+		{Role: "user", Content: json.RawMessage(`"Help me."`)},
+		{Role: "assistant", Content: json.RawMessage(`[{"type":"text","text":"Partly:"},{"type":"refusal","refusal":"I can't help with that part."}]`)},
+	}
+	got := mustResponsesRequest(t, req)
+	msg, ok := got.Input[1].(responsesMessage)
+	want := []responsesContent{{Type: "output_text", Text: "Partly:"}, {Type: "refusal", Refusal: "I can't help with that part."}}
+	if !ok || len(msg.Content) != 2 || msg.Content[0] != want[0] || msg.Content[1] != want[1] {
+		t.Errorf("assistant input = %+v, want %+v", got.Input[1], want)
+	}
+}
+
+// Anything the Responses API cannot take in chat shape is refused with a 400
+// that says what and how to keep the request on chat completions: never sent
+// in chat shape, never dropped.
+func TestToResponsesRequestRefusesWhatItCannotCarry(t *testing.T) {
+	custom := models.Tool{}
+	if err := json.Unmarshal([]byte(`{"type":"custom","custom":{"name":"run_sql","description":"Run SQL"}}`), &custom); err != nil {
+		t.Fatal(err)
+	}
+	for _, tt := range []struct {
+		name, want string
+		edit       func(*models.ChatCompletionRequest)
+	}{
+		{"audio input", `"input_audio" content part`, func(r *models.ChatCompletionRequest) {
+			r.Messages[1].Content = json.RawMessage(`[{"type":"input_audio","input_audio":{"data":"UklGRg==","format":"wav"}}]`)
+		}},
+		{"unknown part", `"video_url" content part`, func(r *models.ChatCompletionRequest) {
+			r.Messages[1].Content = json.RawMessage(`[{"type":"video_url","video_url":{"url":"https://example.invalid/v.mp4"}}]`)
+		}},
+		{"file without data or id", `"file" content part`, func(r *models.ChatCompletionRequest) {
+			r.Messages[1].Content = json.RawMessage(`[{"type":"file","file":{"filename":"empty.pdf"}}]`)
+		}},
+		{"custom tool beside a function tool", `"custom" tool`, func(r *models.ChatCompletionRequest) {
+			r.Tools = append(r.Tools, custom)
+		}},
+		{"custom tool_choice", `"custom" tool_choice`, func(r *models.ChatCompletionRequest) {
+			r.ToolChoice = json.RawMessage(`{"type":"custom","custom":{"name":"run_sql"}}`)
+		}},
+		{"allowed_tools tool_choice", `"allowed_tools" tool_choice`, func(r *models.ChatCompletionRequest) {
+			r.ToolChoice = json.RawMessage(`{"type":"allowed_tools","allowed_tools":{"mode":"auto","tools":[{"type":"function","function":{"name":"get_weather"}}]}}`)
+		}},
+		{"unknown tool_choice mode", `tool_choice "sometimes"`, func(r *models.ChatCompletionRequest) {
+			r.ToolChoice = json.RawMessage(`"sometimes"`)
+		}},
+		{"custom tool call in history", `"custom" tool call`, func(r *models.ChatCompletionRequest) {
+			r.Messages[2].ToolCalls[0].Type = "custom"
+		}},
+		{"image in a tool result", `"image_url" content part in a tool message`, func(r *models.ChatCompletionRequest) {
+			r.Messages[3].Content = json.RawMessage(`[{"type":"image_url","image_url":{"url":"data:image/png;base64,AAAA"}}]`)
+		}},
+		{"audio in an assistant turn", `"audio" content part in an assistant message`, func(r *models.ChatCompletionRequest) {
+			r.Messages[2].Content = json.RawMessage(`[{"type":"audio","audio":{"id":"audio_1"}}]`)
+		}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			req := toolTurnRequest("gpt-5.6-terra")
+			tt.edit(req)
+			for _, stream := range []bool{false, true} {
+				out, err := toResponsesRequest(req, stream)
+				if err == nil {
+					t.Fatalf("stream=%v: translated to %+v, want a 400", stream, out)
+				}
+				if err.Status != http.StatusBadRequest || err.Code != "unsupported_over_responses" ||
+					!strings.Contains(err.Message, tt.want) || !strings.Contains(err.Message, `reasoning_effort to "none"`) {
+					t.Errorf("stream=%v: error = %d %s %q, want a 400 naming %s", stream, err.Status, err.Code, err.Message, tt.want)
+				}
+			}
+		})
+	}
+}
+
+// Only function tools need the Responses route. A request whose tools are all
+// of another kind stays on chat completions, as on any other model.
+func TestNeedsResponsesOnlyForFunctionTools(t *testing.T) {
+	custom := models.Tool{}
+	if err := json.Unmarshal([]byte(`{"type":"custom","custom":{"name":"run_sql"}}`), &custom); err != nil {
+		t.Fatal(err)
+	}
+	onlyCustom := toolTurnRequest("gpt-5.6-terra")
+	onlyCustom.Tools = []models.Tool{custom}
+	if NeedsResponses(onlyCustom) {
+		t.Error("NeedsResponses(only a custom tool) = true, want false")
+	}
+	both := toolTurnRequest("gpt-5.6-terra")
+	both.Tools = append(both.Tools, custom)
+	if !NeedsResponses(both) {
+		t.Error("NeedsResponses(function and custom tools) = false, want true")
+	}
+}
+
+// The Responses API requires a json_schema format name; a chat response_format
+// without one (as the GenAI translator builds it) gets a default.
+func TestToResponsesRequestNamesAnUnnamedJSONSchema(t *testing.T) {
+	for _, tt := range []struct{ schema, want string }{
+		{`{"schema":{"type":"object"}}`, defaultJSONSchemaName},
+		{`{"name":"","schema":{"type":"object"}}`, defaultJSONSchemaName},
+		{`{"name":"weather","schema":{"type":"object"}}`, "weather"},
+	} {
+		req := toolTurnRequest("gpt-5.6-terra")
+		req.ResponseFormat = &models.ResponseFormat{Type: "json_schema", JSONSchema: json.RawMessage(tt.schema)}
+		got := mustResponsesRequest(t, req)
+		var format struct {
+			Name string `json:"name"`
+		}
+		if got.Text == nil || json.Unmarshal(got.Text.Format, &format) != nil || format.Name != tt.want {
+			t.Errorf("%s: text = %+v, want format name %q", tt.schema, got.Text, tt.want)
+		}
+	}
+}
+
+// Chat fields with a Responses equivalent are carried.
+func TestToResponsesRequestCarriesCacheKeyMetadataAndVerbosity(t *testing.T) {
+	req := toolTurnRequest("gpt-5.6-terra")
+	req.Extra = map[string]json.RawMessage{
+		"prompt_cache_key":  json.RawMessage(`"synthetic-cache-key"`),
+		"safety_identifier": json.RawMessage(`"synthetic-user-hash"`),
+		"metadata":          json.RawMessage(`{"run":"synthetic"}`),
+		"verbosity":         json.RawMessage(`"low"`),
+	}
+	body, err := json.Marshal(mustResponsesRequest(t, req))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(body, &got); err != nil {
+		t.Fatal(err)
+	}
+	text, _ := got["text"].(map[string]any)
+	meta, _ := got["metadata"].(map[string]any)
+	if got["prompt_cache_key"] != "synthetic-cache-key" || got["safety_identifier"] != "synthetic-user-hash" ||
+		meta["run"] != "synthetic" || text["verbosity"] != "low" {
+		t.Errorf("request = %s", body)
+	}
+	if _, ok := text["format"]; ok {
+		t.Errorf("text.format = %v, want it left out without a response_format", text["format"])
+	}
+}
+
+// A call item the chat answer cannot carry fails the call; it is never
+// dropped from the answer.
+func TestViaResponsesFailsOnACallItemItCannotCarry(t *testing.T) {
+	const customCall = `{"id":"ctc_1","type":"custom_tool_call","status":"completed","call_id":"call_7","name":"run_sql","input":"SELECT 1"}`
+	ts := fakeOpenAI(t, func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Stream bool `json:"stream"`
+		}
+		json.NewDecoder(r.Body).Decode(&req)
+		final := `{"id":"resp_1","object":"response","created_at":1761580000,"status":"completed","model":"gpt-5.6-terra","output":[` + customCall + `],"usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}`
+		if !req.Stream {
+			io.WriteString(w, final)
+			return
+		}
+		sse(w,
+			`{"type":"response.created","response":{"id":"resp_1","status":"in_progress","model":"gpt-5.6-terra","output":[]}}`,
+			`{"type":"response.output_item.added","output_index":0,"item":`+customCall+`}`,
+			`{"type":"response.completed","response":`+final+`}`)
+	})
+	defer ts.Close()
+	p := newTestProvider(t, ts.URL)
+
+	if resp, err := p.ChatCompletionViaResponses(context.Background(), toolTurnRequest("gpt-5.6-terra")); err == nil || !strings.Contains(err.Error(), "custom_tool_call") {
+		t.Errorf("non-stream: resp %+v, err %v; want an error naming custom_tool_call", resp, err)
+	}
+	if _, err := collect(p.StreamChatCompletionViaResponses(context.Background(), toolTurnRequest("gpt-5.6-terra"))); err == nil || !strings.Contains(err.Error(), "custom_tool_call") {
+		t.Errorf("stream: err %v; want an error naming custom_tool_call", err)
 	}
 }

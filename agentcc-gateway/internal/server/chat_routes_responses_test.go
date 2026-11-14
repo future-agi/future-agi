@@ -92,3 +92,111 @@ func TestBatchCarriesGPT56ToolsOverResponses(t *testing.T) {
 	checkToolCompletion(t, raw)
 	checkHits(t, upstream, 0, 1)
 }
+
+// The GenAI translator builds a json_schema response format with no name. The
+// Responses API requires one, so the bridge names it.
+func TestGenAIResponseSchemaCarriedOverResponses(t *testing.T) {
+	srv, upstream := newResponsesBridgeServer(t)
+
+	body := `{"contents":[{"role":"user","parts":[{"text":"Weather in Paris?"}]}],
+		"tools":[{"functionDeclarations":[{"name":"get_weather","description":"Weather for a city","parameters":{"type":"object","properties":{"city":{"type":"string"}}}}]}],
+		"generationConfig":{"responseMimeType":"application/json","responseSchema":{"type":"object","properties":{"summary":{"type":"string"}}}}}`
+	req := httptest.NewRequest(http.MethodPost, "/v1beta/models/gpt-5.6-terra:generateContent", bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	srv.httpServer.Handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200. Body: %s", w.Code, w.Body.String())
+	}
+	checkHits(t, upstream, 0, 1)
+	var sent struct {
+		Text struct {
+			Format struct {
+				Type   string          `json:"type"`
+				Name   string          `json:"name"`
+				Schema json.RawMessage `json:"schema"`
+			} `json:"format"`
+		} `json:"text"`
+	}
+	if err := json.Unmarshal(upstream.body("/v1/responses"), &sent); err != nil {
+		t.Fatal(err)
+	}
+	if f := sent.Text.Format; f.Type != "json_schema" || f.Name != "response" || len(f.Schema) == 0 {
+		t.Errorf("text.format = %+v, want a json_schema named response with the schema", f)
+	}
+}
+
+// A chat file part reaches the Responses API as an input_file.
+func TestChatCompletionsCarriesFilePartsOverResponses(t *testing.T) {
+	srv, upstream := newResponsesBridgeServer(t)
+	body := `{"model":"gpt-5.6-terra",
+		"tools":[{"type":"function","function":{"name":"get_weather","parameters":{"type":"object","properties":{"city":{"type":"string"}}}}}],
+		"messages":[{"role":"user","content":[{"type":"text","text":"Which city is in this file?"},
+			{"type":"file","file":{"file_data":"data:application/pdf;base64,JVBERi0=","filename":"synthetic.pdf"}}]}]}`
+	w := postBridgeChat(t, srv, body, nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d: %s", w.Code, w.Body.String())
+	}
+	checkHits(t, upstream, 0, 1)
+	var sent struct {
+		Input []struct {
+			Content []map[string]string `json:"content"`
+		} `json:"input"`
+	}
+	if err := json.Unmarshal(upstream.body("/v1/responses"), &sent); err != nil || len(sent.Input) != 1 || len(sent.Input[0].Content) != 2 {
+		t.Fatalf("sent %s: %v", upstream.body("/v1/responses"), err)
+	}
+	file := sent.Input[0].Content[1]
+	if file["type"] != "input_file" || file["file_data"] != "data:application/pdf;base64,JVBERi0=" || file["filename"] != "synthetic.pdf" {
+		t.Errorf("file part = %v, want an input_file with the data and filename", file)
+	}
+}
+
+// What the bridge cannot carry is a clear 400 from the gateway, sent before any
+// upstream call, never a chat-shaped request upstream or a silently dropped
+// part.
+func TestChatCompletionsRefusesWhatResponsesCannotCarry(t *testing.T) {
+	for _, tt := range []struct{ name, body, want string }{
+		{"custom tool beside a function tool", `{"model":"gpt-5.6-terra",
+			"tools":[{"type":"function","function":{"name":"get_weather","parameters":{"type":"object"}}},{"type":"custom","custom":{"name":"run_sql"}}],
+			"messages":[{"role":"user","content":"Hi"}]}`, `"custom" tool`},
+		{"audio input", `{"model":"gpt-5.6-terra",
+			"tools":[{"type":"function","function":{"name":"get_weather","parameters":{"type":"object"}}}],
+			"messages":[{"role":"user","content":[{"type":"input_audio","input_audio":{"data":"UklGRg==","format":"wav"}}]}]}`, `"input_audio" content part`},
+	} {
+		for _, stream := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/stream=%v", tt.name, stream), func(t *testing.T) {
+				srv, upstream := newResponsesBridgeServer(t)
+				body := tt.body
+				if stream {
+					body = `{"stream":true,` + body[1:]
+				}
+				w := postBridgeChat(t, srv, body, nil)
+				if w.Code != http.StatusBadRequest {
+					t.Fatalf("status = %d, want 400: %s", w.Code, w.Body.String())
+				}
+				var resp struct {
+					Error struct {
+						Code    string `json:"code"`
+						Message string `json:"message"`
+					} `json:"error"`
+				}
+				if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil || resp.Error.Code != "unsupported_over_responses" ||
+					!bytes.Contains([]byte(resp.Error.Message), []byte(tt.want)) {
+					t.Errorf("error = %s, want unsupported_over_responses naming %s", w.Body.String(), tt.want)
+				}
+				checkHits(t, upstream, 0, 0)
+			})
+		}
+	}
+}
+
+// A gpt-5.6 request whose only tools are custom tools needs no Responses route
+// and goes to chat completions as on any other model.
+func TestChatCompletionsKeepsCustomOnlyToolsOnChatCompletions(t *testing.T) {
+	srv, upstream := newResponsesBridgeServer(t)
+	body := `{"model":"gpt-5.6-terra","tools":[{"type":"custom","custom":{"name":"run_sql"}}],"messages":[{"role":"user","content":"Hi"}]}`
+	postBridgeChat(t, srv, body, nil)
+	checkHits(t, upstream, 1, 0)
+}

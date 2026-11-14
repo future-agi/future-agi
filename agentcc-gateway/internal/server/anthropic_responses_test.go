@@ -93,6 +93,11 @@ func (u *openAIUpstream) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			fmt.Fprintf(w, "data: %s\n\n", data)
 		}
 	case "/v1/responses":
+		if msg := responsesShapeError(raw); msg != "" {
+			w.WriteHeader(http.StatusBadRequest)
+			fmt.Fprintf(w, `{"error":{"message":%q,"type":"invalid_request_error","param":null,"code":null}}`, msg)
+			return
+		}
 		if failResponses {
 			w.WriteHeader(http.StatusServiceUnavailable)
 			io.WriteString(w, `{"error":{"message":"The server is overloaded.","type":"server_error","param":null,"code":null}}`)
@@ -123,6 +128,97 @@ func (u *openAIUpstream) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	default:
 		http.NotFound(w, r)
 	}
+}
+
+// responsesShapeError checks a /v1/responses request the way the Responses API
+// does for the parts the bridge writes, so a request-shape mistake fails the
+// test as it would fail in production. It returns "" for a request it accepts.
+func responsesShapeError(raw []byte) string {
+	var req struct {
+		Model string `json:"model"`
+		Input []struct {
+			Type    string `json:"type"`
+			Role    string `json:"role"`
+			Content []struct {
+				Type     string `json:"type"`
+				FileData string `json:"file_data"`
+				FileID   string `json:"file_id"`
+			} `json:"content"`
+			CallID string `json:"call_id"`
+		} `json:"input"`
+		Tools []struct {
+			Type       string          `json:"type"`
+			Name       string          `json:"name"`
+			Function   json.RawMessage `json:"function"`
+			Parameters json.RawMessage `json:"parameters"`
+		} `json:"tools"`
+		ToolChoice json.RawMessage `json:"tool_choice"`
+		Text       *struct {
+			Format *struct {
+				Type   string          `json:"type"`
+				Name   *string         `json:"name"`
+				Schema json.RawMessage `json:"schema"`
+			} `json:"format"`
+		} `json:"text"`
+		Messages json.RawMessage `json:"messages"`
+	}
+	if err := json.Unmarshal(raw, &req); err != nil {
+		return "invalid JSON: " + err.Error()
+	}
+	if req.Model == "" {
+		return "Missing required parameter: 'model'."
+	}
+	if req.Messages != nil {
+		return "Unknown parameter: 'messages'."
+	}
+	for i, item := range req.Input {
+		switch item.Type {
+		case "message":
+			allowed := map[string]bool{"input_text": true, "input_image": true, "input_file": true}
+			if item.Role == "assistant" {
+				allowed = map[string]bool{"output_text": true, "refusal": true}
+			}
+			for j, c := range item.Content {
+				if !allowed[c.Type] {
+					return fmt.Sprintf("Invalid value: '%s'. Supported values for input[%d].content[%d].type", c.Type, i, j)
+				}
+				if c.Type == "input_file" && c.FileData == "" && c.FileID == "" {
+					return fmt.Sprintf("input[%d].content[%d]: input_file needs file_data or file_id", i, j)
+				}
+			}
+		case "function_call", "function_call_output":
+			if item.CallID == "" {
+				return fmt.Sprintf("Missing required parameter: 'input[%d].call_id'.", i)
+			}
+		default:
+			return fmt.Sprintf("Invalid value: '%s' for input[%d].type", item.Type, i)
+		}
+	}
+	for i, tool := range req.Tools {
+		if tool.Type != "function" {
+			return fmt.Sprintf("Invalid value: '%s' for tools[%d].type", tool.Type, i)
+		}
+		if tool.Function != nil || tool.Name == "" || tool.Parameters == nil {
+			return fmt.Sprintf("Missing required parameter: 'tools[%d].name'.", i)
+		}
+	}
+	if len(req.ToolChoice) > 0 && req.ToolChoice[0] == '{' {
+		var choice struct {
+			Type     string          `json:"type"`
+			Name     string          `json:"name"`
+			Function json.RawMessage `json:"function"`
+		}
+		json.Unmarshal(req.ToolChoice, &choice)
+		if choice.Type != "function" || choice.Name == "" || choice.Function != nil {
+			return "Invalid value for 'tool_choice'."
+		}
+	}
+	if req.Text != nil && req.Text.Format != nil && req.Text.Format.Type == "json_schema" {
+		if req.Text.Format.Name == nil || *req.Text.Format.Name == "" {
+			return "Invalid 'text.format.name': empty string. Expected a string with minimum length 1."
+		}
+	}
+	return ""
 }
 
 // bridgeModels are the models the bridge test server registers.
