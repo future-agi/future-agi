@@ -2510,9 +2510,9 @@
 
 ### OBS-E2E-066 — a recorded voice call and a traced image play and render on the trace for a signed-in user
 
-**Goal:** A developer whose LiveKit and Pipecat agents uploaded call recordings, and whose model saw an image, audio and a PDF, opens each trace, plays the recordings and sees the image where the model saw it
+**Goal:** A developer opens SDK-shaped LiveKit and Pipecat recordings in trace and Voice players, sees an image where the model saw it, and deletes the LiveKit session to revoke its media without affecting Pipecat
 
-**Spec:** `flows/observe/trace-attachments.spec.ts:216`
+**Spec:** `flows/observe/trace-attachments.spec.ts:221`
 
 **Tags:** —
 
@@ -2525,6 +2525,8 @@
 5. open the Pipecat trace and play the root's recording to the end
 6. open the model trace, select the model span, switch to Chat and see the PNG inside user message 2
 7. load the WAV, and download the PDF, which has no inline preview
+8. open each call on the dedicated Voice full-page route and play its Attachment recording to the end
+9. delete only the LiveKit CH session through the supported session API
 
 **Backend state verified:**
 
@@ -2533,6 +2535,7 @@
 - API: voice detail projects each call's recording as ready on its own parent span with a 200 ms mixed Ogg/Opus manifest, and the trace detail projects exactly the seeded attachments as ready
 - API: with the viewer's media session the gateway serves the whole recording byte-identical (sha256), answers Range with 206 and HEAD with the full length, and a renewed grant continues the same bytes; without the session it is denied and resolve without credentials answers 401
 - API: every media request the page made went through the gateway for exactly the three loaded audio occurrences (zero legacy requests)
+- API and PG: deleting the CH-only LiveKit session returns 204, immediately denies resolve and the previously working Range and HEAD grant, and tombstones its occurrence; the Pipecat session stays playable. Physical erasure is checked separately by component/storage qualification
 
 ## prompts
 
