@@ -7,7 +7,14 @@ buffer and sends it again, so a 503 is only right when a resend can succeed.
 from unittest.mock import patch
 
 import pytest
-from django.db import DataError, InterfaceError, OperationalError
+from django.db import (
+    DataError,
+    InterfaceError,
+    InternalError,
+    NotSupportedError,
+    OperationalError,
+    ProgrammingError,
+)
 
 from accounts.models import Organization
 from agentcc.models import AgentccAPIKey, AgentccRequestLog
@@ -85,8 +92,6 @@ class TestEntriesTheDatabaseRefuses:
             # replay key, so the database refuses this one row.
             _entry("r" * 300, "key-a"),
             _entry("a-after", "key-a"),
-            # PostgreSQL text cannot hold a NUL byte.
-            _entry("b-nul", "key-b", error_message="bad\x00byte"),
             _entry("b-fine", "key-b"),
         ]
 
@@ -94,7 +99,7 @@ class TestEntriesTheDatabaseRefuses:
 
         assert response.status_code == 200, response.content
         assert response.json()["result"]["ingested"] == 3
-        rows = _stored(["a-before", "a-after", "b-fine", "b-nul", "r" * 300])
+        rows = _stored(["a-before", "a-after", "b-fine", "r" * 300])
         assert set(rows) == {"a-before", "a-after", "b-fine"}
         assert rows["a-before"].organization_id == org_a.id
         assert rows["b-fine"].organization_id == org_b.id
@@ -161,3 +166,63 @@ def test_a_connection_lost_mid_insert_is_retried_not_skipped(
         response = _post(api_client, [_entry("kept-for-resend", "key-a")])
 
     assert response.status_code == 503
+
+
+@pytest.mark.integration
+@patch("agentcc.views.webhook.AGENTCC_WEBHOOK_SECRET", SECRET)
+def test_nul_bytes_from_the_caller_are_stripped_not_refused(api_client, two_orgs):
+    """PostgreSQL text and jsonb cannot hold NUL. The gateway copies the
+    caller's ``user`` field and bodies unchecked, so a NUL there must not cost
+    the request its log row (and with it its metering and webhooks)."""
+    response = _post(
+        api_client,
+        [
+            _entry(
+                "nul-everywhere",
+                "key-b",
+                user_id="a\x00b",
+                error_message="bad\x00byte",
+                provider="open\x00ai",
+                request_body={"messages": [{"role": "user", "content": "hi\x00"}]},
+                response_body={"x\x00": ["y\x00"]},
+                metadata={"k": "v\x00"},
+            ),
+            _entry("after-it", "key-b"),
+        ],
+    )
+
+    assert response.status_code == 200, response.content
+    assert response.json()["result"]["ingested"] == 2
+    row = _stored(["nul-everywhere"])["nul-everywhere"]
+    assert row.user_id == "ab"
+    assert row.error_message == "badbyte"
+    assert row.provider == "openai"
+    assert row.request_body == {"messages": [{"role": "user", "content": "hi"}]}
+    assert row.response_body == {"x": ["y"]}
+    assert row.metadata == {"k": "v"}
+
+
+@pytest.mark.integration
+@patch("agentcc.views.webhook.AGENTCC_WEBHOOK_SECRET", SECRET)
+@pytest.mark.parametrize(
+    "error",
+    [
+        ProgrammingError("permission denied for table agentcc_request_log"),
+        InternalError("cannot execute INSERT in a read-only transaction"),
+        NotSupportedError("not supported"),
+    ],
+)
+def test_a_whole_batch_database_error_is_one_503_not_row_by_row(
+    api_client, two_orgs, error
+):
+    """An error every row would hit is not a row's fault: no split into
+    single-row INSERTs, no 200 with nothing stored; the gateway resends."""
+    with patch(
+        "agentcc.services.log_ingestion.AgentccRequestLog.no_workspace_objects.bulk_create",
+        side_effect=error,
+    ) as insert:
+        response = _post(api_client, [_entry(f"r{i}", "key-a") for i in range(8)])
+
+    assert response.status_code == 503, response.content
+    assert insert.call_count == 1
+    assert "permission denied" not in response.content.decode()
