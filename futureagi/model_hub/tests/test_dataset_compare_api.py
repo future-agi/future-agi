@@ -762,3 +762,82 @@ def test_compare_download_removed_member_returns_not_found_before_cells(
             download=True,
         )
     _assert_no_comparison_cells(response, [], captured)
+
+
+@pytest.mark.django_db(transaction=True)
+def test_compare_download_uses_rows_from_resolved_datasets(
+    auth_client, compare_datasets, other_org_dataset
+):
+    base = compare_datasets["base_dataset"]
+    compared = compare_datasets["other_dataset"]
+    second_row = Row.objects.get(dataset=other_org_dataset)
+    response = auth_client.post(
+        f"/model-hub/datasets/{base.id}/compare-datasets/download/",
+        {
+            "dataset_ids": [str(compared.id)],
+            "base_column_name": "input",
+            "dataset_info": {
+                "alpha": {
+                    str(base.id): str(compare_datasets["base_row"].id),
+                    str(compared.id): str(second_row.id),
+                }
+            },
+            "common_column_names": ["judge"],
+        },
+        format="json",
+    )
+    assert response.status_code == status.HTTP_200_OK
+    csv = b"".join(response.streaming_content).decode()
+    assert "pass" in csv
+    assert "other-org-row" not in csv
+    assert "judge-Other Compare Dataset" not in csv
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.parametrize("download", [False, True])
+@pytest.mark.parametrize("repeat_base", [False, True])
+def test_compare_repeated_dataset_ids_return_bad_request(
+    auth_client, compare_datasets, download, repeat_base
+):
+    base = compare_datasets["base_dataset"]
+    compared = compare_datasets["other_dataset"]
+    dataset_ids = (
+        [str(base.id)] if repeat_base else [str(compared.id), str(compared.id)]
+    )
+    endpoint = "compare-datasets/download/" if download else "compare-datasets/"
+    response = auth_client.post(
+        f"/model-hub/datasets/{base.id}/{endpoint}",
+        {
+            "dataset_ids": dataset_ids,
+            "base_column_name": "input",
+            "page_size": 10,
+            "current_page_index": 0,
+        },
+        format="json",
+    )
+    assert response.status_code == status.HTTP_400_BAD_REQUEST, response.content
+    assert "Invalid dataset IDs provided." in response.content.decode()
+
+
+@pytest.mark.django_db(transaction=True)
+def test_compare_cached_page_repeated_ids_return_bad_request(
+    auth_client, compare_datasets, comparison_page_store
+):
+    base = compare_datasets["base_dataset"]
+    compared = compare_datasets["other_dataset"]
+    built = _compare_request(auth_client, base, compared)
+    assert built.status_code == status.HTTP_200_OK, built.content
+    compare_id = built.data["result"]["metadata"]["compare_id"]
+    response = auth_client.post(
+        f"/model-hub/datasets/{base.id}/compare-datasets/",
+        {
+            "dataset_ids": [str(compared.id), str(compared.id)],
+            "base_column_name": "input",
+            "page_size": 10,
+            "current_page_index": 0,
+            "compare_id": compare_id,
+        },
+        format="json",
+    )
+    assert response.status_code == status.HTTP_400_BAD_REQUEST, response.content
+    assert "Invalid dataset IDs provided." in response.content.decode()

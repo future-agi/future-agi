@@ -14386,7 +14386,9 @@ class CompareDatasetsView(APIView):
                 dataset_ids = [str(did) for did in validated_data["dataset_ids"]]
                 if not dataset_ids:
                     return self._gm.bad_request("No dataset IDs provided.")
-                ordered_ids = [dataset_id] + [str(did) for did in dataset_ids]
+                ordered_ids = [str(dataset_id)] + [str(did) for did in dataset_ids]
+                if len(set(ordered_ids)) != len(ordered_ids):
+                    return self._gm.bad_request("Invalid dataset IDs provided.")
 
                 # Create the Case/When expressions for ordering
                 preserved_order = Case(
@@ -14504,7 +14506,9 @@ class CompareDatasetsView(APIView):
                     return self._gm.bad_request("No dataset IDs provided.")
 
             # list dataset ids in order main_datset id then other dataset ids
-            ordered_ids = [dataset_id] + [str(did) for did in dataset_ids]
+            ordered_ids = [str(dataset_id)] + [str(did) for did in dataset_ids]
+            if len(set(ordered_ids)) != len(ordered_ids):
+                return self._gm.bad_request("Invalid dataset IDs provided.")
 
             # Create the Case/When expressions for ordering
             preserved_order = Case(
@@ -14807,9 +14811,14 @@ class DownloadComparisonDatasetView(APIView):
                     get_error_message("FAILED_TO_GET_BASE_COLUMNS")
                 )
 
+            if (
+                len(set(dataset_ids)) != len(dataset_ids)
+                or str(dataset_id) in dataset_ids
+            ):
+                return self._gm.bad_request("Invalid dataset IDs provided.")
+
             # Ensure main dataset is included in comparison
-            if str(dataset_id) not in dataset_ids:
-                dataset_ids.insert(0, str(dataset_id))
+            dataset_ids.insert(0, str(dataset_id))
             comparison_datasets = []
             for ds_id in dataset_ids:
                 dataset = datasets_in_scope.filter(id=ds_id).first()
@@ -14852,6 +14861,7 @@ class DownloadComparisonDatasetView(APIView):
                         # Fetch all common columns for this row in one query
                         cells = Cell.objects.filter(
                             row_id=row_id,
+                            row__dataset=ds,
                             column__name__in=common_column_names,
                             deleted=False,
                         ).select_related("column")
