@@ -74,7 +74,9 @@ class DroppedCase(TypedDict):
 
 class NotGradable(TypedDict):
     key: str
-    reason: Literal["check_unreadable", "no_checks", "evidence_not_supported"]
+    reason: Literal[
+        "check_unreadable", "no_checks", "evidence_not_supported", "judge_unavailable"
+    ]
 
 
 class Grading(TypedDict):
@@ -488,6 +490,7 @@ def _place_all(
         bundle is not None and validation.live_validation(bundle.id) is not None
     )
     pair_failed = validation.failed_check(bundle)
+    judge_failed = judge_unreachable(pairing, bundle)
     by_id = {row["id"]: row for row in rows}
     voice = _voice(pairing)
     many = len(kept) > 1 or trials > 1
@@ -500,6 +503,7 @@ def _place_all(
             many=many,
             pair_validating=pair_validating,
             pair_failed=pair_failed,
+            judge_failed=judge_failed,
         )
         for case in kept
     ]
@@ -602,6 +606,7 @@ def _place(
     many: bool,
     pair_validating: bool,
     pair_failed: bool,
+    judge_failed: bool = False,
 ) -> Placed:
     needed = set(case.rows)
     if voice:
@@ -648,15 +653,26 @@ def _place(
         by=by,
         held_by=held,
         needed=frozenset(needed),
-        gradable=_grading(case, statuses),
+        gradable=_grading(case, statuses, judge_failed=judge_failed),
     )
 
 
-def _grading(case: CaseNeeds, statuses: Mapping[str, Status]) -> NotGradable | None:
-    """Why the case cannot be graded: a check that cannot be read, or a needed
-    evidence row neither Supported nor Partial."""
+def judge_unreachable(pairing: Pairing, bundle: HarnessAssembledBundle | None) -> bool:
+    """Whether the check found the judge unreachable. A certificate made before the
+    check recorded it, or one that did not run it, reports nothing."""
+    return read_evidence(pairing, bundle).checks.get("judge_reachable") == "failed"
+
+
+def _grading(
+    case: CaseNeeds, statuses: Mapping[str, Status], *, judge_failed: bool = False
+) -> NotGradable | None:
+    """Why the case cannot be graded: a check that cannot be read, a judged sub-goal
+    the judge could not be reached for in the check, or a needed evidence row neither
+    Supported nor Partial."""
     if case.grading_gap is not None:
         return {"key": case.key, "reason": case.grading_gap}
+    if case.judged and judge_failed:
+        return {"key": case.key, "reason": "judge_unavailable"}
     if any(
         status not in GATE_OPEN
         for one, status in statuses.items()
