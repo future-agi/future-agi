@@ -62,7 +62,7 @@ func TestDecisionGuardrailDeepNestingIsBoundedAndRefused(t *testing.T) {
 func TestDecisionGuardrailContentDecodesOnce(t *testing.T) {
 	body := []byte(nestedCriteria(maxDecisionTextDepth - 1))
 	allocs := testing.AllocsPerRun(20, func() {
-		if _, err := decisionGuardrailContent(body); err != nil {
+		if _, err := decisionGuardrailContent(body, 0); err != nil {
 			t.Fatal(err)
 		}
 	})

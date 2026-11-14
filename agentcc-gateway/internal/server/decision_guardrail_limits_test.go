@@ -165,15 +165,15 @@ func TestDecisionGuardrailContentIsDeterministic(t *testing.T) {
 	body := `{"model":"typesafe/jev-latest","state":"s","questions":{"q3":{"type":"noul","instructions":"three"},"q1":{"type":"choice","instructions":"one","criteria":{"b":"bee","a":"ay","c":"see"}},"q2":{"type":"noul","instructions":"two"}}}`
 	content := func() string {
 		t.Helper()
-		got, apiErr := decisionGuardrailContent([]byte(body))
+		got, apiErr := decisionGuardrailContent([]byte(body), 0)
 		if apiErr != nil {
 			t.Fatal(apiErr)
 		}
 		return string(got)
 	}
-	// Question fields are read in key order too: criteria before instructions.
+	// Fields are read in body order, at every level.
 	want := content()
-	if want != `"s\na\nay\nb\nbee\nc\nsee\none\ntwo\nthree"` {
+	if want != `"s\nthree\none\nb\nbee\na\nay\nc\nsee\ntwo"` {
 		t.Fatalf("content = %s", want)
 	}
 	for i := 0; i < 50; i++ {

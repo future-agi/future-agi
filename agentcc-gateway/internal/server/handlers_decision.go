@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"maps"
 	"math"
 	"net/http"
 	"slices"
@@ -128,7 +127,7 @@ func (h *Handlers) serveDecision(w http.ResponseWriter, r *http.Request, routeFo
 	// platform's own internal-key traffic (the Jev evaluator judging traces).
 	var guardrailContent json.RawMessage
 	if h.decisionInputGuardrailsApply(rc, orgCfg) {
-		content, apiErr := decisionGuardrailContent(req.Body)
+		content, apiErr := decisionGuardrailContent(req.Body, h.maxBodySize)
 		if apiErr != nil {
 			models.WriteError(w, apiErr)
 			return
@@ -266,96 +265,281 @@ const maxDecisionTextDepth = 64
 // decisionGuardrailContent is the text the input guardrails check: every
 // top-level field but model and questions, and every question field but its
 // type and name (the rule models.DecisionContentField shares with the vendor
-// error filter), read in key order so the same body gives the same text.
+// error filter), in body order, so the same body gives the same text.
 // Strings are decoded (\uXXXX escapes included), object keys inside a value
 // are text too ({"<criterion>": "<description>"}), and numbers are kept as
-// written. The body is decoded once and walked once, with a depth cap. It is
-// never used to build or rewrite the upstream body.
-func decisionGuardrailContent(body []byte) (json.RawMessage, *models.APIError) {
-	dec := json.NewDecoder(bytes.NewReader(body))
-	dec.UseNumber()
-	var fields map[string]any
-	if err := dec.Decode(&fields); err != nil {
+// written. The body is validated, then scanned once in place: no tree and no
+// per-value garbage, so memory is the text plus a little per escaped string.
+// Text deeper than maxDecisionTextDepth, or longer than maxText bytes (when
+// maxText > 0), is refused. It is never used to build or rewrite the
+// upstream body.
+func decisionGuardrailContent(body []byte, maxText int64) (json.RawMessage, *models.APIError) {
+	if !json.Valid(body) || firstNonSpace(body) != '{' {
 		return nil, models.ErrBadRequest("invalid_json", "request body must be a single JSON object")
 	}
-	w := decisionTextWalk{}
-	for _, key := range slices.Sorted(maps.Keys(fields)) {
-		if key == "questions" {
-			continue
+	s := decisionTextScan{b: body, maxText: maxText}
+	if err := s.read(); err != nil {
+		if errors.Is(err, errDecisionTextTooLarge) {
+			return nil, models.ErrBadRequest("decision_text_too_large", fmt.Sprintf(
+				"The decision's text for the gateway's guardrails is longer than %d bytes. Send less text.", maxText))
 		}
-		if models.DecisionContentField(key, false) {
-			w.walk(fields[key])
-		}
-	}
-	appendQuestion := func(q any) {
-		question, ok := q.(map[string]any)
-		if !ok {
-			w.walk(q)
-			return
-		}
-		for _, key := range slices.Sorted(maps.Keys(question)) {
-			if models.DecisionContentField(key, true) {
-				w.walk(question[key])
-			}
-		}
-	}
-	switch questions := fields["questions"].(type) {
-	case map[string]any:
-		for _, id := range slices.Sorted(maps.Keys(questions)) {
-			appendQuestion(questions[id])
-		}
-	case []any:
-		for _, q := range questions {
-			appendQuestion(q)
-		}
-	}
-	if w.tooDeep {
 		return nil, models.ErrBadRequest("decision_too_deep", fmt.Sprintf(
 			"A decision field is nested more than %d levels deep, too deep for the gateway's guardrails to check. Flatten it.", maxDecisionTextDepth))
 	}
-	content, _ := json.Marshal(strings.Join(w.parts, "\n"))
+	content, _ := json.Marshal(s.text.String())
 	return content, nil
 }
 
-// decisionTextWalk collects the text of decoded JSON values, iteratively and
-// depth-first in key order.
-type decisionTextWalk struct {
-	parts   []string
-	tooDeep bool
-}
+var (
+	errDecisionTooDeep      = errors.New("decision field nested too deeply")
+	errDecisionTextTooLarge = errors.New("decision text too large")
+)
 
-func (w *decisionTextWalk) walk(root any) {
-	type frame struct {
-		value any
-		depth int
-	}
-	stack := []frame{{root, 1}}
-	for len(stack) > 0 && !w.tooDeep {
-		f := stack[len(stack)-1]
-		stack = stack[:len(stack)-1]
-		switch v := f.value.(type) {
-		case string:
-			w.parts = append(w.parts, v)
-		case json.Number:
-			w.parts = append(w.parts, v.String())
-		case []any, map[string]any:
-			if f.depth >= maxDecisionTextDepth {
-				w.tooDeep = true
-				return
-			}
-			if list, ok := v.([]any); ok {
-				for i := len(list) - 1; i >= 0; i-- {
-					stack = append(stack, frame{list[i], f.depth + 1})
-				}
-				continue
-			}
-			obj := v.(map[string]any)
-			keys := slices.Sorted(maps.Keys(obj))
-			for i := len(keys) - 1; i >= 0; i-- {
-				stack = append(stack, frame{obj[keys[i]], f.depth + 1}, frame{keys[i], f.depth})
-			}
+func firstNonSpace(b []byte) byte {
+	for _, c := range b {
+		if c != ' ' && c != '\t' && c != '\n' && c != '\r' {
+			return c
 		}
 	}
+	return 0
+}
+
+// decisionTextScan reads a decision body that json.Valid has accepted, in
+// place, and writes the guardrail text into one builder, one part per line.
+// Because the body is valid JSON, the scan needs no syntax checks of its own.
+type decisionTextScan struct {
+	b       []byte
+	i       int
+	text    strings.Builder
+	maxText int64
+}
+
+func (s *decisionTextScan) space() {
+	for s.i < len(s.b) {
+		switch s.b[s.i] {
+		case ' ', '\t', '\n', '\r':
+			s.i++
+		default:
+			return
+		}
+	}
+}
+
+// next skips whitespace and returns the next byte without consuming it.
+func (s *decisionTextScan) next() byte {
+	s.space()
+	return s.b[s.i]
+}
+
+// more consumes a ',' between members and reports whether another member
+// follows; it consumes the closing delimiter when none does.
+func (s *decisionTextScan) more() bool {
+	switch s.next() {
+	case ',':
+		s.i++
+		return true
+	case '}', ']':
+		s.i++
+		return false
+	}
+	return true // the first member
+}
+
+// open consumes an opening delimiter and reports whether the container has
+// members (it consumes the closing delimiter of an empty one).
+func (s *decisionTextScan) open() bool {
+	s.i++
+	if c := s.next(); c == '}' || c == ']' {
+		s.i++
+		return false
+	}
+	return true
+}
+
+// str consumes a string and returns its decoded text as bytes: a sub-slice
+// of the body when it holds no escape, else the decoded copy.
+func (s *decisionTextScan) str() []byte {
+	start, escaped := s.pass()
+	if !escaped {
+		return s.b[start+1 : s.i-1]
+	}
+	var decoded string
+	_ = json.Unmarshal(s.b[start:s.i], &decoded) // valid JSON: cannot fail
+	return []byte(decoded)
+}
+
+// pass consumes a string without decoding it, and returns where it started
+// and whether it holds an escape.
+func (s *decisionTextScan) pass() (int, bool) {
+	s.space()
+	start, escaped := s.i, false
+	for s.i++; s.b[s.i] != '"'; s.i++ {
+		if s.b[s.i] == '\\' {
+			escaped = true
+			s.i++
+		}
+	}
+	s.i++
+	return start, escaped
+}
+
+// key consumes a member's key and the ':' after it.
+func (s *decisionTextScan) key() []byte {
+	key := s.str()
+	s.next()
+	s.i++ // ':'
+	return key
+}
+
+func (s *decisionTextScan) read() error {
+	if !s.open() {
+		return nil
+	}
+	for s.more() {
+		key := s.key()
+		var err error
+		switch {
+		case string(key) == "questions":
+			err = s.questions()
+		case models.DecisionContentField(string(key), false):
+			err = s.value(1)
+		default:
+			s.skip()
+		}
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// questions reads "questions": an object of questions by ID or an array of
+// them; any other value holds no question text.
+func (s *decisionTextScan) questions() error {
+	c := s.next()
+	if c != '{' && c != '[' {
+		s.skip()
+		return nil
+	}
+	if !s.open() {
+		return nil
+	}
+	for s.more() {
+		if c == '{' {
+			s.key()
+		}
+		if err := s.question(); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// question reads one question: its content fields when it is an object, all
+// of its text otherwise.
+func (s *decisionTextScan) question() error {
+	if s.next() != '{' {
+		return s.value(1)
+	}
+	if !s.open() {
+		return nil
+	}
+	for s.more() {
+		key := s.key()
+		if !models.DecisionContentField(string(key), true) {
+			s.skip()
+			continue
+		}
+		if err := s.value(1); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// value reads one value at depth (a content field's value is depth 1) and
+// writes its text.
+func (s *decisionTextScan) value(depth int) error {
+	switch c := s.next(); c {
+	case '"':
+		return s.write(s.str())
+	case '{', '[':
+		if depth >= maxDecisionTextDepth {
+			return errDecisionTooDeep
+		}
+		if !s.open() {
+			return nil
+		}
+		for s.more() {
+			if c == '{' {
+				if err := s.write(s.key()); err != nil {
+					return err
+				}
+			}
+			if err := s.value(depth + 1); err != nil {
+				return err
+			}
+		}
+		return nil
+	case 't', 'n':
+		s.i += 4
+		return nil
+	case 'f':
+		s.i += 5
+		return nil
+	default: // a number, kept as written
+		start := s.i
+		for s.i < len(s.b) && strings.IndexByte("+-0123456789.eE", s.b[s.i]) >= 0 {
+			s.i++
+		}
+		return s.write(s.b[start:s.i])
+	}
+}
+
+// skip consumes one value that holds no guardrail text.
+func (s *decisionTextScan) skip() {
+	open := 0
+	for {
+		switch c := s.next(); c {
+		case '"':
+			s.pass()
+		case '{', '[':
+			open++
+			s.i++
+		case '}', ']':
+			open--
+			s.i++
+		case ',', ':':
+			s.i++
+			continue
+		case 't', 'n':
+			s.i += 4
+		case 'f':
+			s.i += 5
+		default:
+			for s.i < len(s.b) && strings.IndexByte("+-0123456789.eE", s.b[s.i]) >= 0 {
+				s.i++
+			}
+		}
+		if open == 0 {
+			return
+		}
+	}
+}
+
+func (s *decisionTextScan) write(part []byte) error {
+	sep := 0
+	if s.text.Len() > 0 {
+		sep = 1
+	}
+	if s.maxText > 0 && int64(s.text.Len()+sep+len(part)) > s.maxText {
+		return errDecisionTextTooLarge
+	}
+	if sep == 1 {
+		s.text.WriteByte('\n')
+	}
+	s.text.Write(part)
+	return nil
 }
 
 // checkDecisionProviderACL enforces a key's allowed providers. The auth plugin
