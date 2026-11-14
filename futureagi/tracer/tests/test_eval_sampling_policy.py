@@ -1414,15 +1414,18 @@ def test_tag_filtered_sampling_stream_binds_effective_overlay(row_type, unavaila
 
 
 @pytest.mark.parametrize(
-    ("code", "deterministic"),
+    ("code", "deterministic", "message"),
     [
-        ("tag_overlay_budget_exceeded", True),
-        ("tag_scope_required", True),
-        ("tag_assignment_unavailable", False),
-        ("tag_source_unavailable", False),
+        ("tag_overlay_budget_exceeded", True, "Too many traces and spans"),
+        # No usable scope or window: narrowing the tag would not help.
+        ("tag_scope_required", True, "needs a project and a time window"),
+        ("tag_assignment_unavailable", False, "temporarily unavailable"),
+        ("tag_source_unavailable", False, "temporarily unavailable"),
     ],
 )
-def test_sampling_tag_read_failures_split_terminal_from_retryable(code, deterministic):
+def test_sampling_tag_read_failures_split_terminal_from_retryable(
+    code, deterministic, message
+):
     """An over-budget Tag filter is a 400, never a read-pressure retry loop."""
     from contextlib import nullcontext
 
@@ -1477,6 +1480,9 @@ def test_sampling_tag_read_failures_split_terminal_from_retryable(code, determin
     ):
         list(stream_query(statement, params))
     assert isinstance(raised.value, EvalTaskSelectionRejected) is deterministic
+    assert message in str(raised.value)
+    if code == "tag_scope_required":
+        assert "Too many" not in str(raised.value)
 
 
 def test_sampling_tag_overlay_reads_only_window_live_assignments():

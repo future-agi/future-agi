@@ -903,6 +903,13 @@ def stream_query(
             ) as blocks:
                 yield from blocks
     except TagReadUnavailable as exc:
+        if exc.code == "tag_scope_required":
+            # No usable project or window to scope the tag read: narrowing
+            # the Tag filter would not help, so say what is missing.
+            raise SamplingTagFilterTooBroad(
+                "A Tag filter needs a project and a time window to read tags "
+                "from. Set both and try again."
+            ) from exc
         if exc.code in DETERMINISTIC_TAG_READ_CODES:
             # The same window and filter can never fit: fail fast (400 in a
             # preview, a terminal task error in the worker).
