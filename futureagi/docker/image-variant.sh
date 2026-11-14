@@ -19,8 +19,7 @@ case "${IMAGE_VARIANT:=standard}" in
     standard)
         # The groups that were base dependencies before the image-size split
         # (pyproject.toml [project.optional-dependencies]), and pii: Presidio
-        # and spaCy's en_core_web_sm, so evidence imports redact names and
-        # addresses and a project's PII redaction can run.
+        # and spaCy's en_core_web_sm, which a project's PII redaction needs.
         : "${EXTRAS:=sandbox,billing,ops,gcp,langchain,rabbitmq,localizer,pii}"
         : "${FFMPEG_FLAVOR:=debian}"
         : "${WITH_GIT:=true}"

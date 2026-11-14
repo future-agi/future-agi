@@ -631,11 +631,14 @@ unavailable. Voice simulation is gated up front and returns a clear "not
 available in this build" API error. Without `gcp` the model picker does not
 offer the Vertex partner models. Without `sandbox`, hosted runs on Daytona or
 E2B answer `501 sandbox_sdk_missing`. Standalone's slim backend has neither
-`gcp` nor `sandbox`. Standalone's slim backend has no `pii` either: if PII
-redaction is enabled for a project, ingestion fails closed until the extra is
-installed, so unredacted data is never stored silently, and evidence imports
-redact only fixed-shape values (emails, phone numbers, card and ID numbers, IP
-addresses and keys) and say that names and addresses were not checked.
+`gcp` nor `sandbox`. Standalone's slim backend has no `pii` either.
+
+**PII redaction and where it applies:** a project's PII redaction runs on the
+spans the backend ingests itself, through its OTLP HTTP and gRPC endpoints.
+For a project with redaction enabled, that ingestion fails closed: without the
+`pii` extra, and when a value cannot be analysed or anonymized, the batch is
+rejected and nothing of it is stored. Spans sent to `fi-collector` are not
+redacted; the collector does not apply a project's PII setting.
 
 **To enable extras**, rebuild the backend image with the `EXTRAS` build
 argument (comma-separated). `EXTRAS` replaces the variant's own list of

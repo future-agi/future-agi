@@ -449,6 +449,26 @@ class BackendVariants(unittest.TestCase):
                 with self.subTest(path=path.name, group=group):
                     self.assertTrue(imported & set(smoke.EXTRA_MODULES[group]))
 
+    def test_every_image_check_imports_the_model_the_pii_scrubber_loads(self):
+        # Presidio without the spaCy model fails at the first span of a project
+        # with PII redaction on, so each check imports the model the scrubber
+        # names, not only some module of the pii group.
+        scrubber = (
+            ROOT / "futureagi" / "tracer" / "utils" / "pii_scrubber.py"
+        ).read_text(encoding="utf-8")
+        (model,) = re.findall(r'"model_name": "([a-z0-9_]+)"', scrubber)
+        smoke = _load_module(ROOT / "futureagi" / "docker" / "runtime_smoke.py")
+        self.assertIn(model, smoke.EXTRA_MODULES["pii"])
+        for path in (
+            WORKFLOWS / "release-images.yml",
+            ROOT / "scripts" / "verify-image-contents.sh",
+        ):
+            text = path.read_text(encoding="utf-8")
+            (probe,) = re.findall(r'"import (daytona, [a-z0-9_, ]+)"', text)
+            imported = {name.strip() for name in probe.split(",")}
+            with self.subTest(path=path.name):
+                self.assertLessEqual(set(smoke.EXTRA_MODULES["pii"]), imported)
+
     def test_ffmpeg_stages_match_the_variant_defaults(self):
         # FROM picks the ffmpeg stage before any RUN could source the script.
         aliases = {}
