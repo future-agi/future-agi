@@ -211,6 +211,36 @@ class TestAgentccWebhookEvent:
         assert event.attempts == 0
         assert event.last_error == ""
 
+    def test_retry_of_an_event_past_the_age_limit_is_delivered_not_expired(
+        self, auth_client, user, settings
+    ):
+        """A dead-lettered event from before the pending age limit, retried by
+        hand, is due again and is not expired by the maintenance run."""
+        from datetime import timedelta
+
+        from django.utils import timezone
+
+        from agentcc.services.webhook_delivery import _due
+        from agentcc.services.webhook_hygiene import expire_pending_events
+
+        settings.AGENTCC_WEBHOOK_PENDING_MAX_AGE_HOURS = 24
+        webhook = _make_webhook(user)
+        event = _make_event(
+            webhook, user, status=AgentccWebhookEvent.DEAD_LETTER, attempts=5
+        )
+        AgentccWebhookEvent.all_objects.filter(pk=event.pk).update(
+            created_at=timezone.now() - timedelta(hours=72)
+        )
+
+        response = auth_client.post(f"/agentcc/webhook-events/{event.id}/retry/")
+        assert response.status_code == 200
+
+        due = _due(AgentccWebhookEvent.all_objects.filter(pk=event.pk), timezone.now())
+        assert list(due.values_list("pk", flat=True)) == [event.pk]
+        assert expire_pending_events() == 0
+        event.refresh_from_db()
+        assert event.status == AgentccWebhookEvent.PENDING
+
     def test_retry_rejects_already_delivered(self, auth_client, user):
         webhook = _make_webhook(user)
         event = _make_event(webhook, user, status=AgentccWebhookEvent.DELIVERED)

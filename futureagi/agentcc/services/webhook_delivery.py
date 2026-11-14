@@ -53,6 +53,7 @@ from agentcc.services.url_safety import (
 from agentcc.services.webhook_hygiene import (
     cancel_events_for_webhook,
     record_delivery_result,
+    within_pending_age,
 )
 from tfc.temporal.drop_in import temporal_activity
 
@@ -91,7 +92,7 @@ def _due(queryset, now):
     hours = settings.AGENTCC_WEBHOOK_PENDING_MAX_AGE_HOURS
     if hours > 0:
         # Past its age the maintenance run expires it; never send it first.
-        events = events.filter(created_at__gte=now - timedelta(hours=hours))
+        events = events.filter(within_pending_age(now - timedelta(hours=hours)))
     return events
 
 

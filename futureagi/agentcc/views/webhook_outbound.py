@@ -270,7 +270,9 @@ class AgentccWebhookEventViewSet(
 
             instance.status = AgentccWebhookEvent.PENDING
             instance.attempts = 0
-            instance.next_retry_at = None
+            # Due now, and the pending age limit counts from this re-queue: an
+            # event retried after the limit is delivered, not expired.
+            instance.next_retry_at = timezone.now()
             instance.last_error = ""
             instance.save(
                 update_fields=[
