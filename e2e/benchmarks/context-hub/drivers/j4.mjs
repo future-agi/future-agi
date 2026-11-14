@@ -124,9 +124,9 @@ export async function createDriver({ jobId, runId, registration }) {
         if (!(await ack(reviewer).isChecked())) await operator.click(ack(reviewer), name);
         await expect(ack(reviewer)).toBeChecked();
       };
-      // (UX iteration 3, REV1/REV7) Digests and identities sit under named disclosures ("Compared content", "Version details",
-      // and "Details" in the share confirmation). The same visibility assertions run once the disclosure is open; the
-      // disclosure is read inside the inspection body, not counted as an operator primitive, so action counts do not rise.
+      // (UX iteration 3, REV7) The permission fingerprints sit under "Compared content" and the share confirmation's record IDs under
+      // "Details". The same visibility assertions run once the disclosure is open; the disclosure is read inside the inspection body,
+      // not counted as an operator primitive, so the measured action counts do not rise. The target configuration digest stays one hover away.
       const reveal = async (scope, name) => {
         const toggle = scope.getByRole('button', { name, exact: true }).first();
         if ((await toggle.getAttribute('aria-expanded')) !== 'true') await toggle.click();
@@ -329,7 +329,6 @@ export async function createDriver({ jobId, runId, registration }) {
             await expect(reviewer.getByText('Never promise a refund before the order status is checked.', { exact: false }).first()).toBeVisible();
           }, decision);
           await op.review('inspect-target-configuration', ['target-binding', 'target-configuration'], [], async () => {
-            await reveal(reviewer, 'Version details');
             await expect(reviewer.getByTitle(detail.packet.target.configuration_digest, { exact: true }).first()).toBeVisible();
             requireValue(inspection.target_configuration?.entrypoint === 'refund_agent.app:invoke', 'Target configuration differs');
           }, decision);
@@ -432,7 +431,6 @@ export async function createDriver({ jobId, runId, registration }) {
             await expect(reviewer.getByText('Never promise a refund before the order status is checked.', { exact: false }).first()).toBeVisible();
             await expect(reviewer.getByTitle(remaining.source_id, { exact: true }).first()).toBeVisible();
             await expect(reviewer.getByText(`${outcome.graded}/${outcome.planned} attempts graded · ${outcome.incomplete} incomplete · ${outcome.regressions} regressions`, { exact: true }).first()).toBeVisible();
-            await reveal(reviewer, 'Version details');
             await expect(reviewer.getByTitle(detail.packet.target.configuration_digest, { exact: true }).first()).toBeVisible();
             await expect(ack(reviewer)).toBeEnabled();
           }, renewed.decision);

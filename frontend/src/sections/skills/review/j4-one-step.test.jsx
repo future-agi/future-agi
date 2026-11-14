@@ -278,6 +278,9 @@ it('keeps carried evidence and reviewer when editing a prepared request, but cle
   render(<MemoryRouter><ReleaseRequestComposer scopeKey="scope" prefill={{ kind: 'agent_context', subjectId: 'context', name: 'Support agent', candidate: { id: 'v2', number: 2, digest: 'sha256:candidate' }, evidence: ['skills_text:carried'] }} /></MemoryRouter>);
   expect(await screen.findByText('1 result attached from your test')).toBeVisible();
   expect(screen.getByText('From your test')).toBeVisible();
+  // Something is attached, so the "no evidence" caution stays quiet.
+  expect(screen.queryByText(/aren.t attached|isn.t attached/)).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Attach results' })).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole('button', { name: 'Prepare review' }));
   expect(await screen.findByText('Reviewer: Sam Rivera')).toBeVisible();
   expect(screen.queryByRole('combobox', { name: 'Assigned reviewer' })).not.toBeInTheDocument();

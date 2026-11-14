@@ -167,6 +167,7 @@ export default function ReleaseRequestComposer({ scopeKey, renewal, prefill, sta
   const evidenceItems = (options.data?.evidence || []);
   // Available = a settled result for this exact content that could be attached now (a private one after sharing).
   const availableRefs = candidate ? evidenceItems.filter((ref) => evidenceProblems(ref, packet).every((reason) => reason.startsWith('Private'))) : [];
+  // The caution is for "passing results exist but none is attached"; once anything is attached it stays quiet.
   const passingUnattached = availableRefs.filter((ref) => ['pass', 'passed'].includes(evidenceOutcome(ref)?.status) && !selected.some((item) => evidenceKey(item) === evidenceKey(ref)));
   const evidenceSection = useRef(null);
   const attachResults = () => { evidenceSection.current?.scrollIntoView({ block: 'center', behavior: 'smooth' }); evidenceSection.current?.focus({ preventScroll: true }); };
@@ -282,7 +283,7 @@ export default function ReleaseRequestComposer({ scopeKey, renewal, prefill, sta
         <TextField size="small" label="Recorded pipeline decision" value={pipelineDecision} onChange={(event) => setPipelineDecision(event.target.value)} disabled={busy} inputProps={{ maxLength: 2000 }} />
       </Stack></TechnicalDetails>
       <ComposerActions><Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} alignItems={{ sm: 'center' }} justifyContent="space-between">
-      {passingUnattached.length > 0 && !alreadyCurrent && candidate && pipelineComplete
+      {passingUnattached.length > 0 && selected.length === 0 && !alreadyCurrent && candidate && pipelineComplete
         ? <Stack direction="row" alignItems="center" flexWrap="wrap" columnGap={1} role="status" sx={{ minWidth: 0 }}>
           <Typography variant="s3" sx={{ color: 'warning.dark' }}>{counted(passingUnattached.length, 'passing result')} {passingUnattached.length === 1 ? "isn't" : "aren't"} attached. The reviewer will see no test evidence.</Typography>
           <Button size="small" onClick={attachResults}>Attach results</Button>

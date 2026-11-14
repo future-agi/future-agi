@@ -148,6 +148,13 @@ it('states evidence, impact, permissions and files once in a key/value table, wi
   expect(screen.getByRole('button', { name: 'Copy full Before' })).toBeVisible();
   expect(screen.getByRole('button', { name: 'Copy full Candidate' })).toBeVisible();
 });
+it('keeps the target configuration digest one hover away on the visible summary line', () => {
+  const target = { bindingId: 'binding', environmentId: null, revision: 2, configurationDigest: 'd'.repeat(64) };
+  render(<ReleaseReviewBody packet={{ ...summaryPacket, target }} changes={[]} dependencyChanges={[]} checks={emptyChecks} capabilities={capabilities} impact={impact} />);
+  expect(summaryRows().getByText('Application configuration r2')).toBeVisible();
+  expect(screen.getByTitle('d'.repeat(64))).toBeVisible();
+  expect(screen.queryByText(/dddddddddddd/)).not.toBeInTheDocument();
+});
 it('never hides a missing permission comparison or unavailable checks behind the summary', () => {
   render(<ReleaseReviewBody packet={summaryPacket} changes={[]} dependencyChanges={[]} checks={undefined} capabilities={undefined} impact={impact} />);
   expect(summaryRows().getByText('Comparison unavailable. Review the file changes before deciding.')).toBeVisible();

@@ -480,7 +480,8 @@ export default function ReleaseReviewBody({
           { label: 'Who is affected', value: impact ? impactSentence(impact) : 'Application impact has not been measured.' },
           { label: 'Permissions', value: capabilities ? (capabilities.changes.length ? counted(capabilities.changes.length, 'change') : 'No permission changes found.') : 'Comparison unavailable. Review the file changes before deciding.' },
           { label: 'Files', value: filesFact },
-          packet.target && { label: 'Application target', value: `Application configuration r${packet.target.revision}` },
+          // The full configuration digest is one hover or focus away, never primary text; Version details holds the copyable value.
+          packet.target && { label: 'Application target', value: <Tooltip title={packet.target.configurationDigest || ''} describeChild><span tabIndex={0}>{`Application configuration r${packet.target.revision}`}</span></Tooltip> },
         ]} />
       </Stack>
       {(evidence.length > 0 || selected.some((ref) => !evidence.some((item) => evidenceKey(item) === evidenceKey(ref)))) && <Section id="review-evidence" title="Test results">
