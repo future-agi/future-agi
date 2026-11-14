@@ -143,7 +143,9 @@ func TestKeyPolicyDynamicCacheIsolationAndStaticEngine(t *testing.T) {
 	if created != 3 || len(rc.GuardrailResults) != 3 {
 		t.Fatalf("created=%d results=%+v", created, rc.GuardrailResults)
 	}
-	if p.dynamicCache["org"]["secret"] == p.dynamicCache["org"]["secret@a"] || p.dynamicCache["org"]["secret@a"] == p.dynamicCache["org"]["secret@b"] {
+	keyA := keyPolicyCacheKey("secret", "a", cfg.KeyPolicies[0].Checks["secret"])
+	keyB := keyPolicyCacheKey("secret", "b", cfg.KeyPolicies[1].Checks["secret"])
+	if p.dynamicCache["org"][keyA] == nil || p.dynamicCache["org"]["secret"] == p.dynamicCache["org"][keyA] || p.dynamicCache["org"][keyA] == p.dynamicCache["org"][keyB] {
 		t.Fatal("shared cache instances")
 	}
 	p.InvalidateDynamicCache("org")

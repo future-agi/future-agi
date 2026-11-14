@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"maps"
 	"math"
+	"strings"
 	"time"
 
 	"github.com/futureagi/agentcc-gateway/internal/guardrails/policy"
@@ -37,7 +38,11 @@ func (p *GuardrailPlugin) BindRealtime(rc *models.RequestContext) (*RealtimePoli
 	}
 	bound := &RealtimePolicy{metadata: maps.Clone(rc.Metadata), model: rc.Model}
 	if requested == policy.RequestPolicyDisabled {
-		return bound, nil
+		// A request override never turns off the key's own policies, as on chat.
+		if err := p.bindRealtimeKeyPolicies(bound, rc); err != nil {
+			return nil, err
+		}
+		return bound, validateRealtimeRules(bound)
 	}
 	add := func(stage Stage, rule resolvedRule) {
 		if merged != nil {
@@ -126,26 +131,83 @@ func (p *GuardrailPlugin) BindRealtime(rc *models.RequestContext) (*RealtimePoli
 			}
 		}
 	}
+	if err := p.bindRealtimeKeyPolicies(bound, rc); err != nil {
+		return nil, err
+	}
+	if err := validateRealtimeRules(bound); err != nil {
+		return nil, err
+	}
+	return bound, nil
+}
+
+// bindRealtimeKeyPolicies adds the checks of the key policies that apply to
+// the session's key, after the org checks, in the order chat runs them. An
+// Enforce policy's checks keep their action; a Monitor policy's checks only
+// log, so they never block or end the session. Neither the key's static
+// overrides nor an X-Guardrail-Policy header change them: on chat, too, key
+// policies cannot be weakened.
+func (p *GuardrailPlugin) bindRealtimeKeyPolicies(bound *RealtimePolicy, rc *models.RequestContext) *models.APIError {
+	if p.tenantStore == nil {
+		return nil
+	}
+	orgID := rc.Metadata["org_id"]
+	org := p.tenantStore.Get(orgID)
+	if org == nil || org.Guardrails == nil {
+		return nil
+	}
+	timeout := p.defaultTimeout
+	if org.Guardrails.TimeoutMs > 0 {
+		timeout = time.Duration(org.Guardrails.TimeoutMs) * time.Millisecond
+	}
+	for _, pol := range sortedKeyPolicies(org.Guardrails.KeyPoliciesFor(rc.Metadata["auth_key_id"])) {
+		monitor := strings.EqualFold(pol.Mode, "monitor")
+		for _, name := range sortedCheckNames(pol.Checks) {
+			check := pol.Checks[name]
+			if check == nil || !check.Enabled {
+				continue
+			}
+			action := parseAction(check.Action)
+			if monitor {
+				action = ActionLog
+			}
+			g := p.getKeyPolicyGuardrail(orgID, name, keyPolicyCacheKey(name, pol.ID, check), check)
+			if g == nil || (g.Stage() != StagePre && g.Stage() != StagePost) {
+				if action == ActionBlock {
+					return realtimeUnsupported("configured guardrail implementation or stage is unavailable")
+				}
+				continue
+			}
+			bound.rules[g.Stage()] = append(bound.rules[g.Stage()], resolvedRule{
+				guardrail: g, mode: "sync", action: action, threshold: check.ConfidenceThreshold, timeout: timeout,
+			})
+		}
+	}
+	return nil
+}
+
+// validateRealtimeRules refuses a session whose blocking checks could not
+// decide: an invalid threshold, or a checker that is not ready.
+func validateRealtimeRules(bound *RealtimePolicy) *models.APIError {
 	for _, rules := range bound.rules {
 		for _, rule := range rules {
 			if rule.action != ActionBlock {
 				continue
 			}
 			if math.IsNaN(rule.threshold) || math.IsInf(rule.threshold, 0) || rule.threshold < 0 || rule.threshold > 1 {
-				return nil, realtimeUnsupported("configured guardrail threshold is invalid")
+				return realtimeUnsupported("configured guardrail threshold is invalid")
 			}
 			if ready, ok := rule.guardrail.(interface{ RealtimeReady() error }); ok {
 				if err := ready.RealtimeReady(); err != nil {
 					if errors.Is(err, ErrRealtimeUnavailable) {
-						return nil, &models.APIError{Status: 503, Type: models.ErrTypeGuardrail,
+						return &models.APIError{Status: 503, Type: models.ErrTypeGuardrail,
 							Code: "guardrail_unavailable", Message: "configured guardrail is unavailable for realtime checks"}
 					}
-					return nil, realtimeUnsupported("configured guardrail is unavailable for realtime checks")
+					return realtimeUnsupported("configured guardrail is unavailable for realtime checks")
 				}
 			}
 		}
 	}
-	return bound, nil
+	return nil
 }
 
 func realtimeUnsupported(detail string) *models.APIError {

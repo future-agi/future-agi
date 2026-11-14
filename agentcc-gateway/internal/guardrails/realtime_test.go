@@ -108,3 +108,70 @@ func TestRealtimePostStageTextIsOnlyTheResponse(t *testing.T) {
 		t.Fatalf("metadata=%v", seen.Metadata)
 	}
 }
+
+// Speech and transcription relays bind the key's policies too: an Enforce
+// policy's blocking check blocks the matching text; a Monitor policy's check
+// only logs; another key of the org gets neither.
+func TestRealtimeBindsKeyPolicies(t *testing.T) {
+	blocked := realtimeTestCheck{"blocklist", func(_ context.Context, in *CheckInput) *CheckResult {
+		if string(in.Request.Messages[0].Content) == `"forbidden words"` {
+			return &CheckResult{Pass: false, Score: 1}
+		}
+		return &CheckResult{Pass: true}
+	}}
+	registry := map[string]Guardrail{"blocklist": blocked}
+	bind := func(t *testing.T, mode, keyID string, extra map[string]string) *RealtimePolicy {
+		t.Helper()
+		store := tenant.NewStore()
+		store.Set("org", &tenant.OrgConfig{Guardrails: &tenant.GuardrailConfig{KeyPolicies: []*tenant.KeyGuardrailPolicy{{
+			ID: "pol", Name: "pol", Mode: mode, KeyIDs: []string{"key_a"},
+			Checks: map[string]*tenant.GuardrailCheck{"blocklist": {Enabled: true, Action: "block", ConfidenceThreshold: 0.5}},
+		}}}})
+		plugin := NewPlugin(nil, registry, nil, nil, store)
+		rc := models.AcquireRequestContext()
+		t.Cleanup(rc.Release)
+		rc.Metadata["org_id"] = "org"
+		rc.Metadata["auth_key_id"] = keyID
+		for k, v := range extra {
+			rc.Metadata[k] = v
+		}
+		bound, err := plugin.BindRealtime(rc)
+		if err != nil {
+			t.Fatalf("bind: %v", err)
+		}
+		return bound
+	}
+
+	t.Run("enforce blocks for the policy's key", func(t *testing.T) {
+		bound := bind(t, "enforce", "key_a", nil)
+		if !bound.Blocking(StagePre) {
+			t.Fatal("enforce key policy bound no blocking pre-stage rule")
+		}
+		if err := bound.Check(context.Background(), StagePre, "forbidden words"); err == nil {
+			t.Fatal("enforce key policy let blocked text through")
+		}
+		if err := bound.Check(context.Background(), StagePre, "fine words"); err != nil {
+			t.Fatalf("clean text: %v", err)
+		}
+	})
+	t.Run("monitor only logs", func(t *testing.T) {
+		bound := bind(t, "monitor", "key_a", nil)
+		if !bound.Has(StagePre) || bound.Blocking(StagePre) {
+			t.Fatalf("monitor: has=%v blocking=%v; want a log-only rule", bound.Has(StagePre), bound.Blocking(StagePre))
+		}
+		if err := bound.Check(context.Background(), StagePre, "forbidden words"); err != nil {
+			t.Fatalf("monitor key policy blocked: %v", err)
+		}
+	})
+	t.Run("other key gets nothing", func(t *testing.T) {
+		if bound := bind(t, "enforce", "key_b", nil); bound.Has(StagePre) || bound.Has(StagePost) {
+			t.Fatal("a key outside the policy got its checks")
+		}
+	})
+	t.Run("a disabled-policy header does not drop them", func(t *testing.T) {
+		bound := bind(t, "enforce", "key_a", map[string]string{"x-guardrail-policy": "disabled", "key_allow_policy_override": "true"})
+		if err := bound.Check(context.Background(), StagePre, "forbidden words"); err == nil {
+			t.Fatal("X-Guardrail-Policy: disabled turned the key policy off")
+		}
+	})
+}

@@ -2,7 +2,10 @@ package guardrails
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"hash/fnv"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -23,27 +26,13 @@ func (p *GuardrailPlugin) runKeyPolicies(ctx context.Context, rc *models.Request
 	if keyID == "" {
 		return pipeline.ResultContinue()
 	}
-	policies := cfg.KeyPoliciesFor(keyID)
-	sort.Slice(policies, func(i, j int) bool {
-		a, b := policies[i], policies[j]
-		if a.Priority != b.Priority {
-			return a.Priority < b.Priority
-		}
-		if a.Name != b.Name {
-			return a.Name < b.Name
-		}
-		return a.ID < b.ID
-	})
+	policies := sortedKeyPolicies(cfg.KeyPoliciesFor(keyID))
 	timeout := p.defaultTimeout
 	if cfg.TimeoutMs > 0 {
 		timeout = time.Duration(cfg.TimeoutMs) * time.Millisecond
 	}
 	for _, pol := range policies {
-		names := make([]string, 0, len(pol.Checks))
-		for name := range pol.Checks {
-			names = append(names, name)
-		}
-		sort.Strings(names)
+		names := sortedCheckNames(pol.Checks)
 		checks := make([]orgCheck, 0, len(names))
 		for _, name := range names {
 			check := pol.Checks[name]
@@ -51,7 +40,7 @@ func (p *GuardrailPlugin) runKeyPolicies(ctx context.Context, rc *models.Request
 				continue
 			}
 			// Unlike org checks, these still run when a static rule uses the same name.
-			g := p.getKeyPolicyGuardrail(orgID, name, name+"@"+pol.ID, check)
+			g := p.getKeyPolicyGuardrail(orgID, name, keyPolicyCacheKey(name, pol.ID, check), check)
 			if g != nil && g.Stage() == stage {
 				checks = append(checks, orgCheck{name: name, check: check, g: g})
 			}
@@ -91,7 +80,7 @@ func (p *GuardrailPlugin) runKeyPolicies(ctx context.Context, rc *models.Request
 			result.Blocked = true
 			storeGuardrailResults(rc, result)
 			if len(result.Warnings) > 0 {
-				rc.Metadata["guardrail_warnings"] = strings.Join(result.Warnings, "; ")
+				rc.Metadata["guardrail_warnings"] = joinNonEmpty("; ", rc.Metadata["guardrail_warnings"], strings.Join(result.Warnings, "; "))
 			}
 			rc.Flags.GuardrailTriggered = true
 			rc.Metadata["guardrail_name"] = checks[blockIdx].name
@@ -105,10 +94,99 @@ func (p *GuardrailPlugin) runKeyPolicies(ctx context.Context, rc *models.Request
 			return pipeline.ResultError(models.ErrGuardrailBlocked("content_blocked", p.buildBlockMessage(result)))
 		}
 		if len(result.Triggered) > 0 {
-			p.applyMetadata(rc, result)
+			p.addKeyPolicyMetadata(rc, result)
 		}
 	}
 	return pipeline.ResultContinue()
+}
+
+// addKeyPolicyMetadata records an enforce policy's non-blocking triggers on
+// top of what the org checks and earlier policies recorded. applyMetadata
+// alone replaces their check names, action and warnings, and the audit record
+// copies guardrail_action, so a policy that only logged would hide an org
+// check that warned.
+func (p *GuardrailPlugin) addKeyPolicyMetadata(rc *models.RequestContext, result *PipelineResult) {
+	prevNames := rc.Metadata["guardrail_name"]
+	prevAction := rc.Metadata["guardrail_action"]
+	prevWarnings := rc.Metadata["guardrail_warnings"]
+	p.applyMetadata(rc, result)
+	if prevNames != "" {
+		names := strings.Split(prevNames, ",")
+		for _, name := range strings.Split(rc.Metadata["guardrail_name"], ",") {
+			if !slices.Contains(names, name) {
+				names = append(names, name)
+			}
+		}
+		rc.Metadata["guardrail_name"] = strings.Join(names, ",")
+	}
+	if metadataActionRank(prevAction) > metadataActionRank(rc.Metadata["guardrail_action"]) {
+		rc.Metadata["guardrail_action"] = prevAction
+	}
+	if w := joinNonEmpty("; ", prevWarnings, strings.Join(result.Warnings, "; ")); w != "" {
+		rc.Metadata["guardrail_warnings"] = w
+	}
+}
+
+func metadataActionRank(action string) int {
+	switch action {
+	case "blocked":
+		return 3
+	case "warned":
+		return 2
+	case "logged":
+		return 1
+	}
+	return 0
+}
+
+func joinNonEmpty(sep string, parts ...string) string {
+	kept := parts[:0:0]
+	for _, part := range parts {
+		if part != "" {
+			kept = append(kept, part)
+		}
+	}
+	return strings.Join(kept, sep)
+}
+
+// sortedKeyPolicies orders policies as they run: priority, then name, then ID.
+func sortedKeyPolicies(policies []*tenant.KeyGuardrailPolicy) []*tenant.KeyGuardrailPolicy {
+	sort.Slice(policies, func(i, j int) bool {
+		a, b := policies[i], policies[j]
+		if a.Priority != b.Priority {
+			return a.Priority < b.Priority
+		}
+		if a.Name != b.Name {
+			return a.Name < b.Name
+		}
+		return a.ID < b.ID
+	})
+	return policies
+}
+
+func sortedCheckNames(checks map[string]*tenant.GuardrailCheck) []string {
+	names := make([]string, 0, len(checks))
+	for name := range checks {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}
+
+// keyPolicyCacheKey names a key-policy check's instance in the dynamic cache.
+// It includes a hash of the check's config, so an instance built from a config
+// a request read just before a change can never be served for the new config:
+// the cache is cleared on a config change, but a request that started earlier
+// can store its instance again right after.
+func keyPolicyCacheKey(name, policyID string, check *tenant.GuardrailCheck) string {
+	b, err := json.Marshal(check.Config)
+	if err != nil {
+		// Unencodable config: never cache under a shared name.
+		return fmt.Sprintf("%s@%s#%p", name, policyID, check)
+	}
+	h := fnv.New64a()
+	h.Write(b)
+	return fmt.Sprintf("%s@%s#%x", name, policyID, h.Sum64())
 }
 
 // simulateKeyPolicy runs a monitor policy's checks in the order enforce would
