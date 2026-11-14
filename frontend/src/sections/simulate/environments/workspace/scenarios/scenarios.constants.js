@@ -95,6 +95,7 @@ export const SCENARIOS_COPY = {
           : "Not run",
   sourceChanged: (version) => `Source changed in environment v${version}`,
   compare: "Compare",
+  citedRule: "a cited rule",
   compareTitle: (from, to) =>
     `What changed between environment v${from} and v${to}`,
   compareRule: "Rule",

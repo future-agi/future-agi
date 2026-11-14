@@ -293,7 +293,10 @@ export function LifecycleSections({ row, jobId }) {
                 {SCENARIOS_COPY.sourceChanged(
                   lifecycle.source_changed_version ?? "",
                 )}
-                : {lifecycle.source_changed.join(", ")}
+                :{" "}
+                {lifecycle.source_changed
+                  .map((ref) => ref || SCENARIOS_COPY.citedRule)
+                  .join(", ")}
               </Typography>
               {jobId && lifecycle.source_changed_version_id && (
                 <Button
