@@ -884,12 +884,18 @@ class AgentEvaluator:
         "choice_scores": "_choice_scores",
     }
 
-    def run(self, **kwargs):
+    def run(self, *, protect_runtime: bool = False, **kwargs):
         """
         Run the agent evaluation. Returns a BatchRunResult-compatible dict.
 
         This is the entry point called by eval_runner via:
             eval_instance.run(**updated_mapping)
+
+        Evaluation callers (dataset, playground, tracing, simulation, voice,
+        optimizer and SDK new-eval) keep the default validation. The SDK v1
+        Protect endpoint, also used by gateway guardrails, explicitly passes
+        protect_runtime=True through EvalRequest to retain its parse defaults.
+        Model and call_type select Protect; neither identifies the caller.
 
         Any key in kwargs that matches a field in _RUNTIME_OVERRIDABLE will
         override the instance default for this single run. All other kwargs
@@ -923,7 +929,7 @@ class AgentEvaluator:
                 setattr(self, attr, kwargs.pop(k))
 
         try:
-            eval_result = self._evaluate(**kwargs)
+            eval_result = self._evaluate(protect_runtime=protect_runtime, **kwargs)
         finally:
             # Restore instance defaults so the evaluator can be reused.
             for attr, value in saved.items():
@@ -934,7 +940,7 @@ class AgentEvaluator:
             eval_results=[eval_result],
         )
 
-    def _evaluate(self, **kwargs) -> EvalResult:
+    def _evaluate(self, *, protect_runtime: bool = False, **kwargs) -> EvalResult:
         """Run the agent evaluation loop."""
         start_time = time.time()
 
@@ -1326,6 +1332,7 @@ class AgentEvaluator:
                     kwargs=kwargs,
                     call_type=call_type,
                     start_time=start_time,
+                    protect_runtime=protect_runtime,
                 )
             except GradingError as e:
                 # The same terminal event as the agent path below.
@@ -1423,8 +1430,10 @@ class AgentEvaluator:
         kwargs: dict,
         call_type: str,
         start_time: float,
+        *,
+        protect_runtime: bool = False,
     ) -> "EvalResult":
-        """Run a Protect / Protect Flash evaluation."""
+        """Run Protect, validating grades but preserving runtime parse defaults."""
         from ee.protect.helper import ProtectHelper
 
         is_flash = call_type == "protect_flash"
@@ -1509,9 +1518,12 @@ class AgentEvaluator:
             content=content[:500] if content else "EMPTY",
         )
 
-        # Unreadable output has no verdict: never record parse defaults
-        # (Failed, or safe for Flash) as a grade.
-        if not ProtectHelper.has_verdict(content, is_flash=is_flash):
+        # Evaluation output must be readable to count as a grade. Runtime
+        # guardrails keep their historical Failed / Flash Passed defaults:
+        # raising here turns a verdict into an outage that fail_open can admit.
+        if not protect_runtime and not ProtectHelper.has_verdict(
+            content, is_flash=is_flash
+        ):
             raise GradingError(
                 "invalid_output" if (content or "").strip() else "empty_output",
                 content_length=len(content or ""),

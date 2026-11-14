@@ -539,6 +539,7 @@ def _drive_run_agent(evaluator, *, agent_run_result, finalize_text):
     """
     mock_agent = MagicMock()
     mock_agent.run = AsyncMock(return_value=agent_run_result)
+    mock_agent.final_turn_content = agent_run_result.get("content", "")
     mock_agent.total_input_tokens = 0
     mock_agent.total_output_tokens = 0
 
@@ -548,7 +549,8 @@ def _drive_run_agent(evaluator, *, agent_run_result, finalize_text):
     mock_client = MagicMock()
     mock_client.last_oversized_attempt = None
     mock_client._gateway_cost = 0
-    mock_client.stream_completion = _fake_stream
+    mock_client.take_retry.return_value = True
+    mock_client.stream_completion = MagicMock(side_effect=_fake_stream)
 
     from structlog.testing import capture_logs
 
@@ -583,6 +585,8 @@ def test_auto_mode_gets_wider_iteration_budget(evaluator):
         finalize_text="",
     )
     assert mock_agent.MAX_ITERATIONS == 7
+    mock_agent.run.assert_awaited_once()
+    mock_agent.llm_client.stream_completion.assert_not_called()
 
 
 def test_auto_mode_exhaustion_force_finalizes_to_verdict(evaluator):
@@ -607,7 +611,7 @@ def test_auto_mode_exhaustion_force_finalizes_to_verdict(evaluator):
     ]
     verdict = '{"result": "Fail", "explanation": "The answer is not grounded in the retrieved context."}'
 
-    result, _, _ = _drive_run_agent(
+    result, mock_agent, _ = _drive_run_agent(
         evaluator,
         agent_run_result={"content": "", "tool_calls": tool_log},
         finalize_text=verdict,
@@ -616,3 +620,29 @@ def test_auto_mode_exhaustion_force_finalizes_to_verdict(evaluator):
     # Empty content + a non-empty tool log only resolves to the verdict via
     # force-finalize — recovering it proves the path fired and committed.
     assert result["content"] == verdict
+    mock_agent.run.assert_awaited_once()
+    mock_agent.llm_client.take_retry.assert_called_once()
+    mock_agent.llm_client.stream_completion.assert_called_once()
+    assert mock_agent.llm_client.stream_completion.call_args.kwargs["tools"] is None
+
+
+@pytest.mark.parametrize(
+    ("finalize_text", "code"),
+    [("", "empty_output"), ("Not a verdict", "invalid_output")],
+)
+def test_auto_mode_exhaustion_without_verdict_is_ungraded(
+    evaluator, finalize_text, code
+):
+    evaluator.agent_mode = "auto"
+    result, mock_agent, _ = _drive_run_agent(
+        evaluator,
+        agent_run_result={"content": "", "tool_calls": []},
+        finalize_text=finalize_text,
+    )
+    assert result["content"] == finalize_text
+    mock_agent.run.assert_awaited_once()
+    mock_agent.llm_client.stream_completion.assert_called_once()
+    with pytest.raises(GradingError) as exc:
+        evaluator._build_result(result, runtime_ms=10)
+    assert exc.value.code == code
+    assert exc.value.__cause__ is None

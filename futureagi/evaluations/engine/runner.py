@@ -48,6 +48,13 @@ class EvalRequest:
     )
     criteria_override: str | None = None  # Override criteria text
 
+    # Internal caller context, not input data or template configuration.
+    # sdk.utils.evaluations._run_protect (SDK v1 / gateway guardrails) opts in.
+    # SDK new-eval (_run_eval) and tracer span/trace/session callers keep False.
+    # Both paths use Protect models and call_type, so those cannot distinguish
+    # runtime verdicts from evaluation grades.
+    protect_runtime: bool = False
+
 
 @dataclass
 class EvalResult:
@@ -162,6 +169,11 @@ def run_eval(request: EvalRequest) -> EvalResult:
     from evaluations.engine.preprocessing import preprocess_inputs
 
     run_params = preprocess_inputs(eval_template.name, run_params)
+
+    # Set caller context after input preparation so a mapped input cannot
+    # accidentally opt an evaluation out of Protect response validation.
+    if eval_type_id == "AgentEvaluator":
+        run_params["protect_runtime"] = request.protect_runtime
 
     # 4. Execute
     start_time = time.time()

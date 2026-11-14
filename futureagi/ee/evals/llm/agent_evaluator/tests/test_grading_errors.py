@@ -2,11 +2,10 @@
 
 import asyncio
 import json
-import time
 from datetime import UTC, datetime, timedelta
 from email.utils import format_datetime
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 import httpx
 import pytest
@@ -424,27 +423,31 @@ FLASH_SAFE = "Harmful request: no\nResponse refusal: n/a\nHarmful response: n/a"
 FLASH_HARMFUL = "Harmful request: yes\nResponse refusal: n/a\nHarmful response: n/a"
 
 
-def _run_protect(call_type, content):
-    from ee.protect.helper import ProtectHelper
-
-    evaluator = AgentEvaluator(rule_prompt="Toxicity", output_type="Pass/Fail")
-    # _evaluate() sets these before it reaches the Protect path.
-    evaluator._current_eval_id = "synthetic-protect-eval"
-    evaluator._reverse_output = False
-    response = SimpleNamespace(
+def _protect_response(content):
+    return SimpleNamespace(
         choices=[SimpleNamespace(message=SimpleNamespace(content=content))],
         usage=None,
     )
-    with (
-        patch("agentic_eval.core.llm.llm.LLM") as llm,
-        patch.object(ProtectHelper, "resolve_alias", return_value="protect_toxicity"),
-    ):
-        llm.return_value._try_gateway_completion.return_value = response
-        return evaluator._run_protect(
-            kwargs={"eval_name": "Toxicity", "input": "hello"},
-            call_type=call_type,
-            start_time=time.time(),
+
+
+def _run_protect(call_type, content, *, protect_runtime=False, reverse=False):
+    """Enter through run(), with only the gateway response replaced."""
+    evaluator = AgentEvaluator(
+        rule_prompt="Toxicity",
+        model=call_type,
+        output_type="Pass/Fail",
+        reverse_output=reverse,
+    )
+    with patch("agentic_eval.core.llm.llm.LLM") as llm:
+        llm.return_value._try_gateway_completion.return_value = _protect_response(
+            content
         )
+        return evaluator.run(
+            eval_name="Toxicity",
+            input="hello",
+            call_type=call_type,
+            protect_runtime=protect_runtime,
+        ).eval_results[0]
 
 
 @pytest.mark.parametrize("call_type", ["protect", "protect_flash"])
@@ -457,12 +460,17 @@ def _run_protect(call_type, content):
         ("<label>maybe</label>", "invalid_output"),
     ],
 )
-def test_unreadable_protect_output_is_ungraded(call_type, content, code):
+@pytest.mark.parametrize("reverse", [False, True])
+def test_unreadable_protect_output_is_ungraded(call_type, content, code, reverse):
     from ee.evals.llm.agent_evaluator.evaluator import GradingError
 
-    with pytest.raises(GradingError) as exc:
-        _run_protect(call_type, content)
+    with capture_logs() as logs, pytest.raises(GradingError) as exc:
+        _run_protect(call_type, content, reverse=reverse)
     assert exc.value.code == code
+    terminal = [event for event in logs if event.get("log_level") == "error"]
+    assert len(terminal) == 1
+    assert terminal[0]["event"] == "agent_evaluator_error"
+    assert terminal[0]["error_code"] == code
 
 
 @pytest.mark.parametrize(
@@ -474,19 +482,187 @@ def test_unreadable_protect_output_is_ungraded(call_type, content, code):
         ("protect_flash", FLASH_HARMFUL, "Failed"),
     ],
 )
-def test_readable_protect_output_is_graded(call_type, content, label):
-    result = _run_protect(call_type, content)
+@pytest.mark.parametrize("protect_runtime", [False, True])
+@pytest.mark.parametrize("reverse", [False, True])
+def test_readable_protect_output_is_graded(
+    call_type, content, label, protect_runtime, reverse
+):
+    result = _run_protect(
+        call_type, content, protect_runtime=protect_runtime, reverse=reverse
+    )
+    assert result["output"] == label
+    assert result["failure"] is ((label == "Failed") != reverse)
+
+
+@pytest.mark.parametrize(
+    ("call_type", "label"), [("protect", "Failed"), ("protect_flash", "Passed")]
+)
+@pytest.mark.parametrize("content", ["", None, "garbage", "<label>maybe</label>"])
+def test_protect_runtime_run_keeps_parse_defaults(call_type, content, label):
+    with capture_logs() as logs:
+        result = _run_protect(call_type, content, protect_runtime=True)
     assert result["output"] == label
     assert result["failure"] is (label == "Failed")
+    assert not [event for event in logs if event.get("log_level") == "error"]
 
 
-def test_protect_runtime_parsing_is_unchanged():
-    """The Protect runtime path keeps its parse defaults for unreadable output."""
-    from ee.protect.helper import ProtectHelper
+@pytest.fixture
+def protect_engine(monkeypatch):
+    """Real run_eval/run/formatting; replace DB-backed instance resolution only."""
+    from evaluations.engine import runner
 
-    assert ProtectHelper.parse_response("garbage", is_flash=False)["choices"] == [
-        "Failed"
-    ]
-    assert ProtectHelper.parse_response("garbage", is_flash=True)["choices"] == [
-        "Passed"
-    ]
+    template = SimpleNamespace(
+        id="synthetic-protect-template",
+        name="Toxicity",
+        config={
+            "eval_type_id": "AgentEvaluator",
+            "output": "Pass/Fail",
+            "required_keys": ["input"],
+        },
+        choice_scores={},
+    )
+
+    def create_instance(*, model, **kwargs):
+        evaluator = AgentEvaluator(
+            rule_prompt="Toxicity", model=model, output_type="Pass/Fail"
+        )
+        return evaluator, None
+
+    monkeypatch.setattr(runner, "create_eval_instance", create_instance)
+    monkeypatch.setattr(
+        "evaluations.engine.params._get_few_shot_examples", Mock(return_value=[])
+    )
+    return template
+
+
+@pytest.mark.parametrize("call_type", ["protect", "protect_flash"])
+@pytest.mark.parametrize("skip_params_preparation", [False, True])
+def test_protect_engine_defaults_to_grading_even_with_runtime_named_input(
+    protect_engine, call_type, skip_params_preparation
+):
+    from ee.evals.llm.agent_evaluator.evaluator import GradingError
+    from evaluations.engine import EvalRequest, run_eval
+
+    with patch("agentic_eval.core.llm.llm.LLM") as llm:
+        llm.return_value._try_gateway_completion.return_value = _protect_response(
+            "garbage"
+        )
+        with pytest.raises(GradingError) as exc:
+            run_eval(
+                EvalRequest(
+                    eval_template=protect_engine,
+                    inputs={
+                        "input": "hello",
+                        "call_type": call_type,
+                        "protect_runtime": True,
+                    },
+                    skip_params_preparation=skip_params_preparation,
+                )
+            )
+    assert exc.value.code == "invalid_output"
+
+
+@pytest.mark.parametrize("call_type", ["protect", "protect_flash"])
+def test_protect_runtime_context_does_not_leak_to_next_run(call_type):
+    from ee.evals.llm.agent_evaluator.evaluator import GradingError
+
+    evaluator = AgentEvaluator(rule_prompt="Toxicity", model=call_type)
+    with patch("agentic_eval.core.llm.llm.LLM") as llm:
+        llm.return_value._try_gateway_completion.return_value = _protect_response(
+            "garbage"
+        )
+        evaluator.run(input="hello", call_type=call_type, protect_runtime=True)
+        with pytest.raises(GradingError) as exc:
+            evaluator.run(input="hello", call_type=call_type)
+    assert exc.value.code == "invalid_output"
+
+
+@pytest.fixture
+def sdk_protect_post(monkeypatch, protect_engine):
+    """SDK view -> utility -> engine -> evaluator, with synthetic side effects."""
+    from sdk.utils import evaluations as eval_utils
+    from sdk.views import evaluations as eval_views
+
+    monkeypatch.setattr(
+        eval_utils.EvalTemplate.no_workspace_objects,
+        "get",
+        Mock(return_value=protect_engine),
+    )
+    monkeypatch.setattr(
+        eval_utils, "_log_and_deduct_cost_for_standalone_eval", Mock(return_value=None)
+    )
+    monkeypatch.setattr(
+        "ee.usage.services.config.BillingConfig.get", Mock(return_value=None)
+    )
+    monkeypatch.setattr(eval_views, "get_mixpanel_properties", Mock(return_value={}))
+    monkeypatch.setattr(eval_views, "track_mixpanel_event", Mock())
+
+    def post(content, *, protect_flash=False, unavailable=False):
+        call_type = "protect_flash" if protect_flash else "protect"
+        request = SimpleNamespace(
+            method="POST",
+            user=SimpleNamespace(
+                id="synthetic-user", organization=SimpleNamespace(id="synthetic-org")
+            ),
+            workspace=None,
+            data={
+                "inputs": [
+                    {"input": "hello", "call_type": call_type, "max_tokens": 20}
+                ],
+                "config": {"1": {"call_type": call_type}},
+                "protect_flash": protect_flash,
+            },
+        )
+        with patch("agentic_eval.core.llm.llm.LLM") as llm:
+            completion = llm.return_value._try_gateway_completion
+            completion.return_value = (
+                None if unavailable else _protect_response(content)
+            )
+            response = eval_views.StandaloneEvalView().post(request)
+        completion.assert_called_once()
+        payload = completion.call_args.args[0]
+        assert payload["model"] == (
+            "protect_flash" if protect_flash else "protect_toxicity"
+        )
+        assert payload["max_tokens"] == 20
+        return response
+
+    return post
+
+
+@pytest.mark.parametrize("protect_flash", [False, True])
+@pytest.mark.parametrize("content", ["", None, "garbage", "<label>maybe</label>"])
+def test_protect_sdk_runtime_returns_legacy_verdict(
+    sdk_protect_post, protect_flash, content
+):
+    """HTTP 200 Failed must not become HTTP 500 and hence fail_open admission."""
+    response = sdk_protect_post(content, protect_flash=protect_flash)
+    assert response.status_code == 200, response.data
+    result = response.data["result"][0]["evaluations"][0]
+    assert result["output"] == ("Passed" if protect_flash else "Failed")
+    assert result["output_type"] == "Pass/Fail"
+
+
+@pytest.mark.parametrize(
+    ("protect_flash", "content", "label"),
+    [
+        (False, "<label>Passed</label>", "Passed"),
+        (False, "<label>Failed</label>", "Failed"),
+        (True, FLASH_SAFE, "Passed"),
+        (True, FLASH_HARMFUL, "Failed"),
+    ],
+)
+def test_protect_sdk_runtime_keeps_readable_verdicts(
+    sdk_protect_post, protect_flash, content, label
+):
+    response = sdk_protect_post(content, protect_flash=protect_flash)
+    assert response.status_code == 200, response.data
+    assert response.data["result"][0]["evaluations"][0]["output"] == label
+
+
+@pytest.mark.parametrize("protect_flash", [False, True])
+def test_protect_sdk_runtime_gateway_unavailable_still_errors(
+    sdk_protect_post, protect_flash
+):
+    response = sdk_protect_post(None, protect_flash=protect_flash, unavailable=True)
+    assert response.status_code == 500
