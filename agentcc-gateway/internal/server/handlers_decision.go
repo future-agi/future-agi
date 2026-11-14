@@ -15,6 +15,7 @@ import (
 	"github.com/futureagi/agentcc-gateway/internal/middleware"
 	"github.com/futureagi/agentcc-gateway/internal/modeldb"
 	"github.com/futureagi/agentcc-gateway/internal/models"
+	"github.com/futureagi/agentcc-gateway/internal/providers"
 	"github.com/futureagi/agentcc-gateway/internal/tenant"
 )
 
@@ -253,7 +254,11 @@ func (h *Handlers) orgDecisionModels(orgCfg *tenant.OrgConfig) []decisionModel {
 			continue
 		}
 		format := apiFormatDecisionFormat(apiFormat, id, pcfg.BaseURL)
+		openRouterChat := providers.IsOpenRouterChat(apiFormat, id, pcfg.BaseURL)
 		for _, model := range pcfg.Models {
+			if openRouterChat && !isOpenRouterDecisionModel(db, stripProviderPrefix(model, id)) {
+				continue
+			}
 			if entry, ok := newDecisionModel(db, orgCfg, id, model, format); ok {
 				entries = append(entries, entry)
 			}
@@ -267,7 +272,7 @@ func (h *Handlers) registryDecisionModels() []decisionModel {
 	entries := []decisionModel{}
 	db := h.ModelDB()
 	for _, m := range h.registry.ListAllModels() {
-		p, ok := h.registry.GetProvider(m.OwnedBy)
+		p, ok := h.registryDecisionProvider(m.OwnedBy, stripProviderPrefix(m.ID, m.OwnedBy))
 		if !ok {
 			continue
 		}

@@ -124,6 +124,52 @@ func (c *OrgProviderCache) GetOrCreateWithTenantConfig(orgID, providerID, apiKey
 	return p, nil
 }
 
+// GetOrCreateOpenRouterDecision returns the System One provider an org's
+// OpenAI-format OpenRouter connection serves decisions with (see
+// NewOpenRouterDecisionProvider). It is built from the same config the chat
+// provider is: the org's own base_url, checked as validateBaseURL checks it and
+// dialled through the same guarded dialer as an org System One provider, or
+// the config.yaml entry it is layered onto, and never that entry's key. It is
+// cached beside the org's other providers, under "orgID:providerID#decision",
+// so Evict and EvictAll drop it on a config change.
+func (c *OrgProviderCache) GetOrCreateOpenRouterDecision(orgID, providerID, apiKey string, tenantCfg *tenant.ProviderConfig) (Provider, error) {
+	key := orgID + ":" + providerID + "#decision"
+
+	c.mu.RLock()
+	if p, ok := c.providers[key]; ok {
+		c.mu.RUnlock()
+		return p, nil
+	}
+	c.mu.RUnlock()
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if p, ok := c.providers[key]; ok {
+		return p, nil
+	}
+
+	baseCfg, ok := c.baseConfig(providerID, tenantCfg)
+	if !ok {
+		return nil, fmt.Errorf("no base config for provider %q", providerID)
+	}
+	if tenantCfg != nil {
+		if err := validateBaseURL(tenantCfg.BaseURL, c.allowPrivateBaseURLs); err != nil {
+			return nil, fmt.Errorf("org %s provider %s: %w", orgID, providerID, err)
+		}
+	}
+	orgCfg := resolveOrgConfig(baseCfg, apiKey, tenantCfg)
+	if tenantCfg != nil && tenantCfg.BaseURL != "" {
+		orgCfg.DialContext, orgCfg.Proxy = netguard.Proxied(net.Dialer{}, c.allowPrivateBaseURLs, decisionProxy)
+	}
+	p, err := NewOpenRouterDecisionProvider(providerID+"_org_"+orgID, orgCfg)
+	if err != nil {
+		return nil, fmt.Errorf("creating org decision provider %s/%s: %w", orgID, providerID, err)
+	}
+	c.providers[key] = p
+	slog.Info("created per-org OpenRouter decision provider", "org_id", orgID, "provider", providerID)
+	return p, nil
+}
+
 // baseConfig returns the config an org provider is layered onto: the org's own
 // upstream when it names one (or a service account), or when config.yaml has
 // no entry for providerID; otherwise that entry. An org that names its own
