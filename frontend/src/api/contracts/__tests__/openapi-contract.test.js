@@ -13,6 +13,102 @@ describe("OpenAPI runtime contract", () => {
     vi.unstubAllEnvs();
   });
 
+  it("accepts typed Error Feed thresholds in create, update and list contracts", () => {
+    const alertId = "0050b1f4-0b65-4787-bd3f-f4ad4b61e661";
+    expect(
+      validateContractedRequestConfig({
+        url: "/tracer/alerts/",
+        method: "post",
+        data: {
+          kind: "error_feed",
+          trigger_type: "severity_reached",
+          severity_threshold: "high",
+        },
+      }),
+    ).toMatchObject({ ok: true });
+    expect(
+      validateContractedRequestConfig({
+        url: `/tracer/alerts/error_feed/${alertId}/`,
+        method: "patch",
+        data: { trigger_type: "occurrences_crossed", occurrence_threshold: 7 },
+      }),
+    ).toMatchObject({ ok: true });
+    expect(
+      validateContractedRequestConfig({
+        url: "/tracer/alerts/",
+        method: "post",
+        data: { kind: "error_feed", occurrence_threshold: "7" },
+      }).ok,
+    ).toBe(false);
+    expect(
+      validateContractedResponse({
+        config: { url: "/tracer/alerts/?kind=error_feed", method: "get" },
+        status: 200,
+        data: {
+          status: true,
+          result: {
+            alerts: [
+              {
+                id: alertId,
+                kind: "error_feed",
+                name: "Occurrence alert",
+                enabled: true,
+                project_id: null,
+                trigger_type: "occurrences_crossed",
+                occurrence_threshold: 7,
+                last_triggered_at: null,
+                failure_reason: null,
+              },
+            ],
+          },
+        },
+      }),
+    ).toMatchObject({ ok: true });
+  });
+
+  it("accepts an Observe eval log's 16-hex collector span id (TH-4804)", () => {
+    const traceId = "22222222-2222-4222-8222-222222222222";
+    const spanId = "f9da550bd36da78b";
+    const response = (sourceNavigation) => ({
+      config: { url: "/model-hub/get-eval-logs", method: "get" },
+      status: 200,
+      data: {
+        status: true,
+        result: {
+          log_id: "10000000-0000-4000-8000-000000000001",
+          created_at: "2026-11-11T22:40:00Z",
+          evaluation_id: "10000000-0000-4000-8000-000000000001",
+          source: "Tracer",
+          required_keys: ["output"],
+          values: { output: "stored input" },
+          output: { output: 1, reason: "judged the span" },
+          input_data_types: { output: "text" },
+          span_id: spanId,
+          trace_id: traceId,
+          ...sourceNavigation,
+        },
+      },
+    });
+
+    expect(validateContractedResponse(response())).toMatchObject({
+      ok: true,
+    });
+    expect(
+      validateContractedResponse(
+        response({
+          source_navigation: {
+            status: "ready",
+            kind: "trace",
+            project_id: "33333333-3333-4333-8333-333333333333",
+            trace_id: traceId,
+            span_id: spanId,
+            retryable: false,
+          },
+        }),
+      ),
+    ).toMatchObject({ ok: true });
+  });
+
   it("keeps response contracts warn-only unless explicitly promoted to strict", () => {
     expect(shouldEnforceApiResponseContracts()).toBe(false);
 

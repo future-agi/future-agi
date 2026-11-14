@@ -12,6 +12,9 @@ import LoadingStateComponent from "src/components/CallLogsDetailDrawer/LoadingSt
 import { getLoadingStateWithRespectiveStatus } from "../common";
 import { normalizeRecordings } from "src/utils/utils";
 import useStereoChannels from "src/hooks/use-stereo-channels";
+import RecordingFailure from "src/components/multi-track-audio-player/RecordingFailure";
+import { UNAVAILABLE } from "src/components/multi-track-audio-player/failureVariants";
+import { statusColors } from "src/utils/runStatus";
 
 const isUpdatedWithinTwoMinutes = (timestamp) => {
   if (!timestamp) return false;
@@ -60,7 +63,7 @@ export const SingleTrackPlayer = ({ url }) => (
       sx={{
         minWidth: "32px",
         mr: 1,
-        borderRadius: 0.5,
+        borderRadius: "4px",
         bgcolor: "background.paper",
       }}
     />
@@ -92,7 +95,8 @@ export const StereoMultiTrackPlayer = ({
       ? theme.palette.primary.light
       : theme.palette.primary.main;
   const assistantColor = primary;
-  const customerColor = theme.palette.mode === "dark" ? "#FF9933" : "#E9690C";
+  // The caller is info, as in the transcript and talk ratio.
+  const customerColor = statusColors(theme, "info").fg;
 
   const {
     assistantUrl: stereoAssistant,
@@ -140,6 +144,17 @@ export const StereoMultiTrackPlayer = ({
 
   if (combinedOnly) {
     return <SingleTrackPlayer url={recordings.combined} />;
+  }
+
+  // The stereo split was the only source and it failed (403, CORS, decode),
+  // or produced nothing: no track has a URL, so the multi-track player would
+  // wait on them forever.
+  if (!useStereo && !assistantUrl && !customerUrl) {
+    return (
+      <Box sx={{ position: "relative", height: height * 2 + 20 }}>
+        <RecordingFailure variant={UNAVAILABLE} />
+      </Box>
+    );
   }
 
   if (useStereo && stereoLoading) {
@@ -221,6 +236,21 @@ const AudioPlayerCustom = ({ data, onInstance }) => {
 
     // Normalize recordings to flat format for project module
     const normalizedRecordings = normalizeRecordings(data?.recording);
+    // The drawer only mounts this once the detail response has arrived, so a
+    // call that still has no URL here has none to play.
+    const hasAnyUrl = Boolean(
+      normalizedRecordings.stereo ||
+        normalizedRecordings.combined ||
+        normalizedRecordings.assistant ||
+        normalizedRecordings.customer,
+    );
+    if (!hasAnyUrl) {
+      return (
+        <Box sx={{ position: "relative", height: 200 }}>
+          <RecordingFailure variant={UNAVAILABLE} />
+        </Box>
+      );
+    }
     return (
       <StereoMultiTrackPlayer
         recordings={normalizedRecordings}

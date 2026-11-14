@@ -5,11 +5,13 @@ import { format } from "date-fns";
 import PropTypes from "prop-types";
 import { useNavigate } from "react-router";
 import { useDebounce } from "src/hooks/use-debounce";
+import { seriesColor } from "src/theme/data-colors";
 import { preventHeaderSelection } from "src/utils/utils";
 import axios, { endpoints } from "src/utils/axios";
 import { Box, Button, Typography, useTheme } from "@mui/material";
 import FormSearchField from "src/components/FormSearchField/FormSearchField";
 import { AgGridReact } from "ag-grid-react";
+import "src/utils/ag-grid-setup";
 import { useAgThemeWith } from "src/hooks/use-ag-theme";
 import { AG_THEME_OVERRIDES } from "src/theme/ag-theme";
 import { ShowComponent } from "src/components/show";
@@ -24,7 +26,7 @@ import { APP_CONSTANTS } from "src/utils/constants";
 const ApexChartRenderer = ({ data, type, max }) => {
   const muiTheme = useTheme();
   const chartRef = useRef(null);
-  const color = type == "chart1" ? "#E2A6F1" : "#AE9AFD";
+  const color = seriesColor(muiTheme, type == "chart1" ? 4 : 0);
 
   useEffect(() => {
     if (chartRef.current && data) {
@@ -105,7 +107,7 @@ const ApexChartRenderer = ({ data, type, max }) => {
         chart.destroy();
       };
     }
-  }, [data]);
+  }, [data, color]);
 
   return <div ref={chartRef} style={{ height: "32px" }} />;
 };
@@ -290,10 +292,6 @@ const EvalsUsageView = () => {
               disabled={firstLoading}
               onClick={() => {
                 navigate("/dashboard/evaluations");
-              }}
-              sx={{
-                px: "24px",
-                typography: "s1",
               }}
             >
               Create Evaluation

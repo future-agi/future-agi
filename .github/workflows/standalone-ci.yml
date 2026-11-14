@@ -201,6 +201,7 @@ jobs:
       FAGI_ADMIN_NAME: CI Admin
       FAGI_ADMIN_PASSWORD: Ci-Smoke-2026!x
       SMOKE_PROJECT: ci-smoke
+      FUTURE_AGI_TELEMETRY_DISABLED: "true"
     steps:
       - uses: actions/checkout@v4
 
@@ -540,6 +541,7 @@ jobs:
       FAGI_ADMIN_EMAIL: ci-admin@example.com
       FAGI_ADMIN_PASSWORD: Ci-Smoke-2026!x
       SMOKE_PROJECT: ci-upgrade
+      FUTURE_AGI_TELEMETRY_DISABLED: "true"
     steps:
       - uses: actions/checkout@v4
         with:

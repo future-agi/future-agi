@@ -1,5 +1,6 @@
 import PropTypes from "prop-types";
 import { alpha, useTheme } from "@mui/material/styles";
+import { dataColor } from "../runs.constants";
 import { Box } from "@mui/material";
 import ReactApexChart from "react-apexcharts";
 
@@ -61,13 +62,17 @@ export default function SummaryGraph({
   const highlight = series.some((s) => s.id === highlightedId)
     ? highlightedId
     : null;
-  const colorOf = (s) =>
-    highlight && s.id !== highlight ? alpha(s.color, DIMMED) : s.color;
+  // Series colours are the data palette; a faded line keeps its hue (a chart
+  // series needs a concrete colour, so this is the one place alpha is used).
+  const colorOf = (s) => {
+    const color = dataColor(theme, s.colorIndex);
+    return highlight && s.id !== highlight ? alpha(color, DIMMED) : color;
+  };
   const colors = series.map(colorOf);
   const dashes = overlapDashes(series);
   const axisLabelStyle = {
     colors: theme.palette.text.secondary,
-    fontSize: "11px",
+    fontSize: "12px",
   };
 
   const base = {
@@ -125,7 +130,7 @@ export default function SummaryGraph({
             enabled: true,
             formatter: scoreLabel,
             offsetY: -18,
-            style: { fontSize: "11px", colors: [theme.palette.text.primary] },
+            style: { fontSize: "12px", colors: [theme.palette.text.primary] },
           },
           xaxis: {
             categories,
@@ -251,7 +256,7 @@ SummaryGraph.propTypes = {
     PropTypes.shape({
       id: PropTypes.string,
       name: PropTypes.string,
-      color: PropTypes.string,
+      colorIndex: PropTypes.number,
       data: PropTypes.arrayOf(PropTypes.number),
     }),
   ).isRequired,

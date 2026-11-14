@@ -15,8 +15,9 @@ criteria: "You are evaluating whether the model's generated output matches the p
   \ value matches the expected value exactly or is functionally equivalent. Return 'Failed' if it differs in meaning, correctness,\
   \ or required format.\n\n## Inputs\n\n<generated_value>{{generated_value}}</generated_value>\n\n<expected_value>{{expected_value}}</expected_value>"
 eval_tags:
-- NLP Metrics
-- Output Validation
+- Accuracy
+- Matching
+offered_in_environments: true
 visible_ui: true
 permissions:
   allow_edit: false

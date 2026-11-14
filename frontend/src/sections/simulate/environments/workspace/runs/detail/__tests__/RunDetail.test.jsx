@@ -36,6 +36,17 @@ vi.mock("src/api/simulate-environments/runDetail", async (importOriginal) => {
   };
 });
 
+// The run's re-grade request, left hanging so a test can look at the page
+// while it is on its way.
+const runEvaluationsAgain = vi.fn();
+vi.mock(
+  "src/api/simulate-environments/harnessEnvironments",
+  async (importOriginal) => ({
+    ...(await importOriginal()),
+    runEvaluationsAgain: (...args) => runEvaluationsAgain(...args),
+  }),
+);
+
 // The table's current page, as `?rowId=` reads it to find an on-page row.
 const useRunCalls = vi.fn();
 vi.mock("src/api/simulate-environments/runCalls", async (importOriginal) => {
@@ -54,6 +65,16 @@ vi.mock("notistack", async (importOriginal) => {
 
 // Self-improvement is in beta; the launch-flow tests below open it explicitly.
 const useSelfImprovementOpen = vi.fn();
+// Fix my agent is a beta capability; each test sets whether the org has it.
+const fixMyAgentAllowed = vi.fn();
+vi.mock("src/hooks/useCapabilities", async (importOriginal) => ({
+  ...(await importOriginal()),
+  useFeatureAllowed: (feature) => ({
+    allowed: feature === "fix_my_agent" ? fixMyAgentAllowed() : true,
+    isLoading: false,
+    isError: false,
+  }),
+}));
 vi.mock("../fixmyagent/selfImprovement", async (importOriginal) => ({
   ...(await importOriginal()),
   useSelfImprovementOpen: () => useSelfImprovementOpen(),
@@ -74,6 +95,14 @@ vi.mock(
     ),
   }),
 );
+
+// The fix launch form reads launch-options itself; stub it to a marker that
+// names the run it was opened for.
+vi.mock("../../../improvements/LaunchFixDialog", () => ({
+  // eslint-disable-next-line react/prop-types
+  default: ({ open, sourceRunId }) =>
+    open ? <div>{`launch-fix:${sourceRunId}`}</div> : null,
+}));
 
 function AddEvaluationDrawerStub({ open, executionId }) {
   return open ? <div>add-evals-drawer:{executionId}</div> : null;
@@ -104,6 +133,46 @@ vi.mock("../../../evals/AddEvalsDrawer", () => ({
   default: AddEvalsDrawerStub,
 }));
 
+// An eval the drawer stub and the table stub both ask the run page about.
+const RERUN_EVAL = { id: "c1", name: "no_misselling", mapping: { a: "b" } };
+
+function AllEvaluationsDrawerStub({
+  open,
+  runTestId,
+  executionId,
+  canRun,
+  grading,
+  rerunPending,
+  onRerun,
+  onAddEvaluations,
+}) {
+  return open ? (
+    <div>
+      {`all-evals-drawer:${runTestId}:${executionId}:${canRun}:${grading}`}
+      <span>{`drawer-rerun-pending:${rerunPending}`}</span>
+      <button type="button" onClick={onAddEvaluations}>
+        open add flow
+      </button>
+      <button type="button" onClick={() => onRerun([RERUN_EVAL])}>
+        drawer re-run
+      </button>
+    </div>
+  ) : null;
+}
+AllEvaluationsDrawerStub.propTypes = {
+  open: PropTypes.bool,
+  runTestId: PropTypes.string,
+  executionId: PropTypes.string,
+  canRun: PropTypes.bool,
+  grading: PropTypes.bool,
+  rerunPending: PropTypes.bool,
+  onRerun: PropTypes.func,
+  onAddEvaluations: PropTypes.func,
+};
+vi.mock("../AllEvaluationsDrawer", () => ({
+  default: AllEvaluationsDrawerStub,
+}));
+
 // The prev/next maths has its own tests; here only the page's wiring matters.
 const callListNavigation = vi.fn();
 vi.mock("../useCallListNavigation", () => ({
@@ -118,23 +187,54 @@ const TABLE_QUERY = {
   groupBy: "goal",
 };
 
+// Whether the stubbed table reports a call that can be ticked for a re-run.
+let stubTickable = true;
+
 // The per-call table owns its own network hook, so stub it to a marker that
 // reports its query, can open a call, and shows which call/page it follows.
 function RunTraceTableStub({
+  onTickableChange,
   onOpenCall,
   onQueryChange,
   activeCallId,
   activePage,
   initialFilters,
+  evalActions,
+  rerunDisabledReason,
+  onRerunScenarios,
+  onRerunInRun,
 }) {
   useEffect(() => {
     onQueryChange?.(TABLE_QUERY);
     return () => onQueryChange?.(null);
   }, [onQueryChange]);
+  useEffect(() => {
+    onTickableChange?.(stubTickable);
+  }, [onTickableChange]);
   return (
     <div>
       run-trace-table:{JSON.stringify(initialFilters || {})}
       <span>{`active:${activeCallId ?? "-"}:${activePage ?? "-"}`}</span>
+      <span>
+        {evalActions
+          ? `eval-actions:${evalActions.runTestId}:${evalActions.canRun}:${evalActions.grading}:${evalActions.rerunPending}`
+          : "eval-actions:-"}
+      </span>
+      {evalActions && (
+        <button type="button" onClick={() => evalActions.onRerun([RERUN_EVAL])}>
+          column re-run
+        </button>
+      )}
+      <span>{`rerun-off:${rerunDisabledReason ?? "-"}`}</span>
+      {onRerunScenarios && (
+        <button
+          type="button"
+          onClick={() => onRerunScenarios(["scenario-a"], 2)}
+        >
+          rerun ticked
+        </button>
+      )}
+      {onRerunInRun && <span>rerun-in-run</span>}
       <button
         type="button"
         onClick={() => onOpenCall({ id: "c1", simulationCallType: "voice" })}
@@ -145,11 +245,16 @@ function RunTraceTableStub({
   );
 }
 RunTraceTableStub.propTypes = {
+  onTickableChange: PropTypes.func,
   initialFilters: PropTypes.object,
   onOpenCall: PropTypes.func,
   onQueryChange: PropTypes.func,
   activeCallId: PropTypes.string,
   activePage: PropTypes.number,
+  evalActions: PropTypes.object,
+  rerunDisabledReason: PropTypes.string,
+  onRerunScenarios: PropTypes.func,
+  onRerunInRun: PropTypes.func,
 };
 vi.mock("../trace/RunTraceTable", () => ({ default: RunTraceTableStub }));
 vi.mock("../CallDrawer", () => ({
@@ -167,7 +272,9 @@ function RunAnalyticsStub({ onOpenCall }) {
     </button>
   );
 }
-RunAnalyticsStub.propTypes = { onOpenCall: PropTypes.func };
+RunAnalyticsStub.propTypes = {
+  onOpenCall: PropTypes.func,
+};
 vi.mock("../RunAnalytics", () => ({ default: RunAnalyticsStub }));
 
 function CallDrawerStub({ task, hasPrev, hasNext, onPrev, onNext, onClose }) {
@@ -199,6 +306,16 @@ CallDrawerStub.propTypes = {
   onClose: PropTypes.func,
 };
 vi.mock("../CallDrawer", () => ({ default: CallDrawerStub }));
+
+// Resume's mutation, so a test can see the button call it.
+const resumeMutate = vi.fn();
+vi.mock(
+  "src/api/simulate-environments/rerunScenarios",
+  async (importOriginal) => ({
+    ...(await importOriginal()),
+    useResumeRun: () => ({ mutate: resumeMutate, isPending: false }),
+  }),
+);
 
 const { default: RunDetail } = await import("../RunDetail");
 
@@ -338,6 +455,7 @@ function LocationProbe() {
   return (
     <>
       <div data-testid="location">{`${location.search}|${navigationType}`}</div>
+      <div data-testid="pathname">{location.pathname}</div>
       <button type="button" onClick={() => navigate("/?rowId=nope")}>
         follow link
       </button>
@@ -351,7 +469,10 @@ const navArgs = () => callListNavigation.mock.calls.at(-1)[0];
 
 beforeEach(() => {
   useSelfImprovementOpen.mockReturnValue(true);
+  fixMyAgentAllowed.mockReturnValue(true);
   enqueueSnackbar.mockReset();
+  runEvaluationsAgain.mockReset();
+  runEvaluationsAgain.mockReturnValue(new Promise(() => {}));
   useRunCalls.mockReset();
   useRunCalls.mockReturnValue({ tasks: [], groups: [], isLoading: false });
   useCallExecutionV3Detail.mockReset();
@@ -383,7 +504,73 @@ beforeEach(() => {
   });
 });
 
+describe("RunDetail resume", () => {
+  const interrupted = (resume) =>
+    useRunDetail.mockReturnValue({
+      identity: { ...IDENTITY, status: "failed", runState: "failed", resume },
+      stats: STATS,
+      isLoading: false,
+    });
+
+  it("offers Resume on an interrupted run and says how far it got", async () => {
+    resumeMutate.mockReset();
+    interrupted({ resumable: true, finished: 7, unfinished: 5, history: [] });
+    const user = userEvent.setup();
+    renderDetail();
+
+    expect(screen.getByText(/12 tasks · 5 not finished/)).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Resume" }));
+    expect(resumeMutate).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    [
+      "a run that cannot resume",
+      { resumable: false, finished: null, unfinished: null, history: [] },
+    ],
+    ["a backend that says nothing", null],
+  ])("offers no Resume for %s", (_, resume) => {
+    interrupted(resume);
+    renderDetail();
+
+    expect(
+      screen.queryByRole("button", { name: "Resume" }),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText(/not finished/)).not.toBeInTheDocument();
+  });
+
+  it("says when a run was resumed", () => {
+    interrupted({
+      resumable: false,
+      finished: null,
+      unfinished: null,
+      history: [{ at: "2026-11-04T09:00:00Z", by: "u1", calls: 12 }],
+    });
+    renderDetail();
+
+    expect(screen.getByText(/resumed /)).toBeInTheDocument();
+  });
+});
+
 describe("RunDetail", () => {
+  it("goes back to where it was opened from when the opener says so", async () => {
+    const user = userEvent.setup();
+    renderDetail({
+      initialEntries: [
+        {
+          pathname: "/run",
+          state: {
+            backTo: "/dashboard/simulate/environments/env-1/improvements/fix-1",
+          },
+        },
+      ],
+    });
+    await user.click(screen.getByRole("button", { name: "Back" }));
+    expect(screen.getByTestId("pathname").textContent).toBe(
+      "/dashboard/simulate/environments/env-1/improvements/fix-1",
+    );
+  });
+
   it("renders the identity header with the real ordinal, agent, status and task count", () => {
     useRunDetail.mockReturnValue({
       identity: IDENTITY,
@@ -426,7 +613,9 @@ describe("RunDetail", () => {
     renderDetail();
     expect(screen.getByText("Queued")).toBeInTheDocument();
     expect(screen.queryByText("Running")).toBeNull();
-    expect(screen.getByRole("button", { name: /Run again/ })).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: /Debug failures/ }),
+    ).toBeDisabled();
   });
 
   it("does not show a Failed verdict while the run is still loading", () => {
@@ -442,7 +631,12 @@ describe("RunDetail", () => {
 
   it("offers Stop simulation in the header only while the run can be stopped", () => {
     useRunDetail.mockReturnValue({
-      identity: { ...IDENTITY, runState: "running", status: "running", stoppable: true },
+      identity: {
+        ...IDENTITY,
+        runState: "running",
+        status: "running",
+        stoppable: true,
+      },
       stats: STATS,
       isLoading: false,
     });
@@ -463,9 +657,58 @@ describe("RunDetail", () => {
     ).toBeNull();
   });
 
+  it("heads a fix's check run with its fix, not a run number, and offers no Stop", () => {
+    useRunDetail.mockReturnValue({
+      identity: {
+        ...IDENTITY,
+        runState: "running",
+        status: "running",
+        stoppable: true,
+        fixRun: { id: "fix-1", label: "c2-target" },
+      },
+      stats: STATS,
+      isLoading: false,
+    });
+    renderDetail();
+
+    expect(screen.getByText(/^Check run c2-target for/)).toHaveTextContent(
+      "Check run c2-target for this fix · agent v2",
+    );
+    expect(screen.getByRole("link", { name: "this fix" })).toHaveAttribute(
+      "href",
+      "/dashboard/simulate/environments/env-1/improvements/fix-1",
+    );
+    expect(screen.queryByText(/^Run 3/)).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: "Stop simulation" }),
+    ).toBeNull();
+  });
+
+  it("offers no Re-run or Debug failures on a fix's check run", () => {
+    stubTickable = false;
+    const fixRun = { id: "fix-1", label: "c2-target" };
+    useRunDetail.mockReturnValue({
+      identity: { ...IDENTITY, fixRun },
+      stats: STATS,
+      isLoading: false,
+    });
+    renderDetail({ onStartRun: vi.fn() });
+
+    expect(screen.queryByRole("button", { name: /Run again/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: "rerun ticked" })).toBeNull();
+    expect(screen.queryByText("rerun-in-run")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Debug failures" })).toBeNull();
+    stubTickable = true;
+  });
+
   it("shows Cancelling in the header while a stopped run winds down", () => {
     useRunDetail.mockReturnValue({
-      identity: { ...IDENTITY, runState: "cancelling", status: "cancelling", stoppable: false },
+      identity: {
+        ...IDENTITY,
+        runState: "cancelling",
+        status: "cancelling",
+        stoppable: false,
+      },
       stats: STATS,
       isLoading: false,
     });
@@ -482,13 +725,18 @@ describe("RunDetail", () => {
     "disables the header actions while the run is %s",
     (status) => {
       useRunDetail.mockReturnValue({
-        identity: { ...IDENTITY, runState: status, status, stoppable: status === "running" },
+        identity: {
+          ...IDENTITY,
+          runState: status,
+          status,
+          stoppable: status === "running",
+        },
         stats: STATS,
         isLoading: false,
       });
       renderDetail();
 
-      for (const name of [/Add evals/, /Export/, /Run again/, /Debug failures/]) {
+      for (const name of [/Run evals/, /Export/, /Debug failures/]) {
         expect(screen.getByRole("button", { name })).toBeDisabled();
       }
       // Stop stays available — it is the one action a live run needs.
@@ -500,6 +748,25 @@ describe("RunDetail", () => {
     },
   );
 
+  it("keeps the evaluations reachable while a finished run is graded again", () => {
+    useRunDetail.mockReturnValue({
+      identity: {
+        ...IDENTITY,
+        status: "running",
+        executionStatus: "evaluating",
+        stoppable: false,
+      },
+      stats: STATS,
+      isLoading: false,
+    });
+    renderDetail();
+
+    expect(screen.getByRole("button", { name: /Run evals/ })).toBeEnabled();
+    for (const name of [/Export/, /Debug failures/]) {
+      expect(screen.getByRole("button", { name })).toBeDisabled();
+    }
+  });
+
   it("enables the header actions once the run has finished", () => {
     useRunDetail.mockReturnValue({
       identity: IDENTITY,
@@ -508,7 +775,7 @@ describe("RunDetail", () => {
     });
     renderDetail();
 
-    for (const name of [/Add evals/, /Export/, /Run again/, /Debug failures/]) {
+    for (const name of [/Run evals/, /Export/, /Debug failures/]) {
       expect(screen.getByRole("button", { name })).toBeEnabled();
     }
   });
@@ -524,18 +791,169 @@ describe("RunDetail", () => {
     expect(screen.getByText("Failed")).toBeInTheDocument();
   });
 
-  it("opens the real eval picker from the header action, pointed at this run", async () => {
+  it("opens the run's evaluations from the header, and the add flow from there", async () => {
     useRunDetail.mockReturnValue({
-      identity: IDENTITY,
+      identity: { ...IDENTITY, executionStatus: "completed" },
       stats: STATS,
       isLoading: false,
     });
     const user = userEvent.setup();
     renderDetail();
 
-    expect(screen.queryByText(/add-evals-drawer/)).toBeNull();
-    await user.click(screen.getByRole("button", { name: "Add evals" }));
+    expect(screen.queryByRole("button", { name: "Add evals" })).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Run evals" }));
+    expect(
+      screen.getByText("all-evals-drawer:rt1:ex1:true:false"),
+    ).toBeInTheDocument();
+
+    expect(screen.queryByText(/^add-evals-drawer:/)).toBeNull();
+    await user.click(screen.getByRole("button", { name: "open add flow" }));
     expect(screen.getByText("add-evals-drawer:ex1")).toBeInTheDocument();
+  });
+
+  it("gives the table's eval column menus this run's gating", () => {
+    useRunDetail.mockReturnValue({
+      identity: { ...IDENTITY, executionStatus: "completed" },
+      stats: STATS,
+      isLoading: false,
+    });
+    renderDetail();
+    expect(
+      screen.getByText("eval-actions:rt1:true:false:false"),
+    ).toBeInTheDocument();
+  });
+
+  it("holds the column menus' re-runs while the run is being graded", () => {
+    useRunDetail.mockReturnValue({
+      identity: { ...IDENTITY, executionStatus: "evaluating" },
+      stats: STATS,
+      isLoading: false,
+    });
+    renderDetail();
+    expect(
+      screen.getByText("eval-actions:rt1:false:true:false"),
+    ).toBeInTheDocument();
+  });
+
+  it("holds the column menus' re-runs while one sent from the drawer is on its way", async () => {
+    useRunDetail.mockReturnValue({
+      identity: { ...IDENTITY, executionStatus: "completed" },
+      stats: STATS,
+      isLoading: false,
+    });
+    const user = userEvent.setup();
+    renderDetail();
+
+    await user.click(screen.getByRole("button", { name: "Run evals" }));
+    expect(screen.getByText("drawer-rerun-pending:false")).toBeInTheDocument();
+    expect(
+      screen.getByText("eval-actions:rt1:true:false:false"),
+    ).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "drawer re-run" }));
+    await user.click(screen.getByText("Run Evaluations"));
+
+    expect(runEvaluationsAgain).toHaveBeenCalledTimes(1);
+    expect(runEvaluationsAgain).toHaveBeenCalledWith("env-1", "ex1", ["c1"]);
+    expect(
+      await screen.findByText("eval-actions:rt1:true:false:true"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("drawer-rerun-pending:true")).toBeInTheDocument();
+  });
+
+  it("holds the drawer's re-runs while one sent from a column menu is on its way", async () => {
+    useRunDetail.mockReturnValue({
+      identity: { ...IDENTITY, executionStatus: "completed" },
+      stats: STATS,
+      isLoading: false,
+    });
+    const user = userEvent.setup();
+    renderDetail();
+
+    await user.click(screen.getByRole("button", { name: "Run evals" }));
+    await user.click(screen.getByRole("button", { name: "column re-run" }));
+    await user.click(screen.getByText("Run Evaluations"));
+
+    expect(runEvaluationsAgain).toHaveBeenCalledWith("env-1", "ex1", ["c1"]);
+    expect(
+      await screen.findByText("drawer-rerun-pending:true"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("eval-actions:rt1:true:false:true"),
+    ).toBeInTheDocument();
+  });
+
+  it("lets the drawer grade only once the run has finished", async () => {
+    useRunDetail.mockReturnValue({
+      identity: {
+        ...IDENTITY,
+        status: "running",
+        executionStatus: "evaluating",
+      },
+      stats: STATS,
+      isLoading: false,
+    });
+    const user = userEvent.setup();
+    renderDetail();
+
+    await user.click(screen.getByRole("button", { name: "Run evals" }));
+    expect(
+      screen.getByText("all-evals-drawer:rt1:ex1:false:true"),
+    ).toBeInTheDocument();
+  });
+
+  it("refreshes analytics and open call drawers once grading on the run finishes", () => {
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const invalidate = vi.spyOn(client, "invalidateQueries");
+    // Build a fresh element each call so RunDetail re-renders.
+    const tree = () => (
+      <QueryClientProvider client={client}>
+        <MemoryRouter>
+          <RunDetail
+            env={ENV}
+            envState={{ evals: [] }}
+            backed
+            testId="rt1"
+            executionId="ex1"
+          />
+        </MemoryRouter>
+      </QueryClientProvider>
+    );
+
+    useRunDetail.mockReturnValue({
+      identity: {
+        ...IDENTITY,
+        status: "running",
+        executionStatus: "evaluating",
+      },
+      stats: STATS,
+      isLoading: false,
+    });
+    const { rerender } = render(tree());
+    expect(invalidate).not.toHaveBeenCalledWith({
+      queryKey: ["simulation-run-analytics-v3", "ex1"],
+    });
+    expect(invalidate).not.toHaveBeenCalledWith({
+      queryKey: ["simulation-call-detail-v3"],
+    });
+
+    useRunDetail.mockReturnValue({
+      identity: { ...IDENTITY, executionStatus: "completed" },
+      stats: STATS,
+      isLoading: false,
+    });
+    rerender(tree());
+    expect(invalidate).toHaveBeenCalledWith({
+      queryKey: ["simulation-run-analytics-v3", "ex1"],
+    });
+    expect(invalidate).toHaveBeenCalledWith({
+      queryKey: ["harness-run-compare"],
+    });
+    expect(invalidate).toHaveBeenCalledWith({
+      queryKey: ["simulation-call-detail-v3"],
+    });
   });
 
   it("falls back to the store-only picker for a non-backed environment reached via ?mockRuns=1", async () => {
@@ -546,6 +964,7 @@ describe("RunDetail", () => {
     });
     const user = userEvent.setup();
     renderDetail({ backed: false, envState: { evals: ["preset-eval"] } });
+    expect(screen.getByText("eval-actions:-")).toBeInTheDocument();
 
     expect(screen.queryByText(/^add-evals-drawer:/)).toBeNull();
     await user.click(screen.getByRole("button", { name: "Add evals" }));
@@ -570,11 +989,11 @@ describe("RunDetail", () => {
     });
     const invalidateSpy = vi.spyOn(client, "invalidateQueries");
     const user = userEvent.setup();
+    useOptimizationRuns.mockReturnValue({ runs: [OPT_RUN], isLoading: false });
     renderDetail({ client });
-
-    await user.click(screen.getByRole("button", { name: "Debug failures" }));
+    await user.click(screen.getByRole("tab", { name: /Trials/ }));
     await user.click(
-      screen.getByRole("button", { name: "Run Self Improvement" }),
+      screen.getByRole("button", { name: "Launch optimization" }),
     );
     // The optimizer form's onSuccess flows through the real launch drawer to
     // onLaunched → queryClient.invalidateQueries.
@@ -585,19 +1004,159 @@ describe("RunDetail", () => {
     });
   });
 
-  it("submits the same immutable selection and trials on Run again", async () => {
+  // Re-running now starts from the calls ticked in the table, so the header
+  // has no whole-run Run again.
+  it("keeps the table's Re-run off while a run is starting", () => {
     useRunDetail.mockReturnValue({
       identity: IDENTITY,
       stats: STATS,
       isLoading: false,
     });
+    renderDetail({ onStartRun: vi.fn(), runStarting: true });
+
+    expect(screen.getByText("rerun-off:Starting the run…")).toBeInTheDocument();
+  });
+
+  it("has no Run again button when the table has calls to tick", () => {
+    stubTickable = true;
+    useRunDetail.mockReturnValue({
+      identity: IDENTITY,
+      stats: STATS,
+      isLoading: false,
+    });
+    renderDetail({ onStartRun: vi.fn() });
+
+    expect(screen.queryByRole("button", { name: /Run again/ })).toBeNull();
+  });
+
+  it("re-runs the whole run from the header when no call can be ticked", async () => {
+    stubTickable = false;
     const user = userEvent.setup();
     const onStartRun = vi.fn();
+    useRunDetail.mockReturnValue({
+      identity: IDENTITY,
+      stats: STATS,
+      isLoading: false,
+    });
     renderDetail({ onStartRun });
 
-    await user.click(screen.getByRole("button", { name: "Run again" }));
+    await user.click(screen.getByRole("button", { name: /Run again/ }));
+    expect(onStartRun).toHaveBeenCalledWith(["scenario-a", "scenario-b"], 3, {
+      initialPicks: {
+        agent: undefined,
+        environment: undefined,
+        suite: undefined,
+      },
+    });
+    stubTickable = true;
+  });
 
-    expect(onStartRun).toHaveBeenCalledWith(["scenario-a", "scenario-b"], 3);
+  it("re-runs with the versions the run was pinned to pre-selected", async () => {
+    stubTickable = false;
+    const user = userEvent.setup();
+    const onStartRun = vi.fn();
+    useRunDetail.mockReturnValue({
+      identity: {
+        ...IDENTITY,
+        pinnedAgentVersion: { id: "a4", label: "v4" },
+        environmentVersion: { id: "e1", label: "v1" },
+        suiteVersion: { id: "s2", label: "v2" },
+      },
+      stats: STATS,
+      isLoading: false,
+    });
+    renderDetail({ onStartRun });
+
+    await user.click(screen.getByRole("button", { name: /Run again/ }));
+    expect(onStartRun).toHaveBeenCalledWith(["scenario-a", "scenario-b"], 3, {
+      initialPicks: { agent: "a4", environment: "e1", suite: "s2" },
+    });
+    stubTickable = true;
+  });
+
+  it("re-runs ticked calls with the run's versions pre-selected", async () => {
+    const user = userEvent.setup();
+    const onStartRun = vi.fn();
+    useRunDetail.mockReturnValue({
+      identity: {
+        ...IDENTITY,
+        pinnedAgentVersion: { id: "a4", label: "v4" },
+        environmentVersion: { id: "e1", label: "v1" },
+        suiteVersion: { id: "s2", label: "v2" },
+      },
+      stats: STATS,
+      isLoading: false,
+    });
+    renderDetail({ onStartRun });
+
+    await user.click(screen.getByRole("button", { name: "rerun ticked" }));
+    expect(onStartRun).toHaveBeenCalledWith(["scenario-a"], 2, {
+      initialPicks: { agent: "a4", environment: "e1", suite: "s2" },
+    });
+  });
+
+  it("names the run's pinned versions and tags an agent that differs", () => {
+    useRunDetail.mockReturnValue({
+      identity: {
+        ...IDENTITY,
+        pinnedAgentVersion: { id: "a4", label: "v4" },
+        environmentVersion: { id: "e2", label: "v2" },
+        suiteVersion: { id: "s3", label: "v3" },
+        agentDiffers: true,
+      },
+      stats: STATS,
+      isLoading: false,
+    });
+    renderDetail();
+
+    expect(
+      screen.getByText("Run 3 · agent v4 · env v2 · scenarios v3"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("A4 differs from E2")).toBeInTheDocument();
+  });
+
+  it("falls back to the recorded agent version when the run has no agent pin", () => {
+    useRunDetail.mockReturnValue({
+      identity: {
+        ...IDENTITY,
+        pinnedAgentVersion: null,
+        environmentVersion: { id: "e2", label: "v2" },
+        agentDiffers: true,
+      },
+      stats: STATS,
+      isLoading: false,
+    });
+    renderDetail();
+
+    expect(screen.getByText("Run 3 · agent v2 · env v2")).toBeInTheDocument();
+    expect(
+      screen.getByText("Agent differs from its environment version"),
+    ).toBeInTheDocument();
+  });
+
+  it("shows no differs tag for a run whose agent matches", () => {
+    useRunDetail.mockReturnValue({
+      identity: IDENTITY,
+      stats: STATS,
+      isLoading: false,
+    });
+    renderDetail();
+
+    expect(screen.getByText("Run 3 · agent v2")).toBeInTheDocument();
+    expect(screen.queryByText(/differs from/)).toBeNull();
+  });
+
+  it("keeps the header Run again off while a run is starting", () => {
+    stubTickable = false;
+    useRunDetail.mockReturnValue({
+      identity: IDENTITY,
+      stats: STATS,
+      isLoading: false,
+    });
+    renderDetail({ onStartRun: vi.fn(), runStarting: true });
+
+    expect(screen.getByRole("button", { name: /Run again/ })).toBeDisabled();
+    stubTickable = true;
   });
 
   it("does not invent a critical-failure classification", () => {
@@ -651,6 +1210,32 @@ describe("RunDetail", () => {
 
     // The run reports 4 failing, but the diagnosis measured 3 broken of 12.
     expect(screen.getByText("3 failing of 12 measured")).toBeInTheDocument();
+  });
+
+  it("gives no measured count until the diagnosis has one", async () => {
+    // The run's failing count holds errored calls; its measured count does not.
+    useRunDetail.mockReturnValue({
+      identity: IDENTITY,
+      stats: { ...STATS, failed: 19, measured: 18 },
+      isLoading: false,
+    });
+    useDebugAnalysis.mockReturnValue(
+      debugHook({
+        ...ANALYSIS,
+        status: "running",
+        isWorking: true,
+        summary: null,
+        goals: [],
+        oneOffs: [],
+      }),
+    );
+    const user = userEvent.setup();
+    renderDetail();
+
+    await user.click(screen.getByRole("button", { name: "Debug failures" }));
+
+    expect(screen.getByText("19 failing")).toBeInTheDocument();
+    expect(screen.queryByText(/failing of/)).toBeNull();
   });
 
   it("folds long tails into one row so the rows still add up", async () => {
@@ -774,19 +1359,24 @@ describe("RunDetail", () => {
     expect(hook.request).toHaveBeenCalledTimes(2);
   });
 
-  it("launches the first optimization from the diagnosis footer, with no prior runs", async () => {
+  it("opens the fix launch form for this run from the diagnosis footer", async () => {
     useOptimizationRuns.mockReturnValue({ runs: [], isLoading: false });
     const user = userEvent.setup();
     renderDetail();
 
-    // No Trials tab yet (no prior runs), so the footer CTA is the only launch path.
-    expect(screen.queryByRole("tab", { name: /Trials/ })).toBeNull();
     await user.click(screen.getByRole("button", { name: "Debug failures" }));
-    const cta = screen.getByRole("button", { name: "Run Self Improvement" });
-    expect(cta).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Improve" }));
+    expect(screen.getByText("launch-fix:ex1")).toBeInTheDocument();
+    expect(screen.queryByText("optimizer-form")).toBeNull();
+  });
 
-    await user.click(cta);
-    expect(screen.getByText("optimizer-form")).toBeInTheDocument();
+  it("hides Improve when the org does not have Fix my agent", async () => {
+    fixMyAgentAllowed.mockReturnValue(false);
+    const user = userEvent.setup();
+    renderDetail();
+
+    await user.click(screen.getByRole("button", { name: "Debug failures" }));
+    expect(screen.queryByRole("button", { name: "Improve" })).toBeNull();
   });
 
   it("shows the Imagine tab as coming soon (no backend)", async () => {
@@ -798,15 +1388,15 @@ describe("RunDetail", () => {
     expect(screen.getByLabelText("Coming soon")).toBeInTheDocument();
   });
 
-  it("keeps self-improvement in beta: its launch is shown but disabled", async () => {
+  it("keeps Improve open while the old optimizer is in beta", async () => {
     useSelfImprovementOpen.mockReturnValue(false);
     const user = userEvent.setup();
     renderDetail();
 
     await user.click(screen.getByRole("button", { name: "Debug failures" }));
-    const cta = screen.getByRole("button", { name: /Run Self Improvement/ });
-    expect(cta).toBeDisabled();
-    expect(cta).toHaveTextContent("BETA");
+    const cta = screen.getByRole("button", { name: "Improve" });
+    expect(cta).toBeEnabled();
+    expect(cta).not.toHaveTextContent("Beta");
   });
 
   it("keeps the Trials tab visible but disabled while self-improvement is in beta", () => {
@@ -816,7 +1406,7 @@ describe("RunDetail", () => {
 
     const trialsTab = screen.getByRole("tab", { name: /Trials \(1\)/ });
     expect(trialsTab).toBeDisabled();
-    expect(trialsTab).toHaveTextContent("BETA");
+    expect(trialsTab).toHaveTextContent("Beta");
   });
 
   it("omits the Trials tab when there are no optimization runs", () => {
@@ -881,13 +1471,35 @@ describe("RunDetail", () => {
   it("tells the navigation a live run is live", async () => {
     const user = userEvent.setup();
     useRunDetail.mockReturnValue({
-      identity: { ...IDENTITY, runState: "running", status: "running", stoppable: true },
+      identity: {
+        ...IDENTITY,
+        runState: "running",
+        status: "running",
+        stoppable: true,
+      },
       stats: STATS,
       isLoading: false,
     });
     renderDetail();
     await user.click(screen.getByRole("button", { name: "open c1" }));
     expect(navArgs().live).toBe(true);
+  });
+
+  it("lets the calls table feed the header only while it is shown", async () => {
+    const user = userEvent.setup();
+    renderDetail();
+    expect(useRunDetail).toHaveBeenLastCalledWith(
+      "rt1",
+      "ex1",
+      expect.objectContaining({ callsShown: true }),
+    );
+
+    await user.click(screen.getByRole("tab", { name: "Analytics" }));
+    expect(useRunDetail).toHaveBeenLastCalledWith(
+      "rt1",
+      "ex1",
+      expect.objectContaining({ callsShown: false }),
+    );
   });
 
   it("marks a call opened from Analytics as not from the table", async () => {

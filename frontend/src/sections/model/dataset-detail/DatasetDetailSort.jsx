@@ -76,7 +76,10 @@ const DatasetDetailSort = ({
             onMouseLeave={onMouseLeave}
           >
             Lowest to highest score
-            <Iconify sx={{ width: "11px" }} icon="tabler:chevron-right" />
+            <Iconify
+              sx={{ width: "11px" }}
+              icon="solar:alt-arrow-right-linear"
+            />
           </MenuItem>
           <MenuItem
             onClick={(e) => setAncElm({ a: e.target, order: "desc" })}
@@ -84,7 +87,10 @@ const DatasetDetailSort = ({
             onMouseLeave={onMouseLeave}
           >
             Highest to lowest score
-            <Iconify sx={{ width: "11px" }} icon="tabler:chevron-right" />
+            <Iconify
+              sx={{ width: "11px" }}
+              icon="solar:alt-arrow-right-linear"
+            />
           </MenuItem>
           <MenuItem
             selected={sortKey == "createdAt" && sortOrder == "desc"}

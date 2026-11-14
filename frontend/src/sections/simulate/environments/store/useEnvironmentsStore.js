@@ -1,4 +1,4 @@
-import { create } from "zustand";
+import { create } from "src/utils/zustand";
 import { createJSONStorage, devtools, persist } from "zustand/middleware";
 import { useShallow } from "zustand/react/shallow";
 import { CURRENT_ENVIRONMENT } from "src/config-global";
@@ -96,24 +96,6 @@ export const useEnvironmentsStore = create(
             },
             false,
             "recordRun",
-          ),
-
-        addAgentVersion: (envId, version) =>
-          set(
-            (s) => {
-              const prev = s.byEnv[envId] || emptyEnvState();
-              return {
-                byEnv: {
-                  ...s.byEnv,
-                  [envId]: {
-                    ...prev,
-                    agentVersions: [...(prev.agentVersions || []), version],
-                  },
-                },
-              };
-            },
-            false,
-            "addAgentVersion",
           ),
 
         // Register a fork produced by helpers/forkEnvironment.js. `fork` is the

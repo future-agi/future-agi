@@ -1,5 +1,6 @@
 import { Box, LinearProgress, Skeleton, useTheme } from "@mui/material";
 import { AgGridReact } from "ag-grid-react";
+import "src/utils/ag-grid-setup";
 import "src/styles/clean-data-table.css";
 import React, {
   useMemo,
@@ -69,12 +70,12 @@ const getSessionGridThemeParams = (theme) => ({
   headerColumnBorder: false,
   wrapperBorder: { width: 0 },
   wrapperBorderRadius: 0,
-  rowBorder: { width: 1, color: "rgba(0,0,0,0.06)" },
+  rowBorder: { width: 1, color: theme.palette.border.subtle },
   headerFontSize: "13px",
   headerFontWeight: theme.typography.fontWeightMedium,
   headerBackgroundColor: "transparent",
   headerTextColor: theme.palette.text.primary,
-  rowHoverColor: "rgba(120,87,252,0.04)",
+  rowHoverColor: theme.palette.action.hover,
 });
 
 const sessionRowIdentity = (row) => {
@@ -126,9 +127,12 @@ const SessionGrid = React.forwardRef(
     const gridElementRef = useRef(null);
     const {
       beginPageLoad,
+      endUnknown,
+      frontierPage,
+      hasMore,
       page,
-      pageCount,
       pageSize,
+      provenNext,
       changePageSize,
       finishPageLoad,
       goToPage,
@@ -247,7 +251,7 @@ const SessionGrid = React.forwardRef(
         suppressSizeToFit: false,
         cellStyle: {
           padding: "0px 20px",
-          fontSize: "14px",
+          fontSize: "12px",
           height: "100%",
         },
       }),
@@ -328,6 +332,21 @@ const SessionGrid = React.forwardRef(
     const [filteredColumnDefs, setFilteredColumnDefs] = useState([]);
 
     const cursorQueryKeyRef = useRef(null);
+    // Mirrors the `sort_params` derived from `request.sortModel` inside
+    // getRows() below, but as component state: a sort click has to reset the
+    // frontier (React state owned by useCursorGridPagination), and the
+    // frontier cannot be reached from inside the datasource closure. Without
+    // this, sorting reset the cursor chain (getRows()'s own queryKey check)
+    // but left a stale, now-unreachable frontier page drawn as the pager's
+    // boundary.
+    const [sortSignature, setSortSignature] = useState("[]");
+    const onSortChanged = useCallback(({ api }) => {
+      const nextSortModel = (api?.getColumnState?.() || [])
+        .filter((column) => column.sort)
+        .sort((left, right) => (left.sortIndex ?? 0) - (right.sortIndex ?? 0))
+        .map(({ colId, sort }) => ({ column_id: colId, direction: sort }));
+      setSortSignature(JSON.stringify(nextSortModel));
+    }, []);
     const paginationRequestKey = useMemo(
       () =>
         JSON.stringify({
@@ -337,8 +356,17 @@ const SessionGrid = React.forwardRef(
           filters: toBackendFilters(filters),
           dateInterval: dateInterval || null,
           pageSize,
+          sortSignature,
         }),
-      [dateInterval, filters, pageSize, projectId, workspaceId, userIdForUserMode],
+      [
+        dateInterval,
+        filters,
+        pageSize,
+        projectId,
+        workspaceId,
+        userIdForUserMode,
+        sortSignature,
+      ],
     );
     const previousPaginationRequestKeyRef = useRef(paginationRequestKey);
     useEffect(() => {
@@ -347,6 +375,16 @@ const SessionGrid = React.forwardRef(
       }
       previousPaginationRequestKeyRef.current = paginationRequestKey;
     }, [paginationRequestKey, resetPagination]);
+    // Gate the boundary on whether its cursor is still remembered — reset(),
+    // an LRU eviction, or a query-key change (sort/filter/page size) can all
+    // make a page that was genuinely visited unreachable again. `frontierPage`
+    // is 1-indexed (matches the UI); `canReachPage` takes the same 0-indexed
+    // convention as `requestParams`.
+    const furthestPage = cursorPagination.current.canReachPage(
+      frontierPage - 1,
+    )
+      ? frontierPage
+      : 0;
 
     const dataSource = useMemo(
       () => {
@@ -386,6 +424,7 @@ const SessionGrid = React.forwardRef(
               );
               const backendFilters = toBackendFilters(filters);
               const queryKey = JSON.stringify({
+                responseVersion: "capture-coverage-v1",
                 projectId: projectId || null,
                 filters: backendFilters,
                 dateInterval: dateInterval || null,
@@ -597,6 +636,7 @@ const SessionGrid = React.forwardRef(
                 request,
                 rows,
                 isLastPage,
+                metadata: totalMetadata,
               });
 
               finishRequest({
@@ -811,6 +851,7 @@ const SessionGrid = React.forwardRef(
                 rowStyle={{ cursor: "pointer" }}
                 onRowClicked={onRowClicked}
                 onColumnMoved={onColumnMoved}
+                onSortChanged={onSortChanged}
                 onSelectionChanged={onSelectionChanged}
                 getRowId={({ data }) => data.session_id}
                 onFirstDataRendered={({ api }) => {
@@ -834,8 +875,11 @@ const SessionGrid = React.forwardRef(
               disabled={isPageLoading || Boolean(continuationNotice)}
               loading={isPageLoading}
               page={page}
-              pageCount={pageCount}
               pageSize={pageSize}
+              endUnknown={endUnknown}
+              furthestPage={furthestPage}
+              hasMore={hasMore}
+              provenNext={provenNext}
               onPageChange={goToPage}
               onPageSizeChange={changePageSize}
             />

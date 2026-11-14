@@ -7,7 +7,7 @@ import { enqueueSnackbar } from "notistack";
 import { trackEvent, Events } from "src/utils/Mixpanel";
 // primary is accessed via theme.palette.primary for dark mode support
 import logger from "src/utils/logger";
-import SvgColor from "src/components/svg-color";
+import TabSvgIcon from "src/components/tabs/tab-svg-icon";
 import { useAuthContext } from "src/auth/hooks";
 
 const TabOptions = [
@@ -126,6 +126,7 @@ const DevelopBar = ({
           }}
         >
           <Tabs
+            sx={{ boxShadow: "none" }}
             value={currentTab}
             onChange={(e, value) => {
               setCurrentTab(value);
@@ -133,22 +134,6 @@ const DevelopBar = ({
               // if (value === "optimization") trackEvent(Events.optViewed);
               if (value === "experiments") trackEvent(Events.expViewed);
               if (value === "summary") trackEvent(Events.summaryViewed);
-            }}
-            TabIndicatorProps={{
-              style: { backgroundColor: theme.palette.primary.main },
-            }}
-            sx={{
-              minHeight: 0,
-              "& .MuiTab-root": {
-                margin: "0 !important",
-                fontWeight: "600",
-                typography: "s1",
-                color: "primary.main",
-                "&:not(.Mui-selected)": {
-                  color: "text.secondary",
-                  fontWeight: "fontWeightRegular",
-                },
-              },
             }}
           >
             {TabOptions.map((tab) => {
@@ -167,24 +152,13 @@ const DevelopBar = ({
               }
               return (
                 <Tab
-                  sx={{
-                    margin: theme.spacing(0),
-                    px: theme.spacing(1.875),
-                  }}
                   key={tab.value}
                   label={tab.label}
                   value={tab.value}
                   icon={
-                    <SvgColor
+                    <TabSvgIcon
                       src={tab.icons}
-                      sx={{
-                        backgroundColor:
-                          tab.value === currentTab
-                            ? "primary.main"
-                            : "text.secondary",
-                        width: "16px",
-                        height: "16px",
-                      }}
+                      active={tab.value === currentTab}
                     />
                   }
                   iconPosition="start"
@@ -215,7 +189,7 @@ const DevelopBar = ({
                 marginRight: theme.spacing(1.5),
                 fontFamily: "IBM Plex Sans",
                 fontWeight: 500,
-                fontSize: "14px",
+                fontSize: "12px",
                 lineHeight: "22px",
                 paddingRight: theme.spacing(3),
                 borderRight: "2px solid var(--border-default)",
@@ -228,16 +202,12 @@ const DevelopBar = ({
                 key={action.name}
                 variant="text"
                 sx={{
-                  height: theme.spacing(3.75),
                   color: "text.secondary",
                   "&:hover": {
                     color: theme.palette.primary.main,
                   },
-                  borderRadius: "4px",
                   padding: `${theme.spacing(0.75)} ${theme.spacing(1.25)}`,
                   fontFamily: "IBM Plex Sans",
-                  fontWeight: 500,
-                  fontSize: "14px",
                   lineHeight: "22px",
                 }}
                 disabled={action.disabled}

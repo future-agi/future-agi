@@ -24,7 +24,8 @@ const StartIndicator = ({
         height: 30,
         width: 30,
         border: isDashing ? "none" : "1px solid",
-        borderColor: isCompleted || isRunning ? "green.500" : "text.disabled",
+        borderColor:
+          isCompleted || isRunning ? "status.success.solid" : "text.disabled",
         borderRadius: "50%",
         pointerEvents: "none",
       }}
@@ -57,7 +58,7 @@ const StartIndicator = ({
       )}
       <SvgColor
         src="/assets/icons/ic_start_agent.svg"
-        sx={{ width: 20, height: 20, bgcolor: "blue.500" }}
+        sx={{ width: 20, height: 20, bgcolor: "status.info.solid" }}
       />
     </Box>
   );

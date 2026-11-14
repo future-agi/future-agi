@@ -828,6 +828,11 @@ err_dict = {
     "SECRET_KEY_NOT_DISABLED": ["Keys not disabled. Please try again."],
     "API_KEY_DISABLED": ["Keys already disabled."],
     "API_KEY_ENABLED": ["Keys already enabled."],
+    "API_KEY_EXPIRED": ["API key has expired"],
+    "API_KEY_EXPIRY_IN_PAST": ["Expiry must be in the future."],
+    "API_KEY_EXPIRED_CANNOT_ENABLE": [
+        "This key has expired and can't be re-enabled. Generate a new key."
+    ],
     "SECRET_KEY_NOT_ENABLED": ["Keys not enabled. Please try again."],
     "FAILED_TO_GET_KEYS": ["Unable to fetch keys. Please try again."],
     "KEY_NAME_EXISTS": ["Keys with this already name exists."],
@@ -1140,6 +1145,14 @@ def get_specific_error_message(error, is_llm_error=None):
     Returns:
     - A user-friendly error message string
     """
+    from tfc.ee_gates import jev_error_message
+
+    # A failed Jev run gets its own fixed text: its codes (JEV_RATE_LIMITED,
+    # say) would otherwise match the generic checks below.
+    jev_message = jev_error_message(error)
+    if jev_message is not None:
+        return jev_message
+
     error_message = str(error)
     error_message_lower = error_message.lower()
     error_status = None
@@ -1230,6 +1243,11 @@ def get_usage_error_code(error):
     recognises (see ErrorCellRenderer USAGE_LIMIT_CTA). Returns codes from the
     same taxonomy as the usage pre-check (CheckResult.error_code).
     """
+    from tfc.ee_gates import describe_jev_error
+
+    # TypeSafe's rate limit is the org's own, not a Future AGI plan limit.
+    if describe_jev_error(error) is not None:
+        return None
     error_message = str(error)
     error_status = ""
     if (

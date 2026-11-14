@@ -1,48 +1,25 @@
 import { Box, Chip, styled } from "@mui/material";
-import { alpha } from "@mui/material/styles";
 import PropTypes from "prop-types";
 import React from "react";
 
 const StyledChip = styled(Chip, {
   shouldForwardProp: (prop) => prop !== "isSelected",
 })(({ theme, isSelected }) => {
-  const isDark = theme.palette.mode === "dark";
+  const discovery = theme.palette.status.discovery;
   return {
-    borderRadius: "100px",
-    height: "auto",
     cursor: "pointer",
-    padding: "3px 12px",
-    transition: "all 0.2s ease",
+    transition: "background-color 120ms ease, border-color 120ms ease",
     border: `1px solid ${
-      isSelected
-        ? isDark
-          ? theme.palette.purple[500]
-          : theme.palette.purple[200]
-        : isDark
-          ? theme.palette.border.default
-          : theme.palette.grey[300]
+      isSelected ? discovery.border : theme.palette.border.default
     }`,
-    backgroundColor: isSelected
-      ? isDark
-        ? alpha(theme.palette.purple[500], 0.2)
-        : theme.palette.purple.o20
-      : "transparent",
+    backgroundColor: isSelected ? discovery.bg : "transparent",
     color: "text.primary",
     "&:hover": {
-      backgroundColor: isSelected
-        ? isDark
-          ? alpha(theme.palette.purple[500], 0.3)
-          : alpha(theme.palette.purple[500], 0.15)
-        : theme.palette.action.hover,
-      borderColor: isDark
-        ? theme.palette.border.hover
-        : theme.palette.grey[400],
+      backgroundColor: isSelected ? discovery.bg : theme.palette.action.hover,
+      borderColor: theme.palette.border.hover,
     },
     "& .MuiChip-label": {
-      typography: theme.typography.s1,
-      fontWeight: theme.typography.fontWeightMedium,
       color: theme.palette.text.primary,
-      padding: 0,
     },
   };
 });

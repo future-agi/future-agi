@@ -1,9 +1,6 @@
 import PropTypes from "prop-types";
 import { Component as ReactComponent } from "react";
-import { alpha } from "@mui/material/styles";
 import { Box, Typography, Button } from "@mui/material";
-
-import { BUILD_TONES } from "../buildTones";
 
 /**
  * Component-scoped error boundary around the derivation panels. If
@@ -27,17 +24,16 @@ export default class PanelBoundary extends ReactComponent {
     const { children } = this.props;
     if (err) {
       return (
-        <Box sx={{ p: 3, m: 2, border: "1px solid", borderColor: alpha(BUILD_TONES.red, 0.4), borderRadius: 1.5,
-          bgcolor: (t) => alpha(BUILD_TONES.red, t.palette.mode === "dark" ? 0.08 : 0.04) }}>
-          <Typography sx={{ typography: "s1", fontWeight: "fontWeightBold", color: BUILD_TONES.red, mb: 1 }}>
+        <Box sx={{ p: 3, m: 2, borderRadius: "8px", bgcolor: "status.danger.bg" }}>
+          <Typography sx={{ typography: "s1", fontWeight: 500, color: "status.danger.fg", mb: 1 }}>
             The right-side panel crashed
           </Typography>
-          <Typography sx={{ typography: "s2", color: "text.secondary", mb: 1.5 }}>
+          <Typography sx={{ typography: "s1", color: "text.secondary", mb: 1.5 }}>
             The chat on the left still works. Copy the message below and paste it back to me.
           </Typography>
           <Typography component="pre" sx={{
             typography: "s3", fontFamily: "ui-monospace, Menlo, monospace",
-            p: 1.5, borderRadius: 1, bgcolor: "background.neutral",
+            p: 1.5, borderRadius: "4px", bgcolor: "background.neutral",
             whiteSpace: "pre-wrap", wordBreak: "break-word", color: "text.primary",
           }}>
             {String(err?.message || err)}
@@ -47,7 +43,7 @@ export default class PanelBoundary extends ReactComponent {
           <Button
             variant="text" size="small"
             onClick={() => this.setState({ err: null })}
-            sx={{ mt: 1, typography: "s3", fontWeight: "fontWeightBold" }}
+            sx={{ mt: 1 }}
           >
             Retry
           </Button>

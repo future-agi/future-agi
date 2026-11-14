@@ -41,7 +41,11 @@ def compose(
     if "docker-compose.distributed.dev.yml" in overlays:
         env.update(DEV_OVERLAY_ENV)
     env.update(overrides)
-    args = ["docker", "compose", "--env-file", os.devnull, "-f", base_file]
+    try:
+        from .compose_test_tools import compose_command
+    except ImportError:
+        from compose_test_tools import compose_command
+    args = [*compose_command(), "--env-file", os.devnull, "-f", base_file]
     for overlay in overlays:
         args.extend(["-f", overlay])
     result = subprocess.run(
@@ -381,7 +385,7 @@ class ComposeContractTests(unittest.TestCase):
             runner.split("SERVICES=(", 1)[1].split(")", 1)[0],
         )
 
-    def test_e2e_manages_exact_aggregation_worker_without_other_worker_profiles(self):
+    def test_e2e_manages_exact_aggregation_and_sql_workers_without_other_worker_profiles(self):
         # Parse only the literal list; never execute the harness or Compose.
         runner = (ROOT / "bin/e2e").read_text()
         services = shlex.split(
@@ -394,6 +398,7 @@ class ComposeContractTests(unittest.TestCase):
                 "backend",
                 "worker",
                 "worker-exact-aggregation",
+                "worker-sql-workbench",
                 "postgres",
                 "clickhouse",
                 "redis",
@@ -403,6 +408,8 @@ class ComposeContractTests(unittest.TestCase):
                 "fi-collector",
                 "fi-property-catalog-consumer",
                 "mock-llm",
+                "mock-slack",
+                "mock-google",
                 "peerdb-server",
                 "peerdb-flow-worker",
                 "peerdb-flow-snapshot-worker",
@@ -607,7 +614,8 @@ class ProductionCatalogContractTests(unittest.TestCase):
                     for name in services
                     if name == "backend" or name.startswith("worker")
                 }
-                self.assertEqual(len(runtimes), 10)
+                self.assertIn("worker-sql-workbench", runtimes)
+                self.assertEqual(len(runtimes), 11)
                 for name in sorted(runtimes):
                     with self.subTest(runtime=name):
                         runtime = services[name]["environment"]
