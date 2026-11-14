@@ -1604,7 +1604,7 @@
 - the gateway refuses the local webhook outage before opt-in and after revocation, and returns the unique mock echo only while opted in
 - an invalid boolean is refused without creating a configuration version
 
-### GW-E2E-006 — an admin applies a guardrail policy to one gateway key, first monitoring and then enforcing it
+### GW-E2E-007 — an admin applies a guardrail policy to one gateway key, first monitoring and then enforcing it
 
 **Goal:** An admin rolls a guardrail out to a single API key: monitor it first, then enforce it, without affecting other keys or weakening org-wide guardrails
 
