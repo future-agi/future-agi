@@ -1442,6 +1442,9 @@ class FrontendEntrypoint(unittest.TestCase):
             }
             env["CONFIG_PATH"] = str(Path(directory) / "config.js")
             env.update(settings)
+            # The entrypoint writes a fixed path; never read a previous run's file.
+            listen = Path("/tmp/futureagi-nginx/listen.conf")
+            listen.unlink(missing_ok=True)
             result = subprocess.run(
                 ["sh", str(ROOT / "frontend/docker-entrypoint.sh"), "true"],
                 env=env,
@@ -1449,7 +1452,6 @@ class FrontendEntrypoint(unittest.TestCase):
                 capture_output=True,
                 check=False,
             )
-            listen = Path("/tmp/futureagi-nginx/listen.conf")
             content = listen.read_text() if result.returncode == 0 else ""
             return result, content
 
