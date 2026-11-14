@@ -6,10 +6,11 @@
 //
 //   SCAN_SECRET=<value> node scripts/scan-artefacts-for-secret.mjs <dir|file>...
 //
-// SCAN_CONTEXT=1 also prints the text around each raw hit, the secret masked.
+// SCAN_CONTEXT=1 also prints the bytes around each hit, every encoding masked.
 // The secret is read from the environment so it never lands in shell history
 // or process listings. Prints one line per hit (path and form, never the
-// value) and exits 1 on any hit, 0 when every artefact is clean.
+// value) and exits 1 on any hit, 2 when a target is missing or nothing was
+// scanned, 0 when every artefact is clean.
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as zlib from 'node:zlib';
@@ -25,17 +26,17 @@ if (!targets.length) {
   process.exit(2);
 }
 
-// Base64 of the secret depends on its byte offset in the encoded stream; the
-// middle of each of the three encodings is stable whatever precedes it.
+// Base64 of the secret depends on its byte offset in the encoded stream. For
+// each of the three offsets, keep exactly the characters whose 6 bits all come
+// from the secret: they are the same whatever bytes precede or follow it.
 function base64Needles(value) {
   const bytes = Buffer.from(value, 'utf8');
   const out = [];
   for (let shift = 0; shift < 3; shift++) {
     const enc = Buffer.concat([Buffer.alloc(shift), bytes]).toString('base64');
-    // Drop the characters touched by the padding prefix and the tail.
-    const start = Math.ceil((shift * 4) / 3) + 1;
-    const end = enc.length - 4;
-    if (end - start >= 8) out.push(enc.slice(start, end));
+    const start = Math.ceil((8 * shift) / 6);
+    const end = Math.floor((8 * (shift + bytes.length)) / 6);
+    out.push(enc.slice(start, end));
   }
   return out;
 }
@@ -79,19 +80,29 @@ function unzip(buf) {
   return entries;
 }
 
+// The bytes around the first hit of one form, with every form masked across
+// the whole buffer first, so no window edge can cut a copy in half.
+function context(buf, form) {
+  let text = buf.toString('latin1');
+  for (const [name, needle] of needles) text = text.split(needle.toString('latin1')).join(`<SECRET:${name}>`);
+  const marker = `<SECRET:${form}>`;
+  const at = text.indexOf(marker);
+  // Masking came first, so a window edge can only cut a marker, never a copy.
+  return text.slice(Math.max(0, at - 160), at + marker.length + 50)
+    .replace(/<SECRET:[^>]*>/g, '<SECRET>')
+    .replace(/\s+/g, ' ');
+}
+
 let hits = 0;
 let scanned = 0;
+let missing = 0;
 function scanBuffer(label, buf, depth = 0) {
   scanned += 1;
   for (const [form, needle] of needles) {
     if (buf.indexOf(needle) >= 0) {
       hits += 1;
       console.log(`HIT ${label} (${form})`);
-      if (process.env.SCAN_CONTEXT === '1') {
-        const at = buf.indexOf(needle);
-        const around = buf.subarray(Math.max(0, at - 160), at + needle.length + 40).toString('utf8');
-        console.log(`    …${around.split(needle.toString('utf8')).join('<SECRET>').replace(/\s+/g, ' ')}…`);
-      }
+      if (process.env.SCAN_CONTEXT === '1') console.log(`    …${context(buf, form)}…`);
     }
   }
   if (depth > 3) return;
@@ -108,7 +119,7 @@ function scanBuffer(label, buf, depth = 0) {
   }
 }
 function walk(p) {
-  if (!fs.existsSync(p)) { console.log(`MISSING ${p}`); return; }
+  if (!fs.existsSync(p)) { console.log(`MISSING ${p}`); missing += 1; return; }
   const st = fs.statSync(p);
   if (st.isDirectory()) {
     for (const e of fs.readdirSync(p)) walk(path.join(p, e));
@@ -118,4 +129,9 @@ function walk(p) {
 }
 for (const t of targets) walk(t);
 console.log(`scanned ${scanned} files/entries for ${needles.length} encodings of the secret: ${hits} hit(s)`);
-process.exit(hits ? 1 : 0);
+if (hits) process.exit(1);
+if (missing || !scanned) {
+  console.log(missing ? `${missing} target(s) missing: not a clean scan` : 'nothing scanned: not a clean scan');
+  process.exit(2);
+}
+process.exit(0);

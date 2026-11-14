@@ -87,3 +87,30 @@ test("refuses to run without a secret", () => {
   const dir = tmpdir({ "a.txt": "x" });
   assert.equal(scan(dir, "").code, 2);
 });
+
+test("context output masks every encoding, not just the one that matched", () => {
+  const secret = `${SECRET}/`;
+  const encoded = encodeURIComponent(secret);
+  const b64 = Buffer.from(secret).toString("base64");
+  const dir = tmpdir({ "a.txt": `raw ${secret} url ${encoded} b64 ${b64}` });
+  const res = spawnSync(process.execPath, [script, dir], { env: { ...process.env, SCAN_SECRET: secret, SCAN_CONTEXT: "1" }, encoding: "utf8" });
+  assert.equal(res.status, 1);
+  for (const form of [secret, encoded, b64.slice(2, -2)]) {
+    assert.ok(!res.stdout.includes(form), `context leaked ${form === secret ? "the secret" : "an encoding"}: ${res.stdout}`);
+  }
+});
+
+test("base64 copies of a minimum-length (8 character) secret are found at every offset", () => {
+  const short = "Ab3$kQ9z";
+  for (const prefix of ["", "x", "xy"]) {
+    const dir = tmpdir({ "a.txt": Buffer.from(`${prefix}${short}`).toString("base64") });
+    const { code, out } = scan(dir, short);
+    assert.equal(code, 1, `prefix ${JSON.stringify(prefix)}: ${out}`);
+  }
+});
+
+test("a missing target is an error, not a clean scan", () => {
+  const { code, out } = scan(path.join(os.tmpdir(), "no-such-artefact-dir-1167"));
+  assert.equal(code, 2, out);
+  assert.match(out, /MISSING/);
+});
