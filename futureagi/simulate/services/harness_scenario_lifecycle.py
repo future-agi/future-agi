@@ -545,6 +545,73 @@ def uncaptured(
     }
 
 
+WORKFLOW_KINDS = ("success", "refusal", "wrong_result")
+
+
+def workflow_proof(
+    views: Mapping[str, LifecycleView], contents: Mapping[str, Any]
+) -> list[dict[str, Any]]:
+    """Per release-critical workflow, how many cases prove a success, a refusal and a wrong result.
+
+    A workflow is a `use_case` with at least one must-pass case; while no case is must-pass, every
+    use case counts. A success or a refusal counts only a proved case (Validated or Active) whose
+    reference changes, or leaves unchanged, the world; a wrong result is a case one of whose
+    negative controls ran and failed. A control that did not run proves nothing."""
+    by_workflow: dict[str, list[str]] = {}
+    for key, content in contents.items():
+        use_case = str((content or {}).get("use_case") or "").strip()
+        if use_case:
+            by_workflow.setdefault(use_case, []).append(key)
+    critical = {
+        name
+        for name, keys in by_workflow.items()
+        if any((contents.get(key) or {}).get("must_pass") is True for key in keys)
+    }
+    rows: list[dict[str, Any]] = []
+    for name in sorted(critical or by_workflow):
+        counts = dict.fromkeys(WORKFLOW_KINDS, 0)
+        for key in by_workflow[name]:
+            view = views.get(key)
+            if view is None or view["state"] == "archived":
+                continue
+            proof = view["proof"] or {}
+            if view["state"] in ("validated", "active"):
+                if proof.get("outcome") == "no_change":
+                    counts["refusal"] += 1
+                else:
+                    counts["success"] += 1
+            if any(
+                one.get("failed") is True and not one.get("assumed")
+                for one in proof.get("controls") or []
+            ):
+                counts["wrong_result"] += 1
+        rows.append(
+            {
+                "workflow": name,
+                **counts,
+                "missing": [kind for kind in WORKFLOW_KINDS if not counts[kind]],
+            }
+        )
+    return rows
+
+
+def workflow_proofs(environment: HostedHarnessJob) -> list[dict[str, Any]]:
+    """`workflow_proof` over the environment's default pair; empty when it is not versioned."""
+    if environment.suite_version is None or environment.environment_version is None:
+        return []
+    views = scenario_lifecycle(
+        environment,
+        suite_version=environment.suite_version,
+        environment_version=environment.environment_version,
+    )
+    contents = dict(
+        HarnessSuiteMember.no_workspace_objects.filter(
+            suite_version=environment.suite_version
+        ).values_list("scenario_key", "content")
+    )
+    return workflow_proof(views, contents)
+
+
 def must_pass_failures(execution: Any) -> list[str]:
     """Names of the must-pass cases of a run's suite version whose call in this run failed."""
     from simulate.models import CallExecution

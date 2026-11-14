@@ -2240,7 +2240,11 @@ class HostedHarnessProvider:
             request.query_params.get("col_axis") or DEFAULT_COL_AXIS,
             spoken=agent_type(job) == AGENT_TYPE_VOICE,
         )
-        return Response({**grid, **uncovered_levels(job)})
+        from simulate.services.harness_scenario_lifecycle import workflow_proofs
+
+        return Response(
+            {**grid, **uncovered_levels(job), "workflows": workflow_proofs(job)}
+        )
 
     def amend_scenarios(self, request, pk) -> Response:
         """Edit an environment's authored suite, one receipt per requested change."""

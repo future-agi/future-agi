@@ -557,3 +557,58 @@ def test_must_pass_failures_name_only_failed_must_pass_cases():
     ):
         assert lifecycle.must_pass_failures(execution) == ["Refund A"]
     assert lifecycle.must_pass_failures(SimpleNamespace(hosted_harness_job=None)) == []
+
+
+def _workflow_view(state, outcome="change", controls=()):
+    return {"state": state, "proof": {"outcome": outcome, "controls": list(controls)}}
+
+
+def test_workflow_proof_names_the_missing_refusal():
+    from simulate.services.harness_scenario_lifecycle import workflow_proof
+
+    contents = {
+        "a": {"use_case": "refunds", "must_pass": True},
+        "b": {"use_case": "refunds"},
+        "c": {"use_case": "refunds"},
+        "d": {"use_case": "lookups"},
+    }
+    views = {
+        "a": _workflow_view("active", controls=[{"failed": True, "assumed": []}]),
+        # Kept as written never counts as a proved success.
+        "b": _workflow_view("kept_as_written"),
+        "c": _workflow_view("draft", outcome="no_change"),
+        "d": _workflow_view("active", outcome="no_change"),
+    }
+
+    rows = workflow_proof(views, contents)
+
+    assert rows == [
+        {
+            "workflow": "refunds",
+            "success": 1,
+            "refusal": 0,
+            "wrong_result": 1,
+            "missing": ["refusal"],
+        }
+    ]
+    # With no must-pass case, every use case is a workflow.
+    contents["a"]["must_pass"] = False
+    assert [row["workflow"] for row in workflow_proof(views, contents)] == [
+        "lookups",
+        "refunds",
+    ]
+
+
+def test_unrun_control_is_not_a_wrong_result():
+    from simulate.services.harness_scenario_lifecycle import workflow_proof
+
+    contents = {"a": {"use_case": "refunds"}}
+    for controls in (
+        [{"failed": None, "assumed": []}],
+        [{"failed": True, "assumed": ["refund"]}],
+        [{"failed": False, "assumed": []}],
+    ):
+        row = workflow_proof(
+            {"a": _workflow_view("active", controls=controls)}, contents
+        )[0]
+        assert row["wrong_result"] == 0 and "wrong_result" in row["missing"]
