@@ -225,7 +225,9 @@ func isGuardrailBlock(err error) bool {
 
 // decisionInputGuardrailsApply reports whether input guardrails may check
 // this decision: a static (config.yaml) input rule, or an enabled org check
-// that runs on input.
+// that runs on input. Org checks count only when a guardrail plugin runs: it
+// reports each check's stage, and without its callback any enabled check
+// counts.
 // Internal-key traffic is the platform's own (the Jev evaluator judges traces
 // that may hold PII or injection text on purpose), so it is not checked; org
 // keys, BYOK and managed, are.
@@ -242,6 +244,11 @@ func (h *Handlers) decisionInputGuardrailsApply(rc *models.RequestContext, orgCf
 	if h.orgInputGuardrails != nil {
 		// The guardrail plugin knows each check's stage.
 		return h.orgInputGuardrails(rc.Metadata["org_id"])
+	}
+	// No guardrail plugin in the pipeline (guardrails.enabled is false): no
+	// org check will run, so none applies.
+	if h.engine == nil || h.engine.Plugin("guardrails") == nil {
+		return false
 	}
 	for _, check := range orgCfg.Guardrails.Checks {
 		if check != nil && check.Enabled {
