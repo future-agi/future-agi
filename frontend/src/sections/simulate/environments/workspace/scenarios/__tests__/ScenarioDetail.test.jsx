@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import { render, screen } from "src/utils/test-utils";
+import userEvent from "@testing-library/user-event";
 
 vi.mock("src/api/harness/scenarios", () => ({
   useScenarioRevisions: () => ({
@@ -10,6 +11,14 @@ vi.mock("src/api/harness/scenarios", () => ({
       ],
     },
   }),
+}));
+
+const saveDrafts = vi.hoisted(() => vi.fn());
+vi.mock("src/api/simulate-environments/versions", () => ({
+  useDrafts: () => ({
+    data: { any: true, pieces: ["suite"], suite: { parentId: "s1", revision: 3 } },
+  }),
+  useSaveDrafts: () => ({ mutate: saveDrafts, isPending: false }),
 }));
 
 import ScenarioDetail, { ScenarioDetailBody } from "../ScenarioDetail";
@@ -126,5 +135,26 @@ describe("ScenarioDetail source changes", () => {
     };
     render(<ScenarioDetailBody row={{ id: "r1", name: "Refund", lifecycle }} />);
     expect(screen.getByTestId("lifecycle-source-changed")).toHaveTextContent("Source changed in environment v4: rule:1");
+  });
+});
+
+describe("ScenarioDetail Activate", () => {
+  const base = { reason: null, reason_text: null, sources: [], proof: null };
+
+  it("shows Activate only for a Validated case and saves the versions it was proved on", async () => {
+    const user = userEvent.setup();
+    const { rerender } = render(
+      <ScenarioDetailBody jobId="env-1" row={{ id: "r1", name: "Refund", lifecycle: { ...base, state: "validated" } }} />,
+    );
+    expect(screen.getByTestId("lifecycle-activate")).toHaveTextContent(
+      "Activating saves these versions. It does not start a run.",
+    );
+    await user.click(screen.getByRole("button", { name: "Activate" }));
+    expect(saveDrafts).toHaveBeenCalledWith([{ piece: "suite", parentId: "s1", revision: 3 }]);
+
+    for (const state of ["active", "draft", "kept_as_written", "archived"]) {
+      rerender(<ScenarioDetailBody jobId="env-1" row={{ id: "r1", name: "Refund", lifecycle: { ...base, state } }} />);
+      expect(screen.queryByTestId("lifecycle-activate")).toBeNull();
+    }
   });
 });

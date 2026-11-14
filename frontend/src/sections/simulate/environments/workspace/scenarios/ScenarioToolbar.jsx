@@ -42,6 +42,9 @@ export default function ScenarioToolbar({
   proofCounts = null,
   lifecycleFilter = "",
   onLifecycleFilterChange,
+  versionPair = "",
+  versionPairs = [],
+  onVersionPairChange,
   actions,
 }) {
   const [filterAnchor, setFilterAnchor] = useState(null);
@@ -105,6 +108,32 @@ export default function ScenarioToolbar({
             {SCENARIOS_COPY.filterLabel}
             {filterCount ? ` (${filterCount})` : ""}
           </Button>
+          {onVersionPairChange && versionPairs.length > 0 ? (
+            <TextField
+              select
+              size="small"
+              value={versionPair}
+              onChange={(e) => onVersionPairChange(e.target.value)}
+              inputProps={{ "data-testid": "versions-select" }}
+              SelectProps={{
+                displayEmpty: true,
+                renderValue: (value) =>
+                  `${SCENARIOS_COPY.versionsLabel}: ${
+                    versionPairs.find((one) => one.value === value)?.label ??
+                    SCENARIOS_COPY.versionsDefault
+                  }`,
+                SelectDisplayProps: { "aria-label": SCENARIOS_COPY.versionsLabel },
+              }}
+              sx={{ minWidth: 190, "& .MuiSelect-select": { py: 0.5, typography: "s2" } }}
+            >
+              <MenuItem value="">{SCENARIOS_COPY.versionsDefault}</MenuItem>
+              {versionPairs.map((one) => (
+                <MenuItem key={one.value} value={one.value}>
+                  {one.label}
+                </MenuItem>
+              ))}
+            </TextField>
+          ) : null}
           {onLifecycleFilterChange ? (
             <TextField
               select
@@ -220,5 +249,10 @@ ScenarioToolbar.propTypes = {
   }),
   lifecycleFilter: PropTypes.string,
   onLifecycleFilterChange: PropTypes.func,
+  versionPair: PropTypes.string,
+  versionPairs: PropTypes.arrayOf(
+    PropTypes.shape({ value: PropTypes.string, label: PropTypes.string }),
+  ),
+  onVersionPairChange: PropTypes.func,
   actions: PropTypes.node,
 };

@@ -10,7 +10,10 @@ import {
   runnableScenarioKey,
 } from "src/api/simulate-environments/scenarioSelection";
 import { useAmendScenarios } from "src/api/simulate-environments/scenariosHooks";
-import { useActors } from "src/api/simulate-environments/versions";
+import {
+  useActors,
+  useEnvironmentVersions,
+} from "src/api/simulate-environments/versions";
 import EmptyState from "../../components/EmptyState";
 import { withCast } from "../actors/actorUtils";
 import ScenarioToolbar from "./ScenarioToolbar";
@@ -26,7 +29,7 @@ import {
   publishScenarioSelection,
   clearScenarioSelection,
 } from "../../buildEnvironment/console/scenarioSelectionBus";
-import { SCENARIOS_COPY } from "./scenarios.constants";
+import { SCENARIOS_COPY, versionPairs } from "./scenarios.constants";
 import { DRAFTS_COPY } from "../workspace.constants";
 import { withServedLabels } from "./scenarioEditor.constants";
 import { ENV_SHAPE, ENV_STATE_SHAPE } from "./scenarios.shapes";
@@ -126,6 +129,11 @@ export default function ScenariosStep({
   const [filters, setFilters] = useState({});
   // The lifecycle filter rides with the filters, so a page or grouping change keeps it.
   const [lifecycleFilter, setLifecycleFilter] = useState("");
+  // The version pair in view: "" is the saved one; a candidate's cases read Validated.
+  const [versionPair, setVersionPair] = useState("");
+  const versions = useEnvironmentVersions(env?.id);
+  const pairs = versionPairs(versions.data);
+  const pairInView = pairs.find((one) => one.value === versionPair);
   // "Add missing cases" opens Add scenarios prefilled for the uncovered levels.
   const [addPreset, setAddPreset] = useState(null);
   const [adding, setAdding] = useState(false);
@@ -180,9 +188,16 @@ export default function ScenariosStep({
   const pageData = useScenarioPage({
     jobId: env?.id,
     search: debouncedQuery,
-    filters: lifecycleFilter
-      ? { ...filters, lifecycle: lifecycleFilter }
-      : filters,
+    filters: {
+      ...filters,
+      ...(lifecycleFilter ? { lifecycle: lifecycleFilter } : {}),
+      ...(pairInView
+        ? {
+            suite_version_id: pairInView.suiteVersionId,
+            environment_version_id: pairInView.environmentVersionId,
+          }
+        : {}),
+    },
     groupBy,
     page,
     pageSize,
@@ -527,6 +542,12 @@ export default function ScenariosStep({
                     setLifecycleFilter(value);
                     setPage(0);
                   }}
+                  versionPair={pairInView ? versionPair : ""}
+                  versionPairs={pairs}
+                  onVersionPairChange={(value) => {
+                    setVersionPair(value);
+                    setPage(0);
+                  }}
                   actions={
                     <>
                       {!locked && <ValidateScenariosButton jobId={env?.id} />}
@@ -555,6 +576,11 @@ export default function ScenariosStep({
                     </>
                   }
                 />
+                {pairInView && (
+                  <Alert severity="info" sx={{ mt: 1 }} data-testid="versions-in-view">
+                    {SCENARIOS_COPY.versionsInView}
+                  </Alert>
+                )}
               </Box>
               {!locked && sel.count > 0 && (
                 <Box

@@ -60,6 +60,15 @@ export const SCENARIOS_COPY = {
   keptAsWritten: "Kept as written",
   notMeasured: "Not measured at run time",
   lifecycleFilterLabel: "Lifecycle",
+  versionsLabel: "Versions",
+  versionsDefault: "Saved (default)",
+  versionPair: (suite, environment, candidate) =>
+    `Suite ${suite} on environment ${environment}${candidate ? " (candidate)" : ""}`,
+  versionsInView:
+    "Showing these versions. Cases proved here read Validated; they read Active once these versions are saved.",
+  activate: "Activate",
+  activateHint: "Activating saves these versions. It does not start a run.",
+  activateNothing: "Nothing to save: these versions are not unsaved changes.",
   lifecycleFilters: [
     { value: "", label: "All" },
     { value: "draft", label: "Draft" },
@@ -111,6 +120,42 @@ export const SCENARIOS_COPY = {
     `Cited by ${keys.length === 1 ? "1 case" : `${keys.length} cases`}: ${keys.join(", ")}`,
   addMissingCases: "Add missing cases",
   uncoveredTitle: "Planned levels no scenario covers yet",
+};
+
+// The version pairs the Scenarios tab can show besides the saved one: each candidate pair Validate
+// built, and each other active suite or environment version on the other's default.
+const versionName = (version) => version?.label || `v${String(version?.id ?? "").slice(0, 6)}`;
+export const versionPairs = (versions) => {
+  if (!versions || versions.empty) return [];
+  const suites = versions.suite ?? [];
+  const environments = versions.environment ?? [];
+  const suiteDefault = versions.defaults?.suite;
+  const environmentDefault = versions.defaults?.environment;
+  const pairs = [];
+  const add = (suite, environment) => {
+    if (!suite || !environment || (suite.isDefault && environment.isDefault)) return;
+    const value = `${suite.id}:${environment.id}`;
+    if (pairs.some((one) => one.value === value)) return;
+    const candidate = suite.status === "candidate" || environment.status === "candidate";
+    pairs.push({
+      value,
+      suiteVersionId: suite.id,
+      environmentVersionId: environment.id,
+      label: SCENARIOS_COPY.versionPair(versionName(suite), versionName(environment), candidate),
+    });
+  };
+  const candidateSuite = suites.find((one) => one.status === "candidate");
+  const candidateEnvironment = environments.find((one) => one.status === "candidate");
+  if (candidateSuite || candidateEnvironment) {
+    add(candidateSuite ?? suiteDefault, candidateEnvironment ?? environmentDefault);
+  }
+  suites
+    .filter((one) => !one.isDefault && ["active", "candidate"].includes(one.status))
+    .forEach((one) => add(one, environmentDefault));
+  environments
+    .filter((one) => !one.isDefault && ["active", "candidate"].includes(one.status))
+    .forEach((one) => add(suiteDefault, one));
+  return pairs;
 };
 
 // Badge role per lifecycle state, from the design system's status roles.
