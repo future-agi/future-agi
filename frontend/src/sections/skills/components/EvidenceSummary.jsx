@@ -1,11 +1,18 @@
 import PropTypes from 'prop-types';
-import { Button, Checkbox, Chip, Stack, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, Tooltip, Typography } from '@mui/material';
+import { Button, Checkbox, Chip, Stack, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, Typography } from '@mui/material';
 import StatusBadge from 'src/components/status-badge';
+import { runStatusOf } from 'src/utils/runStatus';
 import { ROW_HEIGHT, TABLE_HEADER_HEIGHT } from 'src/theme/sizes';
-import { relativeReviewTime } from '../utils/review-display';
+import { coverageText, outcomeBadge } from '../utils/review-display';
+import { stackedTableSx } from './responsiveTable';
+import When from './When';
 
+// Missing results are "Not recorded", never a pass.
+const resultBadge = (status) => {
+  const badge = status ? outcomeBadge(status) : { status: 'not_tested', label: 'Not recorded' };
+  return { status: badge.status, label: badge.label ?? runStatusOf(badge.status).label };
+};
 const kinds = { text_comparison: 'Text comparison', application_verification: 'Application verification', external_pipeline: 'External pipeline' };
-const reported = (value) => value ?? 'Not reported';
 
 // Display and controlled selection only. Sharing always belongs to the caller,
 // which must explicitly confirm it; neither selection nor Inspect shares data.
@@ -13,7 +20,7 @@ export default function EvidenceSummary({ items = [], selectable = false, select
   const selections = selected instanceof Set ? selected : new Set(selected);
   if (!items.length) return <Typography variant="s1" color="text.secondary">{emptyText}</Typography>;
   return <TableContainer sx={{ minWidth: 0, maxWidth: 1 }}>
-    <Table size="small" aria-label="Test evidence">
+    <Table size="small" aria-label="Test evidence" sx={stackedTableSx}>
       <TableHead><TableRow sx={{ height: TABLE_HEADER_HEIGHT.default }}>
         {selectable && <TableCell padding="checkbox">Attach</TableCell>}
         {['Evidence', 'Result', 'Coverage', 'Visibility', 'Expires', 'Inspect'].map((label) => <TableCell key={label}>{label}</TableCell>)}
@@ -33,11 +40,12 @@ export default function EvidenceSummary({ items = [], selectable = false, select
             {item.visibility === 'private' && <Typography variant="s3" color="text.secondary">Only you can see this result. Share it with the workspace to attach it.</Typography>}
             {renderAction?.(item)}
           </Stack></TableCell>
-          <TableCell>{item.results?.length ? <Stack spacing={0.5}>{item.results.map((outcome) => <Stack key={outcome.label} direction="row" gap={0.5} alignItems="center"><Typography variant="s3">{outcome.label}</Typography><StatusBadge status={outcome.status || 'not_tested'} label={outcome.status ? undefined : 'Not recorded'} /></Stack>)}</Stack> : <StatusBadge status={result || 'not_tested'} label={result ? undefined : 'Not recorded'} />}</TableCell>
-          <TableCell><Typography variant="s3">{counts ? `${reported(counts.graded)} of ${reported(counts.planned)} runs graded · ${reported(counts.regressed)} ${counts.regressed === 1 ? 'regression' : 'regressions'} · ${reported(counts.disagreements)} human ${counts.disagreements === 1 ? 'disagreement' : 'disagreements'}` : 'Not reported'}</Typography></TableCell>
+          {/* Result is the badge only (per-check results keep their check name beside each badge). */}
+          <TableCell>{item.results?.length ? <Stack spacing={0.5}>{item.results.map((outcome) => <Stack key={outcome.label} direction="row" gap={0.5} alignItems="center"><Typography variant="s3">{outcome.label}</Typography><StatusBadge {...resultBadge(outcome.status)} /></Stack>)}</Stack> : <StatusBadge {...resultBadge(result)} />}</TableCell>
+          <TableCell><Typography variant="s3">{coverageText(counts)}</Typography></TableCell>
           <TableCell>{item.visibility === 'private' ? <StatusBadge status="private" /> : item.visibility === 'workspace' ? 'Workspace' : 'Not reported'}</TableCell>
-          <TableCell><Tooltip title={item.expiresAt || 'Not reported'}><Typography component="span" variant="s3">{relativeReviewTime(item.expiresAt) || 'Not reported'}</Typography></Tooltip></TableCell>
-          <TableCell><Button size="small" disabled={!onInspect} onClick={() => onInspect(item)}>Inspect</Button></TableCell>
+          <TableCell><Typography component="span" variant="s3"><When value={item.expiresAt} kind="expiry" /></Typography></TableCell>
+          <TableCell data-cell="actions"><Button size="small" disabled={!onInspect} onClick={() => onInspect(item)}>Inspect</Button></TableCell>
         </TableRow>;
       })}</TableBody>
     </Table>

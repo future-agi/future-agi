@@ -42,14 +42,53 @@ it('discovers the real allowance panel through production navigation and confirm
   await waitFor(() => expect(api.save).toHaveBeenCalledOnce());
   expect(api.save.mock.calls[0][0]).toEqual({ revision: 0, enabled: true, periodLimitUsd: '12.3400', idempotencyKey: expect.any(String) });
 });
-it('allows members to discover the requirement but not authorize spending', () => {
+it('shows members the summary and who can change it, with no form', () => {
   api.workspace.wsLevel = 3;
   mount();
   fireEvent.click(screen.getByRole('button', { name: 'More Skills pages' }));
   fireEvent.click(screen.getByRole('menuitem', { name: 'Workspace allowance' }));
-  expect(screen.getByLabelText('Period allowance (USD)')).toBeDisabled();
-  expect(screen.getByRole('button', { name: 'Save', exact: true })).toBeDisabled();
+  expect(screen.getByText('Paid test runs are off for this workspace.')).toBeVisible();
+  expect(screen.getByText('Only workspace admins can change this.')).toBeVisible();
+  expect(screen.queryByLabelText('Period allowance (USD)')).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Save', exact: true })).not.toBeInTheDocument();
   expect(api.save).not.toHaveBeenCalled();
+});
+it('reads a saved allowance in dollars and states the conclusion first', () => {
+  api.query = { data: { ...policy, revision: 3, enabled: true, periodLimitUsd: '20.00000000', knownEstimateUsd: '0', remainingUsd: '20.00000000' }, refetch: vi.fn() };
+  mount();
+  fireEvent.click(screen.getByRole('button', { name: 'More Skills pages' }));
+  fireEvent.click(screen.getByRole('menuitem', { name: 'Workspace allowance' }));
+  expect(screen.getByRole('status')).toHaveTextContent('Paid test runs are allowed up to $20.00 this period. $0.00 used.');
+  expect(screen.getByLabelText('Period allowance (USD)')).toHaveValue('20.00');
+  expect(screen.getByText('$')).toBeVisible();
+  expect(screen.queryByText(/Leave empty/)).not.toBeInTheDocument();
+  // Nothing typed yet: Save says why it is unavailable.
+  expect(screen.getByRole('button', { name: 'Save', exact: true })).toBeDisabled();
+  expect(screen.getByRole('button', { name: 'Save', exact: true })).toHaveAccessibleDescription('Nothing changed yet.');
+  fireEvent.change(screen.getByLabelText('Period allowance (USD)'), { target: { value: '' } });
+  expect(screen.getByText('Monthly limit in USD. To block paid runs, untick the box below.')).toBeVisible();
+  expect(screen.getByRole('button', { name: 'Save', exact: true })).toHaveAccessibleDescription('Enter an amount.');
+});
+it('explains an empty field only where leaving it empty keeps paid runs off', () => {
+  mount();
+  fireEvent.click(screen.getByRole('button', { name: 'More Skills pages' }));
+  fireEvent.click(screen.getByRole('menuitem', { name: 'Workspace allowance' }));
+  expect(screen.getByRole('status')).toHaveTextContent('Paid test runs are off for this workspace.');
+  expect(screen.getByText('Monthly limit in USD. Leave empty to block paid runs.')).toBeVisible();
+  expect(screen.queryByText(/No amount is filled in/)).not.toBeInTheDocument();
+});
+it('uses its own load failure, never the release review wording', () => {
+  const refetch = vi.fn();
+  api.query = { isError: true, refetch };
+  mount();
+  fireEvent.click(screen.getByRole('button', { name: 'More Skills pages' }));
+  fireEvent.click(screen.getByRole('menuitem', { name: 'Workspace allowance' }));
+  expect(screen.getByText("Couldn't load the workspace allowance.")).toBeVisible();
+  expect(screen.getByText('Nothing was changed.')).toBeVisible();
+  expect(screen.queryByText('Could not load review')).not.toBeInTheDocument();
+  expect(screen.queryByText(/No release action was taken/)).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: /Retry/ }));
+  expect(refetch).toHaveBeenCalled();
 });
 it('does not enable navigation before the spend contract is ready', () => {
   api.ready = false;

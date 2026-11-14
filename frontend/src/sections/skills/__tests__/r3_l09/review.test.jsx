@@ -684,7 +684,8 @@ describe("publication and explicit spending", () => {
       screen.getByRole("button", { name: "Save" }),
     ).toBeDisabled();
     // The lead says what is true now, in currency, not accounting fields.
-    expect(screen.getByText("No spending allowance set · $2.12 used this period (Nov 1–30)")).toBeVisible();
+    expect(screen.getByText("Paid test runs are off for this workspace.")).toBeVisible();
+    expect(screen.getByText(/Period Nov 1–30 \(UTC\) · \$2\.12 used/)).toBeVisible();
     fireEvent.change(
       screen.getByRole("textbox", { name: "Period allowance (USD)" }),
       { target: { value: "12.00000001" } },

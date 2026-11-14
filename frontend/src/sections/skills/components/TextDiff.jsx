@@ -16,12 +16,21 @@ function DiffCell({ line, side, unified = false }) {
 }
 DiffCell.propTypes = { line: PropTypes.object, side: PropTypes.string.isRequired, unified: PropTypes.bool };
 
+// Rows are empty only when both texts are empty, so this speaks about this one
+// file and names why. A side titled "New file" (or flagged missing) did not
+// exist before; any non-empty side always renders as a diff instead.
+function emptyDiffMessage({ fromTitle, fromMissing = false, toMissing = false }) {
+  if (fromMissing || fromTitle === 'New file') return 'New empty file.';
+  if (toMissing) return 'Removed an empty file.';
+  return 'Both versions of this file are empty.';
+}
+
 /** One responsive renderer for publication, recovery, and exact release review. */
-export default function TextDiff({ fromText = '', toText = '', fromTitle = 'Before', toTitle = 'After' }) {
+export default function TextDiff({ fromText = '', toText = '', fromTitle = 'Before', toTitle = 'After', fromMissing = false, toMissing = false }) {
   const theme = useTheme();
   const narrow = useMediaQuery(theme.breakpoints.down('sm'));
   const rows = useMemo(() => buildDiffRows(fromText, toText), [fromText, toText]);
-  if (!rows.length) return <Typography variant="s3" color="text.secondary">Both files are empty.</Typography>;
+  if (!rows.length) return <Typography variant="s3" color="text.secondary">{emptyDiffMessage({ fromTitle, fromMissing, toMissing })}</Typography>;
   const contents = <Box role={narrow ? undefined : 'table'} aria-label={narrow ? undefined : 'File changes'} sx={{ minWidth: 0, border: 1, borderColor: 'divider', borderRadius: 1, overflow: 'hidden' }}>
     <Box role={narrow ? undefined : 'row'} sx={{ display: 'grid', gridTemplateColumns: narrow ? 'minmax(0, 1fr)' : 'minmax(0, 1fr) minmax(0, 1fr)', bgcolor: 'background.neutral' }}>
       {(narrow ? [`− ${fromTitle} / + ${toTitle}`] : [fromTitle, toTitle]).map((title, index) => <Typography key={index} role={narrow ? undefined : 'columnheader'} variant="m3" sx={{ p: 1, overflowWrap: 'anywhere' }}>{title}</Typography>)}
@@ -39,4 +48,6 @@ export default function TextDiff({ fromText = '', toText = '', fromTitle = 'Befo
   </Box>;
   return narrow ? <Box role="region" aria-label="Unified file changes">{contents}</Box> : contents;
 }
-TextDiff.propTypes = { fromText: PropTypes.string, toText: PropTypes.string, fromTitle: PropTypes.string, toTitle: PropTypes.string };
+// fromMissing/toMissing are optional additions (existing props unchanged): set
+// them when the file does not exist on that side, e.g. an added file.
+TextDiff.propTypes = { fromText: PropTypes.string, toText: PropTypes.string, fromTitle: PropTypes.string, toTitle: PropTypes.string, fromMissing: PropTypes.bool, toMissing: PropTypes.bool };

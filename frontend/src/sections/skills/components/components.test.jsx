@@ -142,7 +142,18 @@ describe('TextDiff', () => {
   });
   it('handles empty files and missing final newlines', () => {
     const { rerender } = render(<TextDiff />);
-    expect(screen.getByText('Both files are empty.')).toBeInTheDocument();
+    expect(screen.getByText('Both versions of this file are empty.')).toBeInTheDocument();
+    rerender(<TextDiff fromTitle="New file" toTitle="Your draft" />);
+    expect(screen.getByText('New empty file.')).toBeInTheDocument();
+    rerender(<TextDiff fromMissing fromTitle="v1" toTitle="Your draft" />);
+    expect(screen.getByText('New empty file.')).toBeInTheDocument();
+    expect(screen.queryByText(/Both/)).not.toBeInTheDocument();
+    rerender(<TextDiff toMissing fromTitle="v2" toTitle="Your draft" />);
+    expect(screen.getByText('Removed an empty file.')).toBeInTheDocument();
+    // One empty side with content on the other is a real diff, never an "empty" summary.
+    rerender(<TextDiff fromText="" toText={'Rules\n'} fromTitle="v2" toTitle="Your draft" />);
+    expect(screen.getByRole('cell', { name: 'After line 1, added' })).toBeInTheDocument();
+    expect(screen.queryByText(/empty/)).not.toBeInTheDocument();
     rerender(<TextDiff fromText={'one\n'} toText="one" />);
     expect(screen.getByText('After has no newline at the end of the file.')).toBeInTheDocument();
   });

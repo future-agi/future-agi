@@ -56,3 +56,22 @@ it.each(['loading', 'error', 'empty', 'invalid'])('reads the preview state %s', 
   const { result } = renderHook(usePreviewState, { wrapper: Wrapper });
   expect(result.current).toBe(state === 'invalid' ? null : state);
 });
+it('annotates each version once with its labels and latest, keeping numeric values', () => {
+  const change = vi.fn();
+  render(<VersionSelect skillId="id" value={2} includeLabels={false} annotate ariaLabel="Viewed version" onChange={change} />);
+  const combo = screen.getByRole('combobox', { name: 'Viewed version' });
+  expect(combo).toHaveTextContent('v2 · latest');
+  fireEvent.mouseDown(combo);
+  expect(screen.getAllByRole('option').map((option) => option.textContent)).toEqual(['v2 · latest', 'v1 · production']);
+  expect(screen.queryByRole('option', { name: 'Latest version' })).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole('option', { name: 'v1 · production' }));
+  expect(change).toHaveBeenCalledWith(1);
+  expect(useSkillLabels).toHaveBeenCalledWith('id');
+});
+it('does not call the top of an older page latest', () => {
+  useSkillVersions.mockReturnValue({ data: { results: [{ number: 101 }], count: 101, totalPages: 2 }, refetch });
+  render(<VersionSelect skillId="id" value={101} includeLabels={false} annotate onChange={vi.fn()} />);
+  fireEvent.mouseDown(screen.getByRole('combobox'));
+  fireEvent.click(screen.getByRole('option', { name: 'Older versions' }));
+  expect(screen.queryByText(/latest/)).not.toBeInTheDocument();
+});
