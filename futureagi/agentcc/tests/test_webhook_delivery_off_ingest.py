@@ -422,7 +422,9 @@ class TestDispatcher:
         calls = {c.kwargs["args"][0]: c.kwargs for c in start.call_args_list}
         assert set(calls) == {str(due_a.pk), str(due_b.pk)}
         for webhook_id, kwargs in calls.items():
-            assert kwargs["task_id"] == f"agentcc-webhook-delivery-{webhook_id}"
+            assert kwargs["task_id"].startswith(
+                f"agentcc-webhook-delivery-{webhook_id}-"
+            )
             assert kwargs["id_conflict_policy"] == WorkflowIDConflictPolicy.USE_EXISTING
 
     def test_one_webhook_failing_to_start_does_not_stop_the_others(self, organization):
@@ -1212,3 +1214,34 @@ def test_nul_in_a_logged_request_still_creates_its_webhook_event_and_session(
     assert AgentccSession.no_workspace_objects.filter(
         organization=organization, session_id="session"
     ).exists()
+
+
+@pytest.mark.integration
+def test_a_dispatch_between_run_end_and_workflow_close_starts_a_real_run(
+    organization,
+):
+    """Round 4 review: a run releases its lease, then redispatches and only
+    then does its workflow close. A dispatcher that leases the webhook in that
+    window must start a new run, not hit the closing workflow's id (a no-op
+    that left the fresh lease with no run for 120 s)."""
+    from django.test import override_settings
+
+    webhook = _webhook(organization, "w", "https://a.example.com/x")
+    _events(webhook, 3, start_minutes_ago=10)
+    first = timezone.now()
+    with (
+        override_settings(AGENTCC_WEBHOOK_MAX_CONCURRENT_DELIVERIES_PER_ORG=0),
+        patch.object(webhook_delivery.deliver_webhook_activity, "apply_async") as start,
+    ):
+        webhook_delivery.dispatch_deliveries(now=first)
+        # The run ends on its budget with events still due: lease released,
+        # workflow not yet closed.
+        webhook_delivery._end_run(webhook.pk, False, True, first)
+        second = first + timedelta(seconds=1)
+        webhook_delivery.dispatch_deliveries(now=second)
+
+    ids = [c.kwargs["task_id"] for c in start.call_args_list]
+    assert len(ids) == 2
+    assert ids[0] != ids[1], "the second run reused the closing run's workflow id"
+    webhook.refresh_from_db()
+    assert webhook.last_run_started_at == second

@@ -478,9 +478,22 @@ def deliver_webhook_events(event_ids=None, org_id=None):
     return totals
 
 
-def delivery_task_id(webhook_id):
-    """The fixed workflow id that makes a webhook's runs single-flight."""
-    return f"agentcc-webhook-delivery-{webhook_id}"
+def delivery_task_id(webhook_id, run_started_at=None):
+    """The workflow id of one delivery run: the webhook plus the run's token.
+
+    Single flight is the lease's job (a webhook is leased only when its lease
+    is free or expired, and a run whose token is no longer the latest leaves
+    the newer lease and pause alone). The id is unique per run, because a
+    fixed id made a dispatch in the moment between a run releasing its lease
+    and its workflow closing a no-op: the fresh lease then belonged to no run
+    and kept the webhook, and its org's slot, idle until it expired.
+    """
+    if run_started_at is None:
+        return f"agentcc-webhook-delivery-{webhook_id}"
+    return (
+        f"agentcc-webhook-delivery-{webhook_id}-"
+        f"{run_started_at.strftime('%Y%m%dT%H%M%S%f')}"
+    )
 
 
 def _run_token(value):
@@ -519,9 +532,8 @@ def deliver_webhook_activity(webhook_id, run_started_at=None):
         return deliver_webhook(webhook_id, release_lease=True, run_token=token)
     finally:
         try:
-            # Not this webhook: its workflow is still running, so the fixed
-            # workflow id would reuse it and strand a fresh lease. The next
-            # tick continues it.
+            # Not this webhook: the next tick continues it, so a run that ends
+            # on its budget hands the slot to another webhook first.
             dispatch_deliveries(exclude=webhook_id)
         except Exception:
             # The schedule's next tick dispatches instead.
@@ -561,8 +573,10 @@ def dispatch_deliveries(now=None, exclude=None):
     """Start delivery runs for the webhooks next in turn, within the caps.
 
     A webhook whose run is still going keeps it: its lease keeps it out of
-    the list, and the fixed workflow id means a run that outlived its lease
-    is reused, so the webhook is never sent to twice at once.
+    the list. Each run has its own workflow id (see ``delivery_task_id``); a
+    run's POSTs end inside its budget, well before its lease expires, and
+    each event is claimed before it is sent, so an event is never sent twice
+    at once.
     """
     from temporalio.common import WorkflowIDConflictPolicy
 
@@ -573,7 +587,7 @@ def dispatch_deliveries(now=None, exclude=None):
         try:
             deliver_webhook_activity.apply_async(
                 args=(str(webhook_id), now.isoformat()),
-                task_id=delivery_task_id(webhook_id),
+                task_id=delivery_task_id(webhook_id, now),
                 id_conflict_policy=WorkflowIDConflictPolicy.USE_EXISTING,
             )
             started += 1
