@@ -121,10 +121,12 @@ def record_sources(
     revision: int,
     at: str,
     message_id: str = "",
+    used_files: list[Mapping[str, Any]] | None = None,
 ) -> dict[str, list[dict[str, Any]]]:
     """Where each change came from: every item this write moved gets one source (who, through what, at which draft
     revision), appended to the sources it already had. A retried write at the same revision adds nothing. A chat
-    write names the person's message it answered (`message_id`)."""
+    write names the person's message it answered (`message_id`); a file import names each file and row it read
+    (`used_files`, each `{"file_id", "row"}`, the row ``None`` for a whole file)."""
     out = {key: list(value) for key, value in (provenance or {}).items()}
     whole = whole_documents(before, after)
     old, new = item_index(before, whole), item_index(after, whole)
@@ -146,6 +148,14 @@ def record_sources(
             if user is not None
             else {"kind": "harness"}
         )
+    used = [
+        *used,
+        *(
+            {"kind": "file", "id": str(one["file_id"]), "row": one.get("row")}
+            for one in used_files or []
+            if one.get("file_id")
+        ),
+    ]
     source = {
         "origin": origin,
         "agent": agent,
