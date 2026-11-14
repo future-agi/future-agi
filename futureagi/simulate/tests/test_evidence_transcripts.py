@@ -202,6 +202,20 @@ class TestCuts:
         stored = json.dumps(EvidenceImportCase.objects.get().transcript)
         assert "jane" not in stored.lower()
 
+    def test_a_value_with_spaces_across_the_cut_is_redacted_before_it_is_cut(
+        self, client, environment, no_observe
+    ):
+        # The card straddles TURN_CHARS at one of its spaces: cut first, "4111 1111"
+        # would be left, too short to read as a card.
+        lead = "word " * ((TURN_CHARS - 10) // 5)
+        text = f"User: {lead}4111 1111 1111 1111 and more\nAgent: ok"
+
+        [case] = _post(client, environment, _transcript(text)).json()["cases"]
+
+        assert case["transcript"]["turns"][0]["truncated"] is True
+        stored = json.dumps(EvidenceImportCase.objects.get().transcript)
+        assert "4111" not in stored
+
     def test_transcripts_share_the_import_budget_and_keep_head_and_tail(
         self, client, environment, no_observe
     ):

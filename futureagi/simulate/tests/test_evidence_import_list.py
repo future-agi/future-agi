@@ -9,6 +9,7 @@ from rest_framework import status
 from accounts.tests.test_rbac_regressions import WORKSPACE_WRITE_DENIED, _viewer_client
 from model_hub.models.develop_dataset import Dataset
 from simulate.models import EvidenceImport, EvidenceImportCase
+from simulate.selectors import evidence_import as evidence_selectors
 from simulate.services.hosted_harness import create_hosted_job
 from tracer.models.project import Project
 
@@ -155,6 +156,25 @@ class TestList:
         _import(other, ["pending"])
 
         assert _list(client, environment) == []
+
+
+def test_the_list_is_read_as_typed_records(environment):
+    made = _import(environment, ["pending", "added"])
+
+    [one] = evidence_selectors.open_evidence_imports(environment)
+
+    assert isinstance(one, evidence_selectors.OpenEvidenceImport)
+    assert (one.id, one.source_kind, one.case_count, one.added_count) == (
+        made.id,
+        "transcript",
+        2,
+        1,
+    )
+    assert (one.status, one.can_discard, one.source_available) == (
+        "partly_added",
+        True,
+        True,
+    )
 
 
 class TestDiscard:

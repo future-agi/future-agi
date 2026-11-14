@@ -14,8 +14,8 @@ from tfc.deployment_telemetry.schema import (
     HEARTBEAT_FIELDS,
     REGISTRATION_FIELDS,
 )
-from tfc.logging.sentry import _scrub_deployment_telemetry_event
-from tfc.telemetry.middleware import OTelContextMiddleware
+from tfc.logging.sentry import _is_telemetry_url, _scrub_deployment_telemetry_event
+from tfc.telemetry.middleware import OTelContextMiddleware, is_sensitive_body_path
 
 
 def test_otel_does_not_capture_deployment_telemetry_request_body():
@@ -105,6 +105,44 @@ def test_otel_never_records_a_transcript_import_or_its_refusal():
 
     assert "http.request.body" not in captured
     assert "http.response.body" not in captured
+
+
+# Every routed form of a sensitive path: DRF's format suffix, and no trailing
+# slash (the body is read before Django redirects it), for every entry.
+SLIPPED = [
+    f"{ENVIRONMENT}/evidence-imports.json/",
+    f"{ENVIRONMENT}/evidence-imports.json",
+    f"{ENVIRONMENT}/evidence-imports",
+    "/simulate/api/harness-jobs/secret-values.json",
+    "/simulate/api/harness-jobs/secret-files",
+    "/simulate/api/harness/github/webhook.json/",
+]
+
+
+@pytest.mark.parametrize("path", SLIPPED)
+def test_otel_never_records_a_sensitive_path_in_any_routed_form(path):
+    captured = _captured(path, status=400)
+
+    assert "http.request.body" not in captured
+    assert "http.response.body" not in captured
+
+
+@pytest.mark.parametrize("path", SLIPPED)
+def test_sentry_treats_every_routed_form_as_sensitive(path):
+    assert _is_telemetry_url(f"https://api.futureagi.com{path}?page=2")
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        f"{ENVIRONMENT}/evidence-imports-archive/",
+        "/simulate/api/harness-jobs/secret-values-history/",
+        "/telemetry-settings/",
+    ],
+)
+def test_a_path_that_only_starts_like_a_sensitive_one_is_not(path):
+    """The match ends at a segment: another resource sharing the stem is recorded."""
+    assert not is_sensitive_body_path(path)
 
 
 def test_otel_still_records_an_environments_other_bodies():

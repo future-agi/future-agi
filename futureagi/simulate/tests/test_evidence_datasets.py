@@ -293,6 +293,25 @@ class TestLive:
         assert first["expected_outcome"]["text"] == "Refuse the second refund."
         assert second["changed_since_import"] is False
 
+    def test_a_long_row_and_its_repeat_read_unchanged_on_reload(
+        self, client, environment, dataset, columns
+    ):
+        # Made, the two rows share the budget; reloaded, only the case proposed is
+        # read. Its share must stay the one it was fingerprinted under.
+        chat = "\n".join(
+            f"{'User' if n % 2 == 0 else 'Agent'}: turn {n} " + "word " * 200
+            for n in range(40)
+        )
+        same = {columns["chat"]: chat}
+        rows = [_row(dataset, 0, same), _row(dataset, 1, same)]
+        mapping = _mapping(columns, labels=[], expected=None)
+
+        made = _create(client, environment, dataset, rows, columns, mapping).json()
+
+        [case] = _read(client, environment, made)["cases"]
+        assert case["also_from"] == 1
+        assert case["changed_since_import"] is False
+
     def test_a_deleted_row_reads_unavailable(
         self, client, environment, dataset, rows, columns
     ):

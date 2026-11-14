@@ -5,12 +5,16 @@ dataset rows."""
 
 from __future__ import annotations
 
+import threading
 import uuid
+from unittest.mock import patch
 
 import pytest
+from django.db import connection, transaction
 from rest_framework import status
 
-from simulate.models import EvidenceImportCase
+from simulate.models import EvidenceImportCase, HostedHarnessJob
+from simulate.services import evidence_import as evidence_import_service
 from simulate.services.evidence_import import (
     TranscriptInput,
     create_transcript_import,
@@ -196,6 +200,130 @@ class TestDataset:
         ).json()
 
         assert [one["status"] for one in made["cases"]] == ["pending", "pending"]
+
+
+class TestAcrossSources:
+    def test_a_conversation_with_an_email_is_one_case_as_transcript_and_dataset_row(
+        self, client, environment, dataset, columns
+    ):
+        # The transcript is stored redacted and the row is read raw: both are
+        # fingerprinted as redacted, so the email cannot split them.
+        first = _post_transcripts(client, environment, _transcript(text=CHAT)).json()
+        row = _row(dataset, 0, {columns["chat"]: CHAT})
+
+        again = _create_rows(
+            client,
+            environment,
+            dataset,
+            [row],
+            columns,
+            mapping=_mapping(columns, labels=[], expected=None),
+        ).json()
+
+        [case] = again["cases"]
+        assert case["status"] == "duplicate"
+        assert case["duplicate_of"]["import_id"] == first["id"]
+
+
+_CHAT = "User: Where is my parcel?\nAgent: It left the depot today."
+# How long a thread may stand blocked on a row lock before it reads as waiting.
+_BLOCKED = 2
+
+
+def _transcript_import(environment, user, name):
+    return create_transcript_import(
+        environment=environment,
+        transcripts=[TranscriptInput(name, "text", _CHAT)],
+        production=True,
+        user=user,
+    )
+
+
+def _in_thread(work, errors, results=None):
+    def run():
+        try:
+            value = work()
+            if results is not None:
+                results.append(value)
+        except Exception as exc:  # noqa: BLE001 - asserted empty by the test
+            errors.append(exc)
+        finally:
+            connection.close()
+
+    thread = threading.Thread(target=run)
+    thread.start()
+    return thread
+
+
+class TestDiscardRaces:
+    """Discard takes the environment's lock, as creating an import and adding
+    to the suite do, so neither interleaves with it."""
+
+    @pytest.mark.django_db(transaction=True)
+    def test_an_import_made_during_a_discard_repeats_the_promoted_case(
+        self, environment, user
+    ):
+        first = _transcript_import(environment, user, "first")
+        second = _transcript_import(environment, user, "second")
+        [promoted] = second.cases.all()
+        promoting, resume = threading.Event(), threading.Event()
+        promote = evidence_import_service._promote_duplicates
+
+        def paused(*args, **kwargs):
+            promote(*args, **kwargs)
+            promoting.set()
+            resume.wait(timeout=30)
+
+        errors, made = [], []
+        with patch.object(evidence_import_service, "_promote_duplicates", paused):
+            discarding = _in_thread(lambda: discard_evidence_import(first), errors)
+            assert promoting.wait(timeout=30)
+            creating = _in_thread(
+                lambda: _transcript_import(environment, user, "third"), errors, made
+            )
+            # Without the lock it commits now, repeating the case being discarded.
+            creating.join(timeout=_BLOCKED)
+            resume.set()
+            discarding.join(timeout=30)
+            creating.join(timeout=30)
+
+        assert not errors
+        [third] = made[0].cases.all()
+        assert (third.status, third.duplicate_of_id) == ("duplicate", promoted.id)
+
+    @pytest.mark.django_db(transaction=True)
+    def test_a_discard_during_an_add_keeps_the_added_case(self, environment, user):
+        first = _transcript_import(environment, user, "first")
+        [case] = first.cases.all()
+        holding, release = threading.Event(), threading.Event()
+
+        def adding():
+            # What add-to-suite does under the environment's lock: mark it added.
+            with transaction.atomic():
+                HostedHarnessJob.no_workspace_objects.select_for_update(
+                    of=("self",)
+                ).filter(id=environment.id).first()
+                EvidenceImportCase.objects.filter(id=case.id).update(
+                    status=EvidenceImportCase.Status.ADDED
+                )
+                holding.set()
+                release.wait(timeout=30)
+
+        errors, deleted = [], []
+        adder = _in_thread(adding, errors)
+        assert holding.wait(timeout=30)
+        discarder = _in_thread(lambda: discard_evidence_import(first), errors, deleted)
+        discarder.join(timeout=_BLOCKED)
+        release.set()
+        adder.join(timeout=30)
+        discarder.join(timeout=30)
+
+        assert not errors
+        # The add committed first, so the discard keeps the import and its case.
+        assert deleted == [False]
+        case.refresh_from_db()
+        first.refresh_from_db()
+        assert (case.status, first.deleted) == ("added", False)
 
 
 class TestDiscard:
