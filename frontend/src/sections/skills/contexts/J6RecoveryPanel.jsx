@@ -403,11 +403,9 @@ function RollbackRequest({
           </>}
           <Button variant="outlined" sx={{ alignSelf: 'flex-start' }} href={`?tab=tests&version=${candidate.number}`}>Run tests</Button>
         </Section>}
-        <Typography variant="s3" color="text.secondary">If production changes, review and acknowledge the rollback again.</Typography>
-        <TechnicalDetails title="Request details" keepMounted>
-          <Typography variant="s3">Reviewed against release revision {releaseRevision}. A change to the release restarts this review.</Typography>
-          {packet && <IdentityChip label="Packet fingerprint" value={packet.fingerprint} />}
-        </TechnicalDetails>
+        {/* The revision this review is bound to stays in view: it is what tells the author a restart happened. */}
+        <Typography variant="s3" color="text.secondary">Reviewed against release revision {releaseRevision}. If production changes, review and acknowledge the rollback again.</Typography>
+        {packet && <TechnicalDetails title="Request details" keepMounted><IdentityChip label="Packet fingerprint" value={packet.fingerprint} /></TechnicalDetails>}
         {submit.data ? <FormControlLabel control={<Checkbox checked inputProps={{ readOnly: true }} />} label={`I reviewed everything v${candidate.number} contains, including linked skill versions and files left out.`} /> : <FormControlLabel
           control={
             <Checkbox

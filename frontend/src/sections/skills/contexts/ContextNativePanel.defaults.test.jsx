@@ -134,7 +134,7 @@ it('chooses the newest result across both run types and keeps a combined history
 it('explains disabled packet prerequisites and marks the earlier-run scope', () => {
   h.detail.decision = { state: 'release_ready', reasons: [] };
   renderPanel();
-  fireEvent.click(screen.getByRole('button', { name: 'Attach your CI run (optional)' }));
+  expect(screen.getByRole('button', { name: 'Attach your CI run (optional)' })).toHaveAttribute('aria-expanded', 'true');
   expect(screen.getByText('Fill in the three CI fields to attach your CI run.')).toBeVisible();
   expect(screen.getByRole('button', { name: 'Share evidence and prepare packet' })).toBeDisabled();
   expect(screen.getByText('This applies to the earlier run, not your current selection.')).toBeVisible();
@@ -154,7 +154,7 @@ it('reconciles preparing plus returned work without announcing the result grid',
   expect(screen.getAllByText('Pending')).toHaveLength(4);
 });
 
-it('continues to release review without CI and keeps the CI run an optional, collapsed attachment', () => {
+it('continues to release review without CI and keeps the CI run an optional, foldable attachment', () => {
   h.detail.arms[0] = { variant: 'candidate', version: 7, versionId: 'v7-id', digest: 'sha256:v7' };
   h.detail.decision = { state: 'release_ready', reasons: [] };
   renderPanel();
@@ -162,11 +162,14 @@ it('continues to release review without CI and keeps the CI run an optional, col
   expect(proceed).toHaveClass('MuiButton-contained');
   expect(new URL(proceed.href).searchParams.get('evidence')).toBe('simulation_native:previous');
   expect(screen.getByText('Ready for release review')).toBeVisible();
-  expect(screen.queryByRole('textbox', { name: 'CI run link' })).not.toBeInTheDocument();
+  // Open beside the result so attaching CI costs no extra step; the author can fold it away.
   const disclosure = screen.getByRole('button', { name: 'Attach your CI run (optional)' });
-  expect(disclosure).toHaveAttribute('aria-expanded', 'false');
-  fireEvent.click(disclosure);
+  expect(disclosure).toHaveAttribute('aria-expanded', 'true');
   for (const label of ['CI run link', 'CI configuration ID', 'CI result (pass or hold)']) expect(screen.getByRole('textbox', { name: label })).toBeVisible();
+  fireEvent.click(disclosure);
+  expect(disclosure).toHaveAttribute('aria-expanded', 'false');
+  expect(screen.getByRole('textbox', { name: 'CI run link', hidden: true })).not.toBeVisible();
+  fireEvent.click(disclosure);
   expect(screen.getByRole('button', { name: 'Share evidence and prepare packet' })).toHaveClass('MuiButton-outlined');
   // Opening the release review never shares or prepares anything by itself.
   expect(screen.queryByText(/Packet ready/)).not.toBeInTheDocument();

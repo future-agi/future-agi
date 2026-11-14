@@ -164,7 +164,9 @@ CellDrawer.propTypes = { run: PropTypes.object.isRequired, cell: PropTypes.objec
 
 // The CI attachment is optional: the release review can start from this run alone. Attaching a CI
 // run shares this run with the workspace and prepares the packet the reviewer will see; nothing is
-// released here and sharing is never implied by opening the release review.
+// released here and sharing is never implied by opening the release review. It is shown open under
+// the result (and can be folded away) so teams that do attach CI need no extra step; its title says
+// it is optional and "Continue to release review" stays the one primary action.
 function CiAttachment({ contextId, run, target, canWrite, earlier }) {
   const { user } = useAuthContext();
   const prepare = usePrepareReleasePacket(contextId);
@@ -172,7 +174,7 @@ function CiAttachment({ contextId, run, target, canWrite, earlier }) {
   const set = (key) => (event) => setPipeline({ ...pipeline, [key]: event.target.value });
   const valid = pipeline.url.trim() && pipeline.configurationIdentity.trim() && pipeline.decision.trim();
   const reason = !canWrite ? 'Only a workspace author can share this run.' : !target ? 'Add an application target to share this run.' : !valid ? 'Fill in the three CI fields to attach your CI run.' : prepare.isPending ? 'Preparing…' : null;
-  return <TechnicalDetails title="Attach your CI run (optional)" defaultOpen={Boolean(prepare.data)} keepMounted>
+  return <TechnicalDetails title="Attach your CI run (optional)" defaultOpen keepMounted>
     <Stack spacing={1.5}>
       <Typography variant="s3" color="text.secondary">Adds your CI result to the release evidence and shares this run with your workspace. Nothing is released here.</Typography>
       <Stack direction={{ xs: 'column', md: 'row' }} spacing={1.5} sx={{ '& > *': { flex: 1 } }}>

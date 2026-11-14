@@ -87,7 +87,7 @@ describe("accepted dependency review", () => {
     check("Review update for refunds"); click("Preview dependency changes");
     await screen.findByText(/Compiled candidate/);
     expect(preview).toHaveBeenCalledWith({ revision: 12, links: session.contextSpec.links, refreshSkillIds: ["child"] });
-    check("Accept these exact resolved versions and selector policies."); click("Apply selected updates to draft");
+    check("Accept these linked-skill versions and update rules for 1 context."); click("Apply selected updates to draft");
     await waitFor(() => expect(apply).toHaveBeenCalledOnce());
     expect(apply.mock.calls[0][0].expectedFingerprint).toBe("plan");
     expect(session.mutateDraft).toHaveBeenCalledOnce();
@@ -103,7 +103,7 @@ describe("accepted dependency review", () => {
     const session = draft(); const props = { scopeKey, session, onPreview: async () => ({ revision: 12, fingerprint: "plan", checks: { summary: { errors: 1 } } }), onApply: vi.fn() };
     const view = render(<ContextLinksPanel {...props} />);
     click("Preview dependency changes"); await screen.findByText(/blocking checks/);
-    check("Accept these exact resolved versions and selector policies.");
+    check("Accept these linked-skill versions and update rules for 1 context.");
     expect(button("Apply selected updates to draft")).toBeDisabled();
     view.rerender(<ContextLinksPanel {...props} session={{ ...session, revision: 13 }} />);
     expect(screen.getByText(/draft changed/)).toBeVisible();

@@ -356,10 +356,8 @@ export async function createDriver({ jobId, runId, registration }) {
           // The matched verification is still the one on screen (the CI ran elsewhere); the responder closes the
           // reviewed cell and continues; nothing is reopened or chosen again.
           await op.click(page.getByRole('button', { name: 'Close', exact: true }), 'close-reviewed-cell');
-          // The CI run is an optional attachment folded under the result; opening it is a counted gesture.
-          const attachCi = page.getByRole('button', { name: 'Attach your CI run (optional)', exact: true });
-          await expect(attachCi).toBeVisible({ timeout: 120_000 });
-          await op.click(attachCi, 'open-ci-attachment');
+          // The optional CI attachment is shown open under the result; no gesture opens it.
+          await expect(page.getByRole('button', { name: 'Attach your CI run (optional)', exact: true })).toHaveAttribute('aria-expanded', 'true', { timeout: 120_000 });
           await expect(page.locator(`[data-execution-fingerprint="${state.runs.matched.execution_fingerprint}"]`)).toBeVisible();
           // The pipeline's identity is carried from the CI result into the packet by the operator: a counted reconciliation.
           await op.reconcile('pipeline-identity-into-packet', async () => {

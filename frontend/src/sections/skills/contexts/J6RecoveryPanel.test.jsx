@@ -75,7 +75,7 @@ it("names the release revision a rollback review is made against", () => {
   };
   render(<J6RecoveryPanel contextId="ctx" contextName="Support policy" />);
   fireEvent.click(screen.getByRole("button", { name: "Choose v1" }));
-  fireEvent.click(screen.getByRole("button", { name: "Request details" }));
+  // The bound revision is visible without opening anything.
   expect(
     screen.getByText(/Reviewed against release revision 7\./),
   ).toBeVisible();

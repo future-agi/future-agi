@@ -85,7 +85,8 @@ it('carries the published candidate forward, preselects the only target and shar
   expect(screen.getAllByRole('checkbox', { name: /^Attach Text comparison/ })).toHaveLength(2);
   screen.getAllByRole('checkbox', { name: /^Attach Text comparison/ }).forEach((checkbox) => expect(checkbox).toBeDisabled());
   fireEvent.click(screen.getByRole('button', { name: 'Share and attach 2 results' }));
-  fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Details', exact: true }));
+  // The confirmation names every record it shares, visibly, with no extra disclosure to open.
+  expect(within(screen.getByRole('dialog')).getAllByText('Private', { exact: true })).toHaveLength(2);
   expect(screen.getAllByTitle('run-a').length).toBeGreaterThan(0);
   expect(screen.getAllByTitle('run-b').length).toBeGreaterThan(0);
   expect(screen.queryByText('No matching test evidence. Not tested is not a pass.')).not.toBeInTheDocument();

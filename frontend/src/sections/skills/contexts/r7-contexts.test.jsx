@@ -8,6 +8,8 @@ import ContextLinksPanel from './ContextLinksPanel';
 const state = vi.hoisted(() => ({ upstream: {} }));
 vi.mock('src/api/skills/r3-spend', () => ({ useSkillsSpendPolicy: () => ({}) }));
 vi.mock('src/api/skills/context-skill-inventory', () => ({ useLinkedSkillUpstream: () => state.upstream }));
+// Presentation-only role signal; an author in the Skills scope (the server stays the authority).
+vi.mock('../utils/access', () => ({ useSkillsAccess: () => ({ ready: true, sameScope: true, isViewer: false, canWrite: true, canAdmin: false }) }));
 afterEach(cleanup);
 beforeEach(() => { state.upstream = {}; localStorage.clear(); });
 const version = { id: 'v1', number: 1, digest: `sha256:${'a'.repeat(64)}` };
@@ -25,7 +27,7 @@ it('owns section state in the URL, preserves version and test parameters, and re
   expect(screen.getByLabelText('URL parameters')).toHaveTextContent('version=1&draft=1&reproduce=case&tab=tests');
   expect(screen.getByRole('tabpanel')).toHaveTextContent('Test controls');
   fireEvent.click(screen.getByRole('button', { name: 'Back' }));
-  expect(screen.getByRole('tab', { name: 'Recovery' })).toHaveAttribute('aria-selected', 'true');
+  expect(screen.getByRole('tab', { name: 'Rollback' })).toHaveAttribute('aria-selected', 'true');
   fireEvent.click(screen.getByRole('button', { name: 'Forward' }));
   expect(screen.getByRole('tab', { name: 'Tests' })).toHaveAttribute('aria-selected', 'true');
 });
@@ -67,7 +69,7 @@ it('shows each followed label against the locked version and never calls failed 
   render(<MemoryRouter><ContextLinksPanel scopeKey="scope" readOnly session={session} /></MemoryRouter>);
   const table = screen.getByRole('table', { name: 'Linked skills' });
   expect(within(table).getByText('v2 available')).toBeVisible();
-  expect(within(table).getByText('Pinned intentionally')).toBeVisible();
+  expect(within(table).getByText('Pinned on purpose')).toBeVisible();
   expect(within(table).getByText("Couldn't check")).toBeVisible();
   expect(within(table).queryByText('Up to date')).not.toBeInTheDocument();
   fireEvent.click(within(table).getByRole('button', { name: 'Retry' }));

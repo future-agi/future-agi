@@ -211,7 +211,7 @@ function PublishReview({ onClose, onDraftChange, skill, draft: initialDraft }) {
               </List>
               {selected && selected.status !== "unchanged" && (
                 <Box sx={{ minWidth: 0, overflowX: "auto" }}>
-                  <TextDiff fromText={selected.fromText ?? ""} toText={selected.toText ?? ""} fromTitle={draft.baseVersion === null ? "New file" : `v${draft.baseVersion}`} toTitle="Your draft" />
+                  <TextDiff fromText={selected.fromText ?? ""} toText={selected.toText ?? ""} fromTitle={draft.baseVersion === null ? "New file" : `v${draft.baseVersion}`} toTitle="Your draft" fromMissing={selected.status === "added"} toMissing={selected.status === "removed"} />
                 </Box>
               )}
               {selected?.status === "unchanged" && <Typography variant="s3" color="text.secondary">{selected.path} has no changes.</Typography>}

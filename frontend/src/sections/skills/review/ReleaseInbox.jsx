@@ -24,7 +24,7 @@ import ErrorState from 'src/components/error-state';
 import { visuallyHidden } from '@mui/utils';
 import CapabilityNotice from '../components/CapabilityNotice';
 import { CustomTabs } from 'src/components/tabs/tabs';
-import When from './When';
+import When from '../components/When';
 import { releaseTitle, counted } from './reviewPresentation';
 import { reviewPersonName } from '../utils/review-display';
 import PageHeader from "src/components/page-header";
@@ -94,7 +94,7 @@ function InboxRows({
                 <Stack direction="row" gap={1} alignItems="center">{item.unread && <><StatusBadge status="unknown" label="New" /><Box component="span" sx={visuallyHidden}>Unread</Box></>}<Typography variant="s1" sx={{ fontWeight: item.unread ? 600 : 400, overflowWrap: 'anywhere' }}>{item.name}</Typography></Stack>
                 {item.transition && <Typography variant="s1">{releaseTitle(item.transition)}</Typography>}
                 {item.status === 'pending' && <Typography variant="s3" color="text.secondary">Waiting on {item.recipients?.map((person) => reviewPersonName(person.name)).join(', ') || 'the assigned reviewer'}</Typography>}
-                <Typography variant="s3" color="text.secondary">Requested by {reviewPersonName(item.authorName)} · {item.subjectKind === 'agent_context' ? 'Agent context' : 'Skill'} · <When value={item.updatedAt} /></Typography>
+                <Typography variant="s3" color="text.secondary">Requested by {reviewPersonName(item.authorName)} · {item.subjectKind === 'agent_context' ? 'Agent context' : 'Skill'} · <When value={item.updatedAt} fallback="Time not reported" /></Typography>
               </Stack>
             </Button>
             {item.unread && <Box component="span" sx={visuallyHidden}>Unread</Box>}
@@ -147,7 +147,7 @@ function InboxRows({
                     <TableCell>
                       <StatusBadge status={item.status === "pending" ? "in_review" : item.status === "changes_requested" ? "needs_changes" : item.status} label={item.status === "changes_requested" ? "Changes requested" : undefined} />
                     </TableCell>
-                    <TableCell sx={{ color: 'text.secondary', width: { xs: '70%', sm: 'auto' }, pt: { xs: 0, sm: 1 } }}><When value={item.updatedAt} /></TableCell>
+                    <TableCell sx={{ color: 'text.secondary', width: { xs: '70%', sm: 'auto' }, pt: { xs: 0, sm: 1 } }}><When value={item.updatedAt} fallback="Time not reported" /></TableCell>
                     <TableCell align="right">
                       <IconButton
                         size="small"

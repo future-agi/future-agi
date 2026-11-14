@@ -251,7 +251,6 @@ export async function createDriver({ jobId, runId, registration }) {
           // Carried forward from publication: kind, resource and candidate.
           // The only registered target is preselected and visible.
           await expect(author.getByRole('heading', { name: 'Request release review', exact: true })).toBeVisible();
-          await op.click(author.getByRole('button', { name: 'Candidate details', exact: true }), 'inspect-candidate-details');
           const carriedCandidate = author.getByRole('group', { name: 'Carried release candidate', exact: true });
           await expect(carriedCandidate).toContainText(input.contextName);
           await expect(carriedCandidate).toContainText(new RegExp(` → v${published.number}(?!\\d)`));
@@ -269,9 +268,8 @@ export async function createDriver({ jobId, runId, registration }) {
           await author.screenshot({ path: resolve(output, 'composer-private-evidence.png'), fullPage: true });
           await op.click(author.getByRole('button', { name: `Share and attach ${input.evidenceIds.length} results`, exact: true }), 'share-all-evidence');
           const confirmShare = author.getByRole('dialog');
-          await op.click(confirmShare.getByRole('button', { name: 'Details', exact: true }), 'inspect-sharing-identities');
-          for (const id of input.evidenceIds) await expect(confirmShare.locator(`[data-evidence-id="${id}"]`)).toBeVisible();
-          await expect(confirmShare.getByText('private', { exact: true })).toHaveCount(input.evidenceIds.length);
+          for (const id of input.evidenceIds) await expect(confirmShare.getByTitle(id, { exact: true })).toBeVisible();
+          await expect(confirmShare.getByText('Private', { exact: true })).toHaveCount(input.evidenceIds.length);
           const prepared = responseFor(author, '/release-requests/preview/');
           await op.click(confirmShare.getByRole('button', { name: 'Share and attach', exact: true }), 'confirm-sharing-and-attach');
           const preview = (await (await prepared).json()).result;

@@ -15,6 +15,7 @@ import { ConfirmDialog } from 'src/components/custom-dialog';
 import { ReviewState, TypedEvidenceList, evidenceKey, evidenceProblems, evidenceSelection } from './ReleaseReviewBody';
 import PeoplePicker from '../components/PeoplePicker';
 import IdentityChip from '../components/IdentityChip';
+import StatusBadge from 'src/components/status-badge';
 import { evidenceTitle } from '../utils/review-display';
 import EvidenceSummary from '../components/EvidenceSummary';
 import TechnicalDetails from '../components/TechnicalDetails';
@@ -56,8 +57,12 @@ function ShareAllEvidence({ packet, evidence, selected = [], onShare, onShared, 
       title={`Share ${shareable.length} private results with the workspace?`}
       content={<Stack spacing={1}>
         <Typography variant="s1">Workspace members will be able to see {shareable.length === 1 ? 'this test result' : `these ${shareable.length} test results`}, including the inputs, model answers and files used. Sharing doesn&apos;t extend their 30-day expiry. You&apos;ll review the request before it&apos;s sent.</Typography>
-        {shareable.map((ref) => <Typography key={`${ref.source}:${ref.sourceId}`} variant="s1" sx={{ overflowWrap: 'anywhere' }}>{evidenceTitle(ref, candidateNumber, ref.baselineNumber ?? baselineNumber)}{ref.counts?.planned != null && ref.counts?.passed != null ? ` · ${ref.counts.passed} of ${counted(ref.counts.planned, 'case')} passed` : ref.counts?.graded != null && ref.counts?.planned != null ? ` · ${ref.counts.graded} of ${counted(ref.counts.planned, 'case')} graded` : ' · Case results not reported'}</Typography>)}
-        <TechnicalDetails>{all.map((ref) => <Stack key={`${ref.source}:${ref.sourceId}`} data-evidence-id={ref.sourceId} direction="row" gap={1} alignItems="center"><IdentityChip value={ref.sourceId} kind="id" /><Typography variant="s3">{ref.visibility}</Typography></Stack>)}</TechnicalDetails>
+        {/* Every record this decision shares or attaches is named here with its visibility and short ID,
+            so the author confirms the exact set without opening anything else. */}
+        {all.map((ref) => <Stack key={`${ref.source}:${ref.sourceId}`} data-evidence-id={ref.sourceId} spacing={0.5} sx={{ minWidth: 0 }}>
+          <Typography variant="s1" sx={{ overflowWrap: 'anywhere' }}>{evidenceTitle(ref, candidateNumber, ref.baselineNumber ?? baselineNumber)}{ref.counts?.planned != null && ref.counts?.passed != null ? ` · ${ref.counts.passed} of ${counted(ref.counts.planned, 'case')} passed` : ref.counts?.graded != null && ref.counts?.planned != null ? ` · ${ref.counts.graded} of ${counted(ref.counts.planned, 'case')} graded` : ' · Case results not reported'}</Typography>
+          <Stack direction="row" gap={1} alignItems="center" flexWrap="wrap">{ref.visibility === 'private' ? <StatusBadge status="private" /> : <Typography variant="s3" color="text.secondary">Already shared</Typography>}<IdentityChip value={ref.sourceId} kind="id" /></Stack>
+        </Stack>)}
       </Stack>}
       action={<Button variant="contained" color="primary" disabled={busy} onClick={async () => {
         setBusy(true);
@@ -182,7 +187,8 @@ export default function ReleaseRequestComposer({ scopeKey, renewal, prefill, sta
           </TextField>}
         </Box>
         {options.isFetching && !options.data && <ReviewState state="loading" />}
-        {carried && <TechnicalDetails title="Candidate details"><Stack role="group" aria-label="Carried release candidate" spacing={0.5}><Typography variant="s3">{prefill.name || 'Published candidate'} · {label} {previousVersion != null ? `v${previousVersion}` : '(current version not loaded)'} → v{candidate.number}</Typography><Typography variant="s3">{target ? `Application verification on ${targetOption?.name || 'the selected target'} · configuration r${target.revision}` : 'Compare instructions; no application target'}</Typography></Stack></TechnicalDetails>}
+        {/* The release this request asks for, in one visible line: what moves, from which version, and where it was verified. */}
+        {carried && <Stack role="group" aria-label="Carried release candidate" spacing={0.5} sx={{ minWidth: 0 }}><Typography variant="s1" sx={{ overflowWrap: 'anywhere' }}>{prefill.name || 'Published candidate'} · {label} {previousVersion != null ? `v${previousVersion}` : '(current version not loaded)'} → v{candidate.number}</Typography><Typography variant="s3" color="text.secondary" sx={{ overflowWrap: 'anywhere' }}>{target ? `Application verification on ${targetOption?.name || 'the selected target'} · configuration r${target.revision}` : 'Compare instructions; no application target'}</Typography></Stack>}
         {alreadyCurrent && <Typography variant="s1" role="status">{currentReason}</Typography>}
       </Stack></Section>
       {candidate && <PeoplePicker label="Assigned reviewer" people={options.data?.recipients || []} value={recipientId} onChange={setRecipientId} loading={options.isFetching} error={options.error} onRetry={options.refetch} disabled={busy} helperText="An independent reviewer approves this release." />}

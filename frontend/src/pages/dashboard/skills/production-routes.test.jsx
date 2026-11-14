@@ -210,10 +210,10 @@ it('loads the production draft review and sends the exact head acknowledgment', 
     throw new Error(`Unexpected write ${url}`);
   });
   mount(`/dashboard/skills/contexts/${id}/review`);
-  const confirm = await screen.findByRole('checkbox', { name: /I reviewed the saved candidate/ });
-  expect(screen.getByRole('button', { name: 'Acknowledge reviewed head' })).toBeDisabled();
+  const confirm = await screen.findByRole('checkbox', { name: /I reviewed these changes against the current published version/ });
+  expect(screen.getByRole('button', { name: 'Confirm review' })).toBeDisabled();
   fireEvent.click(confirm);
-  fireEvent.click(screen.getByRole('button', { name: 'Acknowledge reviewed head' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Confirm review' }));
   await waitFor(() => expect(axios.post.mock.calls.find(([url]) => url.endsWith('/acknowledge-head/'))?.[1]).toEqual({ revision: 3, expected_digest: digest, expected_head_version: 4, review_fingerprint: digest }));
   expect(axios.post.mock.calls.some(([url]) => url.endsWith('/publish/'))).toBe(false);
 });
