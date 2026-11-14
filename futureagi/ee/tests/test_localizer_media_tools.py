@@ -81,6 +81,30 @@ def test_no_utterances_is_reported_before_the_missing_tool(no_ffmpeg):
         create_utterance_segments(_wav(), [])
 
 
+def test_utterance_segments_name_the_missing_tool(no_ffmpeg):
+    """A call with stored utterances needs ffprobe and ffmpeg to cut them."""
+    from ee.evals.localizer.conversation_audio import create_utterance_segments
+
+    turns = [
+        {
+            "speaker_role": "assistant",
+            "content": "Hello, how can I help?",
+            "start_time": 0.0,
+            "end_time": 0.5,
+        }
+    ]
+    with (
+        patch("pydub.AudioSegment.from_file") as from_file,
+        pytest.raises(MediaToolUnavailable) as caught,
+    ):
+        create_utterance_segments(_wav(), turns)
+    assert str(caught.value).startswith(
+        ("ffmpeg is not installed", "ffprobe is not installed")
+    )
+    assert "splitting call audio for error localization" in str(caught.value)
+    from_file.assert_not_called()
+
+
 @pytest.mark.parametrize("ending", ["success", "max_turns", "timeout"])
 async def test_run_without_findings_fails_with_the_named_error(monkeypatch, ending):
     from contextlib import asynccontextmanager

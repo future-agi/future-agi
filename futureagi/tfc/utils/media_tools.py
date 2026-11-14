@@ -89,5 +89,12 @@ def _find_media_tool_unavailable(
         if isinstance(exc, MediaToolUnavailable):
             return exc
         seen.add(id(exc))
-        exc = exc.__cause__ or exc.__context__
+        # Python's own chaining rule: an explicit cause, else the implicit
+        # context unless `raise ... from None` suppressed it.
+        if exc.__cause__ is not None:
+            exc = exc.__cause__
+        elif exc.__suppress_context__:
+            exc = None
+        else:
+            exc = exc.__context__
     return None

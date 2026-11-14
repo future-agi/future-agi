@@ -786,15 +786,20 @@ def upload_audio_to_s3_duration(
         if isinstance(audio_base64_str, dict):
             audio_array = audio_base64_str["array"]
             sampling_rate = audio_base64_str["sampling_rate"]
-            with io.BytesIO() as buffer:
-                sf.write(
-                    buffer,
-                    audio_array,
-                    samplerate=sampling_rate,
-                    format="WAV",
-                    subtype="PCM_16",
-                )
-                audio_bytes = buffer.getvalue()
+            try:
+                with io.BytesIO() as buffer:
+                    sf.write(
+                        buffer,
+                        audio_array,
+                        samplerate=sampling_rate,
+                        format="WAV",
+                        subtype="PCM_16",
+                    )
+                    audio_bytes = buffer.getvalue()
+            except ImportError as e:
+                # soundfile is in the optional `audio` extra: name the extra
+                # instead of "Unable to Process Audio at this time".
+                raise ValueError(str(e)) from e
 
             if audio_base64_str["path"]:
                 audio_format = audio_base64_str["path"].split(".")[-1]
@@ -1811,6 +1816,8 @@ def upload_audio_to_s3(
                         return upload_audio_to_s3(
                             dict_data, bucket_name, object_key, org_id
                         )
+                except MediaToolUnavailable:
+                    raise
                 except (ValueError, SyntaxError):
                     pass
 
