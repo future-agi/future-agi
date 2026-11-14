@@ -23033,12 +23033,24 @@ export interface HarnessConversationOverviewApi {
   drafts?: HarnessConversationOverviewApiDrafts;
 }
 
+export interface HarnessConversationFailedScenarioApi {
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  scenario_key: string;
+  /** @maxLength 2000 */
+  reason?: string;
+}
+
 export interface HarnessConversationPublishApi {
   /**
    * @minLength 1
    * @maxLength 128
    */
   digest: string;
+  /** @maxItems 200 */
+  failed_scenarios?: HarnessConversationFailedScenarioApi[];
 }
 
 export interface HarnessConversationRerunApi {

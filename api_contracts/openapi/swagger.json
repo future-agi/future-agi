@@ -150183,6 +150183,25 @@
                 }
             }
         },
+        "HarnessConversationFailedScenario": {
+            "required": [
+                "scenario_key"
+            ],
+            "type": "object",
+            "properties": {
+                "scenario_key": {
+                    "title": "Scenario key",
+                    "type": "string",
+                    "maxLength": 255,
+                    "minLength": 1
+                },
+                "reason": {
+                    "title": "Reason",
+                    "type": "string",
+                    "maxLength": 2000
+                }
+            }
+        },
         "HarnessConversationPublish": {
             "required": [
                 "digest"
@@ -150194,6 +150213,13 @@
                     "type": "string",
                     "maxLength": 128,
                     "minLength": 1
+                },
+                "failed_scenarios": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/HarnessConversationFailedScenario"
+                    },
+                    "maxItems": 200
                 }
             }
         },

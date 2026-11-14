@@ -46768,11 +46768,36 @@ export const SimulateApiHarnessConversationsPublishParams = zod.object({
 
 export const simulateApiHarnessConversationsPublishBodyDigestMax = 128;
 
+export const simulateApiHarnessConversationsPublishBodyFailedScenariosItemScenarioKeyMax = 255;
+
+export const simulateApiHarnessConversationsPublishBodyFailedScenariosItemReasonMax = 2000;
+
+export const simulateApiHarnessConversationsPublishBodyFailedScenariosMax = 200;
+
 export const SimulateApiHarnessConversationsPublishBody = zod.object({
   digest: zod
     .string()
     .min(1)
     .max(simulateApiHarnessConversationsPublishBodyDigestMax),
+  failed_scenarios: zod
+    .array(
+      zod.object({
+        scenario_key: zod
+          .string()
+          .min(1)
+          .max(
+            simulateApiHarnessConversationsPublishBodyFailedScenariosItemScenarioKeyMax,
+          ),
+        reason: zod
+          .string()
+          .max(
+            simulateApiHarnessConversationsPublishBodyFailedScenariosItemReasonMax,
+          )
+          .optional(),
+      }),
+    )
+    .max(simulateApiHarnessConversationsPublishBodyFailedScenariosMax)
+    .optional(),
 });
 
 export const SimulateApiHarnessConversationsRerunParams = zod.object({
