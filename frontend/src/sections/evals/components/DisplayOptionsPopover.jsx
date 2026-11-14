@@ -104,7 +104,7 @@ const SortableColumnRow = ({ col, isVisible, onToggle }) => {
           />
         }
         label={
-          <Typography variant="body2" sx={{ fontSize: "13px", ml: 0.5 }}>
+          <Typography variant="body2" sx={{ fontSize: "12px", ml: 0.5 }}>
             {col.label}
           </Typography>
         }
@@ -267,7 +267,7 @@ const DisplayOptionsPopover = ({
                 />
               }
               label={
-                <Typography variant="body2" sx={{ fontSize: "13px", ml: 0.5 }}>
+                <Typography variant="body2" sx={{ fontSize: "12px", ml: 0.5 }}>
                   {lockedColumn.label}
                   <Iconify
                     icon="solar:lock-linear"

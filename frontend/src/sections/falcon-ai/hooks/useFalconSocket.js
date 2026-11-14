@@ -173,7 +173,7 @@ export const useFalconSocket = () => {
                 c.id === convId ? { ...c, title } : c,
               );
               store.setConversations(updated);
-              document.title = `${title} | Falcon AI`;
+              document.title = `${title} | Chat`;
             }
             break;
           }

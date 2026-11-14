@@ -8,6 +8,7 @@ const KeyConfiguration = ({ control, errors, required }) => {
       <FormTextFieldV2
         control={control}
         fieldName="apiKey"
+        type="password"
         placeholder="Enter API key"
         label="API Key"
         fullWidth
