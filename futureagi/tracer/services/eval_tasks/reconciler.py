@@ -28,9 +28,8 @@ from tracer.services.eval_tasks.config_hash import resolved_config_hash
 from tracer.services.eval_tasks.cursor_policy import CONTINUOUS_CURSOR_OVERLAP
 from tracer.services.eval_tasks.entries import (
     materialize_pending,
-    soft_delete_eval_results,
 )
-from tracer.services.eval_tasks.recalculate import put_back_dropped_replacements
+from tracer.services.eval_tasks.recalculate import drop_pending_entries
 
 # How far behind "now" the continuous cursor is parked after each pass: the
 # window each reconcile re-scans to catch late CH arrivals and version changes.
@@ -331,8 +330,7 @@ def _requeue_and_drop(
     if drop_ids:
         # A dropped entry may be a Recalculate's replacement the engine took
         # over: its previous result comes back rather than staying retired.
-        dropped = put_back_dropped_replacements(drop_ids)
-        dropped += soft_delete_eval_results(EvalLogger.objects.filter(id__in=drop_ids))
+        dropped = drop_pending_entries(EvalLogger.objects.filter(id__in=drop_ids))
     return requeued, dropped
 
 
