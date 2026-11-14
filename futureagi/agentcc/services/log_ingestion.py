@@ -2,6 +2,7 @@ import json
 import uuid
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
+from typing import Any
 
 import structlog
 
@@ -309,7 +310,7 @@ def _compute_cost(entry):
         ):
             continue
 
-        token_usage = {
+        token_usage: dict[str, Any] = {
             "prompt_tokens": prompt_tokens,
             "completion_tokens": completion_tokens,
         }

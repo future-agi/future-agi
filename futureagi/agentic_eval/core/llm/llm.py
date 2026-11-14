@@ -220,7 +220,7 @@ class LLM:
         self.last_finish_reason: Optional[str] = None
 
         # Initialize usage tracking
-        self.cost = {
+        self.cost: dict[str, Any] = {
             "total_cost": 0,
             "prompt_cost": 0,
             "completion_cost": 0,

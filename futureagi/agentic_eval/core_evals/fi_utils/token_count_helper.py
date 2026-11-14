@@ -1,5 +1,5 @@
 import math
-from typing import Any, Optional
+from typing import Any, Optional, TypeGuard
 
 import structlog
 import tiktoken
@@ -206,7 +206,7 @@ def _select_fallback_pricing(
     return DEFAULT_FALLBACK_PRICING, "default"
 
 
-def _is_nonnegative_number(value: Any) -> bool:
+def _is_nonnegative_number(value: Any) -> TypeGuard[int | float]:
     return (
         isinstance(value, (int, float))
         and not isinstance(value, bool)
