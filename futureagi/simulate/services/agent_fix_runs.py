@@ -249,6 +249,14 @@ def retry_fix_run(failed: AgentFixRun, *, user: Any) -> AgentFixRun:
     if blocked := launch_blocker(source_run, usage=False):
         raise blocked
     require_agent_fix_usage(str(failed.organization_id))
+    if (
+        FixRequest.model_validate(failed.request).variations_pending
+        and failed.suite_version_id is None
+    ):
+        # The retry asks the builder again, so the launch's checks for that hold again.
+        if blocked := variations_blocker(source_run):
+            raise blocked
+        require_harness_authoring(str(failed.organization_id))
     # The models the failed fix lost recently, with when: the retry's first launch starts
     # without them. Its last error stays with it.
     lost_models = recent_lost_models(failed.engine_notes)

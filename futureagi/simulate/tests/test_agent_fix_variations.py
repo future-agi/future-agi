@@ -524,6 +524,17 @@ class TestThePrivateSuite:
             == 1
         )
 
+    def test_a_save_delivered_again_leaves_the_chat_s_new_workspace_alone(
+        self, environment, fix_run, storage
+    ):
+        _land(fix_run, storage, _builder_save(environment))
+        # The user's next turn works from a workspace composed after the landing.
+        token = _token(environment, fix_run)
+
+        _land(fix_run, storage, _builder_save(environment), sequence=2)
+
+        assert not _outdated(environment, fix_run, token)
+
     def test_a_save_without_variations_ends_the_fix(
         self, environment, fix_run, storage
     ):
@@ -932,6 +943,23 @@ class TestARunTheEnvironmentMovedOnFrom:
         assert not HostedHarnessConversationMessage.no_workspace_objects.filter(
             client_request_id=f"fix-{fix_run.id}-variations"
         ).exists()
+
+    def test_refuses_a_retry_that_would_ask_the_builder_again(
+        self, environment, fix_run, user
+    ):
+        close_fix_run(
+            fix_run.id,
+            AgentFixRun.State.FAILED,
+            failure={"code": "fix_variations_timeout", "message": "m"},
+        )
+        _move_default_suite(environment, user)
+
+        with pytest.raises(HostedHarnessError) as refused:
+            retry_fix_run(
+                AgentFixRun.no_workspace_objects.get(id=fix_run.id), user=user
+            )
+
+        assert refused.value.code == "fix_variations_source_moved"
 
     def test_ends_a_fix_whose_environment_moved_while_the_builder_wrote(
         self, environment, fix_run, storage, user

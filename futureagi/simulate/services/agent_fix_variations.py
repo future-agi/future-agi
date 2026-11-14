@@ -328,8 +328,23 @@ def land(
 
     Only the finished turn's save lands: the builder also saves while it works, and those
     are refused as not saved. Every save of the turn outdates the chat's workspace, so a
-    later chat save from that sandbox never carries the variations into a draft."""
-    _outdate_workspace(environment, conversation)
+    later chat save from that sandbox never carries the variations into a draft. A save
+    that arrives once the fix has landed or ended leaves the workspace alone: that
+    outdated it already, and the chat may have moved on since."""
+    fix_run = (
+        AgentFixRun.no_workspace_objects.select_related(
+            "source_run__suite_version", "source_run__environment_version"
+        )
+        .filter(id=(command.payload or {}).get("_fix_run_id"))
+        .first()
+    )
+    writing = (
+        fix_run is not None
+        and fix_run.state == AgentFixRun.State.RUNNING
+        and fix_run.suite_version_id is None
+    )
+    if writing:
+        _outdate_workspace(environment, conversation)
     if not HostedHarnessConversationEvent.no_workspace_objects.filter(
         conversation=conversation,
         kind="turn_completed",
@@ -341,18 +356,7 @@ def land(
             " variations when this turn ends",
             status_code=409,
         )
-    fix_run = (
-        AgentFixRun.no_workspace_objects.select_related(
-            "source_run__suite_version", "source_run__environment_version"
-        )
-        .filter(id=(command.payload or {}).get("_fix_run_id"))
-        .first()
-    )
-    if (
-        fix_run is None
-        or fix_run.state != AgentFixRun.State.RUNNING
-        or fix_run.suite_version_id is not None
-    ):
+    if not writing:
         logger.info("agent_fix_variations_save_dropped", command=str(command.id))
         return
     try:
