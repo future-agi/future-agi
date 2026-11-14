@@ -5,6 +5,7 @@ import structlog
 from django.utils import timezone
 
 from tfc.ee_stub import _ee_stub
+from tfc.logging.sentry import is_expected_feature_denial
 
 try:
     from ee.agenthub.explanation_agent.exp_agent import (
@@ -262,7 +263,18 @@ def get_explanation_summary(dataset_id: str) -> None:
         dataset.eval_reason_status = EvalExplanationSummaryStatus.FAILED
         dataset.eval_reason_last_updated = timezone.now()
         dataset.save(update_fields=["eval_reason_status", "eval_reason_last_updated"])
-        logger.exception(
-            f"Error generating explanation summary: {e}", dataset_id=dataset_id
-        )
+        if is_expected_feature_denial(e):
+            # format_exc_info consumes the live type before Sentry sees this
+            # record. Stamp only a typed denial, never a resolver outage.
+            logger.exception(
+                "explanation_summary_denied",
+                reason="feature_unavailable",
+                outcome="handled",
+                activity_name="get_explanation_summary",
+                dataset_id=dataset_id,
+            )
+        else:
+            logger.exception(
+                f"Error generating explanation summary: {e}", dataset_id=dataset_id
+            )
         raise

@@ -106,6 +106,25 @@ EXPECTED_LOG_OUTCOMES = frozenset(
     }
 )
 
+# These two boundaries classify the live exception before structlog renders it
+# (and consumes exc_info) or Temporal emits its exception-free ERROR record.
+# Only records from these exact sources qualify, not serialized exception names
+# or direct capture_message payloads that happen to contain the same fields.
+EXPECTED_FEATURE_DENIAL_LOG_OUTCOMES = frozenset(
+    {
+        (
+            "model_hub.utils.eval_reasons",
+            "explanation_summary_denied",
+            "feature_unavailable",
+        ),
+        (
+            "temporalio.activity",
+            "explanation_summary_denied",
+            "feature_unavailable",
+        ),
+    }
+)
+
 # Keys whose values must be redacted before leaving the process. Matched
 # case-insensitively as substrings against header/cookie/body/extra keys.
 SENSITIVE_KEY_SUBSTRINGS = (
@@ -238,22 +257,25 @@ def _event_scrubber() -> Any:
     return EventScrubber(denylist=denylist, recursive=True)
 
 
-def _expected_feature_denial(hint: dict) -> bool:
-    """Only our typed feature refusals qualify, never generic HTTP errors.
+def is_expected_feature_denial(error: object) -> bool:
+    """Classify the live exception before a logging renderer can erase its type.
 
     CapabilityDenied inherits FeatureUnavailable. A failed entitlement lookup
     uses the same base type, but is a fault rather than an expected refusal.
     """
-    exc_info = hint.get("exc_info")
-    if not isinstance(exc_info, (tuple, list)) or len(exc_info) != 3:
-        return False
     # Keep Sentry initialization independent of Django/DRF module loading.
     try:
         from tfc.ee_gating import FeatureUnavailable, entitlements_unavailable
     except ImportError:
         return False
-    error = exc_info[1]
     return isinstance(error, FeatureUnavailable) and not entitlements_unavailable(error)
+
+
+def _expected_feature_denial(hint: dict) -> bool:
+    exc_info = hint.get("exc_info")
+    if not isinstance(exc_info, (tuple, list)) or len(exc_info) != 3:
+        return False
+    return is_expected_feature_denial(exc_info[1])
 
 
 def _expected_log_outcome(event: dict, hint: dict) -> bool:
@@ -266,7 +288,11 @@ def _expected_log_outcome(event: dict, hint: dict) -> bool:
         return False
     record = hint.get("log_record")
     logentry = event.get("logentry")
-    candidates = [getattr(record, "msg", None), event.get("message")]
+    candidates = [
+        getattr(record, "msg", None),
+        getattr(record, "__dict__", None),  # stdlib/Temporal extra fields
+        event.get("message"),
+    ]
     if isinstance(logentry, dict):
         candidates.extend([logentry.get("formatted"), logentry.get("message")])
     for payload in candidates:
@@ -278,10 +304,17 @@ def _expected_log_outcome(event: dict, hint: dict) -> bool:
         if not isinstance(payload, dict):
             continue
         identity = (event.get("logger"), payload.get("event"), payload.get("reason"))
-        if (
+        if not (
             all(isinstance(value, str) for value in identity)
-            and identity in EXPECTED_LOG_OUTCOMES
             and payload.get("outcome") == "handled"
+        ):
+            continue
+        if identity in EXPECTED_LOG_OUTCOMES:
+            return True
+        if (
+            identity in EXPECTED_FEATURE_DENIAL_LOG_OUTCOMES
+            and getattr(record, "name", None) == identity[0]
+            and payload.get("activity_name") == "get_explanation_summary"
         ):
             return True
     return False
