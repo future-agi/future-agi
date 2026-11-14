@@ -1,34 +1,13 @@
-"""A large but current CDC mirror must not look unhealthy because it is large.
+"""Cloud-only synthetic coverage and physical-read-bound regressions.
 
-Health statements are capped at about one second. ``_peerdb_synced_at`` is in
-no sorting or partition key of the CDC mirrors, so a whole-table
-``max(_peerdb_synced_at)`` reads every row. On mirrors of a few hundred million
-rows that scan outgrew the cap and the endpoint reported ``unhealthy`` with lag
--1 while CDC was current. The lag probe now reads only the newest parts that fit
-a fixed row budget, plus a bounded prefix of the newest part when it alone is
-larger than the budget. It selects parts by partition and block range, so a
-merge that commits between the part inventory and the sample still selects the
-merged part. Only source sync timestamps establish freshness: a stale
-partial sample is unknown (degraded), not evidence of lag or a healthy merge.
-
-These tests use the ClickHouse test sidecar, the production CDC DDL (engine made
-non-replicated; partition and sorting keys unchanged) and synthetic rows only.
-Scan speed varies by machine, so instead of a giant table the size dependence is
-pinned two deterministic ways:
-
-* ClickHouse's own progress counters: the lag statement must read no more than
-  the sample budget from a table many times larger than it.
-* The probing users carry a server-side ``max_rows_to_read`` well below the
-  table size. It stands in for the time cap: the server refuses a whole-table
-  scan and accepts a size-independent sample, on any hardware.
-
-Both server-enforced readonly=1 and client readonly=2 profiles are covered. The
-sample needs ``SELECT`` on six ``system.parts`` columns, which stock ClickHouse
-configs require a grant for (``select_from_system_db_requires_grant``). A
-readonly=1 profile also accepts no per-query limit, so for a role without that
-grant the probe bounds itself: it reads a mirror in full only when
-``system.tables`` shows it within the budget, and reports a larger mirror's lag
-as unknown (degraded) instead of scanning it.
+Production CDC DDL is retained except for replication. Exact lag requires full
+immutable part coverage and a stable post-read inventory. Oversized/truncated
+inventories are healthy but explicitly unverified; metadata-denied large/unknown
+sizes retain their actionable degraded status. Small grantless tables are also
+unverified, without adding degradation. No physical bound relies on SQL LIMIT,
+part age, prefix granularity, or per-query settings in a readonly=1 profile.
+ClickHouse progress counters are the runtime oracle, including concurrent growth
+at the production ten-million-row budget and sparse lightweight-delete masks.
 """
 
 import re
@@ -52,13 +31,13 @@ _DDL = {
 LARGE_ROWS = 2_000_000
 # Far below the table and every bulk part, far above a fresh CDC batch.
 SAMPLE_BUDGET = 20_000
-# A part that fits the budget beside a planned prefix, but not beside the whole
-# granule (8192 rows) ClickHouse reads for that prefix.
+# A smaller stale part beside an oversized current part: its maximum alone
+# cannot establish either exact lag or staleness.
 LARGE_FITTING_ROWS = 15_000
 # Server-side scan limit for the probing users: room for the metadata reads and
 # the sample, an order of magnitude short of the whole table.
 SERVER_ROW_LIMIT = 200_000
-PART_COLUMNS = "database, table, name, rows, active, modification_time"
+PART_COLUMNS = "database, table, name, rows, active"
 AGGREGATE = "SELECT count(), max(_peerdb_synced_at) FROM tracer_trace"
 TOO_MANY_ROWS = 158
 
@@ -234,8 +213,9 @@ def statements(monkeypatch):
             except Exception as exc:
                 entry["error"] = getattr(exc, "code", type(exc).__name__)
                 raise
-            progress = getattr(getattr(driver, "last_query", None), "progress", None)
-            entry["rows"] = getattr(progress, "rows", None)
+            finally:
+                progress = getattr(getattr(driver, "last_query", None), "progress", None)
+                entry["rows"] = getattr(progress, "rows", None)
             return result
 
         monkeypatch.setattr(driver, "execute", recording_execute)
@@ -268,31 +248,34 @@ def _trace_lag_reads(recorded):
     ]
 
 
-def _assert_current_and_healthy(checker, recorded, budget, events):
+def _assert_large_unverified_and_healthy(checker, recorded, events):
     health = checker.get_health_status()
     detail = {"health": health, "statements": recorded}
     assert health.clickhouse_connected is True, detail
     assert health.details["checks"] == {
-        f"legacy.{table}": "ready" for table in CDC_TABLES
+        "legacy.tracer_trace": "unverified",
+        "legacy.trace_session": "ready",
+        "legacy.tracer_eval_logger": "ready",
     }, detail
     assert health.status == "healthy", detail
-    assert set(health.cdc_lag) == set(CDC_TABLES), detail
-    assert all(0 <= lag < 60 for lag in health.cdc_lag.values()), detail
-    reads = _trace_lag_reads(recorded)
-    assert reads and all(entry["error"] is None for entry in reads), detail
-    assert all(entry["rows"] <= budget for entry in reads), detail
+    assert health.cdc_lag["tracer_trace"] == -1, detail
+    assert health.cdc_lag_verified == {
+        "tracer_trace": False, "trace_session": True, "tracer_eval_logger": True,
+    }, detail
+    assert not _trace_lag_reads(recorded), detail
     assert not [e for e in events if e["event"] == "ClickHouse read query failed"]
     result = health_tests.response()
     assert result.status_code == 200
     assert result.data["status"] == "healthy", result.data
-    assert all(lag >= 0 for lag in result.data["cdc_lag"].values()), result.data
+    assert result.data["cdc_lag"]["tracer_trace"] == -1, result.data
+    assert result.data["cdc_lag_verified"]["tracer_trace"] is False, result.data
 
 
 @pytest.mark.integration
 def test_lag_read_does_not_grow_with_table_size(
     configure, large_mirror, statements, small_budget
 ):
-    """The lag statement reads a bounded sample, not the whole mirror."""
+    """The oversized mirror is skipped, never scanned just to sample a timestamp."""
     admin, database, _ = large_mirror
     (total,) = admin.execute("SELECT count() FROM tracer_trace")[0]
     if total < 50 * small_budget:
@@ -300,7 +283,7 @@ def test_lag_read_does_not_grow_with_table_size(
     _sync_now(admin)
     checker = configure(_probe_client(admin, database))
     with capture_logs() as events:
-        _assert_current_and_healthy(checker, statements, small_budget, events)
+        _assert_large_unverified_and_healthy(checker, statements, events)
 
 
 @pytest.mark.integration
@@ -333,7 +316,7 @@ def test_large_current_mirror_is_healthy_when_whole_scans_are_refused(
         )
     )
     with capture_logs() as events:
-        _assert_current_and_healthy(checker, statements, small_budget, events)
+        _assert_large_unverified_and_healthy(checker, statements, events)
 
 
 @pytest.mark.integration
@@ -347,7 +330,7 @@ def test_role_without_part_metadata_never_scans_a_large_mirror(
     on a mirror large enough. The probe used to send that scan for every mirror
     in one statement, so the refusal made all of them unavailable and the
     endpoint unhealthy. Now the large mirror's lag is unknown (degraded), the
-    small mirrors keep their exact lag, and no statement is refused.
+    small mirrors remain non-degraded but unverified, and no statement is refused.
     """
     admin, database, users = large_mirror
     (total,) = admin.execute("SELECT count() FROM tracer_trace")[0]
@@ -368,14 +351,11 @@ def test_role_without_part_metadata_never_scans_a_large_mirror(
     assert health.status == "degraded", detail
     assert health.details["checks"] == {
         "legacy.tracer_trace": "unsampled",
-        "legacy.trace_session": "ready",
-        "legacy.tracer_eval_logger": "ready",
+        "legacy.trace_session": "unverified",
+        "legacy.tracer_eval_logger": "unverified",
     }, detail
-    assert health.cdc_lag["tracer_trace"] == -1, detail
-    assert all(
-        0 <= health.cdc_lag[table] < 60
-        for table in ("trace_session", "tracer_eval_logger")
-    ), detail
+    assert health.cdc_lag == dict.fromkeys(CDC_TABLES, -1), detail
+    assert health.cdc_lag_verified == dict.fromkeys(CDC_TABLES, False), detail
     assert not _trace_lag_reads(statements), detail
     assert all(
         entry["rows"] <= small_budget for entry in statements if entry["error"] is None
@@ -393,7 +373,7 @@ def test_role_without_part_metadata_never_scans_a_large_mirror(
         assert not [s for s in statements if "FROM system.parts" in s["sql"]]
     assert not [e for e in events if e["event"] == "CDC lag check failed"], events
     assert result.status_code == 200
-    assert set(result.data) == {"status", "clickhouse_connected", "cdc_lag", "routing"}
+    assert set(result.data) == {"status", "clickhouse_connected", "cdc_lag", "cdc_lag_verified", "routing"}
     assert result.data["status"] == "degraded", result.data
     assert result.data["cdc_lag"]["tracer_trace"] == -1, result.data
 
@@ -426,12 +406,13 @@ def test_role_without_part_metadata_still_reports_a_missing_mirror(
     detail = {"health": health, "statements": statements}
     assert health.status == "unhealthy", detail
     assert health.details["checks"] == {
-        "legacy.tracer_trace": "ready",
+        "legacy.tracer_trace": "unverified",
         "legacy.trace_session": "missing_required_table",
-        "legacy.tracer_eval_logger": "ready",
+        "legacy.tracer_eval_logger": "unverified",
     }, detail
     assert health.cdc_lag["trace_session"] == -1, detail
-    assert 0 <= health.cdc_lag["tracer_trace"] < 60, detail
+    assert health.cdc_lag["tracer_trace"] == -1, detail
+    assert health.cdc_lag_verified["tracer_trace"] is False, detail
     assert not [entry for entry in statements if entry["error"] is not None], detail
 
 
@@ -454,6 +435,7 @@ def test_sampled_lag_still_reports_a_stalled_mirror(configure, statements):
                 "SELECT generateUUIDv4(), now64(3), now64(3), "
                 "now64(6) - toIntervalSecond(600), 0, 1"
             )
+        _settle(admin)
         client = _probe_client(admin, database)
         try:
             health = configure(client).get_health_status()
@@ -463,7 +445,8 @@ def test_sampled_lag_still_reports_a_stalled_mirror(configure, statements):
     assert set(health.details["checks"].values()) == {"lagging"}
     assert all(lag >= 590 for lag in health.cdc_lag.values()), health.cdc_lag
     reads = _trace_lag_reads(statements)
-    assert reads and all("WHERE 1 LIMIT" in s["sql"] for s in reads), statements
+    assert reads and all("_part IN" in s["sql"] and "LIMIT" not in s["sql"] for s in reads), statements
+    assert health.cdc_lag_verified == dict.fromkeys(CDC_TABLES, True)
 
 
 # One CDC batch three times the sample budget, and one merged month of history
@@ -527,10 +510,9 @@ def test_current_mirror_whose_newest_part_exceeds_the_budget_is_healthy(
 ):
     """The newest part alone is larger than the budget; CDC is current.
 
-    Skipping every part over the budget left either no sample (and a
-    whole-table scan the server refuses: unhealthy) or only the stale small
-    parts (ten minutes of false lag: degraded). The newest part now contributes
-    a bounded prefix of its rows.
+    Reading only the small stale parts would falsely report lag. Reading a
+    fresh prefix would not establish the exact maximum. Skip the data read and
+    explicitly report unverified without degrading health.
     """
     layout, admin, database, users = oversized_batch
     parts = _active_parts(admin)
@@ -555,7 +537,7 @@ def test_current_mirror_whose_newest_part_exceeds_the_budget_is_healthy(
         )
     )
     with capture_logs() as events:
-        _assert_current_and_healthy(checker, statements, small_budget, events)
+        _assert_large_unverified_and_healthy(checker, statements, events)
 
 
 @pytest.fixture
@@ -631,8 +613,9 @@ def test_merge_between_inventory_and_sample_keeps_current_mirror_healthy(
     assert _newest_sync_age(admin) < 60
     detail = {"health": health, "fresh": fresh, "merged": merged}
     assert health.status == "healthy", detail
-    assert health.details["checks"]["legacy.tracer_trace"] == "ready", detail
-    assert 0 <= health.cdc_lag["tracer_trace"] < 60, detail
+    assert health.details["checks"]["legacy.tracer_trace"] == "unverified", detail
+    assert health.cdc_lag["tracer_trace"] == -1, detail
+    assert health.cdc_lag_verified["tracer_trace"] is False, detail
 
 
 # Sort-key order puts every row of the first project before the second's.
@@ -678,8 +661,8 @@ def test_current_mirror_after_a_large_merge_has_unknown_lag(
     """A merge rewrites old rows into a part newer than any sync it holds.
 
     The fresh batch sorts after the old rows, so the bounded prefix of the
-    merged part sees only old syncs. Without reading the fresh rows the check
-    can prove neither freshness nor lag, so it must return unknown/degraded.
+    merged part would see only old syncs. Without complete coverage the check
+    can prove neither freshness nor lag. Return unverified without degradation.
     """
     from conftest import _ch_test_native_client, _ch_test_owned_database
 
@@ -702,11 +685,11 @@ def test_current_mirror_after_a_large_merge_has_unknown_lag(
         assert _newest_sync_age(admin) < 60
         health = _probe_health(configure, admin, database)
     detail = (health, statements)
-    assert health.status == "degraded", detail
-    assert health.details["checks"]["legacy.tracer_trace"] == "unsampled", detail
+    assert health.status == "healthy", detail
+    assert health.details["checks"]["legacy.tracer_trace"] == "unverified", detail
     assert health.cdc_lag["tracer_trace"] == -1, detail
     reads = _trace_lag_reads(statements)
-    assert reads and all(entry["rows"] <= small_budget for entry in reads), detail
+    assert not reads, detail
 
 
 @pytest.mark.integration
@@ -733,8 +716,8 @@ def test_stale_oversized_insert_has_unknown_lag(
         assert low == high, parts  # one insert: one block number, whatever its level
         health = _probe_health(configure, admin, database)
     detail = (health, statements)
-    assert health.status == "degraded", detail
-    assert health.details["checks"]["legacy.tracer_trace"] == "unsampled", detail
+    assert health.status == "healthy", detail
+    assert health.details["checks"]["legacy.tracer_trace"] == "unverified", detail
     assert health.cdc_lag["tracer_trace"] == -1, detail
 
 
@@ -743,7 +726,7 @@ def test_stale_oversized_insert_has_unknown_lag(
 def test_historical_repair_merge_uses_source_timestamps(
     configure, statements, small_budget, fresh_first
 ):
-    """Recent physical inserts/merges are healthy only if a fresh sync is read.
+    """Recent physical inserts/merges cannot verify an incomplete maximum.
 
     Snapshot/reconcile preserve old PG change times rather than the wall time
     of this INSERT. Its recent inactive source must not make stale data healthy.
@@ -785,16 +768,11 @@ def test_historical_repair_merge_uses_source_timestamps(
             assert source_age >= 590
         health = _probe_health(configure, admin, database)
     detail = (health, statements)
-    assert health.status == ("healthy" if fresh_first else "degraded"), detail
-    assert health.details["checks"]["legacy.tracer_trace"] == (
-        "ready" if fresh_first else "unsampled"
-    ), detail
-    if fresh_first:
-        assert 0 <= health.cdc_lag["tracer_trace"] < 60, detail
-    else:
-        assert health.cdc_lag["tracer_trace"] == -1, detail
-    reads = _trace_lag_reads(statements)
-    assert reads and all(entry["rows"] <= small_budget for entry in reads), detail
+    assert health.status == "healthy", detail
+    assert health.details["checks"]["legacy.tracer_trace"] == "unverified", detail
+    assert health.cdc_lag["tracer_trace"] == -1, detail
+    assert health.cdc_lag_verified["tracer_trace"] is False, detail
+    assert not _trace_lag_reads(statements), detail
     assert not any("NOT active" in entry["sql"] for entry in statements), detail
 
 
@@ -846,11 +824,11 @@ def test_newer_stale_partition_does_not_report_false_lag(
         assert _newest_sync_age(admin) < 60
         health = _probe_health(configure, admin, database)
     detail = (health, statements)
-    assert health.status == "degraded", detail
-    assert health.details["checks"]["legacy.tracer_trace"] == "unsampled", detail
+    assert health.status == "healthy", detail
+    assert health.details["checks"]["legacy.tracer_trace"] == "unverified", detail
     assert health.cdc_lag["tracer_trace"] == -1, detail
     reads = _trace_lag_reads(statements)
-    assert reads and all(entry["rows"] <= small_budget for entry in reads), detail
+    assert not reads, detail
 
 
 @pytest.mark.integration
@@ -878,11 +856,11 @@ def test_native_eval_repair_merge_does_not_invent_a_fresh_sync(
     assert _newest_sync_age(native, "tracer_eval_logger") >= 590
     health = configure(*clients, retired=True).get_health_status()
     detail = (health, statements)
-    assert health.status == "degraded", detail
-    assert health.details["checks"]["native.tracer_eval_logger"] == "unsampled", detail
+    assert health.status == "healthy", detail
+    assert health.details["checks"]["native.tracer_eval_logger"] == "unverified", detail
     assert health.cdc_lag == {"tracer_eval_logger": -1}, detail
     reads = [entry for entry in statements if "max(_peerdb_synced_at)" in entry["sql"]]
-    assert reads and all(entry["rows"] <= small_budget for entry in reads), detail
+    assert not reads, detail
 
 
 @pytest.mark.integration
@@ -919,11 +897,11 @@ def test_single_insert_with_mixed_source_timestamps_has_unknown_lag(
         assert _newest_sync_age(admin) < 60
         health = _probe_health(configure, admin, database)
     detail = (health, statements)
-    assert health.status == "degraded", detail
-    assert health.details["checks"]["legacy.tracer_trace"] == "unsampled", detail
+    assert health.status == "healthy", detail
+    assert health.details["checks"]["legacy.tracer_trace"] == "unverified", detail
     assert health.cdc_lag["tracer_trace"] == -1, detail
     reads = _trace_lag_reads(statements)
-    assert reads and all(entry["rows"] <= small_budget for entry in reads), detail
+    assert not reads, detail
 
 
 @pytest.mark.integration
@@ -968,9 +946,190 @@ def test_growth_and_merge_after_inventory_do_not_prove_stale_coverage(
         assert len(changed) == 1 and changed[0][2] > small_budget, changed
         assert _newest_sync_age(admin) < 60
     detail = (health, statements)
-    assert health.status == "degraded", detail
-    assert health.details["checks"]["legacy.tracer_trace"] == "unsampled", detail
+    assert health.status == "healthy", detail
+    assert health.details["checks"]["legacy.tracer_trace"] == "unverified", detail
     assert health.cdc_lag["tracer_trace"] == -1, detail
     reads = _trace_lag_reads(statements)
-    assert reads and all("WHERE 1 LIMIT" in entry["sql"] for entry in reads), detail
+    assert reads and all("_part IN" in entry["sql"] and "LIMIT" not in entry["sql"] for entry in reads), detail
     assert all(entry["rows"] <= small_budget for entry in reads), detail
+
+
+def _sparsely_mask_trace(admin):
+    """The production ReplacingMergeTree DDL permits lightweight deletes.
+
+    Keep one row per 100,000 versions. A LIMIT on surviving rows would no
+    longer bound the physical rows traversed to find them.
+    """
+    admin.execute("SYSTEM START MERGES tracer_trace")
+    try:
+        admin.execute(
+            "DELETE FROM tracer_trace WHERE _peerdb_version % 100000 != 0",
+            settings={"mutations_sync": 2, "allow_experimental_lightweight_delete": 1},
+        )
+    finally:
+        admin.execute("SYSTEM STOP MERGES tracer_trace")
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize(
+    "metadata,sparse",
+    [("select", False), ("select", True), ("hidden", False),
+     ("denied", True), ("sizing_denied", False)],
+)
+def test_production_budget_growth_readonly1_bounds_all_physical_lag_reads(
+    configure, statements, monkeypatch, metadata, sparse, record_property
+):
+    """Inventory below 10M, then multiple parts above 10M before the data read.
+
+    No per-query row/block/thread setting is available to the probing user.
+    The sparse variant exercises real lightweight deletes, not logical CDC
+    tombstones. Sizing denial is explicitly injected because system.tables is
+    implicitly visible on stock ClickHouse; the other grants are real roles.
+    """
+    from clickhouse_driver.errors import ServerException
+    from conftest import _ch_test_native_client, _ch_test_owned_database
+    from tracer.services.clickhouse import consistency
+
+    checker_type = consistency.ConsistencyChecker
+    assert checker_type.LAG_SAMPLE_MAX_ROWS == 10_000_000
+    monkeypatch.setattr(checker_type, "MONITORED_TABLES", [("tracer_trace", "tracer_trace")])
+    # Only the synthetic writer's insert/delete time is excluded from the
+    # diagnostic clock. Actual diagnostic I/O still shares the unchanged wall.
+    paused = [0.0]
+    monkeypatch.setattr(consistency, "monotonic", lambda: time.monotonic() - paused[0])
+    with ExitStack() as stack:
+        database = stack.enter_context(_ch_test_owned_database("test_health_physical_"))
+        admin = stack.enter_context(_ch_test_native_client(database=database))
+        admin.execute(_production_ddl("tracer_trace"))
+        admin.execute("SYSTEM STOP MERGES tracer_trace")
+        initial_rows = 100_000
+        _insert_part(admin, "tracer_trace", initial_rows, synced_age_seconds=600)
+        before = _active_parts(admin)
+        assert sum(row[2] for row in before) == initial_rows
+        user = f"{database}_ro"
+        stack.callback(admin.execute, f"DROP USER IF EXISTS {user}")
+        admin.execute(
+            f"CREATE USER {user} IDENTIFIED WITH no_password SETTINGS readonly = 1, "
+            "max_block_size = 100000, max_threads = 8, max_rows_to_read = 0"
+        )
+        admin.execute(f"GRANT SELECT ON {database}.* TO {user}")
+        admin.execute(f"GRANT SELECT(name, value) ON system.settings TO {user}")
+        if metadata == "select":
+            admin.execute(f"GRANT SELECT({PART_COLUMNS}) ON system.parts TO {user}")
+        elif metadata == "denied":
+            admin.execute(f"GRANT SHOW COLUMNS ON system.parts TO {user}")
+        client = _probe_client(admin, database, user, server_readonly=True)
+        stack.callback(client.close)
+        # Verify the actual server profile, rather than assuming client flags
+        # reproduce readonly=1 or the default 100k-row block behavior.
+        profile = dict(client.execute(
+            "SELECT name, value FROM system.settings "
+            "WHERE name IN ('readonly', 'max_block_size', 'max_threads')"
+        ))
+        assert profile == {"readonly": "1", "max_block_size": "100000", "max_threads": "8"}
+        read = checker_type._read
+        grown = []
+        sizing_denied = []
+
+        def grow_after_sizing(self, probe, sql, params=None, **kwargs):
+            trigger = "FROM system.parts" if metadata == "select" else "FROM system.tables"
+            rows = read(self, probe, sql, params, **kwargs)
+            if trigger in sql and not grown:
+                started = time.monotonic()
+                try:
+                    # Separate monthly partitions cannot merge together. Each
+                    # new part is below the budget; their total exceeds it.
+                    for months_back in (1, 2, 3):
+                        _insert_part(admin, "tracer_trace", 4_000_000, months_back=months_back)
+                    if sparse:
+                        _sparsely_mask_trace(admin)
+                    grown.extend(_active_parts(admin))
+                finally:
+                    paused[0] += time.monotonic() - started
+            if metadata == "sizing_denied" and "FROM system.tables" in sql:
+                sizing_denied.append(True)
+                raise ServerException("synthetic size metadata denial", code=497)
+            return rows
+
+        monkeypatch.setattr(checker_type, "_read", grow_after_sizing)
+        health = configure(client).get_health_status()
+        assert len(grown) >= 4, grown
+        physical_rows = sum(row[2] for row in grown)
+        assert physical_rows > checker_type.LAG_SAMPLE_MAX_ROWS, grown
+        if sparse:
+            visible = admin.execute("SELECT count() FROM tracer_trace")[0][0]
+            assert 0 < visible < physical_rows // 1000, (visible, grown)
+        assert bool(sizing_denied) is (metadata == "sizing_denied")
+
+    reads = _trace_lag_reads(statements)
+    detail = {"health": health, "statements": statements, "before": before, "grown": grown}
+    assert all(entry["rows"] is not None for entry in reads), detail
+    # Aggregate *all* attempts, not just the maximum returned-row LIMIT. With
+    # only one monitored table, native progress belongs entirely to that table.
+    total_read = sum(entry["rows"] for entry in reads)
+    record_property("lag_physical_rows", total_read)
+    record_property("lag_row_budget", checker_type.LAG_SAMPLE_MAX_ROWS)
+    record_property("physical_table_rows_after_growth", physical_rows)
+    assert total_read <= checker_type.LAG_SAMPLE_MAX_ROWS, detail
+    assert total_read <= initial_rows, detail
+    assert all(entry["error"] is None for entry in reads), detail
+    assert health.cdc_lag == {"tracer_trace": -1}, detail
+    assert health.cdc_lag_verified == {"tracer_trace": False}, detail
+    assert health.status == ("degraded" if metadata == "sizing_denied" else "healthy"), detail
+    if metadata == "select":
+        assert len(reads) == 1, detail
+        assert "_part IN" in reads[0]["sql"] and "LIMIT" not in reads[0]["sql"], detail
+    else:
+        assert not reads, detail
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("masked", [False, True])
+def test_readonly1_complete_parts_bound_physical_rows_with_sparse_deletes(
+    configure, statements, monkeypatch, masked, record_property
+):
+    """Within-budget immutable parts: masks do not trigger an extra attempt."""
+    from conftest import _ch_test_native_client, _ch_test_owned_database
+    from tracer.services.clickhouse import consistency
+
+    checker_type = consistency.ConsistencyChecker
+    assert checker_type.LAG_SAMPLE_MAX_ROWS == 10_000_000
+    monkeypatch.setattr(checker_type, "MONITORED_TABLES", [("tracer_trace", "tracer_trace")])
+    with ExitStack() as stack:
+        database = stack.enter_context(_ch_test_owned_database("test_health_masked_"))
+        admin = stack.enter_context(_ch_test_native_client(database=database))
+        admin.execute(_production_ddl("tracer_trace"))
+        admin.execute("SYSTEM STOP MERGES tracer_trace")
+        for month in (1, 2, 3):
+            _insert_part(admin, "tracer_trace", 200_000, months_back=month)
+        if masked:
+            _sparsely_mask_trace(admin)
+        physical_rows = sum(row[2] for row in _active_parts(admin))
+        assert physical_rows == 600_000
+        visible = admin.execute("SELECT count() FROM tracer_trace")[0][0]
+        assert visible == (6 if masked else physical_rows)
+        user = f"{database}_ro"
+        stack.callback(admin.execute, f"DROP USER IF EXISTS {user}")
+        admin.execute(
+            f"CREATE USER {user} IDENTIFIED WITH no_password SETTINGS readonly = 1, "
+            "max_block_size = 100000, max_threads = 8, max_rows_to_read = 0"
+        )
+        admin.execute(f"GRANT SELECT ON {database}.* TO {user}")
+        admin.execute(f"GRANT SELECT({PART_COLUMNS}) ON system.parts TO {user}")
+        client = _probe_client(admin, database, user, server_readonly=True)
+        stack.callback(client.close)
+        health = configure(client).get_health_status()
+    reads = _trace_lag_reads(statements)
+    detail = {"health": health, "statements": statements}
+    assert len(reads) == 1 and reads[0]["error"] is None, detail
+    assert reads[0]["rows"] is not None, detail
+    total_read = sum(entry["rows"] for entry in reads)
+    record_property("lag_physical_rows", total_read)
+    record_property("physical_part_rows", physical_rows)
+    assert 0 < total_read <= physical_rows <= checker_type.LAG_SAMPLE_MAX_ROWS, detail
+    assert health.status == "healthy", detail
+    assert health.cdc_lag_verified["tracer_trace"] is (not masked), detail
+    if masked:
+        assert health.cdc_lag["tracer_trace"] == -1, detail
+    else:
+        assert 0 <= health.cdc_lag["tracer_trace"] < 60, detail

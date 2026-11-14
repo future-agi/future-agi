@@ -61,8 +61,8 @@ def configure(monkeypatch, settings):
     return apply
 
 
-PART_WRITTEN = datetime(2026, 1, 1, 12, 0, 0)
-PART_AGE = 3600
+PART_COLUMNS = {"database", "table", "name", "rows", "active"}
+VERIFIED_COLUMNS = {**dict.fromkeys(CDC_TABLES, CDC_COLUMNS), "system.parts": PART_COLUMNS}
 
 
 def sampled_tables(params):
@@ -74,18 +74,22 @@ def sampled_tables(params):
     ]
 
 
-def fake_client(columns, *, sample=None, parts=(), table_rows=None, inactive=()):
-    """Schema-only double; ``columns["system.parts"]`` opts into the part sample.
+def fake_client(columns, *, sample=None, parts=None, table_rows=None):
+    """Schema/part double. Explicit inventories may omit empty tables.
 
-    ``parts`` are the ``(table, part, rows[, modification_time[, age]])`` rows
-    the system.parts read returns, already newest first as the real ORDER BY
-    delivers them. Without a time, every part was written in the same second;
-    without an age (seconds since that write), long enough ago to prove nothing.
-    ``inactive`` are the replaced parts' ``(table, part, age)`` rows.
-    ``table_rows`` are the ``system.tables`` sizes; unlisted tables hold one row.
+    Metadata visibility is explicit in columns. A default part per CDC table
+    models a stable complete inventory; a supplied sample can simulate a partial
+    aggregate or invalid timestamp independently of its physical row count.
     """
+    explicit_sample = sample is not None
     if sample is None:
         sample = (1, datetime.now(UTC))
+    if parts is None:
+        parts = [
+            (table, "all_1_1_0", sample[0])
+            for table, names in columns.items()
+            if "_peerdb_synced_at" in names and sample[0]
+        ]
     table_rows = table_rows or {}
 
     def execute(sql, params=None):
@@ -95,16 +99,13 @@ def fake_client(columns, *, sample=None, parts=(), table_rows=None, inactive=())
             return [
                 (table, column) for table, names in columns.items() for column in names
             ]
-        if "FROM system.parts" in sql and "NOT active" in sql:
-            return [row for row in inactive if row[0] in params["tables"]]
         if "FROM system.parts" in sql:
-            rows = [row for row in parts if row[0] in params["tables"]]
-            if "modification_time" not in sql:
-                return [row[:3] for row in rows]
-            rows = [row if len(row) >= 4 else (*row, PART_WRITTEN) for row in rows]
-            if "dateDiff" not in sql:
-                return [row[:4] for row in rows]
-            return [row if len(row) == 5 else (*row[:4], PART_AGE) for row in rows]
+            rows = [row[:3] for row in parts if row[0] in params["tables"]]
+            return [
+                row
+                for table in params["tables"]
+                for row in sorted(r for r in rows if r[0] == table)[:params["parts"]]
+            ]
         if "FROM system.tables" in sql:
             return [(table, table_rows.get(table, 1)) for table in params["tables"]]
         if "max(_peerdb_synced_at)" in sql:
@@ -112,7 +113,16 @@ def fake_client(columns, *, sample=None, parts=(), table_rows=None, inactive=())
             # the older per-table statements answer a single unnamed row.
             tables = sampled_tables(params)
             if tables:
-                return [(table, *sample) for table in tables]
+                result = []
+                for index, table in enumerate(tables):
+                    names = params.get(f"parts{index}", ())
+                    count = sum(
+                        row[2] for row in parts if row[0] == table and row[1] in names
+                    )
+                    if explicit_sample and names:
+                        count = sample[0]
+                    result.append((table, count, sample[1]))
+                return result
             return [sample if "count()" in sql else (sample[1],)]
         if "LIMIT 0" in sql:
             return []
@@ -148,15 +158,22 @@ class TestSchemaAwareHealth:
         client.execute.assert_not_called()
 
     def test_complete_cdc_schema(self, configure):
-        checker = configure(fake_client(dict.fromkeys(CDC_TABLES, CDC_COLUMNS)))
+        checker = configure(fake_client(VERIFIED_COLUMNS))
         health = checker.get_health_status()
         assert health.status == "healthy"
         assert set(health.cdc_lag) == set(CDC_TABLES)
         assert all(0 <= lag < 60 for lag in health.cdc_lag.values())
+        assert health.cdc_lag_verified == dict.fromkeys(CDC_TABLES, True)
 
     def test_native_cutover_retains_eval_cdc_on_native_connection(self, configure):
         legacy = fake_client({})
-        native = fake_client({**NATIVE_COLUMNS, "tracer_eval_logger": CDC_COLUMNS})
+        native = fake_client(
+            {
+                **NATIVE_COLUMNS,
+                "tracer_eval_logger": CDC_COLUMNS,
+                "system.parts": PART_COLUMNS,
+            }
+        )
         checker = configure(legacy, native, retired=True)
         health = checker.get_health_status()
         assert health.status == "healthy"
@@ -229,6 +246,7 @@ class TestSchemaAwareHealth:
             "status",
             "clickhouse_connected",
             "cdc_lag",
+            "cdc_lag_verified",
             "routing",
         }
 
@@ -255,8 +273,14 @@ class TestSchemaAwareHealth:
         self, configure, settings
     ):
         settings.CLICKHOUSE_V2 = {"QUERY_TYPES_V2_ONLY": "TRACE_LIST"}
-        legacy = fake_client(dict.fromkeys(CDC_TABLES, CDC_COLUMNS))
-        native = fake_client({**NATIVE_COLUMNS, "tracer_eval_logger": CDC_COLUMNS})
+        legacy = fake_client(VERIFIED_COLUMNS)
+        native = fake_client(
+            {
+                **NATIVE_COLUMNS,
+                "tracer_eval_logger": CDC_COLUMNS,
+                "system.parts": PART_COLUMNS,
+            }
+        )
         checker = configure(legacy, native)
         assert checker.get_health_status().status == "healthy"
         native.execute_read.side_effect = ConnectionError("synthetic outage")
@@ -275,17 +299,22 @@ class TestSchemaAwareHealth:
         # Timestamps are built when the test runs, not at collection, so a long
         # suite cannot age the "fresh" samples into the stale branch.
         sample = (sample[0], sample[1]())
-        checker = configure(
-            fake_client(dict.fromkeys(CDC_TABLES, CDC_COLUMNS), sample=sample)
-        )
+        checker = configure(fake_client(VERIFIED_COLUMNS, sample=sample))
         health = checker.get_health_status()
         assert health.status == expected
         if sample[0] == 0:
             assert set(health.details["checks"].values()) == {"empty"}
             assert set(health.cdc_lag.values()) == {-1}
+            assert health.cdc_lag_verified == dict.fromkeys(CDC_TABLES, False)
 
     def test_row_counts_omit_retired_tables(self, configure, monkeypatch):
-        native = fake_client({**NATIVE_COLUMNS, "tracer_eval_logger": CDC_COLUMNS})
+        native = fake_client(
+            {
+                **NATIVE_COLUMNS,
+                "tracer_eval_logger": CDC_COLUMNS,
+                "system.parts": PART_COLUMNS,
+            }
+        )
         checker = configure(fake_client({}), native, retired=True)
         pg = Mock()
         pg.cursor.return_value.__enter__ = Mock(
@@ -318,16 +347,23 @@ class TestSchemaAwareHealth:
         self, configure, settings
     ):
         settings.CLICKHOUSE_V2 = {"QUERY_TYPES_V2_ONLY": "DASHBOARD"}
-        legacy = fake_client(dict.fromkeys(CDC_TABLES, CDC_COLUMNS), sample=(0, None))
+        legacy = fake_client(VERIFIED_COLUMNS, sample=(0, None))
         native = fake_client(
-            {**NATIVE_COLUMNS, "tracer_eval_logger": CDC_COLUMNS},
+            {
+                **NATIVE_COLUMNS,
+                "tracer_eval_logger": CDC_COLUMNS,
+                "system.parts": PART_COLUMNS,
+            },
             sample=(1, datetime.now(UTC) - timedelta(minutes=5)),
         )
         checker = configure(legacy, native)
-        assert checker.get_health_status().status == "degraded"
+        health = checker.get_health_status()
+        assert health.status == "degraded"
+        assert health.cdc_lag["tracer_eval_logger"] == -1
+        assert health.cdc_lag_verified["tracer_eval_logger"] is False
 
     def test_failed_aggregate_is_not_healthy(self, configure):
-        client = fake_client(dict.fromkeys(CDC_TABLES, CDC_COLUMNS))
+        client = fake_client(VERIFIED_COLUMNS)
         read = client.execute_read.side_effect
 
         def unavailable(sql, params=None, **kwargs):
@@ -498,3 +534,84 @@ class TestRealClickHouseHealth:
         health = checker.get_health_status()
         assert health.status == "healthy"
         assert 0 <= health.cdc_lag["trace_session"] < 60
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("with_verification", [False, True])
+def test_health_serializer_accepts_existing_keys_without_new_field(with_verification):
+    from tracer.serializers.health import ClickHouseHealthResponseSerializer
+
+    legacy = {
+        "status": "healthy",
+        "clickhouse_connected": True,
+        "cdc_lag": {"tracer_trace": -1.0},
+        "routing": {"CH_ROUTE_TRACE_LIST": "pg"},
+    }
+    payload = dict(legacy)
+    if with_verification:
+        payload["cdc_lag_verified"] = {"tracer_trace": False}
+    serializer = ClickHouseHealthResponseSerializer(data=payload)
+    assert serializer.is_valid(), serializer.errors
+    assert {key: serializer.data[key] for key in legacy} == legacy
+    assert serializer.fields["cdc_lag_verified"].required is False
+    assert ("cdc_lag_verified" in serializer.data) is with_verification
+
+
+@pytest.mark.unit
+def test_health_openapi_verification_is_optional_and_old_contract_stable():
+    import json
+    from pathlib import Path
+
+    from tracer.serializers.health import ClickHouseHealthErrorResponseSerializer
+
+    root = Path(__file__).resolve().parents[3]
+    contract = json.loads((root / "api_contracts/openapi/swagger.json").read_text())
+    definitions = contract["definitions"]
+    response_schema = definitions["ClickHouseHealthResponse"]
+    assert response_schema["required"] == [
+        "status", "clickhouse_connected", "cdc_lag", "routing"
+    ]
+    old_properties = response_schema["properties"]
+    assert old_properties["status"]["enum"] == [
+        "healthy", "degraded", "unhealthy", "disabled"
+    ]
+    assert old_properties["clickhouse_connected"]["type"] == "boolean"
+    assert old_properties["cdc_lag"]["additionalProperties"] == {"type": "number"}
+    assert old_properties["routing"]["type"] == "object"
+    assert "-1 means unverified" in old_properties["cdc_lag"]["description"]
+    for name in ("ClickHouseHealthResponse", "ClickHouseHealthErrorResponse"):
+        schema = definitions[name]
+        assert "cdc_lag_verified" not in schema.get("required", [])
+        assert schema["properties"]["cdc_lag_verified"]["additionalProperties"] == {
+            "type": "boolean"
+        }
+    assert ClickHouseHealthErrorResponseSerializer().fields["cdc_lag_verified"].required is False
+    operation = contract["paths"]["/api/health/clickhouse/"]["get"]
+    assert operation["responses"]["200"]["schema"]["$ref"] == "#/definitions/ClickHouseHealthResponse"
+    assert operation["responses"]["503"]["schema"]["$ref"] == "#/definitions/ClickHouseHealthErrorResponse"
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("mode", ["fresh", "empty", "disabled", "error"])
+def test_health_api_verification_matches_lag_in_all_response_modes(configure, monkeypatch, mode):
+    from tracer.views import clickhouse_health
+
+    checker = configure(fake_client(VERIFIED_COLUMNS, parts=[] if mode == "empty" else None))
+    if mode == "disabled":
+        monkeypatch.setattr(consistency, "is_clickhouse_enabled", lambda: False)
+    if mode == "error":
+        monkeypatch.setattr(clickhouse_health, "ConsistencyChecker", Mock(side_effect=RuntimeError("synthetic")))
+    result = response()
+    assert result.status_code == (503 if mode == "error" else 200)
+    assert {"clickhouse_connected", "cdc_lag", "routing"} <= result.data.keys()
+    assert "status" in result.data
+    assert result.data["cdc_lag_verified"] == {
+        table: lag >= 0 for table, lag in result.data["cdc_lag"].items()
+    }
+    if mode in ("disabled", "error"):
+        assert result.data["cdc_lag_verified"] == {}
+    elif mode == "empty":
+        assert result.data["cdc_lag_verified"] == dict.fromkeys(CDC_TABLES, False)
+        assert result.data["cdc_lag"] == dict.fromkeys(CDC_TABLES, -1)
+    else:
+        assert checker.get_health_status().cdc_lag_verified == dict.fromkeys(CDC_TABLES, True)
