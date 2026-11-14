@@ -16,14 +16,15 @@ from __future__ import annotations
 
 import json
 from datetime import UTC, datetime
+from typing import cast
 
 from django.db.models import Count, Max, Min, Q
-
 from tracer.models.eval_sampling import EvalSamplingCohort, EvalSamplingMember
 from tracer.models.eval_task import EvalTask
 from tracer.services.eval_tasks.sampling import stats
 from tracer.services.eval_tasks.sampling.policy import (
     InvalidSamplingPolicy,
+    NormalizedRule,
     cell_rule,
     quota_target,
     target_size,
@@ -68,7 +69,9 @@ def _rules(policy: dict) -> dict[str, dict]:
 
 def _stratum_row(policy: dict, rules: dict, cell: dict) -> dict:
     name, _groups = parse_stratum(cell["stratum"])
-    rule = cell_rule(policy, cell["stratum"], rules.get(name))
+    rule = cast(
+        NormalizedRule | None, cell_rule(policy, cell["stratum"], rules.get(name))
+    )
     population, achieved = cell["population"], cell["achieved"]
     row = {
         "stratum": cell["stratum"],
@@ -123,7 +126,7 @@ def _balance(policy: dict, strata: list[dict]) -> list[dict]:
         for row in strata:
             name, groups = parse_stratum(row["stratum"])
             if index == 0:
-                key = (True, name)
+                key: tuple[bool, str | None] = (True, name)
             else:
                 key = groups[index - 1] if index - 1 < len(groups) else (False, None)
             entry = categories.setdefault(
@@ -343,6 +346,7 @@ def sampling_audit(task: EvalTask, *, cohort_id=None) -> dict:
         for stratum in sorted(set(stored) | set(frozen)):
             row, current = stored.get(stratum), frozen.get(stratum)
             if row is None:
+                assert current is not None  # The stratum came from the frozen map.
                 population, selected = current
                 cells.append(
                     {

@@ -1,8 +1,13 @@
-from rest_framework.decorators import action
+from typing import TYPE_CHECKING
+from uuid import UUID
 
+from django.db.models import Manager, QuerySet
+from rest_framework.decorators import action
+from rest_framework.mixins import UpdateModelMixin
 from tfc.utils.api_contracts import validated_request
 from tfc.utils.api_errors import build_error_envelope
 from tfc.utils.api_serializers import ApiErrorResponseSerializer
+from tfc.utils.general_methods import GeneralMethods
 from tracer.models.eval_task import EvalTask
 from tracer.models.project import Project
 from tracer.serializers.eval_sampling import (
@@ -79,7 +84,23 @@ def _error(message: str, status_code: int, **headers):
     )
 
 
-class SamplingPreviewMixin:
+class SamplingPreviewMixin(UpdateModelMixin):
+    _gm: GeneralMethods
+
+    if TYPE_CHECKING:
+
+        def _scope_project_queryset(
+            self, queryset: QuerySet[Project]
+        ) -> QuerySet[Project]: ...
+
+        def _scope_eval_task_queryset(
+            self, queryset: Manager[EvalTask] | QuerySet[EvalTask]
+        ) -> QuerySet[EvalTask]: ...
+
+        def _invalid_eval_ids_for_project(
+            self, eval_ids: list[UUID], project_id: UUID
+        ) -> list[str]: ...
+
     def perform_update(self, serializer):
         # Generic PATCH/PUT is also a public edit path. A policy scope change
         # must not inherit the arrival watermark of a different population.
@@ -87,7 +108,6 @@ class SamplingPreviewMixin:
         incoming = serializer.validated_data
         if population_changed(serializer.instance, incoming):
             from rest_framework.exceptions import ValidationError
-
             from tracer.models.observation_span import EvalLogger
 
             if EvalLogger.objects.filter(
@@ -104,7 +124,8 @@ class SamplingPreviewMixin:
         ):
             serializer.save(continuous_cursor=None)
             return
-        super().perform_update(serializer)
+        # The registered view supplies the queryset required by this mixin.
+        super().perform_update(serializer)  # type: ignore[misc]
 
     @action(detail=False, methods=["post"], url_path="sampling_preview")
     @validated_request(
