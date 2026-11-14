@@ -411,6 +411,12 @@ def _post(http, webhook, event):
                     stream=True,
                 )
                 try:
+                    if deadline.expired:
+                        # The watchdog's shutdown ends a read as if the
+                        # receiver had: "HTTP/1.1 200 " cut there parses as a
+                        # 200 it never sent. Not delivered; it goes out again
+                        # with the same X-Agentcc-Event-Id.
+                        raise TimeoutError(DELIVERY_DEADLINE_ERROR)
                     if 200 <= resp.status_code < 300:
                         # Delivered. Its body is never read or decoded.
                         return http, resp.status_code, None
@@ -418,7 +424,7 @@ def _post(http, webhook, event):
                 finally:
                     resp.close()
                 if deadline.expired:
-                    # Shut down mid-body, a read can end as if the body had.
+                    # Likewise mid-body: an error body may be cut short.
                     raise TimeoutError(DELIVERY_DEADLINE_ERROR)
             except Exception as e:
                 if deadline.expired:

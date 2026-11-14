@@ -1439,11 +1439,24 @@ def _chunk_size_drip(handler):
     _drip(handler.wfile, b"0" * 60 + b"1\r\nx\r\n0\r\n\r\n")
 
 
+def _status_line_cut_at_the_deadline(handler):
+    # The watchdog's shutdown ends the line here: http.client reads
+    # "HTTP/1.1 200 " and then end of headers, a 200 the receiver never sent.
+    handler.wfile.write(b"HTTP/1.1 200 ")
+    handler.wfile.flush()
+    time.sleep(3)
+
+
 @pytest.mark.integration
 @pytest.mark.parametrize(
     "send",
-    [_status_line_drip, _gzip_header_drip, _chunk_size_drip],
-    ids=["status-line", "gzip-header", "chunk-size-line"],
+    [
+        _status_line_drip,
+        _status_line_cut_at_the_deadline,
+        _gzip_header_drip,
+        _chunk_size_drip,
+    ],
+    ids=["status-line", "status-line-cut", "gzip-header", "chunk-size-line"],
 )
 def test_a_dripping_receiver_cannot_hold_a_post_inside_one_library_call(
     organization, send
