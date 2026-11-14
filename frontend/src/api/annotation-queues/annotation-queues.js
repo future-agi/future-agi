@@ -2008,6 +2008,7 @@ export const useRemoveLabelFromQueue = () => {
 export const useCustomEvalConfigList = ({ projectId, ...options } = {}) => {
   return useQuery({
     queryKey: ["custom-eval-configs", projectId],
+    enabled: Boolean(projectId),
     queryFn: () =>
       axios.get(endpoints.project.getEvalTaskConfig(), {
         params: projectId ? { project_id: projectId } : undefined,

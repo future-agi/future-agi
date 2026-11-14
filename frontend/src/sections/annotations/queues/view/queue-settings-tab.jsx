@@ -285,41 +285,46 @@ export default function QueueSettingsTab({ queue, queueId, creatorId }) {
                 }}
               />
 
-                <Controller
-                  name="custom_eval_config"
-                  control={control}
-                  render={({ field }) => (
-                    <TextField
-                      {...field}
-                      select
-                      size="small"
-                      label="Evaluator (Judge)"
-                      fullWidth
-                      helperText="Link an evaluator to compare judge scores against human labels in the Agreement tab"
-                      FormHelperTextProps={{ sx: { ml: 0 } }}
-                      sx={{ "& .MuiOutlinedInput-root": { borderRadius: 0.5 } }}
-                      SelectProps={{
-                        displayEmpty: true,
-                        renderValue: (value) => {
-                          if (!value) return "None";
-                          const selected = (evalConfigs || []).find(
-                            (ec) => ec.id === value,
-                          );
-                          return selected?.name || value;
-                        },
-                      }}
-                    >
-                      <MenuItem value="">
-                        <em>None</em>
+              <Controller
+                name="custom_eval_config"
+                control={control}
+                render={({ field }) => (
+                  <TextField
+                    {...field}
+                    select
+                    size="small"
+                    label="Evaluator (Judge)"
+                    fullWidth
+                    disabled={!queue?.project}
+                    helperText={
+                      queue?.project
+                        ? "Compare this project's evaluator with matching human labels"
+                        : "Evaluator comparison requires a project queue"
+                    }
+                    FormHelperTextProps={{ sx: { ml: 0 } }}
+                    sx={{ "& .MuiOutlinedInput-root": { borderRadius: 0.5 } }}
+                    SelectProps={{
+                      displayEmpty: true,
+                      renderValue: (value) => {
+                        if (!value) return "None";
+                        const selected = (evalConfigs || []).find(
+                          (ec) => ec.id === value,
+                        );
+                        return selected?.name || value;
+                      },
+                    }}
+                  >
+                    <MenuItem value="">
+                      <em>None</em>
+                    </MenuItem>
+                    {(evalConfigs || []).map((ec) => (
+                      <MenuItem key={ec.id} value={ec.id}>
+                        {ec.name}
                       </MenuItem>
-                      {(evalConfigs || []).map((ec) => (
-                        <MenuItem key={ec.id} value={ec.id}>
-                          {ec.name}
-                        </MenuItem>
-                      ))}
-                    </TextField>
-                  )}
-                />
+                    ))}
+                  </TextField>
+                )}
+              />
             </Stack>
           </Section>
 

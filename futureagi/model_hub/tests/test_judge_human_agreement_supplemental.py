@@ -7,6 +7,8 @@ These tests cover important scenarios identified during code review:
 - Malformed Score.value handling
 """
 
+import uuid
+
 import pytest
 
 from model_hub.models.ai_model import AIModel
@@ -16,7 +18,6 @@ from model_hub.models.choices import (
     QueueItemSourceType,
     ScoreSource,
 )
-from model_hub.models.develop_annotations import AnnotationsLabels
 from model_hub.models.evals_metric import EvalTemplate
 from model_hub.models.score import Score
 from model_hub.utils.annotation_queue_helpers import (
@@ -53,6 +54,7 @@ def _make_trace(project):
 
 def _make_span(project, trace):
     return ObservationSpan.objects.create(
+        id=f"span_{uuid.uuid4().hex[:16]}",
         project=project,
         trace=trace,
         observation_type="generation",
@@ -100,11 +102,12 @@ def _make_queue_item(queue, span, organization):
 
 
 def _make_label(organization, workspace, label_type="categorical"):
-    return AnnotationsLabels.objects.create(
-        name=f"Test Label {label_type}",
-        organization=organization,
-        workspace=workspace,
-        type=label_type,
+    from model_hub.tests.test_judge_human_agreement_integration import (
+        _make_label as make_label,
+    )
+
+    return make_label(
+        organization, workspace, name=f"Test Label {label_type}", type=label_type
     )
 
 
@@ -296,7 +299,7 @@ class TestJudgeHumanAgreementSupplemental:
             label=label,
             organization=organization,
             value={"selected": ["fail"]},
-            score_source=ScoreSource.LLM.value,
+            score_source=ScoreSource.AUTO.value,
         )
 
         result = _calculate_judge_human_agreement(queue)
@@ -349,14 +352,17 @@ class TestJudgeHumanAgreementSupplemental:
         # Judge says "pass"
         _make_eval_row(span, trace, cfg, output_bool=True)
 
-        # Human score with None value
-        Score.objects.create(
+        # JSON null is valid legacy data; SQL NULL is not allowed by the model.
+        from django.db.models import JSONField, Value
+
+        score = Score.objects.create(
             queue_item=item,
             label=label,
             organization=organization,
-            value=None,
+            value={},
             score_source=ScoreSource.HUMAN.value,
         )
+        Score.objects.filter(pk=score.pk).update(value=Value(None, JSONField()))
 
         result = _calculate_judge_human_agreement(queue)
 

@@ -414,7 +414,12 @@ export default function CreateQueueDrawer({
                       size="small"
                       label="Evaluator (Judge)"
                       fullWidth
-                      helperText="Link an evaluator to compare judge scores against human labels in the Agreement tab"
+                      disabled={!evaluatorProjectId}
+                      helperText={
+                        evaluatorProjectId
+                          ? "Compare this project's evaluator with matching human labels"
+                          : "Evaluator comparison requires a project queue"
+                      }
                       FormHelperTextProps={{ sx: { ml: 0 } }}
                       sx={{ "& .MuiOutlinedInput-root": { borderRadius: 0.5 } }}
                       SelectProps={{

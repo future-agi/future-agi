@@ -200,9 +200,9 @@ class TestNormalizeHumanScoreValue(unittest.TestCase):
             == "0.88"
         )
 
-    def test_star_percentage_rounds(self):
+    def test_star_percentage_is_not_a_fraction(self):
         assert (
-            _normalize_human_score_value({"rating": 4.0}, "star", "percentage") == "4.0"
+            _normalize_human_score_value({"rating": 4.0}, "star", "percentage") is None
         )
 
     def test_legacy_bare_scalar_passes_through(self):
@@ -409,6 +409,7 @@ class TestCalculateJudgeHumanAgreement(unittest.TestCase):
                 "label_id": "label-1",
                 "label__name": "Label A",
                 "label__type": "categorical",
+                "label__settings": {"options": [{"label": "pass"}, {"label": "fail"}]},
                 "value": {"selected": ["pass"]},
             },
             {
@@ -416,6 +417,7 @@ class TestCalculateJudgeHumanAgreement(unittest.TestCase):
                 "label_id": "label-2",
                 "label__name": "Label B",
                 "label__type": "categorical",
+                "label__settings": {"options": [{"label": "pass"}, {"label": "fail"}]},
                 "value": {"selected": ["fail"]},
             },
             {
@@ -423,6 +425,7 @@ class TestCalculateJudgeHumanAgreement(unittest.TestCase):
                 "label_id": "label-1",
                 "label__name": "Label A",
                 "label__type": "categorical",
+                "label__settings": {"options": [{"label": "pass"}, {"label": "fail"}]},
                 "value": {"selected": ["fail"]},
             },
             {
@@ -430,6 +433,7 @@ class TestCalculateJudgeHumanAgreement(unittest.TestCase):
                 "label_id": "label-2",
                 "label__name": "Label B",
                 "label__type": "categorical",
+                "label__settings": {"options": [{"label": "pass"}, {"label": "fail"}]},
                 "value": {"selected": ["pass"]},
             },
         ]
@@ -516,6 +520,7 @@ class TestPercentageEndToEnd(unittest.TestCase):
                 "label_id": "label-1",
                 "label__name": "Label A",
                 "label__type": "numeric",
+                "label__settings": {"min": 0, "max": 1},
                 "value": {"value": 0.876},
             },
         ]

@@ -2175,7 +2175,7 @@ def _normalize_eval_output(row, output_type):
         val = row.get("output_float")
         if val is None:
             return None
-        return str(round(float(val), 2))
+        return _unit_interval_value(val)
     else:
         # Deterministic ("choices") evals dual-write: the engine stores the
         # selected choice in ``output_str_list`` and a JSON payload
@@ -2239,8 +2239,8 @@ def _majority_value(values):
 
     normalized = [_vote_key(v) for v in values]
     top_two = Counter(normalized).most_common(2)
-    # If the top two values have the same count there is no true majority.
-    if len(top_two) >= 2 and top_two[0][1] == top_two[1][1]:
+    # A plurality (for example 2/5 votes) is not a strict majority.
+    if top_two[0][1] * 2 <= len(values):
         return None
     # Map the winning normalised value back to its first original.
     winner = top_two[0][0]
@@ -2407,6 +2407,7 @@ def _calculate_judge_human_agreement(queue):
         "label_id",
         "label__name",
         "label__type",
+        "label__settings",
         "value",
     )
 
@@ -2419,6 +2420,7 @@ def _calculate_judge_human_agreement(queue):
             label_info[s["label_id"]] = {
                 "name": s["label__name"],
                 "type": s["label__type"],
+                "settings": s["label__settings"],
             }
 
     # Per-label judge-vs-human agreement.  Accumulate agree / total here
@@ -2431,7 +2433,9 @@ def _calculate_judge_human_agreement(queue):
     all_total = 0
     for label_id, info in label_info.items():
         # Incompatible label type → cannot compare judge vs human.
-        if info["type"] not in comparable_types:
+        if info["type"] not in comparable_types or not _matching_label_scale(
+            info["settings"], output_type, queue.custom_eval_config
+        ):
             label_results[str(label_id)] = {
                 "label_name": info["name"],
                 "label_type": info["type"],
@@ -2501,6 +2505,48 @@ def _calculate_judge_human_agreement(queue):
         "total_comparisons": int(all_total),
         "labels": label_results,
     }
+
+
+def _unit_interval_value(value):
+    """Stored percentage scores are finite fractions, not percent points."""
+    import math
+
+    if isinstance(value, bool):
+        return None
+    try:
+        number = float(value)
+    except (ValueError, TypeError, OverflowError):
+        return None
+    if not math.isfinite(number) or not 0 <= number <= 1:
+        return None
+    return str(round(number, 2))
+
+
+def _matching_label_scale(settings, output_type, config):
+    """Compare only declared matching scales; never infer a label mapping."""
+    if not isinstance(settings, dict):
+        return False
+    if output_type == "percentage":
+        return settings.get("min") == 0 and settings.get("max") == 1
+    options = settings.get("options", [])
+    if not isinstance(options, list) or not options:
+        return False
+    labels = [option.get("label") for option in options if isinstance(option, dict)]
+    if len(labels) != len(options) or not all(isinstance(v, str) and v for v in labels):
+        return False
+    vocabulary = {value.casefold() for value in labels}
+    if output_type == "pass_fail":
+        return not settings.get("multi_choice") and vocabulary == {"pass", "fail"}
+    if output_type != "deterministic":
+        return False
+    choices = config.config.get("choices") or config.eval_template.choices
+    if not isinstance(choices, list) or not choices:
+        return False
+    if not all(isinstance(value, str) and value for value in choices):
+        return False
+    return vocabulary == {value.casefold() for value in choices} and bool(
+        settings.get("multi_choice")
+    ) == bool(config.eval_template.multi_choice)
 
 
 def _comparable_label_types(output_type):
@@ -2595,10 +2641,11 @@ def _normalize_human_score_value(raw_value, label_type, output_type):
         # Align with the judge side: a percentage output rounds to 2 decimals,
         # so the human value must be rounded identically before comparison.
         if output_type == "percentage":
-            try:
-                scalar = round(float(scalar), 2)
-            except (TypeError, ValueError):
-                return None
+            return _unit_interval_value(scalar)
+        if output_type == "pass_fail" and (
+            not isinstance(scalar, str) or scalar.casefold() not in {"pass", "fail"}
+        ):
+            return None
 
         return _normalize_value(scalar)
     except Exception:  # noqa: BLE001 — one bad score must not break the queue

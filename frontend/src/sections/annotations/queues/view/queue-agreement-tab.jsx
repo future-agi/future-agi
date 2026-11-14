@@ -10,6 +10,7 @@ import {
   Typography,
 } from "@mui/material";
 import Section from "src/components/section";
+import MetricStrip from "src/components/metric-strip";
 import { LoadingScreen } from "src/components/loading-screen";
 import { useQueueAgreement } from "src/api/annotation-queues/annotation-queues";
 
@@ -200,25 +201,32 @@ export default function QueueAgreementTab({ queueId, queue }) {
           </Typography>
 
           {/* Overall */}
-          <Card sx={{ my: 2 }}>
-            <CardContent sx={{ textAlign: "center" }}>
-              <Typography variant="caption" color="text.secondary">
-                Overall Judge-Human Agreement
-              </Typography>
-              <Typography
-                variant="h2"
-                color={getAgreementColor(judge_vs_human.overall_agreement)}
-              >
-                {formatPct(judge_vs_human.overall_agreement)}
-              </Typography>
-              {judge_vs_human.overall_agreement == null && (
-                <Typography variant="body2" color="text.secondary">
-                  Not enough overlapping items with both judge scores and human
-                  labels to calculate agreement
-                </Typography>
-              )}
-            </CardContent>
-          </Card>
+          <MetricStrip
+            sx={{ my: 2 }}
+            items={[
+              {
+                label: "Overall Judge-Human Agreement",
+                value: formatPct(judge_vs_human.overall_agreement),
+              },
+              {
+                label: "Comparable item-label pairs",
+                value: judge_vs_human.total_comparisons,
+              },
+            ]}
+          />
+          {judge_vs_human.overall_agreement == null && (
+            <Typography variant="body2" color="text.secondary">
+              Not enough overlapping items with both judge scores and human
+              labels to calculate agreement
+            </Typography>
+          )}
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+            Exact matches against a strict majority of human labels. Numeric
+            labels must use a 0–1 scale; categorical labels must use the
+            evaluator’s choices (Pass/Fail for a pass/fail evaluator). Other
+            scales and vocabularies are not comparable. Numeric values are
+            rounded to two decimal places.
+          </Typography>
 
           {/* Per-Label */}
           {Object.keys(judge_vs_human.labels || {}).length > 0 && (

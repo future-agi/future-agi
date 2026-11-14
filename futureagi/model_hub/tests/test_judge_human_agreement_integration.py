@@ -150,6 +150,22 @@ def _make_label(organization, workspace, **kwargs):
         "settings": {},
     }
     defaults.update(kwargs)
+    if "settings" not in kwargs:
+        if defaults["type"] == "numeric":
+            defaults["settings"] = {
+                "min": 0,
+                "max": 1,
+                "step_size": 0.01,
+                "display_type": "slider",
+            }
+        elif defaults["type"] == "categorical":
+            defaults["settings"] = {
+                "options": [{"label": "pass"}, {"label": "fail"}],
+                "multi_choice": False,
+                "rule_prompt": "",
+                "auto_annotate": False,
+                "strategy": None,
+            }
     return AnnotationsLabels.objects.create(
         organization=organization,
         workspace=workspace,
@@ -437,6 +453,10 @@ class TestJudgeHumanAgreementIntegration:
         item = _make_queue_item(queue, span, organization)
         label = _make_label(organization, workspace)
 
+        template.choices = ["toxic", "benign"]
+        template.save()
+        label.settings["options"] = [{"label": value} for value in template.choices]
+        label.save()
         _make_eval_row(span, trace, cfg, output_str="toxic")
 
         Score.objects.create(
@@ -891,6 +911,10 @@ class TestJudgeHumanAgreementIntegration:
         item = _make_queue_item(queue, span, organization)
         label = _make_label(organization, workspace)
 
+        template.choices = ["toxic", "benign"]
+        template.save()
+        label.settings["options"] = [{"label": value} for value in template.choices]
+        label.save()
         _make_eval_row(
             span,
             trace,

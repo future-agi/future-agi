@@ -248,9 +248,23 @@ class AnnotationQueueSerializer(serializers.ModelSerializer):
                 "Evaluator does not belong to your organization."
             )
         queue_project_id = self._queue_project_id()
-        if queue_project_id and str(value.project_id) != queue_project_id:
+        if not queue_project_id or str(value.project_id) != queue_project_id:
             raise serializers.ValidationError(
                 "Evaluator must belong to the same project as the queue."
+            )
+        if value.deleted or value.project.deleted:
+            raise serializers.ValidationError("Evaluator is no longer available.")
+        if (
+            _workspace
+            and not Project.objects.filter(
+                self._workspace_visibility_q(organization, _workspace),
+                pk=value.project_id,
+                organization=organization,
+                deleted=False,
+            ).exists()
+        ):
+            raise serializers.ValidationError(
+                "Evaluator is not available in this workspace."
             )
         return value
 
