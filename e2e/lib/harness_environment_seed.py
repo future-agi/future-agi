@@ -151,9 +151,10 @@ def _authoring(documents, *, certified, production_only, workers=None):
     # Each tool as ALK writes it: an object named by `name`, so the review lists the contract item by item.
     contract = {"agent": "support", "tools": [{"name": tool} for tool in TOOLS]}
     if workers:
+        # Reached on the agent's tool service, which the world's door fronts as tools-api.
         contract["tool_entrypoints"] = [
-            {"tool": "lookup_order", "endpoint": "/orders/lookup", "method": "POST"},
-            {"tool": "issue_refund", "endpoint": "/refunds/issue", "method": "POST"},
+            {"tool": "lookup_order", "endpoint": "/orders/lookup", "method": "POST", "mode": "service", "service": "tools-api"},
+            {"tool": "issue_refund", "endpoint": "/refunds/issue", "method": "POST", "mode": "service", "service": "tools-api"},
         ]
         contract["workers"] = WORKERS
     if production_only:

@@ -82,15 +82,32 @@ def _bypasses(pairing: Pairing, runs: list[Any]) -> dict[str, list[WorkerBypass]
     return {worker: listed[:_BYPASSES_SHOWN] for worker, listed in found.items()}
 
 
-def _rebuild(name: str) -> Fix:
+def _rebuild(
+    name: str, action: str = "Rebuild the environment so its world holds worker limits"
+) -> Fix:
     return {
         "type": "rebuild_environment",
         "category": "tool_routing",
         "target": None,
-        "action": "Rebuild the environment so its world holds worker limits",
+        "action": action,
         "would": f"{name}'s calls are held to its own tools",
         "recheck": None,
     }
+
+
+# ALK puts the world's door in front of the agent's tool service only when it runs as this service.
+_DOOR_SERVICE = "tools-api"
+
+
+def _behind_door_service(contract: Mapping[str, Any]) -> bool:
+    """Whether the contract reaches its tools on the service the door fronts: a seal without a door then predates
+    worker limits; otherwise the build never had a door."""
+    return any(
+        isinstance(entry, Mapping)
+        and entry.get("mode") == "service"
+        and entry.get("service") == _DOOR_SERVICE
+        for entry in contract.get("tool_entrypoints") or []
+    )
 
 
 def worker_boundaries(
@@ -165,6 +182,18 @@ def worker_boundaries(
             reason = (
                 "This agent's tools run inside its own process, not through the world's door, so no worker's limits "
                 "are held."
+            )
+        elif door is None and not _behind_door_service(contract):
+            status = "blocked" if worker.get("allowed_tools") else "unavailable"
+            code = "no_world_door"
+            reason = (
+                "This build has no world door: its tools reach their service directly, so no worker's limits are "
+                "held. Rebuild with the tool service behind the door to hold them."
+            )
+            fix = (
+                _rebuild(name, "Rebuild the environment with its tool service behind the world's door")
+                if status == "blocked"
+                else None
             )
         elif door is None or door.get("worker_deadlines") != "per_worker":
             status = "blocked" if worker.get("allowed_tools") else "unavailable"

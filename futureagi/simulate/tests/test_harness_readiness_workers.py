@@ -13,16 +13,19 @@ from simulate.services.harness_readiness.evidence import Evidence
 from simulate.tests.test_harness_readiness import readiness_on as readiness_on  # noqa: F401
 from simulate.tests.test_harness_readiness import storage as storage  # noqa: F401
 
+# As ALK seals them: each tool reached on the agent's own tool service, which the world's door fronts as tools-api.
+_SERVICE = {"mode": "service", "service": "tools-api"}
 CONTRACT = {
     "tool_entrypoints": [
-        {"tool": "get_order", "endpoint": "/orders/get", "method": "POST"},
-        {"tool": "list_refunds", "endpoint": "/refunds/list", "method": "POST"},
+        {"tool": "get_order", "endpoint": "/orders/get", "method": "POST", **_SERVICE},
+        {"tool": "list_refunds", "endpoint": "/refunds/list", "method": "POST", **_SERVICE},
         {
             "tool": "update_order_status",
             "endpoint": "/orders/update_status",
             "method": "POST",
+            **_SERVICE,
         },
-        {"tool": "issue_refund", "endpoint": "/refunds/issue"},
+        {"tool": "issue_refund", "endpoint": "/refunds/issue", **_SERVICE},
     ],
     "workers": [
         {
@@ -124,6 +127,28 @@ def test_old_seal_with_allowed_tools_is_blocked_with_a_rebuild_fix():
         "blocked",
         "sealed_before_worker_limits",
     )
+    assert row["fix"]["type"] == "rebuild_environment"
+    assert set(_boundaries(row).values()) == {"not_enforced"}
+
+
+@pytest.mark.parametrize(
+    "entry",
+    [
+        # Built today with the tool service under another name: no door in front of it.
+        {"mode": "service", "service": "ledger"},
+        # Built today with the tools imported from the agent's own module.
+        {"mode": "import", "module": "agent", "service": ""},
+    ],
+)
+def test_a_build_without_a_world_door_says_so_not_that_it_is_old(entry):
+    contract = {
+        **CONTRACT,
+        "tool_entrypoints": [{**one, **entry} for one in CONTRACT["tool_entrypoints"]],
+    }
+    row = _rows(_pairing(contract), _evidence(door=None, worker_permissions=None))["order_lookup"]
+    assert (row["status"], row["reason_code"]) == ("blocked", "no_world_door")
+    assert "sealed before" not in row["reason"]
+    assert "door" in row["reason"]
     assert row["fix"]["type"] == "rebuild_environment"
     assert set(_boundaries(row).values()) == {"not_enforced"}
 
