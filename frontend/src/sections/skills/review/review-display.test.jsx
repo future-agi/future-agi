@@ -37,8 +37,13 @@ it('maps recorded execution time, approver, executor and both versions into the 
   const receipt = mapReleaseReceipt({ request_id: 'request', executed_by: 'executor-id', executed_by_name: 'Erin Releaser', approved_by_name: 'Robin Reviewer', executed_at: '2026-11-10T12:00:00Z', previous_version: 1, name: 'Support agent', currentness_at_action: {}, post_move_state: { label: 'production', version: 2 } });
   render(<ReleaseReceipt receipt={receipt} />);
   expect(screen.getByText('Production moved from v1 to v2')).toBeVisible();
-  expect(screen.getByText(/Released by Erin Releaser/)).toBeVisible();
-  expect(screen.getByText('Approved by Robin Reviewer')).toBeVisible();
+  // Label/value rows in one table, not mixed sentences; no duplicate "Released" badge.
+  const row = (label) => screen.getByText(label, { selector: 'dt' }).parentElement;
+  expect(row('Released by')).toHaveTextContent('Erin Releaser');
+  expect(row('Approved by')).toHaveTextContent('Robin Reviewer');
+  expect(row('Before the move')).toHaveTextContent('Production v1');
+  expect(row('After the move')).toHaveTextContent('Production v2');
+  expect(screen.queryByText('Released', { exact: true })).not.toBeInTheDocument();
   expect(receipt.recordedAt).toBe('2026-11-10T12:00:00Z');
 });
 it('keeps approval and release paused after a stale refusal until explicit refresh', async () => {
@@ -47,8 +52,9 @@ it('keeps approval and release paused after a stale refusal until explicit refre
   render(<ReleaseRequestPanel scopeKey="scope" state="ready" request={{ id: 'request', revision: 1, status: 'pending' }} preview={{ packet, current: true, fingerprint: 'fp' }} review={{ complete: true }} permissions={{ canDecide: true }} onDecide={decide} onRefresh={refresh} />);
   fireEvent.click(screen.getByRole('checkbox'));
   fireEvent.click(screen.getByRole('button', { name: 'Approve release' }));
-  expect(await screen.findByText('This changed since you opened it. Refresh and review again.')).toBeVisible();
+  expect(await screen.findByText('Approval no longer applies. Review the change and renew the request.')).toBeVisible();
   expect(screen.getByRole('button', { name: 'Approve release' })).toBeDisabled();
+  fireEvent.click(screen.getByRole('button', { name: 'Why this review is paused' }));
   fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
   expect(refresh).toHaveBeenCalledTimes(1);
 });
@@ -70,7 +76,7 @@ it('closes the move confirmation before a stale response can open renewal', asyn
   fireEvent.click(screen.getByRole('button', { name: 'Move production', exact: true }));
   expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   reject({ statusCode: 409, code: 'release_conflict' });
-  expect(await screen.findByText('This changed since you opened it. Refresh and review again.')).toBeVisible();
+  expect(await screen.findByText('Approval no longer applies. Review the change and renew the request.')).toBeVisible();
   expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
 });
 
@@ -89,6 +95,10 @@ it('keeps one evidence ID consistent across selection, consent, review, paused r
   fireEvent.click(screen.getByRole('button', { name: 'Share and attach 1 result' }));
   expect(within(screen.getByRole('dialog')).getByText('Passed on examples')).toBeVisible();
   expect(within(screen.getByRole('dialog')).getByText('1 case tested · 2 runs graded · 0 regressions')).toBeVisible();
+  // The record is named by title with a Private badge; its ID sits under Details.
+  expect(within(screen.getByRole('dialog')).getByText('Private', { exact: true })).toBeVisible();
+  expect(screen.queryByTitle('5cae58ed')).not.toBeInTheDocument();
+  fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Details' }));
   expect(screen.getByTitle('5cae58ed')).toBeVisible();
   consent.unmount();
 
@@ -109,4 +119,99 @@ it('keeps one evidence ID consistent across selection, consent, review, paused r
   expect(screen.getByText('Renew the review to recheck this result.')).toBeVisible();
   expect(screen.getByTitle('5cae58ed')).toBeVisible();
   expect(screen.queryByText('Not recorded')).not.toBeInTheDocument();
+});
+
+// ---- UX iteration 3, REV1-REV3, REV7: one summary table, one reason, one action ----
+const summaryPacket = { ...packet, subjectKind: 'agent_context', transition: { ...packet.transition, expectedImpactFingerprint: 'impact-fp' } };
+const capabilities = { beforeDigest: 'a'.repeat(64), afterDigest: 'b'.repeat(64), changes: [] };
+const impact = { following: 2, pinned: 1, unobserved: 0, moreAvailable: false };
+const emptyChecks = { items: [], summary: { errors: 0, warnings: 0 } };
+const summaryRows = () => within(screen.getByLabelText('Release summary'));
+
+it('states evidence, impact, permissions and files once in a key/value table, with the hashes inside Compared content', () => {
+  render(<ReleaseReviewBody packet={summaryPacket} changes={[{ path: 'AGENTS.md', status: 'modified', fromText: 'a', toText: 'b' }]} dependencyChanges={[]} checks={emptyChecks} capabilities={capabilities} impact={impact} />);
+  ['Evidence', 'Who is affected', 'Permissions', 'Files'].forEach((label) => expect(summaryRows().getByText(label, { selector: 'dt' })).toBeVisible());
+  expect(summaryRows().getByText('No test results attached. Not tested is not a pass.')).toBeVisible();
+  expect(summaryRows().getByText('1 file changed · 0 linked skills changed')).toBeVisible();
+  // Nothing below restates a summary fact.
+  expect(screen.getAllByText('No permission changes found.')).toHaveLength(1);
+  expect(screen.getAllByText(/connected consumer|follow/i).length).toBeGreaterThan(0);
+  expect(screen.queryByText('Who is affected', { selector: 'h2,h3,h4,h5,h6,p,span' })).not.toBeInTheDocument();
+  expect(screen.queryByText('No matching test evidence. Not tested is not a pass.')).not.toBeInTheDocument();
+  // Engineering words and raw hashes are not primary content.
+  ['Release identities', 'Impact counts', 'Generated files', 'Other checks', 'Locked digest'].forEach((text) => expect(screen.queryByText(text)).not.toBeInTheDocument());
+  expect(screen.queryByText(/aaaaaaaaaaaa/)).not.toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Counts by app' })).toBeVisible();
+  expect(screen.getByRole('button', { name: 'Version details' })).toBeVisible();
+  fireEvent.click(screen.getByRole('button', { name: 'Compared content' }));
+  expect(screen.getByText('No changes in recognized static declarations. This is not a safety certification.')).toBeVisible();
+  expect(screen.getByRole('button', { name: 'Copy full Before' })).toBeVisible();
+  expect(screen.getByRole('button', { name: 'Copy full Candidate' })).toBeVisible();
+});
+it('keeps the target configuration digest one hover away on the visible summary line', () => {
+  const target = { bindingId: 'binding', environmentId: null, revision: 2, configurationDigest: 'd'.repeat(64) };
+  render(<ReleaseReviewBody packet={{ ...summaryPacket, target }} changes={[]} dependencyChanges={[]} checks={emptyChecks} capabilities={capabilities} impact={impact} />);
+  expect(summaryRows().getByText('Application configuration r2')).toBeVisible();
+  expect(screen.getByTitle('d'.repeat(64))).toBeVisible();
+  expect(screen.queryByText(/dddddddddddd/)).not.toBeInTheDocument();
+});
+it('never hides a missing permission comparison or unavailable checks behind the summary', () => {
+  render(<ReleaseReviewBody packet={summaryPacket} changes={[]} dependencyChanges={[]} checks={undefined} capabilities={undefined} impact={impact} />);
+  expect(summaryRows().getByText('Comparison unavailable. Review the file changes before deciding.')).toBeVisible();
+  expect(screen.getByText('Permission comparison unavailable')).toBeVisible();
+  expect(screen.getByText('Checks unavailable. This is not a successful check.')).toBeVisible();
+});
+it('lists linked skills with a Version column that carries the locked version, not a digest column', () => {
+  const dependency = { mount: 'skills/refund-policy', before: { version: 1 }, after: { version: 2, digest: 'c'.repeat(64), requested: { label: 'production' } } };
+  render(<ReleaseReviewBody packet={summaryPacket} changes={[]} dependencyChanges={[dependency]} checks={emptyChecks} capabilities={capabilities} impact={impact} />);
+  expect(screen.getByRole('columnheader', { name: 'Version' })).toBeVisible();
+  expect(screen.queryByRole('columnheader', { name: 'Digest' })).not.toBeInTheDocument();
+  expect(screen.queryByText('Locked digest')).not.toBeInTheDocument();
+  expect(screen.getByText('v2')).toBeVisible();
+});
+it('shows the result count the author can still attach when none is attached', () => {
+  render(<ReleaseReviewBody packet={summaryPacket} changes={[]} dependencyChanges={[]} checks={emptyChecks} capabilities={capabilities} impact={impact} availableEvidence={2} />);
+  expect(summaryRows().getByText('No test results attached (2 available).')).toBeVisible();
+  cleanup();
+  render(<ReleaseReviewBody packet={summaryPacket} changes={[]} dependencyChanges={[]} checks={emptyChecks} capabilities={capabilities} impact={impact} availableEvidence={0} />);
+  expect(summaryRows().getByText('No matching test evidence. Not tested is not a pass.')).toBeVisible();
+});
+it('orders the pending decision Add comment, Request changes, Approve release, with one reason under the primary', () => {
+  render(<ReleaseRequestPanel scopeKey="scope" state="ready" request={{ id: 'request', revision: 1, status: 'pending' }} preview={{ packet, current: true, fingerprint: 'fp' }} review={{ complete: true }} permissions={{ canDecide: true }} onDecide={vi.fn()} />);
+  const names = ['Add comment', 'Request changes', 'Approve release'];
+  const buttons = names.map((name) => screen.getByRole('button', { name }));
+  buttons.forEach((button, index) => { if (index) expect(buttons[index - 1].compareDocumentPosition(button) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy(); });
+  expect(screen.getByRole('button', { name: 'Approve release' })).toHaveAccessibleDescription('Tick the acknowledgment to approve');
+  expect(screen.getAllByText('Tick the acknowledgment to approve')).toHaveLength(1);
+});
+it('pauses a stale request with one title, one sentence, one action and Refresh inside the disclosure', () => {
+  render(<ReleaseRequestPanel scopeKey="scope" state="ready" request={{ id: 'request', revision: 1, status: 'approved' }} preview={{ packet, current: false, fingerprint: 'fp' }} review={{ complete: true }} staleCode="release_conflict" permissions={{ canDecide: true, canExecute: true }} onRenew={vi.fn()} onRefresh={vi.fn()} />);
+  expect(screen.getByText('Approval no longer applies. Review the change and renew the request.')).toBeVisible();
+  expect(screen.queryByText(/This changed since you opened it/)).not.toBeInTheDocument();
+  expect(screen.queryByText('Renew and approve this request before releasing.')).not.toBeInTheDocument();
+  expect(screen.getAllByRole('button', { name: 'Renew review' })).toHaveLength(1);
+  expect(screen.queryByRole('button', { name: 'Refresh' })).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: 'Why this review is paused' }));
+  expect(screen.getByRole('button', { name: 'Refresh' })).toBeVisible();
+  const release = screen.getByRole('button', { name: 'Release to production' });
+  expect(release).toBeDisabled();
+  expect(release).toHaveAccessibleDescription('Renew the review first');
+});
+it('keeps the renewal approval line free of revision numbers', () => {
+  useRenewalPreview.mockReturnValue({ data: { revision: 2, fingerprint: 'renewed', packet, changes: [], removedEvidence: [] } });
+  render(<ReleaseRenewalDialog open requestId="request" onClose={vi.fn()} />);
+  expect(screen.getByText('Approving records a new approval for this request.')).toBeVisible();
+  expect(screen.queryByText(/Approving creates revision/)).not.toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Approve renewed revision' })).toBeVisible();
+});
+it('renders the receipt as one table of facts and a clear action hierarchy', () => {
+  const receipt = { requestId: 'request', decisionId: 'decision', executedBy: 'executor', executedByName: 'Erin Releaser', approvedByName: 'Robin Reviewer', recordedAt: '2026-11-10T12:00:00Z', subjectKind: 'agent_context', subjectId: 'context', previousVersion: 1, currentnessAtAction: {}, postMoveState: { label: 'production', version: 2 } };
+  render(<ReleaseReceipt receipt={receipt} />);
+  const table = within(screen.getByLabelText('Release receipt details'));
+  ['Before the move', 'After the move', 'Approved by', 'Released by', 'Recorded'].forEach((label) => expect(table.getByText(label, { selector: 'dt' })).toBeVisible());
+  expect(screen.queryByText('Released', { exact: true })).not.toBeInTheDocument();
+  expect(screen.getByRole('link', { name: 'View version' })).toHaveClass('MuiButton-contained');
+  expect(screen.getByRole('link', { name: 'View release history' })).toHaveClass('MuiButton-outlined');
+  expect(screen.getByRole('link', { name: 'Watch delivery' })).toHaveClass('MuiButton-text');
+  expect(screen.getByRole('button', { name: 'Copy receipt link' })).toHaveClass('MuiButton-text');
 });

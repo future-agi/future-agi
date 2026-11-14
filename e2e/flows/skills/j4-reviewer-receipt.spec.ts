@@ -159,7 +159,7 @@ test('SKILLS-E2E-040: an assigned reviewer releases an exact packet and reopens 
     await page.screenshot({ path: `${output}/shots/05-stale-policy-refused.png` });
     await page.getByRole('dialog').getByRole('button', { name: 'Cancel', exact: true }).click();
     await expect(page.getByRole('dialog')).toHaveCount(0);
-    await expect(page.getByText('This changed since you opened it. Refresh and review again.', { exact: true })).toBeVisible();
+    await expect(page.getByText('Approval no longer applies. Review the change and renew the request.', { exact: true })).toBeVisible();
     await page.screenshot({ path: `${output}/shots/review-stale.png` });
     const renewalContext = await scopeActors.openContext(browser, author);
     const renewalPage = await renewalContext.newPage();

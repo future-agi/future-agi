@@ -85,8 +85,10 @@ it('carries the published candidate forward, preselects the only target and shar
   expect(screen.getAllByRole('checkbox', { name: /^Attach Text comparison/ })).toHaveLength(2);
   screen.getAllByRole('checkbox', { name: /^Attach Text comparison/ }).forEach((checkbox) => expect(checkbox).toBeDisabled());
   fireEvent.click(screen.getByRole('button', { name: 'Share and attach 2 results' }));
-  // The confirmation names every record it shares, visibly, with no extra disclosure to open.
+  // The confirmation names every record it shares by title with a Private badge; IDs sit under Details.
   expect(within(screen.getByRole('dialog')).getAllByText('Private', { exact: true })).toHaveLength(2);
+  expect(screen.queryByTitle('run-a')).not.toBeInTheDocument();
+  fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Details' }));
   expect(screen.getAllByTitle('run-a').length).toBeGreaterThan(0);
   expect(screen.getAllByTitle('run-b').length).toBeGreaterThan(0);
   expect(screen.queryByText('No matching test evidence. Not tested is not a pass.')).not.toBeInTheDocument();
@@ -276,6 +278,9 @@ it('keeps carried evidence and reviewer when editing a prepared request, but cle
   render(<MemoryRouter><ReleaseRequestComposer scopeKey="scope" prefill={{ kind: 'agent_context', subjectId: 'context', name: 'Support agent', candidate: { id: 'v2', number: 2, digest: 'sha256:candidate' }, evidence: ['skills_text:carried'] }} /></MemoryRouter>);
   expect(await screen.findByText('1 result attached from your test')).toBeVisible();
   expect(screen.getByText('From your test')).toBeVisible();
+  // Something is attached, so the "no evidence" caution stays quiet.
+  expect(screen.queryByText(/aren.t attached|isn.t attached/)).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Attach results' })).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole('button', { name: 'Prepare review' }));
   expect(await screen.findByText('Reviewer: Sam Rivera')).toBeVisible();
   expect(screen.queryByRole('combobox', { name: 'Assigned reviewer' })).not.toBeInTheDocument();
@@ -287,4 +292,48 @@ it('keeps carried evidence and reviewer when editing a prepared request, but cle
   fireEvent.click(screen.getByRole('button', { name: 'Prepare review' }));
   expect(await screen.findByRole('checkbox', { name: 'I reviewed this exact candidate, target, evidence and release consequence.' })).not.toBeChecked();
   expect(submit).not.toHaveBeenCalled();
+});
+
+// ---- UX iteration 3, REV2 and REV5 ----
+it('marks and lists the carried private run first, never ticks it, and warns beside Prepare without blocking it', async () => {
+  useReviewSubjects.mockReturnValue({ data: { results: [], total_pages: 1 } });
+  useReviewCandidates.mockReturnValue({ data: { results: [], total_pages: 1 } });
+  useReviewOptions.mockReturnValue({ data: { targets: [], evidence: [ref('run-a'), ref('run-b')], recipients: [] }, refetch: vi.fn() });
+  const prepare = vi.fn().mockResolvedValue(null);
+  usePrepareReleaseReview.mockReturnValue({ mutateAsync: prepare, isPending: false });
+  useSubmitReleaseReview.mockReturnValue({ mutateAsync: vi.fn() });
+  useShareReleaseEvidence.mockReturnValue({ mutateAsync: vi.fn() });
+  render(<MemoryRouter><ReleaseRequestComposer scopeKey="org:ws:author" prefill={{ kind: 'agent_context', subjectId: 'context', name: 'Refund policy', candidate: { id: 'v2', number: 2, digest: 'sha256:candidate' }, evidence: ['skills_text:run-b'] }} /></MemoryRouter>);
+  const rows = within(screen.getByRole('table', { name: 'Test evidence' })).getAllByRole('row').slice(1);
+  expect(within(rows[0]).getByText('From your test')).toBeVisible();
+  expect(within(rows[1]).queryByText('From your test')).not.toBeInTheDocument();
+  // Private: offered for sharing, never pre-ticked.
+  expect(within(rows[0]).getByRole('button', { name: 'Share and attach' })).toBeVisible();
+  screen.getAllByRole('checkbox', { name: /^Attach Text comparison/ }).forEach((box) => expect(box).not.toBeChecked());
+  expect(screen.getByText("2 passing results aren't attached. The reviewer will see no test evidence.")).toBeVisible();
+  expect(screen.getByRole('button', { name: 'Attach results' })).toBeVisible();
+  // Prepare stays one click.
+  fireEvent.click(screen.getByRole('button', { name: 'Prepare review' }));
+  await waitFor(() => expect(prepare).toHaveBeenCalledTimes(1));
+  expect(prepare.mock.calls[0][0].evidence).toEqual([]);
+});
+it('shows two numbered steps with the current one marked, and plain headings', () => {
+  useReviewSubjects.mockReturnValue({ data: { results: [], total_pages: 1 } });
+  useReviewCandidates.mockReturnValue({ data: { results: [], total_pages: 1 } });
+  useReviewOptions.mockReturnValue({ data: { targets: [{ name: 'refund_agent', target: { bindingId: 'binding', revision: 1 } }, { name: 'other_agent', target: { bindingId: 'other', revision: 1 } }], evidence: [], recipients: [] }, refetch: vi.fn() });
+  usePrepareReleaseReview.mockReturnValue({ mutateAsync: vi.fn(), isPending: false });
+  useSubmitReleaseReview.mockReturnValue({ mutateAsync: vi.fn() });
+  useShareReleaseEvidence.mockReturnValue({ mutateAsync: vi.fn() });
+  render(<MemoryRouter><ReleaseRequestComposer scopeKey="org:ws:author" prefill={{ kind: 'agent_context', subjectId: 'context', name: 'Refund policy', candidate: { id: 'v2', number: 2, digest: 'sha256:candidate' } }} /></MemoryRouter>);
+  const steps = within(screen.getByLabelText('Request steps')).getAllByRole('listitem');
+  expect(steps).toHaveLength(2);
+  expect(steps[0]).toHaveAttribute('aria-current', 'step');
+  expect(steps[1]).not.toHaveAttribute('aria-current');
+  expect(screen.getByText('Version to release')).toBeVisible();
+  expect(screen.queryByText('Release candidate')).not.toBeInTheDocument();
+  expect(screen.getByLabelText('Published candidate')).toBeVisible();
+  expect(screen.getByRole('link', { name: 'Run tests' })).toBeVisible();
+  fireEvent.mouseDown(screen.getByRole('combobox', { name: 'Application target' }));
+  expect(screen.getByRole('option', { name: 'Application target · refund_agent' })).toBeVisible();
+  expect(screen.queryByText(/Configuration date not reported/)).not.toBeInTheDocument();
 });

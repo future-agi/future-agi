@@ -13,6 +13,7 @@ import { apiPath } from 'src/api/contracts/api-surface';
 import { operationStatus } from 'src/api/skills/operation-errors';
 import CapabilityNotice from '../components/CapabilityNotice';
 import { releaseTitle } from './reviewPresentation';
+import { skillsRouteSx } from '../components/routeGutter';
 import StatusBadge from 'src/components/status-badge';
 import { reviewComposerUrl } from '../utils/review-links';
 import ReleaseRequestPanel, { useReviewedOperation } from './ReleaseRequestPanel';
@@ -57,7 +58,7 @@ export function RequestReviewController({ scopeKey, requestId, contextId, viewSt
   // itself is attested on the page before release. One stable parent keeps
   // the dialog mounted while the page switches between stale and renewed.
   const renewal = <ReleaseRenewalDialog open={renewing} requestId={requestId} onClose={() => { setRenewing(false); query.refetch(); }} />;
-  return <Stack spacing={1.5} sx={{ px: { xs: 2, md: 3 }, py: 2, minWidth: 0 }}>
+  return <Stack spacing={1.5} sx={skillsRouteSx}>
     {header}
     <View scopeKey={scopeKey} state={state} {...query.data} renewalReason={renewalReason} staleCode={query.data?.staleCode || query.data?.renewalRequired || (paused ? 'review_stale' : undefined)} request={request} receipt={display.receipt} onRetry={query.refetch} onRefresh={async () => { const result = await query.refetch(); if (!result?.isError && result?.data?.preview?.current) setRefusedRevision(null); return result; }} onRenew={() => setRenewing(true)}
       renewalOpen={renewing} permissions={{ canDecide, canExecute: !author && query.data?.canExecute === true }} reviewedIdentity={reviewedIdentity} onReviewedChange={setReviewedIdentity}
@@ -75,6 +76,7 @@ export function RequestReviewController({ scopeKey, requestId, contextId, viewSt
 RequestReviewController.propTypes = { scopeKey: PropTypes.string.isRequired, requestId: PropTypes.string.isRequired, contextId: PropTypes.string, viewState: PropTypes.string, View: PropTypes.elementType };
 
 export function ReviewInboxController({ scopeKey, viewState, View }) {
+  const access = useSkillV11Scope();
   const [page, setPage] = useState(1);
   const [status, setStatus] = useState('');
   const [params] = useSearchParams();
@@ -112,7 +114,7 @@ export function ReviewInboxController({ scopeKey, viewState, View }) {
       candidate: { id: params.get('candidate'), number: Number(params.get('number')), digest: params.get('digest') } } : undefined} />;
   if (requestId) return <RequestReviewController key={`${scopeKey}:${requestId}`} scopeKey={scopeKey} requestId={requestId} viewState={viewState} />;
   const state = viewState || (!reviewsReady() ? 'unavailable' : query.isLoading ? 'loading' : query.isError ? 'error' : query.data ? 'ready' : 'unavailable');
-  return <View scopeKey={scopeKey} state={state} data={data} status={status} authored={authored}
+  return <View scopeKey={scopeKey} state={state} data={data} status={status} authored={authored} currentUserId={access.scope?.userId}
     onCompose={state === 'ready' ? () => navigate(`${paths.dashboard.skills.reviews}?compose=1`) : undefined}
     onToggleAuthored={() => { setPage(1); navigate(`${paths.dashboard.skills.reviews}${authored ? '' : '?mine=1'}`); }} onStatusChange={(value) => { setStatus(value); setPage(1); }} onPageChange={setPage} onRetry={query.refetch} onSeen={seen.mutateAsync}
     onOpen={(item) => navigate(`${paths.dashboard.skills.reviews}?request=${item.id}`)} />;

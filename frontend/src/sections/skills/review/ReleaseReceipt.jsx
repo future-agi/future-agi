@@ -1,12 +1,12 @@
 import { useState } from 'react';
 import PropTypes from 'prop-types';
-import { Alert, Box, Button, Stack, Tooltip, Typography } from '@mui/material';
+import { Alert, Button, Stack, Tooltip, Typography } from '@mui/material';
 import { enqueueSnackbar } from 'notistack';
-import StatusBadge from 'src/components/status-badge';
 import { relativeReviewTime, reviewPersonName } from '../utils/review-display';
 import { paths } from 'src/routes/paths';
 import IdentityChip from '../components/IdentityChip';
 import TechnicalDetails from '../components/TechnicalDetails';
+import SummaryTable from './SummaryTable';
 
 // A durable historical record is not a statement about today's production.
 export default function ReleaseReceipt({ receipt, request }) {
@@ -21,18 +21,19 @@ export default function ReleaseReceipt({ receipt, request }) {
   const receiptUrl = `${paths.dashboard.skills.reviews}?request=${encodeURIComponent(receipt.requestId)}`;
   return <Stack spacing={1.5} aria-label="Release receipt">
       <Typography variant="s3" color="text.secondary">Release receipt</Typography>
-      <Box sx={{ border: 1, borderColor: 'divider', borderRadius: 1, p: 1.5 }}><Stack spacing={1}>
-        <Stack direction="row" gap={1} alignItems="center"><StatusBadge status="released" label="Released" /><Typography variant="s1" sx={{ fontWeight: 600 }}>{labelName} moved {before != null ? `from v${before} ` : ''}to v{after.version}</Typography></Stack>
-        <Stack direction="row" gap={1}><Typography variant="s3" color="text.secondary">Before the move</Typography><Typography variant="s3">{before != null ? `${labelName} v${before}` : `${labelName} unassigned`}</Typography></Stack>
-        <Stack direction="row" gap={1}><Typography variant="s3" color="text.secondary">After the move</Typography><Typography variant="s3">{labelName} v{after.version}</Typography></Stack>
-        <Typography variant="s3">Approved by {reviewPersonName(receipt.approvedByName)}</Typography>
-        <Typography variant="s3">Released by {reviewPersonName(receipt.executedByName)}{receipt.recordedAt && <> · <Tooltip title={receipt.recordedAt}><span>{relativeReviewTime(receipt.recordedAt)}</span></Tooltip></>}</Typography>
-        <Typography variant="s3" color="text.secondary">Recorded at release time — production may have moved since.</Typography>
-      </Stack></Box>
-      <Stack direction="row" flexWrap="wrap" gap={1}>
+      <Typography variant="s1" sx={{ fontWeight: 600 }}>{labelName} moved {before != null ? `from v${before} ` : ''}to v{after.version}</Typography>
+      <SummaryTable label="Release receipt details" labelWidth={140} rows={[
+        { label: 'Before the move', value: before != null ? `${labelName} v${before}` : `${labelName} unassigned` },
+        { label: 'After the move', value: `${labelName} v${after.version}` },
+        { label: 'Approved by', value: reviewPersonName(receipt.approvedByName) },
+        { label: 'Released by', value: reviewPersonName(receipt.executedByName) },
+        { label: 'Recorded', value: receipt.recordedAt ? <Tooltip title={receipt.recordedAt}><span>{relativeReviewTime(receipt.recordedAt)}</span></Tooltip> : 'Time not reported' },
+      ]} />
+      <Typography variant="s3" color="text.secondary">Recorded at release time — production may have moved since.</Typography>
+      <Stack direction="row" flexWrap="wrap" alignItems="center" gap={1}>
         <Button variant="contained" color="primary" href={resourceUrl ? `${resourceUrl}?version=${after.version}` : undefined} disabled={!resourceUrl}>View version</Button>
         <Button variant="outlined" href={resourceUrl ? `${resourceUrl}?tab=versions` : undefined} disabled={!resourceUrl}>View release history</Button>
-        {kind === 'agent_context' && <Button variant="outlined" href={resourceUrl ? `${resourceUrl}?tab=consumers` : undefined} disabled={!resourceUrl}>Watch delivery</Button>}
+        {kind === 'agent_context' && <Button href={resourceUrl ? `${resourceUrl}?tab=consumers` : undefined} disabled={!resourceUrl}>Watch delivery</Button>}
         <Button onClick={async () => {
           try { await navigator.clipboard.writeText(new URL(receiptUrl, window.location.origin).href); setCopyError(false); enqueueSnackbar('Copied'); }
           catch { setCopyError(true); }

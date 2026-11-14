@@ -7,13 +7,6 @@ export const releaseTitle = (transition) => transition.expectedVersion == null
 
 export const counted = (count, singular, plural = `${singular}s`) => `${count} ${count === 1 ? singular : plural}`;
 
-export const configurationDate = (option) => {
-  const date = option?.configuredAt || option?.configured_at || option?.updatedAt || option?.updated_at;
-  return date && Number.isFinite(Date.parse(date))
-    ? `Configured ${new Intl.DateTimeFormat(undefined, { dateStyle: 'medium' }).format(new Date(date))}`
-    : 'Configuration date not reported';
-};
-
 // Keep the shared evidence renderer and its controls; stack its cells at phone width.
 export const responsiveEvidenceSx = {
   '& table[aria-label="Test evidence"]': { display: { xs: 'block', sm: 'table' } },
