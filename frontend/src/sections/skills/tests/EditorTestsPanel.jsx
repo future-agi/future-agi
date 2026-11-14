@@ -71,12 +71,12 @@ function EditorTestsContent({
     <Stack spacing={1.5} sx={{ minWidth: 0 }}>
       <Typography variant="m3">Tests</Typography>
       <Typography variant="s3" color="text.secondary">
-        In this text-only test · no scripts or external actions
+        Test cases run text only — no scripts or tools.
       </Typography>
       {!suite.data.cases.length ? (
         <EmptyState
           title="Add a real request"
-          description="Save a reviewed example in Tests before comparing your draft."
+          description="Save a reviewed test case before comparing your draft."
           action={
             <Button
               size="small"
@@ -84,7 +84,7 @@ function EditorTestsContent({
               component={RouterLink}
               to={`${paths.dashboard.skills.detail(skill.id)}?tab=tests`}
             >
-              Add examples
+              Add test case
             </Button>
           }
         />

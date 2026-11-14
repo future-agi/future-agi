@@ -23,10 +23,14 @@ import {
   useSkillTestingOptions,
   useSkillV11Scope,
 } from "src/api/skills/testing";
+import { useSkillsSpendPolicy } from "src/api/skills/r3-spend";
 import ContentSkeleton from "src/components/content-skeleton";
 import ErrorState from "src/components/error-state";
 import Section from "src/components/section";
 import TestInventoryReview from "./TestInventoryReview";
+import CapabilityNotice from "../components/CapabilityNotice";
+import ActionReason, { reasonProps } from "../components/ActionReason";
+import { useSkillsAccess } from "../utils/access";
 
 async function draftCandidate(draft) {
   return { kind: 'draft', revision: draft.revision, digest: await skillFilesDigest(draft.files) };
@@ -256,6 +260,17 @@ export default function TestRunSetup({
       ? profileLimits?.maxTotalTokens
       : Number(settings.maxTotalTokens);
   const permitted = skill.permissions?.canRunTests === true;
+  // Paid runs need a workspace allowance. It is read before consent so a missing allowance is a
+  // calm prerequisite beside the run, never an error after pressing it. Consent stays separate.
+  const spend = useSkillsSpendPolicy();
+  const access = useSkillsAccess();
+  const spendRefused = error.includes("administrator must enable");
+  const policyOff =
+    Boolean(spend?.data) &&
+    (!spend.data.enabled || spend.data.periodLimitUsd == null);
+  // A refusal while the policy is unknown also disables the run; once the re-read policy says an
+  // allowance exists, the reviewer may retry and the server checks again.
+  const allowanceOff = policyOff || (spendRefused && !spend?.data);
   const valid =
     permitted &&
     model?.canRun &&
@@ -404,6 +419,7 @@ export default function TestRunSetup({
       onStarted(run, plan.configuration);
     } catch (failure) {
       setError(errorCopy(failure));
+      if (getSkillErrorCode(failure) === "spend_policy_required") spend?.refetch?.();
       // A validation rejection did not admit work. Unknown/network outcomes keep the exact submission for replay.
       const capacityRejected = !submitted && operationStatus(failure) === 429 && getSkillErrorCode(failure) === "skills_capacity_exceeded";
       if (capacityRejected) setSubmitted(false);
@@ -454,14 +470,35 @@ export default function TestRunSetup({
         · {caseIds.length} selected examples
       </Typography>
       <Typography variant="s3" color="text.secondary">
-        In this text-only test · no scripts or external actions
+        Test cases run text only — no scripts or tools.
       </Typography>
       {!permitted && (
         <Alert severity="info">
           Workspace write access is required to run tests.
         </Alert>
       )}
-      {error && <Alert severity="error">{error}{error.includes("administrator must enable") && <Button component="a" href={paths.dashboard.skills.allowance}>Open workspace allowance</Button>}</Alert>}
+      {(policyOff || spendRefused) && (
+        <CapabilityNotice
+          title="Paid runs need a workspace allowance"
+          description={
+            access.canAdmin
+              ? "Set a limit for paid test runs in this workspace, then run this test."
+              : "Ask a workspace admin to set one."
+          }
+          actions={
+            access.canAdmin ? (
+              <Button
+                variant="outlined"
+                size="small"
+                href={paths.dashboard.skills.allowance}
+              >
+                Set allowance
+              </Button>
+            ) : undefined
+          }
+        />
+      )}
+      {error && !spendRefused && <Alert severity="error">{error}</Alert>}
       {!options.data.models.some((item) => item.canRun) && (
         <Alert severity="info">
           Connect a supported workspace model to run tests.{" "}
@@ -822,18 +859,30 @@ export default function TestRunSetup({
                 submission; do not start a new paid run to discover its status.
               </Alert>
             )}
-            <Box>
+            <Stack
+              direction={{ xs: "column", sm: "row" }}
+              spacing={1.5}
+              alignItems={{ xs: "flex-start", sm: "center" }}
+            >
               <Button
                 variant={compact ? "outlined" : "contained"}
+                color="primary"
                 disabled={
                   !permitted ||
                   busy ||
                   (!submitted &&
-                    (stale ||
+                    (allowanceOff ||
+                      stale ||
                       !review.complete ||
                       !acknowledged ||
                       (review.diagnostic && settings.purpose !== "diagnostic")))
                 }
+                {...reasonProps(
+                  "skill-run-reason",
+                  !submitted && allowanceOff
+                    ? "Paid runs are off for this workspace."
+                    : null,
+                )}
                 onClick={start}
               >
                 {busy && submitted
@@ -844,7 +893,15 @@ export default function TestRunSetup({
                       ? "Run quick check"
                       : "Run repeated comparison"}
               </Button>
-            </Box>
+              <ActionReason
+                id="skill-run-reason"
+                reason={
+                  !submitted && allowanceOff
+                    ? "Paid runs are off for this workspace."
+                    : null
+                }
+              />
+            </Stack>
           </Stack>
         </Section>
       )}

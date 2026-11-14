@@ -47,6 +47,9 @@ vi.mock("src/api/skills", () => ({
   useSkillsList: () => api.skills,
   getSkillErrorCode: (error) => error?.response?.data?.code ?? error?.code,
 }));
+vi.mock("src/api/skills/r3-spend", () => ({
+  useSkillsSpendPolicy: () => api.spend ?? {},
+}));
 vi.mock("src/api/skills/testing", () => ({
   useSkillV11Scope: () => api.scope,
   useSkillTestSuite: () => ({ ...api.suite, refetch: api.refetch }),
@@ -403,12 +406,12 @@ const reviewPlan = async () => {
   await screen.findByText("Confirm the reviewed plan");
   fireEvent.click(
     screen.getByLabelText(
-      "I know of no bundled answer keys or evaluation material",
+      "The files sent to the model contain no answer keys or grading material.",
     ),
   );
   fireEvent.click(
     screen.getByLabelText(
-      "I reviewed the entire inventory and outbound inputs",
+      "I reviewed every file and input that will be sent to the model.",
     ),
   );
   fireEvent.click(
@@ -429,6 +432,7 @@ const setup = (props = {}) => (
 );
 
 beforeEach(() => {
+  api.spend = undefined;
   vi.clearAllMocks();
   Object.defineProperty(globalThis.crypto, "subtle", {
     configurable: true,
@@ -479,22 +483,42 @@ beforeEach(() => {
 });
 afterEach(cleanup);
 
+describe("starter templates", () => {
+  it("falls back to everyday support requests when nothing matches the skill", async () => {
+    const { startersFor } = await import("./starterTemplates");
+    expect(startersFor({ name: "tone-guide", description: "Keep replies friendly." }).map((item) => item.title)).toEqual([
+      "Customer asks for a refund on a damaged item",
+      "Customer asks where their order is",
+      "Customer doesn't recognise a charge",
+    ]);
+    expect(startersFor({ name: "invoice-extractor", description: "Extract JSON fields" }).map((item) => item.title)).toContain("Structured output with a missing value");
+  });
+});
+
 describe("reviewed examples", () => {
-  it("shows the first-run action and three editable starters without paid work", () => {
+  it("shows the first-run action and starters that match the skill, without paid work", () => {
     api.suite.data.cases = [];
     mount(<TestsTab skill={skill} />);
     expect(
       screen.getByText("Does this skill handle your real requests?"),
     ).toBeInTheDocument();
+    const first = screen.getByRole("button", { name: "Add first example" });
+    expect(first).toBeEnabled();
+    expect(first).toHaveClass("MuiButton-containedPrimary");
+    // Unrelated domains are not offered for a refund skill, and the privacy note waits for a case.
     expect(
-      screen.getByRole("button", { name: "Add first example" }),
-    ).toBeEnabled();
+      screen.queryByRole("button", { name: "Tenant isolation in a supplied patch" }),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText(/Saved examples are visible to your workspace/)).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Customer asks for a refund on a damaged item" }),
+    ).toBeVisible();
     fireEvent.click(
       screen.getByRole("button", {
-        name: "Structured output with a missing value",
+        name: "Refund policy boundary",
       }),
     );
-    expect(screen.getByLabelText("Request").value).toContain("null");
+    expect(screen.getByLabelText("Request").value).toContain("30 days");
     expect(
       screen.getByLabelText(
         "I reviewed the request, supplied facts and expected behavior",
@@ -562,7 +586,7 @@ describe("reviewed examples", () => {
     fireEvent.click(screen.getByRole("option", { name: "skills/refund" }));
     // A skill without an action is not a complete expectation.
     expect(screen.getByRole("button", { name: "Save example" })).toBeDisabled();
-    expect(screen.getByText("Choose both the skill and the action, or neither.")).toBeInTheDocument();
+    expect(screen.getByText("Choose both a skill and an action, or leave both as Not specified.")).toBeInTheDocument();
     fireEvent.mouseDown(screen.getByLabelText("Required business action"));
     fireEvent.click(screen.getByRole("option", { name: "Issue a refund" }));
     fireEvent.click(
@@ -1283,11 +1307,13 @@ describe("editor integration seam", () => {
 
 it.each([400, 403])("unlocks normalized first-attempt admission rejection %s and rotates the operation", async (statusCode) => {
   api.create.mockRejectedValueOnce({ statusCode, code: "spend_policy_required" });
+  // The re-read policy now shows an allowance (an admin set one), so the reviewer may try again.
+  api.spend = { data: { enabled: true, periodLimitUsd: "20.00" }, refetch: vi.fn() };
   mount(setup());
   await configure();
   await reviewPlan();
   fireEvent.click(screen.getByRole("button", { name: "Run quick check" }));
-  await screen.findByText(/An administrator must enable the workspace spending allowance/);
+  await screen.findByText("Paid runs need a workspace allowance");
   expect(screen.queryByText(/request may already have been accepted/)).not.toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Preview work and spend" })).toBeEnabled();
   const first = api.create.mock.calls[0][0];
@@ -1303,7 +1329,24 @@ it("does not discard an uncertain paid request after a normalized recovery denia
   await reviewPlan();
   fireEvent.click(screen.getByRole("button", { name: "Run quick check" }));
   fireEvent.click(await screen.findByRole("button", { name: "Retry same submission" }));
-  await screen.findByText(/An administrator must enable the workspace spending allowance/);
+  await screen.findByText("Paid runs need a workspace allowance");
   expect(screen.getByRole("button", { name: "Retry same submission" })).toBeEnabled();
   expect(api.create.mock.calls[1][0]).toBe(api.create.mock.calls[0][0]);
+});
+
+it("shows a missing allowance before consent and disables the paid run with its reason", async () => {
+  api.spend = { data: { enabled: false, periodLimitUsd: null } };
+  try {
+    mount(setup());
+    expect(screen.getByText("Paid runs need a workspace allowance")).toBeVisible();
+    expect(screen.getByText("Ask a workspace admin to set one.")).toBeVisible();
+    await configure();
+    await reviewPlan();
+    const run = screen.getByRole("button", { name: "Run quick check" });
+    expect(run).toBeDisabled();
+    expect(run).toHaveAccessibleDescription("Paid runs are off for this workspace.");
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  } finally {
+    api.spend = undefined;
+  }
 });

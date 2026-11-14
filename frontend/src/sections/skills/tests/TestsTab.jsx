@@ -50,6 +50,7 @@ import { fDateTime } from "src/utils/format-time";
 import TestCaseEditor from "./TestCaseEditor";
 import TestRunSetup from "./TestRunSetup";
 import TestRunResults from "./TestRunResults";
+import { startersFor } from "./starterTemplates";
 
 // Official Solar icons used by the new case actions; no network needed to find them.
 addCollection({
@@ -69,38 +70,6 @@ addCollection({
   },
 });
 
-const STARTERS = [
-  {
-    title: "Refund policy boundary",
-    prompt:
-      "An unopened item was delivered exactly 30 days ago. Is it eligible for a refund? Return JSON with an eligible boolean.",
-    fixture:
-      "Illustrative policy — replace with approved policy before reviewing: Unopened items are eligible through day 30, inclusive. Opened items are not eligible.",
-    checks: [
-      { kind: "json_equals", config: { pointer: "/eligible", value: true } },
-    ],
-  },
-  {
-    title: "Tenant isolation in a supplied patch",
-    prompt:
-      "Review this supplied patch for tenant isolation. Identify a missing workspace constraint without claiming to run the repository.",
-    fixture:
-      "Illustrative tenant rule: every Document read must filter by both organization_id and workspace_id. Patch: Document.objects.filter(organization_id=organization.id, id=document_id).first()",
-    checks: [
-      { kind: "contains", config: { text: "workspace", caseSensitive: false } },
-    ],
-  },
-  {
-    title: "Structured output with a missing value",
-    prompt:
-      "Extract amount and invoice_id from the supplied text. Return only JSON. Use null when a value is absent.",
-    fixture: "Amount: 12.50 USD. No invoice identifier was supplied.",
-    checks: [
-      { kind: "json_equals", config: { pointer: "/amount", value: 12.5 } },
-      { kind: "json_equals", config: { pointer: "/invoice_id", value: null } },
-    ],
-  },
-];
 const starterCase = (starter) => ({
   id: crypto.randomUUID(),
   sourceGroupId: crypto.randomUUID(),
@@ -358,10 +327,6 @@ function TestsContent({ skill }) {
         ))}
       {currentView === "cases" && (
         <>
-          <Typography variant="s3" color="text.secondary">
-            Saved examples are visible to your workspace. Draft runs stay
-            private until you share them.
-          </Typography>
           {saveError && (
             <Alert
               severity="error"
@@ -386,6 +351,7 @@ function TestsContent({ skill }) {
                 action={
                   <Button
                     variant="contained"
+                    color="primary"
                     disabled={!canWrite}
                     onClick={() => {
                       setEditor({ value: null });
@@ -401,7 +367,7 @@ function TestsContent({ skill }) {
                 description="These facts and policies are illustrative. Replace them with approved context before reviewing."
               >
                 <Stack spacing={1} alignItems="start">
-                  {STARTERS.map((starter) => (
+                  {startersFor(skill).map((starter) => (
                     <Button
                       key={starter.title}
                       variant="outlined"
@@ -546,6 +512,10 @@ function TestsContent({ skill }) {
                   </TableBody>
                 </Table>
               </TableContainer>
+              <Typography variant="s3" color="text.secondary">
+                Saved examples are visible to your workspace. Draft runs stay
+                private until you share them.
+              </Typography>
               {canWrite && (
                 <Section title="Compare reviewed examples">
                   <Stack spacing={2}>

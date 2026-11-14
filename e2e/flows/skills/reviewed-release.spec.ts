@@ -156,8 +156,8 @@ test('SKILLS-E2E-002: review a policy repair and deliberately release its exact 
         await page.getByRole('textbox', { name: 'Estimated-cost stop (USD)', exact: true }).fill('1');
         await page.getByRole('button', { name: 'Preview work and spend', exact: true }).click();
         await expect(page.getByText('3 examples × 2 arms × 1 repeats = 6 attempts', { exact: true })).toBeVisible({ timeout: UI_READY });
-        await page.getByRole('checkbox', { name: 'I know of no bundled answer keys or evaluation material', exact: true }).check();
-        await page.getByRole('checkbox', { name: 'I reviewed the entire inventory and outbound inputs', exact: true }).check();
+        await page.getByRole('checkbox', { name: 'The files sent to the model contain no answer keys or grading material.', exact: true }).check();
+        await page.getByRole('checkbox', { name: 'I reviewed every file and input that will be sent to the model.', exact: true }).check();
         await page.getByRole('checkbox', { name: 'Send the reviewed files and example inputs to these model providers within this spend stop', exact: true }).check();
         const response = page.waitForResponse(res => res.url().endsWith(`${SKILLS}${id}/test-runs/`) && res.request().method() === 'POST', { timeout: UI_READY });
         await page.getByRole('button', { name: 'Run quick check', exact: true }).click();

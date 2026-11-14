@@ -10,6 +10,8 @@ import {
 } from "@mui/material";
 import Section from "src/components/section";
 import StatusBadge from "src/components/status-badge";
+import TechnicalDetails from "../components/TechnicalDetails";
+import When from "../components/When";
 import { IdentityValue, ReviewState } from "./ReleaseReviewBody";
 import { OperationFeedback, useReviewedOperation } from "./ReleaseRequestPanel";
 
@@ -33,18 +35,19 @@ function AnnotationForm({
     <Section title="Human review">
       <Stack spacing={1.5}>
         <Stack direction="row" spacing={1}>
-          <Typography variant="s1">Machine verdict</Typography>
+          <Typography variant="s1">Automatic result</Typography>
           <StatusBadge status={machineVerdict} />
         </Stack>
-        <Typography variant="s3">
-          Append a cited review without changing the machine grade. Any new
-          annotation advances evidence revision and requires a new release
-          review.
+        <Typography variant="s3" color="text.secondary">
+          Your review is added next to the automatic result; it doesn&apos;t
+          change it. A new review means the release needs a fresh review.
         </Typography>
-        <IdentityValue
-          label="Check / attempt"
-          value={`${reference.checkId} / ${reference.attemptId}`}
-        />
+        <TechnicalDetails>
+          <IdentityValue
+            label="Check / attempt"
+            value={`${reference.checkId} / ${reference.attemptId}`}
+          />
+        </TechnicalDetails>
         {annotations.map((item) => (
           <Stack key={item.id ?? item.revision} spacing={0.5}>
             <Typography variant="m3">
@@ -53,10 +56,9 @@ function AnnotationForm({
                 : item.verdict === "agree"
                   ? "Agree"
                   : "Disagree"}{" "}
-              · {item.actor?.name ?? item.actorId ?? "Attributed reviewer"} · r
-              {item.revision}
+              · {item.actor?.name ?? item.actorId ?? "Attributed reviewer"}
             </Typography>
-            <Typography variant="s3">{item.createdAt}</Typography>
+            <When value={item.createdAt} />
             <Typography
               variant="s1"
               component="blockquote"
@@ -80,7 +82,9 @@ function AnnotationForm({
           </Stack>
         ))}
         {!annotations.length && (
-          <Typography variant="s3">No human annotations loaded.</Typography>
+          <Typography variant="s3" color="text.secondary">
+            No human reviews yet.
+          </Typography>
         )}
         <TextField
           select
@@ -118,8 +122,8 @@ function AnnotationForm({
         />
         {stale && (
           <Alert severity="warning">
-            Another annotation arrived. Your explanation is preserved. Inspect
-            it before acknowledging revision {reference.annotationRevision}.
+            Someone added another review. Your explanation is kept. Read it
+            before you add yours.
           </Alert>
         )}
         {stale && (
@@ -133,8 +137,8 @@ function AnnotationForm({
         <OperationFeedback operation={operation} />
         {operation.result && (
           <Alert severity="info">
-            Annotation recorded. Machine grade unchanged. Refresh the release
-            review before deciding.
+            Review recorded. The automatic result is unchanged. Refresh the
+            release review before deciding.
           </Alert>
         )}
         <Stack direction="row" spacing={1}>

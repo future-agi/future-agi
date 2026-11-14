@@ -8,7 +8,7 @@ export default function ApplicationBehaviorFields({ skills, behavior, onChange }
   return (
     <Section
       title="Required application behavior"
-      description="Which skill the application must load and which business action it must take. Chosen from this context, not typed."
+      description="The skill the application should open and the action it should take. Leave both as Not specified to check the answer only."
     >
       <Stack spacing={1.5}>
         <TextField
@@ -32,7 +32,7 @@ export default function ApplicationBehaviorFields({ skills, behavior, onChange }
           value={behavior.action}
           error={partial}
           helperText={
-            partial ? "Choose both the skill and the action, or neither." : undefined
+            partial ? "Choose both a skill and an action, or leave both as Not specified." : undefined
           }
           onChange={(event) => onChange({ action: event.target.value })}
         >
