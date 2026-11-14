@@ -5,6 +5,7 @@ labels."""
 
 from __future__ import annotations
 
+import ast
 import contextlib
 import fnmatch
 import functools
@@ -555,6 +556,42 @@ def project_pins() -> dict[str, set[str]]:
     ):
         pins.setdefault(_normalized(name), set()).add(version)
     return pins
+
+
+FFMPEG_DIR = ROOT / "futureagi" / "docker" / "ffmpeg"
+
+
+class MinimalFfmpegBuild(unittest.TestCase):
+    """The minimal FFmpeg build (docker/ffmpeg/) and its build-time self-test."""
+
+    @staticmethod
+    def selftest_videos() -> tuple[str, ...]:
+        tree = ast.parse((FFMPEG_DIR / "selftest.py").read_text(encoding="utf-8"))
+        for node in tree.body:
+            if isinstance(node, ast.Assign) and any(
+                isinstance(t, ast.Name) and t.id == "VIDEOS" for t in node.targets
+            ):
+                return tuple(ast.literal_eval(node.value))
+        raise AssertionError("VIDEOS not found in selftest.py")
+
+    def test_the_selftest_makes_thumbnails_of_rotated_and_cropped_videos(self):
+        # The ffmpeg CLI inserts transpose/hflip/vflip/rotate/crop for a video
+        # with a display matrix (phone recordings) or container cropping, and
+        # fails the whole filter graph if one is missing. FFmpeg's configure
+        # builds them with the CLI (ffmpeg_select), not from FILTERS; the
+        # build-time self-test proves they are there.
+        videos = self.selftest_videos()
+        for sample in (
+            "video-h264-rot90.mp4",  # transpose
+            "video-h264-rot180.mp4",  # hflip + vflip
+            "video-h264-rot45.mp4",  # rotate
+            "video-h264-crop.mkv",  # crop
+        ):
+            with self.subTest(sample=sample):
+                self.assertIn(sample, videos)
+        for sample in videos:
+            with self.subTest(sample=sample):
+                self.assertTrue((FFMPEG_DIR / "samples" / sample).is_file())
 
 
 class FutureAgiBaseDockerfiles(unittest.TestCase):

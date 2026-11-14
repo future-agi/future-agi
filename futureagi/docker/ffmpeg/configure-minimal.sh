@@ -54,6 +54,10 @@ PARSERS="aac aac_latm ac3 flac mpegaudio opus vorbis h264 hevc mpegvideo
 BSFS="aac_adtstoasc h264_mp4toannexb hevc_mp4toannexb vp9_superframe_split"
 FILTERS="aresample aformat anull atrim pan amix amerge channelsplit volume scale
   format null trim fps setpts"
+# The filters the ffmpeg CLI inserts on its own for rotated (display matrix)
+# or cropped input video, transpose hflip vflip rotate crop, are not listed:
+# configure enables them with the CLI (ffmpeg_select). selftest.py makes
+# thumbnails of rotated and cropped samples to prove it.
 
 list() { ./configure --list-"$1"s | tr -s '[:blank:]' '\n'; }
 DECODERS="$DECODERS $(list decoder | grep '^pcm_' | grep -v '_at$' | tr '\n' ' ')"
