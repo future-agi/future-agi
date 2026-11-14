@@ -1,0 +1,25 @@
+eval_id: 220
+name: tool_call_loop_repetition
+description: Diagnostic score for repeated completed tool calls, accounting for changed results and semantic identifiers. Does not stop tool execution.
+eval_tags:
+- Agents
+- Tools
+visible_ui: false
+permissions:
+  allow_edit: false
+  allow_copy: true
+output_type_normalized: percentage
+pass_threshold: 0.5
+config:
+  required_keys:
+  - output
+  output: score
+  eval_type_id: ToolCallLoopRepetition
+  config: {}
+  function_params_schema:
+    min_repeats: {type: integer, default: 3, minimum: 2}
+    max_cycle_length: {type: integer, default: 4, minimum: 1}
+    near_duplicate_threshold: {type: number, default: 0.92, minimum: 0, maximum: 1}
+    also_compare_results: {type: boolean, default: true}
+  config_params_desc:
+    output: Completed tool calls as a list or JSON string. Accepts flat name/arguments/result objects or Gateway function envelopes with JSON arguments and optional result/output.

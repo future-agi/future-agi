@@ -1,89 +1,126 @@
 ---
 title: Tool Call Loop Repetition
-description: Detects agents stuck repeating or oscillating between the same tool calls without making progress.
-category: Local Metrics / Guardrails
+description: Local diagnostic scoring for repeated completed tool calls.
+category: Local Metrics
 tier: local
-latency: "< 10ms"
 requires_llm: false
 ---
 
 # Tool Call Loop Repetition
 
-Detects when an agent is stuck in a non-terminating loop: calling the same
-tool over and over, oscillating between a small cycle of tool calls, or
-retrying near-duplicate calls that never really change state. This is one of
-the most common and expensive agentic failure modes in production — it burns
-tokens and API spend and leaves a workflow stuck — and it's a **local
-metric**: no LLM judge call is required, so it's safe to run inline as a
-guardrail as well as post-hoc over stored traces.
-
-## Why you'd use this
-
-- Catch runaway agent loops before they burn through your token/API budget.
-- Surface stuck workflows in the trace inspector so you know *where* an agent
-  got stuck, not just that the run took too long.
-- Wire it into the gateway as a real-time guardrail to interrupt a looping
-  agent mid-run instead of waiting for the full trace.
+This evaluator diagnoses repeated tool-call sequences locally. It **does not
+stop, cancel, retry, or execute tools**, and it installs no live Gateway plugin.
+The incremental observer is diagnostic too; its historical `Guardrail` class
+name does not imply enforcement. Live stopping requires a separate product
+choice and integration.
 
 ## What it detects
 
-| Loop type | Example |
-|---|---|
-| `exact_repeat` | The same tool + same arguments called 3+ times in a row |
-| `oscillation` | A short cycle (e.g. `search → read_faq → search → read_faq`) repeating 3+ times |
-| `near_duplicate` | Same tool called repeatedly with only cosmetic argument differences (e.g. a slightly reworded query) and no meaningfully new result |
+- `exact_repeat`: the same tool, arguments and observed result repeat.
+- `oscillation`: a short cycle repeats anywhere in a trace, including before a
+  healthy final call.
+- `near_duplicate`: the same tool repeats with similar string arguments and
+  unchanged results. Semantic IDs, pagination values and non-string argument
+  changes are not treated as cosmetic.
 
-It deliberately does **not** flag legitimate iterative patterns like
-pagination or polling, where arguments may look similar but the tool's
-*results* keep changing — that's treated as real progress, not a loop.
+With result comparison enabled, **any changed result is treated as progress**,
+including changes to small counters inside a large response. This conservative
+rule avoids labelling healthy polling as a loop. Missing results can reveal a
+repeated call pattern, but cannot establish whether the tool made progress.
+Changing record `id` arguments is not ignored. Top-level timestamps, request
+IDs and nonces are ignored by default; override the ignored-key set if those
+fields carry meaning for your tools.
 
-## Usage
+## Backend Python usage
+
+These imports are provided by the backend source checkout, **not** by the
+external `fi.evals` SDK. No SDK-level `evaluate("tool_call_loop_repetition", ...)`
+calling convention is claimed.
 
 ```python
-from fi.evals import evaluate
-
-result = evaluate(
-    "tool_call_loop_repetition",
-    tool_calls=[
-        {"name": "search_docs", "arguments": {"query": "refund policy"}},
-        {"name": "search_docs", "arguments": {"query": "refund policy"}},
-        {"name": "search_docs", "arguments": {"query": "refund policy"}},
-    ],
+from agentic_eval.metrics.tool_call_loop_repetition import (
+    evaluate_tool_call_loop_repetition,
 )
 
-print(result.score)   # 0.0-1.0, higher = healthier (no loop)
-print(result.passed)  # False once repeats cross the min_repeats threshold
-print(result.reason)  # human-readable explanation for the trace inspector
+calls = [
+    {"name": "search_docs", "arguments": {"query": "refund policy"}, "result": []},
+    {"name": "search_docs", "arguments": {"query": "refund policy"}, "result": []},
+    {"name": "search_docs", "arguments": {"query": "refund policy"}, "result": []},
+]
+result = evaluate_tool_call_loop_repetition(calls)
+assert result["loop_type"] == "exact_repeat"
+assert result["passed"] is False
+print(result["score"], result["reason"])
 ```
 
-### Real-time guardrail (gateway / inline use)
+Input may also be a JSON string containing the list. The current Gateway's
+OpenAI-compatible envelopes are supported:
 
 ```python
-from fi.evals.guardrails import ToolCallLoopGuardrail
-
-guardrail = ToolCallLoopGuardrail(min_repeats=3)
-
-for call in agent_tool_calls:
-    result = guardrail.observe(call)
-    if result.loop_detected:
-        # interrupt the agent, surface a warning, or fall back to a human
-        break
+calls = [
+    {
+        "id": "call-1",
+        "type": "function",
+        "function": {"name": "poll", "arguments": '{"id": "job-1"}'},
+        "result": {"progress": 1},
+    },
+]
 ```
 
-## Configuration
+Pass **completed** calls with their results when available. Flat calls accept
+`tool_name`/`args`/`output` aliases. An explicit `result` wins over `output`,
+even for `0`, `False`, `""`, empty containers, or `None`. Invalid names and
+non-object arguments raise `ValueError` instead of receiving a healthy score.
+The adapter consumes exported call data; it does not collect Gateway runs.
 
-| Parameter | Default | Description |
+## Registered backend evaluator
+
+The catalog contains the hidden diagnostic template `tool_call_loop_repetition`
+with type `ToolCallLoopRepetition`, required input `output`, and score output.
+It is registered with the backend function-evaluation engine and can be invoked
+through existing evaluation APIs with an explicit template/type selection.
+It is not added to the UI picker while product behavior is being settled.
+
+The standard backend evaluator result contains the score and reason. Use the
+standalone helper above for structured cycle diagnostics. Scores range from
+0 to 1, where higher is healthier; the diagnostic pass threshold is 0.5.
+A low score is **not** an instruction to interrupt an agent.
+
+## Incremental diagnostic observation
+
+```python
+from agentic_eval.metrics.tool_call_loop_repetition import ToolCall, ToolCallLoopGuardrail
+
+observer = ToolCallLoopGuardrail(window_size=12, min_repeats=3)
+for progress in range(4):
+    diagnostic = observer.observe(
+        ToolCall("poll", {"id": "job-1"}, result={"progress": progress})
+    )
+    assert not diagnostic.loop_detected
+```
+
+Create one observer per sequential run; it is not a shared concurrent collector.
+The window bounds retained calls. Indices remain full-stream positions after
+trimming; explicit `ToolCall.index` values take precedence. `reset()` clears the
+buffer and restarts implicit indices at zero. Once an earlier loop leaves the
+window, it is no longer reported by that observer; full-trace evaluation can
+still find it. A window must hold at least `min_repeats` calls, and must be large
+enough for any longer cycle you want to diagnose.
+
+## Configuration and limits
+
+| Parameter | Default | Meaning |
 |---|---|---|
-| `min_repeats` | `3` | Minimum consecutive cycle repetitions before flagging a loop |
-| `max_cycle_length` | `4` | Longest call-cycle searched for (covers single-call retries through 4-step oscillations) |
-| `near_duplicate_threshold` | `0.92` | Similarity (0-1) above which two calls' arguments count as "the same call" |
-| `ignored_argument_keys` | timestamps, request/trace ids, nonces | Volatile keys ignored when comparing call arguments |
-| `also_compare_results` | `True` | If results genuinely diverge across similar calls, don't treat it as a stuck loop |
+| `min_repeats` | `3` | Minimum complete repetitions, integer at least 2 |
+| `max_cycle_length` | `4` | Maximum cycle length, positive integer |
+| `near_duplicate_threshold` | `0.92` | String similarity threshold between 0 and 1; 1 requires exact strings |
+| `also_compare_results` | `True` | Changed results are progress; disabling this diagnoses call shape only |
+| `ignored_argument_keys` | volatile top-level keys | Standalone detector/helper option; replaces the default ignored-key set |
 
-## Score interpretation
-
-Score is in `[0, 1]`, where `1.0` means no repetitive pattern was found and
-lower scores indicate increasingly severe loops (more repeats / tighter
-cycles). `passed` defaults to `score >= 0.5`, matching the pass/fail
-convention used by this project's other guardrail-style metrics (e.g.
-toxicity).
+There is no network or model call in the detector. Runtime depends on trace
+length, cycle limit, and argument/result size; there is **no universal sub-10 ms
+latency guarantee**. Exact cycle search scans all positions in
+`O(number_of_calls × max_cycle_length)` after normalization. Similarity checks
+on long strings can cost more. This heuristic cannot determine whether a
+changing result is useful progress, or whether identical responses are an
+expected part of a workflow; use the diagnostics as evidence, not enforcement.

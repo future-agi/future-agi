@@ -19,6 +19,7 @@ from agentic_eval.metrics.tool_call_loop_repetition import (
 # Healthy traces (should NOT flag a loop)
 # ---------------------------------------------------------------------------
 
+
 class TestHealthyTraces:
     def test_empty_trace(self):
         result = ToolCallLoopDetector().evaluate([])
@@ -48,9 +49,21 @@ class TestHealthyTraces:
         # this is real progress (e.g. paging through search results), not a
         # stuck loop, so it should NOT be flagged.
         calls = [
-            ToolCall(name="list_items", arguments={"page": 1}, result="items 1-10, unique batch A"),
-            ToolCall(name="list_items", arguments={"page": 2}, result="items 11-20, unique batch B"),
-            ToolCall(name="list_items", arguments={"page": 3}, result="items 21-30, unique batch C"),
+            ToolCall(
+                name="list_items",
+                arguments={"page": 1},
+                result="items 1-10, unique batch A",
+            ),
+            ToolCall(
+                name="list_items",
+                arguments={"page": 2},
+                result="items 11-20, unique batch B",
+            ),
+            ToolCall(
+                name="list_items",
+                arguments={"page": 3},
+                result="items 21-30, unique batch C",
+            ),
         ]
         result = ToolCallLoopDetector(near_duplicate_threshold=0.99).evaluate(calls)
         assert result.loop_detected is False
@@ -79,6 +92,7 @@ class TestHealthyTraces:
 # ---------------------------------------------------------------------------
 # Exact repetition loops
 # ---------------------------------------------------------------------------
+
 
 class TestExactRepeatLoops:
     def test_three_identical_calls_flagged(self):
@@ -120,6 +134,7 @@ class TestExactRepeatLoops:
 # Oscillation loops (A, B, A, B, ...)
 # ---------------------------------------------------------------------------
 
+
 class TestOscillationLoops:
     def test_two_step_oscillation_flagged(self):
         calls = []
@@ -146,7 +161,9 @@ class TestOscillationLoops:
     def test_cycle_longer_than_max_cycle_length_not_flagged_as_oscillation(self):
         pattern = [ToolCall(name=f"tool_{i}", arguments={}) for i in range(6)]
         calls = pattern * 3
-        result = ToolCallLoopDetector(max_cycle_length=4, near_duplicate_threshold=1.0).evaluate(calls)
+        result = ToolCallLoopDetector(
+            max_cycle_length=4, near_duplicate_threshold=1.0
+        ).evaluate(calls)
         assert result.loop_type != "oscillation"
 
 
@@ -154,12 +171,17 @@ class TestOscillationLoops:
 # Near-duplicate loops
 # ---------------------------------------------------------------------------
 
+
 class TestNearDuplicateLoops:
     def test_slightly_reworded_repeated_query_flagged(self):
         calls = [
-            ToolCall(name="search", arguments={"query": "refund policy for electronics"}),
+            ToolCall(
+                name="search", arguments={"query": "refund policy for electronics"}
+            ),
             ToolCall(name="search", arguments={"query": "refund policy electronics"}),
-            ToolCall(name="search", arguments={"query": "refund policy electronic items"}),
+            ToolCall(
+                name="search", arguments={"query": "refund policy electronic items"}
+            ),
         ]
         result = ToolCallLoopDetector(near_duplicate_threshold=0.7).evaluate(calls)
         assert result.loop_detected is True
@@ -191,6 +213,7 @@ class TestNearDuplicateLoops:
 # Functional wrapper (dict-based calling convention)
 # ---------------------------------------------------------------------------
 
+
 class TestFunctionalWrapper:
     def test_dict_input_supported(self):
         trace = [
@@ -215,6 +238,7 @@ class TestFunctionalWrapper:
 # ---------------------------------------------------------------------------
 # Streaming guardrail
 # ---------------------------------------------------------------------------
+
 
 class TestStreamingGuardrail:
     def test_flags_as_soon_as_threshold_crossed(self):
@@ -249,6 +273,7 @@ class TestStreamingGuardrail:
 # ---------------------------------------------------------------------------
 # Input validation
 # ---------------------------------------------------------------------------
+
 
 class TestValidation:
     def test_min_repeats_must_be_at_least_two(self):
