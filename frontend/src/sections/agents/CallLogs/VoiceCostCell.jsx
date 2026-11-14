@@ -16,7 +16,7 @@ const BreakdownTooltip = ({ breakdown, totalCents }) => {
   if (!breakdown && !total) return null;
   return (
     <Box sx={{ p: 0.5, minWidth: 180 }}>
-      <Typography sx={{ fontSize: 13, fontWeight: 600, mb: 1 }}>
+      <Typography sx={{ fontSize: 12, fontWeight: 600, mb: 1 }}>
         Cost breakdown
       </Typography>
       {breakdown?.stt != null && (
@@ -84,7 +84,7 @@ const VoiceCostCell = (params) => {
     return (
       <Typography
         variant="body2"
-        sx={{ fontSize: 13, color: "text.disabled", px: 2 }}
+        sx={{ fontSize: 12, color: "text.disabled", px: 2 }}
       >
         -
       </Typography>
@@ -105,7 +105,7 @@ const VoiceCostCell = (params) => {
     >
       <Typography
         variant="body2"
-        sx={{ fontSize: 13, fontVariantNumeric: "tabular-nums" }}
+        sx={{ fontSize: 12, fontVariantNumeric: "tabular-nums" }}
       >
         {fmt(totalDollars)}
       </Typography>

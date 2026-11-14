@@ -138,6 +138,7 @@ def test_tracer_alert_routes_reject_anonymous_before_work(
 
 def _tracer_eval_task_guard_cases():
     return [
+        ("post", "/tracer/eval-task/sampling_preview/", {}),
         ("get", "/tracer/eval-task/", None),
         ("get", f"/tracer/eval-task/{TRACER_GUARD_UUID}/", None),
         ("put", f"/tracer/eval-task/{TRACER_GUARD_UUID}/", {}),

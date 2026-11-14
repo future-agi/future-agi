@@ -21,7 +21,7 @@ from tracer.services.clickhouse.read_budget import (
     is_read_budget_error,
 )
 from tracer.services.clickhouse.trace_project_scope import (
-    latest_live_trace_projects_sql,
+    live_trace_project_sets_sql,
 )
 from tracer.services.exact_aggregation_cache import exact_refresh_state
 
@@ -33,6 +33,31 @@ MAX_PAGE_SIZE = 100
 _USAGE_TABLE = "usage_apicalllog"
 _MAX_PAGE_SELECTION_ROWS = 10_000
 _MIN_PAGE_WINDOW = timedelta(microseconds=1)
+# ``config`` has existed in two encodings: a JSON object and a JSON string
+# containing that object.
+_CONFIG_JSON_EXPR = (
+    "if(isValidJSON(config) AND JSONType(config) = 'String', "
+    "JSONExtractString(config), config)"
+)
+# The project a trace-attached eval log recorded when it ran (empty on older
+# logs and on logs without a trace). It is computed on every row version of
+# every project-scoped statement, including the narrow page-seek counts, so the
+# JSON is parsed only for a trace log whose config may name a project: it
+# contains ``project_id`` or a ``\u`` escape (an escaped key such as
+# ``"\u0070roject_id"`` must still be read, or a recorded log would be judged
+# as an older one). Measured on 1M 1.5 KB trace configs without a project:
+# 0.37 s, against 0.79 s for the unguarded parse and 2.1 s for a guard on
+# ``eval_trace_id`` alone. The parse
+# mirrors the production ``eval_trace_id`` column
+# (``JSONExtractString(JSONExtractString(config), 'trace_id')``): on
+# ClickHouse 24.3 through 25.3 the outer ``JSONExtractString`` unwraps a
+# double-encoded config and returns an object-encoded one unchanged, so both
+# encodings resolve with two parses instead of the four of _CONFIG_JSON_EXPR.
+_SOURCE_PROJECT_EXPR = (
+    "if(eval_trace_id = '' OR (position(config, 'project_id') = 0 "
+    "AND position(config, '\\\\u') = 0), '', "
+    "JSONExtractString(JSONExtractString(config), 'project_id'))"
+)
 
 _READ_SETTINGS = {
     "max_threads": 2,
@@ -167,8 +192,11 @@ def _latest_usage_slice(
         candidate_scope.append(f"created_at >= %({start_param})s")
     if end_param:
         candidate_scope.append(f"created_at < %({end_param})s")
+    source_project = (
+        f", {_SOURCE_PROJECT_EXPR} AS eval_source_project_id" if project_scoped else ""
+    )
     latest_usage = f"""
-        SELECT {projection}
+        SELECT {projection}{source_project}
         FROM {_USAGE_TABLE}
         PREWHERE {" AND ".join(candidate_scope)}
         ORDER BY _peerdb_version DESC
@@ -186,24 +214,42 @@ def _latest_usage_slice(
     # eval rows were relevant.  The repeated usage reference remains inside
     # this one statement; it is not described as a request-wide snapshot on
     # ClickHouse 25.3.
+    #
+    # A trace-attached log belongs to the source it ran on, never to the eval
+    # config (whose project can change, or which can be deleted, after the
+    # run). ``project_ids`` are the projects the caller may read. A log that
+    # recorded its project is listed only while that project is readable and
+    # holds the trace live. An older log recorded no project, so nothing can
+    # name its source; it keeps the rule Usage had before sources were
+    # recorded, limited to readable projects: ``configured_project_ids`` are
+    # the readable projects running this eval now, and the log is listed when
+    # its trace is held by exactly one of them and live there.
     trace_candidates = f"""
         SELECT DISTINCT toUUIDOrZero(eval_trace_id) AS trace_id
         FROM {_USAGE_TABLE}
         PREWHERE {" AND ".join(candidate_scope)}
         WHERE eval_trace_id != ''
     """
-    trace_projects = latest_live_trace_projects_sql(
-        candidate_trace_ids_sql=trace_candidates
+    trace_projects = live_trace_project_sets_sql(
+        candidate_trace_ids_sql=trace_candidates,
+        configured_project_ids_param="configured_project_ids",
     )
     return f"""
         SELECT current_usage.*
         FROM ({latest_usage}) AS current_usage
-        LEFT JOIN ({trace_projects}) AS allowed_trace_projects
-          ON allowed_trace_projects.trace_id =
+        LEFT JOIN ({trace_projects}) AS readable_trace_projects
+          ON readable_trace_projects.trace_id =
              toUUIDOrZero(current_usage.eval_trace_id)
         WHERE (
             current_usage.eval_trace_id = ''
-            OR allowed_trace_projects.project_id IN %(project_ids)s
+            OR if(
+                current_usage.eval_source_project_id = '',
+                readable_trace_projects.configured_live = 1,
+                has(
+                    readable_trace_projects.live_project_ids,
+                    toUUIDOrZero(current_usage.eval_source_project_id)
+                )
+            )
         )
     """
 
@@ -231,6 +277,7 @@ def read_eval_usage(
     organization_id: str,
     workspace_id: str | None,
     project_ids: list[str] | tuple[str, ...],
+    configured_project_ids: list[str] | tuple[str, ...],
     template_id: str,
     start_date: datetime,
     end_date: datetime,
@@ -257,12 +304,21 @@ def read_eval_usage(
         organization_id=organization_id,
         workspace_id=workspace_id,
     )
+    readable = set(project_ids)
     params.update(
         {
             "template_id": template_id,
             # Keep IN syntactically valid and fail closed for trace-attached
-            # rows when this template has no project config in the workspace.
+            # rows when the caller may read no project in the workspace.
             "project_ids": tuple(project_ids)
+            or ("00000000-0000-0000-0000-000000000000",),
+            # Older logs only: the readable projects that run this eval now,
+            # a subset of project_ids (the only projects the trace scan reads).
+            "configured_project_ids": tuple(
+                project_id
+                for project_id in configured_project_ids
+                if project_id in readable
+            )
             or ("00000000-0000-0000-0000-000000000000",),
             "start_date": _utc(start_date),
             # The public contract treats end_date as inclusive. ClickHouse
@@ -311,10 +367,7 @@ def read_eval_usage(
     # ``config`` has existed in two encodings: a JSON object and a JSON string
     # containing that object. Normalize once in SQL before extracting chart
     # values. Page rows still return the original config for lossless details.
-    config_expr = (
-        "if(isValidJSON(config) AND JSONType(config) = 'String', "
-        "JSONExtractString(config), config)"
-    )
+    config_expr = _CONFIG_JSON_EXPR
     output_raw = f"JSONExtractRaw({config_expr}, 'output', 'output')"
     output_type = f"JSONType({output_raw})"
     output_text = f"lowerUTF8(JSONExtractString({config_expr}, 'output', 'output'))"

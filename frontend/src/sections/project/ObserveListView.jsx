@@ -56,6 +56,7 @@ const ObserveListView = forwardRef(
       setSelectedRowsData,
       filters = null,
       onFirstRunChange,
+      countPending = false,
     },
     ref,
   ) => {
@@ -257,8 +258,13 @@ const ObserveListView = forwardRef(
     );
 
     /* Nothing traced yet — not a search or filter that matched nothing. */
+    // While the parent's project count is still loading, an empty list stays
+    // in its loading state: the count decides between this and Get started,
+    // so showing "No traces yet" first would flash two empty screens.
+    const holdEmpty = countPending && total === 0;
     const isFirstRun =
       !isLoading &&
+      !holdEmpty &&
       !isError &&
       total === 0 &&
       !debouncedSearch &&
@@ -305,7 +311,7 @@ const ObserveListView = forwardRef(
         <DataTable
           columns={columns}
           data={items}
-          isLoading={isLoading}
+          isLoading={isLoading || holdEmpty}
           rowCount={total}
           sorting={sorting}
           onSortingChange={setSorting}
@@ -339,6 +345,7 @@ ObserveListView.displayName = "ObserveListView";
 ObserveListView.propTypes = {
   searchQuery: PropTypes.string,
   onFirstRunChange: PropTypes.func,
+  countPending: PropTypes.bool,
   onSelectionChanged: PropTypes.func,
   setSelectedRowsData: PropTypes.func,
   filters: PropTypes.array,

@@ -69,7 +69,7 @@ const PromptTemplateResults = ({ selectedOptimization }) => {
       )}
       <Box sx={{ display: "flex", alignItems: "center", gap: "14px" }}>
         <Iconify icon="solar:card-linear" />
-        <Typography fontWeight={600} fontSize="13px">
+        <Typography fontWeight={600} fontSize="12px">
           Template Score
         </Typography>
       </Box>

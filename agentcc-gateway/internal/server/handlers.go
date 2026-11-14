@@ -82,12 +82,22 @@ type Handlers struct {
 	// Async inference support.
 	asyncStore  *async.Store
 	asyncWorker *async.Worker
+	// asyncKeyRequired is set by server wiring when license auth is enabled
+	// without API-key auth: async jobs then have no anonymous owner.
+	asyncKeyRequired bool
+	// resultIPACL holds the global network rules applied when stored results
+	// (async jobs, batches, admin video jobs) are read or changed.
+	resultIPACL config.IPACLConfig
 
 	// Responses API store.
 	responsesStore *responses.Store
 
 	// Files API store.
 	fileStore *files.Store
+
+	// trustedProxies is ip_acl.trusted_proxies: how many X-Forwarded-For hops
+	// clientIP trusts.
+	trustedProxies int
 
 	// Video generation store.
 	videoIPACL    config.IPACLConfig
@@ -113,6 +123,27 @@ type Handlers struct {
 	conditionalRouter atomic.Pointer[routing.ConditionalRouter]
 	modelTimeouts     atomic.Pointer[map[string]time.Duration]
 	mirror            atomic.Pointer[routing.Mirror]
+
+	// mirrorSlots counts in-flight mirror requests across reloads: the
+	// requests a replaced mirror started still count against the new one.
+	mirrorSlots *routing.MirrorSlots
+}
+
+// applyCacheHeaders copies the cache request headers into the metadata the
+// cache plugin reads. Every route that runs the cache plugin calls it.
+func applyCacheHeaders(rc *models.RequestContext, r *http.Request) {
+	if v := r.Header.Get("x-agentcc-cache-ttl"); v != "" {
+		rc.Metadata["cache_ttl"] = v
+	}
+	if v := r.Header.Get("x-agentcc-cache-namespace"); v != "" {
+		rc.Metadata["cache_namespace"] = v
+	}
+	if r.Header.Get("x-agentcc-cache-force-refresh") == "true" {
+		rc.Metadata["cache_force_refresh"] = "true"
+	}
+	if v := r.Header.Get("Cache-Control"); v != "" {
+		rc.Metadata["cache_control"] = v
+	}
 }
 
 func setAuthMetadataFromRequest(rc *models.RequestContext, r *http.Request) {
@@ -232,6 +263,8 @@ func NewHandlers(registry *providers.Registry, engine *pipeline.Engine, maxBodyS
 	if len(modelTimeouts) > 0 {
 		h.modelTimeouts.Store(&modelTimeouts)
 	}
+	h.mirrorSlots = &routing.MirrorSlots{}
+	mirror.ShareSlots(h.mirrorSlots)
 	h.mirror.Store(mirror)
 	return h
 }
@@ -245,7 +278,7 @@ func (h *Handlers) ReloadRouting(cfg *config.Config, registry *providers.Registr
 	}
 
 	// Rebuild router in registry.
-	if err := registry.ReloadRouter(cfg.Routing); err != nil {
+	if err := registry.ReloadRouter(cfg.Routing, h.healthMonitor); err != nil {
 		return fmt.Errorf("reload router: %w", err)
 	}
 
@@ -278,6 +311,8 @@ func (h *Handlers) ReloadRouting(cfg *config.Config, registry *providers.Registr
 	if cfg.Routing.CircuitBreaker.Enabled && registry.Router() != nil {
 		cbReg = routing.NewCircuitBreakerRegistry(cfg.Routing.CircuitBreaker, registry.Router().SetHealthy)
 	}
+	// Observe the same breakers that the failover chain updates.
+	h.healthMonitor.SetCircuitBreakerRegistry(cbReg)
 
 	if registry.Router() != nil && cfg.Routing.Failover.Enabled {
 		fo := routing.NewFailover(cfg.Routing.Failover, registry.Router(), retryer, cbReg)
@@ -300,6 +335,7 @@ func (h *Handlers) ReloadRouting(cfg *config.Config, registry *providers.Registr
 			return registry.GetProvider(providerID)
 		}
 		m := routing.NewMirror(cfg.Routing.Mirror, mirrorLookup)
+		m.ShareSlots(h.mirrorSlots)
 		h.mirror.Store(m)
 	} else {
 		h.mirror.Store(nil)
@@ -475,7 +511,7 @@ func (h *Handlers) effectiveFailover(orgCfg *tenant.OrgConfig) *routing.Failover
 		if orgCfg.Routing.Retry != nil && orgCfg.Routing.Retry.Enabled {
 			retryer = routing.NewRetryer(h.buildOrgRetryConfig(orgCfg.Routing.Retry))
 		}
-		return routing.NewFailover(foCfg, h.registry.Router(), retryer, nil)
+		return routing.NewFailover(foCfg, h.registry.Router(), retryer, h.healthMonitor.CircuitBreakerRegistry())
 	}
 	return h.failover.Load()
 }
@@ -1011,7 +1047,7 @@ func (h *Handlers) ChatCompletion(w http.ResponseWriter, r *http.Request) {
 	rc.UserID = req.User
 
 	// Extract client IP for IP ACL and audit.
-	rc.Metadata["client_ip"] = extractClientIP(r)
+	rc.Metadata["client_ip"] = h.clientIP(r)
 
 	// Pass Authorization header for auth plugin.
 	setAuthMetadataFromRequest(rc, r)
@@ -1045,19 +1081,7 @@ func (h *Handlers) ChatCompletion(w http.ResponseWriter, r *http.Request) {
 		rc.Metadata["x-guardrail-policy"] = v
 	}
 
-	// Extract cache-related headers into metadata for cache plugin.
-	if v := r.Header.Get("x-agentcc-cache-ttl"); v != "" {
-		rc.Metadata["cache_ttl"] = v
-	}
-	if v := r.Header.Get("x-agentcc-cache-namespace"); v != "" {
-		rc.Metadata["cache_namespace"] = v
-	}
-	if r.Header.Get("x-agentcc-cache-force-refresh") == "true" {
-		rc.Metadata["cache_force_refresh"] = "true"
-	}
-	if v := r.Header.Get("Cache-Control"); v != "" {
-		rc.Metadata["cache_control"] = v
-	}
+	applyCacheHeaders(rc, r)
 
 	// Resolve effective timeout (header > model > default) and apply.
 	timeout := h.resolveTimeout(rc, r)
@@ -1210,22 +1234,6 @@ func (h *Handlers) ChatCompletion(w http.ResponseWriter, r *http.Request) {
 
 	// Note: x-agentcc-timeout-ms is set via setAgentccHeaders (before WriteHeader)
 	// using rc.Metadata["timeout_ms"] which was populated above.
-
-	// Record provider latency for routing (after response).
-	if router := h.registry.Router(); router != nil {
-		if d, ok := rc.Timings["provider"]; ok {
-			router.RecordLatency(rc.Provider, d)
-		}
-	}
-
-	// Record health metrics.
-	if h.healthMonitor != nil && rc.Provider != "" {
-		if len(rc.Errors) > 0 {
-			h.healthMonitor.RecordError(rc.Provider, rc.Errors[0])
-		} else {
-			h.healthMonitor.RecordSuccess(rc.Provider)
-		}
-	}
 
 	// Traffic mirroring (async, fire-and-forget).
 	// Copy request fields before rc is released to the pool.
@@ -1429,7 +1437,7 @@ func (h *Handlers) handleNonStream(ctx context.Context, w http.ResponseWriter, r
 	servingProvider := provider
 
 	providerCall := func(ctx context.Context, rc *models.RequestContext) error {
-		resp, err := provider.ChatCompletion(ctx, rc.Request)
+		resp, err := h.callChatProvider(ctx, provider, rc.Request)
 		if err == nil {
 			rc.Response = resp
 			rc.ResolvedModel = resp.Model
@@ -1449,7 +1457,7 @@ func (h *Handlers) handleNonStream(ctx context.Context, w http.ResponseWriter, r
 			rc.Provider = fbProviderID
 			rc.Request.Model = resolvedModel
 
-			fbResp, fbCallErr := fbProvider.ChatCompletion(ctx, rc.Request)
+			fbResp, fbCallErr := h.callChatProvider(ctx, fbProvider, rc.Request)
 			if fbCallErr == nil {
 				servingProvider = fbProvider
 				rc.Response = fbResp
@@ -1488,16 +1496,7 @@ func (h *Handlers) handleNonStreamWithFailover(ctx context.Context, w http.Respo
 	// Wrap the failover loop inside engine.Process so pre-plugins run once,
 	// then the failover retries only the provider call, then post-plugins run once.
 	providerCall := func(ctx context.Context, rc *models.RequestContext) error {
-		foResult, err := fo.Execute(ctx, rc.Model, func(ctx context.Context, providerID string, modelOverride string) error {
-			p, ok := h.registry.GetProvider(providerID)
-			if !ok {
-				return fmt.Errorf("provider %q not found", providerID)
-			}
-
-			if shouldApplyOrgProviderOverride(rc) {
-				p = h.applyOrgProviderOverride(orgID, orgCfg, providerID, p)
-			}
-
+		foResult, err := h.executeProviderFailover(ctx, rc, fo, orgCfg, func(ctx context.Context, providerID string, p providers.Provider, modelOverride string) error {
 			// Reset for this attempt.
 			rc.Provider = providerID
 			rc.Response = nil
@@ -1508,7 +1507,7 @@ func (h *Handlers) handleNonStreamWithFailover(ctx context.Context, w http.Respo
 				rc.Request.Model = originalModel
 			}
 
-			resp, err := p.ChatCompletion(ctx, rc.Request)
+			resp, err := h.callChatProvider(ctx, p, rc.Request)
 			if err != nil {
 				return err
 			}
@@ -1542,7 +1541,7 @@ func (h *Handlers) handleNonStreamWithFailover(ctx context.Context, w http.Respo
 				rc.Provider = fbProviderID
 				rc.Request.Model = resolvedModel
 
-				fbResp, fbCallErr := fbProvider.ChatCompletion(ctx, rc.Request)
+				fbResp, fbCallErr := h.callChatProvider(ctx, fbProvider, rc.Request)
 				if fbCallErr == nil {
 					servingProvider = fbProvider
 					rc.Response = fbResp
@@ -1597,6 +1596,9 @@ func (h *Handlers) handleStream(ctx context.Context, w http.ResponseWriter, rc *
 	var firstChunk *models.StreamChunk
 	var servingProvider providers.Provider
 	var upstreamStreamCancel context.CancelFunc
+	// Time to the serving attempt's first chunk: the routing latency signal,
+	// as before per-attempt sampling, rather than the whole stream's length.
+	var firstChunkLatency time.Duration
 	defer func() {
 		if upstreamStreamCancel != nil {
 			upstreamStreamCancel()
@@ -1609,17 +1611,22 @@ func (h *Handlers) handleStream(ctx context.Context, w http.ResponseWriter, rc *
 	// attempt returns, which would otherwise end the stream after one chunk.
 	openStream := func(callCtx context.Context, callProvider providers.Provider) error {
 		attemptCtx, attemptCancel := context.WithCancel(ctx)
+		start := time.Now()
 		candidateChunks, candidateErrCh := callProvider.StreamChatCompletion(attemptCtx, rc.Request)
 		if candidateChunks == nil {
 			attemptCancel()
-			return models.ErrUpstreamProvider(http.StatusBadGateway, "upstream provider returned no stream")
+			err := models.ErrUpstreamProvider(http.StatusBadGateway, "upstream provider returned no stream")
+			h.recordProviderOutcome(callCtx, callProvider, time.Since(start), err)
+			return err
 		}
 
 		chunk, err := waitForFirstStreamChunk(callCtx, candidateChunks, candidateErrCh)
 		if err != nil {
+			h.recordProviderOutcome(callCtx, callProvider, time.Since(start), err)
 			cancelAndDrainStream(attemptCancel, candidateChunks)
 			return err
 		}
+		firstChunkLatency = time.Since(start)
 
 		if upstreamStreamCancel != nil {
 			cancelAndDrainStream(upstreamStreamCancel, chunks)
@@ -1675,14 +1682,7 @@ func (h *Handlers) handleStream(ctx context.Context, w http.ResponseWriter, rc *
 		}
 
 		if effectiveFailover != nil && effectiveFailover.IsEnabled() && h.registry.Router() != nil && h.registry.Router().HasTargets(rc.Model) {
-			result, err := effectiveFailover.Execute(ctx, rc.Model, func(callCtx context.Context, providerID string, modelOverride string) error {
-				p, ok := h.registry.GetProvider(providerID)
-				if !ok {
-					return models.ErrUpstreamProvider(http.StatusBadGateway, fmt.Sprintf("provider %q not found", providerID))
-				}
-				if shouldApplyOrgProviderOverride(rc) {
-					p = h.applyOrgProviderOverride(orgID, orgCfg, providerID, p)
-				}
+			result, err := h.executeProviderFailover(ctx, rc, effectiveFailover, orgCfg, func(callCtx context.Context, _ string, p providers.Provider, modelOverride string) error {
 				if modelOverride != "" {
 					rc.Request.Model = modelOverride
 				} else {
@@ -1843,12 +1843,14 @@ func (h *Handlers) handleStream(ctx context.Context, w http.ResponseWriter, rc *
 			if !ok {
 				if apiErr, finished := closedStreamError(ctx, errCh); !finished {
 					if apiErr != nil {
+						h.recordProviderOutcome(ctx, servingProvider, firstChunkLatency, apiErr)
 						rc.AddError(apiErr)
 						sseWriter.WriteError(apiErr)
 					}
 					finalizeStream(ctx.Err() != nil)
 					return
 				}
+				h.recordProviderOutcome(ctx, servingProvider, firstChunkLatency, nil)
 				// Stream complete — run final guardrail check.
 				if streamChecker != nil {
 					if res := streamChecker.Finish(streamCtx); res.Blocked {
@@ -1911,6 +1913,7 @@ func (h *Handlers) handleStream(ctx context.Context, w http.ResponseWriter, rc *
 
 		case err, ok := <-errCh:
 			if ok && err != nil {
+				h.recordProviderOutcome(ctx, servingProvider, firstChunkLatency, err)
 				apiErr, isAPI := err.(*models.APIError)
 				if !isAPI {
 					apiErr = models.ErrInternal(err.Error())
@@ -1927,6 +1930,7 @@ func (h *Handlers) handleStream(ctx context.Context, w http.ResponseWriter, rc *
 			// guardrail goroutines. Drain remaining chunks to unblock the
 			// provider goroutine.
 			if apiErr := streamEndError(ctx, ctx.Err()); apiErr != nil {
+				h.recordProviderOutcome(ctx, servingProvider, firstChunkLatency, ctx.Err())
 				rc.AddError(apiErr)
 				sseWriter.WriteError(apiErr)
 			}
@@ -2303,34 +2307,13 @@ func isBlockedMetadataKey(key string) bool {
 	return false
 }
 
-// extractClientIP extracts the client IP address from the request.
-// It checks X-Forwarded-For, X-Real-IP, and falls back to RemoteAddr.
-func extractClientIP(r *http.Request) string {
-	// Check X-Forwarded-For (may contain multiple IPs: client, proxy1, proxy2).
-	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		parts := strings.Split(xff, ",")
-		if ip := strings.TrimSpace(parts[0]); ip != "" {
-			return ip
-		}
-	}
-
-	// Check X-Real-IP.
-	if xri := r.Header.Get("X-Real-IP"); xri != "" {
-		return xri
-	}
-
-	// Fall back to RemoteAddr (strip port).
-	addr := r.RemoteAddr
-	if idx := strings.LastIndex(addr, ":"); idx > 0 {
-		// Handle IPv6 in brackets: [::1]:8080
-		if addr[0] == '[' {
-			if bracketIdx := strings.Index(addr, "]"); bracketIdx > 0 {
-				return addr[1:bracketIdx]
-			}
-		}
-		return addr[:idx]
-	}
-	return addr
+// clientIP returns the client address recorded as client_ip and judged by
+// ip_acl and per-key allowed_ips. X-Forwarded-For is honoured only for the
+// configured number of trusted proxy hops (ip_acl.trusted_proxies); with the
+// default of 0 it is the TCP peer. X-Real-IP is never trusted. See
+// trustedClientIP.
+func (h *Handlers) clientIP(r *http.Request) string {
+	return trustedClientIP(r, h.trustedProxies)
 }
 
 // extractBodySessionID extracts session_id from the request body's "metadata"

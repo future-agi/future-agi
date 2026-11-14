@@ -44,7 +44,7 @@ export default function SelectionBar({
     >
       <Typography
         sx={{
-          fontSize: 13,
+          fontSize: 12,
           fontWeight: 500,
           color: "text.primary",
           whiteSpace: "nowrap",

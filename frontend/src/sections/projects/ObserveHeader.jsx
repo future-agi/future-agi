@@ -491,7 +491,7 @@ const ObserveHeader = ({ text, refreshData, resetFilters }) => {
               <Typography
                 component="span"
                 sx={{
-                  fontSize: 13,
+                  fontSize: 12,
                   fontWeight: 500,
                   fontFamily: "'IBM Plex Sans', sans-serif",
                   color: "text.primary",

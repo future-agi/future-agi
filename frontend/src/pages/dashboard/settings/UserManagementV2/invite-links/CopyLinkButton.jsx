@@ -4,7 +4,7 @@ import { Button } from "@mui/material";
 import { enqueueSnackbar } from "notistack";
 import Iconify from "src/components/iconify";
 import CustomTooltip from "src/components/tooltip";
-import { copyToClipboard } from "src/utils/utils";
+import { copyToClipboard } from "src/utils/copyToClipboard";
 
 export default function CopyLinkButton({ text, label = "Copy", sx }) {
   const [copied, setCopied] = useState(false);

@@ -337,8 +337,6 @@ const CategorizedSourceDropdownInner = React.forwardRef(
               height: 320,
               borderRadius:
                 position === "bottom" ? "0px 0px 4px 4px" : "4px 4px 0px 0px",
-              border: "1px solid",
-              borderColor: "action.hover",
               p: 0,
               mt: position === "bottom" ? theme.spacing(0.5) : 0,
               mb: position === "top" ? -0.2 : 0,
@@ -395,7 +393,7 @@ const CategorizedSourceDropdownInner = React.forwardRef(
                           typography: "s2_1",
                           sx: {
                             fontWeight: selected ? 600 : 400,
-                            fontSize: "13px",
+                            fontSize: "12px",
                           },
                         }}
                       />

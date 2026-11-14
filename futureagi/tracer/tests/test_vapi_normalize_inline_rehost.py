@@ -9,10 +9,7 @@ Run with: pytest tracer/tests/test_vapi_normalize_inline_rehost.py -v
 
 from unittest.mock import patch
 
-import pytest
-
 from tracer.utils.vapi import normalize_vapi_data
-
 
 # Example R2 provider URLs (the kind Vapi returns)
 R2_COMBINED = "https://storage.vapi.ai/combined.mp3"
@@ -370,7 +367,7 @@ class TestInlineRehostBytesAndMirror:
                 "tracer.utils.vapi_recording.VapiRecordingService.mirror_s3_url_to_consumer_fields",
             ) as mock_mirror,
         ):
-            result = normalize_vapi_data(VAPI_LOG, api_key="test-key")
+            normalize_vapi_data(VAPI_LOG, api_key="test-key")
 
         mock_mirror.assert_called_once()
         call_args = mock_mirror.call_args[1]
@@ -394,7 +391,7 @@ class TestInlineRehostBytesAndMirror:
                 "tracer.utils.vapi_recording.VapiRecordingService.mirror_s3_url_to_consumer_fields",
             ) as mock_mirror,
         ):
-            result = normalize_vapi_data(log, api_key="test-key")
+            normalize_vapi_data(log, api_key="test-key")
 
         mock_mirror.assert_not_called()
 

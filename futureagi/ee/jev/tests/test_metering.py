@@ -162,7 +162,10 @@ def test_r17_dataset_runner_emits_jev_properties():
         columns.return_value.values.return_value = []
         billing.return_value.get_eval_per_run_fee.return_value = 0.0005
         billing.return_value.calculate_ai_credits.return_value = 0.06
-        runner._process_eval_result(SimpleNamespace(id="row"), {})
+        runner._process_eval_result(
+            SimpleNamespace(id="row", dataset_id="dataset-id"), {}
+        )
+        columns.assert_called_once_with(id__in=[], dataset_id="dataset-id")
     # Flat pricing: only the per-run fee is converted to credits, and the
     # answer is charged that (credits_per_answer, as on every Jev path).
     conversions = billing.return_value.calculate_ai_credits.call_args_list

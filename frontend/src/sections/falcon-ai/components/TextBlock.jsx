@@ -98,7 +98,7 @@ function CodeBlockWrapper({ children, className }) {
           m: 0,
           p: 1.5,
           overflow: "auto",
-          fontSize: 13,
+          fontSize: 12,
           lineHeight: 1.6,
           fontFamily: "'SF Mono', 'Fira Code', Menlo, Consolas, monospace",
           bgcolor: "background.paper",
@@ -122,7 +122,7 @@ export default function TextBlock({ content }) {
   return (
     <Box
       sx={{
-        fontSize: 13,
+        fontSize: 12,
         lineHeight: 1.7,
         color: "text.primary",
         wordBreak: "break-word",
@@ -142,13 +142,13 @@ export default function TextBlock({ content }) {
         },
         "& h1": { fontSize: 20 },
         "& h2": { fontSize: 16 },
-        "& h3": { fontSize: 13 },
+        "& h3": { fontSize: 12 },
         // Tables
         "& table": {
           borderCollapse: "collapse",
           width: "100%",
           my: 1.5,
-          fontSize: 13,
+          fontSize: 12,
           borderRadius: "8px",
           overflow: "hidden",
           border: 1,
@@ -170,7 +170,7 @@ export default function TextBlock({ content }) {
           py: 0.75,
           borderBottom: 1,
           borderColor: "divider",
-          fontSize: 13,
+          fontSize: 12,
           color: "text.primary",
         },
         "& tr:last-child td": {

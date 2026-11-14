@@ -191,7 +191,7 @@ describe("CallDrawer — chat branch", () => {
     await user.click(screen.getByRole("tab", { name: /Evals \(2\)/ }));
     expect(screen.getAllByText("Failed")).toHaveLength(2);
     expect(screen.queryByText("0%")).not.toBeInTheDocument();
-    expect(screen.queryByText("Fix with Falcon")).not.toBeInTheDocument();
+    expect(screen.queryByText("Fix with AI")).not.toBeInTheDocument();
     expect(screen.queryByText("Add Evals")).not.toBeInTheDocument();
     await user.click(screen.getByText("Refund correctness"));
     // The expanded eval adds its explanation — banner + drawer = two.
@@ -313,9 +313,17 @@ describe("CallDrawer — chat branch", () => {
 // `mapCallRow`, the real drawer.
 describe("CallDrawer — chat prev/next", () => {
   const renderChat = (props = {}) => {
-    useCallDetail.mockReturnValue({ callDetail: CHAT_DETAIL, isLoading: false });
+    useCallDetail.mockReturnValue({
+      callDetail: CHAT_DETAIL,
+      isLoading: false,
+    });
     return render(
-      <CallDrawer task={chatTask} agentType="text" onClose={() => {}} {...props} />,
+      <CallDrawer
+        task={chatTask}
+        agentType="text"
+        onClose={() => {}}
+        {...props}
+      />,
     );
   };
 
@@ -325,8 +333,12 @@ describe("CallDrawer — chat prev/next", () => {
     const onNext = vi.fn();
     renderChat({ hasPrev: true, hasNext: false, onPrev, onNext });
 
-    expect(screen.getByRole("button", { name: "Next conversation (↓)" })).toBeDisabled();
-    await user.click(screen.getByRole("button", { name: "Previous conversation (↑)" }));
+    expect(
+      screen.getByRole("button", { name: "Next conversation (↓)" }),
+    ).toBeDisabled();
+    await user.click(
+      screen.getByRole("button", { name: "Previous conversation (↑)" }),
+    );
     expect(onPrev).toHaveBeenCalledTimes(1);
     expect(onNext).not.toHaveBeenCalled();
   });
@@ -353,21 +365,18 @@ describe("CallDrawer — chat prev/next", () => {
   it.each([
     ["the transcript", () => screen.getByText("Refund issued.")],
     ["the analytics pane", () => screen.getByText("Words")],
-  ])(
-    "leaves ↑/↓ to scroll %s instead of stepping",
-    (_pane, target) => {
-      const onNext = vi.fn();
-      const onPrev = vi.fn();
-      renderChat({ hasPrev: true, hasNext: true, onPrev, onNext });
+  ])("leaves ↑/↓ to scroll %s instead of stepping", (_pane, target) => {
+    const onNext = vi.fn();
+    const onPrev = vi.fn();
+    renderChat({ hasPrev: true, hasNext: true, onPrev, onNext });
 
-      // fireEvent returns false when the default (the browser's scroll) was
-      // prevented.
-      expect(fireEvent.keyDown(target(), { key: "ArrowDown" })).toBe(true);
-      expect(fireEvent.keyDown(target(), { key: "ArrowUp" })).toBe(true);
-      expect(onNext).not.toHaveBeenCalled();
-      expect(onPrev).not.toHaveBeenCalled();
-    },
-  );
+    // fireEvent returns false when the default (the browser's scroll) was
+    // prevented.
+    expect(fireEvent.keyDown(target(), { key: "ArrowDown" })).toBe(true);
+    expect(fireEvent.keyDown(target(), { key: "ArrowUp" })).toBe(true);
+    expect(onNext).not.toHaveBeenCalled();
+    expect(onPrev).not.toHaveBeenCalled();
+  });
 
   it("says conversation, not call — this is a chat", () => {
     useCallDetail.mockReturnValue({
@@ -382,8 +391,12 @@ describe("CallDrawer — chat prev/next", () => {
 
   it("disables both arrows when nothing is passed", () => {
     renderChat();
-    expect(screen.getByRole("button", { name: "Previous conversation (↑)" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Next conversation (↓)" })).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: "Previous conversation (↑)" }),
+    ).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: "Next conversation (↓)" }),
+    ).toBeDisabled();
   });
 });
 
@@ -561,7 +574,12 @@ describe("CallDrawer — voice branch", () => {
         transcript: [],
         eval_metrics: { cfg_t: {}, cfg_ok: { name: "Tone", value: 0.9 } },
         evaluations: [
-          { id: "cfg_t", name: "Resolution", reason: "late", status: "timed_out" },
+          {
+            id: "cfg_t",
+            name: "Resolution",
+            reason: "late",
+            status: "timed_out",
+          },
           { id: "cfg_p", name: "Policy", reason: "", status: "pending" },
           { id: "cfg_ok", name: "Tone", score: 0.9, status: "succeeded" },
         ],
@@ -617,7 +635,7 @@ describe("CallDrawer — voice branch", () => {
       "data-hide-path-tabs",
       "true",
     );
-    // Fix with Falcon isn't wired into the environment flow yet.
+    // Fix with AI isn't wired into the environment flow yet.
     expect(screen.getByTestId("voice-drawer")).toHaveAttribute(
       "data-show-fix-with-falcon",
       "false",
@@ -735,7 +753,11 @@ describe("CallDrawer — the call's traces", () => {
       data: { id: "voice-1", transcript: [] },
       isPending: false,
     });
-    useCallTraces.mockReturnValue({ projectId: null, traces: [], isError: true });
+    useCallTraces.mockReturnValue({
+      projectId: null,
+      traces: [],
+      isError: true,
+    });
 
     render(
       <CallDrawer
@@ -775,7 +797,10 @@ describe("CallDrawer — the call's traces", () => {
 
   it("gives a chat a Traces tab beside the transcript that opens the call's traces", async () => {
     const user = userEvent.setup();
-    useCallDetail.mockReturnValue({ callDetail: CHAT_DETAIL, isLoading: false });
+    useCallDetail.mockReturnValue({
+      callDetail: CHAT_DETAIL,
+      isLoading: false,
+    });
     useCallTraces.mockReturnValue({
       projectId: "hidden-project",
       traces: ROWS,
@@ -802,7 +827,10 @@ describe("CallDrawer — the call's traces", () => {
   });
 
   it("gives a chat a Traces tab even when the run has nothing to read", () => {
-    useCallDetail.mockReturnValue({ callDetail: CHAT_DETAIL, isLoading: false });
+    useCallDetail.mockReturnValue({
+      callDetail: CHAT_DETAIL,
+      isLoading: false,
+    });
 
     render(<CallDrawer task={chatTask} agentType="text" onClose={() => {}} />);
 

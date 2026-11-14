@@ -62,7 +62,7 @@ const VersionPopoverContent = ({
               <Skeleton
                 variant="text"
                 width={48}
-                sx={{ fontSize: "0.8125rem" }}
+                sx={{ fontSize: "0.75rem" }}
               />
             </MenuItem>
           ))}

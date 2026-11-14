@@ -23,6 +23,11 @@ func (a *Authenticator) HTTPMiddleware(next http.Handler) http.Handler {
 
 		result, err := a.Authenticate(r.Context(), apiKey, secretKey)
 		if err != nil {
+			if errors.Is(err, ErrKeyExpired) {
+				a.log.Warn("http auth failed", "err", err)
+				http.Error(w, `{"error":"`+ExpiredKeyMessage+`","code":"`+ExpiredKeyCode+`"}`, http.StatusUnauthorized)
+				return
+			}
 			if errors.Is(err, ErrUnauthenticated) {
 				a.log.Warn("http auth failed", "err", err)
 				http.Error(w, `{"error":"authentication failed"}`, http.StatusUnauthorized)

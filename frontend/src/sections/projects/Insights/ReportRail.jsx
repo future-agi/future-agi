@@ -457,7 +457,7 @@ function RailTemplates({ onNew }) {
             width={16}
             sx={{ color: "text.secondary", flexShrink: 0 }}
           />
-          <Typography variant="body2" sx={{ fontSize: 13 }}>
+          <Typography variant="body2" sx={{ fontSize: 12 }}>
             {template.title}
           </Typography>
         </Stack>

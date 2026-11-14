@@ -1120,14 +1120,14 @@ const EvaluationConfigureForm = ({
         >
           <Typography
             color={"text.primary"}
-            fontSize="13px"
+            fontSize="12px"
             fontWeight={600}
             sx={{ mt: 1 }}
           >
             {"Evaluation Test"}
           </Typography>
           <Typography
-            fontSize="13px"
+            fontSize="12px"
             fontWeight={600}
             sx={{ mb: "1.5rem", mt: "0.2rem" }}
           >
@@ -1152,7 +1152,7 @@ const EvaluationConfigureForm = ({
             bottom: 0,
           }}
         >
-          <Typography fontSize="13px" fontWeight={600} sx={{ mb: 1 }}>
+          <Typography fontSize="12px" fontWeight={600} sx={{ mb: 1 }}>
             <Box
               sx={{
                 display: "flex",
@@ -1267,9 +1267,9 @@ const EvaluationConfigureForm = ({
           />
         </Box>
 
-        <Typography color={"text.primary"} fontSize="13px" fontWeight={600}>
+        <Typography color={"text.primary"} fontSize="12px" fontWeight={600}>
           {selectedEval?.name || evalConfig?.name}
-          <Typography fontSize="13px" fontWeight={600} sx={{ mt: "0.2rem" }}>
+          <Typography fontSize="12px" fontWeight={600} sx={{ mt: "0.2rem" }}>
             <HelperText text={selectedEval?.description} />
           </Typography>
         </Typography>

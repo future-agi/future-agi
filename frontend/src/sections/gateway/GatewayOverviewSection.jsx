@@ -218,14 +218,14 @@ const GatewayOverviewSection = () => {
             <Typography
               sx={{
                 fontFamily: "monospace",
-                fontSize: 13,
+                fontSize: 12,
                 color: "text.primary",
                 wordBreak: "break-all",
               }}
             >
               {gateway.baseUrl}
             </Typography>
-            <Typography sx={{ fontSize: 13, color: "text.tertiary", mt: 0.5 }}>
+            <Typography sx={{ fontSize: 12, color: "text.tertiary", mt: 0.5 }}>
               Send OpenAI-compatible requests to this URL. Use your API key for
               authentication.
             </Typography>
@@ -378,7 +378,7 @@ const GatewayOverviewSection = () => {
             })}
           </Stack>
         ) : (
-          <Typography sx={{ fontSize: 13, color: "text.tertiary" }}>
+          <Typography sx={{ fontSize: 12, color: "text.tertiary" }}>
             No provider data. Run a health check to see provider status.
           </Typography>
         )}
@@ -387,7 +387,7 @@ const GatewayOverviewSection = () => {
             <Typography sx={{ fontSize: 12, color: "text.tertiary" }}>
               Models
             </Typography>
-            <Typography sx={{ fontSize: 13, color: "text.primary" }}>
+            <Typography sx={{ fontSize: 12, color: "text.primary" }}>
               {gateway.modelCount ?? 0}
             </Typography>
           </Box>
@@ -395,7 +395,7 @@ const GatewayOverviewSection = () => {
             <Typography sx={{ fontSize: 12, color: "text.tertiary" }}>
               Last check
             </Typography>
-            <Typography sx={{ fontSize: 13, color: "text.primary" }}>
+            <Typography sx={{ fontSize: 12, color: "text.primary" }}>
               {gateway.lastHealthCheck
                 ? new Date(gateway.lastHealthCheck).toLocaleString()
                 : "Never"}
@@ -433,7 +433,7 @@ const GatewayOverviewSection = () => {
                 bgcolor: "transparent",
                 color: "text.primary",
                 font: "inherit",
-                fontSize: 13,
+                fontSize: 12,
                 textAlign: "left",
                 cursor: "pointer",
                 "&:hover": { bgcolor: "action.hover" },

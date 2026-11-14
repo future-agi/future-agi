@@ -1,4 +1,4 @@
-import { create } from "zustand";
+import { create } from "src/utils/zustand";
 
 export const useAgentDetailsStore = create((set, get) => ({
   selectedVersion: "",
@@ -44,6 +44,7 @@ export const useAgentDetailsStore = create((set, get) => ({
       selectedVersion: null,
       agentName: "",
       agentDetails: {},
+      latestVersionNumber: 0,
     });
     // Clear URL params when resetting
     const url = new URL(window.location);

@@ -9,22 +9,29 @@ git submodule update --init --recursive
 
 ### Type Checking with MyPy
 
-**We use MyPy with a baseline-driven approach** - new code must be typed, but existing code is grandfathered in.
-
-#### Quick Start
+CI runs mypy on the whole backend in the "Python types (advisory)" workflow.
+Known errors are listed in `mypy-baseline.txt`, one line per error, with line
+numbers set to 0 so moving code does not change them. The check fails when a
+file has more errors of a kind than the baseline lists, including errors a
+change causes in files it did not touch. It is advisory for now.
 
 ```bash
-# One-time setup
-make install-mypy
-make mypy-baseline
-
-# Before every commit
-make mypy
+make mypy                # whole-repo mypy, compared with mypy-baseline.txt
+make mypy-baseline-sync  # rewrite mypy-baseline.txt from a whole-repo run
 ```
 
-**🔥 CI will reject PRs with new type errors!**
+mypy's Django plugin loads the production settings, `tfc.settings.settings`
+(`[tool.django-stubs]` in `pyproject.toml`), with
+`EE_LICENSE_KEY=mypy-placeholder` so the EE apps are registered too. The
+variable is a placeholder, not a key; `make mypy` and CI set it, and both run
+`.venv/bin/mypy`.
 
-📚 **[Read the Full Guide](MYPY_SETUP_GUIDE.md)** | **[Detailed Docs](docs/MYPY_TYPE_CHECKING.md)**
+Fix a new error rather than syncing it into the baseline. After fixing
+baselined errors, run `make mypy-baseline-sync` and commit the smaller
+baseline. CI's environment is the reference (no `ee/cloud` checkout); its run
+uploads mypy's output as the `mypy-output` artifact, which
+`python3 -I ../scripts/mypy_baseline.py sync --input <file>` turns into a
+baseline. See `scripts/mypy_baseline.py`.
 
 ### Pre-commit Hooks
 
@@ -32,11 +39,10 @@ make mypy
 
 #### What do they check?
 
-- ✅ Code formatting (Black, isort)
+- ✅ Code formatting and import sorting (Ruff)
 - ✅ Linting (Ruff)
 - ✅ Security (Bandit, detect-secrets)
 - ✅ Django checks (migrations, system checks)
-- ✅ Type checking (mypy)
 - ✅ File validation (YAML, JSON)
 
 #### First-time setup
@@ -65,7 +71,6 @@ make mypy               # Check types (baseline-driven)
 
 - See [Pre-commit Setup Guide](docs/PRE_COMMIT_SETUP.md)
 - See [Quick Reference](docs/PRE_COMMIT_QUICK_REFERENCE.md)
-- See [MyPy Setup Guide](MYPY_SETUP_GUIDE.md)
 - Run `./scripts/verify-team-setup.sh` to diagnose issues
 
 ### Common Commands
@@ -84,7 +89,7 @@ make test-coverage       # Tests with coverage
 make test-backend-only   # Backend tests only
 
 # Django
-python manage.py runserver    # Start dev server
+DEBUG=true python manage.py runserver  # Start dev server (DEBUG defaults to off; set it explicitly to serve app static files and debug pages)
 python manage.py migrate      # Run migrations
 python manage.py test         # Run Django tests
 ```
@@ -179,8 +184,8 @@ make pre-commit-all
 | `make pre-commit-install` | Install pre-commit hooks (one-time) |
 | `make pre-commit` | Run on staged files |
 | `make pre-commit-all` | Run on all files |
-| `make format` | Auto-format code (black + isort) |
-| `make lint` | Run linters (ruff, black, isort) |
+| `make format` | Auto-fix and format code (`ruff check --fix`, `ruff format`) |
+| `make lint` | Run linters (`ruff check`, `ruff format --check`) |
 | `make check-secrets` | Check for secrets |
 | `make check-all` | Run all quality checks |
 | `make fix` | Auto-fix common issues |
@@ -218,20 +223,18 @@ detect-secrets scan > .secrets.baseline
 git commit --no-verify
 
 # Skip specific hook
-SKIP=ruff git commit -m "Message"
+SKIP=ruff-check,ruff-format git commit -m "Message"
 ```
 
 ## Installed Hooks
 
 ### Auto-fixing Hooks
-✅ **black** - Python formatter
-✅ **isort** - Import sorter
-✅ **ruff** - Linter with auto-fix
+✅ **ruff-check** - Linter and import sorter, with auto-fix
+✅ **ruff-format** - Python formatter
 ✅ **django-upgrade** - Upgrade Django code
 ✅ **djlint** - Django template formatter
 
 ### Checking Hooks
-🔍 **mypy** - Type checking
 🔍 **bandit** - Security scan
 🔍 **detect-secrets** - Secret detection
 🔍 **django-check** - Django system checks

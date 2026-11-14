@@ -187,7 +187,7 @@ export default function PaymentMethods() {
                   <Stack direction="row" alignItems="center" spacing={1.5}>
                     <Iconify icon={brandIcon} width={28} />
                     <Box>
-                      <Typography sx={{ fontSize: 13, fontWeight: 500 }}>
+                      <Typography sx={{ fontSize: 12, fontWeight: 500 }}>
                         {pm.brand} •••• {pm.last4}
                       </Typography>
                       <Typography variant="caption" color="text.tertiary">

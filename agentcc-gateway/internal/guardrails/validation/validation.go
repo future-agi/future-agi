@@ -18,6 +18,7 @@ type ValidationGuardrail struct {
 	maxMsgLen       int
 	maxTotalLen     int
 	minMsgLen       int
+	readinessErr    error
 }
 
 // New creates a ValidationGuardrail from rule config.
@@ -26,6 +27,30 @@ func New(cfg map[string]interface{}) *ValidationGuardrail {
 
 	if cfg == nil {
 		return g
+	}
+
+	// Legacy HTTP checks skip invalid patterns. Realtime must not admit a
+	// blocking session when any configured pattern would be silently skipped.
+	for _, key := range []string{"deny_patterns", "require_patterns"} {
+		value, exists := cfg[key]
+		if !exists {
+			continue
+		}
+		patterns, ok := value.([]interface{})
+		if !ok {
+			g.readinessErr = fmt.Errorf("%s must be a list of patterns", key)
+			continue
+		}
+		for _, value := range patterns {
+			pattern, ok := value.(string)
+			if !ok {
+				g.readinessErr = fmt.Errorf("%s contains a non-string pattern", key)
+				continue
+			}
+			if _, err := regexp.Compile(pattern); err != nil {
+				g.readinessErr = fmt.Errorf("%s contains an invalid pattern", key)
+			}
+		}
 	}
 
 	// Parse deny patterns.
@@ -67,8 +92,11 @@ func New(cfg map[string]interface{}) *ValidationGuardrail {
 	return g
 }
 
-func (g *ValidationGuardrail) Name() string           { return "input-validation" }
+func (g *ValidationGuardrail) Name() string            { return "input-validation" }
 func (g *ValidationGuardrail) Stage() guardrails.Stage { return guardrails.StagePre }
+
+// RealtimeReady reports configuration that legacy HTTP checks would skip.
+func (g *ValidationGuardrail) RealtimeReady() error { return g.readinessErr }
 
 // Check validates messages against configured rules.
 func (g *ValidationGuardrail) Check(ctx context.Context, input *guardrails.CheckInput) *guardrails.CheckResult {

@@ -288,7 +288,7 @@ const AgentVisualizationProjectScopePrompt = () => (
       color: "text.disabled",
     }}
   >
-    <Typography role="status" variant="body2" sx={{ fontSize: 13 }}>
+    <Typography role="status" variant="body2" sx={{ fontSize: 12 }}>
       Select a project filter to use agent visualizations
     </Typography>
   </Box>
@@ -400,7 +400,7 @@ const COMPARE_DATE_OPTIONS = [
 const comparePillSx = {
   textTransform: "none",
   fontWeight: 500,
-  fontSize: 13,
+  fontSize: 12,
   fontFamily: "'IBM Plex Sans', sans-serif",
   height: 26,
   border: "1px solid",
@@ -471,7 +471,7 @@ export const CompareGraphHeader = ({
       >
         {compareType === "primary" ? "A" : "B"}
       </Box>
-      <Typography sx={{ fontSize: 13, fontWeight: 600 }}>{label}</Typography>
+      <Typography sx={{ fontSize: 12, fontWeight: 600 }}>{label}</Typography>
       <Button
         ref={dateButtonRef}
         variant="outlined"

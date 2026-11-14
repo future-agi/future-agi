@@ -59,15 +59,15 @@ export const FEATURES = {
   },
   falconAI: {
     eyebrow: "Cloud feature",
-    title: "Upgrade to use Falcon AI",
+    title: "Upgrade to use Chat",
     description:
       "Your AI copilot for Future AGI — ask questions, build evals, and debug traces in natural language.",
     image: falconAIPreview,
     imageDark: falconAIPreviewDark,
     steps: [
-      "Talk to us to enable Falcon AI on your workspace.",
-      "Connect your tools so Falcon AI can act on your data.",
-      "Ask in plain language and Falcon AI does the work for you.",
+      "Talk to us to enable Chat on your workspace.",
+      "Connect your tools so Chat can act on your data.",
+      "Ask in plain language and Chat does the work for you.",
     ],
   },
   instantEval: {

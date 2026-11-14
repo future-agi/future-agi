@@ -384,7 +384,7 @@ func waitForTaskWorker(t *testing.T, s *Server, taskID string) {
 func TestReturnImmediatelyResponseDoesNotShareTaskWithWorker(t *testing.T) {
 	// Without metadata.model the worker fails the task at once, while the
 	// handler is still encoding the message/send response.
-	s := newPipelineTestA2AServer(t, func(context.Context, string, *models.ChatCompletionRequest) (*models.ChatCompletionResponse, error) {
+	s := newPipelineTestA2AServer(t, func(context.Context, Caller, *models.ChatCompletionRequest) (*models.ChatCompletionResponse, error) {
 		t.Error("executor should not be called without a model")
 		return nil, nil
 	})
@@ -402,7 +402,7 @@ func TestReturnImmediatelyResponseDoesNotShareTaskWithWorker(t *testing.T) {
 
 func TestTasksCancelWhileReturnImmediatelyTaskRuns(t *testing.T) {
 	started := make(chan struct{})
-	s := newPipelineTestA2AServer(t, func(ctx context.Context, _ string, _ *models.ChatCompletionRequest) (*models.ChatCompletionResponse, error) {
+	s := newPipelineTestA2AServer(t, func(ctx context.Context, _ Caller, _ *models.ChatCompletionRequest) (*models.ChatCompletionResponse, error) {
 		close(started)
 		<-ctx.Done()
 		return nil, ctx.Err()
@@ -426,7 +426,7 @@ func TestTasksCancelWhileReturnImmediatelyTaskRuns(t *testing.T) {
 func TestTasksCancelIsNotOverwrittenByLateResult(t *testing.T) {
 	started := make(chan struct{})
 	release := make(chan struct{})
-	s := newPipelineTestA2AServer(t, func(context.Context, string, *models.ChatCompletionRequest) (*models.ChatCompletionResponse, error) {
+	s := newPipelineTestA2AServer(t, func(context.Context, Caller, *models.ChatCompletionRequest) (*models.ChatCompletionResponse, error) {
 		close(started)
 		<-release
 		return &models.ChatCompletionResponse{Choices: []models.Choice{{

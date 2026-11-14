@@ -105,7 +105,7 @@ const UsersTable = ({
             backgroundColor: "background.default",
           },
           "& .MuiDataGrid-columnHeaders": {
-            fontSize: "13px",
+            fontSize: "12px",
             padding: "8px",
             backgroundColor: "background.paper",
             color: "text.disabled",

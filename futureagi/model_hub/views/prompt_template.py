@@ -2032,11 +2032,7 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
                                 except ImportError:
                                     emit = None
 
-                                if (
-                                    emit is not None
-                                    and UsageEvent is not None
-                                    and BillingEventType is not None
-                                ):
+                                if emit is not None and UsageEvent is not None:
                                     emit(
                                         UsageEvent(
                                             org_id=str(organization.id),

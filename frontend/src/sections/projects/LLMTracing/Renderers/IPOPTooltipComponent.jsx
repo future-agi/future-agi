@@ -14,7 +14,7 @@ const IPOPTooltipComponent = memo(({ value }) => {
     overflowY: "auto",
     backgroundColor: "var(--bg-paper)",
     padding: "16px",
-    fontSize: "13px",
+    fontSize: "12px",
     lineHeight: "22px",
     color: "var(--text-primary)",
     fontFamily: "Roboto, sans-serif",

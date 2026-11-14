@@ -3,9 +3,9 @@ window.DS = {
  "tokens": {
   "$meta": {
    "name": "Future AGI Design System",
-   "version": "0.2.3",
+   "version": "0.2.4",
    "status": "draft for review",
-   "updated": "2026-10-31",
+   "updated": "2026-11-12",
    "notes": "Source of truth. Components read only the semantic tier (color.*, shadow.*); primitives exist to be referenced. Run `python3 design-system/tools/build_tokens.py` after any change to regenerate tokens.css, tokens.js and mui-theme.js."
   },
   "primitive": {
@@ -493,6 +493,41 @@ window.DS = {
      "light": "{gray.500}",
      "dark": "{gray.400}"
     }
+   },
+   "dataMono": {
+    "1": {
+     "light": "{purple.500}",
+     "dark": "{purple.400}",
+     "use": "Quiet chart palette: shades of the brand purple for categorical charts where one family reads better than eight hues, such as cost by group or a distribution. Neighbouring entries alternate lighter and darker so adjacent bars and slices stay apart."
+    },
+    "2": {
+     "light": "{purple.300}",
+     "dark": "{purple.700}"
+    },
+    "3": {
+     "light": "{purple.700}",
+     "dark": "{purple.200}"
+    },
+    "4": {
+     "light": "{purple.400}",
+     "dark": "{purple.500}"
+    },
+    "5": {
+     "light": "{purple.800}",
+     "dark": "{purple.100}"
+    },
+    "6": {
+     "light": "{purple.200}",
+     "dark": "{purple.800}"
+    },
+    "7": {
+     "light": "{purple.900}",
+     "dark": "{purple.300}"
+    },
+    "8": {
+     "light": "{purple.600}",
+     "dark": "{purple.600}"
+    }
    }
   },
   "shadow": {
@@ -567,15 +602,15 @@ window.DS = {
      "use": "Page title, object header, dialog and drawer title."
     },
     "title-xs": {
-     "size": 13,
-     "line": 20,
+     "size": 12,
+     "line": 18,
      "weight": 500,
      "tracking": "0",
      "use": "Section title, panel title, group heading."
     },
     "body-md": {
-     "size": 13,
-     "line": 20,
+     "size": 12,
+     "line": 18,
      "weight": 400,
      "tracking": "0",
      "use": "Paragraphs, input values, long text."
@@ -862,6 +897,14 @@ window.DS = {
   "data.6": "#EA580C",
   "data.7": "#65A30D",
   "data.8": "#71717A",
+  "dataMono.1": "#7857FC",
+  "dataMono.2": "#B8AFFF",
+  "dataMono.3": "#573FCC",
+  "dataMono.4": "#A792FD",
+  "dataMono.5": "#4531A6",
+  "dataMono.6": "#D7D0FF",
+  "dataMono.7": "#32247F",
+  "dataMono.8": "#684BE3",
   "shadow.raised": "0 1px 2px rgba(0, 0, 0, 0.05)",
   "shadow.overlay": "0 0 0 1px #E4E4E7, 0 4px 8px -2px rgba(0, 0, 0, 0.05), 0 12px 24px -6px rgba(0, 0, 0, 0.08)",
   "shadow.modal": "0 0 0 1px #E4E4E7, 0 24px 48px -12px rgba(0, 0, 0, 0.18)",
@@ -948,6 +991,14 @@ window.DS = {
   "data.6": "#FB923C",
   "data.7": "#A3E635",
   "data.8": "#A1A1AA",
+  "dataMono.1": "#A792FD",
+  "dataMono.2": "#573FCC",
+  "dataMono.3": "#D7D0FF",
+  "dataMono.4": "#7857FC",
+  "dataMono.5": "#ECE8FF",
+  "dataMono.6": "#4531A6",
+  "dataMono.7": "#B8AFFF",
+  "dataMono.8": "#684BE3",
   "shadow.raised": "0 1px 2px rgba(0, 0, 0, 0.40)",
   "shadow.overlay": "0 0 0 1px rgba(255, 255, 255, 0.08), 0 8px 24px -4px rgba(0, 0, 0, 0.60)",
   "shadow.modal": "0 0 0 1px rgba(255, 255, 255, 0.08), 0 24px 64px -8px rgba(0, 0, 0, 0.70)",

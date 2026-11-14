@@ -238,6 +238,11 @@ const EvalPickerConfigFull = ({
   const [testPassed, setTestPassed] = useState(false);
   const [testError, setTestError] = useState(null);
   const [sourceReady, setSourceReady] = useState(false);
+  const [sourceBlocker, setSourceBlocker] = useState("");
+  const handleReadinessChange = useCallback(
+    ({ message }) => setSourceBlocker(message),
+    [],
+  );
   const [promptMessageError, setPromptMessageError] = useState("");
   const [sourceMapping, setSourceMapping] = useState({});
   const sourceRef = useRef(null);
@@ -1544,7 +1549,7 @@ const EvalPickerConfigFull = ({
                 : `Lowercase letters, numbers, hyphens and underscores only · ${evalName.length}/50`
           }
           FormHelperTextProps={{ sx: { fontSize: "12px", mt: 0.25, mx: 0 } }}
-          sx={{ "& .MuiInputBase-root": { fontSize: "13px", height: 32 } }}
+          sx={{ "& .MuiInputBase-root": { fontSize: "12px", height: 32 } }}
         />
       </Box>
 
@@ -2046,7 +2051,7 @@ const EvalPickerConfigFull = ({
                 <Typography
                   variant="body2"
                   fontWeight={600}
-                  sx={{ fontSize: "13px" }}
+                  sx={{ fontSize: "12px" }}
                 >
                   {source === "composite"
                     ? "Test Playground"
@@ -2182,6 +2187,8 @@ const EvalPickerConfigFull = ({
                     initialMapping={evalData?.mapping}
                     errorLocalizerEnabled={errorLocalizerActive}
                     localFilters={localApiFilters}
+                    onReadinessChange={handleReadinessChange}
+                    taskMapping
                     allowCustomFieldPath
                     {...compositeSourceModeProps}
                   />
@@ -2339,7 +2346,9 @@ const EvalPickerConfigFull = ({
               color="text.secondary"
               sx={{ mr: "auto", fontSize: "12px" }}
             >
-              Map all variables to enable testing & adding
+              {source === "task" && sourceBlocker
+                ? sourceBlocker
+                : "Map all variables to enable testing & adding"}
             </Typography>
           )}
         {isDirty && sourceReady && !testPassed && !testError && (
@@ -2413,7 +2422,10 @@ const EvalPickerConfigFull = ({
 
             if (!testDisabled && !sourceReady && !hasDataInjection) {
               testDisabled = true;
-              testDisabledReason = "Map all variables before running a test.";
+              testDisabledReason =
+                source === "task" && sourceBlocker
+                  ? sourceBlocker
+                  : "Map all variables before running a test.";
             }
 
             return (
@@ -2525,7 +2537,10 @@ const EvalPickerConfigFull = ({
             !hasDataInjection
           ) {
             addDisabled = true;
-            addDisabledReason = `Map all variables before ${actionLabel}.`;
+            addDisabledReason =
+              source === "task" && sourceBlocker
+                ? sourceBlocker
+                : `Map all variables before ${actionLabel}.`;
           }
 
           return (

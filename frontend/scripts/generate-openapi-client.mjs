@@ -130,7 +130,11 @@ function normalizeHostStatusSpec(spec) {
       schemas: Object.fromEntries(
         Object.entries(spec.components?.schemas || {}).map(([name, schema]) => [
           name,
-          name.startsWith("HostUpdateStatusResponse")
+          name.startsWith("HostUpdateStatusResponse") ||
+          // Every non-ready source state sends kind and the ids as explicit null.
+          name === "EvalLogSourceNavigation" ||
+          // A log row sends explicit null for ids its source does not have.
+          name === "EvalApiLogRowResponseResult"
             ? normalizeHostStatusSchema(schema)
             : schema,
         ]),
@@ -1166,6 +1170,21 @@ export type ${jsonAlias} = JsonValueApi;`,
       "expires_at: string | null;",
       "APIKeyBulkItemApi.expires_at nullable",
     );
+    // An organization API key without expiry is created with, and returned
+    // with, expires_at: null.
+    for (const [type, anchor] of [
+      ["CreateSecretKeyApi", "expires_at?: string;"],
+      ["SecretKeyCreateResultApi", "expires_at: string;"],
+      ["SecretKeyListItemApi", "expires_at: string;"],
+    ]) {
+      schemas = assertReplaceInNamedBlock(
+        schemas,
+        `export interface ${type} {`,
+        anchor,
+        anchor.replace("string;", "string | null;"),
+        `${type}.expires_at nullable`,
+      );
+    }
 
     // The compact conversation record passes provider values on as they were
     // logged, and the times it computes are null when the provider gave none.
@@ -1179,6 +1198,8 @@ export type ${jsonAlias} = JsonValueApi;`,
       "ConversationVariablesApiConfigured",
       "ConversationVariablesApiCollected",
       "ConversationAnalysisApiFlags",
+      "EvalTaskDetailsEvalApiMapping",
+      "EvalTaskDetailsEvalApiConfig",
     ]) {
       schemas = assertReplace(
         schemas,
@@ -1202,6 +1223,42 @@ export type ${jsonAlias} = JsonValueApi;`,
         "$1 | null$2",
         `${typeName}.${field} nullable`,
       );
+    }
+
+    // Swagger 2 x-nullable is lost by Orval. Keep the explicit task-details
+    // response aligned with legacy nullable fields and absent sampling policies.
+    for (const [typeName, fields] of Object.entries({
+      EvalTaskDetailsResultApi: [
+        "name",
+        "project_name",
+        "status",
+        "filters_applied",
+        "spans_limit",
+        "sampling_rate",
+        "sampling_policy",
+        "last_run",
+        "run_type",
+      ],
+      SamplingWindowApi: ["end"],
+      EvalTaskDetailsEvalApi: [
+        "name",
+        "template_id",
+        "templateId",
+        "model",
+        "evalType",
+        "templateType",
+        "outputType",
+      ],
+    })) {
+      for (const field of fields) {
+        schemas = assertReplaceRegexInNamedBlock(
+          schemas,
+          `export interface ${typeName} {`,
+          new RegExp(`(^\\s*${field}\\??: [^;]+)(;)$`, "m"),
+          "$1 | null$2",
+          `${typeName}.${field} nullable`,
+        );
+      }
     }
 
     fs.writeFileSync(schemasOutputPath, schemas);
@@ -2207,6 +2264,80 @@ const jsonValueSchema: zod.ZodType<JsonValue> =
         / =[\s\S]*/,
         ` = ${getName};\n\n`,
         postName,
+      );
+    }
+    const taskDetailsDeclaration =
+      "export const TracerEvalTaskGetEvalDetailsResponse = zod.object({";
+    zod = assertReplaceInNamedBlock(
+      zod,
+      taskDetailsDeclaration,
+      '"end": zod.string().min(1).optional()',
+      '"end": zod.string().min(1).nullish()',
+      "task details live sampling window end nullable",
+    );
+    zod = assertReplaceRegexInNamedBlock(
+      zod,
+      taskDetailsDeclaration,
+      /zod\.object\(\{\n\n\}\)\.passthrough\(\)(?=(?:\.(?:optional|nullish|nullable)\(\)|\.default\([^)]*\))*\.describe\('Any valid JSON value\.'\))/g,
+      "jsonValueSchema",
+      "task details mapping/config recursive JSON values",
+    );
+    for (const field of [
+      "name",
+      "project_name",
+      "template_id",
+      "templateId",
+      "model",
+      "evalType",
+      "templateType",
+      "outputType",
+      "last_run",
+      "spans_limit",
+      "sampling_rate",
+    ]) {
+      zod = assertReplaceRegexInNamedBlock(
+        zod,
+        taskDetailsDeclaration,
+        new RegExp(
+          `("${field}": zod\\.(?:string|number)\\(\\)(?:\\.(?:uuid|datetime)\\([^)]*\\))?)(?=,|\\n)`,
+          "g",
+        ),
+        "$1.nullable()",
+        `task details ${field} nullable`,
+      );
+    }
+    for (const field of ["status", "run_type"]) {
+      zod = assertReplaceRegexInNamedBlock(
+        zod,
+        taskDetailsDeclaration,
+        new RegExp(`("${field}": zod\\.enum\\(\\[[^\\]]+\\]\\))(?=,|\\n)`, "g"),
+        "$1.nullable()",
+        `task details ${field} nullable`,
+      );
+    }
+    // These two nested objects end immediately before the next required field.
+    for (const next of ["created_at", "last_run"]) {
+      zod = assertReplaceRegexInNamedBlock(
+        zod,
+        taskDetailsDeclaration,
+        new RegExp(`(\\}\\))(?=,\\n  "${next}")`),
+        "$1.nullable()",
+        `task details nullable object before ${next}`,
+      );
+    }
+
+    // The same organization API key expiry fields, in the zod schemas.
+    for (const name of [
+      "AccountsKeyGenerateSecretKeyBody",
+      "AccountsKeyGenerateSecretKeyResponse",
+      "AccountsKeyGetSecretKeysResponse",
+    ]) {
+      zod = assertReplaceRegexInNamedBlock(
+        zod,
+        `export const ${name} =`,
+        /("expires_at": zod\.string\(\)\.datetime\(\{[^}]*\}\))/g,
+        "$1.nullable()",
+        `${name}.expires_at nullable`,
       );
     }
     fs.writeFileSync(zodOutputPath, zod);

@@ -199,14 +199,17 @@ type CircuitBreakerRegistry struct {
 	breakers map[string]*CircuitBreaker
 	cfg      config.CircuitBreakerConfig
 	onChange func(string, bool)
+	// Share org state across global and per-request failover configurations.
+	orgBreakers *ScopedCircuitBreakerRegistry
 }
 
 // NewCircuitBreakerRegistry creates a registry of circuit breakers.
 func NewCircuitBreakerRegistry(cfg config.CircuitBreakerConfig, onChange func(string, bool)) *CircuitBreakerRegistry {
 	return &CircuitBreakerRegistry{
-		breakers: make(map[string]*CircuitBreaker),
-		cfg:      cfg,
-		onChange: onChange,
+		breakers:    make(map[string]*CircuitBreaker),
+		cfg:         cfg,
+		onChange:    onChange,
+		orgBreakers: NewScopedCircuitBreakerRegistry(cfg),
 	}
 }
 

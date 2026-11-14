@@ -112,8 +112,6 @@ function HoverChipList({ items, label, emptyText, getLabel, getTooltip }) {
             bgcolor: "background.paper",
             boxShadow: (theme) =>
               theme.customShadows?.dropdown || theme.shadows[8],
-            border: "1px solid",
-            borderColor: "divider",
             borderRadius: "8px",
           },
         }}
@@ -551,7 +549,8 @@ const RunTestsContent = ({
                 Run Simulation
               </Typography>
               <Typography typography="s1" color="text.secondary">
-                Run your agent through scenarios at scale and score every conversation with your evals.
+                Run your agent through scenarios at scale and score every
+                conversation with your evals.
               </Typography>
             </Box>
           </Box>

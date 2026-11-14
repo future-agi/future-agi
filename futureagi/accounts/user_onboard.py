@@ -4,7 +4,6 @@ import uuid
 from copy import deepcopy
 
 import structlog
-from django.core.exceptions import ObjectDoesNotExist, ValidationError
 from django.db import IntegrityError, transaction
 from django.utils import timezone
 
@@ -32,8 +31,6 @@ from model_hub.models.develop_optimisation import OptimizationDataset
 from model_hub.models.evals_metric import EvalTemplate, UserEvalMetric
 from model_hub.models.experiments import ExperimentDatasetTable, ExperimentsTable
 from model_hub.models.run_prompt import (
-    PromptTemplate,
-    PromptVersion,
     RunPrompter,
     StatusType,
 )
@@ -1053,186 +1050,6 @@ Include a brief note explaining how your answer connects to the context.
             f"An unexpected error occurred during demo dataset creation for organization {organization_id}: {e}"
         )
         raise
-
-
-def create_demo_prompt_template(
-    organization_id: str, user_id: str
-) -> PromptTemplate | None:
-    logger.info(
-        f"Starting demo prompt template creation for organization ID: {organization_id}"
-    )
-
-    prompt_config = {
-        "name": "Demo Prompt",
-        "description": "A default prompt to help schedule meetings via email.",
-        "config": [
-            {
-                "messages": [
-                    {"role": "system", "content": [{"text": "", "type": "text"}]},
-                    {
-                        "role": "user",
-                        "content": [
-                            {"text": "write email to schedule meeting", "type": "text"}
-                        ],
-                    },
-                ],
-                "configuration": {
-                    "model": "gpt-4o",
-                    "tools": [],
-                    "top_p": 1,
-                    "max_tokens": 1000,
-                    "temperature": 0.7,
-                    "tool_choice": "",
-                    "model_detail": {
-                        "logo_url": "https://fi-image-assets.s3.ap-south-1.amazonaws.com/provider-logos/openai-icon.png",
-                        "providers": "openai",
-                        "model_name": "gpt-4o",
-                        "is_available": False,
-                    },
-                    "response_format": "text",
-                    "presence_penalty": 1,
-                    "frequency_penalty": 1,
-                },
-            }
-        ],
-        "variable_names": {},
-        "evaluation_configs": [],
-    }
-
-    try:
-        organization = Organization.objects.get(id=organization_id)
-        logger.info(f"Found organization: {organization.name}")
-    except ObjectDoesNotExist:
-        logger.error(f"Organization with ID {organization_id} not found.")
-        return None
-    except ValidationError as ve:
-        logger.error(f"Invalid organization ID format '{organization_id}': {ve}")
-        return None
-
-    try:
-        if not prompt_config or not isinstance(prompt_config, dict):
-            logger.error(
-                f"Hardcoded 'prompt_config' is invalid for org {organization.id}"
-            )
-            return None
-
-        template_name = prompt_config.get("name", "Demo Prompt")
-        template_description = prompt_config.get("description", "")
-        template_prompt_config_data = prompt_config.get("config")
-        template_variable_names = prompt_config.get("variable_names", {})
-        template_evaluation_configs = prompt_config.get("evaluation_configs", [])
-
-        if template_prompt_config_data is None:
-            logger.error(
-                f"Missing 'config' key within hardcoded 'prompt_config' for org {organization.id}"
-            )
-            return None
-
-        if not isinstance(template_prompt_config_data, list):
-            if isinstance(template_prompt_config_data, dict):
-                template_prompt_config_data = [template_prompt_config_data]
-            else:
-                logger.error(
-                    f"'config' key within hardcoded 'prompt_config' is not a list or dict for org {organization.id}"
-                )
-                return None
-
-        logger.info(
-            f"Extracted prompt config: Name='{template_name}', Description='{template_description}'"
-        )
-
-    except Exception as e:
-        logger.exception(f"Error processing hardcoded prompt_config: {e}")
-        return None
-
-    # template = PromptTemplate.objects.filter(
-    # 	name=template_name,
-    # 	organization=organization,
-    # 	is_default=True,
-    # 	deleted=False
-    # ).first()
-
-    # if template:
-    # 	logger.warning(f"Default prompt template named '{template_name}' already exists (ID: {template.id}) for organization {organization.id}. Skipping creation.")
-    # 	return template
-
-    try:
-        logger.info(
-            f"Attempting to create PromptTemplate '{template_name}' for org {organization.id}"
-        )
-        template = PromptTemplate.objects.create(
-            name=template_name,
-            description=template_description,
-            organization=organization,
-            prompt_config=template_prompt_config_data,
-            variable_names=template_variable_names,
-            evaluation_configs=template_evaluation_configs,
-            version="v1",
-            is_default=True,
-            is_draft=False,
-            status=StatusType.COMPLETED.value,
-            updated_at=timezone.now(),
-            created_at=timezone.now(),
-        )
-        template.collaborators.add(User.objects.get(id=user_id))
-        logger.info(
-            f"Successfully created prompt template '{template.name}' (ID: {template.id}) for organization {organization.id}"
-        )
-
-        # run_template_task.apply_async(
-        #     args=(template.id, template_evaluation_configs, organization.id, "prompt")
-        # )
-        # logger.info(f"Scheduled run_template_task for prompt template {template.id}")
-
-        # return template
-        execution_output = [
-            'Subject: Request to Schedule a Meeting\n\nHi [Recipient\'s Name],\n\nI hope this message finds you well. I am writing to see if we could schedule a meeting to discuss [briefly state the purpose, e.g., "the upcoming project deadline" or "our recent progress"]. \n\nCould you please let me know your available times over the next few days? I am flexible with timing and can adjust my schedule accordingly.\n\nThank you for your attention, and I look forward to our conversation.\n\nBest regards,\n\n[Your Name]  \n[Your Position]  \n[Your Contact Information]'
-        ]
-        prompt_config_snapshot = (
-            prompt_config.get("config", [{}])[0]
-            if isinstance(prompt_config.get("config"), list)
-            else {}
-        )
-        execution = PromptVersion.objects.create(
-            prompt_config_snapshot=prompt_config_snapshot,
-            template_version=template.version,
-            template_name=template.name,
-            variable_names=template_variable_names,
-            original_template=template.root_template or template,
-            evaluation_configs=template_evaluation_configs,
-            output=execution_output,
-        )
-        return execution
-
-    except ValidationError as ve:
-        logger.error(
-            f"Validation Error creating prompt template for organization {organization.id}: {ve}"
-        )
-        logger.error(
-            f"Data used: name='{template_name}', prompt_config='{template_prompt_config_data}', variable_names='{template_variable_names}', evaluation_configs='{template_evaluation_configs}'"
-        )
-        return None
-    except IntegrityError as ie:
-        logger.error(
-            f"Database Integrity Error creating prompt template for organization {organization.id}: {ie}"
-        )
-        logger.error(
-            f"Likely duplicate name/version/default combination for name: '{template_name}', version: 'v1'"
-        )
-        return None
-    except Exception as e:
-        logger.exception(
-            f"Unexpected Error creating prompt template for organization {organization.id}: {e}"
-        )
-        try:
-            logger.error(
-                f"Data used: name='{template_name}', prompt_config='{template_prompt_config_data}', variable_names='{template_variable_names}', evaluation_configs='{template_evaluation_configs}'"
-            )
-        except NameError:
-            logger.error(
-                "Could not log data used due to error during variable assignment."
-            )
-        return None
 
 
 def create_demo_traces_and_spans(organization_id, user_id=None, *, publish=True):

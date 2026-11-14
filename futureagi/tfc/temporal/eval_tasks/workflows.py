@@ -56,8 +56,40 @@ from tfc.temporal.eval_tasks.types import (
     WorkflowLabelsInput,
 )
 
-# Control activities are quick PG reads/writes; run_entry runs the eval engine.
+# Control activities are quick PG reads/writes. One exhausted control activity
+# fails the whole workflow, so their retries (~7 min of backoff) outlast a
+# connection-pooler restart or a database failover. Changing retry options is
+# replay-safe: Temporal matches activity commands by type and id.
+#
+# How these policies combine with the outage classification in
+# ``db_errors.database_control_errors`` (one rule set for every control step):
+# * A transient PostgreSQL error (refused or dropped connection, read-only
+#   writer, start-up or shutdown refusal, PgBouncer outage) is first retried
+#   in place by the activity's own policy below. Only once that window is
+#   spent does a continuous workflow see ``EvalTaskDatabaseUnavailable``; it
+#   then waits durably (``waiting_for_database``) and retries from its
+#   unchanged cursor instead of failing. A historical workflow has no poll
+#   boundary to wait at, so for it this window is the whole tolerance.
+# * Any other error (bad credentials, configuration, a deterministic statement
+#   error) is never deferred: it uses the same bounded retries and then takes
+#   the terminal fail path.
+# * A claim whose reply was lost after its SQL was submitted is raised as
+#   non-retryable ``EvalTaskClaimOutcomeUnknown``, which Temporal never retries
+#   whatever ``maximum_attempts`` says, so a longer window cannot claim (and
+#   bill) a second batch. The continuous workflow parks and leaves those IDs
+#   to the stale-claim reaper.
 CONTROL_RETRY_POLICY = RetryPolicy(
+    initial_interval=timedelta(seconds=2),
+    maximum_interval=timedelta(seconds=60),
+    maximum_attempts=12,
+    backoff_coefficient=2.0,
+)
+# Reconcile is a ClickHouse read; retrying it longer adds read pressure, and a
+# continuous task already defers exhausted read-budget failures to its next poll.
+# Its PostgreSQL writes use the same classification as the control steps: once
+# this shorter window is spent, a continuous task waits for the database at its
+# poll boundary, exactly as for an exhausted control step.
+RECONCILE_RETRY_POLICY = RetryPolicy(
     initial_interval=timedelta(seconds=2),
     maximum_interval=timedelta(seconds=30),
     maximum_attempts=5,
@@ -235,7 +267,7 @@ async def _reconcile(task_id: str) -> None:
         # ordinary 30-minute control activity ceiling.
         start_to_close_timeout=_RECONCILE_TIMEOUT,
         heartbeat_timeout=_HEARTBEAT,
-        retry_policy=CONTROL_RETRY_POLICY,
+        retry_policy=RECONCILE_RETRY_POLICY,
     )
 
 
@@ -255,11 +287,13 @@ def _is_retryable_reconcile_budget_error(exc: Exception) -> bool:
 async def _reconcile_continuous(task_id: str) -> bool:
     """Reconcile once, deferring only exhausted transient CH read failures.
 
-    The activity already used the bounded five-attempt control policy.  A
+    The activity already used the bounded five-attempt reconcile policy.  A
     continuous task has a durable cursor and another poll boundary, so killing
     it after momentary ClickHouse pressure loses future work. Returning False
     parks before any claim/drain, then retries from the unchanged cursor. Every
-    other exception still reaches the workflow's terminal fail path.
+    other exception propagates: ``_run_with_database_backoff`` still defers an
+    exhausted ``EvalTaskDatabaseUnavailable``, and anything else reaches the
+    workflow's terminal fail path.
     """
 
     try:

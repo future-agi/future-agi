@@ -145,7 +145,9 @@ describe("Choose Scenarios step — paging", () => {
     // The in-flight fetch empties the list; the step must not read that as
     // "this workspace has no scenarios".
     await waitFor(() =>
-      expect(screen.getByRole("progressbar")).toBeInTheDocument(),
+      expect(
+        screen.getByRole("status", { name: "Loading" }),
+      ).toBeInTheDocument(),
     );
     expect(
       screen.queryByText("Add your first scenario"),

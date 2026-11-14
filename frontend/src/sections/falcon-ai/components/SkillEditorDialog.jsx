@@ -82,7 +82,7 @@ export default function SkillEditorDialog({ open, skill, onClose, onSaved }) {
       return;
     }
     if (!form.instructions.trim()) {
-      setError("Instructions are required — tell Falcon how to behave");
+      setError("Instructions are required. Tell Chat how to behave.");
       return;
     }
     if (form.instructions.trim().length < 10) {

@@ -14,6 +14,12 @@ import (
 // has, delivering what it sent is bounded by the client write deadline instead.
 const providerCloseGrace = 5 * time.Second
 
+// Frame is an owned WebSocket frame released by a policy filter.
+type Frame struct {
+	MessageType int
+	Data        []byte
+}
+
 // relayMessage holds a WebSocket message to be relayed.
 type relayMessage struct {
 	messageType int
@@ -33,6 +39,11 @@ type RelayConfig struct {
 	// single client-reading goroutine, so it needs no locking of its own. An error refuses the
 	// message: it is not relayed, and the client is closed with a policy violation.
 	OnClientMessage func(messageType int, data []byte) error
+	// Filters run before enqueueing; nil output holds frames in bounded quarantine.
+	// They must not forward anything themselves. Errors send the client 1008
+	// and terminate both connections without forwarding the refused frames.
+	FilterClient   func(messageType int, data []byte) ([]Frame, error)
+	FilterProvider func(messageType int, data []byte) ([]Frame, error)
 }
 
 func (c RelayConfig) idleTimeout() time.Duration {
@@ -144,18 +155,28 @@ func (r *Relay) readFromClient() {
 		}
 		r.session.ClientConn.SetReadDeadline(time.Now().Add(r.config.idleTimeout()))
 		r.session.Usage.IncrementMessages()
-		if r.config.OnClientMessage != nil {
-			if err := r.config.OnClientMessage(messageType, data); err != nil {
+
+		frames := []Frame{{messageType, data}}
+		if r.config.FilterClient != nil {
+			frames, err = r.config.FilterClient(messageType, data)
+			if err != nil {
 				r.refuseClient(err)
 				return
 			}
 		}
-
-		select {
-		case r.clientToProvider <- relayMessage{messageType, data}:
-		case <-r.clientDraining:
-		case <-r.session.StopChan():
-			return
+		for _, frame := range frames {
+			if r.config.OnClientMessage != nil {
+				if err := r.config.OnClientMessage(frame.MessageType, frame.Data); err != nil {
+					r.refuseClient(err)
+					return
+				}
+			}
+			select {
+			case r.clientToProvider <- relayMessage{frame.MessageType, frame.Data}:
+			case <-r.clientDraining:
+			case <-r.session.StopChan():
+				return
+			}
 		}
 	}
 }
@@ -239,10 +260,20 @@ func (r *Relay) readFromProvider() {
 		r.session.ProviderConn.SetReadDeadline(time.Now().Add(r.config.idleTimeout()))
 		r.session.Usage.IncrementMessages()
 
-		select {
-		case r.providerToClient <- relayMessage{messageType, data}:
-		case <-r.session.StopChan():
-			return
+		frames := []Frame{{messageType, data}}
+		if r.config.FilterProvider != nil {
+			frames, err = r.config.FilterProvider(messageType, data)
+			if err != nil {
+				r.refuseClient(err)
+				return
+			}
+		}
+		for _, frame := range frames {
+			select {
+			case r.providerToClient <- relayMessage{frame.MessageType, frame.Data}:
+			case <-r.session.StopChan():
+				return
+			}
 		}
 	}
 }

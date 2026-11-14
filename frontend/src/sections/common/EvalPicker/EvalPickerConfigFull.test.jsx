@@ -1,7 +1,7 @@
 import React from "react";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { act, render, userEvent } from "src/utils/test-utils";
-import { screen, waitFor } from "@testing-library/react";
+import { screen, waitFor, within } from "@testing-library/react";
 
 import EvalPickerProvider from "./context/EvalPickerProvider";
 import EvalPickerConfigFull from "./EvalPickerConfigFull";
@@ -88,10 +88,10 @@ vi.mock("src/sections/tasks/components/TaskFilterBar", () => ({
 // can assert on the disabled-reason copy without simulating a real hover.
 vi.mock("src/components/tooltip/CustomTooltip", () => ({
   default: ({ show, title, children }) => (
-    <>
+    <span data-tooltip-host>
       {children}
-      {show && title ? <div data-testid="tooltip-text">{title}</div> : null}
-    </>
+      {show && title ? <span data-testid="tooltip-text">{title}</span> : null}
+    </span>
   ),
 }));
 
@@ -475,6 +475,50 @@ describe("pinned decision binding hydration", () => {
   });
 });
 
+it("names the sample-row blocker in the task footer and disabled action explanations", async () => {
+  const original = stableEvalDetail.data;
+  stableEvalDetail.data = {
+    ...original,
+    eval_type: "llm",
+    instructions: "Grade {{input}}",
+    config: { model: "template-model" },
+  };
+  try {
+    renderConfigFull();
+    const message =
+      "Sample row could not be loaded. Retry loading the sample row.";
+    await act(async () => {
+      capturedProps.tracing.onReadyChange(false, { input: "locale" });
+      capturedProps.tracing.onReadinessChange?.({ message });
+    });
+    // Three independent sites: a surviving tooltip cannot stand in for the
+    // footer or for the other disabled action's explanation.
+    expect(
+      screen.getByText(message, { selector: ".MuiTypography-caption" }),
+    ).toBeVisible();
+    for (const name of ["Test Evaluation", "Add Evaluation"]) {
+      const button = screen.getByRole("button", { name });
+      expect(button).toBeDisabled();
+      expect(
+        within(button.closest("[data-tooltip-host]")).getByTestId(
+          "tooltip-text",
+        ),
+      ).toHaveTextContent(message);
+    }
+    expect(
+      screen.queryByText("Map all variables to enable testing & adding"),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByText(/Map all variables before/),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /Add Evaluation/ }),
+    ).toBeDisabled();
+  } finally {
+    stableEvalDetail.data = original;
+  }
+});
+
 it("restores saved system-eval binding configuration", async () => {
   renderConfigFull({
     evalData: {
@@ -523,6 +567,11 @@ describe("EvalPickerConfigFull — task preview time window", () => {
         filter_value: [TIME_WINDOW.startDate, TIME_WINDOW.endDate],
       },
     });
+  });
+
+  it("enables the backend native-field contract only for task mapping", () => {
+    renderConfigFull();
+    expect(capturedProps.tracing.taskMapping).toBe(true);
   });
 
   it("omits the created_at filter when no time window is provided", () => {

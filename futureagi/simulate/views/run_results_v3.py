@@ -77,6 +77,8 @@ logger = structlog.get_logger(__name__)
 class JsonObjectField(serializers.JSONField):
     """Accept a JSON object both in query strings and request bodies."""
 
+    swagger_empty_input_default = "{}"
+
     def to_internal_value(self, data):
         if data in (None, ""):
             return {}
@@ -171,7 +173,7 @@ class RunCallsV3QuerySerializer(RunCallFiltersSerializer):
         default=50, min_value=1, max_value=500, required=False
     )
     group_by = serializers.ChoiceField(
-        choices=list(GROUP_FIELDS), allow_blank=True, required=False, default=""
+        choices=["", *GROUP_FIELDS], allow_blank=True, required=False, default=""
     )
     group_key = serializers.CharField(allow_blank=True, required=False, allow_null=True)
 

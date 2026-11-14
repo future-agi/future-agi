@@ -51,7 +51,7 @@ const CustomTraceHeaderRenderer = ({
     column?.colDef?.context?.sourceColumn?.target_type;
 
   const textStyle = {
-    fontSize: "13px",
+    fontSize: "12px",
     color: theme.palette.text.primary,
     fontWeight: 500,
     lineHeight: 1.4,

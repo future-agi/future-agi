@@ -13,7 +13,6 @@ import {
   ListItemIcon,
   ListItemText,
   IconButton,
-  CircularProgress,
   Container,
   useTheme,
   stepConnectorClasses,
@@ -56,6 +55,7 @@ import { isUUID } from "src/utils/utils";
 import { IOSSwitch } from "../Switch/IOSSwitch";
 import { getIconForAgentDefinitions } from "src/sections/scenarios/common";
 import { AGENT_TYPES, isLiveKitProvider } from "src/sections/agents/constants";
+import { LoadingScreen } from "src/components/loading-screen";
 
 const steps = [
   {
@@ -106,7 +106,7 @@ const StepCircle = styled(Box)(({ theme, active, completed }) => {
         ? theme.palette.primary.main
         : theme.palette.text.disabled,
     fontWeight: 600,
-    fontSize: 13,
+    fontSize: 12,
     transition: "all 0.2s",
     zIndex: 10,
   };
@@ -992,7 +992,7 @@ const CreateRunTestPage = ({ open, onClose }) => {
                 }
                 sx={{
                   "& .MuiOutlinedInput-root": {
-                    fontSize: "13px",
+                    fontSize: "12px",
                   },
                 }}
               />
@@ -1088,11 +1088,7 @@ const CreateRunTestPage = ({ open, onClose }) => {
 
                 {/* Scenarios List */}
                 {isLoadingScenarios ? (
-                  <Box
-                    sx={{ display: "flex", justifyContent: "center", py: 4 }}
-                  >
-                    <CircularProgress />
-                  </Box>
+                  <LoadingScreen compact />
                 ) : scenariosError ? (
                   <Box sx={{ textAlign: "center", py: 4 }}>
                     <Typography color="error">
@@ -1443,7 +1439,7 @@ const CreateRunTestPage = ({ open, onClose }) => {
                 target="_blank"
                 rel="noopener noreferrer"
                 fontWeight="fontWeightMedium"
-                fontSize="13px"
+                fontSize="12px"
                 sx={{
                   textDecoration: "underline",
                 }}

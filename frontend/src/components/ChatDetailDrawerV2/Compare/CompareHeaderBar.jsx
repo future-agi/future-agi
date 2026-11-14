@@ -42,7 +42,7 @@ const CompareHeaderBar = ({ onBack, scenarioName, sessionId }) => {
         <Stack sx={{ minWidth: 0, flex: 1 }}>
           <Typography
             sx={{
-              fontSize: 13,
+              fontSize: 12,
               fontWeight: 600,
               color: "text.primary",
               lineHeight: 1.2,

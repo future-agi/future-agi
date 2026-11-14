@@ -55,7 +55,7 @@ const PanelRow = ({ label, value, onClick, hasMenu = false }) => (
   <ListItemButton onClick={onClick} dense sx={{ px: 2, py: 0.5 }}>
     <ListItemText
       primary={label}
-      primaryTypographyProps={{ variant: "body2", fontSize: 13 }}
+      primaryTypographyProps={{ variant: "body2", fontSize: 12 }}
     />
     {value && (
       <Typography variant="body2" sx={{ fontSize: 12, color: "text.disabled" }}>
@@ -94,7 +94,7 @@ const PanelCheck = ({ label, checked, onChange }) => (
         />
       }
       label={
-        <Typography variant="body2" sx={{ fontSize: 13 }}>
+        <Typography variant="body2" sx={{ fontSize: 12 }}>
           {label}
         </Typography>
       }
@@ -444,7 +444,7 @@ const DisplayPanel = ({
             onClose();
           }}
           sx={{
-            fontSize: 13,
+            fontSize: 12,
             fontFamily: "'IBM Plex Sans', sans-serif",
             color: "text.primary",
             py: 0.5,
@@ -458,7 +458,7 @@ const DisplayPanel = ({
             onClose();
           }}
           sx={{
-            fontSize: 13,
+            fontSize: 12,
             fontFamily: "'IBM Plex Sans', sans-serif",
             color: "text.link",
             py: 0.5,

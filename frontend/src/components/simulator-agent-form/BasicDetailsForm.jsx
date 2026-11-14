@@ -131,7 +131,7 @@ const BasicDetailsForm = ({ control, errors }) => {
           marks={generateNMarks(0, 1)}
           inputSectionStyles={{
             "& .slider-label": {
-              fontSize: "13px",
+              fontSize: "12px",
             },
           }}
         />
