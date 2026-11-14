@@ -8,8 +8,9 @@ from __future__ import annotations
 
 import difflib
 import json
+from collections.abc import Sequence
 from dataclasses import dataclass, field, replace
-from typing import Any, Sequence
+from typing import Any
 
 
 @dataclass
@@ -149,7 +150,8 @@ class ToolCallLoopDetector:
         # Apply the same progress rule to exact repetitions and fuzzy runs.
         if self.also_compare_results:
             signatures = [
-                _serialize([sig, c.result]) for sig, c in zip(signatures, tool_calls)
+                _serialize([sig, c.result])
+                for sig, c in zip(signatures, tool_calls, strict=True)
             ]
         cycle = _find_repeating_cycle(
             signatures, self.max_cycle_length, self.min_repeats

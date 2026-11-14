@@ -14,7 +14,6 @@ from agentic_eval.metrics.tool_call_loop_repetition import (
     evaluate_tool_call_loop_repetition,
 )
 
-
 # ---------------------------------------------------------------------------
 # Healthy traces (should NOT flag a loop)
 # ---------------------------------------------------------------------------
