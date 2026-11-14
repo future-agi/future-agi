@@ -271,7 +271,9 @@ def test_webhook_payload_tells_a_monitor_match_from_an_enforcement(organization)
     assert ("monitored", "guardrail.triggered") not in events
     assert ("blocked", "guardrail.triggered") in events
     monitored = events[("monitored", "request.completed")]
-    assert monitored["guardrail_triggered"] is False
+    # Round 3: the payload's flag matches the stored request log (and its API,
+    # exports and analytics); guardrail_monitored tells the two apart.
+    assert monitored["guardrail_triggered"] is True
     assert monitored["guardrail_monitored"] is True
     blocked = events[("blocked", "request.completed")]
     assert blocked["guardrail_triggered"] is True

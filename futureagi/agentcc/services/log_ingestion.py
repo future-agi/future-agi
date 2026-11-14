@@ -76,7 +76,6 @@ def _dispatch_webhook_events(org, logs):
             bool(entry.get("is_error", False))
             or int(entry.get("status_code", 0)) >= 400
         )
-        guardrail_triggered = _guardrail_enforced(entry)
 
         base_payload = {
             "request_id": entry.get("request_id", ""),
@@ -95,7 +94,11 @@ def _dispatch_webhook_events(org, logs):
             "is_error": is_error,
             "error_message": entry.get("error_message", ""),
             "cache_hit": bool(entry.get("cache_hit", False)),
-            "guardrail_triggered": guardrail_triggered,
+            # The stored request log, its API and filter, CSV export, analytics
+            # and the Datadog export all read the gateway's flag, which is set
+            # for Monitor matches too; the payload reports the same value and
+            # says separately whether the match was Monitor-only.
+            "guardrail_triggered": bool(entry.get("guardrail_triggered", False)),
             "guardrail_monitored": _monitor_only(entry),
             "cost": float(entry.get("cost", 0) or 0),
         }

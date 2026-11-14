@@ -73,12 +73,16 @@ class AgentccGuardrailPolicySerializer(serializers.ModelSerializer):
             "priority",
             "applied_keys",
             "applied_projects",
+            "runs_on_gateway",
             "created_at",
             "updated_at",
         ]
         read_only_fields = [
             "id",
             "organization",
+            # Set by the policy API on every save; a key policy saved before
+            # the gateway ran them stays dormant until saved again.
+            "runs_on_gateway",
             "created_at",
             "updated_at",
         ]
