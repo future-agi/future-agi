@@ -28,6 +28,7 @@ from simulate.models import (
     HostedHarnessJob,
     HostedHarnessReceipt,
     HostedHarnessScenario,
+    TestExecution,
 )
 from simulate.models.test_execution import CallExecution
 from simulate.selectors.agent_fix import ran_at
@@ -3460,6 +3461,66 @@ def test_a_call_the_platform_interrupted_runs_again_and_is_charged_once(
     # The interrupted receipt's 50 tokens are never charged: each call is charged once,
     # 100 for the first and 10 for the second's re-run.
     assert harness_consumption(job)["text_sim_tokens"] == 110
+
+
+@pytest.mark.django_db
+@override_settings(ALK_HOSTED_PROVIDER_UNREACHABLE_GRACE_SECONDS=0)
+def test_a_late_result_after_a_failed_poll_keeps_the_run_without_that_failure(
+    organization, monkeypatch
+):
+    attempt = _delivered_run(organization, "run-late-after-failed-poll", receipts=1)
+    gateway = _lost_by(monkeypatch, "sandbox_unreachable")
+
+    def delete_in_progress(_attempt, **_kwargs):
+        raise SandboxConflictError("sandbox state change in progress", status_code=409)
+
+    monkeypatch.setattr(gateway, "_delete_and_record", delete_in_progress)
+    # Poll 1: unreachable with one result missing, and its delete still in progress.
+    assert gateway.reconcile_completed(attempt) is None
+    attempt.refresh_from_db()
+    assert attempt.terminal_failure["code"] == "sandbox_unreachable"
+    # The missing result lands late; by poll 2 the sandbox is gone.
+    _receive(
+        attempt,
+        HostedHarnessExecution.no_workspace_objects.get(
+            job_id=attempt.job_id, execution_key="scenario-2:0"
+        ),
+    )
+
+    def gone(_attempt):
+        raise SandboxNotFoundError("sandbox not found", status_code=404)
+
+    monkeypatch.setattr(gateway, "inspect", gone)
+
+    job = gateway.reconcile_completed(attempt)
+
+    attempt.refresh_from_db()
+    assert job.state == HostedHarnessJob.State.COMPLETED
+    # Every result is in: poll 1's failure does not describe the Run that is kept.
+    assert attempt.terminal_failure is None
+    assert job.failure is None
+
+
+@pytest.mark.django_db
+@override_settings(ALK_HOSTED_PROVIDER_UNREACHABLE_GRACE_SECONDS=0)
+def test_a_narrowed_retry_counts_the_calls_it_kept(organization, monkeypatch):
+    first = _delivered_run(organization, "run-narrowed-call-counts", receipts=1)
+    assert _lost_by(monkeypatch, "guest_crashed").reconcile_completed(first).state == (
+        HostedHarnessJob.State.RETRY_WAIT
+    )
+    second = register_attempt(
+        first.job_id,
+        endpoint_base_url="https://platform.example",
+        provider_ref="sandbox-2",
+    ).attempt
+
+    _run_calls(second, dict.fromkeys(_dispatched(second.job), 10))
+
+    job = HostedHarnessJob.no_workspace_objects.get(id=first.job_id)
+    execution = TestExecution.objects.get(id=job.test_execution_id)
+    # Both calls are done: the one the retry kept and the one it ran again.
+    assert execution.completed_calls == 2
+    assert job.completed_count == 2
 
 
 @pytest.mark.django_db

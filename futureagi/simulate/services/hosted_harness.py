@@ -3093,14 +3093,13 @@ def update_execution_counts(job: HostedHarnessJob) -> None:
         # failed call.
         scenario_completed = receipts.filter(status="passed").count()
         scenario_failed = receipts.filter(status__in=("failed", "errored")).count()
-        # A run's calls hang off its executions, a build's off its scenarios.
+        # A run's calls hang off its executions, a build's off its scenarios. The calls
+        # counted are those of the receipts counted above: a narrowed retry keeps the
+        # results of the calls it did not run again.
+        counted = receipts.values("id")
         calls = CallExecution.no_workspace_objects.filter(
-            Q(hosted_registration__receipts__attempt_number=current_attempt_number)
-            | Q(
-                hosted_harness_execution__receipt__attempt_number=(
-                    current_attempt_number
-                )
-            ),
+            Q(hosted_registration__receipts__in=counted)
+            | Q(hosted_harness_execution__receipt__in=counted),
             test_execution_id=locked_job.test_execution_id,
         ).distinct()
         calls_completed = calls.filter(

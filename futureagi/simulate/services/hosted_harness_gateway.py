@@ -4394,6 +4394,10 @@ class HostedHarnessGateway:
         False. A completed ending the guest sent stands, and manifest_acked stays False as
         the record of a manifest that never arrived. An ending the guest reported as
         failed or canceled is its own.
+
+        A failure an earlier poll recorded (an unreachable sandbox whose delete was still
+        in progress, before a late result landed) does not describe the Run kept here, so
+        it is cleared.
         """
         if executions_without_result(attempt.job, attempt.attempt_number) != []:
             return False
@@ -4405,18 +4409,24 @@ class HostedHarnessGateway:
                 attempt.id,
                 attempt.provider_ref,
             )
-            return True
-        if attempt.terminal_reason == "terminal_event_lost":
-            # An earlier poll recorded this ending, and the sandbox outlived its delete.
-            return True
-        attempt.terminal_stage = "completed"
-        attempt.terminal_reason = "terminal_event_lost"
-        attempt.save(update_fields=["terminal_stage", "terminal_reason", "updated_at"])
-        structlog_logger.warning(
-            "hosted_run_completed_by_platform",
-            job_id=str(attempt.job_id),
-            attempt_id=str(attempt.id),
-            reason="terminal_event_lost",
+        elif attempt.terminal_reason != "terminal_event_lost":
+            # An earlier poll that recorded this ending already logged it.
+            attempt.terminal_stage = "completed"
+            attempt.terminal_reason = "terminal_event_lost"
+            structlog_logger.warning(
+                "hosted_run_completed_by_platform",
+                job_id=str(attempt.job_id),
+                attempt_id=str(attempt.id),
+                reason="terminal_event_lost",
+            )
+        attempt.terminal_failure = None
+        attempt.save(
+            update_fields=[
+                "terminal_stage",
+                "terminal_reason",
+                "terminal_failure",
+                "updated_at",
+            ]
         )
         return True
 
