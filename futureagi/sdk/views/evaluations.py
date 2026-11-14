@@ -10,6 +10,7 @@ from rest_framework.renderers import JSONRenderer
 from rest_framework.views import APIView
 
 from accounts.authentication import APIKeyAuthentication
+from accounts.models import User, Workspace
 from agentic_eval.core_evals.fi_evals import *  # noqa: F403
 from analytics.utils import (
     MixpanelEvents,
@@ -126,7 +127,40 @@ class GetEvalStructureEvalIdView(APIView):
     )
     def get(self, request, eval_id, *args, **kwargs):
         try:
-            template = EvalTemplate.no_workspace_objects.get(eval_id=eval_id)
+            # Resolve the caller's organization/workspace from the
+            # authenticated request (not the thread-local workspace context or
+            # the user's saved preference) and only look up templates there.
+            organization = getattr(request, "organization", None)
+            workspace = getattr(request, "workspace", None)
+            user = User.objects.filter(pk=request.user.pk, is_active=True).first()
+            workspace = Workspace.no_workspace_objects.filter(
+                pk=getattr(workspace, "pk", None),
+                organization_id=getattr(organization, "pk", None),
+                is_active=True,
+            ).first()
+            if (
+                user is None
+                or workspace is None
+                or not user.can_access_workspace(workspace)
+            ):
+                raise EvalTemplate.DoesNotExist
+
+            in_workspace = Q(
+                organization_id=workspace.organization_id, workspace=workspace
+            )
+            if workspace.is_default:
+                # Older org-level rows (no workspace) belong to the default one.
+                in_workspace |= Q(
+                    organization_id=workspace.organization_id,
+                    workspace__isnull=True,
+                )
+            # Built-in system templates have neither organization nor workspace.
+            builtin = Q(
+                owner="system", organization__isnull=True, workspace__isnull=True
+            )
+            template = EvalTemplate.no_workspace_objects.filter(
+                in_workspace | builtin
+            ).get(eval_id=eval_id)
             return self._gm.success_response(
                 {
                     "id": template.id,
@@ -142,7 +176,12 @@ class GetEvalStructureEvalIdView(APIView):
                     "multi_choice": template.multi_choice,
                 }
             )
-        except EvalTemplate.DoesNotExist:
+        except (
+            EvalTemplate.DoesNotExist,
+            EvalTemplate.MultipleObjectsReturned,
+            ValueError,
+            ValidationError,
+        ):
             return self._gm.bad_request(get_error_message("MISSING_EVAL_TEMPLATE"))
 
 

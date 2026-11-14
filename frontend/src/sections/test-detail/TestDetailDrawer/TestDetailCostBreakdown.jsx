@@ -127,7 +127,7 @@ const TestDetailCostBreakdown = ({ costBreakdown }) => {
               showAlways: true,
               label: "Total Cost",
               fontWeight: 600,
-              fontSize: "13px",
+              fontSize: "12px",
               fontFamily: "IBM Plex Sans",
               color: "var(--text-secondary)",
               formatter: (w) => {
@@ -146,7 +146,7 @@ const TestDetailCostBreakdown = ({ costBreakdown }) => {
         return [`$${Number(actualValue).toFixed(2)}`, `${val.toFixed(1)}%`];
       },
       style: {
-        fontSize: "13px",
+        fontSize: "12px",
         fontFamily: "IBM Plex Sans",
         fontWeight: 600,
         colors: [chartAxisColors(theme).surface],
@@ -194,7 +194,7 @@ const TestDetailCostBreakdown = ({ costBreakdown }) => {
                 background: ${color};
               "></div>
               <div style="
-                font-size: 13px;
+                font-size: 12px;
                 color: var(--text-muted);
               ">
                 ${label}
