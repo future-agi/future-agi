@@ -15,6 +15,7 @@ export default function ActionReason({ id, reason, sx }) {
 ActionReason.propTypes = { id: PropTypes.string.isRequired, reason: PropTypes.node, sx: PropTypes.object };
 
 /** Props for the disabled button, linking it to its reason only when one is shown. */
+// eslint-disable-next-line react-refresh/only-export-components -- the pairing helper ships with its component (SH4 contract).
 export function reasonProps(id, reason) {
   return reason ? { 'aria-describedby': id } : {};
 }
