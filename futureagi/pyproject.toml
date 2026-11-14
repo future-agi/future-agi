@@ -49,11 +49,15 @@ dependencies = [
     # path traversal and SSRF in nltk.download. The corpora the backend loads
     # (stopwords, punkt_tab, averaged_perceptron_tagger_eng, wordnet) are
     # unchanged, so bin/install_nltk_data.py keeps its revision and checksums.
+    # The dependency refresh raised the floor to 3.10.4; the same holds for it.
     "nltk>=3.10.4",
     "retrying",
     # 1.84.0 is the first release to close CVE-2026-35030 and CVE-2026-49468
     # (auth bypass / privilege escalation / RCE); the 1.83.x fixes leave the
     # Host-header bypass open. 1.84.10 is the last patch of that series.
+    # The dependency refresh moved the pin to 1.100.4, which also needs
+    # boto3>=1.43.1 and pydantic-settings>=2.14.1 (pinned in both base-image
+    # Dockerfiles to the versions locked here).
     "litellm==1.100.4",
     "django-filter",
     # >=2.13.0 fixes CVE-2026-48526 (forged-JWT authentication bypass).
@@ -146,6 +150,7 @@ dependencies = [
     "jinja2",
     # >=6.14.2 clears the high-severity pypdf findings of TH-8370 (crafted
     # PDFs reaching kb_indexer.py and the dataset/document upload paths).
+    # The dependency refresh raised the floor to 6.21.4.
     "pypdf>=6.21.4",
     # Imported by integrations/services/cloud_storage_service.py; it used to
     # arrive only via google-cloud-aiplatform (now the `gcp` extra).
@@ -169,6 +174,7 @@ dependencies = [
     # >=12.3.0 clears the high-severity Pillow findings of TH-8370; every
     # user-supplied image (tfc/utils/storage.py, the image evals) is decoded
     # by it.
+    # The dependency refresh raised the floor to 13.0.0 (Python >=3.11).
     "pillow>=13.0.0",
     "pandas",
     # RecursiveCharacterTextSplitter for knowledge-base chunking

@@ -6,8 +6,8 @@
 #   frontend-base -> build and dev stages only, never shipped: node with
 #     `yarn install` already baked in (see Dockerfile.base). Republish it
 #     (base-image-publish.yml) when package.json/yarn.lock change.
-#   nginx:1.31.6-alpine-slim -> the served image: 5.8 MB gzip, vs 26.3 MB for
-#     nginx:alpine (amd64, Docker Hub, 2026-09-25). nginx.conf uses only core
+#   nginx:1.31.8-alpine-slim -> the served image: 5.8 MB gzip, vs 26.3 MB for
+#     nginx:alpine (amd64, Docker Hub, 2026-11-14). nginx.conf uses only core
 #     http directives (gzip, expires, add_header, try_files) and
 #     docker-entrypoint.sh below needs only busybox sh/printenv/sed, so none of
 #     the modules alpine-slim leaves out (njs, geoip, image-filter, xslt, acme)

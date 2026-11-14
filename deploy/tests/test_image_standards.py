@@ -661,6 +661,97 @@ class FutureAgiBaseDockerfiles(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
+# Notes that name the version a pin was checked with follow the pin
+# ---------------------------------------------------------------------------
+
+
+def arg_default(path: Path, name: str) -> str:
+    ((value,),) = [
+        [rest.partition("=")[2]]
+        for keyword, rest in instructions(path)
+        if keyword == "ARG" and rest.partition("=")[0] == name
+    ]
+    return value
+
+
+class PinnedVersionNotes(unittest.TestCase):
+    def test_the_images_and_backend_ci_share_one_uv(self):
+        oss = ROOT / "futureagi" / "Dockerfile.oss"
+        serving = ROOT / "futureagi" / "model_serving" / "Dockerfile.oss"
+        pinned = {
+            re.fullmatch(
+                r"ghcr\.io/astral-sh/uv:([^@]+)@sha256:[0-9a-f]{64}",
+                arg_default(path, "UV_IMAGE"),
+            ).group(1)
+            for path in (oss, serving)
+        }
+        self.assertEqual(len(pinned), 1)
+        ci = re.findall(
+            r'astral-sh/setup-uv@\S+\s+with:\s+version:\s+"([^"]+)"',
+            (WORKFLOWS / "backend-ci.yml").read_text(encoding="utf-8"),
+        )
+        self.assertTrue(ci)
+        self.assertEqual(set(ci), pinned)
+        notes = re.findall(
+            r'^# Same uv as backend-ci\.yml \(astral-sh/setup-uv version "([^"]+)"\)',
+            oss.read_text(encoding="utf-8"),
+            re.MULTILINE,
+        ) + re.findall(
+            r"^# checked with uv (\S+) ",
+            serving.read_text(encoding="utf-8"),
+            re.MULTILINE,
+        )
+        self.assertEqual(len(notes), 2)
+        self.assertEqual(set(notes), pinned)
+
+    def test_the_code_executor_notes_name_the_pinned_base(self):
+        text = (ROOT / "futureagi" / "code-executor" / "Dockerfile").read_text(
+            encoding="utf-8"
+        )
+        (pinned,) = re.findall(
+            r"^ARG CODE_EXECUTOR_BASE=futureagi/code-executor-base:(v[^@\s]+)",
+            text,
+            re.MULTILINE,
+        )
+        noted = re.findall(
+            r"^#.*futureagi/code-executor-base:(v[^@\s]+)", text, re.MULTILINE
+        )
+        self.assertTrue(noted)
+        self.assertEqual(set(noted), {pinned})
+
+    def test_the_nginx_note_names_the_pinned_image(self):
+        path = ROOT / "frontend" / "Dockerfile"
+        pinned = arg_default(path, "NGINX_IMAGE").partition("@")[0]
+        noted = re.findall(
+            r"^#\s+(nginx:\S+-alpine-slim) ->",
+            path.read_text(encoding="utf-8"),
+            re.MULTILINE,
+        )
+        self.assertEqual(noted, [pinned])
+
+    def test_the_base_setuptools_goes_before_the_builder_packages_arrive(self):
+        # COPY merges directories, so the python image's own setuptools has to
+        # be deleted first or its dist-info stays next to the builder's.
+        steps = final_stage(ROOT / "futureagi" / "Dockerfile.oss")
+        site = "/usr/local/lib/python3.11/site-packages"
+        (copy,) = [
+            i
+            for i, (keyword, rest) in enumerate(steps)
+            if keyword == "COPY" and rest.startswith(f"--from=builder {site} ")
+        ]
+        removals = [
+            i
+            for i, (keyword, rest) in enumerate(steps)
+            if keyword == "RUN"
+            and rest.split()[:2] == ["rm", "-rf"]
+            and {f"{site}/setuptools", f"{site}/setuptools-*.dist-info"}
+            <= set(rest.split())
+        ]
+        self.assertEqual(len(removals), 1)
+        self.assertLess(removals[0], copy)
+
+
+# ---------------------------------------------------------------------------
 # Build-time scripts of the backend image (futureagi/docker)
 # ---------------------------------------------------------------------------
 

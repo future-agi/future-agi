@@ -52,9 +52,10 @@ WORKDIR /app/embedding
 COPY pyproject.toml ./
 # --torch-backend routes torch/torchaudio/torchvision/triton to
 # download.pytorch.org/whl/<backend> and everything else to PyPI. Resolution
-# checked with uv 0.11.16 for linux x86_64 and aarch64: cpu gives
-# torch==2.6.0+cpu and torchaudio==2.6.0 with no nvidia-*/triton packages;
-# cu124 gives torch==2.6.0+cu124 with the nvidia-* wheels.
+# checked with uv 0.11.33 for linux x86_64 and aarch64 (the same as with
+# 0.11.16): cpu gives torch==2.6.0+cpu and torchaudio 2.6.0 with no
+# nvidia-*/triton packages; cu124 gives torch==2.6.0+cu124 with the nvidia-*
+# wheels.
 RUN uv pip install --system --torch-backend="${TORCH_BACKEND}" .
 # The build arg is in RUN's environment; fail the build when the installed
 # torch does not match TORCH_BACKEND. A layer of its own: the install above
