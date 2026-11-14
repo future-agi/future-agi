@@ -144,6 +144,7 @@ func (p *Provider) StreamChatCompletionViaResponses(ctx context.Context, req *mo
 
 		conv := responsesStreamConverter{model: req.Model, created: time.Now().Unix()}
 		send := func(chunk models.StreamChunk) bool {
+			chunk.ReceivedAt = time.Now()
 			select {
 			case chunks <- chunk:
 				return true
@@ -283,11 +284,13 @@ type responsesFunctionTool struct {
 }
 
 // toResponsesRequest translates a chat request into a Responses API request.
-// stop has no Responses equivalent and is not sent; neither are n, seed,
-// presence/frequency penalties, logit_bias, logprobs, modalities, audio or
-// other unknown fields. A tool, tool choice, tool call or content part the
-// Responses API cannot be sent in chat shape is refused with a 400 rather than
-// forwarded or dropped.
+// The Responses API has no stop, seed, presence/frequency penalties or
+// logit_bias, and returns logprobs in another shape: a caller's own chat
+// request that sets one is refused with a 400 naming it, and a translated
+// request (/v1/messages, GenAI) is sent without it and the drop logged, as n
+// is. Modalities, audio and other unknown fields are not sent. A tool, tool
+// choice, tool call or content part the Responses API cannot be sent in chat
+// shape is refused with a 400 rather than forwarded or dropped.
 func toResponsesRequest(req *models.ChatCompletionRequest, stream bool) (_ *responsesRequest, apiErr *models.APIError) {
 	// Word the remedy for the route the caller used: only a caller's own chat
 	// request can set reasoning_effort.
@@ -326,15 +329,27 @@ func toResponsesRequest(req *models.ChatCompletionRequest, stream bool) (_ *resp
 			out.Store = store
 		}
 	}
-	// A response has one output; more choices cannot be asked for. A caller's
-	// own chat request asked for them and is told so. A translated request
-	// (GenAI candidateCount) gets one, as before this route existed.
+	// A response has one output; more choices cannot be asked for. A caller
+	// who chose this model themselves asked for them and is told so. A
+	// translated request (GenAI candidateCount), or one the gateway moved onto
+	// this model, gets one, as before this route existed.
+	callerChose := callerChoseResponses(req)
 	if req.N != nil && *req.N > 1 {
-		if req.TranslatedFrom == "" {
+		if callerChose {
 			return nil, unsupportedOverResponses(fmt.Sprintf("n=%d (more than one choice)", *req.N))
 		}
 		slog.Info("responses route answers one choice; extra candidates dropped",
-			"requested", *req.N, "translated_from", req.TranslatedFrom, "model", req.Model)
+			"requested", *req.N, "translated_from", req.TranslatedFrom,
+			"caller_model", req.CallerModel, "model", req.Model)
+	}
+
+	if params := chatOnlyParams(req); len(params) > 0 {
+		if callerChose {
+			return nil, unsupportedOverResponses(strings.Join(params, ", "))
+		}
+		slog.Info("responses route drops chat-only parameters",
+			"parameters", params, "translated_from", req.TranslatedFrom,
+			"caller_model", req.CallerModel, "model", req.Model)
 	}
 
 	out.PromptCacheKey = req.Extra["prompt_cache_key"]
@@ -365,6 +380,95 @@ func toResponsesRequest(req *models.ChatCompletionRequest, stream bool) (_ *resp
 		out.Text = &responsesText{Format: format, Verbosity: verbosity}
 	}
 	return out, nil
+}
+
+// callerChoseResponses reports whether the caller is the one who can change
+// what goes over the Responses route: their own chat request (not a
+// translated one) for a model they chose. A request the gateway moved onto
+// this model (routing, a target's model_override, a model fallback, failover,
+// the traffic mirror) is the caller's only if the model they asked for would
+// have taken this route too, as when a target only renames it.
+func callerChoseResponses(req *models.ChatCompletionRequest) bool {
+	if req.TranslatedFrom != "" {
+		return false
+	}
+	if req.CallerModel == "" || req.CallerModel == req.Model {
+		return true
+	}
+	// "<provider>/<model>" is how a caller names an org provider's model; the
+	// gateway strips the prefix (case-insensitively) to call it. That is the
+	// caller's own choice of model, not a retarget.
+	if _, model, ok := strings.Cut(req.CallerModel, "/"); ok && strings.EqualFold(model, req.Model) {
+		return true
+	}
+	asked := *req
+	asked.Model = req.CallerModel
+	return NeedsResponses(&asked)
+}
+
+// ResponsesDrops names what the Responses route drops from req instead of
+// refusing it (see callerChoseResponses): its chat-only parameters and extra
+// choices. Nil when req does not go over that route, or when it would be
+// refused. A translated route adds these to the drops it reports.
+func (p *Provider) ResponsesDrops(req *models.ChatCompletionRequest) []string {
+	if !p.ChatNeedsResponses(req) || callerChoseResponses(req) {
+		return nil
+	}
+	drops := chatOnlyParams(req)
+	if req.N != nil && *req.N > 1 {
+		drops = append(drops, "n")
+	}
+	return drops
+}
+
+// chatOnlyParams names the chat parameters set on req that the Responses API
+// cannot carry. A value that changes nothing (a zero penalty, logprobs false,
+// an empty stop, a logit_bias of zeros) is not counted.
+func chatOnlyParams(req *models.ChatCompletionRequest) []string {
+	var params []string
+	if stopSet(req.Stop) {
+		params = append(params, "stop")
+	}
+	if req.Seed != nil {
+		params = append(params, "seed")
+	}
+	if req.Logprobs != nil && *req.Logprobs {
+		params = append(params, "logprobs")
+	}
+	if req.TopLogprobs != nil && *req.TopLogprobs > 0 {
+		params = append(params, "top_logprobs")
+	}
+	if req.FrequencyPenalty != nil && *req.FrequencyPenalty != 0 {
+		params = append(params, "frequency_penalty")
+	}
+	if req.PresencePenalty != nil && *req.PresencePenalty != 0 {
+		params = append(params, "presence_penalty")
+	}
+	for _, bias := range req.LogitBias {
+		if bias != 0 {
+			params = append(params, "logit_bias")
+			break
+		}
+	}
+	return params
+}
+
+// stopSet reports whether a chat stop value names at least one sequence.
+func stopSet(raw json.RawMessage) bool {
+	var one string
+	if json.Unmarshal(raw, &one) == nil {
+		return one != ""
+	}
+	var many []string
+	if json.Unmarshal(raw, &many) == nil {
+		for _, s := range many {
+			if s != "" {
+				return true
+			}
+		}
+		return false
+	}
+	return len(raw) > 0 && string(raw) != "null"
 }
 
 // unsupportedOverResponses is the 400 for a request that must go over the
@@ -891,7 +995,11 @@ func (c *responsesStreamConverter) convert(ev *responsesStreamEvent) ([]models.S
 				c.model = ev.Response.Model
 			}
 		}
-		return []models.StreamChunk{c.chunk(models.Delta{Role: "assistant"}, nil)}, nil
+		// Sent at once so the caller sees the stream open, but it is only the
+		// acknowledgement: reasoning comes before the first output.
+		ack := c.chunk(models.Delta{Role: "assistant"}, nil)
+		ack.Acknowledgement = true
+		return []models.StreamChunk{ack}, nil
 
 	case "response.output_text.delta", "response.refusal.delta":
 		delta := ev.Delta

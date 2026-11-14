@@ -187,14 +187,14 @@ func (h *Handlers) AnthropicMessages(w http.ResponseWriter, r *http.Request) {
 		w.Write(errBody)
 		return
 	}
+	canonicalReq.TranslatedFrom = "anthropic"
+	canonicalReq.Model = upstreamModel
+	canonicalReq.Stream = isStream
 	if len(drops) > 0 {
 		joined := strings.Join(drops, ",")
 		rc.Metadata["translation_drops"] = joined
 		w.Header().Set("x-agentcc-translation-drops", joined)
 	}
-	canonicalReq.TranslatedFrom = "anthropic"
-	canonicalReq.Model = upstreamModel
-	canonicalReq.Stream = isStream
 
 	if isStream {
 		h.handleAnthropicStreamViaCanonical(ctx, w, rc, provider, translator, canonicalReq)
@@ -621,6 +621,7 @@ func (h *Handlers) handleAnthropicNonStreamViaCanonical(
 
 	var canonicalResp *models.ChatCompletionResponse
 	err := h.engine.Process(ctx, rc, func(ctx context.Context, rc *models.RequestContext) error {
+		noteResponsesRouteDrops(w, rc, provider, canonicalReq)
 		var callErr error
 		canonicalResp, callErr = provider.ChatCompletion(ctx, canonicalReq)
 		if callErr != nil {
@@ -746,6 +747,7 @@ func (h *Handlers) handleAnthropicStreamViaCanonical(
 		// Do not commit a 200/SSE response until the upstream has actually
 		// produced a chunk. Vertex can terminate before its first chunk (for
 		// example, an unexpected EOF), which must remain a retryable HTTP error.
+		noteResponsesRouteDrops(w, rc, provider, canonicalReq)
 		for attempt := 0; attempt < 2; attempt++ {
 			rawChunkCh, errCh = provider.StreamChatCompletion(streamCtx, canonicalReq)
 			if rawChunkCh == nil {
@@ -1115,4 +1117,57 @@ func setUsageResponse(rc *models.RequestContext, promptTokens, completionTokens 
 			TotalTokens:      promptTokens + completionTokens,
 		},
 	}
+}
+
+// noteResponsesRouteDrops adds what provider's Responses route drops from a
+// translated request to the drops the route reports (x-agentcc-translation-drops
+// and the log's translation_drops). It runs in the provider call, after the
+// pre-plugins, so a request a policy changed or refused reports only what its
+// final form loses.
+func noteResponsesRouteDrops(w http.ResponseWriter, rc *models.RequestContext, provider providers.Provider, req *models.ChatCompletionRequest) {
+	extra := responsesRouteDrops(provider, req)
+	if len(extra) == 0 {
+		return
+	}
+	drops := extra
+	if prev := rc.Metadata["translation_drops"]; prev != "" {
+		drops = append(strings.Split(prev, ","), extra...)
+	}
+	joined := strings.Join(drops, ",")
+	rc.Metadata["translation_drops"] = joined
+	w.Header().Set("x-agentcc-translation-drops", joined)
+}
+
+// noteChatResponsesRouteDrops records what provider's Responses route drops
+// from a chat request the gateway moved there (see the OpenAI provider's
+// ResponsesDrops): each as <name>_unsupported in the log's translation_drops
+// and the x-agentcc-translation-drops header, the gateway's notes channel. It
+// runs per provider attempt, so a failover attempt never keeps another's.
+func noteChatResponsesRouteDrops(w http.ResponseWriter, rc *models.RequestContext, provider providers.Provider, req *models.ChatCompletionRequest) {
+	drops := responsesRouteDrops(provider, req)
+	if len(drops) == 0 {
+		delete(rc.Metadata, "translation_drops")
+		w.Header().Del("x-agentcc-translation-drops")
+		return
+	}
+	names := make([]string, len(drops))
+	for i, drop := range drops {
+		names[i] = drop + "_unsupported"
+	}
+	joined := strings.Join(names, ",")
+	rc.Metadata["translation_drops"] = joined
+	w.Header().Set("x-agentcc-translation-drops", joined)
+}
+
+// responsesRouteDrops names what provider's Responses route will drop from a
+// translated request instead of refusing it (see the OpenAI provider's
+// ResponsesDrops); nil for any other provider or route.
+func responsesRouteDrops(provider providers.Provider, req *models.ChatCompletionRequest) []string {
+	rp, ok := provider.(interface {
+		ResponsesDrops(*models.ChatCompletionRequest) []string
+	})
+	if !ok {
+		return nil
+	}
+	return rp.ResponsesDrops(req)
 }
