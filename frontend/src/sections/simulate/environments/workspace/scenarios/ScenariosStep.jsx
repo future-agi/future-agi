@@ -533,6 +533,7 @@ export default function ScenariosStep({
                   filters={filters}
                   onApplyFilters={applyFilters}
                   filterCount={filterCount}
+                  proofCounts={pageData.proofCounts}
                   actions={
                     <>
                       <CoverageMatrix
