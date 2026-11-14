@@ -208,6 +208,35 @@ func TestChatCompletionsRefusesWhatResponsesCannotCarry(t *testing.T) {
 func TestChatCompletionsKeepsCustomOnlyToolsOnChatCompletions(t *testing.T) {
 	srv, upstream := newResponsesBridgeServer(t)
 	body := `{"model":"gpt-5.6-terra","tools":[{"type":"custom","custom":{"name":"run_sql"}}],"messages":[{"role":"user","content":"Hi"}]}`
-	postBridgeChat(t, srv, body, nil)
+	w := postBridgeChat(t, srv, body, nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", w.Code, w.Body.String())
+	}
 	checkHits(t, upstream, 1, 0)
+	var sent struct {
+		Tools []map[string]any `json:"tools"`
+	}
+	if err := json.Unmarshal(upstream.body("/v1/chat/completions"), &sent); err != nil || len(sent.Tools) != 1 || sent.Tools[0]["type"] != "custom" {
+		t.Errorf("chat request tools = %v (%v), want the custom tool as sent", sent.Tools, err)
+	}
+}
+
+// An allowed_tools choice over function tools reaches the Responses API in its
+// own shape, and the fake checks that shape.
+func TestChatCompletionsCarriesAllowedToolsOverResponses(t *testing.T) {
+	srv, upstream := newResponsesBridgeServer(t)
+	body := chatToolBody("gpt-5.6-terra", false, `"tool_choice":{"type":"allowed_tools","allowed_tools":{"mode":"required","tools":[{"type":"function","function":{"name":"get_weather"}}]}},`)
+	w := postBridgeChat(t, srv, body, nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d: %s", w.Code, w.Body.String())
+	}
+	checkToolCompletion(t, w.Body.Bytes())
+	checkHits(t, upstream, 0, 1)
+	var sent struct {
+		ToolChoice json.RawMessage `json:"tool_choice"`
+	}
+	if err := json.Unmarshal(upstream.body("/v1/responses"), &sent); err != nil ||
+		string(sent.ToolChoice) != `{"type":"allowed_tools","mode":"required","tools":[{"type":"function","name":"get_weather"}]}` {
+		t.Errorf("tool_choice = %s (%v)", sent.ToolChoice, err)
+	}
 }

@@ -637,8 +637,12 @@ func TestToResponsesRequestRefusesWhatItCannotCarry(t *testing.T) {
 		{"custom tool_choice", `"custom" tool_choice`, func(r *models.ChatCompletionRequest) {
 			r.ToolChoice = json.RawMessage(`{"type":"custom","custom":{"name":"run_sql"}}`)
 		}},
-		{"allowed_tools tool_choice", `"allowed_tools" tool_choice`, func(r *models.ChatCompletionRequest) {
-			r.ToolChoice = json.RawMessage(`{"type":"allowed_tools","allowed_tools":{"mode":"auto","tools":[{"type":"function","function":{"name":"get_weather"}}]}}`)
+		{"allowed_tools with a custom tool", `"custom" tool in allowed_tools`, func(r *models.ChatCompletionRequest) {
+			r.ToolChoice = json.RawMessage(`{"type":"allowed_tools","allowed_tools":{"mode":"auto","tools":[{"type":"function","function":{"name":"get_weather"}},{"type":"custom","custom":{"name":"run_sql"}}]}}`)
+		}},
+		{"more than one choice", `n=2`, func(r *models.ChatCompletionRequest) {
+			two := 2
+			r.N = &two
 		}},
 		{"unknown tool_choice mode", `tool_choice "sometimes"`, func(r *models.ChatCompletionRequest) {
 			r.ToolChoice = json.RawMessage(`"sometimes"`)
@@ -767,6 +771,22 @@ func TestViaResponsesFailsOnACallItemItCannotCarry(t *testing.T) {
 	}
 }
 
+// A call item that appears only in the final response, never announced by an
+// output_item.added event, still fails the stream rather than being dropped.
+func TestStreamViaResponsesFailsOnACallItemOnlyInTheFinalResponse(t *testing.T) {
+	final := `{"id":"resp_1","object":"response","created_at":1761580000,"status":"completed","model":"gpt-5.6-terra","output":[{"id":"ws_1","type":"web_search_call","status":"completed"}],"usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}`
+	ts := fakeOpenAI(t, func(w http.ResponseWriter, r *http.Request) {
+		sse(w,
+			`{"type":"response.created","response":{"id":"resp_1","status":"in_progress","model":"gpt-5.6-terra","output":[]}}`,
+			`{"type":"response.completed","response":`+final+`}`)
+	})
+	defer ts.Close()
+	p := newTestProvider(t, ts.URL)
+	if _, err := collect(p.StreamChatCompletionViaResponses(context.Background(), toolTurnRequest("gpt-5.6-terra"))); err == nil || !strings.Contains(err.Error(), "web_search_call") {
+		t.Errorf("stream: err %v; want an error naming web_search_call", err)
+	}
+}
+
 // The first chunk carries the model's first output along with the assistant
 // role, so first-chunk latency measures the model, not response.created.
 func TestStreamViaResponsesFirstChunkCarriesOutput(t *testing.T) {
@@ -794,5 +814,29 @@ func TestStreamViaResponsesFirstChunkCarriesOutput(t *testing.T) {
 	}
 	if roles != 1 {
 		t.Errorf("role sent on %d chunks, want 1", roles)
+	}
+}
+
+// An allowed_tools choice over function tools moves to the Responses shape.
+func TestToResponsesRequestTranslatesAllowedTools(t *testing.T) {
+	req := toolTurnRequest("gpt-5.6-terra")
+	req.ToolChoice = json.RawMessage(`{"type":"allowed_tools","allowed_tools":{"mode":"required","tools":[{"type":"function","function":{"name":"get_weather"}}]}}`)
+	got := mustResponsesRequest(t, req)
+	if want := `{"type":"allowed_tools","mode":"required","tools":[{"type":"function","name":"get_weather"}]}`; string(got.ToolChoice) != want {
+		t.Errorf("tool_choice = %s, want %s", got.ToolChoice, want)
+	}
+}
+
+// The caller's store and a single choice are carried; store defaults to false.
+func TestToResponsesRequestCarriesStoreAndOneChoice(t *testing.T) {
+	req := toolTurnRequest("gpt-5.6-terra")
+	if got := mustResponsesRequest(t, req); got.Store {
+		t.Error("store = true without the caller asking, want false")
+	}
+	one := 1
+	req.N = &one
+	req.Extra = map[string]json.RawMessage{"store": json.RawMessage(`true`)}
+	if got := mustResponsesRequest(t, req); !got.Store {
+		t.Error("store = false, want the caller's true")
 	}
 }

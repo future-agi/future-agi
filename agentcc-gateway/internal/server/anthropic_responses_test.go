@@ -61,17 +61,23 @@ func (u *openAIUpstream) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	u.mu.Unlock()
 
 	var req struct {
-		Model           string            `json:"model"`
-		Stream          bool              `json:"stream"`
-		Tools           []json.RawMessage `json:"tools"`
-		ReasoningEffort *string           `json:"reasoning_effort"`
+		Model  string `json:"model"`
+		Stream bool   `json:"stream"`
+		Tools  []struct {
+			Type string `json:"type"`
+		} `json:"tools"`
+		ReasoningEffort *string `json:"reasoning_effort"`
 	}
 	json.Unmarshal(raw, &req)
 
 	switch r.URL.Path {
 	case "/v1/chat/completions":
 		reasons := req.ReasoningEffort == nil || *req.ReasoningEffort != "none"
-		if strings.HasPrefix(req.Model, "gpt-5.6") && len(req.Tools) > 0 && reasons {
+		functionTools := false
+		for _, tool := range req.Tools {
+			functionTools = functionTools || tool.Type == "function"
+		}
+		if strings.HasPrefix(req.Model, "gpt-5.6") && functionTools && reasons {
 			w.WriteHeader(http.StatusBadRequest)
 			fmt.Fprintf(w, `{"error":{"message":"Function tools with reasoning_effort are not supported for %s in /v1/chat/completions. To use function tools, use /v1/responses or set reasoning_effort to 'none'.","type":"invalid_request_error","param":"tools","code":null}}`, req.Model)
 			return
@@ -207,9 +213,24 @@ func responsesShapeError(raw []byte) string {
 			Type     string          `json:"type"`
 			Name     string          `json:"name"`
 			Function json.RawMessage `json:"function"`
+			Mode     string          `json:"mode"`
+			Tools    []struct {
+				Type string `json:"type"`
+				Name string `json:"name"`
+			} `json:"tools"`
 		}
 		_ = json.Unmarshal(req.ToolChoice, &choice)
-		if choice.Type != "function" || choice.Name == "" || choice.Function != nil {
+		switch {
+		case choice.Type == "allowed_tools":
+			if choice.Mode == "" || len(choice.Tools) == 0 {
+				return "Invalid value for 'tool_choice.tools'."
+			}
+			for _, t := range choice.Tools {
+				if t.Type != "function" || t.Name == "" {
+					return "Invalid value for 'tool_choice.tools'."
+				}
+			}
+		case choice.Type != "function" || choice.Name == "" || choice.Function != nil:
 			return "Invalid value for 'tool_choice'."
 		}
 	}

@@ -213,8 +213,8 @@ type responsesRequest struct {
 	PromptCacheKey   json.RawMessage `json:"prompt_cache_key,omitempty"`
 	SafetyIdentifier json.RawMessage `json:"safety_identifier,omitempty"`
 	Metadata         json.RawMessage `json:"metadata,omitempty"`
-	// Store is sent as false: chat completions store nothing by default, and
-	// the Responses API stores unless told not to.
+	// Store is the caller's store, false when not set: chat completions store
+	// nothing by default, and the Responses API stores unless told not to.
 	Store  bool `json:"store"`
 	Stream bool `json:"stream,omitempty"`
 }
@@ -312,6 +312,16 @@ func toResponsesRequest(req *models.ChatCompletionRequest, stream bool) (*respon
 		if json.Unmarshal(raw, &effort) == nil && effort != "" {
 			out.Reasoning = &responsesReasoning{Effort: effort}
 		}
+	}
+	if raw, ok := req.Extra["store"]; ok {
+		var store bool
+		if json.Unmarshal(raw, &store) == nil {
+			out.Store = store
+		}
+	}
+	// A response has one output; more choices cannot be asked for.
+	if req.N != nil && *req.N > 1 {
+		return nil, unsupportedOverResponses(fmt.Sprintf("n=%d (more than one choice)", *req.N))
 	}
 
 	out.PromptCacheKey = req.Extra["prompt_cache_key"]
@@ -609,11 +619,51 @@ func responsesToolChoice(raw json.RawMessage) (json.RawMessage, *models.APIError
 		}{"function", named.Function.Name})
 		return b, nil
 	}
+	if named.Type == "allowed_tools" {
+		return responsesAllowedTools(raw)
+	}
 	what := "this tool_choice"
 	if named.Type != "" {
 		what = fmt.Sprintf("a %q tool_choice", named.Type)
 	}
 	return nil, unsupportedOverResponses(what)
+}
+
+// responsesAllowedTools translates an allowed_tools tool_choice that lists
+// function tools: the mode and the tools move up a level, and each function's
+// name with them. Any other entry is refused.
+func responsesAllowedTools(raw json.RawMessage) (json.RawMessage, *models.APIError) {
+	var chat struct {
+		AllowedTools struct {
+			Mode  string `json:"mode"`
+			Tools []struct {
+				Type     string `json:"type"`
+				Function struct {
+					Name string `json:"name"`
+				} `json:"function"`
+			} `json:"tools"`
+		} `json:"allowed_tools"`
+	}
+	if json.Unmarshal(raw, &chat) != nil || (chat.AllowedTools.Mode != "auto" && chat.AllowedTools.Mode != "required") {
+		return nil, unsupportedOverResponses("this allowed_tools tool_choice")
+	}
+	type tool struct {
+		Type string `json:"type"`
+		Name string `json:"name"`
+	}
+	out := struct {
+		Type  string `json:"type"`
+		Mode  string `json:"mode"`
+		Tools []tool `json:"tools"`
+	}{Type: "allowed_tools", Mode: chat.AllowedTools.Mode, Tools: []tool{}}
+	for _, t := range chat.AllowedTools.Tools {
+		if t.Type != "function" || t.Function.Name == "" {
+			return nil, unsupportedOverResponses(fmt.Sprintf("a %q tool in allowed_tools", t.Type))
+		}
+		out.Tools = append(out.Tools, tool{Type: "function", Name: t.Function.Name})
+	}
+	b, _ := json.Marshal(out)
+	return b, nil
 }
 
 // ── response ───────────────────────────────────────────────────────────────
@@ -850,6 +900,13 @@ func (c *responsesStreamConverter) convert(ev *responsesStreamEvent) ([]models.S
 		resp := ev.Response
 		if resp == nil {
 			resp = &responsesResponse{}
+		}
+		// The final response lists every output item, including any the
+		// stream never announced with output_item.added.
+		for _, item := range resp.Output {
+			if err := checkOutputItem(item.Type); err != nil {
+				return nil, err
+			}
 		}
 		finish := resp.finishReason(len(c.toolIndex) > 0)
 		final := c.chunk(models.Delta{}, &finish)
