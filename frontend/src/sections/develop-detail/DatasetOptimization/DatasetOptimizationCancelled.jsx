@@ -59,12 +59,12 @@ const DatasetOptimizationCancelled = ({ optimization }) => {
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
-            bgcolor: "black.o5",
+            bgcolor: "action.hover",
             flexShrink: 0,
           }}
         >
           <SvgColor
-            sx={{ color: "red.500", width: 22 }}
+            sx={{ color: "status.danger.fg", width: 22 }}
             src="/assets/icons/ic_failed.svg"
           />
         </Box>
@@ -89,10 +89,7 @@ const DatasetOptimizationCancelled = ({ optimization }) => {
               disabled={optimization?.modelDeprecated}
               onClick={handleRerun}
               startIcon={
-                <SvgColor
-                  sx={{ width: 20, height: 20 }}
-                  src="/assets/icons/ic_refresh.svg"
-                />
+                <SvgColor width={20} src="/assets/icons/ic_refresh.svg" />
               }
             >
               Re-Run Optimization

@@ -1,4 +1,5 @@
 import json
+import uuid
 
 import structlog
 
@@ -8,9 +9,14 @@ from agentic_eval.core_evals.fi_evals import *  # noqa: F403
 from model_hub.models.evals_metric import EvalTemplate
 from model_hub.models.evaluation import Evaluation, StatusChoices
 from model_hub.tasks.user_evaluation import trigger_error_localization_for_standalone
-from sdk.utils.helpers import _get_api_call_type
+from sdk.utils.helpers import (
+    _emit_jev_usage,
+    _get_api_call_type,
+    _get_billing_event_type,
+)
 from tracer.utils.inline_evals import trigger_inline_eval
 from tfc.constants.api_calls import APICallStatusChoices
+
 try:
     from ee.usage.utils.usage_entries import log_and_deduct_cost_for_api_request
 except ImportError:
@@ -41,7 +47,7 @@ def _log_and_deduct_cost_for_standalone_eval(
         "error_localizer": False,
     }
 
-    api_call_type = _get_api_call_type(model)
+    api_call_type = _get_api_call_type(model, template=eval_template)
 
     try:
         from ee.usage.services.metering import check_usage
@@ -86,7 +92,7 @@ def _log_and_deduct_cost_for_standalone_eval(
 
 def _run_evaluation(run_params, eval_model, eval_instance, runner):
     """
-    This is a simplified version of _run_evaluation from tracer/utils/eval.py
+    This is a simplified version of _execute_evaluation from tracer/utils/eval.py
     It runs the evaluation and returns the result.
     """
     # Apply the shared empty-input rules so the SDK path is consistent
@@ -96,9 +102,7 @@ def _run_evaluation(run_params, eval_model, eval_instance, runner):
     # partial_input warning attached to the response.
     from model_hub.utils.eval_input_validation import validate_eval_inputs
 
-    partial_input_warning, run_params = validate_eval_inputs(
-        eval_model, run_params
-    )
+    partial_input_warning, run_params = validate_eval_inputs(eval_model, run_params)
 
     result = eval_instance.run(**run_params)
     output_type = eval_model.config.get("output", "score")
@@ -209,13 +213,15 @@ def _run_eval(eval_template, inputs, model, user, workspace, eval_config=None):
             )
         )
     except Exception as e:
+        from tfc.ee_gates import jev_error_message
+
         logger.exception(f"Standalone Eval | Failed: user: {user.id}, error: {e}")
 
         api_call_log_row.status = APICallStatusChoices.ERROR.value
         config_dict = json.loads(api_call_log_row.config)
         config_dict.update(
             {
-                "output": {"output": None, "reason": str(e)},
+                "output": {"output": None, "reason": jev_error_message(e) or str(e)},
             }
         )
         api_call_log_row.config = json.dumps(config_dict)
@@ -290,17 +296,37 @@ def _run_eval(eval_template, inputs, model, user, workspace, eval_config=None):
             credits = billing_config.calculate_ai_credits(actual_cost)
 
             api_call_type = _get_api_call_type(model)
-            if emit is not None and UsageEvent is not None:
+            evaluator = getattr(result, "evaluator", None)
+            if (
+                emit is not None
+                and UsageEvent is not None
+                and not _emit_jev_usage(
+                    evaluator,
+                    org_id=str(user.organization.id),
+                    run_id=(
+                        str(api_call_log_row.log_id)
+                        if api_call_log_row
+                        else str(uuid.uuid4())
+                    ),
+                )
+            ):
                 emit(
                     UsageEvent(
                         org_id=str(user.organization.id),
-                        event_type=api_call_type,
+                        event_type=_get_billing_event_type(
+                            api_call_type,
+                            model,
+                            getattr(result, "model_used", None),
+                            evaluator=evaluator,
+                        ),
                         amount=credits,
                         properties={
                             "source": "standalone_v2",
                             "source_id": str(eval_template.id),
                             "raw_cost_usd": str(actual_cost),
-                            "log_id": str(api_call_log_row.log_id) if api_call_log_row else None,
+                            "log_id": str(api_call_log_row.log_id)
+                            if api_call_log_row
+                            else None,
                             **token_usage_properties(token_usage),
                         },
                     )
@@ -465,7 +491,10 @@ def _run_protect(
         protect_inputs["call_type"] = "protect_flash" if protect_flash else "protect"
 
         api_call_log_row = _log_and_deduct_cost_for_standalone_eval(
-            user, eval_template, True, protect_inputs,
+            user,
+            eval_template,
+            True,
+            protect_inputs,
             model="protect_flash" if protect_flash else "protect",
             workspace=workspace,
         )

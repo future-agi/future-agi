@@ -9,10 +9,7 @@ Run with: pytest tracer/tests/test_vapi_normalize_inline_rehost.py -v
 
 from unittest.mock import patch
 
-import pytest
-
 from tracer.utils.vapi import normalize_vapi_data
-
 
 # Example R2 provider URLs (the kind Vapi returns)
 R2_COMBINED = "https://storage.vapi.ai/combined.mp3"
@@ -61,16 +58,29 @@ def _make_fake_convert(url_map):
 
 
 def test_duration_falls_back_to_created_at_when_started_at_is_null():
-    result = normalize_vapi_data(
-        {
-            **VAPI_LOG,
-            "startedAt": None,
-            "createdAt": "2026-07-17T12:00:00Z",
-            "endedAt": "2026-07-17T12:01:35Z",
-        }
-    )
+    # This timestamp regression uses the same four recording URLs as the
+    # rehost cases below. Keep its storage lookup/download boundary mocked too;
+    # otherwise a pure duration assertion performs real S3 and Vapi requests.
+    with patch(
+        "tracer.utils.vapi.convert_audio_url_to_s3_sync",
+        side_effect=_make_fake_convert({}),
+    ) as convert:
+        result = normalize_vapi_data(
+            {
+                **VAPI_LOG,
+                "startedAt": None,
+                "createdAt": "2026-07-17T12:00:00Z",
+                "endedAt": "2026-07-17T12:01:35Z",
+            }
+        )
 
     assert result["span_attributes"]["call.duration"] == 95
+    assert [call.kwargs["audio_url"] for call in convert.call_args_list] == [
+        R2_COMBINED,
+        R2_CUSTOMER,
+        R2_ASSISTANT,
+        R2_STEREO,
+    ]
 
 
 class TestInlineRehostReplace:
@@ -146,9 +156,13 @@ class TestInlineRehostReplace:
         def capture(event, **kwargs):
             events.append((event, kwargs))
 
-        with patch("tracer.utils.vapi.logger.info", side_effect=capture), patch(
-            "tracer.utils.vapi._extract_eval_attributes", return_value={}
-        ), patch("tracer.utils.vapi._rehost_recording_urls_sync", return_value=(0, {})):
+        with (
+            patch("tracer.utils.vapi.logger.info", side_effect=capture),
+            patch("tracer.utils.vapi._extract_eval_attributes", return_value={}),
+            patch(
+                "tracer.utils.vapi._rehost_recording_urls_sync", return_value=(0, {})
+            ),
+        ):
             normalize_vapi_data(sensitive_log, api_key="api-secret")
 
         rendered = str(events)
@@ -344,13 +358,16 @@ class TestInlineRehostBytesAndMirror:
             R2_COMBINED: S3_COMBINED,
             R2_STEREO: S3_STEREO,
         }
-        with patch(
-            "tracer.utils.vapi.convert_audio_url_to_s3_sync",
-            side_effect=_make_fake_convert(url_map),
-        ), patch(
-            "tracer.utils.vapi_recording.VapiRecordingService.mirror_s3_url_to_consumer_fields",
-        ) as mock_mirror:
-            result = normalize_vapi_data(VAPI_LOG, api_key="test-key")
+        with (
+            patch(
+                "tracer.utils.vapi.convert_audio_url_to_s3_sync",
+                side_effect=_make_fake_convert(url_map),
+            ),
+            patch(
+                "tracer.utils.vapi_recording.VapiRecordingService.mirror_s3_url_to_consumer_fields",
+            ) as mock_mirror,
+        ):
+            normalize_vapi_data(VAPI_LOG, api_key="test-key")
 
         mock_mirror.assert_called_once()
         call_args = mock_mirror.call_args[1]
@@ -366,12 +383,15 @@ class TestInlineRehostBytesAndMirror:
     def test_mirror_not_called_when_no_conversions(self):
         """mirror_s3_url_to_consumer_fields is NOT called when no URLs are converted."""
         log = {"id": "no-urls", "status": "ended", "costs": [], "messages": []}
-        with patch(
-            "tracer.utils.vapi.convert_audio_url_to_s3_sync",
-        ), patch(
-            "tracer.utils.vapi_recording.VapiRecordingService.mirror_s3_url_to_consumer_fields",
-        ) as mock_mirror:
-            result = normalize_vapi_data(log, api_key="test-key")
+        with (
+            patch(
+                "tracer.utils.vapi.convert_audio_url_to_s3_sync",
+            ),
+            patch(
+                "tracer.utils.vapi_recording.VapiRecordingService.mirror_s3_url_to_consumer_fields",
+            ) as mock_mirror,
+        ):
+            normalize_vapi_data(log, api_key="test-key")
 
         mock_mirror.assert_not_called()
 
@@ -392,4 +412,6 @@ class TestInlineRehostBytesAndMirror:
             "stereo": 1024,
         }
         # total is the sum of the per-type map
-        assert result.get("rehost_bytes_uploaded") == sum(result["rehost_uploads"].values())
+        assert result.get("rehost_bytes_uploaded") == sum(
+            result["rehost_uploads"].values()
+        )

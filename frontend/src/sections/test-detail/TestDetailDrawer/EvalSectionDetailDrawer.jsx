@@ -2,14 +2,17 @@ import { Drawer } from "@mui/material";
 import React from "react";
 import EvalDrawerSection from "./EvalSection";
 import { useTestDetailSideDrawerStoreShallow } from "../states";
+import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
 
 const EvalSectionDetailDrawer = () => {
   const { evalView, setEvalView } = useTestDetailSideDrawerStoreShallow(
     (s) => ({ evalView: s.evalView, setEvalView: s.setEvalView }),
   );
+  const covered = useDrawerCovered(!!evalView);
   return (
     <Drawer
       open={!!evalView}
+      sx={coveredDrawerSx(covered)}
       onClose={() => setEvalView(null)}
       anchor="right"
       PaperProps={{
@@ -17,7 +20,6 @@ const EvalSectionDetailDrawer = () => {
           height: "100vh",
           position: "fixed",
           zIndex: 10,
-          boxShadow: "-10px 0px 100px #00000035",
           borderRadius: "0px !important",
           backgroundColor: "background.paper",
           display: "flex",

@@ -137,6 +137,42 @@ func (rt *Router) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	models.WriteError(w, models.ErrNotFound("not_found", "Unknown endpoint: "+path))
 }
 
+// ServesPath reports whether a registered route matches path under any
+// method. It matches the way ServeHTTP does, so ServeHTTP answers a path it
+// rejects with 404 and runs no handler.
+func (rt *Router) ServesPath(path string) bool {
+	if rt.knownPaths[path] {
+		return true
+	}
+	pathParts := strings.Split(strings.Trim(path, "/"), "/")
+	for pk, candidates := range rt.paramIndex {
+		if pk.segments != len(pathParts) {
+			continue
+		}
+		for i := range candidates {
+			if _, ok := matchParts(candidates[i].parts, pathParts); ok {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// requireKeyForServedPaths applies keyAuth to every /v1/ request and to every
+// request whose path a route serves. A request for any other path reaches the
+// router's 404 without a key check: no handler runs for it, and an unknown
+// path keeps answering 404 rather than 401.
+func requireKeyForServedPaths(rt *Router, keyAuth func(http.Handler) http.Handler, next http.Handler) http.Handler {
+	authenticated := keyAuth(next)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.HasPrefix(r.URL.Path, "/v1/") && !rt.ServesPath(r.URL.Path) {
+			next.ServeHTTP(w, r)
+			return
+		}
+		authenticated.ServeHTTP(w, r)
+	})
+}
+
 // isMethodNotAllowed checks if the path exists for a different method.
 func (rt *Router) isMethodNotAllowed(path, method string, pathParts []string, segCount int) bool {
 	// Check static routes for other methods.

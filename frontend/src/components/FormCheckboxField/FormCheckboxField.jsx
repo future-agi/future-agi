@@ -51,9 +51,10 @@ export const FormCheckboxField = ({
                   alignItems: "flex-start",
                   py: 1.2,
                   cursor: "pointer",
-                  borderRadius: 0.5,
+                  borderRadius: "8px",
                   backgroundColor: "background.paper",
-                  boxShadow: "1px 1px 23px 0px #0000000F",
+                  border: "1px solid",
+                  borderColor: "border.default",
 
                   transition: "all 0.2s ease",
                 }),
@@ -79,27 +80,6 @@ export const FormCheckboxField = ({
                       props.onChange?.(e);
                     }}
                     inputProps={{ "aria-label": "controlled" }}
-                    icon={
-                      <Iconify
-                        icon="system-uicons:checkbox-empty"
-                        sx={{
-                          color:
-                            theme.palette.mode === "light"
-                              ? theme.palette.black?.o20
-                              : theme.palette.grey?.[600],
-                        }}
-                        width={isCustom ? 22 : 20}
-                      />
-                    }
-                    checkedIcon={
-                      <Iconify
-                        icon="famicons:checkbox"
-                        sx={{
-                          color: theme.palette.purple?.[300],
-                        }}
-                        width={isCustom ? 22 : 20}
-                      />
-                    }
                     size={size}
                     sx={{ ...props.checkboxSx }}
                   />
@@ -117,13 +97,13 @@ export const FormCheckboxField = ({
                       marginLeft: -1,
                     }}
                   >
-                    <Typography sx={{ fontWeight: 500, fontSize: "15px" }}>
+                    <Typography sx={{ fontWeight: 500, fontSize: "12px" }}>
                       {label}
                     </Typography>
                     <Typography
                       sx={{
                         fontWeight: 400,
-                        fontSize: "13px",
+                        fontSize: "12px",
                         color: "text.disabled",
                       }}
                     >

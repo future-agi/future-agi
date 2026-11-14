@@ -122,7 +122,7 @@ func TestStreamEventsFromCanonical_ToolCallAccumulation(t *testing.T) {
 				{Index: 0, Delta: models.Delta{
 					ToolCalls: []models.ToolCallDelta{
 						{Index: 0, ID: "call_x", Type: "function",
-							Function: &models.FunctionCall{Name: "get_weather", Arguments: ""}},
+							Function: &models.FunctionCallDelta{Name: "get_weather", Arguments: ""}},
 					},
 				}},
 			},
@@ -132,7 +132,7 @@ func TestStreamEventsFromCanonical_ToolCallAccumulation(t *testing.T) {
 			Choices: []models.StreamChoice{
 				{Index: 0, Delta: models.Delta{
 					ToolCalls: []models.ToolCallDelta{
-						{Index: 0, Function: &models.FunctionCall{Arguments: `{"locati`}},
+						{Index: 0, Function: &models.FunctionCallDelta{Arguments: `{"locati`}},
 					},
 				}},
 			},
@@ -142,7 +142,7 @@ func TestStreamEventsFromCanonical_ToolCallAccumulation(t *testing.T) {
 			Choices: []models.StreamChoice{
 				{Index: 0, Delta: models.Delta{
 					ToolCalls: []models.ToolCallDelta{
-						{Index: 0, Function: &models.FunctionCall{Arguments: `on":"London"}`}},
+						{Index: 0, Function: &models.FunctionCallDelta{Arguments: `on":"London"}`}},
 					},
 				}, FinishReason: &finish},
 			},

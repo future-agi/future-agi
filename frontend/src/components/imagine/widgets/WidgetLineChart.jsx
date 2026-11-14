@@ -2,19 +2,7 @@ import React from "react";
 import PropTypes from "prop-types";
 import ReactApexChart from "react-apexcharts";
 import { useTheme } from "@mui/material/styles";
-
-const COLORS = [
-  "#7B56DB",
-  "#1ABCFE",
-  "#FF6B6B",
-  "#2ECB71",
-  "#F7B731",
-  "#E84393",
-  "#0984E3",
-  "#FD7E14",
-  "#00CEC9",
-  "#A29BFE",
-];
+import { seriesColors } from "src/theme/data-colors";
 
 export default function WidgetLineChart({ config }) {
   const theme = useTheme();
@@ -27,17 +15,17 @@ export default function WidgetLineChart({ config }) {
     chart: {
       type: "line",
       background: "transparent",
-      foreColor: isDark ? "#a1a1aa" : "#666",
+      foreColor: theme.palette.text.secondary,
       toolbar: { show: false },
       zoom: { enabled: false },
     },
     theme: { mode: isDark ? "dark" : "light" },
-    colors: config.colors || COLORS,
+    colors: config.colors || seriesColors(theme),
     stroke: { width: 2, curve: config.curve || "smooth" },
     dataLabels: { enabled: false },
     xaxis: { categories },
     grid: {
-      borderColor: isDark ? "#27272a" : "#f0f0f0",
+      borderColor: theme.palette.divider,
       strokeDashArray: 3,
     },
     tooltip: { theme: isDark ? "dark" : "light" },

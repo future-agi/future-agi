@@ -2,7 +2,7 @@ from agentic_eval.core_evals.run_prompt.litellm_models import LiteLLMModelManage
 
 
 def get_api_key_for_model(
-    model_name: str, organization_id: str, workspace_id: str = None
+    model_name: str, organization_id: str, workspace_id: str | None = None
 ) -> str | dict:
     """
     Get the API key or config for a given model and organization.

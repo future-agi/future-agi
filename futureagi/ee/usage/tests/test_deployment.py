@@ -16,7 +16,6 @@ _TEST_SECRET = os.environ.get("CLOUD_DEPLOYMENT_SECRET", "")
 
 @pytest.mark.unit
 class TestDeploymentMode:
-
     def setup_method(self):
         _detect_mode.cache_clear()
 
@@ -38,6 +37,11 @@ class TestDeploymentMode:
     @patch("ee.usage.deployment._validate_cloud_secret", return_value=True)
     def test_cloud_dev_with_valid_secret(self, _mock):
         _detect_mode.cache_clear()
+        assert _detect_mode() == "cloud"
+
+    @override_settings(CLOUD_DEPLOYMENT=" us ", EE_LICENSE_KEY="")
+    @patch("ee.usage.deployment._validate_cloud_secret", return_value=True)
+    def test_cloud_region_is_read_as_is_cloud_env_reads_it(self, _mock):
         assert _detect_mode() == "cloud"
 
     @override_settings(
@@ -144,7 +148,6 @@ class TestCloudSecretValidation:
 
 @pytest.mark.unit
 class TestEEFeatures:
-
     def test_ee_features_set_exists(self):
         assert len(EE_FEATURES) > 0
 

@@ -1,3 +1,4 @@
+import { getDateRangeDisplayEnd } from "src/components/custom-datepicker/dateRange";
 import { Box, Button } from "@mui/material";
 import React, { useEffect, useRef, useState } from "react";
 import { formatDate } from "src/utils/report-utils";
@@ -96,7 +97,7 @@ const DateTimeRangePicker = ({
       setParentDateFilter(dateFilter);
     }
     setStartDate(format(new Date(dateFilter[0]), "dd/MM/yyyy"));
-    setEndDate(format(new Date(dateFilter[1]), "dd/MM/yyyy"));
+    setEndDate(format(getDateRangeDisplayEnd(dateFilter), "dd/MM/yyyy"));
   }, [dateOption, dateFilter]);
 
   return (
@@ -152,7 +153,7 @@ const DateTimeRangePicker = ({
           disableRipple
         >
           {dateOption === "Custom" && startDate && endDate ? (
-            <Iconify icon="uil:calender" height={16} width={16} />
+            <Iconify icon="solar:calendar-linear" height={16} width={16} />
           ) : null}
           {startDate && endDate && dateOption === "Custom"
             ? `${startDate} - ${endDate}`

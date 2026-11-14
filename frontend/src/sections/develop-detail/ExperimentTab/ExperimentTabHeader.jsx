@@ -164,7 +164,7 @@ const ExperimentTabHeader = ({
             size="medium"
             variant="contained"
             color={"primary"}
-            startIcon={<Iconify icon="mdi:plus" />}
+            startIcon={<Iconify icon="solar:add-linear" />}
             onClick={() => {
               setCurrentTab("data");
               timeoutRef.current = setTimeout(() => {
@@ -195,7 +195,7 @@ const ExperimentTabHeader = ({
               justifyContent: "space-around",
               border: "1px solid",
               borderColor: "divider",
-              borderRadius: "1px",
+              borderRadius: "4px",
               padding: `${theme.spacing(0.5)} ${theme.spacing(2)}`,
               gap: theme.spacing(1),
               marginRight: theme.spacing(0.625),
@@ -209,7 +209,7 @@ const ExperimentTabHeader = ({
                 marginRight: theme.spacing(1.5),
                 paddingRight: theme.spacing(3),
                 borderRight: "1px solid",
-                borderColor: "whiteScale.500",
+                borderColor: "divider",
               }}
             >
               {`${rowSelected.length} selected`}
@@ -228,7 +228,6 @@ const ExperimentTabHeader = ({
                   <Button
                     variant="text"
                     sx={{
-                      height: theme.spacing(3.75),
                       color: action.color,
                       padding: `${theme.spacing(0.75)} ${theme.spacing(1.25)}`,
                     }}

@@ -14,7 +14,12 @@ export default function ExperimentDescriptionCell({ data }) {
       size="small"
     >
       <span>
-        <Button color="primary" variant="text" disabled={isRunning}>
+        <Button
+          className="row-hover-action"
+          color="primary"
+          variant="text"
+          disabled={isRunning}
+        >
           <Typography
             typography="s1"
             color={"inherit"}

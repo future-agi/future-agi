@@ -25,6 +25,7 @@ Speech-to-Text (STT):
 - EagerEOT: Optional faster response with eager_eot_threshold (0.3-0.9)
 """
 
+import math
 import requests
 import time
 import structlog
@@ -36,8 +37,12 @@ import websocket
 import threading
 import io
 from tfc.utils.storage import audio_bytes_from_url_or_base64
-from pydub import AudioSegment
 from urllib.parse import urlencode
+
+# Matches the default ``min_duration_seconds`` of
+# ``tfc.utils.storage.audio_bytes_from_url_or_base64`` — Deepgram audio used to
+# be padded to this length by that loader (via librosa); we now do it with pydub.
+_MIN_AUDIO_DURATION_SECONDS = 1.0
 
 
 def deepgram_speech_response(run_prompt_instance, start_time, api_key):
@@ -249,7 +254,13 @@ def _load_and_convert_audio(run_prompt_instance):
     raw_audio = run_prompt_instance._get_input_audio_from_messages()
 
     try:
-        audio_bytes = audio_bytes_from_url_or_base64(raw_audio)
+        # Deepgram is a base feature and performs its own pydub conversion
+        # below.  The shared silence-padding path (``pad_silence=True`` ->
+        # ``_ensure_min_duration``) uses librosa from the optional ``audio``
+        # extra, so do not route base Deepgram traffic through it.  The
+        # historical >=1s minimum is still enforced below with pydub, so STT
+        # behaviour is identical on slim and full/EE images.
+        audio_bytes = audio_bytes_from_url_or_base64(raw_audio, pad_silence=False)
         logger.info(f"Audio loaded: {len(audio_bytes)} bytes")
     except Exception as e:
         logger.error(f"Failed to load audio: {e}")
@@ -257,6 +268,8 @@ def _load_and_convert_audio(run_prompt_instance):
 
     logger.info("Converting audio to linear16 PCM")
     try:
+        from pydub import AudioSegment
+
         audio = AudioSegment.from_file(io.BytesIO(audio_bytes))
 
         # Convert to mono, 16kHz, 16-bit PCM
@@ -264,15 +277,35 @@ def _load_and_convert_audio(run_prompt_instance):
         audio = audio.set_frame_rate(16000)
         audio = audio.set_sample_width(2)
 
+        duration_seconds = len(audio.raw_data) / (16000 * 2)
+
+        if duration_seconds < 0.5:
+            logger.warning(f"Audio is very short ({duration_seconds:.2f}s)")
+
+        # Preserve the loader's historical minimum-duration padding (it used
+        # to run via librosa before this function) with pydub silence, which
+        # is pure Python and available on every image.
+        if duration_seconds < _MIN_AUDIO_DURATION_SECONDS:
+            pad_ms = int(
+                math.ceil((_MIN_AUDIO_DURATION_SECONDS - duration_seconds) * 1000)
+            )
+            silence = (
+                AudioSegment.silent(duration=pad_ms, frame_rate=16000)
+                .set_channels(1)
+                .set_sample_width(2)
+            )
+            audio = audio + silence
+            logger.info(
+                f"Padded audio with {pad_ms}ms of silence to reach "
+                f"{_MIN_AUDIO_DURATION_SECONDS:.1f}s minimum"
+            )
+
         audio_bytes = audio.raw_data
         duration_seconds = len(audio_bytes) / (16000 * 2)
 
         logger.info(
             f"Converted to PCM: {len(audio_bytes)} bytes ({duration_seconds:.2f}s)"
         )
-
-        if duration_seconds < 0.5:
-            logger.warning(f"Audio is very short ({duration_seconds:.2f}s)")
 
         return audio_bytes
 

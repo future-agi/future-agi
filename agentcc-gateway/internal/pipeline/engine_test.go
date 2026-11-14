@@ -1,7 +1,10 @@
 package pipeline
 
 import (
+	"bytes"
 	"context"
+	"log/slog"
+	"strings"
 	"testing"
 	"time"
 
@@ -169,6 +172,35 @@ func TestEngineProviderError(t *testing.T) {
 	}
 	if !postPluginRan {
 		t.Error("post-plugins should run even when provider errors")
+	}
+}
+
+func TestEngineDecisionFailureLogOmitsVendorText(t *testing.T) {
+	var logs bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
+	defer slog.SetDefault(prev)
+
+	engine := NewEngine()
+	for _, endpoint := range []string{"decision", "chat"} {
+		logs.Reset()
+		rc := models.AcquireRequestContext()
+		rc.EndpointType = endpoint
+		engine.Process(context.Background(), rc, func(ctx context.Context, rc *models.RequestContext) error {
+			return models.ErrUpstreamProvider(422, "question q1 quotes PRIVATE-STATE")
+		})
+		rc.Release()
+
+		leaked := strings.Contains(logs.String(), "PRIVATE-STATE")
+		if endpoint == "decision" && leaked {
+			t.Errorf("decision failure log carries vendor text: %s", logs.String())
+		}
+		if endpoint == "chat" && !leaked {
+			t.Errorf("chat failure log lost its error detail: %s", logs.String())
+		}
+		if !strings.Contains(logs.String(), "provider call failed") {
+			t.Errorf("%s: no failure log line: %s", endpoint, logs.String())
+		}
 	}
 }
 

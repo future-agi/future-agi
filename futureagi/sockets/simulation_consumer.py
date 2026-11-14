@@ -4,9 +4,11 @@ from urllib.parse import parse_qs
 
 import redis.asyncio as aioredis
 import structlog
-from channels.db import database_sync_to_async
 from channels.generic.websocket import AsyncJsonWebsocketConsumer
 from django.conf import settings
+
+from sockets.org_scope import resolve_socket_organization
+from sockets.saml_guard import SamlSocketGuard
 
 logger = structlog.get_logger(__name__)
 
@@ -27,11 +29,14 @@ class SimulationUpdateConsumer(AsyncJsonWebsocketConsumer):
         self._pubsub = None
         self.test_id = None
         self.organization_id = None
+        self._guard = SamlSocketGuard(self)
 
     async def connect(self):
         user = self.scope.get("user")
         if not user or not user.is_authenticated:
             await self.close(code=4001)
+            return
+        if not await self._guard.ensure_live(inbound=True):
             return
 
         # Verify user has an organization (prevents cross-org data leaks)
@@ -57,27 +62,8 @@ class SimulationUpdateConsumer(AsyncJsonWebsocketConsumer):
         )
         self._subscriber_task = asyncio.create_task(self._subscribe_redis())
 
-    @database_sync_to_async
-    def _get_organization_id(self):
-        user = self.scope.get("user")
-        if not user:
-            return None
-        try:
-            from accounts.models.organization_membership import OrganizationMembership
-
-            membership = (
-                OrganizationMembership.objects.filter(user=user, is_active=True)
-                .select_related("organization")
-                .first()
-            )
-            if membership:
-                return membership.organization.id
-            # Fallback to legacy FK
-            if getattr(user, "organization", None):
-                return user.organization.id
-            return None
-        except Exception:
-            return None
+    async def _get_organization_id(self):
+        return await resolve_socket_organization(self.scope, self.scope.get("user"))
 
     async def disconnect(self, close_code):
         logger.info(
@@ -112,6 +98,8 @@ class SimulationUpdateConsumer(AsyncJsonWebsocketConsumer):
 
             async for message in self._pubsub.listen():
                 if message["type"] == "message":
+                    if not await self._guard.ensure_live(inbound=False):
+                        return
                     try:
                         data = json.loads(message["data"])
                         await self.send_json(data)

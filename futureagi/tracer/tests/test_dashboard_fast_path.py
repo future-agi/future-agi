@@ -79,12 +79,17 @@ def test_w1_w6_simple_metrics_use_bounded_rollup(monkeypatch, preset, granularit
     )
 
     assert result["query_status"] == "complete"
+    # The in-table states are per physical part: unmerged versions and
+    # retained tombstones are counted, so the series is not latest-live.
     assert result["query_exact"] is False
+    assert result["metrics"][0]["query_exact"] is False
     assert result["query_provenance"] == "materialized_rollup"
     assert len(analytics.calls) == 1
     query, params, timeout_ms, settings = analytics.calls[0]
-    assert "FROM spans_hourly_rollup" in query
-    assert "FROM spans\n" not in query
+    assert "spans_hourly_rollup" not in query
+    assert "FROM spans\n" in query
+    assert "countState() AS n" in query
+    assert "sumMerge(total_tokens_sum)" in query
     assert params["start_date"] < params["end_date"]
     assert 0 < timeout_ms <= _DASHBOARD_INTERACTIVE_TIMEOUT_MS
     assert settings == _DASHBOARD_ROLLUP_READ_SETTINGS
@@ -141,12 +146,16 @@ def test_span_and_trace_rollups_share_one_deadline(monkeypatch):
     assert result["query_status"] == "complete"
     assert len(analytics.calls) == 2
     assert [call[2] for call in analytics.calls] == [8_000, 7_000]
-    assert {"spans_hourly_rollup", "trace_count_rollup"} == {
-        "spans_hourly_rollup"
-        if "spans_hourly_rollup" in call[0]
-        else "trace_count_rollup"
+    assert {"spans", "trace_count_rollup"} == {
+        "trace_count_rollup" if "FROM trace_count_rollup" in call[0] else "spans"
         for call in analytics.calls
     }
+    assert all("spans_hourly_rollup" not in call[0] for call in analytics.calls)
+    # Neither source is latest-live, so neither the payload nor any metric in
+    # it claims exactness.
+    assert result["query_exact"] is False
+    exactness = {metric["name"]: metric["query_exact"] for metric in result["metrics"]}
+    assert exactness == {"tokens": False, "trace_count": False}
 
 
 @pytest.mark.unit
@@ -243,3 +252,71 @@ def test_exhausted_direct_read_dispatches_one_background_refresh(monkeypatch):
     assert len(calls) == 1
     assert calls[0][0][0] == "dashboard-query"
     assert calls[0][1]["refresh"] is False
+
+
+def _cold_snapshot(query_config, *, refreshing):
+    """The envelope ``read_or_schedule_exact_snapshot`` returns for a cold identity."""
+
+    return {
+        **dashboard_view._pending_dashboard_payload(query_config),
+        "query_refreshing": refreshing,
+        "query_refresh_failed": not refreshing,
+    }
+
+
+@pytest.mark.unit
+def test_rollup_failure_without_a_running_refresh_is_degraded(monkeypatch):
+    analytics = _RollupAnalytics(malformed=True)
+    monkeypatch.setattr(dashboard_view, "V2AnalyticsQueryService", lambda: analytics)
+    query_config = _query_config()
+
+    result = _read_dashboard_rollup_fast_path(
+        query_config,
+        refresh_state=_cold_snapshot(query_config, refreshing=False),
+    )
+
+    assert result["query_status"] == "degraded"
+    assert result["query_error_code"] == "malformed_result"
+    assert result["query_provenance"] == "bounded_unavailable"
+    assert result["query_refreshing"] is False
+    assert result["query_refresh_failed"] is True
+    assert [metric["id"] for metric in result["metrics"]] == ["tokens"]
+
+
+@pytest.mark.unit
+def test_rollup_failure_during_a_running_refresh_stays_pending(monkeypatch):
+    analytics = _RollupAnalytics(malformed=True)
+    monkeypatch.setattr(dashboard_view, "V2AnalyticsQueryService", lambda: analytics)
+    query_config = _query_config()
+
+    result = _read_dashboard_rollup_fast_path(
+        query_config,
+        refresh_state=_cold_snapshot(query_config, refreshing=True),
+    )
+
+    assert result["query_status"] == "pending"
+    assert result["query_refreshing"] is True
+
+
+@pytest.mark.unit
+def test_failed_background_refresh_is_degraded_not_pending(monkeypatch):
+    query_config = _query_config(filters=[{"metric_name": "status"}])
+    monkeypatch.setattr(
+        dashboard_view,
+        "read_or_schedule_exact_snapshot",
+        lambda *args, **kwargs: _cold_snapshot(query_config, refreshing=False),
+    )
+
+    result = _read_public_dashboard_query(
+        query_config,
+        cache_identity={"workspace_id": "workspace", "query_config": {}},
+        refresh=True,
+        try_rollup=False,
+    )
+
+    assert result["query_status"] == "degraded"
+    assert result["query_error_code"] == "read_budget_exceeded"
+    assert result["query_provenance"] == "bounded_unavailable"
+    assert result["query_refreshing"] is False
+    assert result["query_refresh_failed"] is True
+    assert [metric["id"] for metric in result["metrics"]] == ["tokens"]

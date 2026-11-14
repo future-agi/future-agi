@@ -13,10 +13,7 @@ import {
   Typography,
 } from "@mui/material";
 import { useUpdateAutomationRule } from "src/api/annotation-queues/annotation-queues";
-import {
-  SOURCE_OPTIONS,
-  TRIGGER_FREQUENCY_OPTIONS,
-} from "../constants";
+import { SOURCE_OPTIONS, TRIGGER_FREQUENCY_OPTIONS } from "../constants";
 import { RuleFilterSection, RuleScopePicker } from "./create-rule-dialog";
 import {
   buildConditionsForRule,
@@ -102,7 +99,13 @@ export default function EditRuleDialog({
   );
 
   return (
-    <Dialog open={open} onClose={onClose} maxWidth="md" fullWidth>
+    <Dialog
+      open={open}
+      onClose={onClose}
+      maxWidth={false}
+      PaperProps={{ sx: { maxWidth: 960 } }}
+      fullWidth
+    >
       <DialogTitle>Edit Automation Rule</DialogTitle>
       <DialogContent>
         <Stack spacing={2.5} sx={{ mt: 1 }}>

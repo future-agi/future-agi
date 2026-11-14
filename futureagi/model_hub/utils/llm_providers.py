@@ -10,6 +10,11 @@ def get_provider_for_model(
     model_name: str, organization_id: str = None, workspace_id: str = None
 ) -> str | None:
     """Get the provider name for a given model. Returns None for unavailable models."""
+    from evaluations.decision_models import get_decision_model
+
+    decision = get_decision_model(model_name)
+    if decision is not None:
+        return decision.connection
     try:
         model_manager = LiteLLMModelManager(
             model_name=model_name, organization_id=organization_id

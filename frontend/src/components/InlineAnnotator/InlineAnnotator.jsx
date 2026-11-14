@@ -23,6 +23,7 @@ import { useScoresForSource, useBulkCreateScores } from "src/api/scores/scores";
 import LabelInput from "src/sections/annotations/queues/annotate/label-input";
 import AddLabelDrawer from "src/components/traceDetailDrawer/AddLabelDrawer";
 import { useGetOrCreateDefaultQueue } from "src/api/annotation-queues/annotation-queues";
+import ContentSkeleton from "src/components/content-skeleton";
 
 // ---------------------------------------------------------------------------
 // Score value display (read-only chip for existing scores)
@@ -210,7 +211,7 @@ const InlineAnnotator = forwardRef(function InlineAnnotator(
   if (scoresLoading) {
     return (
       <Box sx={{ display: "flex", justifyContent: "center", py: 3 }}>
-        <CircularProgress size={20} />
+        <ContentSkeleton variant="panel" />
       </Box>
     );
   }
@@ -227,7 +228,7 @@ const InlineAnnotator = forwardRef(function InlineAnnotator(
             <Button
               size="small"
               variant="outlined"
-              startIcon={<Iconify icon="mingcute:add-line" width={16} />}
+              startIcon={<Iconify icon="solar:add-linear" width={16} />}
               onClick={() => setAddLabelDrawerOpen(true)}
               sx={{ mt: 1 }}
             >
@@ -267,7 +268,7 @@ const InlineAnnotator = forwardRef(function InlineAnnotator(
               <Button
                 size="small"
                 variant="outlined"
-                startIcon={<Iconify icon="mingcute:add-line" width={14} />}
+                startIcon={<Iconify icon="solar:add-linear" width={14} />}
                 onClick={() => setAddLabelDrawerOpen(true)}
               >
                 Add Label
@@ -277,7 +278,7 @@ const InlineAnnotator = forwardRef(function InlineAnnotator(
               size="small"
               variant="outlined"
               data-inline-annotator-edit
-              startIcon={<Iconify icon="eva:edit-2-fill" width={14} />}
+              startIcon={<Iconify icon="solar:pen-linear" width={14} />}
               onClick={() => setEditing(true)}
             >
               {Object.keys(scoresByLabel).length > 0 ? "Edit" : "Annotate"}
@@ -297,7 +298,7 @@ const InlineAnnotator = forwardRef(function InlineAnnotator(
                   sx={{
                     px: 1.5,
                     py: 0.75,
-                    borderRadius: 0.75,
+                    borderRadius: "4px",
                     bgcolor: "background.neutral",
                   }}
                 >
@@ -366,7 +367,7 @@ const InlineAnnotator = forwardRef(function InlineAnnotator(
           Annotate
         </Typography>
         <IconButton size="small" onClick={handleCancel}>
-          <Iconify icon="mingcute:close-line" width={18} />
+          <Iconify icon="solar:close-linear" width={20} />
         </IconButton>
       </Stack>
 

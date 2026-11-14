@@ -1,14 +1,26 @@
-import { Box, Paper, useTheme } from "@mui/material";
-import React, { lazy, Suspense, useCallback, useEffect, useMemo } from "react";
+import { Alert, Box, Button, useTheme } from "@mui/material";
+import Section from "src/components/section";
+import { useQuery } from "@tanstack/react-query";
+import React, {
+  lazy,
+  Suspense,
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
 import TestRunDetailHeader from "./TestRunDetailHeader";
 import { resetState, useTestDetailStore } from "./states";
 import TestDetailContextProvider from "./TestDetailContextProvider";
 import TestExecutionDetailTabs from "./TestExecutionDetailTabs";
 import { Outlet, useLocation, useNavigate, useParams } from "react-router";
 import { getTabsBasedOnAgentType } from "./common";
+import useExecutionLinkBase from "./useExecutionLinkBase";
 import useTestRunDetails from "src/hooks/useTestRunDetails";
 import { AGENT_TYPES } from "../agents/constants";
 import { SourceType } from "../scenarios/common";
+import { useSimulationSocket } from "src/hooks/use-simulation-socket";
+import axios, { endpoints } from "src/utils/axios";
 
 const FixMyAgentDrawer = lazy(
   () => import("./FixMyAgentDrawer/FixMyAgentDrawer"),
@@ -19,6 +31,41 @@ const TestRunDetailView = () => {
   const navigate = useNavigate();
   const { executionId, testId } = useParams();
   const { pathname } = useLocation();
+  const basePath = useExecutionLinkBase();
+  const [newExecutionId, setNewExecutionId] = useState(null);
+
+  const { data: latestExecutionId, refetch: refetchLatestExecution } = useQuery(
+    {
+      queryKey: ["test-runs-latest-execution", testId],
+      queryFn: () =>
+        axios.get(endpoints.runTests.detailExecutions(testId), {
+          params: { page: 1, limit: 1 },
+        }),
+      select: (response) => response.data?.results?.[0]?.id ?? null,
+      enabled: !!testId,
+    },
+  );
+
+  useEffect(() => {
+    if (latestExecutionId && latestExecutionId !== executionId) {
+      setNewExecutionId(latestExecutionId);
+    } else if (latestExecutionId === executionId) {
+      setNewExecutionId(null);
+    }
+  }, [executionId, latestExecutionId]);
+
+  const handleSimulationUpdate = useCallback(
+    (update) => {
+      const updatedExecutionId = update?.test_execution_id;
+      if (updatedExecutionId && updatedExecutionId !== executionId) {
+        setNewExecutionId(updatedExecutionId);
+      }
+      refetchLatestExecution();
+    },
+    [executionId, refetchLatestExecution],
+  );
+
+  useSimulationSocket(testId, handleSimulationUpdate);
 
   const { reset } = useTestDetailStore();
 
@@ -46,8 +93,9 @@ const TestRunDetailView = () => {
           sourceType === SourceType.PROMPT ? AGENT_TYPES.CHAT : agentType,
         testId,
         executionId,
+        basePath,
       }),
-    [agentType, sourceType, testId, executionId],
+    [agentType, sourceType, testId, executionId, basePath],
   );
 
   // Get current tab from URL - memoized for performance
@@ -85,18 +133,36 @@ const TestRunDetailView = () => {
         }}
       >
         {/* Header Section */}
-        <Paper
+        <Section
           sx={{
             paddingX: theme.spacing(2),
             paddingTop: theme.spacing(2),
-            borderRadius: 0,
-            boxShadow: "none",
-            backgroundColor: "background.paper",
-            flexShrink: 0, // Prevent header from shrinking
+            flexShrink: 0,
           }}
         >
           <TestRunDetailHeader />
-        </Paper>
+        </Section>
+        {newExecutionId && (
+          <Alert
+            severity="info"
+            sx={{ mx: 2, mt: 1, flexShrink: 0 }}
+            action={
+              <Button
+                color="inherit"
+                size="small"
+                onClick={() =>
+                  navigate(
+                    `${basePath.slice(0, -(executionId.length + 1))}/${newExecutionId}/call-details`,
+                  )
+                }
+              >
+                Open rerun
+              </Button>
+            }
+          >
+            A newer simulation execution is available.
+          </Alert>
+        )}
         <TestExecutionDetailTabs
           tabs={tabs}
           currentTab={currentTab}

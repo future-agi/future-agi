@@ -11,14 +11,21 @@ logger = structlog.get_logger(__name__)
 
 
 def mixpanel_slack_notfy(msg):
-    if not settings.ERROR_LOGS_WEBHOOK:
+    """Post an internal alert to the ERROR_LOGS_WEBHOOK Slack channel.
+
+    No-op, with no network call, when the webhook is unset (the self-hosted
+    default) or ENV_TYPE is local/test.
+    """
+    if not str(getattr(settings, "ERROR_LOGS_WEBHOOK", "") or "").strip():
         logger.debug("Skipping Slack notification: ERROR_LOGS_WEBHOOK is not set")
+        return
+    if os.getenv("ENV_TYPE") in ["local", "test"]:
+        logger.debug("Skipping Slack notification in local/test environment")
         return
     try:
         data = msg + "\n" + f"ENV_TYPE: {os.getenv('ENV_TYPE')}"
-        webhook = WebhookClient(settings.ERROR_LOGS_WEBHOOK)
-        if os.getenv("ENV_TYPE") not in ["local", "test"]:
-            webhook.send(text=data)
+        webhook = WebhookClient(settings.ERROR_LOGS_WEBHOOK, timeout=10)
+        webhook.send(text=data)
         logger.info("Slack notification sent successfully")
     except Exception as e:
         logger.error(f"Failed to send Slack notification: {str(e)}")

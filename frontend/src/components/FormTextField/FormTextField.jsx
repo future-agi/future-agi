@@ -54,7 +54,7 @@ export const FormTextField = ({
                 {label?.endsWith("*") ? (
                   <>
                     {label.slice(0, -1)}
-                    <Typography component="span" color="red.500">
+                    <Typography component="span" color="status.danger.fg">
                       *
                     </Typography>
                   </>

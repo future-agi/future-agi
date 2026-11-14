@@ -1,9 +1,8 @@
 /* eslint-disable react/prop-types */
 import React, { useState } from "react";
+import Section from "src/components/section";
 import {
   Stack,
-  Card,
-  CardContent,
   Typography,
   TextField,
   MenuItem,
@@ -12,21 +11,23 @@ import {
   Collapse,
   Divider,
   Chip,
+  Box,
 } from "@mui/material";
 import Iconify from "src/components/iconify";
 
 // ---------- Collapsible section ----------
-const Section = ({ title, subtitle, icon, children, defaultOpen = false }) => {
+const CollapsibleSection = ({
+  title,
+  subtitle,
+  icon,
+  children,
+  defaultOpen = false,
+}) => {
   const [open, setOpen] = useState(defaultOpen);
   return (
-    <Card variant="outlined">
-      <CardContent
-        sx={{
-          py: 1.5,
-          "&:last-child": { pb: 1.5 },
-          cursor: "pointer",
-          userSelect: "none",
-        }}
+    <Section variant="panel">
+      <Box
+        sx={{ cursor: "pointer", userSelect: "none" }}
         onClick={() => setOpen((v) => !v)}
       >
         <Stack
@@ -46,27 +47,27 @@ const Section = ({ title, subtitle, icon, children, defaultOpen = false }) => {
             </Stack>
           </Stack>
           <Iconify
-            icon={open ? "mdi:chevron-up" : "mdi:chevron-down"}
+            icon={
+              open ? "solar:alt-arrow-up-linear" : "solar:alt-arrow-down-linear"
+            }
             width={20}
             sx={{ color: "text.secondary" }}
           />
         </Stack>
-      </CardContent>
+      </Box>
       <Collapse in={open}>
         <Divider />
-        <CardContent sx={{ pt: 2 }} onClick={(e) => e.stopPropagation()}>
-          {children}
-        </CardContent>
+        <Box onClick={(e) => e.stopPropagation()}>{children}</Box>
       </Collapse>
-    </Card>
+    </Section>
   );
 };
 
 // ---------- L1 Backend configs ----------
 const L1_BACKENDS = [
-  { value: "memory", label: "Memory (In-Process)", icon: "mdi:memory" },
-  { value: "disk", label: "Disk (Local File)", icon: "mdi:harddisk" },
-  { value: "redis", label: "Redis", icon: "mdi:database" },
+  { value: "memory", label: "Memory (In-Process)", icon: "solar:cpu-linear" },
+  { value: "disk", label: "Disk (Local File)", icon: "solar:server-linear" },
+  { value: "redis", label: "Redis", icon: "solar:database-linear" },
   { value: "s3", label: "Amazon S3", icon: "mdi:aws" },
   {
     value: "azure-blob",
@@ -77,10 +78,10 @@ const L1_BACKENDS = [
 ];
 
 const L2_BACKENDS = [
-  { value: "memory", label: "Memory (In-Process)", icon: "mdi:memory" },
-  { value: "qdrant", label: "Qdrant", icon: "mdi:vector-square" },
-  { value: "weaviate", label: "Weaviate", icon: "mdi:database-search" },
-  { value: "pinecone", label: "Pinecone", icon: "mdi:pine-tree" },
+  { value: "memory", label: "Memory (In-Process)", icon: "solar:cpu-linear" },
+  { value: "qdrant", label: "Qdrant", icon: "solar:graph-linear" },
+  { value: "weaviate", label: "Weaviate", icon: "solar:database-linear" },
+  { value: "pinecone", label: "Pinecone", icon: "solar:leaf-linear" },
 ];
 
 // ---------- Backend-specific config fields ----------
@@ -559,10 +560,10 @@ const CacheConfigTab = ({ cache, onChange }) => {
   return (
     <Stack spacing={2}>
       {/* ===================== CACHE ENABLED + BASICS ===================== */}
-      <Section
+      <CollapsibleSection
         title="Cache Settings"
         subtitle="Enable response caching and configure basic settings"
-        icon="mdi:cached"
+        icon="solar:refresh-linear"
         defaultOpen
       >
         <Stack spacing={2}>
@@ -602,15 +603,15 @@ const CacheConfigTab = ({ cache, onChange }) => {
             </Stack>
           )}
         </Stack>
-      </Section>
+      </CollapsibleSection>
 
       {config.enabled && (
         <>
           {/* ===================== L1 BACKEND ===================== */}
-          <Section
+          <CollapsibleSection
             title="L1 Backend (Exact Match)"
             subtitle="Storage backend for exact request/response cache"
-            icon="mdi:database"
+            icon="solar:database-linear"
           >
             <Stack spacing={2}>
               <Typography variant="body2" fontWeight={500}>
@@ -646,13 +647,13 @@ const CacheConfigTab = ({ cache, onChange }) => {
                 </>
               )}
             </Stack>
-          </Section>
+          </CollapsibleSection>
 
           {/* ===================== L2 SEMANTIC CACHE ===================== */}
-          <Section
+          <CollapsibleSection
             title="L2 Semantic Cache"
             subtitle="Similarity-based cache for semantically equivalent queries"
-            icon="mdi:brain"
+            icon="solar:brain-linear"
           >
             <Stack spacing={2}>
               <FormControlLabel
@@ -753,13 +754,13 @@ const CacheConfigTab = ({ cache, onChange }) => {
                 </>
               )}
             </Stack>
-          </Section>
+          </CollapsibleSection>
 
           {/* ===================== EDGE CACHING ===================== */}
-          <Section
+          <CollapsibleSection
             title="Edge Caching (CDN)"
             subtitle="HTTP cache headers for CDN and browser caching"
-            icon="mdi:earth"
+            icon="solar:global-linear"
           >
             <Stack spacing={2}>
               <FormControlLabel
@@ -848,7 +849,7 @@ const CacheConfigTab = ({ cache, onChange }) => {
                 </>
               )}
             </Stack>
-          </Section>
+          </CollapsibleSection>
         </>
       )}
     </Stack>

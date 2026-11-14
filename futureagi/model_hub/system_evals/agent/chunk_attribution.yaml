@@ -16,7 +16,8 @@ criteria: "You are evaluating whether a specific context chunk was actually used
   \ unique to this chunk.\n\n## Inputs\n\n<context>{{context}}</context>\n\n<output>{{output}}</output>"
 eval_tags:
 - RAG
-- Retrieval Systems
+- Attribution
+offered_in_environments: true
 visible_ui: true
 permissions:
   allow_edit: false

@@ -21,6 +21,7 @@ import { format, formatDistanceToNow, differenceInSeconds } from "date-fns";
 import { enrichErrorGroups } from "./classifyTaskError";
 import { readEvalTaskLogs } from "./task_log_read";
 import { warningMessage, warningTypeLabel } from "./warningTypes";
+import ContentSkeleton from "src/components/content-skeleton";
 
 // ── Stat Card ──
 
@@ -51,21 +52,21 @@ const StatCard = ({ icon, label, value, color, bgColor }) => (
     >
       <Iconify
         icon={icon}
-        width={18}
+        width={20}
         sx={{ color: color || "text.secondary" }}
       />
     </Box>
     <Box>
       <Typography
         variant="h6"
-        sx={{ fontSize: "18px", fontWeight: 700, lineHeight: 1.2 }}
+        sx={{ fontSize: "16px", fontWeight: 600, lineHeight: 1.2 }}
       >
         {value}
       </Typography>
       <Typography
         variant="caption"
         color="text.secondary"
-        sx={{ fontSize: "11px" }}
+        sx={{ fontSize: "12px" }}
       >
         {label}
       </Typography>
@@ -111,16 +112,13 @@ const ErrorGroupCard = ({ group, defaultExpanded = false }) => {
 
   return (
     <Box
-      sx={(t) => ({
+      sx={{
         border: "1px solid",
-        borderColor: alpha(t.palette[sev].main, 0.3),
-        bgcolor: alpha(
-          t.palette[sev].main,
-          t.palette.mode === "dark" ? 0.08 : 0.04,
-        ),
+        borderColor: "status.danger.border",
+        bgcolor: "status.danger.bg",
         borderRadius: 1,
         overflow: "hidden",
-      })}
+      }}
     >
       {/* Header — always visible, click to expand */}
       <Box
@@ -145,7 +143,7 @@ const ErrorGroupCard = ({ group, defaultExpanded = false }) => {
             flexShrink: 0,
           })}
         >
-          <Iconify icon={group.icon} width={18} sx={{ color: `${sev}.main` }} />
+          <Iconify icon={group.icon} width={20} sx={{ color: `${sev}.main` }} />
         </Box>
 
         <Box sx={{ flex: 1, minWidth: 0 }}>
@@ -161,7 +159,7 @@ const ErrorGroupCard = ({ group, defaultExpanded = false }) => {
             <Typography
               variant="subtitle2"
               fontWeight={600}
-              sx={{ fontSize: "13px" }}
+              sx={{ fontSize: "12px" }}
             >
               {group.title}
             </Typography>
@@ -172,7 +170,6 @@ const ErrorGroupCard = ({ group, defaultExpanded = false }) => {
               size="small"
               color={sev}
               variant="outlined"
-              sx={{ fontSize: "10px", height: 18 }}
             />
           </Box>
           <Typography
@@ -196,7 +193,7 @@ const ErrorGroupCard = ({ group, defaultExpanded = false }) => {
                 }}
                 sx={{
                   ml: 0.5,
-                  fontSize: "11px",
+                  fontSize: "12px",
                   color: "primary.main",
                   cursor: "pointer",
                   fontFamily: "inherit",
@@ -224,7 +221,7 @@ const ErrorGroupCard = ({ group, defaultExpanded = false }) => {
 
       {/* Expandable body — actionable hints + raw examples */}
       <Collapse in={expanded} unmountOnExit>
-        <Divider sx={{ borderColor: alpha("#000", 0) }} />
+        <Divider sx={{ borderColor: "transparent" }} />
         <Box
           sx={{
             px: 1.5,
@@ -244,8 +241,8 @@ const ErrorGroupCard = ({ group, defaultExpanded = false }) => {
                 sx={{
                   display: "block",
                   mb: 0.5,
-                  fontSize: "10px",
-                  textTransform: "uppercase",
+                  fontSize: "12px",
+                  textTransform: "none",
                   letterSpacing: "0.5px",
                   color: "text.disabled",
                 }}
@@ -290,8 +287,8 @@ const ErrorGroupCard = ({ group, defaultExpanded = false }) => {
                 sx={{
                   display: "block",
                   mb: 0.5,
-                  fontSize: "10px",
-                  textTransform: "uppercase",
+                  fontSize: "12px",
+                  textTransform: "none",
                   letterSpacing: "0.5px",
                   color: "text.disabled",
                 }}
@@ -315,7 +312,7 @@ const ErrorGroupCard = ({ group, defaultExpanded = false }) => {
                   >
                     <Typography
                       sx={{
-                        fontSize: "11px",
+                        fontSize: "12px",
                         fontFamily: "monospace",
                         color: "text.secondary",
                         wordBreak: "break-word",
@@ -359,16 +356,13 @@ const WarningGroupCard = ({ group, defaultExpanded = false }) => {
 
   return (
     <Box
-      sx={(t) => ({
+      sx={{
         border: "1px solid",
-        borderColor: alpha(t.palette.warning.main, 0.35),
-        bgcolor: alpha(
-          t.palette.warning.main,
-          t.palette.mode === "dark" ? 0.1 : 0.05,
-        ),
+        borderColor: "status.warning.border",
+        bgcolor: "status.warning.bg",
         borderRadius: 1,
         overflow: "hidden",
-      })}
+      }}
     >
       <Box
         sx={{
@@ -394,7 +388,7 @@ const WarningGroupCard = ({ group, defaultExpanded = false }) => {
         >
           <Iconify
             icon="solar:danger-triangle-linear"
-            width={18}
+            width={20}
             sx={{ color: "warning.main" }}
           />
         </Box>
@@ -411,7 +405,7 @@ const WarningGroupCard = ({ group, defaultExpanded = false }) => {
             <Typography
               variant="subtitle2"
               fontWeight={600}
-              sx={{ fontSize: "13px" }}
+              sx={{ fontSize: "12px" }}
             >
               {warningTypeLabel(group.type)}
             </Typography>
@@ -422,7 +416,6 @@ const WarningGroupCard = ({ group, defaultExpanded = false }) => {
               size="small"
               color="warning"
               variant="outlined"
-              sx={{ fontSize: "10px", height: 18 }}
             />
           </Box>
           <Typography
@@ -448,14 +441,14 @@ const WarningGroupCard = ({ group, defaultExpanded = false }) => {
         )}
       </Box>
       <Collapse in={expanded && hasKeyBreakdown} unmountOnExit>
-        <Divider sx={{ borderColor: alpha("#000", 0) }} />
+        <Divider sx={{ borderColor: "transparent" }} />
         <Box sx={{ px: 1.5, pb: 1.5, pt: 0.5 }}>
           <Typography
             variant="overline"
             sx={{
               display: "block",
               mb: 0.5,
-              fontSize: "10px",
+              fontSize: "12px",
               color: "text.disabled",
             }}
           >
@@ -470,7 +463,6 @@ const WarningGroupCard = ({ group, defaultExpanded = false }) => {
                   size="small"
                   color="warning"
                   variant="outlined"
-                  sx={{ fontSize: "10px", height: 18 }}
                 />
               ))
             ) : (
@@ -486,7 +478,7 @@ const WarningGroupCard = ({ group, defaultExpanded = false }) => {
                 sx={{
                   display: "block",
                   mb: 0.5,
-                  fontSize: "10px",
+                  fontSize: "12px",
                   color: "text.disabled",
                 }}
               >
@@ -494,13 +486,7 @@ const WarningGroupCard = ({ group, defaultExpanded = false }) => {
               </Typography>
               <Box sx={{ display: "flex", gap: 0.5, flexWrap: "wrap" }}>
                 {filledKeys.map((key) => (
-                  <Chip
-                    key={key}
-                    label={key}
-                    size="small"
-                    variant="outlined"
-                    sx={{ fontSize: "10px", height: 18 }}
-                  />
+                  <Chip key={key} label={key} size="small" variant="outlined" />
                 ))}
               </Box>
             </>
@@ -522,12 +508,39 @@ WarningGroupCard.propTypes = {
   defaultExpanded: PropTypes.bool,
 };
 
+// Logs currently carry free-text samples, not provider error codes. Recognize
+// only this explicit SDK constructor failure; unrelated api_key mentions keep
+// the existing classifier's diagnosis. Preserve normalized/raw examples.
+const withCredentialRemedy = (group) => {
+  const message = (group.raw || group.normalized)
+    .replace(/^Error during evaluation:\s*/i, "")
+    .trim();
+  if (
+    !/^The api_key client option must be set either by passing api_key to the client or by setting the OPENAI_API_KEY environment variable\.?$/i.test(
+      message,
+    )
+  )
+    return group;
+  return {
+    ...group,
+    category: "missing_provider_credential",
+    title: "Missing model provider credential",
+    icon: "solar:key-square-linear",
+    hints: [
+      "Ask a workspace admin or owner to configure the evaluator's model provider credential in Settings → AI providers. For a self-hosted provider, ask the deployment owner to check the evaluator service configuration.",
+      "After configuration is fixed, Pause the running task, then start a fresh Re-run. If the task is already stopped, use Re-run; if it is pending, wait until Pause or Re-run becomes available. A task editor must perform these actions.",
+      'In the Re-run dialog, choose "Delete Past Data & Start Fresh". This removes previous evaluations and starts a new run; it is not an in-place retry of failed entries.',
+      "Refreshing logs does not retry evaluations. Use the fresh Re-run after correcting configuration, rather than expecting a log refresh to recover failed runs.",
+    ],
+  };
+};
+
 // ── Main Component ──
 
 const TaskLogsView = ({ evalTaskId, taskStatus }) => {
   const theme = useTheme();
 
-  const { data, isLoading, isError, refetch } = useQuery({
+  const { data, isLoading, isFetching, isError, refetch } = useQuery({
     queryKey: ["eval-task-logs", evalTaskId],
     queryFn: ({ signal }) =>
       readEvalTaskLogs(
@@ -560,7 +573,7 @@ const TaskLogsView = ({ evalTaskId, taskStatus }) => {
   // on the groups array reference so the poll interval (every 5s while
   // the task is running) doesn't re-enrich unnecessarily.
   const errorGroups = useMemo(
-    () => enrichErrorGroups(data?.error_groups || []),
+    () => enrichErrorGroups(data?.error_groups || []).map(withCredentialRemedy),
     [data?.error_groups],
   );
   // Some response paths (older DRF camelCase middleware) emit camelCase;
@@ -583,7 +596,7 @@ const TaskLogsView = ({ evalTaskId, taskStatus }) => {
           minHeight: 200,
         }}
       >
-        <CircularProgress size={32} />
+        <ContentSkeleton variant="rows" />
       </Box>
     );
   }
@@ -620,11 +633,15 @@ const TaskLogsView = ({ evalTaskId, taskStatus }) => {
   // removed, so we alias locally to keep the rest of the component
   // readable.
   const {
+    // COMPLETED executions, including valid false outcomes; not evaluator passes.
     success_count: successCount = 0,
     errors_count: errorsCount = 0,
     skipped_count: skippedCount = 0,
     warnings_count: warningsCount = data?.warningsCount ?? 0,
     total_count: totalCount = 0,
+    // total_count is one per (target, eval) run; target_count is the
+    // distinct spans/traces/sessions/calls those runs cover.
+    target_count: targetCount = totalCount,
     start_time: startTime,
     end_time: endTime,
     row_type: rowType = "spans",
@@ -653,7 +670,8 @@ const TaskLogsView = ({ evalTaskId, taskStatus }) => {
   // auto-expand the largest one that actually has something behind it.
   const firstExpandableWarningGroup = warningGroups.find(
     (group) =>
-      (group.empty_keys || []).length > 0 || (group.filled_keys || []).length > 0,
+      (group.empty_keys || []).length > 0 ||
+      (group.filled_keys || []).length > 0,
   );
   const processedCount = successCount + errorsCount + skippedCount;
   const isDrained = totalCount > 0 && processedCount >= totalCount;
@@ -695,7 +713,9 @@ const TaskLogsView = ({ evalTaskId, taskStatus }) => {
                     : "No data"}
           </Typography>
           <Typography variant="caption" color="text.secondary">
-            {totalCount > 0 ? `${successCount} / ${totalCount} passed` : "—"}
+            {totalCount > 0
+              ? `${successCount} / ${totalCount} evaluation runs completed without errors`
+              : "—"}
           </Typography>
         </Box>
         <LinearProgress
@@ -732,7 +752,7 @@ const TaskLogsView = ({ evalTaskId, taskStatus }) => {
       <Box sx={{ display: "flex", gap: 1.5, flexWrap: "wrap" }}>
         <StatCard
           icon="solar:check-circle-linear"
-          label="Successful"
+          label="Completed runs"
           value={successCount ?? 0}
           color="success.main"
           bgColor={alpha(theme.palette.success.main, 0.1)}
@@ -756,10 +776,19 @@ const TaskLogsView = ({ evalTaskId, taskStatus }) => {
         <StatCard
           icon="solar:layers-linear"
           label={totalLabel}
-          value={totalCount ?? 0}
+          value={targetCount ?? 0}
           color="info.main"
           bgColor={alpha(theme.palette.info.main, 0.1)}
         />
+        {targetCount !== totalCount && (
+          <StatCard
+            icon="solar:clipboard-list-linear"
+            label="Eval Runs"
+            value={totalCount ?? 0}
+            color="info.main"
+            bgColor={alpha(theme.palette.info.main, 0.1)}
+          />
+        )}
         {showDuration && (
           <StatCard
             icon="solar:clock-circle-linear"
@@ -786,7 +815,7 @@ const TaskLogsView = ({ evalTaskId, taskStatus }) => {
             <Typography
               variant="caption"
               color="text.secondary"
-              sx={{ fontSize: "11px" }}
+              sx={{ fontSize: "12px" }}
             >
               Started
             </Typography>
@@ -799,7 +828,7 @@ const TaskLogsView = ({ evalTaskId, taskStatus }) => {
               <Typography
                 variant="caption"
                 color="text.secondary"
-                sx={{ fontSize: "11px" }}
+                sx={{ fontSize: "12px" }}
               >
                 Completed
               </Typography>
@@ -813,7 +842,7 @@ const TaskLogsView = ({ evalTaskId, taskStatus }) => {
               <Typography
                 variant="caption"
                 color="text.secondary"
-                sx={{ fontSize: "11px" }}
+                sx={{ fontSize: "12px" }}
               >
                 Status
               </Typography>
@@ -841,7 +870,7 @@ const TaskLogsView = ({ evalTaskId, taskStatus }) => {
             }}
           >
             <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
-              <Typography variant="subtitle2" sx={{ fontSize: "13px" }}>
+              <Typography variant="subtitle2" sx={{ fontSize: "12px" }}>
                 Warnings
               </Typography>
               <Chip
@@ -851,16 +880,15 @@ const TaskLogsView = ({ evalTaskId, taskStatus }) => {
                 size="small"
                 color="warning"
                 variant="outlined"
-                sx={{ fontSize: "11px", height: 20 }}
               />
             </Box>
             <Typography
               variant="caption"
               color="text.disabled"
-              sx={{ fontSize: "11px" }}
+              sx={{ fontSize: "12px" }}
             >
-              {warningsCount} run{warningsCount !== 1 ? "s" : ""} with
-              warnings, grouped by type below
+              {warningsCount} run{warningsCount !== 1 ? "s" : ""} with warnings,
+              grouped by type below
             </Typography>
           </Box>
           {warningGroupsTruncated && (
@@ -884,7 +912,7 @@ const TaskLogsView = ({ evalTaskId, taskStatus }) => {
               />
               <Typography
                 variant="caption"
-                sx={{ fontSize: "11px", color: "text.secondary" }}
+                sx={{ fontSize: "12px", color: "text.secondary" }}
               >
                 Showing the most common warning types. Rarer warning groups are
                 hidden.
@@ -917,7 +945,7 @@ const TaskLogsView = ({ evalTaskId, taskStatus }) => {
             }}
           >
             <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
-              <Typography variant="subtitle2" sx={{ fontSize: "13px" }}>
+              <Typography variant="subtitle2" sx={{ fontSize: "12px" }}>
                 Error Log
               </Typography>
               <Chip
@@ -927,13 +955,12 @@ const TaskLogsView = ({ evalTaskId, taskStatus }) => {
                 size="small"
                 color="error"
                 variant="outlined"
-                sx={{ fontSize: "11px", height: 20 }}
               />
             </Box>
             <Typography
               variant="caption"
               color="text.disabled"
-              sx={{ fontSize: "11px" }}
+              sx={{ fontSize: "12px" }}
             >
               {errorsCount} total error
               {errorsCount !== 1 ? "s" : ""} — grouped by type
@@ -963,7 +990,7 @@ const TaskLogsView = ({ evalTaskId, taskStatus }) => {
               />
               <Typography
                 variant="caption"
-                sx={{ fontSize: "11px", color: "text.secondary" }}
+                sx={{ fontSize: "12px", color: "text.secondary" }}
               >
                 Showing the top {errorGroups.length} error types by frequency.
                 Rarer error types are hidden — fix the biggest groups first and
@@ -987,6 +1014,28 @@ const TaskLogsView = ({ evalTaskId, taskStatus }) => {
         </Box>
       )}
 
+      {String(effectiveStatus).toLowerCase() === "failed" &&
+        !isFetching &&
+        !isError &&
+        // Defaults used for the counters are not evidence of an empty log.
+        // These counts exclude archived entries; they cannot describe history.
+        [
+          data.total_count,
+          data.success_count,
+          data.errors_count,
+          data.skipped_count,
+          data.warnings_count ?? data.warningsCount,
+        ].every((count) => count === 0) &&
+        totalCount === 0 &&
+        processedCount === 0 &&
+        !hasErrors &&
+        !hasWarnings && (
+          <Alert severity="error">
+            This task failed. No evaluation runs are available in this log, and
+            the failure reason is unavailable.
+          </Alert>
+        )}
+
       {/* Empty state for no errors */}
       {!hasErrors && !hasWarnings && isDrained && (
         <Box
@@ -1006,7 +1055,7 @@ const TaskLogsView = ({ evalTaskId, taskStatus }) => {
           <Typography
             variant="body2"
             color="text.secondary"
-            sx={{ fontSize: "13px" }}
+            sx={{ fontSize: "12px" }}
           >
             All evaluations completed successfully
           </Typography>

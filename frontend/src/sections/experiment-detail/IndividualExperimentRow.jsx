@@ -21,7 +21,7 @@ const IndividualExperimentRow = () => {
         size="small"
         startIcon={
           <Iconify
-            icon="octicon:chevron-left-24"
+            icon="solar:alt-arrow-left-linear"
             width="24px"
             sx={{ color: "primary.main" }}
           />

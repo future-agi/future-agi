@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Box } from "@mui/material";
 import { AgGridReact } from "ag-grid-react";
+import "src/utils/ag-grid-setup";
 import React, {
   useCallback,
   useMemo,
@@ -260,9 +261,6 @@ const DevelopData = React.forwardRef(
           element.textContent.trim() === "Hide Reasoning"
         ) {
           element.style.color = "var(--primary-main)";
-        }
-        if (element.textContent.trim() === "Delete Column") {
-          element.style.color = "#fa0c0c";
         }
         element.style.fontWeight = 400;
         element.style.fontSize = "12px";
@@ -543,7 +541,7 @@ const DevelopData = React.forwardRef(
                 }}
               >
                 <Iconify
-                  icon="material-symbols:schedule-outline"
+                  icon="solar:clock-circle-linear"
                   sx={{
                     display: "flex",
                     gap: 0.5,
@@ -566,7 +564,7 @@ const DevelopData = React.forwardRef(
                 />
                 {Math.round(eachCol?.metadata?.averageTokens)}
                 <Iconify
-                  icon="material-symbols:attach-money"
+                  icon="solar:dollar-minimalistic-linear"
                   sx={{
                     display: "flex",
                     alignItems: "center",

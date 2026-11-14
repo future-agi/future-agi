@@ -76,8 +76,6 @@ const AddDescriptionForm = ({
           sx={{
             width: "200px",
             color: "text.secondary",
-            height: "38px",
-            paddingX: "24px",
           }}
           onClick={() => handleNextTab(1)}
         >
@@ -89,7 +87,7 @@ const AddDescriptionForm = ({
           variant="contained"
           color="primary"
           type="submit"
-          sx={{ width: "200px", height: "38px", paddingX: "24px" }}
+          sx={{ width: "200px" }}
           disabled={columns.some((item) => !item.description)}
           loading={isPending}
         >

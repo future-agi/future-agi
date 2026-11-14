@@ -11,6 +11,7 @@ import (
 // Tracker manages hierarchical budget tracking across org, team, user, key, and tag levels.
 // Thread-safe: each budget level has its own mutex.
 type Tracker struct {
+	durable       GlobalBudgetBackend
 	warnThreshold float64
 	defaultPeriod string
 
@@ -46,6 +47,10 @@ type CheckResult struct {
 	Warnings  []string // Levels that exceeded warn threshold
 	BlockedBy string   // Level:key that blocked (empty if allowed)
 	BlockMsg  string   // Human-readable block message
+	// StoreUnavailable reports that the shared ledger could not be read and
+	// at least one level was checked against this replica's local counter.
+	// Ordinary requests proceed on that fallback; durable video fails closed.
+	StoreUnavailable bool
 }
 
 // NewTracker creates a Tracker from config.
@@ -146,13 +151,13 @@ func (t *Tracker) checkLevel(lb *levelBudget, level, key, model string, now time
 		return
 	}
 
-	lb.counter.mu.Lock()
-	defer lb.counter.mu.Unlock()
-
-	lb.counter.maybeReset(lb.period, now)
-
-	// Check total budget.
-	remaining := lb.limit - lb.counter.totalSpend
+	// Check total budget. The shared ledger, when attached, is read without
+	// holding the level lock; a failed read falls back to the local counter.
+	total, modelSpend, unavailable := t.spend(lb, level, key, now)
+	if unavailable {
+		result.StoreUnavailable = true
+	}
+	remaining := lb.limit - total
 	if remaining < 0 {
 		remaining = 0
 	}
@@ -163,38 +168,38 @@ func (t *Tracker) checkLevel(lb *levelBudget, level, key, model string, now time
 	}
 
 	// Check warning threshold.
-	if lb.limit > 0 && lb.counter.totalSpend >= lb.limit*t.warnThreshold {
+	if lb.limit > 0 && total >= lb.limit*t.warnThreshold {
 		result.Warnings = append(result.Warnings, level+":"+key)
 	}
 
 	// Check hard/soft cap on total.
-	if lb.limit > 0 && lb.counter.totalSpend >= lb.limit {
+	if lb.limit > 0 && total >= lb.limit {
 		if lb.hard {
 			result.Allowed = false
 			result.BlockedBy = level + ":" + key
 			result.BlockMsg = "budget exceeded: " + level + " '" + key + "' has spent $" +
-				formatUSD(lb.counter.totalSpend) + " of $" + formatUSD(lb.limit) + " " + lb.period + " limit"
+				formatUSD(total) + " of $" + formatUSD(lb.limit) + " " + lb.period + " limit"
 		}
 	}
 
 	// Check per-model budget.
 	if model != "" {
 		if modelLimit, ok := lb.perModel[model]; ok && modelLimit > 0 {
-			modelSpend := lb.counter.modelSpend[model]
-			modelRemaining := modelLimit - modelSpend
+			spent := modelSpend[model]
+			modelRemaining := modelLimit - spent
 			if modelRemaining < 0 {
 				modelRemaining = 0
 			}
 			if modelRemaining < result.Remaining || result.Remaining < 0 {
 				result.Remaining = modelRemaining
 			}
-			if modelSpend >= modelLimit && lb.hard {
+			if spent >= modelLimit && lb.hard {
 				result.Allowed = false
 				result.BlockedBy = level + ":" + key + ":model:" + model
 				result.BlockMsg = "budget exceeded: " + level + " '" + key + "' has spent $" +
-					formatUSD(modelSpend) + " of $" + formatUSD(modelLimit) + " " + lb.period + " limit on model '" + model + "'"
+					formatUSD(spent) + " of $" + formatUSD(modelLimit) + " " + lb.period + " limit on model '" + model + "'"
 			}
-			if modelSpend >= modelLimit*t.warnThreshold {
+			if spent >= modelLimit*t.warnThreshold {
 				result.Warnings = append(result.Warnings, level+":"+key+":model:"+model)
 			}
 		}
@@ -209,43 +214,51 @@ func (t *Tracker) RecordSpend(team, user, keyName, model string, tags map[string
 
 	now := time.Now().UTC()
 
-	t.recordLevel(t.org, model, cost, now)
+	t.recordLevel(t.org, "org", "", model, cost, now)
 	if team != "" {
 		if lb, ok := t.teams[team]; ok {
-			t.recordLevel(lb, model, cost, now)
+			t.recordLevel(lb, "team", team, model, cost, now)
 		}
 	}
 	if user != "" {
 		if lb, ok := t.users[user]; ok {
-			t.recordLevel(lb, model, cost, now)
+			t.recordLevel(lb, "user", user, model, cost, now)
 		}
 	}
 	if keyName != "" {
 		if lb, ok := t.keys[keyName]; ok {
-			t.recordLevel(lb, model, cost, now)
+			t.recordLevel(lb, "key", keyName, model, cost, now)
 		}
 	}
 	for k, v := range tags {
 		tag := k + ":" + v
 		if lb, ok := t.tags[tag]; ok {
-			t.recordLevel(lb, model, cost, now)
+			t.recordLevel(lb, "tag", tag, model, cost, now)
 		}
 	}
 }
 
-func (t *Tracker) recordLevel(lb *levelBudget, model string, cost float64, now time.Time) {
+func (t *Tracker) recordLevel(lb *levelBudget, level, key, model string, cost float64, now time.Time) {
 	if lb == nil {
 		return
 	}
 
+	// The local counter always records this replica's spend, so checks have a
+	// meaningful fallback whenever the shared ledger cannot be read.
 	lb.counter.mu.Lock()
-	defer lb.counter.mu.Unlock()
-
 	lb.counter.maybeReset(lb.period, now)
 	lb.counter.totalSpend += cost
 	lb.counter.requests++
 	if model != "" {
 		lb.counter.modelSpend[model] += cost
+	}
+	lb.counter.mu.Unlock()
+
+	// Write through to the shared ledger outside the level lock. As with tenant
+	// budgets, a write Redis refuses is not retried: the local counter keeps it
+	// for fallback checks, and the ledger stays the authority while readable.
+	if t.durable != nil {
+		t.durable.RecordSpend("", "global_"+level, key, lb.period, model, cost)
 	}
 }
 
@@ -256,16 +269,8 @@ func (t *Tracker) GetSpend(level, key string) (total float64, perModel map[strin
 		return 0, nil
 	}
 
-	lb.counter.mu.Lock()
-	defer lb.counter.mu.Unlock()
-
-	lb.counter.maybeReset(lb.period, time.Now().UTC())
-
-	pm := make(map[string]float64, len(lb.counter.modelSpend))
-	for m, s := range lb.counter.modelSpend {
-		pm[m] = s
-	}
-	return lb.counter.totalSpend, pm
+	total, pm, _ := t.spend(lb, level, key, time.Now().UTC())
+	return total, pm
 }
 
 func (t *Tracker) lookupLevel(level, key string) *levelBudget {

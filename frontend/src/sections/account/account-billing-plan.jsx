@@ -78,7 +78,7 @@ export default function AccountBillingPlan({ cardList, addressBook, plans }) {
         {plan.primary && (
           <Label
             color="info"
-            startIcon={<Iconify icon="eva:star-fill" />}
+            startIcon={<Iconify icon="solar:star-bold" />}
             sx={{ position: "absolute", top: 8, right: 8 }}
           >
             Current
@@ -149,9 +149,9 @@ export default function AccountBillingPlan({ cardList, addressBook, plans }) {
               <Button
                 onClick={openAddress.onTrue}
                 endIcon={
-                  <Iconify width={16} icon="eva:arrow-ios-downward-fill" />
+                  <Iconify width={16} icon="solar:alt-arrow-down-linear" />
                 }
-                sx={{ typography: "subtitle2", p: 0, borderRadius: 0 }}
+                sx={{ typography: "subtitle2", p: 0, }}
               >
                 {selectedAddress?.name}
               </Button>
@@ -184,9 +184,9 @@ export default function AccountBillingPlan({ cardList, addressBook, plans }) {
               <Button
                 onClick={openCards.onTrue}
                 endIcon={
-                  <Iconify width={16} icon="eva:arrow-ios-downward-fill" />
+                  <Iconify width={16} icon="solar:alt-arrow-down-linear" />
                 }
-                sx={{ typography: "subtitle2", p: 0, borderRadius: 0 }}
+                sx={{ typography: "subtitle2", p: 0, }}
               >
                 {selectedCard?.cardNumber}
               </Button>
@@ -224,7 +224,7 @@ export default function AccountBillingPlan({ cardList, addressBook, plans }) {
         action={
           <Button
             size="small"
-            startIcon={<Iconify icon="mingcute:add-line" />}
+            startIcon={<Iconify icon="solar:add-linear" />}
             sx={{ alignSelf: "flex-end" }}
           >
             New

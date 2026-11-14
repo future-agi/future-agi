@@ -2282,3 +2282,120 @@ describe("TaskLivePreview sparse cursor continuation", () => {
     expect(screen.queryByText("No matching rows")).not.toBeInTheDocument();
   });
 });
+
+// The same trace id can live in several projects (replays, re-imports, shared
+// voice provider accounts). The preview lists one project's rows, so every
+// row-detail read must pin to that project instead of the newest copy.
+describe("TaskLivePreview row detail project pin", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  const renderPreview = (rowType) => {
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    return render(
+      <QueryClientProvider client={queryClient}>
+        <PreviewHarness rowType={rowType} />
+      </QueryClientProvider>,
+    );
+  };
+  const readsOf = (url) => mocks.get.mock.calls.filter(([u]) => u === url);
+
+  it("pins the trace detail read to the task project", async () => {
+    mocks.get.mockImplementation(async (url) => {
+      if (url === "/traces/") {
+        return observeListPage({
+          rows: [{ trace_id: "trace-pin" }],
+          hasMore: false,
+          nextCursor: null,
+        });
+      }
+      if (url === "/traces/trace-pin/") {
+        return {
+          data: {
+            status: true,
+            result: {
+              trace: { trace_id: "trace-pin", input: "pinned trace detail" },
+              observation_spans: [],
+            },
+          },
+        };
+      }
+      throw new Error(`Unexpected GET ${url}`);
+    });
+
+    renderPreview("traces");
+
+    await screen.findByText(/pinned trace detail/);
+    expect(readsOf("/traces/trace-pin/")).toHaveLength(1);
+    expect(readsOf("/traces/trace-pin/")[0][1].params).toEqual({
+      project_id: PROJECT_ID,
+    });
+  });
+
+  it("pins the session's first-trace read to the task project", async () => {
+    mocks.get.mockImplementation(async (url) => {
+      if (url === "/sessions/") {
+        return observeListPage({
+          rows: [{ session_id: "session-pin" }],
+          hasMore: false,
+          nextCursor: null,
+        });
+      }
+      if (url === "/sessions/session-pin/") {
+        return {
+          data: {
+            result: {
+              session_metadata: {},
+              response: [{ trace_id: "trace-session-first" }],
+            },
+          },
+        };
+      }
+      if (url === "/traces/trace-session-first/") {
+        return {
+          data: {
+            status: true,
+            result: { trace: {}, observation_spans: [] },
+          },
+        };
+      }
+      throw new Error(`Unexpected GET ${url}`);
+    });
+
+    renderPreview("sessions");
+
+    await waitFor(() =>
+      expect(readsOf("/traces/trace-session-first/")).toHaveLength(1),
+    );
+    expect(readsOf("/traces/trace-session-first/")[0][1].params).toEqual({
+      project_id: PROJECT_ID,
+    });
+  });
+
+  it("pins the voice-call detail read to the task project", async () => {
+    mocks.get.mockImplementation(async (url) => {
+      if (url === "/calls/") {
+        return voiceListPage({
+          results: [{ id: "call-pin", trace_id: "trace-voice-pin" }],
+          hasMore: false,
+          nextCursor: null,
+        });
+      }
+      if (url === "/calls/detail/") {
+        return { data: { result: { status: "completed" } } };
+      }
+      throw new Error(`Unexpected GET ${url}`);
+    });
+
+    renderPreview("voiceCalls");
+
+    await waitFor(() => expect(readsOf("/calls/detail/")).toHaveLength(1));
+    expect(readsOf("/calls/detail/")[0][1].params).toEqual({
+      trace_id: "trace-voice-pin",
+      project_id: PROJECT_ID,
+    });
+  });
+});

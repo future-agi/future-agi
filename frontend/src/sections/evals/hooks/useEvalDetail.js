@@ -23,6 +23,19 @@ export function useEvalDetail(templateId) {
 }
 
 /**
+ * A blank model means none is picked yet (deployments without Turing have no
+ * default), and code evals don't use one. The update API rejects a blank
+ * model and treats an absent one as "unchanged", so leave it out.
+ */
+export function toEvalUpdatePayload(payload) {
+  if (!payload || (payload.model && payload.eval_type !== "code")) {
+    return payload;
+  }
+  const { model: _model, ...rest } = payload;
+  return rest;
+}
+
+/**
  * Hook to update an eval template.
  * Invalidates the detail + list caches on success.
  */
@@ -32,7 +45,7 @@ export function useUpdateEval(templateId) {
     mutationFn: async (payload) => {
       const { data } = await axios.put(
         endpoints.develop.eval.updateEvalTemplate(templateId),
-        payload,
+        toEvalUpdatePayload(payload),
       );
       return data?.result;
     },

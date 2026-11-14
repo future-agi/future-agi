@@ -13,6 +13,7 @@ describe("getEvalNonScoreStatus", () => {
     ["pending", "pending"],
     ["running", "running"],
     ["skipped", "skipped"],
+    ["timed_out", "timed_out"], // simulate scoring that never finished
     ["PENDING", "pending"], // case-insensitive
     ["Running", "running"],
     ["completed", null], // terminal score state — caller renders the score
@@ -51,6 +52,7 @@ describe("getEvalStatusLabel", () => {
     ["pending", "Queued"],
     ["running", "Evaluating…"],
     ["skipped", "Skipped"],
+    ["timed_out", "Timed out"],
     ["completed", ""], // terminal states have no lifecycle label
     ["errored", ""],
     [null, ""],

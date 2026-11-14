@@ -1,7 +1,6 @@
 """Canonical scalar codec for the ingestion-fed span-attribute catalog.
 
-This module is pure: it performs no ClickHouse I/O and is not wired into the
-writer or read path yet. Its byte contract is mirrored by
+This module is pure: it performs no ClickHouse I/O. Its byte contract is mirrored by
 ``fi-collector/pkg/attributecatalog`` and pinned by one shared fixture file.
 """
 
@@ -15,6 +14,11 @@ from typing import Any, Literal
 
 FINGERPRINT_DOMAIN = b"futureagi.span-attribute-catalog.scalar.v1"
 MAX_CANONICAL_NUMBER_LENGTH = 4096
+MAX_STRING_VALUE_BYTES = 16 * 1024
+MAX_ARRAY_STRING_VALUE_BYTES = 4 * 1024
+# JSON control escapes and Unicode case folding can expand a valid raw value.
+MAX_CANONICAL_VALUE_BYTES = 6 * MAX_STRING_VALUE_BYTES + 2
+MAX_FOLDED_VALUE_BYTES = 3 * MAX_STRING_VALUE_BYTES
 
 ScalarKind = Literal["string", "number", "boolean"]
 

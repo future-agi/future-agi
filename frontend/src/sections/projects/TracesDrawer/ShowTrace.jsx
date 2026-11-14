@@ -21,8 +21,8 @@ const ShowTrace = ({
       sx={{
         marginTop: "2px",
         border: "1px solid",
-        borderRadius: "10px",
-        borderColor: "divider",
+        borderRadius: "8px",
+        borderColor: "border.default",
         cursor: onTraceClick ? "pointer" : "default",
         minHeight: "440px",
         height: "440px",
@@ -30,8 +30,8 @@ const ShowTrace = ({
         minWidth: 0,
         overflow: "hidden",
         ...(onTraceClick && {
-          transition: "box-shadow 0.2s",
-          "&:hover": { boxShadow: 3 },
+          transition: "border-color 0.2s",
+          "&:hover": { borderColor: "border.hover" },
         }),
       }}
     >
@@ -47,8 +47,8 @@ const ShowTrace = ({
           justifyContent: "center",
           minWidth: 0,
           overflow: "hidden",
-          borderTopLeftRadius: "10px",
-          borderBottomLeftRadius: "10px",
+          borderTopLeftRadius: "8px",
+          borderBottomLeftRadius: "8px",
           position: "relative",
           backgroundColor: "background.paper",
           // paddingY: 4,

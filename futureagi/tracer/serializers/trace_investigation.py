@@ -1,0 +1,449 @@
+from rest_framework import serializers
+
+from tfc.utils.api_serializers import ManagementAPIErrorResponseSerializer
+from tfc.utils.serializer_fields import JsonValueField
+from tracer.serializers.filters import StrictInputSerializer
+from tracer.services.trace_investigation import (
+    InvestigationControlError,
+    canonical_wire_result_digest,
+)
+
+
+class TraceAvailableItemSerializer(StrictInputSerializer):
+    trace_id = serializers.UUIDField()
+    root_span_id = serializers.CharField(max_length=64)
+    root_end_time = serializers.DateTimeField()
+
+
+class TraceAvailableEventSerializer(StrictInputSerializer):
+    version = serializers.IntegerField(min_value=1, max_value=1)
+    event_id = serializers.UUIDField()
+    organization_id = serializers.UUIDField()
+    workspace_id = serializers.UUIDField(allow_null=True)
+    project_id = serializers.UUIDField()
+    event_kind = serializers.ChoiceField(choices=("root_span_written",))
+    traces = TraceAvailableItemSerializer(many=True, min_length=1, max_length=100)
+    emitted_at = serializers.DateTimeField()
+
+
+class TraceAvailableDeliverySerializer(StrictInputSerializer):
+    topic = serializers.ChoiceField(choices=("error-feed.trace-available.v1",))
+    partition = serializers.IntegerField(min_value=0)
+    offset = serializers.IntegerField(min_value=0)
+    value = TraceAvailableEventSerializer()
+
+
+class RecordTraceNotificationsRequestSerializer(StrictInputSerializer):
+    deliveries = TraceAvailableDeliverySerializer(
+        many=True, min_length=1, max_length=100
+    )
+
+
+class PendingInvestigationSerializer(serializers.Serializer):
+    organization_id = serializers.UUIDField()
+    workspace_id = serializers.UUIDField(allow_null=True)
+    project_id = serializers.UUIDField()
+    trace_id = serializers.UUIDField()
+    job_id = serializers.UUIDField()
+    generation = serializers.IntegerField(min_value=1)
+    state = serializers.CharField()
+    not_before = serializers.DateTimeField()
+
+
+class RecordTraceNotificationsResponseSerializer(serializers.Serializer):
+    accepted_events = serializers.IntegerField(min_value=0)
+    duplicate_events = serializers.IntegerField(min_value=0)
+    pending = PendingInvestigationSerializer(many=True)
+
+
+class ClaimInvestigationsRequestSerializer(StrictInputSerializer):
+    worker_id = serializers.CharField(max_length=255)
+    engine_version = serializers.CharField(max_length=20)
+    limit = serializers.IntegerField(min_value=1, max_value=50)
+
+
+class InvestigationMemoryEntrySerializer(serializers.Serializer):
+    id = serializers.CharField(max_length=128)
+    text = serializers.CharField(max_length=4000)
+    source_feedback_id = serializers.CharField(
+        max_length=128, required=False, allow_null=True
+    )
+
+
+class InvestigationMemorySerializer(serializers.Serializer):
+    snapshot_id = serializers.CharField(max_length=128)
+    digest = serializers.CharField(max_length=71)
+    entries = InvestigationMemoryEntrySerializer(many=True)
+
+
+class InvestigationLimitsSerializer(serializers.Serializer):
+    deadline_seconds = serializers.IntegerField(min_value=1)
+    max_model_calls = serializers.IntegerField(min_value=1)
+    max_children = serializers.IntegerField(min_value=0)
+    max_parallel_children = serializers.IntegerField(min_value=0)
+    max_input_tokens_total = serializers.IntegerField(min_value=1)
+    max_output_tokens_total = serializers.IntegerField(min_value=1)
+    max_evidence_bytes = serializers.IntegerField(min_value=1)
+    max_tool_result_bytes = serializers.IntegerField(min_value=1)
+
+
+class InvestigationEvidenceWindowSerializer(serializers.Serializer):
+    start = serializers.DateTimeField()
+    end = serializers.DateTimeField()
+
+
+class InvestigationClaimSerializer(serializers.Serializer):
+    organization_id = serializers.UUIDField()
+    organization_name = serializers.CharField(required=False)
+    workspace_id = serializers.UUIDField(allow_null=True)
+    project_id = serializers.UUIDField()
+    project_name = serializers.CharField(required=False)
+    job_id = serializers.UUIDField()
+    workload_type = serializers.ChoiceField(
+        choices=("trace", "simulation_test_execution"), required=False
+    )
+    trace_id = serializers.UUIDField(required=False, allow_null=True)
+    test_execution_id = serializers.UUIDField(required=False, allow_null=True)
+    generation = serializers.IntegerField(min_value=1)
+    attempt_id = serializers.UUIDField()
+    lease_token = serializers.CharField()
+    lease_expires_at = serializers.DateTimeField()
+    read_cutoff = serializers.DateTimeField()
+    evidence_window = InvestigationEvidenceWindowSerializer(required=False)
+    evidence_source = serializers.ChoiceField(choices=("conversation",), required=False)
+    engine_version = serializers.CharField(max_length=20)
+    contract_version = serializers.CharField()
+    memory = InvestigationMemorySerializer()
+    limits = InvestigationLimitsSerializer()
+    verification_capabilities = serializers.ListField(child=serializers.CharField())
+    feature_enabled = serializers.BooleanField()
+
+
+class ClaimInvestigationsResponseSerializer(serializers.Serializer):
+    claims = InvestigationClaimSerializer(many=True)
+
+
+class UpdateInvestigationAttemptRequestSerializer(StrictInputSerializer):
+    organization_id = serializers.UUIDField()
+    workspace_id = serializers.UUIDField(allow_null=True)
+    project_id = serializers.UUIDField()
+    job_id = serializers.UUIDField()
+    lease_token = serializers.CharField(max_length=255)
+    action = serializers.ChoiceField(choices=("renew", "cancel"))
+    reason = serializers.CharField(
+        required=False, allow_blank=True, max_length=2000, default=""
+    )
+
+
+class UpdateInvestigationAttemptResponseSerializer(serializers.Serializer):
+    attempt_id = serializers.UUIDField()
+    status = serializers.CharField()
+    lease_expires_at = serializers.DateTimeField()
+    cancellation_requested = serializers.BooleanField()
+    job_state = serializers.CharField()
+
+
+class FindingAttributionRoleSerializer(StrictInputSerializer):
+    status = serializers.ChoiceField(choices=("supported", "unsupported", "unknown"))
+    span_id = serializers.CharField(
+        max_length=64, required=False, allow_null=True, allow_blank=False
+    )
+    call_execution_id = serializers.UUIDField(required=False, allow_null=True)
+    evidence_ids = serializers.ListField(
+        child=serializers.CharField(max_length=128), max_length=100
+    )
+    explanation = serializers.CharField(
+        max_length=600, required=False, allow_blank=True
+    )
+
+    def validate(self, attrs):
+        if attrs.get("explanation") and attrs["status"] != "supported":
+            raise serializers.ValidationError(
+                "Only a supported attribution can have an explanation"
+            )
+        return attrs
+
+
+class FindingAttributionSerializer(StrictInputSerializer):
+    origin = FindingAttributionRoleSerializer()
+    decisive = FindingAttributionRoleSerializer()
+    symptom = FindingAttributionRoleSerializer()
+
+
+class InvestigationFindingSerializer(StrictInputSerializer):
+    finding_id = serializers.CharField(max_length=128)
+    kind = serializers.CharField(max_length=64)
+    statement = serializers.CharField(max_length=8000)
+    requirement_id = serializers.CharField(
+        max_length=256, required=False, allow_null=True
+    )
+    evidence_ids = serializers.ListField(
+        child=serializers.CharField(max_length=128), max_length=100
+    )
+    recovery = serializers.CharField(max_length=64)
+    category = serializers.CharField(max_length=100, required=False, allow_null=True)
+    group_label = serializers.CharField(max_length=100, required=False, allow_null=True)
+    fix_layer = serializers.CharField(max_length=50, required=False, allow_null=True)
+    confidence = serializers.CharField(max_length=2, required=False, allow_null=True)
+    attribution = FindingAttributionSerializer()
+
+
+class InvestigationRequirementCheckSerializer(StrictInputSerializer):
+    requirement_id = serializers.CharField(max_length=256)
+    requirement = serializers.CharField(max_length=8000)
+    status = serializers.CharField(max_length=64)
+    evidence_ids = serializers.ListField(
+        child=serializers.CharField(max_length=128), max_length=100
+    )
+
+
+class InvestigationEvidenceReceiptSerializer(StrictInputSerializer):
+    evidence_id = serializers.CharField(max_length=128)
+    span_id = serializers.CharField(max_length=64, required=False, allow_null=True)
+    call_execution_id = serializers.UUIDField(required=False, allow_null=True)
+    parent_span_id = serializers.CharField(
+        max_length=64, required=False, allow_null=True
+    )
+    excerpt = serializers.CharField(max_length=8000)
+    end_time = serializers.DateTimeField(required=False, allow_null=True)
+
+
+class InvestigationVerificationReceiptSerializer(StrictInputSerializer):
+    receipt_id = serializers.CharField(max_length=128)
+    executed = serializers.BooleanField()
+
+
+class InvestigationCoverageSerializer(StrictInputSerializer):
+    scope = serializers.CharField(max_length=255, required=False)
+    observed_span_count = serializers.IntegerField(min_value=0, required=False)
+    observed_call_count = serializers.IntegerField(min_value=0, required=False)
+    read_complete = serializers.BooleanField()
+    future_arrivals_known = serializers.BooleanField(required=False)
+
+
+class InvestigationUsageSerializer(StrictInputSerializer):
+    model_calls = serializers.IntegerField(min_value=0)
+    input_tokens = serializers.IntegerField(min_value=0)
+    output_tokens = serializers.IntegerField(min_value=0)
+    cost_usd = serializers.FloatField(required=False, allow_null=True, min_value=0)
+    cost_status = serializers.CharField(max_length=64)
+
+
+class GatewayAccountingSerializer(StrictInputSerializer):
+    request_id = serializers.CharField(max_length=255, required=False, allow_null=True)
+    model_used = serializers.CharField(max_length=255)
+    cost = serializers.FloatField(min_value=0, allow_null=True)
+    input_tokens = serializers.IntegerField(required=False, min_value=0)
+    output_tokens = serializers.IntegerField(required=False, min_value=0)
+    # Provider diagnostics are accepted on the wire, but only named accounting
+    # scalars are retained in the normalized database rows.
+    raw = serializers.JSONField(required=False, allow_null=True)
+
+
+class InvestigationResultSerializer(StrictInputSerializer):
+    contract_version = serializers.ChoiceField(
+        choices=("omega-investigation/v1", "omega-simulation/v1")
+    )
+    workload_type = serializers.ChoiceField(
+        choices=("trace", "simulation_test_execution"), required=False, default="trace"
+    )
+    organization_id = serializers.UUIDField()
+    workspace_id = serializers.UUIDField(allow_null=True)
+    project_id = serializers.UUIDField()
+    job_id = serializers.UUIDField()
+    generation = serializers.IntegerField(min_value=1)
+    attempt_id = serializers.UUIDField()
+    trace_id = serializers.UUIDField(required=False, allow_null=True)
+    test_execution_id = serializers.UUIDField(required=False, allow_null=True)
+    engine_version = serializers.CharField(max_length=20)
+    read_cutoff = serializers.DateTimeField()
+    memory_snapshot_id = serializers.CharField(max_length=128)
+    memory_digest = serializers.CharField(max_length=71)
+    evidence_digest = serializers.RegexField(r"^sha256:[a-f0-9]{64}$")
+    execution_status = serializers.ChoiceField(choices=("completed", "failed"))
+    outcome = serializers.ChoiceField(choices=("success", "failure", "unknown"))
+    error_message = serializers.CharField(
+        required=False, allow_null=True, allow_blank=True
+    )
+    findings = InvestigationFindingSerializer(many=True, max_length=100)
+    requirement_checks = InvestigationRequirementCheckSerializer(
+        many=True, max_length=100
+    )
+    evidence_receipts = InvestigationEvidenceReceiptSerializer(
+        many=True, max_length=200
+    )
+    verification_receipts = InvestigationVerificationReceiptSerializer(
+        many=True, max_length=100
+    )
+    coverage = InvestigationCoverageSerializer()
+    usage = InvestigationUsageSerializer()
+    gateway_accounting = GatewayAccountingSerializer(many=True, max_length=100)
+    result_digest = serializers.RegexField(r"^sha256:[a-f0-9]{64}$")
+
+    def validate(self, attrs):
+        attrs = super().validate(attrs)
+        simulation = attrs.get("workload_type") == "simulation_test_execution"
+        coverage = attrs["coverage"]
+        if simulation:
+            if (
+                attrs.get("contract_version") != "omega-simulation/v1"
+                or attrs.get("test_execution_id") is None
+                or attrs.get("trace_id") is not None
+                or coverage.get("observed_call_count") is None
+                or coverage.get("observed_span_count") is not None
+                or coverage.get("future_arrivals_known") is not None
+            ):
+                raise serializers.ValidationError("Invalid simulation result scope")
+        elif (
+            attrs.get("contract_version") != "omega-investigation/v1"
+            or attrs.get("trace_id") is None
+            or attrs.get("test_execution_id") is not None
+            or coverage.get("scope") is None
+            or coverage.get("observed_span_count") is None
+            or coverage.get("observed_call_count") is not None
+            or coverage.get("future_arrivals_known") is None
+        ):
+            raise serializers.ValidationError("Invalid trace result scope")
+        return attrs
+
+
+class PublishInvestigationRequestSerializer(StrictInputSerializer):
+    idempotency_key = serializers.CharField(max_length=255)
+    lease_token = serializers.CharField(max_length=255)
+    result = InvestigationResultSerializer()
+
+    def validate(self, attrs):
+        attrs = super().validate(attrs)
+        # Digest the JSON value as received, before UUID and DateTime fields are
+        # normalized by DRF. This is the representation the Node spool retains.
+        try:
+            attrs["wire_result_digest"] = canonical_wire_result_digest(
+                self.initial_data["result"]
+            )
+        except InvestigationControlError as error:
+            raise serializers.ValidationError({"result": str(error)}) from error
+        return attrs
+
+
+class PublishInvestigationResponseSerializer(serializers.Serializer):
+    status = serializers.ChoiceField(choices=("accepted", "duplicate"))
+    report_id = serializers.UUIDField()
+    occurrence_ids = serializers.ListField(child=serializers.UUIDField())
+    grouping_status = serializers.CharField()
+
+
+class SimulationEvidenceRequestSerializer(StrictInputSerializer):
+    lease_token = serializers.CharField(max_length=255)
+    cursor = serializers.IntegerField(min_value=0)
+
+
+class ConversationEvidenceRequestSerializer(StrictInputSerializer):
+    lease_token = serializers.CharField(max_length=255)
+
+
+# The compact call record. Values the provider logged are passed on as they are
+# (any JSON); only the times this module computes have a declared type.
+class ConversationCallAgentSerializer(serializers.Serializer):
+    id = JsonValueField(allow_null=True)
+    version = JsonValueField(allow_null=True)
+    name = JsonValueField(allow_null=True)
+
+
+class ConversationCallSerializer(serializers.Serializer):
+    status = JsonValueField(allow_null=True)
+    direction = JsonValueField(allow_null=True)
+    duration_seconds = serializers.FloatField(allow_null=True)
+    ended_reason = JsonValueField(allow_null=True)
+    agent = ConversationCallAgentSerializer()
+
+
+class ConversationVariablesSerializer(serializers.Serializer):
+    configured = serializers.DictField(child=JsonValueField(allow_null=True))
+    collected = serializers.DictField(child=JsonValueField(allow_null=True))
+
+
+class ConversationAnalysisSerializer(serializers.Serializer):
+    summary = JsonValueField(allow_null=True)
+    successful = JsonValueField(allow_null=True)
+    in_voicemail = JsonValueField(allow_null=True)
+    sentiment = JsonValueField(allow_null=True)
+    flags = serializers.DictField(child=JsonValueField(allow_null=True))
+
+
+class ConversationLatencySerializer(serializers.Serializer):
+    p50 = JsonValueField(allow_null=True)
+    p90 = JsonValueField(allow_null=True)
+    max = JsonValueField(allow_null=True)
+    num = JsonValueField(allow_null=True)
+
+
+class ConversationTurnSerializer(serializers.Serializer):
+    """One transcript event. ``role`` decides which of the optional keys it has."""
+
+    i = serializers.IntegerField(min_value=0)
+    role = serializers.CharField()
+    # A spoken line: agent, user or transfer target.
+    start = serializers.FloatField(required=False, allow_null=True)
+    end = serializers.FloatField(required=False, allow_null=True)
+    text = JsonValueField(required=False, allow_null=True)
+    spoken = serializers.BooleanField(required=False)
+    # Every other event carries the moment it was logged, when the provider gave one.
+    at = serializers.FloatField(required=False, allow_null=True)
+    id = JsonValueField(required=False, allow_null=True)
+    name = JsonValueField(required=False, allow_null=True)
+    arguments = JsonValueField(required=False, allow_null=True)
+    ok = JsonValueField(required=False, allow_null=True)
+    content = JsonValueField(required=False, allow_null=True)
+    to = JsonValueField(required=False, allow_null=True)
+    type = JsonValueField(required=False, allow_null=True)
+    digit = JsonValueField(required=False, allow_null=True)
+    media = serializers.ListField(child=JsonValueField(allow_null=True), required=False)
+
+    def get_fields(self):
+        fields = super().get_fields()
+        # "from" is a Python keyword, so it cannot be a class attribute.
+        fields["from"] = JsonValueField(required=False, allow_null=True)
+        return fields
+
+
+class ConversationProviderLogIssueSerializer(serializers.Serializer):
+    at = serializers.FloatField()
+    level = serializers.ChoiceField(choices=["warn", "error"])
+    message = serializers.CharField(allow_blank=True)
+
+
+class ConversationDossierSerializer(serializers.Serializer):
+    provider = serializers.CharField()
+    agent_instructions = serializers.CharField(allow_null=True, allow_blank=True)
+    call = ConversationCallSerializer()
+    variables = ConversationVariablesSerializer()
+    analysis = ConversationAnalysisSerializer()
+    latency_ms = serializers.DictField(child=ConversationLatencySerializer())
+    turns = ConversationTurnSerializer(many=True)
+    provider_log_issues = ConversationProviderLogIssueSerializer(
+        many=True, required=False
+    )
+    not_included = serializers.ListField(child=serializers.CharField())
+
+
+class ConversationEvidenceRowSerializer(serializers.Serializer):
+    project_id = serializers.UUIDField()
+    trace_id = serializers.UUIDField()
+    org_id = serializers.UUIDField()
+    id = serializers.CharField(max_length=64)
+    parent_span_id = serializers.CharField(allow_blank=True)
+    name = serializers.CharField(allow_blank=True)
+    observation_type = serializers.CharField()
+    start_time = serializers.DateTimeField()
+    end_time = serializers.DateTimeField(allow_null=True)
+    attrs_string = serializers.DictField(child=serializers.CharField())
+    conversation = ConversationDossierSerializer()
+
+
+class ConversationEvidenceResponseSerializer(serializers.Serializer):
+    rows = ConversationEvidenceRowSerializer(many=True)
+
+
+class InvestigationControlErrorSerializer(ManagementAPIErrorResponseSerializer):
+    code = serializers.CharField()
+    detail = serializers.CharField()

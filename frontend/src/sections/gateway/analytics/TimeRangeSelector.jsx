@@ -27,17 +27,7 @@ const TimeRangeSelector = ({ value, onChange }) => {
       aria-label="Time range"
     >
       {TIME_RANGE_OPTIONS.map((option) => (
-        <ToggleButton
-          key={option.value}
-          value={option.value}
-          sx={{
-            px: 1.5,
-            py: 0.5,
-            textTransform: "none",
-            fontSize: "0.8125rem",
-            fontWeight: 600,
-          }}
-        >
+        <ToggleButton key={option.value} value={option.value}>
           {option.label}
         </ToggleButton>
       ))}

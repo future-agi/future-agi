@@ -11,6 +11,8 @@
  * Returns: { nodes: [...], edges: [...] } ready for AgentGraph/React Flow.
  */
 
+import { getOwnEvalScores } from "./evalScores";
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -174,7 +176,7 @@ function buildExplicitGraph(flatSpans) {
       node._hasMatch = true;
     }
     // Collect evals and annotations
-    const entryEvals = item.entry?.eval_scores || [];
+    const entryEvals = getOwnEvalScores(item.entry);
     const entryAnnotations = item.entry?.annotations || [];
     if (entryEvals.length) node.evals.push(...entryEvals);
     if (entryAnnotations.length) node.annotations.push(...entryAnnotations);
@@ -267,7 +269,7 @@ function buildInferredGraph(flatSpans) {
     ) {
       node._hasMatch = true;
     }
-    const entryEvals = item.entry?.eval_scores || [];
+    const entryEvals = getOwnEvalScores(item.entry);
     const entryAnnotations = item.entry?.annotations || [];
     if (entryEvals.length) node.evals.push(...entryEvals);
     if (entryAnnotations.length) node.annotations.push(...entryAnnotations);

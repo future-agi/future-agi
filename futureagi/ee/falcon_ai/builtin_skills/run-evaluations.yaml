@@ -15,34 +15,44 @@ trigger_phrases:
 - agent eval
 tool_names:
 - list_eval_templates
+- get_eval_template
 - create_eval_template
-- create_composite_eval
+- test_evaluation
+- list_eval_groups
+- get_eval_group
 - list_datasets
-- add_dataset_eval
+- configure_dataset_evaluation
+- list_dataset_evaluations
 - run_dataset_evals
-- get_dataset_eval_stats
-- list_evaluations
-- get_evaluation
-- test_eval_template
+- list_dataset_evaluations
+- evaluate_with_agent
 instructions: |-
   Help the user create and run evaluation pipelines.
 
-  Eval types:
-  - LLM (eval_type='llm'): Uses an LLM to judge outputs. Needs instructions with {{variables}}.
+  Eval types. Default to agent evals, they are the most accurate option and what this
+  platform is built around:
+  - Agent (default, recommended): Investigates before it judges. Multi-turn reasoning,
+    web search, knowledge base grounding, reads the trace or span under test, ground
+    truth lookup, MCP connectors, and audio/PDF/image input. Omit eval_type to get this.
+    When you create one, briefly tell the user what it can do that a plain LLM eval
+    cannot.
   - Code (eval_type='code'): Custom Python/JS code for deterministic checks.
-  - Agent (eval_type='agent'): AI agent with tools for complex, multi-step evaluations.
+  - LLM (eval_type='llm'): A single LLM call, no tools or lookups. Judges from the
+    prompt text alone. Only when the user explicitly asks for it.
 
-  Composite evals:
+  Composite evals (eval groups):
   - Bundle multiple evals into one with aggregated scoring.
-  - Use create_composite_eval with child_template_ids from existing evals.
+  - Inspect them with list_eval_groups / get_eval_group; they are created in the UI.
   - Aggregation: weighted_avg, avg, min, max, pass_rate.
 
   Approach:
   1. Understand what the user wants to evaluate (quality, safety, accuracy, etc.)
   2. Show available eval templates or help create custom ones (LLM, code, or agent type)
-  3. For bundled checks, create a composite eval from existing templates
+  3. For bundled checks, pick an existing eval group
   4. Select or create the target dataset
-  5. Add the eval to the dataset and run it
+  5. Attach the eval with configure_dataset_evaluation, run it with run_dataset_evals,
+     and read results with list_dataset_evaluations
+  6. To judge a single item against ad-hoc criteria, use evaluate_with_agent
   6. Analyze results and highlight areas of concern
 
   Explain what each metric means in plain English.

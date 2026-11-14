@@ -7,6 +7,10 @@ logic and are unit-tested directly; the wrappers add heartbeating and OTel
 context propagation, mirroring ``tfc/temporal/evaluations/activities.py``.
 """
 
+import asyncio
+import time
+
+import structlog
 from django.db import close_old_connections
 from temporalio import activity
 from temporalio.exceptions import ApplicationError
@@ -34,10 +38,71 @@ from tfc.temporal.eval_tasks.types import (
     WorkflowLabelsOutput,
 )
 from tracer.services.eval_tasks.ch_guardrails import eval_ch_guardrails
+from tracer.services.eval_tasks.failure_alert import notify_eval_task_failed
+
+# One structured line per control step, so a task that stops draining is
+# visible on a dashboard instead of only in the entry table. Every field is a
+# count or task-level state: an eval entry's payload is customer data and never
+# goes in a log line.
+logger = structlog.get_logger(__name__)
 
 # =============================================================================
 # Synchronous helpers (the testable core)
 # =============================================================================
+
+
+INSTANT_EVAL_DENIED_MESSAGE = "Instant eval isn't available to this organization."
+
+
+def _require_instant_eval_license(task) -> None:
+    """Refuse a task started by Instant eval when its organization may not
+    use Instant eval, with a non-retryable error the workflow fails on.
+
+    Instant eval is Enterprise-only. Its views check the license on every
+    request; this covers a run on an install without it (the license lapsed,
+    or the run predates the gate). Other eval tasks are not affected.
+    """
+    from tfc.capabilities.service import refusal_message
+    from tracer.services.instant_eval_rows import RUN_MARKER
+
+    filters = getattr(task, "filters", None)
+    if not isinstance(filters, dict) or not filters.get(RUN_MARKER):
+        return
+    from tfc.ee_gating import (
+        ENTITLEMENT_CHECK_UNAVAILABLE_MESSAGE,
+        EEFeature,
+        FeatureUnavailable,
+        check_ee_feature,
+        entitlements_unavailable,
+    )
+    from tracer.models.instant_eval import InstantEvalRun
+
+    org_id = (
+        InstantEvalRun.objects.filter(eval_task_id=task.id)
+        .values_list("organization_id", flat=True)
+        .first()
+    )
+    if org_id is None:
+        # An Instant eval task with no run row has no organization to check:
+        # refused, never run unchecked.
+        raise ApplicationError(
+            INSTANT_EVAL_DENIED_MESSAGE, type="CapabilityDenied", non_retryable=True
+        )
+    try:
+        check_ee_feature(EEFeature.INSTANT_EVAL, org_id=str(org_id))
+    except FeatureUnavailable as exc:
+        if entitlements_unavailable(exc):
+            # The entitlement service could not answer: retry the stage,
+            # don't end the run on a denial it never made.
+            raise ApplicationError(
+                ENTITLEMENT_CHECK_UNAVAILABLE_MESSAGE,
+                type="CapabilityUnavailable",
+            ) from None
+        raise ApplicationError(
+            refusal_message(exc, INSTANT_EVAL_DENIED_MESSAGE),
+            type="CapabilityDenied",
+            non_retryable=True,
+        ) from None
 
 
 def _reconcile_sync(task_id: str) -> dict:
@@ -55,6 +120,7 @@ def _reconcile_sync(task_id: str) -> dict:
 
         with eval_ch_guardrails():
             task = EvalTask.objects.get(id=task_id)
+            _require_instant_eval_license(task)
             result = reconcile(task)
         return {
             "task_id": str(task_id),
@@ -80,10 +146,17 @@ def _claim_batch_sync(task_id: str, n: int) -> dict:
         from tracer.services.eval_tasks.entries import claim_pending_batch
 
         task = EvalTask.objects.get(id=task_id)
+        _require_instant_eval_license(task)
         entries = claim_pending_batch(task, n)
         return {"entry_ids": [str(e.id) for e in entries]}
     finally:
         close_old_connections()
+
+
+def _task_paused(task_id) -> bool:
+    from tracer.models.eval_task import EvalTask, EvalTaskStatus
+
+    return EvalTask.objects.filter(id=task_id, status=EvalTaskStatus.PAUSED).exists()
 
 
 def _run_entry_sync(entry_id: str) -> dict:
@@ -92,18 +165,39 @@ def _run_entry_sync(entry_id: str) -> dict:
     Delegates to the ``run_entry`` service, which executes the eval, writes the
     result, and stamps the entry ``completed`` / ``errored`` / ``skipped`` plus
     its config hash. Returns ``"deleted"`` if the entry was soft-deleted mid-run
-    (a Delete & rerun landing while it ran), so the workflow just moves on.
+    (a Delete & rerun landing while it ran) or ``"reclaimed"`` if the row is no
+    longer under the claim the run took -- refused before the eval, or written
+    and fenced out after it -- so the workflow just moves on.
     """
     close_old_connections()
     try:
-        from tracer.models.observation_span import EvalLogger
+        from tracer.models.observation_span import EvalEntryStatus, EvalLogger
         from tracer.services.eval_tasks.run_entry import run_entry
 
         with eval_ch_guardrails():
-            entry = EvalLogger.objects.filter(id=entry_id).first()
+            # Primary: the workflow claimed this entry moments ago.
+            entry = EvalLogger.objects.using("default").filter(id=entry_id).first()
             if entry is None:
-                return {"entry_id": str(entry_id), "status": "deleted"}
-            return {"entry_id": str(entry_id), "status": str(run_entry(entry))}
+                return {"entry_id": str(entry_id), "task_id": "", "status": "deleted"}
+            if _task_paused(entry.eval_task_id):
+                # Paused after this entry was claimed: a retry (or a launch the
+                # workflow had already queued) gives the entry back instead of
+                # paying for an answer nobody asked to wait for.
+                EvalLogger.objects.filter(
+                    id=entry.id, status=EvalEntryStatus.RUNNING
+                ).update(status=EvalEntryStatus.PENDING)
+                return {
+                    "entry_id": str(entry_id),
+                    "task_id": str(entry.eval_task_id or ""),
+                    "status": "paused",
+                }
+            return {
+                "entry_id": str(entry_id),
+                # Carried so the activity wrapper can log which task this run
+                # belonged to without ever naming the entry.
+                "task_id": str(entry.eval_task_id or ""),
+                "status": str(run_entry(entry)),
+            }
     finally:
         close_old_connections()
 
@@ -114,8 +208,20 @@ def _fail_entry_sync(entry_id: str) -> dict:
 
     ``run_entry`` self-converges for eval failures, so an activity reaching this
     path failed at the infra level, not the eval level. Only a still-running
-    entry is touched, so a late failure can't clobber a result that completed (or
-    a Delete & rerun that soft-deleted it) in the meantime.
+    entry is touched, and only under the claim this read saw, so a late failure
+    can't clobber a result that completed or a Delete & rerun that soft-deleted
+    the entry, and cannot race a claim taken between this read and its write.
+
+    The failed run's own claim is not available here -- the activity is handed
+    an entry id, the same reason ``run_entry``'s fence cannot see a claim
+    superseded before it began -- so this is a fence on the current claim, not
+    a check that the row is still the one that failed. What keeps those apart
+    from each other is upstream: the scheduled sweep asks Temporal before it
+    reaps, so no reaper retires the claim of a task whose workflow is still
+    progressing (``tracer.services.eval_tasks.recovery.recover_task``).
+
+    Returns ``"noop"`` when it wrote nothing, so the caller never records a
+    terminal outcome the entry table did not take.
     """
     close_old_connections()
     try:
@@ -124,43 +230,137 @@ def _fail_entry_sync(entry_id: str) -> dict:
         from tracer.services.eval_tasks.config_hash import resolved_config_hash
         from tracer.services.eval_tasks.entries import mark_terminal
 
-        entry = EvalLogger.objects.filter(
-            id=entry_id, status=EvalEntryStatus.RUNNING
-        ).first()
+        # Primary: the claim this fences on was written moments ago.
+        entry = (
+            EvalLogger.objects.using("default")
+            .filter(id=entry_id, status=EvalEntryStatus.RUNNING)
+            .first()
+        )
         if entry is None:
             return {"entry_id": str(entry_id), "status": "noop"}
-        config = CustomEvalConfig.objects.get(id=entry.custom_eval_config_id)
-        mark_terminal(
+        # Primary, as run_entry reads it: stamp the hash of the config the
+        # failed run used, not an older one a lagging replica still holds.
+        config = CustomEvalConfig.objects.using("default").get(
+            id=entry.custom_eval_config_id
+        )
+        landed = mark_terminal(
             entry,
             EvalEntryStatus.ERRORED,
             config_hash=resolved_config_hash(config),
             error=True,
             error_message="run_entry activity failed after retries",
+            # This caller reads the row itself rather than running under a
+            # ``running_entry_epoch`` scope, so it fences on its own read.
+            epoch=entry.updated_at,
         )
+        if not landed:
+            return {"entry_id": str(entry_id), "status": "noop"}
         return {"entry_id": str(entry_id), "status": str(EvalEntryStatus.ERRORED)}
     finally:
         close_old_connections()
 
 
-def _reap_sync(task_id: str, older_than_seconds: int, max_attempts: int) -> dict:
+def _requeue_lost_entry_sync(entry_id: str) -> dict:
+    """Give a lost worker's entry back once, durably across workflow hops.
+
+    ``attempts`` already bounds infrastructure recovery in the reaper. Pause
+    requeues do not increment it, so pausing cannot spend this recovery retry.
+    Lock the row so an activity retry cannot increment it twice or clobber a
+    completed answer.
+    """
+    close_old_connections()
+    try:
+        from django.db import transaction
+        from django.utils import timezone
+
+        from tracer.models.custom_eval_config import CustomEvalConfig
+        from tracer.models.observation_span import EvalEntryStatus, EvalLogger
+        from tracer.services.eval_tasks.config_hash import resolved_config_hash
+        from tracer.services.eval_tasks.entries import mark_terminal
+
+        with transaction.atomic():
+            entry = EvalLogger.objects.select_for_update().filter(id=entry_id).first()
+            if entry is None:
+                return {"entry_id": str(entry_id), "status": "deleted"}
+            if entry.status != EvalEntryStatus.RUNNING:
+                return {"entry_id": str(entry_id), "status": str(entry.status)}
+            if entry.attempts < 1:
+                EvalLogger.objects.filter(id=entry.id).update(
+                    status=EvalEntryStatus.PENDING,
+                    attempts=entry.attempts + 1,
+                    updated_at=timezone.now(),
+                )
+                return {
+                    "entry_id": str(entry_id),
+                    "status": str(EvalEntryStatus.PENDING),
+                }
+            # Primary, as run_entry reads it, for the hash stamped below.
+            config = CustomEvalConfig.objects.using("default").get(
+                id=entry.custom_eval_config_id
+            )
+            mark_terminal(
+                entry,
+                EvalEntryStatus.ERRORED,
+                config_hash=resolved_config_hash(config),
+                error=True,
+                error_message="Evaluation worker was lost after its recovery retry.",
+                epoch=entry.updated_at,
+            )
+            return {"entry_id": str(entry_id), "status": str(EvalEntryStatus.ERRORED)}
+    finally:
+        close_old_connections()
+
+
+def _reap_sync(
+    task_id: str,
+    older_than_seconds: int,
+    max_attempts: int,
+    workflow_confirmed_stopped: bool = False,
+) -> dict:
     """Reclaim entries stuck running past ``older_than_seconds`` (e.g. a worker
     crashed mid-eval).
 
     Stale running entries go back to pending with ``attempts`` incremented;
     those already at ``max_attempts`` are marked errored so one poison row can't
-    loop forever. Returns ``{"requeued", "failed"}``. Called once at workflow
-    start to clear leftovers from a previous, crashed execution.
+    loop forever. Called at workflow start to clear leftovers from a
+    previous, crashed execution, and again while a drain waits for claims
+    too young to reclaim before it can finalize.
+
+    The requested threshold is raised to ``MIN_STALE_RUNNING_SECONDS`` unless
+    the starter's describe established that nothing was draining the task,
+    which ``workflow_confirmed_stopped`` carries. Blind, ``ReapInput``'s 600 s
+    default is inside the window an activity of a since-closed execution can
+    still be running in, and reaping there requeues a live run and pays for it
+    twice; with the describe behind it, 600 s is what Resume and Edit → Save
+    need in order to reclaim anything at all. The decision itself lives in
+    ``effective_stale_seconds``, and applying it here rather than in the
+    workflow keeps the threshold out of the replayed command stream.
+
+    Returns ``{"requeued", "failed", "older_than_seconds"}``, the last being the
+    threshold actually applied so the activity logs what it did, not what it
+    was asked for.
     """
     close_old_connections()
     try:
         from tracer.models.eval_task import EvalTask
-        from tracer.services.eval_tasks.reaper import reap_stale_running
+        from tracer.services.eval_tasks.reaper import (
+            effective_stale_seconds,
+            reap_stale_running,
+        )
 
+        stale_seconds = effective_stale_seconds(
+            older_than_seconds,
+            workflow_confirmed_stopped=workflow_confirmed_stopped,
+        )
         task = EvalTask.objects.get(id=task_id)
         requeued, failed = reap_stale_running(
-            task, older_than_seconds=older_than_seconds, max_attempts=max_attempts
+            task, older_than_seconds=stale_seconds, max_attempts=max_attempts
         )
-        return {"requeued": requeued, "failed": failed}
+        return {
+            "requeued": requeued,
+            "failed": failed,
+            "older_than_seconds": stale_seconds,
+        }
     finally:
         close_old_connections()
 
@@ -210,7 +410,9 @@ def _get_workflow_labels_sync(task_id: str) -> dict:
         )
         project = task.project
         org = getattr(project, "organization", None)
-        eval_count = task.evals.count()
+        # Primary: the workflow reads its labels as it starts, right after the
+        # request that set the task's evals.
+        eval_count = task.evals.using("default").count()
         config_summary = (
             f"row_type={task.row_type}, sampling={task.sampling_rate}, "
             f"limit={task.spans_limit}, evals={eval_count}"
@@ -265,7 +467,7 @@ def _set_task_status_sync(
     try:
         from django.utils import timezone
 
-        from tracer.models.eval_task import EvalTask, EvalTaskStatus
+        from tracer.models.eval_task import EvalTask, EvalTaskStatus, RunType
 
         fields: dict = {"status": status}
         if status == EvalTaskStatus.RUNNING:
@@ -283,6 +485,11 @@ def _set_task_status_sync(
             "task_id": str(task_id),
             "changed": bool(changed),
             "status": task.status or "",
+            # Read off the row already reloaded above; retries are deduped by
+            # the alert itself (failure_alert._dedupe_key).
+            "failed_continuous": bool(changed)
+            and status == EvalTaskStatus.FAILED
+            and task.run_type == RunType.CONTINUOUS,
         }
     finally:
         close_old_connections()
@@ -313,6 +520,7 @@ def _finalize_task_sync(task_id: str) -> dict:
         task.status = EvalTaskStatus.COMPLETED
         task.end_time = timezone.now()
         task.save(update_fields=["status", "end_time"])
+        _prewarm_instant_summary(task_id)
         return {
             "task_id": str(task_id),
             "finalized": True,
@@ -322,9 +530,36 @@ def _finalize_task_sync(task_id: str) -> dict:
         close_old_connections()
 
 
+def _prewarm_instant_summary(task_id: str) -> None:
+    """An Instant eval run that just finished is counted once now, so whoever
+    opens it next reads the count instead of waiting for it. Best effort."""
+    try:
+        from tracer.models.instant_eval import InstantEvalRun
+
+        if not InstantEvalRun.objects.filter(eval_task_id=task_id).exists():
+            return
+        from tracer.services.instant_eval_run import prewarm_summary
+
+        prewarm_summary(task_id)
+    except Exception:
+        logger.warning(
+            "instant_eval_prewarm_failed", task_id=str(task_id), exc_info=True
+        )
+
+
 # =============================================================================
 # Activities
 # =============================================================================
+
+
+# Poll a busy sampling cohort lease until it can have expired.
+_BUSY_LEASE_POLL_SECONDS = 10
+_BUSY_LEASE_MARGIN_SECONDS = 30
+_busy_clock = time.monotonic
+
+
+async def _busy_wait(seconds: float) -> None:
+    await asyncio.sleep(seconds)
 
 
 @activity.defn
@@ -335,11 +570,38 @@ async def reconcile_eval_task_activity(
         EvalTaskReadBudgetExceeded,
         EvalTaskSelectionRejected,
     )
+    from tracer.services.eval_tasks.sampling.errors import SamplingReconcileBusy
+    from tracer.services.eval_tasks.sampling.service import reconcile_lease_duration
 
     try:
         async with Heartbeater():
-            result = await otel_sync_to_async(_reconcile_sync, thread_sensitive=False)(
-                input.task_id
+            # A reconcile that was killed or cancelled (deploy, pause + rerun)
+            # keeps its cohort lease until the lease expires. Wait that lease
+            # out here, heartbeating, instead of spending the activity's short
+            # retry budget inside the lease window and failing the task. A lease
+            # that is still held after a full lease period belongs to a live,
+            # renewing reconcile: report busy as before.
+            busy_deadline = (
+                _busy_clock()
+                + reconcile_lease_duration().total_seconds()
+                + _BUSY_LEASE_MARGIN_SECONDS
+            )
+            while True:
+                try:
+                    result = await otel_sync_to_async(
+                        _reconcile_sync, thread_sensitive=False
+                    )(input.task_id)
+                    break
+                except SamplingReconcileBusy:
+                    if _busy_clock() >= busy_deadline:
+                        raise
+                    await _busy_wait(_BUSY_LEASE_POLL_SECONDS)
+            logger.info(
+                "eval_task_reconciled",
+                task_id=result["task_id"],
+                created=result["created"],
+                requeued=result["requeued"],
+                dropped=result["dropped"],
             )
     except EvalTaskSelectionRejected as exc:
         # Unsupported filters, row-count overflow, and ambiguous public span
@@ -373,6 +635,12 @@ async def claim_eval_batch_activity(input: ClaimBatchInput) -> ClaimBatchOutput:
         result = await otel_sync_to_async(_claim_batch_sync, thread_sensitive=False)(
             input.task_id, input.n
         )
+    logger.info(
+        "eval_task_batch_claimed",
+        task_id=str(input.task_id),
+        claimed=len(result["entry_ids"]),
+        requested=input.n,
+    )
     return ClaimBatchOutput(entry_ids=result["entry_ids"])
 
 
@@ -382,6 +650,11 @@ async def run_eval_entry_activity(input: RunEntryInput) -> RunEntryOutput:
         result = await otel_sync_to_async(_run_entry_sync, thread_sensitive=False)(
             input.entry_id
         )
+    logger.info(
+        "eval_task_entry_run",
+        task_id=result["task_id"],
+        status=result["status"],
+    )
     return RunEntryOutput(entry_id=result["entry_id"], status=result["status"])
 
 
@@ -395,11 +668,30 @@ async def fail_eval_entry_activity(input: RunEntryInput) -> RunEntryOutput:
 
 
 @activity.defn
+async def requeue_lost_eval_entry_activity(input: RunEntryInput) -> RunEntryOutput:
+    async with Heartbeater():
+        result = await otel_sync_to_async(
+            _requeue_lost_entry_sync, thread_sensitive=False
+        )(input.entry_id)
+    return RunEntryOutput(entry_id=result["entry_id"], status=result["status"])
+
+
+@activity.defn
 async def reap_stale_running_activity(input: ReapInput) -> ReapOutput:
     async with Heartbeater():
         result = await otel_sync_to_async(_reap_sync, thread_sensitive=False)(
-            input.task_id, input.older_than_seconds, input.max_attempts
+            input.task_id,
+            input.older_than_seconds,
+            input.max_attempts,
+            input.workflow_confirmed_stopped,
         )
+    logger.info(
+        "eval_task_reaped",
+        task_id=str(input.task_id),
+        requeued=result["requeued"],
+        failed=result["failed"],
+        older_than_seconds=result["older_than_seconds"],
+    )
     return ReapOutput(requeued=result["requeued"], failed=result["failed"])
 
 
@@ -445,6 +737,11 @@ async def set_eval_task_status_activity(input: SetStatusInput) -> SetStatusOutpu
         result = await otel_sync_to_async(
             _set_task_status_sync, thread_sensitive=False
         )(input.task_id, input.status, input.expected_status)
+    if result["failed_continuous"]:
+        info = activity.info()
+        await notify_eval_task_failed(
+            result["task_id"], info.workflow_id, info.workflow_run_id
+        )
     return SetStatusOutput(
         task_id=result["task_id"],
         changed=result["changed"],
@@ -458,6 +755,14 @@ async def finalize_eval_task_activity(input: FinalizeInput) -> FinalizeOutput:
         result = await otel_sync_to_async(_finalize_task_sync, thread_sensitive=False)(
             input.task_id
         )
+    # Logged either way: a drain that ends without finalizing has entries
+    # stranded RUNNING, and that is the line an operator needs to see.
+    logger.info(
+        "eval_task_finalize_attempted",
+        task_id=result["task_id"],
+        finalized=result["finalized"],
+        status=result["status"],
+    )
     return FinalizeOutput(
         task_id=result["task_id"],
         finalized=result["finalized"],
@@ -470,6 +775,7 @@ __all__ = [
     "claim_eval_batch_activity",
     "run_eval_entry_activity",
     "fail_eval_entry_activity",
+    "requeue_lost_eval_entry_activity",
     "reap_stale_running_activity",
     "get_eval_task_state_activity",
     "get_workflow_labels_activity",

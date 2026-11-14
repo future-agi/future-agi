@@ -11,9 +11,7 @@ from collections.abc import Callable
 from concurrent.futures import (
     ThreadPoolExecutor,
 )
-from concurrent.futures import (
-    TimeoutError as FutureTimeoutError,
-)
+from concurrent.futures import TimeoutError as FutureTimeoutError
 from dataclasses import dataclass
 from uuid import UUID
 
@@ -23,6 +21,7 @@ from django.core.cache import cache, caches
 from django.core.cache.backends.locmem import LocMemCache
 from django.db import DatabaseError, connection, transaction
 
+from tracer.constants.dashboard import TEXT_ANNOTATION_AGGREGATIONS
 from tracer.models.custom_eval_config import CustomEvalConfig
 from tracer.models.project import Project, ProjectSourceChoices
 from tracer.services.annotation_label_source import AnnotationLabelScoresProjectPG
@@ -288,6 +287,8 @@ def _annotation_label_metric_entry(annotation_label: dict) -> dict:
         "sources": ["datasets", "traces"],
         "output_type": label_type,
     }
+    if (label_type or "").lower() == "text":
+        metric_entry["allowed_aggregations"] = list(TEXT_ANNOTATION_AGGREGATIONS)
     if label_type == "categorical":
         legacy_choices = []
         choice_options = []
@@ -505,9 +506,9 @@ def resolve_property_catalog_project_scope(
     carried into its visibility predicate must first be proven to belong to
     the already-authorized workspace. Unlike the legacy catalog builder,
     malformed and mixed valid/foreign scopes are rejected instead
-    of silently narrowed. This rollout is qualified for Observe projects;
-    workspace reads materialize that complete eligible PG set so the
-    activation can prove full coverage.
+    of silently narrowed. Workspace reads use the complete live Observe
+    project set; deleted or newly inaccessible scopes cannot be replayed
+    through a previously signed cursor.
     """
 
     raw_project_ids = list(project_ids)

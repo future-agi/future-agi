@@ -11,32 +11,59 @@ import structlog
 from cryptography.fernet import Fernet
 from django.conf import settings
 from django.core.cache import cache
-from django.db import IntegrityError
+from django.db import DatabaseError, IntegrityError, InterfaceError, OperationalError
 from django.http import JsonResponse
 from django.utils import timezone
+from django_redis.exceptions import ConnectionInterrupted
+from redis.exceptions import ConnectionError as RedisConnectionError
+from redis.exceptions import RedisError
+from redis.exceptions import TimeoutError as RedisTimeoutError
 from rest_framework import status
 from rest_framework.authentication import BaseAuthentication
-from rest_framework.exceptions import AuthenticationFailed, PermissionDenied
+from rest_framework.exceptions import (
+    APIException,
+    AuthenticationFailed,
+    PermissionDenied,
+)
 from rest_framework.response import Response
 
 from accounts.models import OrgApiKey, User
 from accounts.models.auth_token import (
     AUTH_TOKEN_EXPIRATION_TIME_IN_MINUTES,
     AuthToken,
+    AuthTokenOrigin,
     AuthTokenType,
 )
 from accounts.models.organization import Organization
 from accounts.models.workspace import Workspace, WorkspaceMembership
+from accounts.saml_credential import SamlCredentialInvalid, validate_saml_credential
 from accounts.services.workspace_membership import create_workspace_membership
 from tfc.constants.roles import OrganizationRoles
 from tfc.ee_gating import is_oss
 from tfc.utils.api_errors import (
+    ApiErrorCode,
     build_error_envelope,
     error_details,
     exception_code,
 )
+from tfc.utils.error_codes import get_error_message
 
 logger = structlog.get_logger(__name__)
+security_logger = structlog.get_logger("saml2_auth.security")
+
+# Postgres or Redis being slow or down says nothing about a credential.
+INFRASTRUCTURE_ERRORS = (
+    DatabaseError,
+    InterfaceError,
+    ConnectionInterrupted,
+    RedisError,
+)
+# The cache could not be reached; any other Redis error is a bug and stays a 500.
+_CACHE_UNAVAILABLE_ERRORS = (
+    ConnectionInterrupted,
+    RedisConnectionError,
+    RedisTimeoutError,
+)
 
 # Rate limiting settings with defaults
 MAX_LOGIN_ATTEMPTS_PER_HOUR: int = getattr(settings, "MAX_LOGIN_ATTEMPTS_PER_HOUR", 10)
@@ -126,18 +153,48 @@ def _is_workspace_write_exempt_view(request):
     )
 
 
+def is_coding_agent_key(request) -> bool:
+    """Whether ``request`` authenticated with a coding agent's key."""
+    org_api_key = getattr(request, "org_api_key", None)
+    return org_api_key is not None and org_api_key.type == "coding_agent"
+
+
 class APIKeyAuthentication(BaseAuthentication):
     def authenticate_header(self, request):
         return "ApiKey"
 
-    def _bind_user_context(self, user):
+    def _bind_user_context(self, user, auth_scope=None):
         """Bind user context to structlog for all subsequent logs in this request."""
         structlog.contextvars.bind_contextvars(user_id=str(user.id))
+        if auth_scope is not None:
+            structlog.contextvars.bind_contextvars(
+                organization_id=str(auth_scope.org_id)
+            )
+            return
         if hasattr(user, "email") and user.email:
             structlog.contextvars.bind_contextvars(user_email=user.email)
         if hasattr(user, "organization") and user.organization:
             structlog.contextvars.bind_contextvars(
                 organization_id=str(user.organization.id)
+            )
+
+    def _reject_if_expired(self, org_api_key):
+        """Raise and disable ``org_api_key`` if its expiry has passed.
+
+        ``expires_at=None`` means the key never expires (backward compatible
+        default for existing keys). Disabling on expiry gives admins
+        visibility in the keys list without needing a separate status field.
+        The key is only written while it is still enabled, so retries against
+        an expired key do not each cost an UPDATE. The ``api_key_expired``
+        code lets clients tell this apart from a wrong or disabled key.
+        """
+        if org_api_key.is_expired:
+            if org_api_key.enabled:
+                org_api_key.enabled = False
+                org_api_key.save(update_fields=["enabled"])
+            raise AuthenticationFailed(
+                get_error_message("API_KEY_EXPIRED"),
+                code=ApiErrorCode.API_KEY_EXPIRED,
             )
 
     def authenticate(self, request):
@@ -150,7 +207,7 @@ class APIKeyAuthentication(BaseAuthentication):
 
         if auth_token:
             try:
-                user, token = decode_token(auth_token)
+                user, token, auth_scope = decode_token(auth_token)
                 # Allow org-less users to authenticate (they were removed
                 # from their org).  View layer handles access control via
                 # request.organization being None.
@@ -160,13 +217,19 @@ class APIKeyAuthentication(BaseAuthentication):
                 # Validate that organization is active
 
                 # Bind user context for structured logging
-                self._bind_user_context(user)
+                request.auth_scope = auth_scope
+                self._bind_user_context(user, auth_scope)
 
                 # Set workspace context after JWT authentication
                 self._set_workspace_context(request, user)
                 return user, token
-            except PermissionDenied:
-                raise  # Let 403 propagate — don't wrap as 401
+            except SamlCredentialInvalid as exc:
+                security_logger.warning(
+                    "saml_credential_denied", reason=exc.reason, transport="http"
+                )
+                raise
+            except (PermissionDenied, *INFRASTRUCTURE_ERRORS):
+                raise  # Authorization denials and database or cache failures are not bad tokens.
             except Exception as e:
                 traceback.print_exc()
                 raise AuthenticationFailed(f"Invalid Token parsed: {e}") from e
@@ -180,13 +243,28 @@ class APIKeyAuthentication(BaseAuthentication):
 
         try:
             org_api_key = OrgApiKey.objects.select_related(
-                "organization", "workspace"
+                "organization", "workspace", "minted_by"
             ).get(
                 api_key=api_key,
                 secret_key=secret_key,
-                enabled=True,
                 deleted=False,
             )
+
+            self._reject_if_expired(org_api_key)
+
+            # An ingest key lives inside a customer's untrusted process and may
+            # only write spans to the collector; refused before a user is chosen
+            # so it can never act as the organisation's system user.
+            if org_api_key.type == "ingest":
+                raise AuthenticationFailed("ingest keys cannot call the API")
+            # A coding agent's key runs on the developer's machine beside the
+            # agent being fixed; it may make only its loop's calls, on its own
+            # environment.
+            if org_api_key.type == "coding_agent":
+                # Imported here: accounts cannot depend on simulate at load.
+                from simulate.authentication import refuse_coding_agent_request
+
+                refuse_coding_agent_request(request, org_api_key)
 
             # Validate that the API key has a valid organization
             if not org_api_key.organization:
@@ -204,8 +282,13 @@ class APIKeyAuthentication(BaseAuthentication):
                     .order_by("created_at")
                     .first()
                 )
+            elif org_api_key.type == "coding_agent":
+                # Its user is null, so an older build refuses it; its minter acts.
+                user = org_api_key.minted_by
             else:
                 user = org_api_key.user
+            if user is None:
+                raise AuthenticationFailed("No user found for API key")
 
             # Store the API key info in request for workspace context
             request.org_api_key = org_api_key
@@ -241,7 +324,10 @@ class APIKeyAuthentication(BaseAuthentication):
         workspace = self._get_requested_workspace(request, user, organization)
 
         if not workspace:
-            workspace = self._get_user_default_workspace(user, organization)
+            if getattr(request, "auth_scope", None) is not None:
+                workspace = self._get_scoped_default_workspace(user, organization)
+            else:
+                workspace = self._get_user_default_workspace(user, organization)
 
         # Check workspace access permissions
         if workspace and not self._user_has_workspace_access(user, workspace):
@@ -300,6 +386,25 @@ class APIKeyAuthentication(BaseAuthentication):
         from accounts.models.organization_membership import OrganizationMembership
 
         logger = structlog.get_logger("auth.resolve_org")
+
+        auth_scope = getattr(request, "auth_scope", None)
+        if auth_scope is not None:
+            requested_org_ids = [
+                value
+                for value in (
+                    request.headers.get("X-Organization-Id"),
+                    request.GET.get("organization_id"),
+                )
+                if value
+            ]
+            if any(
+                str(org_id) != str(auth_scope.org_id) for org_id in requested_org_ids
+            ):
+                raise PermissionDenied(
+                    "This session is bound to the organization that signed you in",
+                    code="saml_scope_conflict",
+                )
+            return Organization.objects.get(id=auth_scope.org_id)
 
         # 1. API key auth — org comes from the key itself
         if hasattr(request, "org_api_key") and request.org_api_key:
@@ -401,6 +506,25 @@ class APIKeyAuthentication(BaseAuthentication):
     def _get_requested_workspace(self, request, user, organization):
         """Get the requested workspace from headers, query params, or API key."""
 
+        auth_scope = getattr(request, "auth_scope", None)
+        if auth_scope is not None:
+            workspace_id = request.headers.get("X-Workspace-Id") or request.GET.get(
+                "workspace_id"
+            )
+            if not workspace_id:
+                return None
+            workspace = Workspace.objects.filter(
+                id=workspace_id, organization_id=auth_scope.org_id, is_active=True
+            ).first()
+            if workspace is None or not self._user_has_workspace_access(
+                user, workspace
+            ):
+                raise PermissionDenied(
+                    "This session is bound to the organization that signed you in",
+                    code="saml_scope_conflict",
+                )
+            return workspace
+
         # First, check if this is an API key request and get workspace from API key
         if hasattr(request, "org_api_key") and request.org_api_key:
             org_api_key = request.org_api_key
@@ -451,13 +575,20 @@ class APIKeyAuthentication(BaseAuthentication):
         if not organization:
             return None
 
+        # Token-cached users can retain old preferences after a workspace
+        # switch. Read persisted config just as organization fallback does,
+        # without mutating the cached user or overriding explicit scope.
+        fresh_config = (
+            User.objects.filter(pk=user.pk).values_list("config", flat=True).first()
+        ) or {}
+
         # Check org-specific workspace preference
-        org_workspace_map = user.config.get("orgWorkspaceMap", {})
+        org_workspace_map = fresh_config.get("orgWorkspaceMap", {})
         workspace_id = org_workspace_map.get(str(organization.id))
 
         # Fallback: legacy currentWorkspaceId (only if it belongs to this org)
         if not workspace_id:
-            workspace_id = user.config.get("currentWorkspaceId") or user.config.get(
+            workspace_id = fresh_config.get("currentWorkspaceId") or fresh_config.get(
                 "defaultWorkspaceId"
             )
 
@@ -490,6 +621,26 @@ class APIKeyAuthentication(BaseAuthentication):
         # Last resort: get or create default workspace (only creates membership
         # when user has NO workspace memberships in this org)
         return self._get_or_create_default_workspace(user, organization)
+
+    def _get_scoped_default_workspace(self, user, organization):
+        """Resolve a bound-org workspace without consulting mutable user config."""
+
+        membership = (
+            WorkspaceMembership.no_workspace_objects.filter(
+                user=user,
+                workspace__organization=organization,
+                workspace__is_active=True,
+                is_active=True,
+            )
+            .select_related("workspace")
+            .first()
+        )
+        if membership:
+            return membership.workspace
+        workspace = Workspace.objects.filter(
+            organization=organization, is_default=True, is_active=True
+        ).first()
+        return workspace if workspace and user.can_access_workspace(workspace) else None
 
     def _get_or_create_default_workspace(self, user, organization):
         """Get or create the default workspace for an organization.
@@ -596,14 +747,27 @@ class LangfuseBasicAuthentication(APIKeyAuthentication):
             ).get(
                 api_key=public_key,
                 secret_key=secret_key,
-                enabled=True,
                 deleted=False,
             )
         except OrgApiKey.DoesNotExist as e:
             raise AuthenticationFailed("Invalid API key or secret key") from e
 
+        self._reject_if_expired(org_api_key)
+
         if not org_api_key.organization:
             raise AuthenticationFailed("API key has no organization")
+
+        if not org_api_key.enabled:
+            raise AuthenticationFailed("API key is disabled")
+
+        # Same refusal as the parent class: an ingest key may only write spans
+        # to the collector, even if a user was attached to it.
+        if org_api_key.type == "ingest":
+            raise AuthenticationFailed("ingest keys cannot call the API")
+        if org_api_key.type == "coding_agent":
+            from simulate.authentication import refuse_coding_agent_request
+
+            refuse_coding_agent_request(request, org_api_key)
 
         # Resolve user (same logic as parent class)
         if org_api_key.type == "system":
@@ -864,7 +1028,94 @@ def decrypt_message(encrypted_message: str) -> dict[str, Any]:
         raise AuthenticationFailed("Invalid token format") from ex
 
 
-def decode_token(token: str):
+def _touch_non_saml_access_token(token_id, user_id, now):
+    """One-query liveness check; even a poisoned cache cannot authorize SAML."""
+    return (
+        AuthToken.objects.filter(
+            id=token_id,
+            user_id=user_id,
+            user__is_active=True,
+            auth_type=AuthTokenType.ACCESS.value,
+            is_active=True,
+            last_used_at__gte=now
+            - timedelta(minutes=AUTH_TOKEN_EXPIRATION_TIME_IN_MINUTES),
+        )
+        .exclude(auth_origin=AuthTokenOrigin.SAML)
+        .update(last_used_at=now)
+        == 1
+    )
+
+
+def _cache_transport_category(exc):
+    """Only known transport errors qualify; Redis auth/config errors do not.
+
+    django-redis wraps transport AND command errors in ConnectionInterrupted.
+    Do not infer availability from the wrapper or an exception's message.
+    """
+    for _ in range(4):
+        if type(exc) is RedisTimeoutError:
+            return "timeout"
+        if type(exc) is RedisConnectionError:
+            return "connection"
+        if type(exc) is not ConnectionInterrupted:
+            return None
+        exc = exc.__cause__
+    return None
+
+
+def _cache_unavailable_metadata(exc):
+    # Same bounded source attribution as database errors; never log values,
+    # exception text, frame locals, cache keys or connection URLs.
+    metadata = _database_unavailable_metadata(exc)
+    metadata.pop("sqlstate")
+    metadata["transport_category"] = _cache_transport_category(exc) or "unknown"
+    metadata["transport_phase"] = "unknown"
+    options = settings.CACHES.get("default", {}).get("OPTIONS", {})
+    for key in ("SOCKET_TIMEOUT", "SOCKET_CONNECT_TIMEOUT"):
+        value = options.get(key)
+        metadata[key.lower()] = (
+            value if type(value) in (int, float) and 0 <= value <= 10 else None
+        )
+    pool = options.get("CONNECTION_POOL_KWARGS", {})
+    retry = pool.get("retry_on_timeout")
+    metadata["retry_on_timeout"] = retry if type(retry) is bool else None
+    # RequestMiddleware already binds the correlation ID to structlog context;
+    # do not read raw headers here or serialize a retry object/connection config.
+    return metadata
+
+
+class _AccessTokenCache:
+    """One failed optional cache operation per decode, never a retry loop."""
+
+    def __init__(self):
+        self.unavailable = False
+
+    def call(self, operation, *args, **kwargs):
+        if self.unavailable:
+            return None
+        started = time.monotonic()
+        try:
+            return getattr(cache, operation)(*args, **kwargs)
+        except _CACHE_UNAVAILABLE_ERRORS as exc:
+            if _cache_transport_category(exc) is None:
+                raise
+            self.unavailable = True
+            logger.warning(
+                "access_token_cache_unavailable",
+                component="access_token_cache",
+                operation=operation,
+                elapsed_ms=round((time.monotonic() - started) * 1000, 3),
+                fallback="database_validated"
+                if operation == "set"
+                else "validate_database",
+                **_cache_unavailable_metadata(exc),
+            )
+            return None
+
+
+def decode_token(token: str, *, transport: str = "http"):
+    token_cache = _AccessTokenCache()
+    outcome = "credential_rejected"
     try:
         if not token:
             raise AuthenticationFailed("empty token")
@@ -872,66 +1123,123 @@ def decode_token(token: str):
         decrypted_token_obj = decrypt_message(token)
         user_id = decrypted_token_obj.get("user_id")
         token_id = decrypted_token_obj.get("id")
-        cache_data = cache.get(f"access_token_{token_id}")
-
-        if cache_data:
-            user = cache_data.get("user")
-            token = cache_data.get("token")
-            # Ensure organization is loaded to prevent sync-in-async errors later.
-            if "organization" not in user._state.fields_cache:
-                user = User.objects.select_related("organization").get(pk=user.pk)
-            cache.set(
-                f"access_token_{token_id}",
-                {"token": token, "user": user},
-                timeout=AUTH_TOKEN_EXPIRATION_TIME_IN_MINUTES * 60,
-            )
-            AuthToken.objects.filter(id=token_id).update(last_used_at=timezone.now())
-
-            return user, token
-
         if not user_id:
             raise AuthenticationFailed("Invalid user id")
-        user = User.objects.select_related("organization").get(
-            id=user_id, is_active=True
-        )
 
-        try:
-            auth_token_obj = AuthToken.objects.get(
-                id=token_id, auth_type=AuthTokenType.ACCESS.value
+        now = timezone.now()
+        cache_key = f"access_token_{token_id}"
+        cache_data = token_cache.call("get", cache_key)
+        # Older pods may cache SAML as ordinary. Only this code writes the
+        # versioned marker, after authoritative classification and validation.
+        # Keep the existing cache key so all revocation paths still evict it.
+        if cache_data and cache_data.get("non_saml_v1") is True:
+            user = cache_data.get("user")
+            if (
+                user is not None
+                and str(user.pk) == str(user_id)
+                and user.is_active
+                and cache_data.get("token") == token
+                and _touch_non_saml_access_token(token_id, user_id, now)
+            ):
+                if "organization" not in user._state.fields_cache:
+                    user = User.objects.select_related("organization").get(pk=user.pk)
+                token_cache.call(
+                    "set",
+                    cache_key,
+                    {"token": token, "user": user, "non_saml_v1": True},
+                    timeout=AUTH_TOKEN_EXPIRATION_TIME_IN_MINUTES * 60,
+                )
+                outcome = "authenticated"
+                return user, token, None
+
+        # Legacy and failed cache hits must be reclassified, not promoted.
+        if cache_data:
+            token_cache.call("delete", cache_key)
+        token_row = (
+            AuthToken.objects.filter(id=token_id)
+            .values(
+                "id",
+                "user_id",
+                "auth_type",
+                "is_active",
+                "last_used_at",
+                "auth_origin",
+                "scoped_organization_id",
+                "origin_idp_id",
+                "origin_idp_generation",
             )
-        except AuthToken.DoesNotExist as e:
-            raise AuthenticationFailed("Invalid auth token") from e
-
-        if not auth_token_obj.is_active:
+            .first()
+        )
+        if token_row is None:
+            raise AuthenticationFailed("Invalid auth token")
+        if token_row["auth_origin"] == AuthTokenOrigin.SAML:
+            credential = validate_saml_credential(
+                token_row, user_id, now=now, transport=transport
+            )
+            user = User.objects.select_related("organization").get(id=user_id)
+            if (
+                AuthToken.objects.filter(id=token_id, is_active=True).update(
+                    last_used_at=now
+                )
+                != 1
+            ):
+                raise SamlCredentialInvalid("token_inactive")
+            outcome = "authenticated"
+            return user, token, credential
+        if (
+            str(token_row["user_id"]) != str(user_id)
+            or token_row["auth_type"] != AuthTokenType.ACCESS.value
+        ):
+            raise AuthenticationFailed("Invalid auth token")
+        if not token_row["is_active"]:
             raise AuthenticationFailed("Access token expired")
 
-        # Check if token has expired due to inactivity
-        expiration_threshold = timezone.now() - timedelta(
+        expiration_threshold = now - timedelta(
             minutes=AUTH_TOKEN_EXPIRATION_TIME_IN_MINUTES
         )
         if (
-            auth_token_obj.last_used_at is None
-            or auth_token_obj.last_used_at < expiration_threshold
+            token_row["last_used_at"] is None
+            or token_row["last_used_at"] < expiration_threshold
         ):
-            auth_token_obj.is_active = False
-            auth_token_obj.save()
+            # Do not deactivate a token concurrently touched by a live request.
+            AuthToken.objects.filter(
+                id=token_id, last_used_at=token_row["last_used_at"]
+            ).update(is_active=False)
             raise AuthenticationFailed(
                 f"Access token expired due to inactivity since {AUTH_TOKEN_EXPIRATION_TIME_IN_MINUTES} minutes"
             )
 
-        auth_token_obj.last_used_at = timezone.now()
-        auth_token_obj.save()
+        user = User.objects.select_related("organization").get(
+            id=user_id, is_active=True
+        )
+        if not _touch_non_saml_access_token(token_id, user_id, now):
+            raise AuthenticationFailed("Invalid auth token")
 
-        cache.set(
-            f"access_token_{auth_token_obj.id}",
-            {"token": token, "user": user},
+        token_cache.call(
+            "set",
+            cache_key,
+            {"token": token, "user": user, "non_saml_v1": True},
             timeout=AUTH_TOKEN_EXPIRATION_TIME_IN_MINUTES * 60,
         )
 
-        return user, token
+        outcome = "authenticated"
+        return user, token, None
 
+    except (DatabaseError, InterfaceError):
+        outcome = "database_unavailable"
+        raise
+    except (*INFRASTRUCTURE_ERRORS, SamlCredentialInvalid):
+        raise
     except Exception as e:
         raise AuthenticationFailed(f"Invalid Token parsed: {e}") from e
+
+    finally:
+        if token_cache.unavailable:
+            logger.info(
+                "access_token_cache_fallback_result",
+                component="access_token_cache",
+                outcome=outcome,
+            )
 
 
 def _pydantic_error_response(exc):
@@ -951,6 +1259,60 @@ def _pydantic_error_response(exc):
     )
 
 
+class DatabaseUnavailable(APIException):
+    status_code = status.HTTP_503_SERVICE_UNAVAILABLE
+    default_detail = "Database temporarily unavailable."
+    default_code = "service_unavailable"
+
+
+class CacheUnavailable(APIException):
+    status_code = status.HTTP_503_SERVICE_UNAVAILABLE
+    default_detail = "Cache temporarily unavailable."
+    default_code = "service_unavailable"
+
+
+def _database_unavailable_metadata(exc):
+    """Allowlisted attribution only: never render exceptions or inspect locals."""
+
+    def bounded_name(value):
+        if isinstance(value, str) and re.fullmatch(
+            r"[A-Za-z_][A-Za-z0-9_.]*|<[A-Za-z_]+>", value
+        ):
+            return value[:128]
+        return None
+
+    cause = exc.__cause__ or (None if exc.__suppress_context__ else exc.__context__)
+    metadata = {
+        "error_class": bounded_name(type(exc).__name__),
+        "cause_class": bounded_name(type(cause).__name__)
+        if cause is not None
+        else None,
+        "sqlstate": None,
+        "source_module": None,
+        "source_function": None,
+        "source_line": None,
+    }
+    for error in (cause, exc):
+        for attribute in ("sqlstate", "pgcode"):
+            value = getattr(error, attribute, None)
+            if isinstance(value, str) and re.fullmatch(r"[A-Z0-9]{5}", value):
+                metadata["sqlstate"] = value
+                break
+        if metadata["sqlstate"] is not None:
+            break
+
+    tb = exc.__traceback__
+    if tb is not None:
+        while tb.tb_next is not None:
+            tb = tb.tb_next
+        metadata.update(
+            source_module=bounded_name(tb.tb_frame.f_globals.get("__name__")),
+            source_function=bounded_name(tb.tb_frame.f_code.co_name),
+            source_line=tb.tb_lineno,
+        )
+    return metadata
+
+
 def custom_exception_handler(exc, context):
     """
     Global DRF exception handler.
@@ -962,6 +1324,27 @@ def custom_exception_handler(exc, context):
 
     from tfc.ee_gating import FeatureUnavailable
 
+    if isinstance(exc, (OperationalError, InterfaceError)):
+        logger.warning(
+            "api_database_unavailable", **_database_unavailable_metadata(exc)
+        )
+        # Keep raw database details private and use DRF's normal rollback path.
+        exc = DatabaseUnavailable()
+    elif isinstance(exc, _CACHE_UNAVAILABLE_ERRORS):
+        request = context.get("request")
+        method = getattr(request, "method", None)
+        route = getattr(getattr(request, "resolver_match", None), "route", None)
+        logger.warning(
+            "api_cache_unavailable",
+            method=method
+            if method in ("GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS")
+            else None,
+            route_template=route
+            if isinstance(route, str) and len(route) <= 256
+            else None,
+            **_cache_unavailable_metadata(exc),
+        )
+        exc = CacheUnavailable()
     response = exception_handler(exc, context)
 
     if isinstance(exc, FeatureUnavailable):

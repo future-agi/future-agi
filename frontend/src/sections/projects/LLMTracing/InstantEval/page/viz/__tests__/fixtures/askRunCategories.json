@@ -1,0 +1,3161 @@
+{
+ "note": "Real answers from harbor-conversations (108 sessions, task a6137644), 2026-10-16: a 6-label category question and Yes/No.",
+ "questions": [
+  {
+   "configId": "6728e38e-a778-445d-aec7-9e12340adb69",
+   "question": "What did the customer come for?",
+   "answerType": "category",
+   "labels": [
+    "Order status",
+    "Return or refund",
+    "Product advice",
+    "Account or email change",
+    "Wholesale or pricing",
+    "Something else"
+   ]
+  },
+  {
+   "configId": "00342d72-8442-4309-b92e-becaba6f0b00",
+   "question": "Did the agent resolve the customer's issue?",
+   "answerType": "yes_no",
+   "labels": [
+    "Yes",
+    "No"
+   ]
+  }
+ ],
+ "records": [
+  {
+   "id": "08dfc02a-8676-553a-a32a-ff2c7f51c6e7",
+   "label": "Change the email on my account to sam49@proton.me, I lost access to my old one.",
+   "excerpt": "Change the email on my account to sam49@proton.me, I lost access to my old one.",
+   "time": "2026-10-15T08:42:33.644514+00:00",
+   "user_id": "cust_arjun_800",
+   "end_user_id": "769c98af-4c45-552f-a634-e3eee28d8832",
+   "trace_id": null,
+   "facets": {
+    "model": "gpt-4o-mini",
+    "turns": 1,
+    "duration_ms": 936,
+    "error": false
+   },
+   "answers": {
+    "6728e38e-a778-445d-aec7-9e12340adb69": {
+     "answer": "Account or email change",
+     "explanation": "",
+     "confidence": 1.0,
+     "status": "completed"
+    },
+    "00342d72-8442-4309-b92e-becaba6f0b00": {
+     "answer": "No",
+     "explanation": "",
+     "confidence": 0.22,
+     "status": "completed"
+    }
+   }
+  },
+  {
+   "id": "0a2569d0-f0d6-5b5a-95a3-f3a051f1991c",
+   "label": "What is the Coastline Rain Shell made of? Is it good for rain?",
+   "excerpt": "What is the Coastline Rain Shell made of? Is it good for rain?",
+   "time": "2026-10-15T08:42:33.644514+00:00",
+   "user_id": "cust_ethan_362",
+   "end_user_id": "ae4b107b-459a-5341-94af-da0d5069a6fa",
+   "trace_id": null,
+   "facets": {
+    "model": "gpt-4o-mini",
+    "turns": 2,
+    "duration_ms": 38898,
+    "error": false
+   },
+   "answers": {
+    "6728e38e-a778-445d-aec7-9e12340adb69": {
+     "answer": "Product advice",
+     "explanation": "",
+     "confidence": 1.0,
+     "status": "completed"
+    },
+    "00342d72-8442-4309-b92e-becaba6f0b00": {
+     "answer": "No",
+     "explanation": "",
+     "confidence": 0.74,
+     "status": "completed"
+    }
+   }
+  },
+  {
+   "id": "0c44efdc-4e01-5dd2-a9f2-91f760f6c678",
+   "label": "Hola, mi pedido HP-98157 todav\u00eda no ha llegado. \u00bfD\u00f3nde est\u00e1?",
+   "excerpt": "Hola, mi pedido HP-98157 todav\u00eda no ha llegado. \u00bfD\u00f3nde est\u00e1?",
+   "time": "2026-10-15T08:42:33.644514+00:00",
+   "user_id": "cust_grace_965",
+   "end_user_id": "279b1bfe-da74-52d3-ad7c-f5f2543056cc",
+   "trace_id": null,
+   "facets": {
+    "model": "gpt-4.1-mini",
+    "turns": 2,
+    "duration_ms": 28160,
+    "error": false
+   },
+   "answers": {
+    "6728e38e-a778-445d-aec7-9e12340adb69": {
+     "answer": "Order status",
+     "explanation": "",
+     "confidence": 1.0,
+     "status": "completed"
+    },
+    "00342d72-8442-4309-b92e-becaba6f0b00": {
+     "answer": "Yes",
+     "explanation": "",
+     "confidence": 0.98,
+     "status": "completed"
+    }
+   }
+  },
+  {
+   "id": "0d7fc8d4-d375-57b8-815f-a45bdc0bf740",
+   "label": "Hola, mi pedido HP-61214 todav\u00eda no ha llegado. \u00bfD\u00f3nde est\u00e1?",
+   "excerpt": "Hola, mi pedido HP-61214 todav\u00eda no ha llegado. \u00bfD\u00f3nde est\u00e1?",
+   "time": "2026-10-15T08:42:33.644514+00:00",
+   "user_id": "cust_isla_849",
+   "end_user_id": "40e6a35e-ac2c-547e-b0b2-8c7bf99224fd",
+   "trace_id": null,
+   "facets": {
+    "model": "gpt-4.1-mini",
+    "turns": 2,
+    "duration_ms": 44016,
+    "error": false
+   },
+   "answers": {
+    "6728e38e-a778-445d-aec7-9e12340adb69": {
+     "answer": "Order status",
+     "explanation": "",
+     "confidence": 1.0,
+     "status": "completed"
+    },
+    "00342d72-8442-4309-b92e-becaba6f0b00": {
+     "answer": "No",
+     "explanation": "",
+     "confidence": 0.94,
+     "status": "completed"
+    }
+   }
+  },
+  {
+   "id": "191653c2-7a75-5aff-8a03-7516b04b45cf",
+   "label": "I'm 6'1\" and usually wear a large. What size Harbor Oxford Shirt should I get?",
+   "excerpt": "I'm 6'1\" and usually wear a large. What size Harbor Oxford Shirt should I get?",
+   "time": "2026-10-15T08:42:33.644514+00:00",
+   "user_id": "cust_omar_702",
+   "end_user_id": "27d6dfa5-cd7e-5cd4-8a73-72d49b34ab86",
+   "trace_id": null,
+   "facets": {
+    "model": "gpt-4o-mini",
+    "turns": 3,
+    "duration_ms": 194703,
+    "error": false
+   },
+   "answers": {
+    "6728e38e-a778-445d-aec7-9e12340adb69": {
+     "answer": "Product advice",
+     "explanation": "",
+     "confidence": 1.0,
+     "status": "completed"
+    },
+    "00342d72-8442-4309-b92e-becaba6f0b00": {
+     "answer": "Yes",
+     "explanation": "",
+     "confidence": 0.04,
+     "status": "completed"
+    }
+   }
+  },
+  {
+   "id": "316be2aa-d75f-52fc-a965-15cc273d8a2c",
+   "label": "Do you have any discount codes? I'm about to buy three things.",
+   "excerpt": "Do you have any discount codes? I'm about to buy three things.",
+   "time": "2026-10-15T08:42:33.644514+00:00",
+   "user_id": "cust_yuki_829",
+   "end_user_id": "f9428a9f-7e13-5a59-8eaa-23896d741864",
+   "trace_id": null,
+   "facets": {
+    "model": "gpt-4o-mini",
+    "turns": 2,
+    "duration_ms": 128657,
+    "error": false
+   },
+   "answers": {
+    "6728e38e-a778-445d-aec7-9e12340adb69": {
+     "answer": "Wholesale or pricing",
+     "explanation": "",
+     "confidence": 1.0,
+     "status": "completed"
+    },
+    "00342d72-8442-4309-b92e-becaba6f0b00": {
+     "answer": "Yes",
+     "explanation": "",
+     "confidence": 0.14,
+     "status": "completed"
+    }
+   }
+  },
+  {
+   "id": "449c2494-769c-55de-b8c7-7e79c70372d3",
+   "label": "I need to speak to a human. Now.",
+   "excerpt": "I need to speak to a human. Now.",
+   "time": "2026-10-15T08:42:33.644514+00:00",
+   "user_id": "cust_priya_597",
+   "end_user_id": "6c2ea44c-5f49-5cfb-9423-d8ce87006f91",
+   "trace_id": null,
+   "facets": {
+    "model": "gpt-4o-mini",
+    "turns": 1,
+    "duration_ms": 1510,
+    "error": false
+   },
+   "answers": {
+    "6728e38e-a778-445d-aec7-9e12340adb69": {
+     "answer": "Something else",
+     "explanation": "",
+     "confidence": 1.0,
+     "status": "completed"
+    },
+    "00342d72-8442-4309-b92e-becaba6f0b00": {
+     "answer": "No",
+     "explanation": "",
+     "confidence": 0.38,
+     "status": "completed"
+    }
+   }
+  },
+  {
+   "id": "68ab6006-7df2-5140-bbc8-2078391b98e3",
+   "label": "I'm 6'1\" and usually wear a large. What size Ridge Fleece Jacket should I get?",
+   "excerpt": "I'm 6'1\" and usually wear a large. What size Ridge Fleece Jacket should I get?",
+   "time": "2026-10-15T08:42:33.644514+00:00",
+   "user_id": "cust_ada_532",
+   "end_user_id": "0f44a281-796e-5c9e-8c1c-12482e3a28d3",
+   "trace_id": null,
+   "facets": {
+    "model": "gpt-4.1-mini",
+    "turns": 3,
+    "duration_ms": 148472,
+    "error": false
+   },
+   "answers": {
+    "6728e38e-a778-445d-aec7-9e12340adb69": {
+     "answer": "Product advice",
+     "explanation": "",
+     "confidence": 1.0,
+     "status": "completed"
+    },
+    "00342d72-8442-4309-b92e-becaba6f0b00": {
+     "answer": "Yes",
+     "explanation": "",
+     "confidence": 0.98,
+     "status": "completed"
+    }
+   }
+  },
+  {
+   "id": "79e23d49-8fc5-5cae-8d67-b52dc62da7a6",
+   "label": "Do you have any discount codes? I'm about to buy three things.",
+   "excerpt": "Do you have any discount codes? I'm about to buy three things.",
+   "time": "2026-10-15T08:42:33.644514+00:00",
+   "user_id": "cust_jordan_175",
+   "end_user_id": "628ae098-7ebd-5df7-a5aa-c957f91c599a",
+   "trace_id": null,
+   "facets": {
+    "model": "gpt-4o-mini",
+    "turns": 2,
+    "duration_ms": 48842,
+    "error": false
+   },
+   "answers": {
+    "6728e38e-a778-445d-aec7-9e12340adb69": {
+     "answer": "Wholesale or pricing",
+     "explanation": "",
+     "confidence": 1.0,
+     "status": "completed"
+    },
+    "00342d72-8442-4309-b92e-becaba6f0b00": {
+     "answer": "No",
+     "explanation": "",
+     "confidence": 0.9,
+     "status": "completed"
+    }
+   }
+  },
+  {
+   "id": "82303568-05f7-536f-a5dc-84f384758b10",
+   "label": "Do you have any discount codes? I'm about to buy three things.",
+   "excerpt": "Do you have any discount codes? I'm about to buy three things.",
+   "time": "2026-10-15T08:42:33.644514+00:00",
+   "user_id": "cust_elena_474",
+   "end_user_id": "6fb10383-ba9e-51b7-b561-be9f1b07cdbd",
+   "trace_id": null,
+   "facets": {
+    "model": "gpt-4.1-mini",
+    "turns": 2,
+    "duration_ms": 119262,
+    "error": false
+   },
+   "answers": {
+    "6728e38e-a778-445d-aec7-9e12340adb69": {
+     "answer": "Wholesale or pricing",
+     "explanation": "",
+     "confidence": 1.0,
+     "status": "completed"
+    },
+    "00342d72-8442-4309-b92e-becaba6f0b00": {
+     "answer": "No",
+     "explanation": "",
+     "confidence": 0.88,
+     "status": "completed"
+    }
+   }
+  },
+  {
+   "id": "9562e0fc-32fb-5fe8-a764-dac0d1eed343",
+   "label": "Do you have any discount codes? I'm about to buy three things.",
+   "excerpt": "Do you have any discount codes? I'm about to buy three things.",
+   "time": "2026-10-15T08:42:33.644514+00:00",
+   "user_id": "cust_yuki_829",
+   "end_user_id": "f9428a9f-7e13-5a59-8eaa-23896d741864",
+   "trace_id": null,
+   "facets": {
+    "model": "gpt-4o-mini",
+    "turns": 2,
+    "duration_ms": 60689,
+    "error": false
+   },
+   "answers": {
+    "6728e38e-a778-445d-aec7-9e12340adb69": {
+     "answer": "Wholesale or pricing",
+     "explanation": "",
+     "confidence": 1.0,
+     "status": "completed"
+    },
+    "00342d72-8442-4309-b92e-becaba6f0b00": {
+     "answer": "No",
+     "explanation": "",
+     "confidence": 0.9,
+     "status": "completed"
+    }
+   }
+  },
+  {
+   "id": "9a05c2a9-6cee-5e00-adff-7974320697e3",
+   "label": "I want a refund for the Summit Down Vest, order HP-34044.",
+   "excerpt": "I want a refund for the Summit Down Vest, order HP-34044.",
+   "time": "2026-10-15T08:42:33.644514+00:00",
+   "user_id": "cust_ben_312",
+   "end_user_id": "76154895-e08c-5f65-ad97-f3340591f374",
+   "trace_id": null,
+   "facets": {
+    "model": "gpt-4o-mini",
+    "turns": 2,
+    "duration_ms": 137141,
+    "error": false
+   },
+   "answers": {
+    "6728e38e-a778-445d-aec7-9e12340adb69": {
+     "answer": "Return or refund",
+     "explanation": "",
+     "confidence": 1.0,
+     "status": "completed"
+    },
+    "00342d72-8442-4309-b92e-becaba6f0b00": {
+     "answer": "Yes",
+     "explanation": "",
+     "confidence": 1.0,
+     "status": "completed"
+    }
+   }
+  },
+  {
+   "id": "9d0d2236-9fd4-5bc1-807c-73edaa2a535a",
+   "label": "Hi, where is my order HP-30194?",
+   "excerpt": "Hi, where is my order HP-30194?",
+   "time": "2026-10-15T08:42:33.644514+00:00",
+   "user_id": "cust_aisha_912",
+   "end_user_id": "fd1c5f67-8cd1-5acb-9865-0b9e5dd2b11f",
+   "trace_id": null,
+   "facets": {
+    "model": "gpt-4o-mini",
+    "turns": 2,
+    "duration_ms": 31584,
+    "error": false
+   },
+   "answers": {
+    "6728e38e-a778-445d-aec7-9e12340adb69": {
+     "answer": "Order status",
+     "explanation": "",
+     "confidence": 1.0,
+     "status": "completed"
+    },
+    "00342d72-8442-4309-b92e-becaba6f0b00": {
+     "answer": "Yes",
+     "explanation": "",
+     "confidence": 1.0,
+     "status": "completed"
+    }
+   }
+  },
+  {
+   "id": "c02f7d3c-a6da-588b-b2dc-6daf19dad3df",
+   "label": "Change the email on my account to jo36@proton.me, I lost access to my old one.",
+   "excerpt": "Change the email on my account to jo36@proton.me, I lost access to my old one.",
+   "time": "2026-10-15T08:42:33.644514+00:00",
+   "user_id": "cust_kai_278",
+   "end_user_id": "5fd6ed2b-9f0c-577b-99fd-63f543ca3f20",
+   "trace_id": null,
+   "facets": {
+    "model": "gpt-4o-mini",
+    "turns": 1,
+    "duration_ms": 1405,
+    "error": false
+   },
+   "answers": {
+    "6728e38e-a778-445d-aec7-9e12340adb69": {
+     "answer": "Account or email change",
+     "explanation": "",
+     "confidence": 1.0,
+     "status": "completed"
+    },
+    "00342d72-8442-4309-b92e-becaba6f0b00": {
+     "answer": "No",
+     "explanation": "",
+     "confidence": 0.2,
+     "status": "completed"
+    }
+   }
+  },
+  {
+   "id": "c11a4f4b-47e9-50bd-b039-e4232a71242b",
+   "label": "Hi, we need 40 Ridge Fleece Jackets with our logo for a company retreat. Do you do wholesale pricing and invoices?",
+   "excerpt": "Hi, we need 40 Ridge Fleece Jackets with our logo for a company retreat. Do you do wholesale pricing and invoices?",
+   "time": "2026-10-15T08:42:33.644514+00:00",
+   "user_id": "cust_zoe_166",
+   "end_user_id": "9f130122-afc1-58fa-9852-5d54d31935ab",
+   "trace_id": null,
+   "facets": {
+    "model": "gpt-4o-mini",
+    "turns": 2,
+    "duration_ms": 30187,
+    "error": false
+   },
+   "answers": {
+    "6728e38e-a778-445d-aec7-9e12340adb69": {
+     "answer": "Wholesale or pricing",
+     "explanation": "",
+     "confidence": 1.0,
+     "status": "completed"
+    },
+    "00342d72-8442-4309-b92e-becaba6f0b00": {
+     "answer": "Yes",
+     "explanation": "",
+     "confidence": 0.82,
+     "status": "completed"
+    }
+   }
+  },
+  {
+   "id": "e02f15eb-b1e1-541a-90c3-b76b9a16ab47",
+   "label": "Where is my order HP-79815? It was supposed to arrive two days ago.",
+   "excerpt": "Where is my order HP-79815? It was supposed to arrive two days ago.",
+   "time": "2026-10-15T08:42:33.644514+00:00",
+   "user_id": "cust_hannah_116",
+   "end_user_id": "ca9bbbee-66ff-5523-b397-fd51fad43d6c",
+   "trace_id": null,
+   "facets": {
+    "model": "gpt-4.1-mini",
+    "turns": 4,
+    "duration_ms": 148452,
+    "error": false
+   },
+   "answers": {
+    "6728e38e-a778-445d-aec7-9e12340adb69": {
+     "answer": "Order status",
+     "explanation": "",
+     "confidence": 1.0,
+     "status": "completed"
+    },
+    "00342d72-8442-4309-b92e-becaba6f0b00": {
+     "answer": "No",
+     "explanation": "",
+     "confidence": 1.0,
+     "status": "completed"
+    }
+   }
+  },
+  {
+   "id": "e1dab850-1efd-5e43-9a67-0d57bab9b7dd",
+   "label": "Where is my order HP-72336? It was supposed to arrive two days ago.",
+   "excerpt": "Where is my order HP-72336? It was supposed to arrive two days ago.",
+   "time": "2026-10-15T08:42:33.644514+00:00",
+   "user_id": "cust_aisha_912",
+   "end_user_id": "fd1c5f67-8cd1-5acb-9865-0b9e5dd2b11f",
+   "trace_id": null,
+   "facets": {
+    "model": "gpt-4o-mini",
+    "turns": 4,
+    "duration_ms": 243585,
+    "error": false
+   },
+   "answers": {
+    "6728e38e-a778-445d-aec7-9e12340adb69": {
+     "answer": "Order status",
+     "explanation": "",
+     "confidence": 1.0,
+     "status": "completed"
+    },
+    "00342d72-8442-4309-b92e-becaba6f0b00": {
+     "answer": "No",
+     "explanation": "",
+     "confidence": 1.0,
+     "status": "completed"
+    }
+   }
+  },
+  {
+   "id": "e2c51d3c-ab11-5afc-9913-ab1deab57017",
+   "label": "Do you have any discount codes? I'm about to buy three things.",
+   "excerpt": "Do you have any discount codes? I'm about to buy three things.",
+   "time": "2026-10-15T08:42:33.644514+00:00",
+   "user_id": "cust_elena_474",
+   "end_user_id": "6fb10383-ba9e-51b7-b561-be9f1b07cdbd",
+   "trace_id": null,
+   "facets": {
+    "model": "gpt-4o-mini",
+    "turns": 2,
+    "duration_ms": 141558,
+    "error": false
+   },
+   "answers": {
+    "6728e38e-a778-445d-aec7-9e12340adb69": {
+     "answer": "Wholesale or pricing",
+     "explanation": "",
+     "confidence": 1.0,
+     "status": "completed"
+    },
+    "00342d72-8442-4309-b92e-becaba6f0b00": {
+     "answer": "No",
+     "explanation": "",
+     "confidence": 0.9,
+     "status": "completed"
+    }
+   }
+  },
+  {
+   "id": "e4cfaff7-55c4-52cd-b000-9e8158d4f7b1",
+   "label": "I'm 6'1\" and usually wear a large. What size Pine Trail Boots should I get?",
+   "excerpt": "I'm 6'1\" and usually wear a large. What size Pine Trail Boots should I get?",
+   "time": "2026-10-15T08:42:33.644514+00:00",
+   "user_id": "cust_ines_979",
+   "end_user_id": "d6126f89-131e-59fd-a9ac-9a1448c03c0c",
+   "trace_id": null,
+   "facets": {
+    "model": "gpt-4.1-mini",
+    "turns": 3,
+    "duration_ms": 250320,
+    "error": false
+   },
+   "answers": {
+    "6728e38e-a778-445d-aec7-9e12340adb69": {
+     "answer": "Product advice",
+     "explanation": "",
+     "confidence": 1.0,
+     "status": "completed"
+    },
+    "00342d72-8442-4309-b92e-becaba6f0b00": {
+     "answer": "Yes",
+     "explanation": "",
+     "confidence": 0.36,
+     "status": "completed"
+    }
+   }
+  },
+  {
+   "id": "f2114d2a-29f1-558d-b62e-9d1c38511da0",
+   "label": "Change the email on my account to jo45@proton.me, I lost access to my old one.",
+   "excerpt": "Change the email on my account to jo45@proton.me, I lost access to my old one.",
+   "time": "2026-10-15T08:42:33.644514+00:00",
+   "user_id": "cust_kai_278",
+   "end_user_id": "5fd6ed2b-9f0c-577b-99fd-63f543ca3f20",
+   "trace_id": null,
+   "facets": {
+    "model": "gpt-4o-mini",
+    "turns": 1,
+    "duration_ms": 1372,
+    "error": false
+   },
+   "answers": {
+    "6728e38e-a778-445d-aec7-9e12340adb69": {
+     "answer": "Account or email change",
+     "explanation": "",
+     "confidence": 1.0,
+     "status": "completed"
+    },
+    "00342d72-8442-4309-b92e-becaba6f0b00": {
+     "answer": "No",
+     "explanation": "",
+     "confidence": 0.22,
+     "status": "completed"
+    }
+   }
+  },
+  {
+   "id": "f9530278-e176-5a95-ae53-0d5c01bf4067",
+   "label": "Hi, I'd like to return the Coastline Rain Shell I bought, it doesn't fit.",
+   "excerpt": "Hi, I'd like to return the Coastline Rain Shell I bought, it doesn't fit.",
+   "time": "2026-10-15T08:41:14+00:00",
+   "user_id": "cust_lucia_406",
+   "end_user_id": "e0c4405d-e4ae-5e9a-bf80-dab3239117c9",
+   "trace_id": null,
+   "facets": {
+    "model": "gpt-4o-mini",
+    "turns": 3,
+    "duration_ms": 113606,
+    "error": false
+   },
+   "answers": {
+    "6728e38e-a778-445d-aec7-9e12340adb69": {
+     "answer": "Return or refund",
+     "explanation": "",
+     "confidence": 1.0,
+     "status": "completed"
+    },
+    "00342d72-8442-4309-b92e-becaba6f0b00": {
+     "answer": "Yes",
+     "explanation": "",
+     "confidence": 1.0,
+     "status": "completed"
+    }
+   }
+  },
+  {
+   "id": "8a3faa02-a3a0-5894-990c-9e1dd43f14f4",
+   "label": "How do I send back my Harbor Oxford Shirt? Wrong size.",
+   "excerpt": "How do I send back my Harbor Oxford Shirt? Wrong size.",
+   "time": "2026-10-14T23:24:26+00:00",
+   "user_id": "cust_amara_103",
+   "end_user_id": "57fcca25-30ad-5f6d-a02d-0d356f59ddd9",
+   "trace_id": null,
+   "facets": {
+    "model": "gpt-4.1-mini",
+    "turns": 3,
+    "duration_ms": 87913,
+    "error": false
+   },
+   "answers": {
+    "6728e38e-a778-445d-aec7-9e12340adb69": {
+     "answer": "Return or refund",
+     "explanation": "",
+     "confidence": 1.0,
+     "status": "completed"
+    },
+    "00342d72-8442-4309-b92e-becaba6f0b00": {
+     "answer": "Yes",
+     "explanation": "",
+     "confidence": 1.0,
+     "status": "completed"
+    }
+   }
+  },
+  {
+   "id": "a1d8f13b-4de1-5b25-92bf-9974c85df7a3",
+   "label": "What is the Harbor Oxford Shirt made of? Is it good for rain?",
+   "excerpt": "What is the Harbor Oxford Shirt made of? Is it good for rain?",
+   "time": "2026-10-14T22:34:51+00:00",
+   "user_id": "cust_diego_251",
+   "end_user_id": "2cccabc3-f3b7-52a1-afee-ac7a102bd12d",
+   "trace_id": null,
+   "facets": {
+    "model": "gpt-4.1-mini",
+    "turns": 2,
+    "duration_ms": 49307,
+    "error": false
+   },
+   "answers": {
+    "6728e38e-a778-445d-aec7-9e12340adb69": {
+     "answer": "Product advice",
+     "explanation": "",
+     "confidence": 1.0,
+     "status": "completed"
+    },
+    "00342d72-8442-4309-b92e-becaba6f0b00": {
+     "answer": "Yes",
+     "explanation": "",
+     "confidence": 0.92,
+     "status": "completed"
+    }
+   }
+  },
+  {
+   "id": "fd2398a6-0bea-5a90-8959-d3c38cc3248b",
+   "label": "I need to speak to a human. Now.",
+   "excerpt": "I need to speak to a human. Now.",
+   "time": "2026-10-14T19:46:49+00:00",
+   "user_id": "cust_kwame_873",
+   "end_user_id": "2637370d-9a3e-582f-ab71-90e761429f37",
+   "trace_id": null,
+   "facets": {
+    "model": "gpt-4o-mini",
+    "turns": 3,
+    "duration_ms": 242592,
+    "error": false
+   },
+   "answers": {
+    "6728e38e-a778-445d-aec7-9e12340adb69": {
+     "answer": "Something else",
+     "explanation": "",
+     "confidence": 1.0,
+     "status": "completed"
+    },
+    "00342d72-8442-4309-b92e-becaba6f0b00": {
+     "answer": "No",
+     "explanation": "",
+     "confidence": 1.0,
+     "status": "completed"
+    }
+   }
+  },
+  {
+   "id": "e232742f-d161-5332-8d72-bde554c0dbf3",
+   "label": "Just wanted to say the Harbor Oxford Shirt is amazing, wore it all weekend!",
+   "excerpt": "Just wanted to say the Harbor Oxford Shirt is amazing, wore it all weekend!",
+   "time": "2026-10-14T18:27:07+00:00",
+   "user_id": "cust_ines_979",
+   "end_user_id": "d6126f89-131e-59fd-a9ac-9a1448c03c0c",
+   "trace_id": null,
+   "facets": {
+    "model": "gpt-4o-mini",
+    "turns": 1,
+    "duration_ms": 1375,
+    "error": false
+   },
+   "answers": {
+    "6728e38e-a778-445d-aec7-9e12340adb69": {
+     "answer": "Something else",
+     "explanation": "",
+     "confidence": 1.0,
+     "status": "completed"
+    },
+    "00342d72-8442-4309-b92e-becaba6f0b00": {
+     "answer": "No",
+     "explanation": "",
+     "confidence": 0.22,
+     "status": "completed"
+    }
+   }
+  },
+  {
+   "id": "a11b9f94-a2a1-5b74-adf0-84d1a0f71cf9",
+   "label": "What is the Everyday Merino Tee made of? Is it good for rain?",
+   "excerpt": "What is the Everyday Merino Tee made of? Is it good for rain?",
+   "time": "2026-10-14T16:52:18+00:00",
+   "user_id": "cust_felix_324",
+   "end_user_id": "a0ee7a23-6e21-5ac5-92a3-08b75ac7c5d2",
+   "trace_id": null,
+   "facets": {
+    "model": "gpt-4o-mini",
+    "turns": 2,
+    "duration_ms": 97321,
+    "error": false
+   },
+   "answers": {
+    "6728e38e-a778-445d-aec7-9e12340adb69": {
+     "answer": "Product advice",
+     "explanation": "",
+     "confidence": 1.0,
+     "status": "completed"
+    },
+    "00342d72-8442-4309-b92e-becaba6f0b00": {
+     "answer": "Yes",
+     "explanation": "",
+     "confidence": 0.92,
+     "status": "completed"
+    }
+   }
+  },
+  {
+   "id": "26dd5036-e2c6-5ab8-b609-fdeaf1ccccad",
+   "label": "I'm 6'1\" and usually wear a large. What size Coastline Rain Shell should I get?",
+   "excerpt": "I'm 6'1\" and usually wear a large. What size Coastline Rain Shell should I get?",
+   "time": "2026-10-14T16:37:06+00:00",
+   "user_id": "cust_ada_532",
+   "end_user_id": "0f44a281-796e-5c9e-8c1c-12482e3a28d3",
+   "trace_id": null,
+   "facets": {
+    "model": "gpt-4o-mini",
+    "turns": 3,
+    "duration_ms": 210258,
+    "error": false
+   },
+   "answers": {
+    "6728e38e-a778-445d-aec7-9e12340adb69": {
+     "answer": "Product advice",
+     "explanation": "",
+     "confidence": 1.0,
+     "status": "completed"
+    },
+    "00342d72-8442-4309-b92e-becaba6f0b00": {
+     "answer": "Yes",
+     "explanation": "",
+     "confidence": 0.94,
+     "status": "completed"
+    }
+   }
+  },
+  {
+   "id": "be92cb63-46db-55bb-8cfc-aa9dbd2afae1",
+   "label": "Hi, where is my order HP-54476?",
+   "excerpt": "Hi, where is my order HP-54476?",
+   "time": "2026-10-14T14:40:48+00:00",
+   "user_id": "cust_carmen_948",
+   "end_user_id": "5d9e668d-2277-5763-9d75-d00cf4f46f42",
+   "trace_id": null,
+   "facets": {
+    "model": "gpt-4o-mini",
+    "turns": 2,
+    "duration_ms": 19118,
+    "error": false
+   },
+   "answers": {
+    "6728e38e-a778-445d-aec7-9e12340adb69": {
+     "answer": "Order status",
+     "explanation": "",
+     "confidence": 1.0,
+     "status": "completed"
+    },
+    "00342d72-8442-4309-b92e-becaba6f0b00": {
+     "answer": "Yes",
+     "explanation": "",
+     "confidence": 1.0,
+     "status": "completed"
+    }
+   }
+  },
+  {
+   "id": "f53ab98e-270c-59f7-82f7-a7049693dfdd",
+   "label": "Where is my order HP-52009? It was supposed to arrive two days ago.",
+   "excerpt": "Where is my order HP-52009? It was supposed to arrive two days ago.",
+   "time": "2026-10-14T14:14:34+00:00",
+   "user_id": "cust_vera_619",
+   "end_user_id": "0fdfe2b4-db98-596f-bbc7-c5a6d2697910",
+   "trace_id": null,
+   "facets": {
+    "model": "gpt-4o-mini",
+    "turns": 4,
+    "duration_ms": 246756,
+    "error": false
+   },
+   "answers": {
+    "6728e38e-a778-445d-aec7-9e12340adb69": {
+     "answer": "Order status",
+     "explanation": "",
+     "confidence": 1.0,
+     "status": "completed"
+    },
+    "00342d72-8442-4309-b92e-becaba6f0b00": {
+     "answer": "No",
+     "explanation": "",
+     "confidence": 1.0,
+     "status": "completed"
+    }
+   }
+  },
+  {
+   "id": "f2e12850-0735-53b6-a93c-aeaa9a5964b2",
+   "label": "Refund please, order HP-53480. The Everyday Merino Tee fell apart after a week.",
+   "excerpt": "Refund please, order HP-53480. The Everyday Merino Tee fell apart after a week.",
+   "time": "2026-10-14T12:41:59+00:00",
+   "user_id": "cust_lina_505",
+   "end_user_id": "0d4bcff1-ebe6-5fc3-bd2f-068bc0cb50b8",
+   "trace_id": null,
+   "facets": {
+    "model": "gpt-4.1-mini",
+    "turns": 2,
+    "duration_ms": 109900,
+    "error": false
+   },
+   "answers": {
+    "6728e38e-a778-445d-aec7-9e12340adb69": {
+     "answer": "Return or refund",
+     "explanation": "",
+     "confidence": 1.0,
+     "status": "completed"
+    },
+    "00342d72-8442-4309-b92e-becaba6f0b00": {
+     "answer": "Yes",
+     "explanation": "",
+     "confidence": 1.0,
+     "status": "completed"
+    }
+   }
+  },
+  {
+   "id": "fcdbaf25-4deb-5b3a-80b5-ae3e7a0a2aac",
+   "label": "Do you have any discount codes? I'm about to buy three things.",
+   "excerpt": "Do you have any discount codes? I'm about to buy three things.",
+   "time": "2026-10-14T12:24:45+00:00",
+   "user_id": "cust_maya_938",
+   "end_user_id": "475be90e-0678-59c4-b098-6218b27bd461",
+   "trace_id": null,
+   "facets": {
+    "model": "gpt-4o-mini",
+    "turns": 2,
+    "duration_ms": 41142,
+    "error": false
+   },
+   "answers": {
+    "6728e38e-a778-445d-aec7-9e12340adb69": {
+     "answer": "Wholesale or pricing",
+     "explanation": "",
+     "confidence": 1.0,
+     "status": "completed"
+    },
+    "00342d72-8442-4309-b92e-becaba6f0b00": {
+     "answer": "No",
+     "explanation": "",
+     "confidence": 0.9,
+     "status": "completed"
+    }
+   }
+  },
+  {
+   "id": "808a2b00-d465-58f6-a297-70468d16b555",
+   "label": "Hi, we need 40 Ridge Fleece Jackets with our logo for a company retreat. Do you do wholesale pricing and invoices?",
+   "excerpt": "Hi, we need 40 Ridge Fleece Jackets with our logo for a company retreat. Do you do wholesale pricing and invoices?",
+   "time": "2026-10-14T12:00:52+00:00",
+   "user_id": "cust_malik_535",
+   "end_user_id": "77344bc2-596d-5150-be70-947f40db1a4b",
+   "trace_id": null,
+   "facets": {
+    "model": "gpt-4.1-mini",
+    "turns": 2,
+    "duration_ms": 111723,
+    "error": false
+   },
+   "answers": {
+    "6728e38e-a778-445d-aec7-9e12340adb69": {
+     "answer": "Wholesale or pricing",
+     "explanation": "",
+     "confidence": 1.0,
+     "status": "completed"
+    },
+    "00342d72-8442-4309-b92e-becaba6f0b00": {
+     "answer": "No",
+     "explanation": "",
+     "confidence": 0.92,
+     "status": "completed"
+    }
+   }
+  },
+  {
+   "id": "8409e0aa-4cd4-59fb-adf2-854301c294e2",
+   "label": "Change the email on my account to alex97@proton.me, I lost access to my old one.",
+   "excerpt": "Change the email on my account to alex97@proton.me, I lost access to my old one.",
+   "time": "2026-10-14T11:08:13+00:00",
+   "user_id": "cust_rosa_710",
+   "end_user_id": "092177ed-160e-5cfe-afa1-2ff08ff68e57",
+   "trace_id": null,
+   "facets": {
+    "model": "gpt-4.1-mini",
+    "turns": 1,
+    "duration_ms": 1482,
+    "error": false
+   },
+   "answers": {
+    "6728e38e-a778-445d-aec7-9e12340adb69": {
+     "answer": "Account or email change",
+     "explanation": "",
+     "confidence": 1.0,
+     "status": "completed"
+    },
+    "00342d72-8442-4309-b92e-becaba6f0b00": {
+     "answer": "No",
+     "explanation": "",
+     "confidence": 0.16,
+     "status": "completed"
+    }
+   }
+  },
+  {
+   "id": "76b0793f-497c-5c5a-9859-57fef4566ebd",
+   "label": "Refund please, order HP-91685. The Coastline Rain Shell fell apart after a week.",
+   "excerpt": "Refund please, order HP-91685. The Coastline Rain Shell fell apart after a week.",
+   "time": "2026-10-14T10:35:45+00:00",
+   "user_id": "cust_leila_769",
+   "end_user_id": "30bae721-3b8b-55d4-819a-227af90a258c",
+   "trace_id": null,
+   "facets": {
+    "model": "gpt-4.1-mini",
+    "turns": 2,
+    "duration_ms": 61795,
+    "error": false
+   },
+   "answers": {
+    "6728e38e-a778-445d-aec7-9e12340adb69": {
+     "answer": "Return or refund",
+     "explanation": "",
+     "confidence": 1.0,
+     "status": "completed"
+    },
+    "00342d72-8442-4309-b92e-becaba6f0b00": {
+     "answer": "Yes",
+     "explanation": "",
+     "confidence": 1.0,
+     "status": "completed"
+    }
+   }
+  },
+  {
+   "id": "f54e1e1d-d225-5254-b4df-d2778fed3c41",
+   "label": "How do I send back my Coastline Rain Shell? Wrong size.",
+   "excerpt": "How do I send back my Coastline Rain Shell? Wrong size.",
+   "time": "2026-10-14T10:23:18+00:00",
+   "user_id": "cust_leila_769",
+   "end_user_id": "30bae721-3b8b-55d4-819a-227af90a258c",
+   "trace_id": null,
+   "facets": {
+    "model": "gpt-4.1-mini",
+    "turns": 3,
+    "duration_ms": 197724,
+    "error": false
+   },
+   "answers": {
+    "6728e38e-a778-445d-aec7-9e12340adb69": {
+     "answer": "Return or refund",
+     "explanation": "",
+     "confidence": 1.0,
+     "status": "completed"
+    },
+    "00342d72-8442-4309-b92e-becaba6f0b00": {
+     "answer": "Yes",
+     "explanation": "",
+     "confidence": 1.0,
+     "status": "completed"
+    }
+   }
+  },
+  {
+   "id": "39ce4aa7-9200-5108-877f-a3a30f44b076",
+   "label": "Please change my account email to alex58@proton.me.",
+   "excerpt": "Please change my account email to alex58@proton.me.",
+   "time": "2026-10-13T22:10:03+00:00",
+   "user_id": "cust_arjun_800",
+   "end_user_id": "769c98af-4c45-552f-a634-e3eee28d8832",
+   "trace_id": null,
+   "facets": {
+    "model": "gpt-4o-mini",
+    "turns": 2,
+    "duration_ms": 65884,
+    "error": false
+   },
+   "answers": {
+    "6728e38e-a778-445d-aec7-9e12340adb69": {
+     "answer": "Account or email change",
+     "explanation": "",
+     "confidence": 1.0,
+     "status": "completed"
+    },
+    "00342d72-8442-4309-b92e-becaba6f0b00": {
+     "answer": "Yes",
+     "explanation": "",
+     "confidence": 0.7,
+     "status": "completed"
+    }
+   }
+  },
+  {
+   "id": "23bbcb16-512e-5897-9cab-3e7907f8d39a",
+   "label": "What is the Everyday Merino Tee made of? Is it good for rain?",
+   "excerpt": "What is the Everyday Merino Tee made of? Is it good for rain?",
+   "time": "2026-10-13T19:02:49+00:00",
+   "user_id": "cust_tomas_705",
+   "end_user_id": "3cd6e3ec-1319-5de7-abfa-b1f540018075",
+   "trace_id": null,
+   "facets": {
+    "model": "gpt-4.1-mini",
+    "turns": 2,
+    "duration_ms": 52227,
+    "error": false
+   },
+   "answers": {
+    "6728e38e-a778-445d-aec7-9e12340adb69": {
+     "answer": "Product advice",
+     "explanation": "",
+     "confidence": 1.0,
+     "status": "completed"
+    },
+    "00342d72-8442-4309-b92e-becaba6f0b00": {
+     "answer": "No",
+     "explanation": "",
+     "confidence": 0.86,
+     "status": "completed"
+    }
+   }
+  },
+  {
+   "id": "0220bb66-18bc-5cd8-8912-cb04e37ec734",
+   "label": "Where is my order HP-81981? It was supposed to arrive two days ago.",
+   "excerpt": "Where is my order HP-81981? It was supposed to arrive two days ago.",
+   "time": "2026-10-13T18:59:21+00:00",
+   "user_id": "cust_aisha_912",
+   "end_user_id": "fd1c5f67-8cd1-5acb-9865-0b9e5dd2b11f",
+   "trace_id": null,
+   "facets": {
+    "model": "gpt-4o-mini",
+    "turns": 4,
+    "duration_ms": 302438,
+    "error": false
+   },
+   "answers": {
+    "6728e38e-a778-445d-aec7-9e12340adb69": {
+     "answer": "Order status",
+     "explanation": "",
+     "confidence": 1.0,
+     "status": "completed"
+    },
+    "00342d72-8442-4309-b92e-becaba6f0b00": {
+     "answer": "No",
+     "explanation": "",
+     "confidence": 1.0,
+     "status": "completed"
+    }
+   }
+  },
+  {
+   "id": "abcdec54-9912-5f9e-b044-07b159c344bf",
+   "label": "How do I send back my Coastline Rain Shell? Wrong size.",
+   "excerpt": "How do I send back my Coastline Rain Shell? Wrong size.",
+   "time": "2026-10-13T18:31:22+00:00",
+   "user_id": "cust_lina_505",
+   "end_user_id": "0d4bcff1-ebe6-5fc3-bd2f-068bc0cb50b8",
+   "trace_id": null,
+   "facets": {
+    "model": "gpt-4.1-mini",
+    "turns": 2,
+    "duration_ms": 142912,
+    "error": false
+   },
+   "answers": {
+    "6728e38e-a778-445d-aec7-9e12340adb69": {
+     "answer": "Return or refund",
+     "explanation": "",
+     "confidence": 1.0,
+     "status": "completed"
+    },
+    "00342d72-8442-4309-b92e-becaba6f0b00": {
+     "answer": "Yes",
+     "explanation": "",
+     "confidence": 1.0,
+     "status": "completed"
+    }
+   }
+  },
+  {
+   "id": "2b66b09c-28ef-5ad8-bfd7-2e76c73ad664",
+   "label": "Hi, I'd like to return the Pine Trail Boots I bought, it doesn't fit.",
+   "excerpt": "Hi, I'd like to return the Pine Trail Boots I bought, it doesn't fit.",
+   "time": "2026-10-13T17:31:27+00:00",
+   "user_id": "cust_leila_769",
+   "end_user_id": "30bae721-3b8b-55d4-819a-227af90a258c",
+   "trace_id": null,
+   "facets": {
+    "model": "gpt-4o-mini",
+    "turns": 3,
+    "duration_ms": 74627,
+    "error": false
+   },
+   "answers": {
+    "6728e38e-a778-445d-aec7-9e12340adb69": {
+     "answer": "Return or refund",
+     "explanation": "",
+     "confidence": 1.0,
+     "status": "completed"
+    },
+    "00342d72-8442-4309-b92e-becaba6f0b00": {
+     "answer": "Yes",
+     "explanation": "",
+     "confidence": 1.0,
+     "status": "completed"
+    }
+   }
+  },
+  {
+   "id": "593c0dc6-40c8-5b26-92fd-d6deb16a3efb",
+   "label": "Hi, we need 40 Ridge Fleece Jackets with our logo for a company retreat. Do you do wholesale pricing and invoices?",
+   "excerpt": "Hi, we need 40 Ridge Fleece Jackets with our logo for a company retreat. Do you do wholesale pricing and invoices?",
+   "time": "2026-10-13T17:14:33+00:00",
+   "user_id": "cust_malik_535",
+   "end_user_id": "77344bc2-596d-5150-be70-947f40db1a4b",
+   "trace_id": null,
+   "facets": {
+    "model": "gpt-4o-mini",
+    "turns": 2,
+    "duration_ms": 71841,
+    "error": false
+   },
+   "answers": {
+    "6728e38e-a778-445d-aec7-9e12340adb69": {
+     "answer": "Wholesale or pricing",
+     "explanation": "",
+     "confidence": 1.0,
+     "status": "completed"
+    },
+    "00342d72-8442-4309-b92e-becaba6f0b00": {
+     "answer": "No",
+     "explanation": "",
+     "confidence": 0.9,
+     "status": "completed"
+    }
+   }
+  },
+  {
+   "id": "fc74507c-e35b-5c37-a606-f16e87f15494",
+   "label": "Hi, I'd like to return the Pine Trail Boots I bought, it doesn't fit.",
+   "excerpt": "Hi, I'd like to return the Pine Trail Boots I bought, it doesn't fit.",
+   "time": "2026-10-13T16:53:00+00:00",
+   "user_id": "cust_leila_769",
+   "end_user_id": "30bae721-3b8b-55d4-819a-227af90a258c",
+   "trace_id": null,
+   "facets": {
+    "model": "gpt-4o-mini",
+    "turns": 2,
+    "duration_ms": 50108,
+    "error": false
+   },
+   "answers": {
+    "6728e38e-a778-445d-aec7-9e12340adb69": {
+     "answer": "Return or refund",
+     "explanation": "",
+     "confidence": 1.0,
+     "status": "completed"
+    },
+    "00342d72-8442-4309-b92e-becaba6f0b00": {
+     "answer": "Yes",
+     "explanation": "",
+     "confidence": 0.98,
+     "status": "completed"
+    }
+   }
+  },
+  {
+   "id": "44952273-1e2b-5c4b-87d2-f56f052751c1",
+   "label": "Can you check on order HP-32154?",
+   "excerpt": "Can you check on order HP-32154?",
+   "time": "2026-10-13T16:51:25.154821+00:00",
+   "user_id": "cust_lucas_328",
+   "end_user_id": "20bf082b-4869-54a5-a7e3-5c4f033777b2",
+   "trace_id": null,
+   "facets": {
+    "model": "gpt-4o-mini",
+    "turns": 2,
+    "duration_ms": 54553,
+    "error": true
+   },
+   "answers": {
+    "6728e38e-a778-445d-aec7-9e12340adb69": {
+     "answer": "Order status",
+     "explanation": "",
+     "confidence": 1.0,
+     "status": "completed"
+    },
+    "00342d72-8442-4309-b92e-becaba6f0b00": {
+     "answer": "No",
+     "explanation": "",
+     "confidence": 1.0,
+     "status": "completed"
+    }
+   }
+  },
+  {
+   "id": "9b5b0f56-f366-5472-bec0-25a1021a35a3",
+   "label": "Can you check on order HP-15055?",
+   "excerpt": "Can you check on order HP-15055?",
+   "time": "2026-10-13T16:45:40.991143+00:00",
+   "user_id": "cust_ravi_651",
+   "end_user_id": "e189aaa8-15e0-5740-8ae9-1257781dfe14",
+   "trace_id": null,
+   "facets": {
+    "model": "gpt-4o-mini",
+    "turns": 2,
+    "duration_ms": 108230,
+    "error": true
+   },
+   "answers": {
+    "6728e38e-a778-445d-aec7-9e12340adb69": {
+     "answer": "Order status",
+     "explanation": "",
+     "confidence": 1.0,
+     "status": "completed"
+    },
+    "00342d72-8442-4309-b92e-becaba6f0b00": {
+     "answer": "No",
+     "explanation": "",
+     "confidence": 1.0,
+     "status": "completed"
+    }
+   }
+  },
+  {
+   "id": "3be6d9d6-a3fb-5aaf-9c16-5262e5aeae95",
+   "label": "Can you check on order HP-44692?",
+   "excerpt": "Can you check on order HP-44692?",
+   "time": "2026-10-13T16:39:36.673998+00:00",
+   "user_id": "cust_hannah_116",
+   "end_user_id": "ca9bbbee-66ff-5523-b397-fd51fad43d6c",
+   "trace_id": null,
+   "facets": {
+    "model": "gpt-4o-mini",
+    "turns": 2,
+    "duration_ms": 80653,
+    "error": true
+   },
+   "answers": {
+    "6728e38e-a778-445d-aec7-9e12340adb69": {
+     "answer": "Order status",
+     "explanation": "",
+     "confidence": 1.0,
+     "status": "completed"
+    },
+    "00342d72-8442-4309-b92e-becaba6f0b00": {
+     "answer": "No",
+     "explanation": "",
+     "confidence": 1.0,
+     "status": "completed"
+    }
+   }
+  },
+  {
+   "id": "e9b96f34-d317-5436-b1cb-4afaa8b0fb64",
+   "label": "Can you check on order HP-49932?",
+   "excerpt": "Can you check on order HP-49932?",
+   "time": "2026-10-13T16:20:35.239948+00:00",
+   "user_id": "cust_hannah_116",
+   "end_user_id": "ca9bbbee-66ff-5523-b397-fd51fad43d6c",
+   "trace_id": null,
+   "facets": {
+    "model": "gpt-4o-mini",
+    "turns": 2,
+    "duration_ms": 50264,
+    "error": true
+   },
+   "answers": {
+    "6728e38e-a778-445d-aec7-9e12340adb69": {
+     "answer": "Order status",
+     "explanation": "",
+     "confidence": 1.0,
+     "status": "completed"
+    },
+    "00342d72-8442-4309-b92e-becaba6f0b00": {
+     "answer": "No",
+     "explanation": "",
+     "confidence": 1.0,
+     "status": "completed"
+    }
+   }
+  },
+  {
+   "id": "f73082d2-b1d8-5fbc-b815-524241451da4",
+   "label": "Can you check on order HP-43751?",
+   "excerpt": "Can you check on order HP-43751?",
+   "time": "2026-10-13T15:32:24.595406+00:00",
+   "user_id": "cust_lucas_328",
+   "end_user_id": "20bf082b-4869-54a5-a7e3-5c4f033777b2",
+   "trace_id": null,
+   "facets": {
+    "model": "gpt-4o-mini",
+    "turns": 2,
+    "duration_ms": 118490,
+    "error": true
+   },
+   "answers": {
+    "6728e38e-a778-445d-aec7-9e12340adb69": {
+     "answer": "Order status",
+     "explanation": "",
+     "confidence": 1.0,
+     "status": "completed"
+    },
+    "00342d72-8442-4309-b92e-becaba6f0b00": {
+     "answer": "No",
+     "explanation": "",
+     "confidence": 1.0,
+     "status": "completed"
+    }
+   }
+  },
+  {
+   "id": "2b2fd09d-dc5a-5d62-aac7-7d2db73f7f11",
+   "label": "Can you check on order HP-95454?",
+   "excerpt": "Can you check on order HP-95454?",
+   "time": "2026-10-13T15:19:29.131299+00:00",
+   "user_id": "cust_jonas_417",
+   "end_user_id": "f17450ad-a602-5695-ab47-57af563c9fd6",
+   "trace_id": null,
+   "facets": {
+    "model": "gpt-4o-mini",
+    "turns": 2,
+    "duration_ms": 44237,
+    "error": true
+   },
+   "answers": {
+    "6728e38e-a778-445d-aec7-9e12340adb69": {
+     "answer": "Order status",
+     "explanation": "",
+     "confidence": 1.0,
+     "status": "completed"
+    },
+    "00342d72-8442-4309-b92e-becaba6f0b00": {
+     "answer": "No",
+     "explanation": "",
+     "confidence": 1.0,
+     "status": "completed"
+    }
+   }
+  },
+  {
+   "id": "0753d08c-6ae2-5761-a64e-83f185367807",
+   "label": "Can you check on order HP-98190?",
+   "excerpt": "Can you check on order HP-98190?",
+   "time": "2026-10-13T15:06:37.780330+00:00",
+   "user_id": "cust_hannah_116",
+   "end_user_id": "ca9bbbee-66ff-5523-b397-fd51fad43d6c",
+   "trace_id": null,
+   "facets": {
+    "model": "gpt-4.1-mini",
+    "turns": 2,
+    "duration_ms": 45005,
+    "error": true
+   },
+   "answers": {
+    "6728e38e-a778-445d-aec7-9e12340adb69": {
+     "answer": "Order status",
+     "explanation": "",
+     "confidence": 1.0,
+     "status": "completed"
+    },
+    "00342d72-8442-4309-b92e-becaba6f0b00": {
+     "answer": "No",
+     "explanation": "",
+     "confidence": 1.0,
+     "status": "completed"
+    }
+   }
+  },
+  {
+   "id": "a95152c4-6f71-5fe9-8d63-89a740ca87fc",
+   "label": "Can you check on order HP-32669?",
+   "excerpt": "Can you check on order HP-32669?",
+   "time": "2026-10-13T14:57:59.860730+00:00",
+   "user_id": "cust_jonas_417",
+   "end_user_id": "f17450ad-a602-5695-ab47-57af563c9fd6",
+   "trace_id": null,
+   "facets": {
+    "model": "gpt-4.1-mini",
+    "turns": 2,
+    "duration_ms": 164068,
+    "error": true
+   },
+   "answers": {
+    "6728e38e-a778-445d-aec7-9e12340adb69": {
+     "answer": "Order status",
+     "explanation": "",
+     "confidence": 1.0,
+     "status": "completed"
+    },
+    "00342d72-8442-4309-b92e-becaba6f0b00": {
+     "answer": "No",
+     "explanation": "",
+     "confidence": 1.0,
+     "status": "completed"
+    }
+   }
+  },
+  {
+   "id": "553b226b-e091-5cdb-bba0-3c4f6dc36422",
+   "label": "I need to speak to a human. Now.",
+   "excerpt": "I need to speak to a human. Now.",
+   "time": "2026-10-13T11:04:37+00:00",
+   "user_id": "cust_priya_597",
+   "end_user_id": "6c2ea44c-5f49-5cfb-9423-d8ce87006f91",
+   "trace_id": null,
+   "facets": {
+    "model": "gpt-4o-mini",
+    "turns": 3,
+    "duration_ms": 134731,
+    "error": false
+   },
+   "answers": {
+    "6728e38e-a778-445d-aec7-9e12340adb69": {
+     "answer": "Something else",
+     "explanation": "",
+     "confidence": 1.0,
+     "status": "completed"
+    },
+    "00342d72-8442-4309-b92e-becaba6f0b00": {
+     "answer": "No",
+     "explanation": "",
+     "confidence": 1.0,
+     "status": "completed"
+    }
+   }
+  },
+  {
+   "id": "8527d7a5-0a6d-51ba-8e38-6dde094ba971",
+   "label": "Just wanted to say the Harbor Oxford Shirt is amazing, wore it all weekend!",
+   "excerpt": "Just wanted to say the Harbor Oxford Shirt is amazing, wore it all weekend!",
+   "time": "2026-10-13T09:41:14+00:00",
+   "user_id": "cust_mateo_596",
+   "end_user_id": "60595de2-9e19-568e-b319-2a7fa0e84c42",
+   "trace_id": null,
+   "facets": {
+    "model": "gpt-4o-mini",
+    "turns": 1,
+    "duration_ms": 2324,
+    "error": false
+   },
+   "answers": {
+    "6728e38e-a778-445d-aec7-9e12340adb69": {
+     "answer": "Something else",
+     "explanation": "",
+     "confidence": 1.0,
+     "status": "completed"
+    },
+    "00342d72-8442-4309-b92e-becaba6f0b00": {
+     "answer": "No",
+     "explanation": "",
+     "confidence": 0.28,
+     "status": "completed"
+    }
+   }
+  },
+  {
+   "id": "672df2ae-dde8-5d03-a4a8-5087b33af3cc",
+   "label": "Where is my order HP-66835? It was supposed to arrive two days ago.",
+   "excerpt": "Where is my order HP-66835? It was supposed to arrive two days ago.",
+   "time": "2026-10-13T09:29:22+00:00",
+   "user_id": "cust_mia_399",
+   "end_user_id": "a7388d8f-eee3-5157-a10e-815d0eeb02c6",
+   "trace_id": null,
+   "facets": {
+    "model": "gpt-4.1-mini",
+    "turns": 4,
+    "duration_ms": 240930,
+    "error": false
+   },
+   "answers": {
+    "6728e38e-a778-445d-aec7-9e12340adb69": {
+     "answer": "Order status",
+     "explanation": "",
+     "confidence": 1.0,
+     "status": "completed"
+    },
+    "00342d72-8442-4309-b92e-becaba6f0b00": {
+     "answer": "No",
+     "explanation": "",
+     "confidence": 1.0,
+     "status": "completed"
+    }
+   }
+  },
+  {
+   "id": "28a02674-a742-5660-9963-edff8c2fea46",
+   "label": "Hola, mi pedido HP-78959 todav\u00eda no ha llegado. \u00bfD\u00f3nde est\u00e1?",
+   "excerpt": "Hola, mi pedido HP-78959 todav\u00eda no ha llegado. \u00bfD\u00f3nde est\u00e1?",
+   "time": "2026-10-13T08:53:14+00:00",
+   "user_id": "cust_olivia_367",
+   "end_user_id": "2392cc84-20e6-5edc-823f-4c343276a02c",
+   "trace_id": null,
+   "facets": {
+    "model": "gpt-4.1-mini",
+    "turns": 2,
+    "duration_ms": 124152,
+    "error": false
+   },
+   "answers": {
+    "6728e38e-a778-445d-aec7-9e12340adb69": {
+     "answer": "Order status",
+     "explanation": "",
+     "confidence": 1.0,
+     "status": "completed"
+    },
+    "00342d72-8442-4309-b92e-becaba6f0b00": {
+     "answer": "Yes",
+     "explanation": "",
+     "confidence": 1.0,
+     "status": "completed"
+    }
+   }
+  },
+  {
+   "id": "08e10e94-2c4d-597d-8271-b6194216b959",
+   "label": "I'm 6'1\" and usually wear a large. What size Summit Down Vest should I get?",
+   "excerpt": "I'm 6'1\" and usually wear a large. What size Summit Down Vest should I get?",
+   "time": "2026-10-13T08:33:48+00:00",
+   "user_id": "cust_sofia_322",
+   "end_user_id": "7198250f-77b1-56ae-bd28-fa779b4eb95d",
+   "trace_id": null,
+   "facets": {
+    "model": "gpt-4o-mini",
+    "turns": 3,
+    "duration_ms": 124797,
+    "error": false
+   },
+   "answers": {
+    "6728e38e-a778-445d-aec7-9e12340adb69": {
+     "answer": "Product advice",
+     "explanation": "",
+     "confidence": 1.0,
+     "status": "completed"
+    },
+    "00342d72-8442-4309-b92e-becaba6f0b00": {
+     "answer": "Yes",
+     "explanation": "",
+     "confidence": 0.6,
+     "status": "completed"
+    }
+   }
+  },
+  {
+   "id": "7417acf5-20e8-57f5-8945-3c6c8de908e5",
+   "label": "Where is my order HP-64264? It was supposed to arrive two days ago.",
+   "excerpt": "Where is my order HP-64264? It was supposed to arrive two days ago.",
+   "time": "2026-10-12T21:58:02+00:00",
+   "user_id": "cust_ravi_651",
+   "end_user_id": "e189aaa8-15e0-5740-8ae9-1257781dfe14",
+   "trace_id": null,
+   "facets": {
+    "model": "gpt-4.1-mini",
+    "turns": 4,
+    "duration_ms": 296639,
+    "error": false
+   },
+   "answers": {
+    "6728e38e-a778-445d-aec7-9e12340adb69": {
+     "answer": "Order status",
+     "explanation": "",
+     "confidence": 1.0,
+     "status": "completed"
+    },
+    "00342d72-8442-4309-b92e-becaba6f0b00": {
+     "answer": "No",
+     "explanation": "",
+     "confidence": 1.0,
+     "status": "completed"
+    }
+   }
+  },
+  {
+   "id": "91b688a4-f8df-5d84-b16c-602b4ebc1aff",
+   "label": "I want a refund for the Ridge Fleece Jacket, order HP-64847.",
+   "excerpt": "I want a refund for the Ridge Fleece Jacket, order HP-64847.",
+   "time": "2026-10-12T19:21:20+00:00",
+   "user_id": "cust_ben_312",
+   "end_user_id": "76154895-e08c-5f65-ad97-f3340591f374",
+   "trace_id": null,
+   "facets": {
+    "model": "gpt-4.1-mini",
+    "turns": 2,
+    "duration_ms": 46130,
+    "error": false
+   },
+   "answers": {
+    "6728e38e-a778-445d-aec7-9e12340adb69": {
+     "answer": "Return or refund",
+     "explanation": "",
+     "confidence": 1.0,
+     "status": "completed"
+    },
+    "00342d72-8442-4309-b92e-becaba6f0b00": {
+     "answer": "Yes",
+     "explanation": "",
+     "confidence": 0.98,
+     "status": "completed"
+    }
+   }
+  },
+  {
+   "id": "8f07f6c3-b34c-562f-a3ee-4bbf8cd0d8a3",
+   "label": "Refund please, order HP-13342. The Coastline Rain Shell fell apart after a week.",
+   "excerpt": "Refund please, order HP-13342. The Coastline Rain Shell fell apart after a week.",
+   "time": "2026-10-12T19:04:21+00:00",
+   "user_id": "cust_ben_312",
+   "end_user_id": "76154895-e08c-5f65-ad97-f3340591f374",
+   "trace_id": null,
+   "facets": {
+    "model": "gpt-4o-mini",
+    "turns": 2,
+    "duration_ms": 107004,
+    "error": false
+   },
+   "answers": {
+    "6728e38e-a778-445d-aec7-9e12340adb69": {
+     "answer": "Return or refund",
+     "explanation": "",
+     "confidence": 1.0,
+     "status": "completed"
+    },
+    "00342d72-8442-4309-b92e-becaba6f0b00": {
+     "answer": "Yes",
+     "explanation": "",
+     "confidence": 1.0,
+     "status": "completed"
+    }
+   }
+  },
+  {
+   "id": "2809c3d2-1414-5537-b01f-e89ffeef4a97",
+   "label": "Hi, where is my order HP-71821?",
+   "excerpt": "Hi, where is my order HP-71821?",
+   "time": "2026-10-12T17:10:07+00:00",
+   "user_id": "cust_theo_477",
+   "end_user_id": "d9daeabe-e004-53fe-9b3b-38920e0649d0",
+   "trace_id": null,
+   "facets": {
+    "model": "gpt-4o-mini",
+    "turns": 2,
+    "duration_ms": 122439,
+    "error": false
+   },
+   "answers": {
+    "6728e38e-a778-445d-aec7-9e12340adb69": {
+     "answer": "Order status",
+     "explanation": "",
+     "confidence": 1.0,
+     "status": "completed"
+    },
+    "00342d72-8442-4309-b92e-becaba6f0b00": {
+     "answer": "Yes",
+     "explanation": "",
+     "confidence": 1.0,
+     "status": "completed"
+    }
+   }
+  },
+  {
+   "id": "d137d8db-6dc8-5f2b-80da-afb958469b68",
+   "label": "I need to speak to a human. Now.",
+   "excerpt": "I need to speak to a human. Now.",
+   "time": "2026-10-12T16:23:31+00:00",
+   "user_id": "cust_pablo_144",
+   "end_user_id": "f9d8bb3d-7547-598c-9da5-b895613c3942",
+   "trace_id": null,
+   "facets": {
+    "model": "gpt-4o-mini",
+    "turns": 1,
+    "duration_ms": 2522,
+    "error": false
+   },
+   "answers": {
+    "6728e38e-a778-445d-aec7-9e12340adb69": {
+     "answer": "Something else",
+     "explanation": "",
+     "confidence": 1.0,
+     "status": "completed"
+    },
+    "00342d72-8442-4309-b92e-becaba6f0b00": {
+     "answer": "No",
+     "explanation": "",
+     "confidence": 0.46,
+     "status": "completed"
+    }
+   }
+  },
+  {
+   "id": "d0c794de-54ca-587d-b664-6f7b980e14fc",
+   "label": "Just wanted to say the Summit Down Vest is amazing, wore it all weekend!",
+   "excerpt": "Just wanted to say the Summit Down Vest is amazing, wore it all weekend!",
+   "time": "2026-10-12T16:07:43+00:00",
+   "user_id": "cust_ines_979",
+   "end_user_id": "d6126f89-131e-59fd-a9ac-9a1448c03c0c",
+   "trace_id": null,
+   "facets": {
+    "model": "gpt-4.1-mini",
+    "turns": 1,
+    "duration_ms": 2536,
+    "error": false
+   },
+   "answers": {
+    "6728e38e-a778-445d-aec7-9e12340adb69": {
+     "answer": "Something else",
+     "explanation": "",
+     "confidence": 1.0,
+     "status": "completed"
+    },
+    "00342d72-8442-4309-b92e-becaba6f0b00": {
+     "answer": "No",
+     "explanation": "",
+     "confidence": 0.3,
+     "status": "completed"
+    }
+   }
+  },
+  {
+   "id": "15d72d08-c595-5706-ae4f-c0654a4e6b2f",
+   "label": "Hi, we need 40 Ridge Fleece Jackets with our logo for a company retreat. Do you do wholesale pricing and invoices?",
+   "excerpt": "Hi, we need 40 Ridge Fleece Jackets with our logo for a company retreat. Do you do wholesale pricing and invoices?",
+   "time": "2026-10-12T15:50:40+00:00",
+   "user_id": "cust_david_899",
+   "end_user_id": "de8f7412-917f-53f6-8831-7c80607266e1",
+   "trace_id": null,
+   "facets": {
+    "model": "gpt-4o-mini",
+    "turns": 2,
+    "duration_ms": 83997,
+    "error": false
+   },
+   "answers": {
+    "6728e38e-a778-445d-aec7-9e12340adb69": {
+     "answer": "Wholesale or pricing",
+     "explanation": "",
+     "confidence": 1.0,
+     "status": "completed"
+    },
+    "00342d72-8442-4309-b92e-becaba6f0b00": {
+     "answer": "Yes",
+     "explanation": "",
+     "confidence": 0.8,
+     "status": "completed"
+    }
+   }
+  },
+  {
+   "id": "f47467da-baec-52cd-9f12-9515bacd0518",
+   "label": "Refund please, order HP-14869. The Harbor Oxford Shirt fell apart after a week.",
+   "excerpt": "Refund please, order HP-14869. The Harbor Oxford Shirt fell apart after a week.",
+   "time": "2026-10-12T14:54:51+00:00",
+   "user_id": "cust_lucia_406",
+   "end_user_id": "e0c4405d-e4ae-5e9a-bf80-dab3239117c9",
+   "trace_id": null,
+   "facets": {
+    "model": "gpt-4.1-mini",
+    "turns": 2,
+    "duration_ms": 139879,
+    "error": false
+   },
+   "answers": {
+    "6728e38e-a778-445d-aec7-9e12340adb69": {
+     "answer": "Return or refund",
+     "explanation": "",
+     "confidence": 1.0,
+     "status": "completed"
+    },
+    "00342d72-8442-4309-b92e-becaba6f0b00": {
+     "answer": "Yes",
+     "explanation": "",
+     "confidence": 1.0,
+     "status": "completed"
+    }
+   }
+  },
+  {
+   "id": "42bd434c-6a15-5971-8893-2b053679c077",
+   "label": "Do you have any discount codes? I'm about to buy three things.",
+   "excerpt": "Do you have any discount codes? I'm about to buy three things.",
+   "time": "2026-10-12T14:46:00+00:00",
+   "user_id": "cust_maya_938",
+   "end_user_id": "475be90e-0678-59c4-b098-6218b27bd461",
+   "trace_id": null,
+   "facets": {
+    "model": "gpt-4o-mini",
+    "turns": 2,
+    "duration_ms": 29543,
+    "error": false
+   },
+   "answers": {
+    "6728e38e-a778-445d-aec7-9e12340adb69": {
+     "answer": "Wholesale or pricing",
+     "explanation": "",
+     "confidence": 1.0,
+     "status": "completed"
+    },
+    "00342d72-8442-4309-b92e-becaba6f0b00": {
+     "answer": "No",
+     "explanation": "",
+     "confidence": 0.88,
+     "status": "completed"
+    }
+   }
+  },
+  {
+   "id": "332687f3-325e-5391-9272-3ffa2acf03ee",
+   "label": "Change the email on my account to kai27@proton.me, I lost access to my old one.",
+   "excerpt": "Change the email on my account to kai27@proton.me, I lost access to my old one.",
+   "time": "2026-10-12T13:36:31+00:00",
+   "user_id": "cust_rosa_710",
+   "end_user_id": "092177ed-160e-5cfe-afa1-2ff08ff68e57",
+   "trace_id": null,
+   "facets": {
+    "model": "gpt-4o-mini",
+    "turns": 1,
+    "duration_ms": 1544,
+    "error": false
+   },
+   "answers": {
+    "6728e38e-a778-445d-aec7-9e12340adb69": {
+     "answer": "Account or email change",
+     "explanation": "",
+     "confidence": 1.0,
+     "status": "completed"
+    },
+    "00342d72-8442-4309-b92e-becaba6f0b00": {
+     "answer": "No",
+     "explanation": "",
+     "confidence": 0.2,
+     "status": "completed"
+    }
+   }
+  },
+  {
+   "id": "25ba2fa6-1650-50fd-a963-1cbed41c8a12",
+   "label": "Hola, mi pedido HP-14791 todav\u00eda no ha llegado. \u00bfD\u00f3nde est\u00e1?",
+   "excerpt": "Hola, mi pedido HP-14791 todav\u00eda no ha llegado. \u00bfD\u00f3nde est\u00e1?",
+   "time": "2026-10-12T10:15:10+00:00",
+   "user_id": "cust_sam_254",
+   "end_user_id": "3d191815-8f50-5c04-9d45-50ad00923d4f",
+   "trace_id": null,
+   "facets": {
+    "model": "gpt-4.1-mini",
+    "turns": 2,
+    "duration_ms": 127736,
+    "error": false
+   },
+   "answers": {
+    "6728e38e-a778-445d-aec7-9e12340adb69": {
+     "answer": "Order status",
+     "explanation": "",
+     "confidence": 1.0,
+     "status": "completed"
+    },
+    "00342d72-8442-4309-b92e-becaba6f0b00": {
+     "answer": "No",
+     "explanation": "",
+     "confidence": 0.96,
+     "status": "completed"
+    }
+   }
+  },
+  {
+   "id": "e821989a-9fc4-59ec-bb2a-f8246e712d54",
+   "label": "Hi, where is my order HP-90809?",
+   "excerpt": "Hi, where is my order HP-90809?",
+   "time": "2026-10-12T10:05:54+00:00",
+   "user_id": "cust_ravi_651",
+   "end_user_id": "e189aaa8-15e0-5740-8ae9-1257781dfe14",
+   "trace_id": null,
+   "facets": {
+    "model": "gpt-4o-mini",
+    "turns": 2,
+    "duration_ms": 66515,
+    "error": false
+   },
+   "answers": {
+    "6728e38e-a778-445d-aec7-9e12340adb69": {
+     "answer": "Order status",
+     "explanation": "",
+     "confidence": 1.0,
+     "status": "completed"
+    },
+    "00342d72-8442-4309-b92e-becaba6f0b00": {
+     "answer": "Yes",
+     "explanation": "",
+     "confidence": 1.0,
+     "status": "completed"
+    }
+   }
+  },
+  {
+   "id": "ef1cc0c8-93aa-5c7b-aba1-870eea1bb746",
+   "label": "Do you have any discount codes? I'm about to buy three things.",
+   "excerpt": "Do you have any discount codes? I'm about to buy three things.",
+   "time": "2026-10-12T04:31:02+00:00",
+   "user_id": "cust_jordan_175",
+   "end_user_id": "628ae098-7ebd-5df7-a5aa-c957f91c599a",
+   "trace_id": null,
+   "facets": {
+    "model": "gpt-4o-mini",
+    "turns": 2,
+    "duration_ms": 82288,
+    "error": false
+   },
+   "answers": {
+    "6728e38e-a778-445d-aec7-9e12340adb69": {
+     "answer": "Wholesale or pricing",
+     "explanation": "",
+     "confidence": 1.0,
+     "status": "completed"
+    },
+    "00342d72-8442-4309-b92e-becaba6f0b00": {
+     "answer": "No",
+     "explanation": "",
+     "confidence": 0.88,
+     "status": "completed"
+    }
+   }
+  },
+  {
+   "id": "fe497b53-f1c4-58a2-a82c-f2cfbe8d3257",
+   "label": "Hola, mi pedido HP-23918 todav\u00eda no ha llegado. \u00bfD\u00f3nde est\u00e1?",
+   "excerpt": "Hola, mi pedido HP-23918 todav\u00eda no ha llegado. \u00bfD\u00f3nde est\u00e1?",
+   "time": "2026-10-11T18:47:03+00:00",
+   "user_id": "cust_sam_254",
+   "end_user_id": "3d191815-8f50-5c04-9d45-50ad00923d4f",
+   "trace_id": null,
+   "facets": {
+    "model": "gpt-4.1-mini",
+    "turns": 2,
+    "duration_ms": 115756,
+    "error": false
+   },
+   "answers": {
+    "6728e38e-a778-445d-aec7-9e12340adb69": {
+     "answer": "Order status",
+     "explanation": "",
+     "confidence": 1.0,
+     "status": "completed"
+    },
+    "00342d72-8442-4309-b92e-becaba6f0b00": {
+     "answer": "Yes",
+     "explanation": "",
+     "confidence": 1.0,
+     "status": "completed"
+    }
+   }
+  },
+  {
+   "id": "cdade1cc-9e23-5fc6-bddf-35caca91bdf4",
+   "label": "How do I send back my Summit Down Vest? Wrong size.",
+   "excerpt": "How do I send back my Summit Down Vest? Wrong size.",
+   "time": "2026-10-11T17:42:49+00:00",
+   "user_id": "cust_chen_877",
+   "end_user_id": "6070c2c0-43fb-5a67-a1de-25a3aeb5b2ac",
+   "trace_id": null,
+   "facets": {
+    "model": "gpt-4o-mini",
+    "turns": 3,
+    "duration_ms": 284591,
+    "error": false
+   },
+   "answers": {
+    "6728e38e-a778-445d-aec7-9e12340adb69": {
+     "answer": "Return or refund",
+     "explanation": "",
+     "confidence": 1.0,
+     "status": "completed"
+    },
+    "00342d72-8442-4309-b92e-becaba6f0b00": {
+     "answer": "Yes",
+     "explanation": "",
+     "confidence": 1.0,
+     "status": "completed"
+    }
+   }
+  },
+  {
+   "id": "927eb18b-711e-5548-b228-f89bb887f773",
+   "label": "Where is my order HP-93946? It was supposed to arrive two days ago.",
+   "excerpt": "Where is my order HP-93946? It was supposed to arrive two days ago.",
+   "time": "2026-10-11T17:38:25+00:00",
+   "user_id": "cust_ravi_651",
+   "end_user_id": "e189aaa8-15e0-5740-8ae9-1257781dfe14",
+   "trace_id": null,
+   "facets": {
+    "model": "gpt-4o-mini",
+    "turns": 4,
+    "duration_ms": 258156,
+    "error": false
+   },
+   "answers": {
+    "6728e38e-a778-445d-aec7-9e12340adb69": {
+     "answer": "Order status",
+     "explanation": "",
+     "confidence": 1.0,
+     "status": "completed"
+    },
+    "00342d72-8442-4309-b92e-becaba6f0b00": {
+     "answer": "No",
+     "explanation": "",
+     "confidence": 1.0,
+     "status": "completed"
+    }
+   }
+  },
+  {
+   "id": "57225855-8adf-575d-84a2-c94a30028b93",
+   "label": "Where is my order HP-50696? It was supposed to arrive two days ago.",
+   "excerpt": "Where is my order HP-50696? It was supposed to arrive two days ago.",
+   "time": "2026-10-11T15:05:53+00:00",
+   "user_id": "cust_vera_619",
+   "end_user_id": "0fdfe2b4-db98-596f-bbc7-c5a6d2697910",
+   "trace_id": null,
+   "facets": {
+    "model": "gpt-4o-mini",
+    "turns": 4,
+    "duration_ms": 120407,
+    "error": false
+   },
+   "answers": {
+    "6728e38e-a778-445d-aec7-9e12340adb69": {
+     "answer": "Order status",
+     "explanation": "",
+     "confidence": 1.0,
+     "status": "completed"
+    },
+    "00342d72-8442-4309-b92e-becaba6f0b00": {
+     "answer": "No",
+     "explanation": "",
+     "confidence": 1.0,
+     "status": "completed"
+    }
+   }
+  },
+  {
+   "id": "0a853f54-2bbc-51ad-87a9-ac54733ee8b1",
+   "label": "Hola, mi pedido HP-11510 todav\u00eda no ha llegado. \u00bfD\u00f3nde est\u00e1?",
+   "excerpt": "Hola, mi pedido HP-11510 todav\u00eda no ha llegado. \u00bfD\u00f3nde est\u00e1?",
+   "time": "2026-10-11T14:01:26+00:00",
+   "user_id": "cust_olivia_367",
+   "end_user_id": "2392cc84-20e6-5edc-823f-4c343276a02c",
+   "trace_id": null,
+   "facets": {
+    "model": "gpt-4.1-mini",
+    "turns": 2,
+    "duration_ms": 109478,
+    "error": false
+   },
+   "answers": {
+    "6728e38e-a778-445d-aec7-9e12340adb69": {
+     "answer": "Order status",
+     "explanation": "",
+     "confidence": 1.0,
+     "status": "completed"
+    },
+    "00342d72-8442-4309-b92e-becaba6f0b00": {
+     "answer": "No",
+     "explanation": "",
+     "confidence": 0.94,
+     "status": "completed"
+    }
+   }
+  },
+  {
+   "id": "42016e4d-907a-5042-9239-173b610eac36",
+   "label": "Hi, we need 40 Ridge Fleece Jackets with our logo for a company retreat. Do you do wholesale pricing and invoices?",
+   "excerpt": "Hi, we need 40 Ridge Fleece Jackets with our logo for a company retreat. Do you do wholesale pricing and invoices?",
+   "time": "2026-10-11T12:44:30+00:00",
+   "user_id": "cust_david_899",
+   "end_user_id": "de8f7412-917f-53f6-8831-7c80607266e1",
+   "trace_id": null,
+   "facets": {
+    "model": "gpt-4.1-mini",
+    "turns": 2,
+    "duration_ms": 143761,
+    "error": false
+   },
+   "answers": {
+    "6728e38e-a778-445d-aec7-9e12340adb69": {
+     "answer": "Wholesale or pricing",
+     "explanation": "",
+     "confidence": 1.0,
+     "status": "completed"
+    },
+    "00342d72-8442-4309-b92e-becaba6f0b00": {
+     "answer": "Yes",
+     "explanation": "",
+     "confidence": 0.84,
+     "status": "completed"
+    }
+   }
+  },
+  {
+   "id": "3274a8c6-807e-50a0-be33-b4914618fa84",
+   "label": "Hi, I'd like to return the Harbor Oxford Shirt I bought, it doesn't fit.",
+   "excerpt": "Hi, I'd like to return the Harbor Oxford Shirt I bought, it doesn't fit.",
+   "time": "2026-10-11T12:39:12+00:00",
+   "user_id": "cust_ben_312",
+   "end_user_id": "76154895-e08c-5f65-ad97-f3340591f374",
+   "trace_id": null,
+   "facets": {
+    "model": "gpt-4.1-mini",
+    "turns": 3,
+    "duration_ms": 101159,
+    "error": false
+   },
+   "answers": {
+    "6728e38e-a778-445d-aec7-9e12340adb69": {
+     "answer": "Return or refund",
+     "explanation": "",
+     "confidence": 1.0,
+     "status": "completed"
+    },
+    "00342d72-8442-4309-b92e-becaba6f0b00": {
+     "answer": "Yes",
+     "explanation": "",
+     "confidence": 1.0,
+     "status": "completed"
+    }
+   }
+  },
+  {
+   "id": "2f75dac5-bd74-5a11-8bb9-d4d8db895970",
+   "label": "I'm 6'1\" and usually wear a large. What size Harbor Oxford Shirt should I get?",
+   "excerpt": "I'm 6'1\" and usually wear a large. What size Harbor Oxford Shirt should I get?",
+   "time": "2026-10-11T12:22:00+00:00",
+   "user_id": "cust_tomas_705",
+   "end_user_id": "3cd6e3ec-1319-5de7-abfa-b1f540018075",
+   "trace_id": null,
+   "facets": {
+    "model": "gpt-4o-mini",
+    "turns": 3,
+    "duration_ms": 204475,
+    "error": false
+   },
+   "answers": {
+    "6728e38e-a778-445d-aec7-9e12340adb69": {
+     "answer": "Product advice",
+     "explanation": "",
+     "confidence": 1.0,
+     "status": "completed"
+    },
+    "00342d72-8442-4309-b92e-becaba6f0b00": {
+     "answer": "Yes",
+     "explanation": "",
+     "confidence": 0.02,
+     "status": "completed"
+    }
+   }
+  },
+  {
+   "id": "17245e56-ce64-5941-bade-0196b83be2d2",
+   "label": "What is the Ridge Fleece Jacket made of? Is it good for rain?",
+   "excerpt": "What is the Ridge Fleece Jacket made of? Is it good for rain?",
+   "time": "2026-10-11T12:07:34+00:00",
+   "user_id": "cust_liam_354",
+   "end_user_id": "fede6ee8-95d8-5189-96ce-b2ef938b98d9",
+   "trace_id": null,
+   "facets": {
+    "model": "gpt-4o-mini",
+    "turns": 2,
+    "duration_ms": 47915,
+    "error": false
+   },
+   "answers": {
+    "6728e38e-a778-445d-aec7-9e12340adb69": {
+     "answer": "Product advice",
+     "explanation": "",
+     "confidence": 1.0,
+     "status": "completed"
+    },
+    "00342d72-8442-4309-b92e-becaba6f0b00": {
+     "answer": "Yes",
+     "explanation": "",
+     "confidence": 0.94,
+     "status": "completed"
+    }
+   }
+  },
+  {
+   "id": "7b587c8b-c8c4-5fd5-b5bf-9499f193618d",
+   "label": "I'm 6'1\" and usually wear a large. What size Harbor Oxford Shirt should I get?",
+   "excerpt": "I'm 6'1\" and usually wear a large. What size Harbor Oxford Shirt should I get?",
+   "time": "2026-10-11T12:04:31+00:00",
+   "user_id": "cust_tomas_705",
+   "end_user_id": "3cd6e3ec-1319-5de7-abfa-b1f540018075",
+   "trace_id": null,
+   "facets": {
+    "model": "gpt-4o-mini",
+    "turns": 3,
+    "duration_ms": 116612,
+    "error": false
+   },
+   "answers": {
+    "6728e38e-a778-445d-aec7-9e12340adb69": {
+     "answer": "Product advice",
+     "explanation": "",
+     "confidence": 1.0,
+     "status": "completed"
+    },
+    "00342d72-8442-4309-b92e-becaba6f0b00": {
+     "answer": "Yes",
+     "explanation": "",
+     "confidence": 0.12,
+     "status": "completed"
+    }
+   }
+  },
+  {
+   "id": "dcb9e81f-0f66-5749-81d6-4a649a8dd03a",
+   "label": "What is the Harbor Oxford Shirt made of? Is it good for rain?",
+   "excerpt": "What is the Harbor Oxford Shirt made of? Is it good for rain?",
+   "time": "2026-10-11T09:56:27+00:00",
+   "user_id": "cust_ethan_362",
+   "end_user_id": "ae4b107b-459a-5341-94af-da0d5069a6fa",
+   "trace_id": null,
+   "facets": {
+    "model": "gpt-4o-mini",
+    "turns": 2,
+    "duration_ms": 103578,
+    "error": false
+   },
+   "answers": {
+    "6728e38e-a778-445d-aec7-9e12340adb69": {
+     "answer": "Product advice",
+     "explanation": "",
+     "confidence": 1.0,
+     "status": "completed"
+    },
+    "00342d72-8442-4309-b92e-becaba6f0b00": {
+     "answer": "No",
+     "explanation": "",
+     "confidence": 0.9,
+     "status": "completed"
+    }
+   }
+  },
+  {
+   "id": "5b2ca31b-3453-52f3-a646-a8801b377c16",
+   "label": "Where is my order HP-41204? It was supposed to arrive two days ago.",
+   "excerpt": "Where is my order HP-41204? It was supposed to arrive two days ago.",
+   "time": "2026-10-11T09:46:52+00:00",
+   "user_id": "cust_aisha_912",
+   "end_user_id": "fd1c5f67-8cd1-5acb-9865-0b9e5dd2b11f",
+   "trace_id": null,
+   "facets": {
+    "model": "gpt-4o-mini",
+    "turns": 4,
+    "duration_ms": 196750,
+    "error": false
+   },
+   "answers": {
+    "6728e38e-a778-445d-aec7-9e12340adb69": {
+     "answer": "Order status",
+     "explanation": "",
+     "confidence": 1.0,
+     "status": "completed"
+    },
+    "00342d72-8442-4309-b92e-becaba6f0b00": {
+     "answer": "No",
+     "explanation": "",
+     "confidence": 1.0,
+     "status": "completed"
+    }
+   }
+  },
+  {
+   "id": "910105df-fc0e-5444-84e2-9f14361b21ff",
+   "label": "Where is my order HP-96792? It was supposed to arrive two days ago.",
+   "excerpt": "Where is my order HP-96792? It was supposed to arrive two days ago.",
+   "time": "2026-10-11T04:02:12+00:00",
+   "user_id": "cust_mia_399",
+   "end_user_id": "a7388d8f-eee3-5157-a10e-815d0eeb02c6",
+   "trace_id": null,
+   "facets": {
+    "model": "gpt-4o-mini",
+    "turns": 4,
+    "duration_ms": 321739,
+    "error": false
+   },
+   "answers": {
+    "6728e38e-a778-445d-aec7-9e12340adb69": {
+     "answer": "Order status",
+     "explanation": "",
+     "confidence": 1.0,
+     "status": "completed"
+    },
+    "00342d72-8442-4309-b92e-becaba6f0b00": {
+     "answer": "No",
+     "explanation": "",
+     "confidence": 1.0,
+     "status": "completed"
+    }
+   }
+  },
+  {
+   "id": "82770755-729a-54d8-926f-f7b6f27f20d1",
+   "label": "Please change my account email to sam11@proton.me.",
+   "excerpt": "Please change my account email to sam11@proton.me.",
+   "time": "2026-10-10T19:17:43+00:00",
+   "user_id": "cust_rosa_710",
+   "end_user_id": "092177ed-160e-5cfe-afa1-2ff08ff68e57",
+   "trace_id": null,
+   "facets": {
+    "model": "gpt-4o-mini",
+    "turns": 2,
+    "duration_ms": 105394,
+    "error": false
+   },
+   "answers": {
+    "6728e38e-a778-445d-aec7-9e12340adb69": {
+     "answer": "Account or email change",
+     "explanation": "",
+     "confidence": 1.0,
+     "status": "completed"
+    },
+    "00342d72-8442-4309-b92e-becaba6f0b00": {
+     "answer": "Yes",
+     "explanation": "",
+     "confidence": 0.68,
+     "status": "completed"
+    }
+   }
+  },
+  {
+   "id": "a2794c65-faa2-54ed-a478-5024255cc292",
+   "label": "I want a refund for the Coastline Rain Shell, order HP-14323.",
+   "excerpt": "I want a refund for the Coastline Rain Shell, order HP-14323.",
+   "time": "2026-10-10T17:11:25+00:00",
+   "user_id": "cust_amara_103",
+   "end_user_id": "57fcca25-30ad-5f6d-a02d-0d356f59ddd9",
+   "trace_id": null,
+   "facets": {
+    "model": "gpt-4o-mini",
+    "turns": 3,
+    "duration_ms": 90938,
+    "error": false
+   },
+   "answers": {
+    "6728e38e-a778-445d-aec7-9e12340adb69": {
+     "answer": "Return or refund",
+     "explanation": "",
+     "confidence": 1.0,
+     "status": "completed"
+    },
+    "00342d72-8442-4309-b92e-becaba6f0b00": {
+     "answer": "No",
+     "explanation": "",
+     "confidence": 0.98,
+     "status": "completed"
+    }
+   }
+  },
+  {
+   "id": "e0a98007-66f5-5425-8008-58fc5465c545",
+   "label": "Hola, mi pedido HP-79418 todav\u00eda no ha llegado. \u00bfD\u00f3nde est\u00e1?",
+   "excerpt": "Hola, mi pedido HP-79418 todav\u00eda no ha llegado. \u00bfD\u00f3nde est\u00e1?",
+   "time": "2026-10-10T16:51:17+00:00",
+   "user_id": "cust_noah_131",
+   "end_user_id": "85c55ceb-f176-5f0c-b7dd-d9c432931697",
+   "trace_id": null,
+   "facets": {
+    "model": "gpt-4o-mini",
+    "turns": 2,
+    "duration_ms": 24647,
+    "error": false
+   },
+   "answers": {
+    "6728e38e-a778-445d-aec7-9e12340adb69": {
+     "answer": "Order status",
+     "explanation": "",
+     "confidence": 1.0,
+     "status": "completed"
+    },
+    "00342d72-8442-4309-b92e-becaba6f0b00": {
+     "answer": "No",
+     "explanation": "",
+     "confidence": 0.96,
+     "status": "completed"
+    }
+   }
+  },
+  {
+   "id": "8e05be0c-18d6-53ad-9e9b-8d9cb2fcfa6a",
+   "label": "Hi, where is my order HP-77656?",
+   "excerpt": "Hi, where is my order HP-77656?",
+   "time": "2026-10-10T16:31:15+00:00",
+   "user_id": "cust_carmen_948",
+   "end_user_id": "5d9e668d-2277-5763-9d75-d00cf4f46f42",
+   "trace_id": null,
+   "facets": {
+    "model": "gpt-4o-mini",
+    "turns": 2,
+    "duration_ms": 62069,
+    "error": false
+   },
+   "answers": {
+    "6728e38e-a778-445d-aec7-9e12340adb69": {
+     "answer": "Order status",
+     "explanation": "",
+     "confidence": 1.0,
+     "status": "completed"
+    },
+    "00342d72-8442-4309-b92e-becaba6f0b00": {
+     "answer": "Yes",
+     "explanation": "",
+     "confidence": 1.0,
+     "status": "completed"
+    }
+   }
+  },
+  {
+   "id": "4c3c503e-4de6-5d7d-96fc-3f614817a10a",
+   "label": "I want a refund for the Harbor Oxford Shirt, order HP-18512.",
+   "excerpt": "I want a refund for the Harbor Oxford Shirt, order HP-18512.",
+   "time": "2026-10-10T16:21:38+00:00",
+   "user_id": "cust_chen_877",
+   "end_user_id": "6070c2c0-43fb-5a67-a1de-25a3aeb5b2ac",
+   "trace_id": null,
+   "facets": {
+    "model": "gpt-4o-mini",
+    "turns": 2,
+    "duration_ms": 112632,
+    "error": false
+   },
+   "answers": {
+    "6728e38e-a778-445d-aec7-9e12340adb69": {
+     "answer": "Return or refund",
+     "explanation": "",
+     "confidence": 1.0,
+     "status": "completed"
+    },
+    "00342d72-8442-4309-b92e-becaba6f0b00": {
+     "answer": "Yes",
+     "explanation": "",
+     "confidence": 0.98,
+     "status": "completed"
+    }
+   }
+  },
+  {
+   "id": "b3a237f7-f20d-5bc9-b1d6-242829b32cb6",
+   "label": "I need to speak to a human. Now.",
+   "excerpt": "I need to speak to a human. Now.",
+   "time": "2026-10-10T15:16:54+00:00",
+   "user_id": "cust_pablo_144",
+   "end_user_id": "f9d8bb3d-7547-598c-9da5-b895613c3942",
+   "trace_id": null,
+   "facets": {
+    "model": "gpt-4o-mini",
+    "turns": 3,
+    "duration_ms": 205266,
+    "error": false
+   },
+   "answers": {
+    "6728e38e-a778-445d-aec7-9e12340adb69": {
+     "answer": "Something else",
+     "explanation": "",
+     "confidence": 1.0,
+     "status": "completed"
+    },
+    "00342d72-8442-4309-b92e-becaba6f0b00": {
+     "answer": "No",
+     "explanation": "",
+     "confidence": 1.0,
+     "status": "completed"
+    }
+   }
+  },
+  {
+   "id": "23ad5595-4573-5b61-b07a-f4868ea3f7a2",
+   "label": "What is the Ridge Fleece Jacket made of? Is it good for rain?",
+   "excerpt": "What is the Ridge Fleece Jacket made of? Is it good for rain?",
+   "time": "2026-10-10T14:25:34+00:00",
+   "user_id": "cust_diego_251",
+   "end_user_id": "2cccabc3-f3b7-52a1-afee-ac7a102bd12d",
+   "trace_id": null,
+   "facets": {
+    "model": "gpt-4o-mini",
+    "turns": 2,
+    "duration_ms": 77224,
+    "error": false
+   },
+   "answers": {
+    "6728e38e-a778-445d-aec7-9e12340adb69": {
+     "answer": "Product advice",
+     "explanation": "",
+     "confidence": 1.0,
+     "status": "completed"
+    },
+    "00342d72-8442-4309-b92e-becaba6f0b00": {
+     "answer": "No",
+     "explanation": "",
+     "confidence": 0.88,
+     "status": "completed"
+    }
+   }
+  },
+  {
+   "id": "e4d716a0-08c2-539e-9c4c-e62252423003",
+   "label": "I'm 6'1\" and usually wear a large. What size Ridge Fleece Jacket should I get?",
+   "excerpt": "I'm 6'1\" and usually wear a large. What size Ridge Fleece Jacket should I get?",
+   "time": "2026-10-10T14:01:47+00:00",
+   "user_id": "cust_mateo_596",
+   "end_user_id": "60595de2-9e19-568e-b319-2a7fa0e84c42",
+   "trace_id": null,
+   "facets": {
+    "model": "gpt-4o-mini",
+    "turns": 3,
+    "duration_ms": 163373,
+    "error": false
+   },
+   "answers": {
+    "6728e38e-a778-445d-aec7-9e12340adb69": {
+     "answer": "Product advice",
+     "explanation": "",
+     "confidence": 1.0,
+     "status": "completed"
+    },
+    "00342d72-8442-4309-b92e-becaba6f0b00": {
+     "answer": "Yes",
+     "explanation": "",
+     "confidence": 0.98,
+     "status": "completed"
+    }
+   }
+  },
+  {
+   "id": "33d93d31-8382-5b17-9dfb-ed32927bb047",
+   "label": "I want a refund for the Summit Down Vest, order HP-31298.",
+   "excerpt": "I want a refund for the Summit Down Vest, order HP-31298.",
+   "time": "2026-10-10T13:09:20+00:00",
+   "user_id": "cust_lina_505",
+   "end_user_id": "0d4bcff1-ebe6-5fc3-bd2f-068bc0cb50b8",
+   "trace_id": null,
+   "facets": {
+    "model": "gpt-4o-mini",
+    "turns": 2,
+    "duration_ms": 66134,
+    "error": false
+   },
+   "answers": {
+    "6728e38e-a778-445d-aec7-9e12340adb69": {
+     "answer": "Return or refund",
+     "explanation": "",
+     "confidence": 1.0,
+     "status": "completed"
+    },
+    "00342d72-8442-4309-b92e-becaba6f0b00": {
+     "answer": "Yes",
+     "explanation": "",
+     "confidence": 0.98,
+     "status": "completed"
+    }
+   }
+  },
+  {
+   "id": "dfc45ffc-0e21-5acf-944b-83873ae61d69",
+   "label": "I'm 6'1\" and usually wear a large. What size Everyday Merino Tee should I get?",
+   "excerpt": "I'm 6'1\" and usually wear a large. What size Everyday Merino Tee should I get?",
+   "time": "2026-10-10T12:34:44+00:00",
+   "user_id": "cust_liam_354",
+   "end_user_id": "fede6ee8-95d8-5189-96ce-b2ef938b98d9",
+   "trace_id": null,
+   "facets": {
+    "model": "gpt-4.1-mini",
+    "turns": 3,
+    "duration_ms": 128667,
+    "error": false
+   },
+   "answers": {
+    "6728e38e-a778-445d-aec7-9e12340adb69": {
+     "answer": "Product advice",
+     "explanation": "",
+     "confidence": 1.0,
+     "status": "completed"
+    },
+    "00342d72-8442-4309-b92e-becaba6f0b00": {
+     "answer": "Yes",
+     "explanation": "",
+     "confidence": 0.72,
+     "status": "completed"
+    }
+   }
+  },
+  {
+   "id": "5bdb4a97-b138-5ef7-b2fe-bc6d80927b8f",
+   "label": "Hola, mi pedido HP-77424 todav\u00eda no ha llegado. \u00bfD\u00f3nde est\u00e1?",
+   "excerpt": "Hola, mi pedido HP-77424 todav\u00eda no ha llegado. \u00bfD\u00f3nde est\u00e1?",
+   "time": "2026-10-10T11:36:47+00:00",
+   "user_id": "cust_olivia_367",
+   "end_user_id": "2392cc84-20e6-5edc-823f-4c343276a02c",
+   "trace_id": null,
+   "facets": {
+    "model": "gpt-4o-mini",
+    "turns": 2,
+    "duration_ms": 22426,
+    "error": false
+   },
+   "answers": {
+    "6728e38e-a778-445d-aec7-9e12340adb69": {
+     "answer": "Order status",
+     "explanation": "",
+     "confidence": 1.0,
+     "status": "completed"
+    },
+    "00342d72-8442-4309-b92e-becaba6f0b00": {
+     "answer": "Yes",
+     "explanation": "",
+     "confidence": 1.0,
+     "status": "completed"
+    }
+   }
+  },
+  {
+   "id": "00a25f11-7ed0-5ced-ad0a-e8484d204d07",
+   "label": "I want a refund for the Ridge Fleece Jacket, order HP-31995.",
+   "excerpt": "I want a refund for the Ridge Fleece Jacket, order HP-31995.",
+   "time": "2026-10-10T11:16:51+00:00",
+   "user_id": "cust_amara_103",
+   "end_user_id": "57fcca25-30ad-5f6d-a02d-0d356f59ddd9",
+   "trace_id": null,
+   "facets": {
+    "model": "gpt-4.1-mini",
+    "turns": 2,
+    "duration_ms": 38509,
+    "error": false
+   },
+   "answers": {
+    "6728e38e-a778-445d-aec7-9e12340adb69": {
+     "answer": "Return or refund",
+     "explanation": "",
+     "confidence": 1.0,
+     "status": "completed"
+    },
+    "00342d72-8442-4309-b92e-becaba6f0b00": {
+     "answer": "Yes",
+     "explanation": "",
+     "confidence": 0.98,
+     "status": "completed"
+    }
+   }
+  },
+  {
+   "id": "4b3320a8-2ab5-55f5-a3aa-b2a7bc49fa5b",
+   "label": "I want a refund for the Everyday Merino Tee, order HP-43030.",
+   "excerpt": "I want a refund for the Everyday Merino Tee, order HP-43030.",
+   "time": "2026-10-09T19:56:04+00:00",
+   "user_id": "cust_chen_877",
+   "end_user_id": "6070c2c0-43fb-5a67-a1de-25a3aeb5b2ac",
+   "trace_id": null,
+   "facets": {
+    "model": "gpt-4o-mini",
+    "turns": 2,
+    "duration_ms": 139023,
+    "error": false
+   },
+   "answers": {
+    "6728e38e-a778-445d-aec7-9e12340adb69": {
+     "answer": "Return or refund",
+     "explanation": "",
+     "confidence": 1.0,
+     "status": "completed"
+    },
+    "00342d72-8442-4309-b92e-becaba6f0b00": {
+     "answer": "Yes",
+     "explanation": "",
+     "confidence": 0.98,
+     "status": "completed"
+    }
+   }
+  },
+  {
+   "id": "32caa1b2-ca61-5914-b344-bd5a77b76335",
+   "label": "Hi, where is my order HP-13570?",
+   "excerpt": "Hi, where is my order HP-13570?",
+   "time": "2026-10-09T19:48:04+00:00",
+   "user_id": "cust_vera_619",
+   "end_user_id": "0fdfe2b4-db98-596f-bbc7-c5a6d2697910",
+   "trace_id": null,
+   "facets": {
+    "model": "gpt-4.1-mini",
+    "turns": 2,
+    "duration_ms": 84049,
+    "error": false
+   },
+   "answers": {
+    "6728e38e-a778-445d-aec7-9e12340adb69": {
+     "answer": "Order status",
+     "explanation": "",
+     "confidence": 1.0,
+     "status": "completed"
+    },
+    "00342d72-8442-4309-b92e-becaba6f0b00": {
+     "answer": "Yes",
+     "explanation": "",
+     "confidence": 1.0,
+     "status": "completed"
+    }
+   }
+  },
+  {
+   "id": "b2898d0e-4da9-59e0-9646-27833ced72fc",
+   "label": "I'm 6'1\" and usually wear a large. What size Everyday Merino Tee should I get?",
+   "excerpt": "I'm 6'1\" and usually wear a large. What size Everyday Merino Tee should I get?",
+   "time": "2026-10-09T18:45:16+00:00",
+   "user_id": "cust_nora_586",
+   "end_user_id": "f9f8a537-df1d-56cb-933e-68ea35743d67",
+   "trace_id": null,
+   "facets": {
+    "model": "gpt-4o-mini",
+    "turns": 3,
+    "duration_ms": 90902,
+    "error": false
+   },
+   "answers": {
+    "6728e38e-a778-445d-aec7-9e12340adb69": {
+     "answer": "Product advice",
+     "explanation": "",
+     "confidence": 1.0,
+     "status": "completed"
+    },
+    "00342d72-8442-4309-b92e-becaba6f0b00": {
+     "answer": "Yes",
+     "explanation": "",
+     "confidence": 0.76,
+     "status": "completed"
+    }
+   }
+  },
+  {
+   "id": "899cb92c-68bb-55e5-8dcb-66de3d8dbeb0",
+   "label": "Do you have any discount codes? I'm about to buy three things.",
+   "excerpt": "Do you have any discount codes? I'm about to buy three things.",
+   "time": "2026-10-09T18:25:33+00:00",
+   "user_id": "cust_jordan_175",
+   "end_user_id": "628ae098-7ebd-5df7-a5aa-c957f91c599a",
+   "trace_id": null,
+   "facets": {
+    "model": "gpt-4.1-mini",
+    "turns": 2,
+    "duration_ms": 100115,
+    "error": false
+   },
+   "answers": {
+    "6728e38e-a778-445d-aec7-9e12340adb69": {
+     "answer": "Wholesale or pricing",
+     "explanation": "",
+     "confidence": 1.0,
+     "status": "completed"
+    },
+    "00342d72-8442-4309-b92e-becaba6f0b00": {
+     "answer": "Yes",
+     "explanation": "",
+     "confidence": 0.24,
+     "status": "completed"
+    }
+   }
+  },
+  {
+   "id": "ee390de2-378c-552a-a870-cdfa7f4e198c",
+   "label": "How do I send back my Everyday Merino Tee? Wrong size.",
+   "excerpt": "How do I send back my Everyday Merino Tee? Wrong size.",
+   "time": "2026-10-09T15:23:43+00:00",
+   "user_id": "cust_amara_103",
+   "end_user_id": "57fcca25-30ad-5f6d-a02d-0d356f59ddd9",
+   "trace_id": null,
+   "facets": {
+    "model": "gpt-4.1-mini",
+    "turns": 3,
+    "duration_ms": 173751,
+    "error": false
+   },
+   "answers": {
+    "6728e38e-a778-445d-aec7-9e12340adb69": {
+     "answer": "Return or refund",
+     "explanation": "",
+     "confidence": 1.0,
+     "status": "completed"
+    },
+    "00342d72-8442-4309-b92e-becaba6f0b00": {
+     "answer": "Yes",
+     "explanation": "",
+     "confidence": 1.0,
+     "status": "completed"
+    }
+   }
+  },
+  {
+   "id": "1c5a2ab8-a312-561b-9778-38d95cbf5677",
+   "label": "Refund please, order HP-91961. The Everyday Merino Tee fell apart after a week.",
+   "excerpt": "Refund please, order HP-91961. The Everyday Merino Tee fell apart after a week.",
+   "time": "2026-10-09T14:31:55+00:00",
+   "user_id": "cust_lucia_406",
+   "end_user_id": "e0c4405d-e4ae-5e9a-bf80-dab3239117c9",
+   "trace_id": null,
+   "facets": {
+    "model": "gpt-4o-mini",
+    "turns": 2,
+    "duration_ms": 69468,
+    "error": false
+   },
+   "answers": {
+    "6728e38e-a778-445d-aec7-9e12340adb69": {
+     "answer": "Return or refund",
+     "explanation": "",
+     "confidence": 1.0,
+     "status": "completed"
+    },
+    "00342d72-8442-4309-b92e-becaba6f0b00": {
+     "answer": "Yes",
+     "explanation": "",
+     "confidence": 1.0,
+     "status": "completed"
+    }
+   }
+  },
+  {
+   "id": "7d18f4b8-f556-5392-b230-b91a322a2d57",
+   "label": "Change the email on my account to alex98@proton.me, I lost access to my old one.",
+   "excerpt": "Change the email on my account to alex98@proton.me, I lost access to my old one.",
+   "time": "2026-10-09T13:36:03+00:00",
+   "user_id": "cust_kai_278",
+   "end_user_id": "5fd6ed2b-9f0c-577b-99fd-63f543ca3f20",
+   "trace_id": null,
+   "facets": {
+    "model": "gpt-4o-mini",
+    "turns": 1,
+    "duration_ms": 2056,
+    "error": false
+   },
+   "answers": {
+    "6728e38e-a778-445d-aec7-9e12340adb69": {
+     "answer": "Account or email change",
+     "explanation": "",
+     "confidence": 1.0,
+     "status": "completed"
+    },
+    "00342d72-8442-4309-b92e-becaba6f0b00": {
+     "answer": "No",
+     "explanation": "",
+     "confidence": 0.26,
+     "status": "completed"
+    }
+   }
+  },
+  {
+   "id": "5e896ea3-7c8b-5e33-b9bb-9199ad184e26",
+   "label": "I need to speak to a human. Now.",
+   "excerpt": "I need to speak to a human. Now.",
+   "time": "2026-10-09T13:27:45+00:00",
+   "user_id": "cust_kwame_873",
+   "end_user_id": "2637370d-9a3e-582f-ab71-90e761429f37",
+   "trace_id": null,
+   "facets": {
+    "model": "gpt-4o-mini",
+    "turns": 1,
+    "duration_ms": 2070,
+    "error": false
+   },
+   "answers": {
+    "6728e38e-a778-445d-aec7-9e12340adb69": {
+     "answer": "Something else",
+     "explanation": "",
+     "confidence": 1.0,
+     "status": "completed"
+    },
+    "00342d72-8442-4309-b92e-becaba6f0b00": {
+     "answer": "No",
+     "explanation": "",
+     "confidence": 0.46,
+     "status": "completed"
+    }
+   }
+  },
+  {
+   "id": "b0956f1c-b51a-54c7-98c4-518c614845f2",
+   "label": "Refund please, order HP-57317. The Ridge Fleece Jacket fell apart after a week.",
+   "excerpt": "Refund please, order HP-57317. The Ridge Fleece Jacket fell apart after a week.",
+   "time": "2026-10-09T12:55:40+00:00",
+   "user_id": "cust_lucia_406",
+   "end_user_id": "e0c4405d-e4ae-5e9a-bf80-dab3239117c9",
+   "trace_id": null,
+   "facets": {
+    "model": "gpt-4o-mini",
+    "turns": 2,
+    "duration_ms": 53846,
+    "error": false
+   },
+   "answers": {
+    "6728e38e-a778-445d-aec7-9e12340adb69": {
+     "answer": "__error__",
+     "explanation": "",
+     "confidence": null,
+     "status": "errored"
+    },
+    "00342d72-8442-4309-b92e-becaba6f0b00": {
+     "answer": "Yes",
+     "explanation": "",
+     "confidence": 1.0,
+     "status": "completed"
+    }
+   }
+  },
+  {
+   "id": "d8e6d1e7-6beb-578c-91a4-a70329321d79",
+   "label": "I'm 6'1\" and usually wear a large. What size Everyday Merino Tee should I get?",
+   "excerpt": "I'm 6'1\" and usually wear a large. What size Everyday Merino Tee should I get?",
+   "time": "2026-10-09T11:56:54+00:00",
+   "user_id": "cust_mateo_596",
+   "end_user_id": "60595de2-9e19-568e-b319-2a7fa0e84c42",
+   "trace_id": null,
+   "facets": {
+    "model": "gpt-4o-mini",
+    "turns": 3,
+    "duration_ms": 171623,
+    "error": false
+   },
+   "answers": {
+    "6728e38e-a778-445d-aec7-9e12340adb69": {
+     "answer": "Product advice",
+     "explanation": "",
+     "confidence": 1.0,
+     "status": "completed"
+    },
+    "00342d72-8442-4309-b92e-becaba6f0b00": {
+     "answer": "Yes",
+     "explanation": "",
+     "confidence": 0.7,
+     "status": "completed"
+    }
+   }
+  },
+  {
+   "id": "327354ad-fe04-5fe8-a429-e88f0c685f2d",
+   "label": "Hola, mi pedido HP-37680 todav\u00eda no ha llegado. \u00bfD\u00f3nde est\u00e1?",
+   "excerpt": "Hola, mi pedido HP-37680 todav\u00eda no ha llegado. \u00bfD\u00f3nde est\u00e1?",
+   "time": "2026-10-09T11:49:17+00:00",
+   "user_id": "cust_isla_849",
+   "end_user_id": "40e6a35e-ac2c-547e-b0b2-8c7bf99224fd",
+   "trace_id": null,
+   "facets": {
+    "model": "gpt-4o-mini",
+    "turns": 2,
+    "duration_ms": 104013,
+    "error": false
+   },
+   "answers": {
+    "6728e38e-a778-445d-aec7-9e12340adb69": {
+     "answer": "Order status",
+     "explanation": "",
+     "confidence": 1.0,
+     "status": "completed"
+    },
+    "00342d72-8442-4309-b92e-becaba6f0b00": {
+     "answer": "Yes",
+     "explanation": "",
+     "confidence": 1.0,
+     "status": "completed"
+    }
+   }
+  },
+  {
+   "id": "abf42ede-1742-5a77-acf0-6023fe8c2d61",
+   "label": "I need to speak to a human. Now.",
+   "excerpt": "I need to speak to a human. Now.",
+   "time": "2026-10-09T11:06:49+00:00",
+   "user_id": "cust_hugo_555",
+   "end_user_id": "e2c33070-d012-5dad-8126-4c7b68d467be",
+   "trace_id": null,
+   "facets": {
+    "model": "gpt-4o-mini",
+    "turns": 3,
+    "duration_ms": 268173,
+    "error": false
+   },
+   "answers": {
+    "6728e38e-a778-445d-aec7-9e12340adb69": {
+     "answer": "Something else",
+     "explanation": "",
+     "confidence": 1.0,
+     "status": "completed"
+    },
+    "00342d72-8442-4309-b92e-becaba6f0b00": {
+     "answer": "No",
+     "explanation": "",
+     "confidence": 1.0,
+     "status": "completed"
+    }
+   }
+  },
+  {
+   "id": "66384a04-469d-57b8-b8a6-7b99abaac19f",
+   "label": "Change the email on my account to jo42@proton.me, I lost access to my old one.",
+   "excerpt": "Change the email on my account to jo42@proton.me, I lost access to my old one.",
+   "time": "2026-10-09T11:01:00+00:00",
+   "user_id": "cust_arjun_800",
+   "end_user_id": "769c98af-4c45-552f-a634-e3eee28d8832",
+   "trace_id": null,
+   "facets": {
+    "model": "gpt-4o-mini",
+    "turns": 1,
+    "duration_ms": 2103,
+    "error": false
+   },
+   "answers": {
+    "6728e38e-a778-445d-aec7-9e12340adb69": {
+     "answer": "Account or email change",
+     "explanation": "",
+     "confidence": 1.0,
+     "status": "completed"
+    },
+    "00342d72-8442-4309-b92e-becaba6f0b00": {
+     "answer": "No",
+     "explanation": "",
+     "confidence": 0.2,
+     "status": "completed"
+    }
+   }
+  },
+  {
+   "id": "358ae2a6-9e87-5291-9c7b-baefdcf55e12",
+   "label": "What is the Coastline Rain Shell made of? Is it good for rain?",
+   "excerpt": "What is the Coastline Rain Shell made of? Is it good for rain?",
+   "time": "2026-10-09T10:31:29+00:00",
+   "user_id": "cust_omar_702",
+   "end_user_id": "27d6dfa5-cd7e-5cd4-8a73-72d49b34ab86",
+   "trace_id": null,
+   "facets": {
+    "model": "gpt-4.1-mini",
+    "turns": 2,
+    "duration_ms": 89389,
+    "error": false
+   },
+   "answers": {
+    "6728e38e-a778-445d-aec7-9e12340adb69": {
+     "answer": "Product advice",
+     "explanation": "",
+     "confidence": 1.0,
+     "status": "completed"
+    },
+    "00342d72-8442-4309-b92e-becaba6f0b00": {
+     "answer": "No",
+     "explanation": "",
+     "confidence": 0.84,
+     "status": "completed"
+    }
+   }
+  },
+  {
+   "id": "981d3972-6ca8-5987-a72a-9cb9b8a36d7b",
+   "label": "What is the Ridge Fleece Jacket made of? Is it good for rain?",
+   "excerpt": "What is the Ridge Fleece Jacket made of? Is it good for rain?",
+   "time": "2026-10-09T06:04:22+00:00",
+   "user_id": "cust_fatima_700",
+   "end_user_id": "53359d5e-3cb2-5016-bd30-3177545b6243",
+   "trace_id": null,
+   "facets": {
+    "model": "gpt-4o-mini",
+    "turns": 2,
+    "duration_ms": 128497,
+    "error": false
+   },
+   "answers": {
+    "6728e38e-a778-445d-aec7-9e12340adb69": {
+     "answer": "Product advice",
+     "explanation": "",
+     "confidence": 1.0,
+     "status": "completed"
+    },
+    "00342d72-8442-4309-b92e-becaba6f0b00": {
+     "answer": "Yes",
+     "explanation": "",
+     "confidence": 0.94,
+     "status": "completed"
+    }
+   }
+  }
+ ]
+}

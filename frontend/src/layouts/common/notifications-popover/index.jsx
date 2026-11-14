@@ -88,14 +88,14 @@ export default function NotificationsPopover() {
       {!!totalUnRead && (
         <Tooltip title="Mark all as read">
           <IconButton color="primary" onClick={handleMarkAllAsRead}>
-            <Iconify icon="eva:done-all-fill" />
+            <Iconify icon="solar:check-read-linear" />
           </IconButton>
         </Tooltip>
       )}
 
       {!smUp && (
         <IconButton onClick={drawer.onFalse}>
-          <Iconify icon="mingcute:close-line" />
+          <Iconify icon="solar:close-linear" />
         </IconButton>
       )}
     </Stack>
@@ -168,7 +168,7 @@ export default function NotificationsPopover() {
           backdrop: { invisible: true },
         }}
         PaperProps={{
-          sx: { width: 1, maxWidth: 420 },
+          sx: { width: 1, maxWidth: 480 },
         }}
       >
         {renderHead}

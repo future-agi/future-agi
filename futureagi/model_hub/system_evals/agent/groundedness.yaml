@@ -17,6 +17,7 @@ criteria: "You are evaluating whether the output is strictly grounded in the pro
 eval_tags:
 - RAG
 - Hallucination
+offered_in_environments: true
 visible_ui: true
 permissions:
   allow_edit: false

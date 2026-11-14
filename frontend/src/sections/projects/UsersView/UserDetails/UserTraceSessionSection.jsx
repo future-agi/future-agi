@@ -1,11 +1,4 @@
-import {
-  Badge,
-  Box,
-  Collapse,
-  IconButton,
-  useTheme,
-  Divider,
-} from "@mui/material";
+import { Box, IconButton, useTheme, Divider } from "@mui/material";
 import React, {
   useCallback,
   useEffect,
@@ -18,7 +11,7 @@ import SvgColor from "src/components/svg-color";
 import CustomTooltip from "src/components/tooltip";
 import UserTraceTabV2 from "./UserTraceTabV2";
 import UserSessionsTab from "./UserSessionsTab";
-import ComplexFilter from "src/components/ComplexFilter/ComplexFilter";
+import { FilterButton, useComplexFilterBinding } from "src/components/filter";
 import {
   DEFAULT_DATE_FILTER,
   initialSessionVisibility,
@@ -195,25 +188,16 @@ const UserTraceSessionSection = () => {
   // Debounce the validated filters at component level
   const debouncedValidatedFilters = useDebounce(validatedFilters, 500);
 
-  // Calculate if filters are applied without useEffect
-  const isFilterApplied = useMemo(() => {
-    const hasValidFilters =
-      debouncedValidatedFilters && debouncedValidatedFilters.length > 0;
-    const hasNonDefaultFilters = filters.some((filter) => {
-      const filterConfig = filter.filter_config || {};
-      const defaultConfig = userDefaultFilter.filter_config || {};
-
-      return (
-        filter.column_id !== userDefaultFilter.column_id ||
-        filterConfig.filter_op !== defaultConfig.filter_op ||
-        filterConfig.filter_value !== defaultConfig.filter_value ||
-        filterConfig.filter_type !== defaultConfig.filter_type ||
-        (filterConfig.filter_value && filterConfig.filter_value.length > 0)
-      );
-    });
-
-    return hasValidFilters || hasNonDefaultFilters;
-  }, [debouncedValidatedFilters, filters]);
+  const {
+    fields: filterFields,
+    value: filterValue,
+    onChange: onFilterChange,
+  } = useComplexFilterBinding({
+    filters,
+    setFilters,
+    filterDefinition: SessionFilterDefinition,
+    defaultFilter: userDefaultFilter,
+  });
 
   // Processed filters
   const processedFilters = useMemo(() => {
@@ -239,10 +223,15 @@ const UserTraceSessionSection = () => {
         tooltip: "Column Size",
       },
       {
-        icon: "ic_filter",
-        action: toggleOpenUserDetailFilter,
-        tooltip: "Filter",
-        showBadge: isFilterApplied,
+        render: () => (
+          <FilterButton
+            fields={filterFields}
+            value={filterValue}
+            onChange={onFilterChange}
+            open={openUserDetailFilter}
+            onOpenChange={toggleOpenUserDetailFilter}
+          />
+        ),
       },
       {
         icon: "ic_column",
@@ -258,49 +247,40 @@ const UserTraceSessionSection = () => {
       toggleOpenUserDetailFilter,
       handleColumnConfigureClick,
       selectedTab,
-      isFilterApplied,
+      filterFields,
+      filterValue,
+      onFilterChange,
+      openUserDetailFilter,
     ],
   );
 
   // Render helpers
   const renderActionButton = useCallback(
-    (button, index) => (
-      <CustomTooltip
-        key={index}
-        show
-        title={button.tooltip}
-        placement="bottom"
-        arrow
-        size="small"
-      >
-        <IconButton
+    (button, index) =>
+      button.render ? (
+        <React.Fragment key={index}>{button.render()}</React.Fragment>
+      ) : (
+        <CustomTooltip
+          key={index}
+          show
+          title={button.tooltip}
+          placement="bottom"
+          arrow
           size="small"
-          sx={{ color: "text.disabled" }}
-          onClick={button.action}
-          ref={button.ref ? (el) => (refs.current[button.ref] = el) : null}
         >
-          {button.showBadge ? (
-            <Badge
-              variant="dot"
-              color="error"
-              overlap="circular"
-              anchorOrigin={{ vertical: "top", horizontal: "right" }}
-              sx={{ "& .MuiBadge-badge": { top: 1, right: 1 } }}
-            >
-              <SvgColor
-                src={`/assets/icons/action_buttons/${button.icon}.svg`}
-                sx={{ width: 16, height: 16, color: "text.primary" }}
-              />
-            </Badge>
-          ) : (
+          <IconButton
+            size="small"
+            sx={{ color: "text.disabled" }}
+            onClick={button.action}
+            ref={button.ref ? (el) => (refs.current[button.ref] = el) : null}
+          >
             <SvgColor
               src={`/assets/icons/action_buttons/${button.icon}.svg`}
               sx={{ width: 16, height: 16, color: "text.primary" }}
             />
-          )}
-        </IconButton>
-      </CustomTooltip>
-    ),
+          </IconButton>
+        </CustomTooltip>
+      ),
     [],
   );
 
@@ -354,22 +334,6 @@ const UserTraceSessionSection = () => {
           )}
         </Box>
       </Box>
-
-      {selectedTab === "sessions" && (
-        <Box>
-          <Collapse in={openUserDetailFilter} sx={{ mb: 1 }} unmountOnExit>
-            <Box sx={{ paddingY: "13px", paddingX: 1 }}>
-              <ComplexFilter
-                filters={filters}
-                defaultFilter={userDefaultFilter}
-                setFilters={setFilters}
-                filterDefinition={SessionFilterDefinition}
-                onClose={toggleOpenUserDetailFilter}
-              />
-            </Box>
-          </Collapse>
-        </Box>
-      )}
 
       <Box sx={{ mt: 2 }}>
         <ShowComponent condition={selectedTab === "traces"}>

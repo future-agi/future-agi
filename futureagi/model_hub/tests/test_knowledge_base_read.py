@@ -218,11 +218,7 @@ class TestKnowledgeBaseTableView:
 
         response = auth_client.get(
             TABLE_URL,
-            {
-                "sort": json.dumps(
-                    [{"column_id": blank_column_id, "type": "ascending"}]
-                )
-            },
+            {"sort": json.dumps([{"column_id": blank_column_id, "type": "ascending"}])},
         )
 
         assert response.status_code == status.HTTP_400_BAD_REQUEST
@@ -272,9 +268,7 @@ class TestKnowledgeBaseDropdownList:
         names = [row["name"] for row in response.json()["result"]["table_data"]]
         assert names == ["ready-kb"]
 
-    def test_soft_deleted_kbs_are_excluded(
-        self, auth_client, organization, workspace
-    ):
+    def test_soft_deleted_kbs_are_excluded(self, auth_client, organization, workspace):
         kb = _kb(organization, workspace, "archived-kb")
         kb.deleted = True
         kb.save()
@@ -317,9 +311,7 @@ class TestKnowledgeBaseFilesList:
         going = _file("going.txt", status_value=StatusType.DELETING.value)
         kb = _kb(organization, workspace, "mixed-files-kb", files=[keep, going])
 
-        response = auth_client.post(
-            FILES_URL, {"kb_id": str(kb.id)}, format="json"
-        )
+        response = auth_client.post(FILES_URL, {"kb_id": str(kb.id)}, format="json")
 
         names = [row["name"] for row in response.json()["result"]["table_data"]]
         assert names == ["keep.txt"]
@@ -337,9 +329,7 @@ class TestKnowledgeBaseFilesList:
             ],
         )
 
-        response = auth_client.post(
-            FILES_URL, {"kb_id": str(kb.id)}, format="json"
-        )
+        response = auth_client.post(FILES_URL, {"kb_id": str(kb.id)}, format="json")
 
         result = response.json()["result"]
         assert result["status"] == StatusType.PROCESSING.value
@@ -501,9 +491,7 @@ class TestKnowledgeBaseFileDelete:
         kb = _kb(organization, workspace, "no-selector-kb", files=[kb_file])
         remove_kb_files = mocker.patch(REMOVE_KB_FILES)
 
-        response = auth_client.delete(
-            FILES_URL, {"kb_id": str(kb.id)}, format="json"
-        )
+        response = auth_client.delete(FILES_URL, {"kb_id": str(kb.id)}, format="json")
 
         assert response.status_code == status.HTTP_400_BAD_REQUEST
         remove_kb_files.assert_not_called()

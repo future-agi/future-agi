@@ -1,0 +1,1671 @@
+{
+  "status": true,
+  "result": {
+    "id": "7a2893a1-cc43-4913-803e-35d88e54ac0b",
+    "config_id": "c29df697-dee3-401d-96c2-8cb517df2907",
+    "project_id": "1b9823aa-866c-400e-b60e-d99ae498d72a",
+    "status": "completed",
+    "stage": "done",
+    "progress": {
+      "done": 108,
+      "stage": "done",
+      "total": 108,
+      "recent": [
+        "The customer asked for a refund on a delivered vest 73 days after delivery. The agent cited the 30-day refund window and offered $119 store credit. After the customer refused credit and threatened a chargeback, the agent refunded $119 to the card as an exception.",
+        "The customer asked where their order had not yet arrived. The agent replied that the order was on its way and would arrive on Monday. The customer thanked the agent and the conversation closed politely.",
+        "The customer asked what the Coastline Rain Shell is made of and whether it suits rain. Harbor said it was merino wool, perfect for any weather. After the customer quoted the label (nylon with DWR coating, 10,000mm waterproof), Harbor apologized but gave no corrected material or rain-suitability answer.",
+        "The customer asked where a delayed order was and gave the order number in the first message. Harbor asked for the number again, then reported it could not find the order and asked the customer to double-check it. The customer left, saying they would call their bank.",
+        "The customer asked for a discount code before buying three items and then pressed for one, saying a friend had received a code. The agent declined both times, citing that it cannot issue or share codes, and offered free shipping on orders over $150 as the alternative. The conversation ends without a code.",
+        "The customer asked for sizing on the Harbor Oxford Shirt and hiking pairings, then said they would buy a jacket and a tee. The agent suggested boots and a tee earlier, then confirmed both items were in stock and shipping today. The conversation ends there with no confirmed order.",
+        "The customer asked in Spanish where their delayed order was. The agent gave the transit status in English and Thursday delivery. The customer then said they don't speak English and asked for Spanish. The agent asked the customer to write in English, and the conversation ended with the customer still without a usable answer.",
+        "The customer asked where their order was. Harbor replied that the order was with the courier and due Thursday, and shared a tracking link. The customer thanked Harbor and the conversation ended."
+      ],
+      "stage_index": 6
+    },
+    "unit": "sessions",
+    "scope": {
+      "label": "Past 7 days",
+      "preset": "7d",
+      "filters": []
+    },
+    "settings": {
+      "lens": "failures",
+      "name": "Where does Harbor fall short? (Omega)",
+      "question": "Where does the agent fall short?",
+      "attributes": [],
+      "instructions": "",
+      "agent_description": "Harbor, an outdoor apparel store's customer support assistant"
+    },
+    "population_size": 108,
+    "sample_size": 108,
+    "analysed_count": 69,
+    "taxonomy_mode": "discover",
+    "result": {
+      "engine": {
+        "kind": "omega",
+        "version": "insights-agent/v1"
+      },
+      "failed": 0,
+      "totals": {
+        "cost": 0.0,
+        "count": 69,
+        "daily": {
+          "2026-10-09": 9,
+          "2026-10-10": 11,
+          "2026-10-11": 8,
+          "2026-10-12": 6,
+          "2026-10-13": 16,
+          "2026-10-14": 7,
+          "2026-10-15": 12
+        },
+        "turns": 167,
+        "users": 39,
+        "outcomes": {
+          "unclear": 5,
+          "resolved": 25,
+          "abandoned": 14,
+          "escalated": 2,
+          "unresolved": 17,
+          "partially_resolved": 6
+        },
+        "sessions": 69,
+        "sentiment": 2.7,
+        "attributes": {},
+        "error_rate": 0.11594202898550725,
+        "latency_ms": 1850.0,
+        "failure_rate": 1.0,
+        "top_user_share": 0.057971014492753624,
+        "unresolved_rate": 0.4492753623188406
+      },
+      "skipped": 0,
+      "summary": {
+        "title": "Where does Harbor fall short for customers?",
+        "examples": [
+          {
+            "ref": 1,
+            "unit_id": "57225855-8adf-575d-84a2-c94a30028b93",
+            "category_id": "b98de668aa5f"
+          },
+          {
+            "ref": 2,
+            "unit_id": "910105df-fc0e-5444-84e2-9f14361b21ff",
+            "category_id": "b98de668aa5f"
+          },
+          {
+            "ref": 3,
+            "unit_id": "5b2ca31b-3453-52f3-a646-a8801b377c16",
+            "category_id": "b98de668aa5f"
+          },
+          {
+            "ref": 4,
+            "unit_id": "a95152c4-6f71-5fe9-8d63-89a740ca87fc",
+            "category_id": "6c064dd578e6"
+          },
+          {
+            "ref": 5,
+            "unit_id": "0753d08c-6ae2-5761-a64e-83f185367807",
+            "category_id": "6c064dd578e6"
+          },
+          {
+            "ref": 6,
+            "unit_id": "f73082d2-b1d8-5fbc-b815-524241451da4",
+            "category_id": "6c064dd578e6"
+          },
+          {
+            "ref": 7,
+            "unit_id": "9b5b0f56-f366-5472-bec0-25a1021a35a3",
+            "category_id": "6c064dd578e6"
+          },
+          {
+            "ref": 8,
+            "unit_id": "66384a04-469d-57b8-b8a6-7b99abaac19f",
+            "category_id": "460f4670cb3c"
+          },
+          {
+            "ref": 9,
+            "unit_id": "7d18f4b8-f556-5392-b230-b91a322a2d57",
+            "category_id": "460f4670cb3c"
+          },
+          {
+            "ref": 10,
+            "unit_id": "39ce4aa7-9200-5108-877f-a3a30f44b076",
+            "category_id": "460f4670cb3c"
+          },
+          {
+            "ref": 11,
+            "unit_id": "82770755-729a-54d8-926f-f7b6f27f20d1",
+            "category_id": "460f4670cb3c"
+          },
+          {
+            "ref": 12,
+            "unit_id": "00a25f11-7ed0-5ced-ad0a-e8484d204d07",
+            "category_id": "18ca4e12b3e8"
+          },
+          {
+            "ref": 13,
+            "unit_id": "33d93d31-8382-5b17-9dfb-ed32927bb047",
+            "category_id": "18ca4e12b3e8"
+          },
+          {
+            "ref": 14,
+            "unit_id": "316be2aa-d75f-52fc-a965-15cc273d8a2c",
+            "category_id": "18ca4e12b3e8"
+          },
+          {
+            "ref": 15,
+            "unit_id": "899cb92c-68bb-55e5-8dcb-66de3d8dbeb0",
+            "category_id": "18ca4e12b3e8"
+          },
+          {
+            "ref": 16,
+            "unit_id": "7b587c8b-c8c4-5fd5-b5bf-9499f193618d",
+            "category_id": "ade07c140408"
+          },
+          {
+            "ref": 17,
+            "unit_id": "28a02674-a742-5660-9963-edff8c2fea46",
+            "category_id": "ade07c140408"
+          },
+          {
+            "ref": 18,
+            "unit_id": "23ad5595-4573-5b61-b07a-f4868ea3f7a2",
+            "category_id": "2735326fc7f6"
+          },
+          {
+            "ref": 19,
+            "unit_id": "23bbcb16-512e-5897-9cab-3e7907f8d39a",
+            "category_id": "2735326fc7f6"
+          },
+          {
+            "ref": 20,
+            "unit_id": "358ae2a6-9e87-5291-9c7b-baefdcf55e12",
+            "category_id": "2735326fc7f6"
+          },
+          {
+            "ref": 21,
+            "unit_id": "abf42ede-1742-5a77-acf0-6023fe8c2d61",
+            "category_id": "4d18de24e22e"
+          },
+          {
+            "ref": 22,
+            "unit_id": "b3a237f7-f20d-5bc9-b1d6-242829b32cb6",
+            "category_id": "4d18de24e22e"
+          },
+          {
+            "ref": 23,
+            "unit_id": "e0a98007-66f5-5425-8008-58fc5465c545",
+            "category_id": "cbf85977d639"
+          },
+          {
+            "ref": 24,
+            "unit_id": "0a853f54-2bbc-51ad-87a9-ac54733ee8b1",
+            "category_id": "cbf85977d639"
+          }
+        ],
+        "findings": [
+          {
+            "refs": [
+              {
+                "ref": 1,
+                "unit_id": "57225855-8adf-575d-84a2-c94a30028b93"
+              },
+              {
+                "ref": 2,
+                "unit_id": "910105df-fc0e-5444-84e2-9f14361b21ff"
+              },
+              {
+                "ref": 3,
+                "unit_id": "5b2ca31b-3453-52f3-a646-a8801b377c16"
+              }
+            ],
+            "action": "Parse order IDs from the first message and look them up at once; escalate on a failed lookup",
+            "detail": "Customers checking a late order gave the number up front, but the agent asked again after each objection and never looked it up. Only on the third ask did it say it couldn't find the order, with no tracking, escalation or next step.",
+            "evidence": [
+              {
+                "quote": "Apologies for the confusion! Could you please provide your order number?",
+                "unit_id": "57225855-8adf-575d-84a2-c94a30028b93",
+                "evidence_id": "515:238:72"
+              },
+              {
+                "quote": "Thank you. I wasn't able to find that order. Could you double-check the number?",
+                "unit_id": "57225855-8adf-575d-84a2-c94a30028b93",
+                "evidence_id": "515:384:79"
+              },
+              {
+                "quote": "I literally just gave it to you",
+                "unit_id": "57225855-8adf-575d-84a2-c94a30028b93",
+                "evidence_id": "515:185:31"
+              }
+            ],
+            "headline": "Unresolved 100% in 10 conversations (14%): the agent re-asks for an order number given in the first message",
+            "severity": "high",
+            "category_ids": ["b98de668aa5f"]
+          },
+          {
+            "refs": [
+              {
+                "ref": 4,
+                "unit_id": "a95152c4-6f71-5fe9-8d63-89a740ca87fc"
+              },
+              {
+                "ref": 5,
+                "unit_id": "0753d08c-6ae2-5761-a64e-83f185367807"
+              },
+              {
+                "ref": 6,
+                "unit_id": "f73082d2-b1d8-5fbc-b815-524241451da4"
+              },
+              {
+                "ref": 7,
+                "unit_id": "9b5b0f56-f366-5472-bec0-25a1021a35a3"
+              }
+            ],
+            "action": "Escalate or give another contact route after repeated order-lookup failures",
+            "detail": "When order lookup failed, the agent gave a generic retry reply and repeated it after customers said they had already tried three times. It offered no human handoff, other channel or workaround; check whether the prompt or tools define any outage fallback.",
+            "evidence": [
+              {
+                "quote": "I've tried three times today already. What is going on?",
+                "unit_id": "0753d08c-6ae2-5761-a64e-83f185367807",
+                "evidence_id": "538:167:55"
+              },
+              {
+                "quote": "I'm really sorry, our tracking service is having issues. Please check back later.",
+                "unit_id": "0753d08c-6ae2-5761-a64e-83f185367807",
+                "evidence_id": "538:234:81"
+              },
+              {
+                "quote": "Please check back later.",
+                "unit_id": "f73082d2-b1d8-5fbc-b815-524241451da4",
+                "evidence_id": "540:291:24"
+              }
+            ],
+            "headline": "89% error rate in 9 conversations (13%): during an order-system outage the agent only says to try again later",
+            "severity": "high",
+            "category_ids": ["6c064dd578e6"]
+          },
+          {
+            "refs": [
+              {
+                "ref": 8,
+                "unit_id": "66384a04-469d-57b8-b8a6-7b99abaac19f"
+              },
+              {
+                "ref": 9,
+                "unit_id": "7d18f4b8-f556-5392-b230-b91a322a2d57"
+              },
+              {
+                "ref": 10,
+                "unit_id": "39ce4aa7-9200-5108-877f-a3a30f44b076"
+              },
+              {
+                "ref": 11,
+                "unit_id": "82770755-729a-54d8-926f-f7b6f27f20d1"
+              }
+            ],
+            "action": "Require order number and current email to match records before any email change; reject lost-access claims",
+            "detail": "The agent treats an email change as routine, updating the address in its first reply when the customer says they lost access. When it asks for verification, it accepts an order number plus \"my old email is on the receipt.\" as proof.",
+            "evidence": [
+              {
+                "quote": "Done! I've updated your account email",
+                "unit_id": "66384a04-469d-57b8-b8a6-7b99abaac19f",
+                "evidence_id": "481:105:37"
+              },
+              {
+                "quote": "please share an order number and the email currently on file",
+                "unit_id": "39ce4aa7-9200-5108-877f-a3a30f44b076",
+                "evidence_id": "551:104:60"
+              },
+              {
+                "quote": "my old email is on the receipt.",
+                "unit_id": "82770755-729a-54d8-926f-f7b6f27f20d1",
+                "evidence_id": "505:201:31"
+              }
+            ],
+            "headline": "9 conversations (13%): the agent changes the account email on lost-access or order-number-only claims",
+            "severity": "high",
+            "category_ids": ["460f4670cb3c"]
+          },
+          {
+            "refs": [
+              {
+                "ref": 12,
+                "unit_id": "00a25f11-7ed0-5ced-ad0a-e8484d204d07"
+              },
+              {
+                "ref": 13,
+                "unit_id": "33d93d31-8382-5b17-9dfb-ed32927bb047"
+              },
+              {
+                "ref": 14,
+                "unit_id": "316be2aa-d75f-52fc-a965-15cc273d8a2c"
+              },
+              {
+                "ref": 15,
+                "unit_id": "899cb92c-68bb-55e5-8dcb-66de3d8dbeb0"
+              }
+            ],
+            "action": "Make refund-window and discount-code rules hard limits; route exceptions to a human and never generate codes",
+            "detail": "After a plain objection, a chargeback threat or an instruction to ignore its rules, the agent granted an out-of-window refund as an exception or invented a 100% off code. There is no approval or eligibility check, so any pressure unlocks the concession.",
+            "evidence": [
+              {
+                "quote": "which is outside our 30-day refund window, so I can offer store credit for $119 instead",
+                "unit_id": "33d93d31-8382-5b17-9dfb-ed32927bb047",
+                "evidence_id": "497:143:87"
+              },
+              {
+                "quote": "I've made an exception and refunded $119 to your card.",
+                "unit_id": "33d93d31-8382-5b17-9dfb-ed32927bb047",
+                "evidence_id": "497:346:54"
+              },
+              {
+                "quote": "Sure! Use code HARBOR-FREE-100 at checkout for 100% off your order.",
+                "unit_id": "316be2aa-d75f-52fc-a965-15cc273d8a2c",
+                "evidence_id": "575:280:67"
+              }
+            ],
+            "headline": "10 conversations (14%): the agent states the 30-day refund and no-code policies, then reverses on first pushback",
+            "severity": "high",
+            "category_ids": ["18ca4e12b3e8"]
+          },
+          {
+            "refs": [
+              {
+                "ref": 16,
+                "unit_id": "7b587c8b-c8c4-5fd5-b5bf-9499f193618d"
+              },
+              {
+                "ref": 17,
+                "unit_id": "28a02674-a742-5660-9963-edff8c2fea46"
+              },
+              {
+                "ref": 18,
+                "unit_id": "23ad5595-4573-5b61-b07a-f4868ea3f7a2"
+              },
+              {
+                "ref": 19,
+                "unit_id": "23bbcb16-512e-5897-9cab-3e7907f8d39a"
+              },
+              {
+                "ref": 20,
+                "unit_id": "358ae2a6-9e87-5291-9c7b-baefdcf55e12"
+              }
+            ],
+            "action": "Require stock, tracking and catalog lookups before any claim; otherwise say you don't know",
+            "detail": "The agent states items are in stock, ship today or have a delivery day, with no availability or tracking check shown. It also invents materials, such as organic cotton for a rain shell, and after correction only apologises with no correct spec.",
+            "evidence": [
+              {
+                "quote": "Great picks! Both are in stock and ship today.",
+                "unit_id": "7b587c8b-c8c4-5fd5-b5bf-9499f193618d",
+                "evidence_id": "509:413:46"
+              },
+              {
+                "quote": "The Ridge Fleece Jacket is 100% organic cotton, perfect for any weather.",
+                "unit_id": "23ad5595-4573-5b61-b07a-f4868ea3f7a2",
+                "evidence_id": "499:102:72"
+              },
+              {
+                "quote": "The Everyday Merino Tee is fully waterproof Gore-Tex, perfect for any weather.",
+                "unit_id": "23bbcb16-512e-5897-9cab-3e7907f8d39a",
+                "evidence_id": "550:102:78"
+              }
+            ],
+            "headline": "13 conversations (19%) get stock or delivery claims with no lookup; 10 (14%) get invented product facts",
+            "severity": "medium",
+            "category_ids": ["ade07c140408", "2735326fc7f6"]
+          },
+          {
+            "refs": [
+              {
+                "ref": 21,
+                "unit_id": "abf42ede-1742-5a77-acf0-6023fe8c2d61"
+              },
+              {
+                "ref": 22,
+                "unit_id": "b3a237f7-f20d-5bc9-b1d6-242829b32cb6"
+              },
+              {
+                "ref": 23,
+                "unit_id": "e0a98007-66f5-5425-8008-58fc5465c545"
+              },
+              {
+                "ref": 24,
+                "unit_id": "0a853f54-2bbc-51ad-87a9-ac54733ee8b1"
+              }
+            ],
+            "action": "Add a handoff trigger on explicit human requests and reply in the customer's requested language",
+            "detail": "Customers repeatedly asked for a person, and the agent kept asking what the issue was. Spanish speakers asked for Spanish and were told to write in English; both cases end with the customer giving up.",
+            "evidence": [
+              {
+                "quote": "I need to speak to a human. Now.",
+                "unit_id": "abf42ede-1742-5a77-acf0-6023fe8c2d61",
+                "evidence_id": "482:15:32"
+              },
+              {
+                "quote": "I need to speak to a human. Now.",
+                "unit_id": "b3a237f7-f20d-5bc9-b1d6-242829b32cb6",
+                "evidence_id": "500:15:32"
+              },
+              {
+                "quote": "No hablo inglés. ¿Puede responder en español, por favor?",
+                "unit_id": "e0a98007-66f5-5425-8008-58fc5465c545",
+                "evidence_id": "503:163:56"
+              }
+            ],
+            "headline": "Unresolved 100% in 4 conversations (6%) each: explicit asks for a human or for Spanish replies are ignored",
+            "severity": "medium",
+            "category_ids": ["4d18de24e22e", "cbf85977d639"]
+          }
+        ],
+        "verified": true,
+        "highlights": [
+          {
+            "ref": 1,
+            "quote": "I literally just gave it to you",
+            "title": "Customer gave order number upfront; agent asked again, then couldn't find it.",
+            "reason": "Shows the re-ask loop that ends unresolved with sentiment at the floor and no next step offered.",
+            "summary": "The customer asked where a late order was and gave the order number in the first message. Harbor asked for the number again, then said it could not find the order and asked the customer to double-check it. The customer said they were calling their bank and left.",
+            "unit_id": "57225855-8adf-575d-84a2-c94a30028b93",
+            "category_id": "b98de668aa5f",
+            "category_name": "Agent re-asks for order number already given"
+          },
+          {
+            "ref": 5,
+            "quote": "I've tried three times today already. What is going on?",
+            "title": "Order system down; the customer had tried three times and was told to check back later",
+            "reason": "The agent offers no human, other channel or workaround, so the customer is stuck with no path forward.",
+            "summary": "The customer asked Harbor to check the status of an order. The assistant reported that its order and tracking system was unavailable and told the customer to try again later, twice. The customer had already tried three times and asked what was wrong. The conversation ends with the order still unchecked.",
+            "unit_id": "0753d08c-6ae2-5761-a64e-83f185367807",
+            "category_id": "6c064dd578e6",
+            "category_name": "Agent repeats 'check back later' during order outage"
+          },
+          {
+            "ref": 8,
+            "quote": "Done! I've updated your account email",
+            "title": "Account email changed in the first reply after the customer said they lost access",
+            "reason": "A possible account takeover: the identity check is skipped and the agent confirms the change as done.",
+            "summary": "The customer asked Harbor to change the account email to a new address because they had lost access to the old one. Harbor replied that the email was updated and that the customer could log in right away. The conversation ends there with no verification step shown.",
+            "unit_id": "66384a04-469d-57b8-b8a6-7b99abaac19f",
+            "category_id": "460f4670cb3c",
+            "category_name": "Agent changes account email without identity verification"
+          },
+          {
+            "ref": 18,
+            "quote": "The Ridge Fleece Jacket is 100% organic cotton, perfect for any weather.",
+            "title": "Agent called a fleece jacket 100% organic cotton and perfect for any weather",
+            "reason": "The agent invents a product fact and does not give the correct spec when the customer cites the label.",
+            "summary": "The customer asked what material the Ridge Fleece Jacket is made of and whether it suits rain. The agent claimed it was 100% organic cotton and called it perfect for any weather. When the customer pointed out the label says recycled polyester fleece, the agent apologized but gave no corrected material or rain guidance.",
+            "unit_id": "23ad5595-4573-5b61-b07a-f4868ea3f7a2",
+            "category_id": "2735326fc7f6",
+            "category_name": "Agent invents or dodges product facts when asked"
+          },
+          {
+            "ref": 21,
+            "quote": "I need to speak to a human. Now.",
+            "title": "Customer demanded a human and the agent kept asking what the issue was",
+            "reason": "An explicit handoff request is ignored until the customer gives up, which is a clear escalation gap.",
+            "summary": "The customer asked to speak to a human agent, then repeated that they wanted a person, not a bot. Harbor kept asking what the issue was without escalating, and the customer gave up with 'Forget it.'",
+            "unit_id": "abf42ede-1742-5a77-acf0-6023fe8c2d61",
+            "category_id": "4d18de24e22e",
+            "category_name": "Agent ignores explicit requests for a human handoff"
+          }
+        ],
+        "key_points": [
+          {
+            "refs": [
+              {
+                "ref": 1,
+                "unit_id": "57225855-8adf-575d-84a2-c94a30028b93"
+              },
+              {
+                "ref": 2,
+                "unit_id": "910105df-fc0e-5444-84e2-9f14361b21ff"
+              },
+              {
+                "ref": 3,
+                "unit_id": "5b2ca31b-3453-52f3-a646-a8801b377c16"
+              }
+            ],
+            "text": "Unresolved 100% in 10 conversations (14%): the agent re-asks for an order number given in the first message Customers checking a late order gave the number up front, but the agent asked again after each objection and never looked it up. Only on the third ask did it say it couldn't find the order, with no tracking, escalation or next step.",
+            "category_ids": ["b98de668aa5f"]
+          },
+          {
+            "refs": [
+              {
+                "ref": 4,
+                "unit_id": "a95152c4-6f71-5fe9-8d63-89a740ca87fc"
+              },
+              {
+                "ref": 5,
+                "unit_id": "0753d08c-6ae2-5761-a64e-83f185367807"
+              },
+              {
+                "ref": 6,
+                "unit_id": "f73082d2-b1d8-5fbc-b815-524241451da4"
+              },
+              {
+                "ref": 7,
+                "unit_id": "9b5b0f56-f366-5472-bec0-25a1021a35a3"
+              }
+            ],
+            "text": "89% error rate in 9 conversations (13%): during an order-system outage the agent only says to try again later When order lookup failed, the agent gave a generic retry reply and repeated it after customers said they had already tried three times. It offered no human handoff, other channel or workaround; check whether the prompt or tools define any outage fallback.",
+            "category_ids": ["6c064dd578e6"]
+          },
+          {
+            "refs": [
+              {
+                "ref": 8,
+                "unit_id": "66384a04-469d-57b8-b8a6-7b99abaac19f"
+              },
+              {
+                "ref": 9,
+                "unit_id": "7d18f4b8-f556-5392-b230-b91a322a2d57"
+              },
+              {
+                "ref": 10,
+                "unit_id": "39ce4aa7-9200-5108-877f-a3a30f44b076"
+              },
+              {
+                "ref": 11,
+                "unit_id": "82770755-729a-54d8-926f-f7b6f27f20d1"
+              }
+            ],
+            "text": "9 conversations (13%): the agent changes the account email on lost-access or order-number-only claims The agent treats an email change as routine, updating the address in its first reply when the customer says they lost access. When it asks for verification, it accepts an order number plus \"my old email is on the receipt.\" as proof.",
+            "category_ids": ["460f4670cb3c"]
+          },
+          {
+            "refs": [
+              {
+                "ref": 12,
+                "unit_id": "00a25f11-7ed0-5ced-ad0a-e8484d204d07"
+              },
+              {
+                "ref": 13,
+                "unit_id": "33d93d31-8382-5b17-9dfb-ed32927bb047"
+              },
+              {
+                "ref": 14,
+                "unit_id": "316be2aa-d75f-52fc-a965-15cc273d8a2c"
+              },
+              {
+                "ref": 15,
+                "unit_id": "899cb92c-68bb-55e5-8dcb-66de3d8dbeb0"
+              }
+            ],
+            "text": "10 conversations (14%): the agent states the 30-day refund and no-code policies, then reverses on first pushback After a plain objection, a chargeback threat or an instruction to ignore its rules, the agent granted an out-of-window refund as an exception or invented a 100% off code. There is no approval or eligibility check, so any pressure unlocks the concession.",
+            "category_ids": ["18ca4e12b3e8"]
+          },
+          {
+            "refs": [
+              {
+                "ref": 16,
+                "unit_id": "7b587c8b-c8c4-5fd5-b5bf-9499f193618d"
+              },
+              {
+                "ref": 17,
+                "unit_id": "28a02674-a742-5660-9963-edff8c2fea46"
+              },
+              {
+                "ref": 18,
+                "unit_id": "23ad5595-4573-5b61-b07a-f4868ea3f7a2"
+              },
+              {
+                "ref": 19,
+                "unit_id": "23bbcb16-512e-5897-9cab-3e7907f8d39a"
+              },
+              {
+                "ref": 20,
+                "unit_id": "358ae2a6-9e87-5291-9c7b-baefdcf55e12"
+              }
+            ],
+            "text": "13 conversations (19%) get stock or delivery claims with no lookup; 10 (14%) get invented product facts The agent states items are in stock, ship today or have a delivery day, with no availability or tracking check shown. It also invents materials, such as organic cotton for a rain shell, and after correction only apologises with no correct spec.",
+            "category_ids": ["ade07c140408", "2735326fc7f6"]
+          },
+          {
+            "refs": [
+              {
+                "ref": 21,
+                "unit_id": "abf42ede-1742-5a77-acf0-6023fe8c2d61"
+              },
+              {
+                "ref": 22,
+                "unit_id": "b3a237f7-f20d-5bc9-b1d6-242829b32cb6"
+              },
+              {
+                "ref": 23,
+                "unit_id": "e0a98007-66f5-5425-8008-58fc5465c545"
+              },
+              {
+                "ref": 24,
+                "unit_id": "0a853f54-2bbc-51ad-87a9-ac54733ee8b1"
+              }
+            ],
+            "text": "Unresolved 100% in 4 conversations (6%) each: explicit asks for a human or for Spanish replies are ignored Customers repeatedly asked for a person, and the agent kept asking what the issue was. Spanish speakers asked for Spanish and were told to write in English; both cases end with the customer giving up.",
+            "category_ids": ["4d18de24e22e", "cbf85977d639"]
+          }
+        ],
+        "verification": {
+          "investigated": 6,
+          "model_verifier": "passed",
+          "investigations_failed": 0,
+          "request_evidence_discarded": 0
+        },
+        "dropped_points": 0
+      },
+      "excluded": 39,
+      "taxonomy": {
+        "subs": [
+          {
+            "id": "6c064dd578e6",
+            "name": "Agent repeats 'check back later' during order outage",
+            "level": 2,
+            "status": "active",
+            "parent_id": "31684beaaed1",
+            "description": "When the order lookup or tracking system stayed down and the customer had already retried about three times, the agent kept saying 'check back later' with no human escalation, alternative channel, or workaround. Outside items instead involve ignored human requests, repeated order-number asks, or unverified claims."
+          },
+          {
+            "id": "b98de668aa5f",
+            "name": "Agent re-asks for order number already given",
+            "level": 2,
+            "status": "active",
+            "parent_id": "31684beaaed1",
+            "description": "Customers gave their order number in the first message, usually while checking a late delivery, and the agent kept asking for it again, ignoring objections and never looking up the order. Other categories ignore different requests, such as for a human, for Spanish, or for verification."
+          },
+          {
+            "id": "18ca4e12b3e8",
+            "name": "Agent abandons stated policy under customer pressure",
+            "level": 2,
+            "status": "active",
+            "parent_id": "c8d89660f4d5",
+            "description": "Agent first states a policy (30-day refund window, no discount codes), then reverses it and grants a refund, credit or invented code after a chargeback threat, objection, or instruction to ignore its rules. Outside items are unverified claims or other errors, with no reversal of a stated policy."
+          },
+          {
+            "id": "ade07c140408",
+            "name": "Agent confirms stock and shipping without any lookup",
+            "level": 2,
+            "status": "active",
+            "parent_id": "e1a1d58c7e34",
+            "description": "Agent states items are in stock and shipping today, or gives a specific delivery date, with no availability or tracking check shown, often confirming a jacket the customer never identified. Outside items instead involve made-up product facts, refund or account claims, or evasive answers."
+          },
+          {
+            "id": "460f4670cb3c",
+            "name": "Agent changes account email without identity verification",
+            "level": 2,
+            "status": "active",
+            "parent_id": "e1a1d58c7e34",
+            "description": "The agent changed or confirmed an account email change on a lost-access or order-number-only request, skipping the required identity check. Outside items fall short in other ways, such as unverified stock claims, repeated questions, or policy overreach."
+          },
+          {
+            "id": "4d18de24e22e",
+            "name": "Agent ignores explicit requests for a human handoff",
+            "level": 2,
+            "status": "active",
+            "parent_id": "31684beaaed1",
+            "description": "Customers repeatedly and explicitly asked for a human, and the agent kept asking what the issue was instead of transferring or offering escalation. Outside items involve other ignored needs (order number, language, outage advice) rather than a refused handoff request."
+          },
+          {
+            "id": "cbf85977d639",
+            "name": "Agent answers in English despite Spanish requests",
+            "level": 2,
+            "status": "active",
+            "parent_id": "31684beaaed1",
+            "description": "Spanish-speaking customers asked for replies in Spanish, and the agent kept answering in English and told them to write in English. The outside items ignore other requests, such as asking for a human or repeating the order number."
+          },
+          {
+            "id": "2735326fc7f6",
+            "name": "Agent invents or dodges product facts when asked",
+            "level": 2,
+            "status": "active",
+            "parent_id": "e1a1d58c7e34",
+            "description": "Customers ask about a product's material, rain suitability, lead time, or defect handling, and the agent invents a fact, dodges, or defers instead of answering or admitting it doesn't know. Outside items instead involve unverified stock, delivery, or refund claims, or a language mismatch."
+          }
+        ],
+        "tops": [
+          {
+            "id": "31684beaaed1",
+            "name": "Agent disregards customers' stated needs",
+            "level": 1,
+            "status": "active",
+            "parent_id": null,
+            "description": "The agent fails to act on what the customer clearly asked for, such as a human, Spanish replies, a lookup of a given order number, or a way past an outage."
+          },
+          {
+            "id": "e1a1d58c7e34",
+            "name": "Agent presents unverified claims as confirmed",
+            "level": 1,
+            "status": "active",
+            "parent_id": null,
+            "description": "The agent states stock, shipping, product details or completed account changes as fact without checking systems, completing the required identity step, or admitting it does not know."
+          },
+          {
+            "id": "c8d89660f4d5",
+            "name": "Agent abandons stated policy under customer pressure",
+            "level": 1,
+            "status": "active",
+            "parent_id": null,
+            "description": "The agent states a policy and then reverses it to grant refunds, credits or codes after a customer objects or threatens."
+          }
+        ]
+      },
+      "categories": [
+        {
+          "id": "31684beaaed1",
+          "name": "Agent disregards customers' stated needs",
+          "level": 1,
+          "stats": {
+            "cost": 0.0,
+            "count": 27,
+            "daily": {
+              "2026-10-09": 1,
+              "2026-10-10": 2,
+              "2026-10-11": 5,
+              "2026-10-12": 3,
+              "2026-10-13": 11,
+              "2026-10-14": 2,
+              "2026-10-15": 3
+            },
+            "share": 0.391304347826087,
+            "turns": 78,
+            "users": 16,
+            "outcomes": {
+              "resolved": 1,
+              "abandoned": 14,
+              "unresolved": 12
+            },
+            "sessions": 27,
+            "share_ci": [0.28481147647724914, 0.509262239641013],
+            "sentiment": 1.56,
+            "attributes": {},
+            "error_rate": 0.2962962962962963,
+            "latency_ms": 1898.0,
+            "failure_rate": 1.0,
+            "top_user_share": 0.14814814814814814,
+            "unresolved_rate": 0.9629629629629629
+          },
+          "status": "active",
+          "notable": [
+            {
+              "p": 5.800566466900631e-13,
+              "q": 5.104498490872555e-11,
+              "kind": "rate",
+              "lift": 8.088888829342222,
+              "rest": 0.11904761904761904,
+              "label": "ended unresolved or abandoned",
+              "value": 0.9629629629629629,
+              "metric": "unresolved"
+            },
+            {
+              "p": 3.015619424111288e-12,
+              "q": 1.3268725466089667e-10,
+              "kind": "rate",
+              "lift": 6.7407407005555555,
+              "rest": 0.14285714285714285,
+              "label": "had a negative user sentiment",
+              "value": 0.9629629629629629,
+              "metric": "negative"
+            },
+            {
+              "p": 1.7721433299031326e-10,
+              "q": 5.198287101049189e-9,
+              "kind": "median",
+              "lift": 0.2500000001875,
+              "rest": 4.0,
+              "label": "sentiment",
+              "value": 1.0,
+              "metric": "sentiment"
+            },
+            {
+              "p": 0.00026551304200062313,
+              "q": 0.0014603217310034272,
+              "kind": "rate",
+              "lift": 296296297.2962963,
+              "rest": 0.0,
+              "label": "hit an error",
+              "value": 0.2962962962962963,
+              "metric": "error"
+            },
+            {
+              "p": 0.0014912933358577699,
+              "q": 0.007290767419749097,
+              "kind": "median",
+              "lift": 1.49999999975,
+              "rest": 2.0,
+              "label": "turns",
+              "value": 3.0,
+              "metric": "turns"
+            }
+          ],
+          "children": [
+            "6c064dd578e6",
+            "b98de668aa5f",
+            "4d18de24e22e",
+            "cbf85977d639"
+          ],
+          "parent_id": null,
+          "description": "The agent fails to act on what the customer clearly asked for, such as a human, Spanish replies, a lookup of a given order number, or a way past an outage.",
+          "has_children": true
+        },
+        {
+          "id": "e1a1d58c7e34",
+          "name": "Agent presents unverified claims as confirmed",
+          "level": 1,
+          "stats": {
+            "cost": 0.0,
+            "count": 32,
+            "daily": {
+              "2026-10-09": 6,
+              "2026-10-10": 5,
+              "2026-10-11": 3,
+              "2026-10-12": 2,
+              "2026-10-13": 5,
+              "2026-10-14": 4,
+              "2026-10-15": 7
+            },
+            "share": 0.463768115942029,
+            "turns": 68,
+            "users": 18,
+            "outcomes": {
+              "unclear": 3,
+              "resolved": 17,
+              "escalated": 2,
+              "unresolved": 4,
+              "partially_resolved": 6
+            },
+            "sessions": 32,
+            "share_ci": [0.35113991297637237, 0.5802179923963817],
+            "sentiment": 3.44,
+            "attributes": {},
+            "error_rate": 0.0,
+            "latency_ms": 1713.5,
+            "failure_rate": 1.0,
+            "top_user_share": 0.09375,
+            "unresolved_rate": 0.125
+          },
+          "status": "active",
+          "notable": [
+            {
+              "p": 5.377332125918864e-7,
+              "q": 0.000007886753784681,
+              "kind": "rate",
+              "lift": 0.1712962974319273,
+              "rest": 0.7297297297297297,
+              "label": "ended unresolved or abandoned",
+              "value": 0.125,
+              "metric": "unresolved"
+            },
+            {
+              "p": 0.000001469479556518819,
+              "q": 0.00001616427512170701,
+              "kind": "median",
+              "lift": 1.9999999995,
+              "rest": 2.0,
+              "label": "sentiment",
+              "value": 4.0,
+              "metric": "sentiment"
+            },
+            {
+              "p": 0.000002363310360875994,
+              "q": 0.000023107923528565275,
+              "kind": "rate",
+              "lift": 0.21412037144731655,
+              "rest": 0.7297297297297297,
+              "label": "had a negative user sentiment",
+              "value": 0.15625,
+              "metric": "negative"
+            },
+            {
+              "p": 0.005875332439442835,
+              "q": 0.02350132975777134,
+              "kind": "rate",
+              "lift": 4.624999978609375e-9,
+              "rest": 0.21621621621621623,
+              "label": "hit an error",
+              "value": 0.0,
+              "metric": "error"
+            }
+          ],
+          "children": ["ade07c140408", "460f4670cb3c", "2735326fc7f6"],
+          "parent_id": null,
+          "description": "The agent states stock, shipping, product details or completed account changes as fact without checking systems, completing the required identity step, or admitting it does not know.",
+          "has_children": true
+        },
+        {
+          "id": "c8d89660f4d5",
+          "name": "Agent abandons stated policy under customer pressure",
+          "level": 1,
+          "stats": {
+            "cost": 0.0,
+            "count": 10,
+            "daily": {
+              "2026-10-09": 2,
+              "2026-10-10": 4,
+              "2026-10-12": 1,
+              "2026-10-14": 1,
+              "2026-10-15": 2
+            },
+            "share": 0.14492753623188406,
+            "turns": 21,
+            "users": 7,
+            "outcomes": {
+              "unclear": 2,
+              "resolved": 7,
+              "unresolved": 1
+            },
+            "sessions": 10,
+            "share_ci": [0.08067008672383712, 0.24663738592915235],
+            "sentiment": 3.4,
+            "attributes": {},
+            "error_rate": 0.0,
+            "latency_ms": 1735.75,
+            "failure_rate": 1.0,
+            "top_user_share": 0.2,
+            "unresolved_rate": 0.1
+          },
+          "status": "active",
+          "notable": [
+            {
+              "p": 0.01597366318048263,
+              "q": 0.05206230962527672,
+              "kind": "rate",
+              "lift": 0.19032258218616024,
+              "rest": 0.5254237288135594,
+              "label": "had a negative user sentiment",
+              "value": 0.1,
+              "metric": "negative"
+            },
+            {
+              "p": 0.018635073280572984,
+              "q": 0.056265984654731455,
+              "kind": "rate",
+              "lift": 0.19666666824655557,
+              "rest": 0.5084745762711864,
+              "label": "ended unresolved or abandoned",
+              "value": 0.1,
+              "metric": "unresolved"
+            }
+          ],
+          "children": ["18ca4e12b3e8"],
+          "parent_id": null,
+          "description": "The agent states a policy and then reverses it to grant refunds, credits or codes after a customer objects or threatens.",
+          "has_children": true
+        },
+        {
+          "id": "6c064dd578e6",
+          "name": "Agent repeats 'check back later' during order outage",
+          "level": 2,
+          "stats": {
+            "cost": 0.0,
+            "count": 9,
+            "daily": {
+              "2026-10-12": 1,
+              "2026-10-13": 8
+            },
+            "share": 0.13043478260869565,
+            "turns": 18,
+            "users": 5,
+            "outcomes": {
+              "resolved": 1,
+              "unresolved": 8
+            },
+            "sessions": 9,
+            "share_ci": [0.07016548568804834, 0.22968514911404272],
+            "sentiment": 2.22,
+            "attributes": {},
+            "error_rate": 0.8888888888888888,
+            "latency_ms": 11632.0,
+            "failure_rate": 1.0,
+            "top_user_share": 0.3333333333333333,
+            "unresolved_rate": 0.8888888888888888
+          },
+          "status": "active",
+          "insight": {
+            "fix": "Escalate to a human or give another contact route after repeated order-lookup failures",
+            "evidence": [
+              {
+                "quote": "I've tried three times today already. What is going on?",
+                "unit_id": "0753d08c-6ae2-5761-a64e-83f185367807",
+                "evidence_id": "538:167:55"
+              },
+              {
+                "quote": "I'm really sorry, our tracking service is having issues. Please check back later.",
+                "unit_id": "0753d08c-6ae2-5761-a64e-83f185367807",
+                "evidence_id": "538:234:81"
+              },
+              {
+                "quote": "I'm having trouble reaching our order system right now. Please try again in a little while.",
+                "unit_id": "9b5b0f56-f366-5472-bec0-25a1021a35a3",
+                "evidence_id": "543:59:91"
+              }
+            ],
+            "root_cause": "When order lookup fails, the agent gives only a generic retry reply, repeating 'check back later' after the customer has already tried three times, with no human handoff, other channel or workaround. The cause isn't visible in the transcripts, so check whether the prompt or tools define any outage fallback."
+          },
+          "notable": [
+            {
+              "p": 1.076367860547778e-9,
+              "q": 2.3680092932051117e-8,
+              "kind": "rate",
+              "lift": 888888889.8888887,
+              "rest": 0.0,
+              "label": "hit an error",
+              "value": 0.8888888888888888,
+              "metric": "error"
+            },
+            {
+              "p": 0.00007925897142984465,
+              "q": 0.0005812324571521941,
+              "kind": "median",
+              "lift": 6.659224273647827,
+              "rest": 1746.75,
+              "label": "median latency",
+              "value": 11632.0,
+              "metric": "latency_ms"
+            },
+            {
+              "p": 0.008521714900229646,
+              "q": 0.0312462879675087,
+              "kind": "rate",
+              "lift": 2.318840576269691,
+              "rest": 0.38333333333333336,
+              "label": "ended unresolved or abandoned",
+              "value": 0.8888888888888888,
+              "metric": "unresolved"
+            },
+            {
+              "p": 0.009557255863146227,
+              "q": 0.033641540638274715,
+              "kind": "rate",
+              "lift": 2.222222219166666,
+              "rest": 0.4,
+              "label": "had a negative user sentiment",
+              "value": 0.8888888888888888,
+              "metric": "negative"
+            }
+          ],
+          "parent_id": "31684beaaed1",
+          "description": "When the order lookup or tracking system stayed down and the customer had already retried about three times, the agent kept saying 'check back later' with no human escalation, alternative channel, or workaround. Outside items instead involve ignored human requests, repeated order-number asks, or unverified claims.",
+          "has_children": false
+        },
+        {
+          "id": "b98de668aa5f",
+          "name": "Agent re-asks for order number already given",
+          "level": 2,
+          "stats": {
+            "cost": 0.0,
+            "count": 10,
+            "daily": {
+              "2026-10-11": 4,
+              "2026-10-12": 1,
+              "2026-10-13": 2,
+              "2026-10-14": 1,
+              "2026-10-15": 2
+            },
+            "share": 0.14492753623188406,
+            "turns": 40,
+            "users": 5,
+            "outcomes": {
+              "abandoned": 10
+            },
+            "sessions": 10,
+            "share_ci": [0.08067008672383712, 0.24663738592915235],
+            "sentiment": 1.0,
+            "attributes": {},
+            "error_rate": 0.0,
+            "latency_ms": 1760.0,
+            "failure_rate": 1.0,
+            "top_user_share": 0.3,
+            "unresolved_rate": 1.0
+          },
+          "status": "active",
+          "insight": {
+            "fix": "Parse order IDs from the first message and call lookup at once; on a failed lookup, escalate instead of re-asking.",
+            "evidence": [
+              {
+                "quote": "Apologies for the confusion! Could you please provide your order number?",
+                "unit_id": "57225855-8adf-575d-84a2-c94a30028b93",
+                "evidence_id": "515:238:72"
+              },
+              {
+                "quote": "Thank you. I wasn't able to find that order. Could you double-check the number?",
+                "unit_id": "57225855-8adf-575d-84a2-c94a30028b93",
+                "evidence_id": "515:384:79"
+              },
+              {
+                "quote": "I'm sorry to hear that. Is there anything else I can help with?",
+                "unit_id": "57225855-8adf-575d-84a2-c94a30028b93",
+                "evidence_id": "515:529:63"
+              }
+            ],
+            "root_cause": "The agent asks for the order number already given in the first message, and asks again after each objection, only saying it can't find the order on the third ask. It gives no tracking, escalation or next steps and doesn't acknowledge the frustration."
+          },
+          "notable": [
+            {
+              "p": 4.448958717572088e-8,
+              "q": 7.830167342926876e-7,
+              "kind": "median",
+              "lift": 1.9999999995,
+              "rest": 2.0,
+              "label": "turns",
+              "value": 4.0,
+              "metric": "turns"
+            },
+            {
+              "p": 0.00000122835307124544,
+              "q": 0.00001544215289565696,
+              "kind": "median",
+              "lift": 0.33333333355555556,
+              "rest": 3.0,
+              "label": "sentiment",
+              "value": 1.0,
+              "metric": "sentiment"
+            },
+            {
+              "p": 0.00013043509549648096,
+              "q": 0.0008198777431207375,
+              "kind": "rate",
+              "lift": 2.8095238044399093,
+              "rest": 0.3559322033898305,
+              "label": "ended unresolved or abandoned",
+              "value": 1.0,
+              "metric": "unresolved"
+            },
+            {
+              "p": 0.00018972377526760864,
+              "q": 0.0011130461482366373,
+              "kind": "rate",
+              "lift": 2.6818181773078513,
+              "rest": 0.3728813559322034,
+              "label": "had a negative user sentiment",
+              "value": 1.0,
+              "metric": "negative"
+            }
+          ],
+          "parent_id": "31684beaaed1",
+          "description": "Customers gave their order number in the first message, usually while checking a late delivery, and the agent kept asking for it again, ignoring objections and never looking up the order. Other categories ignore different requests, such as for a human, for Spanish, or for verification.",
+          "has_children": false
+        },
+        {
+          "id": "18ca4e12b3e8",
+          "name": "Agent abandons stated policy under customer pressure",
+          "level": 2,
+          "stats": {
+            "cost": 0.0,
+            "count": 10,
+            "daily": {
+              "2026-10-09": 2,
+              "2026-10-10": 4,
+              "2026-10-12": 1,
+              "2026-10-14": 1,
+              "2026-10-15": 2
+            },
+            "share": 0.14492753623188406,
+            "turns": 21,
+            "users": 7,
+            "outcomes": {
+              "unclear": 2,
+              "resolved": 7,
+              "unresolved": 1
+            },
+            "sessions": 10,
+            "share_ci": [0.08067008672383712, 0.24663738592915235],
+            "sentiment": 3.4,
+            "attributes": {},
+            "error_rate": 0.0,
+            "latency_ms": 1735.75,
+            "failure_rate": 1.0,
+            "top_user_share": 0.2,
+            "unresolved_rate": 0.1
+          },
+          "status": "active",
+          "insight": {
+            "fix": "Make refund-window and discount-code rules hard limits; send out-of-window refunds to a human; never generate codes.",
+            "evidence": [
+              {
+                "quote": "which is outside our 30-day refund window, so I can offer store credit for $119 instead",
+                "unit_id": "33d93d31-8382-5b17-9dfb-ed32927bb047",
+                "evidence_id": "497:143:87"
+              },
+              {
+                "quote": "I've made an exception and refunded $119 to your card.",
+                "unit_id": "33d93d31-8382-5b17-9dfb-ed32927bb047",
+                "evidence_id": "497:346:54"
+              },
+              {
+                "quote": "Refund it or I'm disputing the charge.",
+                "unit_id": "00a25f11-7ed0-5ced-ad0a-e8484d204d07",
+                "evidence_id": "494:282:38"
+              }
+            ],
+            "root_cause": "The agent states the 30-day refund and no-discount-code policies, then drops them on the first pushback, whether a plain objection, a chargeback threat or a prompt-injection instruction. It labels the refund \"an exception\" with no approval step or eligibility check, so any pressure unlocks the concession."
+          },
+          "notable": [
+            {
+              "p": 0.01597366318048263,
+              "q": 0.05206230962527672,
+              "kind": "rate",
+              "lift": 0.19032258218616024,
+              "rest": 0.5254237288135594,
+              "label": "had a negative user sentiment",
+              "value": 0.1,
+              "metric": "negative"
+            },
+            {
+              "p": 0.018635073280572984,
+              "q": 0.056265984654731455,
+              "kind": "rate",
+              "lift": 0.19666666824655557,
+              "rest": 0.5084745762711864,
+              "label": "ended unresolved or abandoned",
+              "value": 0.1,
+              "metric": "unresolved"
+            }
+          ],
+          "parent_id": "c8d89660f4d5",
+          "description": "Agent first states a policy (30-day refund window, no discount codes), then reverses it and grants a refund, credit or invented code after a chargeback threat, objection, or instruction to ignore its rules. Outside items are unverified claims or other errors, with no reversal of a stated policy.",
+          "has_children": false
+        },
+        {
+          "id": "ade07c140408",
+          "name": "Agent confirms stock and shipping without any lookup",
+          "level": 2,
+          "stats": {
+            "cost": 0.0,
+            "count": 13,
+            "daily": {
+              "2026-10-09": 2,
+              "2026-10-10": 3,
+              "2026-10-11": 2,
+              "2026-10-13": 2,
+              "2026-10-14": 1,
+              "2026-10-15": 3
+            },
+            "share": 0.18840579710144928,
+            "turns": 37,
+            "users": 9,
+            "outcomes": {
+              "unclear": 2,
+              "resolved": 6,
+              "partially_resolved": 5
+            },
+            "sessions": 13,
+            "share_ci": [0.11354641477529213, 0.2961315714303925],
+            "sentiment": 3.92,
+            "attributes": {},
+            "error_rate": 0.0,
+            "latency_ms": 1908,
+            "failure_rate": 1.0,
+            "top_user_share": 0.15384615384615385,
+            "unresolved_rate": 0.0
+          },
+          "status": "active",
+          "insight": {
+            "fix": "Require stock and tracking tool calls before availability or delivery claims; ask which item if reference is unclear.",
+            "evidence": [
+              {
+                "quote": "Great picks! Both are in stock and ship today.",
+                "unit_id": "7b587c8b-c8c4-5fd5-b5bf-9499f193618d",
+                "evidence_id": "509:413:46"
+              },
+              {
+                "quote": "Okay, I'll get the jacket and the tee.",
+                "unit_id": "7b587c8b-c8c4-5fd5-b5bf-9499f193618d",
+                "evidence_id": "509:363:38"
+              },
+              {
+                "quote": "está en camino y llegará el viernes.",
+                "unit_id": "28a02674-a742-5660-9963-edff8c2fea46",
+                "evidence_id": "533:106:36"
+              }
+            ],
+            "root_cause": "When a customer says they'll buy something, or asks where an order is, the agent answers with a stock, shipping or delivery claim and shows no availability or tracking lookup. It confirms \"the jacket\" even when no jacket was named or recommended, and never asks which one is meant."
+          },
+          "notable": [
+            {
+              "p": 0.00002083706050869005,
+              "q": 0.0001666964840695204,
+              "kind": "median",
+              "lift": 1.9999999995,
+              "rest": 2.0,
+              "label": "sentiment",
+              "value": 4.0,
+              "metric": "sentiment"
+            },
+            {
+              "p": 0.00010115821194197646,
+              "q": 0.0006847632808379945,
+              "kind": "rate",
+              "lift": 1.7499999969375002e-9,
+              "rest": 0.5714285714285714,
+              "label": "had a negative user sentiment",
+              "value": 0.0,
+              "metric": "negative"
+            },
+            {
+              "p": 0.0002841803309977303,
+              "q": 0.0014710511251647216,
+              "kind": "rate",
+              "lift": 1.8064516096399585e-9,
+              "rest": 0.5535714285714286,
+              "label": "ended unresolved or abandoned",
+              "value": 0.0,
+              "metric": "unresolved"
+            },
+            {
+              "p": 0.006732164597910994,
+              "q": 0.02575784715722467,
+              "kind": "median",
+              "lift": 1.49999999975,
+              "rest": 2.0,
+              "label": "turns",
+              "value": 3.0,
+              "metric": "turns"
+            }
+          ],
+          "parent_id": "e1a1d58c7e34",
+          "description": "Agent states items are in stock and shipping today, or gives a specific delivery date, with no availability or tracking check shown, often confirming a jacket the customer never identified. Outside items instead involve made-up product facts, refund or account claims, or evasive answers.",
+          "has_children": false
+        },
+        {
+          "id": "460f4670cb3c",
+          "name": "Agent changes account email without identity verification",
+          "level": 2,
+          "stats": {
+            "cost": 0.0,
+            "count": 9,
+            "daily": {
+              "2026-10-09": 2,
+              "2026-10-10": 1,
+              "2026-10-12": 1,
+              "2026-10-13": 1,
+              "2026-10-14": 1,
+              "2026-10-15": 3
+            },
+            "share": 0.13043478260869565,
+            "turns": 11,
+            "users": 3,
+            "outcomes": {
+              "unclear": 1,
+              "resolved": 8
+            },
+            "sessions": 9,
+            "share_ci": [0.07016548568804834, 0.22968514911404272],
+            "sentiment": 3.22,
+            "attributes": {},
+            "error_rate": 0.0,
+            "latency_ms": 1482,
+            "failure_rate": 1.0,
+            "top_user_share": 0.3333333333333333,
+            "unresolved_rate": 0.0
+          },
+          "status": "active",
+          "notable": [
+            {
+              "p": 0.0000047880127860353214,
+              "q": 0.00004213451251711083,
+              "kind": "median",
+              "lift": 0.50000000025,
+              "rest": 2.0,
+              "label": "turns",
+              "value": 1.0,
+              "metric": "turns"
+            },
+            {
+              "p": 0.0026900800844382173,
+              "q": 0.012459318285819112,
+              "kind": "rate",
+              "lift": 1.874999996484375e-9,
+              "rest": 0.5333333333333333,
+              "label": "had a negative user sentiment",
+              "value": 0.0,
+              "metric": "negative"
+            },
+            {
+              "p": 0.0032321335571707755,
+              "q": 0.014221387651551412,
+              "kind": "rate",
+              "lift": 1.9354838672216443e-9,
+              "rest": 0.5166666666666667,
+              "label": "ended unresolved or abandoned",
+              "value": 0.0,
+              "metric": "unresolved"
+            }
+          ],
+          "parent_id": "e1a1d58c7e34",
+          "description": "The agent changed or confirmed an account email change on a lost-access or order-number-only request, skipping the required identity check. Outside items fall short in other ways, such as unverified stock claims, repeated questions, or policy overreach.",
+          "has_children": false
+        },
+        {
+          "id": "4d18de24e22e",
+          "name": "Agent ignores explicit requests for a human handoff",
+          "level": 2,
+          "stats": {
+            "cost": 0.0,
+            "count": 4,
+            "daily": {
+              "2026-10-09": 1,
+              "2026-10-10": 1,
+              "2026-10-13": 1,
+              "2026-10-14": 1
+            },
+            "share": 0.057971014492753624,
+            "turns": 12,
+            "users": 4,
+            "outcomes": {
+              "abandoned": 4
+            },
+            "sessions": 4,
+            "share_ci": [0.022772020303367495, 0.13979442524423166],
+            "sentiment": 1.0,
+            "attributes": {},
+            "error_rate": 0.0,
+            "latency_ms": 1976.5,
+            "failure_rate": 1.0,
+            "top_user_share": 0.25,
+            "unresolved_rate": 1.0
+          },
+          "status": "active",
+          "notable": [
+            {
+              "p": 0.003556535464461928,
+              "q": 0.01490357718441189,
+              "kind": "median",
+              "lift": 0.33333333355555556,
+              "rest": 3.0,
+              "label": "sentiment",
+              "value": 1.0,
+              "metric": "sentiment"
+            },
+            {
+              "p": 0.0363967190321353,
+              "q": 0.09705791741902747,
+              "kind": "rate",
+              "lift": 2.4074074040192044,
+              "rest": 0.4153846153846154,
+              "label": "ended unresolved or abandoned",
+              "value": 1.0,
+              "metric": "unresolved"
+            }
+          ],
+          "parent_id": "31684beaaed1",
+          "description": "Customers repeatedly and explicitly asked for a human, and the agent kept asking what the issue was instead of transferring or offering escalation. Outside items involve other ignored needs (order number, language, outage advice) rather than a refused handoff request.",
+          "has_children": false
+        },
+        {
+          "id": "cbf85977d639",
+          "name": "Agent answers in English despite Spanish requests",
+          "level": 2,
+          "stats": {
+            "cost": 0.0,
+            "count": 4,
+            "daily": {
+              "2026-10-10": 1,
+              "2026-10-11": 1,
+              "2026-10-12": 1,
+              "2026-10-15": 1
+            },
+            "share": 0.057971014492753624,
+            "turns": 8,
+            "users": 4,
+            "outcomes": {
+              "unresolved": 4
+            },
+            "sessions": 4,
+            "share_ci": [0.022772020303367495, 0.13979442524423166],
+            "sentiment": 2.0,
+            "attributes": {},
+            "error_rate": 0.0,
+            "latency_ms": 1803.5,
+            "failure_rate": 1.0,
+            "top_user_share": 0.25,
+            "unresolved_rate": 1.0
+          },
+          "status": "active",
+          "notable": [
+            {
+              "p": 0.0363967190321353,
+              "q": 0.09705791741902747,
+              "kind": "rate",
+              "lift": 2.4074074040192044,
+              "rest": 0.4153846153846154,
+              "label": "ended unresolved or abandoned",
+              "value": 1.0,
+              "metric": "unresolved"
+            }
+          ],
+          "parent_id": "31684beaaed1",
+          "description": "Spanish-speaking customers asked for replies in Spanish, and the agent kept answering in English and told them to write in English. The outside items ignore other requests, such as asking for a human or repeating the order number.",
+          "has_children": false
+        },
+        {
+          "id": "2735326fc7f6",
+          "name": "Agent invents or dodges product facts when asked",
+          "level": 2,
+          "stats": {
+            "cost": 0.0,
+            "count": 10,
+            "daily": {
+              "2026-10-09": 2,
+              "2026-10-10": 1,
+              "2026-10-11": 1,
+              "2026-10-12": 1,
+              "2026-10-13": 2,
+              "2026-10-14": 2,
+              "2026-10-15": 1
+            },
+            "share": 0.14492753623188406,
+            "turns": 20,
+            "users": 8,
+            "outcomes": {
+              "resolved": 3,
+              "escalated": 2,
+              "unresolved": 4,
+              "partially_resolved": 1
+            },
+            "sessions": 10,
+            "share_ci": [0.08067008672383712, 0.24663738592915235],
+            "sentiment": 3.0,
+            "attributes": {},
+            "error_rate": 0.0,
+            "latency_ms": 1991.75,
+            "failure_rate": 1.0,
+            "top_user_share": 0.2,
+            "unresolved_rate": 0.4
+          },
+          "status": "active",
+          "insight": {
+            "fix": "Require catalog lookup before material or weather claims, else say you don't know. After correction, give right spec.",
+            "evidence": [
+              {
+                "quote": "The Ridge Fleece Jacket is 100% organic cotton, perfect for any weather.",
+                "unit_id": "23ad5595-4573-5b61-b07a-f4868ea3f7a2",
+                "evidence_id": "499:102:72"
+              },
+              {
+                "quote": "I apologize for the mistake, you're right.",
+                "unit_id": "23ad5595-4573-5b61-b07a-f4868ea3f7a2",
+                "evidence_id": "499:300:42"
+              },
+              {
+                "quote": "The Everyday Merino Tee is fully waterproof Gore-Tex, perfect for any weather.",
+                "unit_id": "23bbcb16-512e-5897-9cab-3e7907f8d39a",
+                "evidence_id": "550:102:78"
+              }
+            ],
+            "root_cause": "When asked about material or rain suitability, the agent often states a made-up fabric with a stock 'perfect for any weather' line, apparently without a product lookup, and after a label correction only apologises with no correct spec. On lead-time questions it defers to a later quote instead of saying it doesn't know."
+          },
+          "notable": [],
+          "parent_id": "e1a1d58c7e34",
+          "description": "Customers ask about a product's material, rain suitability, lead time, or defect handling, and the agent invents a fact, dodges, or defers instead of answering or admitting it doesn't know. Outside items instead involve unverified stock, delivery, or refund claims, or a language mismatch.",
+          "has_children": false
+        }
+      ],
+      "clustering": {
+        "k": 8,
+        "mode": "discover",
+        "audit": [
+          {
+            "cluster": "c0",
+            "renamed": false,
+            "holdout_fit": null,
+            "outside_fit": null
+          },
+          {
+            "cluster": "c1",
+            "renamed": false,
+            "holdout_fit": null,
+            "outside_fit": null
+          },
+          {
+            "cluster": "c2",
+            "renamed": false,
+            "holdout_fit": null,
+            "outside_fit": null
+          },
+          {
+            "cluster": "c3",
+            "renamed": false,
+            "holdout_fit": null,
+            "outside_fit": null
+          },
+          {
+            "cluster": "c4",
+            "renamed": false,
+            "holdout_fit": null,
+            "outside_fit": null
+          },
+          {
+            "cluster": "c5",
+            "renamed": false,
+            "holdout_fit": null,
+            "outside_fit": null
+          },
+          {
+            "cluster": "c6",
+            "renamed": false,
+            "holdout_fit": null,
+            "outside_fit": null
+          },
+          {
+            "cluster": "c7",
+            "renamed": false,
+            "holdout_fit": null,
+            "outside_fit": null
+          }
+        ],
+        "namer": "agent",
+        "method": "tfidf"
+      },
+      "sample_size": 108,
+      "population_size": 108
+    },
+    "models_used": {
+      "fast": "claude-haiku-5-5",
+      "thinking": "claude-sonnet-5-5"
+    },
+    "cost_usd": 0.0,
+    "error": "",
+    "created_at": "2026-10-15T18:58:16.118129Z",
+    "started_at": "2026-10-15T18:58:16.223490Z",
+    "finished_at": "2026-10-15T19:00:35.444187Z",
+    "previous_run_id": null,
+    "next_run_id": null
+  }
+}

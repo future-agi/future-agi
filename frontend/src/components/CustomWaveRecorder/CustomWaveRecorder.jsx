@@ -145,12 +145,7 @@ const CustomWaveRecorder = ({ onClose }) => {
         <Typography typography="s1">
           Please allow microphone access to record audio.
         </Typography>
-        <IconButton
-          sx={{
-            padding: 0,
-          }}
-          onClick={onClose}
-        >
+        <IconButton onClick={onClose}>
           <SvgColor
             src="/assets/icons/ic_close.svg"
             sx={{
@@ -184,8 +179,7 @@ const CustomWaveRecorder = ({ onClose }) => {
         <IconButton
           onClick={handleRecord}
           sx={{
-            color: "red.500",
-            padding: 0,
+            color: "status.danger.fg",
           }}
         >
           <ShowComponent condition={isRecording}>

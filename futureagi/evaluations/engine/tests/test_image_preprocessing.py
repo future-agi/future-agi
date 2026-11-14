@@ -102,8 +102,15 @@ def test_blocked_urls_never_fetch(url):
 # ---------------------------------------------------------------------------
 
 
-def _safe_get_result(*, status=200, body=b"\x89PNG\r\n\x1a\n" + b"\x00" * 64, content_type="image/png", url="https://example.com/img.png"):
+def _safe_get_result(
+    *,
+    status=200,
+    body=b"\x89PNG\r\n\x1a\n" + b"\x00" * 64,
+    content_type="image/png",
+    url="https://example.com/img.png",
+):
     from tfc.utils.ssrf_guard import SsrfResponse
+
     return SsrfResponse(status, {"Content-Type": content_type}, body, url)
 
 
@@ -158,7 +165,9 @@ def test_image_properties_replaces_text_kwarg():
         "evaluations.engine.preprocessing.safe_fetch",
         return_value=_safe_get_result(),
     ):
-        out = preprocess_inputs("image_properties", {"text": "https://example.com/x.png"})
+        out = preprocess_inputs(
+            "image_properties", {"text": "https://example.com/x.png"}
+        )
     assert out["text"] != "https://example.com/x.png"
     assert isinstance(out["text"], str) and len(out["text"]) > 0
 
@@ -217,7 +226,9 @@ def test_data_uri_resolver_forces_image_mime_when_octet_stream():
     body = b"\x89PNG\r\n\x1a\n" + b"\x00" * 64
     with patch(
         "evaluations.engine.preprocessing.safe_fetch",
-        return_value=_safe_get_result(body=body, content_type="application/octet-stream"),
+        return_value=_safe_get_result(
+            body=body, content_type="application/octet-stream"
+        ),
     ):
         out = _resolve_image_input_as_data_uri("https://example.com/key-no-extension")
     assert out.startswith("data:image/jpeg;base64,")
@@ -240,7 +251,7 @@ def test_data_uri_resolver_rejects_svg_content_type():
     execute it. Reject at fetch time — fall through to the original URL so
     the sandbox produces its own load error, no data URI is returned.
     """
-    body = b"<svg onload=\"alert(1)\"></svg>"
+    body = b'<svg onload="alert(1)"></svg>'
     with patch(
         "evaluations.engine.preprocessing.safe_fetch",
         return_value=_safe_get_result(body=body, content_type="image/svg+xml"),

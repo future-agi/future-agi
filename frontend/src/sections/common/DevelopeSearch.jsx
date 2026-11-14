@@ -63,7 +63,7 @@ const DevelopeSearch = ({
             }
           }}
         >
-          <Iconify icon="eva:search-fill" color="text.disabled" />
+          <Iconify icon="solar:magnifier-linear" color="text.disabled" />
         </IconButton>
       </Collapse>
       <Collapse
@@ -78,7 +78,8 @@ const DevelopeSearch = ({
             startAdornment: (
               <InputAdornment position="start">
                 <Iconify
-                  icon="eva:search-fill"
+                  icon="solar:magnifier-linear"
+                  width={16}
                   sx={{ color: "text.disabled" }}
                 />
               </InputAdornment>
@@ -86,7 +87,7 @@ const DevelopeSearch = ({
             endAdornment: (
               <InputAdornment position="end">
                 <IconButton size="small" onClick={onClose}>
-                  <Iconify icon="material-symbols:close" />
+                  <Iconify icon="solar:close-linear" />
                 </IconButton>
               </InputAdornment>
             ),

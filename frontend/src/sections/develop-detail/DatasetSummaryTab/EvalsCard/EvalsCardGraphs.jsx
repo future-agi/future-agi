@@ -63,7 +63,7 @@ const EvalsCardGraphs = ({
         { value: redarData, name: redarLabel, outputType: radarOutputType },
       ],
     };
-  }, [data,mode]);
+  }, [data, mode]);
 
   if (isPending || isLoading) {
     return <EvalsCardLoading />;
@@ -136,21 +136,21 @@ const EvalsCardGraphs = ({
                   >
                     <Box
                       sx={{
-                        backgroundColor: "green.o10",
+                        backgroundColor: "status.success.bg",
                         padding: 1,
-                        color: "green.500",
+                        color: "status.success.fg",
                         display: "flex",
                         justifyContent: "center",
                         alignItems: "center",
                         width: "32px",
                         height: "32px",
-                        borderRadius: "2px",
+                        borderRadius: "4px",
                       }}
                     >
                       <Iconify
                         // @ts-ignore
                         icon="qlementine-icons:success-16"
-                        color="green.500"
+                        color="status.success.fg"
                       />
                     </Box>
                     <Box>
@@ -166,8 +166,8 @@ const EvalsCardGraphs = ({
                         fontWeight={"fontWeightSemiBold"}
                         sx={{
                           color: "text.primary",
-                          fontWeight: 700,
-                          fontSize: "1.125rem",
+                          fontWeight: 600,
+                          fontSize: "1rem",
                         }}
                       >
                         {redarChart?.label?.length > 0 &&

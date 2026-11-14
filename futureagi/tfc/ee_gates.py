@@ -7,7 +7,138 @@ through EE code paths)."""
 from __future__ import annotations
 
 from rest_framework.response import Response
+
 from tfc.utils.api_errors import build_error_envelope
+
+JEV_MODEL_IDS = ("jev-1.13.0", "jev-1.14.0", "jev-latest")
+
+
+def is_jev_model(model_name: object) -> bool:
+    return model_name in JEV_MODEL_IDS
+
+
+# The user-facing text when this build doesn't ship Jev's code.
+JEV_UNAVAILABLE_MESSAGE = "Jev isn't available in this build."
+
+
+def jev_available() -> bool:
+    """Whether this build ships Jev's code (the evaluator and its client).
+    A build with ee/ stripped doesn't, and must refuse Jev rather than fail
+    on an import."""
+    from tfc.ee_loader import has_ee
+
+    return has_ee("ee.jev") and has_ee("ee.evals.llm.jev_evaluator")
+
+
+def _jev_denied_off_cloud() -> bool:
+    """Jev is a Community feature: every self-hosted install runs it, OSS or
+    EE, licensed or not. Cloud defers to the engine's plan check
+    (has_jev_models)."""
+    from tfc.capabilities import service as capability_service
+    from tfc.licensing.types import DeploymentLocation
+
+    if not capability_service.is_configured():
+        return False
+    if capability_service.get_deployment_location() == DeploymentLocation.CLOUD:
+        return False
+    return not capability_service.check("jev_models").allowed
+
+
+def _jev_denied_response(message: str) -> Response:
+    return Response(
+        build_error_envelope(
+            message,
+            status_code=402,
+            error_type="entitlement_error",
+            code="ENTITLEMENT_DENIED",
+            extra={"upgrade_required": True, "feature": "jev"},
+        ),
+        status=402,
+    )
+
+
+def jev_gate_for_template(model_name: object, template_id=None, eval_type=None):
+    from evaluations.decision_models import get_decision_model
+
+    if isinstance(model_name, str) and model_name.lower().startswith("decision/"):
+        if get_decision_model(model_name) is None:
+            return Response(
+                build_error_envelope(
+                    "Select a supported decision model and connection.",
+                    code="DECISION_MODEL_UNKNOWN",
+                    extra={"attr": "model", "feature": "decision_models"},
+                ),
+                status=400,
+            )
+        from tfc.ee_loader import has_ee
+
+        if not has_ee("ee.decisions.evaluator"):
+            return Response(
+                build_error_envelope(
+                    "Decision evaluators are not available in this build.",
+                    code="DECISION_UNAVAILABLE",
+                    status_code=402,
+                ),
+                status=402,
+            )
+        from evaluations.decision_models import uses_jev_billing
+
+        if uses_jev_billing(model_name) and _jev_denied_off_cloud():
+            return _jev_denied_response(
+                "Jev models are not available in this deployment."
+            )
+        # Non-Jev connections retain the existing general BYOK policy.
+        return None
+    if isinstance(model_name, str) and model_name.lower().startswith("jev-"):
+        if not is_jev_model(model_name):
+            return Response(
+                build_error_envelope(
+                    "Unsupported Jev model. Supported: jev-1.13.0, jev-1.14.0, jev-latest.",
+                    code="JEV_MODEL_UNKNOWN",
+                    extra={"attr": "model", "feature": "jev"},
+                ),
+                status=400,
+            )
+        if not jev_available():
+            return _jev_denied_response(JEV_UNAVAILABLE_MESSAGE)
+        if _jev_denied_off_cloud():
+            return _jev_denied_response(
+                "Jev models are not available in this deployment."
+            )
+    return None
+
+
+def ee_model_gate_for_template(model_name: object, template_id=None, eval_type=None):
+    gate = jev_gate_for_template(model_name, template_id, eval_type)
+    if gate is not None:
+        return gate
+    return turing_oss_gate_for_template(model_name, template_id, eval_type)
+
+
+def describe_jev_error(exc: BaseException) -> dict | None:
+    """The typed code and fixed user-facing text for a failed Jev run, as
+    ``{"code", "message", "attr", "details"}``. None when exc is not a Jev
+    failure, or when this build has no Jev."""
+    try:
+        from ee.decisions.errors import describe as describe_decision
+    except ImportError:
+        pass
+    else:
+        decision = describe_decision(exc)
+        if decision is not None:
+            return decision
+    try:
+        from ee.jev.errors import describe
+    except ImportError:
+        return None
+    return describe(exc)
+
+
+def jev_error_message(exc: BaseException) -> str | None:
+    """The user-facing text for a failed Jev run, or None for any other error."""
+    described = describe_jev_error(exc)
+    return described["message"] if described else None
+
 
 _TURING_MODELS = frozenset(
     {
@@ -27,6 +158,59 @@ def is_turing_model(model_name: object) -> bool:
     return str(model_name).lower() in _TURING_MODELS
 
 
+def insights_turing_models() -> list[str]:
+    """The Turing models Insights is configured to call: its fast and
+    thinking models (INSIGHTS_FAST_MODEL / INSIGHTS_THINKING_MODEL), which
+    are Turing's by default. Empty when a deployment points both at its own
+    models, or when this build has no Insights."""
+    try:
+        from ee.agenthub.insights.llm import FAST, THINKING, model_for
+    except ImportError:
+        return []
+    models = [model_for(FAST), model_for(THINKING)]
+    return [
+        model
+        for model in models
+        if is_turing_model(model) or is_turing_model(str(model).rsplit("/", 1)[-1])
+    ]
+
+
+INSIGHTS_DENIED_MESSAGE = "Insights isn't available to this organization."
+INSIGHTS_TURING_DENIED_MESSAGE = (
+    "Insights runs on Turing models, which aren't available on this "
+    "organization's plan."
+)
+# Self-hosted, Insights is licensed but Turing isn't: the deployment can point
+# Insights at its own models instead.
+INSIGHTS_TURING_UNLICENSED_MESSAGE = (
+    "Insights runs on Turing models, which this Enterprise license doesn't "
+    "include. Set INSIGHTS_FAST_MODEL and INSIGHTS_THINKING_MODEL to your own "
+    "models, or ask us to add Turing models to the license."
+)
+
+
+def insights_turing_denied_message() -> str:
+    """Why insights_turing_denied refused, in this deployment's terms: a
+    Cloud plan, or a self-hosted license."""
+    from tfc.capabilities import service as capability_service
+    from tfc.licensing.types import DeploymentLocation
+
+    if capability_service.get_deployment_location() == DeploymentLocation.CLOUD:
+        return INSIGHTS_TURING_DENIED_MESSAGE
+    return INSIGHTS_TURING_UNLICENSED_MESSAGE
+
+
+def insights_turing_denied(org_id) -> bool:
+    """Whether Insights' model steps are refused for want of Turing: only
+    when Insights is configured to call a Turing model. A deployment that
+    points Insights at its own models doesn't need Turing."""
+    if not insights_turing_models():
+        return False
+    from tfc.capabilities import service as capability_service
+
+    return not capability_service.check("turing_models", org_id=str(org_id)).allowed
+
+
 def voice_sim_oss_gate_response() -> Response | None:
     """Return a 402 response when the voice-sim code isn't available in this
     build (OSS image with ee/ stripped), else None.
@@ -36,6 +220,11 @@ def voice_sim_oss_gate_response() -> Response | None:
     layer (capability service / cloud plan resolver), and voice_sim is open
     on self-hosted deployments regardless of license state, so deployment
     mode alone must never deny here."""
+    from tfc.utils.lazy_extras import extra_available
+
+    if not extra_available("livekit"):
+        return _voice_sim_code_unavailable_response()
+
     try:
         from tfc.capabilities import service as capability_service
         from tfc.licensing.types import DenialReason
@@ -58,6 +247,44 @@ def voice_sim_oss_gate_response() -> Response | None:
     return _voice_sim_code_unavailable_response()
 
 
+def voice_sim_gate_response(user_organization) -> Response | None:
+    """Return the complete deployment and plan gate for voice simulation.
+
+    All HTTP and non-HTTP entry points use this helper so code availability
+    and the cloud ``has_voice_sim`` entitlement cannot drift apart.
+    """
+    oss_gate = voice_sim_oss_gate_response()
+    if oss_gate is not None:
+        return oss_gate
+
+    try:
+        from ee.usage.deployment import DeploymentMode
+        from ee.usage.services.entitlements import Entitlements
+    except ImportError:
+        # A partial EE installation cannot safely answer plan entitlements.
+        return _voice_sim_code_unavailable_response()
+
+    if not DeploymentMode.is_cloud():
+        return None
+
+    feature_check = Entitlements.check_feature(
+        str(user_organization.id), "has_voice_sim"
+    )
+    if feature_check.allowed:
+        return None
+
+    message = feature_check.reason or "This feature requires a higher plan"
+    return Response(
+        build_error_envelope(
+            message,
+            status_code=403,
+            code="permission_denied",
+            extra={"upgrade_required": True, "feature": "voice_sim"},
+        ),
+        status=403,
+    )
+
+
 def _voice_sim_code_unavailable_response() -> Response:
     message = (
         "Voice simulation is not available on OSS. "
@@ -76,6 +303,83 @@ def _voice_sim_code_unavailable_response() -> Response:
         ),
         status=402,
     )
+
+
+class RetentionPolicyUnavailable(RuntimeError):
+    pass
+
+
+def trace_retention_cutoff(organization_id, *, now=None):
+    """The Cloud org's trace cutoff, or None for self-hosted/unlimited.
+
+    A failed Cloud policy lookup must not become unlimited retention.
+    Call once per materialization/settlement operation, not once per unit.
+    """
+    from datetime import timedelta
+
+    from django.utils import timezone
+
+    from tfc.capabilities import service as capability_service
+    from tfc.licensing.types import DeploymentLocation
+
+    if capability_service.get_deployment_location() != DeploymentLocation.CLOUD:
+        return None
+    from ee.usage.services.entitlements import Entitlements
+
+    try:
+        days = Entitlements.get_retention_days(
+            str(organization_id), "traces", use_cache=False
+        )
+    except Exception as exc:
+        import structlog
+
+        structlog.get_logger(__name__).warning(
+            "analysis_retention_policy_unavailable",
+            organization_id=str(organization_id),
+            exc_info=True,
+        )
+        raise RetentionPolicyUnavailable(
+            "Data retention could not be checked. Please retry."
+        ) from exc
+    return (now or timezone.now()) - timedelta(days=days) if days > 0 else None
+
+
+def forget_analysis_evidence(run_id) -> None:
+    """Cancel expired work without billing and remove its snapshot evidence."""
+    import structlog
+    from django.core.cache import cache
+
+    from tfc.ee_loader import has_ee
+
+    if not has_ee("ee.agenthub.insights"):
+        return
+    from ee.agenthub.insights.pipeline import STOP_KEY, STOP_KEY_TTL_S, _forget_evidence
+    from tfc.temporal.common.client import cancel_workflow_sync
+    from tfc.temporal.insights.client import workflow_id_for
+    from tracer.models.insights import InsightRun
+
+    logger = structlog.get_logger(__name__)
+    try:
+        cache.set(STOP_KEY.format(run_id), True, timeout=STOP_KEY_TTL_S)
+    except Exception:
+        # The worker also checks the run's database state before queued calls.
+        logger.warning(
+            "analysis_retention_stop_signal_failed", run_id=str(run_id), exc_info=True
+        )
+    workflow_id = (
+        InsightRun._base_manager.filter(id=run_id)
+        .values_list("workflow_id", flat=True)
+        .first()
+    )
+    try:
+        cancel_workflow_sync(workflow_id or workflow_id_for(run_id))
+    except Exception:
+        logger.warning(
+            "analysis_retention_workflow_cancel_failed",
+            run_id=str(run_id),
+            exc_info=True,
+        )
+    _forget_evidence(run_id)
 
 
 def _is_oss() -> bool:

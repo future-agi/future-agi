@@ -193,15 +193,16 @@ describe.each(["catalog", "legacy"])("Users graph %s metrics", (path) => {
       );
 
       fireEvent.click(await screen.findByRole("button", { name: "Latency" }));
-      // Catalog arrival resolves the default metric and issues its own graph
-      // read. Wait for that render before clicking (not a detached loading DOM).
+      // The users catalog has no latency entry. Its arrival only lists the
+      // options: the default metric stays and no graph read is issued.
       await waitFor(() => {
         expect(client.isFetching()).toBe(0);
-        expect(
-          screen.getByTestId("graph-metric-picker-trigger"),
-        ).toHaveTextContent("Active Users");
         expect(screen.getByRole("button", { name: label })).toBeInTheDocument();
       });
+      expect(
+        screen.getByTestId("graph-metric-picker-trigger"),
+      ).toHaveTextContent("Latency");
+      expect(axios.post).toHaveBeenCalledTimes(1);
       fireEvent.click(screen.getByRole("button", { name: label }));
       await waitFor(() => {
         expect(axios.post.mock.calls.at(-1)?.[1].req_data_config).toEqual({

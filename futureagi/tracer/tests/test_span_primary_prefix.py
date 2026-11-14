@@ -181,8 +181,7 @@ def test_prefix_utc_floor_deduplication_and_driver_timezone_independence(
             "toUnixTimestamp64Micro(toDateTime64(toStartOfHour(start_time), 6, 'UTC'))"
             in sql
         )
-        assert "optimize_move_to_prewhere_if_final = 0" in sql
-        assert "enable_optimize_predicate_expression_to_final_subquery = 0" in sql
+        assert "optimize_move_to_prewhere = 0" in sql
         assert "query_plan_merge_expressions = 0" in sql
 
 

@@ -1,8 +1,6 @@
 import {
-  Badge,
   Box,
   Button,
-  Collapse,
   Divider,
   IconButton,
   InputAdornment,
@@ -24,7 +22,7 @@ import { useTestDetailStore, useTestDetailStoreShallow } from "./states";
 import CustomTooltip from "src/components/tooltip/CustomTooltip";
 import logger from "../../utils/logger";
 import { useTestDetail } from "./context/TestDetailContext";
-import ComplexFilter from "src/components/ComplexFilter/ComplexFilter";
+import { FilterButton, useComplexFilterBinding } from "src/components/filter";
 import {
   getSelectedCallExecutionIds,
   getTestRunDetailColumnQuery,
@@ -231,11 +229,6 @@ const TestRunDetailBar = () => {
       tooltip: "View Column",
       ref: columnConfigureRef,
     },
-    {
-      icon: "ic_filter",
-      action: () => setOpenFilter((b) => !b),
-      tooltip: "Filter",
-    },
   ];
 
   // Handle column visibility change in AG Grid
@@ -302,6 +295,13 @@ const TestRunDetailBar = () => {
     [setFilters, gridApi],
   );
 
+  const filterBinding = useComplexFilterBinding({
+    filters,
+    setFilters: handleSetFilters,
+    filterDefinition,
+    defaultFilter,
+  });
+
   const iconStyles = {
     width: 16,
     height: 16,
@@ -350,7 +350,7 @@ const TestRunDetailBar = () => {
               endAdornment: search && (
                 <InputAdornment position="end">
                   <Iconify
-                    icon="mingcute:close-line"
+                    icon="solar:close-linear"
                     onClick={() => {
                       setSearch("");
                     }}
@@ -374,33 +374,26 @@ const TestRunDetailBar = () => {
               arrow
               size="small"
             >
-              <Badge
-                variant="dot"
-                color="error"
-                overlap="circular"
-                anchorOrigin={{ vertical: "top", horizontal: "right" }}
-                sx={{
-                  "& .MuiBadge-badge": {
-                    top: 1,
-                    right: 1,
-                  },
-                }}
-                invisible={!(isFilterApplied && button?.icon === "ic_filter")}
+              <StyledSmallButton
+                size="small"
+                sx={{ color: "text.disabled" }}
+                ref={button.ref}
+                onClick={button.action}
               >
-                <StyledSmallButton
-                  size="small"
-                  sx={{ color: "text.disabled" }}
-                  ref={button.ref}
-                  onClick={button.action}
-                >
-                  <SvgColor
-                    src={`/assets/icons/action_buttons/${button.icon}.svg`}
-                    sx={iconStyles}
-                  />
-                </StyledSmallButton>
-              </Badge>
+                <SvgColor
+                  src={`/assets/icons/action_buttons/${button.icon}.svg`}
+                  sx={iconStyles}
+                />
+              </StyledSmallButton>
             </CustomTooltip>
           ))}
+          <FilterButton
+            fields={filterBinding.fields}
+            value={filterBinding.value}
+            onChange={filterBinding.onChange}
+            open={openFilter}
+            onOpenChange={setOpenFilter}
+          />
           <ShowComponent condition={isFilterApplied}>
             <Divider orientation="vertical" flexItem />
             <CustomTooltip
@@ -413,9 +406,9 @@ const TestRunDetailBar = () => {
               <Button
                 size="small"
                 variant="outlined"
-                sx={{ ...theme.typography.s2_1, fontWeight: 500, paddingX: 2 }}
+                sx={{ ...theme.typography.s2_1 }}
                 startIcon={
-                  <Iconify icon="akar-icons:cross" width={8} height={8} />
+                  <Iconify icon="solar:close-linear" width={8} height={8} />
                 }
                 onClick={() => {
                   removeAllFilters();
@@ -431,17 +424,6 @@ const TestRunDetailBar = () => {
         </Box>
         <TestDetailSelection agentType={testExecutions?.agent_type} />
       </Box>
-      <Collapse in={openFilter}>
-        <Box sx={{ paddingTop: 2 }}>
-          <ComplexFilter
-            filters={filters}
-            defaultFilter={defaultFilter}
-            setFilters={handleSetFilters}
-            filterDefinition={filterDefinition}
-            onClose={() => setOpenFilter(false)}
-          />
-        </Box>
-      </Collapse>
       <Box>
         <ShowComponent condition={isFilterApplied}>
           <Typography variant="s2" fontWeight="fontWeightMedium">

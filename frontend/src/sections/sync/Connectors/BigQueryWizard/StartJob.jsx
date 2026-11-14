@@ -75,7 +75,7 @@ const StartJob = ({
         }}
       >
         <TableContainer
-          elevation={1}
+          elevation={0}
           component={Paper}
           sx={{ flex: 1, overflow: "auto" }}
         >
@@ -88,7 +88,7 @@ const StartJob = ({
             <TableBody>
               <TableRow>
                 <TableCell>
-                  <Typography fontSize={14} fontWeight={700} color="primary">
+                  <Typography fontSize={12} fontWeight={600} color="primary">
                     Table Permission
                   </Typography>
                   <Box
@@ -103,8 +103,8 @@ const StartJob = ({
                   </Box>
                   <Typography
                     sx={{ paddingTop: "10px" }}
-                    fontSize={14}
-                    fontWeight={700}
+                    fontSize={12}
+                    fontWeight={600}
                     color="primary"
                   >
                     Model Info
@@ -136,8 +136,8 @@ const StartJob = ({
                   </Box>
                   <Typography
                     sx={{ paddingTop: "10px" }}
-                    fontSize={14}
-                    fontWeight={700}
+                    fontSize={12}
+                    fontWeight={600}
                     color="primary"
                   >
                     Mapping
@@ -182,8 +182,8 @@ const StartJob = ({
                   </Box>
                   <Typography
                     sx={{ paddingTop: "10px" }}
-                    fontSize={14}
-                    fontWeight={700}
+                    fontSize={12}
+                    fontWeight={600}
                     color="primary"
                   >
                     Extra Info
@@ -220,13 +220,13 @@ const InfoItem = ({ title, value }) => {
     <Box>
       <Typography
         component="span"
-        fontSize="14px"
-        fontWeight={700}
+        fontSize="12px"
+        fontWeight={600}
         color="text.secondary"
       >
         {title}
       </Typography>{" "}
-      <Typography component="span" fontSize={14} color="text.primary">
+      <Typography component="span" fontSize={12} color="text.primary">
         {value}
       </Typography>
     </Box>

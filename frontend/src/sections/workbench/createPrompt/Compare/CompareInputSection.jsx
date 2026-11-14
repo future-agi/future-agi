@@ -215,7 +215,7 @@ const CompareInputSection = ({
                 variant="rectangular"
                 width={25}
                 height={23}
-                sx={{ borderRadius: "2px" }}
+                sx={{ borderRadius: "4px" }}
               />
             )}
             {promptVersion?.isDraft ? (
@@ -223,8 +223,8 @@ const CompareInputSection = ({
                 typography="s3"
                 fontWeight={"fontWeightMedium"}
                 sx={{
-                  backgroundColor: "orange.o10",
-                  borderRadius: "2px",
+                  backgroundColor: "status.warning.bg",
+                  borderRadius: "4px",
                   color: "text.primary",
                   paddingX: theme.spacing(0.75),
                   paddingTop: theme.spacing(0.5),
@@ -265,12 +265,9 @@ const CompareInputSection = ({
           >
             <IconButton
               sx={{
-                borderRadius: "4px",
                 backgroundColor: "background.paper",
                 border: "1px solid",
                 borderColor: "divider",
-                height: "24px",
-                padding: 0.5,
               }}
               disabled={!RolePermission.PROMPTS[PERMISSIONS.UPDATE][userRole]}
               onClick={() => {
@@ -296,7 +293,7 @@ const CompareInputSection = ({
             <StopGeneratingButton
               sx={{
                 lineHeight: 1.5,
-                borderRadius: 0.5,
+                borderRadius: "4px",
                 height: "24px",
               }}
               onClick={onStopGenerating}
@@ -317,15 +314,13 @@ const CompareInputSection = ({
                 size="small"
                 sx={{
                   lineHeight: 1.5,
-                  borderRadius: 0.5,
-                  height: "24px",
                   width: "56px",
                 }}
                 disabled={!RolePermission.PROMPTS[PERMISSIONS.UPDATE][userRole]}
                 startIcon={
                   <SvgColor
+                    width={16}
                     src="/assets/icons/navbar/ic_get_started.svg"
-                    sx={{ width: "16px", height: "16px" }}
                   />
                 }
                 onClick={() => {

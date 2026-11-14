@@ -9,7 +9,7 @@ from django.test.utils import CaptureQueriesContext
 from django.utils import timezone
 
 from tracer.models.custom_eval_config import CustomEvalConfig
-from tracer.models.eval_task import EvalTask, EvalTaskStatus, RunType
+from tracer.models.eval_task import EvalTask, EvalTaskStatus, RowType, RunType
 
 
 def _result(response):
@@ -27,6 +27,7 @@ def _tasks(project, eval_config, rows):
                 sampling_rate=row.get("sampling_rate", 100),
                 last_run=row.get("last_run"),
                 run_type=row.get("run_type", RunType.CONTINUOUS),
+                row_type=row.get("row_type", RowType.SPANS),
                 status=row.get("status", EvalTaskStatus.COMPLETED),
             )
             for row in rows
@@ -132,6 +133,7 @@ def test_deep_page_is_counted_and_sliced_before_hydration(
         "Task 019",
     ]
     assert all(row["created_at"].endswith("Z") for row in data["table"])
+    assert {row["row_type"] for row in data["table"]} == {"spans"}
     assert str(deleted_only_task.id) not in {row["id"] for row in data["table"]}
 
     sql = [query["sql"] for query in captured.captured_queries]
@@ -236,7 +238,7 @@ def test_unicode_text_filters_keep_filter_engine_semantics(
         project,
         custom_eval_config,
         [
-            {"name": composed},
+            {"name": composed, "row_type": RowType.TRACES},
             {"name": "istanbul"},
             {"name": "Other"},
         ],
@@ -269,6 +271,7 @@ def test_unicode_text_filters_keep_filter_engine_semantics(
     data = _result(response)
     assert data["metadata"]["total_rows"] == 1
     assert [row["name"] for row in data["table"]] == [composed]
+    assert data["table"][0]["row_type"] == "traces"
 
     _assert_bounded_compatibility_task_reads(captured)
     assert all("UPPER(" not in query["sql"] for query in captured.captured_queries)
@@ -396,3 +399,60 @@ def test_untranslatable_eval_name_filter_keeps_filter_engine_semantics(
     assert data["metadata"]["total_rows"] == 1
     assert [row["id"] for row in data["table"]] == [str(second.id)]
     assert str(first.id) not in {row["id"] for row in data["table"]}
+
+
+_COUNT_POLICY = {
+    "version": 1,
+    "sampling_unit": "session",
+    "mode": "closed",
+    "window": {"start": "2026-11-01T00:00:00Z", "end": "2026-11-08T00:00:00Z"},
+    "default": {"target_n": 10},
+    "strata": [],
+}
+
+
+@pytest.mark.integration
+@pytest.mark.api
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/tracer/eval-task/list_eval_tasks/",
+        "/tracer/eval-task/list_eval_tasks_with_project_name/",
+    ],
+)
+@pytest.mark.parametrize("compatibility", [False, True])
+def test_list_rows_carry_the_saved_sampling_policy(
+    auth_client, project, custom_eval_config, path, compatibility
+):
+    """A cohort task keeps sampling_rate at its default; the list must expose
+    the saved policy so it is not presented as "100%"."""
+    cohort, legacy = _tasks(
+        project,
+        custom_eval_config,
+        [{"name": "Cohort"}, {"name": "Legacy", "sampling_rate": 40}],
+    )
+    EvalTask.objects.filter(id=cohort.id).update(sampling_policy=_COUNT_POLICY)
+    params = _list_params(path, project, page_number=0, page_size=10)
+    if compatibility:
+        # A Python-semantics text filter takes the bounded compatibility path.
+        params["filters"] = json.dumps(
+            [
+                {
+                    "column_id": "name",
+                    "filter_config": {
+                        "filter_type": "text",
+                        "filter_op": "not_equals",
+                        "filter_value": "i̇stanbul",
+                    },
+                }
+            ]
+        )
+
+    response = auth_client.get(path, params)
+
+    assert response.status_code == 200, response.json()
+    rows = {row["name"]: row for row in _result(response)["table"]}
+    assert rows["Cohort"]["sampling_policy"] == _COUNT_POLICY
+    assert rows["Cohort"]["sampling_rate"] == 100
+    assert rows["Legacy"]["sampling_policy"] is None
+    assert rows["Legacy"]["sampling_rate"] == 40

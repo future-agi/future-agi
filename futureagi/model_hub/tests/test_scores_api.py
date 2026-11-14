@@ -1478,7 +1478,9 @@ class TestScoreOnCollectorOnlySpan:
             def __exit__(self, *exc):
                 return False
 
-            def get(self, sid):
+            def get(self, sid, *, project_id=None, project_ids=None):
+                if project_ids is not None and fake.project_id not in project_ids:
+                    return None
                 return fake if str(sid) == ch_span_id else None
 
             def close(self):
@@ -1505,7 +1507,9 @@ class TestScoreOnCollectorOnlySpan:
             def __exit__(self, *exc):
                 return False
 
-            def get(self, sid):
+            def get(self, sid, *, project_id=None, project_ids=None):
+                if project_ids is not None and fake.project_id not in project_ids:
+                    return None
                 return fake if str(sid) == ch_span_id else None
 
             def close(self):

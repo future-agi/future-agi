@@ -1,6 +1,9 @@
 import _ from "lodash";
 import { AGENT_TYPES } from "../agents/constants";
 
+export const PERSONAS_DOCS_URL =
+  "https://docs.futureagi.com/docs/simulation/concepts/personas";
+
 const toArray = (val) => {
   if (val == null) return [];
   if (Array.isArray(val)) return val;

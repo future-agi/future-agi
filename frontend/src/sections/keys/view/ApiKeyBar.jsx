@@ -31,15 +31,12 @@ const ApiKeyBar = ({ searchQuery, setSearchQuery, handleCreateClick }) => {
           color="primary"
           startIcon={
             <Iconify
-              icon="octicon:plus-24"
+              width={20}
+              icon="solar:add-linear"
               color="background.paper"
-              sx={{
-                width: "20px",
-                height: "20px",
-              }}
             />
           }
-          sx={{ px: "24px", typography: "s1" }}
+          sx={{ typography: "s1" }}
         >
           Add API Key
         </Button>

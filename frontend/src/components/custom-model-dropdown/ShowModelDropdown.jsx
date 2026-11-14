@@ -347,8 +347,6 @@ const ShowModelDropdown = forwardRef(
           mt: mode === "top" ? "-40px" : 0,
           "& .MuiPaper-root": {
             bgcolor: "background.paper",
-            border: "1px solid",
-            borderColor: "divider",
             p: "12px",
             marginTop: "-2px",
             borderRadius: "0px 0px 4px 4px !important",
@@ -423,11 +421,10 @@ const ShowModelDropdown = forwardRef(
                   display: "flex",
                   alignItems: "center",
                   gap: 1,
-                  color: "primary.main",
                   minWidth: "350px",
                 }}
               >
-                <Iconify icon="eva:plus-fill" width={16} />
+                <Iconify icon="solar:add-linear" width={16} />
                 <Typography
                   variant="s1"
                   fontWeight="fontWeightMedium"
@@ -513,7 +510,8 @@ const ShowModelDropdown = forwardRef(
                             pointerEvents: "auto",
                             cursor: "pointer",
                             opacity: 1,
-                            color: "error.main",
+                            // eslint-disable-next-line no-restricted-syntax -- ds: error state
+                            color: "status.danger.fg",
                           },
                         }}
                       >
@@ -529,7 +527,7 @@ const ShowModelDropdown = forwardRef(
                             sx={{
                               p: 0,
                               alignSelf: "center",
-                              color: "black.300",
+                              color: "text.disabled",
                             }}
                           />
                         )}
@@ -552,7 +550,7 @@ const ShowModelDropdown = forwardRef(
                             text={modelName}
                             width={16}
                             height={16}
-                            fontSize={10}
+                            fontSize={12}
                           />
                         </ShowComponent>
                         <Box
@@ -578,7 +576,7 @@ const ShowModelDropdown = forwardRef(
                               sx={{
                                 lineHeight: "14px",
                                 fontSize: "12px",
-                                color: "red.500",
+                                color: "status.danger.fg",
                                 fontWeight: 400,
                               }}
                             >

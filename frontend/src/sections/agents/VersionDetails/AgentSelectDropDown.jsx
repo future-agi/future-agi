@@ -62,7 +62,7 @@ const AgentSelectDropDown = forwardRef(
 
           <Typography
             sx={{ px: 1, pt: 1 }}
-            color="text.disabled"
+            color="text.tertiary"
             fontWeight={600}
             fontSize={12}
           >
@@ -104,12 +104,12 @@ const AgentSelectDropDown = forwardRef(
                   onClick={() => handleSelect(option)}
                 >
                   <Box display="flex" flexDirection="column">
-                    <Typography variant="s1" fontWeight="fontWeightMedium">
+                    <Typography variant="s2_1" fontWeight={400}>
                       {option.label}
                     </Typography>
                     <Typography
                       variant="s2"
-                      color="text.disabled"
+                      color="text.tertiary"
                       noWrap
                       sx={{ maxWidth: 200 }} // adjust width
                     >

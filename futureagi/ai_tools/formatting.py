@@ -58,6 +58,7 @@ def dashboard_link(
     """
     path_map = {
         "dataset": f"dashboard/develop/{entity_id}",
+        "dashboard": f"dashboard/dashboards/{entity_id}",
         "evaluation": f"dashboard/evaluations/{entity_id}",
         "project": f"dashboard/observe/{entity_id}",
         "agent": f"dashboard/agents/playground/{entity_id}",

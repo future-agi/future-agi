@@ -40,9 +40,11 @@ from model_hub.serializers.develop_dataset_contracts import (
     LocalFileDatasetCreateStartedResponseSerializer,
 )
 from model_hub.utils.file_reader import FileProcessor
+from model_hub.views.utils.dataset_limit import dataset_add_refusal
 from tfc.settings.settings import UPLOAD_BUCKET_NAME
 from tfc.temporal import temporal_activity
 from tfc.utils.api_contracts import validated_request
+from tfc.utils.api_serializers import DatasetLimitCheckFailedErrorSerializer
 from tfc.utils.error_codes import get_error_message
 from tfc.utils.general_methods import GeneralMethods
 from tfc.utils.storage import (
@@ -56,6 +58,7 @@ from tfc.utils.storage_client import (
     get_storage_client,
 )
 from tfc.constants.api_calls import APICallStatusChoices, APICallTypeChoices
+
 try:
     from ee.usage.utils.usage_entries import (
         ROW_LIMIT_REACHED_MESSAGE,
@@ -167,7 +170,11 @@ def upload_file_to_minio(file_obj, object_key, org_id=None):
                 except ImportError:
                     emit = None
 
-                if emit is not None and UsageEvent is not None and BillingEventType is not None:
+                if (
+                    emit is not None
+                    and UsageEvent is not None
+                    and BillingEventType is not None
+                ):
                     emit(
                         UsageEvent(
                             org_id=str(org_id),
@@ -984,6 +991,7 @@ class CreateDatasetFromLocalFileView(CreateAPIView):
         responses={
             200: LocalFileDatasetCreateStartedResponseSerializer,
             **MODEL_HUB_ERROR_RESPONSES,
+            503: DatasetLimitCheckFailedErrorSerializer,
         },
         reject_unknown_fields=True,
     )
@@ -1031,18 +1039,17 @@ class CreateDatasetFromLocalFileView(CreateAPIView):
                 call_log_row_entry = log_and_deduct_cost_for_resource_request(
                     organization=organization,
                     api_call_type=APICallTypeChoices.DATASET_ADD.value,
-                    sdk_source=True if source == DatasetSourceChoices.SDK.value else False,
+                    sdk_source=True
+                    if source == DatasetSourceChoices.SDK.value
+                    else False,
                     workspace=request.workspace,
                 )
-                if (
-                    call_log_row_entry is None
-                    or call_log_row_entry.status
-                    == APICallStatusChoices.RESOURCE_LIMIT.value
-                    and source != DatasetSourceChoices.SDK.value
-                ):
-                    return self._gm.too_many_requests(
-                        get_error_message("DATASET_CREATE_LIMIT_REACHED")
-                    )
+                refusal = dataset_add_refusal(
+                    call_log_row_entry,
+                    sdk_source=source == DatasetSourceChoices.SDK.value,
+                )
+                if refusal is not None:
+                    return refusal
                 call_log_row_entry.status = APICallStatusChoices.SUCCESS.value
                 call_log_row_entry.save()
 

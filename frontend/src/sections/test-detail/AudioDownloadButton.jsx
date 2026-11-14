@@ -89,12 +89,18 @@ const AudioDownloadButton = ({
         disabled={
           downloadMutation.isPending || Object.keys(audioUrls).length === 0
         }
-        startIcon={!singleTrack && <Iconify icon="eva:download-outline" />}
+        startIcon={
+          !singleTrack && <Iconify icon="solar:download-minimalistic-linear" />
+        }
         {...buttonProps}
         loading={downloadMutation.isPending}
         ref={anchor}
       >
-        {singleTrack ? <Iconify icon="eva:download-outline" /> : "Download"}
+        {singleTrack ? (
+          <Iconify icon="solar:download-minimalistic-linear" />
+        ) : (
+          "Download"
+        )}
       </LoadingButton>
       <Popover
         open={open}
@@ -127,7 +133,7 @@ const AudioDownloadButton = ({
           >
             <ListItemIcon sx={{ mr: 0 }}>
               <Iconify
-                icon="ph:speaker-simple-none"
+                icon="solar:volume-cross-linear"
                 sx={{
                   fontSize: 20,
                 }}
@@ -151,7 +157,7 @@ const AudioDownloadButton = ({
           >
             <ListItemIcon sx={{ mr: 0 }}>
               <Iconify
-                icon="ph:speaker-simple-high"
+                icon="solar:volume-loud-linear"
                 sx={{
                   fontSize: 20,
                 }}
@@ -175,7 +181,7 @@ const AudioDownloadButton = ({
           >
             <ListItemIcon sx={{ mr: 0 }}>
               <Iconify
-                icon="ph:microphone"
+                icon="solar:microphone-3-linear"
                 sx={{
                   fontSize: 20,
                 }}
@@ -199,7 +205,7 @@ const AudioDownloadButton = ({
           >
             <ListItemIcon sx={{ mr: 0 }}>
               <Iconify
-                icon="ph:user-sound"
+                icon="solar:user-speak-linear"
                 sx={{
                   fontSize: 20,
                 }}

@@ -1,4 +1,4 @@
-import { Box, LinearProgress } from "@mui/material";
+import { Box } from "@mui/material";
 import React, { useMemo } from "react";
 import ExperimentSummaryTable from "./ExperimentSummaryTable";
 import ExperimentEvaluationChart from "./ExperimentEvaluationChart";
@@ -9,6 +9,7 @@ import { ExperimentSummaryStaticColumnDefs } from "./tableConfig";
 import ExperimentEvalCellRenderer from "./CustomRenderers/ExperimentEvalCellRenderer";
 import SpiderChartExperiment from "./ExperimentSummaryChart/SpiderChartExperiment";
 import RankWithIndexRenderer from "./CustomRenderers/RankWithIndexRenderer";
+import { LoadingScreen } from "src/components/loading-screen";
 
 const ExperimentSummaryView = () => {
   const { experimentId } = useParams();
@@ -54,7 +55,7 @@ const ExperimentSummaryView = () => {
     return colData;
   }, [data]);
   if (isLoading) {
-    return <LinearProgress />;
+    return <LoadingScreen />;
   }
 
   return (

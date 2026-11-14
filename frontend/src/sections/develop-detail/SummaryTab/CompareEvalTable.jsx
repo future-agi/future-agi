@@ -1,6 +1,7 @@
 import React, { useMemo } from "react";
 import { Box, Typography, useTheme, alpha } from "@mui/material";
 import { AgGridReact } from "ag-grid-react";
+import "src/utils/ag-grid-setup";
 import { useAgThemeWith } from "src/hooks/use-ag-theme";
 import { AG_THEME_OVERRIDES } from "src/theme/ag-theme";
 import Iconify from "src/components/iconify";
@@ -20,7 +21,7 @@ const RankCellRenderer = (params) => {
       >
         <Typography
           sx={{
-            fontSize: "14px",
+            fontSize: "12px",
             fontWeight: 400,
             color: "14px",
             textAlign: "center",
@@ -37,9 +38,10 @@ const RankCellRenderer = (params) => {
           }}
         >
           <Iconify
-            icon="mdi:crown"
-            width={20}
-            height={20}
+            icon="solar:crown-bold"
+            width={16}
+            height={16}
+            // eslint-disable-next-line no-restricted-syntax -- ds: encoding (first-rank crown)
             sx={{ color: "#FFD700" }}
           />
         </Box>
@@ -51,7 +53,7 @@ const RankCellRenderer = (params) => {
     <Typography
       sx={{
         width: "100%",
-        fontSize: "14px",
+        fontSize: "12px",
         fontWeight: 400,
         color: "14px",
         alignItems: "flex-start",
@@ -90,7 +92,7 @@ const CompareEvalTable = ({
           sx={{
             color: tagForeground,
             backgroundColor: tagBackground,
-            borderRadius: "5px",
+            borderRadius: "6px",
             height: "24px",
             width: "24px",
             fontSize: "12px",
@@ -105,7 +107,7 @@ const CompareEvalTable = ({
           {String.fromCharCode(65 + index)}
         </Typography>
         <Typography
-          sx={{ fontSize: "14px", fontWeight: 400, color: "text.primary" }}
+          sx={{ fontSize: "12px", fontWeight: 400, color: "text.primary" }}
         >
           {params.value}
         </Typography>
@@ -274,7 +276,7 @@ const CompareEvalTable = ({
         <Typography
           sx={{
             marginLeft: "49.9%",
-            fontSize: "14px",
+            fontSize: "12px",
             color: "text.primary",
             fontWeight: 500,
             borderTop: "1px solid var(--border-light)",

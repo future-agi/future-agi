@@ -43,7 +43,7 @@ const getPartsWithHighlighting = (text, validVariables) => {
           fontWeight={"fontWeightRegular"}
           color={"text.primary"}
           sx={{
-            color: isValid ? "green.600" : "red.600",
+            color: isValid ? "status.success.fg" : "status.danger.fg",
           }}
         >
           {part}

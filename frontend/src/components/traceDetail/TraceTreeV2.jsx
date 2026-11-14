@@ -6,7 +6,14 @@ import React, {
   useRef,
 } from "react";
 import PropTypes from "prop-types";
-import { Box, Collapse, IconButton, Stack, Typography } from "@mui/material";
+import {
+  Box,
+  Button,
+  Collapse,
+  IconButton,
+  Stack,
+  Typography,
+} from "@mui/material";
 import { alpha } from "@mui/material/styles";
 import Iconify from "src/components/iconify";
 import SvgColor from "src/components/svg-color";
@@ -21,6 +28,8 @@ import {
 // Type config — icon path + color
 // ---------------------------------------------------------------------------
 import { getTypeConfig } from "./spanTypeConfig";
+import { getOwnEvalScores } from "./evalScores";
+import { timingSpanIds, withoutTimingSpans } from "./timingSpans";
 
 function getSpan(entry) {
   return entry?.observation_span || {};
@@ -37,7 +46,7 @@ function countErrors(entry) {
 
 /** Collect all eval scores from a subtree (recursive) */
 function collectSubtreeEvals(entry) {
-  const evals = entry?.eval_scores || [];
+  const evals = getOwnEvalScores(entry);
   let pass = 0;
   let fail = 0;
   let total = evals.length;
@@ -69,7 +78,7 @@ function getLatencyColor(latency, rootLatency) {
   if (!rootLatency || !latency) return "text.disabled";
   const ratio = latency / rootLatency;
   if (ratio >= 0.75) return "accent.fail";
-  if (ratio >= 0.5) return "#D97706";
+  if (ratio >= 0.5) return "status.warning.fg";
   return "text.disabled";
 }
 
@@ -112,11 +121,11 @@ const TreeToolbar = ({
     <Stack direction="row" alignItems="center" justifyContent="space-between">
       <Typography
         sx={{
-          fontSize: 10.5,
+          fontSize: 12,
           fontWeight: 600,
           color: "text.disabled",
           letterSpacing: "0.03em",
-          textTransform: "uppercase",
+          textTransform: "none",
         }}
       >
         Trace Tree
@@ -131,8 +140,12 @@ const TreeToolbar = ({
             size="small"
             type="black"
           >
-            <IconButton size="small" onClick={onRefresh} sx={{ p: 0.25 }}>
-              <Iconify icon="mdi:refresh" width={14} color="text.disabled" />
+            <IconButton size="small" onClick={onRefresh}>
+              <Iconify
+                icon="solar:refresh-linear"
+                width={14}
+                color="text.disabled"
+              />
             </IconButton>
           </CustomTooltip>
         )}
@@ -147,13 +160,12 @@ const TreeToolbar = ({
           <IconButton
             size="small"
             onClick={allCollapsed ? onExpandAll : onCollapseAll}
-            sx={{ p: 0.25 }}
           >
             <Iconify
               icon={
                 allCollapsed
-                  ? "mdi:unfold-more-horizontal"
-                  : "mdi:unfold-less-horizontal"
+                  ? "solar:chevrons-up-down-linear"
+                  : "solar:chevrons-down-up-linear"
               }
               width={14}
               color="text.disabled"
@@ -168,9 +180,11 @@ const TreeToolbar = ({
           size="small"
           type="black"
         >
-          <IconButton size="small" onClick={onToggleMetrics} sx={{ p: 0.25 }}>
+          <IconButton size="small" onClick={onToggleMetrics}>
             <Iconify
-              icon={showMetrics ? "mdi:eye-outline" : "mdi:eye-off-outline"}
+              icon={
+                showMetrics ? "solar:eye-linear" : "solar:eye-closed-linear"
+              }
               width={14}
               color="text.disabled"
             />
@@ -187,10 +201,10 @@ const TreeToolbar = ({
         py: 0.25,
         border: "1px solid",
         borderColor: "divider",
-        borderRadius: 0.5,
+        borderRadius: "4px",
       }}
     >
-      <Iconify icon="mdi:magnify" width={11} color="text.disabled" />
+      <Iconify icon="solar:magnifier-linear" width={12} color="text.disabled" />
       <Box
         component="input"
         placeholder="Search"
@@ -200,7 +214,7 @@ const TreeToolbar = ({
           border: "none",
           outline: "none",
           flex: 1,
-          fontSize: 11,
+          fontSize: 12,
           color: "text.primary",
           bgcolor: "transparent",
           fontFamily: "inherit",
@@ -271,7 +285,7 @@ const TreeNodeRow = ({
   const evalTotal = subtreeEvals.total;
 
   // This span's own evals — check if THIS span has failed evals (for red dot indicator)
-  const ownEvals = entry?.eval_scores || [];
+  const ownEvals = getOwnEvalScores(entry);
   const hasOwnFailedEval = ownEvals.some((e) => {
     const score =
       e?.score ?? (e?.result === true ? 100 : e?.result === false ? 0 : null);
@@ -303,13 +317,12 @@ const TreeNodeRow = ({
           display: "flex",
           alignItems: "flex-start",
           cursor: "pointer",
-          bgcolor: isSelected ? "rgba(120, 87, 252, 0.1)" : "transparent",
-          borderLeft: isSelected
-            ? "2px solid #7C3AED"
-            : "2px solid transparent",
+          bgcolor: isSelected ? "action.selected" : "transparent",
+          borderLeft: "2px solid",
+          borderLeftColor: isSelected ? "primary.main" : "transparent",
           opacity: isDimmed ? 0.4 : 1,
           "&:hover": {
-            bgcolor: isSelected ? "rgba(120, 87, 252, 0.1)" : "action.hover",
+            bgcolor: isSelected ? "action.selected" : "action.hover",
             opacity: 1,
           },
           pl: `${depth * INDENT + 6}px`,
@@ -384,9 +397,9 @@ const TreeNodeRow = ({
           <Typography
             noWrap
             sx={{
-              fontSize: 11.5,
+              fontSize: 12,
               fontWeight: isSelected ? 600 : 500,
-              lineHeight: 1.2,
+              lineHeight: "16px",
               color: "text.primary",
             }}
           >
@@ -398,14 +411,14 @@ const TreeNodeRow = ({
                 <Typography
                   component="span"
                   sx={{
-                    fontSize: 9.5,
+                    fontSize: 12,
                     color: getLatencyColor(latency, rootLatency),
                     display: "inline-flex",
                     alignItems: "center",
                     gap: "2px",
                   }}
                 >
-                  <Iconify icon="mdi:clock-outline" width={9} />
+                  <Iconify icon="solar:clock-circle-linear" width={9} />
                   {formatLatency(latency)}
                 </Typography>
               )}
@@ -413,14 +426,14 @@ const TreeNodeRow = ({
                 <Typography
                   component="span"
                   sx={{
-                    fontSize: 9.5,
+                    fontSize: 12,
                     color: "text.disabled",
                     display: "inline-flex",
                     alignItems: "center",
                     gap: "2px",
                   }}
                 >
-                  <Iconify icon="mdi:pound" width={9} />
+                  <Iconify icon="solar:hashtag-linear" width={9} />
                   {formatTokenCount(tokens)}
                 </Typography>
               )}
@@ -428,14 +441,14 @@ const TreeNodeRow = ({
                 <Typography
                   component="span"
                   sx={{
-                    fontSize: 9.5,
+                    fontSize: 12,
                     color: "text.disabled",
                     display: "inline-flex",
                     alignItems: "center",
                     gap: "2px",
                   }}
                 >
-                  <Iconify icon="mdi:currency-usd" width={9} />
+                  <Iconify icon="solar:dollar-minimalistic-linear" width={9} />
                   {formatCost(span.cost)}
                 </Typography>
               )}
@@ -443,7 +456,7 @@ const TreeNodeRow = ({
                 <Typography
                   component="span"
                   sx={{
-                    fontSize: 9.5,
+                    fontSize: 12,
                     color: "accent.fail",
                     fontWeight: 600,
                     display: "inline-flex",
@@ -451,7 +464,7 @@ const TreeNodeRow = ({
                     gap: "2px",
                   }}
                 >
-                  <Iconify icon="mdi:alert-outline" width={9} />
+                  <Iconify icon="solar:danger-triangle-linear" width={9} />
                   {errorCount}
                 </Typography>
               )}
@@ -460,7 +473,7 @@ const TreeNodeRow = ({
                 <Typography
                   component="span"
                   sx={{
-                    fontSize: 9.5,
+                    fontSize: 12,
                     color: evalFailCount > 0 ? "accent.fail" : "accent.pass",
                     fontWeight: 500,
                     display: "inline-flex",
@@ -475,14 +488,14 @@ const TreeNodeRow = ({
                       ),
                     px: "3px",
                     py: "1px",
-                    borderRadius: "3px",
+                    borderRadius: "4px",
                   }}
                 >
                   <Iconify
                     icon={
                       evalFailCount > 0
-                        ? "mdi:shield-alert-outline"
-                        : "mdi:shield-check-outline"
+                        ? "solar:shield-warning-linear"
+                        : "solar:shield-check-linear"
                     }
                     width={9}
                   />
@@ -506,6 +519,7 @@ const TreeNodeRow = ({
                   const ownFail = ownEvals.length - ownPass;
                   return (
                     <CustomTooltip
+                      card
                       show
                       type="black"
                       size="small"
@@ -514,7 +528,7 @@ const TreeNodeRow = ({
                         <Box sx={{ p: 0.25, minWidth: 120 }}>
                           <Typography
                             sx={{
-                              fontSize: 10,
+                              fontSize: 12,
                               color: "rgba(255,255,255,0.5)",
                               mb: 0.25,
                             }}
@@ -543,21 +557,31 @@ const TreeNodeRow = ({
                                 <Iconify
                                   icon={
                                     pass
-                                      ? "mdi:check-circle-outline"
-                                      : "mdi:alert-circle-outline"
+                                      ? "solar:check-circle-linear"
+                                      : "solar:danger-circle-linear"
                                   }
-                                  width={10}
-                                  sx={{ color: pass ? "#4ade80" : "#f87171" }}
+                                  width={12}
+                                  sx={{
+                                    color: pass
+                                      ? "status.success.solid"
+                                      : "status.danger.solid",
+                                  }}
                                 />
                                 <Typography
-                                  sx={{ fontSize: 10, color: "#fff", flex: 1 }}
+                                  sx={{
+                                    fontSize: 12,
+                                    color: "text.primary",
+                                    flex: 1,
+                                  }}
                                 >
                                   {e.eval_name || "eval"}
                                 </Typography>
                                 <Typography
                                   sx={{
-                                    fontSize: 10,
-                                    color: pass ? "#4ade80" : "#f87171",
+                                    fontSize: 12,
+                                    color: pass
+                                      ? "status.success.solid"
+                                      : "status.danger.solid",
                                     fontWeight: 600,
                                   }}
                                 >
@@ -572,7 +596,7 @@ const TreeNodeRow = ({
                       <Typography
                         component="span"
                         sx={{
-                          fontSize: 9,
+                          fontSize: 12,
                           fontWeight: 600,
                           color: ownFail > 0 ? "accent.fail" : "accent.pass",
                           display: "inline-flex",
@@ -584,10 +608,10 @@ const TreeNodeRow = ({
                         <Iconify
                           icon={
                             ownFail > 0
-                              ? "mdi:shield-alert-outline"
-                              : "mdi:shield-check-outline"
+                              ? "solar:shield-warning-linear"
+                              : "solar:shield-check-linear"
                           }
-                          width={11}
+                          width={12}
                         />
                         {ownFail > 0 ? ownFail : ""}
                       </Typography>
@@ -606,10 +630,10 @@ const TreeNodeRow = ({
               e.stopPropagation();
               onToggleExpand(span.id);
             }}
-            sx={{ p: 0, mt: 0.25, flexShrink: 0 }}
+            sx={{ mt: 0.25, flexShrink: 0 }}
           >
             <Iconify
-              icon="mdi:chevron-down"
+              icon="solar:alt-arrow-down-linear"
               width={14}
               color="text.disabled"
               sx={{
@@ -671,8 +695,21 @@ const TraceTreeV2 = ({
   visibleMetrics,
   onToggleMetrics: onToggleMetricsProp,
   onRefresh,
+  showTimingSpans: showTimingProp,
+  onTimingVisibilityChange,
 }) => {
   const [searchQuery, setSearchQuery] = useState("");
+  const [showTimingLocal, setShowTimingLocal] = useState(false);
+  const showTimingSpans = showTimingProp ?? showTimingLocal;
+  const setShowTimingSpans = useCallback((show) => {
+    setShowTimingLocal(show);
+    onTimingVisibilityChange?.(show);
+  }, [onTimingVisibilityChange]);
+  const timingIds = useMemo(() => timingSpanIds(spans || []), [spans]);
+  const visibleSpans = useMemo(
+    () => (showTimingSpans ? spans : withoutTimingSpans(spans || [])),
+    [spans, showTimingSpans],
+  );
   const [showMetricsLocal, setShowMetricsLocal] = useState(true);
   // Use prop if provided, otherwise use local state
   const showMetrics =
@@ -696,8 +733,14 @@ const TraceTreeV2 = ({
     if (spans) {
       setExpandedSet(collectAllIds(spans));
       setSearchQuery("");
+      setShowTimingSpans(false);
     }
   }, [spansKey]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Direct navigation to a timing span must reveal it, not strand selection.
+  useEffect(() => {
+    if (timingIds.has(selectedSpanId)) setShowTimingSpans(true);
+  }, [selectedSpanId, timingIds, spansKey, setShowTimingSpans]);
 
   const handleCollapseAll = useCallback(() => setExpandedSet(new Set()), []);
   const handleExpandAll = useCallback(
@@ -725,6 +768,8 @@ const TraceTreeV2 = ({
 
   return (
     <Box
+      role="region"
+      aria-label="Trace Tree"
       sx={{
         display: "flex",
         flexDirection: "column",
@@ -742,13 +787,31 @@ const TraceTreeV2 = ({
         showMetrics={showMetrics}
         onToggleMetrics={handleToggleMetrics}
       />
+      {timingIds.size > 0 && (
+        <Button
+          size="small"
+          color="inherit"
+          aria-pressed={showTimingSpans}
+          onClick={() => setShowTimingSpans(!showTimingSpans)}
+          startIcon={<Iconify icon="solar:clock-circle-linear" width={14} />}
+          sx={{
+            alignSelf: "flex-start",
+            mx: 1,
+            my: 0.5,
+            color: "text.secondary",
+          }}
+        >
+          {showTimingSpans ? "Hide" : "Show"} {timingIds.size} timing{" "}
+          {timingIds.size === 1 ? "span" : "spans"}
+        </Button>
+      )}
       <Box sx={{ flex: 1, overflow: "auto" }}>
-        {spans.map((entry, idx) => (
+        {visibleSpans.map((entry, idx) => (
           <TreeNodeRow
             key={getSpan(entry).id || idx}
             entry={entry}
             depth={0}
-            isLast={idx === spans.length - 1}
+            isLast={idx === visibleSpans.length - 1}
             selectedSpanId={selectedSpanId}
             onSelect={onSelectSpan}
             expandedSet={expandedSet}
@@ -772,6 +835,8 @@ TraceTreeV2.propTypes = {
   visibleMetrics: PropTypes.object,
   onToggleMetrics: PropTypes.func,
   onRefresh: PropTypes.func,
+  showTimingSpans: PropTypes.bool,
+  onTimingVisibilityChange: PropTypes.func,
 };
 
 export default React.memo(TraceTreeV2);

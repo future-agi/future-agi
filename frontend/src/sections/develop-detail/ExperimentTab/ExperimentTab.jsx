@@ -1,4 +1,4 @@
-import { Box, Button, Chip, IconButton, keyframes } from "@mui/material";
+import { Box, Button, IconButton, keyframes } from "@mui/material";
 import React, {
   useCallback,
   useEffect,
@@ -13,8 +13,9 @@ import axios, { endpoints } from "src/utils/axios";
 import { DataTable, DataTablePagination } from "src/components/data-table";
 import { useDebounce } from "src/hooks/use-debounce";
 import { trackEvent, Events } from "src/utils/Mixpanel";
-import { palette } from "src/theme/palette";
 import SvgColor from "src/components/svg-color";
+import StatusBadge from "src/components/status-badge/StatusBadge";
+import { EXECUTION_STATUS_ROLE } from "src/sections/common/simulation/constants/statusStyles";
 import CustomTooltip from "src/components/tooltip";
 import EmptyLayout from "src/components/EmptyLayout/EmptyLayout";
 import { ShowComponent } from "src/components/show/ShowComponent";
@@ -22,66 +23,34 @@ import { useReRunExperiment, useStopExperiment } from "../Experiment/api";
 import { useRunExperimentStoreShallow } from "../states";
 import { format } from "date-fns";
 
-// ── Status chip (matches ConsistentCellRender) ──────────────────────
+// ── Status badge (matches ConsistentCellRender) ──────────────────────
 
 const spin = keyframes`
   from { transform: rotate(0deg); }
   to { transform: rotate(360deg); }
 `;
 
-const STATUS_STYLES = {
+const STATUS_META = {
   NotStarted: {
-    bg: palette("light").black["o10"],
-    color: palette("light").black["500"],
-    border: palette("light").black["o30"],
     icon: "/assets/icons/ic_call_pending.svg",
     label: "Not Started",
   },
-  Queued: {
-    bg: palette("light").orange["o10"],
-    color: palette("light").orange["700"],
-    border: palette("light").orange["o30"],
-    icon: "/assets/icons/ic_queued_header.svg",
-  },
-  Running: {
-    bg: palette("light").blue["o10"],
-    color: palette("light").blue["800"],
-    border: palette("light").blue["o30"],
-    icon: "/assets/icons/ic_queued_header.svg",
-  },
-  Completed: {
-    bg: palette("light").green["o10"],
-    color: palette("light").green["500"],
-    border: palette("light").green["300"],
-    icon: "/assets/icons/ic_completed.svg",
-  },
-  Cancelled: {
-    bg: palette("light").red["o10"],
-    color: palette("light").red["800"],
-    border: palette("light").red["o30"],
-    icon: "/assets/icons/ic_close.svg",
-  },
-  Failed: {
-    bg: palette("light").red["o10"],
-    color: palette("light").red["800"],
-    border: palette("light").red["o30"],
-    icon: "/assets/icons/ic_failed.svg",
-  },
-  Editing: {
-    bg: palette("light").pink["o10"],
-    color: palette("light").pink["500"],
-    border: palette("light").pink["o30"],
-    icon: "/assets/icons/ic_edit_pencil.svg",
-  },
+  Queued: { icon: "/assets/icons/ic_queued_header.svg" },
+  Running: { icon: "/assets/icons/ic_queued_header.svg" },
+  Completed: { icon: "/assets/icons/ic_completed.svg" },
+  Cancelled: { icon: "/assets/icons/ic_close.svg" },
+  Failed: { icon: "/assets/icons/ic_failed.svg" },
+  Editing: { icon: "/assets/icons/ic_edit_pencil.svg" },
 };
 
 const StatusChip = ({ status }) => {
-  const s = STATUS_STYLES[status] ?? STATUS_STYLES.Completed;
+  const key = STATUS_META[status] ? status : "Completed";
+  const s = STATUS_META[key];
   return (
-    <Chip
-      variant="soft"
+    <StatusBadge
+      status={status}
       label={s.label || status}
-      size="small"
+      role={EXECUTION_STATUS_ROLE[key]}
       icon={
         s.icon ? (
           <SvgColor
@@ -96,16 +65,6 @@ const StatusChip = ({ status }) => {
           />
         ) : undefined
       }
-      sx={{
-        height: 24,
-        fontSize: 12,
-        fontWeight: 500,
-        border: "1px solid",
-        borderColor: s.border,
-        backgroundColor: s.bg,
-        color: s.color,
-        "& .MuiChip-icon": { color: s.color },
-      }}
     />
   );
 };
@@ -157,10 +116,8 @@ const ExperimentActions = ({ experimentId, status, onRefresh }) => {
           <IconButton
             sx={{
               width: 32,
-              height: 32,
               border: "1px solid",
               borderColor: isReRunningExperiment ? "text.disabled" : "divider",
-              borderRadius: "4px",
               backgroundColor: "transparent",
               p: 0,
             }}
@@ -191,12 +148,10 @@ const ExperimentActions = ({ experimentId, status, onRefresh }) => {
             <IconButton
               sx={{
                 width: 32,
-                height: 32,
                 border: "1px solid",
                 borderColor: isStoppingExperiment
                   ? "border.hover"
                   : "border.default",
-                borderRadius: "4px",
                 backgroundColor: "transparent",
                 p: 0,
               }}

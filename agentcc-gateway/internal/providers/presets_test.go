@@ -87,6 +87,41 @@ func TestPreset_Azure(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// 4b. applyProviderPreset — known type "telnyx" fills BaseURL and APIFormat
+// ---------------------------------------------------------------------------
+
+func TestPreset_Telnyx(t *testing.T) {
+	cfg := &config.ProviderConfig{
+		Type: "telnyx",
+	}
+	applyProviderPreset(cfg)
+
+	// Telnyx serves the OpenAI routes under /v2/ai/openai with no version
+	// segment; .../v2/ai/v1/chat/completions returns 404.
+	wantURL := "https://api.telnyx.com/v2/ai"
+	wantFmt := "openai"
+	wantPrefix := "/openai"
+
+	if cfg.BaseURL != wantURL {
+		t.Errorf("BaseURL = %q, want %q", cfg.BaseURL, wantURL)
+	}
+	if cfg.APIFormat != wantFmt {
+		t.Errorf("APIFormat = %q, want %q", cfg.APIFormat, wantFmt)
+	}
+	if cfg.APIPathPrefix == nil {
+		t.Fatal("APIPathPrefix = nil, want a stated prefix")
+	}
+	if *cfg.APIPathPrefix != wantPrefix {
+		t.Errorf("APIPathPrefix = %q, want %q", *cfg.APIPathPrefix, wantPrefix)
+	}
+
+	wantChat := "https://api.telnyx.com/v2/ai/openai/chat/completions"
+	if got := cfg.EndpointURL("/v1/chat/completions"); got != wantChat {
+		t.Errorf("EndpointURL(/v1/chat/completions) = %q, want %q", got, wantChat)
+	}
+}
+
+// ---------------------------------------------------------------------------
 // 5. applyProviderPreset — explicit BaseURL is NOT overridden by preset
 // ---------------------------------------------------------------------------
 
@@ -142,10 +177,11 @@ func TestPreset_KnownProvidersComplete(t *testing.T) {
 		"perplexity":  {BaseURL: "https://api.perplexity.ai", APIFormat: "openai", PathPrefix: "/v1"},
 		"cerebras":    {BaseURL: "https://api.cerebras.ai", APIFormat: "openai", PathPrefix: "/v1"},
 		"xai":         {BaseURL: "https://api.x.ai", APIFormat: "openai", PathPrefix: "/v1"},
-		"huggingface": {BaseURL: "https://api-inference.huggingface.co", APIFormat: "openai", PathPrefix: "/v1"},
+		"huggingface": {BaseURL: "https://router.huggingface.co", APIFormat: "openai", PathPrefix: "/v1"},
 		"anyscale":    {BaseURL: "https://api.endpoints.anyscale.com", APIFormat: "openai", PathPrefix: "/v1"},
 		"replicate":   {BaseURL: "https://api.replicate.com", APIFormat: "openai", PathPrefix: "/v1"},
 		"openrouter":  {BaseURL: "https://openrouter.ai/api", APIFormat: "openai", PathPrefix: "/v1"},
+		"telnyx":      {BaseURL: "https://api.telnyx.com/v2/ai", APIFormat: "openai", PathPrefix: "/openai"},
 		"azure":       {BaseURL: "", APIFormat: "azure", PathPrefix: ""},
 	}
 

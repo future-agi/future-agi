@@ -203,8 +203,12 @@ describe("useBaseNodeActions", () => {
       );
     });
 
-    it("adds node without position when getNode returns null", async () => {
+    it("refuses to attach to a source node that no longer exists (TH-4549 deferred Agent add, PRD R-13)", async () => {
+      const { enqueueSnackbar } = await import("notistack");
       const props = makeProps();
+      // The node's own "+" can only be clicked while the node exists; getNode
+      // returning null happens when a deferred Agent insert (setup dialog)
+      // runs after the node was deleted.
       mockGetNode.mockReturnValue(null);
 
       const { result } = renderHook(() => useBaseNodeActions(props));
@@ -213,15 +217,13 @@ describe("useBaseNodeActions", () => {
         result.current.handleNodeSelect("agent", null);
       });
 
-      expect(mockAddNode).toHaveBeenCalledWith(
-        expect.objectContaining({
-          type: "agent",
-          position: undefined,
-          sourceNodeId: "n1",
-          node_template_id: null,
-        }),
-      );
+      expect(mockAddNode).not.toHaveBeenCalled();
       expect(mockSetCenter).not.toHaveBeenCalled();
+      expect(enqueueSnackbar).toHaveBeenCalledWith(
+        expect.stringMatching(/no longer exists/),
+        { variant: "warning" },
+      );
+      expect(result.current.popperOpen).toBe(false);
     });
 
     it("closes popper after selection", async () => {

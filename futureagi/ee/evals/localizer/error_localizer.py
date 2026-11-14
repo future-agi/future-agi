@@ -23,7 +23,6 @@ from ee.evals.localizer.prompts import (
     SYSTEM_PROMPT,
 )
 from PIL import Image
-from pydub import AudioSegment
 from tfc.utils.storage import (
     audio_bytes_from_url_or_base64,
     image_bytes_from_url_or_base64,
@@ -94,6 +93,8 @@ def _create_audio_segments(audio_input: Any) -> dict[str, dict[str, Any]]:
             if not isinstance(audio_input, bytes)
             else audio_input
         )
+        from pydub import AudioSegment
+
         audio = AudioSegment.from_file(BytesIO(raw))
         total_ms = len(audio)
         chunk_ms = total_ms / max(1, int(total_ms / max(5000, int(total_ms * 0.1))))

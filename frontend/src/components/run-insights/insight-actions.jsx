@@ -109,7 +109,7 @@ const InsightActions = ({ evalMetrics, setSelectedTraceIds }) => {
                 <Chip
                   avatar={
                     <Iconify
-                      icon="icon-park-outline:caution"
+                      icon="solar:danger-triangle-linear"
                       color={`${theme.palette.red[500]} !important`}
                       width={6}
                       sx={{
@@ -120,12 +120,10 @@ const InsightActions = ({ evalMetrics, setSelectedTraceIds }) => {
                   label={metric?.name}
                   variant="error"
                   sx={{
-                    backgroundColor: "red.o10",
+                    backgroundColor: "status.danger.bg",
                     typography: "s2",
-                    borderRadius: (theme) => theme.spacing(1),
-                    fontWeight: "fontWeightRegular",
                     marginLeft: (theme) => theme.spacing(5),
-                    color: "red.500",
+                    color: "status.danger.fg",
                     transition: "none",
                     cursor: "default",
                   }}

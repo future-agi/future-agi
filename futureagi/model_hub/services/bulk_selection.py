@@ -508,6 +508,7 @@ def _resolve_voice_call_ids_clickhouse(
     builder = _use_authoritative_eval_source(
         VoiceCallListQueryBuilderV2(
             project_id=str(project_id),
+            eval_count_mode=True,
             page_number=0,
             page_size=cap + 1,
             filters=filters or [],
@@ -640,6 +641,7 @@ def _resolve_trace_ids_clickhouse(
     builder = _use_authoritative_eval_source(
         TraceListQueryBuilderV2(
             project_id=str(project_id),
+            eval_count_mode=True,
             page_number=0,
             # Fetch cap+1 as the page size so a >cap result trips the truncation
             # sentinel below. Unlike the voice builder, the trace ``build()`` LIMIT
@@ -909,6 +911,7 @@ def _resolve_span_ids_clickhouse(
     builder = _use_authoritative_eval_source(
         SpanListQueryBuilderV2(
             project_id=str(project_id),
+            eval_count_mode=True,
             filters=ch_filters,
             annotation_label_ids=annotation_label_ids,
             bounded_internal_scan=_needs_bounded_internal_scan(ch_filters),

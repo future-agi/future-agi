@@ -26,9 +26,7 @@ const EnterPrisePricingCard = ({
     <Box
       flex={1}
       padding={"8px"}
-      bgcolor={(theme) =>
-        theme.palette.mode === "dark" ? "rgba(0,0,0,0.2)" : "primary.lighter"
-      }
+      bgcolor="background.neutral"
       borderRadius={"12px"}
     >
       <Box
@@ -52,7 +50,7 @@ const EnterPrisePricingCard = ({
         <Box>
           <Iconify
             // @ts-ignore
-            icon="carbon:enterprise"
+            icon="solar:buildings-2-linear"
             sx={{
               width: 24,
               height: 24,
@@ -95,7 +93,7 @@ const EnterPrisePricingCard = ({
                   <SvgColor
                     // @ts-ignore
                     src="/icons/settings/pricing-list-enterprise.svg"
-                    sx={{ width: "20px", color: "green.500" }}
+                    sx={{ width: "20px", color: "status.success.fg" }}
                   />
                 </Box>
                 <Typography
@@ -119,7 +117,7 @@ const EnterPrisePricingCard = ({
           <Typography
             color="primary.contrastText"
             typography="l2"
-            fontWeight={"fontWeightBold"}
+            fontWeight={"fontWeightSemiBold"}
           >
             Custom Pricing
           </Typography>

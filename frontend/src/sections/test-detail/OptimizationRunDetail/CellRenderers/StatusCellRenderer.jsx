@@ -1,34 +1,22 @@
-import { Box, IconButton, styled, Typography } from "@mui/material";
+import { Box, IconButton, styled } from "@mui/material";
 import PropTypes from "prop-types";
 import React from "react";
 import { AgentPromptOptimizerStatus } from "../../FixMyAgentDrawer/common";
 import SvgColor from "../../../../components/svg-color";
 import { ShowComponent } from "../../../../components/show";
+import StatusBadge from "src/components/status-badge/StatusBadge";
 import CustomTooltip from "src/components/tooltip/CustomTooltip";
 import { useOptimizationRunDetailStoreShallow } from "../states";
 import { format } from "date-fns";
 
-const statusColorMap = {
-  [AgentPromptOptimizerStatus.PENDING]: {
-    backgroundColor: "action.hover",
-    color: "primary.main",
-    title: "Queue",
-  },
-  [AgentPromptOptimizerStatus.RUNNING]: {
-    backgroundColor: "blue.o10",
-    color: "blue.500",
-    title: "Running",
-  },
+const statusMap = {
+  [AgentPromptOptimizerStatus.PENDING]: { role: "neutral", title: "Queue" },
+  [AgentPromptOptimizerStatus.RUNNING]: { role: "info", title: "Running" },
   [AgentPromptOptimizerStatus.COMPLETED]: {
-    backgroundColor: "green.o10",
-    color: "green.500",
+    role: "success",
     title: "Completed",
   },
-  [AgentPromptOptimizerStatus.FAILED]: {
-    backgroundColor: "red.o10",
-    color: "red.500",
-    title: "Failed",
-  },
+  [AgentPromptOptimizerStatus.FAILED]: { role: "danger", title: "Failed" },
 };
 
 const StyledIconButton = styled(IconButton)(({ theme }) => ({
@@ -80,24 +68,11 @@ const StatusCellRenderer = ({ value, data }) => {
           </StyledIconButton>
         </CustomTooltip>
       </ShowComponent>
-      <Box
-        sx={{
-          backgroundColor:
-            statusColorMap?.[value]?.backgroundColor ??
-            statusColorMap?.[AgentPromptOptimizerStatus.PENDING]
-              ?.backgroundColor,
-          color:
-            statusColorMap?.[value]?.color ??
-            statusColorMap?.[AgentPromptOptimizerStatus.PENDING]?.color,
-          paddingX: 1,
-          paddingY: 0.5,
-          borderRadius: 0.5,
-        }}
-      >
-        <Typography typography="s3" fontWeight="fontWeightMedium">
-          {statusColorMap?.[value]?.title ?? "-"}
-        </Typography>
-      </Box>
+      <StatusBadge
+        status={value}
+        label={statusMap[value]?.title ?? "-"}
+        role={statusMap[value]?.role ?? "neutral"}
+      />
     </Box>
   );
 };

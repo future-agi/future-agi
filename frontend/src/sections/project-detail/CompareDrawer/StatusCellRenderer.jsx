@@ -1,6 +1,7 @@
-import { Box, Chip } from "@mui/material";
+import { Box } from "@mui/material";
 import PropTypes from "prop-types";
 import React from "react";
+import StatusBadge from "src/components/status-badge/StatusBadge";
 import { normalizeEvalCellValue } from "src/sections/develop-detail/DataTab/common";
 
 const StatusCellRenderer = ({ value }) => {
@@ -15,13 +16,15 @@ const StatusCellRenderer = ({ value }) => {
         : normalized.choice ?? "";
   }
 
-  let color;
+  // Score bands take a status role; text results ("Passed", "Failed") and
+  // the empty "Error" case are inferred from their label.
+  let role;
   if (displayValue >= 0 && displayValue <= 49) {
-    color = "error";
+    role = "danger";
   } else if (displayValue >= 50 && displayValue <= 79) {
-    color = "warning";
+    role = "warning";
   } else if (displayValue >= 80 && displayValue <= 100) {
-    color = "success";
+    role = "success";
   }
 
   const isNumeric = typeof displayValue === "number" && !isNaN(displayValue);
@@ -33,15 +36,7 @@ const StatusCellRenderer = ({ value }) => {
 
   return (
     <Box>
-      <Chip
-        variant="soft"
-        label={label}
-        size="small"
-        color={color}
-        sx={{
-          paddingX: "4px",
-        }}
-      />
+      <StatusBadge status={label} label={label} role={role} />
     </Box>
   );
 };

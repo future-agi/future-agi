@@ -1,0 +1,260 @@
+{
+  "analysis": {
+    "successEvaluation": "true",
+    "summary": "The caller booked a Tuesday morning appointment at the Example Clinic."
+  },
+  "artifact": {
+    "logUrl": "https://storage.example.com/logs/baseline-call.jsonl.gz",
+    "messages": [
+      {
+        "duration": 0,
+        "message": "You are the booking assistant for the Example Clinic. Be brief and polite.",
+        "role": "system",
+        "secondsFromStart": 0.0,
+        "time": 1788256802000
+      },
+      {
+        "duration": 2800,
+        "endTime": 1788256805600,
+        "message": "Hello, this is the Example Clinic. How can I help you today?",
+        "role": "bot",
+        "secondsFromStart": 0.8,
+        "time": 1788256802800
+      },
+      {
+        "duration": 3200,
+        "endTime": 1788256809700,
+        "message": "Hi, I would like to book an appointment for next Tuesday.",
+        "role": "user",
+        "secondsFromStart": 4.5,
+        "time": 1788256806500
+      },
+      {
+        "duration": 1700,
+        "endTime": 1788256812100,
+        "message": "Of course. Would you prefer the morning or the afternoon?",
+        "role": "bot",
+        "secondsFromStart": 8.4,
+        "time": 1788256810400
+      },
+      {
+        "duration": 1100,
+        "endTime": 1788256814100,
+        "message": "Morning, please.",
+        "role": "user",
+        "secondsFromStart": 11.0,
+        "time": 1788256813000
+      },
+      {
+        "duration": 3100,
+        "endTime": 1788256818000,
+        "message": "You are booked for Tuesday at nine in the morning. Anything else?",
+        "role": "bot",
+        "secondsFromStart": 12.9,
+        "time": 1788256814900
+      },
+      {
+        "duration": 1900,
+        "endTime": 1788256820900,
+        "message": "No, that is all. Thank you.",
+        "role": "user",
+        "secondsFromStart": 17.0,
+        "time": 1788256819000
+      },
+      {
+        "duration": 800,
+        "endTime": 1788256822300,
+        "message": "Goodbye, and have a nice day.",
+        "role": "bot",
+        "secondsFromStart": 19.5,
+        "time": 1788256821500
+      }
+    ],
+    "performanceMetrics": {
+      "endpointingLatencyAverage": 146.7,
+      "modelLatencyAverage": 380,
+      "transcriberLatencyAverage": 110,
+      "turnLatencies": [
+        {
+          "endpointingLatency": 150,
+          "modelLatency": 410,
+          "transcriberLatency": 120,
+          "turnLatency": 910,
+          "voiceLatency": 230
+        },
+        {
+          "endpointingLatency": 140,
+          "modelLatency": 380,
+          "transcriberLatency": 110,
+          "turnLatency": 840,
+          "voiceLatency": 210
+        },
+        {
+          "endpointingLatency": 150,
+          "modelLatency": 350,
+          "transcriberLatency": 100,
+          "turnLatency": 800,
+          "voiceLatency": 200
+        }
+      ],
+      "turnLatencyAverage": 850,
+      "voiceLatencyAverage": 213.3
+    },
+    "recording": {
+      "mono": {
+        "assistantUrl": "https://storage.example.com/recordings/baseline-call/assistant.wav",
+        "combinedUrl": "https://storage.example.com/recordings/baseline-call/mono.wav",
+        "customerUrl": "https://storage.example.com/recordings/baseline-call/customer.wav"
+      },
+      "stereoUrl": "https://storage.example.com/recordings/baseline-call/stereo.wav"
+    },
+    "recordingUrl": "https://storage.example.com/recordings/baseline-call/mono.wav",
+    "stereoRecordingUrl": "https://storage.example.com/recordings/baseline-call/stereo.wav",
+    "transcript": "AI: Hello, this is the Example Clinic. How can I help you today?\nUser: Hi, I would like to book an appointment for next Tuesday.\nAI: Of course. Would you prefer the morning or the afternoon?\nUser: Morning, please.\nAI: You are booked for Tuesday at nine in the morning. Anything else?\nUser: No, that is all. Thank you.\nAI: Goodbye, and have a nice day."
+  },
+  "assistantId": "0b5e11e0-0000-4000-8000-0000000000a2",
+  "cost": 0.0834,
+  "costBreakdown": {
+    "llm": 0.0312,
+    "llmCompletionTokens": 96,
+    "llmPromptTokens": 812,
+    "stt": 0.012,
+    "total": 0.0834,
+    "transport": 0.0042,
+    "tts": 0.021,
+    "ttsCharacters": 310,
+    "vapi": 0.015
+  },
+  "costs": [
+    {
+      "cost": 0.012,
+      "minutes": 0.37,
+      "transcriber": {
+        "model": "nova-2",
+        "provider": "deepgram"
+      },
+      "type": "transcriber"
+    },
+    {
+      "completionTokens": 96,
+      "cost": 0.0312,
+      "model": {
+        "model": "gpt-4o-mini",
+        "provider": "openai"
+      },
+      "promptTokens": 812,
+      "type": "model"
+    },
+    {
+      "characters": 310,
+      "cost": 0.021,
+      "type": "voice",
+      "voice": {
+        "provider": "11labs",
+        "voiceId": "example-voice"
+      }
+    },
+    {
+      "cost": 0.015,
+      "minutes": 0.37,
+      "subType": "normal",
+      "type": "vapi"
+    },
+    {
+      "cost": 0.0042,
+      "minutes": 0.37,
+      "provider": "twilio",
+      "type": "transport"
+    }
+  ],
+  "createdAt": "2026-09-01T10:00:00.000Z",
+  "customer": {
+    "name": "Example Caller",
+    "number": "+15550100002"
+  },
+  "endedAt": "2026-09-01T10:00:24.000Z",
+  "endedReason": "customer-ended-call",
+  "id": "0b5e11e0-0000-4000-8000-00000000ca11",
+  "messages": [
+    {
+      "duration": 0,
+      "message": "You are the booking assistant for the Example Clinic. Be brief and polite.",
+      "role": "system",
+      "secondsFromStart": 0.0,
+      "time": 1788256802000
+    },
+    {
+      "duration": 2800,
+      "endTime": 1788256805600,
+      "message": "Hello, this is the Example Clinic. How can I help you today?",
+      "role": "bot",
+      "secondsFromStart": 0.8,
+      "time": 1788256802800
+    },
+    {
+      "duration": 3200,
+      "endTime": 1788256809700,
+      "message": "Hi, I would like to book an appointment for next Tuesday.",
+      "role": "user",
+      "secondsFromStart": 4.5,
+      "time": 1788256806500
+    },
+    {
+      "duration": 1700,
+      "endTime": 1788256812100,
+      "message": "Of course. Would you prefer the morning or the afternoon?",
+      "role": "bot",
+      "secondsFromStart": 8.4,
+      "time": 1788256810400
+    },
+    {
+      "duration": 1100,
+      "endTime": 1788256814100,
+      "message": "Morning, please.",
+      "role": "user",
+      "secondsFromStart": 11.0,
+      "time": 1788256813000
+    },
+    {
+      "duration": 3100,
+      "endTime": 1788256818000,
+      "message": "You are booked for Tuesday at nine in the morning. Anything else?",
+      "role": "bot",
+      "secondsFromStart": 12.9,
+      "time": 1788256814900
+    },
+    {
+      "duration": 1900,
+      "endTime": 1788256820900,
+      "message": "No, that is all. Thank you.",
+      "role": "user",
+      "secondsFromStart": 17.0,
+      "time": 1788256819000
+    },
+    {
+      "duration": 800,
+      "endTime": 1788256822300,
+      "message": "Goodbye, and have a nice day.",
+      "role": "bot",
+      "secondsFromStart": 19.5,
+      "time": 1788256821500
+    }
+  ],
+  "metadata": {
+    "campaign": "baseline",
+    "source": "example"
+  },
+  "orgId": "0b5e11e0-0000-4000-8000-0000000000a1",
+  "phoneNumber": {
+    "number": "+15550100001"
+  },
+  "phoneNumberId": "0b5e11e0-0000-4000-8000-0000000000a3",
+  "recordingUrl": "https://storage.example.com/recordings/baseline-call/mono.wav",
+  "startedAt": "2026-09-01T10:00:02.000Z",
+  "status": "ended",
+  "stereoRecordingUrl": "https://storage.example.com/recordings/baseline-call/stereo.wav",
+  "summary": "The caller booked a Tuesday morning appointment at the Example Clinic.",
+  "transcript": "AI: Hello, this is the Example Clinic. How can I help you today?\nUser: Hi, I would like to book an appointment for next Tuesday.\nAI: Of course. Would you prefer the morning or the afternoon?\nUser: Morning, please.\nAI: You are booked for Tuesday at nine in the morning. Anything else?\nUser: No, that is all. Thank you.\nAI: Goodbye, and have a nice day.",
+  "type": "outboundPhoneCall",
+  "updatedAt": "2026-09-01T10:00:30.000Z"
+}

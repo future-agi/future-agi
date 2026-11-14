@@ -32,6 +32,8 @@ from typing import Callable, Optional, Union
 import redis
 from redis.exceptions import LockError, LockNotOwnedError, RedisError
 
+from tfc.utils.redaction import redact_url_credentials
+
 logger = logging.getLogger(__name__)
 
 
@@ -112,7 +114,8 @@ class DistributedLockManager:
             self._redis_client.ping()
             self._redis_available = True
             logger.info(
-                f"Distributed lock manager connected to Redis at {self._redis_url}"
+                "Distributed lock manager connected to Redis at "
+                f"{redact_url_credentials(self._redis_url)}"
             )
         except RedisError as e:
             logger.warning(

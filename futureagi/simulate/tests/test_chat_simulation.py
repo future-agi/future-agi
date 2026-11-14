@@ -1080,6 +1080,7 @@ class TestMonitorTestExecutionForChat:
         scenario,
         organization,
         workspace,
+        django_capture_on_commit_callbacks,
     ):
         """Test execution marked completed when all calls are completed."""
         # Setup - create completed call executions
@@ -1093,8 +1094,10 @@ class TestMonitorTestExecutionForChat:
                 call_metadata={"eval_started": True, "eval_completed": True},
             )
 
-        # Execute
-        monitor_test_execution_for_chat(str(test_execution.id))
+        # Execute: the settle completes the run and queues the summary after
+        # the commit.
+        with django_capture_on_commit_callbacks(execute=True):
+            monitor_test_execution_for_chat(str(test_execution.id))
 
         # Assert
         test_execution.refresh_from_db()
@@ -1199,6 +1202,7 @@ class TestMonitorTestExecutionForChat:
         scenario,
         organization,
         workspace,
+        django_capture_on_commit_callbacks,
     ):
         """Monitor handles mix of completed, failed, and cancelled calls."""
         # Setup - create calls with different statuses
@@ -1218,16 +1222,20 @@ class TestMonitorTestExecutionForChat:
             simulation_call_type=CallExecution.SimulationCallType.TEXT,
         )
 
-        # Execute
-        with patch(
-            "simulate.tasks.eval_summary_tasks.run_eval_summary_task.apply_async"
-        ) as mock_eval:
+        # Execute: the settle completes the run and queues the summary after
+        # the commit.
+        with (
+            patch(
+                "simulate.tasks.eval_summary_tasks.run_eval_summary_task.apply_async"
+            ) as mock_eval,
+            django_capture_on_commit_callbacks(execute=True),
+        ):
             monitor_test_execution_for_chat(str(test_execution.id))
 
-            # Assert - should be marked completed
-            test_execution.refresh_from_db()
-            assert test_execution.status == TestExecution.ExecutionStatus.COMPLETED
-            mock_eval.assert_called_once()
+        # Assert - should be marked completed
+        test_execution.refresh_from_db()
+        assert test_execution.status == TestExecution.ExecutionStatus.COMPLETED
+        mock_eval.assert_called_once()
 
     @pytest.mark.django_db
     def test_monitor_handles_invalid_test_execution_id(self):

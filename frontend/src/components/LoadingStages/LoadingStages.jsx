@@ -103,7 +103,7 @@ const LoadingStages = ({
                 }}
               >
                 <div className="icon-wrapper">
-                  <SvgColor
+                  <SvgColor width={24}
                     // @ts-ignore
                     src={step.icon}
                     className="icon-image"

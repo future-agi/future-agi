@@ -1,4 +1,4 @@
-import { Box, LinearProgress, Stack, Typography } from "@mui/material";
+import { Box, Stack, Typography } from "@mui/material";
 import React, { useMemo, useState } from "react";
 import { useApiKeysStatus } from "src/api/model/api-keys";
 import PropTypes from "prop-types";
@@ -11,6 +11,7 @@ import {
 import { ConfirmDialog } from "src/components/custom-dialog";
 import { LoadingButton } from "@mui/lab";
 import SvgColor from "../svg-color";
+import { LoadingScreen } from "src/components/loading-screen";
 
 export default function ConfigureKeysContent({
   shouldFetch,
@@ -56,7 +57,7 @@ export default function ConfigureKeysContent({
   return (
     <Stack direction={"column"}>
       {isLoading ? (
-        <LinearProgress />
+        <LoadingScreen compact />
       ) : (
         <>
           <FormSearchField
@@ -80,19 +81,19 @@ export default function ConfigureKeysContent({
                 },
                 "&:hover fieldset": {
                   borderColor: "action.hover",
-                  boxShadow: "unset",
+                  boxShadow: "none",
                   outline: "none",
                 },
                 "&.Mui-focused fieldset": {
                   borderColor: "action.hover",
-                  boxShadow: "unset",
+                  boxShadow: "none",
                   outline: "none",
                 },
                 "&.Mui-focused": {
-                  boxShadow: "none !important",
+                  boxShadow: "none",
                 },
                 "& input": {
-                  boxShadow: "none !important",
+                  boxShadow: "none",
                   outline: "none",
                 },
               },
@@ -147,7 +148,8 @@ export default function ConfigureKeysContent({
             startIcon={
               <SvgColor
                 // @ts-ignore
-                sx={{ height: 2, width: 2, mt: -0.5 }}
+                width={2}
+                sx={{ mt: -0.5 }}
                 src={"/assets/icons/ic_delete.svg"}
               />
             }

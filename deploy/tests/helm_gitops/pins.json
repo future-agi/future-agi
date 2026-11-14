@@ -1,0 +1,15 @@
+{
+  "argo": {
+    "version": "v3.6.1",
+    "commit": "94037c4d4e1af4bd0651d37a179fbd9e347e668c",
+    "url": "https://raw.githubusercontent.com/argoproj/argo-cd/94037c4d4e1af4bd0651d37a179fbd9e347e668c/manifests/install.yaml",
+    "sha256": "7be23ca7d9ca3d3074dee8332f1ca92a933b990cee7c9cf22cf3843ee8c2913e"
+  },
+  "flux": {
+    "version": "v2.10.0",
+    "commit": "3fa784edd773d56630bb9f62645e08f70c2cff0a",
+    "url": "https://github.com/fluxcd/flux2/releases/download/v2.10.0/install.yaml",
+    "sha256": "a8c838ccd9be5d30eba9df87cd229b7c4eb80c0049fba1bc3b9840829f267f28"
+  },
+  "registry_image": "registry:2@sha256:a3d8aaa63ed8681a604f1dea0aa03f100d5895b6a58ace528858a7b332415373"
+}

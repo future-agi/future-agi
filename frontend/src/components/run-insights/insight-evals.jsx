@@ -72,7 +72,11 @@ const InsightEvals = ({ evalMetrics }) => {
           >
             {/* Main Key */}
             <Box sx={{ display: "flex", alignItems: "center" }}>
-              <Iconify icon="gg:check-o" width={20} color="green.500" />
+              <Iconify
+                icon="solar:check-circle-linear"
+                width={20}
+                color="status.success.fg"
+              />
               <Typography
                 ml={(theme) => theme.spacing(2)}
                 fontWeight="fontWeightRegular"

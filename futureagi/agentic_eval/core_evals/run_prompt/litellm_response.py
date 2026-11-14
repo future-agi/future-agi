@@ -20,7 +20,7 @@ from model_hub.utils.websocket_manager import get_websocket_manager
 from channels.db import sync_to_async
 
 import litellm
-import av
+from tfc.utils.lazy_extras import av
 import requests
 import base64
 import copy
@@ -1277,9 +1277,9 @@ class RunPrompt:
                             if tool_call.function.name:
                                 tc["function"]["name"] += tool_call.function.name
                             if tool_call.function.arguments:
-                                tc["function"][
-                                    "arguments"
-                                ] += tool_call.function.arguments
+                                tc["function"]["arguments"] += (
+                                    tool_call.function.arguments
+                                )
 
         except Exception as e:
             if "value must be a string" in str(e):
@@ -2988,9 +2988,9 @@ class RunPrompt:
                             if tool_call.function.name:
                                 tc["function"]["name"] += tool_call.function.name
                             if tool_call.function.arguments:
-                                tc["function"][
-                                    "arguments"
-                                ] += tool_call.function.arguments
+                                tc["function"]["arguments"] += (
+                                    tool_call.function.arguments
+                                )
 
         except Exception as e:
             if "value must be a string" in str(e):

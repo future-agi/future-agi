@@ -42,13 +42,13 @@ const TestDetailDrawerHeaderSection = ({ data }) => {
         {/* <Box>
           {data?.type === CallType.INBOUND ? (
             <Iconify
-              icon="hugeicons:call-02"
-              sx={{ width: 24, height: 24, color: "blue.600" }}
+              icon="solar:phone-linear"
+              sx={{ width: 24, height: 24, color: "status.info.fg" }}
             />
           ) : (
             <Iconify
-              icon="mdi-light:message"
-              sx={{ width: 24, height: 24, color: "green.600" }}
+              icon="solar:chat-round-line-linear"
+              sx={{ width: 24, height: 24, color: "status.success.fg" }}
             />
           )}
         </Box> */}
@@ -107,7 +107,7 @@ const TestDetailDrawerHeaderSection = ({ data }) => {
             <>
               <Box sx={{ display: "flex", alignItems: "center", gap: 0.5 }}>
                 <Iconify
-                  icon="material-symbols:schedule-outline"
+                  icon="solar:clock-circle-linear"
                   width="14px"
                   height="14px"
                   color="text.disabled"
@@ -142,10 +142,7 @@ const TestDetailDrawerHeaderSection = ({ data }) => {
           variant="outlined"
           size="small"
           sx={{
-            borderRadius: "4px",
-            height: "30px",
-            px: "4px",
-            width: "105px",
+            flexShrink: 0,
           }}
           onClick={() => {
             handleOnDocsClicked("call-log-simulate");
@@ -168,7 +165,7 @@ const TestDetailDrawerHeaderSection = ({ data }) => {
             p: 0.5, // ✅ reduce padding if needed to align better
           }}
         >
-          <Iconify icon="akar-icons:cross" />
+          <Iconify icon="solar:close-linear" />
         </IconButton>
       </Box>
     </Box>

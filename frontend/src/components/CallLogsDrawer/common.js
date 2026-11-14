@@ -1,5 +1,5 @@
 export const getCsatScoreColor = (n) => {
-  if (n <= 5) return "red.500";
-  if (n <= 7) return "orange.500";
-  return "green.500";
+  if (n <= 5) return "status.danger.solid";
+  if (n <= 7) return "status.warning.solid";
+  return "status.success.solid";
 };

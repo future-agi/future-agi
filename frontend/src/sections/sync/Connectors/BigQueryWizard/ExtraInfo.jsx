@@ -166,7 +166,7 @@ const ExtraInfo = ({ setActiveStep, draftInfo }) => {
                       },
                       marginTop: "10px",
                     }}
-                    startIcon={<Iconify icon="ic:round-plus" />}
+                    startIcon={<Iconify icon="solar:add-linear" />}
                   />
                 </Box>
                 <Box

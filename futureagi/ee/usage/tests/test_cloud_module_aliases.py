@@ -7,6 +7,14 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from tfc.ee_loader import has_ee
+
+# The canonical modules live in the private cloud overlay (ee/cloud), which
+# OSS checkouts and fork CI runs do not have.
+pytestmark = pytest.mark.skipif(
+    not has_ee("ee.cloud"), reason="requires ee/cloud (OSS lane)"
+)
+
 
 @pytest.mark.parametrize(
     ("legacy_path", "canonical_path", "public_symbols"),

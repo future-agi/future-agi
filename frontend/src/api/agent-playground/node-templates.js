@@ -36,7 +36,7 @@ export const useGetNodeTemplates = (options = {}) =>
           title: t.display_name,
           description: t.description,
           iconSrc: "/assets/icons/ic_chat_single.svg",
-          color: "orange.500",
+          color: "text.secondary",
         })),
     staleTime: 5 * 60 * 1000,
     ...options,

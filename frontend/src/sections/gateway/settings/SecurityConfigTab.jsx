@@ -109,15 +109,15 @@ const SecurityConfigTab = ({
   return (
     <Box>
       <Stack direction="row" alignItems="center" spacing={1} sx={{ mb: 2 }}>
-        <Icon icon="mdi:shield-lock-outline" width={24} />
+        <Icon icon="solar:shield-keyhole-linear" width={24} />
         <Typography variant="h6">Security</Typography>
       </Stack>
 
       {/* ===== IP ACL ===== */}
       <Paper variant="outlined" sx={{ p: 2, mb: 3 }}>
         <Stack direction="row" alignItems="center" spacing={1} sx={{ mb: 1 }}>
-          <Icon icon="mdi:ip-network-outline" width={20} />
-          <Typography variant="subtitle1" fontWeight="bold">
+          <Icon icon="solar:global-linear" width={20} />
+          <Typography variant="subtitle1" fontWeight="600">
             IP Access Control
           </Typography>
         </Stack>
@@ -231,8 +231,8 @@ const SecurityConfigTab = ({
       {/* ===== PRIVACY ===== */}
       <Paper variant="outlined" sx={{ p: 2, mb: 3 }}>
         <Stack direction="row" alignItems="center" spacing={1} sx={{ mb: 1 }}>
-          <Icon icon="mdi:eye-off-outline" width={20} />
-          <Typography variant="subtitle1" fontWeight="bold">
+          <Icon icon="solar:eye-closed-linear" width={20} />
+          <Typography variant="subtitle1" fontWeight="600">
             Privacy & PII Redaction
           </Typography>
         </Stack>
@@ -268,7 +268,7 @@ const SecurityConfigTab = ({
               <MenuItem value="none">None (logging only)</MenuItem>
             </TextField>
 
-            <Typography variant="body2" fontWeight={500}>
+            <Typography variant="body2" fontWeight={400}>
               Redact Patterns
             </Typography>
 
@@ -289,8 +289,12 @@ const SecurityConfigTab = ({
                 <Typography variant="caption" sx={{ fontFamily: "monospace" }}>
                   {p.pattern}
                 </Typography>
-                <IconButton size="small" onClick={() => removePattern(idx)}>
-                  <Icon icon="mdi:delete-outline" width={16} color="#d32f2f" />
+                <IconButton
+                  sx={{ color: "status.danger.fg" }}
+                  size="small"
+                  onClick={() => removePattern(idx)}
+                >
+                  <Icon icon="solar:trash-bin-trash-linear" width={16} />
                 </IconButton>
               </Stack>
             ))}
@@ -327,8 +331,8 @@ const SecurityConfigTab = ({
       {/* ===== TOOL POLICY ===== */}
       <Paper variant="outlined" sx={{ p: 2 }}>
         <Stack direction="row" alignItems="center" spacing={1} sx={{ mb: 1 }}>
-          <Icon icon="mdi:tools" width={20} />
-          <Typography variant="subtitle1" fontWeight="bold">
+          <Icon icon="solar:toolbox-linear" width={20} />
+          <Typography variant="subtitle1" fontWeight="600">
             Tool / Function Calling Policy
           </Typography>
         </Stack>

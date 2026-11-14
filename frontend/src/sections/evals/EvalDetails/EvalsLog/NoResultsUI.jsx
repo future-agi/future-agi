@@ -1,49 +1,17 @@
 import React from "react";
 import PropTypes from "prop-types";
-import { Box, Stack, Typography } from "@mui/material";
+import EmptyContent from "src/components/empty-content";
 
 export default function NoResultsUI({
   title = "No evaluations has been logged",
   description = "Test evaluations on the playground section to view the logs",
 }) {
   return (
-    <Box
-      sx={{
-        display: "flex",
-        flexDirection: "column",
-        justifyContent: "center",
-        alignItems: "center",
-        minHeight: "400px",
-      }}
-    >
-      <img
-        style={{
-          height: "109px",
-          width: "117px",
-        }}
-        alt="no dataset added ui"
-        src="/assets/illustrations/no-dataset-added.svg"
-      />
-      <Stack direction="column" rowGap={0} alignItems="center">
-        <Typography
-          variant="s1"
-          color="text.primary"
-          fontWeight="fontWeightSemiBold"
-          sx={{ mt: 2.5 }}
-        >
-          {title}
-        </Typography>
-        {description && (
-          <Typography
-            variant="s1"
-            color="text.secondary"
-            fontWeight="fontWeightRegular"
-          >
-            {description}
-          </Typography>
-        )}
-      </Stack>
-    </Box>
+    <EmptyContent
+      title={title}
+      description={description || undefined}
+      sx={{ minHeight: 400 }}
+    />
   );
 }
 

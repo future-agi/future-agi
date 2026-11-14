@@ -51,7 +51,11 @@ def test_user_leaves_are_aggregated_independently_without_narrowing_metrics(
     assert "attrs_string[" not in candidate
     assert "user_member_match" not in candidate
     assert "HAVING " + having in sql
-    assert "sum(ifNull(cost, 0)) AS total_cost" in sql
+    metrics = " ".join(sql.split("user_span_metrics AS (", 1)[1].split())
+    assert (
+        "if(countIf(graph_cost_flags.2) > 0, CAST(NULL, 'Nullable(Float64)'), "
+        "sum(ifNull(cost, 0))) AS total_cost" in metrics
+    )
     assert "SELECT toString(trace_id) FROM candidate_trace_ids" not in sql
     assert "SAMPLE " not in sql
 

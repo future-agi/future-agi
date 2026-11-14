@@ -1,59 +1,35 @@
-import Quill from "quill";
 import React from "react";
-import { createRoot } from "react-dom/client";
 import "../PromptCardEditor.css";
 import ImageEmbed from "../EmbedComponents/ImageEmbed";
-const BlockEmbed = Quill.import("blots/block/embed");
+import MediaBlockEmbed from "./MediaBlockEmbed";
 
-class ImageBlot extends BlockEmbed {
-  static create(value) {
-    const node = super.create();
-    node.setAttribute("contenteditable", false);
-    node.setAttribute("id", value.id);
-    node.setAttribute(
-      "data-image-data",
-      JSON.stringify({
-        url: value.url,
-        img_name: value.name,
-        img_size: value.size,
-      }),
-    );
-
-    const root = createRoot(node);
-
-    root.render(
+class ImageBlot extends MediaBlockEmbed {
+  static renderCard(v, callbacks) {
+    const readOnly = Boolean(callbacks.readOnly);
+    const info = { url: v.url, name: v.name, size: v.size, id: v.id };
+    const canSelect = typeof callbacks.setSelectedImage === "function";
+    const canRemove =
+      !readOnly && typeof callbacks.handleRemoveImage === "function";
+    return (
       <ImageEmbed
-        url={value.url}
-        name={value.name}
-        size={value.size}
-        onMagnify={() =>
-          value.setSelectedImage({
-            url: value.url,
-            name: value.name,
-            size: value.size,
-            id: value.id,
-          })
+        url={v.url}
+        name={v.name}
+        size={v.size}
+        onMagnify={
+          canSelect ? () => callbacks.setSelectedImage(info) : undefined
         }
         isEmbed
-        id={value.id}
-        onDelete={() => value.handleRemoveImage(value.id)}
-        onReplace={() =>
-          value.setSelectedImage({
-            url: value.url,
-            name: value.name,
-            size: value.size,
-            id: value.id,
-            replace: true,
-          })
+        id={v.id}
+        onDelete={
+          canRemove ? () => callbacks.handleRemoveImage(v.id) : undefined
         }
-      />,
+        onReplace={
+          canSelect && !readOnly
+            ? () => callbacks.setSelectedImage({ ...info, replace: true })
+            : undefined
+        }
+      />
     );
-
-    return node;
-  }
-
-  static formats() {
-    return null;
   }
 
   // Add value method to properly handle the blot's value
@@ -81,5 +57,7 @@ class ImageBlot extends BlockEmbed {
 
 ImageBlot.blotName = "ImageBlot";
 ImageBlot.tagName = "div";
+ImageBlot.mediaKind = "image";
+ImageBlot.dataAttribute = "data-image-data";
 
 export default ImageBlot;

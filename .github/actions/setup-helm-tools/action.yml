@@ -1,0 +1,130 @@
+# The tools of the Helm chart workflows (helm-ci.yml, helm-release.yml),
+# pinned here and nowhere else. Helm and kubeconform are checked against their
+# sha256 (get.helm.sh/<file>.sha256sum, the kubeconform release's CHECKSUMS),
+# and every tool installed must report its pinned version. helm-ci.yml
+# installs each of them on every pull request, so a pin that cannot install
+# fails there before a release.
+name: Set up the Helm chart tools
+description: Installs the pinned Helm, kubeconform, cosign, ORAS and kind that the Helm chart workflows use.
+inputs:
+  helm:
+    description: Helm majors to install, space-separated (4, 3), each at $RUNNER_TEMP/helm<major>/helm; the first also goes on PATH. Empty for none.
+    default: ""
+  kubeconform:
+    description: '"true" installs kubeconform, on PATH.'
+    default: "false"
+  cosign:
+    description: '"true" installs cosign, on PATH.'
+    default: "false"
+  oras:
+    description: '"true" installs ORAS, on PATH.'
+    default: "false"
+  kind:
+    description: '"true" installs kind, on PATH.'
+    default: "false"
+  # Helm 4 packages, pushes and installs; Helm 3 checks too (the chart
+  # supports both).
+  helm-version:
+    description: Helm 4 release.
+    default: v4.3.0
+  helm-sha256:
+    description: sha256 of helm-<helm-version>-linux-amd64.tar.gz.
+    default: 86584a54def73570558f66f5111cc53dfed56689637ae32c1201205d494f54fb
+  helm3-version:
+    description: Helm 3 release.
+    default: v3.22.0
+  helm3-sha256:
+    description: sha256 of helm-<helm3-version>-linux-amd64.tar.gz.
+    default: 1e4ab49e429626cf6c6958d914248b78c9730803c2751b87627e171dc800e7bb
+  kubeconform-version:
+    description: kubeconform release.
+    default: v0.6.7
+  kubeconform-sha256:
+    description: sha256 of that release's kubeconform-linux-amd64.tar.gz.
+    default: 95f14e87aa28c09d5941f11bd024c1d02fdc0303ccaa23f61cef67bc92619d73
+  cosign-version:
+    description: cosign release.
+    default: v3.1.3
+  # setup-oras installs this release by URL and sha256 (the release's
+  # oras_<version>_checksums.txt, linux_amd64): by version it knows only the
+  # ORAS releases it bundles, and v2.0.1 stops at 1.3.3.
+  oras-version:
+    description: ORAS release.
+    default: 1.3.4
+  oras-sha256:
+    description: sha256 of that release's oras_<version>_linux_amd64.tar.gz.
+    default: f27adb935022d94df8dc77719c322dda592c78a0d57a6f7dcdd8d900b248c454
+runs:
+  using: composite
+  steps:
+    - name: Helm and kubeconform
+      if: inputs.helm != '' || inputs.kubeconform == 'true'
+      shell: bash
+      env:
+        HELM_MAJORS: ${{ inputs.helm }}
+        HELM_VERSION: ${{ inputs.helm-version }}
+        HELM_SHA256: ${{ inputs.helm-sha256 }}
+        HELM3_VERSION: ${{ inputs.helm3-version }}
+        HELM3_SHA256: ${{ inputs.helm3-sha256 }}
+        KUBECONFORM: ${{ inputs.kubeconform }}
+        KUBECONFORM_VERSION: ${{ inputs.kubeconform-version }}
+        KUBECONFORM_SHA256: ${{ inputs.kubeconform-sha256 }}
+      run: |
+        set -euo pipefail
+        fetch() { # url sha256 -> file in $RUNNER_TEMP
+          curl -fsSL -o "$RUNNER_TEMP/${1##*/}" "$1"
+          echo "$2  $RUNNER_TEMP/${1##*/}" | sha256sum -c -
+        }
+        on_path=""
+        for major in $HELM_MAJORS; do
+          case $major in
+            4) version=$HELM_VERSION sha=$HELM_SHA256 ;;
+            3) version=$HELM3_VERSION sha=$HELM3_SHA256 ;;
+            *)
+              echo "::error::setup-helm-tools: helm takes the majors 4 and 3, not '$major'"
+              exit 1
+              ;;
+          esac
+          fetch "https://get.helm.sh/helm-${version}-linux-amd64.tar.gz" "$sha"
+          mkdir -p "$RUNNER_TEMP/helm$major"
+          tar -xzf "$RUNNER_TEMP/helm-${version}-linux-amd64.tar.gz" -C "$RUNNER_TEMP/helm$major" --strip-components=1 linux-amd64/helm
+          "$RUNNER_TEMP/helm$major/helm" version --short | grep -F "$version+"
+          on_path=${on_path:-$RUNNER_TEMP/helm$major}
+        done
+        [ -z "$on_path" ] || echo "$on_path" >> "$GITHUB_PATH"
+        if [ "$KUBECONFORM" = true ]; then
+          fetch "https://github.com/yannh/kubeconform/releases/download/${KUBECONFORM_VERSION}/kubeconform-linux-amd64.tar.gz" "$KUBECONFORM_SHA256"
+          mkdir -p "$RUNNER_TEMP/kubeconform"
+          tar -xzf "$RUNNER_TEMP/kubeconform-linux-amd64.tar.gz" -C "$RUNNER_TEMP/kubeconform" kubeconform
+          "$RUNNER_TEMP/kubeconform/kubeconform" -v | grep -Fx "$KUBECONFORM_VERSION"
+          echo "$RUNNER_TEMP/kubeconform" >> "$GITHUB_PATH"
+        fi
+
+    - if: inputs.cosign == 'true'
+      uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+      with:
+        cosign-release: ${{ inputs.cosign-version }}
+
+    - if: inputs.oras == 'true'
+      uses: oras-project/setup-oras@1d808f7d7f6995cc68b7bf507bfe5c5446e1dc9d # v2.0.1
+      with:
+        url: https://github.com/oras-project/oras/releases/download/v${{ inputs.oras-version }}/oras_${{ inputs.oras-version }}_linux_amd64.tar.gz
+        checksum: ${{ inputs.oras-sha256 }}
+
+    - if: inputs.cosign == 'true' || inputs.oras == 'true'
+      name: cosign and ORAS are the pinned versions
+      shell: bash
+      env:
+        COSIGN: ${{ inputs.cosign }}
+        COSIGN_VERSION: ${{ inputs.cosign-version }}
+        ORAS: ${{ inputs.oras }}
+        ORAS_VERSION: ${{ inputs.oras-version }}
+      run: |
+        set -euo pipefail
+        if [ "$COSIGN" = true ]; then cosign version 2>&1 | grep -E "^GitVersion: +$COSIGN_VERSION\$"; fi
+        if [ "$ORAS" = true ]; then oras version | grep -E "^Version: +$ORAS_VERSION\$"; fi
+
+    - if: inputs.kind == 'true'
+      uses: helm/kind-action@06c1ae10762d3b9c1644e7fe69596ae519e015a2 # v1.15.0
+      with:
+        install_only: true

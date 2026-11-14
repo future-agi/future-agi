@@ -337,8 +337,13 @@ class TestBuildEvalQuery:
             span_ids=["s1"]
         )
         assert "avgIf(" in sql
-        # non-terminal / skipped / errored excluded from the aggregate guard.
-        assert "status NOT IN ('pending', 'running', 'skipped', 'errored')" in sql
+        # non-terminal / skipped / errored excluded from the aggregate guard;
+        # NULL-safe so a row with no status is not dropped by 3-valued logic.
+        assert (
+            "ifNull(status, '') NOT IN ('pending', 'running', 'skipped', 'errored')"
+            in sql
+        )
+        assert "AND status NOT IN" not in sql
         # NULL-safe output_str comparison.
         assert "ifNull(output_str, '') != 'ERROR'" in sql
 

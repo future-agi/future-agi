@@ -21,6 +21,7 @@ import { trackEvent, Events } from "src/utils/Mixpanel";
 import { useDevelopDatasetList } from "src/api/develop/develop-detail";
 import logger from "src/utils/logger";
 import { useRunAnnotationsStore } from "../states";
+import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
 
 const RunAnnotationsForm = ({ onClose, setRenderAnnotationTable }) => {
   const { dataset } = useParams();
@@ -382,18 +383,19 @@ const RunAnnotations = ({ setRenderAnnotationTable }) => {
     setOpenRunAnnotations(false);
   };
 
+  const covered = useDrawerCovered(openRunAnnotations);
   return (
     <Drawer
       anchor="right"
       open={openRunAnnotations}
+      sx={coveredDrawerSx(covered)}
       variant="persistent"
       PaperProps={{
         sx: {
           height: "100vh",
           position: "fixed",
           zIndex: 2,
-          boxShadow: "-10px 0px 100px #00000035",
-          borderRadius: "10px",
+          borderRadius: "8px",
           backgroundColor: "background.paper",
           width: "640px",
         },
@@ -408,7 +410,7 @@ const RunAnnotations = ({ setRenderAnnotationTable }) => {
         onClick={onClose}
         sx={{ position: "absolute", top: "12px", right: "12px" }}
       >
-        <Iconify icon="mingcute:close-line" />
+        <Iconify icon="solar:close-linear" />
       </IconButton>
       <RunAnnotationsForm
         onClose={onClose}

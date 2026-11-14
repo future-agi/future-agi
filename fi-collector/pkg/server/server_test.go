@@ -10,7 +10,6 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -18,9 +17,8 @@ import (
 	"time"
 
 	chexp "github.com/future-agi/future-agi/fi-collector/exporter/clickhouse25exporter"
-	"github.com/future-agi/future-agi/fi-collector/pkg/catalogwriter"
 	"github.com/future-agi/future-agi/fi-collector/pkg/chwriter"
-	"github.com/future-agi/future-agi/fi-collector/pkg/propertycatalog"
+	"github.com/future-agi/future-agi/fi-collector/pkg/observedcatalog"
 	"go.opentelemetry.io/collector/pdata/pcommon"
 	"go.opentelemetry.io/collector/pdata/ptrace"
 	"go.opentelemetry.io/collector/pdata/ptrace/ptraceotlp"
@@ -63,9 +61,8 @@ func TestServerEnd2End(t *testing.T) {
 	})
 
 	s := New(Config{GRPCAddr: "127.0.0.1:0", BatchMaxRows: 1, BatchMaxAge: 50 * time.Millisecond}, w, nil, nil, nil)
-	// We need a known listen address to dial; replicate Run's bind step.
-	// Easier: use a non-zero port — pick one that's likely free.
-	addr := "127.0.0.1:24317"
+	s.cfg.HTTPAddr = "" // Test only gRPC; never bind the production HTTP port.
+	addr := testTCPAddr(t)
 	s.cfg.GRPCAddr = addr
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -130,54 +127,16 @@ func insertTable(r *http.Request) string {
 	return ""
 }
 
-type catalogWriterStub struct {
-	stageCalls  int
-	submitCalls int
-	stagedRows  []map[string]any
-	report      catalogwriter.StageReport
-	stagedJobs  []catalogwriter.StagedProjectJob
-	submitErr   error
-	events      *[]string
-	eventsMu    *sync.Mutex
-}
-
 type propertyCatalogWriterStub struct {
-	rows  []propertycatalog.ScopedSpan
+	rows  []observedcatalog.ScopedSpan
 	calls int
 	err   error
 }
 
-func (s *propertyCatalogWriterStub) EnqueueCanonicalSpans(rows []propertycatalog.ScopedSpan) error {
+func (s *propertyCatalogWriterStub) EnqueueCanonicalSpans(rows []observedcatalog.ScopedSpan) error {
 	s.calls++
 	s.rows = append(s.rows, rows...)
 	return s.err
-}
-
-func (s *catalogWriterStub) record(event string) {
-	if s.events == nil {
-		return
-	}
-	if s.eventsMu != nil {
-		s.eventsMu.Lock()
-		defer s.eventsMu.Unlock()
-	}
-	*s.events = append(*s.events, event)
-}
-
-func (s *catalogWriterStub) StageCanonicalSpansByProject(rows []map[string]any) []catalogwriter.StagedProjectJob {
-	s.stageCalls++
-	s.stagedRows = rows
-	s.record("stage")
-	if s.stagedJobs != nil {
-		return s.stagedJobs
-	}
-	return []catalogwriter.StagedProjectJob{{Job: catalogwriter.Job{}, Report: s.report}}
-}
-
-func (s *catalogWriterStub) Enqueue(catalogwriter.Job) error {
-	s.submitCalls++
-	s.record("submit")
-	return s.submitErr
 }
 
 func newSpanTestWriter(t *testing.T, url, deadLetterFile string) *chwriter.Writer {
@@ -196,18 +155,6 @@ func newSpanTestWriter(t *testing.T, url, deadLetterFile string) *chwriter.Write
 		t.Fatal(err)
 	}
 	return writer
-}
-
-func TestAttributeCatalogWriterOptionIsNilByDefault(t *testing.T) {
-	without := New(Config{}, nil, nil, nil, nil)
-	if without.catalog != nil {
-		t.Fatal("catalog writer must be nil unless explicitly installed")
-	}
-	stub := &catalogWriterStub{}
-	with := New(Config{}, nil, nil, nil, nil, WithAttributeCatalogWriter(stub))
-	if with.catalog != stub {
-		t.Fatal("catalog writer option was not installed")
-	}
 }
 
 func TestPropertyCatalogSidecarIsDefaultOffAndNeverChangesCanonicalSpanBytes(t *testing.T) {
@@ -295,7 +242,7 @@ func TestPropertyCatalogRunsOnlyAfterSpanSuccessAndCannotChangeSpanHealth(t *tes
 	enqueue("committed")
 	stats := writer.Snapshot()
 	if stub.calls != 1 || stats.BatchesInserted != 1 || stats.BatchesFailed != 1 ||
-		stats.RowsDeadLettered != 1 || !strings.Contains(logs.String(), "property catalog enqueue failed") {
+		stats.RowsDeadLettered != 1 || !strings.Contains(logs.String(), "observed catalog enqueue failed") {
 		t.Fatalf("calls=%d stats=%+v logs=%q", stub.calls, stats, logs.String())
 	}
 }
@@ -333,124 +280,6 @@ func TestPropertyCatalogSidecarMarksForeignWorkspaceProjectAsDurableGapInput(t *
 	}
 }
 
-func TestDrainStagesCatalogOnlyAfterCanonicalSpanSuccess(t *testing.T) {
-	var eventsMu sync.Mutex
-	events := []string{}
-	chServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if insertTable(r) == "spans" {
-			eventsMu.Lock()
-			events = append(events, "spans")
-			eventsMu.Unlock()
-		}
-		_, _ = io.Copy(io.Discard, r.Body)
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer chServer.Close()
-
-	writer := newSpanTestWriter(t, chServer.URL, t.TempDir()+"/spans.jsonl")
-	stub := &catalogWriterStub{events: &events, eventsMu: &eventsMu}
-	server := New(Config{}, writer, nil, nil, nil, WithAttributeCatalogWriter(stub))
-	row := map[string]any{"id": "span-1", "project_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"}
-	server.enqueue([]map[string]any{row}, nil)
-	server.drainNow(context.Background())
-
-	eventsMu.Lock()
-	gotEvents := append([]string(nil), events...)
-	eventsMu.Unlock()
-	if strings.Join(gotEvents, ",") != "spans,stage,submit" {
-		t.Fatalf("catalog ordering=%v want [spans stage submit]", gotEvents)
-	}
-	if stub.stageCalls != 1 || stub.submitCalls != 1 || len(stub.stagedRows) != 1 || stub.stagedRows[0]["id"] != row["id"] {
-		t.Fatalf("catalog calls stage=%d submit=%d rows=%v", stub.stageCalls, stub.submitCalls, stub.stagedRows)
-	}
-}
-
-func TestDrainEnqueuesEveryProjectScopedCatalogJob(t *testing.T) {
-	chServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = io.Copy(io.Discard, r.Body)
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer chServer.Close()
-
-	writer := newSpanTestWriter(t, chServer.URL, t.TempDir()+"/spans.jsonl")
-	stub := &catalogWriterStub{stagedJobs: []catalogwriter.StagedProjectJob{
-		{},
-		{Report: catalogwriter.StageReport{RejectedSpans: 1}},
-		{},
-	}}
-	server := New(Config{}, writer, nil, nil, nil, WithAttributeCatalogWriter(stub))
-	server.enqueue([]map[string]any{
-		{"id": "span-a", "project_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"},
-		{"id": "span-b", "project_id": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"},
-		{"id": "span-unscoped"},
-	}, nil)
-	server.drainNow(context.Background())
-
-	if stub.stageCalls != 1 || stub.submitCalls != 3 {
-		t.Fatalf("project staging calls=%d enqueue calls=%d", stub.stageCalls, stub.submitCalls)
-	}
-}
-
-func TestDrainSkipsCatalogWhenCanonicalSpanIsDeadLettered(t *testing.T) {
-	chServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = io.Copy(io.Discard, r.Body)
-		w.WriteHeader(http.StatusBadRequest)
-		_, _ = w.Write([]byte("forced non-retryable failure"))
-	}))
-	defer chServer.Close()
-
-	deadLetter := t.TempDir() + "/spans.jsonl"
-	writer := newSpanTestWriter(t, chServer.URL, deadLetter)
-	stub := &catalogWriterStub{}
-	server := New(Config{}, writer, nil, nil, nil, WithAttributeCatalogWriter(stub))
-	server.enqueue([]map[string]any{{"id": "span-1"}}, nil)
-	server.drainNow(context.Background())
-
-	stats := writer.Snapshot()
-	if stub.stageCalls != 0 || stub.submitCalls != 0 {
-		t.Fatalf("dead-lettered span reached catalog: stage=%d submit=%d", stub.stageCalls, stub.submitCalls)
-	}
-	if stats.BatchesFailed != 1 || stats.RowsDeadLettered != 1 || stats.BatchesInserted != 0 {
-		t.Fatalf("unexpected span stats: %+v", stats)
-	}
-	if payload, err := os.ReadFile(deadLetter); err != nil || !strings.Contains(string(payload), "span-1") {
-		t.Fatalf("span dead-letter missing: payload=%q err=%v", payload, err)
-	}
-}
-
-func TestCatalogSubmitFailureCannotFailCanonicalSpanDrain(t *testing.T) {
-	chServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = io.Copy(io.Discard, r.Body)
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer chServer.Close()
-
-	writer := newSpanTestWriter(t, chServer.URL, t.TempDir()+"/spans.jsonl")
-	stub := &catalogWriterStub{submitErr: errors.New("catalog disk unavailable")}
-	var logs bytes.Buffer
-	logger := slog.New(slog.NewTextHandler(&logs, nil))
-	server := New(
-		Config{}, writer, nil, nil, nil,
-		WithLogger(logger),
-		WithAttributeCatalogWriter(stub),
-	)
-	server.enqueue([]map[string]any{{"id": "span-1"}}, nil)
-	server.drainNow(context.Background())
-	server.enqueue([]map[string]any{{"id": "span-2"}}, nil)
-	server.drainNow(context.Background())
-
-	stats := writer.Snapshot()
-	if stub.stageCalls != 2 || stub.submitCalls != 2 {
-		t.Fatalf("subsequent drain did not progress: stage=%d submit=%d", stub.stageCalls, stub.submitCalls)
-	}
-	if stats.BatchesInserted != 2 || stats.RowsInserted != 2 || stats.BatchesFailed != 0 || stats.RowsDeadLettered != 0 {
-		t.Fatalf("catalog failure changed span health: %+v", stats)
-	}
-	if !strings.Contains(logs.String(), "attribute catalog enqueue failed") {
-		t.Fatalf("catalog failure was not observable: %q", logs.String())
-	}
-}
-
 // TestServerEnd2End_WritesTraceRow: an OTLP root span through the real converter
 // + curatedwriter must produce a `traces` insert (so trace_dict resolves the
 // trace's project_id / name for evals & annotations) in addition to the spans one.
@@ -483,15 +312,17 @@ func TestServerEnd2End_WritesTraceRow(t *testing.T) {
 	})
 
 	// curatedwriter over the SAME chwriter (as production: server.New wires it).
-	s := New(Config{GRPCAddr: "127.0.0.1:24320", BatchMaxRows: 1, BatchMaxAge: 50 * time.Millisecond}, w, nil, nil, nil)
+	addr := testTCPAddr(t)
+	s := New(Config{GRPCAddr: addr, BatchMaxRows: 1, BatchMaxAge: 50 * time.Millisecond}, w, nil, nil, nil)
+	s.cfg.HTTPAddr = "" // Test only gRPC; never bind the production HTTP port.
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	go func() { _ = s.Run(ctx) }()
-	if !waitPort("127.0.0.1:24320", 2*time.Second) {
+	if !waitPort(addr, 2*time.Second) {
 		t.Fatal("server didn't listen")
 	}
 
-	conn, err := grpc.NewClient("127.0.0.1:24320", grpc.WithTransportCredentials(insecure.NewCredentials()))
+	conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -558,8 +389,8 @@ func startServerWithHTTP(t *testing.T) (httpAddr, grpcAddr string, sawCH func() 
 		t.Fatalf("chwriter.New: %v", err)
 	}
 
-	httpAddr = "127.0.0.1:24318"
-	grpcAddr = "127.0.0.1:24319" // dynamic enough that grpc test above on :24317 doesn't clash
+	httpAddr = testTCPAddr(t)
+	grpcAddr = testTCPAddr(t)
 	s := New(Config{
 		GRPCAddr:     grpcAddr,
 		HTTPAddr:     httpAddr,
@@ -806,6 +637,10 @@ func (s *stubPricer) TokenCost(ctx context.Context, orgID, model string, p, c in
 	return s.cost, true
 }
 
+func (s *stubPricer) OpenRouterTokenCost(ctx context.Context, orgID, model string, p, c int32) (float64, bool) {
+	return s.TokenCost(ctx, orgID, model, p, c)
+}
+
 func (s *stubPricer) snapshot() (calls int, lastOrgID string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -866,8 +701,9 @@ func TestPricerWiredThroughGRPCExport(t *testing.T) {
 	}
 
 	stub := &stubPricer{cost: 0.0099}
-	addr := "127.0.0.1:24321" // distinct from the other gRPC ports used in this file
+	addr := testTCPAddr(t)
 	s := New(Config{GRPCAddr: addr, BatchMaxRows: 1, BatchMaxAge: 50 * time.Millisecond}, w, nil, nil, nil, WithPricer(stub))
+	s.cfg.HTTPAddr = "" // Test only gRPC; never bind the production HTTP port.
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -928,6 +764,21 @@ func TestPricerWiredThroughGRPCExport(t *testing.T) {
 	if !strings.Contains(body, `"cost":0.0099`) {
 		t.Errorf("enqueued row cost != stub's 0.0099 (or key absent); CH body: %q", body)
 	}
+}
+
+// testTCPAddr keeps tests independent of developer machines, CI workers, and
+// unrelated local services that may already own a well-known port.
+func testTCPAddr(t *testing.T) string {
+	t.Helper()
+	lis, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("reserve test port: %v", err)
+	}
+	addr := lis.Addr().String()
+	if err := lis.Close(); err != nil {
+		t.Fatalf("release test port %s: %v", addr, err)
+	}
+	return addr
 }
 
 // waitPort polls until something accepts on addr or deadline. Simple enough
@@ -1091,7 +942,7 @@ func TestGRPCAcceptsSpanLargerThanFourMiB(t *testing.T) {
 		DeadLetterFile: t.TempDir() + "/dl.jsonl",
 	})
 
-	addr := "127.0.0.1:24323"
+	addr := testTCPAddr(t)
 	s := New(Config{GRPCAddr: addr, BatchMaxRows: 1000, BatchMaxAge: 50 * time.Millisecond}, w, nil, nil, nil)
 	s.cfg.HTTPAddr = "" // gRPC-only; don't race other tests (or a dev stack) for :4318
 
@@ -1128,9 +979,9 @@ func TestGRPCAcceptsSpanLargerThanFourMiB(t *testing.T) {
 }
 
 // An over-cap message must be rejected AND show up in the collector's own
-// logs. The transport rejects it before the handler runs, so only the
-// stats.Handler sees it — this pins that the error is logged (else the drop
-// is invisible server-side and diagnosable only from client logs).
+// logs (else the drop is diagnosable only from client logs). It is refused
+// from its length prefix, before it is read or leased, with INVALID_ARGUMENT:
+// Some exporters (Python, Java) retry RESOURCE_EXHAUSTED without RetryInfo.
 func TestGRPCOverCapRejectionIsLogged(t *testing.T) {
 	chSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = io.Copy(io.Discard, r.Body)
@@ -1157,7 +1008,7 @@ func TestGRPCOverCapRejectionIsLogged(t *testing.T) {
 		return logBuf.Write(p)
 	})
 
-	addr := "127.0.0.1:24322"
+	addr := testTCPAddr(t)
 	s := New(
 		Config{GRPCAddr: addr, BatchMaxRows: 1000, BatchMaxAge: 50 * time.Millisecond},
 		w, nil, nil, nil,
@@ -1188,17 +1039,19 @@ func TestGRPCOverCapRejectionIsLogged(t *testing.T) {
 
 	req := ptraceotlp.NewExportRequestFromTraces(traces)
 	_, err = client.Export(context.Background(), req)
-	if status.Code(err) != codes.ResourceExhausted {
-		t.Fatalf("want ResourceExhausted, got %v", err)
+	if status.Code(err) != codes.InvalidArgument || !strings.Contains(err.Error(), "FI_GRPC_MAX_RECV_MIB") {
+		t.Fatalf("want InvalidArgument naming FI_GRPC_MAX_RECV_MIB, got %v", err)
+	}
+	if p := s.wire.peak.Load(); p != 0 {
+		t.Errorf("an over-cap message leased %d wire bytes, want it refused from its length prefix", p)
 	}
 
-	// stats.End may fire concurrently with the client seeing the status.
 	deadline := time.Now().Add(time.Second)
 	for time.Now().Before(deadline) {
 		logMu.Lock()
 		got := logBuf.String()
 		logMu.Unlock()
-		if strings.Contains(got, "grpc message over size cap") && strings.Contains(got, "ResourceExhausted") {
+		if strings.Contains(got, "OTLP request refused") && strings.Contains(got, `"reason":"body_size"`) && strings.Contains(got, "InvalidArgument") {
 			return
 		}
 		time.Sleep(10 * time.Millisecond)

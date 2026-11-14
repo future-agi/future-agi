@@ -36,6 +36,27 @@ server {
         proxy_set_header Content-Encoding $http_content_encoding;
     }
 
+    # Ask performs bounded agent work (180s client deadline) after credit
+    # checks and evidence preparation. The generic 30s DEV timeout can close
+    # a valid answer mid-flight. Only this exact UUID route gets additional
+    # read time; callers still face the application's own deadline and any
+    # external edge limit. Never replay this paid POST onto another upstream.
+    location ~ "^/tracer/insights/runs/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}/ask/$" {
+        client_max_body_size 0;
+
+        proxy_pass http://dev_backend;
+        proxy_connect_timeout ${DEV_API_PROXY_CONNECT_TIMEOUT};
+        proxy_read_timeout 210s;
+        proxy_send_timeout ${DEV_API_PROXY_SEND_TIMEOUT};
+        proxy_next_upstream off;
+
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
     location / {
         # Preserve the backend's existing request-size behavior. The bounded
         # edge limit above applies only to OTLP/HTTP ingestion.

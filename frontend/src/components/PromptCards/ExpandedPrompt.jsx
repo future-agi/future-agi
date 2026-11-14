@@ -12,6 +12,7 @@ import PropTypes from "prop-types";
 import React, { useCallback, useRef, useState } from "react";
 import PromptTopSection from "./PromptCardTopSection";
 import PromptEditor from "./PromptEditor";
+import { ALL_MEDIA_KINDS, NO_MEDIA_KINDS } from "./clipboard/constants";
 import { ShowComponent } from "../show";
 import PromptRecorder from "./PromptRecorder";
 import UploadMedia from "./UploadMedia/UploadMedia";
@@ -299,8 +300,8 @@ export default function ExpandedPrompt({
       keepMounted={false}
       PaperProps={{
         sx: {
-          minWidth: "700px",
-          maxWidth: "700px",
+          minWidth: "720px",
+          maxWidth: "720px",
           minHeight: "300px",
           overflow: "visible",
           padding: 2,
@@ -323,12 +324,7 @@ export default function ExpandedPrompt({
         }}
       >
         {label}
-        <IconButton
-          sx={{
-            padding: 0,
-          }}
-          onClick={onClose}
-        >
+        <IconButton onClick={onClose}>
           <SvgColor
             src="/assets/icons/ic_close.svg"
             sx={{
@@ -388,6 +384,9 @@ export default function ExpandedPrompt({
             variableValidator={variableValidator}
             jinjaMode={jinjaMode}
             label={hideExpandedHeader ? role : ""}
+            allowedMediaTypes={
+              allowAttachment ? ALL_MEDIA_KINDS : NO_MEDIA_KINDS
+            }
           />
           <ShowComponent condition={isRecorderActive}>
             <PromptRecorder

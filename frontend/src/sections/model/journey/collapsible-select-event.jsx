@@ -1,7 +1,5 @@
 import {
   Button,
-  Card,
-  CardHeader,
   Collapse,
   FormControl,
   Grid,
@@ -12,6 +10,7 @@ import {
   Stack,
   Typography,
 } from "@mui/material";
+import Section from "src/components/section";
 import PropTypes from "prop-types";
 import React, { useState } from "react";
 import Iconify from "src/components/iconify";
@@ -70,36 +69,27 @@ export default function CollapsibleSelectEvent() {
   }
 
   return (
-    <Card
-      sx={{
-        p: 0,
-      }}
-      variant="outlined"
+    <Section
+      variant="panel"
+      title="Select Event"
+      actions={
+        <IconButton
+          size="small"
+          color={collapsible.value ? "inherit" : "default"}
+          onClick={collapsible.onToggle}
+        >
+          <Iconify
+            icon={
+              collapsible.value
+                ? "solar:alt-arrow-up-linear"
+                : "solar:alt-arrow-down-linear"
+            }
+          />
+        </IconButton>
+      }
     >
-      <CardHeader
-        sx={{
-          p: 1,
-        }}
-        title="Select Event"
-        action={
-          <IconButton
-            size="small"
-            color={collapsible.value ? "inherit" : "default"}
-            onClick={collapsible.onToggle}
-          >
-            <Iconify
-              icon={
-                collapsible.value
-                  ? "eva:arrow-ios-upward-fill"
-                  : "eva:arrow-ios-downward-fill"
-              }
-            />
-          </IconButton>
-        }
-      />
-
       <Collapse in={collapsible.value} unmountOnExit>
-        <Grid container sx={{ p: 2 }} spacing={2}>
+        <Grid container spacing={2}>
           {eventFilters?.map((event, eventIndex) => (
             <>
               <Grid item xs={1} key={`head${eventIndex}`}>
@@ -125,11 +115,11 @@ export default function CollapsibleSelectEvent() {
                     </FormControl>
 
                     <IconButton onClick={() => onAddEventFilter(eventIndex)}>
-                      <Iconify icon={"carbon:filter"} />
+                      <Iconify icon={"solar:filter-linear"} />
                     </IconButton>
 
                     <IconButton>
-                      <Iconify icon={"material-symbols:delete"} />
+                      <Iconify icon={"solar:trash-bin-trash-linear"} />
                     </IconButton>
                   </Stack>
                   {event.filters.map((eventFilter, eventFilterIndex) => (
@@ -200,7 +190,7 @@ export default function CollapsibleSelectEvent() {
                         </FormControl>
 
                         <IconButton>
-                          <Iconify icon={"material-symbols:delete"} />
+                          <Iconify icon={"solar:trash-bin-trash-linear"} />
                         </IconButton>
                       </Stack>
                     </>
@@ -214,7 +204,7 @@ export default function CollapsibleSelectEvent() {
             <Button
               // sx={{ width: 120 }}
               variant="outlined"
-              startIcon={<Iconify icon="material-symbols:add" />}
+              startIcon={<Iconify icon="solar:add-linear" />}
               onClick={onAddEvent}
             >
               Add Event
@@ -222,7 +212,7 @@ export default function CollapsibleSelectEvent() {
           </Grid>
         </Grid>
       </Collapse>
-    </Card>
+    </Section>
   );
 }
 

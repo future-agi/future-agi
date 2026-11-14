@@ -8,7 +8,7 @@ import pytest
 from rest_framework import status
 
 from tracer.views.observation_span import ObservationSpanView
-from tracer.views.trace import TraceView
+from tracer.views.trace import TraceView, _voice_call_export_projection
 from tracer.views.trace_session import TraceSessionView
 
 pytestmark = pytest.mark.unit
@@ -240,6 +240,34 @@ def test_voice_trace_export_preserves_legacy_schema_on_one_bounded_page():
         bounded_export=True,
         read_deadline=ANY,
     )
+
+
+def test_voice_export_writes_count_tiles_as_the_list_shows_them():
+    rows, _fieldnames = _voice_call_export_projection(
+        [
+            {
+                "id": "trace-1",
+                "eval_outputs": {
+                    "helpful": {
+                        "name": "Helpful",
+                        "output": 50.0,
+                        "counts": {"pass": 1, "fail": 1},
+                    },
+                    "tone": {
+                        "name": "Tone",
+                        "output": ["neutral"],
+                        "output_type": "str_list",
+                        "counts": {"neutral": 1, "joy": 0},
+                    },
+                    "relevance": {"name": "Relevance", "output": 72.5},
+                },
+            }
+        ]
+    )
+
+    assert rows[0]["Helpful"] == '{"pass": 1, "fail": 1}'
+    assert rows[0]["Tone"] == '{"neutral": 1, "joy": 0}'
+    assert rows[0]["Relevance"] == "72.5"
 
 
 def test_simulator_voice_export_skips_the_expensive_modality_probe():

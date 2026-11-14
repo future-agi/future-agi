@@ -1,0 +1,48 @@
+%% TH-8088 component diagram (Mermaid). Existing components are solid; proposed ones are tagged [new].
+flowchart LR
+  subgraph Client
+    C[Developer app]
+  end
+  subgraph Gateway["agentcc-gateway replica (N replicas, interchangeable)"]
+    MW[KeyAuth middleware]
+    H["handlers_video.go\nPOST/GET/DELETE /v1/videos\nPOST .../cancel  GET .../content"]
+    ENG["pipeline.Engine\nauth 20 . rbac 30 . quota 35 . budget 40\nvalidation 70 . ratelimit 80 | cost 500 . credits 510 . logging/otel/audit"]
+    CAP["capability registry [new]\nservice+model+version+region+operation"]
+    TAR["tariff + estimator [new]"]
+    MED["media ingress [new]\nnetguard dialer, limits, sniff"]
+    SVC["lifecycle.Service [new]\naccept / status / list / cancel / delete"]
+    WRK["lifecycle.Worker [new]\nsubmit . poll . copy . settle . reconcile . GC\n(lease per job, fencing token)"]
+    ADP["providers/video adapters [new]\nbyteplus (P1) . gemini . vertex . runway . luma\nkling . minimax . dashscope . xai . nova . fal"]
+    BLOB["artifacts blob store [new]\ndisk | S3 (SigV4 reuse)"]
+  end
+  subgraph Redis["Redis (redisstate.Client, existing)"]
+    JOB["video:v1:job:{id} hash"]
+    IDX["org index zset . idem NX keys\nsubmit / due / reconcile / expire zsets"]
+    LEASE["lease:{id} + fence"]
+    BUD["budget hashes (existing Lua)\nrate limiter . credits"]
+  end
+  subgraph Providers["Upstream (explicitly selected, no fallback)"]
+    BP["BytePlus ModelArk\nark.ap-southeast.bytepluses.com"]
+    OTH["Veo . Omni . Vertex . Runway . Luma . Kling\nMiniMax . Wan/HappyHorse . xAI . Nova . fal"]
+  end
+  C -->|Idempotency-Key| MW --> H
+  H --> ENG
+  ENG -->|pre-plugins| SVC
+  SVC --> CAP
+  SVC --> TAR
+  SVC --> MED
+  MED -->|temp assets| BLOB
+  SVC -->|Lua accept: idem NX + reserve + job| JOB
+  SVC --> IDX
+  SVC --> BUD
+  WRK -->|claim with lease| LEASE
+  WRK --> JOB
+  WRK --> IDX
+  WRK --> ADP
+  ADP -->|submit/poll/fetch/cancel/reconcile| BP
+  ADP --> OTH
+  WRK -->|copy output| BLOB
+  WRK -->|settle delta + RunPostPlugins| BUD
+  WRK -.->|settlement rc| ENG
+  H -->|status/list read Redis only| JOB
+  H -->|content stream| BLOB

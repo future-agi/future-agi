@@ -13,9 +13,9 @@ export function formatNumber(value) {
 }
 
 export function formatCost(value) {
-  if (value == null) return "$0.00";
+  if (value == null) return "—";
   const num = Number(value);
-  if (Number.isNaN(num)) return "$0.00";
+  if (!Number.isFinite(num)) return "—";
 
   const abs = Math.abs(num);
 
@@ -26,6 +26,11 @@ export function formatCost(value) {
   if (abs > 0) return `$${num.toFixed(7).replace(/0+$/, "0")}`;
 
   return "$0.00";
+}
+
+// Axis ticks sit on round values, so zeros past the cents only widen the label
+export function formatCostTick(value) {
+  return formatCost(value).replace(/(\.\d{2}\d*?)0+$/, "$1");
 }
 
 export function formatPercent(value, decimals = 1) {

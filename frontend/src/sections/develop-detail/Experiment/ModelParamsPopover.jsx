@@ -29,7 +29,7 @@ export default function ModelParamsPopover({
         sx: {
           p: 1,
           width: 584,
-          borderRadius: 0.5,
+          borderRadius: "4px",
         },
       }}
     >

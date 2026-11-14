@@ -1,5 +1,6 @@
 import { Box, Skeleton } from "@mui/material";
 import { AgGridReact } from "ag-grid-react";
+import "src/utils/ag-grid-setup";
 import React, { useMemo, useRef } from "react";
 import { ExperimentSummaryDefaultColDef } from "./tableConfig";
 import { useAgThemeWith } from "src/hooks/use-ag-theme";
@@ -29,7 +30,7 @@ const SkeletonCellRenderer = () => (
       variant="rectangular"
       width="80%"
       height={20}
-      sx={{ borderRadius: 0.5 }}
+      sx={{ borderRadius: "4px" }}
     />
   </Box>
 );

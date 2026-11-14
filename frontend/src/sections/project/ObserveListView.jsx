@@ -1,7 +1,9 @@
+import { ROW_HEIGHT } from "src/theme/sizes";
 import { Alert, Box, Button, Chip, Typography, useTheme } from "@mui/material";
 import { alpha } from "@mui/material/styles";
 import { formatDistanceToNow, differenceInHours } from "date-fns";
 import React, {
+  useEffect,
   forwardRef,
   useCallback,
   useImperativeHandle,
@@ -13,6 +15,8 @@ import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { useDebounce } from "src/hooks/use-debounce";
 import PropTypes from "prop-types";
 import { DataTable, DataTablePagination } from "src/components/data-table";
+import EmptyState from "src/components/empty-state";
+import { quickstartTracing } from "src/components/empty-state/quickstarts";
 import VolumeBarChart from "./VolumeBarChart";
 import TagEditor from "./TagEditor";
 import { buildProjectListApiFilters } from "./common";
@@ -51,6 +55,8 @@ const ObserveListView = forwardRef(
       onSelectionChanged,
       setSelectedRowsData,
       filters = null,
+      onFirstRunChange,
+      countPending = false,
     },
     ref,
   ) => {
@@ -142,7 +148,7 @@ const ObserveListView = forwardRef(
             <Typography
               variant="body2"
               noWrap
-              sx={{ fontWeight: 500, fontSize: 13 }}
+              sx={{ fontWeight: 500, fontSize: 12 }}
             >
               {getValue()}
             </Typography>
@@ -162,7 +168,7 @@ const ObserveListView = forwardRef(
               return (
                 <Typography
                   variant="body2"
-                  sx={{ fontSize: 13, color: "text.disabled" }}
+                  sx={{ fontSize: 12, color: "text.disabled" }}
                 >
                   —
                 </Typography>
@@ -173,12 +179,8 @@ const ObserveListView = forwardRef(
                 label={count}
                 size="small"
                 sx={{
-                  height: 20,
-                  fontSize: 11,
-                  fontWeight: 600,
                   bgcolor: (t) => alpha(t.palette.error.main, 0.1),
                   color: "error.main",
-                  "& .MuiChip-label": { px: 0.75 },
                 }}
               />
             );
@@ -244,7 +246,7 @@ const ObserveListView = forwardRef(
                     flexShrink: 0,
                   }}
                 />
-                <Typography variant="body2" noWrap sx={{ fontSize: 13 }}>
+                <Typography variant="body2" noWrap sx={{ fontSize: 12 }}>
                   {formatDistanceToNow(parsed, { addSuffix: true })}
                 </Typography>
               </Box>
@@ -254,6 +256,34 @@ const ObserveListView = forwardRef(
       ],
       [theme],
     );
+
+    /* Nothing traced yet — not a search or filter that matched nothing. */
+    // While the parent's project count is still loading, an empty list stays
+    // in its loading state: the count decides between this and Get started,
+    // so showing "No traces yet" first would flash two empty screens.
+    const holdEmpty = countPending && total === 0;
+    const isFirstRun =
+      !isLoading &&
+      !holdEmpty &&
+      !isError &&
+      total === 0 &&
+      !debouncedSearch &&
+      !(filters?.length > 0);
+    useEffect(() => {
+      onFirstRunChange?.(isFirstRun);
+    }, [isFirstRun, onFirstRunChange]);
+
+    if (isFirstRun) {
+      return (
+        <EmptyState
+          icon="solar:routing-2-linear"
+          title="No traces yet"
+          description="Instrument your app once and every LLM call, tool call and agent step shows up here as a trace, grouped by project."
+          docsHref="https://docs.futureagi.com/docs/observe"
+          quickstart={quickstartTracing("my-project")}
+        />
+      );
+    }
 
     return (
       <Box
@@ -281,7 +311,7 @@ const ObserveListView = forwardRef(
         <DataTable
           columns={columns}
           data={items}
-          isLoading={isLoading}
+          isLoading={isLoading || holdEmpty}
           rowCount={total}
           sorting={sorting}
           onSortingChange={setSorting}
@@ -292,7 +322,7 @@ const ObserveListView = forwardRef(
           }
           getRowId={(row) => row.id}
           enableSelection
-          rowHeight={44}
+          rowHeight={ROW_HEIGHT.default}
           emptyMessage={isError ? "" : EMPTY_MESSAGE}
         />
         <DataTablePagination
@@ -314,6 +344,8 @@ ObserveListView.displayName = "ObserveListView";
 
 ObserveListView.propTypes = {
   searchQuery: PropTypes.string,
+  onFirstRunChange: PropTypes.func,
+  countPending: PropTypes.bool,
   onSelectionChanged: PropTypes.func,
   setSelectedRowsData: PropTypes.func,
   filters: PropTypes.array,

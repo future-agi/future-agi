@@ -37,6 +37,12 @@ class GatewaySummaryResultSerializer(serializers.Serializer):
     name = serializers.CharField()
     base_url = serializers.URLField()
     status = serializers.CharField()
+    last_health_check = serializers.DateTimeField(
+        help_text=(
+            "Completion time of this request's live health probe, including "
+            "unreachable results."
+        )
+    )
     provider_count = serializers.IntegerField(required=False)
     model_count = serializers.IntegerField(required=False)
 
@@ -69,6 +75,9 @@ class GatewayConfiguredProvidersSerializer(serializers.Serializer):
 
 class GatewayHealthResultSerializer(serializers.Serializer):
     status = serializers.CharField()
+    last_health_check = serializers.DateTimeField(
+        help_text="Completion time of this request's live health probe."
+    )
     health = serializers.JSONField(required=False)
     providers = GatewayConfiguredProvidersSerializer()
     provider_count = serializers.IntegerField()
@@ -80,6 +89,43 @@ class GatewayHealthResponseSerializer(serializers.Serializer):
     result = GatewayHealthResultSerializer()
 
 
+class GatewayHealthErrorResultSerializer(serializers.Serializer):
+    """Legacy string error or the typed result of a failed live probe."""
+
+    status = serializers.ChoiceField(choices=["unreachable"])
+    error = serializers.CharField(allow_blank=True)
+    last_health_check = serializers.DateTimeField(
+        help_text="Completion time of this request's failed live health probe."
+    )
+
+    def to_internal_value(self, data):
+        if isinstance(data, str):
+            return data
+        return super().to_internal_value(data)
+
+    def to_representation(self, instance):
+        if isinstance(instance, str):
+            return instance
+        return super().to_representation(instance)
+
+    class Meta:
+        swagger_schema_fields = {"x-string-or-object": True}
+
+
+class GatewayHealthErrorResponseSerializer(AgentccErrorResponseSerializer):
+    result = GatewayHealthErrorResultSerializer()
+
+    class Meta:
+        swagger_schema_fields = {
+            "description": (
+                "Failed probes return a result object with status (unreachable), "
+                "error, and last_health_check (ISO 8601 completion time). Request "
+                "validation and other errors return a string result without a "
+                "probe timestamp."
+            )
+        }
+
+
 class GatewayConfigProviderSerializer(serializers.Serializer):
     id = serializers.UUIDField()
     name = serializers.CharField()
@@ -89,6 +135,9 @@ class GatewayConfigProviderSerializer(serializers.Serializer):
         allow_blank=True,
         allow_null=True,
         help_text=API_FORMAT_HELP_TEXT,
+    )
+    api_path_prefix = serializers.CharField(
+        required=False, allow_blank=True, allow_null=True
     )
     models = serializers.ListField(child=serializers.JSONField())
     is_active = serializers.BooleanField()
@@ -287,31 +336,26 @@ class GatewayMutationResponseSerializer(serializers.Serializer):
 
 
 class GatewayConfigPatchRequestSerializer(serializers.Serializer):
-    guardrails = serializers.DictField(
-        child=serializers.JSONField(), required=False
-    )
-    routing = serializers.DictField(child=serializers.JSONField(), required=False)
-    cache = serializers.DictField(child=serializers.JSONField(), required=False)
-    rate_limiting = serializers.DictField(
-        child=serializers.JSONField(), required=False
-    )
-    budgets = serializers.DictField(child=serializers.JSONField(), required=False)
-    cost_tracking = serializers.DictField(
-        child=serializers.JSONField(), required=False
-    )
-    ip_acl = serializers.DictField(child=serializers.JSONField(), required=False)
-    alerting = serializers.DictField(child=serializers.JSONField(), required=False)
-    privacy = serializers.DictField(child=serializers.JSONField(), required=False)
-    tool_policy = serializers.DictField(
-        child=serializers.JSONField(), required=False
-    )
-    mcp = serializers.DictField(child=serializers.JSONField(), required=False)
-    a2a = serializers.DictField(child=serializers.JSONField(), required=False)
-    audit = serializers.DictField(child=serializers.JSONField(), required=False)
+    guardrails = serializers.DictField(child=JsonValueField(), required=False)
+    routing = serializers.DictField(child=JsonValueField(), required=False)
+    cache = serializers.DictField(child=JsonValueField(), required=False)
+    rate_limiting = serializers.DictField(child=JsonValueField(), required=False)
+    budgets = serializers.DictField(child=JsonValueField(), required=False)
+    cost_tracking = serializers.DictField(child=JsonValueField(), required=False)
+    ip_acl = serializers.DictField(child=JsonValueField(), required=False)
+    alerting = serializers.DictField(child=JsonValueField(), required=False)
+    privacy = serializers.DictField(child=JsonValueField(), required=False)
+    tool_policy = serializers.DictField(child=JsonValueField(), required=False)
+    mcp = serializers.DictField(child=JsonValueField(), required=False)
+    a2a = serializers.DictField(child=JsonValueField(), required=False)
+    audit = serializers.DictField(child=JsonValueField(), required=False)
+    # Object values only, on purpose: the section's one key is the
+    # `overrides` map (the gateway's ModelDatabaseOrgConfig, and
+    # OrgConfigSerializer.validate_model_database requires an object).
     model_database = serializers.DictField(
         child=serializers.JSONField(), required=False
     )
-    model_map = serializers.DictField(child=serializers.JSONField(), required=False)
+    model_map = serializers.DictField(child=JsonValueField(), required=False)
 
 
 class GatewayProviderUpdateRequestSerializer(serializers.Serializer):
@@ -341,7 +385,7 @@ class GatewayPlaygroundTestRequestSerializer(serializers.Serializer):
 
 class GatewayBudgetSetRequestSerializer(serializers.Serializer):
     level = serializers.CharField()
-    config = serializers.DictField(child=serializers.JSONField())
+    config = serializers.DictField(child=JsonValueField())
 
 
 class GatewayBudgetRemoveRequestSerializer(serializers.Serializer):
@@ -350,7 +394,7 @@ class GatewayBudgetRemoveRequestSerializer(serializers.Serializer):
 
 class GatewayBatchSubmitRequestSerializer(serializers.Serializer):
     requests = serializers.ListField(
-        child=serializers.DictField(child=serializers.JSONField())
+        child=serializers.DictField(child=JsonValueField())
     )
     max_concurrency = serializers.IntegerField(required=False, min_value=1, default=5)
 
@@ -361,7 +405,7 @@ class GatewayBatchRequestSerializer(serializers.Serializer):
 
 class GatewayMCPServerUpdateRequestSerializer(serializers.Serializer):
     server_id = serializers.CharField()
-    config = serializers.DictField(child=serializers.JSONField())
+    config = serializers.DictField(child=JsonValueField())
 
 
 class GatewayMCPServerRemoveRequestSerializer(serializers.Serializer):
@@ -369,13 +413,13 @@ class GatewayMCPServerRemoveRequestSerializer(serializers.Serializer):
 
 
 class GatewayMCPGuardrailsUpdateRequestSerializer(serializers.Serializer):
-    config = serializers.DictField(child=serializers.JSONField())
+    config = serializers.DictField(child=JsonValueField())
 
 
 class GatewayMCPToolTestRequestSerializer(serializers.Serializer):
     name = serializers.CharField()
     arguments = serializers.DictField(
-        child=serializers.JSONField(), required=False, default=dict
+        child=JsonValueField(), required=False, default=dict
     )
 
 
@@ -439,9 +483,11 @@ class APIKeyBulkItemSerializer(serializers.Serializer):
     name = serializers.CharField()
     owner = serializers.CharField(allow_blank=True)
     key_hash = serializers.CharField()
+    key_prefix = serializers.CharField(allow_blank=True)
     models = serializers.ListField(child=serializers.CharField())
     providers = serializers.ListField(child=serializers.CharField())
     metadata = serializers.DictField()
+    expires_at = serializers.DateTimeField(allow_null=True)
 
 
 class APIKeyBulkResponseSerializer(serializers.Serializer):
@@ -471,6 +517,11 @@ class OrgConfigBulkItemSerializer(serializers.Serializer):
 class OrgConfigBulkResponseSerializer(serializers.Serializer):
     status = serializers.BooleanField()
     result = serializers.DictField(child=OrgConfigBulkItemSerializer())
+    unbuilt_org_ids = serializers.ListField(
+        child=serializers.CharField(),
+        help_text="Orgs with an active config that could not be built. The "
+        "gateway keeps their last good config instead of dropping them.",
+    )
 
 
 class SpendSummaryQuerySerializer(serializers.Serializer):

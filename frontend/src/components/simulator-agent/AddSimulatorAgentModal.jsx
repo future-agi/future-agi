@@ -147,12 +147,10 @@ const AddSimulatorAgentModal = ({ open, onClose, onCreateSuccess }) => {
     <Dialog
       open={open}
       onClose={handleClose}
-      maxWidth="md"
+      maxWidth={false}
       fullWidth
       PaperProps={{
-        sx: {
-          borderRadius: 2,
-        },
+        sx: { maxWidth: 960, borderRadius: 2 },
       }}
     >
       <DialogTitle
@@ -165,7 +163,7 @@ const AddSimulatorAgentModal = ({ open, onClose, onCreateSuccess }) => {
       >
         <Typography variant="h6">Add Simulator Agent</Typography>
         <IconButton onClick={handleClose} disabled={isCreating}>
-          <Iconify icon="eva:close-fill" />
+          <Iconify icon="solar:close-linear" />
         </IconButton>
       </DialogTitle>
 

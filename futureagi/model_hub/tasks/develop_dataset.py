@@ -52,8 +52,12 @@ from tfc.utils.storage import (
     delete_compare_folder,
 )
 from tfc.constants.api_calls import APICallStatusChoices, APICallTypeChoices
+
 try:
-    from ee.usage.utils.usage_entries import count_text_tokens, log_and_deduct_cost_for_api_request
+    from ee.usage.utils.usage_entries import (
+        count_text_tokens,
+        log_and_deduct_cost_for_api_request,
+    )
 except ImportError:
     count_text_tokens = None
     log_and_deduct_cost_for_api_request = None
@@ -361,6 +365,7 @@ def create_synthetic_dataset(
             request_uuid = task_manager.start_task(str(dataset_id))
 
         from tfc.constants.api_calls import APICallTypeChoices
+
         try:
             from ee.usage.schemas.event_types import BillingEventType
         except ImportError:
@@ -440,7 +445,9 @@ def create_synthetic_dataset(
         tik_total_tokens = 0
         for col in synthetic_df.columns:
             for value in synthetic_df[col]:
-                tik_total_tokens += (count_text_tokens(str(value)) if count_text_tokens else 0)
+                tik_total_tokens += (
+                    count_text_tokens(str(value)) if count_text_tokens else 0
+                )
 
         rows = list(Row.objects.filter(dataset=dataset))
 
@@ -552,18 +559,18 @@ def create_synthetic_dataset(
 
                 if emit is not None and UsageEvent is not None:
                     emit(
-                    UsageEvent(
-                        org_id=str(organization.id),
-                        event_type=api_call_type,
-                        amount=credits,
-                        properties={
-                            "source": "synthetic_dataset",
-                            "source_id": str(dataset.id),
-                            "raw_cost_usd": str(actual_cost),
-                            **llm_usage_properties(agent),
-                        },
+                        UsageEvent(
+                            org_id=str(organization.id),
+                            event_type=api_call_type,
+                            amount=credits,
+                            properties={
+                                "source": "synthetic_dataset",
+                                "source_id": str(dataset.id),
+                                "raw_cost_usd": str(actual_cost),
+                                **llm_usage_properties(agent),
+                            },
+                        )
                     )
-                )
             except Exception:
                 pass  # Metering failure must not break the action
 
@@ -576,6 +583,19 @@ def create_synthetic_dataset(
         except Exception as inner_e:
             logger.error(f"Error updating dataset status: {str(inner_e)}")
         raise e
+
+
+def _file_metadata_with_error(metadata, error):
+    """Return a file's metadata with ``error`` set, as the JSON string the files view reads."""
+    meta = metadata or {}
+    if isinstance(meta, str):
+        try:
+            meta = json.loads(meta)
+        except ValueError:
+            meta = {}
+    if not isinstance(meta, dict):
+        meta = {}
+    return json.dumps({**meta, "error": error[:10000]})
 
 
 def remove_from_kb(deleted_files, kb_file_id, org_id):
@@ -677,7 +697,7 @@ def ingest_files_to_s3(files, kb_id, org):
     try:
         ingest_futures = []
         docs = []
-        error_files = []
+        file_errors = {}
         latest_error = None
         kb_file = KnowledgeBaseFile.objects.get(id=kb_id)
         kb_file.status = StatusType.PROCESSING.value
@@ -715,7 +735,7 @@ def ingest_files_to_s3(files, kb_id, org):
                     result = future.result()
                     if result and "file_id" in result:
                         if result.get("error"):
-                            error_files.append(result["file_id"])
+                            file_errors[str(result["file_id"])] = result["error"]
                             latest_error = result["error"]
                         else:
                             docs.append(result["file_id"])
@@ -730,9 +750,13 @@ def ingest_files_to_s3(files, kb_id, org):
 
         if docs:
             Files.objects.filter(id__in=docs).update(status=StatusType.COMPLETED.value)
-        if error_files:
-            Files.objects.filter(id__in=error_files).update(
-                status=StatusType.FAILED.value
+        # Keep each file's own error so the files table can show why it failed.
+        for failed_file in Files.objects.filter(id__in=list(file_errors)):
+            Files.objects.filter(id=failed_file.id).update(
+                status=StatusType.FAILED.value,
+                metadata=_file_metadata_with_error(
+                    failed_file.metadata, file_errors[str(failed_file.id)]
+                ),
             )
 
         kb_file.refresh_from_db()
@@ -831,10 +855,10 @@ def remove_kb_files(files, org, kb_id):
                 try:
                     file_instance = Files.objects.filter(id=res["file_id"]).first()
                     if file_instance:
-                        meta = json.loads(file_instance.metadata)
                         if res.get("error", None):
-                            meta.update({"error": res["error"]})
-                        file_instance.metadata = json.dumps(meta)
+                            file_instance.metadata = _file_metadata_with_error(
+                                file_instance.metadata, res["error"]
+                            )
                         file_instance.status = res["status"]
                         file_instance.deleted = (
                             True

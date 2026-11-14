@@ -3,6 +3,10 @@ from django.core.cache import cache
 
 logger = structlog.get_logger(__name__)
 
+# Whether the current cache outage has been logged: once per outage, not per
+# request.
+_cache_outage_logged = False
+
 
 class AuthMonitoringMiddleware:
     def __init__(self, get_response):
@@ -11,15 +15,7 @@ class AuthMonitoringMiddleware:
     def __call__(self, request):
         # Monitor failed auth attempts
         if hasattr(request, "user") and not request.user.is_authenticated:
-            client_ip = self.get_client_ip(request)
-            failed_attempts = cache.get(f"failed_auth_{client_ip}", 0)
-
-            if failed_attempts > 5:  # Rate limiting
-                # logger.warning(f"Multiple failed auth attempts from IP: {client_ip}")
-                #     return JsonResponse({'error': 'Too many failed attempts'}, status=429)
-                pass
-
-            cache.set(f"failed_auth_{client_ip}", failed_attempts + 1, 300)  # 5 minutes
+            self.count_attempt(self.get_client_ip(request))
 
         response = self.get_response(request)
 
@@ -31,6 +27,21 @@ class AuthMonitoringMiddleware:
             )
 
         return response
+
+    def count_attempt(self, client_ip):
+        """Fails open: this runs on every anonymous request, /health/ and the
+        setup screen's checks included, and a cache that is down (Standalone's
+        Redis restarting, or full) must not turn each of them into a 500."""
+        global _cache_outage_logged
+        try:
+            failed_attempts = cache.get(f"failed_auth_{client_ip}", 0)
+            cache.set(f"failed_auth_{client_ip}", failed_attempts + 1, 300)  # 5 minutes
+        except Exception as exc:
+            if not _cache_outage_logged:
+                _cache_outage_logged = True
+                logger.warning("auth_monitoring_cache_unavailable", error=str(exc))
+            return
+        _cache_outage_logged = False
 
     def get_client_ip(self, request):
         x_forwarded_for = request.META.get("HTTP_X_FORWARDED_FOR")

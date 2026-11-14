@@ -18,6 +18,7 @@ from asgiref.sync import sync_to_async
 from django.db import close_old_connections
 from django.db.models import Max
 from temporalio import activity
+from temporalio.exceptions import ApplicationError
 
 # Activity-aware stub: invocations raise a Temporal non-retryable
 # ApplicationError so the workflow fails once instead of retrying.
@@ -33,10 +34,12 @@ from simulate.models import (
 )
 from simulate.utils.agent_optimiser import get_full_test_execution_data
 from simulate.utils.agent_prompt_optimiser import (
+    fetch_agent_level_issues_from_run,
     get_agent_prompt_optimiser_run_steps,
     store_single_trial,
     update_agent_optimiser_run_step,
 )
+from simulate.utils.llm import get_api_key_for_model
 from tfc.temporal.common.heartbeat import Heartbeater
 
 logger = structlog.get_logger(__name__)
@@ -353,6 +356,20 @@ async def run_optimization_activity(input: Dict[str, Any]) -> Dict[str, Any]:
                 "use_temporal_evaluation", True
             )
 
+            organization = run.test_execution.run_test.organization
+            workspace = run.test_execution.run_test.workspace
+            try:
+                api_key = get_api_key_for_model(
+                    model_name=run.model,
+                    organization_id=organization.id,
+                    workspace_id=workspace.id if workspace else None,
+                )
+            except ValueError as e:
+                # No usable key or model for this org; fail without retries
+                raise ApplicationError(str(e), non_retryable=True) from e
+
+            issues = fetch_agent_level_issues_from_run(run.agent_optimiser_run)
+
             result = agent.optimize_from_execution(
                 execution_data=execution_data,
                 optimizer_type=run.optimiser_type,
@@ -360,14 +377,16 @@ async def run_optimization_activity(input: Dict[str, Any]) -> Dict[str, Any]:
                 optimizer_config=run.configuration or {},
                 use_dual_llm_sim=True,
                 agent_optimiser_run_steps=steps,
-                organization=run.test_execution.run_test.organization,
-                workspace=run.test_execution.run_test.workspace,
+                organization=organization,
+                workspace=workspace,
                 resume_state=resume_state,
                 max_new_trials=remaining,
                 scenario_manifest=scenario_manifest,
                 skip_baseline=skip_baseline,
                 on_trial_callback=on_trial_complete,
                 use_temporal_evaluation=use_temporal_eval,
+                api_key=api_key,
+                issues=issues,
             )
 
             # Get final best results

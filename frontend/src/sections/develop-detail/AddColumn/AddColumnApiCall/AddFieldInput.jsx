@@ -149,10 +149,9 @@ const AddFieldInput = ({ control, fieldName, allColumns, jsonSchemas }) => {
       ))}
       <Box>
         <Button
-          startIcon={<Iconify icon="mdi:plus" />}
+          startIcon={<Iconify icon="solar:add-linear" />}
           color="primary"
           size="small"
-          sx={{ fontWeight: 400 }}
           onClick={() =>
             append({
               id: getRandomId(),

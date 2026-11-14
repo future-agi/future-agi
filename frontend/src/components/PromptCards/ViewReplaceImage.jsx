@@ -93,7 +93,13 @@ const ViewReplaceImage = ({
   };
 
   return (
-    <Dialog open={open} onClose={onClose} fullWidth maxWidth="sm">
+    <Dialog
+      open={open}
+      onClose={onClose}
+      fullWidth
+      maxWidth={false}
+      PaperProps={{ sx: { maxWidth: 720 } }}
+    >
       <Box
         sx={{
           p: 2,
@@ -110,7 +116,7 @@ const ViewReplaceImage = ({
             onClick={onClose}
             sx={{ position: "absolute", top: "10px", right: "12px" }}
           >
-            <Iconify icon="mingcute:close-line" color="text.primary" />
+            <Iconify icon="solar:close-linear" color="text.primary" />
           </IconButton>
         </Box>
         <Box
@@ -155,9 +161,7 @@ const ViewReplaceImage = ({
             loading={isPending}
             sx={{
               width: "200px",
-              fontSize: "14px",
               color: "text.disabled",
-              fontWeight: 500,
             }}
             onClick={handleReplaceClick}
           >

@@ -77,7 +77,7 @@ ApiKeyCard.propTypes = {
 
 const styles = {
   card: {
-    borderRadius: "10px",
+    borderRadius: "8px",
     border: "1px solid var(--border-default)",
     overflow: "hidden",
     display: "flex",
@@ -110,7 +110,7 @@ const styles = {
     marginLeft: "10px",
   },
   label: {
-    fontWeight: "bold",
+    fontWeight: "600",
   },
   input: {
     flex: "0 0 75%", // Set width to 20%
@@ -119,7 +119,7 @@ const styles = {
     border: "none", // Add border to mimic TextField
     boxSizing: "border-box",
     padding: "10px",
-    borderRadius: "10px",
+    borderRadius: "8px",
     outline: "none",
   },
   saveButton: {
