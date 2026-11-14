@@ -433,7 +433,7 @@ function HistoryRow({ contextId, run, selected, onInspect }) {
     const against = [arm('production') && `production v${arm('production').version}`, arm('reference') && `recorded v${arm('reference').version}`].filter(Boolean);
     const cases = detail.data?.cases?.length;
     description = [`Application verification`, `v${arm('candidate')?.version ?? '?'}${against.length ? ` vs ${against.join(' and ')}` : ''}`, cases ? plural(cases, 'case') : null].filter(Boolean).join(' · ');
-    outcome = applicationOutcome(detail.data ?? { jobState: run.jobState, status: run.status });
+    outcome = detail.isError ? ['unknown', 'Not reported'] : applicationOutcome(detail.data ?? { jobState: run.jobState, status: run.status });
   } else {
     const cases = run.selected_case_ids?.length;
     description = [`Answer check`, `${run.candidate?.version ? `v${run.candidate.version}` : 'Saved draft'} vs ${run.reference?.version ? `v${run.reference.version}` : 'no context'}`, cases ? plural(cases, 'case') : null].filter(Boolean).join(' · ');

@@ -11,7 +11,7 @@ vi.mock('../utils/access', async (original) => ({ ...(await original()), useSkil
 vi.mock('src/api/skills/context-testing', () => ({
   useNativeTargets: () => (h.targetsLoading ? { isLoading: true, data: undefined } : { data: { runtime: { available: true, runtime: 'container', evidenceClass: 'synthetic fixture' }, targets: h.targets ?? [{ bindingId: 'binding', name: 'support-app', revision: 2, qualified: true, configurationDigest: 'sha256:abc' }] } }),
   useNativeRuns: () => ({ data: h.runs }),
-  useNativeRun: (_, id) => ({ data: id ? h.detail : undefined, isLoading: false }),
+  useNativeRun: (_, id) => (h.detailError ? { isError: true, isLoading: false, refetch: () => {} } : { data: id ? h.detail : undefined, isLoading: false }),
   usePreviewNativeRun: () => ({
     get data() { return h.preview.data; }, isPending: false, isError: false, reset: () => { h.preview.data = undefined; },
     mutate: (plan, options) => { h.preview.plans.push(plan); h.preview.data = { executionFingerprint: 'sha256:plan', reproducible: true, missingInputs: [], cells: 6, ceilingUsd: 1.5, arms: [{ variant: 'candidate', version: plan.candidateVersion }] }; options?.onSuccess?.(); },
@@ -423,4 +423,14 @@ it('claims no regression when no attempt finished', () => {
   renderPanel();
   expect(screen.getByText('v6 passed 0 of 2 cases.')).toBeVisible();
   expect(screen.queryByText(/regression/i)).not.toBeInTheDocument();
+});
+it('reads an application row whose detail fails as not reported, never loading forever', () => {
+  h.detailError = true;
+  try {
+    renderPanel({ answerHistory: { data: { results: [] } }, renderAnswer: () => null });
+    const row = within(screen.getByRole('table', { name: 'Test history' })).getByText(/^Application verification/).closest('tr');
+    const outcome = row.querySelectorAll('td')[1];
+    expect(outcome).toHaveTextContent('Not reported');
+    expect(within(row).queryByText('Loading…')).not.toBeInTheDocument();
+  } finally { h.detailError = false; }
 });
