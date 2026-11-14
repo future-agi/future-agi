@@ -8,6 +8,7 @@ from simulate.models.chat_message import ChatMessageModel
 from simulate.pydantic_schemas.chat import ChatRole
 from simulate.serializers.chat_message import ChatMessageSerializer
 from tracer.models.trace import Trace
+from tracer.utils.attribute_accessor import span_raw_log
 from tracer.utils.otel import CallAttributes, ConversationAttributes
 
 RECORDING_ATTR_KEYS = {
@@ -393,8 +394,7 @@ def parse_voice_span_transcripts(attrs: dict) -> list[dict]:
 
     # Final fallback: read from raw_log.messages (full Vapi/Retell response)
     if not transcripts or all(t["role"] == "user" for t in transcripts):
-        raw_log = attrs.get("raw_log", {})
-        raw_messages = raw_log.get("messages", []) if isinstance(raw_log, dict) else []
+        raw_messages = span_raw_log(attrs).get("messages", [])
         if raw_messages:
             from_raw = []
             for msg in raw_messages:
@@ -449,6 +449,10 @@ def _extract_metrics_from_provider_call_data(call_execution: CallExecution):
             duration = (end - start).total_seconds()
         except (ValueError, TypeError):
             pass
+    # Provider-agnostic fallback (Bland, etc.): duration_seconds is populated on
+    # the model for every provider during fetch, so comparison isn't VAPI-only.
+    if not duration:
+        duration = call_execution.duration_seconds or 0
 
     # Count turns from messages
     messages = vapi_data.get("messages", [])
@@ -457,6 +461,17 @@ def _extract_metrics_from_provider_call_data(call_execution: CallExecution):
         total_turns = sum(
             1 for m in messages if m.get("role") in ("user", "assistant", "bot")
         )
+    if not total_turns:
+        # CallTranscript rows are written for every provider.
+        from simulate.models.test_execution import CallTranscript
+
+        total_turns = CallTranscript.objects.filter(
+            call_execution=call_execution,
+            speaker_role__in=[
+                CallTranscript.SpeakerRole.USER,
+                CallTranscript.SpeakerRole.ASSISTANT,
+            ],
+        ).count()
 
     return {
         "duration": duration,
@@ -479,6 +494,31 @@ def fetch_voice_trace_comparison_metrics(
     comparison_metrics = _extract_metrics_from_provider_call_data(call_execution)
 
     return _build_metric_comparisons(base_metrics, comparison_metrics)
+
+
+def _transcripts_from_call_transcript_rows(call_execution: CallExecution):
+    """Provider-agnostic transcripts from the persisted CallTranscript rows.
+
+    These are written for every voice provider (VAPI, Bland, ...) and ordered by
+    start_time_ms, so a provider whose raw payload isn't VAPI/Retell-shaped
+    (e.g. Bland) still compares against a baseline instead of rendering blank.
+    """
+    from simulate.models.test_execution import CallTranscript
+
+    role_map = {
+        CallTranscript.SpeakerRole.ASSISTANT: "assistant",
+        CallTranscript.SpeakerRole.USER: "user",
+    }
+    transcripts = []
+    rows = CallTranscript.objects.filter(call_execution=call_execution).order_by(
+        "start_time_ms"
+    )
+    for row in rows:
+        display_role = role_map.get(row.speaker_role)
+        content = (row.content or "").strip()
+        if display_role and content:
+            transcripts.append({"role": display_role, "messages": [content]})
+    return transcripts
 
 
 def _extract_transcripts_from_provider_call_data(call_execution: CallExecution):
@@ -517,7 +557,10 @@ def _extract_transcripts_from_provider_call_data(call_execution: CallExecution):
         "transcript_with_tool_calls", []
     )
 
-    if isinstance(transcript, list):
+    # Guard on retell_data so a provider without a retell payload (e.g. Bland,
+    # whose empty transcript is still a list) falls through to the CallTranscript
+    # fallback instead of returning an empty list here.
+    if retell_data and isinstance(transcript, list):
         transcripts = []
         for entry in transcript:
             role = entry.get("role", "")
@@ -531,7 +574,8 @@ def _extract_transcripts_from_provider_call_data(call_execution: CallExecution):
                 )
         return transcripts
 
-    return []
+    # Provider-agnostic fallback (Bland, etc.): read the persisted transcript.
+    return _transcripts_from_call_transcript_rows(call_execution)
 
 
 def fetch_voice_trace_comparison_transcripts(

@@ -38,7 +38,7 @@ const TestRunsView = () => {
       }}
     >
       <ShowComponent condition={showSdk}>
-        <SDkComponentVoiceTestRun />
+        <SDkComponentVoiceTestRun agentType={agentType} />
       </ShowComponent>
 
       <ShowComponent condition={!showSdk}>

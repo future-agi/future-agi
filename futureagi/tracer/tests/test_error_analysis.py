@@ -35,6 +35,15 @@ AUTH_REQUIRED_STATUS_CODES = (
 )
 
 
+@pytest.fixture(autouse=True)
+def _error_feed_entitled(monkeypatch):
+    """error_feed is EE-gated: without a valid license the mixin raises
+    FeatureUnavailable (402) before the view body runs. These tests cover
+    the API behavior, not the license gate, so stub the gate open.
+    """
+    monkeypatch.setattr("tfc.ee_gating.check_ee_feature", lambda *a, **k: None)
+
+
 def get_result(response):
     """Extract result from API response wrapper."""
     data = response.json()

@@ -287,7 +287,8 @@ def allow_queue_creation_entitlement():
             entitlements_available = (
                 importlib.util.find_spec("ee.usage.services.entitlements") is not None
             )
-        except ModuleNotFoundError:
+        except (ModuleNotFoundError, ValueError):
+            # ValueError: OSS stub has __spec__=None; see test_annotation_advanced_api.py.
             entitlements_available = False
 
         if entitlements_available:
@@ -1179,6 +1180,108 @@ class TestSubmitAnnotations:
             label=numeric_label,
             deleted=False,
         ).exists()
+
+    def test_query_count_does_not_grow_with_label_count(
+        self, auth_client, queue_with_items, label_b, organization, workspace
+    ):
+        """TH-7211: submit was ~8 queries per label — 82 for 7 labels, in the
+        annotator's inner loop. One extra label must not cost extra queries."""
+        from django.db import connection
+        from django.test.utils import CaptureQueriesContext
+
+        queue_id, item_ids, label = queue_with_items
+        queue = AnnotationQueue.objects.get(pk=queue_id)
+        extra = [label_b] + [
+            AnnotationsLabels.objects.create(
+                name=f"Bulk Label {i}",
+                type="categorical",
+                settings={
+                    "options": [{"label": "positive"}, {"label": "negative"}],
+                    "multi_choice": False,
+                    "rule_prompt": "",
+                    "auto_annotate": False,
+                    "strategy": None,
+                },
+                organization=organization,
+                workspace=workspace,
+            )
+            for i in range(4)
+        ]
+        for order, extra_label in enumerate(extra, start=1):
+            AnnotationQueueLabel.objects.create(
+                queue=queue, label=extra_label, order=order, required=False
+            )
+
+        def submit(item_id, labels):
+            body = {
+                "annotations": [
+                    {
+                        "label_id": str(each.id),
+                        "value": 3 if each.type == "star" else "positive",
+                    }
+                    for each in labels
+                ]
+            }
+            with CaptureQueriesContext(connection) as ctx:
+                resp = auth_client.post(
+                    submit_annotations_url(queue_id, item_id), body, format="json"
+                )
+            assert resp.status_code == status.HTTP_200_OK, resp.data
+            assert _result(resp)["submitted"] == len(labels), _result(resp)
+            return len(ctx.captured_queries)
+
+        one = submit(item_ids[0], [label])
+        six = submit(item_ids[1], [label] + extra)
+
+        assert one == six, (
+            f"submit ran {one} queries for 1 label and {six} for 6 — "
+            f"{(six - one) / 5:.1f} per label. The per-label label lookup or the "
+            "per-label Score upsert is back (TH-7211)."
+        )
+
+        # The two submits above both create. Resubmitting the same item drives
+        # the bulk_update branch instead, which has its own per-label hazards
+        # (value_history is built per row) and would otherwise be unguarded.
+        one_again = submit(item_ids[0], [label])
+        six_again = submit(item_ids[1], [label] + extra)
+
+        assert one_again == six_again, (
+            f"resubmit ran {one_again} queries for 1 label and {six_again} for "
+            f"6 — {(six_again - one_again) / 5:.1f} per label. The update branch "
+            "is querying per label (TH-7211)."
+        )
+
+    def test_duplicate_label_in_one_payload_keeps_the_last_value(
+        self, auth_client, queue_with_items
+    ):
+        """A payload repeating a label_id must land the LAST value.
+
+        The sequential update_or_create this replaced created then updated the
+        same row, so the last entry won. bulk_create(ignore_conflicts=True)
+        keeps the FIRST row of a self-conflicting batch and drops the rest, so
+        without an explicit collapse the value silently flips to first-wins."""
+        queue_id, item_ids, label = queue_with_items
+
+        resp = auth_client.post(
+            submit_annotations_url(queue_id, item_ids[0]),
+            {
+                "annotations": [
+                    {"label_id": str(label.id), "value": "positive"},
+                    {"label_id": str(label.id), "value": "negative"},
+                ]
+            },
+            format="json",
+        )
+
+        assert resp.status_code == status.HTTP_200_OK, resp.data
+        scores = Score.objects.filter(
+            queue_item_id=item_ids[0], label=label, deleted=False
+        )
+        assert scores.count() == 1, "duplicate label_id created two Score rows"
+        assert scores.first().value == "negative", (
+            "duplicate label_id kept the first value — bulk_create's "
+            "ignore_conflicts flipped last-wins to first-wins"
+        )
 
     def test_submit_stores_notes_per_label(
         self, auth_client, queue_with_items, label_b
@@ -2197,16 +2300,13 @@ class TestReviewItem:
         assert threads.count() == 2
         assert set(threads.values_list("workspace_id", flat=True)) == {workspace.id}
 
-    def test_bulk_review_respects_review_workflow_entitlement_denial(
+    def test_bulk_review_allows_oss_review_workflow(
         self,
         auth_client,
         queue_with_items,
         second_user,
         organization,
     ):
-        if importlib.util.find_spec("ee.usage.services.entitlements") is None:
-            pytest.skip("Enterprise entitlement module is not available.")
-
         queue_id, item_ids, label = queue_with_items
         item = QueueItem.objects.get(pk=item_ids[0])
         item.status = QueueItemStatus.IN_PROGRESS.value
@@ -2214,33 +2314,19 @@ class TestReviewItem:
         item.save(update_fields=["status", "review_status", "updated_at"])
         _create_score_for_item(item, label, second_user, organization)
 
-        with patch(
-            "ee.usage.services.entitlements.Entitlements.check_feature",
-            return_value=SimpleNamespace(
-                allowed=False,
-                reason="review workflow disabled",
-            ),
-        ):
-            resp = auth_client.post(
-                bulk_review_url(queue_id),
-                {
-                    "item_ids": [str(item.id)],
-                    "action": "approve",
-                    "notes": "Should not be saved.",
-                },
-                format="json",
-            )
+        resp = auth_client.post(
+            bulk_review_url(queue_id),
+            {
+                "item_ids": [str(item.id)],
+                "action": "approve",
+                "notes": "Should be saved.",
+            },
+            format="json",
+        )
 
-        assert resp.status_code == status.HTTP_403_FORBIDDEN
-        assert "review workflow disabled" in str(_result(resp))
+        assert resp.status_code == status.HTTP_200_OK
         item.refresh_from_db()
-        assert item.review_status == "pending_review"
-        assert item.status == QueueItemStatus.IN_PROGRESS.value
-        assert item.review_notes in (None, "")
-        assert not QueueItemReviewComment.objects.filter(
-            queue_item=item,
-            action=QueueItemReviewComment.ACTION_APPROVE,
-        ).exists()
+        assert item.review_status == "approved"
 
     def test_bulk_review_reports_own_annotations_without_approving_them(
         self,
@@ -6593,3 +6679,384 @@ class TestLoadBalancedAssignment:
 
         item = QueueItem.objects.filter(queue_id=queue_id, deleted=False).first()
         assert item.assigned_to_id is None
+
+
+def _queries_by_table(ctx):
+    """{(verb, table): count} for a CaptureQueriesContext."""
+    import re
+
+    counts = {}
+    for q in ctx.captured_queries:
+        sql = re.sub(r"\s+", " ", q["sql"]).strip()
+        m = re.search(r'FROM "([a-z_]+)"|INTO "([a-z_]+)"|UPDATE "([a-z_]+)"', sql)
+        table = next((g for g in (m.groups() if m else []) if g), "?")
+        verb = sql.split()[0]
+        counts[(verb, table)] = counts.get((verb, table), 0) + 1
+    return counts
+
+
+@pytest.mark.django_db
+class TestAssignItemsQueryCount:
+    """TH-7211: assign was ~2 queries per item — 1,018 at batch 500.
+
+    The legacy ``assigned_to`` FK was resolved with a SELECT plus an UPDATE per
+    item. Everything else on this endpoint was already batched, so the test
+    pins the shape (flat total, one SELECT for the batch) rather than a
+    magic number.
+    """
+
+    def _add_items(self, auth_client, queue_id, ds, n, order_base):
+        rows = [Row.objects.create(dataset=ds, order=order_base + i) for i in range(n)]
+        auth_client.post(
+            add_items_url(queue_id),
+            {
+                "items": [
+                    {"source_type": "dataset_row", "source_id": str(r.id)} for r in rows
+                ]
+            },
+            format="json",
+        )
+        ids = list(
+            QueueItem.objects.filter(
+                queue_id=queue_id, dataset_row__in=rows, deleted=False
+            ).values_list("id", flat=True)
+        )
+        assert len(ids) == n
+        return ids
+
+    def _assign(self, auth_client, queue_id, item_ids, user_ids):
+        from django.db import connection
+        from django.test.utils import CaptureQueriesContext
+
+        with CaptureQueriesContext(connection) as ctx:
+            resp = auth_client.post(
+                assign_url(queue_id),
+                {
+                    "item_ids": [str(i) for i in item_ids],
+                    "user_ids": [str(u) for u in user_ids],
+                    "action": "add",
+                },
+                format="json",
+            )
+        assert resp.status_code == status.HTTP_200_OK, resp.data
+        assert _result(resp)["assigned"] == len(item_ids) * len(user_ids), _result(resp)
+        return ctx
+
+    def test_query_count_does_not_grow_with_batch_size(
+        self, auth_client, queue_with_items, dataset_rows, second_user, user
+    ):
+        queue_id, _, _ = queue_with_items
+        ds, _ = dataset_rows
+        AnnotationQueueAnnotator.objects.update_or_create(
+            queue_id=queue_id,
+            user=second_user,
+            defaults={
+                "role": AnnotatorRole.ANNOTATOR.value,
+                "roles": [AnnotatorRole.ANNOTATOR.value],
+            },
+        )
+        # ONE user, deliberately. The endpoint emits one UPDATE per distinct
+        # winning assignee, and with two users each item's winner is min(pk)
+        # over uuid4 keys — a coin flip. A 20-item batch then almost always
+        # spans both assignees (2 UPDATEs) while a 2-item batch collapses to one
+        # about half the time, so comparing totals across batch sizes fails
+        # ~50% of runs on correct code. With a single assignee the UPDATE count
+        # is deterministically 1 and the comparison measures only per-item
+        # growth, which is what it is for. Grouping across several assignees is
+        # asserted separately below.
+        user_ids = [user.id]
+
+        small = self._add_items(auth_client, queue_id, ds, 2, 600)
+        large = self._add_items(auth_client, queue_id, ds, 20, 700)
+
+        small_ctx = self._assign(auth_client, queue_id, small, user_ids)
+        large_ctx = self._assign(auth_client, queue_id, large, user_ids)
+
+        n_small = len(small_ctx.captured_queries)
+        n_large = len(large_ctx.captured_queries)
+        assert n_small == n_large, (
+            f"assign ran {n_small} queries for 2 items and {n_large} for 20 — "
+            f"{(n_large - n_small) / 18:.2f} per item. Something on this path is "
+            "querying per row again (TH-7211)."
+        )
+
+        counts = _queries_by_table(large_ctx)
+        # The legacy-FK resolve: one read for the whole batch...
+        assert counts.get(("SELECT", "model_hub_queueitemassignment"), 0) <= 2, (
+            "the assigned_to resolve is reading assignments per item again"
+        )
+        assert counts.get(("UPDATE", "model_hub_queueitem"), 0) == 1, (
+            "assigned_to is not being written in a single grouped UPDATE"
+        )
+
+    def test_updates_are_grouped_by_assignee_not_per_item(
+        self, auth_client, queue_with_items, dataset_rows, second_user, user
+    ):
+        """With several winning assignees the writes group by assignee.
+
+        Split out of the flatness test because the number of distinct winners is
+        random (min(pk) over uuid4 keys), which makes it unusable in a
+        cross-batch total comparison but fine as a bound.
+        """
+        queue_id, _, _ = queue_with_items
+        ds, _ = dataset_rows
+        AnnotationQueueAnnotator.objects.update_or_create(
+            queue_id=queue_id,
+            user=second_user,
+            defaults={
+                "role": AnnotatorRole.ANNOTATOR.value,
+                "roles": [AnnotatorRole.ANNOTATOR.value],
+            },
+        )
+        item_ids = self._add_items(auth_client, queue_id, ds, 20, 950)
+        ctx = self._assign(auth_client, queue_id, item_ids, [user.id, second_user.id])
+
+        n_updates = _queries_by_table(ctx).get(("UPDATE", "model_hub_queueitem"), 0)
+        distinct_assignees = len(
+            set(
+                QueueItem.objects.filter(pk__in=item_ids).values_list(
+                    "assigned_to_id", flat=True
+                )
+            )
+        )
+        assert 1 <= n_updates <= distinct_assignees, (
+            f"{n_updates} UPDATEs for 20 items resolving to {distinct_assignees} "
+            "distinct assignees — assigned_to is being written per item instead "
+            "of grouped by assignee"
+        )
+
+    def test_assigned_to_is_the_lowest_pk_assignment_not_scan_order(
+        self, auth_client, queue_with_items, dataset_rows, second_user, third_user, user
+    ):
+        """The per-item ``.first()`` this replaced ran on an unordered queryset,
+        and ``QuerySet.first()`` falls back to ``order_by("pk")`` there — so the
+        old code deterministically picked the lowest-pk assignment. Reading the
+        batch unordered would follow scan order instead, which is stable in a
+        clean fixture and not in general. Seeds a foreign assignee first so the
+        winner is decided by pk, not by insertion order or the request's
+        ``user_ids``."""
+        queue_id, _, _ = queue_with_items
+        ds, _ = dataset_rows
+        for annotator in (second_user, third_user):
+            AnnotationQueueAnnotator.objects.update_or_create(
+                queue_id=queue_id,
+                user=annotator,
+                defaults={
+                    "role": AnnotatorRole.ANNOTATOR.value,
+                    "roles": [AnnotatorRole.ANNOTATOR.value],
+                },
+            )
+        item_ids = self._add_items(auth_client, queue_id, ds, 4, 900)
+
+        # A live assignment from a user this request will never name.
+        for item_id in item_ids:
+            QueueItemAssignment.objects.create(queue_item_id=item_id, user=third_user)
+
+        self._assign(auth_client, queue_id, item_ids, [user.id, second_user.id])
+
+        for item_id in item_ids:
+            expected = (
+                QueueItemAssignment.objects.filter(queue_item_id=item_id, deleted=False)
+                .order_by("pk")
+                .values_list("user_id", flat=True)
+                .first()
+            )
+            actual = QueueItem.objects.get(pk=item_id).assigned_to_id
+            assert actual == expected, (
+                f"assigned_to={actual} but the lowest-pk live assignment is "
+                f"{expected} — the batched resolve is following scan order"
+            )
+
+    def test_assigned_to_still_mirrors_an_active_assignment(
+        self, auth_client, queue_with_items, dataset_rows, second_user, user
+    ):
+        """The batched resolve must pick the same kind of value the per-item
+        query did: some user who actually holds a live assignment, and NULL
+        once every assignment is gone."""
+        queue_id, _, _ = queue_with_items
+        ds, _ = dataset_rows
+        AnnotationQueueAnnotator.objects.update_or_create(
+            queue_id=queue_id,
+            user=second_user,
+            defaults={
+                "role": AnnotatorRole.ANNOTATOR.value,
+                "roles": [AnnotatorRole.ANNOTATOR.value],
+            },
+        )
+        item_ids = self._add_items(auth_client, queue_id, ds, 4, 800)
+        self._assign(auth_client, queue_id, item_ids, [user.id, second_user.id])
+
+        for item_id in item_ids:
+            item = QueueItem.objects.get(pk=item_id)
+            live = set(
+                QueueItemAssignment.objects.filter(
+                    queue_item_id=item_id, deleted=False
+                ).values_list("user_id", flat=True)
+            )
+            assert live == {user.id, second_user.id}
+            assert item.assigned_to_id in live, (
+                f"assigned_to={item.assigned_to_id} is not one of this item's "
+                f"live assignments {live}"
+            )
+
+        # Removing every assignment must clear the FK, not leave it pointing at
+        # a soft-deleted row.
+        resp = auth_client.post(
+            assign_url(queue_id),
+            {
+                "item_ids": [str(i) for i in item_ids],
+                "user_ids": [str(user.id), str(second_user.id)],
+                "action": "remove",
+            },
+            format="json",
+        )
+        assert resp.status_code == status.HTTP_200_OK, resp.data
+        for item_id in item_ids:
+            assert QueueItem.objects.get(pk=item_id).assigned_to_id is None
+
+
+@pytest.mark.django_db
+class TestBulkReviewQueryCount:
+    """TH-7211: bulk-review must not query per item — it was ~12/item, 5,512 at
+    batch 500. Asserting per-table counts rather than a total, so the test says
+    which lookup regressed instead of just that some number moved."""
+
+    BATCHED_ONCE = {
+        "model_hub_annotationqueuelabel": "the queue's label set (identical for every item)",
+        "model_hub_score": "the submitted-annotation and own-annotation checks",
+    }
+
+    def test_validation_and_persistence_are_batched(
+        self,
+        auth_client,
+        queue_with_items,
+        dataset_rows,
+        second_user,
+        organization,
+        workspace,
+    ):
+        from django.db import connection
+        from django.test.utils import CaptureQueriesContext
+
+        queue_id, _, label = queue_with_items
+        ds, _ = dataset_rows
+
+        rows = [Row.objects.create(dataset=ds, order=500 + i) for i in range(10)]
+        auth_client.post(
+            add_items_url(queue_id),
+            {
+                "items": [
+                    {"source_type": "dataset_row", "source_id": str(r.id)} for r in rows
+                ]
+            },
+            format="json",
+        )
+        ids = list(
+            QueueItem.objects.filter(
+                queue_id=queue_id, dataset_row__in=rows, deleted=False
+            ).values_list("id", flat=True)
+        )
+        assert len(ids) == 10
+        QueueItem.objects.filter(pk__in=ids).update(
+            status=QueueItemStatus.IN_PROGRESS.value, review_status="pending_review"
+        )
+        for item in QueueItem.objects.filter(pk__in=ids):
+            _create_score_for_item(item, label, second_user, organization)
+
+        with CaptureQueriesContext(connection) as ctx:
+            resp = auth_client.post(
+                bulk_review_url(queue_id),
+                {
+                    "item_ids": [str(i) for i in ids],
+                    "action": "approve",
+                    "notes": "Bulk approved.",
+                },
+                format="json",
+            )
+
+        assert resp.status_code == status.HTTP_200_OK, resp.data
+        assert _result(resp)["reviewed"] == 10, _result(resp)
+
+        counts = _queries_by_table(ctx)
+        for table, what in self.BATCHED_ONCE.items():
+            n = counts.get(("SELECT", table), 0)
+            assert n == 1, (
+                f"bulk-review ran {n} SELECTs on {table} for 10 items — {what} "
+                "is being looked up per row again (TH-7211)."
+            )
+        # The item write is one bulk_update, not a save() each.
+        assert counts.get(("UPDATE", "model_hub_queueitem"), 0) == 1, (
+            "items are being saved one at a time instead of bulk_update"
+        )
+        # Prior threads resolve in one statement for the whole approved set.
+        assert counts.get(("UPDATE", "model_hub_queueitemreviewthread"), 0) <= 1, (
+            "prior review threads are being resolved per item"
+        )
+        # Threads and comments are two bulk_creates, not two INSERTs per item.
+        for table in (
+            "model_hub_queueitemreviewthread",
+            "model_hub_queueitemreviewcomment",
+        ):
+            n = counts.get(("INSERT", table), 0)
+            assert n == 1, f"{table} is being INSERTed per item ({n} for 10 items)"
+        # The two lookups whose answer is structurally known on this path:
+        # bulk review passes no mentions, and the thread was just created.
+        assert counts.get(("SELECT", "model_hub_queueitemreviewcomment"), 0) == 0, (
+            "the thread-participant scan is back — it can only ever return the "
+            "reviewer, who is then discarded as the actor"
+        )
+
+    def test_bulk_review_persists_tenancy_without_the_save_signal(
+        self, auth_client, queue_with_items, second_user, organization
+    ):
+        """bulk_create skips the post_save workspace/organization backfill, so
+        they are passed explicitly. A regression writes NULL tenancy, which is
+        invisible until something filters by workspace."""
+        queue_id, item_ids, label = queue_with_items
+        selected = item_ids[:2]
+        QueueItem.objects.filter(pk__in=selected).update(
+            status=QueueItemStatus.IN_PROGRESS.value, review_status="pending_review"
+        )
+        for item in QueueItem.objects.filter(pk__in=selected):
+            _create_score_for_item(item, label, second_user, organization)
+
+        resp = auth_client.post(
+            bulk_review_url(queue_id),
+            {"item_ids": [str(i) for i in selected], "action": "approve"},
+            format="json",
+        )
+        assert resp.status_code == status.HTTP_200_OK, resp.data
+
+        threads = QueueItemReviewThread.objects.filter(queue_item_id__in=selected)
+        comments = QueueItemReviewComment.objects.filter(queue_item_id__in=selected)
+        assert threads.count() == 2
+        assert comments.count() == 2
+        for row in list(threads) + list(comments):
+            assert row.organization_id is not None, f"{row!r} has NULL organization"
+            assert row.workspace_id is not None, f"{row!r} has NULL workspace"
+            assert row.created_at is not None
+
+    def test_bulk_review_sends_no_email(
+        self, auth_client, queue_with_items, second_user, organization, mocker
+    ):
+        """Bulk review has never emailed (recipients are always empty here). The
+        bulk path now broadcasts directly rather than computing that empty set
+        per item, so this pins the outcome, not the mechanism."""
+        send = mocker.patch(
+            "model_hub.views.annotation_queues._send_annotation_discussion_email"
+        )
+        queue_id, item_ids, label = queue_with_items
+        selected = item_ids[:2]
+        QueueItem.objects.filter(pk__in=selected).update(
+            status=QueueItemStatus.IN_PROGRESS.value, review_status="pending_review"
+        )
+        for item in QueueItem.objects.filter(pk__in=selected):
+            _create_score_for_item(item, label, second_user, organization)
+
+        resp = auth_client.post(
+            bulk_review_url(queue_id),
+            {"item_ids": [str(i) for i in selected], "action": "approve"},
+            format="json",
+        )
+        assert resp.status_code == status.HTTP_200_OK, resp.data
+        send.assert_not_called()

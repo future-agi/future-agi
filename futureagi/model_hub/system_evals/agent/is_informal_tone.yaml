@@ -13,8 +13,8 @@ criteria: "You are evaluating whether the output uses an informal or casual tone
   \ 'Passed' if the output exhibits clear informal tone markers (contractions, slang, emojis, casual phrasing). Return 'Failed'\
   \ if the tone is formal, neutral, or academic with no informal indicators.\n\n## Inputs\n\n<output>{{output}}</output>"
 eval_tags:
-- NLP Metrics
-- Chatbot behaviors
+- Tone
+offered_in_environments: true
 visible_ui: true
 permissions:
   allow_edit: false

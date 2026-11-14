@@ -10,6 +10,79 @@ ENV_PROJECT_ROOT=${ENV_PROJECT_ROOT:-/app/backend}
 # Fast startup mode - skip non-essential checks for faster local dev
 FAST_STARTUP=${FAST_STARTUP:-false}
 
+# Hosted application startup is mutation-free by default. Production schema or
+# data bootstrap must run as a dedicated one-shot operator job using both
+# SERVICE_TYPE=bootstrap and STARTUP_DB_MUTATION_MODE=operator. Development and
+# self-hosted compose retain the existing default startup behavior.
+# Temporal schedules are not database state: SERVICE_TYPE=temporal-schedules is
+# the one-shot job a deploy runs to create or update this release's schedules,
+# with database mutations still disabled.
+CLOUD_STARTUP=false
+case "$ENV_TYPE" in
+    "prod"|"production"|"staging"|"PROD"|"PRODUCTION"|"STAGING") CLOUD_STARTUP=true ;;
+esac
+case "$CLOUD_DEPLOYMENT" in
+    "US"|"EU"|"DEV"|"us"|"eu"|"dev") CLOUD_STARTUP=true ;;
+esac
+
+STARTUP_DB_MUTATION_MODE=${STARTUP_DB_MUTATION_MODE:-disabled}
+case "$STARTUP_DB_MUTATION_MODE" in
+    "disabled"|"operator") ;;
+    *)
+        echo "ERROR: STARTUP_DB_MUTATION_MODE must be exactly 'disabled' or 'operator'"
+        exit 64
+        ;;
+esac
+
+OPERATOR_BOOTSTRAP=false
+if [ "$CLOUD_STARTUP" = "true" ] && [ "$SERVICE_TYPE" = "bootstrap" ] && [ "$STARTUP_DB_MUTATION_MODE" = "operator" ]; then
+    OPERATOR_BOOTSTRAP=true
+fi
+
+if [ "${NO_STARTUP_DB_MUTATIONS+x}" != "x" ]; then
+    if [ "$OPERATOR_BOOTSTRAP" = "true" ]; then
+        NO_STARTUP_DB_MUTATIONS=false
+    elif [ "$CLOUD_STARTUP" = "true" ]; then
+        NO_STARTUP_DB_MUTATIONS=true
+    else
+        NO_STARTUP_DB_MUTATIONS=false
+    fi
+fi
+case "$NO_STARTUP_DB_MUTATIONS" in
+    "true"|"false") ;;
+    *)
+        echo "ERROR: NO_STARTUP_DB_MUTATIONS must be exactly 'true' or 'false'"
+        exit 64
+        ;;
+esac
+
+if [ "$OPERATOR_BOOTSTRAP" = "true" ] && [ "$NO_STARTUP_DB_MUTATIONS" != "false" ]; then
+    echo "ERROR: operator bootstrap requires NO_STARTUP_DB_MUTATIONS=false"
+    exit 64
+fi
+
+if [ "$CLOUD_STARTUP" = "true" ] && [ "$NO_STARTUP_DB_MUTATIONS" = "false" ]; then
+    if [ "$OPERATOR_BOOTSTRAP" != "true" ]; then
+        echo "ERROR: hosted database mutations require SERVICE_TYPE=bootstrap and STARTUP_DB_MUTATION_MODE=operator"
+        exit 64
+    fi
+fi
+
+if [ "$CLOUD_STARTUP" = "true" ] && [ "$SERVICE_TYPE" = "bootstrap" ] && [ "$OPERATOR_BOOTSTRAP" != "true" ]; then
+    echo "ERROR: hosted bootstrap requires STARTUP_DB_MUTATION_MODE=operator"
+    exit 64
+fi
+
+# Operator bootstrap must execute the complete one-shot path even if an
+# inherited workload environment set FAST_STARTUP=true. Ordinary services keep
+# their configured FAST_STARTUP value; mutation permission is enforced below as
+# a separate boundary.
+if [ "$OPERATOR_BOOTSTRAP" = "true" ]; then
+    FAST_STARTUP=false
+fi
+export NO_STARTUP_DB_MUTATIONS
+export STARTUP_DB_MUTATION_MODE
+
 # Disable bytecode compilation to speed up imports (optional)
 # export PYTHONDONTWRITEBYTECODE=1
 
@@ -115,9 +188,6 @@ export ENV_PROJECT_ROOT
 # Change to the backend directory
 cd /app/backend
 
-# Install any missing dependencies (2FA/WebAuthn added after Docker image build)
-pip install --quiet "pyotp>=2.9.0" "qrcode[pil]>=7.4" "webauthn>=2.2.0" 2>/dev/null || true
-
 # Create logs directory if it doesn't exist
 mkdir -p logs media static
 
@@ -221,48 +291,127 @@ print_service_info() {
 # Initialize
 print_service_info
 
-# Run database checks for services that need it (skip in FAST_STARTUP mode)
+# Run startup checks for services that need them (skip in FAST_STARTUP mode).
+# FAST_STARTUP controls validation latency only. Database mutation permission
+# is independently controlled by NO_STARTUP_DB_MUTATIONS.
 if [ "$FAST_STARTUP" != "true" ]; then
     case "$SERVICE_TYPE" in
-        "backend"|"worker"|"beat"|"grpc")
+        "backend"|"worker"|"beat"|"grpc"|"bootstrap")
             wait_for_db
             ;;
     esac
 
-    # Create cache table for services that need it
-    case "$SERVICE_TYPE" in
-        "backend"|"worker")
-            create_cache_table
-            ;;
-    esac
+    if [ "$NO_STARTUP_DB_MUTATIONS" = "true" ]; then
+        echo "NO_STARTUP_DB_MUTATIONS=true: skipping cache-table, migration, and seed writes"
+        if [ "$SERVICE_TYPE" = "backend" ]; then
+            collect_static
+            if [ "$ENV_TYPE" = "prod" ] || [ "$ENV_TYPE" = "staging" ]; then
+                validate_django
+            fi
+        fi
+    else
+        case "$SERVICE_TYPE" in
+            "backend"|"worker"|"bootstrap")
+                create_cache_table
+                ;;
+        esac
 
-    # Run backend-specific setup
-    if [ "$SERVICE_TYPE" = "backend" ]; then
-        run_migrations
-        collect_static
-        if [ "$ENV_TYPE" = "prod" ] || [ "$ENV_TYPE" = "staging" ]; then
-            validate_django
+        if [ "$SERVICE_TYPE" = "backend" ] || [ "$SERVICE_TYPE" = "bootstrap" ]; then
+            run_migrations
+            if [ "$SERVICE_TYPE" = "bootstrap" ]; then
+                python manage.py seed_system_evals
+            fi
+            collect_static
+            if [ "$ENV_TYPE" = "prod" ] || [ "$ENV_TYPE" = "staging" ]; then
+                validate_django
+            fi
         fi
     fi
 else
     echo "FAST_STARTUP mode: skipping DB checks, migrations, and static collection"
 fi
 
-python manage.py register_temporal_schedules || echo "WARNING: Temporal schedule registration failed (non-fatal), continuing startup..."
+# Static collection writes only image/container files. Keep hosted backend/admin
+# assets available when mutation-free startup explicitly uses FAST_STARTUP.
+if [ "$FAST_STARTUP" = "true" ] && [ "$NO_STARTUP_DB_MUTATIONS" = "true" ] && [ "$SERVICE_TYPE" = "backend" ]; then
+    collect_static
+fi
+
+should_register_temporal_schedules() {
+    # The registrar exists only to register, so no switch may turn it into a
+    # job that succeeds without schedules.
+    if [ "$SERVICE_TYPE" = "temporal-schedules" ]; then
+        return 0
+    fi
+
+    if [ "$NO_STARTUP_DB_MUTATIONS" = "true" ]; then
+        echo "NO_STARTUP_DB_MUTATIONS=true: skipping Temporal schedule registration"
+        return 1
+    fi
+
+    if [ "${REGISTER_TEMPORAL_SCHEDULES+x}" = "x" ]; then
+        register_temporal_schedules_value=$(printf '%s' "$REGISTER_TEMPORAL_SCHEDULES" | tr '[:upper:]' '[:lower:]')
+        case "$register_temporal_schedules_value" in
+            true|1|yes|y|on|t)
+                return 0
+                ;;
+            false|0|no|n|off|f)
+                return 1
+                ;;
+            *)
+                echo "WARNING: Unrecognized REGISTER_TEMPORAL_SCHEDULES value; registration disabled"
+                return 1
+                ;;
+        esac
+    fi
+
+    [ "$SERVICE_TYPE" = "backend" ]
+}
+
+if should_register_temporal_schedules; then
+    if ! python manage.py register_temporal_schedules; then
+        if [ "$SERVICE_TYPE" = "bootstrap" ] || [ "$SERVICE_TYPE" = "temporal-schedules" ]; then
+            echo "ERROR: Temporal schedule registration failed; $SERVICE_TYPE is incomplete"
+            exit 1
+        fi
+        echo "WARNING: Temporal schedule registration failed (non-fatal), continuing startup..."
+    fi
+else
+    echo "Temporal schedule registration disabled for service type: $SERVICE_TYPE"
+fi
 
 # Start the appropriate service based on SERVICE_TYPE
 case "$SERVICE_TYPE" in
+    "bootstrap")
+        echo "One-shot database bootstrap completed successfully"
+        exit 0
+        ;;
+
+    "temporal-schedules")
+        echo "One-shot Temporal schedule registration completed successfully"
+        exit 0
+        ;;
+
     "backend")
         echo "Starting backend server..."
 
-        # Enhanced signal handling to cleanup gRPC process
+        # The runtime signals only this script (PID 1), and bash defers a trap
+        # while a foreground child runs, so Granian runs in the background.
+        # On TERM Granian finishes in-flight requests but closes idle
+        # keep-alive connections and leaves new ones unanswered, so the pod
+        # needs a preStop delay to leave the load balancer first. The gRPC
+        # server has no TERM handler and exits at once.
         cleanup() {
             echo "Shutting down services..."
+            if [ ! -z "$HTTP_PID" ]; then
+                echo "Stopping HTTP server (PID: $HTTP_PID)..."
+                kill -TERM $HTTP_PID 2>/dev/null || true
+            fi
             if [ ! -z "$GRPC_PID" ]; then
                 echo "Stopping gRPC server (PID: $GRPC_PID)..."
                 kill -TERM $GRPC_PID 2>/dev/null || true
-                wait $GRPC_PID 2>/dev/null || true
             fi
+            wait $HTTP_PID $GRPC_PID 2>/dev/null || true
             exit 0
         }
         trap cleanup TERM INT
@@ -296,7 +445,7 @@ case "$SERVICE_TYPE" in
                     --port 80 \
                     --log-level warning \
                     --access-log \
-                    --respawn-failed-workers
+                    --respawn-failed-workers &
             else
                 echo "Starting development backend server with Granian..."
                 # Use Granian's native --reload with ignore patterns for logs/media/static
@@ -316,8 +465,10 @@ case "$SERVICE_TYPE" in
                     --reload-ignore-patterns '^\..*' \
                     --reload-ignore-patterns '.*\.log$' \
                     --reload-ignore-patterns '.*\.pyc$' \
-                    --reload-ignore-patterns '.*\.core$'
+                    --reload-ignore-patterns '.*\.core$' &
             fi
+            HTTP_PID=$!
+            wait $HTTP_PID
         else
             echo "HTTP server disabled (ENABLE_HTTP=false)"
             # If gRPC is running, wait for it; otherwise nothing to do
@@ -487,7 +638,7 @@ case "$SERVICE_TYPE" in
 
         if [ "$ENV_TYPE" = "prod" ] || [ "$ENV_TYPE" = "staging" ]; then
             # Production: run worker with graceful shutdown handling
-            ./bin/temporal-worker --task-queue "$TEMPORAL_TASK_QUEUE" $RESOURCE_TUNING_ARGS
+            exec ./bin/temporal-worker --task-queue "$TEMPORAL_TASK_QUEUE" $RESOURCE_TUNING_ARGS
         else
             # Build list of watch paths, skipping any that don't exist.
             # ``watchfiles`` exits immediately with a non-zero code if any
@@ -499,7 +650,7 @@ case "$SERVICE_TYPE" in
             for d in tfc accounts analytics model_hub sockets tracer usage utils simulate agent_playground; do
                 [ -d "./$d" ] && WATCH_PATHS+=("./$d")
             done
-            watchfiles --filter python \
+            exec watchfiles --filter python \
                 "python manage.py start_temporal_worker --task-queue $TEMPORAL_TASK_QUEUE $ALL_QUEUES_ARG $RESOURCE_TUNING_ARGS" \
                 "${WATCH_PATHS[@]}"
         fi
@@ -507,7 +658,7 @@ case "$SERVICE_TYPE" in
 
     *)
         echo "ERROR: Unknown SERVICE_TYPE: $SERVICE_TYPE"
-        echo "Available options: backend, worker, beat, flower, grpc, temporal-worker"
+        echo "Available options: bootstrap, temporal-schedules, backend, worker, beat, flower, grpc, temporal-worker"
         echo "Current environment:"
         echo "  SERVICE_TYPE=$SERVICE_TYPE"
         echo "  ENV_TYPE=$ENV_TYPE"

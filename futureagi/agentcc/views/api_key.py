@@ -1,4 +1,5 @@
 import structlog
+from django.http import Http404
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.viewsets import ModelViewSet
@@ -130,6 +131,8 @@ class AgentccAPIKeyViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
             api_key = auth_bridge.update_key(api_key, **serializer.validated_data)
             return self._gm.success_response(AgentccAPIKeySerializer(api_key).data)
 
+        except Http404:
+            return self._gm.not_found("API key not found")
         except GatewayClientError as e:
             logger.exception("api_key_update_gateway_error", error=str(e))
             return self._gm.bad_request(f"Gateway error: {e}")

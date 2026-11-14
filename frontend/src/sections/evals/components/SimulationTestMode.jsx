@@ -2,6 +2,7 @@
 import {
   Autocomplete,
   Box,
+  Button,
   CircularProgress,
   IconButton,
   InputAdornment,
@@ -22,6 +23,7 @@ import React, {
   useState,
 } from "react";
 import Iconify from "src/components/iconify";
+import { useMapToVariable } from "./useMapToVariable";
 import axios, { endpoints } from "src/utils/axios";
 import { canonicalEntries, canonicalKeys } from "src/utils/utils";
 import CustomAudioPlayer from "src/components/custom-audio/CustomAudioPlayer";
@@ -36,6 +38,8 @@ import {
   useExecuteCompositeEval,
   useExecuteCompositeEvalAdhoc,
 } from "../hooks/useCompositeEval";
+import RequiredMark from "src/components/RequiredMark";
+import { getSafeActionErrorMessage } from "src/utils/errorUtils";
 import {
   NEVER_PICKABLE_TOPLEVEL,
   VOICE_ONLY_METRICS,
@@ -43,6 +47,12 @@ import {
   isTextCallDetail,
   translateDeepScenarioColumn,
 } from "../utils/simulationTestModeUtils";
+import {
+  SIMULATION_PREVIEW_HTTP_TIMEOUT_MS,
+  SIMULATION_PREVIEW_PAGE_SIZE,
+  mergeSimulationPreviewPage,
+  simulationPreviewRequestError,
+} from "../utils/simulation_preview_pagination";
 
 // Hover-tooltip content for the Columns / Value table. Stringifies
 // primitives and JSON-encodes objects, then caps length so a 50k-char
@@ -181,6 +191,7 @@ const SimulationTestMode = React.forwardRef(
       model = "turing_large",
       variables = [],
       codeParams = {},
+      runConfig,
       onTestResult,
       onColumnsLoaded,
       onClearResult,
@@ -202,6 +213,8 @@ const SimulationTestMode = React.forwardRef(
     const [loadingMoreRunTests, setLoadingMoreRunTests] = useState(false);
     const [runTestsPage, setRunTestsPage] = useState(1);
     const [runTestsHasMore, setRunTestsHasMore] = useState(true);
+    const [runTestsError, setRunTestsError] = useState(null);
+    const runTestsRequestRef = useRef({ version: 0, controller: null });
     const [selectedRunTestId, setSelectedRunTestId] = useState(
       initialRunTestId || "",
     );
@@ -212,13 +225,33 @@ const SimulationTestMode = React.forwardRef(
     // Test executions (runs within a simulation)
     const [executions, setExecutions] = useState([]);
     const [executionsFetched, setExecutionsFetched] = useState(false);
+    const [executionsTotal, setExecutionsTotal] = useState(0);
+    const [executionsCursor, setExecutionsCursor] = useState(null);
+    const [executionsSnapshotAt, setExecutionsSnapshotAt] = useState(null);
+    const [loadingExecutions, setLoadingExecutions] = useState(false);
+    const [loadingMoreExecutions, setLoadingMoreExecutions] = useState(false);
+    const [executionsError, setExecutionsError] = useState(null);
+    const [executionReloadToken, setExecutionReloadToken] = useState(0);
+    const executionRequestVersionRef = useRef(0);
+    const executionSourceRef = useRef(null);
     const [selectedExecutionId, setSelectedExecutionId] = useState(
       initialExecutionId || "",
     );
+    const selectedExecutionIdRef = useRef(initialExecutionId || "");
+    useEffect(() => {
+      selectedExecutionIdRef.current = selectedExecutionId;
+    }, [selectedExecutionId]);
 
     // Call executions (individual calls)
     const [calls, setCalls] = useState([]);
     const [totalCalls, setTotalCalls] = useState(0);
+    const [callsCursor, setCallsCursor] = useState(null);
+    const [callsSnapshotAt, setCallsSnapshotAt] = useState(null);
+    const [callsError, setCallsError] = useState(null);
+    const [loadingMoreCalls, setLoadingMoreCalls] = useState(false);
+    const [callsReloadToken, setCallsReloadToken] = useState(0);
+    const callsRequestVersionRef = useRef(0);
+    const callsSourceRef = useRef(null);
     // Derive "is the current selection stale w.r.t. the last fetch" at
     // render time. React effects run *after* paint, so tracking a
     // `hasFetchedCalls` boolean still left a render-frame gap where the
@@ -231,12 +264,19 @@ const SimulationTestMode = React.forwardRef(
     // Synchronous: true between the prop change and the fetch
     // completing. Hides the empty-state and keeps the spinner on screen
     // across the render-frame gap.
+    const selectedCallsSourceKey =
+      selectedRunTestId && selectedExecutionId
+        ? `${selectedRunTestId}:${selectedExecutionId}`
+        : null;
     const isPendingCallsFetch =
-      !!selectedExecutionId && lastFetchedCallsKey !== selectedExecutionId;
+      !!selectedCallsSourceKey &&
+      lastFetchedCallsKey !== selectedCallsSourceKey;
 
     // Call detail
     const [callDetail, setCallDetail] = useState(null);
     const [loadingDetail, setLoadingDetail] = useState(false);
+    const [callDetailError, setCallDetailError] = useState(null);
+    const [callDetailReloadToken, setCallDetailReloadToken] = useState(0);
 
     // Per-call cache so toggling calls doesn't refetch or re-walk the same
     // payload. Keyed by call id. Each entry is `{ detail, fieldNames? }`
@@ -269,6 +309,13 @@ const SimulationTestMode = React.forwardRef(
         ? { ...initialMapping }
         : {},
     );
+
+    // Shared click-to-map behaviour for the Columns/Value table rows.
+    const { renderRowMapAction, mapMenu, rowHoverSx } = useMapToVariable({
+      variables,
+      mapping,
+      setMapping,
+    });
     // displayKey ("scenario_<col_name>") -> scenario column UUID. The backend
     // resolver at run time only accepts scenario column UUIDs, not names, so
     // we persist the UUID while the dropdown still shows the friendly label.
@@ -286,37 +333,79 @@ const SimulationTestMode = React.forwardRef(
 
     // 1. Fetch run tests (simulations) — infinite-scroll pagination.
     // Page 1 loads on mount; subsequent pages fetch via onScroll on the
-    // Autocomplete listbox. We use a large-ish page_size (50) to reduce
-    // round-trips while keeping the initial payload small.
-    const RUN_TESTS_PAGE_SIZE = 50;
+    // Autocomplete listbox shares the deployment-tuned simulation page size.
+    const RUN_TESTS_PAGE_SIZE = SIMULATION_PREVIEW_PAGE_SIZE;
     const fetchRunTestsPage = useCallback(async (pageNum) => {
       const isFirst = pageNum === 1;
-      if (isFirst) setLoadingRunTests(true);
-      else setLoadingMoreRunTests(true);
+      const previousRequest = runTestsRequestRef.current;
+      previousRequest.controller?.abort();
+      const controller = new AbortController();
+      const version = previousRequest.version + 1;
+      runTestsRequestRef.current = { version, controller };
+      setRunTestsError(null);
+      if (isFirst) {
+        setLoadingMoreRunTests(false);
+        setLoadingRunTests(true);
+      } else {
+        setLoadingMoreRunTests(true);
+      }
       try {
         const { data } = await axios.get(endpoints.runTests.list, {
           // Backend's ExtendedPageNumberPagination uses `limit`, not
           // `page_size`, as the page-size query param. Sending
           // `page_size` silently falls back to the 10-item default and
           // the dropdown maxed out at 10 rows regardless of scroll.
-          params: { page: pageNum, limit: RUN_TESTS_PAGE_SIZE },
+          params: {
+            page: pageNum,
+            limit: RUN_TESTS_PAGE_SIZE,
+            summary: true,
+          },
+          signal: controller.signal,
+          timeout: SIMULATION_PREVIEW_HTTP_TIMEOUT_MS,
         });
-        const items = Array.isArray(data?.results) ? data.results : [];
-        const total = data?.count ?? 0;
+        if (runTestsRequestRef.current.version !== version) return;
+        if (
+          !Array.isArray(data?.results) ||
+          !Number.isSafeInteger(data?.count) ||
+          data.count < 0 ||
+          data.results.length > RUN_TESTS_PAGE_SIZE
+        ) {
+          throw new Error("Invalid simulations page response");
+        }
+        const items = data.results;
+        const total = data.count;
         setRunTests((prev) => (isFirst ? items : [...prev, ...items]));
         setRunTestsPage(pageNum);
         setRunTestsHasMore(pageNum * RUN_TESTS_PAGE_SIZE < total);
-      } catch {
-        if (isFirst) setRunTests([]);
-        setRunTestsHasMore(false);
+      } catch (requestError) {
+        if (runTestsRequestRef.current.version !== version) return;
+        setRunTestsError({
+          page: pageNum,
+          message:
+            requestError?.name === "CanceledError" ||
+            requestError?.code === "ECONNABORTED"
+              ? "Simulation loading timed out."
+              : "Simulations are temporarily unavailable.",
+        });
       } finally {
-        if (isFirst) setLoadingRunTests(false);
-        else setLoadingMoreRunTests(false);
+        if (runTestsRequestRef.current.version === version) {
+          runTestsRequestRef.current = { version, controller: null };
+          if (isFirst) setLoadingRunTests(false);
+          else setLoadingMoreRunTests(false);
+        }
       }
     }, []);
 
     useEffect(() => {
       fetchRunTestsPage(1);
+      return () => {
+        const current = runTestsRequestRef.current;
+        current.controller?.abort();
+        runTestsRequestRef.current = {
+          version: current.version + 1,
+          controller: null,
+        };
+      };
     }, [fetchRunTestsPage]);
 
     const handleRunTestsListboxScroll = useCallback(
@@ -331,108 +420,285 @@ const SimulationTestMode = React.forwardRef(
       [runTestsHasMore, loadingMoreRunTests, runTestsPage, fetchRunTestsPage],
     );
 
-    // 2. Fetch run test detail (context) + executions when selected
+    // 2. Fetch run-test context and the first immutable execution page.
+    // Retrying the same source keeps old rows rendered until replacement
+    // succeeds; changing sources intentionally clears them.
     useEffect(() => {
+      // A stale load-more request deliberately cannot clear state in its
+      // version-mismatched finally block. The replacement source owns the flag.
+      setLoadingMoreExecutions(false);
       if (!selectedRunTestId) {
         setExecutions([]);
+        setExecutionsTotal(0);
+        setExecutionsCursor(null);
+        setExecutionsSnapshotAt(null);
+        setExecutionsError(null);
         setSelectedExecutionId("");
         setRunTestContext(null);
         setExecutionsFetched(false);
+        executionSourceRef.current = null;
         return undefined;
       }
+      const isNewSource = executionSourceRef.current !== selectedRunTestId;
+      executionSourceRef.current = selectedRunTestId;
+      if (isNewSource) {
+        setExecutions([]);
+        setExecutionsTotal(0);
+        setExecutionsCursor(null);
+        setExecutionsSnapshotAt(null);
+        setSelectedExecutionId(initialExecutionId || "");
+        setRunTestContext(null);
+      }
       setExecutionsFetched(false);
-      let cancelled = false;
+      setLoadingExecutions(true);
+      setExecutionsError(null);
+      const requestVersion = ++executionRequestVersionRef.current;
+
       const fetchAll = async () => {
         try {
-          // Fetch detail (agent def, scenarios, persona, evals) and executions in parallel
-          // Simulate APIs return data directly (no {status, result} wrapper)
           const [detailRes, execRes] = await Promise.all([
-            axios
-              .get(endpoints.runTests.detail(selectedRunTestId))
-              .catch(() => ({ data: {} })),
-            axios.get(endpoints.runTests.detailExecutions(selectedRunTestId), {
-              params: { page: 1, limit: 100 },
+            axios.get(endpoints.runTests.detail(selectedRunTestId), {
+              timeout: SIMULATION_PREVIEW_HTTP_TIMEOUT_MS,
+            }),
+            axios.get(endpoints.runTests.previewExecutions(selectedRunTestId), {
+              params: { page_size: SIMULATION_PREVIEW_PAGE_SIZE },
+              timeout: SIMULATION_PREVIEW_HTTP_TIMEOUT_MS,
             }),
           ]);
-          if (cancelled) return;
-          // Detail: flat serializer data
+          if (requestVersion !== executionRequestVersionRef.current) return;
+          const page = mergeSimulationPreviewPage(execRes.data);
+          detailCacheRef.current.clear();
+          setCallDetail(null);
+          setCallDetailError(null);
           setRunTestContext(detailRes.data || null);
-          // Executions: paginated {results: [...]}
-          const items = execRes.data?.results || [];
-          setExecutions(items);
+          setExecutions(page.items);
+          setExecutionsTotal(page.snapshotTotal);
+          setExecutionsCursor(page.nextCursor);
+          setExecutionsSnapshotAt(page.snapshotAt);
           setExecutionsFetched(true);
-          if (items.length > 0) {
+          if (page.items.length > 0 || initialExecutionId) {
+            const currentSelection = selectedExecutionIdRef.current;
             const preferred =
-              initialExecutionId &&
-              items.some((it) => it.id === initialExecutionId)
-                ? initialExecutionId
-                : items[0].id || "";
+              initialExecutionId ||
+              (currentSelection &&
+              page.items.some((item) => item.id === currentSelection)
+                ? currentSelection
+                : page.items[0]?.id || "");
             setSelectedExecutionId(preferred);
+          } else {
+            setSelectedExecutionId("");
           }
-        } catch {
-          if (cancelled) return;
-          setExecutions([]);
-          setRunTestContext(null);
+          // A successful execution-list restart must also revalidate the
+          // selected execution's call snapshot. This matters for pinned edit
+          // selections that may not appear in the first execution page.
+          if (!isNewSource) {
+            setCallsReloadToken((value) => value + 1);
+          }
+        } catch (requestError) {
+          if (requestVersion !== executionRequestVersionRef.current) return;
+          setExecutionsError({
+            ...simulationPreviewRequestError(requestError),
+            duringMore: false,
+          });
           setExecutionsFetched(true);
+        } finally {
+          if (requestVersion === executionRequestVersionRef.current) {
+            setLoadingExecutions(false);
+          }
         }
       };
       fetchAll();
       return () => {
-        cancelled = true;
+        if (requestVersion === executionRequestVersionRef.current) {
+          executionRequestVersionRef.current += 1;
+        }
       };
-    }, [selectedRunTestId, initialExecutionId]);
+    }, [selectedRunTestId, initialExecutionId, executionReloadToken]);
 
-    // 3. Fetch call executions for the selected execution
+    const loadMoreExecutions = useCallback(async () => {
+      if (!selectedRunTestId || !executionsCursor || loadingMoreExecutions)
+        return;
+      const requestVersion = executionRequestVersionRef.current;
+      setLoadingMoreExecutions(true);
+      setExecutionsError(null);
+      try {
+        const { data } = await axios.get(
+          endpoints.runTests.previewExecutions(selectedRunTestId),
+          {
+            params: {
+              page_size: SIMULATION_PREVIEW_PAGE_SIZE,
+              cursor: executionsCursor,
+            },
+            timeout: SIMULATION_PREVIEW_HTTP_TIMEOUT_MS,
+          },
+        );
+        if (requestVersion !== executionRequestVersionRef.current) return;
+        const page = mergeSimulationPreviewPage(data, {
+          previousItems: executions,
+          expectedSnapshotTotal: executionsTotal,
+          expectedSnapshotAt: executionsSnapshotAt,
+        });
+        setExecutions(page.items);
+        setExecutionsCursor(page.nextCursor);
+      } catch (requestError) {
+        if (requestVersion !== executionRequestVersionRef.current) return;
+        setExecutionsError({
+          ...simulationPreviewRequestError(requestError),
+          duringMore: true,
+        });
+      } finally {
+        if (requestVersion === executionRequestVersionRef.current) {
+          setLoadingMoreExecutions(false);
+        }
+      }
+    }, [
+      selectedRunTestId,
+      executionsCursor,
+      loadingMoreExecutions,
+      executions,
+      executionsTotal,
+      executionsSnapshotAt,
+    ]);
+
+    // 3. Fetch the first immutable call page for the selected execution.
     useEffect(() => {
-      if (!selectedExecutionId) {
+      setLoadingMoreCalls(false);
+      if (!selectedExecutionId || !selectedRunTestId) {
         setCalls([]);
         setTotalCalls(0);
+        setCallsCursor(null);
+        setCallsSnapshotAt(null);
+        setCallsError(null);
         setCurrentCallIndex(0);
         setCallDetail(null);
         setLastFetchedCallsKey(null);
+        callsSourceRef.current = null;
         return undefined;
       }
-      // Flip loading synchronously so the spinner shows as soon as the
-      // user picks a run. Empty-state visibility comes from the
-      // render-time `isPendingCallsFetch` comparison.
+      const callsSourceKey = `${selectedRunTestId}:${selectedExecutionId}`;
+      const isNewSource = callsSourceRef.current !== callsSourceKey;
+      callsSourceRef.current = callsSourceKey;
+      if (isNewSource) {
+        setCalls([]);
+        setTotalCalls(0);
+        setCallsCursor(null);
+        setCallsSnapshotAt(null);
+        setCurrentCallIndex(0);
+        setCallDetail(null);
+      }
       setLoadingCalls(true);
-      let cancelled = false;
+      setCallsError(null);
+      const requestVersion = ++callsRequestVersionRef.current;
+
       const fetchCalls = async () => {
         try {
           const { data } = await axios.get(
-            endpoints.testExecutions.list(selectedExecutionId),
-            { params: { page: 1, limit: 50 } },
+            endpoints.testExecutions.previewCalls(selectedExecutionId),
+            {
+              params: {
+                page_size: SIMULATION_PREVIEW_PAGE_SIZE,
+                run_test_id: selectedRunTestId,
+              },
+              timeout: SIMULATION_PREVIEW_HTTP_TIMEOUT_MS,
+            },
           );
-          if (cancelled) return;
-          const items = data?.results || [];
-          const total = data?.count || items.length;
-          setCalls(items);
-          setTotalCalls(total);
+          if (requestVersion !== callsRequestVersionRef.current) return;
+          const page = mergeSimulationPreviewPage(data);
+          detailCacheRef.current.clear();
+          setCallDetail(null);
+          setCallDetailError(null);
+          setCalls(page.items);
+          setTotalCalls(page.snapshotTotal);
+          setCallsCursor(page.nextCursor);
+          setCallsSnapshotAt(page.snapshotAt);
           setCurrentCallIndex(0);
-        } catch {
-          if (cancelled) return;
-          setCalls([]);
-          setTotalCalls(0);
+        } catch (requestError) {
+          if (requestVersion !== callsRequestVersionRef.current) return;
+          setCallsError({
+            ...simulationPreviewRequestError(requestError),
+            duringMore: false,
+          });
         } finally {
-          if (!cancelled) {
+          if (requestVersion === callsRequestVersionRef.current) {
             setLoadingCalls(false);
-            setLastFetchedCallsKey(selectedExecutionId);
+            setLastFetchedCallsKey(callsSourceKey);
           }
         }
       };
       fetchCalls();
       return () => {
-        cancelled = true;
+        if (requestVersion === callsRequestVersionRef.current) {
+          callsRequestVersionRef.current += 1;
+        }
       };
-    }, [selectedExecutionId]);
+    }, [selectedExecutionId, selectedRunTestId, callsReloadToken]);
+
+    const loadMoreCalls = useCallback(async () => {
+      if (
+        !selectedExecutionId ||
+        !selectedRunTestId ||
+        !callsCursor ||
+        loadingMoreCalls
+      )
+        return;
+      const requestVersion = callsRequestVersionRef.current;
+      setLoadingMoreCalls(true);
+      setCallsError(null);
+      try {
+        const { data } = await axios.get(
+          endpoints.testExecutions.previewCalls(selectedExecutionId),
+          {
+            params: {
+              page_size: SIMULATION_PREVIEW_PAGE_SIZE,
+              run_test_id: selectedRunTestId,
+              cursor: callsCursor,
+            },
+            timeout: SIMULATION_PREVIEW_HTTP_TIMEOUT_MS,
+          },
+        );
+        if (requestVersion !== callsRequestVersionRef.current) return;
+        const page = mergeSimulationPreviewPage(data, {
+          previousItems: calls,
+          expectedSnapshotTotal: totalCalls,
+          expectedSnapshotAt: callsSnapshotAt,
+        });
+        setCalls(page.items);
+        setCallsCursor(page.nextCursor);
+      } catch (requestError) {
+        if (requestVersion !== callsRequestVersionRef.current) return;
+        setCallsError({
+          ...simulationPreviewRequestError(requestError),
+          duringMore: true,
+        });
+      } finally {
+        if (requestVersion === callsRequestVersionRef.current) {
+          setLoadingMoreCalls(false);
+        }
+      }
+    }, [
+      selectedExecutionId,
+      selectedRunTestId,
+      callsCursor,
+      loadingMoreCalls,
+      calls,
+      totalCalls,
+      callsSnapshotAt,
+    ]);
 
     // Current call
-    const currentCall = calls[currentCallIndex] || null;
+    // Effects clear stale calls after paint. Bind the visible/actionable call
+    // synchronously to both selected parents so an execution ID retained
+    // during a run-test switch can never feed the detail/eval action.
+    const currentCall =
+      lastFetchedCallsKey === selectedCallsSourceKey
+        ? calls[currentCallIndex] || null
+        : null;
 
     // 4. Fetch call detail, resolve all IDs, flatten into one table
     useEffect(() => {
       if (!currentCall) {
         setCallDetail(null);
+        setCallDetailError(null);
         return undefined;
       }
 
@@ -440,6 +706,7 @@ const SimulationTestMode = React.forwardRef(
       const cached = cacheKey && detailCacheRef.current.get(cacheKey);
       if (cached) {
         setCallDetail(cached.detail);
+        setCallDetailError(null);
         setLoadingDetail(false);
         return undefined;
       }
@@ -447,12 +714,15 @@ const SimulationTestMode = React.forwardRef(
       let cancelled = false;
       const fetchDetail = async () => {
         setLoadingDetail(true);
+        setCallDetail(null);
+        setCallDetailError(null);
         try {
           const callId = currentCall.id;
           let callData = currentCall;
           if (callId) {
             const { data } = await axios.get(
               endpoints.runTests.callExecutionDetail(callId),
+              { timeout: SIMULATION_PREVIEW_HTTP_TIMEOUT_MS },
             );
             if (cancelled) return;
             callData = data || currentCall;
@@ -594,8 +864,7 @@ const SimulationTestMode = React.forwardRef(
           }
 
           // simulation_call_type (modality) wins over call_type (Inbound/Outbound).
-          const callType =
-            callData.simulation_call_type || callData.call_type;
+          const callType = callData.simulation_call_type || callData.call_type;
           const isTextCall =
             typeof callType === "string" &&
             ["text", "chat", "prompt"].includes(callType.toLowerCase());
@@ -749,9 +1018,10 @@ const SimulationTestMode = React.forwardRef(
             detailCacheRef.current.set(cacheKey, { detail: flat });
           }
           setCallDetail(flat);
-        } catch {
+        } catch (requestError) {
           if (cancelled) return;
-          setCallDetail(currentCall);
+          setCallDetail(null);
+          setCallDetailError(simulationPreviewRequestError(requestError));
         } finally {
           if (!cancelled) setLoadingDetail(false);
         }
@@ -760,7 +1030,7 @@ const SimulationTestMode = React.forwardRef(
       return () => {
         cancelled = true;
       };
-    }, [currentCall, runTestContext]);
+    }, [currentCall, runTestContext, callDetailReloadToken]);
 
     // Field names for variable mapping. Expand nested object keys into
     // dot-notation paths; drop non-leaf intermediates so groups aren't picked.
@@ -890,6 +1160,22 @@ const SimulationTestMode = React.forwardRef(
         onTestResult?.(false, "No template ID — save the eval first");
         return;
       }
+      if (
+        executionsError ||
+        callsError ||
+        callDetailError ||
+        loadingExecutions ||
+        loadingCalls ||
+        loadingDetail ||
+        !currentCall ||
+        !callDetail
+      ) {
+        onTestResult?.(
+          false,
+          "Simulation preview data is not ready. Finish or retry the exact read first.",
+        );
+        return;
+      }
       setIsRunning(true);
       setResult(null);
       setError(null);
@@ -946,15 +1232,18 @@ const SimulationTestMode = React.forwardRef(
               }
           : await axios.post(endpoints.develop.eval.evalPlayground, {
               template_id: tid,
-              model,
+              ...(model ? { model } : {}),
               error_localizer: errorLocalizerEnabled,
               config: {
+                ...(runConfig ? { run_config: runConfig } : {}),
                 mapping: evalMapping,
                 ...(Object.keys(codeParams || {}).length > 0
                   ? { params: codeParams }
                   : {}),
               },
-              ...(_callId ? { call_id: _callId } : {}),
+              ...(_callId
+                ? { call_id: _callId, run_test_id: selectedRunTestId }
+                : {}),
             });
         if (data?.status) {
           const nextResult = isComposite
@@ -974,16 +1263,15 @@ const SimulationTestMode = React.forwardRef(
             startErrorLocalizerPoll(data.result.log_id);
           }
         } else {
-          const errMsg = data?.result || "Evaluation failed";
+          const errMsg = "Evaluation failed. Please retry.";
           setError(errMsg);
           onTestResult?.(false, errMsg);
         }
       } catch (err) {
-        const errMsg =
-          err?.result ||
-          err?.detail ||
-          err?.message ||
-          "Failed to run evaluation";
+        const errMsg = getSafeActionErrorMessage(
+          err,
+          "Failed to run evaluation. Please retry.",
+        );
         setError(errMsg);
         onTestResult?.(false, errMsg);
       } finally {
@@ -1001,9 +1289,17 @@ const SimulationTestMode = React.forwardRef(
       compositeAdhocConfig,
       startErrorLocalizerPoll,
       codeParams,
+      runConfig,
       model,
       executeComposite,
       executeCompositeAdhoc,
+      executionsError,
+      callsError,
+      callDetailError,
+      loadingExecutions,
+      loadingCalls,
+      loadingDetail,
+      selectedRunTestId,
     ]);
 
     useImperativeHandle(
@@ -1037,13 +1333,21 @@ const SimulationTestMode = React.forwardRef(
       !!selectedExecutionId &&
       totalCalls === 0 &&
       !loadingCalls &&
-      !isPendingCallsFetch;
+      !isPendingCallsFetch &&
+      !callsError;
     const hasNoExecutions =
-      !!selectedRunTestId && executionsFetched && executions.length === 0;
+      !!selectedRunTestId &&
+      executionsFetched &&
+      executionsTotal === 0 &&
+      !executionsError;
     const isMappingPending =
       !isConfirmedEmpty &&
       !hasNoExecutions &&
+      !executionsError &&
+      !callsError &&
+      !callDetailError &&
       (loadingRunTests ||
+        loadingExecutions ||
         loadingCalls ||
         isPendingCallsFetch ||
         loadingDetail ||
@@ -1053,11 +1357,19 @@ const SimulationTestMode = React.forwardRef(
             !!selectedExecutionId)));
 
     return (
-      <Box sx={{ display: "flex", flexDirection: "column", gap: 1.5 }}>
+      <Box
+        sx={{
+          display: "flex",
+          flexDirection: "column",
+          gap: 1.5,
+          height: "100%",
+        }}
+      >
         {/* Simulation (Run Test) selector */}
         <Box>
           <Typography variant="body2" fontWeight={600} sx={{ mb: 0.5 }}>
-            Simulation<span style={{ color: "#d32f2f" }}>*</span>
+            Simulation
+            <RequiredMark />
           </Typography>
           <Autocomplete
             size="small"
@@ -1066,15 +1378,25 @@ const SimulationTestMode = React.forwardRef(
             value={runTests.find((rt) => rt.id === selectedRunTestId) || null}
             onChange={(_, val) => {
               setSelectedRunTestId(val?.id || "");
+              setLoadingMoreExecutions(false);
+              setLoadingMoreCalls(false);
               setMapping({});
               setRunTestContext(null);
               setExecutions([]);
+              setExecutionsTotal(0);
+              setExecutionsCursor(null);
+              setExecutionsSnapshotAt(null);
+              setExecutionsError(null);
               setExecutionsFetched(false);
               setSelectedExecutionId("");
               setCalls([]);
               setTotalCalls(0);
+              setCallsCursor(null);
+              setCallsSnapshotAt(null);
+              setCallsError(null);
               setCurrentCallIndex(0);
               setCallDetail(null);
+              setCallDetailError(null);
               setLastFetchedCallsKey(null);
               detailCacheRef.current.clear();
             }}
@@ -1087,7 +1409,7 @@ const SimulationTestMode = React.forwardRef(
                 placeholder="Search simulations..."
                 InputProps={{
                   ...params.InputProps,
-                  sx: { ...params.InputProps.sx, fontSize: "13px" },
+                  sx: { ...params.InputProps.sx, fontSize: "12px" },
                   endAdornment: loadingRunTests ? (
                     <InputAdornment position="end">
                       <CircularProgress size={14} />
@@ -1109,7 +1431,7 @@ const SimulationTestMode = React.forwardRef(
                   {...rest}
                   sx={{
                     ...rest.sx,
-                    fontSize: "13px",
+                    fontSize: "12px",
                     display: "flex",
                     gap: 1,
                     alignItems: "center",
@@ -1118,16 +1440,16 @@ const SimulationTestMode = React.forwardRef(
                   <Iconify
                     icon={
                       type === "voice"
-                        ? "mdi:phone-outline"
+                        ? "solar:phone-linear"
                         : type === "chat"
-                          ? "mdi:chat-outline"
-                          : "mdi:play-circle-outline"
+                          ? "solar:chat-round-line-linear"
+                          : "solar:play-circle-linear"
                     }
                     width={16}
                     sx={{
                       color:
                         type === "voice"
-                          ? "warning.main"
+                          ? "status.warning.fg"
                           : type === "chat"
                             ? "info.main"
                             : "primary.main",
@@ -1137,7 +1459,7 @@ const SimulationTestMode = React.forwardRef(
                   <Box sx={{ minWidth: 0 }}>
                     <Typography
                       variant="body2"
-                      sx={{ fontSize: "13px" }}
+                      sx={{ fontSize: "12px" }}
                       noWrap
                     >
                       {option.name || option.id}
@@ -1145,7 +1467,7 @@ const SimulationTestMode = React.forwardRef(
                     <Typography
                       variant="caption"
                       color="text.disabled"
-                      sx={{ fontSize: "11px" }}
+                      sx={{ fontSize: "12px" }}
                       noWrap
                     >
                       {[
@@ -1164,8 +1486,31 @@ const SimulationTestMode = React.forwardRef(
               style: { maxHeight: 300 },
               onScroll: handleRunTestsListboxScroll,
             }}
-            noOptionsText={loadingRunTests ? "Loading..." : "No simulations"}
+            noOptionsText={
+              loadingRunTests
+                ? "Loading..."
+                : runTestsError
+                  ? "Simulations unavailable"
+                  : "No simulations"
+            }
           />
+          {runTestsError && (
+            <Box
+              role="alert"
+              sx={{ mt: 0.75, display: "flex", alignItems: "center", gap: 1 }}
+            >
+              <Typography variant="caption" color="status.danger.fg">
+                {runTestsError.message}
+              </Typography>
+              <Button
+                size="small"
+                onClick={() => fetchRunTestsPage(runTestsError.page)}
+                disabled={loadingRunTests || loadingMoreRunTests}
+              >
+                Retry simulations
+              </Button>
+            </Box>
+          )}
         </Box>
 
         {/* Execution selector (if multiple runs exist) */}
@@ -1180,16 +1525,21 @@ const SimulationTestMode = React.forwardRef(
               value={selectedExecutionId}
               onChange={(e) => {
                 setSelectedExecutionId(e.target.value);
+                setLoadingMoreCalls(false);
                 setCalls([]);
                 setTotalCalls(0);
                 setCurrentCallIndex(0);
                 setCallDetail(null);
               }}
               disabled={!!initialExecutionId}
-              sx={{ fontSize: "13px" }}
+              sx={{ fontSize: "12px" }}
             >
+              {selectedExecutionId &&
+                !executions.some((ex) => ex.id === selectedExecutionId) && (
+                  <MenuItem value={selectedExecutionId}>Selected run</MenuItem>
+                )}
               {executions.map((ex, i) => (
-                <MenuItem key={ex.id} value={ex.id} sx={{ fontSize: "13px" }}>
+                <MenuItem key={ex.id} value={ex.id}>
                   Run {i + 1} — {ex.status || "completed"}{" "}
                   {ex.created_at
                     ? `(${new Date(ex.created_at).toLocaleDateString()})`
@@ -1197,6 +1547,47 @@ const SimulationTestMode = React.forwardRef(
                 </MenuItem>
               ))}
             </Select>
+          </Box>
+        )}
+
+        {selectedRunTestId && executions.length > 0 && (
+          <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+            <Typography variant="caption" color="text.secondary">
+              {executions.length} of {executionsTotal} execution runs loaded
+            </Typography>
+            {executionsCursor && !executionsError && (
+              <Button
+                size="small"
+                onClick={loadMoreExecutions}
+                disabled={loadingMoreExecutions}
+              >
+                {loadingMoreExecutions ? "Loading…" : "Load more runs"}
+              </Button>
+            )}
+          </Box>
+        )}
+
+        {executionsError && (
+          <Box
+            role="alert"
+            sx={{ display: "flex", alignItems: "center", gap: 1 }}
+          >
+            <Typography variant="caption" color="status.danger.fg">
+              {executionsError.message}
+            </Typography>
+            {!executionsError.terminal && (
+              <Button
+                size="small"
+                color="error"
+                onClick={
+                  executionsError.duringMore && !executionsError.restartRequired
+                    ? loadMoreExecutions
+                    : () => setExecutionReloadToken((value) => value + 1)
+                }
+              >
+                {executionsError.restartRequired ? "Restart list" : "Retry"}
+              </Button>
+            )}
           </Box>
         )}
 
@@ -1215,7 +1606,7 @@ const SimulationTestMode = React.forwardRef(
             }}
           >
             <Iconify
-              icon="mdi:table-off"
+              icon="solar:table-linear"
               width={28}
               sx={{ color: "text.disabled" }}
             />
@@ -1232,6 +1623,7 @@ const SimulationTestMode = React.forwardRef(
         {selectedExecutionId &&
           !loadingCalls &&
           !isPendingCallsFetch &&
+          !callsError &&
           totalCalls === 0 && (
             <Box
               sx={{
@@ -1246,7 +1638,7 @@ const SimulationTestMode = React.forwardRef(
               }}
             >
               <Iconify
-                icon="mdi:table-off"
+                icon="solar:table-linear"
                 width={28}
                 sx={{ color: "text.disabled" }}
               />
@@ -1270,7 +1662,8 @@ const SimulationTestMode = React.forwardRef(
           !isPendingCallsFetch && (
             <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
               <Typography variant="caption" color="text.secondary">
-                Call {currentCallIndex + 1} of {totalCalls}
+                Call {currentCallIndex + 1} · {calls.length} of {totalCalls}{" "}
+                loaded
               </Typography>
               <IconButton
                 size="small"
@@ -1281,25 +1674,74 @@ const SimulationTestMode = React.forwardRef(
                   setError(null);
                   onClearResult?.();
                 }}
-                sx={{ width: 24, height: 24 }}
               >
-                <Iconify icon="mdi:chevron-left" width={16} />
+                <Iconify icon="solar:alt-arrow-left-linear" width={16} />
               </IconButton>
               <IconButton
                 size="small"
-                disabled={currentCallIndex >= totalCalls - 1}
+                disabled={currentCallIndex >= calls.length - 1}
                 onClick={() => {
-                  setCurrentCallIndex((i) => Math.min(totalCalls - 1, i + 1));
+                  setCurrentCallIndex((i) => Math.min(calls.length - 1, i + 1));
                   setResult(null);
                   setError(null);
                   onClearResult?.();
                 }}
-                sx={{ width: 24, height: 24 }}
               >
-                <Iconify icon="mdi:chevron-right" width={16} />
+                <Iconify icon="solar:alt-arrow-right-linear" width={16} />
               </IconButton>
+              {callsCursor && !callsError && (
+                <Button
+                  size="small"
+                  onClick={loadMoreCalls}
+                  disabled={loadingMoreCalls}
+                >
+                  {loadingMoreCalls ? "Loading…" : "Load more calls"}
+                </Button>
+              )}
             </Box>
           )}
+
+        {callsError && (
+          <Box
+            role="alert"
+            sx={{ display: "flex", alignItems: "center", gap: 1 }}
+          >
+            <Typography variant="caption" color="status.danger.fg">
+              {callsError.message}
+            </Typography>
+            {!callsError.terminal && (
+              <Button
+                size="small"
+                color="error"
+                onClick={
+                  callsError.duringMore && !callsError.restartRequired
+                    ? loadMoreCalls
+                    : () => setCallsReloadToken((value) => value + 1)
+                }
+              >
+                {callsError.restartRequired ? "Restart list" : "Retry"}
+              </Button>
+            )}
+          </Box>
+        )}
+
+        {callDetailError && currentCall && (
+          <Box
+            role="alert"
+            sx={{ display: "flex", alignItems: "center", gap: 1 }}
+          >
+            <Typography variant="caption" color="status.danger.fg">
+              {callDetailError.message}
+            </Typography>
+            <Button
+              size="small"
+              color="error"
+              onClick={() => setCallDetailReloadToken((value) => value + 1)}
+            >
+              Retry call details
+            </Button>
+          </Box>
+        )}
 
         {/* Skeleton hides once callDetail lands so the real table doesn't
             double-render during peripheral-fetch gaps (isPendingCallsFetch
@@ -1331,7 +1773,7 @@ const SimulationTestMode = React.forwardRef(
                   startAdornment: (
                     <InputAdornment position="start">
                       <Iconify
-                        icon="mdi:magnify"
+                        icon="solar:magnifier-linear"
                         width={14}
                         sx={{ color: "text.disabled" }}
                       />
@@ -1346,10 +1788,7 @@ const SimulationTestMode = React.forwardRef(
                 display: "flex",
                 px: 1.5,
                 py: 0.5,
-                backgroundColor: (theme) =>
-                  theme.palette.mode === "dark"
-                    ? "rgba(255,255,255,0.03)"
-                    : "#fafafa",
+                backgroundColor: "background.neutral",
                 borderBottom: "1px solid",
                 borderColor: "divider",
               }}
@@ -1430,7 +1869,7 @@ const SimulationTestMode = React.forwardRef(
                       startAdornment: (
                         <InputAdornment position="start">
                           <Iconify
-                            icon="mdi:magnify"
+                            icon="solar:magnifier-linear"
                             width={14}
                             sx={{ color: "text.disabled" }}
                           />
@@ -1446,10 +1885,7 @@ const SimulationTestMode = React.forwardRef(
                     display: "flex",
                     px: 1.5,
                     py: 0.5,
-                    backgroundColor: (theme) =>
-                      theme.palette.mode === "dark"
-                        ? "rgba(255,255,255,0.03)"
-                        : "#fafafa",
+                    backgroundColor: "background.neutral",
                     borderBottom: "1px solid",
                     borderColor: "divider",
                   }}
@@ -1534,6 +1970,7 @@ const SimulationTestMode = React.forwardRef(
                             borderColor: "divider",
                             "&:last-child": { borderBottom: "none" },
                             "&:hover": { backgroundColor: "action.hover" },
+                            ...rowHoverSx,
                           }}
                         >
                           <Tooltip
@@ -1599,7 +2036,7 @@ const SimulationTestMode = React.forwardRef(
                                       whiteSpace: "pre-wrap",
                                       wordBreak: "break-all",
                                       fontFamily: "monospace",
-                                      fontSize: 11,
+                                      fontSize: 12,
                                       maxWidth: 520,
                                     }}
                                   >
@@ -1650,6 +2087,7 @@ const SimulationTestMode = React.forwardRef(
                               </Tooltip>
                             )}
                           </Box>
+                          {renderRowMapAction(key)}
                         </Box>
                       );
                     })}
@@ -1657,20 +2095,6 @@ const SimulationTestMode = React.forwardRef(
               </Box>
             );
           })()}
-
-        {/* Empty state */}
-        {selectedExecutionId &&
-          !loadingCalls &&
-          !isPendingCallsFetch &&
-          totalCalls === 0 && (
-            <Typography
-              variant="body2"
-              color="text.disabled"
-              sx={{ textAlign: "center", py: 3 }}
-            >
-              No calls found for this simulation run
-            </Typography>
-          )}
 
         {/* Variable mapping */}
         {variables.length > 0 && (
@@ -1698,9 +2122,7 @@ const SimulationTestMode = React.forwardRef(
                     size="small"
                     disabled={isMappingPending}
                     options={
-                      showCurrent
-                        ? [currentValue, ...fieldNames]
-                        : fieldNames
+                      showCurrent ? [currentValue, ...fieldNames] : fieldNames
                     }
                     value={mapping[variable] || null}
                     onChange={(_, val) =>
@@ -1791,7 +2213,7 @@ const SimulationTestMode = React.forwardRef(
                       }}
                     >
                       <Iconify
-                        icon="mdi:code-braces"
+                        icon="solar:code-linear"
                         width={14}
                         sx={{ color: "text.secondary" }}
                       />
@@ -1804,7 +2226,7 @@ const SimulationTestMode = React.forwardRef(
                       </Typography>
                     </Box>
                     <Iconify
-                      icon="mdi:arrow-right"
+                      icon="solar:arrow-right-linear"
                       width={14}
                       sx={{ color: "text.disabled" }}
                     />
@@ -1828,6 +2250,9 @@ const SimulationTestMode = React.forwardRef(
             </Box>
           </Box>
         )}
+
+        {/* Map-from-table menu — shared across mapping surfaces */}
+        {mapMenu}
 
         {/* Result */}
         {result && (
@@ -1861,11 +2286,11 @@ const SimulationTestMode = React.forwardRef(
               p: 1.5,
               borderRadius: "6px",
               border: "1px solid",
-              borderColor: "error.main",
-              backgroundColor: "error.lighter",
+              borderColor: "status.danger.border",
+              backgroundColor: "status.danger.bg",
             }}
           >
-            <Typography variant="caption" color="error.main">
+            <Typography variant="caption" color="status.danger.fg">
               {typeof error === "string" ? error : JSON.stringify(error)}
             </Typography>
           </Box>
@@ -1881,6 +2306,7 @@ SimulationTestMode.propTypes = {
   templateId: PropTypes.string,
   variables: PropTypes.array,
   codeParams: PropTypes.object,
+  runConfig: PropTypes.object,
   onTestResult: PropTypes.func,
   onColumnsLoaded: PropTypes.func,
   onClearResult: PropTypes.func,

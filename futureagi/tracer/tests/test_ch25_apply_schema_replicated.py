@@ -12,41 +12,56 @@ would create non-replicated tables in prod — silent split-brain across
 replicas. These tests cover the engines and statement shapes we care
 about; any new engine the schema starts using needs a test added here.
 """
+
 from __future__ import annotations
 
 import pytest
 
 from tracer.services.clickhouse.v2.apply_schema_rewriter import (
     ReplicatedRewriteError,
-    extract_table_name as _extract_table_name,
     rewrite_for_replicated,
     split_statements,
+)
+from tracer.services.clickhouse.v2.apply_schema_rewriter import (
+    extract_table_name as _extract_table_name,
 )
 
 
 def _rewrite(sql: str, table: str = "spans") -> str:
     """Convenience wrapper with prod-default cluster + zk_prefix."""
     return rewrite_for_replicated(
-        sql, table_name=table,
-        cluster="default", zk_prefix="/clickhouse/tables",
+        sql,
+        table_name=table,
+        cluster="default",
+        zk_prefix="/clickhouse/tables",
     )
 
 
 class TestExtractTableName:
-    @pytest.mark.parametrize("stmt, expected", [
-        ("CREATE TABLE IF NOT EXISTS spans (a UInt8) ENGINE = MergeTree", "spans"),
-        ("CREATE TABLE spans_v2_dead_letter (...) ENGINE = MergeTree", "spans_v2_dead_letter"),
-        ("CREATE MATERIALIZED VIEW IF NOT EXISTS spans_per_session_mv TO spans_per_session AS ...",
-         "spans_per_session_mv"),
-        ("CREATE MATERIALIZED VIEW eval_per_config_mv TO eval_per_config AS ...",
-         "eval_per_config_mv"),
-        ("ALTER TABLE spans ADD COLUMN foo String", "spans"),
-        ("ALTER TABLE spans_per_session MODIFY TTL ...", "spans_per_session"),
-        # Negative — statements we deliberately don't touch:
-        ("INSERT INTO spans VALUES (1)", None),
-        ("SELECT * FROM spans", None),
-        ("DROP TABLE spans", None),  # we don't rewrite DROPs — safety
-    ])
+    @pytest.mark.parametrize(
+        "stmt, expected",
+        [
+            ("CREATE TABLE IF NOT EXISTS spans (a UInt8) ENGINE = MergeTree", "spans"),
+            (
+                "CREATE TABLE spans_v2_dead_letter (...) ENGINE = MergeTree",
+                "spans_v2_dead_letter",
+            ),
+            (
+                "CREATE MATERIALIZED VIEW IF NOT EXISTS spans_per_session_mv TO spans_per_session AS ...",
+                "spans_per_session_mv",
+            ),
+            (
+                "CREATE MATERIALIZED VIEW eval_per_config_mv TO eval_per_config AS ...",
+                "eval_per_config_mv",
+            ),
+            ("ALTER TABLE spans ADD COLUMN foo String", "spans"),
+            ("ALTER TABLE spans_per_session MODIFY TTL ...", "spans_per_session"),
+            # Negative — statements we deliberately don't touch:
+            ("INSERT INTO spans VALUES (1)", None),
+            ("SELECT * FROM spans", None),
+            ("DROP TABLE spans", None),  # we don't rewrite DROPs — safety
+        ],
+    )
     def test_extracts_or_skips(self, stmt, expected):
         assert _extract_table_name(stmt) == expected
 
@@ -113,8 +128,10 @@ class TestOnClusterAttachment:
             "TO spans_per_session AS SELECT 1",
             table="spans_per_session_mv",
         )
-        assert ("CREATE MATERIALIZED VIEW IF NOT EXISTS spans_per_session_mv "
-                "ON CLUSTER 'default'") in out
+        assert (
+            "CREATE MATERIALIZED VIEW IF NOT EXISTS spans_per_session_mv "
+            "ON CLUSTER 'default'"
+        ) in out
 
     def test_alter_table_gets_on_cluster(self):
         out = _rewrite("ALTER TABLE spans ADD PROJECTION p (...)")
@@ -155,6 +172,7 @@ class TestAllShippedSchemas:
     @pytest.fixture
     def schema_files(self):
         import pathlib
+
         here = pathlib.Path(__file__).resolve().parents[1]
         schema_dir = here / "services" / "clickhouse" / "v2" / "schema"
         return sorted(schema_dir.glob("*.sql"))
@@ -235,8 +253,11 @@ class TestFailClosed:
                 "CREATE TABLE foo (a UInt8) ENGINE = CollapsingMergeTree(sign)",
                 table="foo",
             )
-        assert "CollapsingMergeTree" in str(exc.value) or "unrecognised" in str(exc.value).lower() \
+        assert (
+            "CollapsingMergeTree" in str(exc.value)
+            or "unrecognised" in str(exc.value).lower()
             or "recognised" in str(exc.value).lower()
+        )
 
     def test_create_with_no_engine_at_all_raises(self):
         # Defensive: a CREATE without ENGINE is invalid CH SQL anyway, but
@@ -255,15 +276,23 @@ class TestSchemaQualifiedNames:
     path, not the database qualifier.
     """
 
-    @pytest.mark.parametrize("stmt, expected", [
-        ("CREATE TABLE analytics.spans (a UInt8) ENGINE = MergeTree", "spans"),
-        ("CREATE TABLE `analytics`.`spans` (a UInt8) ENGINE = MergeTree", "spans"),
-        ("CREATE MATERIALIZED VIEW analytics.spans_mv TO analytics.spans AS SELECT 1",
-         "spans_mv"),
-        ("ALTER TABLE analytics.spans ADD COLUMN b UInt8", "spans"),
-        ("CREATE TABLE IF NOT EXISTS `default`.`spans` (a UInt8) ENGINE = MergeTree", "spans"),
-        ("CREATE OR REPLACE TABLE foo (a UInt8) ENGINE = MergeTree", "foo"),
-    ])
+    @pytest.mark.parametrize(
+        "stmt, expected",
+        [
+            ("CREATE TABLE analytics.spans (a UInt8) ENGINE = MergeTree", "spans"),
+            ("CREATE TABLE `analytics`.`spans` (a UInt8) ENGINE = MergeTree", "spans"),
+            (
+                "CREATE MATERIALIZED VIEW analytics.spans_mv TO analytics.spans AS SELECT 1",
+                "spans_mv",
+            ),
+            ("ALTER TABLE analytics.spans ADD COLUMN b UInt8", "spans"),
+            (
+                "CREATE TABLE IF NOT EXISTS `default`.`spans` (a UInt8) ENGINE = MergeTree",
+                "spans",
+            ),
+            ("CREATE OR REPLACE TABLE foo (a UInt8) ENGINE = MergeTree", "foo"),
+        ],
+    )
     def test_extracts_table_segment(self, stmt, expected):
         assert _extract_table_name(stmt) == expected
 
@@ -284,20 +313,48 @@ class TestGoldenOutputForShippedFiles:
     must update this test, making the change visible in review.
     """
 
-    @pytest.mark.parametrize("table, expected_engine_substr", [
-        ("spans", "ReplicatedReplacingMergeTree('/clickhouse/tables/{shard}/spans', '{replica}', _version, is_deleted)"),
-        ("spans_v2_dead_letter", "ReplicatedMergeTree('/clickhouse/tables/{shard}/spans_v2_dead_letter', '{replica}')"),
-        ("schema_versions", "ReplicatedMergeTree('/clickhouse/tables/{shard}/schema_versions', '{replica}')"),
-        ("backfill_checkpoints", "ReplicatedReplacingMergeTree('/clickhouse/tables/{shard}/backfill_checkpoints', '{replica}', _version)"),
-        ("spans_per_session", "ReplicatedAggregatingMergeTree('/clickhouse/tables/{shard}/spans_per_session', '{replica}')"),
-        ("eval_per_config", "ReplicatedAggregatingMergeTree('/clickhouse/tables/{shard}/eval_per_config', '{replica}')"),
-        ("spans_hourly_rollup", "ReplicatedAggregatingMergeTree('/clickhouse/tables/{shard}/spans_hourly_rollup', '{replica}')"),
-        ("tracer_eval_logger_v2", "ReplicatedReplacingMergeTree('/clickhouse/tables/{shard}/tracer_eval_logger_v2', '{replica}', _version, is_deleted)"),
-    ])
+    @pytest.mark.parametrize(
+        "table, expected_engine_substr",
+        [
+            (
+                "spans",
+                "ReplicatedReplacingMergeTree('/clickhouse/tables/{shard}/spans', '{replica}', _version, is_deleted)",
+            ),
+            (
+                "spans_v2_dead_letter",
+                "ReplicatedMergeTree('/clickhouse/tables/{shard}/spans_v2_dead_letter', '{replica}')",
+            ),
+            (
+                "schema_versions",
+                "ReplicatedMergeTree('/clickhouse/tables/{shard}/schema_versions', '{replica}')",
+            ),
+            (
+                "backfill_checkpoints",
+                "ReplicatedReplacingMergeTree('/clickhouse/tables/{shard}/backfill_checkpoints', '{replica}', _version)",
+            ),
+            (
+                "spans_per_session",
+                "ReplicatedAggregatingMergeTree('/clickhouse/tables/{shard}/spans_per_session', '{replica}')",
+            ),
+            (
+                "eval_per_config",
+                "ReplicatedAggregatingMergeTree('/clickhouse/tables/{shard}/eval_per_config', '{replica}')",
+            ),
+            (
+                "spans_hourly_rollup",
+                "ReplicatedAggregatingMergeTree('/clickhouse/tables/{shard}/spans_hourly_rollup', '{replica}')",
+            ),
+            (
+                "tracer_eval_logger_v2",
+                "ReplicatedReplacingMergeTree('/clickhouse/tables/{shard}/tracer_eval_logger_v2', '{replica}', _version, is_deleted)",
+            ),
+        ],
+    )
     def test_engine_substr_matches(self, table, expected_engine_substr):
         # Find the file that declares this table and assert the rewrite
         # produces the expected engine line.
         import pathlib
+
         here = pathlib.Path(__file__).resolve().parents[1]
         schema_dir = here / "services" / "clickhouse" / "v2" / "schema"
         for f in sorted(schema_dir.glob("*.sql")):
@@ -313,3 +370,185 @@ class TestGoldenOutputForShippedFiles:
                 )
                 return
         pytest.fail(f"No CREATE TABLE found for {table} in any shipped schema file")
+
+
+class TestAttrValueBloomIndexFile:
+    """022_attr_value_bloom_indexes.sql — value blooms for SPAN_ATTRIBUTE
+    equality filters (the whale-tenant Code-159 timeout, 2026-07-24)."""
+
+    @pytest.fixture()
+    def statements(self):
+        import pathlib
+
+        here = pathlib.Path(__file__).resolve().parents[1]
+        f = (
+            here
+            / "services"
+            / "clickhouse"
+            / "v2"
+            / "schema"
+            / "022_attr_value_bloom_indexes.sql"
+        )
+        assert f.exists(), f"{f.name} missing from v2 schema dir"
+        return split_statements(f.read_text())
+
+    def test_adds_value_blooms_for_string_and_number_maps(self, statements):
+        adds = [s for s in statements if "ADD INDEX" in s]
+        assert len(adds) == 2
+        # string values are indexed LOWERCASED — text filters compare via
+        # lower(), so the index expression must match the companion
+        # predicate ClickHouseFilterBuilderV2._span_attr_inner emits
+        assert any(
+            "arrayMap(x -> lower(x), mapValues(attrs_string))" in s for s in adds
+        )
+        # number values are indexed raw — number filters never case-fold
+        assert any(
+            "mapValues(attrs_number)" in s and "arrayMap" not in s for s in adds
+        )
+        for s in adds:
+            assert "IF NOT EXISTS" in s
+            assert "TYPE bloom_filter(0.01)" in s
+            assert "GRANULARITY 1" in s
+
+    def test_bool_map_values_deliberately_not_indexed(self, statements):
+        # attrs_bool values are {0,1}: present in every granule, a values
+        # bloom could never skip anything.
+        assert not any("mapValues(attrs_bool)" in s for s in statements)
+
+    def test_no_materialize_in_boot_applier(self, statements):
+        # MATERIALIZE INDEX is an unbounded background mutation; run
+        # synchronously by the boot-time applier (120s HTTP timeout) it times
+        # out on a large spans table, the file never records in
+        # schema_versions, and it re-applies + re-errors on every boot
+        # (CORE-BACKEND-11KX). The file must contain only fast, idempotent
+        # metadata DDL; backfilling existing parts is a separate ops step.
+        assert not any("MATERIALIZE INDEX" in s for s in statements)
+
+    def test_every_statement_survives_replicated_rewrite(self, statements):
+        for stmt in statements:
+            assert _extract_table_name(stmt) == "spans"
+            out = _rewrite(stmt)
+            assert "ON CLUSTER 'default'" in out
+
+
+class TestSpansCreatedAtIndexFile:
+    """024_spans_created_at_index.sql — created_at minmax skip index on spans,
+    so the continuous eval-task reconcile's arrival floor (created_at >= cursor)
+    prunes granules instead of scanning the project's whole history."""
+
+    @pytest.fixture()
+    def statements(self):
+        import pathlib
+
+        here = pathlib.Path(__file__).resolve().parents[1]
+        f = (
+            here
+            / "services"
+            / "clickhouse"
+            / "v2"
+            / "schema"
+            / "024_spans_created_at_index.sql"
+        )
+        assert f.exists(), f"{f.name} missing from v2 schema dir"
+        return split_statements(f.read_text())
+
+    def test_adds_created_at_minmax_index(self, statements):
+        adds = [s for s in statements if "ADD INDEX" in s]
+        assert len(adds) == 1
+        stmt = adds[0]
+        # Mirrors the traces table's auto_minmax_index_created_at so arrival-time
+        # pruning is available on spans too.
+        assert "IF NOT EXISTS" in stmt
+        # Pin the indexed COLUMN (adjacent to the index name), not just the name —
+        # guard a wrong-column migration (e.g. indexing start_time) the name hides.
+        assert "auto_minmax_index_created_at created_at" in stmt
+        assert "TYPE minmax()" in stmt
+        assert "GRANULARITY 1" in stmt
+
+    def test_does_not_materialize_the_index(self, statements):
+        # MATERIALIZE is a full-table mutation (reads created_at per replica) and
+        # must never fire unattended from an applier run — it is a documented
+        # manual deploy step in the file header instead.
+        assert not any("MATERIALIZE INDEX" in s for s in statements)
+        # ...and the header must keep telling the deployer to run it.
+        import pathlib
+
+        here = pathlib.Path(__file__).resolve().parents[1]
+        raw = (
+            here
+            / "services"
+            / "clickhouse"
+            / "v2"
+            / "schema"
+            / "024_spans_created_at_index.sql"
+        ).read_text()
+        assert "MATERIALIZE INDEX auto_minmax_index_created_at" in raw
+        assert "DEPLOY STEP" in raw
+
+    def test_every_statement_survives_replicated_rewrite(self, statements):
+        for stmt in statements:
+            assert _extract_table_name(stmt) == "spans"
+            out = _rewrite(stmt)
+            assert "ON CLUSTER 'default'" in out
+
+
+class TestAttrValueNgramIndexFile:
+    """023_attr_value_ngram_index.sql — ngram bloom for substring (ILIKE)
+    search over attribute values (the filter-value picker's search path)."""
+
+    @pytest.fixture()
+    def statements(self):
+        import pathlib
+
+        here = pathlib.Path(__file__).resolve().parents[1]
+        f = (
+            here
+            / "services"
+            / "clickhouse"
+            / "v2"
+            / "schema"
+            / "023_attr_value_ngram_index.sql"
+        )
+        assert f.exists(), f"{f.name} missing from v2 schema dir"
+        return split_statements(f.read_text())
+
+    def test_adds_ngram_index_over_lowered_values(self, statements):
+        adds = [s for s in statements if "ADD INDEX" in s]
+        assert len(adds) == 1
+        stmt = adds[0]
+        # Must stay byte-identical to the companion predicate the view
+        # emits, or the index silently disengages.
+        assert (
+            "arrayStringConcat(arrayMap(x -> lower(x), mapValues(attrs_string)))"
+            in stmt
+        )
+        assert "IF NOT EXISTS" in stmt
+        # 32768 bytes sized for ~43k measured 4-grams/granule (1024 saturates).
+        assert "TYPE ngrambf_v1(4, 32768, 3, 0)" in stmt
+        assert "GRANULARITY 1" in stmt
+
+    def test_does_not_materialize_the_index(self, statements):
+        # MATERIALIZE is a full-table mutation (~70 GiB of attrs_string per
+        # replica on US) and must never fire unattended from an applier run —
+        # it is a documented manual deploy step in the file header instead.
+        assert not any("MATERIALIZE INDEX" in s for s in statements)
+        # ...and the header must keep telling the deployer to run it.
+        import pathlib
+
+        here = pathlib.Path(__file__).resolve().parents[1]
+        raw = (
+            here
+            / "services"
+            / "clickhouse"
+            / "v2"
+            / "schema"
+            / "023_attr_value_ngram_index.sql"
+        ).read_text()
+        assert "MATERIALIZE INDEX idx_attrs_str_ngram" in raw
+        assert "DEPLOY STEP" in raw
+
+    def test_every_statement_survives_replicated_rewrite(self, statements):
+        for stmt in statements:
+            assert _extract_table_name(stmt) == "spans"
+            out = _rewrite(stmt)
+            assert "ON CLUSTER 'default'" in out

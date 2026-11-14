@@ -10,6 +10,7 @@ import pytest
 from django.utils import timezone
 
 from tracer.models.custom_eval_config import CustomEvalConfig
+from tracer.models.eval_task import EvalTask, EvalTaskStatus, RunType
 from tracer.models.observation_span import (
     EvalEntryStatus,
     EvalLogger,
@@ -19,7 +20,11 @@ from tracer.models.observation_span import (
 from tracer.models.trace import Trace
 from tracer.models.trace_session import TraceSession
 from tracer.services.eval_tasks.run_entry import run_entry
-from tracer.tests._ch_seed import seed_ch_span, seed_ch_trace, seed_ch_trace_sessions
+from tracer.tests._ch_seed import (
+    seed_ch_span,
+    seed_ch_trace,
+    seed_ch_trace_sessions,
+)
 
 
 def _make_entry(**kwargs):
@@ -79,8 +84,9 @@ class TestRunEntryChInput:
             status=EvalEntryStatus.RUNNING,
         )
         _assert_completed(run_entry(entry), entry, task_id=str(eval_task.id))
-        # The span was read from CH and never written to PG.
-        assert ObservationSpan.objects.count() == 0
+        # The span was read from CH and never written to PG. Scope by id — the
+        # shared PG table may hold committed rows from other tests.
+        assert not ObservationSpan.objects.filter(id=span.id).exists()
 
     def test_voicecall_rides_span_path_from_ch(
         self, project, custom_eval_config, eval_task, stub_run_eval, stub_cost_log
@@ -120,11 +126,11 @@ class TestRunEntryChInput:
             status=EvalEntryStatus.RUNNING,
         )
         _assert_completed(run_entry(entry), entry, task_id=str(eval_task.id))
-        assert ObservationSpan.objects.count() == 0
-        assert Trace.objects.count() == 0  # trace came from CH, not PG
+        assert not ObservationSpan.objects.filter(id=root.id).exists()
+        assert not Trace.objects.filter(id=trace.id).exists()  # from CH, not PG
 
     def test_session_evaluates_from_ch_with_pg_empty(
-        self, observe_project, eval_template, eval_task, stub_run_eval, stub_cost_log
+        self, observe_project, eval_template, stub_run_eval, stub_cost_log
     ):
         session = TraceSession.objects.create(project=observe_project, name="sess")
         seed_ch_trace_sessions([session])
@@ -137,14 +143,24 @@ class TestRunEntryChInput:
             mapping={"input": "name"},
             filters={},
         )
+        task = EvalTask.objects.create(
+            project=observe_project,
+            name="Session Eval Task",
+            filters={},
+            sampling_rate=1.0,
+            run_type=RunType.CONTINUOUS,
+            status=EvalTaskStatus.PENDING,
+            spans_limit=100,
+        )
+        task.evals.add(config)
         entry = _make_entry(
             target_type=EvalTargetType.SESSION,
             trace_session=session,
             custom_eval_config=config,
-            eval_task_id=str(eval_task.id),
+            eval_task_id=str(task.id),
             status=EvalEntryStatus.RUNNING,
         )
-        _assert_completed(run_entry(entry), entry, task_id=str(eval_task.id))
+        _assert_completed(run_entry(entry), entry, task_id=str(task.id))
 
     def test_ch_miss_hard_fails_to_errored(
         self, project, custom_eval_config, eval_task, stub_run_eval, stub_cost_log

@@ -63,7 +63,11 @@ const NavItem = forwardRef(
 
         {caption && (
           <Tooltip title={caption} arrow>
-            <Iconify width={16} icon="eva:info-outline" className="caption" />
+            <Iconify
+              width={16}
+              icon="solar:info-circle-linear"
+              className="caption"
+            />
           </Tooltip>
         )}
 
@@ -79,8 +83,8 @@ const NavItem = forwardRef(
             className="arrow"
             icon={
               subItem
-                ? "eva:arrow-ios-forward-fill"
-                : "eva:arrow-ios-downward-fill"
+                ? "solar:alt-arrow-right-linear"
+                : "solar:alt-arrow-down-linear"
             }
           />
         )}

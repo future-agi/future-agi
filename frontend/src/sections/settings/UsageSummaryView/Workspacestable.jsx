@@ -1,5 +1,6 @@
 import { Box } from "@mui/material";
 import { AgGridReact } from "ag-grid-react";
+import "src/utils/ag-grid-setup";
 import PropTypes from "prop-types";
 import React, { useMemo, useCallback, useRef, useEffect } from "react";
 import { useAgThemeWith } from "src/hooks/use-ag-theme";
@@ -165,7 +166,7 @@ export default function WorkspaceUsageTable({
           params.node.rowPinned ? { component: TotalCellRenderer } : undefined,
       },
       {
-        headerName: "Agent compass",
+        headerName: "Error Feed",
         field: "agent_compass",
         flex: 1,
         valueGetter: (params) =>

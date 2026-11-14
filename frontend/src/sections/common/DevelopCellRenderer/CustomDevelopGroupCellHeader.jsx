@@ -5,44 +5,41 @@ import Iconify from "src/components/iconify";
 
 const CustomDevelopGroupCellHeader = (props) => {
   const { displayName, col } = props;
-  // #FFE2FE
+
   const renderIcon = () => {
     if (col.originType === "run_prompt") {
       return <Iconify icon="token:rune" sx={{ color: "info.main" }} />;
     } else if (col.originType === "evaluation") {
       return (
-        <Iconify
-          icon="material-symbols:check-circle-outline"
-          sx={{ color: "#22B3B7" }}
-        />
+        <Iconify icon="solar:check-circle-linear" sx={{ color: "status.success.fg" }} />
       );
     } else if (col.originType === "optimisation") {
       return (
         <Iconify
-          icon="icon-park-outline:smart-optimization"
+          icon="solar:magic-stick-3-linear"
           sx={{ color: "primary.main" }}
         />
       );
     } else if (col.dataType === "text") {
-      return <Iconify icon="material-symbols:notes" />;
+      return <Iconify icon="solar:notes-linear" />;
     } else if (col.dataType === "array") {
-      return <Iconify icon="material-symbols:data-array" />;
+      return <Iconify icon="solar:brackets-linear" />;
     } else if (col.dataType === "integer") {
-      return <Iconify icon="material-symbols:tag" />;
+      return <Iconify icon="solar:hashtag-linear" />;
     } else if (col.dataType === "float") {
       return <Iconify icon="tabler:decimal" />;
     } else if (col.dataType === "boolean") {
       return <Iconify icon="material-symbols:toggle-on-outline" />;
     } else if (col.dataType === "datetime") {
-      return <Iconify icon="tabler:calendar" />;
+      return <Iconify icon="solar:calendar-linear" />;
     } else if (col.dataType === "json") {
-      return <Iconify icon="material-symbols:data-object" />;
+      return <Iconify icon="solar:braces-linear" />;
     } else if (col.dataType === "image") {
-      return <Iconify icon="material-symbols:image-outline" />;
+      return <Iconify icon="solar:gallery-linear" />;
     } else if (col.dataType === "images") {
       return (
         <Iconify
-          icon="material-symbols:art-track-outline"
+          icon="solar:gallery-linear"
           sx={{ width: 20, height: 20, color: "text.secondary" }}
         />
       );
@@ -51,11 +48,11 @@ const CustomDevelopGroupCellHeader = (props) => {
 
   const getBackgroundColor = () => {
     if (col.originType === "run_prompt") {
-      return "info.lighter";
+      return "status.info.bg";
     } else if (col.originType === "evaluation") {
       return "var(--surface-highlight)";
     } else if (col.originType === "optimisation") {
-      return "primary.lighter";
+      return "status.discovery.bg";
     }
 
     return "background.default";
@@ -74,7 +71,7 @@ const CustomDevelopGroupCellHeader = (props) => {
     >
       <Box sx={{ display: "flex", alignItems: "center", gap: 0.5 }}>
         {renderIcon()}
-        <Typography fontWeight={700} fontSize="13px" color={"text.secondary"}>
+        <Typography fontWeight={600} fontSize="12px" color={"text.secondary"}>
           {displayName}
         </Typography>
       </Box>

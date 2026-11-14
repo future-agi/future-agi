@@ -26,6 +26,7 @@ from sdk.serializers.contracts import (
 from sdk.utils.api_errors import sdk_validation_error_response
 from simulate.models import CallExecution, TestExecution
 from simulate.models.run_test import RunTest
+from simulate.selectors.runs import user_executions
 from simulate.utils.eval_summary import (
     _build_template_statistics,
     _calculate_final_template_summaries,
@@ -163,7 +164,8 @@ class SimulationMetricsView(APIView):
             return self._gm.not_found(get_error_message("ANALYTICS_RUN_TEST_NOT_FOUND"))
 
         executions = (
-            TestExecution.objects.filter(run_test__in=run_tests)
+            user_executions()
+            .filter(run_test__in=run_tests)
             .select_related("run_test")
             .order_by("-created_at")
         )
@@ -402,7 +404,8 @@ class SimulationRunsView(APIView):
             return self._gm.not_found(get_error_message("ANALYTICS_RUN_TEST_NOT_FOUND"))
 
         executions = (
-            TestExecution.objects.filter(run_test__in=run_tests)
+            user_executions()
+            .filter(run_test__in=run_tests)
             .select_related("run_test")
             .order_by("-created_at")
         )
@@ -531,7 +534,8 @@ class SimulationAnalyticsView(APIView):
             return self._gm.not_found(get_error_message("ANALYTICS_RUN_TEST_NOT_FOUND"))
 
         latest_execution = (
-            TestExecution.objects.filter(run_test__in=run_tests, status="completed")
+            user_executions()
+            .filter(run_test__in=run_tests, status="completed")
             .select_related("run_test")
             .order_by("-completed_at")
             .first()

@@ -6,7 +6,7 @@ import {
 } from "src/utils/constant";
 import CustomCellRender from "src/sections/common/DevelopCellRenderer/CustomCellRender";
 import CustomDevelopGroupCellHeader from "src/sections/common/DevelopCellRenderer/CustomDevelopGroupCellHeader";
-import { interpolateColorBasedOnScore } from "src/utils/utils";
+import { statusColors } from "src/utils/runStatus";
 import {
   reorderMenuList,
   setMenuIcons,
@@ -522,7 +522,7 @@ const getMainMenuItems =
       // use the underlying eval / eval_reason column ids, so the old
       // `column.id` key no longer matched what was stored and the
       // "Hide Reasoning" state was lost.
-      const key = column?.sourceId || column?.id;
+      const key = column?.source_id || column?.id;
       extraMenuItems.push({
         name: showSummary.includes(key) ? "Hide Reasoning" : "Show Reasoning",
         action: () => {
@@ -687,77 +687,28 @@ export const onCellValueChangedWrapper = (queryClient, dataset) => (params) => {
   }
 };
 
-export const getStatusColor = (value, theme) => {
-  if (!value) {
-    return {
-      backgroundColor: interpolateColorBasedOnScore(0, 1),
-      color: theme.palette.red[500],
-      fontWeight: 400,
-    };
-  }
-
-  if (Array.isArray(value)) {
-    return {
-      backgroundColor: theme.palette.action.hover,
-      color: theme.palette.primary.main,
-      fontWeight: 400,
-    };
-  }
-
-  if (value === STATUS.PASSED) {
-    return {
-      backgroundColor: interpolateColorBasedOnScore(1, 1),
-      color: theme.palette.green[500],
-      fontWeight: 400,
-    };
-  }
-
-  // if (typeof value === "number") {
-  //   return {
-  //     backgroundColor: interpolateColorBasedOnScore(value, 1),
-  //     color: value >= 0.5 ? theme.palette.green[500] : theme.palette.red[500],
-  //     fontWeight: 400,
-  //   };
-  // }
-
+// Role of an eval result in the one status map (src/utils/runStatus):
+// pass/fail verdicts and score bands; choice labels stay neutral.
+export const evalResultRole = (value) => {
+  if (!value) return "danger";
+  if (Array.isArray(value)) return "neutral";
+  if (value === STATUS.PASSED) return "success";
   if (!isNaN(Number(value))) {
     const numericValue = Number(value) * 100;
-
-    let color, backgroundColor;
-
-    if (numericValue <= 49) {
-      color = "red.500";
-      backgroundColor = "red.o10";
-    } else if (numericValue <= 79) {
-      color = "orange.500";
-      backgroundColor = "orange.o10";
-    } else if (numericValue <= 100) {
-      color = "green.500";
-      backgroundColor = "green.o10";
-    } else {
-      color = "green.500";
-      backgroundColor = "green.o10";
-    }
-
-    return {
-      color,
-      backgroundColor,
-      fontWeight: 400,
-    };
+    if (numericValue <= 49) return "danger";
+    if (numericValue <= 79) return "warning";
+    return "success";
   }
-  // >>>>>>> dev
+  if (value === STATUS.FAILED) return "danger";
+  return "neutral";
+};
 
-  if (value === STATUS.FAILED) {
-    return {
-      backgroundColor: interpolateColorBasedOnScore(0, 1),
-      color: theme.palette.red[500],
-      fontWeight: 400,
-    };
-  }
-
+// Chip sx for an eval result, resolved from theme.palette.status.
+export const getStatusColor = (value, theme) => {
+  const colors = statusColors(theme, evalResultRole(value));
   return {
-    backgroundColor: theme.palette.action.hover,
-    color: theme.palette.primary.main,
+    backgroundColor: colors.bg,
+    color: colors.fg,
     fontWeight: 400,
   };
 };
@@ -816,6 +767,10 @@ export const normalizeEvalCellValue = (value) => {
 export const cleanChoiceLabel = (value) => {
   const parsed = parsePythonReprIfNeeded(value);
   if (Array.isArray(parsed)) return parsed.map((v) => String(v)).join(", ");
+  // Scored choices evals emit {score, choice} / {score, choices} as the bucket
+  // key, which would otherwise stringify to "[object Object]".
+  const choiceLabel = extractChoiceLabel(parsed);
+  if (choiceLabel !== null) return choiceLabel;
   return String(parsed ?? value);
 };
 
@@ -902,9 +857,14 @@ export const normalizeEvalResult = (value, outputType) => {
       items = [v];
     }
     items = items
-      .map((/** @type {any} */ x) =>
-        x && typeof x === "object" ? x.choice ?? x.label ?? x.value ?? "" : x,
-      )
+      .flatMap((x) => {
+        if (!x || typeof x !== "object") return [x];
+        return (
+          extractChoiceArray(x) ?? [
+            extractChoiceLabel(x) ?? x.label ?? x.value ?? "",
+          ]
+        );
+      })
       .map((/** @type {any} */ x) => String(x ?? ""))
       .filter(Boolean);
     if (items.length === 0) return { kind: "empty" };
@@ -1117,9 +1077,6 @@ export const postProcessPopup = (params) => {
       element.textContent.trim() === "Hide Reasoning"
     ) {
       element.style.color = "var(--primary-main)";
-    }
-    if (element.textContent.trim() === "Delete Column") {
-      element.style.color = "#fa0c0c";
     }
     element.style.fontWeight = 400;
     element.style.fontSize = "12px";

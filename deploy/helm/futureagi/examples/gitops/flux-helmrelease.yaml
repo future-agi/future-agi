@@ -1,0 +1,70 @@
+# Flux: an immutable chart digest, verified before controller-driven rollout.
+# prepare-release.py supplies the digest and exact release signing identity.
+# Replace BOTH placeholders in one reviewed Git change; never use a floating
+# semver range. An approval authorizes only that release, not future tags.
+#
+# Apply flux-rbac.yaml first. The operator owns the namespace and the dedicated
+# reconciler's namespace-only Role; the application receives no Kubernetes token.
+# Put non-secret overrides in futureagi-values, in this namespace. Application
+# credentials belong in pre-existing Secrets, not in committed values.
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: OCIRepository
+metadata:
+  name: futureagi
+  namespace: futureagi
+spec:
+  interval: 1h
+  url: oci://ghcr.io/future-agi/charts/futureagi
+  ref:
+    digest: sha256:REPLACE_WITH_VERIFIED_CHART_DIGEST
+  layerSelector:
+    mediaType: application/vnd.cncf.helm.chart.content.v1.tar+gzip
+    operation: copy
+  verify:
+    provider: cosign
+    matchOIDCIdentity:
+      - issuer: ^https://token\.actions\.githubusercontent\.com$
+        subject: ^https://github\.com/future-agi/future-agi/\.github/workflows/helm-release\.yml@refs/tags/vREPLACE_WITH_ESCAPED_VERSION$
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: futureagi
+  namespace: futureagi
+spec:
+  interval: 1h
+  releaseName: futureagi
+  targetNamespace: futureagi
+  storageNamespace: futureagi
+  serviceAccountName: futureagi-reconciler
+  install:
+    createNamespace: false
+    timeout: 20m
+    strategy:
+      name: RemediateOnFailure
+    remediation:
+      retries: 0
+      remediateLastFailure: false
+  upgrade:
+    timeout: 20m
+    strategy:
+      name: RemediateOnFailure
+    remediation:
+      retries: 0
+      remediateLastFailure: false
+  # Fail visibly, without an automatic rollback/uninstall or retry loop.
+  # Database recovery is an operator decision, not a Helm revision rollback.
+  test:
+    enable: true
+    ignoreFailures: false
+  chartRef:
+    kind: OCIRepository
+    name: futureagi
+    namespace: futureagi
+  valuesFrom:
+    # The key values.yaml of this ConfigMap holds your values (e.g.
+    # examples/external.yaml plus your hosts). Credentials stay in Secrets
+    # (existingSecret values, or examples/external-secrets.yaml).
+    - kind: ConfigMap
+      name: futureagi-values
+      valuesKey: values.yaml

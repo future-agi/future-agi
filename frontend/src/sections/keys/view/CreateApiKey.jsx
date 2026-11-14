@@ -11,6 +11,8 @@ import {
   Typography,
 } from "@mui/material";
 import PropTypes from "prop-types";
+import { DatePicker } from "@mui/x-date-pickers/DatePicker";
+import { startOfDay } from "date-fns";
 import Iconify from "src/components/iconify";
 import { LoadingButton } from "@mui/lab";
 import axios, { endpoints } from "src/utils/axios";
@@ -20,17 +22,27 @@ import { ShowComponent } from "src/components/show";
 import { enqueueSnackbar } from "notistack";
 import { copyToClipboard } from "src/utils/utils";
 import SvgColor from "src/components/svg-color";
+import { expiresAtFromDate } from "./keyExpiry";
 
 const CreateApiKey = ({ open, onClose, refreshGrid }) => {
   const [keyName, setKeyName] = useState("");
+  const [expiryDate, setExpiryDate] = useState(null);
   const [showKeys, setShowKeys] = useState(false);
 
   const handleClose = () => {
     setKeyName("");
+    setExpiryDate(null);
     setShowKeys(false);
     reset();
     onClose();
   };
+
+  // A typed-in date can be incomplete or in the past; the picker only blocks
+  // past dates in its calendar. Never fall back to "no expiry" for it.
+  const expiresAt = expiresAtFromDate(expiryDate);
+  const isExpiryInvalid =
+    expiryDate !== null &&
+    (expiresAt === null || new Date(expiresAt) <= new Date());
 
   const {
     mutate: handleAddApiKey,
@@ -41,6 +53,7 @@ const CreateApiKey = ({ open, onClose, refreshGrid }) => {
     mutationFn: () =>
       axios.post(endpoints.keys.generateSecretKey, {
         key_name: keyName,
+        ...(expiresAt && { expires_at: expiresAt }),
       }),
     onSuccess: () => {
       setShowKeys(true);
@@ -68,7 +81,8 @@ const CreateApiKey = ({ open, onClose, refreshGrid }) => {
       onClose={handleClose}
       aria-labelledby="api-key-dialog"
       fullWidth
-      maxWidth="sm"
+      maxWidth={false}
+      PaperProps={{ sx: { maxWidth: 720 } }}
     >
       <Box sx={{ padding: 2 }}>
         <DialogTitle
@@ -86,11 +100,11 @@ const CreateApiKey = ({ open, onClose, refreshGrid }) => {
             alignItems="center"
             justifyContent="space-between"
           >
-            <Typography color="text.primary" fontWeight={700} fontSize="18px">
+            <Typography color="text.primary" fontWeight={600} fontSize="16px">
               {isSecretKey ? "Key’s Generated" : "Key Name"}
             </Typography>
             <IconButton onClick={handleClose}>
-              <Iconify icon="mdi:close" />
+              <Iconify icon="solar:close-linear" />
             </IconButton>
           </Box>
         </DialogTitle>
@@ -105,7 +119,7 @@ const CreateApiKey = ({ open, onClose, refreshGrid }) => {
                 onKeyDown={(e) => {
                   if (e.key === "Enter") {
                     e.preventDefault();
-                    handleAddApiKey();
+                    if (!isExpiryInvalid) handleAddApiKey();
                   }
                 }}
                 fullWidth
@@ -113,6 +127,23 @@ const CreateApiKey = ({ open, onClose, refreshGrid }) => {
                 variant="outlined"
                 required
                 size="small"
+              />
+              <DatePicker
+                label="Expires on (optional)"
+                value={expiryDate}
+                onChange={setExpiryDate}
+                minDate={startOfDay(new Date())}
+                disablePast
+                slotProps={{
+                  field: { clearable: true },
+                  textField: {
+                    size: "small",
+                    fullWidth: true,
+                    helperText:
+                      "Valid through the end of this day. Leave empty for a key that never expires.",
+                  },
+                }}
+                sx={{ marginTop: 2 }}
               />
             </Box>
           </ShowComponent>
@@ -225,7 +256,7 @@ const CreateApiKey = ({ open, onClose, refreshGrid }) => {
               color="primary"
               onClick={handleAddApiKey}
               loading={loading}
-              disabled={!keyName}
+              disabled={!keyName || isExpiryInvalid}
             >
               Next
             </LoadingButton>

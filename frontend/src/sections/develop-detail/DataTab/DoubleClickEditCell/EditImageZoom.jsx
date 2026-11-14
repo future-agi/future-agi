@@ -1,10 +1,4 @@
-import {
-  Box,
-  CircularProgress,
-  DialogActions,
-  Typography,
-  IconButton,
-} from "@mui/material";
+import { Box, DialogActions, Typography, IconButton } from "@mui/material";
 import PropTypes from "prop-types";
 import React, { useEffect, useRef, useState } from "react";
 import ErrorMessage from "./ErrorMessage";
@@ -14,6 +8,7 @@ import SvgColor from "src/components/svg-color";
 import { ShowComponent } from "src/components/show";
 import { enqueueSnackbar } from "notistack";
 import DeleteMediaDialog from "./ConfirmDelete";
+import ContentSkeleton from "src/components/content-skeleton";
 
 const EditImageZoom = ({
   setImageZoomModal,
@@ -120,7 +115,7 @@ const EditImageZoom = ({
 
   const imageStyles = {
     transform: `scale(${zoom}) rotate(${rotation}deg)`,
-    transition: "transform 0.3s ease",
+    transition: "transform 0.2s ease",
     maxWidth: "100%",
     maxHeight: "100%",
     objectFit: "contain",
@@ -155,7 +150,7 @@ const EditImageZoom = ({
 
   const buttonStyles = {
     color: "text.primary",
-    fontSize: "14px",
+    fontSize: "12px",
     fontWeight: 400,
     lineHeight: "22px",
   };
@@ -220,7 +215,7 @@ const EditImageZoom = ({
                     height: "100%",
                   }}
                 >
-                  <CircularProgress />
+                  <ContentSkeleton variant="panel" />
                 </Box>
               </ShowComponent>
               <ShowComponent condition={!isLoading && Boolean(imageUrl)}>
@@ -304,7 +299,10 @@ const EditImageZoom = ({
                     }}
                   >
                     <IconButton onClick={handleButtonClick}>
-                      <Iconify icon="fa6-solid:rotate" color="#fff" />
+                      <Iconify
+                        icon="solar:refresh-linear"
+                        color="common.white"
+                      />
                     </IconButton>
                   </Box>
                 </Box>
@@ -331,7 +329,7 @@ const EditImageZoom = ({
                     fontWeight={500}
                     sx={{
                       maxWidth: "200px",
-                      fontSize: "14px",
+                      fontSize: "12px",
                       lineHeight: "22px",
                       whiteSpace: "nowrap",
                       overflow: "hidden",
@@ -387,9 +385,6 @@ const EditImageZoom = ({
             sx={{
               backgroundColor: "primary.main",
               "&:hover": { backgroundColor: "primary.main" },
-              borderRadius: "10px",
-              fontSize: "14px",
-              fontWeight: 600,
               width: "205px",
             }}
           >

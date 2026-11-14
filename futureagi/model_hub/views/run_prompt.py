@@ -23,6 +23,12 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from model_hub.serializers.decision_models import (
+    DecisionModelGroupSerializer,
+    ModelListQuerySerializer,
+    ModelListResponseSerializer,
+)
+
 logger = structlog.get_logger(__name__)
 from agentic_eval.core_evals.run_prompt.available_models import AVAILABLE_MODELS
 
@@ -33,6 +39,7 @@ from agentic_eval.core_evals.run_prompt.other_services.manager import (
     get_model_parameters,
 )
 from model_hub.models.api_key import ApiKey
+from model_hub.utils.llm_providers import is_model_in_catalog
 from model_hub.models.choices import (
     CellStatus,
     LiteLlmModelProvider,
@@ -49,7 +56,6 @@ from model_hub.serializers.contracts import (
     MODEL_HUB_ERROR_RESPONSES,
     DatasetRunPromptStatsResponseSerializer,
     LiteLLMModelVoicesResponseSerializer,
-    ModelHubPaginatedResponseSerializer,
     ModelHubStringResultResponseSerializer,
     ModelHubSuccessMessageResponseSerializer,
     ModelParametersResponseSerializer,
@@ -1048,10 +1054,26 @@ class LitellmAPIView(CreateAPIView):
     def post(self, request, *args, **kwargs):
         from django.db import transaction
 
+        from tfc.ee_gates import turing_oss_gate_response
+
         validated_data = request.validated_data
+
+        gate_response = turing_oss_gate_response(validated_data.get("model"))
+        if gate_response is not None:
+            return gate_response
+
         # `validated_request` owns request-shape validation; from here the view
         # handles only domain execution errors.
         organization = _request_organization(request)
+        organization_id = organization.id if organization else None
+        model_name = validated_data.get("model")
+        if model_name and not is_model_in_catalog(
+            model_name, organization_id=organization_id
+        ):
+            return self._gm.bad_request(
+                f"Model '{model_name}' is no longer available. "
+                "Please update the column to use a supported model before running."
+            )
         dataset = (
             _request_dataset_queryset(request)
             .filter(id=validated_data.get("dataset_id"))
@@ -1157,7 +1179,7 @@ class RunPrompts:
                 self.run_prompt_model.tools.all()
             )  # This will give you the related Tools instances
             for tool in tools:
-                self.tools_config.append(tool.config)
+                self.tools_config.append(tool.as_openai_tool())
             logger.info(
                 "RunPrompts_load_run_prompt_id_tools_loaded",
                 run_prompt_id=str(self.run_prompt_id),
@@ -1726,6 +1748,13 @@ class AddRunPromptColumnView(APIView):
             ).exists():
                 return self._gm.bad_request(get_error_message("COLUMN_NAME_EXISTS"))
 
+            model_name = config.get("model")
+            if model_name and not is_model_in_catalog(model_name, organization_id=organization.id):
+                return self._gm.bad_request(
+                    f"Model '{model_name}' is no longer available. "
+                    "Please select a supported model."
+                )
+
             output_format = config.get("output_format")
             messages = config.get("messages", [])
             if output_format != "audio":
@@ -1880,7 +1909,7 @@ class PreviewRunPromptColumnView(APIView):
                 tool_ids = [tool.get("id") for tool in config["tools"] if "id" in tool]
                 if tool_ids:
                     tools = Tools.objects.filter(id__in=tool_ids)
-                    tools_config = [tool.config for tool in tools]
+                    tools_config = [tool.as_openai_tool() for tool in tools]
 
             rf = config.get("response_format")
             if rf and not isinstance(rf, dict):
@@ -1995,6 +2024,13 @@ class EditRunPromptColumnView(APIView):
             )
             if not column:
                 return self._gm.not_found("Column or dataset not found")
+
+            model_name = config.get("model")
+            if model_name and not is_model_in_catalog(model_name, organization_id=dataset.organization_id):
+                return self._gm.bad_request(
+                    f"Model '{model_name}' is no longer available. "
+                    "Please select a supported model."
+                )
 
             # Verify column is a run prompt column
             if column.source != SourceChoices.RUN_PROMPT.value:
@@ -2223,72 +2259,6 @@ class RetrieveRunPromptColumnConfigView(APIView):
             return self._gm.internal_server_error_response(error_message)
 
 
-class DefaultProviderView(APIView):
-    _gm = GeneralMethods()
-    permission_classes = [IsAuthenticated]
-
-    def get(self, request, *args, **kwargs):
-        """
-        Get the default provider configuration for the authenticated user's organization
-        """
-        try:
-            # Get the organization's default provider settings
-            api_key = ApiKey.objects.filter(
-                organization=getattr(request, "organization", None)
-                or request.user.organization,
-                is_default=True,
-            ).first()
-
-            if api_key:
-                data = {"provider": api_key.provider, "key": api_key.key}
-                return self._gm.success_response(data)
-
-            return self._gm.not_found(get_error_message("PROVIDER_CONFIG_NOT_FOUND"))
-
-        except Exception as e:
-            error_message = get_specific_error_message(e)
-            logger.exception(
-                f"Error in fetching provider's configurations: {error_message}"
-            )
-            return self._gm.internal_server_error_response(error_message)
-
-    def post(self, request, *args, **kwargs):
-        """
-        Set a provider as default for the authenticated user's organization
-        """
-        try:
-            provider = request.data.get("provider")
-
-            if not provider:
-                return self._gm.bad_request(get_error_message("PROVIDER_MISSING"))
-
-            # Reset all providers to non-default
-            ApiKey.objects.filter(
-                organization=getattr(request, "organization", None)
-                or request.user.organization
-            ).update(is_default=False)
-
-            # Set the specified provider as default
-            api_key = ApiKey.objects.filter(
-                organization=getattr(request, "organization", None)
-                or request.user.organization,
-                provider=provider,
-            ).first()
-
-            if not api_key:
-                return self._gm.not_found(get_error_message("PROVIDER_NOT_FOUND"))
-
-            api_key.is_default = True
-            api_key.save()
-
-            return self._gm.success_response("Default provider updated successfully")
-
-        except Exception as e:
-            error_message = get_specific_error_message(e)
-            logger.exception(f"Error in setting provider as default: {error_message}")
-            return self._gm.internal_server_error_response(error_message)
-
-
 class RetrieveRunPromptOptionsView(APIView):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
@@ -2436,9 +2406,10 @@ class DatasetRunPromptStatsView(APIView):
 class LiteLLMModelListView(APIView):
     permission_classes = [IsAuthenticated]
 
-    @swagger_auto_schema(
+    @validated_request(
+        query_serializer=ModelListQuerySerializer,
         responses={
-            200: ModelHubPaginatedResponseSerializer,
+            200: ModelListResponseSerializer,
             **MODEL_HUB_ERROR_RESPONSES,
         }
     )
@@ -2447,8 +2418,26 @@ class LiteLLMModelListView(APIView):
         organization = (
             getattr(request, "organization", None) or request.user.organization
         )
+        query = request.validated_query_data
+        if query.get("model_type") == "decision":
+            from model_hub.selectors.decision_models import get_decision_catalog
+
+            checked_organization = getattr(request, "organization", None)
+            workspace = getattr(request, "workspace", None)
+            paginator = ExtendedPageNumberPagination()
+            page = paginator.paginate_queryset(
+                get_decision_catalog(
+                    organization_id=getattr(checked_organization, "id", None),
+                    workspace_id=getattr(workspace, "id", None),
+                    search=query.get("search", ""),
+                ),
+                request,
+            )
+            return paginator.get_paginated_response(
+                DecisionModelGroupSerializer(page, many=True).data
+            )
         one_time_model_providers_update()
-        exclude_providers = request.GET.getlist("exclude_providers", [])
+        exclude_providers = query.get("exclude_providers", [])
 
         # Optimization: Fetch all ApiKeys for the org and build a set of providers with valid keys/configs
         # Do this early to avoid unnecessary model processing if we need to filter by availability
@@ -2468,7 +2457,7 @@ class LiteLLMModelListView(APIView):
         )
 
         # Single Model Details - if requesting a specific model, skip fetching all models
-        model_name = request.query_params.get("name", None)
+        model_name = query.get("name")
         if model_name:
             model_manager = LiteLLMModelManager(
                 model_name=model_name,
@@ -2487,8 +2476,8 @@ class LiteLLMModelListView(APIView):
             ]
         else:
             # Search functionality - only fetch all models if needed
-            search_query = request.query_params.get("search", None)
-            model_type = request.query_params.get("model_type")
+            search_query = query.get("search")
+            model_type = query.get("model_type")
             model_manager = LiteLLMModelManager(
                 model_name="",
                 organization_id=organization.id,
@@ -2756,7 +2745,17 @@ class RunPromptForRowsView(APIView):
                 if set(map(str, scoped_rows)) != requested_row_ids:
                     return self._gm.not_found("Row not found")
 
-            # Run all evaluations in a single async task
+            deprecated_models = [
+                rp.model for rp in run_prompters
+                if rp.model and not is_model_in_catalog(rp.model, organization_id=user_org_id)
+            ]
+            if deprecated_models:
+                names = ", ".join(f"'{m}'" for m in set(deprecated_models))
+                return self._gm.bad_request(
+                    f"Model(s) {names} no longer available. "
+                    "Please update the column(s) to use supported models before running."
+                )
+
             run_prompt = None
             if selected_all_rows:
                 run_prompt = RunPrompter.objects.get(id=run_prompt_ids[0])
