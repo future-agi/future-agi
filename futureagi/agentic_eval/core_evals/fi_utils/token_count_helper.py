@@ -334,7 +334,9 @@ def _compute_costs(pricing: dict, token_usage: dict) -> tuple[float, float, bool
 
     # Image-based pricing (Image generation models)
     elif "per_image" in pricing or "low_quality_per_image" in pricing:
-        images_generated = token_usage.get("images_generated") or 1
+        images_generated = token_usage.get("images_generated")
+        if images_generated is None:
+            images_generated = 1
         quality = token_usage.get("quality") or "standard"
 
         # Handle quality-based pricing (gpt-image models)
