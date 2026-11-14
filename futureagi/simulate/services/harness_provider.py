@@ -28,6 +28,7 @@ from simulate.models import (
     RunTest,
     TestExecution,
 )
+from simulate.selectors.runs import user_runs
 from simulate.services.hosted_harness_conversation import serialize_conversation
 from tfc.utils.api_errors import build_error_envelope
 
@@ -1445,7 +1446,9 @@ class HostedHarnessProvider:
     def list(self, request) -> Response:
         organization = request_organization(request)
         jobs = scope_jobs(
-            HostedHarnessJob.no_workspace_objects.filter(organization=organization),
+            HostedHarnessJob.no_workspace_objects.filter(
+                user_runs(), organization=organization
+            ),
             request,
         ).order_by("-created_at")[:100]
         return Response([serialize_job(job) for job in jobs])
@@ -1554,6 +1557,8 @@ class HostedHarnessProvider:
     def run(self, request, pk) -> Response:
         """Create and dispatch one immutable selected-scenario simulation Run."""
 
+        from simulate.selectors.held_back import coding_agent_key
+        from simulate.services.harness_verify import require_default_suite
         from simulate.services.harness_versioning.run_warnings import created_run
         from simulate.services.hosted_harness import (
             HostedHarnessError,
@@ -1583,7 +1588,14 @@ class HostedHarnessProvider:
             if response is not None:
                 return response
             raise
+        coder = coding_agent_key(request)
         try:
+            if coder is not None:
+                # The cases a coding agent may not run are chosen before its first run,
+                # and it runs only the default suite.
+                require_default_suite(
+                    environment, request.validated_data.get("suite_version_id")
+                )
             child, created = create_selected_harness_run(
                 environment,
                 scenario_keys=list(request.validated_data["scenario_ids"]),
@@ -1596,6 +1608,7 @@ class HostedHarnessProvider:
                     ),
                     suite_version_id=request.validated_data.get("suite_version_id"),
                 ),
+                coding_agent_key_id=str(coder.id) if coder is not None else None,
             )
             retry_dispatch = False
             if (

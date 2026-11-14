@@ -9,14 +9,15 @@
 
 .prompt-editor-card .ql-container strong {
   font-weight: 500 !important;
-  font-size: 15px !important;
+  font-size: inherit !important;
 }
 
 .prompt-editor-card .ql-editor {
   border: none !important;
   padding: 0;
-  font-size: 14px;
-  line-height: 22px;
+  /* Design system: reading text and inputs are 13/20. */
+  font-size: 12px;
+  line-height: 20px;
   color: var(--text-primary);
   background-color: transparent;
 }

@@ -748,6 +748,15 @@ _TRACE_PROJECT_SCOPE = filed(
 # Every entry is decided: a reader is filed under the category whose claim holds,
 # with a reason, and a reader nobody filed fails the case that reads this table.
 _FILED_BY_MODULE: dict[str, dict[str, Filing]] = {
+    "accounts.user_onboard": {
+        "_write_demo_trace_to_clickhouse": filed(
+            BY_ID_ALONE,
+            why=(
+                "demo publication reads the span ids of the one demo trace it is "
+                "given before inserting, so a retried publication cannot double them"
+            ),
+        ),
+    },
     "agentic_eval.core.database.ch_vector": {
         "ClickHouseVectorDB.fetch_all_vectors": _EMBEDDING_STORE,
         "ClickHouseVectorDB.fetch_vector_by_id": _EMBEDDING_STORE,
@@ -755,6 +764,25 @@ _FILED_BY_MODULE: dict[str, dict[str, Filing]] = {
         "ClickHouseVectorDB.get_random_examples": _EMBEDDING_STORE,
         "ClickHouseVectorDB.vector_similarity_search": _EMBEDDING_STORE,
         "ClickHouseVectorDB.vector_similarity_search_with_threshold": _EMBEDDING_STORE,
+    },
+    "ee.agenthub.insights.evidence": {
+        **{
+            f"EvidenceQueryBuilder.{name}": filed(
+                BY_ID_ALONE,
+                why=(
+                    "reads the spans of the sessions, users or traces a report run "
+                    "sampled, for the evidence broker, pinned to the run's project; "
+                    "a run is only created for a project its view took from a "
+                    "project manager"
+                ),
+            )
+            for name in (
+                "content_query",
+                "identity_query",
+                "roster_query",
+                "trace_stats_query",
+            )
+        },
     },
     "ee.agenthub.traceerroragent.error_cluster": {
         (
@@ -837,15 +865,25 @@ _FILED_BY_MODULE: dict[str, dict[str, Filing]] = {
     "model_hub.selectors.eval_usage": {
         "_latest_usage_slice": filed(
             NO_SPAN_TABLE,
-            ROW_DRIVEN,
+            PROJECT_SET,
             why=(
-                "the eval usage page reads the API call log through the project scope "
-                "of each run's trace, for the projects of the eval configs of the "
-                "template (a join through the config's project, which uses no "
-                "manager)"
+                "the eval usage page reads the API call log and lists a run's trace "
+                "log by the project the log recorded; an older log, which recorded "
+                "none, by the projects holding a config of the template. Both stay "
+                "within the project ids its view passes in (the caller's readable "
+                "projects, from the project manager in readable_source_projects)"
             ),
             table="usage_apicalllog",
-            row="tracer.CustomEvalConfig",
+        ),
+    },
+    "model_hub.utils.optimization_feedback": {
+        "_FEEDBACK_VECTOR_IDS_QUERY": filed(
+            NO_SPAN_TABLE,
+            why=(
+                "looks up the feedback vector ids of an explicit set of feedback "
+                "rows, for one eval, before a similarity search limited to them"
+            ),
+            table="feedbacks",
         ),
     },
     "model_hub.utils.clickhouse": {
@@ -1307,6 +1345,41 @@ _FILED_BY_MODULE: dict[str, dict[str, Filing]] = {
         "SessionListQueryBuilder._candidate_session_ctes": _SESSION_OR_USER,
         "SessionListQueryBuilder._seed_witness_identity_gate": _SESSION_OR_USER,
         "SessionListQueryBuilder._session_from_where": _SESSION_OR_USER,
+        "SessionListQueryBuilder._session_member_ctes": filed(
+            PROJECT_SET,
+            why=(
+                "latest live member replay and child-inclusive usage for sessions "
+                "scoped by the list view's project ids; shared by filtering and hydration"
+            ),
+        ),
+        "SessionListQueryBuilder._member_trace_usage_select": filed(
+            PROJECT_SET,
+            why=(
+                "per-trace usage reducer over the latest live member rows a caller "
+                "supplies (the list's physical replay or the sampling snapshot); "
+                "adds no read, and groups every row by its project"
+            ),
+        ),
+        "SessionListQueryBuilder._session_usage_rollup_select": filed(
+            PROJECT_SET,
+            why=(
+                "session roll-up over per-trace usage rows a caller supplies; "
+                "adds no read, and groups every row by its project"
+            ),
+        ),
+        "SessionListQueryBuilder._snapshot_session_usage_select": filed(
+            PROJECT_SET,
+            ROW_DRIVEN,
+            why=(
+                "child-aware session usage over the sampling snapshot; only "
+                "SamplingQuery._source reaches it, through the session builder it "
+                "creates for the previewed or stored EvalTask's project. Task "
+                "creation resolves Project.objects, which excludes hidden projects, "
+                "and simulation creates no EvalTask. The read is fenced by the "
+                "builder's project_where like every list read"
+            ),
+            row="tracer.EvalTask",
+        ),
         "SessionListQueryBuilder.build_filter_anchor_probe": _SESSION_OR_USER,
         "SessionListQueryBuilder.build_filter_seed_page": _SESSION_OR_USER,
         "SessionListQueryBuilder.build_page_hydration_query": _SESSION_OR_USER,
@@ -1332,6 +1405,12 @@ _FILED_BY_MODULE: dict[str, dict[str, Filing]] = {
         "SpanListQueryBuilder.build_filter_anchor_probe": _CANDIDATE_PROBE,
         "SpanListQueryBuilder.build_filter_seed_page": _SEED_PAGE,
         "SpanListQueryBuilder.build_id_query": _LEGACY_PAGE_STATEMENT,
+    },
+    "tracer.services.clickhouse.query_builders.graph_monetary_usage": {
+        "graph_monetary_rows_sql": filed(
+            PROJECT_SET,
+            why="reduces only the latest-live source fenced by each graph caller's authorized project; parent evidence is grouped by project and trace",
+        ),
     },
     "tracer.services.clickhouse.query_builders.time_series": {
         "TimeSeriesQueryBuilder._build_agg_query": _PROJECT_CHART_STATEMENT,
@@ -1502,6 +1581,7 @@ _FILED_BY_MODULE: dict[str, dict[str, Filing]] = {
     "tracer.services.clickhouse.trace_project_scope": {
         "latest_live_project_traces_sql": _TRACE_PROJECT_SCOPE,
         "latest_live_trace_projects_sql": _TRACE_PROJECT_SCOPE,
+        "live_trace_project_sets_sql": _TRACE_PROJECT_SCOPE,
     },
     "tracer.services.clickhouse.v2.backfill": {
         "_process_window": filed(
@@ -1660,6 +1740,14 @@ _FILED_BY_MODULE: dict[str, dict[str, Filing]] = {
         "latest_physical_span_rows_sql": _SESSION_OR_USER,
     },
     "tracer.services.clickhouse.v2.span_reader": {
+        "CHSpanReader._roots_resolved": filed(
+            BY_ID_ALONE,
+            why=(
+                "root spans of the session or end-user ids it is given (Instant "
+                "eval and Insights, through roots_by_session_ids and "
+                "roots_by_end_user_ids); the project only narrows the read"
+            ),
+        ),
         "CHSpanReader._session_filter_remap": filed(
             NO_SPAN_TABLE,
             why=(
@@ -1692,6 +1780,15 @@ _FILED_BY_MODULE: dict[str, dict[str, Filing]] = {
                 "manager; the third, the session comparison, passes only a session "
                 "id, after a trace session manager check of the organization when "
                 "one is passed, and a hidden project has no session row to pass it"
+            ),
+        ),
+        "CHSpanReader.source_arrivals_by_trace_ids": _READS_THE_IDS_IT_IS_GIVEN,
+        "CHSpanReader.activity_by_trace_ids": filed(
+            BY_ID_ALONE,
+            why=(
+                "the tool calls, failed steps and media steps of the traces it is "
+                "given (the built-in Insights engine, after roots_by_trace_ids or "
+                "roots_by_session_ids picked them); the project only narrows it"
             ),
         ),
         "CHSpanReader.distinct_end_users_by_trace_ids": _READS_THE_IDS_IT_IS_GIVEN,
@@ -1803,13 +1900,112 @@ _FILED_BY_MODULE: dict[str, dict[str, Filing]] = {
         "_backfill_status": _EVAL_LOG_BACKFILL,
         "backfill_blank_completed_status": _EVAL_LOG_BACKFILL,
     },
+    "tracer.services.eval_tasks.sampling.query": {
+        "SamplingQuery._source": filed(
+            PROJECT_SET,
+            ROW_DRIVEN,
+            CHILDREN_SPAN_EVAL_TASKS,
+            why=(
+                "shared sampling source: preview builds an unsaved EvalTask from "
+                "Project.objects through the scoped project queryset; reconciliation, "
+                "pending proofs and frozen audit populations use the stored EvalTask's "
+                "project. Task creation resolves Project.objects, which excludes "
+                "hidden projects, and simulation creates no EvalTask. The audit also "
+                "rechecks the visible project manager before reading. Span tasks "
+                "include children; query parameters always bind that task's project"
+            ),
+            row="tracer.EvalTask",
+        ),
+        "live_scan_windows": filed(
+            ROW_DRIVEN,
+            why=(
+                "arrival-day discovery called only by reconcile_policy for the "
+                "stored EvalTask's project; simulation never creates that task row"
+            ),
+            row="tracer.EvalTask",
+        ),
+    },
+    "tracer.services.eval_tasks.sampling.unit_scope": {
+        "physical_unit_scope": filed(
+            ROW_DRIVEN,
+            why=(
+                "member expansion and first-admission proof fragments of "
+                "SamplingQuery._source, used only with persisted cohort members or "
+                "live candidates of an EvalTask. The caller binds sp_project from "
+                "that task, never from a unit id; simulation makes no EvalTask"
+            ),
+            row="tracer.EvalTask",
+        ),
+    },
     "tracer.services.grouping.feature_store": {
         "GroupingFeatureStore.read_vectors": _GROUPING_STORE,
         "GroupingFeatureStore.write_and_verify": _GROUPING_STORE,
         "nearest_sql": _GROUPING_STORE,
     },
+    "tracer.services.instant_eval_rows": {
+        "_FACET_SQL": filed(
+            BY_ID_ALONE,
+            why=(
+                "Instant eval facets of the trace, session or user ids a run reads; "
+                "the run's project only narrows the read"
+            ),
+        ),
+        "_extent_sql": filed(
+            BY_ID_ALONE,
+            why=(
+                "first and last span start of the trace, session or user ids an "
+                "Instant eval run reads; the run's project only narrows the read"
+            ),
+        ),
+    },
     "tracer.services.users_list_manager": {
         "_users_attr_enrichment_query": _SESSION_OR_USER,
+    },
+    "tracer.sql_workbench.catalog": {
+        "sources": filed(
+            PROJECT_SET,
+            why=(
+                "SQL workbench source templates, built for the one scope a caller "
+                "passes in. Every caller takes that project from access.authorize or "
+                "from the operator command, and both resolve it through "
+                "Project.no_workspace_objects, a project manager that leaves out "
+                "simulation projects, so the id of a hidden project is refused "
+                "before a source is built"
+            ),
+        ),
+    },
+    "tracer.sql_workbench.examples": {
+        "EXAMPLES": filed(
+            PROJECT_SET,
+            why=(
+                "editor examples are virtual-catalog SQL, not directly executed "
+                "physical reads; Run goes through service.submit and "
+                "access.authorize's simulation-excluding Project.no_workspace_objects "
+                "before the compiler builds scoped sources"
+            ),
+        ),
+    },
+    "scripts.sql_workbench.capability_check": {
+        "QUERIES": filed(
+            PROJECT_SET,
+            why=(
+                "fixed test corpus executed by the isolated ClickHouse capability "
+                "test through service.submit and the real worker; project ids "
+                "are authorized using the same simulation-excluding project "
+                "manager as a normal workbench run"
+            ),
+        ),
+    },
+    "tracer.sql_workbench.runner": {
+        "derived_metrics_availability": filed(
+            NO_SPAN_TABLE,
+            why=(
+                "schema and grant probe: a LIMIT 0 select over the derived metrics "
+                "view returns no row at all, and that view holds metric results, "
+                "not spans"
+            ),
+            table="derived_metrics",
+        ),
     },
     "tracer.views.dashboard": {
         "_read_dashboard_rollup_fast_path": filed(
@@ -1915,11 +2111,16 @@ _RUN_TRACES_CALLERS = frozenset(
 # The entry points that hand those readers their project ids, pinned the same
 # way so that a new route to a builder fails here too.
 ENTRY_POINTS = {
+    # Evaluation Logs source navigation reads one project from
+    # tracer.views.trace._project_queryset_for_request, a manager that leaves
+    # out simulation projects, and takes no run scope, so it never opens a
+    # hidden project.
     "read_trace_detail": (
         None,
         frozenset(
             {
                 _DETAIL_FILE,
+                "model_hub/services/eval_log_source_navigation.py",
                 "tracer/services/clickhouse/v2/query_builders/trace_detail.py",
                 "tracer/views/trace.py",
             }
@@ -1955,6 +2156,13 @@ SCOPE_IDS = {
 BY_ID_WITHOUT_AN_ID = {
     "tracer.services.clickhouse.v2.span_reader:_dedup_sql": (
         "wraps reads that name their ids in the where clause the caller passes"
+    ),
+    "ee.agenthub.insights.evidence:EvidenceQueryBuilder.content_query": (
+        "reads the physical span identities (trace, span and version) that "
+        "identity_query returned for the trace ids it was given"
+    ),
+    "accounts.user_onboard:_write_demo_trace_to_clickhouse": (
+        "takes the one demo Trace object it publishes and reads by that trace's id"
     ),
 }
 
@@ -2206,7 +2414,8 @@ def _filing_problems(readers):
                     )
                 ]
                 if not any(
-                    name.endswith(("_id", "_ids")) and name not in SCOPE_IDS
+                    (name == "ids" or name.endswith(("_id", "_ids")))
+                    and name not in SCOPE_IDS
                     for name in names
                 ):
                     problems.append(
@@ -2856,7 +3065,7 @@ def creator_problems(found, pinned, present):
                     f"{key} (line {creator.call.lineno}) is pinned as {claim!r} and "
                     "the code does not show it"
                 )
-    for key, (claim, _why) in sorted(pinned.items()):
+    for key, (_claim, _why) in sorted(pinned.items()):
         if key in found:
             continue
         relative = key.split(":", 1)[0]
@@ -3010,12 +3219,23 @@ ROW_TYPES = {
     "tracer.EvalTask.project": USER_MADE,
     "tracer.EvaluationRun.project": USER_MADE,
     "tracer.ImagineAnalysis.project": USER_MADE,
+    # Insights reports and Instant eval runs are started from the Insights and
+    # Ask pages, whose views resolve the project through Project.objects, which
+    # leaves the hidden project out.
+    "tracer.InsightConfig.project": USER_MADE,
+    "tracer.InsightRun.project": USER_MADE,
+    "tracer.InstantEvalRun.project": USER_MADE,
     "tracer.ObservabilityProvider.project": OTHER_PROJECTS_ROW,
     "tracer.ObservationSpan.project": TRACE_STORE_ROW,
     "tracer.ProjectCapability.project": JOB_THROUGH_MANAGERS,
     "tracer.ProjectVersion.project": USER_MADE,
     "tracer.ProjectVersionWinner.project": USER_MADE,
     "tracer.ReplaySession.project": USER_MADE,
+    # Both are made only by the SQL workbench's submit and save paths, which take
+    # the project from access.authorize, a project manager that refuses a
+    # simulation project; a simulated run has no path to them.
+    "tracer.SQLExecution.project": USER_MADE,
+    "tracer.SavedSQLQuery.project": USER_MADE,
     "tracer.SavedView.project": USER_MADE,
     "tracer.Trace.project": TRACE_STORE_ROW,
     "tracer.TraceErrorAnalysis.project": JOB_THROUGH_MANAGERS,

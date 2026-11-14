@@ -1,7 +1,5 @@
 # views.py
 
-import time
-
 import structlog
 from django.db.models import Case, Prefetch, When
 from django.http import Http404
@@ -14,12 +12,6 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from tfc.ee_stub import _ee_stub
-
-try:
-    from ee.agenthub.prompt_optimizer_agent.agent_task_v2 import PromptOptimizer
-except ImportError:
-    PromptOptimizer = _ee_stub("PromptOptimizer")
 from model_hub.models import OptimizeDataset
 from model_hub.models.ai_model import AIModel
 from model_hub.models.column_config import ColumnConfig
@@ -48,7 +40,6 @@ from model_hub.serializers.optimize_dataset import (
     OptimizeDatasetKbSerializer,
     OptimizeDatasetSerializer,
 )
-from model_hub.tasks.agent import create_criteria_text_prompt
 from model_hub.tasks.prompt_template_optimizer import get_topk_prompts
 from model_hub.utils.constant import optimize_table_columns
 from model_hub.utils.optimize import (
@@ -72,6 +63,8 @@ from tfc.utils.pagination import ExtendedPageNumberPagination
 from tfc.utils.types import Environments
 
 logger = structlog.get_logger(__name__)
+
+RAG_PROMPT_OPTIMIZATION_UNAVAILABLE = "RAG prompt optimization is not available."
 
 
 def _clickhouse_environment_value(environment):
@@ -218,12 +211,11 @@ class OptimizedDatasetView(APIView):
                 id=model_id,
             )
 
-            if optimize_type == OptimizeDataset.OptimizeType.TEMPLATE:
-                pass
-            elif optimize_type == OptimizeDataset.OptimizeType.RAG_TEMPLATE:
-                pass
-            else:
-                pass
+            if optimize_type in (
+                OptimizeDataset.OptimizeType.RAG_TEMPLATE,
+                "RAG_PROMPT_TEMPLATE",
+            ):
+                return self._gm.bad_request(RAG_PROMPT_OPTIMIZATION_UNAVAILABLE)
 
             valid, msg = check_valid_metrics(
                 (
@@ -275,42 +267,6 @@ class OptimizedDatasetView(APIView):
                         end_date,
                     )
                 )
-            elif optim_obj.optimize_type == OptimizeDataset.OptimizeType.RAG_TEMPLATE:
-                optimize_dataset = optim_obj
-                if len(optimize_dataset.criteria_breakdown) != 0:
-                    criteria_breakdown = optimize_dataset.criteria_breakdown
-                else:
-                    metrics_list = list(optimize_dataset.metrics.all())
-                    input_eval_prompts = [
-                        str(metric.text_prompt) for metric in metrics_list
-                    ]
-                    metric = "\n".join(
-                        [
-                            f"{i}. {criteria}"
-                            for i, criteria in enumerate(input_eval_prompts)
-                        ]
-                    )
-                    criteria_breakdown = create_criteria_text_prompt(metric)
-
-                    optimize_dataset.criteria_breakdown = criteria_breakdown
-                    optimize_dataset.save()
-                prompt_optim_agent = PromptOptimizer(
-                    prompt=prompt,
-                    train_data="",
-                    criteria_breakdown=criteria_breakdown,
-                    optimize_rag=True,
-                    filter_keys=optim_obj.knowledge_base_filters,
-                    variables=variables,
-                )
-                top_k_optimized_prompts = prompt_optim_agent.get_optimized_prompt()
-
-                optimized_prompts = [
-                    instruction_template["instruction_template"]
-                    for instruction_template in top_k_optimized_prompts
-                ]
-                optim_obj.optimized_k_prompts = optimized_prompts
-                optim_obj.status = OptimizeDataset.StatusType.COMPLETED
-                optim_obj.save()
 
             return Response(
                 {
@@ -352,29 +308,6 @@ class OptimizeDetailView(APIView):
             },
             status=200,
         )
-
-
-class KOptimizedPromptTemplateView(APIView):
-    permission_classes = [IsAuthenticated]
-
-    def get(self, request, *args, **kwarg):
-        try:
-            optimization_id = request.query_params.get("optim_id")
-            k_optimized_prompts = OptimizeDataset.objects.filter(
-                id=optimization_id
-            ).values("optimizedKPrompts")
-
-            return Response(
-                {
-                    "status": "Success",
-                    "message": "Fetched prompts successfully",
-                    "data": k_optimized_prompts,
-                },
-                status=200,
-            )
-
-        except Exception as e:
-            return GeneralMethods().internal_server_error_response(str(e))
 
 
 class RightAnswerResultsView(APIView):
@@ -1556,77 +1489,13 @@ class OptimizedDatasetKbView(CreateAPIView):
         return self.create(request, *args, **kwargs)
 
     def create(self, request, *args, **kwargs):
-        try:
-            data = request.validated_data
-            name = data.get("name")
-            knowledge_base_metrics = data.get("knowledge_base_metrics")
-            knowledge_base_filters = data.get("knowledge_base_filters")
-            prompt = data.get("prompt")
-            variables = data.get("variables")
-
-            optim_dict = {
-                "name": name,
-                "optimize_type": OptimizeDataset.OptimizeType.RAG_TEMPLATE,
-                "prompt": prompt,
-                "knowledge_base_filters": knowledge_base_filters,
-                "knowledge_base_metrics": knowledge_base_metrics,
-                "variables": variables,
-                "status": OptimizeDataset.StatusType.RUNNING.value,
-                "organization": request_organization(request),
-                "workspace": request_workspace(request),
-                "environment": OptimizeDataset.EnvTypes.CORPUS,
-                "version": "",
-            }
-
-            optim_obj = OptimizeDataset(**optim_dict)
-            optim_obj.save()
-
-            optimize_dataset = optim_obj
-            if len(optimize_dataset.criteria_breakdown) != 0:
-                criteria_breakdown = optimize_dataset.criteria_breakdown
-            else:
-                input_eval_prompts = knowledge_base_metrics
-                metric = "\n".join(
-                    [
-                        f"{i}. {criteria}"
-                        for i, criteria in enumerate(input_eval_prompts)
-                    ]
-                )
-                criteria_breakdown = create_criteria_text_prompt(metric)
-                optimize_dataset.criteria_breakdown = criteria_breakdown
-                optimize_dataset.save()
-
-            rag_prompt_optimzer.apply_async(args=(optim_obj.id,))
-
-            return self._gm.success_response(optim_obj.id)
-        except Exception as e:
-            logger.exception(f"Error in starting knowledge base optimizer: {str(e)}")
-            return self._gm.internal_server_error_response(
-                f"Failed to Start knowledge base optimizer {get_error_message('FAILED_TO_START_KB_OPTIMIZER')}"
-            )
+        return self._gm.bad_request(RAG_PROMPT_OPTIMIZATION_UNAVAILABLE)
 
 
 @temporal_activity(time_limit=3600, queue="default")
 def rag_prompt_optimzer(optim_id):
     optim_obj = OptimizeDataset.objects.filter(id=optim_id).get()
-    time.sleep(10)
-    prompt_optim_agent = PromptOptimizer(
-        prompt=optim_obj.prompt,
-        train_data="",
-        criteria_breakdown=optim_obj.criteria_breakdown,
-        optimize_rag=True,
-        filter_keys=optim_obj.knowledge_base_filters,
-        variables=optim_obj.variables,
-    )
-    top_k_optimized_prompts = prompt_optim_agent.get_optimized_prompt()
-
-    optimized_prompts = [
-        instruction_template["instruction_template"]
-        for instruction_template in top_k_optimized_prompts
-    ]
-    optim_obj.optimized_k_prompts = optimized_prompts
-    optim_obj.status = OptimizeDataset.StatusType.COMPLETED
-    optim_obj.save()
+    optim_obj.mark_as_failed(RAG_PROMPT_OPTIMIZATION_UNAVAILABLE)
 
 
 class OptimizeDatasetList(ListAPIView):

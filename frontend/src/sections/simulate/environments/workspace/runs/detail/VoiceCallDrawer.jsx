@@ -45,7 +45,7 @@ function StatePane({ children, onClose }) {
         onClick={onClose}
         sx={{ position: "absolute", top: 8, right: 8, color: "text.subtitle" }}
       >
-        <Iconify icon="mingcute:close-line" width={18} />
+        <Iconify icon="solar:close-linear" width={18} />
       </IconButton>
       {children}
     </Stack>
@@ -101,7 +101,7 @@ export default function VoiceCallDrawer({
       {
         label: CALL_TRACES_COPY.tab,
         value: "traces",
-        icon: "mdi:chart-gantt",
+        icon: "solar:chart-square-linear",
         content: (
           <CallTracesPanel
             traces={callTraces.traces}

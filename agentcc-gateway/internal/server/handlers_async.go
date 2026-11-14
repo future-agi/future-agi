@@ -4,10 +4,15 @@ import (
 	"encoding/json"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/futureagi/agentcc-gateway/internal/async"
+	"github.com/futureagi/agentcc-gateway/internal/middleware"
 	"github.com/futureagi/agentcc-gateway/internal/models"
+	authplugin "github.com/futureagi/agentcc-gateway/internal/plugins/auth"
+	ipaclplugin "github.com/futureagi/agentcc-gateway/internal/plugins/ipacl"
+	"github.com/futureagi/agentcc-gateway/internal/tenant"
 )
 
 // AsyncMiddleware checks for x-agentcc-async header and routes to async processing.
@@ -26,6 +31,12 @@ func (h *Handlers) AsyncMiddleware(w http.ResponseWriter, r *http.Request, rc *m
 		return false
 	}
 
+	caller, ok := h.asyncCaller(r)
+	if !ok {
+		models.WriteError(w, models.ErrUnauthorized("Invalid or missing API key"))
+		return true
+	}
+
 	// Parse TTL from header.
 	ttl := async.DefaultResultTTL
 	if v := r.Header.Get("x-agentcc-async-job-result-ttl"); v != "" {
@@ -34,10 +45,11 @@ func (h *Handlers) AsyncMiddleware(w http.ResponseWriter, r *http.Request, rc *m
 		}
 	}
 
-	// Determine org ID for scoping.
-	orgID := ""
-	if v, ok := rc.Metadata["org_id"]; ok {
-		orgID = v
+	// Determine org ID for scoping: the authenticated key's organization when
+	// keys are in use, otherwise the request's resolved organization.
+	orgID := caller.orgID
+	if caller.rawKey == "" {
+		orgID = rc.Metadata["org_id"]
 	}
 
 	now := time.Now()
@@ -45,6 +57,7 @@ func (h *Handlers) AsyncMiddleware(w http.ResponseWriter, r *http.Request, rc *m
 		ID:           async.GenerateJobID(),
 		Status:       async.StatusQueued,
 		OrgID:        orgID,
+		Principal:    caller.principal,
 		EndpointType: rc.EndpointType,
 		Request:      rc.Request,
 		Metadata:     copyMetadata(rc.Metadata),
@@ -53,16 +66,18 @@ func (h *Handlers) AsyncMiddleware(w http.ResponseWriter, r *http.Request, rc *m
 		ExpiresAt:    now.Add(ttl + 24*time.Hour), // extra buffer before GC
 	}
 
-	h.asyncWorker.Submit(job)
-
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusAccepted)
-	json.NewEncoder(w).Encode(map[string]interface{}{
+	// Capture the admission response before a worker can mutate the live job.
+	response := map[string]interface{}{
 		"job_id":     job.ID,
 		"status":     job.Status,
 		"created_at": job.CreatedAt,
 		"expires_at": job.ExpiresAt,
-	})
+	}
+	h.asyncWorker.Submit(job)
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusAccepted)
+	json.NewEncoder(w).Encode(response)
 
 	return true
 }
@@ -85,23 +100,16 @@ func (h *Handlers) GetAsyncJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Extract org ID from auth for scoping.
-	orgID := ""
-	rc := models.AcquireRequestContext()
-	if authHeader := r.Header.Get("Authorization"); authHeader != "" {
-		rc.Metadata["authorization"] = authHeader
+	caller, ok := h.asyncCaller(r)
+	if !ok {
+		models.WriteError(w, models.ErrUnauthorized("Invalid or missing API key"))
+		return
 	}
-	if v, ok := rc.Metadata["org_id"]; ok {
-		orgID = v
+	if err := h.resultNetworkAdmission(r, &caller); err != nil {
+		models.WriteError(w, err)
+		return
 	}
-	rc.Release()
-
-	var job *async.Job
-	if orgID != "" {
-		job = h.asyncStore.GetForOrg(jobID, orgID)
-	} else {
-		job = h.asyncStore.Get(jobID)
-	}
+	job := h.asyncStore.GetForPrincipal(jobID, caller.principal)
 
 	if job == nil {
 		models.WriteError(w, models.ErrNotFound("job_not_found", "Async job not found"))
@@ -131,25 +139,21 @@ func (h *Handlers) DeleteAsyncJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Try to cancel a running job.
-	job := h.asyncStore.Get(jobID)
-	if job == nil {
-		models.WriteError(w, models.ErrNotFound("job_not_found", "Async job not found"))
+	caller, ok := h.asyncCaller(r)
+	if !ok {
+		models.WriteError(w, models.ErrUnauthorized("Invalid or missing API key"))
+		return
+	}
+	if err := h.resultNetworkAdmission(r, &caller); err != nil {
+		models.WriteError(w, err)
 		return
 	}
 
-	// Cancel if still running.
-	if job.Status == async.StatusQueued || job.Status == async.StatusProcessing {
-		now := time.Now()
-		job.Status = async.StatusCancelled
-		job.CompletedAt = &now
-		if job.CancelFn != nil {
-			job.CancelFn()
-		}
+	// Authorize and cancel atomically; never authorize a snapshot then delete by ID.
+	if !h.asyncStore.CancelForPrincipal(jobID, caller.principal) {
+		models.WriteError(w, models.ErrNotFound("job_not_found", "Async job not found"))
+		return
 	}
-
-	// Delete from store.
-	h.asyncStore.Delete(jobID)
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
@@ -158,6 +162,70 @@ func (h *Handlers) DeleteAsyncJob(w http.ResponseWriter, r *http.Request) {
 		"status":  "cancelled",
 		"deleted": true,
 	})
+}
+
+// asyncCallerInfo identifies who submits or accesses an async job.
+type asyncCallerInfo struct {
+	// principal owns the job. It is empty only when key auth is disabled.
+	principal string
+	// orgID is the authenticated key's organization ("" for keys without one).
+	orgID string
+	// rawKey is the key the caller authenticated with ("" without key auth).
+	rawKey string
+}
+
+// asyncCaller uses the same credential precedence as KeyAuth. Org-scoped
+// keys share their organization's jobs; keys without an org own only their jobs.
+func (h *Handlers) asyncCaller(r *http.Request) (asyncCallerInfo, bool) {
+	// A license token authorizes synchronous requests only; it is not an owner
+	// for stored async jobs.
+	if middleware.IsLicenseAuthorized(r.Context()) {
+		return asyncCallerInfo{}, false
+	}
+	if h.keyStore == nil {
+		if h.asyncKeyRequired {
+			return asyncCallerInfo{}, false
+		}
+		return asyncCallerInfo{}, true // auth explicitly disabled
+	}
+	rawKey := r.Header.Get("x-api-key")
+	if header := r.Header.Get("Authorization"); strings.HasPrefix(header, "Bearer ") {
+		rawKey = strings.TrimPrefix(header, "Bearer ")
+	}
+	key := h.keyStore.Authenticate(rawKey)
+	if key == nil {
+		return asyncCallerInfo{}, false
+	}
+	caller := asyncCallerInfo{orgID: key.Metadata["org_id"], rawKey: rawKey}
+	if caller.orgID != "" {
+		caller.principal = "org:" + caller.orgID
+	} else {
+		caller.principal = "key:" + key.ID
+	}
+	return caller, true
+}
+
+// resultNetworkAdmission applies the network rules that guard inference to a
+// read or cancellation of a stored result, without calling a provider or
+// charging for it. A nil caller (administrator routes) is checked against the
+// global rules only. With a key, the key's own IP allowlist and its
+// organization's rules apply too; the organization comes from the
+// authenticated key, never from request metadata. Rules are read on every call
+// so a changed organization configuration takes effect immediately.
+func (h *Handlers) resultNetworkAdmission(r *http.Request, caller *asyncCallerInfo) *models.APIError {
+	rc := models.AcquireRequestContext()
+	defer rc.Release()
+	// Only the configured number of trusted proxy hops is read from
+	// X-Forwarded-For, as for video routes.
+	rc.Metadata["client_ip"] = trustedClientIP(r, h.resultIPACL.TrustedProxies)
+	if caller != nil && caller.rawKey != "" {
+		rc.Metadata["authorization"] = "Bearer " + caller.rawKey
+		if result := authplugin.New(h.keyStore, true).ProcessRequest(r.Context(), rc); result.Error != nil {
+			return result.Error
+		}
+		rc.Metadata[tenant.MetadataKeyOrgID] = caller.orgID
+	}
+	return ipaclplugin.New(h.resultIPACL, h.tenantStore).ProcessRequest(r.Context(), rc).Error
 }
 
 func copyMetadata(m map[string]string) map[string]string {

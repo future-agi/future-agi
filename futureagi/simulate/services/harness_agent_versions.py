@@ -1541,6 +1541,18 @@ def retry_preflight(version: AgentVersion) -> None:
     logger.info("harness_agent_version_retried version=%s", version.id)
 
 
+def queue_check(version: AgentVersion) -> None:
+    """Check a pending version no environment asked to make its default: a new one,
+    or the pending twin a repeated change returned. Its pass moves no default; a run
+    can pick it, and a move makes it the default."""
+    now = timezone.now()
+    pending = HarnessAgentVersionRuntime.no_workspace_objects.filter(
+        agent_version_id=version.id, preflight_status=Status.PENDING
+    ).update(check_started_at=now, updated_at=now)
+    if pending:
+        transaction.on_commit(lambda: _schedule_preflight(version.id))
+
+
 def _live_duplicate(
     runtime: HarnessAgentVersionRuntime,
 ) -> HarnessAgentVersionRuntime | None:
@@ -1681,6 +1693,18 @@ def _turned_down(
         # Moved meanwhile, and not by a request of its own from the same default.
         return "not_parent_default"
     return None
+
+
+def make_default(
+    version: AgentVersion, environment: HostedHarnessJob, *, user: Any
+) -> str:
+    """Make a passed version the environment's default because a user asked for it.
+
+    Returns the outcome: ``activated``, ``already_default``, or why it did not move.
+    """
+    outcome = _activate_on(environment.id, version, explicit=True, user=user)
+    _record_activation(version.id, {str(environment.id): outcome})
+    return outcome
 
 
 def _activate_on(

@@ -162,6 +162,7 @@ from tracer.services.clickhouse.v2.trace_detail_reads import (
     TraceDetailReadUnavailable,
     read_trace_detail,
 )
+from tracer.services.eval_tasks.entries import soft_delete_eval_results
 from tracer.services.eval_tiles import (
     build_eval_rollup,
     count_column_metadata,
@@ -177,6 +178,7 @@ from tracer.services.filter_principal_context import (
     bind_request_my_annotations_principal,
 )
 from tracer.services.observability_providers import ObservabilityService
+from tracer.services.trace_source_navigation import classify_trace_source
 from tracer.services.users_list_manager import USER_EXPORT_PAGE_SIZE, UsersListManager
 from tracer.utils.annotations import (
     build_annotation_subqueries as _build_annotation_subqueries_impl,
@@ -1178,15 +1180,16 @@ def _trace_session_queryset_for_request(request):
 
 def _soft_delete_trace_tree(traces):
     now = timezone.now()
-    trace_ids = [trace.id for trace in traces if trace]
+    traces = [trace for trace in traces if trace]
+    trace_ids = [trace.id for trace in traces]
     if not trace_ids:
         return []
 
     ObservationSpan.no_workspace_objects.filter(trace_id__in=trace_ids).update(
         deleted=True, deleted_at=now
     )
-    EvalLogger.no_workspace_objects.filter(trace_id__in=trace_ids).update(
-        deleted=True, deleted_at=now
+    soft_delete_eval_results(
+        EvalLogger.no_workspace_objects.filter(trace_id__in=trace_ids)
     )
     try:
         from tracer.models.trace_annotation import TraceAnnotation
@@ -1200,6 +1203,15 @@ def _soft_delete_trace_tree(traces):
     Trace.no_workspace_objects.filter(id__in=trace_ids).update(
         deleted=True, deleted_at=now
     )
+    from tracer.services.analysis_retention import retire_analysis_sources
+
+    for project_id in sorted({trace.project_id for trace in traces}):
+        selected = [trace for trace in traces if trace.project_id == project_id]
+        retire_analysis_sources(
+            project_id=project_id,
+            trace_ids=[trace.id for trace in selected],
+            session_ids=[trace.session_id for trace in selected if trace.session_id],
+        )
     return [str(trace_id) for trace_id in trace_ids]
 
 
@@ -3959,6 +3971,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             200: TraceVoiceCallDetailResponseSerializer,
             400: ApiErrorResponseSerializer,
             404: ApiErrorResponseSerializer,
+            409: ApiErrorResponseSerializer,
             500: ApiErrorResponseSerializer,
             503: ApiErrorResponseSerializer,
         },
@@ -4069,6 +4082,24 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
 
     def _voice_call_detail_clickhouse(self, request, trace_id, detail, eval_configs):
         """Return heavy voice-call detail fields from ClickHouse."""
+        # Eval navigation must prove its evaluated span in the exact snapshot
+        # rendered below, on every load/retry. An earlier readiness read cannot
+        # authorize a changed tree, and this payload omits some root ancestry.
+        query = getattr(request, "validated_query_data", {})
+        expected_span_id = query.get("expected_span_id")
+        if expected_span_id is not None:
+            source = classify_trace_source(
+                detail,
+                project_id=str(query["project_id"]),
+                trace_id=str(trace_id),
+                span_id=expected_span_id,
+            )
+            if source.status != "ready" or source.kind != "voice_call":
+                return self._gm.custom_error_response(
+                    status.HTTP_409_CONFLICT,
+                    "The evaluated source changed. Revalidate before opening it.",
+                    code="source_reference_changed",
+                )
         project_id = detail.project_id
         root_rows = [
             span
@@ -5619,11 +5650,13 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             column_config, annotation_labels
         )
 
-        # Format response matching PG format
+        # Format response matching PG format. Keep the typed sidecar separate
+        # from arbitrary attributes/eval columns, which may use the same names.
+        trace_capture_coverage = {}
         table_data = []
         for row in result.data:
             trace_id = str(row.get("trace_id", ""))
-            raw_cost = row.get("cost")
+            raw_cost = row.get("cost", 0)
             entry = {
                 "trace_id": trace_id,
                 "project_id": (
@@ -5646,7 +5679,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                     if isinstance(raw_cost, (int, float))
                     and not isinstance(raw_cost, bool)
                     and math.isfinite(raw_cost)
-                    else 0
+                    else (None if raw_cost is None else 0)
                 ),
                 "trace_name": row.get("trace_name") or row.get("span_name") or "",
                 "start_time": row.get("start_time"),
@@ -5658,6 +5691,11 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                     (str(row.get("project_id") or project_id or ""), trace_id)
                 ),
             }
+
+            if row.get("capture_coverage") is not None:
+                trace_capture_coverage.setdefault(entry["project_id"], {})[trace_id] = (
+                    row["capture_coverage"]
+                )
 
             # Add eval metrics
             trace_evals = eval_map.get(trace_id, {})
@@ -5876,6 +5914,11 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             "metadata": metadata,
             "table": _sanitize_nonfinite_floats(table_data),
             "config": column_config,
+            **(
+                {"trace_capture_coverage": trace_capture_coverage}
+                if trace_capture_coverage
+                else {}
+            ),
         }
 
         return self._gm.success_response(response)
@@ -7530,6 +7573,14 @@ class GetUserCodeExampleView(APIView):
             if project_type != "observe":
                 return self._gm.bad_request("Project type must be 'observe'.")
 
+        # JSON's ASCII mode splits non-BMP characters into surrogate pairs,
+        # which Python literals do not recombine. Escape Unicode using Python's
+        # codec after JSON has safely quoted the ordinary string characters.
+        project_name_literal = (
+            json.dumps(project_name, ensure_ascii=False)
+            .encode("ascii", "backslashreplace")
+            .decode("ascii")
+        )
         code_example = f"""import openai
 from fi_instrumentation import FITracer, register, using_attributes
 from fi_instrumentation.fi_types import ProjectType
@@ -7537,7 +7588,7 @@ from traceai_openai import OpenAIInstrumentor
 
 trace_provider = register(
     project_type=ProjectType.OBSERVE,
-    project_name="{project_name}",
+    project_name={project_name_literal},
 )
 
 tracer = FITracer(trace_provider.get_tracer(__name__))

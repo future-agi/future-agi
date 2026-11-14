@@ -171,9 +171,18 @@ def _reseed_eval_clustering(entry: EvalLogger, project_id) -> None:
     # Keep the trigger gate aligned with the fetch query. This also handles
     # choice-scored templates whose score is stored in output_str/list and
     # resolved through the template config.
-    from tracer.queries.eval_clustering import is_clusterable_eval_failure
+    from tracer.queries.eval_clustering import (
+        is_clusterable_eval_failure,
+        is_instant_eval_task,
+    )
 
     if not is_clusterable_eval_failure(entry):
+        return
+    # An Instant eval run asks ad-hoc questions: its "No" answers (and Jev's
+    # own errors) aren't failures anyone signed up to monitor, and one question
+    # over 100k rows would flood Error Feed. Saved evaluators run by regular
+    # eval tasks still cluster.
+    if is_instant_eval_task(entry.eval_task_id):
         return
     # Lazy import: the tasks module pulls the tracer task graph, so importing at
     # module top risks a cycle (mirrors eval.py).

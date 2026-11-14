@@ -45,11 +45,8 @@ const ScenarioActionMenu = ({ scenario, onEdit, onDelete }) => {
           sx={{
             display: "flex",
             gap: 1,
-            borderRadius: theme.spacing(1),
             borderColor: `${theme.palette.divider} !important`,
             minWidth: 71,
-            px: 1,
-            py: 0.25,
           }}
         >
           <SvgColor
@@ -78,7 +75,7 @@ const ScenarioActionMenu = ({ scenario, onEdit, onDelete }) => {
         PaperProps={{
           sx: {
             mt: 1,
-            minWidth: 100,
+            minWidth: 200,
             p: 0.5,
           },
         }}
@@ -99,15 +96,12 @@ const ScenarioActionMenu = ({ scenario, onEdit, onDelete }) => {
           <ListItemText
             primary="Edit"
             primaryTypographyProps={{
-              fontSize: 13,
+              fontSize: 12,
               fontWeight: 400,
             }}
           />
         </MenuItem>
-        <MenuItem
-          onClick={handleDelete}
-          sx={{ color: "error.main", px: 1.25, py: 0.75 }}
-        >
+        <MenuItem onClick={handleDelete} sx={{ px: 1.25, py: 0.75 }}>
           <ListItemIcon sx={{ minWidth: "unset", mr: 1 }}>
             <SvgColor
               src="/assets/icons/ic_delete.svg"
@@ -120,7 +114,7 @@ const ScenarioActionMenu = ({ scenario, onEdit, onDelete }) => {
           <ListItemText
             primary="Delete"
             primaryTypographyProps={{
-              fontSize: 13,
+              fontSize: 12,
               fontWeight: 400,
             }}
           />

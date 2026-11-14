@@ -70,7 +70,7 @@ export default function ApiKeyContainer() {
                       <IconButton
                         onClick={() => handleCopy(keysData.apiKey, "apiKey")}
                       >
-                        <Iconify icon="ph:copy" />
+                        <Iconify icon="solar:copy-linear" />
                       </IconButton>
                     </Tooltip>
                   </InputAdornment>
@@ -93,7 +93,7 @@ export default function ApiKeyContainer() {
                           handleCopy(keysData.secretKey, "secretKey")
                         }
                       >
-                        <Iconify icon="ph:copy" />
+                        <Iconify icon="solar:copy-linear" />
                       </IconButton>
                     </Tooltip>
                   </InputAdornment>

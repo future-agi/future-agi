@@ -995,6 +995,18 @@ class TestActivateAccountAPI:
         user.refresh_from_db()
         assert user.is_active is False
 
+    @pytest.mark.parametrize("bad_uid", ["a", "_w", "bm90LWEtdXVpZA", "4piD", "bnVsbA"])
+    def test_activate_account_malformed_uid_returns_bad_request(
+        self, api_client, db, bad_uid
+    ):
+        """Malformed base64, UTF-8 or UUID identifiers return 400, not 500."""
+        from django.core.cache import cache
+
+        cache.clear()
+        response = api_client.get(f"/accounts/activate/{bad_uid}/any-token/")
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert "Activation link is invalid or has expired." in response.json()["result"]
+
     def test_activate_account_unknown_user(self, api_client, db):
         """Unknown uid returns bad request."""
         from django.core.cache import cache
@@ -1246,6 +1258,19 @@ class TestActivateAccountReplay:
 @pytest.mark.api
 class TestPasswordResetConfirmEdgeCases:
     """Edge-case tests for POST /accounts/password-reset-confirm/<uidb64>/<token>/."""
+
+    @pytest.mark.parametrize("bad_uid", ["a", "_w", "bm90LWEtdXVpZA", "4piD", "bnVsbA"])
+    def test_password_reset_confirm_malformed_uid_returns_bad_request(
+        self, api_client, db, bad_uid
+    ):
+        """Malformed base64, UTF-8 or UUID identifiers return 400, not 500."""
+        response = api_client.post(
+            f"/accounts/password-reset-confirm/{bad_uid}/any-token/",
+            {"new_password": "BrandNewPass123!", "repeat_password": "BrandNewPass123!"},
+            format="json",
+        )
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert "Invalid reset link." in response.json()["result"]
 
     def test_inactive_auth_token_rejected(self, api_client, user):
         """Reset confirm rejects when the AuthToken is inactive."""
@@ -2113,6 +2138,61 @@ def _first_signup_payload(email):
         "company_name": "",
         "password": OSS_SIGNUP_PASSWORD,
     }
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("supplied_password", [True, False])
+def test_every_signup_dispatches_demo_seeding_after_commit(
+    supplied_password, no_outbound_email, django_capture_on_commit_callbacks
+):
+    from accounts.utils import first_signup
+
+    payload = _first_signup_payload("demo-seed@futureagi.com")
+    if not supplied_password:
+        payload.pop("password")
+    with (
+        patch("accounts.utils.process_post_registration") as dispatch,
+        patch("accounts.utils.is_cloud_env", return_value=False),
+        patch("accounts.utils._fire_deployment_telemetry_registration"),
+        patch("accounts.utils._record_signup_api_key_event"),
+    ):
+        with django_capture_on_commit_callbacks(execute=True):
+            user = first_signup(payload)
+            dispatch.assert_not_called()
+        dispatch.assert_called_once()
+        user_id, generated_password = dispatch.call_args.args
+        assert user_id == user.id
+        if supplied_password:
+            assert generated_password is None
+        else:
+            assert generated_password
+
+
+@pytest.mark.django_db
+def test_signup_survives_unavailable_post_registration_worker(
+    no_outbound_email, django_capture_on_commit_callbacks, caplog
+):
+    from accounts.utils import first_signup
+
+    payload = _first_signup_payload("demo-seed-worker-down@futureagi.com")
+    with (
+        patch(
+            "accounts.utils.process_post_registration",
+            side_effect=RuntimeError("Temporal unavailable"),
+        ) as dispatch,
+        patch("accounts.utils.is_cloud_env", return_value=False),
+        patch("accounts.utils._fire_deployment_telemetry_registration") as telemetry,
+        patch("accounts.utils._record_signup_api_key_event"),
+    ):
+        with django_capture_on_commit_callbacks(execute=True):
+            user = first_signup(payload)
+            dispatch.assert_not_called()
+        dispatch.assert_called_once_with(user.id, None)
+        telemetry.assert_called_once()
+
+    user.refresh_from_db()
+    assert user.check_password(payload["password"])
+    assert "Temporal unavailable" in caplog.text
 
 
 def _deployment(monkeypatch, *, cloud=False, ee=False):

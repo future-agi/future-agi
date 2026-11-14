@@ -62,7 +62,7 @@ const GeneratePromptConfirmation = ({
       onClose={() => handleClose(false)}
       PaperProps={{
         sx: {
-          minWidth: "532px",
+          minWidth: "560px",
           borderRadius: "8px",
           padding: theme.spacing(2),
           display: "flex",
@@ -88,7 +88,7 @@ const GeneratePromptConfirmation = ({
             color: "text.primary",
           }}
         >
-          <Iconify icon="akar-icons:cross" />
+          <Iconify icon="solar:close-linear" />
         </IconButton>
       </DialogTitle>
 
@@ -207,7 +207,6 @@ const GeneratePromptConfirmation = ({
           onClick={() => handleClose(false)}
           sx={{
             minWidth: "200px",
-            minHeight: "38px",
             "&:hover": {
               borderColor: "divider",
             },
@@ -228,7 +227,6 @@ const GeneratePromptConfirmation = ({
           disabled={!!error}
           sx={{
             minWidth: "200px",
-            minHeight: "38px",
           }}
         >
           <Typography

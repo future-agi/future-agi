@@ -21,6 +21,8 @@ type ResolveResult struct {
 	WorkspaceID string
 	UserID      string
 	KeyType     string // "system", "user", "mcp", "ingest"
+	// Immutable expiry accompanies the cache entry; nil means never expires.
+	ExpiresAt *time.Time
 	// SimulationAgent is the agent an "ingest" key names; its ID is empty for
 	// every other key and for an ingest key made for no agent. It is set once
 	// before the result is cached and never changed.
@@ -41,6 +43,15 @@ type ResolveResult struct {
 	// failed holds digests of names with deterministic value/check failures
 	// until their retry time (failedProjectRetry).
 	failed map[[sha256.Size]byte]time.Time
+}
+
+// Expired reports whether the key expires at or before now.
+func (r *ResolveResult) Expired(now time.Time) bool {
+	return r != nil && keyExpired(r.ExpiresAt, now)
+}
+
+func keyExpired(expiresAt *time.Time, now time.Time) bool {
+	return expiresAt != nil && !expiresAt.After(now)
 }
 
 // failedProjectRetry is how long a project name with a permanent value failure is
@@ -292,27 +303,28 @@ func (r *PGResolver) Close() {
 }
 
 const validateKeyQuery = `
-		SELECT k.organization_id, k.workspace_id, k.user_id, k.type
+		SELECT k.organization_id, k.workspace_id, k.user_id, k.type, k.enabled, k.expires_at
 		FROM accounts_orgapikey k
 		WHERE k.api_key = $1 AND k.secret_key = $2
-		  AND k.enabled = true AND k.deleted = false
+		  AND k.deleted = false
 		LIMIT 1`
 
 // validateKeyWithAgentQuery also reads the agent of a sandbox key. The join is
 // a left join so that a key whose agent row was deleted still validates and is
 // told apart from an invalid key.
 const validateKeyWithAgentQuery = `
-		SELECT k.organization_id, k.workspace_id, k.user_id, k.type,
+		SELECT k.organization_id, k.workspace_id, k.user_id, k.type, k.enabled, k.expires_at,
 		       k.simulation_agent_id, a.organization_id, a.deleted
 		FROM accounts_orgapikey k
 		LEFT JOIN simulate_agent_definition a
 		  ON a.id = k.simulation_agent_id AND k.type = 'ingest'
 		WHERE k.api_key = $1 AND k.secret_key = $2
-		  AND k.enabled = true AND k.deleted = false
+		  AND k.deleted = false
 		LIMIT 1`
 
 // ValidateKey checks an API key pair and returns the associated org context.
-// Returns nil, nil if the key is not found (invalid credentials).
+// Returns nil, nil for unknown/disabled keys and ErrKeyExpired for expired keys.
+// Do not filter enabled in SQL: auto-disabled expired keys retain their error.
 func (r *PGResolver) ValidateKey(ctx context.Context, apiKey, secretKey string) (*ResolveResult, error) {
 	withAgent := r.columns.state() == columnsPresent
 	res, err := r.validateKey(ctx, apiKey, secretKey, withAgent)
@@ -335,19 +347,32 @@ func (r *PGResolver) validateKey(ctx context.Context, apiKey, secretKey string, 
 	var workspaceID, userID *string
 	var agentID, agentOrgID *string
 	var agentDeleted *bool
+	var enabled bool
+	var expiresAt *time.Time
 
 	var err error
 	if withAgent {
 		err = r.read.QueryRow(ctx, validateKeyWithAgentQuery, apiKey, secretKey).Scan(
-			&orgID, &workspaceID, &userID, &keyType, &agentID, &agentOrgID, &agentDeleted)
+			&orgID, &workspaceID, &userID, &keyType, &enabled, &expiresAt, &agentID, &agentOrgID, &agentDeleted)
 	} else {
-		err = r.read.QueryRow(ctx, validateKeyQuery, apiKey, secretKey).Scan(&orgID, &workspaceID, &userID, &keyType)
+		err = r.read.QueryRow(ctx, validateKeyQuery, apiKey, secretKey).Scan(&orgID, &workspaceID, &userID, &keyType, &enabled, &expiresAt)
 	}
 	if err != nil {
 		if err == pgx.ErrNoRows {
 			return nil, nil // invalid key
 		}
 		return nil, fmt.Errorf("validate key: %w", err)
+	}
+	// A coding agent's key reads as an invalid key here, whichever statement read it.
+	if keyType == keyTypeCodingAgent {
+		return nil, nil
+	}
+
+	if keyExpired(expiresAt, time.Now()) {
+		return nil, ErrKeyExpired
+	}
+	if !enabled {
+		return nil, nil
 	}
 
 	effectiveWorkspace := ""
@@ -362,7 +387,7 @@ func (r *PGResolver) validateKey(ctx context.Context, apiKey, secretKey string, 
 	}
 	res := &ResolveResult{
 		OrgID: orgID, WorkspaceID: effectiveWorkspace,
-		KeyType: keyType, Projects: make(map[string]string),
+		KeyType: keyType, ExpiresAt: expiresAt, Projects: make(map[string]string),
 	}
 	if userID != nil {
 		res.UserID = *userID
