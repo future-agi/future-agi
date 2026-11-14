@@ -49,7 +49,7 @@ class LlmEvaluator(BaseEvaluator):
     def __init__(
         self,
         model: str | None = None,
-        api_key : str | None = None,
+        api_key: str | None = None,
         system_message_template: str | None = None,
         user_message_template: str | None = None,
         llm_service: AbstractLlmService | None = None,
@@ -77,7 +77,6 @@ class LlmEvaluator(BaseEvaluator):
         else:
             self._user_message_template = user_message_template
 
-
     @property
     @abstractmethod
     def default_model(self):
@@ -88,10 +87,8 @@ class LlmEvaluator(BaseEvaluator):
         formatted_args = [str(value) for value in self.required_args]
         return f"Docstring: {self.__doc__}\nRequired Arguments: {formatted_args}"
 
-
     def _system_message(self) -> str:
         return self._system_message_template or self.DEFAULT_SYSTEM_MESSAGE_TEMPLATE
-
 
     @abstractmethod
     def _user_message(self, **kwargs) -> str:
@@ -134,7 +131,9 @@ class LlmEvaluator(BaseEvaluator):
             explanation = chat_completion_response_json["explanation"]
             failure = self.is_failure(result)
             passed_value = 1.0 - (1.0 if failure else 0.0)
-            metrics.append(EvalResultMetric(id=MetricType.PASSED.value, value=passed_value))
+            metrics.append(
+                EvalResultMetric(id=MetricType.PASSED.value, value=passed_value)
+            )
 
         except Exception as e:
             logger.error(f"Error occurred during eval: {e}")
@@ -148,7 +147,7 @@ class LlmEvaluator(BaseEvaluator):
             "data": kwargs,
             "failure": failure,
             "reason": explanation,
-            "metadata": chat_completion_response_json.get('metadata'),
+            "metadata": chat_completion_response_json.get("metadata"),
             "runtime": eval_runtime_ms,
             "model": self._model,
             "metrics": metrics,
@@ -156,7 +155,9 @@ class LlmEvaluator(BaseEvaluator):
         }
         return llm_eval_result
 
-    def _get_completion_content(self, messages, model=None, temperature=None, response_format=None):
+    def _get_completion_content(
+        self, messages, model=None, temperature=None, response_format=None
+    ):
         """
         Get the raw content from a completion response instead of JSON.
         Useful for audio and other multimodal inputs.
@@ -179,7 +180,7 @@ class LlmEvaluator(BaseEvaluator):
             params = {
                 "model": model_to_use,
                 "messages": messages,
-                "temperature": temp_to_use
+                "temperature": temp_to_use,
             }
 
             # Add response_format if provided
@@ -195,4 +196,3 @@ class LlmEvaluator(BaseEvaluator):
         except Exception as e:
             logger.error(f"Error getting completion content: {e}")
             raise e
-

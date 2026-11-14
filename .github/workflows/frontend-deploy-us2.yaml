@@ -1,7 +1,6 @@
-# Manual trigger only, mirroring frontend-prod-deploy.yaml (AWS) for the
-# GCP us2 stack. Pick any branch to build: main -> production-flavored
-# build, anything else -> dev-flavored build. Either way the result ships
-# to the us2 bucket behind app-us2.futureagi.com.
+# Manual trigger only, for the GCP us2 stack. Pick any branch to build:
+# main -> production-flavored build, anything else -> dev-flavored build.
+# Either way the result ships to the us2 bucket behind app-us2.futureagi.com.
 name: Deploy Frontend to US2 (GCP)
 
 on:

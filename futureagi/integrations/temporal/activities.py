@@ -18,16 +18,24 @@ EXPORT_PLATFORMS = {"datadog", "posthog", "mixpanel", "cloud_storage", "message_
 @temporal_activity(time_limit=120, queue="tasks_s")
 def poll_active_integrations():
     """Find integration connections due for sync and dispatch sync activities."""
-    from integrations.models import ConnectionStatus, IntegrationConnection, IntegrationPlatform
+    from integrations.models import (
+        ConnectionStatus,
+        IntegrationConnection,
+        IntegrationPlatform,
+    )
 
     now = datetime.now(timezone.utc)
 
-    connections = IntegrationConnection.no_workspace_objects.filter(
-        status=ConnectionStatus.ACTIVE,
-        deleted=False,
-    ).exclude(platform=IntegrationPlatform.SLACK).filter(
-        Q(last_synced_at__isnull=True)
-        | Q(last_synced_at__lte=now - timedelta(seconds=60))
+    connections = (
+        IntegrationConnection.no_workspace_objects.filter(
+            status=ConnectionStatus.ACTIVE,
+            deleted=False,
+        )
+        .exclude(platform=IntegrationPlatform.SLACK)
+        .filter(
+            Q(last_synced_at__isnull=True)
+            | Q(last_synced_at__lte=now - timedelta(seconds=60))
+        )
     )
 
     dispatched = 0
@@ -304,10 +312,11 @@ def sync_integration_connection(connection_id: str):
             .values_list("trace_id", flat=True)
             .distinct()
         )
+        # Read the repairs above on primary; the unevaluated span subquery
+        # inherits this connection as part of the same SQL statement.
         incomplete_traces = list(
-            Trace.no_workspace_objects.filter(
-                project_id=_project_id, external_id__isnull=False
-            )
+            Trace.no_workspace_objects.using("default")
+            .filter(project_id=_project_id, external_id__isnull=False)
             .exclude(external_id="")
             .exclude(id__in=traces_with_spans)
         )

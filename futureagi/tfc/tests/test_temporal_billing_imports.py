@@ -106,6 +106,4 @@ def test_monthly_reset_skips_cleanly_without_cloud_overlay(monkeypatch):
 
     activities._run_monthly_reset_sync("2026-08")
 
-    logger.info.assert_called_once_with(
-        "monthly_reset_skipped_billing_is_cloud_only"
-    )
+    logger.info.assert_called_once_with("monthly_reset_skipped_billing_is_cloud_only")

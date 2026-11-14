@@ -89,7 +89,7 @@ make test-coverage       # Tests with coverage
 make test-backend-only   # Backend tests only
 
 # Django
-python manage.py runserver    # Start dev server
+DEBUG=true python manage.py runserver  # Start dev server (DEBUG defaults to off; set it explicitly to serve app static files and debug pages)
 python manage.py migrate      # Run migrations
 python manage.py test         # Run Django tests
 ```

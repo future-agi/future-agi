@@ -464,9 +464,7 @@ class TestAgentccProviderCredentialOrganizationIsolation:
             f"/agentcc/provider-credentials/{credential.id}/"
         )
         assert read_response.status_code == 200, read_response.json()
-        assert read_response.json()["result"]["extra_config"] == {
-            "api_path_prefix": ""
-        }
+        assert read_response.json()["result"]["extra_config"] == {"api_path_prefix": ""}
 
         with patch(
             "agentcc.views.provider_credential.AgentccProviderCredentialViewSet._push_config_to_gateway",

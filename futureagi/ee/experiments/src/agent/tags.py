@@ -9,7 +9,6 @@ from agentic_eval.core.embeddings.embeddings_v2 import get_embedding_model
 # NOTE: chromadb is lazy-loaded in Tags.__init__ to avoid loading onnxruntime at startup
 
 
-
 # class EmbeddingModel:
 #     def __init__(self):
 #         self.model = model
@@ -51,7 +50,7 @@ class Tags:
                 {
                     "role": "user",
                     "content": f"""You are the very best tag generator. You will take a review. This review is a critique of outputs of an AI model against some evaluation criteria. You will generate tags, which reflect the nature of the review. You will pick up key points which the review states and make a tag out of those. You can make anywhere between 2 to 5 tags, but you will keep it to a minimum to keep the tags unique. The least number of tags is desirable, covering all aspects. Each tag can have a maximum of 2 words. Prepend it with the sentiment of the tag. By sentiment, I mean if the tag represents a good thing for the critique or a bad thing. It can only be "POSITIVE" or "NEGATIVE". For e.g. POSTIVE:concise, NEGATIVE:inaccurate, NEGATIVE:bad-chronology. You will return a list of tags with the key "tags" in JSON format. Do not insert backticks.
-                    Evaluation Criteria: {self.metric_properties['eval_instructions']}
+                    Evaluation Criteria: {self.metric_properties["eval_instructions"]}
                     Critique: {reason}""",
                 },
             ],
