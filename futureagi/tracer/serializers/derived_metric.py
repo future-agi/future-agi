@@ -234,11 +234,26 @@ class MetricHistoryDefinitionSerializer(DerivedMetricVersionSerializer):
         swagger_schema_fields = {"x-nullable": True}
 
 
+class MetricCalculationPausedSerializer(serializers.Serializer):
+    reason = serializers.ChoiceField(
+        choices=["too_large"],
+        help_text="too_large: the project's stored metric rows exceed the limit",
+    )
+    since = serializers.DateTimeField()
+    rows = serializers.IntegerField(
+        min_value=0, help_text="Stored metric rows measured when it paused"
+    )
+    limit = serializers.IntegerField(
+        min_value=1, help_text="METRICS_MAX_CHECKPOINT_ROWS; raising it resumes"
+    )
+
+
 class DerivedMetricSerializer(serializers.ModelSerializer):
     definition = DerivedMetricVersionSerializer(
         source="active_version", read_only=True, allow_null=True
     )
     draft_definition = serializers.SerializerMethodField()
+    calculation_paused = serializers.SerializerMethodField()
     snapshot_supported = serializers.SerializerMethodField()
     snapshot_unsupported_reason = serializers.SerializerMethodField()
     value_mode = serializers.SerializerMethodField()
@@ -256,6 +271,29 @@ class DerivedMetricSerializer(serializers.ModelSerializer):
         from tracer.services.derived_metrics.spec import snapshot_support
 
         return snapshot_support(obj.active_version)[1]
+
+    @swagger_serializer_method(
+        serializer_or_field=MetricCalculationPausedSerializer(allow_null=True)
+    )
+    def get_calculation_paused(self, obj):
+        """Why the project's metrics stopped calculating, or null."""
+        from tracer.models.derived_metric import MetricProjectRefresh
+        from tracer.services.derived_metrics.size_cap import max_checkpoint_rows
+
+        try:
+            state = obj.project.metric_refresh
+        except MetricProjectRefresh.DoesNotExist:
+            return None
+        if not state.paused_reason:
+            return None
+        return MetricCalculationPausedSerializer(
+            {
+                "reason": state.paused_reason,
+                "since": state.paused_at,
+                "rows": state.paused_rows,
+                "limit": max_checkpoint_rows(),
+            }
+        ).data
 
     @swagger_serializer_method(serializer_or_field=serializers.CharField())
     def get_value_mode(self, obj):
@@ -278,6 +316,7 @@ class DerivedMetricSerializer(serializers.ModelSerializer):
             "snapshot_supported",
             "snapshot_unsupported_reason",
             "value_mode",
+            "calculation_paused",
             "definition",
             "created_at",
             "updated_at",
@@ -705,11 +744,13 @@ class MetricUnavailableSerializer(serializers.Serializer):
         ),
     )
     reason = serializers.ChoiceField(
-        choices=["not_calculated", "settling"],
+        choices=["not_calculated", "settling", "too_large"],
         required=False,
         help_text=(
             "window_not_calculated_yet: not_calculated (past the calculated "
-            "bound) or settling (calculated, but holding open units)"
+            "bound), settling (calculated, but holding open units) or "
+            "too_large (the project's metrics are paused: it stores more rows "
+            "than the limit)"
         ),
     )
 

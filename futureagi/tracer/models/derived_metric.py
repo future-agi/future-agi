@@ -802,6 +802,18 @@ class MetricProjectRefresh(models.Model):
     last_error_at = models.DateTimeField(null=True, blank=True)
     last_error_code = models.CharField(max_length=64, blank=True, default="")
     consecutive_failures = models.PositiveIntegerField(default=0)
+    # Set when the project's stored metric rows exceed METRICS_MAX_CHECKPOINT_ROWS,
+    # measured at enrollment or after a pass (size_cap). Only expiry runs while
+    # paused; reads keep serving buckets final before the pause. Cleared once
+    # the limit admits paused_rows again.
+    paused_reason = models.CharField(
+        max_length=16,
+        choices=[("", "Not paused"), ("too_large", "Too large")],
+        blank=True,
+        default="",
+    )
+    paused_at = models.DateTimeField(null=True, blank=True)
+    paused_rows = models.PositiveBigIntegerField(null=True, blank=True)
     # Capture statements this project's next pass may plan, learned when a
     # pass stops at its soft budget (half of what it managed). NULL means the
     # configured METRICS_PASS_MAX_CAPTURES; a fast pass doubles it back.

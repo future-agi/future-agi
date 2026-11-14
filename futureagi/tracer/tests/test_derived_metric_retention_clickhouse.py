@@ -406,6 +406,50 @@ def test_one_user_erasure_keeps_other_live_rows_and_drops_anonymous_history(
 
 
 @pytest.mark.django_db(transaction=True)
+def test_a_paused_project_still_retires_expired_units(
+    live_writer, workspace, observe_project
+):
+    """Privacy work never pauses: a project paused as too large gets an
+    expiry-only pass, which retires expired evidence and calculates nothing."""
+    from tracer.models.derived_metric import DerivedMetricVersion
+    from tracer.services.derived_metrics import admission
+
+    writer = live_writer
+    definition = definition_for(writer, workspace, observe_project)
+    template = numeric_definition(definition.metric_id)
+    DerivedMetricVersion.objects.filter(id=definition.id).update(
+        formula=template.formula, inputs=template.inputs
+    )
+    definition.refresh_from_db()
+    now = timezone.now()
+    old, live = str(uuid4()), str(uuid4())
+    seed_fields_and_buckets(
+        writer,
+        definition,
+        [
+            (old, now - timedelta(days=2), 4, ""),
+            (live, now - timedelta(hours=1), 6, ""),
+        ],
+    )
+    writer.compact()
+    MetricProjectRefresh.objects.filter(project_id=observe_project.id).update(
+        paused_reason="too_large", paused_at=now, paused_rows=10
+    )
+    before = MetricProjectRefresh.for_project(observe_project.id)
+    writer.retention_days = lambda: 1
+    admission.run_paused_expiry(writer)
+    head = MetricProjectRefresh.for_project(observe_project.id).head_manifest
+    assert head.id != before.head_manifest_id
+    assert head.published_by.source_ceilings.get("logical_expiry")
+    assert [r[0] for r in current_fields(writer, head) if not r[2]] == [live]
+    # Nothing new was calculated: the watermark did not move.
+    assert (
+        MetricProjectRefresh.for_project(observe_project.id).watermark_ns
+        == before.watermark_ns
+    )
+
+
+@pytest.mark.django_db(transaction=True)
 def test_physical_expiry_waits_its_interval_while_reads_and_erasure_stay_exact(
     live_writer, workspace, observe_project
 ):

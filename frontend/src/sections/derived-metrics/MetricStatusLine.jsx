@@ -8,7 +8,11 @@ import {
   Typography,
 } from "@mui/material";
 import { formatMetricTime, formatRelativeMetricTime } from "./metricTime";
-import { calculatedThroughCopy, forwardCoverageCopy } from "./copy";
+import {
+  calculatedThroughCopy,
+  calculationPausedCopy,
+  forwardCoverageCopy,
+} from "./copy";
 
 import { metricReadMessage } from "./metricPageValues";
 
@@ -40,6 +44,20 @@ MetricReadNotice.propTypes = {
   query: PropTypes.object.isRequired,
   label: PropTypes.string.isRequired,
   definition: PropTypes.object,
+};
+
+/** A project whose metrics paused (calculation_paused): say why, once. */
+export function MetricPausedNotice({ paused }) {
+  const message = calculationPausedCopy(paused);
+  if (!message) return null;
+  return (
+    <Alert severity="warning" data-testid="metric-calculation-paused">
+      {message}
+    </Alert>
+  );
+}
+MetricPausedNotice.propTypes = {
+  paused: PropTypes.object,
 };
 
 /** Where values begin for a metric that started with no history, from the

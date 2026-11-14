@@ -58,7 +58,9 @@ def metric_queryset(request):
             project__in=project_queryset_for_request(request),
             deleted=False,
         )
-        .select_related("project", "workspace", "active_version")
+        .select_related(
+            "project", "project__metric_refresh", "workspace", "active_version"
+        )
         .prefetch_related(
             Prefetch(
                 "versions",

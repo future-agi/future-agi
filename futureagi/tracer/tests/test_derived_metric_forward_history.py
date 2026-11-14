@@ -1173,6 +1173,22 @@ def test_forward_window_past_the_consumed_cut_is_not_calculated_yet_never_no_dat
         assert datetime.fromisoformat(
             result.data["calculated_through"]
         ) == NOW - timedelta(hours=1)
+
+    # A project paused as too large (size_cap) calculates nothing past its
+    # frozen cut: the same windows are not calculated with reason too_large,
+    # and a history version gets the same bound (it is no longer refreshed).
+    MetricProjectRefresh.objects.filter(project_id=observe_project.id).update(
+        paused_reason="too_large", paused_at=NOW, paused_rows=2_000_000
+    )
+    with pytest.raises(reads.MetricUnavailableError) as paused:
+        reads.require_calculated_window(definition, window(45), head)
+    assert paused.value.reason == "too_large"
+    assert paused.value.calculated_through == NOW - timedelta(hours=1)
+    for action, result in wire(45).items():
+        assert result.status_code == 503, (action, result.status_code, result.data)
+        assert result.data["reason"] == "too_large", action
+    history = SimpleNamespace(history_mode="history", level="conversation")
+    assert reads.calculated_through(head, history) == NOW - timedelta(hours=1)
     # A snapshot request is refused the same way, without creating a pin.
     with pytest.raises(reads.MetricUnavailableError) as snapshot:
         snapshots.request_snapshot(

@@ -1,5 +1,5 @@
 from concurrent.futures import ThreadPoolExecutor
-from datetime import timedelta
+from datetime import datetime, timedelta
 from threading import Barrier
 from unittest.mock import patch
 from uuid import uuid4
@@ -124,6 +124,34 @@ def test_definition_validation_versioning_and_old_version_runs(
 
 
 @pytest.mark.django_db
+def test_a_paused_project_says_why_on_its_metrics(auth_client, saved, settings):
+    from tracer.models.derived_metric import MetricProjectRefresh
+
+    settings.METRICS_MAX_CHECKPOINT_ROWS = 5_000
+    detail = auth_client.get(f"{ROOT}{saved['id']}/").data
+    assert detail["calculation_paused"] is None
+    since = timezone.now().replace(microsecond=0)
+    MetricProjectRefresh.objects.update_or_create(
+        project_id=saved["project_id"],
+        defaults={
+            "paused_reason": "too_large",
+            "paused_at": since,
+            "paused_rows": 7_500,
+        },
+    )
+
+    def paused(metric):
+        value = dict(metric["calculation_paused"])
+        value["since"] = datetime.fromisoformat(value["since"].replace("Z", "+00:00"))
+        return value
+
+    expected = {"reason": "too_large", "since": since, "rows": 7_500, "limit": 5_000}
+    assert paused(auth_client.get(f"{ROOT}{saved['id']}/").data) == expected
+    listing = auth_client.get(ROOT, {"project_id": saved["project_id"]}).data
+    (item,) = [m for m in listing["results"] if m["id"] == saved["id"]]
+    assert paused(item) == expected
+
+
 def test_idempotent_run_key_and_conflicting_request(auth_client, saved):
     data = run_body()
     with patch("tracer.views.derived_metric._enqueue") as enqueue:

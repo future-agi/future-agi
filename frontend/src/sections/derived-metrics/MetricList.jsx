@@ -20,6 +20,7 @@ import { ROW_HEIGHT } from "src/theme/sizes";
 import { useMetricKpi } from "./api";
 import {
   calculatedThroughCopy,
+  calculationPausedCopy,
   forwardPendingCopy,
   windowNotCalculatedYetCopy,
 } from "./copy";
@@ -81,6 +82,17 @@ function MetricReadCell({ metric, scope, window, freshness = false }) {
     params: window && coverageWindow(window, metric.definition),
     enabled: Boolean(metric.definition && window) && !waiting,
   });
+  // A paused project calculates nothing new: freshness says so first. Values
+  // already calculated still show in the Value column.
+  const paused = calculationPausedCopy(metric.calculation_paused);
+  if (freshness && paused)
+    return (
+      <Tooltip title={paused} placement="top-start">
+        <span>
+          <StatusBadge status="paused" label="Paused" variant="dot" />
+        </span>
+      </Tooltip>
+    );
   // A window past where values are calculated (refreshes due or failing) is
   // "not calculated yet", never a load error.
   const notYet =

@@ -415,6 +415,42 @@ def test_work_larger_than_a_pass_publishes_across_passes_and_never_leaves_it_ope
 
 
 @pytest.mark.django_db(transaction=True)
+def test_a_project_too_large_at_enrollment_pauses_before_any_attempt(
+    live_writer, workspace, observe_project, settings
+):
+    from tracer.models.derived_metric import MetricRefreshAttempt
+    from tracer.services.derived_metrics import size_cap
+
+    writer = live_writer
+    scope = Scope(workspace.organization_id, workspace.id, observe_project.id)
+    # A version enrolling: the measure runs only then (as enter_backfill's).
+    definition_for(writer, workspace, observe_project)
+    now = datetime.now(UTC).replace(microsecond=0)
+    for index in range(3):
+        seed_span(
+            writer.store.client,
+            scope,
+            f"span-{index}",
+            uuid4(),
+            uuid4(),
+            now - timedelta(hours=index + 1),
+            resolved=1,
+        )
+    analytics = Analytics(writer.store.client)
+    settings.METRICS_MAX_CHECKPOINT_ROWS = 3
+    assert not size_cap.pause_at_enrollment(writer.lease, analytics, retention_days=0)
+    state = MetricProjectRefresh.for_project(observe_project.id)
+    assert state.paused_reason == "" and state.head_manifest_id is None
+    settings.METRICS_MAX_CHECKPOINT_ROWS = 2
+    assert size_cap.pause_at_enrollment(writer.lease, analytics, retention_days=0)
+    state = MetricProjectRefresh.for_project(observe_project.id)
+    assert (state.paused_reason, state.paused_rows) == ("too_large", 3)
+    # Measured, not calculated: nothing was begun or published.
+    assert state.head_manifest_id is None
+    assert not MetricRefreshAttempt.objects.filter(project_id=observe_project.id)
+
+
+@pytest.mark.django_db(transaction=True)
 @pytest.mark.usefixtures("enabled_metrics")
 def test_fresh_large_project_first_pass_publishes_values_from_coverage_start(
     live_writer, workspace, observe_project, settings

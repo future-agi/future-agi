@@ -48,7 +48,10 @@ import {
   localTimeZone,
   metricWindow,
 } from "./metricTime";
-import MetricStatusLine, { MetricReadNotice } from "./MetricStatusLine";
+import MetricStatusLine, {
+  MetricPausedNotice,
+  MetricReadNotice,
+} from "./MetricStatusLine";
 import { metricActionMessage } from "./metricPageValues";
 import { firstCalculationBadge } from "./metricCalculationState";
 import MetricOverview from "./MetricOverview";
@@ -439,6 +442,7 @@ function WorkspaceMetricDetail({ scope, metricId, canWrite }) {
         {/* While the header stays, the loading line sits in the panel's
             place below the tabs instead (see the placeholder there). */}
         {!rereading && <MetricReadNotice query={detail} label="Metric" />}
+        <MetricPausedNotice paused={identity?.calculation_paused} />
         {/* Like the header's badge, these notices keep the last read of the
             same metric while it reads again, so the tabs stay in place. */}
         {identity && userMetric && (

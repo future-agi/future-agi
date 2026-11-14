@@ -241,11 +241,13 @@ def cut_terms(manifest, definition):
     once ended, settles at once): a unit first arriving within it may not have
     arrived yet, so its bucket cannot be final either. None for history.
     """
-    if (
-        manifest is None
-        or getattr(definition, "history_mode", None)
-        != DerivedMetricVersion.HistoryMode.FORWARD
-    ):
+    if manifest is None:
+        return None
+    if getattr(
+        definition, "history_mode", None
+    ) != DerivedMetricVersion.HistoryMode.FORWARD and not _paused(manifest):
+        # A paused project (size_cap) calculates nothing past its frozen cut,
+        # whatever its history mode, so every metric reads final buckets only.
         return None
     from tracer.services.derived_metrics.changes import from_ns
 
@@ -278,6 +280,18 @@ def cut_terms(manifest, definition):
         0 if getattr(definition, "level", None) == "span" else state["settle_minutes"]
     )
     return _floor15(through), _floor15(through - timedelta(minutes=settle))
+
+
+def _paused(manifest):
+    """Whether a pinned manifest's project is paused as too large (size_cap)."""
+    from tracer.models.derived_metric import MetricReadManifest
+
+    return (
+        isinstance(manifest, MetricReadManifest)
+        and MetricProjectRefresh.objects.filter(project_id=manifest.project_id)
+        .exclude(paused_reason="")
+        .exists()
+    )
 
 
 def calculated_through(manifest, definition):
@@ -332,8 +346,15 @@ class Finality:
     units to their count. One long-open unit holds only its own bucket.
     """
 
-    def __init__(self, calculated, settled, opened):
+    def __init__(self, calculated, settled, opened, paused=False):
         self.calculated, self.settled, self.opened = calculated, settled, opened
+        # A paused project (size_cap) calculates nothing past ``calculated``.
+        self.paused = paused
+
+    @property
+    def uncalculated(self):
+        """Why a bucket past ``calculated`` has no value."""
+        return "too_large" if self.paused else "not_calculated"
 
     def final(self, bucket):
         return bucket + QUARTER <= self.settled and bucket not in self.opened
@@ -357,7 +378,7 @@ class Finality:
 
     def reason(self, window):
         return (
-            "not_calculated"
+            self.uncalculated
             if window["window_start"] >= self.calculated
             else "settling"
         )
@@ -391,7 +412,7 @@ def read_finality(store, metric, definition, manifest, window):
         opened = open_buckets(
             store, metric, definition, manifest, window["window_start"], end
         )
-    return Finality(calculated, settled, opened)
+    return Finality(calculated, settled, opened, paused=_paused(manifest))
 
 
 def provenance(manifest, definition, through=None):
@@ -666,7 +687,7 @@ def require_calculated_window(
         stop = finality.complete_through(window)
         raise _not_calculated_yet(
             stop,
-            "not_calculated" if stop >= finality.calculated else "settling",
+            finality.uncalculated if stop >= finality.calculated else "settling",
             "A snapshot needs its whole window final: choose an earlier end or "
             "retry after the next calculation.",
         )

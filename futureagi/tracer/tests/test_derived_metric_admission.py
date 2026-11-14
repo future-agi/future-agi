@@ -233,6 +233,132 @@ def test_a_permanently_failing_project_waits_out_its_backoff(enabled, state_fact
         assert order.count(state.project_id) >= (300 - len(turns)) // 3 - 1
 
 
+def test_a_too_large_project_runs_only_expiry_until_the_limit_admits_it(
+    enabled, settings, state_factory
+):
+    from tracer.services.derived_metrics import size_cap
+
+    settings.METRICS_MAX_CHECKPOINT_ROWS = 1_000
+    paused = state_factory(pending_repair=True, pending_backfill=True)
+    assert not size_cap.pause_if_too_large(paused.project_id, 1_000, now=NOW)
+    assert size_cap.pause_if_too_large(paused.project_id, 1_001, now=NOW)
+    paused.refresh_from_db()
+    assert (paused.paused_reason, paused.paused_at, paused.paused_rows) == (
+        "too_large",
+        NOW,
+        1_001,
+    )
+    # Paused with every lane due: only an expiry pass, once per expiry
+    # interval (privacy work never pauses), and nothing new is calculated.
+    MetricProjectRefresh.objects.filter(pk=paused.pk).update(
+        last_started_at=NOW - timedelta(minutes=5)
+    )
+    assert admission.reserve_projects(clock=lambda: NOW) == []
+    due = NOW + timedelta(days=1)
+    assert admission.reserve_projects(clock=lambda: due) == []
+    due += admission.PAUSED_EXPIRY_SLACK
+    (expiry,) = admission.reserve_projects(clock=lambda: due)
+    assert (expiry.grant.project_id, expiry.purpose) == (paused.project_id, "expiry")
+    release_all([expiry], due)
+    assert not MetricRefreshAttempt.objects.filter(project_id=paused.project_id)
+    # A raise short of the measured rows keeps it paused.
+    settings.METRICS_MAX_CHECKPOINT_ROWS = 1_000
+    later = due + timedelta(minutes=1)
+    assert admission.reserve_projects(clock=lambda: later) == []
+    # Raising the limit to the measured rows resumes it at the next tick.
+    settings.METRICS_MAX_CHECKPOINT_ROWS = 1_001
+    (reservation,) = admission.reserve_projects(clock=lambda: later)
+    assert reservation.grant.project_id == paused.project_id
+    assert reservation.purpose != "expiry"
+    paused.refresh_from_db()
+    assert (paused.paused_reason, paused.paused_at, paused.paused_rows) == (
+        "",
+        None,
+        None,
+    )
+    release_all([reservation], later)
+
+
+def test_head_rows_count_every_receipt_the_head_reads(
+    enabled, workspace, observe_project
+):
+    from tracer.models.derived_metric import (
+        MetricAttemptBatch,
+        MetricCompactionRange,
+    )
+    from tracer.services.derived_metrics import size_cap
+
+    assert size_cap.head_rows(None) == 0
+    allowed = [uuid4(), uuid4()]
+    head = SimpleNamespace(allowed_attempts=lambda: [(1, allowed[0]), (2, allowed[1])])
+    created = []
+    for attempt_id, generation in zip(allowed + [uuid4()], (1, 2, 3), strict=True):
+        created.append(
+            MetricRefreshAttempt.objects.create(
+                id=attempt_id,
+                project=observe_project,
+                generation=generation,
+                fencing_epoch=1,
+                lease_token=uuid4(),
+                purpose="compaction" if generation == 1 else "incremental",
+                prepared_sha256="0" * 64,
+                created_at=NOW,
+                expires_at=NOW + timedelta(days=7),
+            )
+        )
+    checkpoint, delta, unread = created
+    MetricCompactionRange.objects.bulk_create(
+        MetricCompactionRange(
+            attempt=checkpoint,
+            table_kind="field_values",
+            bucket=bucket,
+            ordinal=0,
+            source_sha256="0" * 64,
+            schema_sha256="0" * 64,
+            algorithm="rowbinary-sha256-merkle-v1",
+            shard_identity=["s", "db"],
+            row_count=rows,
+            sequence_first=first,
+            sequence_last=first + rows - 1,
+        )
+        for bucket, rows, first in ((0, 700, 1), (1, 250, 701))
+    )
+    for attempt, rows in ((delta, 40), (unread, 9_999)):
+        MetricAttemptBatch.objects.create(
+            attempt=attempt,
+            table_name="field_values",
+            batch_no=0,
+            row_count=rows,
+            payload_sha256="0" * 64,
+        )
+    # Only the head's allowlist counts: ranges (checkpoint) plus batches (delta).
+    assert size_cap.head_rows(head) == 990
+
+
+def test_max_checkpoint_rows_loads_bounded_from_the_environment(settings):
+    from django.core.exceptions import ImproperlyConfigured
+
+    from tfc.settings.runtime_setting_specs import (
+        RUNTIME_NUMERIC_SETTING_SPECS,
+        load_numeric_settings,
+    )
+    from tracer.services.derived_metrics import size_cap
+
+    name = "METRICS_MAX_CHECKPOINT_ROWS"
+    assert load_numeric_settings(RUNTIME_NUMERIC_SETTING_SPECS, source={})[name] == (
+        size_cap.DEFAULT_MAX_CHECKPOINT_ROWS
+    )
+    with pytest.raises(ValueError):
+        load_numeric_settings(RUNTIME_NUMERIC_SETTING_SPECS, source={name: "0"})
+    if hasattr(settings, name):
+        delattr(settings, name)
+    assert size_cap.max_checkpoint_rows() == size_cap.DEFAULT_MAX_CHECKPOINT_ROWS
+    for invalid in (0, 10_000_000_001, "10"):
+        setattr(settings, name, invalid)
+        with pytest.raises(ImproperlyConfigured):
+            size_cap.max_checkpoint_rows()
+
+
 def test_a_tick_refills_a_freed_slot_instead_of_waiting_for_the_next(
     enabled, state_factory, monkeypatch
 ):

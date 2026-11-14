@@ -62248,6 +62248,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           readOnly: true,
           minLength: 1,
         },
+        calculation_paused: {
+          $ref: "#/definitions/MetricCalculationPaused",
+        },
         definition: {
           $ref: "#/definitions/DerivedMetricVersion",
         },
@@ -77345,9 +77348,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
         reason: {
           title: "Reason",
           description:
-            "window_not_calculated_yet: not_calculated (past the calculated bound) or settling (calculated, but holding open units)",
+            "window_not_calculated_yet: not_calculated (past the calculated bound), settling (calculated, but holding open units) or too_large (the project's metrics are paused: it stores more rows than the limit)",
           type: "string",
-          enum: ["not_calculated", "settling"],
+          enum: ["not_calculated", "settling", "too_large"],
         },
       },
     },
@@ -101677,6 +101680,38 @@ export const OPENAPI_CONTRACT = Object.freeze({
           readOnly: true,
         },
       },
+    },
+    MetricCalculationPaused: {
+      description: "Why the project's metrics stopped calculating, or null.",
+      required: ["reason", "since", "rows", "limit"],
+      type: "object",
+      properties: {
+        reason: {
+          title: "Reason",
+          description:
+            "too_large: the project's stored metric rows exceed the limit",
+          type: "string",
+          enum: ["too_large"],
+        },
+        since: {
+          title: "Since",
+          type: "string",
+          format: "date-time",
+        },
+        rows: {
+          title: "Rows",
+          description: "Stored metric rows measured when it paused",
+          type: "integer",
+          minimum: 0,
+        },
+        limit: {
+          title: "Limit",
+          description: "METRICS_MAX_CHECKPOINT_ROWS; raising it resumes",
+          type: "integer",
+          minimum: 1,
+        },
+      },
+      "x-nullable": true,
     },
     DerivedMetricResult: {
       required: [

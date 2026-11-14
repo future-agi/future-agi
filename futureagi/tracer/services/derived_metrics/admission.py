@@ -64,6 +64,7 @@ from tracer.services.derived_metrics.lease import (
     ProjectLease,
 )
 from tracer.services.derived_metrics.refresh import RefreshWriter
+from tracer.services.derived_metrics.retention import expiry_interval
 
 DISPATCH_SECONDS = 60
 RUN_NOW_THROTTLE = timedelta(seconds=60)
@@ -71,6 +72,9 @@ RUN_NOW_THROTTLE = timedelta(seconds=60)
 BACKOFF_BASE_SECONDS = 60
 # One pass's budget: the activity's 600 s timeout less a minute to unwind.
 PASS_SECONDS = 540
+# Longer than a pass, so a paused project's expiry pass never finds the last
+# expiry's floor still within its interval (physical_cutoff).
+PAUSED_EXPIRY_SLACK = timedelta(minutes=15)
 BACKOFF_MAX_SECONDS = 900
 _LOCK_NAMESPACE = 0x4D455452
 _DISPATCH_LOCK = -1
@@ -108,7 +112,7 @@ class Reservation:
     @classmethod
     def from_payload(cls, payload: dict) -> "Reservation":
         purpose = payload["purpose"]
-        if purpose not in {"incremental", "backfill", "repair", "cleanup"}:
+        if purpose not in {"incremental", "backfill", "repair", "cleanup", "expiry"}:
             raise ValueError("unknown metric dispatch purpose")
         if (purpose == "cleanup") != bool(payload.get("expiry_id")):
             raise ValueError("cleanup requires a durable expiry identity")
@@ -236,6 +240,16 @@ def eligible_projects(now: datetime):
             )
         )
         .filter(project__deleted=False)
+        # A project paused as too large runs only privacy work: an expiry pass
+        # once per expiry interval (and its cleanup debts, if any). The floor's
+        # own stamp is written a little after a pass starts, so wait a further
+        # PAUSED_EXPIRY_SLACK: the next pass then finds the interval elapsed.
+        .filter(
+            Q(paused_reason="")
+            | Q(cleanup_id__isnull=False)
+            | Q(last_started_at__isnull=True)
+            | Q(last_started_at__lte=now - expiry_interval() - PAUSED_EXPIRY_SLACK)
+        )
         .filter(Q(simulation_agent_id__isnull=True) | Q(cleanup_id__isnull=False))
         .filter(Q(lease_expires_at__isnull=True) | Q(lease_expires_at__lte=now))
         .filter(
@@ -319,6 +333,9 @@ def reserve_projects(*, clock: Callable = timezone.now) -> list[Reservation]:
             )
             if not cursor.fetchone()[0]:
                 return []
+        from tracer.services.derived_metrics import size_cap
+
+        size_cap.resume_within_limit(now=now)
         free = max(
             0,
             limit
@@ -342,6 +359,8 @@ def reserve_projects(*, clock: Callable = timezone.now) -> list[Reservation]:
                     and (state.pending_repair or state.routine_repair_due)
                 )
             )
+            if state.paused_reason:
+                purpose = "expiry"
             expiry_id = state.cleanup_id if state.simulation_agent_id else None
             if expiry_id:
                 purpose = "cleanup"
@@ -804,6 +823,17 @@ def run_project_pass(lease: ProjectLease, purpose: str) -> None:
                 next_due_at=lease.clock()
             )
         analytics = NativeMetricAnalytics(client, lease=lease)
+        from tracer.services.derived_metrics import size_cap
+
+        if purpose == "expiry" or state.paused_reason:
+            # Paused as too large: privacy work only, never new calculation.
+            run_paused_expiry(writer)
+            writer.collect_garbage()
+            return
+        if state.head_manifest_id is None and size_cap.pause_at_enrollment(
+            lease, analytics, retention_days=policy(scope.organization)
+        ):
+            return
         # Every version decides history vs "start with no history" before it
         # can enter backfill; forward-only versions activate here, so a large
         # project never starts a history sweep for them.
@@ -831,8 +861,32 @@ def run_project_pass(lease: ProjectLease, purpose: str) -> None:
         else:
             run_incremental(writer, analytics, scope, state)
         writer.collect_garbage()
+        size_cap.pause_if_too_large(
+            lease.project_id,
+            size_cap.head_rows(
+                MetricProjectRefresh.for_project(lease.project_id).head_manifest
+            ),
+            now=lease.clock(),
+        )
     finally:
         client.disconnect()
+
+
+def run_paused_expiry(writer) -> None:
+    """A paused project's pass: physical expiry only, nothing new calculated."""
+    from tracer.services.derived_metrics import backfill
+    from tracer.services.derived_metrics.retention import expire_project
+
+    head = MetricProjectRefresh.for_project(writer.lease.project_id).head_manifest
+    if head is None:
+        return
+    expire_project(
+        writer,
+        backfill.retirement_definitions(
+            writer, head, backfill.working_definitions(writer.lease.project_id)
+        ),
+        retention_days=writer.retention_days,
+    )
 
 
 def run_incremental(writer, analytics, scope, state) -> None:
