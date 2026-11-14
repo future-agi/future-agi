@@ -11,6 +11,7 @@ These endpoints use APIKeyAuthentication (x-api-key / x-secret-key headers).
 
 import json
 import uuid
+from itertools import permutations
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -1022,6 +1023,45 @@ class TestSimulationAnalyticsView:
         assert response.status_code == status.HTTP_200_OK
         averages = response.json()["result"]["eval_averages"]
         assert json.dumps(averages, separators=(",", ":")) == expected_json
+
+    @pytest.mark.parametrize(
+        "eval_rows",
+        permutations(
+            [
+                ("eval-shared", "Tone", "score", 75.0, None, None),
+                ("eval-shared", "tone", "score", 65.0, None, None),
+                ("eval-shared", "TONE", "score", 55.0, None, None),
+            ]
+        ),
+    )
+    def test_execution_id_repeated_metric_names_keep_every_average(
+        self, sdk_client, test_execution, call_execution, eval_rows
+    ):
+        with (
+            patch("sdk.views.analytics.connection") as mock_conn,
+            patch("sdk.views.analytics._get_eval_configs_with_template") as mock_eval,
+            patch("sdk.views.analytics._get_completed_call_executions"),
+            patch("sdk.views.analytics._build_template_statistics"),
+            patch(
+                "sdk.views.analytics._calculate_final_template_summaries",
+                return_value=[],
+            ),
+        ):
+            mock_eval.return_value = MagicMock(filter=MagicMock(return_value=[]))
+            self._mock_connection_for_analytics(mock_conn, eval_rows)
+            response = sdk_client.get(
+                ANALYTICS_URL,
+                {"execution_id": str(test_execution.id)},
+            )
+
+        assert response.status_code == status.HTTP_200_OK
+        averages = response.json()["result"]["eval_averages"]
+        assert set(averages) == {
+            "avg_tone",
+            "avg_tone__eval-shared",
+            "avg_tone__eval-shared_",
+        }
+        assert set(averages.values()) == {75.0, 65.0, 55.0}
 
     def test_execution_id_system_summary_populated(
         self, sdk_client, test_execution, call_execution
