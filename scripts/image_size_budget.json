@@ -47,10 +47,10 @@
     },
     {
       "image": "futureagi/agentcc-gateway",
-      "budget_mb": 9,
-      "projected_mb": 8.0,
-      "measured_mb": 6.5,
-      "note": "projected 7.2 + 0.8: the static HEALTHCHECK probe (/usr/local/bin/healthcheck, 0.79 MB gzip on amd64; scratch has no shell or wget). fi-collector carries the same probe within its budget."
+      "budget_mb": 12,
+      "projected_mb": 10.1,
+      "measured_mb": 10.1,
+      "note": "TH-10227 (PR #4085): 9 -> 12 MB, ceil(10.1 + 10%), for native HTTPS. The static HEALTHCHECK probe (/usr/local/bin/healthcheck; scratch has no shell or wget) now speaks TLS so an HTTPS-only gateway can be probed (HEALTHCHECK_URL=https://127.0.0.1:8443/healthz); linking crypto/tls and crypto/x509 took its layer from 0.91 to 1.97 MB on amd64 and from 0.83 to 1.78 MB on arm64. The gateway binary already linked crypto/tls through net/http: +0.01 MB on both architectures (the arm64 binary is the same byte size), with the same 9 modules and the same CGO_ENABLED=0 -trimpath -ldflags='-s -w' build. Measured 2026-11-14 from source builds of the PR pushed to a local registry and read with this script: amd64 10.1 MB (dev 9.0), arm64 9.0 MB (dev 8.1). Before: projected 7.2 + 0.8 for the plain-HTTP probe. fi-collector carries the same probe within its budget."
     },
     {
       "image": "futureagi/serving",
