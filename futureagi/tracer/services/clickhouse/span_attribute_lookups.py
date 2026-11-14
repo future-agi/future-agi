@@ -340,7 +340,7 @@ def scoped_trace_ids(
         # No read window here: a trace_name leaf resolves the live roots of
         # exactly these traces, through the trace_id bloom index.
         trace_name_root_window=None,
-        trace_name_root_traces_sql="toString(trace_id) IN %(_tids)s",
+        trace_name_root_traces_sql="trace_id IN %(_tids)s",
     )
     where, params = fb.translate(filters)
     params = dict(params)

@@ -112,7 +112,7 @@ def test_cluster_rca_trace_scoping_binds_every_placeholder():
     _assert_bound(captured["query"], captured["params"])
     (scope,) = _root_scopes(captured["query"])
     # The agent has the cluster's traces and no window: resolve their roots.
-    assert "toString(trace_id) IN %(_tids)s" in scope
+    assert "trace_id IN %(_tids)s" in scope
     assert "start_date" not in scope and "end_date" not in scope
 
 
@@ -159,8 +159,7 @@ def test_span_list_classifier_reads_only_its_candidates_roots(full_state):
     _assert_bound(sql, params)
     for scope in _root_scopes(sql):
         assert (
-            "(project_id, trace_id) IN (SELECT project_id, trace_id "
-            "FROM resolved_annotation_candidates)" in scope
+            "trace_id IN (SELECT trace_id FROM resolved_annotation_candidates)" in scope
         )
         # Continuous eval tasks classify full state: candidates are not
         # limited to the request window, and neither are their roots.

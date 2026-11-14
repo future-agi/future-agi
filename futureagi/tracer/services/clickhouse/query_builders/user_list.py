@@ -1211,7 +1211,7 @@ class UserListQueryBuilder(BaseQueryBuilder):
 
         return scope_trace_name_roots(
             query,
-            "(project_id, trace_id) IN (SELECT project_id, trace_id FROM spans "
+            "trace_id IN (SELECT trace_id FROM spans "
             f"PREWHERE {self._matching_activity_range_predicate()})",
         )
 
@@ -2312,8 +2312,7 @@ class UserListQueryBuilder(BaseQueryBuilder):
         # candidate traces only, not of every trace in the window.
         query = scope_trace_name_roots(
             query,
-            "(project_id, trace_id) IN "
-            "(SELECT project_id, trace_id FROM latest_candidate_spans)",
+            "trace_id IN (SELECT trace_id FROM latest_candidate_spans)",
         )
         return query, params
 

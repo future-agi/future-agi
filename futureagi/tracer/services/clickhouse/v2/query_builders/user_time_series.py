@@ -833,8 +833,7 @@ class UserDetailTimeSeriesQueryBuilderV2(V2RewriteMixin, BaseQueryBuilder):
         # A trace_name leaf looks up the live roots of this user's own traces.
         query = scope_trace_name_roots(
             query,
-            "(project_id, trace_id) IN "
-            "(SELECT project_id, trace_id FROM candidate_user_trace_ids)",
+            "trace_id IN (SELECT trace_id FROM candidate_user_trace_ids)",
         )
         return query, self.params
 

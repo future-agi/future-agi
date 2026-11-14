@@ -2135,10 +2135,7 @@ class ClickHouseFilterBuilder:
             terms.append(f"toStartOfHour(start_time) <= %({end})s")
         candidates = self.trace_name_root_traces_sql
         if candidates is None and self.resolved_candidate_spans_table is not None:
-            candidates = (
-                "(project_id, trace_id) IN (SELECT project_id, trace_id "
-                f"FROM {self.resolved_candidate_spans_table})"
-            )
+            candidates = f"trace_id IN (SELECT trace_id FROM {self.resolved_candidate_spans_table})"
         if candidates is None and self.trace_name_root_window is None:
             raise _unsupported_filter_shape(
                 "a span trace_name filter needs a read window or candidate traces"

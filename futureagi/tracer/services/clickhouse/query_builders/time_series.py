@@ -1104,7 +1104,7 @@ class TimeSeriesQueryBuilder(BaseQueryBuilder):
         # roots); the request window still bounds how early a root may start.
         query = scope_trace_name_roots(
             query,
-            "(project_id, trace_id) IN (SELECT project_id, trace_id FROM spans "
+            "trace_id IN (SELECT trace_id FROM spans "
             "PREWHERE project_id = %(project_id)s "
             "AND toStartOfHour(start_time) >= %(graph_partition_start)s "
             "AND toStartOfHour(start_time) < %(graph_partition_end)s)",

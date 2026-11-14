@@ -32,8 +32,11 @@ def scope_trace_name_roots(sql: str, candidates_sql: str) -> str:
     """Restrict every trace-name root lookup in ``sql`` to ``candidates_sql``.
 
     ``candidates_sql`` is a code-owned predicate over the root scan's
-    ``spans`` columns, such as ``(project_id, trace_id) IN (SELECT project_id,
-    trace_id FROM <candidate CTE>)``.
+    ``spans`` columns, such as ``trace_id IN (SELECT trace_id FROM <candidate
+    CTE>)``. Keep it on ``trace_id`` alone: the ``idx_trace_id`` bloom index
+    prunes granules for a single-column IN, not for a tuple. The lookup's own
+    project predicate and the outer ``(project_id, trace_id)`` match keep
+    tenant correlation.
     """
 
     return sql.replace(TRACE_NAME_ROOT_TRACES_MARKER, f"({candidates_sql})")
