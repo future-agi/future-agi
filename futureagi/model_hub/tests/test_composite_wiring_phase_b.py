@@ -420,7 +420,9 @@ class TestExecuteCompositeChildrenSync:
         assert outcome.aggregate_score == pytest.approx(0.8, abs=1e-6)
 
     @pytest.mark.requires_ee
-    @pytest.mark.parametrize("pricing_source", [None, "available_models", "default", "fallback"])
+    @pytest.mark.parametrize(
+        "pricing_source", [None, "available_models", "default", "fallback"]
+    )
     def test_composite_child_billing_uses_token_pricing_when_cost_is_zero(
         self, composite_parent, organization, workspace, monkeypatch, pricing_source
     ):

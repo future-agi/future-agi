@@ -653,7 +653,9 @@ class LLM:
         }
         increment = calculate_total_cost(self.model_name, usage_delta)
         hidden = getattr(response, "_hidden_params", None)
-        response_cost = hidden.get("response_cost") if isinstance(hidden, dict) else None
+        response_cost = (
+            hidden.get("response_cost") if isinstance(hidden, dict) else None
+        )
         if (
             isinstance(response_cost, (int, float))
             and not isinstance(response_cost, bool)
