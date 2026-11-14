@@ -130,3 +130,38 @@ def test_a_file_never_checked_reads_unchecked_not_changed(user, workspace, stora
     unchecked = _one(environment, version, source)
 
     assert (unchecked["resolved"], unchecked["problem"]) == (False, FILE_UNCHECKED)
+
+
+def test_requested_line_without_a_citing_case_is_uncovered(user, workspace, storage):
+    from simulate.models import HarnessSuiteMember
+    from simulate.services.harness_scenario_sources import requested_uncovered
+    from simulate.tests.test_harness_affected_scenarios import REFUND_KEYS, _suite, _ten
+
+    environment = _environment(user, workspace, storage, "src-requested")
+    _suite(environment, _ten())
+    enqueue_message(
+        environment,
+        content=(
+            "Add one scenario for each requested case below.\n"
+            "Requested case 1: A refund asked for after 30 days\n"
+            "Requested case 2: A second refund on the same order"
+        ),
+        client_request_id=f"req-{environment.id}",
+    )
+    member = HarnessSuiteMember.no_workspace_objects.get(
+        suite_version=environment.suite_version, scenario_key=REFUND_KEYS[0]
+    )
+    # Cited by its words, not by the message: case and punctuation do not matter.
+    member.content = {
+        **(member.content or {}),
+        "sources": [
+            {
+                "kind": "requirement",
+                "ref": "",
+                "quote": "a refund asked for after 30 days.",
+            }
+        ],
+    }
+    member.save(update_fields=["content"])
+
+    assert requested_uncovered(environment) == ["A second refund on the same order"]

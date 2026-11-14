@@ -2241,9 +2241,15 @@ class HostedHarnessProvider:
             spoken=agent_type(job) == AGENT_TYPE_VOICE,
         )
         from simulate.services.harness_scenario_lifecycle import workflow_proofs
+        from simulate.services.harness_scenario_sources import requested_uncovered
 
         return Response(
-            {**grid, **uncovered_levels(job), "workflows": workflow_proofs(job)}
+            {
+                **grid,
+                **uncovered_levels(job),
+                "workflows": workflow_proofs(job),
+                "requested_uncovered": requested_uncovered(job),
+            }
         )
 
     def amend_scenarios(self, request, pk) -> Response:

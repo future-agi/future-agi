@@ -398,6 +398,17 @@ export default function CoverageMatrix({
                   </Box>
                 </Box>
               </Box>
+              <RequestedUncovered
+                lines={data?.requested_uncovered ?? []}
+                onAddMissing={
+                  onAddGuidance
+                    ? (lines) => {
+                        close();
+                        onAddGuidance(SCENARIOS_COPY.requestedGuidance(lines), lines.length);
+                      }
+                    : undefined
+                }
+              />
               <WorkflowChecks
                 workflows={data?.workflows ?? []}
                 onAddMissing={
@@ -427,6 +438,33 @@ export default function CoverageMatrix({
     </>
   );
 }
+
+// The cases a person asked for in the builder chat that no scenario cites yet.
+export function RequestedUncovered({ lines, onAddMissing }) {
+  if (!lines.length) return null;
+  return (
+    <Stack spacing={1} sx={{ px: 3, py: 2 }} data-testid="coverage-requested">
+      <Typography sx={{ typography: "s1", fontWeight: "fontWeightMedium" }}>
+        {SCENARIOS_COPY.requestedTitle}
+      </Typography>
+      <Typography component="ul" sx={{ typography: "s2", pl: 2, m: 0 }}>
+        {lines.map((line) => (
+          <li key={line}>{line}</li>
+        ))}
+      </Typography>
+      {onAddMissing && (
+        <Button size="small" variant="outlined" onClick={() => onAddMissing(lines)} sx={{ alignSelf: "flex-start" }}>
+          {SCENARIOS_COPY.addMissingCases}
+        </Button>
+      )}
+    </Stack>
+  );
+}
+
+RequestedUncovered.propTypes = {
+  lines: PropTypes.arrayOf(PropTypes.string).isRequired,
+  onAddMissing: PropTypes.func,
+};
 
 const WORKFLOW_KINDS = ["success", "refusal", "wrong_result"];
 
