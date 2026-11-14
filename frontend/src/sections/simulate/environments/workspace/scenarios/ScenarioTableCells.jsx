@@ -7,22 +7,26 @@ import { DRAFTS_COPY } from "../workspace.constants";
 import { SUB_TASK_SHAPE } from "./scenarios.shapes";
 import { normaliseSubTasks } from "./scenarioEditor.constants";
 import {
-  LANE_WARNINGS,
   LIFECYCLE_ROLES,
+  RUN_TIME_WARNINGS,
   SCENARIOS_COPY,
   hasUnsavedChange,
   isUnsavedAddition,
   unsavedReasonId,
 } from "./scenarios.constants";
 
-// The case's lifecycle on the versions in view: Draft, Validated, Active or Archived, with why on
-// hover. A case kept as written (its solution could not run here) also carries a chip.
+// The case's lifecycle on the versions in view: Draft, Validated, Active, Kept as written or
+// Archived, with why on hover. Kept as written runs, but nothing proved its checks hold. A proved
+// case whose check reads evidence this agent does not give carries a "Not measured" chip.
 export function LifecycleBadge({ row }) {
   const lifecycle = row?.lifecycle ?? row?._raw?.lifecycle;
   if (!lifecycle) return null;
   const label = SCENARIOS_COPY.lifecycle[lifecycle.state] ?? lifecycle.state;
-  const tooltip = lifecycle.reason_text || (lifecycle.legacy ? SCENARIOS_COPY.legacyTooltip : "");
-  const kept = LANE_WARNINGS.includes(lifecycle.warning);
+  const tooltip =
+    lifecycle.reason_text ||
+    (lifecycle.state === "kept_as_written" ? lifecycle.warning_text : "") ||
+    (lifecycle.legacy ? SCENARIOS_COPY.legacyTooltip : "");
+  const notMeasured = RUN_TIME_WARNINGS.includes(lifecycle.warning);
   return (
     <Stack direction="row" alignItems="center" spacing={0.5} sx={{ flexShrink: 0 }}>
       <Tooltip title={tooltip} disableHoverListener={!tooltip}>
@@ -36,13 +40,13 @@ export function LifecycleBadge({ row }) {
           />
         </span>
       </Tooltip>
-      {kept && (
+      {notMeasured && (
         <Tooltip title={lifecycle.warning_text || ""}>
-          <span data-testid="lifecycle-kept-chip">
+          <span data-testid="lifecycle-not-measured-chip">
             <StatusBadge
-              status="kept_as_written"
+              status="not_measured"
               role="warning"
-              label={SCENARIOS_COPY.keptAsWritten}
+              label={SCENARIOS_COPY.notMeasured}
               size="sm"
               dot={false}
             />

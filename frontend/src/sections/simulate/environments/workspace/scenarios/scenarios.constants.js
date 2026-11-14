@@ -52,20 +52,22 @@ export const SCENARIOS_COPY = {
     draft: "Draft",
     validated: "Validated",
     active: "Active",
+    kept_as_written: "Kept as written",
     archived: "Archived",
   },
   legacyTooltip:
     "Validated before checks were recorded. Validate again to confirm.",
   keptAsWritten: "Kept as written",
+  notMeasured: "Not measured at run time",
   lifecycleFilterLabel: "Lifecycle",
   lifecycleFilters: [
     { value: "", label: "All" },
     { value: "draft", label: "Draft" },
     { value: "validated", label: "Validated" },
     { value: "active", label: "Active" },
+    { value: "kept_as_written", label: "Kept as written" },
     { value: "archived", label: "Archived" },
     { value: "source_changed", label: "Source changed" },
-    { value: "kept_as_written", label: "Kept as written" },
   ],
   validate: "Validate scenarios",
   validating: "Validating… (up to 45 min)",
@@ -115,13 +117,11 @@ export const LIFECYCLE_ROLES = {
   draft: "neutral",
   validated: "info",
   active: "success",
+  kept_as_written: "warning",
   archived: "neutral",
 };
-export const LANE_WARNINGS = [
-  "solution_assumed",
-  "proof_deferred",
-  "control_not_run",
-];
+// A warning on a case that runs and is proved: a check reads evidence this agent does not give.
+export const RUN_TIME_WARNINGS = ["evidence_not_captured"];
 
 // A row the unsaved changes add or change; an added one can't be picked for a
 // run yet.
