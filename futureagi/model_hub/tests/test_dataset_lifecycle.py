@@ -160,14 +160,17 @@ def test_delete_run_prompt_column_stamps_source_and_column(lifecycle_context):
     _assert_soft_deleted(dependent_column, dependent_column_updated_at)
     _assert_soft_deleted(dependent_cell, dependent_cell_updated_at)
     assert run_prompter.updated_at == column.updated_at
-    assert len(
-        {
-            run_prompter.updated_at,
-            column.updated_at,
-            dependent_column.updated_at,
-            dependent_cell.updated_at,
-        }
-    ) == 1
+    assert (
+        len(
+            {
+                run_prompter.updated_at,
+                column.updated_at,
+                dependent_column.updated_at,
+                dependent_cell.updated_at,
+            }
+        )
+        == 1
+    )
 
 
 @pytest.mark.django_db

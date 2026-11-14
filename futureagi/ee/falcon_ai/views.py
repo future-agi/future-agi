@@ -398,8 +398,7 @@ class FileUploadView(APIView):
                 ".gif": "image/gif",
                 ".webp": "image/webp",
                 ".xlsx": (
-                    "application/vnd.openxmlformats-officedocument"
-                    ".spreadsheetml.sheet"
+                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                 ),
                 ".docx": (
                     "application/vnd.openxmlformats-officedocument"

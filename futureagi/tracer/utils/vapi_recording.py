@@ -75,6 +75,7 @@ class VapiRecordingService:
         ).split(",")
         if b.strip()
     )
+
     @classmethod
     def build_artifact_url(cls, call_id: str, artifact_type: VapiArtifactType) -> str:
         """Build the authenticated endpoint URL for a call artifact."""
@@ -112,9 +113,7 @@ class VapiRecordingService:
 
         if not url:
             return False
-        return any(
-            is_own_storage_url(url, bucket) for bucket in cls._FAGI_S3_BUCKETS
-        )
+        return any(is_own_storage_url(url, bucket) for bucket in cls._FAGI_S3_BUCKETS)
 
     @classmethod
     def get_api_key_for_project(cls, project_id: Any) -> Optional[str]:
@@ -148,7 +147,9 @@ class VapiRecordingService:
             return None
 
     @classmethod
-    def get_api_key_for_agent_definition(cls, agent_definition_id: Any) -> Optional[str]:
+    def get_api_key_for_agent_definition(
+        cls, agent_definition_id: Any
+    ) -> Optional[str]:
         """Resolve the Vapi api_key for an AgentDefinition by id; None on failure."""
         if agent_definition_id is None:
             return None
@@ -167,6 +168,7 @@ class VapiRecordingService:
                 agent_definition_id=str(agent_definition_id),
             )
             return None
+
     @classmethod
     def _get_vapi_provider_for_project(cls, project_id: Any):
         from tracer.models.observability_provider import (
@@ -174,14 +176,11 @@ class VapiRecordingService:
             ProviderChoices,
         )
 
-        return (
-            ObservabilityProvider.objects.filter(
-                project_id=project_id,
-                provider=ProviderChoices.VAPI,
-                enabled=True,
-            )
-            .first()
-        )
+        return ObservabilityProvider.objects.filter(
+            project_id=project_id,
+            provider=ProviderChoices.VAPI,
+            enabled=True,
+        ).first()
 
     @classmethod
     def _api_key_from_provider_row(cls, provider) -> Optional[str]:
@@ -273,9 +272,7 @@ class VapiRecordingService:
         url = cls.build_artifact_url(call_id, artifact_type)
         headers = {"Authorization": f"Bearer {api_key}"}
 
-        with httpx.Client(
-            follow_redirects=True, timeout=timeout_seconds
-        ) as client:
+        with httpx.Client(follow_redirects=True, timeout=timeout_seconds) as client:
             try:
                 with client.stream("GET", url, headers=headers) as response:
                     cls._raise_for_artifact_response(response, call_id, artifact_type)
@@ -290,9 +287,7 @@ class VapiRecordingService:
                 raise
 
     @staticmethod
-    def _require_download_args(
-        call_id: str, artifact_type: str, api_key: str
-    ) -> None:
+    def _require_download_args(call_id: str, artifact_type: str, api_key: str) -> None:
         if not call_id:
             raise ValueError("call_id is required")
         if not artifact_type:
@@ -301,7 +296,9 @@ class VapiRecordingService:
             raise ValueError("api_key is required")
 
     @staticmethod
-    def _raise_for_artifact_response(response, call_id: str, artifact_type: str) -> None:
+    def _raise_for_artifact_response(
+        response, call_id: str, artifact_type: str
+    ) -> None:
         status = response.status_code
         if status in (401, 403):
             logger.warning(
@@ -421,8 +418,9 @@ class VapiRecordingService:
 
         # Multiple historical snapshots may share a provider call ID; update all.
         rows = list(
-            CallExecutionSnapshot.objects.filter(service_provider_call_id=call_id)
-            .only("id", "recording_url", "stereo_recording_url")
+            CallExecutionSnapshot.objects.filter(service_provider_call_id=call_id).only(
+                "id", "recording_url", "stereo_recording_url"
+            )
         )
         for row in rows:
             update_fields: list[str] = []
@@ -434,7 +432,6 @@ class VapiRecordingService:
                 update_fields.append("stereo_recording_url")
             if update_fields:
                 row.save(update_fields=update_fields)
-
 
     @classmethod
     def fetch_and_parse_call_logs(
@@ -494,9 +491,7 @@ class VapiRecordingService:
     ) -> Optional[bytes]:
         if call_id and api_key:
             try:
-                url = cls.build_artifact_url(
-                    call_id, VapiArtifactType.CALL_LOGS
-                )
+                url = cls.build_artifact_url(call_id, VapiArtifactType.CALL_LOGS)
                 headers = {"Authorization": f"Bearer {api_key}"}
                 response = requests.get(
                     url,

@@ -44,7 +44,9 @@ def test_content_tokens_list_image_part_uses_fixed_estimate():
 
 
 def test_content_tokens_list_audio_part():
-    parts = [{"type": "input_audio", "input_audio": {"data": "BASE64BLOB", "format": "wav"}}]
+    parts = [
+        {"type": "input_audio", "input_audio": {"data": "BASE64BLOB", "format": "wav"}}
+    ]
     assert budget.content_tokens(parts) == budget.EST_TOKENS_PER_AUDIO_PART
 
 
@@ -55,12 +57,17 @@ def test_content_tokens_list_file_part():
 
 def test_content_tokens_list_mixed_parts():
     parts = [
-        {"type": "text", "text": "x" * 350},          # 100
-        {"type": "image_url", "image_url": {}},        # 1500
-        {"type": "input_audio", "input_audio": {}},    # 10_000
-        {"type": "file", "file": {}},                  # 10_000
+        {"type": "text", "text": "x" * 350},  # 100
+        {"type": "image_url", "image_url": {}},  # 1500
+        {"type": "input_audio", "input_audio": {}},  # 10_000
+        {"type": "file", "file": {}},  # 10_000
     ]
-    expected = 100 + budget.EST_TOKENS_PER_IMAGE + budget.EST_TOKENS_PER_AUDIO_PART + budget.EST_TOKENS_PER_FILE_PART
+    expected = (
+        100
+        + budget.EST_TOKENS_PER_IMAGE
+        + budget.EST_TOKENS_PER_AUDIO_PART
+        + budget.EST_TOKENS_PER_FILE_PART
+    )
     assert budget.content_tokens(parts) == expected
 
 
@@ -106,6 +113,7 @@ def test_message_tokens_counts_tool_calls_field():
 def test_message_tokens_tool_calls_unserializable_falls_back():
     class Weird:
         pass
+
     m = {"role": "assistant", "content": "", "tool_calls": [{"x": Weird()}]}
     # Should not raise
     assert budget.message_tokens(m) >= 0
@@ -269,17 +277,29 @@ def test_budgets_for_model_xl_variant():
 
 def test_budgets_for_model_empty_falls_back_to_default():
     s, h, g = budget.budgets_for_model("")
-    assert (s, h, g) == (budget.BUDGET_DEFAULT_SOFT, budget.BUDGET_DEFAULT_HARD, budget.BUDGET_DEFAULT_GUARD)
+    assert (s, h, g) == (
+        budget.BUDGET_DEFAULT_SOFT,
+        budget.BUDGET_DEFAULT_HARD,
+        budget.BUDGET_DEFAULT_GUARD,
+    )
 
 
 def test_budgets_for_model_none_falls_back_to_default():
     s, h, g = budget.budgets_for_model(None)
-    assert (s, h, g) == (budget.BUDGET_DEFAULT_SOFT, budget.BUDGET_DEFAULT_HARD, budget.BUDGET_DEFAULT_GUARD)
+    assert (s, h, g) == (
+        budget.BUDGET_DEFAULT_SOFT,
+        budget.BUDGET_DEFAULT_HARD,
+        budget.BUDGET_DEFAULT_GUARD,
+    )
 
 
 def test_budgets_for_model_unknown_name_falls_back_to_default():
     s, h, g = budget.budgets_for_model("some_unknown_alias")
-    assert (s, h, g) == (budget.BUDGET_DEFAULT_SOFT, budget.BUDGET_DEFAULT_HARD, budget.BUDGET_DEFAULT_GUARD)
+    assert (s, h, g) == (
+        budget.BUDGET_DEFAULT_SOFT,
+        budget.BUDGET_DEFAULT_HARD,
+        budget.BUDGET_DEFAULT_GUARD,
+    )
 
 
 # ── PER_MESSAGE_CHARS_CAP pinned value ───────────────────────────────────

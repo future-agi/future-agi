@@ -228,7 +228,7 @@ def test_livekit_target_probe_reports_rejected_credentials(status):
 
     assert result is not None and result.ok is False
     assert result.message == (
-        "LiveKit rejected LIVEKIT_API_KEY + LIVEKIT_API_SECRET " f"(HTTP {status})"
+        f"LiveKit rejected LIVEKIT_API_KEY + LIVEKIT_API_SECRET (HTTP {status})"
     )
     assert [method for method, _ in calls] == ["CreateRoom"]
 
