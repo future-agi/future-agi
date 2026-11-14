@@ -4,6 +4,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
+import { Tab } from '@mui/material';
+import { CustomTabs } from 'src/components/tabs/tabs';
 import { enqueueSnackbar } from 'notistack';
 import { RUN_STATUS } from 'src/utils/runStatus';
 import IdentityChip from './IdentityChip';
@@ -14,6 +16,11 @@ import TechnicalDetails from './TechnicalDetails';
 import EvidenceSummary from './EvidenceSummary';
 import OperationFeedback from './OperationFeedback';
 import CapabilityNotice from './CapabilityNotice';
+import ActionReason, { reasonProps } from './ActionReason';
+import { ScrollTable, stackedTableSx } from './responsiveTable';
+import When from './When';
+import { createTheme } from '@mui/material/styles';
+import { coverageText, outcomeBadge, outcomeLabel } from '../utils/review-display';
 
 vi.mock('notistack', () => ({ enqueueSnackbar: vi.fn() }));
 const digest = `sha256:${'ab'.repeat(32)}`;
@@ -266,4 +273,102 @@ it('adds the shared vocabulary without merging approval, release or delivery', (
   expect(RUN_STATUS.not_observed).toEqual({ role: 'neutral', label: 'Not observed', shape: 'hollow' });
   expect(RUN_STATUS.checking).toEqual({ role: 'info', label: 'Checking', shape: 'live' });
   for (const key of ['pinned', 'stale', 'superseded', 'held', 'excluded', 'update_available', 'up_to_date', 'unavailable', 'private']) expect(RUN_STATUS[key]).toBeDefined();
+});
+
+describe('ActionReason', () => {
+  it('explains a disabled primary and links it for assistive technology', () => {
+    const reason = 'Enter an amount.';
+    render(<div><button type="button" disabled {...reasonProps('save-reason', reason)}>Save</button><ActionReason id="save-reason" reason={reason} /></div>);
+    expect(screen.getByRole('button', { name: 'Save' })).toHaveAccessibleDescription('Enter an amount.');
+    expect(screen.getByText('Enter an amount.')).toBeVisible();
+  });
+  it('renders nothing and adds no dangling description without a reason', () => {
+    const { container } = render(<ActionReason id="none" reason={null} />);
+    expect(container).toBeEmptyDOMElement();
+    expect(reasonProps('none', null)).toEqual({});
+  });
+});
+
+describe('responsive tables', () => {
+  const theme = createTheme();
+  it('stacks rows only below sm, hiding the header visually but not from assistive technology', () => {
+    const sx = stackedTableSx(theme);
+    const query = theme.breakpoints.down('sm');
+    expect(Object.keys(sx)).toEqual([query]);
+    expect(sx[query]['& thead']).toMatchObject({ position: 'absolute', overflow: 'hidden', clip: 'rect(0 0 0 0)' });
+    expect(sx[query]['& thead'].display).toBeUndefined();
+    expect(sx[query]['& tbody tr']).toMatchObject({ display: 'block', borderBottom: `1px solid ${theme.palette.divider}` });
+    const title = Object.entries(sx[query]).find(([selector]) => selector.endsWith('.MuiTableCell-paddingCheckbox + td'))?.[1];
+    expect(title).toMatchObject({ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' });
+    expect(sx[query]['& tbody td:not(:first-of-type)::before']).toEqual({ content: '" · "', whiteSpace: 'pre' });
+    expect(sx[query]['& tbody td[data-cell="actions"]']).toMatchObject({ display: 'block' });
+  });
+  it('keeps a real, keyboard-scrollable table region with a hidden fade when nothing overflows', () => {
+    render(<ScrollTable label="Versions"><table aria-label="Versions table"><tbody><tr><td>v1</td></tr></tbody></table></ScrollTable>);
+    const region = screen.getByRole('region', { name: 'Versions' });
+    expect(region).toHaveAttribute('tabindex', '0');
+    expect(within(region).getByRole('table', { name: 'Versions table' })).toBeInTheDocument();
+    expect(document.querySelector('[data-scroll-fade]')).toHaveAttribute('data-scroll-fade', 'off');
+  });
+});
+
+describe('When', () => {
+  it('shows a short time and reveals the full UTC time on keyboard focus', async () => {
+    const user = userEvent.setup();
+    render(<When value="2026-11-14T00:36:00Z" now={Date.parse('2026-11-14T00:48:30Z')} />);
+    expect(screen.getByText('12 min ago')).toHaveAttribute('datetime', '2026-11-14T00:36:00.000Z');
+    await user.tab();
+    expect(screen.getByText('12 min ago')).toHaveFocus();
+    expect(await screen.findByRole('tooltip')).toHaveTextContent('14 Nov 2026, 00:36 UTC');
+  });
+  it('says Not reported for a missing time instead of inventing one', () => {
+    render(<When value={undefined} />);
+    expect(screen.getByText('Not reported')).toBeVisible();
+  });
+});
+
+describe('evidence vocabulary', () => {
+  it('reads an established pass on examples as "Passed on examples"', () => {
+    expect(outcomeLabel('works_on_examples')).toBe('Passed on examples');
+    expect(outcomeBadge('works_on_examples')).toEqual({ status: 'passed', label: 'Passed on examples' });
+    expect(outcomeBadge('failed')).toEqual({ status: 'failed' });
+  });
+  it('states coverage once, always in runs, never inferring missing counts', () => {
+    expect(coverageText({ graded: 3, planned: 4, regressions: 1, incomplete: 1, disagreements: 0 })).toBe('3 of 4 runs graded · 1 incomplete · 1 regression · 0 human disagreements');
+    expect(coverageText({})).toBe('Not reported of Not reported runs graded · Not reported regressions · Not reported human disagreements');
+    expect(coverageText(null)).toBe('Not reported');
+  });
+  it('shows the result as a single badge per row, with one coverage string', () => {
+    render(<EvidenceSummary items={[{ id: 'run-3', source: 'skills_text', title: 'Text checks', outcome: 'works_on_examples', counts: { graded: 2, planned: 2, regressed: 0, disagreements: 0 }, visibility: 'workspace' }]} />);
+    const row = screen.getAllByRole('row')[1];
+    expect(within(row).getByText('Passed on examples')).toBeVisible();
+    expect(within(row).queryByText(/Works on examples/)).not.toBeInTheDocument();
+    expect(within(row).getAllByText(/runs graded/)).toHaveLength(1);
+    expect(within(row).queryByText(/attempts/)).not.toBeInTheDocument();
+  });
+});
+
+describe('header identity', () => {
+  it('puts the picker first as "Viewing [select]" and still names every role', () => {
+    render(<VersionIdentityRow picker={<select aria-label="Viewed version"><option>v2</option></select>} viewing={{ number: 2, digest }} latest={{ number: 2 }} production={{ number: 1 }} draft={{ baseNumber: 2 }} />);
+    const viewing = screen.getByText('Viewing');
+    expect(viewing.compareDocumentPosition(screen.getByRole('combobox', { name: 'Viewed version' })) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(screen.getAllByText(/Viewing/)).toHaveLength(1);
+    expect(screen.getByText('Production v1')).toBeVisible();
+    expect(screen.getByText('Latest v2')).toBeVisible();
+    expect(screen.getByText('Your draft (from v2)')).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Copy full Digest' })).toBeVisible();
+  });
+  it('keeps the breadcrumb even when a caller hides direct breadcrumb children, and truncates the middle crumb', () => {
+    render(<MemoryRouter><ObjectHeader sx={{ '& > .MuiBreadcrumbs-root': { display: 'none' } }} crumbs={[{ label: 'Reviews', to: '/dashboard/skills/reviews' }, { label: 'support-agent', to: '/x' }, { label: 'v2' }]} title="support-agent" /></MemoryRouter>);
+    const nav = screen.getByRole('navigation', { name: 'Breadcrumb' });
+    expect(nav).toBeVisible();
+    expect(within(nav).getByRole('link', { name: 'support-agent' })).toHaveStyle({ textOverflow: 'ellipsis', whiteSpace: 'nowrap' });
+  });
+  it('makes object tabs scrollable without changing their names or values', () => {
+    render(<MemoryRouter><ObjectHeader title="refund-policy" tabs={<CustomTabs value="versions" aria-label="Context detail sections"><Tab value="files" label="Files" /><Tab value="versions" label="Versions" /></CustomTabs>} /></MemoryRouter>);
+    const tablist = screen.getByRole('tablist', { name: 'Context detail sections' });
+    expect(tablist.closest('.MuiTabs-scrollableX')).not.toBeNull();
+    expect(screen.getByRole('tab', { name: 'Versions' })).toHaveAttribute('aria-selected', 'true');
+  });
 });
