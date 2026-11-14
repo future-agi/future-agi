@@ -723,7 +723,8 @@ def get_top_tags_distribution(
                     )
                 ) AS tag
             FROM events
-            WHERE startsWith(tag, {"'POSITIVE'" if tag_type == "good" else "'NEGATIVE'"})
+            WHERE EventDateTime BETWEEN '{start_date}' AND '{end_date}'
+                AND startsWith(tag, {"'POSITIVE'" if tag_type == "good" else "'NEGATIVE'"})
             {filter_query} AND has(EvalResults.Key, 'metric_{metric_id}_tags')
         )
         GROUP BY tag
