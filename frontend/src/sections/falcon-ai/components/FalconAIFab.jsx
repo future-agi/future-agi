@@ -62,22 +62,53 @@ function FalconIcon(props) {
   );
 }
 
-// Skills task footers mark themselves with [data-sticky-footer]; on a phone the
-// FAB steps aside while one is mounted instead of covering its actions.
-function useStickyFooterMounted(active) {
-  const [mounted, setMounted] = useState(false);
+// Skills task footers mark themselves with [data-sticky-footer] and publish
+// their height as --skills-sticky-footer-height (useStickyFooterHeight in
+// SkillsWorkspaceLayout). The FAB also measures any marked footer that is on
+// screen, so it clears footers that have not adopted the hook yet. It reports
+// whether a modal surface (dialog, drawer, menu) is open, because on a phone
+// the FAB steps aside for those and for footers instead of covering them.
+const OVERLAY = '.MuiModal-root:not(.MuiModal-hidden), [role="dialog"]';
+function useSkillsSurfaces(active) {
+  const [surfaces, setSurfaces] = useState({ footer: false, footerHeight: 0, overlay: false });
   useEffect(() => {
     if (!active || typeof MutationObserver === "undefined") {
-      setMounted(false);
+      setSurfaces({ footer: false, footerHeight: 0, overlay: false });
       return undefined;
     }
-    const check = () => setMounted(Boolean(document.querySelector("[data-sticky-footer]")));
-    check();
-    const observer = new MutationObserver(check);
-    observer.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ["data-sticky-footer"] });
-    return () => observer.disconnect();
+    let frame = 0;
+    const sizes = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(() => schedule());
+    const watched = new Set();
+    const measure = () => {
+      const footers = [...document.querySelectorAll("[data-sticky-footer]")].filter((node) => !node.closest(".MuiModal-root"));
+      footers.forEach((node) => { if (!watched.has(node)) { watched.add(node); sizes?.observe(node); } });
+      const viewport = window.innerHeight;
+      const footerHeight = footers.reduce((height, node) => {
+        const rect = node.getBoundingClientRect();
+        // Only a footer that is on screen and reaches the bottom edge lifts the FAB.
+        return rect.height > 0 && rect.top < viewport && rect.bottom >= viewport - 24 ? Math.max(height, Math.ceil(viewport - rect.top)) : height;
+      }, 0);
+      const next = { footer: footers.length > 0, footerHeight, overlay: Boolean(document.querySelector(OVERLAY)) };
+      setSurfaces((current) => (current.footer === next.footer && current.footerHeight === next.footerHeight && current.overlay === next.overlay ? current : next));
+    };
+    function schedule() {
+      window.cancelAnimationFrame(frame);
+      frame = window.requestAnimationFrame(measure);
+    }
+    measure();
+    const observer = new MutationObserver(schedule);
+    observer.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ["data-sticky-footer", "class"] });
+    window.addEventListener("resize", schedule);
+    document.addEventListener("scroll", schedule, { capture: true, passive: true });
+    return () => {
+      window.cancelAnimationFrame(frame);
+      observer.disconnect();
+      sizes?.disconnect();
+      window.removeEventListener("resize", schedule);
+      document.removeEventListener("scroll", schedule, { capture: true });
+    };
   }, [active]);
-  return mounted;
+  return surfaces;
 }
 
 export default function FalconAIFab() {
@@ -86,7 +117,7 @@ export default function FalconAIFab() {
   const phone = useMediaQuery(theme.breakpoints.down("sm"));
   const skillsRoot = paths.dashboard.skills.root;
   const inSkills = pathname === skillsRoot || pathname.startsWith(`${skillsRoot}/`);
-  const footerMounted = useStickyFooterMounted(inSkills && phone);
+  const surfaces = useSkillsSurfaces(inSkills);
   const navigate = useNavigate();
   const { allowed: falconAllowed } = useFeatureAllowed("falcon_ai");
   const isSidebarOpen = useFalconStore((s) => s.isSidebarOpen);
@@ -121,11 +152,17 @@ export default function FalconAIFab() {
   // Hide FAB when sidebar is open
   if (isSidebarOpen) return null;
 
-  // Skills: the FAB sits 16px from the edges, under drawers and dialogs, and
-  // never over a phone task footer. Elsewhere it keeps its original placement.
-  if (inSkills && phone && footerMounted) return null;
+  // Skills: the FAB sits 16px from the edges and above any sticky task footer
+  // (published height or measured, whichever is larger). On a phone it steps
+  // aside while a footer, dialog, drawer or menu is open. Elsewhere it keeps
+  // its original placement.
+  if (inSkills && phone && (surfaces.footer || surfaces.overlay)) return null;
   const placement = inSkills
-    ? { bottom: 16, right: 16, zIndex: theme.zIndex.speedDial }
+    ? {
+        bottom: `calc(max(var(--skills-sticky-footer-height, 0px), ${surfaces.footerHeight}px) + 16px)`,
+        right: 16,
+        zIndex: theme.zIndex.speedDial,
+      }
     : { bottom: 72, right: 12, zIndex: 1200 };
 
   return (
@@ -150,7 +187,8 @@ export default function FalconAIFab() {
             transform: "scale(1.08)",
           },
           transition:
-            "box-shadow 0.2s ease, background-color 0.2s ease, transform 0.15s ease",
+            "box-shadow 0.2s ease, background-color 0.2s ease, transform 0.15s ease, bottom 0.15s ease",
+          "@media (prefers-reduced-motion: reduce)": { transition: "none" },
         }}
       >
         <FalconIcon sx={{ fontSize: 20 }} />

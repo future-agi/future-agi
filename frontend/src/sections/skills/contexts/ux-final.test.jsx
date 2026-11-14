@@ -21,9 +21,9 @@ describe('conclusion sentences', () => {
   it('names the version publishing creates and what changes in it', () => {
     const review = { expectedHeadVersion: 1, changes: [{ path: 'skills/refund-policy/SKILL.md' }, { path: '.futureagi/context.json' }],
       acceptedLock: { links: [{ mount: 'skills/refund-policy/', version: 2 }] } };
-    expect(publishSentence('billing-agent', review)).toBe('Publishing creates billing-agent v2: refund-policy v2, no instruction changes');
+    expect(publishSentence('billing-agent', review)).toBe('Publishing creates billing-agent v2: refund-policy v2; AGENTS.md is unchanged.');
     expect(publishSentence('billing-agent', { expectedHeadVersion: null, changes: [{ path: 'AGENTS.md' }] }))
-      .toBe('Publishing creates billing-agent v1: 1 instruction file changes');
+      .toBe('Publishing creates billing-agent v1: no linked-skill changes; AGENTS.md changes.');
   });
   it('reads the context descriptor as linked-skill version moves, and refuses to guess on unreadable bytes', () => {
     const descriptor = (version) => JSON.stringify({ links: [{ skill_id: 's1', mount: 'skills/refund-policy/', version }, { skill_id: 's2', mount: 'skills/privacy/', version: 1 }] });

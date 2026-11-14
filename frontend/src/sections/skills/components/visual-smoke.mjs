@@ -49,18 +49,56 @@ function App() {
 }
 createRoot(document.getElementById('root')).render(h(App));
 `;
+// The app shell around a Skills page (SH1): the real frame styles and <Main>,
+// a header that hides text with a bare `width: 1` (100% in sx, which once
+// widened the whole document), a run button that scrolls and focuses its
+// result the way the Tests form does, and an Inspect drawer.
+const shellFixture = `
+import React from 'react';
+import {createRoot} from 'react-dom/client';
+import {Box, Button, CssBaseline, Drawer, Table, TableBody, TableCell, TableHead, TableRow, Typography} from '@mui/material';
+import {createTheme, ThemeProvider} from '@mui/material/styles';
+import {palette} from 'src/theme/palette';
+import {typography} from 'src/theme/typography';
+import {dsShape} from 'src/theme/ds-tokens';
+import {customShadows} from 'src/theme/custom-shadows';
+import {componentsOverrides} from 'src/theme/overrides';
+import Main, {dashboardFrameSx, PHONE_BAR_HEIGHT} from 'src/layouts/dashboard/main';
+const h = React.createElement;
+const theme = createTheme({palette:palette('light'), typography, shape:dsShape, customShadows:customShadows('light')});
+theme.components = componentsOverrides(theme);
+function Shell() {
+ const [open, setOpen] = React.useState(false);
+ const phone = window.innerWidth < 900;
+ const run = () => { const el = document.getElementById('result'); el.scrollIntoView({block:'start', inline:'nearest'}); el.focus(); };
+ const rows = Array.from({length:40}, (_, i) => h(TableRow,{key:i},h(TableCell,null,'Case '+(i+1)),h(TableCell,null,'Not failing')));
+ return h(ThemeProvider,{theme},h(CssBaseline),
+  phone && h(Box,{sx:{height:PHONE_BAR_HEIGHT,borderBottom:1,borderColor:'divider'}},'Menu'),
+  h(Box,{'data-testid':'frame',sx:dashboardFrameSx({phone,contain:true})},
+   h(Box,{sx:{width:{xs:0,md:200},flexShrink:0,height:'100vh',position:'relative'}},h(Typography,{sx:{p:2}},'Sidebar')),
+   h(Main,{sx:phone?{height:'calc(100vh - '+PHONE_BAR_HEIGHT+'px)'}:undefined},
+    h(Box,{sx:{p:3}},
+     h(Button,{variant:'contained',onClick:run},'Run on the application'),
+     h(Button,{onClick:()=>setOpen(true),sx:{ml:1}},'Inspect'),
+     h(Table,{size:'small','aria-label':'Cases to run'},h(TableHead,null,h(TableRow,null,h(TableCell,null,'Case'),h(TableCell,null,h(Box,{component:'span',sx:{position:'absolute',width:1,height:1,overflow:'hidden',clip:'rect(0 0 0 0)'}},'Was failing')))),h(TableBody,null,rows)),
+     h(Box,{id:'result',tabIndex:-1,sx:{mt:4,p:2,border:1,borderColor:'divider',width:'calc(100% + 400px)'}},'Result')))),
+  h(Drawer,{anchor:'right',open,onClose:()=>setOpen(false)},h(Box,{sx:{width:{xs:'100vw',sm:460},p:2}},h(Button,{onClick:()=>setOpen(false)},'Close inspect'),h(Typography,null,'Attempt'))));
+}
+createRoot(document.getElementById('root')).render(h(Shell));
+`;
 const server = await createServer({
   configFile: false, root: frontend, logLevel: 'error',
   resolve: { alias: { src: path.join(frontend, 'src') } },
   plugins: [react(), {
     name: 'skills-smoke-fixture',
-    resolveId(id) { return id === 'virtual:skills-smoke' ? '\0skills-smoke' : null; },
-    load(id) { return id === '\0skills-smoke' ? fixture : null; },
+    resolveId(id) { return id === 'virtual:skills-smoke' ? '\0skills-smoke' : id === 'virtual:skills-shell' ? '\0skills-shell' : null; },
+    load(id) { return id === '\0skills-smoke' ? fixture : id === '\0skills-shell' ? shellFixture : null; },
     configureServer(vite) {
       vite.middlewares.use(async (request, response, next) => {
-        if (!request.url.startsWith('/__skills_visual__/')) return next();
+        const entry = request.url.startsWith('/__skills_visual__/') ? 'skills-smoke' : request.url.startsWith('/__skills_shell__/') ? 'skills-shell' : null;
+        if (!entry) return next();
         response.setHeader('Content-Type', 'text/html');
-        response.end(await vite.transformIndexHtml(request.url, '<!doctype html><html><head><meta name="viewport" content="width=device-width, initial-scale=1"></head><body><div id="root"></div><script type="module" src="/@id/virtual:skills-smoke"></script></body></html>'));
+        response.end(await vite.transformIndexHtml(request.url, `<!doctype html><html><head><meta name="viewport" content="width=device-width, initial-scale=1"></head><body><div id="root"></div><script type="module" src="/@id/virtual:${entry}"></script></body></html>`));
       });
     },
   }],
@@ -99,18 +137,54 @@ try {
       });
       assert.equal(actions.wrap, 'nowrap');
       assert.equal(new Set(actions.tops).size, 1, 'File actions must stay on one row.');
-      assert.equal(actions.icons, 4, 'All file-action Solar icons must render offline.');
-      assert.deepEqual(actions.labels, ['New file', 'New folder', 'Rename', 'Delete']);
+      // R7 replaced "New folder" with paths ("Add file"; folders come from file paths).
+      assert.equal(actions.icons, 3, 'All file-action Solar icons must render offline.');
+      assert.deepEqual(actions.labels, ['Add file', 'Rename file', 'Delete file']);
       assert(actions.fits, 'File actions must fit inside the tree pane.');
-      await page.click('button[aria-label="New file"]');
+      await page.click('button[aria-label="Add file"]');
       await page.waitForSelector('[role="dialog"] input');
       await page.type('[role="dialog"] input', 'references/new.md');
       await page.evaluate(() => [...document.querySelectorAll('[role="dialog"] button')].find((button) => button.textContent === 'Create file').click());
       await page.waitForFunction(() => [...document.querySelectorAll('[role="treeitem"]')].some((node) => node.textContent.includes('new.md')));
     }
   }
+  // SH1: the shell never scrolls. After "Run on the application" (scrollIntoView
+  // plus focus on a wide result) and after Inspect opens and closes, the
+  // document and the frame stay at scrollLeft 0, the document does not scroll
+  // vertically, and nothing widens it past the viewport.
+  const shell = () => page.evaluate(() => {
+    const frame = document.querySelector('[data-testid="frame"]');
+    const html = document.documentElement;
+    return { htmlLeft: html.scrollLeft, htmlTop: html.scrollTop, width: html.scrollWidth, height: html.scrollHeight, inner: window.innerWidth, innerHeight: window.innerHeight, frameLeft: frame.scrollLeft, mainTop: document.querySelector('main').scrollTop };
+  });
+  const assertShell = (value, label) => {
+    assert.equal(value.htmlLeft, 0, `${label}: document scrolled sideways`);
+    assert.equal(value.frameLeft, 0, `${label}: frame scrolled sideways`);
+    assert.equal(value.htmlTop, 0, `${label}: document scrolled vertically`);
+    assert(value.width <= value.inner, `${label}: document wider than the viewport (${value.width} > ${value.inner})`);
+    assert(value.height <= value.innerHeight, `${label}: document taller than the viewport (${value.height} > ${value.innerHeight})`);
+  };
+  const clickText = (text) => page.evaluate((label) => [...document.querySelectorAll('button')].find((button) => button.textContent === label).click(), text);
+  for (const width of [1280, 390]) {
+    await page.setViewport({ width, height: 900 });
+    await page.goto(`http://127.0.0.1:${address.port}/__skills_shell__/`, { waitUntil: 'networkidle0' });
+    await page.waitForSelector('main');
+    assertShell(await shell(), `shell ${width} on load`);
+    await clickText('Run on the application');
+    await new Promise((resolve) => { setTimeout(resolve, 300); });
+    const afterRun = await shell();
+    assertShell(afterRun, `shell ${width} after Run on the application`);
+    assert(afterRun.mainTop > 0, 'The result scrolls into view inside <main>.');
+    await clickText('Inspect');
+    await page.waitForSelector('.MuiDrawer-paper');
+    assertShell(await shell(), `shell ${width} with Inspect open`);
+    await clickText('Close inspect');
+    await page.waitForFunction(() => !document.querySelector('.MuiDrawer-paper'));
+    assertShell(await shell(), `shell ${width} after Inspect closed`);
+    await page.screenshot({ path: path.join(screenshotDir, `shell-${width}.png`) });
+  }
   assert.deepEqual(errors, [], 'Browser must not throw runtime errors.');
-  process.stdout.write(`PASS: four light/dark desktop/mobile renders, offline icon, relative links, file creation, and no page overflow. Screenshots: ${screenshotDir}\n`);
+  process.stdout.write(`PASS: four light/dark desktop/mobile renders, offline icon, relative links, file creation, no page overflow, and a shell that never scrolls after Run and Inspect at 1280 and 390. Screenshots: ${screenshotDir}\n`);
 } finally {
   await browser?.close();
   await server.close();

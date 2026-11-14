@@ -20,7 +20,7 @@ import ActionReason, { reasonProps } from './ActionReason';
 import { ScrollTable, stackedTableSx } from './responsiveTable';
 import When from './When';
 import { createTheme } from '@mui/material/styles';
-import { coverageText, outcomeBadge, outcomeLabel } from '../utils/review-display';
+import { coverageText, evidenceCoverage, evidenceOutcome, outcomeBadge, outcomeLabel } from '../utils/review-display';
 
 vi.mock('notistack', () => ({ enqueueSnackbar: vi.fn() }));
 const digest = `sha256:${'ab'.repeat(32)}`;
@@ -345,6 +345,50 @@ describe('evidence vocabulary', () => {
     expect(within(row).queryByText(/Works on examples/)).not.toBeInTheDocument();
     expect(within(row).getAllByText(/runs graded/)).toHaveLength(1);
     expect(within(row).queryByText(/attempts/)).not.toBeInTheDocument();
+  });
+  it('maps every native outcome and text decision state to one badge, and never reads an unknown value as a pass', () => {
+    const states = { works_on_examples: ['passed', 'Passed on examples'], needs_changes: ['failed', 'Needs changes'], inconclusive: ['incomplete', 'Inconclusive'],
+      diagnostic: ['diagnostic', 'Diagnostic only'], routing_only: ['routing_only', 'Routing only'] };
+    for (const source of ['simulation_native', 'skills_text']) {
+      for (const [value, [status, label]] of Object.entries(states)) expect(evidenceOutcome({ source, outcome: value })).toMatchObject({ status, label });
+    }
+    expect(evidenceOutcome({ source: 'skills_text', outcome: 'diagnostic' }).role).toBe('neutral');
+    expect(evidenceOutcome({ source: 'skills_text', outcome: 'routing_only' }).role).toBe('neutral');
+    // A text decision carried only in the summary reads the same as the option row.
+    expect(evidenceOutcome({ source: 'skills_text', summary: { answer: 'works_on_examples' } })).toEqual(evidenceOutcome({ source: 'skills_text', outcome: 'works_on_examples' }));
+    expect(evidenceOutcome({ source: 'simulation_native', summary: { answer: 'works_on_examples' } })).toBeNull();
+    for (const value of ['works_on_example', 'release_ready', 'success', 'ok', 'true']) {
+      const badge = evidenceOutcome({ source: 'skills_text', outcome: value });
+      expect(badge).toEqual({ status: 'unknown', label: 'Unknown result' });
+      expect(RUN_STATUS[badge.status].role).not.toBe('success');
+    }
+    expect(evidenceOutcome({ source: 'skills_text', outcome: null })).toBeNull();
+    expect(evidenceOutcome({ source: 'simulation_native', outcome: 'fail' })).toEqual({ status: 'fail' });
+  });
+  it('states coverage in cases and runs only when the server reports a case count', () => {
+    expect(evidenceCoverage({ graded: 2, planned: 2, regressed: 0, disagreements: 0 }, 1)).toBe('1 case tested · 2 runs graded · 0 regressions');
+    expect(evidenceCoverage({ graded: 3, planned: 4, regressed: 1, disagreements: 2, cases: 2 })).toBe('2 cases tested · 3 of 4 runs graded · 1 regression · 2 human disagreements');
+    // Without a case count it never derives one from runs.
+    expect(evidenceCoverage({ graded: 2, planned: 2, regressed: 0, disagreements: 0 })).toBe('2 of 2 runs graded · 0 regressions · 0 human disagreements');
+    expect(evidenceCoverage(null)).toBe('Not reported');
+  });
+  it('says "Not loaded" for a result the review could not recheck, separate from "Not recorded"', () => {
+    render(<EvidenceSummary items={[{ id: 'run-4', source: 'skills_text', title: 'Text checks', status: 'completed', outcome: 'works_on_examples', resultState: 'not_loaded', visibility: 'workspace' }, { id: 'run-5', source: 'skills_text', title: 'Older text checks', status: 'completed', visibility: 'workspace' }]} />);
+    const [, loaded, recorded] = screen.getAllByRole('row');
+    expect(within(loaded).getByText('Not loaded')).toBeVisible();
+    expect(within(loaded).getByText('Renew the review to recheck this result.')).toBeVisible();
+    expect(within(loaded).queryByText('Passed on examples')).not.toBeInTheDocument();
+    expect(within(loaded).queryByText('Not recorded')).not.toBeInTheDocument();
+    expect(within(recorded).getByText('Not recorded')).toBeVisible();
+  });
+  it('marks evidence carried from the test the user just ran, and shows visibility as a badge with whole words', () => {
+    render(<EvidenceSummary items={[{ id: 'run-6', source: 'simulation_native', title: 'Application verification', outcome: 'works_on_examples', origin: 'from_test', suggested: true, visibility: 'workspace' }]} />);
+    const row = screen.getAllByRole('row')[1];
+    expect(within(row).getByText('From your test')).toBeVisible();
+    expect(within(row).queryByText('Suggested')).not.toBeInTheDocument();
+    const workspace = within(row).getByText('Workspace');
+    expect(workspace.closest('td')).toHaveStyle({ whiteSpace: 'nowrap' });
+    expect(screen.getByRole('columnheader', { name: 'Visibility' })).toHaveStyle({ whiteSpace: 'nowrap' });
   });
 });
 

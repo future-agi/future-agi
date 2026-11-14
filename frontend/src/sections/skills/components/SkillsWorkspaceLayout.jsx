@@ -1,4 +1,4 @@
-import { Suspense, useId, useRef, useState } from 'react';
+import { Suspense, useEffect, useId, useRef, useState } from 'react';
 import { NavLink, Outlet, useLocation } from 'react-router-dom';
 import { Box, IconButton, ListItemIcon, Menu, MenuItem, Stack, Tab, useMediaQuery, useTheme } from '@mui/material';
 import { useContextAuthoring } from '../contexts/ContextLibraryView';
@@ -12,6 +12,31 @@ import { campaignsContractReady, useContextCampaignAvailability } from 'src/api/
 import SkillsProductionProvider from './SkillsProductionProvider';
 import { scrollTabsProps, scrollTabsSx, useActiveTabInView } from './tabStrip';
 import './skillIcons';
+
+// Sticky task footers publish their height so the floating assistant sits above
+// them instead of over their actions: --skills-sticky-footer-height on <html>,
+// the tallest mounted footer wins, and the property is removed with the last.
+const footerHeights = new Map();
+const FOOTER_VAR = '--skills-sticky-footer-height';
+function publishFooterHeight() {
+  if (typeof document === 'undefined') return;
+  const height = Math.max(0, ...footerHeights.values());
+  if (footerHeights.size && height > 0) document.documentElement.style.setProperty(FOOTER_VAR, `${Math.ceil(height)}px`);
+  else document.documentElement.style.removeProperty(FOOTER_VAR);
+}
+/** Call with the ref of a `position: sticky; bottom: 0` footer that carries `data-sticky-footer`. */
+export function useStickyFooterHeight(ref) {
+  useEffect(() => {
+    const node = ref.current;
+    if (!node) return undefined;
+    const key = {};
+    const measure = () => { footerHeights.set(key, node.getBoundingClientRect().height); publishFooterHeight(); };
+    measure();
+    const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(measure);
+    observer?.observe(node);
+    return () => { observer?.disconnect(); footerHeights.delete(key); publishFooterHeight(); };
+  }, [ref]);
+}
 
 // Local navigation within Skills. Destination visibility never grants access:
 // direct routes and their existing authorization remain unchanged.
@@ -57,7 +82,8 @@ function SkillsNavigation() {
   const shortLabels = { [paths.dashboard.skills.contextRollouts]: 'Rollouts' };
 
   // Bottom padding = assistant button (40px) + 16px offset + 16px, so it never covers the last row.
-  return <Stack key={access.identity} sx={{ minWidth: 0, minHeight: 0, flex: 1, pb: { xs: 9, md: 10 } }}>
+  // The workspace never grows wider than the content panel, so nothing in it can scroll the app frame sideways.
+  return <Stack key={access.identity} data-skills-workspace sx={{ minWidth: 0, maxWidth: '100%', width: '100%', minHeight: 0, flex: 1, pb: { xs: 9, md: 10 } }}>
     <Box component="nav" aria-label="Skills navigation" sx={{ px: { xs: 2, md: 3 }, pt: 1.5, minWidth: 0 }}>
       <Stack direction="row" alignItems="center" spacing={1}>
         <CustomTabs ref={tabsRef} value={tabValue} {...scrollTabsProps} aria-label="Skills views" sx={{ ...scrollTabsSx, flex: 1 }}>

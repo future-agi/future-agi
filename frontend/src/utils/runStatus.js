@@ -22,7 +22,7 @@ export const RUN_STATUS = {
   held: { role: "warning", label: "Held" },
   excluded: { role: "neutral", label: "Excluded" },
   update_available: { role: "info", label: "Update available" },
-  up_to_date: { role: "success", label: "Up to date" },
+  up_to_date: { role: "neutral", label: "Up to date" },
   checking: { role: "info", label: "Checking", shape: "live" },
   unavailable: { role: "warning", label: "Unavailable" },
   private: { role: "neutral", label: "Private" },
