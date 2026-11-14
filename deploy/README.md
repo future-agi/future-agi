@@ -452,6 +452,97 @@ server {
 }
 ```
 
+## Gateway webhook events: housekeeping
+
+The `agentcc_webhook_event` table retains gateway outbound webhook history.
+Safe to purge at any time: delivered history, dead-letter rows, failed rows
+(including test sends), cancelled, expired and dropped rows, and **every event
+of a deleted webhook**. Never purge pending events of a live webhook by hand:
+the pending-age and per-webhook cap settings handle those. See the
+[configuration reference](https://docs.futureagi.com/docs/self-hosting/configuration/reference#application-behaviour)
+for `AGENTCC_WEBHOOK_PENDING_MAX_AGE_HOURS` (24 hours),
+`AGENTCC_WEBHOOK_MAX_PENDING_PER_WEBHOOK` (10000), and
+`AGENTCC_WEBHOOK_DISABLE_AFTER_FAILURES` (100).
+
+Preview the selection with `--dry-run`, check the reported counts, then run
+without it. The examples below remove delivered history older than 30 days,
+terminal events older than 30 days, and all events of deleted webhooks. Use
+`--organization UUID` to restrict either run to one organization; omit it to
+cover all organizations. Tune `--batch-size` (default 5000) and
+`--sleep-seconds` (default 0.1) for the database load. The command refuses to
+run without at least one selector; it never deletes live pending rows.
+
+Like the other operator commands, it runs only with the explicit operator
+authorization (`SERVICE_TYPE=bootstrap`, `STARTUP_DB_MUTATION_MODE=operator`,
+`NO_STARTUP_DB_MUTATIONS=false`) set for that one command; Django's startup
+guard refuses it otherwise.
+
+**Standalone** (from the repository root):
+
+```bash
+OPERATOR="-e SERVICE_TYPE=bootstrap -e STARTUP_DB_MUTATION_MODE=operator -e NO_STARTUP_DB_MUTATIONS=false"
+docker compose exec $OPERATOR app python manage.py purge_agentcc_webhook_events \
+  --delivered-older-than-days 30 --terminal-older-than-days 30 \
+  --deleted-webhooks --batch-size 5000 --sleep-seconds 0.1 --dry-run
+docker compose exec $OPERATOR app python manage.py purge_agentcc_webhook_events \
+  --delivered-older-than-days 30 --terminal-older-than-days 30 \
+  --deleted-webhooks --batch-size 5000 --sleep-seconds 0.1
+```
+
+**Compose** (Distributed production overlay; use `docker compose exec backend`
+for a non-production Distributed install):
+
+```bash
+OPERATOR="-e SERVICE_TYPE=bootstrap -e STARTUP_DB_MUTATION_MODE=operator -e NO_STARTUP_DB_MUTATIONS=false"
+docker compose --env-file deploy/.env.production \
+  -f docker-compose.distributed.yml -f deploy/docker-compose.production.yml \
+  exec $OPERATOR backend python manage.py purge_agentcc_webhook_events \
+  --delivered-older-than-days 30 --terminal-older-than-days 30 \
+  --deleted-webhooks --batch-size 5000 --sleep-seconds 0.1 --dry-run
+docker compose --env-file deploy/.env.production \
+  -f docker-compose.distributed.yml -f deploy/docker-compose.production.yml \
+  exec $OPERATOR backend python manage.py purge_agentcc_webhook_events \
+  --delivered-older-than-days 30 --terminal-older-than-days 30 \
+  --deleted-webhooks --batch-size 5000 --sleep-seconds 0.1
+```
+
+**Helm** (replace the namespace and release placeholders):
+
+```bash
+kubectl -n <namespace> exec deploy/<release>-backend -c backend -- \
+  env SERVICE_TYPE=bootstrap STARTUP_DB_MUTATION_MODE=operator NO_STARTUP_DB_MUTATIONS=false \
+  python manage.py purge_agentcc_webhook_events \
+  --delivered-older-than-days 30 --terminal-older-than-days 30 \
+  --deleted-webhooks --batch-size 5000 --sleep-seconds 0.1 --dry-run
+kubectl -n <namespace> exec deploy/<release>-backend -c backend -- \
+  env SERVICE_TYPE=bootstrap STARTUP_DB_MUTATION_MODE=operator NO_STARTUP_DB_MUTATIONS=false \
+  python manage.py purge_agentcc_webhook_events \
+  --delivered-older-than-days 30 --terminal-older-than-days 30 \
+  --deleted-webhooks --batch-size 5000 --sleep-seconds 0.1
+```
+
+For a one-off cleanup of orphaned rows on an existing install, use the same
+command for your setup with just `--deleted-webhooks`: preview first, then
+apply, for example on Standalone:
+
+```bash
+OPERATOR="-e SERVICE_TYPE=bootstrap -e STARTUP_DB_MUTATION_MODE=operator -e NO_STARTUP_DB_MUTATIONS=false"
+docker compose exec $OPERATOR app python manage.py purge_agentcc_webhook_events --deleted-webhooks --dry-run
+docker compose exec $OPERATOR app python manage.py purge_agentcc_webhook_events --deleted-webhooks
+```
+
+Deleted rows free PostgreSQL space for reuse after autovacuum. Returning disk
+space to the OS requires `VACUUM FULL agentcc_webhook_event` (an exclusive
+lock, so schedule a maintenance window) or `pg_repack`; the purge command does
+not run either for you.
+
+**Upgrade:** run migrations, then re-run the bootstrap job (it runs
+`python manage.py register_temporal_schedules`) so the new
+`agentcc-webhook-delivery` and `agentcc-webhook-event-maintenance` Temporal
+schedules exist. Normal service startup does not register them. Then preview
+and run the one-off deleted-webhook cleanup above if the install already has
+orphaned events.
+
 ## Backups
 
 ### Postgres

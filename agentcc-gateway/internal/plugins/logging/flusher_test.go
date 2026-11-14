@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/futureagi/agentcc-gateway/internal/config"
 	"github.com/futureagi/agentcc-gateway/internal/models"
 )
 
@@ -207,20 +208,23 @@ func TestLogFlusher_StaysBoundedWhileASendIsSlow(t *testing.T) {
 // error, until the webhook has failed maxFlushRetries times in a row, and
 // drops a batch that met a client error at once.
 func TestLogFlusherFlush_RetriesThenDrops(t *testing.T) {
+	cfg := config.DefaultLogFlushConfig()
+	cfg.RetryBackoff = time.Millisecond
+	cfg.MaxRetryBackoff = time.Millisecond
 	for _, tc := range []struct {
 		name      string
 		status    int
 		wantSends int
 	}{
-		{"after a dropped connection", dropConnection, maxFlushRetries + 1},
-		{"after a server error", http.StatusServiceUnavailable, maxFlushRetries + 1},
+		{"after a dropped connection", dropConnection, cfg.MaxRetries + 1},
+		{"after a server error", http.StatusServiceUnavailable, cfg.MaxRetries + 1},
 		{"after a client error", http.StatusBadRequest, 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			_, restore := installCapturingLogger()
 			defer restore()
 			wh := newFakeLogWebhook(t, func(int, *http.Request) int { return tc.status })
-			f := NewLogFlusher(wh.URL, "secret", time.Hour, 100)
+			f := NewLogFlusher(wh.URL, "secret", time.Hour, 100, cfg)
 			enqueue(f, "req-1", "req-2")
 			buffered := func() int {
 				f.mu.Lock()
@@ -228,7 +232,10 @@ func TestLogFlusherFlush_RetriesThenDrops(t *testing.T) {
 				return len(f.buffer)
 			}
 
-			for sends := 1; sends <= 2*maxFlushRetries; sends++ {
+			for sends := 1; sends <= 2*cfg.MaxRetries; sends++ {
+				if sends > 1 {
+					time.Sleep(2 * cfg.RetryBackoff)
+				}
 				f.flush()
 				if buffered() == 0 {
 					if sends != tc.wantSends {
@@ -240,7 +247,7 @@ func TestLogFlusherFlush_RetriesThenDrops(t *testing.T) {
 					return
 				}
 			}
-			t.Errorf("still holds the batch after %d sends, want it dropped after %d", 2*maxFlushRetries, tc.wantSends)
+			t.Errorf("still holds the batch after %d sends, want it dropped after %d", 2*cfg.MaxRetries, tc.wantSends)
 		})
 	}
 }

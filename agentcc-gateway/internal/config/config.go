@@ -952,11 +952,59 @@ type EdgeConfig struct {
 
 // ControlPlaneConfig configures the connection to the Django control plane.
 type ControlPlaneConfig struct {
-	URL           string        `yaml:"url" json:"url"`                         // e.g. "http://localhost:8000"
-	AdminToken    string        `yaml:"admin_token" json:"-"`                   // shared secret for gateway ↔ Django auth
-	WebhookSecret string        `yaml:"webhook_secret" json:"-"`                // shared secret sent as X-Webhook-Secret header
-	SyncOnStartup bool          `yaml:"sync_on_startup" json:"sync_on_startup"` // pull all org configs on boot
-	SyncInterval  time.Duration `yaml:"sync_interval" json:"sync_interval"`     // periodic re-sync (0 = disabled)
+	URL           string         `yaml:"url" json:"url"`                         // e.g. "http://localhost:8000"
+	AdminToken    string         `yaml:"admin_token" json:"-"`                   // shared secret for gateway ↔ Django auth
+	WebhookSecret string         `yaml:"webhook_secret" json:"-"`                // shared secret sent as X-Webhook-Secret header
+	SyncOnStartup bool           `yaml:"sync_on_startup" json:"sync_on_startup"` // pull all org configs on boot
+	SyncInterval  time.Duration  `yaml:"sync_interval" json:"sync_interval"`     // periodic re-sync (0 = disabled)
+	LogFlush      LogFlushConfig `yaml:"log_flush" json:"log_flush"`
+}
+
+// LogFlushConfig controls bounded request-log delivery to the control plane.
+type LogFlushConfig struct {
+	Interval        time.Duration `yaml:"interval" json:"interval"`
+	Timeout         time.Duration `yaml:"timeout" json:"timeout"`
+	MaxBatch        int           `yaml:"max_batch" json:"max_batch"`
+	MaxRetries      int           `yaml:"max_retries" json:"max_retries"`
+	RetryBackoff    time.Duration `yaml:"retry_backoff" json:"retry_backoff"`
+	MaxRetryBackoff time.Duration `yaml:"max_retry_backoff" json:"max_retry_backoff"`
+}
+
+func DefaultLogFlushConfig() LogFlushConfig {
+	return LogFlushConfig{Interval: 5 * time.Second, Timeout: 15 * time.Second, MaxBatch: 5000,
+		MaxRetries: 3, RetryBackoff: 5 * time.Second, MaxRetryBackoff: time.Minute}
+}
+
+// normalize replaces invalid settings individually so a bad value never
+// disables the flusher or creates an unbounded retry loop.
+func (c *LogFlushConfig) normalize() {
+	defaults := DefaultLogFlushConfig()
+	for _, field := range []struct {
+		name     string
+		value    *time.Duration
+		fallback time.Duration
+	}{
+		{"interval", &c.Interval, defaults.Interval}, {"timeout", &c.Timeout, defaults.Timeout},
+		{"retry_backoff", &c.RetryBackoff, defaults.RetryBackoff},
+		{"max_retry_backoff", &c.MaxRetryBackoff, defaults.MaxRetryBackoff},
+	} {
+		if *field.value <= 0 {
+			slog.Warn("invalid control_plane.log_flush value; using default", "field", field.name, "value", *field.value, "default", field.fallback)
+			*field.value = field.fallback
+		}
+	}
+	for _, field := range []struct {
+		name     string
+		value    *int
+		fallback int
+	}{
+		{"max_batch", &c.MaxBatch, defaults.MaxBatch}, {"max_retries", &c.MaxRetries, defaults.MaxRetries},
+	} {
+		if *field.value <= 0 {
+			slog.Warn("invalid control_plane.log_flush value; using default", "field", field.name, "value", *field.value, "default", field.fallback)
+			*field.value = field.fallback
+		}
+	}
 }
 
 // EnvAllowPrivateProviderURLs names the env var behind
@@ -1035,8 +1083,9 @@ func DefaultConfig() *Config {
 			// Unset: Load reads it as WriteTimeout, whatever that is set to.
 			MaxRequestTimeout: 0,
 		},
-		Providers: make(map[string]ProviderConfig),
-		ModelMap:  make(map[string]string),
+		ControlPlane: ControlPlaneConfig{LogFlush: DefaultLogFlushConfig()},
+		Providers:    make(map[string]ProviderConfig),
+		ModelMap:     make(map[string]string),
 		LicenseAuth: LicenseAuthConfig{
 			Issuer:               "https://licenses.futureagi.com",
 			Audience:             "futureagi-agentcc-gateway",
@@ -1279,6 +1328,12 @@ func loadFromEnv(cfg *Config) {
 		cfg.ControlPlane.SyncOnStartup = v == "true" || v == "1"
 	}
 	envDuration("AGENTCC_SYNC_INTERVAL", &cfg.ControlPlane.SyncInterval)
+	envDuration("AGENTCC_LOG_FLUSH_INTERVAL", &cfg.ControlPlane.LogFlush.Interval)
+	envDuration("AGENTCC_LOG_FLUSH_TIMEOUT", &cfg.ControlPlane.LogFlush.Timeout)
+	envInt("AGENTCC_LOG_FLUSH_MAX_BATCH", &cfg.ControlPlane.LogFlush.MaxBatch)
+	envInt("AGENTCC_LOG_FLUSH_MAX_RETRIES", &cfg.ControlPlane.LogFlush.MaxRetries)
+	envDuration("AGENTCC_LOG_FLUSH_RETRY_BACKOFF", &cfg.ControlPlane.LogFlush.RetryBackoff)
+	envDuration("AGENTCC_LOG_FLUSH_MAX_RETRY_BACKOFF", &cfg.ControlPlane.LogFlush.MaxRetryBackoff)
 	if v := os.Getenv("AGENTCC_WEBHOOK_SECRET"); v != "" {
 		cfg.ControlPlane.WebhookSecret = v
 	}
@@ -1337,6 +1392,7 @@ func loadFromEnv(cfg *Config) {
 
 // Validate checks that the config is valid.
 func (c *Config) Validate() error {
+	c.ControlPlane.LogFlush.normalize()
 	if c.Server.Port < 1 || c.Server.Port > 65535 {
 		return fmt.Errorf("server.port must be between 1 and 65535, got %d", c.Server.Port)
 	}

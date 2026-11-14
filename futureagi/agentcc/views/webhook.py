@@ -29,6 +29,7 @@ class GatewayWebhookView(APIView):
         responses={
             200: WebhookIngestResponseSerializer,
             400: AgentccErrorResponseSerializer,
+            503: AgentccErrorResponseSerializer,
         },
         reject_unknown_fields=True,
     )
@@ -48,5 +49,9 @@ class GatewayWebhookView(APIView):
             count = ingest_request_logs(logs)
             return self._gm.success_response({"ingested": count})
         except Exception as e:
+            # Not the batch's fault: answer 503 so the gateway sends it again
+            # instead of dropping it. Ingest is replay-safe, keyed on request id.
             logger.exception("webhook_ingestion_error", error=str(e))
-            return self._gm.bad_request(str(e))
+            return self._gm.custom_error_response(
+                503, "Log ingest failed; retry the batch"
+            )

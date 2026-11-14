@@ -4,6 +4,7 @@ import json
 
 import requests as http_requests
 import structlog
+from django.db import transaction
 from django.utils import timezone
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
@@ -19,6 +20,7 @@ from agentcc.services.url_safety import (
     build_ssrf_safe_session,
     ensure_public_http_url,
 )
+from agentcc.services.webhook_hygiene import cancel_events_for_webhook
 from tfc.utils.base_viewset import BaseModelViewSetMixinWithUserOrg
 from tfc.utils.general_methods import GeneralMethods
 
@@ -85,7 +87,21 @@ class AgentccWebhookViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
             )
             if not serializer.is_valid():
                 return self._gm.bad_request(serializer.errors)
+            was_active = instance.is_active
             webhook = serializer.save()
+            if webhook.is_active and not was_active:
+                # Turned back on: the failure streak and its reason are history.
+                webhook.consecutive_failures = 0
+                webhook.disabled_reason = ""
+                webhook.disabled_at = None
+                webhook.save(
+                    update_fields=[
+                        "consecutive_failures",
+                        "disabled_reason",
+                        "disabled_at",
+                        "updated_at",
+                    ]
+                )
             return self._gm.success_response(AgentccWebhookSerializer(webhook).data)
         except Exception as e:
             logger.exception("webhook_update_error", error=str(e))
@@ -98,9 +114,13 @@ class AgentccWebhookViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
     def destroy(self, request, *args, **kwargs):
         try:
             instance = self.get_object()
-            instance.deleted = True
-            instance.deleted_at = timezone.now()
-            instance.save(update_fields=["deleted", "deleted_at", "updated_at"])
+            with transaction.atomic():
+                instance.deleted = True
+                instance.deleted_at = timezone.now()
+                instance.save(update_fields=["deleted", "deleted_at", "updated_at"])
+                # A soft delete cascades nothing: without this its events
+                # would wait in the delivery queue for ever.
+                cancel_events_for_webhook(instance.id)
             return self._gm.success_response({"deleted": True})
         except Exception as e:
             logger.exception("webhook_delete_error", error=str(e))
@@ -186,7 +206,9 @@ class AgentccWebhookViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
             return self._gm.bad_request(str(e))
 
 
-class AgentccWebhookEventViewSet(BaseModelViewSetMixinWithUserOrg, ReadOnlyModelViewSet):
+class AgentccWebhookEventViewSet(
+    BaseModelViewSetMixinWithUserOrg, ReadOnlyModelViewSet
+):
     """Read-only view of webhook event delivery records."""
 
     permission_classes = [IsAuthenticated]
@@ -219,7 +241,9 @@ class AgentccWebhookEventViewSet(BaseModelViewSetMixinWithUserOrg, ReadOnlyModel
     def retrieve(self, request, *args, **kwargs):
         try:
             instance = self.get_object()
-            return self._gm.success_response(AgentccWebhookEventSerializer(instance).data)
+            return self._gm.success_response(
+                AgentccWebhookEventSerializer(instance).data
+            )
         except Exception as e:
             logger.exception("webhook_event_retrieve_error", error=str(e))
             return self._gm.not_found("Webhook event not found")
@@ -231,6 +255,15 @@ class AgentccWebhookEventViewSet(BaseModelViewSetMixinWithUserOrg, ReadOnlyModel
             instance = self.get_object()
             if instance.status == AgentccWebhookEvent.DELIVERED:
                 return self._gm.bad_request("Event already delivered")
+            if instance.status in AgentccWebhookEvent.NOT_RETRYABLE:
+                return self._gm.bad_request(
+                    f"A {instance.status} event cannot be retried"
+                )
+            webhook = AgentccWebhook.all_objects.filter(pk=instance.webhook_id).first()
+            if webhook is None or webhook.deleted:
+                return self._gm.bad_request("Webhook was deleted")
+            if not webhook.is_active:
+                return self._gm.bad_request("Enable the webhook before retrying")
 
             instance.status = AgentccWebhookEvent.PENDING
             instance.attempts = 0
@@ -246,7 +279,9 @@ class AgentccWebhookEventViewSet(BaseModelViewSetMixinWithUserOrg, ReadOnlyModel
                 ]
             )
 
-            return self._gm.success_response(AgentccWebhookEventSerializer(instance).data)
+            return self._gm.success_response(
+                AgentccWebhookEventSerializer(instance).data
+            )
         except Exception as e:
             logger.exception("webhook_event_retry_error", error=str(e))
             return self._gm.bad_request(str(e))

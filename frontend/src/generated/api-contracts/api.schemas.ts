@@ -3754,6 +3754,9 @@ export const AgentccWebhookEventApiStatus = {
   delivered: "delivered",
   failed: "failed",
   dead_letter: "dead_letter",
+  cancelled: "cancelled",
+  expired: "expired",
+  dropped: "dropped",
 } as const;
 
 export interface AgentccWebhookEventApi {
@@ -3823,6 +3826,12 @@ export interface AgentccWebhookApi {
   is_active?: boolean;
   headers?: AgentccWebhookApiHeaders;
   description?: string;
+  readonly consecutive_failures?: number;
+  /** @minLength 1 */
+  readonly disabled_reason?: string;
+  readonly disabled_at?: string;
+  readonly dropped_events_total?: number;
+  readonly last_dropped_at?: string;
   readonly created_at?: string;
   readonly updated_at?: string;
 }

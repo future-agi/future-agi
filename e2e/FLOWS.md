@@ -1604,6 +1604,31 @@
 - the gateway refuses the local webhook outage before opt-in and after revocation, and returns the unique mock echo only while opted in
 - an invalid boolean is refused without creating a configuration version
 
+### GW-E2E-006 — a webhook that keeps failing is disabled with its reason, re-enabled, and deleted without leftover events
+
+**Goal:** A platform engineer sees why the gateway disabled a webhook that kept failing, turns it back on, and deletes it without leaving events to deliver
+
+**Spec:** `flows/gateway/webhook-health.spec.ts:31`
+
+**Tags:** —
+
+**User steps:**
+
+1. create a gateway key and an outbound webhook for request.completed
+2. point the webhook at an in-stack host the delivery guard refuses, so every attempt fails on the VM
+3. deliver five gateway request logs on the logs webhook
+4. wait for the delivery schedule to disable the webhook after three failed deliveries
+5. open Gateway Webhooks and read the Disabled status and its reason
+6. choose Enable from the row actions and see it Active
+7. delete the webhook from the row actions
+
+**Backend state verified:**
+
+- log ingest answers at once and leaves its five events pending with no attempt
+- the webhook in PG agentcc_webhook is inactive with a reason naming three consecutive failed deliveries, and its events are dead-lettered
+- enabling it stores is_active true with the failure streak and reason cleared
+- after the delete none of its events is pending, failed or dead-lettered; all five are cancelled
+
 ## knowledge-base
 
 ### KB-E2E-001 — a workspace reader downloads an owned knowledge-base file
