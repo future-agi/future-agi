@@ -76,8 +76,12 @@ def process_in_line_evals():
         )
 
     span_ids = [eval.span_id for eval in evals_to_process]
-    spans = ObservationSpan.objects.filter(id__in=span_ids).select_related(
-        "project", "trace"
+    # Primary, like the Exists() that selected these evals: a span ingested a
+    # moment ago may not be on the replica yet.
+    spans = (
+        ObservationSpan.objects.using("default")
+        .filter(id__in=span_ids)
+        .select_related("project", "trace")
     )
     spans_map = {str(span.id): span for span in spans}
 
