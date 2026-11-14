@@ -2,6 +2,7 @@ import json
 import uuid
 from datetime import datetime, timedelta
 from decimal import Decimal
+from typing import Any, cast
 
 import numpy as np
 from channels.db import database_sync_to_async
@@ -430,7 +431,9 @@ class GraphDataConsumer(DataConsumer):
 
                 evaluations[config_id_str]["data"][0]["value"].append(value_entry)
             else:
-                data_entries = evaluations[config_id_str]["data"]
+                data_entries = cast(
+                    list[dict[str, Any]], evaluations[config_id_str]["data"]
+                )
                 for choice_name, value in metric_score.items():
                     value_entry = {
                         "timestamp": timestamp.strftime("%Y-%m-%dT%H:%M:%S"),
