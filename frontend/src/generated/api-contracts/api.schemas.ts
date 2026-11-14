@@ -20867,6 +20867,10 @@ export type HarnessDraftSaveResponseApiSaved = {
   [key: string]: HarnessVersionApi;
 };
 
+export type HarnessDraftSaveResponseApiNotActiveItem = {
+  [key: string]: string;
+};
+
 export interface HarnessVersionsApi {
   agent: HarnessVersionApi[];
   environment: HarnessVersionApi[];
@@ -20877,6 +20881,8 @@ export interface HarnessDraftSaveResponseApi {
   /** Each saved piece's new default version, by piece. */
   saved: HarnessDraftSaveResponseApiSaved;
   versions: HarnessVersionsApi;
+  /** Cases of the new suite version not Active on the new defaults: {scenario_key, reason, reason_text}. */
+  not_active?: HarnessDraftSaveResponseApiNotActiveItem[];
 }
 
 /**
@@ -21358,6 +21364,97 @@ export interface HarnessEnvironmentRunEvaluationsQueuedApi {
   call_execution_count: number;
 }
 
+export type HarnessScenarioValidationStatusApiState =
+  (typeof HarnessScenarioValidationStatusApiState)[keyof typeof HarnessScenarioValidationStatusApiState];
+
+export const HarnessScenarioValidationStatusApiState = {
+  validating: "validating",
+  finished: "finished",
+  failed: "failed",
+} as const;
+
+export interface HarnessScenarioValidationStatusApi {
+  state: HarnessScenarioValidationStatusApiState;
+  /** @minLength 1 */
+  job_id: string;
+  /** @minLength 1 */
+  deadline_at: string;
+  /** @minLength 1 */
+  finished_at: string;
+  proofs_recorded: boolean;
+  /** @minLength 1 */
+  message: string;
+}
+
+export interface HarnessScenarioValidateApi {
+  agent_version_id?: string;
+  environment_version_id?: string;
+  suite_version_id?: string;
+  /** Answer ready without a new job when the newest proving finished after the pair's last change. */
+  if_fresh?: boolean;
+}
+
+export type HarnessScenarioValidateResponseApiState =
+  (typeof HarnessScenarioValidateResponseApiState)[keyof typeof HarnessScenarioValidateResponseApiState];
+
+export const HarnessScenarioValidateResponseApiState = {
+  validating: "validating",
+  ready: "ready",
+  unavailable: "unavailable",
+} as const;
+
+export interface HarnessScenarioValidateResponseApi {
+  state: HarnessScenarioValidateResponseApiState;
+  /** @minLength 1 */
+  job_id?: string;
+  /** @minLength 1 */
+  deadline_at?: string;
+  /** @minLength 1 */
+  finished_at?: string;
+  /** @minLength 1 */
+  message?: string;
+}
+
+export interface HarnessScenarioArchiveApi {
+  /** @maxLength 255 */
+  reason?: string;
+}
+
+export type HarnessScenarioLifecycleResponseApiLifecycle = {
+  [key: string]: string;
+};
+
+export interface HarnessScenarioLifecycleResponseApi {
+  /** @minLength 1 */
+  scenario_key: string;
+  lifecycle: HarnessScenarioLifecycleResponseApiLifecycle;
+}
+
+export interface HarnessScenarioRestoreApi {
+  [key: string]: unknown;
+}
+
+export type HarnessScenarioRevisionApiLifecycleOnDefaultEnvironment = {
+  [key: string]: string;
+};
+
+export interface HarnessScenarioRevisionApi {
+  revision: number;
+  /** @minLength 1 */
+  digest: string;
+  suite_versions: number[];
+  first_suite_version: number;
+  changed_fields: string[];
+  lifecycle_on_default_environment: HarnessScenarioRevisionApiLifecycleOnDefaultEnvironment;
+}
+
+export interface HarnessScenarioRevisionsApi {
+  /** @minLength 1 */
+  scenario_key: string;
+  revisions: HarnessScenarioRevisionApi[];
+  truncated: boolean;
+}
+
 export interface HarnessVerifyCreateApi {
   /** The agent version to verify. Its completed verify is final; after one that failed or was canceled, a new one starts. */
   agent_version_id: string;
@@ -21463,6 +21560,31 @@ export interface HarnessAgentVersionCreateApi {
 
 export interface HarnessAgentCredentialsResponseApi {
   agent_version: HarnessVersionApi;
+}
+
+export type HarnessSourceChangeApiKind =
+  (typeof HarnessSourceChangeApiKind)[keyof typeof HarnessSourceChangeApiKind];
+
+export const HarnessSourceChangeApiKind = {
+  rule: "rule",
+  file: "file",
+} as const;
+
+export interface HarnessSourceChangeApi {
+  kind: HarnessSourceChangeApiKind;
+  ref: string;
+  /** @minLength 1 */
+  before: string;
+  /** @minLength 1 */
+  after: string;
+  cited_by: string[];
+}
+
+export interface HarnessSourceChangesApi {
+  from_version: number;
+  to_version: number;
+  changes: HarnessSourceChangeApi[];
+  truncated: boolean;
 }
 
 export interface HarnessSuiteMemberApi {
@@ -40989,6 +41111,10 @@ export type SimulateApiHarnessEnvironmentsRunPlanParams = {
   agent_version_id?: string;
   environment_version_id?: string;
   suite_version_id?: string;
+};
+
+export type SimulateApiHarnessEnvironmentsValidationStatusParams = {
+  job_id: string;
 };
 
 export type SimulateApiHarnessEnvironmentsVersionsVersionDiffParams = {
