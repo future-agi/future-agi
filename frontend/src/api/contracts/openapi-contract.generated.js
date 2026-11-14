@@ -53071,6 +53071,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Applied projects",
           type: "object",
         },
+        runs_on_gateway: {
+          title: "Runs on gateway",
+          type: "boolean",
+          readOnly: true,
+        },
         created_at: {
           title: "Created at",
           type: "string",

@@ -260,6 +260,18 @@ export default function PolicyDialog({ open, onClose, policy, gatewayId }) {
                   label="Enforce"
                 />
               </RadioGroup>
+              <Typography
+                variant="s3"
+                color="text.secondary"
+                data-testid="policy-mode-speech-note"
+                sx={{ display: "block", mt: 0.5 }}
+              >
+                On speech-to-text and text-to-speech streams, Monitor policies
+                don&apos;t run, and Enforce checks run only where there is text
+                to read: text sent for speech, or transcripts. A check that runs
+                before the model is skipped on speech-to-text streams instead of
+                stopping them.
+              </Typography>
               {errors.mode && (
                 <Typography variant="s3" color="error">
                   {errorText(errors.mode)}

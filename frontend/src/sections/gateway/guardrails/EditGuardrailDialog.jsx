@@ -50,9 +50,11 @@ const EditGuardrailDialog = ({ open, onClose, guardrail, gatewayId }) => {
       stage,
       mode: resolveExecutionMode(guardrail),
     };
-    // Send one spelling: a stored confidence_threshold the field replaced
-    // must not ride along (the API refuses one outside 0 to 1).
+    // Send the threshold only from the field, in one spelling. A stored value
+    // the spread carries in must not ride along: the API refuses one outside
+    // 0 to 1, and an empty (optional) field leaves the stored value as it is.
     delete config.confidence_threshold;
+    delete config.threshold;
     if (threshold !== "") config.threshold = Number(threshold);
 
     updateGuardrail.mutate(

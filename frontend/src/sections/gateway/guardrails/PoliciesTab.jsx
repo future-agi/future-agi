@@ -32,6 +32,11 @@ import {
 } from "./hooks/useGuardrailPolicies";
 import PolicyDialog from "./PolicyDialog";
 
+// A key policy saved before the gateway ran key policies is stored but not
+// sent to the gateway until an admin saves it again (any edit or toggle).
+const isDormant = (policy) =>
+  policy.is_active && policy.runs_on_gateway === false;
+
 export default function PoliciesTab({ gatewayId }) {
   const {
     data: policies = [],
@@ -178,13 +183,23 @@ export default function PoliciesTab({ gatewayId }) {
                   />
                 </TableCell>
                 <TableCell>
-                  <Switch
-                    size="small"
-                    aria-label={`Active ${policy.name}`}
-                    checked={policy.is_active}
-                    disabled={update.isPending}
-                    onChange={() => toggle(policy)}
-                  />
+                  <Stack direction="row" alignItems="center" spacing={1}>
+                    <Switch
+                      size="small"
+                      aria-label={`Active ${policy.name}`}
+                      checked={policy.is_active}
+                      disabled={update.isPending}
+                      onChange={() => toggle(policy)}
+                    />
+                    {isDormant(policy) && (
+                      <StatusBadge
+                        status="not_running"
+                        label="Not running – save to start"
+                        role="neutral"
+                        data-testid={`guardrail-policy-dormant-${policy.id}`}
+                      />
+                    )}
+                  </Stack>
                 </TableCell>
                 <TableCell>
                   {policy.updated_at
