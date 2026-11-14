@@ -17985,12 +17985,21 @@ export interface AgentFixVerdictTierPartApi {
   detail?: string;
 }
 
+export interface AgentFixCeilingNumbersApi {
+  baseline?: number;
+  candidate?: number;
+  allowed?: number;
+  limit?: number;
+}
+
 export interface AgentFixVerdictTierApi {
   /** @minLength 1 */
   name: string;
   status: AgentFixVerdictTierApiStatus;
   detail?: string;
   parts?: AgentFixVerdictTierPartApi[];
+  latency?: AgentFixCeilingNumbersApi;
+  cost?: AgentFixCeilingNumbersApi;
 }
 
 export interface AgentFixVerdictApi {

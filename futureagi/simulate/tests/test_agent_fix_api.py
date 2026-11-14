@@ -454,6 +454,19 @@ class TestEngineCalls:
                     {"name": "reply latency", "status": "passed", "detail": "within"},
                     {"name": "agent cost", "status": "skipped", "detail": "untraced"},
                 ],
+                # The numbers it was decided on, which the screens show.
+                "latency": {
+                    "baseline": 13.22,
+                    "candidate": 10.87,
+                    "allowed": 16.53,
+                    "limit": None,
+                },
+                "cost": {
+                    "baseline": None,
+                    "candidate": None,
+                    "allowed": None,
+                    "limit": 0.005,
+                },
             },
         ]
 
@@ -503,7 +516,7 @@ class TestEngineCalls:
         )
         assert read["diagnosis"] == {"causes": ["It never refunds before closing"]}
         assert read["candidates"][0]["verdict"]["tiers"] == [
-            {"parts": [], **tier} for tier in tiers
+            {"parts": [], "latency": None, "cost": None, **tier} for tier in tiers
         ]
 
     def test_a_check_run_past_the_organizations_limit_is_refused_with_its_reason(
@@ -543,6 +556,21 @@ class TestEngineCalls:
         response = _engine(api_client, "get", fix_run, f"check-runs/{source_run.id}/")
 
         assert (response.status_code, response.json()["error"]) == (404, "not_found")
+
+    def test_a_retry_reading_a_run_its_failed_fix_finished_gets_its_own_spend(
+        self, api_client, source_run
+    ):
+        failed = _fix_run(source_run)
+        run = _check(failed, label="baseline")  # Unsealed: held at the worst case.
+        AgentFixRun.no_workspace_objects.filter(id=failed.id).update(
+            state=AgentFixRun.State.FAILED
+        )
+        retried = _armed(_fix_run(source_run, retried_from=failed))
+
+        body = _engine(api_client, "get", retried, f"check-runs/{run.id}/").json()
+
+        # The retry's budget holds only its own check runs, none yet.
+        assert body["committed_usd"] == 0.0
 
 
 class TestEngineModelCalls:

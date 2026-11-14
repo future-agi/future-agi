@@ -181,6 +181,8 @@ describe("FixVerdict", () => {
             detail: "the agent's model calls are not traced",
           },
         ],
+        latency: { baseline: 1, candidate: 1.1, allowed: 1.25, limit: null },
+        cost: { baseline: null, candidate: null, allowed: null, limit: null },
       },
     ];
     return fix;
@@ -196,7 +198,11 @@ describe("FixVerdict", () => {
     const latency = screen.getByText("Reply time").parentElement;
     const cost = screen.getByText("Agent's cost").parentElement;
     expect(within(latency).queryByText("Reply time unknown")).toBeNull();
-    expect(within(latency).getByText("Within the limit.")).toBeInTheDocument();
+    expect(
+      within(latency).getByText(
+        "Within the limit: 1.10 s against 1.00 s on the current version, allowed up to 1.25 s.",
+      ),
+    ).toBeInTheDocument();
     // An untraced agent's cost is unknown, said plainly, never "not verified".
     expect(within(cost).getByText("Cost unknown")).toBeInTheDocument();
     expect(
@@ -227,6 +233,8 @@ describe("FixVerdict", () => {
             detail: "the agent's model calls are not traced",
           },
         ],
+        latency: { baseline: 1, candidate: 1.1, allowed: 1.25, limit: null },
+        cost: { baseline: null, candidate: null, allowed: null, limit: null },
       },
     ];
     renderUi(<FixDecisionDrawer fix={fix} open onClose={vi.fn()} />);
@@ -234,7 +242,11 @@ describe("FixVerdict", () => {
     const latency = screen.getByText("Reply time").parentElement;
     const cost = screen.getByText("Agent's cost").parentElement;
     expect(within(latency).queryByText("Reply time unknown")).toBeNull();
-    expect(within(latency).getByText("Within the limit.")).toBeInTheDocument();
+    expect(
+      within(latency).getByText(
+        "Within the limit: 1.10 s against 1.00 s on the current version, allowed up to 1.25 s.",
+      ),
+    ).toBeInTheDocument();
     expect(within(cost).getByText("Cost unknown")).toBeInTheDocument();
     // Only the tier reads Unknown; its unmeasured cost says Cost unknown and why.
     expect(screen.getAllByText("Unknown")).toHaveLength(1);

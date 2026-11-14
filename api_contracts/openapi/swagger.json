@@ -137214,6 +137214,32 @@
                 }
             }
         },
+        "AgentFixCeilingNumbers": {
+            "type": "object",
+            "properties": {
+                "baseline": {
+                    "title": "Baseline",
+                    "type": "number",
+                    "x-nullable": true
+                },
+                "candidate": {
+                    "title": "Candidate",
+                    "type": "number",
+                    "x-nullable": true
+                },
+                "allowed": {
+                    "title": "Allowed",
+                    "type": "number",
+                    "x-nullable": true
+                },
+                "limit": {
+                    "title": "Limit",
+                    "type": "number",
+                    "x-nullable": true
+                }
+            },
+            "x-nullable": true
+        },
         "AgentFixVerdictTier": {
             "required": [
                 "name",
@@ -137247,6 +137273,12 @@
                         "$ref": "#/definitions/AgentFixVerdictTierPart"
                     },
                     "default": []
+                },
+                "latency": {
+                    "$ref": "#/definitions/AgentFixCeilingNumbers"
+                },
+                "cost": {
+                    "$ref": "#/definitions/AgentFixCeilingNumbers"
                 }
             }
         },

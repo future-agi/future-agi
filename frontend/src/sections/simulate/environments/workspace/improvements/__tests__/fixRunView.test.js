@@ -334,6 +334,40 @@ describe("verdict", () => {
     ]);
   });
 
+  it("shows the numbers a ceiling was decided on, within or over", () => {
+    const tiers = [
+      {
+        name: "ceilings",
+        status: "failed",
+        parts: [
+          { name: "reply latency", status: "passed", detail: "within" },
+          { name: "agent cost", status: "failed", detail: "over" },
+        ],
+        latency: {
+          baseline: 13.22,
+          candidate: 10.87,
+          allowed: 16.53,
+          limit: null,
+        },
+        cost: {
+          baseline: 0.0096,
+          candidate: 0.012,
+          allowed: 0.0144,
+          limit: 0.005,
+        },
+      },
+    ];
+
+    expect(
+      describeChecks(tiers, { meters_agent_cost: true })[0].parts.map(
+        (p) => p.detail,
+      ),
+    ).toEqual([
+      "Within the limit: 10.87 s against 13.22 s on the current version, allowed up to 16.53 s.",
+      "Over the limit: $0.012 against $0.0096 on the current version, allowed up to $0.0144, limit $0.005.",
+    ]);
+  });
+
   it("says a ceiling it could not measure is unknown, and why for an untraced agent", () => {
     const ceilings = (cost) => [
       {

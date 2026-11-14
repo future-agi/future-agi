@@ -330,9 +330,14 @@ def source_failures(
     ]
 
 
-def check_run_status(run: HostedHarnessJob) -> CheckRunStatus:
+def check_run_status(
+    run: HostedHarnessJob, reader: AgentFixRun | None = None
+) -> CheckRunStatus:
     """A check run's finished trials as engine records. A trial without a receipt yet is
-    left out; ``finished`` says when no more will come."""
+    left out; ``finished`` says when no more will come. ``reader`` is the fix that reads
+    it, when that is not the run's own: a retry reads the runs its failed fix finished,
+    and its request and budget are what its engine works to."""
+    reader = reader or run.fix_run
     executions = list(
         HostedHarnessExecution.no_workspace_objects.filter(job=run)
         .select_related("source_scenario", "call_execution")
@@ -344,7 +349,7 @@ def check_run_status(run: HostedHarnessJob) -> CheckRunStatus:
     calls = [execution.call_execution for execution in executions]
     transcripts = _transcripts(call.id for call in calls) if finished else {}
     # Only a fix whose source run exported the agent's model calls reads its runs' spans.
-    request = FixRequest.model_validate(run.fix_run.request)
+    request = FixRequest.model_validate(reader.request)
     traced = request.observes_models or request.meters_agent_cost
     usage, unreadable = {}, False
     if finished and traced:
@@ -383,7 +388,7 @@ def check_run_status(run: HostedHarnessJob) -> CheckRunStatus:
         ),
         records=records,
         parallelism=ran_at(run, len(executions)) if finished else None,
-        committed_usd=float(committed_usd(run.fix_run)),
+        committed_usd=float(committed_usd(reader)),
         usage_unreadable=unreadable,
     )
 
@@ -759,7 +764,8 @@ def with_spend(runs: QuerySet[AgentFixRun]) -> QuerySet[AgentFixRun]:
     """Each fix's spend in billed US dollars. ``fix_spent_usd`` is the engine's model calls,
     every check run's sealed usage and what its evals billed. ``committed_usd`` is what the
     fix's limit is held against: a check run not settled yet (usage not sealed, or evals
-    still grading) holds at least a worst case for each execution."""
+    still grading) holds at least a worst case for each execution, and a settled run a
+    winner's grading may read still holds its evals' worst case while the fix goes on."""
     live = Q(check_runs__deleted=False)
     money = DecimalField(max_digits=12, decimal_places=4)
     actual = ExpressionWrapper(
@@ -795,10 +801,36 @@ def with_spend(runs: QuerySet[AgentFixRun]) -> QuerySet[AgentFixRun]:
         check_runs__fix_cost_usd__isnull=False,
         check_runs__test_execution__status__in=_SETTLED_RUN_STATUSES,
     )
+    # A graded run settles before its fix has a winner, and the winner's grading runs its
+    # evals later. So while the fix goes on, they stay held on top of what it billed.
+    # Only a run that completed is ever graded.
+    awaiting_grading = (
+        graded
+        & Q(state__in=AgentFixRun.ACTIVE_STATES)
+        & Q(check_runs__test_execution__status=TestExecution.ExecutionStatus.COMPLETED)
+    )
+    pending_evals = Case(
+        When(
+            awaiting_grading,
+            then=ExpressionWrapper(
+                F("check_runs__scenario_count") * (_worst_case(evals) - _worst_case(0)),
+                output_field=money,
+            ),
+        ),
+        default=Value(Decimal(0)),
+        output_field=money,
+    )
     spent = Coalesce(Sum(actual, filter=live), Value(Decimal(0)), output_field=money)
     committed = Coalesce(
         Sum(
-            Case(When(settled, then=actual), default=held, output_field=money),
+            Case(
+                When(
+                    settled,
+                    then=ExpressionWrapper(actual + pending_evals, output_field=money),
+                ),
+                default=held,
+                output_field=money,
+            ),
             filter=live,
         ),
         Value(Decimal(0)),
@@ -1104,8 +1136,29 @@ def _pooled(
 
 
 # The base version's repeats and a candidate's final check, the runs a winner's evals compare.
-_BASELINE_LABEL = re.compile(r"^baseline-r\d+$")
-_FINALIST_LABEL = re.compile(r"^c\d+-finalist-r\d+$")
+# A repeat that failed on our side is asked for once more as ``<label>-again``.
+_BASELINE_LABEL = re.compile(r"^baseline-r(\d+)(?:-again)?$")
+_FINALIST_LABEL = re.compile(r"^c\d+-finalist-r(\d+)(?:-again)?$")
+
+
+_UNGRADED_STATES = (HostedHarnessJob.State.FAILED, HostedHarnessJob.State.CANCELED)
+
+
+def _each_repeat(
+    runs: Iterable[HostedHarnessJob], label: re.Pattern[str]
+) -> list[HostedHarnessJob]:
+    """Each repeat's run: its replacement when the first failed and the engine asked for it
+    again, else the first. A run that failed or was cancelled is never one, so a repeat
+    with no other is left out."""
+    chosen: dict[str, HostedHarnessJob] = {}
+    for run in runs:
+        found = label.match(run.fix_label)
+        if found is None or run.state in _UNGRADED_STATES:
+            continue
+        repeat = found.group(1)
+        if repeat not in chosen or run.fix_label.endswith("-again"):
+            chosen[repeat] = run
+    return [chosen[repeat] for repeat in sorted(chosen, key=int)]
 
 
 def fix_winner(fix_run: AgentFixRun) -> AgentFixCandidate | None:
@@ -1128,16 +1181,25 @@ def graded_check_runs(
         fix_run.check_run_list = list(
             HostedHarnessJob.no_workspace_objects.filter(fix_run=fix_run)
         )
-    base = [
-        run for run in base_check_runs(fix_run) if _BASELINE_LABEL.match(run.fix_label)
-    ]
-    final = [
-        run
-        for run in fix_run.check_run_list
-        if run.agent_version_id == winner.agent_version_id
-        and _FINALIST_LABEL.match(run.fix_label)
-    ]
+    base = _each_repeat(base_check_runs(fix_run), _BASELINE_LABEL)
+    final = _each_repeat(
+        (
+            run
+            for run in fix_run.check_run_list
+            if run.agent_version_id == winner.agent_version_id
+        ),
+        _FINALIST_LABEL,
+    )
     return base, final
+
+
+def _graded_rows(runs: list[HostedHarnessJob], billed: set[str]) -> list[Any]:
+    """The stored output of each billed eval on each finished call of ``runs``."""
+    outputs = HostedHarnessExecution.no_workspace_objects.filter(
+        job_id__in=[run.id for run in runs],
+        call_execution__status=CallExecution.CallStatus.COMPLETED,
+    ).values_list("call_execution__eval_outputs", flat=True)
+    return [(one or {}).get(config_id) for one in outputs for config_id in billed]
 
 
 def eval_review(fix_run: AgentFixRun) -> EvalReview:
@@ -1151,13 +1213,8 @@ def eval_review(fix_run: AgentFixRun) -> EvalReview:
     run_test_id = fix_run.environment.run_test_id
     base, final = graded_check_runs(fix_run, winner)
     billed = set(runnable_eval_config_ids(run_test_id))
-    graded = HostedHarnessExecution.no_workspace_objects.filter(
-        job_id__in=[run.id for run in (*base, *final)],
-        call_execution__status=CallExecution.CallStatus.COMPLETED,
-    ).values_list("call_execution__eval_outputs", flat=True)
-    rows = [
-        (outputs or {}).get(config_id) for outputs in graded for config_id in billed
-    ]
+    base_rows, final_rows = _graded_rows(base, billed), _graded_rows(final, billed)
+    rows = base_rows + final_rows
     scoring = TestExecution.objects.filter(
         id__in=[run.test_execution_id for run in (*base, *final)],
         status=TestExecution.ExecutionStatus.EVALUATING,
@@ -1182,10 +1239,12 @@ def eval_review(fix_run: AgentFixRun) -> EvalReview:
                     base_trials=base_trials,
                 )
             )
+    # Grading with an arm that has no graded call compared nothing: it is not done.
+    compared_both = not billed or bool(base_rows and final_rows)
     return EvalReview(
         grading=(
             EvalGrading.DONE
-            if all(is_sealed_verdict(row) for row in rows)
+            if compared_both and all(is_sealed_verdict(row) for row in rows)
             else EvalGrading.INCOMPLETE
         ),
         warnings=warnings,

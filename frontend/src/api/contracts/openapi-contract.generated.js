@@ -132299,6 +132299,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
           },
           default: [],
         },
+        latency: {
+          $ref: "#/definitions/AgentFixCeilingNumbers",
+        },
+        cost: {
+          $ref: "#/definitions/AgentFixCeilingNumbers",
+        },
       },
     },
     AgentPromptOptimiserTrialEvalScore: {
@@ -134070,6 +134076,32 @@ export const OPENAPI_CONTRACT = Object.freeze({
           minimum: 0,
         },
       },
+    },
+    AgentFixCeilingNumbers: {
+      type: "object",
+      properties: {
+        baseline: {
+          title: "Baseline",
+          type: "number",
+          "x-nullable": true,
+        },
+        candidate: {
+          title: "Candidate",
+          type: "number",
+          "x-nullable": true,
+        },
+        allowed: {
+          title: "Allowed",
+          type: "number",
+          "x-nullable": true,
+        },
+        limit: {
+          title: "Limit",
+          type: "number",
+          "x-nullable": true,
+        },
+      },
+      "x-nullable": true,
     },
     AgentFixVerdictTierPart: {
       required: ["name", "status"],

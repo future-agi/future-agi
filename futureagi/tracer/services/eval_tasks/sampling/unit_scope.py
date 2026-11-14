@@ -10,8 +10,8 @@ MAX_UNIT_PARAMETER_BYTES = 65_536
 
 
 def unit_batches(units: Iterable[str]) -> Iterator[list[str]]:
-    batch = []
-    seen = set()
+    batch: list[str] = []
+    seen: set[str] = set()
     size = 0
     for value in units:
         unit = str(value)
@@ -58,7 +58,7 @@ def physical_unit_scope(
         raise ValueError("Unsupported sampling unit closure.")
     if not param_prefix.replace("_", "").isalnum():
         raise ValueError("Sampling unit scope parameter prefix is invalid.")
-    by_kind = {}
+    by_kind: dict[str, list[str]] = {}
     fallback = {"spans": "span", "traces": "trace", "sessions": "session"}[row_type]
     for unit in unit_ids:
         kind, separator, value = unit.partition(":")
