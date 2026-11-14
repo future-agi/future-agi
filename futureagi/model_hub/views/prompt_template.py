@@ -2059,7 +2059,7 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
                         execution.is_draft = False
 
                 except Exception as e:
-                    logger.exception(f"Error for index {i}: {e}")
+                    logger.warning(f"Error for index {i}: {e}")
                     if not is_sdk:
                         ws_manager.send_error_message(
                             template_id=str(template.id),
