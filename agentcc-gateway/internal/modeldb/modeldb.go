@@ -42,6 +42,10 @@ type ModelInfo struct {
 type ModelDB struct {
 	models     map[string]*ModelInfo
 	byProvider map[string][]*ModelInfo
+	// priceOverridden holds the ids whose price comes from a config override,
+	// so a lookup across several names can rank an operator's price above a
+	// bundled one (DecisionPricingAny).
+	priceOverridden map[string]bool
 }
 
 // New creates a ModelDB from bundled data merged with config overrides.
@@ -60,6 +64,7 @@ func New(bundled map[string]*ModelInfo, overrides map[string]ModelOverride) *Mod
 	}
 
 	// Apply overrides.
+	priceOverridden := make(map[string]bool)
 	for id, ov := range overrides {
 		existing, ok := models[id]
 		if !ok {
@@ -68,6 +73,9 @@ func New(bundled map[string]*ModelInfo, overrides map[string]ModelOverride) *Mod
 			models[id] = existing
 		}
 		mergeOverride(existing, ov)
+		if ov.Pricing != nil {
+			priceOverridden[id] = true
+		}
 	}
 
 	// Build provider index.
@@ -79,7 +87,7 @@ func New(bundled map[string]*ModelInfo, overrides map[string]ModelOverride) *Mod
 		sort.Slice(list, func(i, j int) bool { return list[i].ID < list[j].ID })
 	}
 
-	return &ModelDB{models: models, byProvider: byProvider}
+	return &ModelDB{models: models, byProvider: byProvider, priceOverridden: priceOverridden}
 }
 
 // Get returns model info by ID. Tries exact match, then strips "provider/"

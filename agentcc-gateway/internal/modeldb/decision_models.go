@@ -50,41 +50,47 @@ func (db *ModelDB) DecisionPricing(model string) (*PricingInfo, bool) {
 // several names, most specific first (a call's dated resolved name, the name
 // it was sent upstream, the caller's provider-qualified name). It looks only
 // under "decision:" keys and never falls back to a chat model of the same
-// name. It makes two passes over the names:
-//   - exact: every name as given, then its last path segment ("jev-1.13.0"
-//     from "typesafe/jev-1.13.0");
-//   - only if no name matched exactly, for Jev only: every name's last segment
-//     without its release date, then normalized to the version it names, so
-//     OpenRouter's "typesafe/jev-1.13" and the dated "typesafe/jev-1.13-20260917"
-//     it answers with are priced as jev-1.13.0 (see jevVersionCandidates).
+// name.
 //
-// So an exact key for any of the names, such as an operator override on
-// "decision:typesafe/jev-1.13" or "decision:openrouter/typesafe/jev-1.13",
-// always wins over a normalized bundled price for another of them.
+// For each name it has exact candidates (the name as given, then its last path
+// segment, "jev-1.13.0" from "typesafe/jev-1.13.0") and, for Jev only,
+// normalized ones (that segment without its release date, then the version it
+// names, so OpenRouter's "typesafe/jev-1.13" and the dated
+// "typesafe/jev-1.13-20260917" it answers with are priced as jev-1.13.0; see
+// jevVersionCandidates). It tries, stopping at the first price:
+//  1. operator overrides under the exact candidates of every name, in order;
+//  2. operator overrides under the normalized candidates of every name;
+//  3. any price under the exact candidates of every name;
+//  4. any price under the normalized candidates of every name.
+//
+// So an operator's price for any name the call goes by, such as
+// "decision:typesafe/jev-1.13", "decision:openrouter/typesafe/jev-1.13",
+// "decision:jev-latest" or the resolved version's "decision:jev-1.14.0", always
+// wins over a bundled price, and an exact name wins over a normalized one.
 func (db *ModelDB) DecisionPricingAny(names ...string) (*PricingInfo, bool) {
-	for _, name := range names {
-		ids := []string{name}
-		if last := lastPathSegment(name); last != name {
-			ids = append(ids, last)
+	exact := make([][]string, len(names))
+	normalized := make([][]string, len(names))
+	for i, name := range names {
+		last := lastPathSegment(name)
+		exact[i] = []string{name}
+		if last != name {
+			exact[i] = append(exact[i], last)
 		}
-		if pricing, ok := db.decisionPricingFor(ids...); ok {
-			return pricing, true
-		}
+		normalized[i] = jevVersionCandidates(last)
 	}
-	for _, name := range names {
-		if pricing, ok := db.decisionPricingFor(jevVersionCandidates(lastPathSegment(name))...); ok {
-			return pricing, true
-		}
-	}
-	return nil, false
-}
-
-// decisionPricingFor returns the price under the first "decision:" key among
-// ids that has one.
-func (db *ModelDB) decisionPricingFor(ids ...string) (*PricingInfo, bool) {
-	for _, id := range ids {
-		if m, ok := db.models[DecisionKeyPrefix+id]; ok && m.Pricing.HasPricing() {
-			return &m.Pricing, true
+	for _, overriddenOnly := range []bool{true, false} {
+		for _, candidates := range [][][]string{exact, normalized} {
+			for _, ids := range candidates {
+				for _, id := range ids {
+					key := DecisionKeyPrefix + id
+					if overriddenOnly && !db.priceOverridden[key] {
+						continue
+					}
+					if m, ok := db.models[key]; ok && m.Pricing.HasPricing() {
+						return &m.Pricing, true
+					}
+				}
+			}
 		}
 	}
 	return nil, false

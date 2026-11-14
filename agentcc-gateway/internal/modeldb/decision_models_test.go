@@ -203,6 +203,38 @@ func TestDecisionPricingAnyTriesExactNamesBeforeNormalizing(t *testing.T) {
 		t.Errorf("both overrides: %g, want the upstream name's 0.5", got)
 	}
 
+	// An operator's price for any name beats a bundled price for another: the
+	// resolved version's override beats the bundled alias a jev-latest call was
+	// sent as, and an alias override beats the bundled exact resolved version.
+	latestCall := []string{"typesafe/jev-1.14-20261015", "~typesafe/jev-latest", "openrouter/~typesafe/jev-latest"}
+	for _, tt := range []struct {
+		key   string
+		names []string
+	}{
+		{"jev-1.14.0", latestCall},
+		{"jev-latest", latestCall},
+		{"jev-latest", []string{"jev-1.13.0", "jev-latest", "typesafe/jev-latest"}},
+		{qualified, []string{"typesafe/jev-1.13.0", upstream, qualified}},
+	} {
+		db := New(BundledModels, map[string]ModelOverride{
+			DecisionKeyPrefix + tt.key: {Mode: string(ModeDecision), Pricing: &PricingOverride{InputPerToken: &p}},
+		})
+		if got := price(db, tt.names...); math.Abs(got-0.5) > 1e-9 {
+			t.Errorf("override on %q for %v: %g, want 0.5", tt.key, tt.names, got)
+		}
+	}
+	// Without overrides those calls keep their bundled prices.
+	if got := price(New(BundledModels, nil), latestCall...); math.Abs(got-0.042) > 1e-9 {
+		t.Errorf("jev-latest call without overrides: %g, want 0.042", got)
+	}
+	// A mode-only override sets no price, so it does not outrank bundled ones.
+	db = New(BundledModels, map[string]ModelOverride{
+		DecisionKeyPrefix + "jev-latest": {Mode: string(ModeDecision)},
+	})
+	if got := price(db, latestCall...); math.Abs(got-0.042) > 1e-9 {
+		t.Errorf("mode-only override: %g, want 0.042", got)
+	}
+
 	// An unknown version stays unpriced under every name.
 	if pricing, ok := New(BundledModels, nil).DecisionPricingAny("typesafe/jev-9.9-20270101", "typesafe/jev-9.9", "openrouter/typesafe/jev-9.9"); ok {
 		t.Errorf("unknown Jev version priced %+v", pricing)
