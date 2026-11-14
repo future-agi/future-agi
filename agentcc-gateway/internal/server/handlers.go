@@ -1439,6 +1439,7 @@ func (h *Handlers) handleNonStream(ctx context.Context, w http.ResponseWriter, r
 	providerCall := func(ctx context.Context, rc *models.RequestContext) error {
 		resp, err := h.callChatProvider(ctx, provider, rc.Request)
 		if err == nil {
+			rc.ServedBy = provider
 			rc.Response = resp
 			rc.ResolvedModel = resp.Model
 			return nil
@@ -1460,6 +1461,7 @@ func (h *Handlers) handleNonStream(ctx context.Context, w http.ResponseWriter, r
 			fbResp, fbCallErr := h.callChatProvider(ctx, fbProvider, rc.Request)
 			if fbCallErr == nil {
 				servingProvider = fbProvider
+				rc.ServedBy = fbProvider
 				rc.Response = fbResp
 				rc.ResolvedModel = fbResp.Model
 				rc.Flags.FallbackUsed = true
@@ -1512,6 +1514,7 @@ func (h *Handlers) handleNonStreamWithFailover(ctx context.Context, w http.Respo
 				return err
 			}
 			servingProvider = p
+			rc.ServedBy = p
 			rc.Response = resp
 			rc.ResolvedModel = resp.Model
 			return nil
@@ -1544,6 +1547,7 @@ func (h *Handlers) handleNonStreamWithFailover(ctx context.Context, w http.Respo
 				fbResp, fbCallErr := h.callChatProvider(ctx, fbProvider, rc.Request)
 				if fbCallErr == nil {
 					servingProvider = fbProvider
+					rc.ServedBy = fbProvider
 					rc.Response = fbResp
 					rc.ResolvedModel = fbResp.Model
 					rc.Flags.FallbackUsed = true
@@ -1633,6 +1637,7 @@ func (h *Handlers) handleStream(ctx context.Context, w http.ResponseWriter, rc *
 		}
 		upstreamStreamCancel = attemptCancel
 		servingProvider = callProvider
+		rc.ServedBy = callProvider
 		chunks = candidateChunks
 		errCh = candidateErrCh
 		firstChunk = chunk

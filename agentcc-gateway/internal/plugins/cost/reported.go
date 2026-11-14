@@ -79,15 +79,16 @@ func readOpenRouterCost(extra map[string]json.RawMessage) (float64, string, bool
 // output_cost, …, total_cost}); a cost in that shape without a currency is
 // not used. The Sonar Chat Completions API states none ({input_tokens_cost,
 // output_tokens_cost, …, total_cost}), and documents every value as USD. Any
-// stated currency other than USD is not used.
+// stated currency other than USD, null included, is not used.
 func readPerplexityCost(extra map[string]json.RawMessage) (float64, string, bool, bool) {
 	var cost map[string]json.RawMessage
 	if !decodeObject(extra["cost"], &cost) {
 		return 0, "", false, false
 	}
-	if raw, stated := cost["currency"]; stated && !isNull(raw) {
+	if raw, stated := cost["currency"]; stated {
+		// A stated currency, null included, must be USD.
 		var currency string
-		if json.Unmarshal(raw, &currency) != nil || currency != "USD" {
+		if isNull(raw) || json.Unmarshal(raw, &currency) != nil || currency != "USD" {
 			return 0, "", false, false
 		}
 	} else if !perplexityChatShape(cost) {

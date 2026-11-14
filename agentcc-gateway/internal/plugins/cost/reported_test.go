@@ -58,6 +58,8 @@ func TestReadReportedCost(t *testing.T) {
 		{"perplexity responses zero", "perplexity", `{"cost":{"currency":"USD","input_cost":0,"output_cost":0,"total_cost":0}}`, 0, UnitUSD, false, true},
 		{"perplexity EUR", "perplexity", `{"cost":{"currency":"EUR","input_cost":0.001,"output_cost":0.002,"total_cost":0.003}}`, 0, "", false, false},
 		{"perplexity lower-case usd is not USD", "perplexity", `{"cost":{"currency":"usd","input_cost":0.001,"output_cost":0.002,"total_cost":0.003}}`, 0, "", false, false},
+		{"perplexity chat with a null currency", "perplexity", `{"cost":{"currency":null,"input_tokens_cost":0.001,"output_tokens_cost":0.002,"total_cost":0.003}}`, 0, "", false, false},
+		{"perplexity responses with a null currency", "perplexity", `{"cost":{"currency":null,"input_cost":0.001,"output_cost":0.002,"total_cost":0.003}}`, 0, "", false, false},
 		{"perplexity currency not a string", "perplexity", `{"cost":{"currency":1,"input_cost":0.001,"output_cost":0.002,"total_cost":0.003}}`, 0, "", false, false},
 		{"perplexity responses shape without currency", "perplexity", `{"cost":{"input_cost":0.001,"output_cost":0.002,"total_cost":0.003}}`, 0, "", false, false},
 		{"perplexity total null", "perplexity", `{"cost":{"currency":"USD","input_cost":0.001,"output_cost":0.002,"total_cost":null}}`, 0, UnitUSD, false, false},
