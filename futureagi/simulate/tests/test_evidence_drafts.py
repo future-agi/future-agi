@@ -247,6 +247,27 @@ def test_an_injected_environment_change_keeps_nothing(environment, cases, storag
     assert drafts.open_draft(environment, "suite") is None
 
 
+def test_an_environment_with_no_saved_version_drafts_nothing(
+    environment, cases, storage
+):
+    """A legacy environment holds no saved version, so there is nothing to pin a
+    proposal to: every case is blocked with a way forward, and nothing lands."""
+    conversation, command = _command(environment, cases, 13)
+    keys = [evidence_drafts.scenario_key_for(case) for case in cases]
+    key, digest = _save(conversation, command, storage, keys)
+    _end_turn(conversation, command)
+    type(environment).no_workspace_objects.filter(id=environment.id).update(
+        environment_version=None
+    )
+
+    _promote(conversation, command, key, digest, 13)
+
+    assert [(c.status, c.reason) for c in _refreshed(cases)] == [
+        ("blocked", evidence_drafts.NO_VERSION)
+    ] * 2
+    assert not any(c.proposal_object_key for c in _refreshed(cases))
+
+
 def test_the_builders_own_publish_lands_nowhere(environment, cases, storage):
     conversation, command = _command(environment, cases, 13)
     HostedHarnessConversationMessage.no_workspace_objects.filter(id=command.id).update(

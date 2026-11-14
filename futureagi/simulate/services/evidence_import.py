@@ -128,7 +128,9 @@ def add_to_suite(
         environment_version = (
             drafts.fresh_draft(locked, "environment") or locked.environment_version
         )
-        if any(case.environment_hash != environment_version.hash for case in cases):
+        if environment_version is None or any(
+            case.environment_hash != environment_version.hash for case in cases
+        ):
             raise HostedHarnessError(
                 "evidence_draft_stale",
                 "The environment changed since these cases were drafted; draft "

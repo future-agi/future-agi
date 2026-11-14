@@ -10,7 +10,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Mapping
 from dataclasses import asdict, replace
+from typing import cast
 
 from django.db.models import Q, QuerySet
 
@@ -128,7 +130,7 @@ def import_bundle(
     if evidence is None:
         evidence = import_evidence(
             evidence_import.project,
-            evidence_import.source_kind,
+            _observe_kind(evidence_import),
             [case.source_id for case in cases],
         )
     # A source the import found nothing for stays unavailable: it was frozen so.
@@ -427,8 +429,13 @@ def _labels(evidence: SourceEvidence) -> dict:
     return _part("present", labels=labels)
 
 
+def _observe_kind(evidence_import: EvidenceImport) -> SourceKind:
+    # The model stores the kind as text; its choices are exactly Observe's kinds.
+    return cast(SourceKind, evidence_import.source_kind)
+
+
 def _texts(
-    cases: list[EvidenceImportCase], evidence: dict[str, SourceEvidence | None]
+    cases: list[EvidenceImportCase], evidence: Mapping[str, SourceEvidence | None]
 ) -> list[tuple[EvidenceImportCase, str, int, str, str]]:
     """Every text the bundle carries, as (case, part, index, field, text)."""
     values: list[tuple[EvidenceImportCase, str, int, str, str]] = []
@@ -508,7 +515,7 @@ def evidence_document(
     if evidence is None:
         evidence = import_evidence(
             evidence_import.project,
-            evidence_import.source_kind,
+            _observe_kind(evidence_import),
             [case.source_id for case in cases],
         )
     values = _texts(cases, evidence)
