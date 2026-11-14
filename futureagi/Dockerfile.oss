@@ -21,10 +21,13 @@
 #   EXTRAS                sandbox,billing,ops,gcp,langchain,rabbitmq,localizer | none
 #                         (optional dependency groups, comma-separated;
 #                         `none` installs no group)
-#   FFMPEG_FLAVOR         debian       minimal   (minimal: LGPL source build,
-#                         ~9 MB; debian: Debian's ffmpeg package, ~+145 MB
-#                         gzip; none: audio upload/convert, video thumbnails
-#                         and Deepgram STT fail)
+#   FFMPEG_FLAVOR         minimal      minimal   (minimal: LGPL source build,
+#                         ~9 MB; debian: Debian's ffmpeg package and its ~189
+#                         dependencies, ~+145 MB gzip, for codecs the minimal
+#                         build leaves out; none: audio format detection and
+#                         conversion, video thumbnails, Deepgram STT and the
+#                         call-audio splits fail with a named
+#                         `ffmpeg_unavailable` error, tfc/utils/media_tools.py)
 #   WITH_GIT              true         false     (git for hosted-harness
 #                         GitHub sources, + perl, ~29 MB gzip; without it they
 #                         answer 501)
@@ -46,7 +49,8 @@
 #     runtime gets it only with WITH_UV=true.
 #   * ffmpeg/ffprobe come from a minimal LGPL source build (docker/ffmpeg/,
 #     ~9 MB) instead of Debian's `ffmpeg` (189 extra packages, ~406 MB
-#     unpacked / ~150 MB gzip incl. libllvm15 via mesa).
+#     unpacked / ~150 MB gzip incl. libllvm15 via mesa). The standard
+#     variant uses the same build by default.
 #   * NLTK data is installed in the builder, before `COPY . .`, so a
 #     source-only change never rebuilds (or re-publishes) that layer.
 #   * Every stage starts from ONE digest-pinned base, shared with serving and
@@ -122,7 +126,7 @@ FROM ${PYTHON_IMAGE} AS ffmpeg-debian
 RUN mkdir -p /opt/ffmpeg/bin /opt/ffmpeg/doc
 FROM ffmpeg-debian AS ffmpeg-none
 # Each variant's default flavor; keep in sync with docker/image-variant.sh.
-FROM ffmpeg-debian AS ffmpeg-standard
+FROM ffmpeg-minimal AS ffmpeg-standard
 FROM ffmpeg-minimal AS ffmpeg-slim
 # A stage of this file, selected by FFMPEG_FLAVOR, else by IMAGE_VARIANT; not
 # a registry image. Only the selected ffmpeg stage is built.
@@ -238,8 +242,12 @@ ARG FFMPEG_FLAVOR
 ARG WITH_GIT=""
 
 # Runtime-only system packages. xmlsec1 (CLI) is what pysaml2 shells out to.
-# With Debian ffmpeg + git (the standard variant) this layer was 200.6 MB
-# gzip / 538 MB unpacked on v1.41.
+# The minimal ffmpeg (both variants' default) links only Debian's
+# libmp3lame0. FFMPEG_FLAVOR=debian installs Debian's ffmpeg instead: with it
+# and git (the standard variant before it switched to the minimal build) this
+# layer was 200.6 MB gzip / 538 MB unpacked on v1.41.
+# The resolved flavor is written to /usr/local/lib/futureagi/ffmpeg-flavor, so
+# scripts/verify-image-contents.sh can read what an image was built with.
 # $pkgs is a word list on purpose.
 # hadolint ignore=SC1091,SC2086
 RUN set -eux; \
@@ -251,6 +259,7 @@ RUN set -eux; \
         none)    ;; \
     esac; \
     if [ "$WITH_GIT" = true ]; then pkgs="$pkgs git"; fi; \
+    printf '%s\n' "$FFMPEG_FLAVOR" > /usr/local/lib/futureagi/ffmpeg-flavor; \
     apt-get update; \
     apt-get install -y --no-install-recommends $pkgs; \
     rm -rf /var/lib/apt/lists/*; \

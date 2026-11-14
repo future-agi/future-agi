@@ -76,5 +76,8 @@ jobs:
         env:
           OSS_IMAGE: futureagi/future-agi:${{ inputs.version }}${{ inputs.variant == 'slim' && '-slim' || '' }}
           OSS_VARIANT: ${{ inputs.variant }}
+          # Built above from this checkout with no FFMPEG_FLAVOR: the variant's
+          # default, the minimal build. Not guessed from the version tag.
+          OSS_FFMPEG_FLAVOR: minimal
           VERSION: ${{ inputs.version }}
         run: ./scripts/verify-image-contents.sh "$VERSION" oss

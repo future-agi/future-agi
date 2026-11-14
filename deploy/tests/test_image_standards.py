@@ -5,6 +5,7 @@ labels."""
 
 from __future__ import annotations
 
+import ast
 import contextlib
 import fnmatch
 import functools
@@ -372,7 +373,7 @@ class BackendVariants(unittest.TestCase):
         expected = {
             "IMAGE_VARIANT": "standard",
             "EXTRAS": STANDARD_EXTRAS,
-            "FFMPEG_FLAVOR": "debian",
+            "FFMPEG_FLAVOR": "minimal",
             "WITH_GIT": "true",
             "WITH_UV": "true",
             "SLIM_SITE_PACKAGES": "0",
@@ -448,6 +449,29 @@ class BackendVariants(unittest.TestCase):
             for group in STANDARD_EXTRAS.split(","):
                 with self.subTest(path=path.name, group=group):
                     self.assertTrue(imported & set(smoke.EXTRA_MODULES[group]))
+
+    def test_release_backend_checks_the_ffmpeg_it_built(self):
+        # release-backend.yml builds from the branch it checks out with no
+        # FFMPEG_FLAVOR, so the image has the variant's default ffmpeg; the
+        # verify step must say so instead of letting the script guess the
+        # flavor from a version tag (a v1.58.1-dev build is still minimal).
+        text = (WORKFLOWS / "release-backend.yml").read_text(encoding="utf-8")
+        self.assertNotIn("FFMPEG_FLAVOR=", text)
+        step = text[text.index("- name: Verify OSS image boundary") :]
+        step = step[: step.index("run:")]
+        self.assertRegex(step, r"\n\s+OSS_FFMPEG_FLAVOR: minimal\n")
+
+    def test_the_image_records_its_ffmpeg_flavor(self):
+        # verify-image-contents.sh reads it, so a check never has to guess
+        # the flavor of an image built from this tree.
+        text = (ROOT / "futureagi" / "Dockerfile.oss").read_text(encoding="utf-8")
+        step = text[text.index('case "$FFMPEG_FLAVOR" in') - 200 :]
+        step = step[: step.index("apt-get clean")]
+        self.assertIn(". /usr/local/lib/futureagi/image-variant.sh", step)
+        self.assertIn(
+            "printf '%s\\n' \"$FFMPEG_FLAVOR\" > /usr/local/lib/futureagi/ffmpeg-flavor",
+            step,
+        )
 
     def test_ffmpeg_stages_match_the_variant_defaults(self):
         # FROM picks the ffmpeg stage before any RUN could source the script.
@@ -555,6 +579,42 @@ def project_pins() -> dict[str, set[str]]:
     ):
         pins.setdefault(_normalized(name), set()).add(version)
     return pins
+
+
+FFMPEG_DIR = ROOT / "futureagi" / "docker" / "ffmpeg"
+
+
+class MinimalFfmpegBuild(unittest.TestCase):
+    """The minimal FFmpeg build (docker/ffmpeg/) and its build-time self-test."""
+
+    @staticmethod
+    def selftest_videos() -> tuple[str, ...]:
+        tree = ast.parse((FFMPEG_DIR / "selftest.py").read_text(encoding="utf-8"))
+        for node in tree.body:
+            if isinstance(node, ast.Assign) and any(
+                isinstance(t, ast.Name) and t.id == "VIDEOS" for t in node.targets
+            ):
+                return tuple(ast.literal_eval(node.value))
+        raise AssertionError("VIDEOS not found in selftest.py")
+
+    def test_the_selftest_makes_thumbnails_of_rotated_and_cropped_videos(self):
+        # The ffmpeg CLI inserts transpose/hflip/vflip/rotate/crop for a video
+        # with a display matrix (phone recordings) or container cropping, and
+        # fails the whole filter graph if one is missing. FFmpeg's configure
+        # builds them with the CLI (ffmpeg_select), not from FILTERS; the
+        # build-time self-test proves they are there.
+        videos = self.selftest_videos()
+        for sample in (
+            "video-h264-rot90.mp4",  # transpose
+            "video-h264-rot180.mp4",  # hflip + vflip
+            "video-h264-rot45.mp4",  # rotate
+            "video-h264-crop.mkv",  # crop
+        ):
+            with self.subTest(sample=sample):
+                self.assertIn(sample, videos)
+        for sample in videos:
+            with self.subTest(sample=sample):
+                self.assertTrue((FFMPEG_DIR / "samples" / sample).is_file())
 
 
 class FutureAgiBaseDockerfiles(unittest.TestCase):
@@ -918,11 +978,20 @@ class VerifyImageContents(unittest.TestCase):
 
     FAKE_DOCKER = r"""#!/bin/sh
 printf '%s\n' "$*" >> "$DOCKER_LOG"
+if [ -n "$DOCKER_ARGV" ]; then
+  for arg in "$@"; do printf '\037%s' "$arg"; done >> "$DOCKER_LOG"
+  printf '\037\n' >> "$DOCKER_LOG"
+fi
 case "$*" in
   *-slim*"command -v uv"*|*-slim*"command -v git"*) exit 1 ;;
   *-slim*"git --version"*|*-slim*"import daytona"*) exit 1 ;;
   *-slim*omw-1.4*|*-slim*get_static_doc*) exit 1 ;;
-  *COPYING.LGPLv2.1*) case "$*" in *-slim*) exit 0 ;; *) exit 1 ;; esac ;;
+  *"dpkg -s ffmpeg"*) case "$*" in *-debian*) exit 0 ;; esac
+    [ -n "$FAKE_DEBIAN_FFMPEG" ] && exit 0; exit 1 ;;
+  *"image inspect"*) printf '%s\n' "$FAKE_IMAGE_VERSION"; exit 0 ;;
+  *"ffmpeg-flavor"*) [ -n "$FAKE_RECORDED_FLAVOR" ] || exit 1
+    printf '%s\n' "$FAKE_RECORDED_FLAVOR"; exit 0 ;;
+  *"command -v ffmpeg"*) case "$*" in *-noffmpeg*) exit 1 ;; *) exit 0 ;; esac ;;
   *"test -e /app/backend/ee/cloud"*) exit 1 ;;
 esac
 exit 0
@@ -983,6 +1052,127 @@ exit 0
         )
         self.assertEqual(proc.returncode, 1)
         self.assertIn("FAIL: Has uv", proc.stdout)
+
+    def test_the_ffmpeg_checks_follow_the_flavor(self):
+        proc = self.run_script("futureagi/future-agi:v9.9.9")
+        self.assertIn("ffmpeg flavor: minimal", proc.stdout)
+        for check in (
+            "ffmpeg can encode mp3 and png",
+            "Ships the ffmpeg LGPL notice",
+            "No Debian ffmpeg package tree",
+        ):
+            self.assertIn(f"PASS: {check}", proc.stdout)
+        proc = self.run_script("futureagi/future-agi:local-debian", OSS_FFMPEG_FLAVOR="debian")
+        self.assertEqual(proc.returncode, 0, proc.stdout)
+        self.assertIn("PASS: Has Debian's ffmpeg package", proc.stdout)
+        self.assertNotIn("LGPL notice", proc.stdout)
+        proc = self.run_script("futureagi/future-agi:local-noffmpeg", OSS_FFMPEG_FLAVOR="none")
+        self.assertEqual(proc.returncode, 0, proc.stdout)
+        self.assertIn("PASS: No ffmpeg (FFMPEG_FLAVOR=none)", proc.stdout)
+        self.assertNotIn("can encode", proc.stdout)
+        # A minimal-flavor check of an image with Debian's ffmpeg fails.
+        proc = self.run_script("futureagi/future-agi:local-debian")
+        self.assertEqual(proc.returncode, 1)
+        self.assertIn("FAIL: No Debian ffmpeg package tree", proc.stdout)
+        proc = self.run_script("futureagi/future-agi:v9.9.9", OSS_FFMPEG_FLAVOR="dev")
+        self.assertEqual(proc.returncode, 2)
+
+    def test_standard_tags_up_to_v1_58_are_checked_for_debian_ffmpeg(self):
+        """Every standard release up to v1.58 shipped Debian's ffmpeg; checked
+        as minimal they failed two checks."""
+        for image in (
+            "futureagi/future-agi:v1.56.1",
+            "futureagi/future-agi:v1.57.0",
+            "futureagi/future-agi:v1.58.0",
+            "futureagi/future-agi:1.58.2",
+            "futureagi/future-agi:v1.58.0@sha256:" + "0" * 64,
+        ):
+            with self.subTest(image=image):
+                proc = self.run_script(image, FAKE_DEBIAN_FFMPEG="1")
+                self.assertEqual(proc.returncode, 0, proc.stdout)
+                self.assertIn("ffmpeg flavor: debian", proc.stdout)
+                self.assertIn("PASS: Has Debian's ffmpeg package", proc.stdout)
+                self.assertNotIn("No Debian ffmpeg package tree", proc.stdout)
+
+    def test_later_and_slim_tags_are_checked_for_the_minimal_build(self):
+        for image in (
+            "futureagi/future-agi:v1.59.0",
+            "futureagi/future-agi:v2.0.0",
+            "futureagi/future-agi:v1.58.0-slim",
+            "futureagi/future-agi:v1.40.0-slim",
+            "futureagi/future-agi:local",
+        ):
+            with self.subTest(image=image):
+                proc = self.run_script(image)
+                self.assertEqual(proc.returncode, 0, proc.stdout)
+                self.assertIn("ffmpeg flavor: minimal", proc.stdout)
+                self.assertIn("PASS: No Debian ffmpeg package tree", proc.stdout)
+
+    def test_an_unversioned_tag_is_read_from_the_image_version_label(self):
+        """`latest` (the default) is whatever release it points at."""
+        proc = self.run_script(
+            "futureagi/future-agi:latest",
+            FAKE_IMAGE_VERSION="v1.58.0",
+            FAKE_DEBIAN_FFMPEG="1",
+        )
+        self.assertEqual(proc.returncode, 0, proc.stdout)
+        self.assertIn("ffmpeg flavor: debian", proc.stdout)
+        self.assertIn("org.opencontainers.image.version", proc.docker_log)
+        proc = self.run_script(
+            "futureagi/future-agi:latest", FAKE_IMAGE_VERSION="1.59.0"
+        )
+        self.assertEqual(proc.returncode, 0, proc.stdout)
+        self.assertIn("ffmpeg flavor: minimal", proc.stdout)
+
+    def test_a_digest_is_judged_by_the_image_it_pins(self):
+        """A digest wins over the tag in Docker, so its label decides."""
+        image = "localhost:5000/future-agi:v1.58.0@sha256:" + "1" * 64
+        proc = self.run_script(image, FAKE_IMAGE_VERSION="v1.59.0")
+        self.assertEqual(proc.returncode, 0, proc.stdout)
+        self.assertIn("ffmpeg flavor: minimal", proc.stdout)
+        self.assertIn("org.opencontainers.image.version", proc.docker_log)
+
+    def test_zero_padded_versions_compare_as_decimal(self):
+        proc = self.run_script("futureagi/future-agi:v1.08.1", FAKE_DEBIAN_FFMPEG="1")
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertNotIn("value too great", proc.stderr)
+        self.assertIn("ffmpeg flavor: debian", proc.stdout)
+
+    def test_the_flavor_the_image_recorded_wins_over_the_tag(self):
+        """A dev or rc build of this tree tagged v1.58 or lower is minimal:
+        it says so, whatever workflow file checks it."""
+        proc = self.run_script("futureagi/future-agi:v1.58.1-dev", FAKE_RECORDED_FLAVOR="minimal")
+        self.assertEqual(proc.returncode, 0, proc.stdout)
+        self.assertIn("ffmpeg flavor: minimal", proc.stdout)
+        self.assertIn("ffmpeg-flavor", proc.docker_log)
+        proc = self.run_script(
+            "futureagi/future-agi:local-debian", FAKE_RECORDED_FLAVOR="debian"
+        )
+        self.assertEqual(proc.returncode, 0, proc.stdout)
+        self.assertIn("ffmpeg flavor: debian", proc.stdout)
+        # Anything else in the file is not a record: the version rule applies.
+        proc = self.run_script(
+            "futureagi/future-agi:v1.58.0", FAKE_RECORDED_FLAVOR="bogus", FAKE_DEBIAN_FFMPEG="1"
+        )
+        self.assertIn("ffmpeg flavor: debian", proc.stdout)
+
+    def test_an_explicit_ffmpeg_flavor_wins_over_the_tag(self):
+        proc = self.run_script(
+            "futureagi/future-agi:v1.58.0", OSS_FFMPEG_FLAVOR="minimal"
+        )
+        self.assertEqual(proc.returncode, 0, proc.stdout)
+        self.assertIn("ffmpeg flavor: minimal", proc.stdout)
+        self.assertNotIn("org.opencontainers.image.version", proc.docker_log)
+
+    def test_shell_checks_reach_the_image_as_one_script(self):
+        """`sh -c "a | b"` must arrive as one argument; joined with "$*"
+        it ran a bare `a` and piped its (empty) stdout to `b`."""
+        proc = self.run_script("futureagi/future-agi:v9.9.9", DOCKER_ARGV="1")
+        script = (
+            "ffmpeg -hide_banner -encoders | grep -q libmp3lame && "
+            "ffmpeg -hide_banner -encoders | grep -qw png"
+        )
+        self.assertIn(f"\x1f{script}\x1f", proc.docker_log)
 
     def test_an_unknown_variant_is_a_usage_error(self):
         proc = self.run_script("futureagi/future-agi:v9.9.9", OSS_VARIANT="lean")
@@ -1614,6 +1804,22 @@ class Workflows(unittest.TestCase):
         self.assertNotIn("tag-suffix", default)
         for probe in ("uv --version", "git --version", "import daytona, e2b"):
             self.assertIn(probe, default["verify-command"])
+        # The default runs the minimal ffmpeg build, never Debian's package
+        # tree. `! cmd` cannot fail `sh -e`, so absence checks must exit.
+        for probe in (
+            "ffmpeg -hide_banner -version",
+            "ffprobe -hide_banner -version",
+            "COPYING.LGPLv2.1",
+            "if dpkg -s ffmpeg",
+            "^libav(codec|format|filter|device)",
+        ):
+            self.assertIn(probe, default["verify-command"])
+        self.assertNotRegex(default["verify-command"], r"(?m)^\s*!\s")
+        # The ffmpeg compile is the slim variant's; reuse its caches.
+        for arch in ("amd64", "arm64"):
+            self.assertIn(
+                f"build-cache:backend-slim-{arch}", default["cache-from-extra"]
+            )
         self.assertEqual(slim["tag-suffix"], "-slim")
         self.assertEqual(slim["build-args"].split(), ["IMAGE_VARIANT=slim"])
         # futureagi/standalone is FROM the -slim digest; nothing else is.

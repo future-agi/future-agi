@@ -347,8 +347,8 @@ Releases publish every image for `linux/amd64` and `linux/arm64` (built natively
 except the `-gpu` serving variant. The serving image runs PyTorch on the CPU; on
 GPU nodes pin `SERVING_VERSION=<version>-gpu` and reserve the GPU for the service.
 `FUTURE_AGI_VERSION` names the default, feature-complete backend
-(`futureagi/future-agi:<version>`: Debian's ffmpeg, git, the Vertex AI and
-hosted-sandbox SDKs); its `-slim` tags are the base of Standalone's app image,
+(`futureagi/future-agi:<version>`: git, the Vertex AI and hosted-sandbox SDKs
+and the minimal ffmpeg build it shares with `-slim`); its `-slim` tags are the base of Standalone's app image,
 not for this overlay ([Backend variants](https://docs.futureagi.com/docs/self-hosting/images#backend-variants)).
 Features that need a further optional extra are listed in
 [INSTALLATION.md](../INSTALLATION.md#optional-feature-extras).

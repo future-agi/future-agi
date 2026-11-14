@@ -509,7 +509,9 @@ jobs:
   # The default variant (IMAGE_VARIANT=standard). It stays a drop-in for what
   # builds on it: the EE and cloud images run `uv pip install` in it, and the
   # simulation runner's hosted-harness jobs need the sandbox SDKs and git, so
-  # no tag moves unless they are there.
+  # no tag moves unless they are there. Its ffmpeg is the minimal LGPL build
+  # it shares with -slim (so it reads the slim caches for that compile), and
+  # Debian's ffmpeg package tree must not come back by accident.
   backend:
     needs: [guard, approve]
     if: contains(needs.guard.outputs.components, '"backend"')
@@ -528,11 +530,20 @@ jobs:
       enabled: ${{ needs.guard.outputs.channel == 'stable' || github.run_attempt == 1 }}
       cache-scope: backend
       environment: production-auto
-      cache-from-extra: ghcr.io/future-agi/future-agi/e2e-cache:backend
+      cache-from-extra: |
+        ghcr.io/future-agi/future-agi/e2e-cache:backend
+        ghcr.io/future-agi/future-agi/build-cache:backend-slim-amd64
+        ghcr.io/future-agi/future-agi/build-cache:backend-slim-arm64
+      # `! cmd` never trips `sh -e`, so the absence checks use if/exit.
       verify-command: |
         uv --version
         git --version
         python -c "import daytona, e2b, httpx_ws, stripe, flower, vertexai, langchain_community, channels_rabbitmq, claude_agent_sdk"
+        ffmpeg -hide_banner -version
+        ffprobe -hide_banner -version
+        test -f /usr/local/share/doc/ffmpeg/COPYING.LGPLv2.1
+        if dpkg -s ffmpeg >/dev/null 2>&1; then echo "Debian's ffmpeg package is installed" >&2; exit 1; fi
+        if dpkg-query -W -f '${Package}\n' | grep -E '^libav(codec|format|filter|device)'; then echo "Debian libav* packages are installed" >&2; exit 1; fi
     secrets:
       dockerhub-username: ${{ secrets.DOCKERHUB_USERNAME }}
       dockerhub-token: ${{ secrets.DOCKERHUB_TOKEN }}

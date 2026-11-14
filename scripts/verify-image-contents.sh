@@ -8,11 +8,21 @@ set -euo pipefail
 # Overrides: OSS_IMAGE, EE_IMAGE, CLOUD_IMAGE, CLOUD_DEPLOYMENT_SECRET,
 #   OSS_VARIANT: the backend variant OSS_IMAGE was built as
 #   (futureagi/Dockerfile.oss IMAGE_VARIANT; https://docs.futureagi.com/docs/self-hosting/images#backend-variants). standard is
-#   feature-complete (uv, git, the sandbox SDKs, Debian ffmpeg, every NLTK
-#   package); slim is the lean base of futureagi/standalone. Default: slim for a
-#   tag ending in -slim, else standard. Standalone local builds
-#   (./bin/install --from-source, ./bin/dev) are slim: pass OSS_VARIANT=slim;
+#   feature-complete (uv, git, the sandbox SDKs, every NLTK package); slim is
+#   the lean base of futureagi/standalone. Default: slim for a tag ending in
+#   -slim, else standard. Standalone local builds (./bin/install
+#   --from-source, ./bin/dev) are slim: pass OSS_VARIANT=slim;
 #   ./bin/install --distributed --from-source builds standard.
+#   OSS_FFMPEG_FLAVOR: the FFMPEG_FLAVOR OSS_IMAGE was built with (minimal,
+#   the default of both variants; debian; none). Default: the flavor the
+#   image recorded at build time (/usr/local/lib/futureagi/ffmpeg-flavor).
+#   For an image without that record (published up to v1.58): debian for a
+#   standard tag up to v1.58 (LAST_DEBIAN_FFMPEG_RELEASE below: every
+#   standard release up to it shipped Debian's ffmpeg), else minimal. A
+#   digest reference, or a tag without a version (latest, a local build), is
+#   judged by the image's org.opencontainers.image.version label. Images
+#   built from this tree carry the record, so the version rule is only for
+#   images published before it.
 
 VERSION="${1:-latest}"
 FLAVOR="${2:-all}"
@@ -28,6 +38,67 @@ esac
 case "$OSS_VARIANT" in
   standard|slim) ;;
   *) echo "OSS_VARIANT must be standard or slim, not '${OSS_VARIANT}'" >&2; exit 2 ;;
+esac
+# The last release whose standard image shipped Debian's ffmpeg package; the
+# releases after it ship the minimal build.
+LAST_DEBIAN_FFMPEG_RELEASE="1.58"
+
+# The image's org.opencontainers.image.version label (pulled if needed).
+image_version_label() {
+  local format='{{ index .Config.Labels "org.opencontainers.image.version" }}'
+  docker image inspect -f "$format" "$OSS_IMAGE" 2>/dev/null \
+    || { docker pull -q "$OSS_IMAGE" >/dev/null 2>&1 \
+      && docker image inspect -f "$format" "$OSS_IMAGE" 2>/dev/null; } \
+    || true
+}
+
+# "MAJOR MINOR" of OSS_IMAGE. A digest pins the image whatever its tag says,
+# so a digest reference, or a tag without a version (latest, a local build),
+# is judged by the image's version label, then by the tag.
+oss_image_version() {
+  local ref="${OSS_IMAGE%%@*}" tag="" label="" version
+  [[ "${ref##*/}" == *:* ]] && tag="${ref##*:}"
+  if [[ "$OSS_IMAGE" == *@* || ! "$tag" =~ ^v?[0-9]+\.[0-9]+ ]]; then
+    label="$(image_version_label)"
+  fi
+  for version in "$label" "$tag"; do
+    if [[ "$version" =~ ^v?([0-9]+)\.([0-9]+) ]]; then
+      echo "$((10#${BASH_REMATCH[1]})) $((10#${BASH_REMATCH[2]}))"
+      return 0
+    fi
+  done
+  return 1
+}
+
+# The flavor the image recorded at build time (Dockerfile.oss writes it);
+# images published up to v1.58 have no record.
+recorded_ffmpeg_flavor() {
+  local flavor
+  flavor="$(docker run --rm --entrypoint /bin/cat "$OSS_IMAGE" /usr/local/lib/futureagi/ffmpeg-flavor 2>/dev/null)" || return 1
+  case "$flavor" in
+    minimal|debian|none) echo "$flavor" ;;
+    *) return 1 ;;
+  esac
+}
+
+default_ffmpeg_flavor() {
+  recorded_ffmpeg_flavor && return 0
+  local major minor last_major="${LAST_DEBIAN_FFMPEG_RELEASE%%.*}" last_minor="${LAST_DEBIAN_FFMPEG_RELEASE#*.}"
+  if [[ "$OSS_VARIANT" == standard ]] && read -r major minor < <(oss_image_version) \
+    && (( major < last_major || (major == last_major && minor <= last_minor) )); then
+    echo debian
+  else
+    echo minimal
+  fi
+}
+
+if [[ -z "${OSS_FFMPEG_FLAVOR:-}" && ( "$FLAVOR" == oss || "$FLAVOR" == all ) ]]; then
+  OSS_FFMPEG_FLAVOR="$(default_ffmpeg_flavor)"
+fi
+OSS_FFMPEG_FLAVOR="${OSS_FFMPEG_FLAVOR:-minimal}"
+case "$OSS_FFMPEG_FLAVOR" in
+  minimal|debian|none) ;;
+  *) echo "OSS_FFMPEG_FLAVOR must be minimal, debian or none, not '${OSS_FFMPEG_FLAVOR}'" >&2; exit 2 ;;
 esac
 EE_IMAGE="${EE_IMAGE:-futureagi/future-agi-ee:${VERSION}}"
 CLOUD_IMAGE="${CLOUD_IMAGE:-futureagi/future-agi-cloud:${VERSION}}"
@@ -60,10 +131,12 @@ check_absent() {
   fi
 }
 
+# Runs its arguments as given (`sh -c "a | b"` stays one script); "$*" would
+# re-split them, so `sh -c "ffmpeg -encoders | grep ..."` ran a bare `ffmpeg`.
 image_test() {
   local image="$1"
   shift
-  docker run --rm --entrypoint /bin/sh "$image" -c "$*"
+  docker run --rm --entrypoint /bin/sh "$image" -c '"$@"' sh "$@"
 }
 
 image_python() {
@@ -126,11 +199,27 @@ echo ""
 
 if [[ "$FLAVOR" == oss || "$FLAVOR" == all ]]; then
 echo "=== OSS Image: ${OSS_IMAGE} (${OSS_VARIANT} variant) ==="
+echo "ffmpeg flavor: ${OSS_FFMPEG_FLAVOR}"
 check "Has shared EE package tree" image_test "$OSS_IMAGE" test -d /app/backend/ee
 check_absent "No cloud-private package" image_test "$OSS_IMAGE" test -e /app/backend/ee/cloud
 check "Has required NLTK runtime corpora" image_python "$OSS_IMAGE" -c \
   "import nltk; [nltk.data.find(p) for p in ('corpora/stopwords/', 'tokenizers/punkt_tab/english/', 'taggers/averaged_perceptron_tagger_eng/', 'corpora/wordnet/')]; assert nltk.word_tokenize('Future AGI') == ['Future', 'AGI']; assert nltk.pos_tag(['Future'])[0][1]"
-check "ffmpeg can encode mp3 and png" image_test "$OSS_IMAGE" sh -c "ffmpeg -hide_banner -encoders | grep -q libmp3lame && ffmpeg -hide_banner -encoders | grep -qw png"
+case "$OSS_FFMPEG_FLAVOR" in
+  none)
+    check_absent "No ffmpeg (FFMPEG_FLAVOR=none)" image_test "$OSS_IMAGE" sh -c "command -v ffmpeg || command -v ffprobe"
+    ;;
+  *)
+    check "ffmpeg can encode mp3 and png" image_test "$OSS_IMAGE" sh -c "ffmpeg -hide_banner -encoders | grep -q libmp3lame && ffmpeg -hide_banner -encoders | grep -qw png"
+    check "Has ffprobe" image_test "$OSS_IMAGE" sh -c "ffprobe -hide_banner -version"
+    ;;
+esac
+if [[ "$OSS_FFMPEG_FLAVOR" == minimal ]]; then
+  check "Ships the ffmpeg LGPL notice" image_test "$OSS_IMAGE" test -f /usr/local/share/doc/ffmpeg/COPYING.LGPLv2.1
+  check_absent "No Debian ffmpeg package tree" image_test "$OSS_IMAGE" sh -c "dpkg -s ffmpeg || dpkg-query -W -f '\${Package}\n' | grep -E '^libav(codec|format|filter|device)'"
+fi
+if [[ "$OSS_FFMPEG_FLAVOR" == debian ]]; then
+  check "Has Debian's ffmpeg package" image_test "$OSS_IMAGE" dpkg -s ffmpeg
+fi
 if [[ "$OSS_VARIANT" == standard ]]; then
   # A drop-in for what builds on it: the EE and cloud images run
   # `uv pip install` in it, and the simulation runner's hosted-harness jobs
@@ -144,7 +233,6 @@ if [[ "$OSS_VARIANT" == standard ]]; then
   check "Keeps every googleapiclient discovery document" image_python "$OSS_IMAGE" -c \
     "from googleapiclient.discovery_cache import get_static_doc; assert get_static_doc('drive', 'v3')"
 else
-  check "Ships the ffmpeg LGPL notice" image_test "$OSS_IMAGE" test -f /usr/local/share/doc/ffmpeg/COPYING.LGPLv2.1
   check_absent "No uv in the runtime image" image_test "$OSS_IMAGE" sh -c "command -v uv"
   check_absent "No git in the runtime image" image_test "$OSS_IMAGE" sh -c "command -v git"
 fi
