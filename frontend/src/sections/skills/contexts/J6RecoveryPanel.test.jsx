@@ -75,6 +75,7 @@ it("names the release revision a rollback review is made against", () => {
   };
   render(<J6RecoveryPanel contextId="ctx" contextName="Support policy" />);
   fireEvent.click(screen.getByRole("button", { name: "Choose v1" }));
+  fireEvent.click(screen.getByRole("button", { name: "Request details" }));
   expect(
     screen.getByText(/Reviewed against release revision 7\./),
   ).toBeVisible();
@@ -98,7 +99,7 @@ it("prepares the rollback packet when the review is acknowledged, with no separa
   fireEvent.click(screen.getByRole("button", { name: "Choose v1" }));
   expect(screen.queryByRole("button", { name: "Preview rollback packet" })).toBeNull();
   expect(previewMutate).not.toHaveBeenCalled();
-  fireEvent.click(screen.getByRole("checkbox", { name: /I reviewed the complete v1 closure/ }));
+  fireEvent.click(screen.getByRole("checkbox", { name: /I reviewed everything v1 contains/ }));
   expect(previewMutate).toHaveBeenCalledTimes(1);
   expect(previewMutate).toHaveBeenCalledWith({ contextId: "ctx", candidateVersionId: "v1-id", evidence: [], external_pipeline: null });
 });
@@ -110,10 +111,10 @@ it("submits to the only reviewer and offers the exact request link afterwards", 
   submitState = { data: { id: "req-1" } };
   render(<J6RecoveryPanel contextId="ctx" contextName="Support policy" />);
   fireEvent.click(screen.getByRole("button", { name: "Choose v1" }));
-  fireEvent.click(screen.getByRole("checkbox", { name: /I reviewed the complete v1 closure/ }));
+  fireEvent.click(screen.getByRole("checkbox", { name: /I reviewed everything v1 contains/ }));
   expect(screen.queryByRole("button", { name: "Submit rollback for review" })).toBeNull();
   expect(screen.queryByRole("combobox", { name: "Reviewer" })).toBeNull();
-  expect(screen.getByRole("checkbox", { name: /I reviewed the complete v1 closure/ })).toBeChecked();
+  expect(screen.getByRole("checkbox", { name: /I reviewed everything v1 contains/ })).toBeChecked();
   expect(screen.getByRole("link", { name: "Review link" }).href).toBe(
     `${window.location.origin}/dashboard/skills/contexts/ctx/review?request=req-1`,
   );
@@ -140,7 +141,7 @@ it("preselects the newest eligible release before the failing one and shows its 
   // The review and its acknowledgement are still required before anything is prepared.
   expect(screen.getByText("Request rollback to v1")).toBeVisible();
   expect(previewMutate).not.toHaveBeenCalled();
-  expect(screen.getByRole("checkbox", { name: /I reviewed the complete v1 closure/ })).not.toBeChecked();
+  expect(screen.getByRole("checkbox", { name: /I reviewed everything v1 contains/ })).not.toBeChecked();
   // The quarantined alternative is still refused, and another release can still be chosen,
   // all without opening anything: the alternatives sit in the review the acknowledgment covers.
   expect(screen.getByRole("table", { name: "Recovery releases" })).toBeVisible();
@@ -153,7 +154,7 @@ it("preselects whoever last moved production as the reviewer", () => {
   reviewers = [{ id: "u2", name: "Alice" }, { id: "u3", name: "Releaser" }];
   previewState = { data: { fingerprint: "fp", packet: { p: 1 } } };
   render(<J6RecoveryPanel contextId="ctx" contextName="Support policy" />);
-  fireEvent.click(screen.getByRole("checkbox", { name: /I reviewed the complete v1 closure/ }));
+  fireEvent.click(screen.getByRole("checkbox", { name: /I reviewed everything v1 contains/ }));
   expect(screen.getByRole("combobox", { name: "Reviewer" })).toHaveTextContent("Releaser");
   fireEvent.click(screen.getByRole("button", { name: "Submit rollback for review" }));
   expect(submitMutate).toHaveBeenCalledWith(expect.objectContaining({ reviewerId: "u3" }));
@@ -166,7 +167,7 @@ it("attaches only explicitly selected workspace evidence for the exact recovery 
   render(<J6RecoveryPanel contextId="ctx" contextName="Support policy" />);
   expect(screen.getAllByRole('checkbox', { name: 'Attach Text comparison' })).toHaveLength(1);
   fireEvent.click(screen.getByRole('checkbox', { name: 'Attach Text comparison' }));
-  fireEvent.click(screen.getByRole('checkbox', { name: /I reviewed the complete v1 closure/ }));
+  fireEvent.click(screen.getByRole('checkbox', { name: /I reviewed everything v1 contains/ }));
   expect(previewMutate).toHaveBeenCalledWith({ contextId: 'ctx', candidateVersionId: 'v1-id', evidence: [evidence], external_pipeline: null });
   expect(screen.getByRole('checkbox', { name: 'Attach Text comparison' })).toBeDisabled();
 });
@@ -176,7 +177,7 @@ it("keeps evidence errors distinct from an empty test history and blocks incompl
   evidenceOptions = { isError: true, refetch: vi.fn() };
   render(<J6RecoveryPanel contextId="ctx" contextName="Support policy" />);
   expect(screen.getByText("Couldn't load test evidence")).toBeVisible();
-  expect(screen.getByRole('checkbox', { name: /I reviewed the complete v1 closure/ })).toBeDisabled();
+  expect(screen.getByRole('checkbox', { name: /I reviewed everything v1 contains/ })).toBeDisabled();
   expect(previewMutate).not.toHaveBeenCalled();
 });
 
@@ -202,7 +203,7 @@ it('retries the preview with the acknowledged annotation revision, not refreshed
   evidenceOptions = { data: { evidence: [evidence] } };
   const view = render(<J6RecoveryPanel contextId="ctx" contextName="Support policy" />);
   fireEvent.click(screen.getByRole('checkbox', { name: 'Attach Text comparison' }));
-  fireEvent.click(screen.getByRole('checkbox', { name: /I reviewed the complete v1 closure/ }));
+  fireEvent.click(screen.getByRole('checkbox', { name: /I reviewed everything v1 contains/ }));
   const original = previewMutate.mock.calls[0][0];
   previewState = { error: { requestSent: false } };
   evidenceOptions = { data: { evidence: [{ ...evidence, annotationRevision: 5 }] } };
@@ -224,7 +225,7 @@ it('keeps the submitted request revision-bound when production changes', () => {
   recovery = { ...recovery, releaseRevision: 8 };
   view.rerender(<J6RecoveryPanel contextId="ctx" contextName="Support policy" />);
   expect(screen.queryByText(/Rollback to v1 requested from Releaser/)).toBeNull();
-  expect(screen.getByRole('checkbox', { name: /I reviewed the complete v1 closure/ })).not.toBeChecked();
+  expect(screen.getByRole('checkbox', { name: /I reviewed everything v1 contains/ })).not.toBeChecked();
 });
 
 it('reports a production move without treating missing reports as confirmation', () => {
@@ -266,7 +267,7 @@ it('uses one exact-identity disclosure and a pressed release choice', () => {
   expect(screen.getByRole('button', { name: 'Choose v1' })).toHaveAttribute('aria-pressed', 'true');
   expect(screen.getAllByRole('button', { name: 'Exact identities', exact: true })).toHaveLength(1);
   expect(screen.queryByText(/0 removed|0 sources retired/)).toBeNull();
-  expect(screen.getByRole('checkbox', { name: 'I reviewed the complete v1 closure, its retained children and the excluded alternatives.' })).not.toBeChecked();
+  expect(screen.getByRole('checkbox', { name: 'I reviewed everything v1 contains, including linked skill versions and files left out.' })).not.toBeChecked();
 });
 
 it('shows a disabled submit and a checking status while preparing the rollback request', () => {
@@ -295,14 +296,14 @@ it("lets a workspace member pick a reviewer from the request's eligible recipien
   previewState = { data: { fingerprint: "fp", packet: { p: 1 } } };
   render(<J6RecoveryPanel contextId="ctx" contextName="Support policy" />);
   fireEvent.click(screen.getByRole("button", { name: "Choose v1" }));
-  fireEvent.click(screen.getByRole("checkbox", { name: /I reviewed the complete v1 closure/ }));
+  fireEvent.click(screen.getByRole("checkbox", { name: /I reviewed everything v1 contains/ }));
   const picker = screen.getByRole("combobox", { name: "Reviewer" });
   expect(picker).toHaveTextContent("Maya Chen");
   expect(screen.queryByText("Couldn't load reviewers.")).toBeNull();
   expect(screen.getByRole("button", { name: "Submit rollback for review" })).toBeEnabled();
   expect(screen.getByText("Rollback request ready. Choose who reviews it.")).toBeVisible();
   // The fingerprint is a detail, not part of the decision.
-  expect(screen.queryByText("Packet fingerprint")).toBeNull();
+  expect(screen.getByText("Packet fingerprint")).not.toBeVisible();
 });
 
 it("leads the rollback review with its consequence and keeps the descriptor bytes in details", () => {
@@ -327,4 +328,33 @@ it("leads the rollback review with its consequence and keeps the descriptor byte
   expect(descriptor).toHaveTextContent("refund-policy v2 → v1");
   expect(descriptor.textContent).toContain(json);
   expect(screen.getByRole("button", { name: "Raw .futureagi/context.json change" })).toHaveAttribute("aria-expanded", "false");
+});
+
+it('explains a single release without offering a rollback or replacement credential', () => {
+  recovery = { cohort: [], releaseRevision: 1, candidates: [{ ...rollbackCandidate, isProduction: true, eligible: false }] };
+  render(<J6RecoveryPanel contextId="ctx" contextName="Support policy" />);
+  expect(screen.getByText("v1 is the only version, so there's nothing to roll back to.")).toBeVisible();
+  expect(screen.queryByRole('list', { name: 'Recovery progress' })).toBeNull();
+  expect(screen.queryByRole('table')).toBeNull();
+  expect(screen.queryByRole('button', { name: 'Issue replacement credential' })).toBeNull();
+});
+
+it('opens an eligible rollback without needing a retained app failure', () => {
+  recovery = { cohort: [], releaseRevision: 2, canPromote: true, candidates: [rollbackCandidate, { ...rollbackCandidate, id: 'v2', number: 2, isProduction: true, eligible: false }] };
+  render(<J6RecoveryPanel contextId="ctx" contextName="Support policy" />);
+  expect(screen.getByText('Production is v2. Roll back to v1?')).toBeVisible();
+  expect(screen.getByRole('button', { name: 'Choose v1' })).toHaveAttribute('aria-pressed', 'true');
+  expect(screen.getByRole('button', { name: 'Submit rollback for review' })).toBeDisabled();
+  expect(screen.getByRole('combobox', { name: 'Reviewer' })).toBeVisible();
+  expect(screen.getByRole('checkbox', { name: /I reviewed everything v1 contains/ })).not.toBeChecked();
+  expect(previewMutate).not.toHaveBeenCalled();
+});
+
+it('gives denied rollback access a calm next step', () => {
+  window.history.replaceState({}, '', '?state=denied');
+  try {
+    render(<J6RecoveryPanel contextId="ctx" contextName="Support policy" />);
+    expect(screen.getByText('Only admins and reviewers can start a rollback. Ask a workspace admin.')).toBeVisible();
+    expect(screen.queryByRole('alert')).toBeNull();
+  } finally { window.history.replaceState({}, '', '/'); }
 });

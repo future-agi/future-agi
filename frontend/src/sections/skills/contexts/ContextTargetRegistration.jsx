@@ -1,8 +1,9 @@
-import { useRef, useState } from "react";
+import { useId, useRef, useState } from "react";
 import PropTypes from "prop-types";
 import { Alert, Button, MenuItem, Stack, TextField, Typography } from "@mui/material";
 import ModalWrapper from "src/components/ModalWrapper/ModalWrapper";
 import { useCreateContextBinding } from "src/api/skills/context-consumers";
+import ActionReason, { reasonProps } from "../components/ActionReason";
 import { IdentityValue } from "../review/ReleaseReviewBody";
 
 // Intent: an application owner explicitly registers one runtime target with
@@ -19,6 +20,7 @@ const SUMMARY = [
 
 export default function ContextTargetRegistration({ contextId, canRegister }) {
   const create = useCreateContextBinding(contextId);
+  const reasonId = useId();
   const file = useRef(null);
   const operationKey = useRef(null);
   const [open, setOpen] = useState(false);
@@ -69,13 +71,19 @@ export default function ContextTargetRegistration({ contextId, canRegister }) {
     name.trim().length > 0 &&
     /^[a-z0-9][a-z0-9-]{0,39}$/.test(label) &&
     manifest !== null &&
-    !create.isPending;
+    !create.isPending && canRegister;
+  const actionReason = !canRegister ? 'Ask a workspace admin for permission to connect an app.'
+    : !manifest ? 'Choose the runtime manifest JSON file from your app build.'
+      : !name.trim() ? 'Enter a target name.'
+        : !/^[a-z0-9][a-z0-9-]{0,39}$/.test(label) ? 'Use a label with lowercase letters, numbers or hyphens, starting with a letter or number.'
+          : create.isPending ? 'Connecting the app…' : '';
   return (
     <>
       <Stack direction="row" spacing={1} alignItems="center">
         <Button
           variant="outlined"
           disabled={!canRegister}
+          {...reasonProps(`${reasonId}-access`, !canRegister && actionReason)}
           onClick={() => {
             reset();
             setDone(null);
@@ -84,6 +92,7 @@ export default function ContextTargetRegistration({ contextId, canRegister }) {
         >
           Register application target
         </Button>
+        {!canRegister && <ActionReason id={`${reasonId}-access`} reason={actionReason} />}
         {done && (
           <Typography variant="s3">
             Registered {done.name} · configuration r{done.revision}
@@ -95,9 +104,10 @@ export default function ContextTargetRegistration({ contextId, canRegister }) {
         onClose={() => {
           if (!create.isPending) setOpen(false);
         }}
-        title="Register application target"
-        subTitle="Releases can be reviewed against this pinned runtime configuration. Registering does not move any label."
+        title="Connect an app"
+        subTitle="Connect your app using the configuration from its build. This does not change production."
         actionBtnTitle="Register target"
+        actionBtnProps={reasonProps(`${reasonId}-submit`, actionReason)}
         isValid={valid}
         isLoading={create.isPending}
         onCancelBtn={() => setOpen(false)}
@@ -138,7 +148,7 @@ export default function ContextTargetRegistration({ contextId, canRegister }) {
           />
           <TextField
             size="small"
-            label="Follows label"
+            label="Release label to follow"
             value={label}
             onChange={(event) => setLabel(event.target.value)}
             inputProps={{ maxLength: 40 }}
@@ -146,7 +156,7 @@ export default function ContextTargetRegistration({ contextId, canRegister }) {
           <TextField
             select
             size="small"
-            label="Update mode"
+            label="When to update"
             value={updateMode}
             onChange={(event) => setUpdateMode(event.target.value)}
           >
@@ -177,6 +187,7 @@ export default function ContextTargetRegistration({ contextId, canRegister }) {
                 value={typeof manifest[key] === "string" ? manifest[key] : "Missing"}
               />
             ))}
+          <ActionReason id={`${reasonId}-submit`} reason={actionReason} />
           {error && <Alert severity="error">{error}</Alert>}
         </Stack>
       </ModalWrapper>

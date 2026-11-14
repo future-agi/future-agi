@@ -4,14 +4,16 @@
 
 /**
  * The newest eligible release older than every release a declared consumer failed on.
- * Returns null when no consumer failure is retained or no such release is eligible.
+ * With no retained failure, use production as the boundary so rollback is discoverable.
+ * Returns null when no earlier selectable release is eligible.
  */
 export function suggestRelease({ candidates, cohort }) {
   const failing = cohort
     .map((row) => candidates.find((candidate) => candidate.id === row.latestFailure?.versionId)?.number)
     .filter(Number.isInteger);
-  if (!failing.length) return null;
-  const oldest = Math.min(...failing);
+  const production = candidates.find((candidate) => candidate.isProduction)?.number;
+  if (!failing.length && !Number.isInteger(production)) return null;
+  const oldest = failing.length ? Math.min(...failing) : production;
   const pick = candidates
     .filter((candidate) => candidate.eligible && candidate.selectable && !candidate.isProduction && candidate.number < oldest)
     .sort((a, b) => b.number - a.number)[0];

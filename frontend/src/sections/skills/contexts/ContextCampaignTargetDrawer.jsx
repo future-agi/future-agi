@@ -5,6 +5,7 @@ import Iconify from 'src/components/iconify';
 import { fDateTimeUTC } from 'src/utils/format-time';
 import '../components/skillIcons';
 import { humanizeCode } from './consumerPresentation';
+import RolloutInstructions from './RolloutInstructions';
 import Section from 'src/components/section';
 import IdentityChip from '../components/IdentityChip';
 import TechnicalDetails from '../components/TechnicalDetails';
@@ -43,7 +44,7 @@ export default function ContextCampaignTargetDrawer({ target, open, onClose, dec
         <Typography component="p" variant="s1">Release v{target.desiredVersion} · {target.selector.version ? `Pinned v${target.selector.version}` : `Follows ${target.selector.label}`}</Typography>
         {target.repository ? <Typography component="p" variant="s3" sx={source}>Branch: {target.repository.defaultBranch} · {target.repository.projectScope ? `Folder: ${target.repository.projectScope}` : 'Root folder'}</Typography> : <Alert severity="warning">This target no longer names a repository. The old plan cannot authorize new writes.</Alert>}
       </Section>
-      {!target.plan ? <Alert severity="warning">No local plan has been submitted. Inspect this repository with the qualified local executor before including it.</Alert> : <>
+      {!target.plan ? <Section title="No local plan yet" description="Plan this repository locally, submit the plan, then review the changes here."><RolloutInstructions version={target.desiredVersion} /></Section> : <>
         <Section title="Changes" description="Excerpts only. Files are checked again before anything is written.">
           {target.plan.changes.map((change) => <Box key={change.path} sx={{ borderBottom: 1, borderColor: 'divider', py: 1 }}>
             <Typography component="h3" variant="m3" sx={source}>{{ replace: 'Replaces', add: 'Adds', create: 'Creates', remove: 'Removes', delete: 'Deletes' }[change.action] || humanizeCode(change.action)} {change.path} ({change.ownership === 'managed' ? 'managed by Future AGI' : humanizeCode(change.ownership)})</Typography>

@@ -403,11 +403,12 @@ function RollbackRequest({
           </>}
           <Button variant="outlined" sx={{ alignSelf: 'flex-start' }} href={`?tab=tests&version=${candidate.number}`}>Run tests</Button>
         </Section>}
-        <Typography variant="s3">
-          Reviewed against release revision {releaseRevision}. A change to the
-          release restarts this review.
-        </Typography>
-        {submit.data ? <FormControlLabel control={<Checkbox checked inputProps={{ readOnly: true }} />} label={`I reviewed the complete v${candidate.number} closure, its retained children and the excluded alternatives.`} /> : <FormControlLabel
+        <Typography variant="s3" color="text.secondary">If production changes, review and acknowledge the rollback again.</Typography>
+        <TechnicalDetails title="Request details" keepMounted>
+          <Typography variant="s3">Reviewed against release revision {releaseRevision}. A change to the release restarts this review.</Typography>
+          {packet && <IdentityChip label="Packet fingerprint" value={packet.fingerprint} />}
+        </TechnicalDetails>
+        {submit.data ? <FormControlLabel control={<Checkbox checked inputProps={{ readOnly: true }} />} label={`I reviewed everything v${candidate.number} contains, including linked skill versions and files left out.`} /> : <FormControlLabel
           control={
             <Checkbox
               checked={reviewed}
@@ -423,18 +424,18 @@ function RollbackRequest({
               }}
             />
           }
-          label={`I reviewed the complete v${candidate.number} closure, its retained children and the excluded alternatives.`}
+          label={`I reviewed everything v${candidate.number} contains, including linked skill versions and files left out.`}
         />}
         {!submit.data && !reviewed && <Typography variant="s3">Tick the acknowledgment to continue.</Typography>}
-        {preview.isPending && <Stack direction="row" spacing={1} alignItems="center" useFlexGap flexWrap="wrap">
+        {!packet && !submit.data && <Stack spacing={1} alignItems="flex-start">
+          <PeoplePicker label="Reviewer" people={reviewers.data ?? []} value={listed ? recipient : ''} onChange={onReviewer} loading={reviewers.isLoading} error={reviewers.error} onRetry={reviewers.refetch} helperText="Choose an independent reviewer. Sending a request does not move production." />
           <Button color="primary" variant="contained" disabled>Submit rollback for review</Button>
-          <Box role="status"><StatusBadge status="checking" label="Preparing the rollback request…" /></Box>
+          {preview.isPending && <Box role="status"><StatusBadge status="checking" label="Preparing the rollback request…" /></Box>}
         </Stack>}
         <OperationFeedback error={preview.error} action="prepare a recovery review" onRefresh={onRefresh} onRetry={() => { if (originalPreview.current) startPreview(originalPreview.current); }} />
         {packet && (
           <Stack spacing={1}>
             {!submit.data && <Typography variant="s1" role="status">Rollback request ready. Choose who reviews it.</Typography>}
-            <TechnicalDetails title="Request details"><IdentityChip label="Packet fingerprint" value={packet.fingerprint} /></TechnicalDetails>
             {submit.data ? <Typography variant="s1">Requested from {reviewerName}</Typography> : <PeoplePicker label="Reviewer" people={reviewers.data ?? []} value={listed ? recipient : ''} onChange={onReviewer} loading={reviewers.isLoading} error={reviewers.error} onRetry={reviewers.refetch} disabled={submit.isPending || Boolean(originalSubmission.current) || Boolean(submit.data)} helperText="Suggested: whoever last moved production. The server checks review authority on submit." />}
             {!submit.data && <Button color="primary"
               sx={{ alignSelf: 'flex-start' }}
@@ -524,14 +525,13 @@ function LocalRecovery({ contextId, contextName, candidate, canIssue }) {
     <Stack spacing={3}>
         <Section title="Replace the application credential"><Stack spacing={1.5}>
         <Typography variant="s3">
-          Expired or revoked credentials are never extended. A new consume
-          credential follows production and is pinned to v{candidate.number};
-          threads opened under the old credential cannot be resumed with it.
+          Create a new access key for apps using production, limited to v{candidate.number}.
+          Expired or revoked keys stay invalid. This key cannot resume threads opened with an older key.
         </Typography>
         <TextField
           select
           size="small"
-          label="Credential lifetime"
+          label="Expires after"
           sx={{ width: 1, maxWidth: 480 }}
           value={hours}
           disabled={Boolean(issue.data)}
@@ -575,7 +575,7 @@ function LocalRecovery({ contextId, contextName, candidate, canIssue }) {
             helperText="Store it in the application's secret manager now. It is not shown again."
           />
         )}
-        </Stack></Section><Section title="Restore repository lock"><Stack spacing={1.5}>
+        </Stack></Section><Section title="Restore the reviewed repository version"><Stack spacing={1.5}>
         <TextField
           size="small"
           label="Last reviewed commit"
@@ -695,7 +695,7 @@ export default function J6RecoveryPanel({ contextId, contextName }) {
     <ContentSkeleton variant="panel" rows={2} sx={{ '& .MuiSkeleton-root': { bgcolor: 'action.selected' } }} />
   </Stack>;
   if (previewState === 'inventory-limit' || query.error?.code === 'recovery_inventory_limit') return <CapabilityNotice title="Recovery needs a complete inventory" description="This context has more than 100 releases or consumers, which recovery can't review completely here. Use the CLI restore for contexts this large." actions={<Button href="?tab=use" variant="outlined">Open CLI restore instructions</Button>} details={query.error?.message} />;
-  if (previewState === 'denied') return <ErrorState title="You cannot review recovery for this context" />;
+  if (previewState === 'denied' || query.error?.statusCode === 403) return <CapabilityNotice title="Rollback access" description="Only admins and reviewers can start a rollback. Ask a workspace admin." />;
   if (previewState === 'off') return <CapabilityNotice title="Recovery is not available" description="Ask a workspace administrator to check recovery access." />;
   if (previewState === 'empty') return <EmptyState title="No eligible recovery release" description="Publish and review a recovery candidate before requesting a production change." />;
   if (previewState === 'error' || query.error || !data)
@@ -712,14 +712,27 @@ export default function J6RecoveryPanel({ contextId, contextName }) {
   const confirmed = data.cohort.filter((row) => row.observationsComplete === true && row.states.includes('matches_target') && row.loaded?.versionId === row.desired?.versionId && row.states.every((state) => ['matches_target', 'pinned_as_intended'].includes(state))).length;
   const from = previousProduction.current?.id !== production?.id ? previousProduction.current?.number : movedFrom.current;
   const step = candidate?.isProduction ? 2 : awaiting ? 1 : 0;
+  // An initial release is not a recovery task. Link to delivery facts, but do not
+  // invite an impossible rollback or expose a replacement credential form.
+  const onlyVersion = data.candidates.length === 1 && production;
+  if (onlyVersion) return <Stack spacing={3}>
+    <Typography variant="s1" role="status">v{production.number} is the only version, so there&apos;s nothing to roll back to.</Typography>
+    <Typography variant="s3" color="text.secondary">Check Consumers for app delivery reports. Production alone does not confirm that apps are updated.</Typography>
+    <Button variant="outlined" sx={{ alignSelf: 'flex-start' }} href="?tab=consumers">Open consumers</Button>
+  </Stack>;
   return (
     <Stack spacing={3} sx={{ minWidth: 0 }}>
       <Stack spacing={1}>
-        <Typography variant="m3" role="status">{candidate?.isProduction ? `${from ? `Production moved from v${from} to v${candidate.number}` : `Production is v${candidate.number}`} · ${confirmed} of ${data.cohort.length} consumers confirmed` : awaiting ? `Rollback to v${candidate?.number} requested from ${submitted.reviewer}. Production has not moved.` : `Production is ${production ? `v${production.number}` : 'not set'}.${suggestion ? ` Suggested recovery: v${suggestion.number} (a suggestion, not a safety verdict).` : ''}`}</Typography>
+        <Typography variant="m3" role="status">{candidate?.isProduction ? `${from ? `Production moved from v${from} to v${candidate.number}` : `Production is v${candidate.number}`} · ${confirmed} of ${data.cohort.length} consumers confirmed` : awaiting ? `Rollback to v${candidate?.number} requested from ${submitted.reviewer}. Production has not moved.` : `Production is ${production ? `v${production.number}` : 'not set'}.${candidate ? ` Roll back to v${candidate.number}?` : ' Choose an eligible version to request a rollback.'}`}</Typography>
         <Stack component="ol" direction="row" spacing={1} useFlexGap flexWrap="wrap" aria-label="Recovery progress" sx={{ listStyle: 'none', m: 0, p: 0 }}>
-          {['Review release', 'Await approval', 'Verify consumers'].map((label, index) => <Box component="li" key={label} aria-current={step === index ? 'step' : undefined}><Typography variant="s3" color={step === index ? 'text.primary' : 'text.secondary'} sx={{ fontWeight: step === index ? 600 : 400 }}>{index > 0 ? '→ ' : ''}{label}</Typography></Box>)}
+          {['Request', 'Approve', 'Confirm apps updated'].map((label, index) => <Stack component="li" key={label} direction="row" spacing={1} alignItems="center" aria-current={step === index ? 'step' : undefined}>
+            {index > 0 && <Typography variant="s1" color="text.secondary" aria-hidden="true">→</Typography>}
+            <Box aria-hidden="true" sx={{ width: 8, height: 8, borderRadius: '50%', bgcolor: step === index ? 'text.primary' : 'divider' }} />
+            <Typography variant="s1" color={step === index ? 'text.primary' : 'text.secondary'} sx={{ fontWeight: step === index ? 600 : 400 }}>{label}</Typography>
+          </Stack>)}
         </Stack>
       </Stack>
+      {data.canPromote === false && <CapabilityNotice title="Rollback access" description="Only admins and reviewers can start a rollback. Ask a workspace admin." />}
       {query.isFetching && <StatusBadge status="checking" label="Updating…" sx={{ alignSelf: 'flex-start' }} />}
       {!data.candidates.some((row) => row.eligible) && !candidate?.isProduction && <EmptyState title="No eligible recovery release" description="Excluded releases cannot be requested. Review their restrictions below." />}
       {!candidate?.isProduction && <Stack spacing={3}>

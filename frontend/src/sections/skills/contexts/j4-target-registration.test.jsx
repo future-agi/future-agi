@@ -63,3 +63,11 @@ it('cannot be opened without writer permission', () => {
   render(<ContextTargetRegistration contextId="context" canRegister={false} />);
   expect(screen.getByRole('button', { name: 'Register application target' })).toBeDisabled();
 });
+
+it('explains why connecting is unavailable before a manifest is chosen', () => {
+  render(<ContextTargetRegistration contextId="context" canRegister />);
+  fireEvent.click(screen.getByRole('button', { name: 'Register application target' }));
+  expect(screen.getByText('Connect an app')).toBeVisible();
+  expect(screen.getByText('Choose the runtime manifest JSON file from your app build.')).toBeVisible();
+  expect(screen.getByRole('button', { name: 'Register target' })).toBeDisabled();
+});
