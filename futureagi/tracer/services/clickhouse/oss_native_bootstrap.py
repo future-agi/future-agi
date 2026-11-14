@@ -152,11 +152,6 @@ def _spans(database):
     head, entries, tail = _table_parts(sql)
     overrides = dict(core._SPAN_COLUMNS)
     overrides["attributes_extra"] += " CODEC(ZSTD(3))"
-    if overrides["trace_name"].count("'trace_dict'") != 1:
-        raise NativeBootstrapError("packaged trace-name dictionary changed")
-    overrides["trace_name"] = overrides["trace_name"].replace(
-        "'trace_dict'", f"'{database}.trace_dict'"
-    )
     entries = [entry for entry in entries if core._tokens(entry)[0] not in overrides]
     entries.extend(f"{name} {declaration}" for name, declaration in overrides.items())
     for filename, count, index, kind, name in _EXTRAS:

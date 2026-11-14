@@ -706,13 +706,10 @@ class DualWriter:
         seed_ch_trace_sessions(sessions)
         if scores:
             seed_ch_scores(scores)
-        # trace_dict / trace_sessions_dict are HASHED dictionaries with a
-        # 30-60s LIFETIME sourced from the tables we just seeded; the voice
-        # endpoints resolve project scope via dictGet. Force a reload so the
-        # fresh rows are visible immediately and deterministically, instead of
-        # racing the refresh cycle (the source of prior timing-based flakiness).
-        for dictionary in ("trace_dict", "trace_sessions_dict"):
-            self.ch.command(f"SYSTEM RELOAD DICTIONARY {dictionary}")
+        # The collector writes spans before traces, so their names must resolve
+        # from root span rows; reloading trace_dict cannot repair a stored name.
+        # Session lookups still use their dictionary and need fresh rows.
+        self.ch.command("SYSTEM RELOAD DICTIONARY trace_sessions_dict")
 
     # The filter subqueries hardcode ``tracer_eval_logger``; eval-config
     # discovery reads ``settings.CH25_EVAL_LOGGER_TABLE`` (tracer_eval_logger_v2

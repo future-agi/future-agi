@@ -27,6 +27,82 @@
         "reviewer": "nik13",
         "large_volume_rehearsal": true
       }
+    },
+    {
+      "path": "futureagi/tracer/services/clickhouse/v2/schema/039_trace_name_row_local.sql",
+      "before_sha256": null,
+      "after_sha256": "531f1010e270a6edcd2f5936b9110c54ddf8e335a04399d51134aca6d8b80497",
+      "declaration": {
+        "schema_version": 1,
+        "risk_classes": [
+          "clickhouse_change"
+        ],
+        "tables": [
+          "clickhouse:spans",
+          "clickhouse:traces"
+        ],
+        "mitigation": "Metadata-only ALTER TABLE spans MODIFY COLUMN trace_name (expression change, type unchanged): no mutation, no data rewritten (rehearsed on CH 25.3: system.mutations count unchanged). Removes the trace_dict lookup from the span insert path. Never run MATERIALIZE COLUMN trace_name afterwards. Rollback: app code rolls back alone; restoring the dictionary expression needs a new forward schema file.",
+        "review": "",
+        "reviewer": "",
+        "large_volume_rehearsal": true
+      }
+    },
+    {
+      "path": "futureagi/tracer/services/clickhouse/oss_cdc_bootstrap.py",
+      "before_sha256": "bf3746d9f5094d5149002f5bfc3f683b579465d17f14b039e15ae5a70bdeadca",
+      "after_sha256": "99b7894b4de6a4e76846a3a297b5e414fc3274bc34beab4ea478edc0f7b9ee19",
+      "declaration": {
+        "schema_version": 1,
+        "risk_classes": [
+          "clickhouse_change"
+        ],
+        "tables": [
+          "clickhouse:spans",
+          "clickhouse:traces"
+        ],
+        "mitigation": "Fresh OSS installs create spans.trace_name with the row-local root expression; retained installs are inspect-only and now accept the new, the legacy 015 and the qualified legacy expression, rejecting anything else. No DDL on retained tables.",
+        "review": "",
+        "reviewer": "",
+        "large_volume_rehearsal": true
+      }
+    },
+    {
+      "path": "futureagi/tracer/services/clickhouse/oss_native_bootstrap.py",
+      "before_sha256": "6912a084f13f338950dd5c197ccb31bcab764cd4a8593faef77a3099b5e2f8af",
+      "after_sha256": "fcab3e844063399edef08b2751bf74f6f61c15a4e6e7c4497ee2f160c11718d1",
+      "declaration": {
+        "schema_version": 1,
+        "risk_classes": [
+          "clickhouse_change"
+        ],
+        "tables": [
+          "clickhouse:spans",
+          "clickhouse:traces"
+        ],
+        "mitigation": "Drops the guard that required exactly one trace_dict reference in the spans trace_name override; trace_dict is still created and 015's statement counts are unchanged. No DDL on retained tables.",
+        "review": "",
+        "reviewer": "",
+        "large_volume_rehearsal": true
+      }
+    },
+    {
+      "path": "futureagi/tracer/management/commands/ch25_backfill_traces.py",
+      "before_sha256": "7cc7a723e6c94848f996348c5267c013906bfa5318249540ab4fbb6e90c2ec0d",
+      "after_sha256": "467e300bd5068575c1e034a2beda01ac53da0c092c240f4ebfb544d50e2d913e",
+      "declaration": {
+        "schema_version": 1,
+        "risk_classes": [
+          "clickhouse_change"
+        ],
+        "tables": [
+          "clickhouse:spans",
+          "clickhouse:traces"
+        ],
+        "mitigation": "Removes --materialize-spans (would blank stored names via a full mutation) and the default SYSTEM RELOAD DICTIONARY trace_dict (re-triggers the double-copy load). The command now only writes traces rows as before.",
+        "review": "",
+        "reviewer": "",
+        "large_volume_rehearsal": true
+      }
     }
   ]
 }

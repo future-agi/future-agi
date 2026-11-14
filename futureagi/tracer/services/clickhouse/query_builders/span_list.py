@@ -1496,6 +1496,13 @@ class SpanListQueryBuilder(BaseQueryBuilder):
             BaseQueryBuilder.is_datetime_filter(item) for item in self.filters
         )
         scope_to_request_window = not candidate_full_state or has_explicit_time_filter
+        # A trace_name residual looks up the live roots of this batch's own
+        # candidate traces (resolved_annotation_candidates). Full-state
+        # classification does not limit candidates to the request window, so
+        # neither does their root lookup.
+        trace_name_root_window = (
+            ("start_date", "end_date") if scope_to_request_window else None
+        )
         plans, residual_filters = partition_span_filter_plans(self.filters)
         params: dict[str, Any] = {
             **self.params,
@@ -1626,6 +1633,7 @@ class SpanListQueryBuilder(BaseQueryBuilder):
                         span_date_scope=scope_to_request_window,
                         candidate_ids_param="candidate_span_ids",
                         resolved_candidate_spans_table="resolved_annotation_candidates",
+                        trace_name_root_window=trace_name_root_window,
                         candidate_entities_param=(
                             "candidate_span_entities" if branch_entities else None
                         ),
@@ -1689,6 +1697,7 @@ class SpanListQueryBuilder(BaseQueryBuilder):
                     span_date_scope=scope_to_request_window,
                     candidate_ids_param="candidate_span_ids",
                     resolved_candidate_spans_table="resolved_annotation_candidates",
+                    trace_name_root_window=trace_name_root_window,
                     candidate_entities_param=candidate_entities_param,
                     strict_trace_project_correlation=has_eval_residual,
                     trace_project_eval_config_ids=(

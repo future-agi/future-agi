@@ -22,6 +22,7 @@ from typing import Any
 import structlog
 
 from tracer.services.clickhouse.query_service import AnalyticsQueryService
+from tracer.services.clickhouse.trace_name_sql import TRACE_NAME_SQL
 from tracer.services.clickhouse.v2 import get_reader
 from tracer.services.clickhouse.v2.span_reader import CHSpan
 
@@ -29,9 +30,8 @@ logger = structlog.get_logger(__name__)
 
 
 # Columns cluster_rca needs off a span. Aliased to the agent's vocabulary.
-# Includes the trace-level fields denormalized onto every span row
-# (trace_name / trace_session_id) so the agent can derive trace context
-# without a separate PG Trace read.
+# Resolve a root's trace_name from its row (a child cannot name its trace),
+# and carry trace_session_id without a separate PG Trace read.
 _SPAN_COLS = (
     "toString(id) AS span_id",
     "toString(trace_id) AS trace_id",
@@ -53,7 +53,7 @@ _SPAN_COLS = (
     "total_tokens",
     "cost",
     "tags",
-    "trace_name",
+    f"{TRACE_NAME_SQL} AS trace_name",
     "toString(trace_session_id) AS trace_session_id",
 )
 
@@ -275,18 +275,18 @@ def trace_roots(project_id: str, trace_ids: Iterable[str]) -> dict[str, dict[str
     ids = _ids_list(trace_ids)
     if not ids:
         return {}
-    query = """
+    query = f"""
         SELECT
             trace_id,
             argMin(input, start_time)  AS input,
             argMin(output, start_time) AS output,
-            any(trace_name)            AS trace_name,
+            anyIf({TRACE_NAME_SQL}, parent_span_id = '') AS trace_name,
             toString(any(trace_session_id)) AS trace_session_id,
             max(status = 'ERROR')      AS has_error,
             min(start_time)            AS first_start
         FROM (
-            SELECT trace_id, input, output, trace_name, trace_session_id,
-                   status, start_time, id
+            SELECT trace_id, input, output, trace_name, parent_span_id, name,
+                   trace_session_id, status, start_time, id
             FROM spans
             WHERE project_id = %(pid)s AND is_deleted = 0
               AND toString(trace_id) IN %(tids)s
@@ -419,16 +419,17 @@ def traces_in_session(project_id: str, session_id: str) -> dict[str, dict[str, A
     first_start). Powers read(session). Returns {trace_id: root-info}."""
     if not session_id:
         return {}
-    query = """
+    query = f"""
         SELECT
             trace_id,
             argMin(input, start_time)  AS input,
             argMin(output, start_time) AS output,
-            any(trace_name)            AS trace_name,
+            anyIf({TRACE_NAME_SQL}, parent_span_id = '') AS trace_name,
             max(status = 'ERROR')      AS has_error,
             min(start_time)            AS first_start
         FROM (
-            SELECT trace_id, input, output, trace_name, status, start_time, id
+            SELECT trace_id, input, output, trace_name, parent_span_id, name,
+                   status, start_time, id
             FROM spans
             WHERE project_id = %(pid)s AND is_deleted = 0
               AND toString(trace_session_id) = %(sid)s

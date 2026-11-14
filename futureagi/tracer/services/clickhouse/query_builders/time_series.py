@@ -34,6 +34,7 @@ from tracer.services.clickhouse.query_builders.hourly_aggregate_states import (
     hourly_aggregate_state_source,
 )
 from tracer.services.clickhouse.query_builders.trace_usage import usage_coverage_sql
+from tracer.services.clickhouse.trace_name_sql import scope_trace_name_roots
 
 _SAFE_CLUSTER_NAME_RE = re.compile(r"\A[A-Za-z0-9_-]+\Z")
 
@@ -1097,6 +1098,19 @@ class TimeSeriesQueryBuilder(BaseQueryBuilder):
         GROUP BY time_bucket
         ORDER BY time_bucket
         """
+        # A trace_name leaf looks up live roots. One graph runs one statement
+        # per partition, so restrict each lookup to the traces with a span in
+        # this partition's storage hours. That narrows the roots the lookup
+        # returns (memory), not what it reads: under FINAL with
+        # use_skip_indexes_if_final=0 the trace_id bloom index prunes nothing,
+        # so the read is bounded by the request window's hours.
+        query = scope_trace_name_roots(
+            query,
+            "trace_id IN (SELECT trace_id FROM spans "
+            "PREWHERE project_id = %(project_id)s "
+            "AND toStartOfHour(start_time) >= %(graph_partition_start)s "
+            "AND toStartOfHour(start_time) < %(graph_partition_end)s)",
+        )
         # Repeated partition builds mutate ``self.params``. Return an isolated
         # snapshot so a queued statement can never inherit the next slice.
         return query, dict(self.params)

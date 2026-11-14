@@ -20,6 +20,7 @@ from tracer.services.clickhouse.query_builders.trace_usage import (
     usage_aggregate_sql,
     usage_coverage_sql,
 )
+from tracer.services.clickhouse.trace_name_sql import scope_trace_name_roots
 from tracer.services.clickhouse.v2.id_remap_sql import (
     bounded_survivor_map_subquery,
     literal_survivor_map_subquery,
@@ -48,6 +49,10 @@ USER_NATIVE_SPAN_DIMENSIONS: dict[str, str] = {
         "trace_name",
     )
 }
+# The native-user replay uses this value as a *bare identifier* when naming
+# ``latest_<column>``. Its membership flag is compiled independently by the
+# shared filter builder and resolves the name from the root via a semi-join.
+USER_NATIVE_SPAN_DIMENSIONS["trace_name"] = "trace_name"
 
 
 class MembershipTerm(NamedTuple):
@@ -974,7 +979,7 @@ class UserListQueryBuilder(BaseQueryBuilder):
         LIMIT %(slice_user_limit)s
         {_SEEDED_PAGE_READ_SETTINGS}
         """
-        return query, params
+        return self._scope_walk_trace_name_roots(query), params
 
     def build_matching_activity_instant_query(
         self,
@@ -1033,7 +1038,7 @@ class UserListQueryBuilder(BaseQueryBuilder):
         LIMIT %(slice_user_limit)s
         {_SEEDED_PAGE_READ_SETTINGS}
         """
-        return query, params
+        return self._scope_walk_trace_name_roots(query), params
 
     def build_matching_activity_existence_query(
         self,
@@ -1068,7 +1073,7 @@ class UserListQueryBuilder(BaseQueryBuilder):
         LIMIT 1
         {_SEEDED_PAGE_READ_SETTINGS}
         """
-        return query, params
+        return self._scope_walk_trace_name_roots(query), params
 
     def build_matching_activity_presence_query(
         self, *, range_start: Any, range_end: Any
@@ -1193,6 +1198,25 @@ class UserListQueryBuilder(BaseQueryBuilder):
                 "the matching-activity walk chose no witness for this page"
             )
         return {**witness.params, **range_params, "_witness_sql": witness.sql}
+
+    def _scope_walk_trace_name_roots(self, query: str) -> str:
+        """Bound a walk statement's trace_name root lookups by its own range.
+
+        A trace_name leaf resolves a span through its trace's live root. The
+        walk's statements are bounded by their slice or probe range, never by
+        the request window, so the root lookup returns only the roots of the
+        traces with a span in that range. That narrows what it returns
+        (memory), not what it reads: under FINAL with
+        use_skip_indexes_if_final=0 the trace_id bloom index prunes nothing,
+        so each statement still reads the request window's root hours.
+        """
+
+        return scope_trace_name_roots(
+            query,
+            # A code-owned predicate over bound parameters.
+            "trace_id IN (SELECT trace_id FROM spans "  # noqa: S608
+            f"PREWHERE {self._matching_activity_range_predicate()})",
+        )
 
     def _matching_activity_range_predicate(self) -> str:
         return f"""{self._project_predicate("spans")}
@@ -2129,6 +2153,27 @@ class UserListQueryBuilder(BaseQueryBuilder):
         flags, condition, params, terms = compile_user_membership_leaf(
             item, project_id=str(project_id), namespace=f"native_leaf_{index}"
         )
+        # A trace-name leaf resolves a child from its root through a semi-join
+        # bounded by the list's own window; every caller of these flags binds
+        # the same values under these names.
+        start_date, end_date = self.parse_time_range(self.filters)
+        params = {**params, "start_date": start_date, "end_date": end_date}
+        if self.project_ids is not None:
+            # The graph compiles for one project; an organization Users list
+            # binds only project_ids. A root-name semi-join must use the same
+            # authorized project set while preserving (project_id, trace_id)
+            # correlation, even when trace IDs repeat in different projects.
+            scalar_scope = "project_id = %(project_id)s"
+            organization_scope = "project_id IN %(project_ids)s"
+            flags = tuple(
+                flag.replace(scalar_scope, organization_scope) for flag in flags
+            )
+            terms = tuple(
+                term._replace(
+                    predicate=term.predicate.replace(scalar_scope, organization_scope)
+                )
+                for term in terms
+            )
         return flags, condition, params, self._native_witness_flag(terms)
 
     @staticmethod
@@ -2247,6 +2292,8 @@ class UserListQueryBuilder(BaseQueryBuilder):
             FROM (
                 SELECT
                     toString({resolved_eu}) AS end_user_id,
+                    project_id,
+                    trace_id,
                     latest_start_time AS native_span_start_time,
                     {projected}
                 FROM latest_candidate_spans
@@ -2264,6 +2311,12 @@ class UserListQueryBuilder(BaseQueryBuilder):
         ) AS native_span_flags
         GROUP BY end_user_id
         """
+        # A trace_name leaf looks up the live roots of these users' own
+        # candidate traces only, not of every trace in the window.
+        query = scope_trace_name_roots(
+            query,
+            "trace_id IN (SELECT trace_id FROM latest_candidate_spans)",
+        )
         return query, params
 
     def _finite_user_activity_ctes(

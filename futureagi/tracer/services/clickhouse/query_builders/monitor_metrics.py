@@ -211,6 +211,9 @@ class MonitorMetricsQueryBuilder(BaseQueryBuilder):
         # Bound for the filter builder's date-scoped subqueries (span/score
         # membership) — see _translate_filters.
         params["start_date"] = params["start_time"]
+        # A trace_name filter resolves a span through its trace's root, a
+        # lookup bounded by this statement's own window.
+        params["end_date"] = params["end_time"]
 
         base_where = self._spans_base_where()
         time_win = f"AND {_pruned_window('start_time', 'end_time')}"
@@ -412,6 +415,9 @@ class MonitorMetricsQueryBuilder(BaseQueryBuilder):
         # Bound for the filter builder's date-scoped subqueries (span/score
         # membership) — see _translate_filters.
         params["start_date"] = params["start_time"]
+        # A trace_name filter resolves a span through its trace's root, a
+        # lookup bounded by this statement's own window.
+        params["end_date"] = params["end_time"]
 
         base_where = self._spans_base_where()
         time_win = f"AND {_pruned_window('start_time', 'end_time')}"
@@ -619,6 +625,9 @@ class MonitorMetricsQueryBuilder(BaseQueryBuilder):
         # Bound for the filter builder's date-scoped subqueries (span/score
         # membership) — see _translate_filters.
         params["start_date"] = params["start_time"]
+        # A trace_name filter resolves a span through its trace's root, a
+        # lookup bounded by this statement's own window.
+        params["end_date"] = params["end_time"]
         params["freq_seconds"] = frequency_seconds
 
         bucket_expr = _TIME_BUCKET_EXPR

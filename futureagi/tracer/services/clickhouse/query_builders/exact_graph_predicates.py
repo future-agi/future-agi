@@ -812,14 +812,39 @@ def compile_exact_graph_row_predicates(
                 score_date_scope=False,
                 span_date_scope=False,
             )
-            predicate, predicate_params = builder.translate([item])
+            if (
+                column_id == "trace_name"
+                and not is_raw_attribute
+                and normalized_observe_type == "trace"
+            ):
+                # Trace graphs already fold per-root row predicates into
+                # trace membership. Avoid a second spans read in that mode.
+                predicate = builder._build_column_condition(  # noqa: SLF001
+                    builder.SYSTEM_METRIC_MAP[column_id],
+                    str(filter_type),
+                    normalize_filter_op(
+                        config.get("filter_op") or config.get("filterOp")
+                    ),
+                    raw_value,
+                )
+                predicate_params = dict(builder._params)  # noqa: SLF001
+            else:
+                predicate, predicate_params = builder.translate([item])
 
         if not predicate:
             raise UnsupportedFilterShapeError(
                 f"graph filter {column_id!r} did not produce a predicate"
             )
-        if _OUTER_SOURCE_SENTINEL in predicate or _SPANS_SOURCE_PATTERN.search(
-            predicate
+        # A trace-name span leaf must consult the named root; the current
+        # child row intentionally has no trace name. The shared compiler
+        # bounds that lookup by project and the graph's start/end params.
+        root_name_lookup = (
+            column_id == "trace_name"
+            and not is_raw_attribute
+            and normalized_observe_type == "span"
+        )
+        if _OUTER_SOURCE_SENTINEL in predicate or (
+            _SPANS_SOURCE_PATTERN.search(predicate) and not root_name_lookup
         ):
             raise UnsupportedFilterShapeError(
                 f"graph filter {column_id!r} requires another spans read"
@@ -827,6 +852,7 @@ def compile_exact_graph_row_predicates(
         if (
             _RELATIONAL_SQL_PATTERN.search(predicate)
             and normalized_col_type != "EVAL_METRIC"
+            and not root_name_lookup
         ):
             raise UnsupportedFilterShapeError(
                 f"graph filter {column_id!r} produced an unsupported relation"

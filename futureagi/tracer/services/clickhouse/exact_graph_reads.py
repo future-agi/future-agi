@@ -72,6 +72,7 @@ from tracer.services.clickhouse.read_budget import (
     is_clickhouse_query_size_error,
     is_read_budget_error,
 )
+from tracer.services.clickhouse.trace_name_sql import scope_trace_name_roots
 from tracer.services.clickhouse.v2.id_remap_sql import (
     resolved_id_expr,
 )
@@ -2566,8 +2567,15 @@ def _matching_span_ids(
 ) -> set[str]:
     if not span_ids:
         return set()
+    # A trace_name leaf looks up live roots: only those of this batch's
+    # candidates' traces, as every other finite-candidate statement does.
+    predicate = scope_trace_name_roots(
+        predicate or "1",
+        "trace_id IN (SELECT trace_id FROM spans "
+        "WHERE project_id = %(project_id)s AND id IN %(candidate_span_ids)s)",
+    )
     source = latest_span_membership_source_sql(
-        predicate=predicate or "1",
+        predicate=predicate,
         identity_scope="AND id IN %(candidate_span_ids)s",
     )
     result = analytics.execute_ch_query(
@@ -4205,6 +4213,10 @@ def _user_aggregate_source_sql(
         **filter_params,
         **membership_params,
         "project_id": project_id,
+        # A trace-name membership flag resolves an in-window child from its
+        # possibly earlier root. Both limits are bound by this read budget.
+        "start_date": start_date,
+        "end_date": end_date,
         "snapshot_start_date": start_date,
         "snapshot_end_date": end_date,
     }

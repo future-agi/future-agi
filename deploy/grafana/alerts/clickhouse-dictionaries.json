@@ -1,0 +1,52 @@
+{
+  "_comment": "Read-only ClickHouse dictionary health alert. Replace __CLICKHOUSE_DS_UID__ and __FOLDER_UID__ during provisioning. NOT_LOADED dictionaries are healthy.",
+  "rules": [
+    {
+      "uid": "clickhouse-dictionaries-health",
+      "title": "ClickHouse dictionary failed, stale, or oversized",
+      "ruleGroup": "clickhouse-dictionaries",
+      "folderUID": "__FOLDER_UID__",
+      "condition": "C",
+      "noDataState": "OK",
+      "execErrState": "Error",
+      "for": "10m",
+      "labels": {
+        "alert_group": "clickhouse-dictionaries",
+        "severity": "warning"
+      },
+      "annotations": {
+        "summary": "ClickHouse dictionary health check found {{ $values.B.Value }} failing dictionaries",
+        "description": "Inspect system.dictionaries for failed loads, updates stale over ten minutes, or allocations over 4 GiB. NOT_LOADED is intentionally healthy."
+      },
+      "data": [
+        {
+          "refId": "A",
+          "datasourceUid": "__CLICKHOUSE_DS_UID__",
+          "relativeTimeRange": {"from": 600, "to": 0},
+          "model": {
+            "refId": "A",
+            "format": "table",
+            "rawQuery": true,
+            "editorMode": "code",
+            "rawSql": "SELECT count() AS failures FROM (SELECT database, name, status, element_count, bytes_allocated, loading_duration, last_successful_update_time, dateDiff('second', last_successful_update_time, now()) AS stale_seconds, substring(last_exception,1,300) AS last_exception FROM system.dictionaries WHERE last_exception != '' OR status IN ('FAILED','FAILED_AND_RELOADING') OR (status IN ('LOADED','LOADED_AND_RELOADING') AND last_successful_update_time < now() - INTERVAL 10 MINUTE) OR bytes_allocated > 4294967296)"
+          }
+        },
+        {
+          "refId": "B",
+          "datasourceUid": "__expr__",
+          "model": {"refId": "B", "type": "reduce", "expression": "A", "reducer": "last"}
+        },
+        {
+          "refId": "C",
+          "datasourceUid": "__expr__",
+          "model": {
+            "refId": "C",
+            "type": "threshold",
+            "expression": "B",
+            "conditions": [{"evaluator": {"type": "gt", "params": [0]}}]
+          }
+        }
+      ]
+    }
+  ]
+}

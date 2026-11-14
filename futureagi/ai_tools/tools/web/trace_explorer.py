@@ -430,7 +430,7 @@ class TraceExplorerTool(BaseTool):
         _status = "error" if error_count > 0 else "ok"
         lines = [
             f"## Trace Summary",
-            f"**Name:** {data.get('trace_name', data.get('name', 'unnamed'))}",
+            f"**Name:** {data.get('trace_name') or data.get('name') or 'unnamed'}",
             f"**Status:** {_status}",
             f"**Total spans:** {total_spans}",
             f"**Errors:** {error_count}",
