@@ -1656,6 +1656,138 @@ def _redirecting(status, location, hits):
 
 @pytest.mark.integration
 @pytest.mark.parametrize("status", [307, 308])
+def test_serial_keepalive_redirect_retires_the_watched_connection(organization, status):
+    """A duplicate fd must not keep the abandoned hop alive at a serial receiver."""
+    import threading
+    from http.server import HTTPServer
+
+    hits = []
+    handler = _redirecting(status, lambda: "/next", hits)
+    handler.protocol_version = "HTTP/1.1"
+    server = HTTPServer(("127.0.0.1", 0), handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    base = f"http://127.0.0.1:{server.server_address[1]}"
+    try:
+        with _short_deadline(2), _loopback_is_public():
+            result, elapsed, event = _deliver_one(organization, base, "serial-redirect")
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=3)
+    assert result == {"delivered": 1, "failed": 0, "retired": 0}
+    assert event.status == "delivered" and event.last_response_code == 200
+    assert [path for path, _, _ in hits] == ["/hook", "/next"]
+    assert elapsed < 1.5, elapsed
+    assert not thread.is_alive()
+
+
+@pytest.mark.parametrize("reuse", [False, True], ids=["new", "reused"])
+@pytest.mark.parametrize("failure", [OSError("EMFILE"), ValueError("invalid fd")])
+def test_watch_registration_failure_closes_the_original_socket(reuse, failure):
+    import socket
+
+    connection = webhook_delivery._WatchedHTTPConnection("127.0.0.1", 9)
+    original, peer = socket.socketpair()
+    if reuse:
+        connection.sock = original
+    try:
+        with (
+            webhook_delivery._PostDeadline(30) as deadline,
+            patch.object(webhook_delivery.socket, "fromfd", side_effect=failure),
+            patch.object(webhook_delivery.socket, "socket", return_value=original),
+        ):
+            if reuse:
+                with pytest.raises(OSError, match="Cannot watch webhook connection"):
+                    connection.request("POST", "/")
+            else:
+                with pytest.raises(webhook_delivery.NewConnectionError):
+                    connection._new_conn()
+            assert original.fileno() == -1
+            assert deadline._sockets == {}
+    finally:
+        connection.close()
+        original.close()
+        peer.close()
+
+
+def test_watch_lifetime_preserves_reused_socket_protection_and_releases_duplicates():
+    import socket
+
+    connection = webhook_delivery._WatchedHTTPConnection("127.0.0.1", 9)
+    original, peer = socket.socketpair()
+    connection.sock = original
+    try:
+        with webhook_delivery._PostDeadline(30) as first:
+            first.watch(connection, original)
+            first_dup = first._sockets[connection]
+        assert first_dup.fileno() == -1
+        assert original.fileno() != -1  # The pooled socket still belongs to urllib3.
+        with webhook_delivery._PostDeadline(30) as second:
+            second.watch(connection, original)
+            second_dup = second._sockets[connection]
+            second.watch(connection, original)
+            assert second_dup.fileno() == -1  # No duplicate accumulates on rewatch.
+            active_dup = second._sockets[connection]
+            second._expire()
+            peer.settimeout(1)
+            assert peer.recv(1) == b""  # Reused sockets still answer to the timer.
+            connection.close()
+            second.unwatch(connection)
+            assert active_dup.fileno() == -1
+            assert second._sockets == {}
+    finally:
+        connection.close()
+        original.close()
+        peer.close()
+
+
+@pytest.mark.integration
+def test_fromfd_failure_refuses_the_unwatched_post(organization):
+    """EMFILE must fail closed, rather than entering a body read without a timer."""
+    import errno
+    from http.server import BaseHTTPRequestHandler
+
+    hits = []
+
+    @_quiet
+    class Drip(BaseHTTPRequestHandler):
+        def do_POST(self):
+            self.rfile.read(int(self.headers.get("Content-Length", 0)))
+            hits.append(self.path)
+            self.send_response(500)
+            self.send_header("Content-Length", "40")
+            self.end_headers()
+            # Finite even on the broken transport: four seconds exceeds the
+            # total deadline, while every byte satisfies the inactivity limit.
+            _drip(self.wfile, b"x" * 40, interval=0.1)
+
+    server, base = _serve(Drip)
+    try:
+        with (
+            _short_deadline(0.3),
+            _loopback_is_public(),
+            patch.object(
+                webhook_delivery.socket,
+                "fromfd",
+                side_effect=OSError(errno.EMFILE, "injected descriptor exhaustion"),
+            ) as duplicate,
+        ):
+            result, elapsed, event = _deliver_one(organization, base, "no-watch")
+    finally:
+        server.shutdown()
+        server.server_close()
+    assert duplicate.called
+    assert hits == [], "the transport connected without deadline protection"
+    assert elapsed < 1, elapsed
+    assert result["failed"] == 1
+    assert event.status == "pending" and event.attempts == 1
+    assert event.last_response_code is None
+    assert "injected descriptor exhaustion" in event.last_error
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("status", [307, 308])
 def test_a_307_or_308_to_an_allowed_host_delivers_the_post(organization, status):
     """Round 5 review: dev followed redirects (each hop's URL checked again),
     and 307/308 keep the POST and its body. Round 4 stopped following them,
