@@ -3797,8 +3797,11 @@ def calculate_mean_average_precision(reference, hypothesis, **kwargs):
             gt_set = set(str(x) for x in gt)
             hits = 0
             sum_prec = 0.0
+            seen = set()
             for rank, item in enumerate(ret, 1):
-                if str(item) in gt_set:
+                # Credit each relevant item once, as the system eval does.
+                if str(item) in gt_set and str(item) not in seen:
+                    seen.add(str(item))
                     hits += 1
                     sum_prec += hits / rank
             ap = sum_prec / len(gt_set) if gt_set else 0.0
@@ -3811,8 +3814,11 @@ def calculate_mean_average_precision(reference, hypothesis, **kwargs):
         return {"result": 0.0, "reason": "Empty ground truth"}
     hits = 0
     sum_prec = 0.0
+    seen = set()
     for rank, item in enumerate(retrieved, 1):
-        if str(item) in gt_set:
+        # A repeated retrieval used to count again, so ["a", "a"] against ["a"] scored 2.0.
+        if str(item) in gt_set and str(item) not in seen:
+            seen.add(str(item))
             hits += 1
             sum_prec += hits / rank
     ap = sum_prec / len(gt_set)

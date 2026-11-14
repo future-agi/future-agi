@@ -32,8 +32,15 @@ config:
         if not ref: return {"score": 0.0, "reason": "Empty reference"}
         gt = set(str(x) for x in ref)
         hits, sp = 0, 0.0
+        seen = set()
         for rank, item in enumerate(ret, 1):
-            if str(item) in gt:
+            # Binary relevance credits each relevant item at most once. The
+            # denominator counts distinct ground-truth items, so counting repeat
+            # retrievals in the numerator let AP exceed its 1.0 upper bound:
+            # ret=["a","a"] against ref=["a"] scored 2.0.
+            key = str(item)
+            if key in gt and key not in seen:
+                seen.add(key)
                 hits += 1
                 sp += hits/rank
         ap = sp/len(gt)
