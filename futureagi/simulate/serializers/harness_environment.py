@@ -1283,7 +1283,8 @@ class HarnessCapabilityCountsSerializer(serializers.Serializer):
 class WorkerToolSerializer(serializers.Serializer):
     tool = serializers.CharField()
     action = serializers.CharField(
-        allow_null=True, help_text="The sealed world action; null when the tool has no route."
+        allow_null=True,
+        help_text="The sealed world action; null when the tool has no route.",
     )
     boundary = serializers.ChoiceField(choices=("allowed", "blocked", "not_enforced"))
 
@@ -1305,7 +1306,8 @@ class WorkerBoundarySerializer(serializers.Serializer):
     reason = serializers.CharField()
     tools = WorkerToolSerializer(many=True)
     bypassed = WorkerBypassSerializer(
-        many=True, help_text="Recent calls where the worker reached the world without its own channel."
+        many=True,
+        help_text="Recent calls where the worker reached the world without its own channel.",
     )
     fix = HarnessCapabilityFixSerializer(allow_null=True)
     checked_at = serializers.CharField(allow_null=True)

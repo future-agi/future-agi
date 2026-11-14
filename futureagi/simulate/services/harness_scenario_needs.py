@@ -136,7 +136,9 @@ def _compute(
         matched = by_token.get(_scenario_token(key)) or by_token.get(
             _scenario_token(content.get("name"))
         )
-        found.append(_needs(key, number, matched, content, catalogue, connect_only, declared))
+        found.append(
+            _needs(key, number, matched, content, catalogue, connect_only, declared)
+        )
     unmatched = sum(1 for one in found if not one.recorded)
     if unmatched:
         logger.warning(
@@ -226,7 +228,9 @@ def _declared_workers(environment_version: HarnessEnvironmentVersion) -> frozens
     contract = (environment_version.documents or {}).get("contract")
     workers = contract.get("workers") if isinstance(contract, Mapping) else None
     return frozenset(
-        str(one["id"]) for one in workers or [] if isinstance(one, Mapping) and one.get("id")
+        str(one["id"])
+        for one in workers or []
+        if isinstance(one, Mapping) and one.get("id")
     )
 
 
@@ -241,7 +245,9 @@ def _relied_workers(
     for name in _sub_goal_names(document):
         goal = catalogue.get(name) or {}
         subject = str(goal.get("subject") or "")
-        worker = goal.get("worker") or (subject.removeprefix("worker:") if subject.startswith("worker:") else "")
+        worker = goal.get("worker") or (
+            subject.removeprefix("worker:") if subject.startswith("worker:") else ""
+        )
         if worker:
             workers.add(str(worker))
     budget = document.get("worker_budget_seconds")

@@ -341,7 +341,10 @@ class TestCache:
 
 def test_needs_version_three_reads_workers_from_subjects_and_budgets():
     catalogue = {
-        "lookup_read_only": {"name": "lookup_read_only", "subject": "worker:order_lookup"},
+        "lookup_read_only": {
+            "name": "lookup_read_only",
+            "subject": "worker:order_lookup",
+        },
         "refund_once": {"name": "refund_once", "worker": "refund"},
         "reply_truthful": {"name": "reply_truthful"},
     }
@@ -349,12 +352,22 @@ def test_needs_version_three_reads_workers_from_subjects_and_budgets():
 
     assert harness_scenario_needs.NEEDS_VERSION == "3"
     assert harness_scenario_needs._relied_workers(
-        {"sub_goals": ["lookup_read_only", "reply_truthful"], "worker_budget_seconds": {"refund": 2}},
+        {
+            "sub_goals": ["lookup_read_only", "reply_truthful"],
+            "worker_budget_seconds": {"refund": 2},
+        },
         catalogue,
         declared,
     ) == {"refund", "order_lookup"}
     # A bare number budgets every declared worker.
+    assert (
+        harness_scenario_needs._relied_workers(
+            {"sub_goals": ["reply_truthful"], "worker_budget_seconds": 5},
+            catalogue,
+            declared,
+        )
+        == declared
+    )
     assert harness_scenario_needs._relied_workers(
-        {"sub_goals": ["reply_truthful"], "worker_budget_seconds": 5}, catalogue, declared
-    ) == declared
-    assert harness_scenario_needs._relied_workers({"sub_goals": ["refund_once"]}, catalogue, declared) == {"refund"}
+        {"sub_goals": ["refund_once"]}, catalogue, declared
+    ) == {"refund"}

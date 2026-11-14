@@ -48,7 +48,9 @@ def _routes(contract: Mapping[str, Any]) -> dict[str, str]:
             continue
         tool, endpoint = str(entry.get("tool") or ""), str(entry.get("endpoint") or "")
         if tool and endpoint.strip():
-            routes[tool] = _method_action(str(entry.get("method") or ""), _world_action(endpoint))
+            routes[tool] = _method_action(
+                str(entry.get("method") or ""), _world_action(endpoint)
+            )
     return routes
 
 
@@ -59,9 +61,9 @@ def _bypasses(pairing: Pairing, runs: list[Any]) -> dict[str, list[WorkerBypass]
     if not runs:
         return {}
     calls = CallExecution.objects.filter(
-        test_execution_id__in=HostedHarnessJob.no_workspace_objects.filter(id__in=runs).values(
-            "test_execution_id"
-        )
+        test_execution_id__in=HostedHarnessJob.no_workspace_objects.filter(
+            id__in=runs
+        ).values("test_execution_id")
     ).order_by("-created_at")[:_CALLS_READ]
     found: dict[str, list[WorkerBypass]] = {}
     for call in calls:
@@ -91,10 +93,16 @@ def _rebuild(name: str) -> Fix:
     }
 
 
-def worker_boundaries(pairing: Pairing, evidence: Evidence, runs: list[Any]) -> list[WorkerBoundaryView]:
+def worker_boundaries(
+    pairing: Pairing, evidence: Evidence, runs: list[Any]
+) -> list[WorkerBoundaryView]:
     """One row per declared worker, first matching rule wins. No rule yields Supported."""
     contract = _contract(pairing)
-    declared = [one for one in contract.get("workers") or [] if isinstance(one, Mapping) and one.get("id")]
+    declared = [
+        one
+        for one in contract.get("workers") or []
+        if isinstance(one, Mapping) and one.get("id")
+    ]
     if not declared:
         return []
     routes = _routes(contract)
@@ -108,7 +116,11 @@ def worker_boundaries(pairing: Pairing, evidence: Evidence, runs: list[Any]) -> 
         binding = "separate" if worker.get("binding") == "separate" else "shared"
         tools = [str(one) for one in worker.get("tools") or [] if one]
         sealed = permissions.get(f"worker:{worker_id}")
-        allow = set((sealed or {}).get("allow") or []) if isinstance(sealed, Mapping) else set()
+        allow = (
+            set((sealed or {}).get("allow") or [])
+            if isinstance(sealed, Mapping)
+            else set()
+        )
 
         def views(held: bool, tools=tools, allow=allow) -> list[WorkerToolView]:
             return [
@@ -127,15 +139,19 @@ def worker_boundaries(pairing: Pairing, evidence: Evidence, runs: list[Any]) -> 
             ]
 
         held_on_channel = binding == "separate" and isinstance(sealed, Mapping)
-        status, code, reason, fix, held = "blocked", "worker_not_sealed", "", None, False
+        status, code, reason, fix, held = (
+            "blocked",
+            "worker_not_sealed",
+            "",
+            None,
+            False,
+        )
         if evidence.unreadable:
             status, code = "untested", "evidence_unreadable"
             reason = "This pairing's sealed files could not be read, so this worker's limits are not known."
         elif worker_id in bypasses:
             status, code, held = "blocked", "worker_channel_bypassed", held_on_channel
-            reason = (
-                f"{name} reached the world without its own channel in a recent run, so its limits were not held there."
-            )
+            reason = f"{name} reached the world without its own channel in a recent run, so its limits were not held there."
             fix = {
                 "type": "rebind_worker",
                 "category": "tool_routing",
@@ -186,4 +202,6 @@ def worker_boundaries(pairing: Pairing, evidence: Evidence, runs: list[Any]) -> 
 
 def blocked_workers(boundaries: list[WorkerBoundaryView]) -> frozenset[str]:
     """The workers whose limits a run cannot rely on: cases relying on them are held."""
-    return frozenset(one["worker_id"] for one in boundaries if one["status"] == "blocked")
+    return frozenset(
+        one["worker_id"] for one in boundaries if one["status"] == "blocked"
+    )

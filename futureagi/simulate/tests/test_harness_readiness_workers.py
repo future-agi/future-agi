@@ -15,7 +15,11 @@ CONTRACT = {
     "tool_entrypoints": [
         {"tool": "get_order", "endpoint": "/orders/get", "method": "POST"},
         {"tool": "list_refunds", "endpoint": "/refunds/list", "method": "POST"},
-        {"tool": "update_order_status", "endpoint": "/orders/update_status", "method": "POST"},
+        {
+            "tool": "update_order_status",
+            "endpoint": "/orders/update_status",
+            "method": "POST",
+        },
         {"tool": "issue_refund", "endpoint": "/refunds/issue"},
     ],
     "workers": [
@@ -45,7 +49,9 @@ PERMISSIONS = {
 
 
 def _pairing(contract=CONTRACT):
-    return SimpleNamespace(environment_version=SimpleNamespace(documents={"contract": contract}))
+    return SimpleNamespace(
+        environment_version=SimpleNamespace(documents={"contract": contract})
+    )
 
 
 def _evidence(**fields):
@@ -65,7 +71,12 @@ def no_bypasses(monkeypatch):
 
 
 def _rows(pairing=None, evidence=None):
-    return {one["worker_id"]: one for one in workers.worker_boundaries(pairing or _pairing(), evidence or _evidence(), [])}
+    return {
+        one["worker_id"]: one
+        for one in workers.worker_boundaries(
+            pairing or _pairing(), evidence or _evidence(), []
+        )
+    }
 
 
 def _boundaries(row):
@@ -74,7 +85,10 @@ def _boundaries(row):
 
 def test_separate_worker_on_a_new_seal_reads_partial_with_allowed_and_blocked_tools():
     lookup = _rows()["order_lookup"]
-    assert (lookup["status"], lookup["reason_code"]) == ("partial", "held_at_world_cooperative")
+    assert (lookup["status"], lookup["reason_code"]) == (
+        "partial",
+        "held_at_world_cooperative",
+    )
     assert _boundaries(lookup) == {
         "get_order": "allowed",
         "list_refunds": "allowed",
@@ -85,7 +99,13 @@ def test_separate_worker_on_a_new_seal_reads_partial_with_allowed_and_blocked_to
 
 
 def test_shared_worker_reads_unavailable_not_enforced():
-    shared = {**CONTRACT, "workers": [{**one, "binding": "shared", "allowed_tools": []} for one in CONTRACT["workers"]]}
+    shared = {
+        **CONTRACT,
+        "workers": [
+            {**one, "binding": "shared", "allowed_tools": []}
+            for one in CONTRACT["workers"]
+        ],
+    }
     row = _rows(_pairing(shared), _evidence(worker_permissions={}))["refund"]
     assert (row["status"], row["reason_code"]) == ("unavailable", "shared_binding")
     assert set(_boundaries(row).values()) == {"not_enforced"}
@@ -93,13 +113,19 @@ def test_shared_worker_reads_unavailable_not_enforced():
 
 def test_old_seal_with_allowed_tools_is_blocked_with_a_rebuild_fix():
     row = _rows(evidence=_evidence(door=None))["order_lookup"]
-    assert (row["status"], row["reason_code"]) == ("blocked", "sealed_before_worker_limits")
+    assert (row["status"], row["reason_code"]) == (
+        "blocked",
+        "sealed_before_worker_limits",
+    )
     assert row["fix"]["type"] == "rebuild_environment"
     assert set(_boundaries(row).values()) == {"not_enforced"}
 
 
 def test_in_process_tools_read_unavailable():
-    in_process = {**CONTRACT, "tool_entrypoints": [{"tool": "get_order", "endpoint": ""}]}
+    in_process = {
+        **CONTRACT,
+        "tool_entrypoints": [{"tool": "get_order", "endpoint": ""}],
+    }
     row = _rows(_pairing(in_process))["order_lookup"]
     assert (row["status"], row["reason_code"]) == ("unavailable", "in_process_tools")
 
@@ -108,7 +134,10 @@ def test_a_bypass_in_a_run_blocks_that_worker_with_a_fix(monkeypatch):
     seen = [{"run_id": "r1", "call_execution_id": "c1", "tool": None}]
     monkeypatch.setattr(workers, "_bypasses", lambda _pairing, _runs: {"refund": seen})
     rows = _rows()
-    assert (rows["refund"]["status"], rows["refund"]["reason_code"]) == ("blocked", "worker_channel_bypassed")
+    assert (rows["refund"]["status"], rows["refund"]["reason_code"]) == (
+        "blocked",
+        "worker_channel_bypassed",
+    )
     assert rows["refund"]["bypassed"] == seen
     assert rows["refund"]["fix"]["type"] == "rebind_worker"
     assert "REFUND_API_URL" in rows["refund"]["fix"]["action"]
@@ -146,7 +175,9 @@ def test_cached_files_without_door_keys_are_read_once_more(monkeypatch):
     members = _archive_members(
         {
             "bundle/generated/tool-proxy/door.json": json.dumps(DOOR).encode(),
-            "bundle/generated/tool-proxy/permissions.json": json.dumps(PERMISSIONS).encode(),
+            "bundle/generated/tool-proxy/permissions.json": json.dumps(
+                PERMISSIONS
+            ).encode(),
         }
     )
     assert assembly.DOOR_FILE_PATH in members
@@ -159,7 +190,10 @@ def test_cached_files_without_door_keys_are_read_once_more(monkeypatch):
     monkeypatch.setattr(evidence_module.archives, "stream_members", stream_members)
     cache.clear()
     # A read cached before the door files were read, under the old key: never used again.
-    old_key = "harness-readiness-certification:" + evidence_module.hashlib.sha256(b"k1").hexdigest()
+    old_key = (
+        "harness-readiness-certification:"
+        + evidence_module.hashlib.sha256(b"k1").hexdigest()
+    )
     cache.set(old_key, ({name: [] for name in evidence_module._FILES}, True))
     saved = []
 
@@ -193,11 +227,17 @@ def test_cached_files_without_door_keys_are_read_once_more(monkeypatch):
 
 
 def test_sealed_action_names_match_alk():
-    assert workers._method_action("GET", workers._world_action("/orders/{order_id}?x=1")) == "GET orders.{order_id}"
-    assert workers._method_action("", workers._world_action("/refunds/issue")) == "POST refunds.issue"
-    assert workers._method_action("patch", workers._world_action("orders/update_status/")) == (
-        "PATCH orders.update_status"
+    assert (
+        workers._method_action("GET", workers._world_action("/orders/{order_id}?x=1"))
+        == "GET orders.{order_id}"
     )
+    assert (
+        workers._method_action("", workers._world_action("/refunds/issue"))
+        == "POST refunds.issue"
+    )
+    assert workers._method_action(
+        "patch", workers._world_action("orders/update_status/")
+    ) == ("PATCH orders.update_status")
 
 
 class _Calls(list):
@@ -214,7 +254,9 @@ def _call(record, trial=None, receipt=None):
         metadata["harness_trial_state"] = trial
     if receipt is not None:
         metadata["hosted_harness_receipt"] = receipt
-    return SimpleNamespace(call_metadata=metadata, created_at=datetime(2026, 11, 14, tzinfo=UTC))
+    return SimpleNamespace(
+        call_metadata=metadata, created_at=datetime(2026, 11, 14, tzinfo=UTC)
+    )
 
 
 def _children(monkeypatch, calls, contract=CONTRACT, runs=("job-1",)):
@@ -235,7 +277,10 @@ _EVENTS = [
 
 
 def _seen(*ids):
-    return [{"id": one, "worker_id": f"r/{one}", "observed": True, "state": "completed"} for one in ids]
+    return [
+        {"id": one, "worker_id": f"r/{one}", "observed": True, "state": "completed"}
+        for one in ids
+    ]
 
 
 @pytest.mark.django_db
@@ -245,7 +290,11 @@ def test_children_passed_when_every_declared_worker_is_seen(monkeypatch):
         [
             _call(
                 {"workers": _seen("order_lookup", "refund"), "events": _EVENTS},
-                trial={"state_changes": [{"who": "worker:refund", "committed_actions": ["issue_refund"]}]},
+                trial={
+                    "state_changes": [
+                        {"who": "worker:refund", "committed_actions": ["issue_refund"]}
+                    ]
+                },
                 receipt={"sub_goals": [{"subject": "worker:refund", "held": True}]},
             )
         ],
@@ -263,14 +312,29 @@ def test_children_passed_when_every_declared_worker_is_seen(monkeypatch):
 def test_children_limited_when_a_declared_worker_is_never_seen(monkeypatch):
     reading = _children(
         monkeypatch,
-        [_call({"workers": [*_seen("order_lookup"), {"id": "refund", "observed": False}], "events": _EVENTS[:3]})],
+        [
+            _call(
+                {
+                    "workers": [
+                        *_seen("order_lookup"),
+                        {"id": "refund", "observed": False},
+                    ],
+                    "events": _EVENTS[:3],
+                }
+            )
+        ],
     )
-    assert (reading.finding, reading.reason_code) == ("limited", "workers_partly_observed")
+    assert (reading.finding, reading.reason_code) == (
+        "limited",
+        "workers_partly_observed",
+    )
     assert reading.reason.startswith("1 of 2")
 
 
 @pytest.mark.django_db
-def test_children_not_applicable_for_a_single_agent_and_not_run_without_runs(monkeypatch):
+def test_children_not_applicable_for_a_single_agent_and_not_run_without_runs(
+    monkeypatch,
+):
     single = _children(monkeypatch, [], contract={"workers": []}, runs=())
     assert (single.finding, single.reason_code) == ("not_applicable", "single_agent")
     waiting = _children(monkeypatch, [], runs=())
