@@ -18,6 +18,7 @@ import DeleteConfirmation from "./DeleteConfirmation";
 import { QUERY_FAILED_RETRY_MESSAGE } from "src/utils/queryReadState";
 import { readEvalTaskListPage } from "./task_list_read";
 import { isResumableTaskStatus } from "./task_status";
+import { compactSamplingLabel } from "src/sections/tasks/components/simpleSamplingPolicy";
 
 const POLL_INTERVAL_MS = 5000;
 
@@ -494,10 +495,10 @@ const TaskListView = ({
         id: "samplingRate",
         accessorKey: "sampling_rate",
         header: "Sampling",
-        size: 90,
-        cell: ({ getValue }) => (
+        size: 150,
+        cell: ({ getValue, row }) => (
           <Typography variant="body2" sx={{ fontSize: "12px" }}>
-            {getValue()}%
+            {compactSamplingLabel(row.original.sampling_policy, getValue())}
           </Typography>
         ),
       },

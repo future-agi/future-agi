@@ -17,7 +17,7 @@ import { useNavigate, useParams } from "react-router";
 import axios, { endpoints } from "src/utils/axios";
 import { enqueueSnackbar } from "src/components/snackbar";
 import Iconify from "src/components/iconify";
-import ResizablePanels from "src/components/resizablePanels/ResizablePanels";
+import TaskPanels from "./components/task_panels";
 import TaskLogsView from "src/sections/common/EvalsTasks/TaskLogsView";
 import { useGetTaskData } from "src/sections/common/EvalsTasks/common";
 import { isResumableTaskStatus } from "src/sections/common/EvalsTasks/task_status";
@@ -25,9 +25,13 @@ import { useAuthContext } from "src/auth/hooks";
 import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
 import CustomPopover, { usePopover } from "src/components/custom-popover";
 import TaskHeader from "./components/TaskHeader";
+import SavedTaskSelection from "./components/sampling_selection_summary";
 import TaskConfigPanel from "./components/TaskConfigPanel";
 import TaskLivePreview from "./components/TaskLivePreview";
 import TaskUsageTab from "./components/TaskUsageTab";
+import SamplingAuditPanel from "./components/SamplingAuditPanel";
+import { samplingPolicyForApi } from "./components/samplingPolicyForm";
+import { samplingContextError } from "./components/simpleSamplingPolicy";
 import {
   NewTaskValidationSchema,
   getDefaultTaskValues,
@@ -47,6 +51,12 @@ const TAB_OPTIONS = [
   { label: "Logs", value: "logs", icon: "solar:notebook-linear" },
   { label: "Usage", value: "usage", icon: "solar:chart-2-linear" },
 ];
+// Shown only for tasks with a sampling policy: an advisory, read-only audit.
+const SAMPLING_AUDIT_TAB = {
+  label: "Sampling audit",
+  value: "sampling",
+  icon: "solar:pie-chart-2-linear",
+};
 
 const firstFilterValue = (value) => {
   if (Array.isArray(value)) return value.find(Boolean) || null;
@@ -135,9 +145,16 @@ const TaskDetailPage = () => {
     mutationFn: ({ payload }) =>
       axios.patch(endpoints.project.patchEvalTask(), {
         ...payload,
+        // Confirmation reads raw watched form state, not the resolver's output.
+        ...(payload.sampling_policy !== undefined
+          ? { sampling_policy: samplingPolicyForApi(payload.sampling_policy) }
+          : {}),
         eval_task_id: taskId,
       }),
     onSuccess: (_data, { mode }) => {
+      // A fresh run archives/replaces the cohort. Do not leave its old audit
+      // visible while the current cohort is being fetched or has not frozen.
+      queryClient.resetQueries({ queryKey: ["samplingAudit", taskId] });
       queryClient.invalidateQueries({ queryKey: ["taskDetails", taskId] });
       queryClient.invalidateQueries({ queryKey: ["eval-tasks"] });
       enqueueSnackbar(
@@ -181,6 +198,7 @@ const TaskDetailPage = () => {
       queryClient.setQueryData(["taskDetails", taskId], ctx.prev);
   };
   const reconcileStatus = () => {
+    queryClient.invalidateQueries({ queryKey: ["samplingAudit", taskId] });
     queryClient.invalidateQueries({ queryKey: ["taskDetails", taskId] });
     queryClient.invalidateQueries({ queryKey: ["eval-tasks"] });
   };
@@ -230,7 +248,13 @@ const TaskDetailPage = () => {
   const openConfirm = useCallback(
     (mode) =>
       handleSubmit(
-        () => setConfirmMode(mode),
+        () => {
+          const samplingError = samplingContextError(getValues());
+          if (samplingError) {
+            setTab("details");
+            enqueueSnackbar(samplingError, { variant: "error" });
+          } else setConfirmMode(mode);
+        },
         () => {
           setTab("details");
           enqueueSnackbar(
@@ -239,12 +263,17 @@ const TaskDetailPage = () => {
           );
         },
       )(),
-    [handleSubmit],
+    [handleSubmit, getValues],
   );
 
   const { mutate: duplicateTask, isPending: isDuplicating } = useMutation({
     mutationFn: (payload) =>
-      axios.post(endpoints.project.createEvalTask(), payload),
+      axios.post(endpoints.project.createEvalTask(), {
+        ...payload,
+        ...(payload.sampling_policy !== undefined
+          ? { sampling_policy: samplingPolicyForApi(payload.sampling_policy) }
+          : {}),
+      }),
     meta: { errorHandled: true },
     onSuccess: (resp) => {
       queryClient.invalidateQueries({ queryKey: ["eval-tasks"] });
@@ -273,6 +302,11 @@ const TaskDetailPage = () => {
       ? formValues
       : getDefaultTaskValues(taskDetails, null);
 
+    const samplingError = samplingContextError(src);
+    if (samplingError) {
+      enqueueSnackbar(samplingError, { variant: "error" });
+      return;
+    }
     const isDateDirty = Boolean(dirtyFields?.startDate || dirtyFields?.endDate);
     const hasSavedDateRange = Boolean(
       taskDetails?.filters_applied?.date_range?.length ||
@@ -304,6 +338,7 @@ const TaskDetailPage = () => {
         ? { spans_limit: Number(src.spansLimit) }
         : {}),
       sampling_rate: src.samplingRate,
+      ...(src.samplingPolicy ? { sampling_policy: src.samplingPolicy } : {}),
       evals: src.evalsDetails?.map((item) => item.id || item) || [],
       filters: {
         ...wireFilters,
@@ -320,6 +355,12 @@ const TaskDetailPage = () => {
   const handleConfirm = useCallback(
     (editType) => {
       const data = formValues;
+      const samplingError = samplingContextError(data);
+      if (samplingError) {
+        enqueueSnackbar(samplingError, { variant: "error" });
+        setConfirmMode(null);
+        return;
+      }
       const { filters, attributeFilters } = getNewTaskFilters(
         data,
         data.project,
@@ -338,13 +379,16 @@ const TaskDetailPage = () => {
         project: data.project,
         run_type: data.runType,
         sampling_rate: data.samplingRate,
+        ...(data.samplingPolicy || taskDetails.sampling_policy
+          ? { sampling_policy: data.samplingPolicy ?? null }
+          : {}),
         spans_limit: data.spansLimit ? Number(data.spansLimit) : undefined,
         edit_type: editType,
       };
       updateTask({ payload: transformedData, mode: confirmMode });
       setConfirmMode(null);
     },
-    [formValues, updateTask, confirmMode],
+    [formValues, updateTask, confirmMode, taskDetails],
   );
 
   if (isLoading && !taskDetails) {
@@ -511,173 +555,189 @@ const TaskDetailPage = () => {
   );
 
   return (
-    <Box sx={{ display: "flex", flexDirection: "column", height: "100%" }}>
-      <TaskHeader
-        mode="edit"
-        name={taskDetails.name}
-        projectName={taskDetails.project_name ?? taskDetails.projectName}
-        status={taskDetails.status}
-        actions={headerActions}
-        onNameChange={(newName) => renameTask(newName)}
-      />
-
-      {isError && (
-        <Alert
-          severity="error"
-          action={
-            <Button
-              color="inherit"
-              size="small"
-              onClick={() => refetch?.()}
-              disabled={isFetching}
-            >
-              Retry
-            </Button>
-          }
-          sx={{ mx: 2, mt: 1, flexShrink: 0 }}
-        >
-          {getTaskDetailsErrorMessage(error)} Existing task details are still
-          shown.
-        </Alert>
-      )}
-
-      {/* Segmented-pill tabs — matches EvalDetailPage style */}
+    <>
       <Box
         sx={{
-          px: 2,
-          pt: 1.5,
-          pb: 1,
-          flexShrink: 0,
-          backgroundColor: "background.paper",
+          minWidth: 0,
+          display: "flex",
+          flexDirection: "column",
+          height: "100%",
         }}
       >
-        <SegmentedTabs
-          value={tab}
-          onChange={(_, val) => setTab(val)}
-          sx={{ width: "fit-content" }}
-        >
-          {TAB_OPTIONS.map((t) => (
-            <Tab
-              key={t.value}
-              value={t.value}
-              label={
-                <Box sx={{ display: "flex", alignItems: "center", gap: 0.75 }}>
-                  <Iconify icon={t.icon} width={14} />
-                  {t.label}
-                </Box>
-              }
-            />
-          ))}
-        </SegmentedTabs>
-      </Box>
+        <TaskHeader
+          mode="edit"
+          name={taskDetails.name}
+          projectName={taskDetails.project_name ?? taskDetails.projectName}
+          status={taskDetails.status}
+          actions={headerActions}
+          onNameChange={(newName) => renameTask(newName)}
+          selectionSummary={<SavedTaskSelection task={taskDetails} />}
+        />
 
-      {/* Tab content */}
-      <Box sx={{ flex: 1, minHeight: 0, overflow: "hidden" }}>
-        {tab === "details" && (
-          <ResizablePanels
-            initialLeftWidth={55}
-            minLeftWidth={35}
-            maxLeftWidth={75}
-            showIcon
-            leftPanel={
-              <TaskConfigPanel
-                mode="edit"
-                control={control}
-                getValues={getValues}
-                setValue={setValue}
-                projectLocked
-                initialProjectName={
-                  taskDetails.project_name ?? taskDetails.projectName
-                }
-              />
+        {isError && (
+          <Alert
+            severity="error"
+            action={
+              <Button
+                color="inherit"
+                size="small"
+                onClick={() => refetch?.()}
+                disabled={isFetching}
+              >
+                Retry
+              </Button>
             }
-            rightPanel={
-              <TaskLivePreview
-                ref={previewRef}
-                control={control}
-                projectId={project}
-                onTestStateChange={handleTestStateChange}
-              />
-            }
-          />
+            sx={{ mx: 2, mt: 1, flexShrink: 0 }}
+          >
+            {getTaskDetailsErrorMessage(error)} Existing task details are still
+            shown.
+          </Alert>
         )}
 
-        {tab === "logs" && (
-          <Box sx={{ height: "100%", overflow: "auto", p: 2 }}>
-            <TaskLogsView
-              evalTaskId={taskId}
-              taskStatus={taskDetails?.status}
-            />
-          </Box>
-        )}
-
-        {tab === "usage" && (
-          <Box sx={{ height: "100%", overflow: "hidden" }}>
-            <TaskUsageTab taskId={taskId} projectId={project} />
-          </Box>
-        )}
-      </Box>
-
-      {/* Footer with Test + Save — only on Details tab */}
-      {tab === "details" && (
+        {/* Segmented-pill tabs — matches EvalDetailPage style */}
         <Box
           sx={{
-            display: "flex",
-            justifyContent: "flex-end",
-            alignItems: "center",
-            gap: 1,
             px: 2,
-            py: 1.25,
-            borderTop: "1px solid",
-            borderColor: "divider",
-            backgroundColor: "background.paper",
+            pt: 1.5,
+            pb: 1,
             flexShrink: 0,
+            backgroundColor: "background.paper",
           }}
         >
-          <LoadingButton
-            variant="outlined"
-            size="small"
-            loading={testState.isTesting}
-            disabled={!testState.canTest || !canEditTask}
-            onClick={() => previewRef.current?.runTest()}
-            startIcon={<Iconify icon="solar:play-circle-linear" width={14} />}
-            sx={{ minWidth: 120 }}
+          <SegmentedTabs
+            value={tab}
+            onChange={(_, val) => setTab(val)}
+            sx={{ width: "fit-content" }}
           >
-            Test
-          </LoadingButton>
-          <LoadingButton
-            variant="contained"
-            size="small"
-            onClick={() => openConfirm("save")}
-            loading={isUpdating}
-            disabled={!canEditTask}
-            sx={{ minWidth: 140 }}
-          >
-            Save
-          </LoadingButton>
+            {(taskDetails?.sampling_policy
+              ? [...TAB_OPTIONS, SAMPLING_AUDIT_TAB]
+              : TAB_OPTIONS
+            ).map((t) => (
+              <Tab
+                key={t.value}
+                value={t.value}
+                label={
+                  <Box
+                    sx={{ display: "flex", alignItems: "center", gap: 0.75 }}
+                  >
+                    <Iconify icon={t.icon} width={14} />
+                    {t.label}
+                  </Box>
+                }
+              />
+            ))}
+          </SegmentedTabs>
         </Box>
-      )}
 
-      <TaskConfirmDialog
-        title={confirmMode === "rerun" ? "Re-run Task" : "Update Task"}
-        content="Select one of the options"
-        confirmText={confirmMode === "rerun" ? "Re-run" : "Run task"}
-        open={!!confirmMode}
-        onClose={() => setConfirmMode(null)}
-        onConfirm={handleConfirm}
-        isLoading={isUpdating}
-      />
+        {/* Tab content */}
+        <Box sx={{ flex: 1, minHeight: 0, overflow: "hidden" }}>
+          {tab === "details" && (
+            <TaskPanels
+              leftPanel={
+                <TaskConfigPanel
+                  mode="edit"
+                  control={control}
+                  getValues={getValues}
+                  setValue={setValue}
+                  projectLocked
+                  initialProjectName={
+                    taskDetails.project_name ?? taskDetails.projectName
+                  }
+                />
+              }
+              rightPanel={
+                <TaskLivePreview
+                  ref={previewRef}
+                  control={control}
+                  projectId={project}
+                  onTestStateChange={handleTestStateChange}
+                />
+              }
+            />
+          )}
 
-      {duplicateDialogOpen && (
-        <DuplicateTaskDialog
-          open={duplicateDialogOpen}
-          onClose={() => setDuplicateDialogOpen(false)}
-          defaultName={`${formValues?.name || taskDetails?.name || "Task"}-duplicate`}
-          onSubmit={handleConfirmDuplicate}
-          isSubmitting={isDuplicating}
+          {tab === "logs" && (
+            <Box sx={{ height: "100%", overflow: "auto", p: 2 }}>
+              <TaskLogsView
+                evalTaskId={taskId}
+                taskStatus={taskDetails?.status}
+              />
+            </Box>
+          )}
+
+          {tab === "usage" && (
+            <Box sx={{ height: "100%", overflow: "hidden" }}>
+              <TaskUsageTab taskId={taskId} projectId={project} />
+            </Box>
+          )}
+
+          {tab === "sampling" && taskDetails?.sampling_policy && (
+            <Box sx={{ height: "100%", overflow: "auto", p: 2 }}>
+              <SamplingAuditPanel taskId={taskId} />
+            </Box>
+          )}
+        </Box>
+
+        {/* Footer with Test + Save — only on Details tab */}
+        {tab === "details" && (
+          <Box
+            sx={{
+              display: "flex",
+              justifyContent: "flex-end",
+              alignItems: "center",
+              gap: 1,
+              flexWrap: "wrap",
+              px: 2,
+              py: 1.25,
+              borderTop: "1px solid",
+              borderColor: "divider",
+              backgroundColor: "background.paper",
+              flexShrink: 0,
+            }}
+          >
+            <LoadingButton
+              variant="outlined"
+              size="small"
+              loading={testState.isTesting}
+              disabled={!testState.canTest || !canEditTask}
+              onClick={() => previewRef.current?.runTest()}
+              startIcon={<Iconify icon="solar:play-circle-linear" width={14} />}
+            >
+              Test on this row
+            </LoadingButton>
+            <LoadingButton
+              variant="contained"
+              size="small"
+              onClick={() => openConfirm("save")}
+              loading={isUpdating}
+              disabled={!canEditTask}
+            >
+              Save
+            </LoadingButton>
+          </Box>
+        )}
+
+        <TaskConfirmDialog
+          title={confirmMode === "rerun" ? "Re-run Task" : "Update Task"}
+          content="Select one of the options"
+          confirmText={confirmMode === "rerun" ? "Re-run" : "Run task"}
+          open={!!confirmMode}
+          onClose={() => setConfirmMode(null)}
+          onConfirm={handleConfirm}
+          isLoading={isUpdating}
         />
-      )}
-    </Box>
+
+        {duplicateDialogOpen && (
+          <DuplicateTaskDialog
+            open={duplicateDialogOpen}
+            onClose={() => setDuplicateDialogOpen(false)}
+            defaultName={`${formValues?.name || taskDetails?.name || "Task"}-duplicate`}
+            onSubmit={handleConfirmDuplicate}
+            isSubmitting={isDuplicating}
+          />
+        )}
+      </Box>
+    </>
   );
 };
 
