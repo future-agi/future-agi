@@ -673,6 +673,7 @@ import type {
   HarnessScenarioLifecycleResponseApi,
   HarnessScenarioOperationApi,
   HarnessScenarioOperationResponseApi,
+  HarnessScenarioRecordsResponseApi,
   HarnessScenarioRestoreApi,
   HarnessScenarioRevisionsApi,
   HarnessScenarioValidateApi,
@@ -1272,6 +1273,7 @@ import type {
   SimulateApiHarnessEnvironmentsListParams,
   SimulateApiHarnessEnvironmentsNudgesParams,
   SimulateApiHarnessEnvironmentsRunPlanParams,
+  SimulateApiHarnessEnvironmentsScenarioRecordsParams,
   SimulateApiHarnessEnvironmentsUploadFileBody,
   SimulateApiHarnessEnvironmentsValidationStatusParams,
   SimulateApiHarnessEnvironmentsVersionsVersionDiffParams,
@@ -61954,6 +61956,71 @@ export const simulateApiHarnessEnvironmentsArchiveScenario = async (
   );
 };
 
+export type simulateApiHarnessEnvironmentsScenarioRecordsResponse200 = {
+  data: HarnessScenarioRecordsResponseApi;
+  status: 200;
+};
+
+export type simulateApiHarnessEnvironmentsScenarioRecordsResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type simulateApiHarnessEnvironmentsScenarioRecordsResponseSuccess =
+  simulateApiHarnessEnvironmentsScenarioRecordsResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type simulateApiHarnessEnvironmentsScenarioRecordsResponseError =
+  simulateApiHarnessEnvironmentsScenarioRecordsResponseDefault & {
+    headers: ApiResponseHeaders;
+  };
+
+export type simulateApiHarnessEnvironmentsScenarioRecordsResponse =
+  | simulateApiHarnessEnvironmentsScenarioRecordsResponseSuccess
+  | simulateApiHarnessEnvironmentsScenarioRecordsResponseError;
+
+export const getSimulateApiHarnessEnvironmentsScenarioRecordsUrl = (
+  id: string,
+  key: string,
+  params: SimulateApiHarnessEnvironmentsScenarioRecordsParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/simulate/api/harness-environments/${id}/scenarios/${key}/records/?${stringifiedParams}`
+    : `/simulate/api/harness-environments/${id}/scenarios/${key}/records/`;
+};
+
+/**
+ * Seeded rows of one table, to pick a real record for a case whose record is missing. No writes.
+ */
+export const simulateApiHarnessEnvironmentsScenarioRecords = async (
+  id: string,
+  key: string,
+  params: SimulateApiHarnessEnvironmentsScenarioRecordsParams,
+  options?: RequestInit,
+): Promise<simulateApiHarnessEnvironmentsScenarioRecordsResponse> => {
+  return apiMutator<simulateApiHarnessEnvironmentsScenarioRecordsResponse>(
+    getSimulateApiHarnessEnvironmentsScenarioRecordsUrl(id, key, params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
 export type simulateApiHarnessEnvironmentsRestoreScenarioResponse200 = {
   data: HarnessScenarioLifecycleResponseApi;
   status: 200;
@@ -61985,7 +62052,7 @@ export const getSimulateApiHarnessEnvironmentsRestoreScenarioUrl = (
 };
 
 /**
- * Put an archived scenario back as a draft under its own key.
+ * Bring an archived scenario back: at once when the saved suite still holds it, else as a draft.
  */
 export const simulateApiHarnessEnvironmentsRestoreScenario = async (
   id: string,
