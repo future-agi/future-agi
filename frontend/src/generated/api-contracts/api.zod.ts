@@ -27824,6 +27824,23 @@ export const ModelHubKbDeleteParams = zod.object({
     .describe("A UUID string identifying this knowledge base."),
 });
 
+/**
+ * Download an active file from the knowledge-base file collection. Requires current organization and workspace read access. Returns an attachment, never a public storage URL. Unauthorized scope is 403; a missing or deleted file is 404.
+ * @summary Download a KB file.
+ */
+export const ModelHubKbDownloadFileParams = zod.object({
+  id: zod
+    .string()
+    .uuid()
+    .describe("A UUID string identifying this knowledge base."),
+});
+
+export const ModelHubKbDownloadFileQueryParams = zod.object({
+  file_id: zod.string().uuid(),
+});
+
+export const ModelHubKbDownloadFileResponse = zod.instanceof(File);
+
 export const ModelHubKnowledgeBaseListResponse = zod.object({
   status: zod.boolean(),
   result: zod.object({
