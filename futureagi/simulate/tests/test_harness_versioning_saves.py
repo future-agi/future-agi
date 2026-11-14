@@ -354,8 +354,9 @@ class TestRaces:
         assert [suite.origin for suite in suites] == ["backfill", "extend"]
         metadata = _metadata(environment)
         assert metadata["authoring_object_key"] != _raw_key(environment, body)
-        assert metadata["authoring_revision"] in (
-            environment.suite_version.documents["authoring_revisions"]
+        assert (
+            metadata["authoring_revision"]
+            in (environment.suite_version.documents["authoring_revisions"])
         )
 
     def test_two_overlapping_polls_record_one_extend(

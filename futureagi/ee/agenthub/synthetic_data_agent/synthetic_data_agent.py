@@ -3135,11 +3135,15 @@ INSTRUCTION: """ + str(ins_subset[i])
                         min_length = field_constraint.get("min_length", None)
                         max_length = field_constraint.get("max_length", None)
                         try:
-                            if min_length and len(field_value) < int(re.sub(r"[^\d]", "", str(min_length)) or 0):
+                            if min_length and len(field_value) < int(
+                                re.sub(r"[^\d]", "", str(min_length)) or 0
+                            ):
                                 issues.append(
                                     f"Record {record_id}, Field {field_name}: Length {len(field_value)} below minimum {min_length}"
                                 )
-                            if max_length and len(field_value) > int(re.sub(r"[^\d]", "", str(max_length)) or 0):
+                            if max_length and len(field_value) > int(
+                                re.sub(r"[^\d]", "", str(max_length)) or 0
+                            ):
                                 issues.append(
                                     f"Record {record_id}, Field {field_name}: Length {len(field_value)} above maximum {max_length}"
                                 )

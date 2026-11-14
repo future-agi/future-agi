@@ -119,9 +119,9 @@ class TestErrorFeedGate:
             CreateLinearIssueView,
             LinearTeamsView,
         ):
-            assert issubclass(
-                view, ErrorFeedLicenseRequired
-            ), f"{view.__name__} lost the error-feed license gate"
+            assert issubclass(view, ErrorFeedLicenseRequired), (
+                f"{view.__name__} lost the error-feed license gate"
+            )
 
 
 class TestOpenedGates:

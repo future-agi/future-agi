@@ -70,6 +70,8 @@ def test_falls_back_when_meta_raises():
 def test_oss_safety_no_ee_module_no_crash():
     # Module set to None in sys.modules makes `import` raise ImportError —
     # simulates an OSS deployment with no ee package.
-    with patch.dict(sys.modules, {"ee.agenthub.trace_scanner.eval_cluster_title": None}):
+    with patch.dict(
+        sys.modules, {"ee.agenthub.trace_scanner.eval_cluster_title": None}
+    ):
         m = _eval_cluster_meta("prosody_and_intonation", REASONING)
     assert m == EvalClusterMeta(title=_extract_title(REASONING))

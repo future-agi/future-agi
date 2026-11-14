@@ -5,7 +5,11 @@ Tests the ModelConfigs pattern for consistency, resolution, and integration.
 """
 
 import pytest
-from agentic_eval.core.utils.model_config import ModelConfig, ModelConfigs, LiteLlmProvider
+from agentic_eval.core.utils.model_config import (
+    ModelConfig,
+    ModelConfigs,
+    LiteLlmProvider,
+)
 
 
 class TestModelConfigsStructure:
@@ -14,7 +18,7 @@ class TestModelConfigsStructure:
     def test_all_configs_are_model_config_instances(self):
         """All ModelConfigs attributes should be ModelConfig instances."""
         for attr_name in dir(ModelConfigs):
-            if attr_name.startswith('_') or attr_name[0].islower():
+            if attr_name.startswith("_") or attr_name[0].islower():
                 continue
             attr_value = getattr(ModelConfigs, attr_name)
             if isinstance(attr_value, ModelConfig):
@@ -26,9 +30,9 @@ class TestModelConfigsStructure:
     def test_all_configs_have_valid_providers(self):
         """All configs should use valid LiteLlmProvider values."""
         valid_providers = {p.value for p in LiteLlmProvider}
-        
+
         for attr_name in dir(ModelConfigs):
-            if attr_name.startswith('_') or attr_name[0].islower():
+            if attr_name.startswith("_") or attr_name[0].islower():
                 continue
             attr_value = getattr(ModelConfigs, attr_name)
             if isinstance(attr_value, ModelConfig):
@@ -37,7 +41,7 @@ class TestModelConfigsStructure:
     def test_configs_are_immutable(self):
         """ModelConfig instances should be frozen/immutable."""
         config = ModelConfigs.TURING_LARGE
-        
+
         with pytest.raises(Exception):  # FrozenInstanceError or AttributeError
             config.temperature = 0.5
 
@@ -56,7 +60,7 @@ class TestModelConfigsResolution:
         """get_config should match models without provider prefix."""
         test_config = ModelConfigs.TURING_LARGE
         # Extract short name (e.g., "gemini-2.5-pro" from "vertex_ai/gemini-2.5-pro")
-        short_name = test_config.model_name.split('/')[-1]
+        short_name = test_config.model_name.split("/")[-1]
         resolved = ModelConfigs.get_config(short_name)
         assert resolved == test_config
 
@@ -101,23 +105,22 @@ class TestModelConfigsHelpers:
         assert ModelConfigs.get_provider("invalid-model") is None
 
 
-
 class TestEvalRunnerIntegration:
     """Test integration with eval_runner.py."""
 
     def test_futureagi_model_choices_map_to_configs(self):
         """All ModelChoices should map to valid ModelConfigs."""
         from model_hub.models.choices import ModelChoices
-        
+
         # These are the mappings used in _get_futureagi_model_config
         choice_to_config = {
-            ModelChoices.TURING_SMALL.value: 'TURING_SMALL',
-            ModelChoices.TURING_LARGE.value: 'TURING_LARGE',
-            ModelChoices.TURING_FLASH.value: 'TURING_FLASH',
-            ModelChoices.PROTECT_FLASH.value: 'PROTECT_FLASH',
-            ModelChoices.PROTECT.value: 'GROQ_LLAMA_3_3_70B',
+            ModelChoices.TURING_SMALL.value: "TURING_SMALL",
+            ModelChoices.TURING_LARGE.value: "TURING_LARGE",
+            ModelChoices.TURING_FLASH.value: "TURING_FLASH",
+            ModelChoices.PROTECT_FLASH.value: "PROTECT_FLASH",
+            ModelChoices.PROTECT.value: "GROQ_LLAMA_3_3_70B",
         }
-        
+
         for choice_value, config_name in choice_to_config.items():
             config = getattr(ModelConfigs, config_name)
             assert isinstance(config, ModelConfig)
@@ -131,14 +134,18 @@ class TestProviderEnum:
     def test_provider_enum_has_expected_values(self):
         """LiteLlmProvider should have all expected providers."""
         expected_providers = [
-            "VERTEX_AI", "OPENAI", "PERPLEXITY", "ANTHROPIC",
-            "AWS_BEDROCK_ANTHROPIC", "GROQ", "VLLM"
+            "VERTEX_AI",
+            "OPENAI",
+            "PERPLEXITY",
+            "ANTHROPIC",
+            "AWS_BEDROCK_ANTHROPIC",
+            "GROQ",
+            "VLLM",
         ]
-        
+
         for provider in expected_providers:
             assert hasattr(LiteLlmProvider, provider)
 
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
-

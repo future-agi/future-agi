@@ -220,7 +220,9 @@ def _trials(run, results, *, evals_pass=True):
         status = (
             "failed"
             if False in checks
-            else "inconclusive" if None in checks else "passed"
+            else "inconclusive"
+            if None in checks
+            else "passed"
         )
         call.status = "completed"
         call.call_metadata = {

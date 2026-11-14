@@ -632,9 +632,9 @@ class EvalTemplateVersionManager(models.Manager):
             )
             next_version = (last_version or 0) + 1
 
-            self.filter(
-                eval_template=eval_template, is_default=True
-            ).update(is_default=False)
+            self.filter(eval_template=eval_template, is_default=True).update(
+                is_default=False
+            )
 
             version = self.create(
                 eval_template=eval_template,

@@ -501,8 +501,9 @@ def _poll_with_complete_priced_authoring(attempt, monkeypatch):
 
     job.refresh_from_db()
     attempt.refresh_from_db()
-    assert job.payload["metadata"]["harness_spend"]["attempts"]["1"]["stages"] == (
-        PRICED_SPEND["stages"]
+    assert (
+        job.payload["metadata"]["harness_spend"]["attempts"]["1"]["stages"]
+        == (PRICED_SPEND["stages"])
     )
     assert attempt.authoring_usage_report is None
     priced = [
