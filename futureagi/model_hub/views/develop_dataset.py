@@ -364,7 +364,7 @@ def _request_workspace_filter(request, field_name="workspace"):
     return Q(**{field_name: workspace})
 
 
-def _compare_metadata_matches_request(
+def _cached_comparison_matches_selection(
     metadata, dataset_id, dataset_ids, base_column_name
 ):
     requested_ids = [str(dataset_id), *(str(ds_id) for ds_id in dataset_ids)]
@@ -14390,9 +14390,6 @@ class CompareDatasetsView(APIView):
             start_page = math.ceil((start + 1) / 10)
             end_page = start_page + num_pages_to_fetch
 
-            if validated_data.get("compare_id") and not os.path.exists(metadata_path):
-                return self._gm.not_found(get_error_message("DATASET_NOT_FOUND"))
-
             if os.path.exists(metadata_path):
                 metadata = self.read_metadata_safely(metadata_path)
                 if metadata.get("total_pages") < num_pages_to_fetch:
@@ -14442,7 +14439,7 @@ class CompareDatasetsView(APIView):
                     return self._gm.not_found(get_error_message("DATASET_NOT_FOUND"))
 
                 comparison_datasets = list(datasets)
-                if not _compare_metadata_matches_request(
+                if not _cached_comparison_matches_selection(
                     metadata, dataset_id, dataset_ids, base_column_name
                 ):
                     return self._gm.not_found(get_error_message("DATASET_NOT_FOUND"))
@@ -14834,10 +14831,9 @@ class DownloadComparisonDatasetView(APIView):
             dataset_ids = [str(did) for did in validated_data["dataset_ids"]]
             dataset_info = validated_data.get("dataset_info", {})
             common_column_names = validated_data.get("common_column_names", [])
+            cached_metadata: dict[str, Any] | None = None
             if compare_id:
                 metadata_path = get_compare_metadata_path(compare_id)
-                if not os.path.exists(metadata_path):
-                    return self._gm.not_found(get_error_message("DATASET_NOT_FOUND"))
                 if os.path.exists(get_compare_local_dir(compare_id)):
                     metadata = {"status ": "processing"}
                     loop_start = time.time()
@@ -14850,6 +14846,7 @@ class DownloadComparisonDatasetView(APIView):
                             )
                         time.sleep(0.2)
 
+                    cached_metadata = metadata
                     dataset_info = metadata.get("dataset_info")
                     common_column_names = metadata.get("common_column_names")
 
@@ -14859,11 +14856,9 @@ class DownloadComparisonDatasetView(APIView):
                 )
 
             # Ensure main dataset is included in comparison
-            dataset_ids = [str(dataset_id)] + list(
-                dict.fromkeys(
-                    ds_id for ds_id in dataset_ids if ds_id != str(dataset_id)
-                )
-            )
+            dataset_ids = list(dict.fromkeys(dataset_ids))
+            if str(dataset_id) not in dataset_ids:
+                dataset_ids.insert(0, str(dataset_id))
             comparison_datasets = []
             for ds_id in dataset_ids:
                 dataset = datasets_in_scope.filter(id=ds_id).first()
@@ -14871,8 +14866,11 @@ class DownloadComparisonDatasetView(APIView):
                     return self._gm.not_found(get_error_message("DATASET_NOT_FOUND"))
                 comparison_datasets.append(dataset)
 
-            if compare_id and not _compare_metadata_matches_request(
-                metadata, dataset_id, dataset_ids[1:], base_column_name
+            if cached_metadata is not None and not _cached_comparison_matches_selection(
+                cached_metadata,
+                dataset_id,
+                [ds_id for ds_id in dataset_ids if ds_id != str(dataset_id)],
+                base_column_name,
             ):
                 return self._gm.not_found(get_error_message("DATASET_NOT_FOUND"))
 
