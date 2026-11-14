@@ -17078,6 +17078,7 @@ export interface HarnessRunSummaryApi {
   outcome_failed: number;
   outcome_errored: number;
   outcome_skipped: number;
+  outcome_cancelled: number;
   outcome_no_score: number;
   started_at: string;
   completed_at: string;
@@ -24188,6 +24189,7 @@ export interface TestExecutionItemResponseApi {
   readonly outcome_failed?: number;
   readonly outcome_errored?: number;
   readonly outcome_skipped?: number;
+  readonly outcome_cancelled?: number;
   readonly outcome_no_score?: number;
   environment_version?: RunVersionLabelApi | null;
   suite_version?: RunVersionLabelApi | null;
@@ -25345,6 +25347,7 @@ export const CallExecutionV3DetailResponseApiOutcome = {
   inconclusive: "inconclusive",
   no_score: "no_score",
   error: "error",
+  cancelled: "cancelled",
 } as const;
 
 export type CallExecutionV3DetailResponseApiScoringStatus =
@@ -26275,6 +26278,7 @@ export interface RunDashboardRiskApi {
   passed: number;
   failed: number;
   error: number;
+  cancelled: number;
   inconclusive: number;
   no_score: number;
 }
@@ -26336,6 +26340,7 @@ export interface OutcomeCountsApi {
   passed: number;
   failed: number;
   error: number;
+  cancelled: number;
   inconclusive: number;
   no_score: number;
 }
@@ -26414,6 +26419,7 @@ export interface ReliabilityRowApi {
   passed: number;
   failed: number;
   error: number;
+  cancelled: number;
   inconclusive: number;
   no_score: number;
   /** @minLength 1 */
@@ -26454,6 +26460,7 @@ export interface TurnDistributionApi {
   passed: number;
   failed: number;
   error: number;
+  cancelled: number;
   inconclusive: number;
   no_score: number;
   turn_count: number;
@@ -26647,6 +26654,7 @@ export const RunCallApiOutcome = {
   inconclusive: "inconclusive",
   no_score: "no_score",
   error: "error",
+  cancelled: "cancelled",
 } as const;
 
 export type RunCallApiScoringStatus =

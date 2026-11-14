@@ -105,6 +105,24 @@ describe("executionToRun", () => {
     expect(executionToRun({ ...stopped, outcome_failed: 0, outcome_no_score: 0 }).scored).toBe(0);
   });
 
+  it("counts calls the user stopped apart, never against the run", () => {
+    const run = executionToRun({
+      id: "ex-cancelled",
+      status: "Completed",
+      total_chats: 3,
+      outcome_passed: 2,
+      outcome_failed: 0,
+      outcome_errored: 0,
+      outcome_cancelled: 1,
+    });
+    expect([run.status, run.cancelled, run.errored, run.scored]).toEqual([
+      "passed",
+      1,
+      0,
+      2,
+    ]);
+  });
+
   it("reads No score for a finished run whose graded calls all had no pass or fail", () => {
     const run = executionToRun({
       id: "ex-unscored",
@@ -486,4 +504,3 @@ describe("runSimulationTarget", () => {
     expect(runSimulationTarget(null)).toBe(paths.dashboard.simulate.test);
   });
 });
-

@@ -104,6 +104,7 @@ export const ENVIRONMENT_RUN = {
   outcome_errored: 0,
   outcome_no_score: 0,
   outcome_skipped: 0,
+  outcome_cancelled: 1,
   started_at: "2026-10-14T11:58:53.368130+00:00",
   completed_at: "2026-10-14T12:27:36.569945+00:00",
 };

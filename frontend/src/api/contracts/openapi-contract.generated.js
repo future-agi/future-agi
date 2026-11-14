@@ -57267,6 +57267,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "inconclusive",
             "no_score",
             "error",
+            "cancelled",
           ],
         },
         cost_breakdown_cents: {
@@ -95437,6 +95438,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "outcome_failed",
         "outcome_errored",
         "outcome_skipped",
+        "outcome_cancelled",
         "outcome_no_score",
         "started_at",
         "completed_at",
@@ -95495,6 +95497,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         outcome_skipped: {
           title: "Outcome skipped",
+          type: "integer",
+          "x-nullable": true,
+        },
+        outcome_cancelled: {
+          title: "Outcome cancelled",
           type: "integer",
           "x-nullable": true,
         },
@@ -112648,6 +112655,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "passed",
         "failed",
         "error",
+        "cancelled",
         "inconclusive",
         "no_score",
         "scenario",
@@ -112678,6 +112686,10 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         error: {
           title: "Error",
+          type: "integer",
+        },
+        cancelled: {
+          title: "Cancelled",
           type: "integer",
         },
         inconclusive: {
@@ -113550,6 +113562,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "passed",
         "failed",
         "error",
+        "cancelled",
         "inconclusive",
         "no_score",
         "turn_count",
@@ -113574,6 +113587,10 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         error: {
           title: "Error",
+          type: "integer",
+        },
+        cancelled: {
+          title: "Cancelled",
           type: "integer",
         },
         inconclusive: {
@@ -113618,6 +113635,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "passed",
         "failed",
         "error",
+        "cancelled",
         "inconclusive",
         "no_score",
       ],
@@ -113641,6 +113659,10 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         error: {
           title: "Error",
+          type: "integer",
+        },
+        cancelled: {
+          title: "Cancelled",
           type: "integer",
         },
         inconclusive: {
@@ -113777,6 +113799,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "inconclusive",
             "no_score",
             "error",
+            "cancelled",
           ],
         },
         outcome_reason: {
@@ -114450,6 +114473,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         outcome_skipped: {
           title: "Outcome skipped",
+          type: "integer",
+          readOnly: true,
+          "x-nullable": true,
+        },
+        outcome_cancelled: {
+          title: "Outcome cancelled",
           type: "integer",
           readOnly: true,
           "x-nullable": true,
@@ -129830,6 +129859,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "passed",
         "failed",
         "error",
+        "cancelled",
         "inconclusive",
         "no_score",
       ],
@@ -129858,6 +129888,10 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         error: {
           title: "Error",
+          type: "integer",
+        },
+        cancelled: {
+          title: "Cancelled",
           type: "integer",
         },
         inconclusive: {

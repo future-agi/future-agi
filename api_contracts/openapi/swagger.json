@@ -135665,6 +135665,7 @@
                 "outcome_failed",
                 "outcome_errored",
                 "outcome_skipped",
+                "outcome_cancelled",
                 "outcome_no_score",
                 "started_at",
                 "completed_at"
@@ -135726,6 +135727,11 @@
                 },
                 "outcome_skipped": {
                     "title": "Outcome skipped",
+                    "type": "integer",
+                    "x-nullable": true
+                },
+                "outcome_cancelled": {
+                    "title": "Outcome cancelled",
                     "type": "integer",
                     "x-nullable": true
                 },
@@ -152281,6 +152287,12 @@
                     "readOnly": true,
                     "x-nullable": true
                 },
+                "outcome_cancelled": {
+                    "title": "Outcome cancelled",
+                    "type": "integer",
+                    "readOnly": true,
+                    "x-nullable": true
+                },
                 "outcome_no_score": {
                     "title": "Outcome no score",
                     "type": "integer",
@@ -156297,7 +156309,8 @@
                         "failed",
                         "inconclusive",
                         "no_score",
-                        "error"
+                        "error",
+                        "cancelled"
                     ]
                 },
                 "cost_breakdown_cents": {
@@ -157601,6 +157614,7 @@
                 "passed",
                 "failed",
                 "error",
+                "cancelled",
                 "inconclusive",
                 "no_score"
             ],
@@ -157629,6 +157643,10 @@
                 },
                 "error": {
                     "title": "Error",
+                    "type": "integer"
+                },
+                "cancelled": {
+                    "title": "Cancelled",
                     "type": "integer"
                 },
                 "inconclusive": {
@@ -157901,6 +157919,7 @@
                 "passed",
                 "failed",
                 "error",
+                "cancelled",
                 "inconclusive",
                 "no_score"
             ],
@@ -157924,6 +157943,10 @@
                 },
                 "error": {
                     "title": "Error",
+                    "type": "integer"
+                },
+                "cancelled": {
+                    "title": "Cancelled",
                     "type": "integer"
                 },
                 "inconclusive": {
@@ -158191,6 +158214,7 @@
                 "passed",
                 "failed",
                 "error",
+                "cancelled",
                 "inconclusive",
                 "no_score",
                 "scenario",
@@ -158221,6 +158245,10 @@
                 },
                 "error": {
                     "title": "Error",
+                    "type": "integer"
+                },
+                "cancelled": {
+                    "title": "Cancelled",
                     "type": "integer"
                 },
                 "inconclusive": {
@@ -158382,6 +158410,7 @@
                 "passed",
                 "failed",
                 "error",
+                "cancelled",
                 "inconclusive",
                 "no_score",
                 "turn_count"
@@ -158406,6 +158435,10 @@
                 },
                 "error": {
                     "title": "Error",
+                    "type": "integer"
+                },
+                "cancelled": {
+                    "title": "Cancelled",
                     "type": "integer"
                 },
                 "inconclusive": {
@@ -159236,7 +159269,8 @@
                         "failed",
                         "inconclusive",
                         "no_score",
-                        "error"
+                        "error",
+                        "cancelled"
                     ]
                 },
                 "outcome_reason": {

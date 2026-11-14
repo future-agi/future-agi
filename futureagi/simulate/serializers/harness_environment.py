@@ -108,6 +108,8 @@ class HarnessRunSummarySerializer(serializers.Serializer):
     outcome_failed = serializers.IntegerField(allow_null=True)
     outcome_errored = serializers.IntegerField(allow_null=True)
     outcome_skipped = serializers.IntegerField(allow_null=True)
+    # Calls the user stopped; neither errored nor failed.
+    outcome_cancelled = serializers.IntegerField(allow_null=True)
     outcome_no_score = serializers.IntegerField(allow_null=True)
     started_at = serializers.DateTimeField(allow_null=True)
     completed_at = serializers.DateTimeField(allow_null=True)

@@ -169,6 +169,7 @@ class TestExecutionItemResponseSerializer(serializers.Serializer):
     outcome_failed = serializers.IntegerField(read_only=True, allow_null=True)
     outcome_errored = serializers.IntegerField(read_only=True, allow_null=True)
     outcome_skipped = serializers.IntegerField(read_only=True, allow_null=True)
+    outcome_cancelled = serializers.IntegerField(read_only=True, allow_null=True)
     outcome_no_score = serializers.IntegerField(read_only=True, allow_null=True)
     environment_version = RunVersionLabelSerializer(read_only=True, allow_null=True)
     suite_version = RunVersionLabelSerializer(read_only=True, allow_null=True)

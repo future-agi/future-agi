@@ -43,6 +43,7 @@ GOAL_OUTCOMES = (
     "passed",
     "failed",
     "error",
+    "cancelled",
     "escalated",
     "inconclusive",
     "no_score",
@@ -52,6 +53,8 @@ GOAL_OUTCOMES = (
 END_REASONS = [
     ("Caller hung up", r"(during|before|after).*(warm.?transfer)"),
     ("Error", r"transfer.?(cancel|fail)|warm.?transfer.*(fail|error)"),
+    # A call the user stopped (hosted user_canceled, "Cancelled by user"): not an error.
+    ("Cancelled", r"^user[-_]cancel+ed$|cancel+ed by user"),
     (
         "Error",
         r"error|fail|unavailable|^sip-|twilio|busy|no-answer|did-not-answer|dial|"
@@ -738,6 +741,7 @@ def build_run_dashboard(
                 "passed": row["outcomes"]["passed"],
                 "failed": row["outcomes"]["failed"],
                 "error": row["outcomes"]["error"],
+                "cancelled": row["outcomes"]["cancelled"],
                 "inconclusive": row["outcomes"]["inconclusive"],
                 "no_score": row["outcomes"]["no_score"],
             }
