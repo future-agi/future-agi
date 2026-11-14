@@ -14,7 +14,7 @@ import { useForm } from "react-hook-form";
 import FormTextFieldV2 from "src/components/FormTextField/FormTextFieldV2";
 import Iconify from "src/components/iconify";
 import HelperText from "src/sections/develop-detail/Common/HelperText";
-import { Events, PropertyName, trackEvent } from "src/utils/Mixpanel";
+import { Events, trackEvent } from "src/utils/Mixpanel";
 
 const CreateNewProperties = ({ open, onClose, data, setOptions, update }) => {
   const { control, reset, watch } = useForm({
@@ -33,8 +33,7 @@ const CreateNewProperties = ({ open, onClose, data, setOptions, update }) => {
 
   const handleAdd = () => {
     trackEvent(Events.syntheticDatasetNewPropertyCreated, {
-      [PropertyName.propName]: label,
-      [PropertyName.propDesc]: description,
+      has_description: Boolean(description?.trim()),
     });
     setOptions({ label, description, value: label });
     update(Number(data), { type: label, value: "", category: "" });
