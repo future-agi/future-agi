@@ -54,7 +54,7 @@ dependencies = [
     # 1.84.0 is the first release to close CVE-2026-35030 and CVE-2026-49468
     # (auth bypass / privilege escalation / RCE); the 1.83.x fixes leave the
     # Host-header bypass open. 1.84.10 is the last patch of that series.
-    "litellm==1.95.0",
+    "litellm==1.100.4",
     "django-filter",
     # >=2.13.0 fixes CVE-2026-48526 (forged-JWT authentication bypass).
     "pyjwt>=2.13.0",
@@ -418,6 +418,7 @@ constraint-dependencies = [
     "msgpack>=1.2.3",
     "orjson>=3.11.6",
     "pyasn1>=0.6.5",
+    "soupsieve>=2.8.4,<3",
     "sqlparse>=0.6.0",
     "starlette>=1.3.1",
     "tornado>=6.5.9",

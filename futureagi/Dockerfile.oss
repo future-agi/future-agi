@@ -259,6 +259,12 @@ RUN set -eux; \
 COPY --from=ffmpeg /opt/ffmpeg/bin/ /usr/local/bin/
 COPY --from=ffmpeg /opt/ffmpeg/doc/ /usr/local/share/doc/ffmpeg/
 COPY --from=builder /usr/local/share/nltk_data /usr/local/share/nltk_data
+# The builder's site-packages replace the base image's. COPY merges into the
+# existing directory, so delete the base's setuptools first: otherwise its
+# older dist-info and vendored packages stay next to the builder's newer
+# setuptools (and importlib.metadata still reports the old version).
+RUN rm -rf /usr/local/lib/python3.11/site-packages/setuptools \
+        /usr/local/lib/python3.11/site-packages/setuptools-*.dist-info
 # Copy installed Python packages from builder
 COPY --from=builder /usr/local/lib/python3.11/site-packages \
                     /usr/local/lib/python3.11/site-packages
