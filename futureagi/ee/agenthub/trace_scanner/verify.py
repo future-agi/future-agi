@@ -253,7 +253,11 @@ def _moments_text(key_moments: Optional[List[Any]]) -> str:
         quote = str(getattr(km, "verbatim", "") or "").strip()
         if not quote:
             continue
-        mark = " <- scanner marked this the failure" if getattr(km, "is_failure", False) else ""
+        mark = (
+            " <- scanner marked this the failure"
+            if getattr(km, "is_failure", False)
+            else ""
+        )
         span = neutralize(getattr(km, "span", "") or "")
         where = f" [{span}]" if span else ""
         lines.append(f"  {field(quote)}{where}{mark}")
@@ -276,7 +280,9 @@ def verify_issues(
 
     trace_text = _raw_trace_text(trace_data)
     if not trace_text.strip():
-        return [], [{"brief": getattr(i, "brief", ""), "reason": "no_raw_trace"} for i in issues]
+        return [], [
+            {"brief": getattr(i, "brief", ""), "reason": "no_raw_trace"} for i in issues
+        ]
 
     # Numbered from 1. Models renumber a 0-based list to 1-based as a matter of
     # habit, and under the persist rule a single unmatched index defers the whole
@@ -313,7 +319,8 @@ def verify_issues(
     except Exception as exc:
         logger.warning("scanner_verify_failed", error=str(exc)[:200])
         return [], [
-            {"brief": getattr(i, "brief", ""), "reason": "verifier_error"} for i in issues
+            {"brief": getattr(i, "brief", ""), "reason": "verifier_error"}
+            for i in issues
         ]
 
     if not verdicts:

@@ -24,6 +24,7 @@ This module is intentionally thin — the parity comparison is shape-agnostic
 so each query type's specific normalization (sorting, float-rounding,
 UTC datetime coercion) lives in the per-builder code.
 """
+
 from __future__ import annotations
 
 import json
@@ -41,26 +42,28 @@ logger = structlog.get_logger(__name__)
 
 class RoutingMode(str, Enum):
     """How the dispatcher routes a query type."""
-    V1_ONLY    = "v1"          # legacy CH path only (default until flipped)
-    V2_ONLY    = "v2"          # new CH path only (post-cutover steady state)
-    SHADOW     = "shadow"      # both run; v1 returned to user; diff logged
+
+    V1_ONLY = "v1"  # legacy CH path only (default until flipped)
+    V2_ONLY = "v2"  # new CH path only (post-cutover steady state)
+    SHADOW = "shadow"  # both run; v1 returned to user; diff logged
     V2_PRIMARY = "v2_primary"  # v2 returned; v1 still run in shadow for safety
-    DISABLED   = "disabled"    # neither run (e.g., during a CH outage drill)
+    DISABLED = "disabled"  # neither run (e.g., during a CH outage drill)
 
 
 @dataclass
 class ShadowResult:
     """Outcome of a shadow comparison for one request."""
+
     query_type: str
     mode: RoutingMode
     v1_elapsed_ms: float | None = None
     v2_elapsed_ms: float | None = None
-    rows_v1:       int | None = None
-    rows_v2:       int | None = None
-    diff_count:    int | None = None
+    rows_v1: int | None = None
+    rows_v2: int | None = None
+    diff_count: int | None = None
     diff_examples: list[dict[str, Any]] = field(default_factory=list)
-    error_v1:      str | None = None
-    error_v2:      str | None = None
+    error_v1: str | None = None
+    error_v2: str | None = None
 
 
 def get_routing_mode(query_type: str) -> RoutingMode:
@@ -168,11 +171,15 @@ def run_with_shadow(
         sr.diff_count, sr.diff_examples = _diff(n1, n2, max_diff_examples)
 
     log_payload = {
-        "query_type": query_type, "mode": mode.value,
-        "v1_ms": ms1, "v2_ms": ms2,
-        "rows_v1": sr.rows_v1, "rows_v2": sr.rows_v2,
+        "query_type": query_type,
+        "mode": mode.value,
+        "v1_ms": ms1,
+        "v2_ms": ms2,
+        "rows_v1": sr.rows_v1,
+        "rows_v2": sr.rows_v2,
         "diff_count": sr.diff_count,
-        "err_v1": sr.error_v1, "err_v2": sr.error_v2,
+        "err_v1": sr.error_v1,
+        "err_v2": sr.error_v2,
     }
     if sr.diff_count or sr.error_v1 or sr.error_v2:
         logger.warning("shadow_diff", **log_payload, diff_examples=sr.diff_examples)
@@ -224,8 +231,12 @@ def _diff(a: Any, b: Any, max_examples: int) -> tuple[int, list[dict[str, Any]]]
             if ra != rb:
                 if len(examples) >= max_examples:
                     break
-                examples.append({"kind": "row", "i": i, "v1": _short(ra), "v2": _short(rb)})
-        return max(abs(len(a) - len(b)), sum(1 for ra, rb in zip(a, b) if ra != rb)), examples
+                examples.append(
+                    {"kind": "row", "i": i, "v1": _short(ra), "v2": _short(rb)}
+                )
+        return max(
+            abs(len(a) - len(b)), sum(1 for ra, rb in zip(a, b) if ra != rb)
+        ), examples
 
     # Scalar / non-list: one diff
     examples.append({"kind": "scalar", "v1": _short(a), "v2": _short(b)})
