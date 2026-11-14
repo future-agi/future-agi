@@ -98,7 +98,7 @@ REQUESTED_MESSAGES = 20
 def requested_uncovered(environment: Any) -> list[str]:
     """The lines a person asked for in the builder chat ("Requested case N: ...", the last 20
     messages) that no scenario of the suite being edited cites by quote yet."""
-    from simulate.models import HarnessSuiteMember
+    from simulate.models import HarnessSuiteMember, HostedHarnessConversationMessage
     from simulate.services.harness_versioning.drafts import open_draft
 
     messages = list(
