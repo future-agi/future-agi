@@ -551,7 +551,8 @@ def _dropped_tokens(bundle: HarnessAssembledBundle | None) -> frozenset[str]:
 
 
 def _proved_tokens(pairing: Pairing) -> frozenset[str]:
-    """Scenarios with a holding proof for this suite and environment version."""
+    """Scenarios proved for this suite and environment version; an assumed solution is not proved."""
+    from simulate.services.harness_versioning.versions import _proof_passes
     from simulate.services.hosted_harness_gateway import _scenario_token
 
     proofs = (
@@ -565,7 +566,7 @@ def _proved_tokens(pairing: Pairing) -> frozenset[str]:
     return frozenset(
         _scenario_token(key)
         for key, proof in (proofs or {}).items()
-        if isinstance(proof, Mapping) and proof.get("holds")
+        if _proof_passes(proof)
     )
 
 

@@ -561,6 +561,44 @@ def suite_change(
     return diff, diffs.summarize_suite(diff)
 
 
+def _proof_passes(entry: object) -> bool:
+    """Whether a saved proof counts as proved: format 2 reads `proved`, an older entry `holds`."""
+    if not isinstance(entry, Mapping):
+        return False
+    if entry.get("format") == 2:
+        return entry.get("proved") is True
+    return entry.get("holds") is True
+
+
+def proof_counts(job: HostedHarnessJob) -> dict[str, int] | None:
+    """Proved, kept as written and not proved over the default suite, on the default pair."""
+    if not job.suite_version_id or not job.environment_version_id:
+        return None
+    keys = list(
+        HarnessSuiteMember.no_workspace_objects.filter(
+            suite_version_id=job.suite_version_id
+        ).values_list("scenario_key", flat=True)
+    )
+    proofs = (
+        HarnessSuiteValidation.no_workspace_objects.filter(
+            suite_version_id=job.suite_version_id,
+            environment_version_id=job.environment_version_id,
+        )
+        .values_list("proofs", flat=True)
+        .first()
+    ) or {}
+    counts = {"proved": 0, "kept_as_written": 0, "not_proved": 0}
+    for key in keys:
+        entry = proofs.get(key) if isinstance(proofs, dict) else None
+        if _proof_passes(entry):
+            counts["proved"] += 1
+        elif isinstance(entry, Mapping) and entry.get("kept_as_written") is True:
+            counts["kept_as_written"] += 1
+        else:
+            counts["not_proved"] += 1
+    return counts
+
+
 def _carried_proofs(
     environment_version: HarnessEnvironmentVersion,
     paired: list[tuple[HostedHarnessScenario, dict[str, Any]]],

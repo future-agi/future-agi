@@ -205,6 +205,45 @@ class TestBuckets:
             (LOOKUP_KEYS[0], ["not_proved_here"])
         ]
 
+    def test_assumed_proof_is_not_proved_for_selection(self, user, workspace, storage):
+        environment = _environment(user, workspace, storage, "as-assumed")
+        _suite(environment, _ten())
+        HarnessAssembledBundle._base_manager.filter(id=_row(environment).id).update(
+            state="pending", object_key=None
+        )
+        _built(environment)
+        assumed = {
+            "format": 2,
+            "holds": True,
+            "proved": False,
+            "assumed": [LOOKUP],
+            "kept_as_written": True,
+        }
+        proved = {"format": 2, "holds": True, "proved": True, "assumed": []}
+        HarnessSuiteValidation.no_workspace_objects.update_or_create(
+            suite_version=environment.suite_version,
+            environment_version=environment.environment_version,
+            defaults={
+                "status": "partial",
+                "proved_at": timezone.now(),
+                "proofs": {
+                    key: (assumed if key == LOOKUP_KEYS[0] else proved)
+                    for key in REFUND_KEYS + LOOKUP_KEYS
+                },
+            },
+        )
+
+        pairing = _pairing(environment)
+        chosen = _select(environment, pairing=pairing)["selection"]
+        page = harness_readiness.case_page(
+            pairing, keys=None, trials=1, bucket="stale", row=None, cursor=None
+        )
+
+        assert (chosen["stale"], chosen["eligible"]) == (1, 9)
+        assert [(one["key"], one["by"]) for one in page["items"]] == [
+            (LOOKUP_KEYS[0], ["not_proved_here"])
+        ]
+
     def test_ready_pair_bundle_counts_as_proved(self, user, workspace, storage):
         environment = _ten_certified(user, workspace, storage, "as-ready-proves")
         HarnessSuiteValidation.no_workspace_objects.filter(

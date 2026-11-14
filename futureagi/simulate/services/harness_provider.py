@@ -2186,6 +2186,9 @@ class HostedHarnessProvider:
         from simulate.services.harness_scenarios import level_labels_for
 
         response.data["level_labels"] = level_labels_for(rows, response.data["fields"])
+        from simulate.services.harness_versioning.versions import proof_counts
+
+        response.data["proof_counts"] = proof_counts(job)
         return response
 
     def scenario_coverage(self, request, pk) -> Response:
