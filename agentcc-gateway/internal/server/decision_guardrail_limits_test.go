@@ -11,6 +11,7 @@ import (
 	"github.com/futureagi/agentcc-gateway/internal/guardrails"
 	"github.com/futureagi/agentcc-gateway/internal/guardrails/pii"
 	"github.com/futureagi/agentcc-gateway/internal/modeldb"
+	"github.com/futureagi/agentcc-gateway/internal/models"
 	"github.com/futureagi/agentcc-gateway/internal/pipeline"
 	authplugin "github.com/futureagi/agentcc-gateway/internal/plugins/auth"
 	budgetplugin "github.com/futureagi/agentcc-gateway/internal/plugins/budget"
@@ -148,4 +149,23 @@ func TestDecisionOrgBudgetStopsBeforeUpstream(t *testing.T) {
 	}
 	expectError(t, g.post(t, keyByok, decisionSysBody), http.StatusTooManyRequests, "org_budget_exceeded")
 	expectOnlyKey(t, g, orgTypeSafeKey, 1)
+}
+
+// The guardrail text is the same for the same body: questions and named
+// criteria are read in key order, not Go's random map order.
+func TestDecisionGuardrailContentIsDeterministic(t *testing.T) {
+	body := `{"model":"typesafe/jev-latest","state":"s","questions":{"q3":{"type":"noul","instructions":"three"},"q1":{"type":"choice","instructions":"one","criteria":{"b":"bee","a":"ay","c":"see"}},"q2":{"type":"noul","instructions":"two"}}}`
+	req, err := models.ParseDecisionRequest([]byte(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := string(decisionGuardrailContent(req))
+	if want != `"s\none\nay\nbee\nsee\ntwo\nthree"` {
+		t.Fatalf("content = %s", want)
+	}
+	for i := 0; i < 50; i++ {
+		if got := string(decisionGuardrailContent(req)); got != want {
+			t.Fatalf("run %d: %s, want %s", i, got, want)
+		}
+	}
 }

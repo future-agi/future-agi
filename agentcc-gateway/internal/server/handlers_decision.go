@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
 	"math"
 	"net/http"
 	"slices"
@@ -204,7 +205,9 @@ func decisionRedactionError() *models.APIError {
 }
 
 // decisionGuardrailContent extracts only user-supplied decision text for the
-// input guardrails. It is never used to build or rewrite the upstream body.
+// input guardrails: the state (or OpenAI input), then each question's text,
+// instructions and criteria, objects read in key order so the same body gives
+// the same text. It is never used to build or rewrite the upstream body.
 func decisionGuardrailContent(req *models.DecisionRequest) json.RawMessage {
 	var fields map[string]json.RawMessage
 	_ = json.Unmarshal(req.Body, &fields) // ParseDecisionRequest already validated the JSON.
@@ -226,8 +229,8 @@ func decisionGuardrailContent(req *models.DecisionRequest) json.RawMessage {
 	if req.Format == models.DecisionFormatSystemOne {
 		var questions map[string]json.RawMessage
 		_ = json.Unmarshal(fields["questions"], &questions)
-		for _, q := range questions {
-			appendDecisionQuestionText(&parts, q)
+		for _, id := range slices.Sorted(maps.Keys(questions)) {
+			appendDecisionQuestionText(&parts, questions[id])
 		}
 	} else {
 		var questions []json.RawMessage
@@ -266,8 +269,8 @@ func appendDecisionText(parts *[]string, raw json.RawMessage) {
 	}
 	var fields map[string]json.RawMessage
 	if json.Unmarshal(raw, &fields) == nil {
-		for _, value := range fields {
-			appendDecisionText(parts, value)
+		for _, key := range slices.Sorted(maps.Keys(fields)) {
+			appendDecisionText(parts, fields[key])
 		}
 	}
 }
