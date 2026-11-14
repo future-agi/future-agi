@@ -3111,8 +3111,8 @@ def calculate_accuracy(output, expected, **kwargs):
     return {"result": accuracy, "reason": f"Accuracy: {accuracy:.4f} ({correct}/{len(labels)} correct)"}
 
 
-# Explicit conventions, not alphabetical order. Subsets also cover batches where
-# only the negative class appears; those must not become perfect positive scores.
+# Explicit conventions, not alphabetical order. A convention applies only when
+# its positive class is observed; negative-only agreement uses the macro fallback.
 _CLASSIFICATION_LABEL_PAIRS = (
     ("yes", "no"),
     ("true", "false"),
@@ -3135,7 +3135,11 @@ def _classification_counts(preds, labels, positive_label):
         positive = str(positive_label).lower()
     else:
         positive = next(
-            (pos for pos, neg in _CLASSIFICATION_LABEL_PAIRS if classes <= {pos, neg}),
+            (
+                pos
+                for pos, neg in _CLASSIFICATION_LABEL_PAIRS
+                if pos in classes and classes <= {pos, neg}
+            ),
             None,
         )
     if positive is not None:
@@ -3165,9 +3169,11 @@ def calculate_precision_score(output, expected, positive_label=None, **kwargs):
         output: Predicted label(s).
         expected: Expected label(s).
         positive_label: Explicit one-vs-rest label, including numeric zero. If
-            omitted, resolve a known binary pair; otherwise macro-average over
-            the union of predicted and expected classes. Undefined precision is
-            zero for that class. See _CLASSIFICATION_LABEL_PAIRS for conventions.
+            omitted, resolve a known binary pair with an observed positive class;
+            otherwise macro-average over the union of predicted and expected
+            classes. Negative-only agreement therefore scores one by default.
+            Undefined precision is zero for that class.
+            See _CLASSIFICATION_LABEL_PAIRS for conventions.
 
     Returns:
         dict: {"result": float (0-1), "reason": str}
@@ -3798,9 +3804,10 @@ def calculate_f_beta_score(output, expected, beta=1.0, positive_label=None, **kw
     """Compute per-class F-beta, then average using the precision label policy.
 
     An explicit positive_label (including zero) selects one-vs-rest scoring.
-    Otherwise known binary pairs select their positive class; other label sets
-    use an unweighted mean over predicted and expected classes. A class with
-    no true positives contributes zero, including classes never predicted.
+    Otherwise known binary pairs select their positive class when observed;
+    other label sets use an unweighted mean over predicted and expected classes.
+    Negative-only agreement therefore scores one by default. A class with no
+    true positives contributes zero, including classes never predicted.
     """
 
     def _parse(val):

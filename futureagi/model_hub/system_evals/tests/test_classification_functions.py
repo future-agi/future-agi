@@ -31,15 +31,103 @@ PAIRS = [
 
 @SCORERS
 @pytest.mark.parametrize("positive, negative", PAIRS)
-def test_known_pairs_do_not_promote_a_negative_only_batch(score, positive, negative):
-    # A negative-only batch has no positive predictions, even when all are right.
-    result = score([negative, negative], [negative, negative])
-    assert result["result"] == 0.0
-    assert f"positive='{str(positive).lower()}'" in result["reason"]
+def test_known_pairs_keep_binary_policy_when_positive_is_observed(
+    score, positive, negative
+):
     # Both classes present: TP=1, FP=2, FN=0. Test semantic selection too.
     mixed = score([positive] * 3 + [negative] * 2, [positive] + [negative] * 4)
     expected = 1 / 3 if score is calculate_precision_score else 1 / 2
     assert mixed["result"] == pytest.approx(expected)
+    assert f"positive='{str(positive).lower()}'" in mixed["reason"]
+
+
+@pytest.mark.parametrize("evaluator", [PrecisionScore, FBetaScore])
+@pytest.mark.parametrize("positive, negative", PAIRS)
+@pytest.mark.parametrize(
+    "encode",
+    [
+        lambda value: value,
+        lambda value: [value] * 3,
+        lambda value: json.dumps([value] * 3),
+    ],
+    ids=["scalar", "batch", "json"],
+)
+def test_registered_negative_only_agreement_uses_observed_class(
+    evaluator, positive, negative, encode
+):
+    result = evaluator()._evaluate(output=encode(negative), expected=encode(negative))
+    assert result["metrics"][0]["value"] == 1.0
+    assert result["failure"] is False
+    assert "macro over 1 classes" in result["reason"]
+    # The fallback is only for omitted labels, not an explicitly absent positive.
+    explicit = evaluator(positive_label=positive)._evaluate(
+        output=encode(negative), expected=encode(negative)
+    )
+    assert explicit["metrics"][0]["value"] == 0.0
+    assert explicit["failure"] is True
+    assert f"positive='{str(positive).lower()}'" in explicit["reason"]
+
+
+@pytest.mark.parametrize("evaluator", [PrecisionScore, FBetaScore])
+@pytest.mark.parametrize("positive, negative", PAIRS)
+@pytest.mark.parametrize(
+    "false_positive", [True, False], ids=["false-positive", "false-negative"]
+)
+def test_registered_known_pair_mistakes_do_not_use_agreement_fallback(
+    evaluator, positive, negative, false_positive
+):
+    output = [positive, negative] if false_positive else [negative, negative]
+    expected = [negative, negative] if false_positive else [positive, negative]
+    result = evaluator()._evaluate(output=output, expected=expected)
+    assert result["metrics"][0]["value"] == 0.0
+    assert result["failure"] is True
+    assert f"positive='{str(positive).lower()}'" in result["reason"]
+
+
+@pytest.mark.parametrize("evaluator", [PrecisionScore, FBetaScore])
+@pytest.mark.parametrize("label", ["pass", "fail", "skip"])
+def test_registered_pass_fail_skip_rows_agree(evaluator, label):
+    result = evaluator()._evaluate(output=label, expected=label)
+    assert result["metrics"][0]["value"] == 1.0
+    assert result["failure"] is False
+
+
+@SCORERS
+@pytest.mark.parametrize(
+    "output, expected, precision, fbeta, classes",
+    [
+        (["pass", "skip"], ["fail", "skip"], 1 / 3, 1 / 3, 3),
+        (["no", "fail"], ["no", "fail"], 1.0, 1.0, 2),
+        (["no", "skip", "skip"], ["no", "no", "skip"], 3 / 4, 2 / 3, 2),
+    ],
+)
+def test_partially_overlapping_pairs_use_macro(
+    score, output, expected, precision, fbeta, classes
+):
+    result = score(output, expected)
+    assert result["result"] == pytest.approx(
+        precision if score is calculate_precision_score else fbeta
+    )
+    assert f"macro over {classes} classes" in result["reason"]
+
+
+@pytest.mark.parametrize("evaluator", [PrecisionScore, FBetaScore])
+@pytest.mark.parametrize("label", [0, False, ""])
+def test_registered_explicit_falsy_labels_keep_config_and_one_vs_rest(evaluator, label):
+    configured = evaluator(positive_label=label)
+    restored = evaluator(**configured.to_config())
+    assert restored.to_config()["positive_label"] == label
+    result = restored._evaluate(
+        output=[label, label, "other"], expected=[label, "other", "other"]
+    )
+    assert result["metrics"][0]["value"] == pytest.approx(
+        1 / 2 if evaluator is PrecisionScore else 2 / 3
+    )
+    assert result["failure"] is False
+    assert f"positive='{str(label).lower()}'" in result["reason"]
+    absent = restored._evaluate(output="no", expected="no")
+    assert absent["metrics"][0]["value"] == 0.0
+    assert absent["failure"] is True
 
 
 @SCORERS
