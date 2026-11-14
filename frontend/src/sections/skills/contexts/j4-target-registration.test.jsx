@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import ContextTargetRegistration from './ContextTargetRegistration';
 import { useCreateContextBinding } from 'src/api/skills/context-consumers';
 
@@ -67,7 +67,8 @@ it('cannot be opened without writer permission', () => {
 it('explains why connecting is unavailable before a manifest is chosen', () => {
   render(<ContextTargetRegistration contextId="context" canRegister />);
   fireEvent.click(screen.getByRole('button', { name: 'Register application target' }));
-  expect(screen.getByText('Connect an app')).toBeVisible();
-  expect(screen.getByText('Choose the runtime manifest JSON file from your app build.')).toBeVisible();
+  expect(within(screen.getByRole('dialog')).getByText('Register application target')).toBeVisible();
+  expect(screen.getByText('Choose the app manifest (JSON) file from your app build.')).toBeVisible();
+  expect(screen.getByRole('group', { name: 'App manifest (JSON)' })).toBeVisible();
   expect(screen.getByRole('button', { name: 'Register target' })).toBeDisabled();
 });

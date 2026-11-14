@@ -19,7 +19,7 @@ it('uses one calm summary and one waiting message for an unreported app', () => 
   const table = screen.getByRole('table', { name: 'Context delivery observations' });
   expect(within(table).getByRole('columnheader', { name: 'Kind' })).toBeVisible();
   expect(within(table).getByText('App')).toBeVisible();
-  expect(within(table).getByText('Runtime loading not observed')).toBeVisible();
+  expect(within(table).getByText('No report from this app yet')).toBeVisible();
   expect(within(table).getAllByText('Waiting for first report')).toHaveLength(1);
   expect(screen.getByRole('link', { name: 'How apps report' })).toHaveAttribute('href', 'https://docs.futureagi.com/docs/skills/rollout-recovery');
 });

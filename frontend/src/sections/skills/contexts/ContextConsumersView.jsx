@@ -50,7 +50,7 @@ function ConsumerRows({ data, windowDays, onWindowChange, onPageChange, versionN
       </TextField>
     </ListToolbar>}
     {data.count > data.pageSize && <Typography variant="s3" color="text.secondary">Search and filters apply to the consumers on this page.</Typography>}
-    {!data.results.length ? <EmptyState variant="first-run" title="No declared consumers" description={emptyDescription} action={primaryRegistration(registrationAction)} />
+    {!data.results.length ? <EmptyState variant="first-run" title="No apps connected yet" description={emptyDescription} action={primaryRegistration(registrationAction)} />
       : !rows.length ? <EmptyState variant="no-results" title="No consumers match these filters" onClearFilters={clear} />
         : <TableContainer sx={{ maxWidth: 1 }}><Table size="small" aria-label="Context delivery observations">
           <TableHead sx={{ display: { xs: 'none', sm: 'table-header-group' } }}><TableRow sx={{ height: TABLE_HEADER_HEIGHT.default }}>{['Consumer', 'Kind', 'Target release', 'Last delivered', 'Verification', 'Last report', 'Inspect'].map((name) => <TableCell key={name}>{name}</TableCell>)}</TableRow></TableHead>
@@ -59,7 +59,7 @@ function ConsumerRows({ data, windowDays, onWindowChange, onPageChange, versionN
             <TableCell sx={{ ...mobileLabel('Kind'), gridColumn: '1 / -1', gridRow: 4 }}><Typography variant="s1">{row.binding.kind === 'runtime' ? 'App' : row.binding.kind === 'repository' ? 'Repository' : 'Unknown'}</Typography></TableCell>
             <TableCell sx={{ ...mobileLabel('Target release'), gridRow: 2 }}>{row.desired ? <Stage stage={row.desired} versionNumbers={versionNumbers} /> : <Typography variant="s3" color="text.secondary">—</Typography>}</TableCell>
             <TableCell sx={{ ...mobileLabel('Last delivered'), gridRow: 2 }}>{row.loaded ? <Stage stage={row.loaded} versionNumbers={versionNumbers} /> : <Typography variant="s3" color="text.secondary">—</Typography>}</TableCell>
-            <TableCell sx={{ gridColumn: '1 / 4', gridRow: 3 }}><Stack spacing={0.5} alignItems="flex-start">{row.states.map((state) => <StatusBadge key={state} status={state} label={consumerStateNames[state] ?? 'Unknown'} />)}</Stack></TableCell>
+            <TableCell sx={{ gridColumn: '1 / 4', gridRow: 3 }}><Stack spacing={0.5} alignItems="flex-start">{row.states.map((state) => <StatusBadge key={state} status={state} role={state === 'unknown' ? 'neutral' : undefined} label={consumerStateNames[state] ?? 'Unknown'} />)}</Stack></TableCell>
             <TableCell sx={{ display: { xs: 'none', sm: 'table-cell' } }}><Typography variant="s3"><When value={consumerReportAt(row, data.asOf)} fallback="Waiting for first report" /></Typography></TableCell>
             <TableCell sx={{ gridColumn: 3, gridRow: 1 }}><Button size="small" variant="outlined" aria-label={`Inspect ${row.binding.name}`} onClick={() => setSelectedId(row.binding.id)}>Inspect</Button></TableCell>
           </TableRow>)}</TableBody>
@@ -96,7 +96,7 @@ export default function ContextConsumersView({ scopeKey, state: resolvedState = 
       : state === 'loading' ? <ContentSkeleton sx={{ '& .MuiSkeleton-root': { bgcolor: 'action.selected' } }} variant="rows" />
         : state === 'error' ? <ErrorState detail="Delivery status is unknown until this loads." title="Couldn't load consumers" onRetry={onRetry} />
           : state === 'off' ? <CapabilityNotice title="Consumer observations are off" description="Delivery can only be verified when a registered runtime reports it." />
-            : state === 'empty' ? <EmptyState variant="first-run" title="No declared consumers" description={emptyDescription} action={primaryRegistration(registrationAction)} />
+            : state === 'empty' ? <EmptyState variant="first-run" title="No apps connected yet" description={emptyDescription} action={primaryRegistration(registrationAction)} />
               : ['ready', 'filtered-empty'].includes(state) && data ? <ConsumerRows key={scopeKey} {...{ data, windowDays, onWindowChange, onPageChange, versionNumbers, registrationAction }} previewState={state} />
                 : <ReviewState state={state} onRetry={onRetry} />}
   </Section>;

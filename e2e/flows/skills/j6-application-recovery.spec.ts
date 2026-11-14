@@ -163,7 +163,7 @@ test('SKILLS-E2E-061: recover a persisted refund checkpoint through the real reg
     const table = page.getByRole('table', { name: 'Context delivery observations' });
     for (const binding of bindings) {
       const row = table.getByRole('row').filter({ hasText: binding.name });
-      await expect(row.getByText('Runtime loading not observed', { exact: true })).toBeVisible({ timeout: UI_READY });
+      await expect(row.getByText('No report from this app yet', { exact: true })).toBeVisible({ timeout: UI_READY });
       await expect(row.getByText('Matches target', { exact: true })).toHaveCount(0);
     }
     await page.screenshot({ path: testInfo.outputPath('j6-recovered-then-revoked.png') });

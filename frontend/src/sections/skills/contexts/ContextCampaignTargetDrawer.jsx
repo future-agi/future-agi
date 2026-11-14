@@ -1,4 +1,4 @@
-import { useId, useState } from 'react';
+import { useEffect, useId, useState } from 'react';
 import PropTypes from 'prop-types';
 import { Alert, Box, Button, Drawer, IconButton, MenuItem, Stack, TextField, Typography } from '@mui/material';
 import Iconify from 'src/components/iconify';
@@ -6,6 +6,7 @@ import { fDateTimeUTC } from 'src/utils/format-time';
 import '../components/skillIcons';
 import { humanizeCode } from './consumerPresentation';
 import RolloutInstructions from './RolloutInstructions';
+import { ROLLOUTS_OFF_REASON } from './rolloutCopy';
 import { planCommand } from './rolloutCommands';
 import CapabilityNotice from '../components/CapabilityNotice';
 import Section from 'src/components/section';
@@ -31,9 +32,22 @@ function ChangeExcerpt({ text }) {
   })}</Stack>;
 }
 ChangeExcerpt.propTypes = { text: PropTypes.string.isRequired };
-export default function ContextCampaignTargetDrawer({ target, open, onClose, decision, onDecision, editable = false, observations, onNext }) {
+export default function ContextCampaignTargetDrawer({ target, open, onClose, decision, onDecision, editable = false, readOnly = false, observations, onNext }) {
   const title = useId();
   const [copyState, setCopyState] = useState(null);
+  // The footer is a separate row under the scrolling body. Keep the body's last content one
+  // footer-height plus 16px clear of its bottom edge, so nothing ends under a fixed bar.
+  const [footer, setFooter] = useState(null);
+  const [footerHeight, setFooterHeight] = useState(0);
+  useEffect(() => {
+    if (!footer) return undefined;
+    const measure = () => setFooterHeight(Math.ceil(footer.getBoundingClientRect().height));
+    measure();
+    if (typeof ResizeObserver === 'undefined') return undefined;
+    const observer = new ResizeObserver(measure);
+    observer.observe(footer);
+    return () => observer.disconnect();
+  }, [footer]);
   const covered = useDrawerCovered(open);
   return <Drawer anchor="right" open={open} onClose={onClose} sx={coveredDrawerSx(covered)}
     PaperProps={{ role: 'dialog', 'aria-modal': true, 'aria-labelledby': title, sx: { width: { xs: 1, sm: 640 }, maxWidth: 1, overflow: 'hidden' } }}>
@@ -41,17 +55,20 @@ export default function ContextCampaignTargetDrawer({ target, open, onClose, dec
       <Typography id={title} component="h2" variant="m1">{target?.name || 'Repository target'}</Typography>
       <IconButton aria-label="Close target" onClick={onClose}><Iconify icon="solar:close-linear" width={18} /></IconButton>
     </Stack>
-    {target && <Stack spacing={2} sx={{ minWidth: 0, overflowY: 'auto', flex: 1, p: 2 }}>
+    {target && <Stack spacing={2} sx={{ minWidth: 0, minHeight: 0, overflowY: 'auto', flex: 1, px: 2, pt: 2, pb: `${footerHeight + 16}px`,
+      // Content ends in a soft fade above the footer, so a heading at the fold reads as scrolled, not sliced.
+      maskImage: 'linear-gradient(to bottom, black calc(100% - 32px), transparent)' }}>
+      {readOnly && <Alert severity="info" role="status">{ROLLOUTS_OFF_REASON}</Alert>}
       <CapabilityNotice title="Pull requests and delivery are separate" description="Pull request status comes from your Git client. A merged PR doesn't mean the app has the change." />
       <Section title="Target">
         <Typography component="p" variant="s1">Release v{target.desiredVersion} · {target.selector.version ? `Pinned v${target.selector.version}` : `Follows ${target.selector.label}`}</Typography>
         {target.repository ? <Typography component="p" variant="s3" sx={source}>Branch: {target.repository.defaultBranch} · {target.repository.projectScope ? `Folder: ${target.repository.projectScope}` : 'Root folder'}</Typography> : <Alert severity="warning">This target no longer names a repository. The old plan cannot authorize new writes.</Alert>}
       </Section>
-      {!target.plan ? <Section title="No local plan yet" description="Plan this repository locally, submit the plan, then review the changes here."><RolloutInstructions version={target.desiredVersion} /></Section> : <>
+      {!target.plan ? (readOnly ? <Section title="No local plan yet" description="No plan was submitted for this repository before rollouts were turned off." /> : <Section title="No local plan yet" description="Plan this repository locally, submit the plan, then review the changes here."><RolloutInstructions version={target.desiredVersion} /></Section>) : <>
         <Section title="Changes" description="Excerpts only. Files are checked again before anything is written.">
           {target.plan.changes.map((change) => <Box key={change.path} sx={{ borderBottom: 1, borderColor: 'divider', py: 1 }}>
             <Typography component="h3" variant="m3" sx={source}>{{ replace: 'Replaces', add: 'Adds', create: 'Creates', remove: 'Removes', delete: 'Deletes' }[change.action] || humanizeCode(change.action)} {change.path} ({change.ownership === 'managed' ? 'managed by Future AGI' : humanizeCode(change.ownership)})</Typography>
-            <TechnicalDetails title="File fingerprints"><IdentityChip label="Before" value={change.beforeSha256 || 'absent'} /><IdentityChip label="After" value={change.afterSha256 || 'absent'} /></TechnicalDetails>
+            <TechnicalDetails title="File details"><IdentityChip label="Before" value={change.beforeSha256 || 'absent'} /><IdentityChip label="After" value={change.afterSha256 || 'absent'} /></TechnicalDetails>
             <ChangeExcerpt text={change.diffPreview || ''} />
           </Box>)}
         </Section>
@@ -60,13 +77,13 @@ export default function ContextCampaignTargetDrawer({ target, open, onClose, dec
           {target.plan.blockers.map((blocker) => <Alert severity="warning" key={blocker}>{blocker}</Alert>)}
         </Section>}
       </>}
-      {decision && <Section title="Target decision">
+      {decision && !(readOnly && decision.decision === 'pending' && !decision.reason) && <Section title="Target decision">
         <TextField select fullWidth size="small" label="Include this target" value={decision.decision} disabled={!editable} onChange={(event) => onDecision({ ...decision, decision: event.target.value })}>
           <MenuItem value="pending">Not decided</MenuItem><MenuItem value="include" disabled={!target.repository || !target.plan || target.plan.blockers.length > 0 || (target.selector.version && target.selector.version !== target.desiredVersion)}>Include exact plan</MenuItem><MenuItem value="exclude">Exclude with reason</MenuItem>
         </TextField>
         <TextField fullWidth multiline minRows={2} size="small" label="Review or exclusion reason" value={decision.reason} disabled={!editable} onChange={(event) => onDecision({ ...decision, reason: event.target.value })} inputProps={{ maxLength: 500 }} sx={{ mt: 1 }} />
       </Section>}
-      <TechnicalDetails title="Repository fingerprints">
+      <TechnicalDetails title="Technical details">
         <IdentityChip value={target.desiredDigest} label="Release digest" /><Typography variant="s3">Repository ID {target.repository?.repositoryId ?? 'Not reported'}</Typography>
         <IdentityChip kind="id" label="Release ID" value={target.desiredVersionId} />
         {target.plan && <Stack spacing={1}><Typography variant="s3">Planned repository ID {target.plan.repositoryId}</Typography><IdentityChip label="Base commit" value={target.plan.baseCommit} /><IdentityChip label="Plan" value={target.planDigest} /><IdentityChip label="Previous lock" value={target.plan.previousLockDigest || 'None — cold adoption'} /><IdentityChip label="Materialization" value={target.plan.materializationDigest} /></Stack>}
@@ -85,8 +102,8 @@ export default function ContextCampaignTargetDrawer({ target, open, onClose, dec
         })}</Stack>}
       </Section>
     </Stack>}
-    {target && <Stack spacing={1} alignItems="flex-start" sx={{ p: 2, borderTop: 1, borderColor: 'divider', bgcolor: 'background.paper', flexShrink: 0 }}><Typography variant="s3" color="text.secondary">Decisions are saved to this draft for this review session.</Typography><Stack direction="row" spacing={1}>
-      {!target.plan && <Button color="primary" variant="contained" onClick={async () => {
+    {target && <Stack ref={setFooter} spacing={1} alignItems="flex-start" sx={{ p: 2, borderTop: 1, borderColor: 'divider', bgcolor: 'background.paper', flexShrink: 0 }}><Typography variant="s3" color="text.secondary">{readOnly ? 'This target is read-only while rollouts are off.' : 'Decisions are saved to this draft for this review session.'}</Typography><Stack direction="row" spacing={1}>
+      {!target.plan && !readOnly && <Button color="primary" variant="contained" onClick={async () => {
         try {
           if (!navigator.clipboard?.writeText) throw new Error('Clipboard unavailable');
           await navigator.clipboard.writeText(planCommand(target.desiredVersion));
@@ -99,6 +116,6 @@ export default function ContextCampaignTargetDrawer({ target, open, onClose, dec
 }
 ContextCampaignTargetDrawer.propTypes = {
   target: PropTypes.object, open: PropTypes.bool.isRequired, onClose: PropTypes.func.isRequired,
-  decision: PropTypes.object, onDecision: PropTypes.func.isRequired, editable: PropTypes.bool,
+  decision: PropTypes.object, onDecision: PropTypes.func.isRequired, editable: PropTypes.bool, readOnly: PropTypes.bool,
   observations: PropTypes.object, onNext: PropTypes.func,
 };

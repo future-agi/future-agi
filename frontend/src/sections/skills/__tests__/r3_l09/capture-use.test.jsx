@@ -410,7 +410,7 @@ describe("independent consumer observations", () => {
       />,
     );
     expect(screen.getByText("Pinned as intended")).toBeVisible();
-    expect(screen.getByText("Runtime loading not observed")).toBeVisible();
+    expect(screen.getByText("No report from this app yet")).toBeVisible();
     // A calm summary, not a warning: connected consumers that have not reported delivery are named and counted.
     expect(screen.getByText("1 of 1 connected consumer needs a delivery report to confirm the version received.")).toBeVisible();
     // The queue names one missing report (no report yet); it never fills the absent delivery in.

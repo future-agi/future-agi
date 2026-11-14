@@ -12,15 +12,17 @@ import Section from 'src/components/section';
 import { ConfirmDialog } from 'src/components/custom-dialog';
 import { ROW_HEIGHT, TABLE_HEADER_HEIGHT } from 'src/theme/sizes';
 import ActionReason, { reasonProps } from '../components/ActionReason';
-import CapabilityNotice from '../components/CapabilityNotice';
 import RolloutInstructions from './RolloutInstructions';
+import RolloutsOffNotice from './RolloutsOffNotice';
+import { ROLLOUTS_OFF_REASON } from './rolloutCopy';
 import ContextCampaignTargetDrawer from './ContextCampaignTargetDrawer';
 
 const decisionLabels = { pending: 'Not decided', include: 'Included', exclude: 'Excluded' };
 const fileCount = (plan) => plan ? `${plan.changes.length} file${plan.changes.length === 1 ? '' : 's'} changed` : 'No plan';
 
-export default function ContextCampaignReview({ campaign, targets, onAuthorize, onStatus, onRollback, pending = false, selectedTarget, onSelectTarget, observations, rollback }) {
+export default function ContextCampaignReview({ campaign, targets, onAuthorize, onStatus, onRollback, pending = false, selectedTarget, onSelectTarget, observations, rollback, access }) {
   const cancelReasonId = useId();
+  const authorizeReasonId = useId();
   const [basis, setBasis] = useState(() => ({ revision: campaign.revision, digest: campaign.manifestDigest }));
   const [decisions, setDecisions] = useState({});
   const [acknowledged, setAcknowledged] = useState(false);
@@ -59,6 +61,8 @@ export default function ContextCampaignReview({ campaign, targets, onAuthorize, 
               : campaign.status === 'running' ? 'Repository work is running. Open each repository to check its pull request and delivery reports.'
                 : missingPlans === targets.length && targets.length > 0 ? `All ${targets.length} ${targets.length === 1 ? 'repository is' : 'repositories are'} blocked: no local plan yet. Run the plan command in each repository, then review it here.`
                   : `${outstanding.length} ${outstanding.length === 1 ? 'repository needs' : 'repositories need'} review${blockedCount ? `; ${blockedCount} blocked` : ''}. Open each repository to review its changes.`;
+  // Off wins: while rollouts are off nothing can be authorized, so "review every target" would be a false next step.
+  const authorizeReason = !campaign.enabled ? ROLLOUTS_OFF_REASON : !ready ? 'Review every target to continue.' : !acknowledged ? 'Tick the acknowledgment to continue.' : '';
   const nextTarget = outstanding.find((target) => target.bindingId !== selectedTarget);
   const selected = targets.find((target) => target.bindingId === selectedTarget);
   const run = async (operation) => {
@@ -76,7 +80,7 @@ export default function ContextCampaignReview({ campaign, targets, onAuthorize, 
     {campaign.enabled && campaign.status === 'draft' && missingPlans > 0 && <RolloutInstructions version={planVersion} />}
     <Typography variant="s1">{campaign.targetCount} targets · {outstanding.length} need review · <Link component="button" type="button" variant="s1" color="inherit" onClick={() => setFilter('blocked')}>{targets.filter(blocked).length} blocked</Link> · {targets.filter((target) => decisionFor(target) === 'exclude').length} excluded</Typography>
     <TechnicalDetails title="Rollout details"><Typography variant="s3">Revision {campaign.revision}</Typography>{campaign.manifestDigest ? <IdentityChip label="Inventory fingerprint" value={campaign.manifestDigest} /> : <Typography variant="s3">Waiting for local plans</Typography>}</TechnicalDetails>
-    {!campaign.enabled && <CapabilityNotice title="Repository rollouts are off" description="Rollouts are turned on in your deployment settings. Ask a workspace admin to check the setting; existing records remain readable." details="SKILLS_CONTEXT_CAMPAIGNS_ENABLED controls repository writes. No writes can be authorized or claimed while it is off." />}
+    {!campaign.enabled && <RolloutsOffNotice access={access} lead="New repository changes can't be started." />}
     {!campaign.canAuthorize && <Alert severity="info">A current workspace administrator must authorize these repository writes.</Alert>}
     {!complete && <Alert severity="warning">The complete target inventory has not loaded. Authorization is unavailable.</Alert>}
     {stale && <Alert severity="warning" action={<Button color="inherit" size="small" onClick={reset}>Review changed state</Button>}>This review is stale. No preconditions were refreshed automatically.</Alert>}
@@ -85,8 +89,8 @@ export default function ContextCampaignReview({ campaign, targets, onAuthorize, 
     {campaign.status === 'draft' && <Section title="Authorize pull requests"><Stack spacing={1} alignItems="flex-start">
       <Typography variant="s3">Reviewed {targets.length - outstanding.length} of {campaign.targetCount}</Typography>
       <FormControlLabel control={<Checkbox checked={acknowledged} disabled={!editable} onChange={(event) => setAcknowledged(event.target.checked)} />} label="I reviewed every included patch and authorize only the listed repository writes, not merge or deployment." />
-      <Button color="primary" variant="contained" disabled={!editable || !ready || !acknowledged} onClick={() => setConfirm('authorize')}>Authorize reviewed PR plans</Button>
-      {!ready ? <Typography variant="s3">Review every target to continue.</Typography> : !acknowledged && <Typography variant="s3">Tick the acknowledgment to continue.</Typography>}
+      <Button color="primary" variant="contained" disabled={!editable || !ready || !acknowledged} {...reasonProps(authorizeReasonId, authorizeReason)} onClick={() => setConfirm('authorize')}>Authorize pull requests</Button>
+      <ActionReason id={authorizeReasonId} reason={authorizeReason} />
     </Stack></Section>}
     </Box>
     <ListToolbar sx={{ flexWrap: 'wrap', gap: 1 }}>
@@ -120,7 +124,7 @@ export default function ContextCampaignReview({ campaign, targets, onAuthorize, 
     </Section>}
     <ContextCampaignTargetDrawer target={selected} open={Boolean(selected)} onClose={() => onSelectTarget(null)}
       decision={selected ? (campaign.status === 'draft' ? chosen(selected) : { decision: selected.decision, reason: selected.reason }) : null}
-      onDecision={(decision) => setDecisions((old) => ({ ...old, [selected.bindingId]: decision }))} editable={editable} observations={observations} onNext={nextTarget ? () => onSelectTarget(nextTarget.bindingId) : undefined} />
+      onDecision={(decision) => setDecisions((old) => ({ ...old, [selected.bindingId]: decision }))} editable={editable} observations={observations} readOnly={!campaign.enabled} onNext={nextTarget ? () => onSelectTarget(nextTarget.bindingId) : undefined} />
     <ConfirmDialog open={Boolean(confirm)} onClose={() => setConfirm(null)} title={confirm === 'authorize' ? 'Authorize exact repository patches?' : `${confirm || 'Change'} rollout?`}
       content={confirm === 'authorize' ? 'Only included plans in this reviewed manifest may create pull requests. This does not authorize merges or deployments.' : 'In-flight Git requests may still complete. Existing branches, PRs and receipts are retained.'}
       action={<Button color="primary" variant="contained" disabled={pending || (confirm === 'authorize' ? (!editable || !ready || !acknowledged) : !reason.trim())} onClick={() => run(() => confirm === 'authorize' ? onAuthorize({ revision: basis.revision, expectedManifestDigest: basis.digest, decisions: targets.map(chosen), acknowledgeRepositoryWrites: true }) : onStatus({ action: confirm, revision: campaign.revision, reason }))}>{confirm === 'authorize' ? 'Authorize exact plans' : 'Confirm change'}</Button>}
@@ -132,4 +136,5 @@ ContextCampaignReview.propTypes = {
   onAuthorize: PropTypes.func.isRequired, onStatus: PropTypes.func.isRequired, onRollback: PropTypes.func.isRequired,
   pending: PropTypes.bool, selectedTarget: PropTypes.string, onSelectTarget: PropTypes.func.isRequired,
   observations: PropTypes.object, rollback: PropTypes.object,
+  access: PropTypes.shape({ ready: PropTypes.bool, canAdmin: PropTypes.bool }),
 };

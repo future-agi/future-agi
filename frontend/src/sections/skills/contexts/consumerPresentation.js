@@ -3,7 +3,7 @@ export const consumerStateNames = {
   matches_target: 'Matches target', pinned_as_intended: 'Pinned as intended',
   update_available: 'Update available', local_modifications: 'Local modifications',
   mixed_sessions: 'Mixed sessions', old_thread_pinned: 'Old thread retained',
-  stale_observation: 'Stale observation', unknown: 'Runtime loading not observed', quarantined: 'Quarantined',
+  stale_observation: 'Stale observation', unknown: 'No report from this app yet', quarantined: 'Quarantined',
 };
 export const consumerNextSteps = {
   review_quarantine: 'Review the quarantined release before continuing.',

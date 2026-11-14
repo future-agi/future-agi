@@ -17,11 +17,11 @@ const target = {
     changes: [{ path: 'AGENTS.md', action: 'replace', beforeSha256: 'a'.repeat(64), afterSha256: 'b'.repeat(64), ownership: 'adopted', diffPreview: 'Keep local instructions. Add managed policy.' }] },
 };
 const observations = { data: { installed: null, discovered: null, delivered: null } };
-function Harness({ value = campaign, targets = [target], onAuthorize = vi.fn().mockResolvedValue({}), onStatus = vi.fn().mockResolvedValue({}) }) {
+function Harness({ value = campaign, targets = [target], onAuthorize = vi.fn().mockResolvedValue({}), onStatus = vi.fn().mockResolvedValue({}), access }) {
   const [selectedTarget, select] = useState(null);
-  return <MemoryRouter><ContextCampaignReview campaign={value} targets={targets} onAuthorize={onAuthorize} onStatus={onStatus} onRollback={vi.fn()} selectedTarget={selectedTarget} onSelectTarget={select} observations={observations} /></MemoryRouter>;
+  return <MemoryRouter><ContextCampaignReview access={access} campaign={value} targets={targets} onAuthorize={onAuthorize} onStatus={onStatus} onRollback={vi.fn()} selectedTarget={selectedTarget} onSelectTarget={select} observations={observations} /></MemoryRouter>;
 }
-Harness.propTypes = { value: PropTypes.object, targets: PropTypes.array, onAuthorize: PropTypes.func, onStatus: PropTypes.func };
+Harness.propTypes = { value: PropTypes.object, targets: PropTypes.array, onAuthorize: PropTypes.func, onStatus: PropTypes.func, access: PropTypes.object };
 afterEach(cleanup);
 
 async function reviewTarget() {
@@ -38,7 +38,7 @@ describe('exact repository review', () => {
   it('requires complete inventory, per-target decision, local review and explicit consent', async () => {
     const authorize = vi.fn().mockResolvedValue({});
     render(<Harness onAuthorize={authorize} />);
-    const button = screen.getByRole('button', { name: 'Authorize reviewed PR plans' });
+    const button = screen.getByRole('button', { name: 'Authorize pull requests' });
     expect(button).toBeDisabled();
     await reviewTarget();
     expect(button).not.toBeDisabled();
@@ -52,20 +52,20 @@ describe('exact repository review', () => {
     render(<Harness value={{ ...campaign, targetCount: 40 }} />);
     await reviewTarget();
     expect(screen.getByText(/complete target inventory has not loaded/)).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Authorize reviewed PR plans' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Authorize pull requests' })).toBeDisabled();
   });
   it('preserves a failed review and does not refresh stale preconditions', async () => {
     const authorize = vi.fn().mockRejectedValue(new Error('conflict'));
     const view = render(<Harness onAuthorize={authorize} />);
     await reviewTarget();
-    fireEvent.click(screen.getByRole('button', { name: 'Authorize reviewed PR plans' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Authorize pull requests' }));
     fireEvent.click(screen.getByRole('button', { name: 'Authorize exact plans' }));
     await waitFor(() => expect(screen.getByText(/operation was not confirmed/)).toBeInTheDocument());
     fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Cancel' }));
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
     view.rerender(<Harness value={{ ...campaign, revision: 4, manifestDigest: 'sha256:new' }} onAuthorize={authorize} />);
     expect(screen.getByText(/No preconditions were refreshed automatically/)).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Authorize reviewed PR plans' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Authorize pull requests' })).toBeDisabled();
     fireEvent.click(screen.getByRole('button', { name: 'Review changed state' }));
     expect(screen.getByRole('checkbox')).not.toBeChecked();
     expect(screen.getByText('Not decided', { exact: true })).toBeInTheDocument();
@@ -78,9 +78,9 @@ describe('exact repository review', () => {
   });
   it('keeps disabled and role-lost campaigns read-only', () => {
     const view = render(<Harness value={{ ...campaign, enabled: false }} />);
-    expect(screen.getByRole('button', { name: 'Authorize reviewed PR plans' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Authorize pull requests' })).toBeDisabled();
     view.rerender(<Harness value={{ ...campaign, canAuthorize: false }} />);
-    expect(screen.getByRole('button', { name: 'Authorize reviewed PR plans' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Authorize pull requests' })).toBeDisabled();
   });
   it('collects a pause reason before the confirmation focus trap opens', async () => {
     const onStatus = vi.fn().mockResolvedValue({});
@@ -103,14 +103,14 @@ describe('independent observations and availability', () => {
   it('retains the planned identity when a binding no longer names a repository', () => {
     render(<ContextCampaignTargetDrawer target={{ ...target, repository: null }} open onClose={vi.fn()} onDecision={vi.fn()} observations={observations} />);
     expect(screen.getByText(/target no longer names a repository/)).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'Repository fingerprints' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Technical details' }));
     expect(screen.getByText(/Planned repository ID 100/)).toBeInTheDocument();
   });
   it('keeps a zero repository identifier in technical details without exposing it in the summary', () => {
     render(<ContextCampaignTargetDrawer target={{ ...target, repository: { ...target.repository, repositoryId: 0 } }} open onClose={vi.fn()} onDecision={vi.fn()} observations={observations} />);
     expect(screen.getByText('Branch: main · Root folder')).toBeVisible();
     expect(screen.queryByText('Repository ID 0')).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'Repository fingerprints' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Technical details' }));
     expect(screen.getByText('Repository ID 0')).toBeVisible();
   });
   it('renders remote diff text literally', () => {
@@ -150,7 +150,7 @@ it('keeps hidden targets in authorization validation when filtering the inventor
   await reviewTarget();
   fireEvent.change(screen.getByLabelText('Search repositories'), { target: { value: 'synthetic' } });
   expect(screen.queryByRole('button', { name: 'Review target another-repository' })).toBeNull();
-  expect(screen.getByRole('button', { name: 'Authorize reviewed PR plans' })).toBeDisabled();
+  expect(screen.getByRole('button', { name: 'Authorize pull requests' })).toBeDisabled();
   expect(screen.getByText('Reviewed 1 of 2')).toBeVisible();
 });
 
@@ -162,7 +162,7 @@ it('links the blocked count to visible, labelled blockers without relaxing autho
   expect(screen.getByText('Blocked: local changes')).toBeVisible();
   expect(screen.getByText('Local modifications need review')).toBeVisible();
   expect(screen.queryByRole('button', { name: 'Review target synthetic-repository' })).toBeNull();
-  expect(screen.getByRole('button', { name: 'Authorize reviewed PR plans' })).toBeDisabled();
+  expect(screen.getByRole('button', { name: 'Authorize pull requests' })).toBeDisabled();
 });
 
 it('renders unified excerpts with the shared diff while retaining hunk boundaries', () => {
@@ -178,7 +178,7 @@ it('renders unified excerpts with the shared diff while retaining hunk boundarie
 it('leads missing plans with a local command and keeps authorization blocked', () => {
   render(<Harness targets={[{ ...target, plan: null }]} />);
   expect(screen.getByText(/All 1 repository is blocked: no local plan yet/)).toBeVisible();
-  expect(screen.getByRole('button', { name: 'Authorize reviewed PR plans' })).toBeDisabled();
+  expect(screen.getByRole('button', { name: 'Authorize pull requests' })).toBeDisabled();
   fireEvent.click(screen.getByRole('button', { name: 'Review target synthetic-repository' }));
   expect(within(screen.getByRole('dialog')).getByText(/python -m fi.context plan --name/)).toBeVisible();
   expect(within(screen.getByRole('dialog')).getByRole('link', { name: 'Plan and submit repository changes' })).toHaveAttribute('href', 'https://docs.futureagi.com/docs/skills/campaigns');
@@ -200,4 +200,63 @@ it.each([
   render(<Harness value={{ ...campaign, status }} targets={[{ ...target, plan: null }]} />);
   expect(screen.getByRole('status')).toHaveTextContent(conclusion);
   expect(screen.queryByText(/python -m fi.context plan --name/)).toBeNull();
+});
+
+const OFF_REASON = "Rollouts are off, so pull requests can't be authorized. Existing records stay readable.";
+const ADMIN_COPY = 'Rollouts are set by your deployment configuration, not by this workspace. Ask whoever runs your Future AGI deployment to turn them on.';
+
+describe('rollouts off', () => {
+  const off = { ...campaign, enabled: false };
+  it('explains why authorization is unavailable instead of asking for a review that cannot count', () => {
+    render(<Harness value={off} />);
+    const button = screen.getByRole('button', { name: 'Authorize pull requests' });
+    expect(button).toBeDisabled();
+    expect(button).toHaveAccessibleDescription(OFF_REASON);
+    expect(screen.queryByText('Review every target to continue.')).toBeNull();
+    expect(screen.getByRole('checkbox')).toBeDisabled();
+  });
+  it('still asks for the review when rollouts are on', () => {
+    render(<Harness />);
+    expect(screen.getByRole('button', { name: 'Authorize pull requests' })).toHaveAccessibleDescription('Review every target to continue.');
+  });
+  it('opens target drawers read-only: no plan command, no decision form, records and observations stay readable', () => {
+    render(<Harness value={off} targets={[{ ...target, plan: null }]} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Review target synthetic-repository' }));
+    const drawer = screen.getByRole('dialog');
+    expect(within(drawer).getByText(OFF_REASON)).toBeVisible();
+    expect(within(drawer).queryByRole('button', { name: 'Copy plan command' })).toBeNull();
+    expect(within(drawer).queryByText(/python -m fi.context plan/)).toBeNull();
+    expect(within(drawer).queryByLabelText('Include this target')).toBeNull();
+    expect(within(drawer).getByText('Independent delivery observations')).toBeVisible();
+    expect(within(drawer).getByRole('button', { name: 'Technical details' })).toBeVisible();
+  });
+  it('keeps a recorded decision visible, but not editable, after rollouts are turned off', () => {
+    render(<Harness value={{ ...off, status: 'authorized' }} targets={[{ ...target, decision: 'include', reason: 'Reviewed.' }]} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Review target synthetic-repository' }));
+    expect(within(screen.getByRole('dialog')).getByLabelText('Include this target')).toHaveAttribute('aria-disabled', 'true');
+  });
+  it.each([
+    ['an admin', { ready: true, canAdmin: true }, ADMIN_COPY],
+    ['a member', { ready: true, canAdmin: false }, 'Ask a workspace admin.'],
+  ])('tells %s what controls the setting, on the review page and the list', (_, access, sentence) => {
+    const view = render(<Harness value={off} access={access} />);
+    expect(screen.getByText(new RegExp(sentence.replace(/[.]/g, '\\.')))).toBeVisible();
+    if (access.canAdmin) expect(screen.getByRole('link', { name: 'Read the rollout setup guide' })).toHaveAttribute('href', 'https://docs.futureagi.com/docs/skills/campaigns');
+    else expect(screen.queryByRole('link', { name: 'Read the rollout setup guide' })).toBeNull();
+    view.unmount();
+    render(<ContextCampaignList access={access} query={{ data: { count: 0, results: [] } }} enabled={false} onOpen={vi.fn()} page={1} onPageChange={vi.fn()} />);
+    expect(screen.getByText(new RegExp(sentence.replace(/[.]/g, '\\.')))).toBeVisible();
+    if (access.canAdmin) expect(screen.queryByText('Ask a workspace admin.')).toBeNull();
+  });
+  it('shows neither role sentence until the role is known', () => {
+    render(<Harness value={off} access={{ ready: false, canAdmin: false }} />);
+    expect(screen.getByText('Repository rollouts are off')).toBeVisible();
+    expect(screen.queryByText(/Ask a workspace admin/)).toBeNull();
+    expect(screen.queryByText(/deployment configuration/)).toBeNull();
+  });
+  it('keeps engineer words inside the technical details of the plan step', () => {
+    render(<Harness targets={[{ ...target, plan: null }]} />);
+    expect(screen.queryByText(/record_plan|repository_id|scoped context credential/)).toBeNull();
+    expect(screen.getByText(/Each repository records its plan with a read-only key/)).toBeVisible();
+  });
 });

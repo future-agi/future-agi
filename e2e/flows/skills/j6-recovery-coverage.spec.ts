@@ -131,7 +131,7 @@ test('SKILLS-E2E-060: distinguish reported delivery from incomplete and unknown 
       await expect(page.getByText(/^3 of 4 connected consumers need a delivery report to confirm the version received\. /)).toBeVisible();
       for (const binding of bindings.slice(1)) {
         const row = table.getByRole('row').filter({ hasText: binding.name });
-        await expect(row.getByText('Runtime loading not observed', { exact: true })).toBeVisible();
+        await expect(row.getByText('No report from this app yet', { exact: true })).toBeVisible();
         await expect(row.getByText('Matches target', { exact: true })).toHaveCount(0);
       }
       await page.screenshot({ path: testInfo.outputPath('j6-consumers.png'), animations: 'disabled' });

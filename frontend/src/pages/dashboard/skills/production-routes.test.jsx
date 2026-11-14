@@ -88,7 +88,7 @@ it('opens the real context controller through production navigation and reads ex
   fireEvent.click(await screen.findByRole('button', { name: 'policy-context' }));
   expect(await screen.findByText('# Exact policy')).toBeVisible();
   fireEvent.click(screen.getByRole('tab', { name: 'Consumers' }));
-  expect(await screen.findByText('No declared consumers')).toBeVisible();
+  expect(await screen.findByText('No apps connected yet')).toBeVisible();
   fireEvent.click(screen.getByRole('tab', { name: 'Use' }));
   fireEvent.click(screen.getByRole('button', { name: 'Installation requirements' }));
   expect(screen.getByTitle(versionId)).toBeVisible();
