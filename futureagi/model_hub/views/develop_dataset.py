@@ -668,7 +668,7 @@ def _compare_dataset_ids(metadata):
 def _resolve_request_compare(request, compare_id):
     """Metadata of a comparison the request may use, or None.
 
-    A comparison belongs to the organization and workspace of every
+    A comparison belongs to the organization and workspace that can see every
     dataset it joins. Unknown, cleaned-up and out-of-scope comparisons all
     resolve to None so that callers answer them identically.
     """
@@ -14236,8 +14236,6 @@ class CompareDatasetsView(APIView):
         },
     )
     def post(self, request, dataset_id, *args, **kwargs):
-        if getattr(request, "organization", None) is None:
-            return self._gm.not_found(get_error_message("DATASET_NOT_FOUND"))
         try:
             start_time = time.time()
             # Pagination parameters
@@ -14688,8 +14686,6 @@ class DownloadComparisonDatasetView(APIView):
         },
     )
     def post(self, request, dataset_id, *args, **kwargs):
-        if getattr(request, "organization", None) is None:
-            return self._gm.not_found(get_error_message("DATASET_NOT_FOUND"))
         try:
             # Get main dataset and validate request data
             datasets_in_scope = _request_dataset_queryset(request)

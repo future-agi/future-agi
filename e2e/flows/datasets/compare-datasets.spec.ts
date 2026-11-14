@@ -156,7 +156,7 @@ test('DATA-E2E-005: compared datasets show joined rows across both result blocks
   });
 
   await test.step('select the second dataset and compare by input', async () => {
-    // DevelopDetailContext and the comparison picker use these native labels.
+    // DevelopDetailContext and the comparison picker expose these native labels.
     await page.goto(`/dashboard/develop/${left.id}`, { waitUntil: 'domcontentloaded' });
     await page.getByRole('button', { name: 'Compare with another dataset', exact: true }).click();
     await page.getByText(right.name, { exact: true }).click();

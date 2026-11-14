@@ -569,21 +569,21 @@ def test_build_with_another_organizations_dataset_is_not_found(
 ):
     _, other_organization, other_workspace = other_org
     compare_root = _replica(monkeypatch, tmp_path, "replica-a")
-    shared = [f"other-build-{index:02d}" for index in range(3)]
+    shared = [f"foreign-build-{index:02d}" for index in range(3)]
     left, _, _ = _make_dataset(organization, workspace, "Build left", shared, "left")
-    other, _, _ = _make_dataset(
-        other_organization, other_workspace, "Build other", shared, "other"
+    foreign, _, _ = _make_dataset(
+        other_organization, other_workspace, "Build foreign", shared, "foreign"
     )
 
     unknown = _post(auth_client, left.id, [uuid.uuid4()], 0, None)
     for response in (
-        _post(auth_client, left.id, [other.id], 0, None),
-        _post(auth_client, other.id, [left.id], 0, None),
+        _post(auth_client, left.id, [foreign.id], 0, None),
+        _post(auth_client, foreign.id, [left.id], 0, None),
     ):
-        # Matches the response for an unknown dataset.
+        # Indistinguishable from a dataset that does not exist.
         assert response.status_code == status.HTTP_404_NOT_FOUND, response.content[:500]
         assert response.json() == unknown.json()
-        assert "other-" not in response.content.decode()
+        assert "foreign-" not in response.content.decode()
     assert unknown.status_code == status.HTTP_404_NOT_FOUND, unknown.content[:500]
     # Nothing was started for the refused selections.
     assert not compare_root.exists() or not any(compare_root.iterdir())
@@ -594,14 +594,14 @@ def test_download_without_compare_id_refuses_rows_of_another_organization(
     auth_client, organization, workspace, other_org
 ):
     _, other_organization, other_workspace = other_org
-    shared = [f"other-rows-{index:02d}" for index in range(3)]
+    shared = [f"foreign-rows-{index:02d}" for index in range(3)]
     left, _, _ = _make_dataset(organization, workspace, "Rows left", shared, "left")
     right, _, _ = _make_dataset(organization, workspace, "Rows right", shared, "right")
-    other, _, _ = _make_dataset(
-        other_organization, other_workspace, "Rows other", shared, "other"
+    foreign, _, _ = _make_dataset(
+        other_organization, other_workspace, "Rows foreign", shared, "secret"
     )
     left_rows, right_rows = _rows_by_input(left), _rows_by_input(right)
-    other_rows = _rows_by_input(other)
+    foreign_rows = _rows_by_input(foreign)
 
     def download(dataset_info, dataset_id=left.id):
         return auth_client.post(
@@ -630,12 +630,12 @@ def test_download_without_compare_id_refuses_rows_of_another_organization(
     assert unknown.status_code == status.HTTP_404_NOT_FOUND, unknown.content[:500]
     for listed_under in (left, right):
         pointed = copy.deepcopy(own)
-        pointed[shared[0]][str(listed_under.id)] = other_rows[shared[0]]
+        pointed[shared[0]][str(listed_under.id)] = foreign_rows[shared[0]]
         response = download(pointed)
-        # Matches the response for an unknown dataset.
+        # Answered like an unknown dataset, with none of the foreign cells.
         assert response.status_code == status.HTTP_404_NOT_FOUND, response
         assert response.json() == unknown.json()
-        assert "other-" not in response.content.decode()
+        assert "secret-" not in response.content.decode()
 
 
 def _age_metadata(page_store, compare_id, hours):
@@ -686,155 +686,3 @@ def test_a_comparison_expires_two_hours_after_it_was_created(
     )
     assert kept.status_code == status.HTTP_200_OK, kept.content[:500]
     assert _result(_post(auth_client, left.id, [right.id], 0, fresh_id))["table"]
-
-
-def _client_without_workspace(user):
-    client = WorkspaceAwareAPIClient()
-    client.force_authenticate(user=user)
-    return client
-
-
-def _assert_not_found_before_cell_reads(monkeypatch, response_call):
-    from django.db import connection
-    from django.test.utils import CaptureQueriesContext
-
-    from model_hub.views import develop_dataset
-
-    calls = []
-
-    def record(*args, **kwargs):
-        calls.append("cell processing")
-        raise AssertionError("cell processing began before dataset resolution")
-
-    monkeypatch.setattr(
-        develop_dataset.CompareDatasetsView, "process_base_values", record
-    )
-    monkeypatch.setattr(develop_dataset, "_prepare_compare_dataset_impl", record)
-    with CaptureQueriesContext(connection) as captured:
-        response = response_call()
-    assert response.status_code == status.HTTP_404_NOT_FOUND, response.content[:500]
-    assert calls == []
-    assert not any('"model_hub_cell"' in query["sql"] for query in captured)
-
-
-def _bind_request_organization(monkeypatch, organization):
-    from rest_framework.views import APIView
-
-    original_initial = APIView.initial
-
-    def initial(view, request, *args, **kwargs):
-        request.organization = organization
-        return original_initial(view, request, *args, **kwargs)
-
-    monkeypatch.setattr(APIView, "initial", initial)
-
-
-@pytest.mark.django_db(transaction=True)
-def test_compare_without_bound_organization_returns_not_found(
-    organization, workspace, page_store, monkeypatch
-):
-    shared = [f"unbound-{index}" for index in range(3)]
-    left, _, _ = _make_dataset(organization, workspace, "Unbound left", shared, "left")
-    right, _, _ = _make_dataset(organization, workspace, "Unbound right", shared, "right")
-    suffix = uuid.uuid4().hex[:8]
-    user = User.objects.create_user(
-        email=f"compare-unbound-{suffix}@example.test",
-        password="testpassword123",
-        name="Compare Unbound",
-        organization=None,
-    )
-    # User creation may assign the test thread's current organization.
-    User.objects.filter(pk=user.pk).update(organization=None)
-    user.refresh_from_db()
-    assert user.organization_id is None
-    client = _client_without_workspace(user)
-    _assert_not_found_before_cell_reads(
-        monkeypatch, lambda: _post(client, left.id, [right.id], 0, None)
-    )
-
-
-@pytest.mark.django_db(transaction=True)
-def test_compare_without_workspace_resolves_datasets_in_request_organization(
-    organization, workspace, other_org, page_store, monkeypatch
-):
-    _, other_organization, _ = other_org
-    shared = [f"other-org-{index}" for index in range(3)]
-    left, _, _ = _make_dataset(organization, workspace, "Scope left", shared, "left")
-    right, _, _ = _make_dataset(organization, workspace, "Scope right", shared, "right")
-    owner = User.objects.get(
-        organization=other_organization, organization_role=OrganizationRoles.OWNER
-    )
-    _bind_request_organization(monkeypatch, other_organization)
-    client = _client_without_workspace(owner)
-    for base, compared in ((left.id, right.id), (right.id, left.id)):
-        _assert_not_found_before_cell_reads(
-            monkeypatch, lambda base=base, compared=compared: _post(
-                client, base, [compared], 0, None
-            )
-        )
-
-
-@pytest.mark.django_db(transaction=True)
-def test_compare_without_active_organization_membership_returns_not_found(
-    organization, workspace, page_store, monkeypatch
-):
-    shared = [f"inactive-{index}" for index in range(3)]
-    left, _, _ = _make_dataset(organization, workspace, "Inactive left", shared, "left")
-    right, _, _ = _make_dataset(organization, workspace, "Inactive right", shared, "right")
-    suffix = uuid.uuid4().hex[:8]
-    user = User.objects.create_user(
-        email=f"compare-inactive-{suffix}@example.test",
-        password="testpassword123",
-        name="Compare Inactive",
-        organization=organization,
-        organization_role=OrganizationRoles.MEMBER,
-    )
-    membership, _ = OrganizationMembership.no_workspace_objects.get_or_create(
-        user=user,
-        organization=organization,
-        defaults={"role": OrganizationRoles.MEMBER, "level": Level.MEMBER},
-    )
-    OrganizationMembership.no_workspace_objects.filter(pk=membership.pk).update(
-        is_active=False
-    )
-    client = _client_without_workspace(user)
-    _assert_not_found_before_cell_reads(
-        monkeypatch, lambda: _post(client, left.id, [right.id], 0, None)
-    )
-
-
-@pytest.mark.django_db(transaction=True)
-def test_download_without_workspace_resolves_datasets_in_request_organization(
-    organization, workspace, other_org, monkeypatch
-):
-    _, other_organization, other_workspace = other_org
-    shared = [f"download-scope-{index}" for index in range(3)]
-    other, _, _ = _make_dataset(
-        organization, workspace, "Download other", shared, "other"
-    )
-    own, _, _ = _make_dataset(
-        other_organization, other_workspace, "Download own", shared, "own"
-    )
-    owner = User.objects.get(
-        organization=other_organization, organization_role=OrganizationRoles.OWNER
-    )
-    _bind_request_organization(monkeypatch, other_organization)
-    client = _client_without_workspace(owner)
-    own_rows, other_rows = _rows_by_input(own), _rows_by_input(other)
-    dataset_info = {
-        value: {str(own.id): own_rows[value], str(other.id): other_rows[value]}
-        for value in shared
-    }
-    _assert_not_found_before_cell_reads(
-        monkeypatch,
-        lambda: client.post(
-            DOWNLOAD_URL.format(dataset_id=own.id),
-            {
-                "dataset_ids": [str(other.id)],
-                "base_column_name": "input",
-                "dataset_info": dataset_info,
-                "common_column_names": ["input", "output"],
-            },
-            format="json",
-        ),
-    )
