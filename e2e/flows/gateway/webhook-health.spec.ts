@@ -1,0 +1,171 @@
+import { request } from '@playwright/test';
+import pg from 'pg';
+import { test, expect } from '../../lib/fixtures';
+import { E2E } from '../../lib/env';
+import { POLL } from '../../lib/state-probe';
+import { flowAnnotation } from '../../lib/flow-meta';
+
+// frontend/src/routes/sections/dashboard.jsx: gateway "webhooks".
+const WEBHOOKS_ROUTE = '/dashboard/gateway/webhooks';
+// agentcc/urls.py: AgentccWebhookViewSet and AgentccAPIKeyViewSet.
+const WEBHOOKS = '/agentcc/webhooks/';
+const API_KEYS = '/agentcc/api-keys/';
+// GatewayWebhookView, and the secret docker-compose.e2e.yml gives the backend.
+const LOGS_WEBHOOK_PATH = '/agentcc/webhook/logs/';
+const WEBHOOK_SECRET = process.env.AGENTCC_WEBHOOK_SECRET || 'e2e-agentcc-webhook-secret';
+// docker-compose.e2e.yml sets AGENTCC_WEBHOOK_DISABLE_AFTER_FAILURES=3 on the
+// worker, which runs the delivery schedule.
+const DISABLE_AFTER = 3;
+// Five events, so each of the three failing runs has a due one: a run stops at
+// its first failed attempt and that event backs off 30 s.
+const EVENTS = 5;
+// tfc/temporal/schedules/agentcc_webhooks.py: agentcc-webhook-delivery fires
+// every 10 s and each run makes one failed attempt, so three failures take three
+// ticks plus worker start-up. ASYNC_JOB is one Temporal job; this is a chain of them.
+const DISABLED_WITHIN = { timeout: 3 * POLL.ASYNC_JOB.timeout, intervals: [2_000] };
+const UI_READY = 60_000;
+
+type Created = { result: { id: string } };
+type Key = { result: { gateway_key_id: string } };
+
+test('GW-E2E-005: a webhook that keeps failing is disabled with its reason, re-enabled, and deleted without leftover events', {
+  tag: ['@flow'],
+  annotation: flowAnnotation({
+    id: 'GW-E2E-005',
+    area: 'gateway',
+    userGoal: 'A platform engineer sees why the gateway disabled a webhook that kept failing, turns it back on, and deletes it without leaving events to deliver',
+    steps: [
+      'create a gateway key and an outbound webhook for request.completed',
+      'point the webhook at an in-stack host the delivery guard refuses, so every attempt fails on the VM',
+      'deliver five gateway request logs on the logs webhook',
+      'wait for the delivery schedule to disable the webhook after three failed deliveries',
+      'open Gateway Webhooks and read the Disabled status and its reason',
+      'choose Enable from the row actions and see it Active',
+      'delete the webhook from the row actions',
+    ],
+    backendChecks: [
+      'log ingest answers at once and leaves its five events pending with no attempt',
+      'the webhook in PG agentcc_webhook is inactive with a reason naming three consecutive failed deliveries, and its events are dead-lettered',
+      'enabling it stores is_active true with the failure streak and reason cleared',
+      'after the delete none of its events is pending, failed or dead-lettered; all five are cancelled',
+    ],
+  }),
+}, async ({ page, actor, probe }, testInfo) => {
+  // Seeding, up to three Temporal delivery ticks, three UI stages.
+  test.setTimeout(DISABLED_WITHIN.timeout + 4 * UI_READY + 60_000);
+  const name = `e2e-wh-${testInfo.workerIndex}-${Date.now().toString(36)}`;
+
+  const key = await actor.api.post<Key>(API_KEYS, { name });
+  // A public placeholder, as flows/alerts/webhook-configuration.spec.ts uses:
+  // the serializer refuses private hosts at save time.
+  const webhook = await actor.api.post<Created>(WEBHOOKS, {
+    name,
+    url: `http://93.184.216.34/${name}`,
+    events: ['request.completed'],
+  });
+  const webhookId = webhook.result.id;
+  await testInfo.attach('seeded-ids', {
+    body: JSON.stringify({ organization: actor.organizationId, webhook: webhookId, gatewayKeyId: key.result.gateway_key_id, name }),
+    contentType: 'application/json',
+  });
+
+  // Before any event exists, point the webhook at a compose-network host. The
+  // delivery guard (agentcc/services/url_safety.py) refuses it before any
+  // connection, so every attempt fails fast and nothing leaves the VM. The
+  // probe stays read-only; this one seeding write has its own connection.
+  const seedClient = new pg.Client({ connectionString: E2E.pgUrl });
+  await seedClient.connect();
+  try {
+    const repointed = await seedClient.query(
+      'UPDATE agentcc_webhook SET url = $2 WHERE id = $1 AND organization_id = $3',
+      [webhookId, `http://mock-llm:8080/${name}`, actor.organizationId],
+    );
+    expect(repointed.rowCount).toBe(1);
+  } finally {
+    await seedClient.end();
+  }
+
+  const events = () => probe.pg<{ status: string; attempts: number }>(
+    'SELECT status, attempts FROM agentcc_webhook_event WHERE webhook_id = $1 ORDER BY created_at',
+    [webhookId],
+  );
+  const stored = async () => (await probe.pg<{ is_active: boolean; consecutive_failures: number; disabled_reason: string }>(
+    'SELECT is_active, consecutive_failures, disabled_reason FROM agentcc_webhook WHERE id = $1',
+    [webhookId],
+  ))[0];
+
+  await test.step('ingest only records the events', async () => {
+    const req = await request.newContext();
+    const res = await req.post(`${E2E.apiUrl}${LOGS_WEBHOOK_PATH}`, {
+      headers: { 'X-Webhook-Secret': WEBHOOK_SECRET },
+      data: {
+        logs: Array.from({ length: EVENTS }, (_, i) => ({
+          request_id: `${name}-${i}`,
+          auth_key_id: key.result.gateway_key_id,
+          model: 'gpt-4o-mini',
+          provider: 'openai',
+          status_code: 200,
+          latency_ms: 120,
+          timestamp: new Date().toISOString(),
+        })),
+      },
+    });
+    expect(res.status(), await res.text()).toBe(200);
+    expect(await res.json()).toMatchObject({ result: { ingested: EVENTS } });
+    await req.dispose();
+    // Read straight after the 200: a tick may start before this read, so only
+    // the events still untried are counted, and none can have been delivered.
+    const rows = await events();
+    expect(rows).toHaveLength(EVENTS);
+    expect(rows.filter(r => r.status === 'delivered')).toEqual([]);
+  });
+
+  await test.step('the delivery schedule disables the webhook after three failures', async () => {
+    await expect.poll(async () => (await stored()).is_active, DISABLED_WITHIN).toBe(false);
+    const disabled = await stored();
+    expect(disabled.consecutive_failures).toBe(DISABLE_AFTER);
+    expect(disabled.disabled_reason).toContain(`Disabled after ${DISABLE_AFTER} consecutive failed deliveries`);
+    const rows = await events();
+    expect(rows.map(r => r.status)).toEqual(Array(EVENTS).fill('dead_letter'));
+    // One failed attempt per run, each one counted: three in all, so the
+    // webhook's other events waited untouched.
+    expect(rows.reduce((sum, r) => sum + r.attempts, 0)).toBe(DISABLE_AFTER);
+  });
+
+  const row = page.getByRole('row').filter({ hasText: name });
+  await test.step('the dashboard shows Disabled and why', async () => {
+    await page.goto(WEBHOOKS_ROUTE);
+    await expect(row).toHaveCount(1, { timeout: UI_READY });
+    await expect(row.getByText('Disabled', { exact: true })).toBeVisible({ timeout: UI_READY });
+    await expect(row.getByText(/Disabled after 3 consecutive failed deliveries/)).toBeVisible({ timeout: UI_READY });
+  });
+
+  await test.step('Enable turns it back on and clears the streak', async () => {
+    const saved = page.waitForResponse(
+      res => res.url().endsWith(`${WEBHOOKS}${webhookId}/`) && res.request().method() === 'PATCH',
+      { timeout: UI_READY },
+    );
+    await row.getByRole('button', { name: 'Webhook actions' }).click();
+    await page.getByRole('menuitem', { name: 'Enable', exact: true }).click();
+    expect((await saved).status()).toBe(200);
+    await expect(page.getByText('Webhook enabled')).toBeVisible({ timeout: UI_READY });
+    await expect(row.getByText('Active', { exact: true })).toBeVisible({ timeout: UI_READY });
+    await expect(row.getByText(/consecutive failed deliveries/)).toHaveCount(0);
+    expect(await stored()).toEqual({ is_active: true, consecutive_failures: 0, disabled_reason: '' });
+  });
+
+  await test.step('deleting it leaves no event to deliver', async () => {
+    const deleted = page.waitForResponse(
+      res => res.url().endsWith(`${WEBHOOKS}${webhookId}/`) && res.request().method() === 'DELETE',
+      { timeout: UI_READY },
+    );
+    await row.getByRole('button', { name: 'Webhook actions' }).click();
+    await page.getByRole('menuitem', { name: 'Delete', exact: true }).click();
+    await page.getByRole('dialog').getByRole('button', { name: 'Delete', exact: true }).click();
+    expect((await deleted).status()).toBe(200);
+    await expect(row).toHaveCount(0, { timeout: UI_READY });
+    const rows = await events();
+    expect(rows.filter(r => ['pending', 'failed', 'dead_letter'].includes(r.status))).toEqual([]);
+    expect(rows.map(r => r.status)).toEqual(Array(EVENTS).fill('cancelled'));
+  });
+});
