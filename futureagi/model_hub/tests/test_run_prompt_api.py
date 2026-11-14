@@ -1329,6 +1329,238 @@ class TestPreviewRunPromptColumnView:
         ]
 
 
+# ==================== Run Prompt Error Disclosure Tests ====================
+
+
+@pytest.fixture
+def execute_prompt_error_case(auth_client, dataset, row, organization):
+    """Exercise the public preview and both row writers without provider calls."""
+    from types import SimpleNamespace
+
+    from model_hub.views import run_prompt as module
+
+    def execute(path, *, phase=None, failure=None):
+        config = {
+            "model": "gpt-4o",
+            "messages": [{"role": "user", "content": "Hello"}],
+            "output_format": "string",
+            "run_prompt_config": {},
+        }
+        column = SimpleNamespace(id=uuid.uuid4())
+        with (
+            patch.object(module, "RunPrompt") as provider,
+            patch.object(module, "populate_placeholders") as populate,
+            patch.object(module, "logger") as logger,
+            patch.object(module, "log_and_deduct_cost_for_api_request", None),
+            patch.object(module, "close_old_connections"),
+            patch.object(module.Cell.objects, "create") as create_cell,
+            patch.object(module.Cell.objects, "get") as get_cell,
+            patch.object(module.Cell.objects, "update_or_create") as update_cell,
+            patch.dict(
+                "sys.modules",
+                {
+                    "ee.usage.schemas.events": MagicMock(),
+                    "ee.usage.services.emitter": MagicMock(),
+                },
+            ),
+        ):
+            populate.return_value = config["messages"]
+            provider.return_value.litellm_response.return_value = (
+                "Successful answer",
+                {"data": {"response": "Successful answer"}, "metadata": {}},
+            )
+            if phase == "preparation":
+                populate.side_effect = failure
+            elif phase == "constructor":
+                provider.side_effect = failure
+            elif phase == "provider":
+                provider.return_value.litellm_response.side_effect = failure
+
+            if path == "preview":
+                response = auth_client.post(
+                    "/model-hub/develops/preview_run_prompt_column/",
+                    {
+                        "dataset_id": str(dataset.id),
+                        "name": "Preview",
+                        "first_n_rows": 1,
+                        "config": config,
+                    },
+                    format="json",
+                )
+                assert response.status_code == status.HTTP_200_OK
+                result = response.json()["result"]
+                assert result["token_usage"] == {}
+                assert result["cost"] == {}
+                messages = result["responses"]
+                cell_status = None
+            elif path == "direct":
+                module.LitellmAPIView().process_row(
+                    row,
+                    config,
+                    dataset,
+                    column,
+                    SimpleNamespace(organization=organization),
+                )
+                saved = update_cell.call_args.kwargs["defaults"]
+                messages = [saved["value"], json.loads(saved["value_infos"])["reason"]]
+                cell_status = saved["status"]
+            else:
+                runner = module.RunPrompts(run_prompt_id=uuid.uuid4())
+                runner.run_prompt_model = MagicMock(
+                    dataset=dataset, organization=organization, **config
+                )
+                runner.is_editing = path == "edit"
+                runner.process_row(row, column)
+                if path == "edit":
+                    saved_cell = get_cell.return_value
+                    saved_cell.save.assert_called_once()
+                    saved = {
+                        "value": saved_cell.value,
+                        "value_infos": saved_cell.value_infos,
+                        "status": saved_cell.status,
+                    }
+                else:
+                    saved = create_cell.call_args.kwargs
+                messages = [saved["value"], json.loads(saved["value_infos"])["reason"]]
+                cell_status = saved["status"]
+
+            return messages, cell_status, logger, provider
+
+    return execute
+
+
+@pytest.mark.django_db
+class TestRunPromptErrorDisclosure:
+    GENERIC_ERROR = (
+        "Unable to run prompt. Please try again or contact support if the problem persists."
+    )
+
+    @pytest.mark.parametrize("path", ["preview", "worker", "edit", "direct"])
+    @pytest.mark.parametrize("phase", ["preparation", "constructor", "provider"])
+    @pytest.mark.parametrize("error_type", [RuntimeError, ValueError])
+    def test_unexpected_errors_are_redacted_and_logged(
+        self, execute_prompt_error_case, path, phase, error_type
+    ):
+        # A ValueError is not proof of local validation. I/O and providers use it too.
+        error = error_type("upstream body: internal connection at /srv/private/client.py")
+        messages, cell_status, logger, provider = execute_prompt_error_case(
+            path, phase=phase, failure=error
+        )
+
+        assert messages == [self.GENERIC_ERROR] * len(messages)
+        assert str(error) not in json.dumps(messages)
+        assert cell_status == (None if path == "preview" else CellStatus.ERROR.value)
+        assert logger.exception.called
+        assert str(error) in str(logger.exception.call_args_list)
+        if phase == "preparation":
+            provider.assert_not_called()
+
+    @pytest.mark.parametrize("path", ["preview", "worker", "edit", "direct"])
+    @pytest.mark.parametrize(
+        "validation,expected",
+        [
+            ("placeholder", "'missing_column'"),
+            ("template", "unexpected 'end of print statement'"),
+            ("image", "Model gpt-4o does not support image input."),
+            ("audio", "Model gpt-4o does not support audio input."),
+            ("pdf", "Model gpt-4o does not support PDF input."),
+        ],
+        ids=["placeholder", "template", "image", "audio", "pdf"],
+    )
+    def test_local_validation_remains_actionable(
+        self, execute_prompt_error_case, monkeypatch, path, validation, expected
+    ):
+        from model_hub.views import run_prompt as module
+
+        monkeypatch.setattr(module.litellm.utils, "supports_vision", lambda **kw: False)
+        monkeypatch.setattr(
+            module.litellm.utils, "supports_audio_input", lambda **kw: False
+        )
+        monkeypatch.setattr(module.litellm.utils, "supports_pdf_input", lambda **kw: False)
+        monkeypatch.setattr(
+            "model_hub.views.prompt_template.get_model_mode", lambda model: "chat"
+        )
+
+        def validate(*args, **kwargs):
+            if validation in ("placeholder", "template"):
+                text = (
+                    "{missing_column}" if validation == "placeholder" else "{{ missing + }}"
+                )
+                template_format = "f-string" if validation == "placeholder" else "jinja2"
+                return module.process_text_with_media(
+                    text, {}, {}, 0, "gpt-4o", template_format=template_format
+                )
+            media_type = f"{validation}_url"
+            return module.process_list_content(
+                [{"type": media_type, media_type: {"url": "https://example.com/media"}}],
+                {},
+                {},
+                0,
+                "gpt-4o",
+            )
+
+        messages, cell_status, _, provider = execute_prompt_error_case(
+            path, phase="preparation", failure=validate
+        )
+
+        assert messages == [expected] * len(messages)
+        assert cell_status == (None if path == "preview" else CellStatus.ERROR.value)
+        provider.assert_not_called()
+
+    @pytest.mark.parametrize("path", ["preview", "worker", "edit", "direct"])
+    def test_validation_shaped_provider_error_is_not_allowlisted(
+        self, execute_prompt_error_case, monkeypatch, path
+    ):
+        from model_hub.views import run_prompt as module
+
+        # Even the local validation exception type is not trusted outside that phase.
+        monkeypatch.setattr(module.litellm.utils, "supports_vision", lambda **kw: False)
+        with pytest.raises(ValueError) as raised:
+            module.process_media_markers(
+                "marker", {"marker": {"type": "image", "counter": 0}}, "gpt-4o"
+            )
+        messages, _, logger, _ = execute_prompt_error_case(
+            path, phase="provider", failure=raised.value
+        )
+
+        assert messages == [self.GENERIC_ERROR] * len(messages)
+        assert logger.exception.called
+
+    @pytest.mark.parametrize("path", ["preview", "worker", "edit", "direct"])
+    def test_successful_answers_are_unchanged(self, execute_prompt_error_case, path):
+        messages, cell_status, _, _ = execute_prompt_error_case(path)
+
+        assert messages == ["Successful answer"] * len(messages)
+        assert cell_status == (None if path == "preview" else CellStatus.PASS.value)
+
+    def test_preview_setup_error_is_redacted(self, auth_client, dataset):
+        error = ValueError("internal query failed at /srv/private/query.py")
+        with (
+            patch("model_hub.views.run_prompt.Row.objects.filter", side_effect=error),
+            patch("model_hub.views.run_prompt.logger") as logger,
+        ):
+            response = auth_client.post(
+                "/model-hub/develops/preview_run_prompt_column/",
+                {
+                    "dataset_id": str(dataset.id),
+                    "name": "Preview",
+                    "first_n_rows": 1,
+                    "config": {
+                        "model": "gpt-4o",
+                        "messages": [{"role": "user", "content": "Hello"}],
+                        "output_format": "string",
+                    },
+                },
+                format="json",
+            )
+
+        assert response.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
+        assert self.GENERIC_ERROR in json.dumps(response.json())
+        assert str(error) not in json.dumps(response.json())
+        assert logger.exception.called
+        assert str(error) in str(logger.exception.call_args_list)
+
+
 # ==================== RetrieveRunPromptColumnConfigView Tests ====================
 
 
