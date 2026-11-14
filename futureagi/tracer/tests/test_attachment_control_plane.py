@@ -24,6 +24,7 @@ from tracer.models.attachment import (
 )
 from tracer.services.attachments import (
     control_plane,
+    lifecycle,
     manifests,
     occurrences,
     uploads,
@@ -38,6 +39,7 @@ from tracer.services.attachments.references import REFS
 from tracer.tasks.attachment_binding import reconcile_attachment_bindings
 from tracer.tests import test_attachment_core as core
 from tracer.tests.test_attachment_core import ImmutableStore, initialized, wav_bytes
+from tracer.tests.test_attachment_lifecycle import ErasableStore
 
 setup = core.setup
 
@@ -199,6 +201,54 @@ def test_bound_source_equals_the_read_path_source(setup, user, monkeypatch):
     )
 
 
+def test_bound_occurrence_still_reads_25h_later_through_the_scheduled_jobs(
+    setup, user, monkeypatch
+):
+    """Regression: binding kept the 24 h pending deadline, so the sweep erased
+    every bound occurrence one day after upload. The real binder, real source
+    rule and real read path; only the clock and the span store are doubles."""
+    scope, _ = setup
+    row = occurrence(setup, monkeypatch)
+    spans = Spans()
+    spans.put(scope.project_id, span_for(row))
+    assert control_plane.reconcile_tick(span_reader=spans)["bound"] == 1
+    row.refresh_from_db()
+    assert row.expires_at == row.source_expires_at
+    parent = occurrences.Parent(row.trace_id, row.span_id)
+    authority = LiveSession(
+        span_reader=lambda project_id, span_id: spans(project_id, {span_id}).get(
+            span_id
+        )
+    )
+    viewer = viewer_for(scope, user)
+    for hours in (25, 24 * 30):
+        _travel(monkeypatch, timedelta(hours=hours))
+        swept, drained = _scheduled_tick(spans)
+        assert swept.get("occurrences_expired", 0) == 0, (hours, swept)
+        assert "erase_done" not in drained, (hours, drained)
+        found, _, expiry = occurrences.get_occurrence(
+            viewer, authority, row.client_id, parent, ready=True
+        )
+        assert found.pk == row.pk and found.deleted_at is None
+        assert expiry == row.source_expires_at
+    assert not AttachmentOutbox.objects.filter(scope=scope, event="erase").exists()
+
+
+def test_unbound_occurrence_still_expires_after_the_24h_deadline(
+    setup, monkeypatch
+):
+    """Control: with no span the binder never binds, and the deadline holds."""
+    scope, _ = setup
+    row = occurrence(setup, monkeypatch)
+    spans = Spans()
+    assert control_plane.reconcile_tick(span_reader=spans)["pending"] == 1
+    _travel(monkeypatch, timedelta(hours=25))
+    swept, drained = _scheduled_tick(spans)
+    row.refresh_from_db()
+    assert row.bound_at is None and row.deleted_at is not None
+    assert drained.get("erase_done") == 1, drained
+
+
 def test_binding_waits_without_any_sdk_retry(setup, monkeypatch):
     scope, _ = setup
     row = occurrence(setup, monkeypatch)
@@ -212,7 +262,24 @@ def test_binding_waits_without_any_sdk_retry(setup, monkeypatch):
     assert control_plane.reconcile_tick(span_reader=spans)["bound"] == 1
 
 
-def _binds_without_a_reference(scope, row, refs):
+def _travel(monkeypatch, delta):
+    """Move every service's clock (they all read ``timezone.now``)."""
+    later = timezone.now() + delta
+    monkeypatch.setattr(timezone, "now", lambda: later)
+    return later
+
+
+def _scheduled_tick(spans):
+    """The scheduled binder, lifecycle sweep and outbox drain, all rows due."""
+    control_plane.reconcile_tick(span_reader=spans)
+    swept = lifecycle.sweep()
+    AttachmentOutbox.objects.filter(processed_at__isnull=True).update(
+        available_at=timezone.now() - timedelta(seconds=1)
+    )
+    return swept, lifecycle.drain_outbox(storage=ErasableStore())
+
+
+def _binds_without_a_reference(scope, row, refs, monkeypatch):
     """The authenticated parent + live span + known retention is the proof."""
     spans = Spans()
     span = span_for(row, refs=refs)
@@ -226,12 +293,16 @@ def _binds_without_a_reference(scope, row, refs):
     row.refresh_from_db()
     assert row.bound_at is not None and row.deleted_at is None
     assert row.source_generation == 0
-    # Still bound after the 24 h pending window: nothing erases it.
-    AttachmentOccurrence.objects.filter(pk=row.pk).update(
-        created_at=timezone.now() - timedelta(hours=25)
-    )
-    control_plane.reconcile_tick(span_reader=spans)
+    # Bound: it takes the source retention, not the 24 h pending deadline.
+    assert row.expires_at == row.source_expires_at
+    assert row.expires_at - row.created_at > timedelta(days=365)
+    # Still bound 25 h later, through the real scheduled sweep and erase drain
+    # (moving only created_at, as this test once did, proved nothing).
+    _travel(monkeypatch, timedelta(hours=25))
+    swept, drained = _scheduled_tick(spans)
     row.refresh_from_db()
+    assert swept.get("occurrences_expired", 0) == 0, swept
+    assert "erase_done" not in drained, drained
     assert row.deleted_at is None
     assert not AttachmentOutbox.objects.filter(
         scope=scope, upload__occurrence=row, event="erase"
@@ -252,13 +323,15 @@ def test_recording_segment_binds_with_no_span_reference(setup, monkeypatch):
     row = AttachmentOccurrence.objects.select_related("attachment", "scope").get(
         pk=upload.occurrence_id
     )
-    _binds_without_a_reference(scope, row, refs=[])
+    _binds_without_a_reference(scope, row, refs=[], monkeypatch=monkeypatch)
 
 
 def test_late_attach_binds_with_no_span_reference(setup, monkeypatch):
     """The span was exported (ended) before the upload; it never names it."""
     scope, _ = setup
-    _binds_without_a_reference(scope, occurrence(setup, monkeypatch), refs=[])
+    _binds_without_a_reference(
+        scope, occurrence(setup, monkeypatch), refs=[], monkeypatch=monkeypatch
+    )
 
 
 def test_occurrence_past_the_reference_cap_binds(setup, monkeypatch):
@@ -270,7 +343,7 @@ def test_occurrence_past_the_reference_cap_binds(setup, monkeypatch):
         for _ in range(64)
     ]
     assert len(control_plane._references(span_for(row, refs=others))) == 64
-    _binds_without_a_reference(scope, row, refs=others)
+    _binds_without_a_reference(scope, row, refs=others, monkeypatch=monkeypatch)
 
 
 @pytest.mark.parametrize(

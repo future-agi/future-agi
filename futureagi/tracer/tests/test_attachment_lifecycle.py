@@ -34,6 +34,7 @@ from tracer.models.trace import Trace
 from tracer.services.attachments import (
     lifecycle,
     occurrences,
+    playback,
     retention,
     uploads,
     validation,
@@ -763,3 +764,195 @@ def test_upload_outbox_rows_carry_their_attachment(setup):
     upload, _, _, _ = initialized(setup)
     row = AttachmentOutbox.objects.get(upload=upload, event="admitted")
     assert row.attachment_id == upload.attachment_id
+
+
+# --- Bound media keeps its source retention, not the 24 h pending deadline ------
+#
+# Regression: bind_retention kept ``min(now + 24 h, source)``, so the scheduled
+# sweep tombstoned every bound occurrence a day after upload and the erase
+# drain removed its bytes. Time is moved by patching ``timezone.now`` (every
+# service reads it through the module), and each read mints a fresh media
+# session after the move, so a denial can only come from the occurrence itself.
+
+DECADE = timedelta(days=3650)
+
+
+def _travel(monkeypatch, delta):
+    later = timezone.now() + delta
+    monkeypatch.setattr(timezone, "now", lambda: later)
+    return later
+
+
+def _ready_upload(setup, store):
+    upload, _ = streamed(setup, store)
+    lifecycle.drain_outbox(storage=store)
+    upload.refresh_from_db()
+    assert upload.state == AttachmentState.READY
+    return upload
+
+
+def _reader(scope, user, row, lifetime):
+    parent = occurrences.Parent(row.trace_id, row.span_id)
+    state = occurrences.SourceState(
+        scope.id,
+        parent,
+        3,
+        timezone.now() - timedelta(hours=1),
+        timezone.now() + lifetime,
+        True,
+        True,
+    )
+    viewer = occurrences.Viewer(
+        user.id,
+        uuid.uuid4(),
+        scope.organization_id,
+        scope.workspace_id,
+        scope.project_id,
+    )
+    return state, playback_tests.AuthorityDouble(viewer, state)
+
+
+def _plays(authority, row):
+    """Resolve then gateway-authorize ``row``: 'ready' or the denial status."""
+    viewer = authority.viewer
+    _, cookie = playback.exchange(viewer, authority)
+    (result,) = playback.resolve(
+        viewer,
+        authority,
+        [
+            {
+                "occurrence_id": str(row.client_id),
+                "parent": {"trace_id": str(row.trace_id), "span_id": row.span_id},
+                "representation": "original",
+            }
+        ],
+    )
+    if result["status"] != "ready":
+        return result["status"]
+    grant = result["gateway_path"].rsplit("/", 1)[1]
+    try:
+        playback.authorize(cookie, grant, row.client_id, authority)
+    except AttachmentError as error:
+        return f"gateway_{error.code}"
+    return "ready"
+
+
+def _tick(store):
+    """The two scheduled jobs, with every queued outbox row made due."""
+    swept = lifecycle.sweep()
+    AttachmentOutbox.objects.filter(processed_at__isnull=True).update(
+        available_at=timezone.now() - timedelta(seconds=1)
+    )
+    return swept, lifecycle.drain_outbox(storage=store)
+
+
+def test_bound_upload_outlives_the_24h_pending_deadline(
+    setup, user, parser_probe, monkeypatch
+):
+    scope, _ = setup
+    store = ErasableStore()
+    upload = _ready_upload(setup, store)
+    state, authority = _reader(scope, user, upload.occurrence, DECADE)
+    row = retention.bind_retention(
+        scope_id=scope.id, occurrence_id=upload.occurrence_id, source=state
+    )
+    assert row.expires_at == state.expires_at == row.source_expires_at
+    objects = dict(store.objects)
+    assert objects and _plays(authority, row) == "ready"
+    _travel(monkeypatch, timedelta(hours=25))
+    swept, drained = _tick(store)
+    row.refresh_from_db()
+    assert swept.get("occurrences_expired", 0) == 0, swept
+    assert "erase_done" not in drained, drained
+    assert row.deleted_at is None and store.erased == []
+    assert store.objects == objects
+    assert Attachment.objects.get(pk=upload.attachment_id).state == "ready"
+    assert _plays(authority, row) == "ready"
+    # A year later it is still served: only the source retention bounds it.
+    _travel(monkeypatch, timedelta(days=365))
+    _tick(store)
+    assert _plays(authority, row) == "ready" and store.objects == objects
+
+
+def test_linked_occurrence_of_bound_media_outlives_the_24h_deadline(
+    setup, user, parser_probe, monkeypatch
+):
+    scope, _ = setup
+    store = ErasableStore()
+    upload = _ready_upload(setup, store)
+    state, authority = _reader(scope, user, upload.occurrence, DECADE)
+    retention.bind_retention(
+        scope_id=scope.id, occurrence_id=upload.occurrence_id, source=state
+    )
+    source = AttachmentOccurrence.objects.get(pk=upload.occurrence_id)
+    parent = {"trace_id": str(source.trace_id), "span_id": source.span_id}
+    linked = occurrences.link(
+        authority.viewer,
+        authority,
+        {
+            "source_occurrence_id": str(source.client_id),
+            "source_parent": parent,
+            "target_parent": parent,
+            "occurrence_id": str(uuid.uuid4()),
+            "policy_version": str(scope.policy_version),
+            "deletion_generation": scope.deletion_generation,
+        },
+    )
+    created = AttachmentOccurrence.objects.get(
+        client_id=linked["reference"]["occurrence_id"]
+    )
+    assert created.expires_at == state.expires_at
+    objects = dict(store.objects)
+    _travel(monkeypatch, timedelta(hours=25))
+    swept, drained = _tick(store)
+    assert swept.get("occurrences_expired", 0) == 0, swept
+    assert "erase_done" not in drained and store.objects == objects
+    assert _plays(authority, source) == "ready"
+    assert _plays(authority, created) == "ready"
+
+
+def test_unbound_upload_still_expires_and_is_erased_after_24h(
+    setup, user, parser_probe, monkeypatch
+):
+    # Control: the 24 h deadline still applies while nothing has bound it.
+    store = ErasableStore()
+    upload = _ready_upload(setup, store)
+    assert store.objects
+    _travel(monkeypatch, timedelta(hours=25))
+    swept, drained = _tick(store)
+    upload.occurrence.refresh_from_db()
+    assert swept["occurrences_expired"] == 1, swept
+    assert drained["erase_done"] == 1, drained
+    assert upload.occurrence.deleted_at is not None
+    assert store.erased == [upload.id] and store.objects == {}
+    # And a late bind can no longer revive it.
+    scope, _ = setup
+    state, _ = _reader(scope, user, upload.occurrence, DECADE)
+    with pytest.raises(AttachmentError, match="binding_fenced"):
+        retention.bind_retention(
+            scope_id=scope.id, occurrence_id=upload.occurrence_id, source=state
+        )
+
+
+def test_bound_upload_with_short_source_retention_expires_with_its_source(
+    setup, user, parser_probe, monkeypatch
+):
+    # Control: binding takes the source retention, it does not disable expiry.
+    scope, _ = setup
+    store = ErasableStore()
+    upload = _ready_upload(setup, store)
+    state, authority = _reader(scope, user, upload.occurrence, timedelta(hours=2))
+    row = retention.bind_retention(
+        scope_id=scope.id, occurrence_id=upload.occurrence_id, source=state
+    )
+    assert row.expires_at == state.expires_at
+    _travel(monkeypatch, timedelta(hours=1))
+    _tick(store)
+    assert _plays(authority, row) == "ready" and store.erased == []
+    _travel(monkeypatch, timedelta(hours=2))
+    swept, drained = _tick(store)
+    row.refresh_from_db()
+    assert swept["occurrences_expired"] == 1, swept
+    assert drained["erase_done"] == 1, drained
+    assert row.deleted_at is not None and store.objects == {}
+    assert _plays(authority, row) == "not_found"

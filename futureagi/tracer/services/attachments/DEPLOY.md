@@ -61,6 +61,17 @@ host must allow unprivileged user namespaces (on Ubuntu 24.04:
 `AttachmentAuditEvent` rows are kept. Media sessions and playback grants are
 deleted one hour after they expire or are revoked.
 
+## Occurrence expiry
+
+- An occurrence starts with a 24 h deadline: ingestion must observe its
+  parent span and bind it within that window, or the lifecycle sweep expires
+  it and the erase drain removes its bytes.
+- Binding replaces that deadline with the source's retention
+  (`retention.bind_retention`: `expires_at = source.expires_at`), so bound
+  media plays and is kept for as long as its trace is retained, not 24 h.
+  Binding never extends a known source expiry; a rebind with a different one
+  is refused.
+
 ## Deletion
 
 - Trace and trace-session deletion (`views/trace.py`,
