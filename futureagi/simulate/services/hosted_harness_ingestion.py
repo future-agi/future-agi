@@ -1254,7 +1254,7 @@ def _decode_artifact_text(data: bytes, *, field: str) -> str:
 
 
 def _load_artifact_json(text: str, *, field: str) -> Any:
-    """Parse artifact JSON, refusing numbers JSONB cannot store before any timing math."""
+    """Parse artifact JSON, refusing unsupported numbers before any timing math."""
 
     def nonfinite(_token: str) -> float:
         raise HostedHarnessError(
@@ -1269,7 +1269,24 @@ def _load_artifact_json(text: str, *, field: str) -> Any:
             nonfinite(token)
         return value
 
-    return json.loads(text, parse_constant=nonfinite, parse_float=finite_float)
+    def bounded_int(token: str) -> int:
+        try:
+            return int(token)
+        except ValueError:
+            # Python's integer digit limit raises ValueError, not JSONDecodeError.
+            # Refuse it rather than treating it as legacy text or a skippable line.
+            raise HostedHarnessError(
+                "invalid_jsonb_number",
+                f"{field} contains an integer exceeding the digit limit",
+                status_code=400,
+            ) from None
+
+    return json.loads(
+        text,
+        parse_constant=nonfinite,
+        parse_float=finite_float,
+        parse_int=bounded_int,
+    )
 
 
 # The latest epoch second a timing value may name (9999-12-31T23:59:59Z). Bounding

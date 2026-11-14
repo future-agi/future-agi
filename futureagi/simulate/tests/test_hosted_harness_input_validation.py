@@ -4,6 +4,7 @@ import copy
 import hashlib
 import io
 import json
+import sys
 from datetime import UTC, datetime
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -1045,3 +1046,130 @@ def test_voice_transcript_keeps_plausible_timing(receipt_channel):
         _ingest_hosted_transcript(call, SimpleNamespace(object_key="transcript.json"))
     row = call.transcripts.get()
     assert (row.start_time_ms, row.end_time_ms) == (1500, 3750)
+
+
+@pytest.fixture
+def artifact_integer_digit_limit():
+    # Exercise the production default even when the test runner overrides it.
+    previous = sys.get_int_max_str_digits()
+    sys.set_int_max_str_digits(4300)
+    try:
+        yield 4300
+    finally:
+        sys.set_int_max_str_digits(previous)
+
+
+def _artifact_with_integer(kind, token):
+    # Assemble raw JSON so the oversized literal reaches the artifact parser,
+    # rather than raising in this test's own int() or json.dumps() call.
+    tool_call = b'{"name": "lookup", "result": {"count": ' + token + b"}}"
+    if kind == "transcript":
+        return (
+            b'{"messages": [{"role": "user", "content": "hello"}, '
+            b'{"role": "assistant", "content": "hi", "tool_calls": ['
+            + tool_call
+            + b"]}]}"
+        )
+    return b'{"name": "first"}\n' + tool_call + b"\n"
+
+
+@pytest.mark.parametrize("kind", ["transcript", "tool_trace"])
+@pytest.mark.parametrize("sign", [b"", b"-"], ids=["positive", "negative"])
+def test_receipt_rejects_artifact_integer_digit_limit_without_writes(
+    receipt_channel, artifact_integer_digit_limit, kind, sign
+):
+    job, capability, body = receipt_channel
+    call = job.scenario_registrations.get().call_execution
+    earlier = CallTranscript.objects.create(
+        call_execution=call, speaker_role="user", content="earlier transcript"
+    )
+    before = _call_state(call)
+    objects = {}
+    token = sign + b"9" * (artifact_integer_digit_limit + 1)
+    content = _artifact_with_integer(kind, token)
+    digest = _upload(capability, objects, content, kind)
+    if kind == "tool_trace":
+        # Transcript replacement happens before the trace is parsed and must roll back.
+        digest = _upload(capability, objects, _transcript("Hello", "Hi"), "transcript")
+    body["call"]["transcript_artifact"] = f"sha256:{digest}"
+
+    response = _post_receipt(capability, objects, body, via_api=True)
+
+    assert response.status_code == 400, response.content
+    assert response.json() == {
+        "error": "invalid_jsonb_number",
+        "message": (
+            f"{'transcript' if kind == 'transcript' else 'tool trace'} artifact "
+            "contains an integer exceeding the digit limit"
+        ),
+        "retryable": False,
+    }
+    assert b"9" * 32 not in response.content
+    assert not HostedHarnessReceipt.no_workspace_objects.filter(job=job).exists()
+    assert _call_state(call) == before
+    earlier.refresh_from_db()
+    assert earlier.content == "earlier transcript"
+
+
+@pytest.mark.parametrize("kind", ["transcript", "tool_trace"])
+@pytest.mark.parametrize(
+    "token",
+    [b"0", b"42", b"-42", b"9" * 4300, b"-" + b"9" * 4300],
+    ids=["zero", "positive", "negative", "positive-boundary", "negative-boundary"],
+)
+def test_receipt_accepts_artifact_integers_within_digit_limit(
+    receipt_channel, artifact_integer_digit_limit, kind, token
+):
+    job, capability, body = receipt_channel
+    objects = {}
+    digest = _upload(capability, objects, _artifact_with_integer(kind, token), kind)
+    if kind == "transcript":
+        body["call"]["transcript_artifact"] = f"sha256:{digest}"
+
+    response = _post_receipt(capability, objects, body, via_api=True)
+
+    assert response.status_code == 200, response.content
+    assert response.json() == {"accepted": True, "duplicate": False}
+    assert HostedHarnessReceipt.no_workspace_objects.filter(job=job).count() == 1
+    call = job.scenario_registrations.get().call_execution
+    if kind == "transcript":
+        reply = ChatMessageModel.objects.get(call_execution=call, role="assistant")
+        tool_calls = reply.content[0]["tool_calls"]
+    else:
+        call.refresh_from_db()
+        tool_calls = call.provider_call_data["livekit"]["tool_calls"]
+        assert tool_calls[0] == {"name": "first"}
+    assert tool_calls[-1] == {"name": "lookup", "result": {"count": int(token)}}
+
+
+@pytest.mark.parametrize("kind", ["transcript", "tool_trace"])
+def test_receipt_keeps_artifact_syntax_error_behavior(receipt_channel, kind):
+    job, capability, body = receipt_channel
+    objects = {}
+    if kind == "transcript":
+        content = b"customer: Hello\nagent: Hi"
+    else:
+        content = (
+            b'{"name": "first", "result": 42}\n'
+            b'{"name": "malformed", "result": 01}\n'
+            b'{"name": "second", "result": -42}\n'
+        )
+    digest = _upload(capability, objects, content, kind)
+    if kind == "transcript":
+        body["call"]["transcript_artifact"] = f"sha256:{digest}"
+
+    response = _post_receipt(capability, objects, body, via_api=True)
+
+    assert response.status_code == 200, response.content
+    call = job.scenario_registrations.get().call_execution
+    if kind == "transcript":
+        user = ChatMessageModel.objects.get(call_execution=call, role="user")
+        reply = ChatMessageModel.objects.get(call_execution=call, role="assistant")
+        assert user.messages == ["Hello"]
+        assert reply.messages == ["Hi"]
+    else:
+        call.refresh_from_db()
+        assert call.provider_call_data["livekit"]["tool_calls"] == [
+            {"name": "first", "result": 42},
+            {"name": "second", "result": -42},
+        ]
