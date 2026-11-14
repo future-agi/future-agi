@@ -9,7 +9,7 @@ const h = vi.hoisted(() => ({ preview: { data: undefined, plans: [] }, create: v
 vi.mock('src/api/skills/r3-spend', () => ({ useSkillsSpendPolicy: () => h.spend }));
 vi.mock('../utils/access', async (original) => ({ ...(await original()), useSkillsAccess: () => h.access }));
 vi.mock('src/api/skills/context-testing', () => ({
-  useNativeTargets: () => ({ data: { runtime: { available: true, runtime: 'container', evidenceClass: 'synthetic fixture' }, targets: h.targets ?? [{ bindingId: 'binding', name: 'support-app', revision: 2, qualified: true, configurationDigest: 'sha256:abc' }] } }),
+  useNativeTargets: () => (h.targetsLoading ? { isLoading: true, data: undefined } : { data: { runtime: { available: true, runtime: 'container', evidenceClass: 'synthetic fixture' }, targets: h.targets ?? [{ bindingId: 'binding', name: 'support-app', revision: 2, qualified: true, configurationDigest: 'sha256:abc' }] } }),
   useNativeRuns: () => ({ data: h.runs }),
   useNativeRun: (_, id) => ({ data: id ? h.detail : undefined, isLoading: false }),
   usePreviewNativeRun: () => ({
@@ -28,7 +28,7 @@ const versions = [7, 6, 4].map((number) => ({ number, id: `v${number}` }));
 const cases = [{ id: 'refund', title: 'Original refund failure', reviewed: true }, { id: 'chargeback', title: 'Working chargeback case', reviewed: true }, { id: 'draft', title: 'Unreviewed', reviewed: false }];
 const renderPanel = (props = {}) => render(<MemoryRouter><ContextNativePanel contextId="context" versions={versions} viewed={{ number: 7 }} cases={cases} canWrite productionVersion={6} {...props} /></MemoryRouter>);
 beforeEach(() => {
-  h.annotations = []; h.annotationIds = []; h.annotationError = undefined; h.prepared = undefined; h.spend = {}; h.access = { canAdmin: true }; h.targets = undefined;
+  h.annotations = []; h.annotationIds = []; h.annotationError = undefined; h.prepared = undefined; h.spend = {}; h.access = { canAdmin: true }; h.targets = undefined; h.targetsLoading = false;
   h.preview = { data: undefined, plans: [] }; h.create = vi.fn().mockResolvedValue('evidence');
   h.runs = [{ id: 'previous', arms: [{ variant: 'candidate', version: 6 }, { variant: 'reference', version: 4 }] }];
   h.detail = { id: 'previous', status: 'completed', executionFingerprint: 'sha256:previous', received: 2, planned: 2, arms: h.runs[0].arms, cases: [{ id: 'refund', historical: true }, { id: 'chargeback', historical: false }] };
@@ -301,4 +301,19 @@ it('draws verification rules with the divider colour at every width', () => {
   renderPanel();
   const cell = screen.getByRole('table', { name: 'Verification cells' }).querySelector('tbody td');
   expect(getComputedStyle(cell).borderBottomColor).not.toMatch(/^(currentcolor|rgb\(0, 0, 0\))$/i);
+});
+
+it('waits for the registered targets before choosing what to test, then keeps the reviewer\'s choice', () => {
+  h.runs = []; h.detail = undefined; h.targetsLoading = true;
+  const view = renderPanel({ state: 'empty' });
+  // No provisional default that could flip under the reviewer while targets load.
+  expect(screen.queryByRole('radio', { name: /^Verify on the application/ })).not.toBeInTheDocument();
+  expect(screen.getByLabelText('Loading test options')).toBeInTheDocument();
+  h.targetsLoading = false; h.targets = [];
+  view.rerender(<MemoryRouter><ContextNativePanel contextId="context" versions={versions} viewed={{ number: 7 }} cases={cases} canWrite productionVersion={6} state="empty" /></MemoryRouter>);
+  // Nothing registered: the answer check is the default, and choosing the application test sticks.
+  expect(screen.getByRole('radio', { name: /^Check answers with this context/ })).toBeChecked();
+  fireEvent.click(screen.getByRole('radio', { name: /^Verify on the application/ }));
+  view.rerender(<MemoryRouter><ContextNativePanel contextId="context" versions={versions} viewed={{ number: 7 }} cases={cases} canWrite productionVersion={6} state="empty" /></MemoryRouter>);
+  expect(screen.getByRole('radio', { name: /^Verify on the application/ })).toBeChecked();
 });

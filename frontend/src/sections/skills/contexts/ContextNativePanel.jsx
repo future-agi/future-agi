@@ -429,7 +429,7 @@ export default function ContextNativePanel({ contextId, versions, viewed, cases,
   const kind = chosenKind ?? defaultKind;
   // The default depends on the registered targets, so the choice waits for them: showing a
   // provisional default would flip under the reviewer (and swallow a click on the flipped option).
-  const kindPending = !chosenKind && !seed && !draftHandoff && !runtimeOff && !targets.data && !targets.isError && state !== 'error';
+  const kindPending = !chosenKind && !seed && !draftHandoff && !runtimeOff && Boolean(targets.isLoading) && !targets.data && state !== 'error';
   // "Run a test" starts open unless a current result is the subject of the page. The form stays
   // mounted while collapsed: it owns the run's idempotency key and the selection that marks an
   // earlier result, and neither may be lost by folding the section.
