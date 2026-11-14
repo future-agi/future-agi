@@ -86,6 +86,8 @@ RULES: list[tuple[str, dict]] = [
     ("*port", PORT),
     ("*Port", PORT),
     ("*.service.port", PORT),
+    ("agentccGateway.tls.minVersion", {"enum": ["1.2", "1.3"]}),
+    ("frontend.tls.reloadInterval", {"type": "integer", "minimum": 1, "maximum": 60}),
     ("bootstrap.ttlSecondsAfterFinished", {"type": ["integer", "string"]}),
     ("*Seconds", {"type": "integer", "minimum": 1}),
     ("*.extraEnv", SCALAR_MAP),

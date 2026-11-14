@@ -1,0 +1,11 @@
+# Apply over ci/tls.yaml: in-cluster Python callers trust the gateway CA.
+agentccGateway:
+  tls:
+    httpEnabled: false
+frontend:
+  tls:
+    httpEnabled: false
+global:
+  caBundle:
+    secret: gateway-ca
+    key: ca.crt

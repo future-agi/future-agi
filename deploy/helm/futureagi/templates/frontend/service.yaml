@@ -16,10 +16,18 @@ spec:
   selector:
     {{- include "futureagi.selectorLabels" $ctx | nindent 4 }}
   ports:
+    {{- if $f.tls.httpEnabled }}
     - name: http
       port: {{ $f.service.port }}
       targetPort: http
       protocol: TCP
+    {{- end }}
+    {{- if $f.tls.enabled }}
+    - name: https
+      port: {{ $f.tls.servicePort }}
+      targetPort: https
+      protocol: TCP
+    {{- end }}
 {{- if $f.autoscaling.enabled }}
 ---
 {{ include "futureagi.hpa" (dict "root" . "component" "frontend" "name" (include "futureagi.component" $ctx) "autoscaling" $f.autoscaling) }}

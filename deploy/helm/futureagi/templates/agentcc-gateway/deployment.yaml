@@ -53,9 +53,16 @@ spec:
           imagePullPolicy: {{ include "futureagi.imagePullPolicy" (dict "root" . "image" $g.image) }}
           args: ["--config", "/etc/agentcc/config.yaml"]
           ports:
+            {{- if $g.tls.httpEnabled }}
             - name: http
               containerPort: {{ include "futureagi.gateway.port" . }}
               protocol: TCP
+            {{- end }}
+            {{- if $g.tls.enabled }}
+            - name: https
+              containerPort: {{ $g.tls.port }}
+              protocol: TCP
+            {{- end }}
           {{- include "futureagi.block" (dict "text" (include "futureagi.preStop" (dict "root" . "seconds" $g.preStopSleepSeconds "native" true)) "indent" 10) }}
           env:
             {{- include "futureagi.env.gateway" (dict "root" .) | trim | nindent 12 }}
@@ -66,13 +73,19 @@ spec:
           readinessProbe:
             httpGet:
               path: /readyz
-              port: http
+              port: {{ ternary "http" "https" $g.tls.httpEnabled }}
+              {{- if not $g.tls.httpEnabled }}
+              scheme: HTTPS
+              {{- end }}
             periodSeconds: 10
             timeoutSeconds: 3
           livenessProbe:
             httpGet:
               path: /livez
-              port: http
+              port: {{ ternary "http" "https" $g.tls.httpEnabled }}
+              {{- if not $g.tls.httpEnabled }}
+              scheme: HTTPS
+              {{- end }}
             periodSeconds: 20
             timeoutSeconds: 3
             failureThreshold: 3
@@ -87,6 +100,11 @@ spec:
             - name: tmp
               mountPath: /tmp
             {{- include "futureagi.block" (dict "text" (include "futureagi.caBundle.volumeMount" $) "indent" 12) }}
+            {{- if $g.tls.enabled }}
+            - name: tls
+              mountPath: /var/run/secrets/futureagi/tls
+              readOnly: true
+            {{- end }}
             {{- if $g.gcpCredentials.existingSecret }}
             - name: gcp-credentials
               mountPath: /var/run/secrets/futureagi/gcp
@@ -103,6 +121,16 @@ spec:
           emptyDir:
             sizeLimit: 256Mi
         {{- include "futureagi.block" (dict "text" (include "futureagi.caBundle.volume" $) "indent" 8) }}
+        {{- if $g.tls.enabled }}
+        - name: tls
+          secret:
+            secretName: {{ $g.tls.existingSecret }}
+            items:
+              - key: {{ $g.tls.certKey }}
+                path: tls.crt
+              - key: {{ $g.tls.keyKey }}
+                path: tls.key
+        {{- end }}
         {{- if $g.gcpCredentials.existingSecret }}
         - name: gcp-credentials
           secret:

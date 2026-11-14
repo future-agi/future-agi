@@ -163,8 +163,8 @@ is only port-forwarded). */ -}}
       "TEMPORAL_HOST" (include "futureagi.temporal.address" $root)
       "TEMPORAL_NAMESPACE" $v.temporal.namespace
       "EXACT_AGGREGATION_TASK_QUEUE" (ternary "exact_aggregation" "tasks_xl" $v.worker.exactAggregation.enabled)
-      "AGENTCC_INTERNAL_URL" (printf "http://%s:%v" (include "futureagi.component" (dict "root" $root "component" "agentcc-gateway")) $v.agentccGateway.service.port)
-      "AGENTCC_GATEWAY_INTERNAL_URL" (printf "http://%s:%v" (include "futureagi.component" (dict "root" $root "component" "agentcc-gateway")) $v.agentccGateway.service.port)
+      "AGENTCC_INTERNAL_URL" (printf "%s://%s:%v" (ternary "http" "https" $v.agentccGateway.tls.httpEnabled) (include "futureagi.component" (dict "root" $root "component" "agentcc-gateway")) (ternary $v.agentccGateway.service.port $v.agentccGateway.tls.servicePort $v.agentccGateway.tls.httpEnabled))
+      "AGENTCC_GATEWAY_INTERNAL_URL" (printf "%s://%s:%v" (ternary "http" "https" $v.agentccGateway.tls.httpEnabled) (include "futureagi.component" (dict "root" $root "component" "agentcc-gateway")) (ternary $v.agentccGateway.service.port $v.agentccGateway.tls.servicePort $v.agentccGateway.tls.httpEnabled))
       "CODE_EXECUTOR_URL" (ternary (printf "http://%s:8060" (include "futureagi.component" (dict "root" $root "component" "code-executor"))) "" $v.codeExecutor.enabled)
       "CODE_EXECUTOR_LOCAL_FALLBACK" (toString $v.codeExecutor.localFallback)
       "AGENTCC_ALLOW_PRIVATE_PROVIDER_URLS" (toString $v.agentccGateway.allowPrivateProviderURLs)
@@ -188,6 +188,7 @@ a public URL, and every origin while it is only port-forwarded. */ -}}
 {{- end -}}
 {{- if and $cors (ne $cors "*") }}{{ $_ := set $plain "CORS_ALLOWED_ORIGINS" $cors }}{{ end -}}
 {{- if $csrf }}{{ $_ := set $plain "EXTRA_CSRF_ORIGINS" (join "," $csrf) }}{{ end -}}
+{{- with $v.urls.gateway }}{{ $_ := set $plain "AGENTCC_GATEWAY_PUBLIC_URL" . }}{{ end -}}
 {{- /* Django's pooled connection (PGBOUNCER_*) and read replica. PG_HOST stays
 the direct server: the outbox CDC's advisory lock needs a session. */ -}}
 {{- $pooler := $v.postgres.pooler | default dict -}}
@@ -423,6 +424,16 @@ redis.external.tls. */}}
 {{- $_ := set $plain "GOOGLE_APPLICATION_CREDENTIALS" "/var/run/secrets/futureagi/gcp/credentials.json" -}}
 {{- end -}}
 {{- $plain = mergeOverwrite $plain (include "futureagi.env.platform" (dict "root" $root "kind" "gateway") | fromYaml) $overrides -}}
+{{- if $g.tls.enabled -}}
+{{- $_ := set $plain "AGENTCC_HTTP_ENABLED" (toString $g.tls.httpEnabled) -}}
+{{- $_ := set $plain "AGENTCC_TLS_ENABLED" "true" -}}
+{{- $_ := set $plain "AGENTCC_TLS_PORT" (toString $g.tls.port) -}}
+{{- $_ := set $plain "AGENTCC_TLS_CERT_FILE" "/var/run/secrets/futureagi/tls/tls.crt" -}}
+{{- $_ := set $plain "AGENTCC_TLS_KEY_FILE" "/var/run/secrets/futureagi/tls/tls.key" -}}
+{{- $_ := set $plain "AGENTCC_TLS_MIN_VERSION" $g.tls.minVersion -}}
+{{- $_ := set $plain "AGENTCC_TLS_RELOAD_INTERVAL" $g.tls.reloadInterval -}}
+{{- if not $g.tls.httpEnabled }}{{ $_ := set $plain "HEALTHCHECK_URL" (printf "https://127.0.0.1:%v/healthz" $g.tls.port) }}{{ end -}}
+{{- end -}}
 {{- range $name := keys $plain | sortAlpha }}
 - name: {{ $name }}
   value: {{ get $plain $name | toString | quote }}

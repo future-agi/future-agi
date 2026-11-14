@@ -112,6 +112,41 @@ Renders nothing when the values are consistent.
 {{- end -}}
 {{- end -}}
 {{- $gw := $v.agentccGateway -}}
+{{- range $component := list "agentccGateway" "frontend" -}}
+{{- $tls := (index $v $component).tls -}}
+{{- if and $tls.enabled (not $tls.existingSecret) -}}
+{{- $errors = append $errors (printf "%s.tls.existingSecret is required when %s.tls.enabled=true" $component $component) -}}
+{{- end -}}
+{{- if and (not $tls.httpEnabled) (not $tls.enabled) -}}
+{{- $errors = append $errors (printf "%s.tls.httpEnabled=false requires %s.tls.enabled=true: at least one listener must be on" $component $component) -}}
+{{- end -}}
+{{- end -}}
+{{- if and $v.frontend.tls.enabled $v.frontend.tls.httpEnabled (eq (int $v.frontend.tls.port) 8080) -}}
+{{- $errors = append $errors "frontend.tls.port must differ from the HTTP container port 8080 while frontend.tls.httpEnabled=true" -}}
+{{- end -}}
+{{- if and $gw.tls.enabled $gw.tls.httpEnabled (eq (int $gw.tls.port) (include "futureagi.gateway.port" . | int)) -}}
+{{- $errors = append $errors "agentccGateway.tls.port must differ from the configured HTTP container port while agentccGateway.tls.httpEnabled=true" -}}
+{{- end -}}
+{{- range $component := list "agentccGateway" "frontend" -}}
+{{- $service := (index $v $component).service -}}
+{{- $tls := (index $v $component).tls -}}
+{{- if and $tls.enabled $tls.httpEnabled (eq (int $tls.servicePort) (int $service.port)) -}}
+{{- $errors = append $errors (printf "%s.tls.servicePort must differ from %s.service.port while HTTP is on" $component $component) -}}
+{{- end -}}
+{{- end -}}
+{{- if and (not $gw.tls.httpEnabled) $v.gatewayApi.enabled $v.gatewayApi.llmGateway.enabled -}}
+{{- $errors = append $errors "agentccGateway.tls.httpEnabled=false cannot be used with gatewayApi.llmGateway.enabled: that route targets plain HTTP" -}}
+{{- end -}}
+{{- if and (not $v.frontend.tls.httpEnabled) (or $v.ingress.enabled $v.gatewayApi.enabled) -}}
+{{- $errors = append $errors "frontend.tls.httpEnabled=false cannot be used with ingress.enabled or gatewayApi.enabled: their routes target plain HTTP" -}}
+{{- end -}}
+{{- if and (not $gw.tls.httpEnabled) (not (or $v.global.caBundle.configMap $v.global.caBundle.secret)) -}}
+{{- $errors = append $errors "agentccGateway.tls.httpEnabled=false requires global.caBundle.configMap or global.caBundle.secret: backend and workers call the gateway in-cluster and must trust its certificate" -}}
+{{- end -}}
+{{- $apiUrl := include "futureagi.url.api" . -}}
+{{- if and $v.frontend.tls.enabled (hasPrefix "http://" $apiUrl) (eq (include "futureagi.isLocalUrl" $apiUrl) "") -}}
+{{- $errors = append $errors "frontend.tls.enabled needs an HTTPS urls.api: a non-local HTTP API URL causes mixed content in the dashboard" -}}
+{{- end -}}
 {{- $gwRedis := dig "redis" "enabled" "auto" $gw | toString -}}
 {{- if not (has $gwRedis (list "auto" "true" "false")) -}}
 {{- $errors = append $errors (printf "agentccGateway.redis.enabled must be auto, true or false (got %q)" $gwRedis) -}}

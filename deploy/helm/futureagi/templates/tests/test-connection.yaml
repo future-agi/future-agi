@@ -4,9 +4,9 @@ in the backend image (already on the nodes) with the standard library. */ -}}
 {{- $ctx := dict "root" . "component" "test" -}}
 {{- $urls := list
       (printf "http://%s:%v/health/" (include "futureagi.component" (dict "root" . "component" "backend")) $b.service.port)
-      (printf "http://%s:%v/" (include "futureagi.component" (dict "root" . "component" "frontend")) .Values.frontend.service.port)
+      (printf "%s://%s:%v/" (ternary "http" "https" .Values.frontend.tls.httpEnabled) (include "futureagi.component" (dict "root" . "component" "frontend")) (ternary .Values.frontend.service.port .Values.frontend.tls.servicePort .Values.frontend.tls.httpEnabled))
       (printf "http://%s:9464/healthz" (include "futureagi.component" (dict "root" . "component" "fi-collector")))
-      (printf "http://%s:%v/healthz" (include "futureagi.component" (dict "root" . "component" "agentcc-gateway")) .Values.agentccGateway.service.port) -}}
+      (printf "%s://%s:%v/healthz" (ternary "http" "https" .Values.agentccGateway.tls.httpEnabled) (include "futureagi.component" (dict "root" . "component" "agentcc-gateway")) (ternary .Values.agentccGateway.service.port .Values.agentccGateway.tls.servicePort .Values.agentccGateway.tls.httpEnabled)) -}}
 {{- if .Values.serving.enabled -}}
 {{- $urls = append $urls (printf "http://%s:8080/health" (include "futureagi.component" (dict "root" . "component" "serving"))) -}}
 {{- end -}}
@@ -39,10 +39,20 @@ spec:
       args:
         - |
           import sys, urllib.request
+          {{- if or (not .Values.frontend.tls.httpEnabled) (not .Values.agentccGateway.tls.httpEnabled) }}
+          import ssl
+          {{- end }}
           failed = 0
           for url in sys.argv[1:]:
               try:
+                  {{- if or (not .Values.frontend.tls.httpEnabled) (not .Values.agentccGateway.tls.httpEnabled) }}
+                  # The Helm smoke test probes a self-signed service; production clients
+                  # verify the configured global.caBundle instead.
+                  context = ssl._create_unverified_context() if url.startswith("https://") else None
+                  with urllib.request.urlopen(url, timeout=10, context=context) as response:
+                  {{- else }}
                   with urllib.request.urlopen(url, timeout=10) as response:
+                  {{- end }}
                       print(f"ok    {response.status} {url}")
               except Exception as exc:
                   failed += 1

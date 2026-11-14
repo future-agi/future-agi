@@ -72,9 +72,9 @@ the cluster, which no `from` peer names: its ports admit any source (the
 collector's admin port stays internal). */ -}}
 {{- $exposed := dict -}}
 {{- if ne $v.backend.service.type "ClusterIP" }}{{ $_ := set $exposed "backend" (list "http") }}{{ end -}}
-{{- if ne $v.frontend.service.type "ClusterIP" }}{{ $_ := set $exposed "frontend" (list "http") }}{{ end -}}
+{{- if ne $v.frontend.service.type "ClusterIP" }}{{ $_ := set $exposed "frontend" (concat (ternary (list "http") (list) $v.frontend.tls.httpEnabled) (ternary (list "https") (list) $v.frontend.tls.enabled)) }}{{ end -}}
 {{- if ne $v.fiCollector.service.type "ClusterIP" }}{{ $_ := set $exposed "fi-collector" (list "otlp-grpc" "otlp-http") }}{{ end -}}
-{{- if ne $v.agentccGateway.service.type "ClusterIP" }}{{ $_ := set $exposed "agentcc-gateway" (list "http") }}{{ end -}}
+{{- if ne $v.agentccGateway.service.type "ClusterIP" }}{{ $_ := set $exposed "agentcc-gateway" (concat (ternary (list "http") (list) $v.agentccGateway.tls.httpEnabled) (ternary (list "https") (list) $v.agentccGateway.tls.enabled)) }}{{ end -}}
 {{- if and (eq $v.objectStorage.mode "bundled") (ne (dig "bundled" "service" "type" "ClusterIP" $v.objectStorage) "ClusterIP") }}{{ $_ := set $exposed "minio" (list "s3") }}{{ end -}}
 {{- range $component, $ports := $exposed }}
 ---

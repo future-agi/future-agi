@@ -75,6 +75,8 @@ value_sets=(
   "dockerhub-mirror|examples/bundled.yaml ci/dockerhub-mirror.yaml"
   "external-secrets|examples/external.yaml examples/external-secrets.yaml ci/external-secrets.yaml"
   "openshift|examples/bundled.yaml ci/openshift.yaml"
+  "tls|examples/bundled.yaml ci/tls.yaml"
+  "tls-https-only|examples/bundled.yaml ci/tls.yaml ci/tls-https-only.yaml"
 )
 
 echo "== chart defaults: refuse to render, with guidance"
@@ -97,6 +99,19 @@ echo "== inconsistent values: refuse to render"
 # values.schema.json rejects some values before validate.yaml runs, and Helm
 # 3.18+ and Helm 4 word schema errors differently from older Helm 3.
 refused=(
+  "gateway TLS without a Secret|agentccGateway.tls.existingSecret is required|--set agentccGateway.tls.enabled=true"
+  "frontend TLS without a Secret|frontend.tls.existingSecret is required|--set frontend.tls.enabled=true"
+  "gateway TLS overlaps HTTP|agentccGateway.tls.port must differ|--set agentccGateway.tls.enabled=true --set agentccGateway.tls.existingSecret=gw --set agentccGateway.tls.port=8080"
+  "frontend TLS overlaps HTTP|frontend.tls.port must differ|--set frontend.tls.enabled=true --set frontend.tls.existingSecret=fe --set frontend.tls.port=8080"
+  "gateway HTTPS Service port overlaps HTTP|agentccGateway.tls.servicePort must differ|--set agentccGateway.tls.enabled=true --set agentccGateway.tls.existingSecret=gw --set agentccGateway.tls.servicePort=8080"
+  "frontend HTTPS Service port overlaps HTTP|frontend.tls.servicePort must differ|--set frontend.tls.enabled=true --set frontend.tls.existingSecret=fe --set frontend.tls.servicePort=80"
+  "gateway without a listener|agentccGateway.tls.httpEnabled=false requires agentccGateway.tls.enabled=true|--set agentccGateway.tls.httpEnabled=false"
+  "frontend without a listener|frontend.tls.httpEnabled=false requires frontend.tls.enabled=true|--set frontend.tls.httpEnabled=false"
+  "HTTPS-only gateway with HTTP Gateway API route|agentccGateway.tls.httpEnabled=false cannot be used with gatewayApi.llmGateway.enabled|--set agentccGateway.tls.enabled=true --set agentccGateway.tls.existingSecret=gw --set agentccGateway.tls.httpEnabled=false --set global.caBundle.secret=ca --set gatewayApi.enabled=true --set gatewayApi.llmGateway.enabled=true"
+  "HTTPS-only frontend with Ingress|frontend.tls.httpEnabled=false cannot be used with ingress.enabled or gatewayApi.enabled|--set frontend.tls.enabled=true --set frontend.tls.existingSecret=fe --set frontend.tls.httpEnabled=false --set ingress.enabled=true"
+  "HTTPS-only frontend with Gateway API|frontend.tls.httpEnabled=false cannot be used with ingress.enabled or gatewayApi.enabled|--set frontend.tls.enabled=true --set frontend.tls.existingSecret=fe --set frontend.tls.httpEnabled=false --set gatewayApi.enabled=true"
+  "HTTPS-only gateway without a CA bundle|agentccGateway.tls.httpEnabled=false requires global.caBundle|--set agentccGateway.tls.enabled=true --set agentccGateway.tls.existingSecret=gw --set agentccGateway.tls.httpEnabled=false"
+  "HTTPS frontend with remote plain HTTP API|frontend.tls.enabled needs an HTTPS urls.api|--set frontend.tls.enabled=true --set frontend.tls.existingSecret=fe --set urls.api=http://api.example.com"
   "recaptcha without its key|config.recaptcha needs secrets.extra.RECAPTCHA_SECRET_KEY|--set config.recaptcha=true"
   "gateway replicas without Redis|agentccGateway runs more than one replica without Redis|--set agentccGateway.replicas=2 --set agentccGateway.redis.enabled=false"
   "gateway Redis over TLS|the gateway has no Redis TLS|--set redis.mode=external --set redis.external.host=r --set redis.external.tls=true --set agentccGateway.redis.enabled=true"
