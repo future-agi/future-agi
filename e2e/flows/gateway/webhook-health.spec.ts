@@ -96,6 +96,7 @@ test('GW-E2E-006: a webhook that keeps failing is disabled with its reason, re-e
 
   await test.step('ingest only records the events', async () => {
     const req = await request.newContext();
+    const started = Date.now();
     const res = await req.post(`${E2E.apiUrl}${LOGS_WEBHOOK_PATH}`, {
       headers: { 'X-Webhook-Secret': WEBHOOK_SECRET },
       data: {
@@ -110,8 +111,14 @@ test('GW-E2E-006: a webhook that keeps failing is disabled with its reason, re-e
         })),
       },
     });
+    // Ingest delivers nothing itself, so it does not wait on the webhook.
+    // Generous for a loaded runner; inline delivery of five events to a
+    // refused host would still finish fast, so the storage reads below are
+    // what prove no attempt was made here.
+    const ingestMs = Date.now() - started;
     expect(res.status(), await res.text()).toBe(200);
     expect(await res.json()).toMatchObject({ result: { ingested: EVENTS } });
+    expect(ingestMs).toBeLessThan(5_000);
     await req.dispose();
     // Read straight after the 200: a tick may start before this read, so only
     // the events still untried are counted, and none can have been delivered.

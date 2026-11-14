@@ -3,6 +3,7 @@ package logging
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -154,5 +155,36 @@ func TestLogFlusherBufferFullLogsAtMostOncePerInterval(t *testing.T) {
 	}
 	if strings.Contains(logs.String(), "records dropped") {
 		t.Fatalf("a buffer-full drop was logged one record at a time:\n%s", logs.String())
+	}
+}
+
+// A failed batch goes back to the front of the buffer, so the next send
+// retries the same records, in order, and max_retries counts that batch's own
+// failures: a batch behind it is never dropped for failures it did not have.
+func TestLogFlusherRetriesTheFailedBatchFirst(t *testing.T) {
+	wh := newFakeLogWebhook(t, func(int, *http.Request) int { return http.StatusServiceUnavailable })
+	cfg := flushTestConfig() // MaxBatch 2, MaxRetries 1
+	f := NewLogFlusher(wh.URL, "", cfg.Interval, cfg.MaxBatch, cfg)
+	enqueue(f, "a", "b", "c", "d")
+
+	f.flush()
+	time.Sleep(cfg.RetryBackoff + 20*time.Millisecond)
+	f.flush()
+
+	wh.mu.Lock()
+	batches := fmt.Sprint(wh.batches)
+	wh.mu.Unlock()
+	if batches != "[[a b] [a b]]" {
+		t.Fatalf("sent %s, want the failed batch retried first: [[a b] [a b]]", batches)
+	}
+	if got := f.Dropped()["max_retries"]; got != 2 {
+		t.Fatalf("max_retries = %d, want 2 (a, b)", got)
+	}
+	f.mu.Lock()
+	left := len(f.buffer)
+	first := f.buffer[0].RequestID
+	f.mu.Unlock()
+	if left != 2 || first != "c" {
+		t.Fatalf("buffer holds %d records starting %q, want c, d untouched", left, first)
 	}
 }

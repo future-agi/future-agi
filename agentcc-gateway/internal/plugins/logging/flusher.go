@@ -604,7 +604,8 @@ func (f *LogFlusher) post(ctx context.Context, body []byte) (int, error) {
 	return resp.StatusCode, nil
 }
 
-// reEnqueue puts failed records back into the buffer (up to twice maxBuffer).
+// reEnqueue puts failed records back at the front of the buffer (up to twice
+// maxBuffer in all).
 // This prevents data loss when the webhook endpoint is temporarily unavailable.
 // Once Close has begun it keeps them all for Close's last attempt: Enqueue
 // refuses records by then, so the buffer cannot grow further.
@@ -615,7 +616,11 @@ func (f *LogFlusher) reEnqueue(records []TraceRecord) {
 		capacity = len(records)
 	}
 	kept := min(len(records), max(0, capacity))
-	f.buffer = append(f.buffer, records[:kept]...)
+	// Back at the front, ahead of what arrived since: the next send retries
+	// this batch, in order, so consecutiveFails counts this batch's failures.
+	// records shares the buffer's backing array; the capped slice makes
+	// append copy instead of writing over it.
+	f.buffer = append(records[:kept:kept], f.buffer...)
 	f.mu.Unlock()
 	if dropped := len(records) - kept; dropped > 0 {
 		f.countLost(dropped)
