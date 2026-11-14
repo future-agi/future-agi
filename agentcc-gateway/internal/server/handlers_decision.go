@@ -284,16 +284,19 @@ func newDecisionModel(db *modeldb.ModelDB, orgCfg *tenant.OrgConfig, providerID,
 	if format == "" {
 		return decisionModel{}, false
 	}
+	id := providerID + "/" + stripProviderPrefix(model, providerID)
 	var known *modeldb.PricingInfo
 	if db != nil {
-		known, _ = db.DecisionPricing(model)
+		// The names a call of this entry goes by, in the cost plugin's order
+		// (decisionModelNames), so the listing shows the price it charges.
+		known, _ = db.DecisionPricingAny(model, id)
 	}
 	if format == models.DecisionFormatOpenAI && known == nil {
 		// An OpenAI provider lists chat models too; only decision ones count.
 		return decisionModel{}, false
 	}
 	entry := decisionModel{
-		ID:       providerID + "/" + stripProviderPrefix(model, providerID),
+		ID:       id,
 		Object:   "model",
 		Provider: providerID,
 		Format:   format,

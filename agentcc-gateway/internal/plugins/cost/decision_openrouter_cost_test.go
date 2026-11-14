@@ -58,3 +58,31 @@ func TestCostPlugin_DecisionOpenRouterJevOverride(t *testing.T) {
 		t.Fatalf("cost = %q, want the 0.500000 override", got)
 	}
 }
+
+// An operator override keyed on any name the call goes by, including the full
+// OpenRouter names, prices the call. Exact names are tried for every name
+// before any Jev name is normalized, so the dated resolved name normalizing to
+// the bundled "jev-1.13.0" or "jev-1.14.0" never shadows an override.
+func TestCostPlugin_DecisionOpenRouterJevFullNameOverride(t *testing.T) {
+	price := 0.5 / 1_000_000
+	for _, tt := range []struct {
+		name, key, model, upstream, resolved string
+	}{
+		{"upstream name", "typesafe/jev-1.13", "openrouter/typesafe/jev-1.13", "typesafe/jev-1.13", "typesafe/jev-1.13-20260917"},
+		{"provider-qualified name", "openrouter/typesafe/jev-1.13", "openrouter/typesafe/jev-1.13", "typesafe/jev-1.13", "typesafe/jev-1.13-20260917"},
+		{"jev-latest answered as dated jev-1.14", "jev-latest", "openrouter/~typesafe/jev-latest", "~typesafe/jev-latest", "typesafe/jev-1.14-20261015"},
+		{"short name", "jev-1.13", "openrouter/typesafe/jev-1.13", "typesafe/jev-1.13", "typesafe/jev-1.13-20260917"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			db := modeldb.New(modeldb.BundledModels, map[string]modeldb.ModelOverride{
+				modeldb.DecisionKeyPrefix + tt.key: {Mode: string(modeldb.ModeDecision), Pricing: &modeldb.PricingOverride{InputPerToken: &price}},
+			})
+			p := New(true, func() *modeldb.ModelDB { return db }, nil, nil)
+			rc := decisionRC(tt.model, tt.upstream, tt.resolved, 1_000_000, 5)
+			p.ProcessResponse(context.Background(), rc)
+			if got := rc.Metadata["cost"]; got != "0.500000" {
+				t.Fatalf("override on %q: cost = %q, want 0.500000", modeldb.DecisionKeyPrefix+tt.key, got)
+			}
+		})
+	}
+}
