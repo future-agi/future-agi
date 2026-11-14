@@ -146,7 +146,9 @@ def rows(
                 capability,
                 "untested",
                 reason_code="no_check_yet",
-                reason="No check measures this yet",
+                reason=_NOT_MEASURED_WHY.get(
+                    capability.id, "No check measures this yet"
+                ),
             )
         elif capability.id == "start" and preflight is not None:
             row = _row(
@@ -258,6 +260,16 @@ def rows(
         row["consequence"] = consequence(row, connection(pairing.runtime))
         rows.append(row)
     return rows
+
+
+# What an unmeasured row lacks, so its Untested reason names what would measure it;
+# files are read from the agent's runs (``observed``).
+_NOT_MEASURED_WHY: dict[str, str] = {
+    "browser": "Nothing records the agent's browser yet, so checks on pages are not"
+    " verified",
+    "hidden_material": "Not checked yet whether the agent can read the grading"
+    " material. Treat this run as not blind",
+}
 
 
 def _keep_structural(row: RowView, structural: Any) -> None:
