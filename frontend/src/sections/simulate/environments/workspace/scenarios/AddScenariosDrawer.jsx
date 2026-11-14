@@ -1,6 +1,15 @@
 import PropTypes from "prop-types";
 import { useState } from "react";
-import { Alert, Button, Link, Stack, TextField, ToggleButton, ToggleButtonGroup, Typography } from "@mui/material";
+import {
+  Alert,
+  Button,
+  Link,
+  Stack,
+  TextField,
+  ToggleButton,
+  ToggleButtonGroup,
+  Typography,
+} from "@mui/material";
 import { useQueryClient } from "@tanstack/react-query";
 
 import SideDrawer from "../../components/SideDrawer";
@@ -34,7 +43,22 @@ const message = (content) => ({
 });
 
 // Add scenarios: five routes, each ending with the builder writing and proving drafts.
-export default function AddScenariosDrawer({ open, onClose, env, initialGuidance = "", initialCount }) {
+// FileReader rather than Blob.text(), which some embedded browsers and jsdom lack.
+const readText = (file) =>
+  new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result ?? ""));
+    reader.onerror = () => reject(reader.error);
+    reader.readAsText(file);
+  });
+
+export default function AddScenariosDrawer({
+  open,
+  onClose,
+  env,
+  initialGuidance = "",
+  initialCount,
+}) {
   const [route, setRoute] = useState("generate");
   const [count, setCount] = useState(initialCount ?? 5);
   const [guidance, setGuidance] = useState(initialGuidance);
@@ -55,7 +79,7 @@ export default function AddScenariosDrawer({ open, onClose, env, initialGuidance
   const upload = async () => {
     if (file.size > UPLOAD_MAX_BYTES) throw new Error(ADD_COPY.tooLarge);
     await uploadEnvironmentFile(jobId, { file, kind: "knowledge" });
-    return { path: `knowledge/${file.name}`, text: await file.text() };
+    return { path: `knowledge/${file.name}`, text: await readText(file) };
   };
 
   const submit = async () => {
@@ -64,20 +88,35 @@ export default function AddScenariosDrawer({ open, onClose, env, initialGuidance
     try {
       const n = clampCount(count);
       if (route === "generate") {
-        await extendHarnessJob(jobId, { count: n, ...(guidance.trim() ? { guidance: guidance.trim() } : {}) });
+        await extendHarnessJob(jobId, {
+          count: n,
+          ...(guidance.trim() ? { guidance: guidance.trim() } : {}),
+        });
       } else if (route === "describe") {
-        await sendHarnessConversationMessage(jobId, message(`${DESCRIBE_PREFIX} ${description.trim()}`));
+        await sendHarnessConversationMessage(
+          jobId,
+          message(`${DESCRIBE_PREFIX} ${description.trim()}`),
+        );
       } else if (route === "file" || route === "records") {
         const { path, text } = await upload();
-        const content = route === "file" ? fileMessage(n, path, text) : recordsMessage(n, path, text);
+        const content =
+          route === "file"
+            ? fileMessage(n, path, text)
+            : recordsMessage(n, path, text);
         await sendHarnessConversationMessage(jobId, message(content));
       }
-      queryClient.invalidateQueries({ queryKey: harnessScenariosListKey(jobId) });
+      queryClient.invalidateQueries({
+        queryKey: harnessScenariosListKey(jobId),
+      });
       setState("done");
       close();
     } catch (failure) {
       setState("error");
-      setError(failure?.response?.data?.message || failure?.message || "Something went wrong.");
+      setError(
+        failure?.response?.data?.message ||
+          failure?.message ||
+          "Something went wrong.",
+      );
     }
   };
 
@@ -88,10 +127,18 @@ export default function AddScenariosDrawer({ open, onClose, env, initialGuidance
 
   return (
     <SideDrawer open={open} onClose={close} width={720}>
-      <Stack spacing={2.5} sx={{ p: 3, height: "100%" }} data-testid="add-scenarios-drawer">
+      <Stack
+        spacing={2.5}
+        sx={{ p: 3, height: "100%" }}
+        data-testid="add-scenarios-drawer"
+      >
         <Stack spacing={0.5}>
-          <Typography sx={{ typography: "m1", fontWeight: "fontWeightMedium" }}>{ADD_COPY.title}</Typography>
-          <Typography sx={{ typography: "s2", color: "text.subtitle" }}>{ADD_COPY.subtitle}</Typography>
+          <Typography sx={{ typography: "m1", fontWeight: "fontWeightMedium" }}>
+            {ADD_COPY.title}
+          </Typography>
+          <Typography sx={{ typography: "s2", color: "text.subtitle" }}>
+            {ADD_COPY.subtitle}
+          </Typography>
         </Stack>
         <ToggleButtonGroup
           exclusive
@@ -106,7 +153,9 @@ export default function AddScenariosDrawer({ open, onClose, env, initialGuidance
             </ToggleButton>
           ))}
         </ToggleButtonGroup>
-        <Typography sx={{ typography: "s2", color: "text.subtitle" }}>{ADD_COPY.routes[route].blurb}</Typography>
+        <Typography sx={{ typography: "s2", color: "text.subtitle" }}>
+          {ADD_COPY.routes[route].blurb}
+        </Typography>
 
         {route !== "describe" && route !== "elsewhere" && (
           <TextField
@@ -140,7 +189,13 @@ export default function AddScenariosDrawer({ open, onClose, env, initialGuidance
         )}
         {(route === "file" || route === "records") && (
           <Stack spacing={0.5}>
-            <Button component="label" variant="outlined" color="inherit" size="small" sx={{ alignSelf: "flex-start" }}>
+            <Button
+              component="label"
+              variant="outlined"
+              color="inherit"
+              size="small"
+              sx={{ alignSelf: "flex-start" }}
+            >
               {file ? file.name : ADD_COPY.file}
               <input
                 hidden
@@ -157,19 +212,34 @@ export default function AddScenariosDrawer({ open, onClose, env, initialGuidance
         )}
         {route === "elsewhere" && (
           <Stack spacing={1}>
-            <Link component="button" type="button" onClick={close} sx={{ alignSelf: "flex-start" }}>
+            <Link
+              component="button"
+              type="button"
+              onClick={close}
+              sx={{ alignSelf: "flex-start" }}
+            >
               {ADD_COPY.transcriptLink}
             </Link>
-            <Link href={paths.dashboard.observe} sx={{ alignSelf: "flex-start" }}>
+            <Link
+              href={paths.dashboard.observe}
+              sx={{ alignSelf: "flex-start" }}
+            >
               {ADD_COPY.productionLink}
             </Link>
           </Stack>
         )}
 
-        {state === "submitting" && <Alert severity="info">{ADD_COPY.writing}</Alert>}
+        {state === "submitting" && (
+          <Alert severity="info">{ADD_COPY.writing}</Alert>
+        )}
         {state === "error" && error && <Alert severity="error">{error}</Alert>}
 
-        <Stack direction="row" justifyContent="flex-end" spacing={1} sx={{ mt: "auto" }}>
+        <Stack
+          direction="row"
+          justifyContent="flex-end"
+          spacing={1}
+          sx={{ mt: "auto" }}
+        >
           <Button size="small" color="inherit" onClick={close}>
             {ADD_COPY.cancel}
           </Button>
