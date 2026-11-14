@@ -14,14 +14,15 @@ set -euo pipefail
 #   --from-source, ./bin/dev) are slim: pass OSS_VARIANT=slim;
 #   ./bin/install --distributed --from-source builds standard.
 #   OSS_FFMPEG_FLAVOR: the FFMPEG_FLAVOR OSS_IMAGE was built with (minimal,
-#   the default of both variants; debian; none). Default: debian for a
+#   the default of both variants; debian; none). Default: the flavor the
+#   image recorded at build time (/usr/local/lib/futureagi/ffmpeg-flavor).
+#   For an image without that record (published up to v1.58): debian for a
 #   standard tag up to v1.58 (LAST_DEBIAN_FFMPEG_RELEASE below: every
 #   standard release up to it shipped Debian's ffmpeg), else minimal. A
 #   digest reference, or a tag without a version (latest, a local build), is
-#   judged by the image's org.opencontainers.image.version label. That guess
-#   is for images already published; a build you made yourself (or a dev or
-#   rc build of this tree tagged v1.58 or lower) should pass the flavor it
-#   was built with, as release-backend.yml does.
+#   judged by the image's org.opencontainers.image.version label. Images
+#   built from this tree carry the record, so the version rule is only for
+#   images published before it.
 
 VERSION="${1:-latest}"
 FLAVOR="${2:-all}"
@@ -69,7 +70,19 @@ oss_image_version() {
   return 1
 }
 
+# The flavor the image recorded at build time (Dockerfile.oss writes it);
+# images published up to v1.58 have no record.
+recorded_ffmpeg_flavor() {
+  local flavor
+  flavor="$(docker run --rm --entrypoint /bin/cat "$OSS_IMAGE" /usr/local/lib/futureagi/ffmpeg-flavor 2>/dev/null)" || return 1
+  case "$flavor" in
+    minimal|debian|none) echo "$flavor" ;;
+    *) return 1 ;;
+  esac
+}
+
 default_ffmpeg_flavor() {
+  recorded_ffmpeg_flavor && return 0
   local major minor last_major="${LAST_DEBIAN_FFMPEG_RELEASE%%.*}" last_minor="${LAST_DEBIAN_FFMPEG_RELEASE#*.}"
   if [[ "$OSS_VARIANT" == standard ]] && read -r major minor < <(oss_image_version) \
     && (( major < last_major || (major == last_major && minor <= last_minor) )); then

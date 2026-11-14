@@ -232,14 +232,14 @@ in `images-ci.yml`, with `test_image_size_budget.py`. Its workflow tests need
 PyYAML and are skipped without it. To check a built backend image's contents,
 `scripts/verify-image-contents.sh` takes `OSS_VARIANT=standard|slim` (a tag
 ending in `-slim` means slim). Standalone builds by `./bin/install --from-source`
-and `./bin/dev` are slim, so pass `OSS_VARIANT=slim` for them. It expects
-Debian's ffmpeg in standard tags up to v1.58 (every standard release before
-the minimal build became the default shipped it) and the minimal build in
-every other tag; a tag without a version, such as `latest`, is judged by the
-image's `org.opencontainers.image.version` label. That guess is for
-published images: for an image you built, pass the flavor it was built with,
-`OSS_FFMPEG_FLAVOR=minimal|debian|none` (`release-backend.yml` passes
-`minimal`, since it builds this tree's default).
+and `./bin/dev` are slim, so pass `OSS_VARIANT=slim` for them. It checks the
+ffmpeg flavor the image recorded at build time
+(`/usr/local/lib/futureagi/ffmpeg-flavor`, written by `futureagi/Dockerfile.oss`).
+Images published before that record existed are judged by version: Debian's
+ffmpeg in standard tags up to v1.58, the minimal build in every other tag; a
+tag without a version, such as `latest`, is judged by the image's
+`org.opencontainers.image.version` label. `OSS_FFMPEG_FLAVOR=minimal|debian|none`
+overrides both.
 
 The Helm chart has its own checks (they need `helm`, `kubeconform` and Python
 with PyYAML; the kind smoke test also needs `kind`, `kubectl` and images built

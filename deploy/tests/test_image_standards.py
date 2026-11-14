@@ -461,6 +461,18 @@ class BackendVariants(unittest.TestCase):
         step = step[: step.index("run:")]
         self.assertRegex(step, r"\n\s+OSS_FFMPEG_FLAVOR: minimal\n")
 
+    def test_the_image_records_its_ffmpeg_flavor(self):
+        # verify-image-contents.sh reads it, so a check never has to guess
+        # the flavor of an image built from this tree.
+        text = (ROOT / "futureagi" / "Dockerfile.oss").read_text(encoding="utf-8")
+        step = text[text.index('case "$FFMPEG_FLAVOR" in') - 200 :]
+        step = step[: step.index("apt-get clean")]
+        self.assertIn(". /usr/local/lib/futureagi/image-variant.sh", step)
+        self.assertIn(
+            "printf '%s\\n' \"$FFMPEG_FLAVOR\" > /usr/local/lib/futureagi/ffmpeg-flavor",
+            step,
+        )
+
     def test_ffmpeg_stages_match_the_variant_defaults(self):
         # FROM picks the ffmpeg stage before any RUN could source the script.
         aliases = {}
@@ -977,6 +989,8 @@ case "$*" in
   *"dpkg -s ffmpeg"*) case "$*" in *-debian*) exit 0 ;; esac
     [ -n "$FAKE_DEBIAN_FFMPEG" ] && exit 0; exit 1 ;;
   *"image inspect"*) printf '%s\n' "$FAKE_IMAGE_VERSION"; exit 0 ;;
+  *"ffmpeg-flavor"*) [ -n "$FAKE_RECORDED_FLAVOR" ] || exit 1
+    printf '%s\n' "$FAKE_RECORDED_FLAVOR"; exit 0 ;;
   *"command -v ffmpeg"*) case "$*" in *-noffmpeg*) exit 1 ;; *) exit 0 ;; esac ;;
   *"test -e /app/backend/ee/cloud"*) exit 1 ;;
 esac
@@ -1122,6 +1136,24 @@ exit 0
         proc = self.run_script("futureagi/future-agi:v1.08.1", FAKE_DEBIAN_FFMPEG="1")
         self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
         self.assertNotIn("value too great", proc.stderr)
+        self.assertIn("ffmpeg flavor: debian", proc.stdout)
+
+    def test_the_flavor_the_image_recorded_wins_over_the_tag(self):
+        """A dev or rc build of this tree tagged v1.58 or lower is minimal:
+        it says so, whatever workflow file checks it."""
+        proc = self.run_script("futureagi/future-agi:v1.58.1-dev", FAKE_RECORDED_FLAVOR="minimal")
+        self.assertEqual(proc.returncode, 0, proc.stdout)
+        self.assertIn("ffmpeg flavor: minimal", proc.stdout)
+        self.assertIn("ffmpeg-flavor", proc.docker_log)
+        proc = self.run_script(
+            "futureagi/future-agi:local-debian", FAKE_RECORDED_FLAVOR="debian"
+        )
+        self.assertEqual(proc.returncode, 0, proc.stdout)
+        self.assertIn("ffmpeg flavor: debian", proc.stdout)
+        # Anything else in the file is not a record: the version rule applies.
+        proc = self.run_script(
+            "futureagi/future-agi:v1.58.0", FAKE_RECORDED_FLAVOR="bogus", FAKE_DEBIAN_FFMPEG="1"
+        )
         self.assertIn("ffmpeg flavor: debian", proc.stdout)
 
     def test_an_explicit_ffmpeg_flavor_wins_over_the_tag(self):

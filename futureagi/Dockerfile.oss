@@ -246,6 +246,8 @@ ARG WITH_GIT=""
 # libmp3lame0. FFMPEG_FLAVOR=debian installs Debian's ffmpeg instead: with it
 # and git (the standard variant before it switched to the minimal build) this
 # layer was 200.6 MB gzip / 538 MB unpacked on v1.41.
+# The resolved flavor is written to /usr/local/lib/futureagi/ffmpeg-flavor, so
+# scripts/verify-image-contents.sh can read what an image was built with.
 # $pkgs is a word list on purpose.
 # hadolint ignore=SC1091,SC2086
 RUN set -eux; \
@@ -257,6 +259,7 @@ RUN set -eux; \
         none)    ;; \
     esac; \
     if [ "$WITH_GIT" = true ]; then pkgs="$pkgs git"; fi; \
+    printf '%s\n' "$FFMPEG_FLAVOR" > /usr/local/lib/futureagi/ffmpeg-flavor; \
     apt-get update; \
     apt-get install -y --no-install-recommends $pkgs; \
     rm -rf /var/lib/apt/lists/*; \
