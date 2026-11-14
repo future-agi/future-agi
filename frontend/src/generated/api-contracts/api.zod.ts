@@ -6508,7 +6508,7 @@ export const AgentccGuardrailPoliciesDeleteParams = zod.object({
 });
 
 /**
- * Apply this policy to specific keys or projects.
+ * Apply to dashboard key UUIDs, or persist a project-only assignment.
  */
 export const AgentccGuardrailPoliciesApplyParams = zod.object({
   id: zod

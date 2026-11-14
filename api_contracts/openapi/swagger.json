@@ -12456,7 +12456,7 @@
         "/agentcc/guardrail-policies/{id}/apply/": {
             "post": {
                 "operationId": "agentcc_guardrail-policies_apply",
-                "description": "Apply this policy to specific keys or projects.",
+                "description": "Apply to dashboard key UUIDs, or persist a project-only assignment.",
                 "parameters": [
                     {
                         "name": "data",

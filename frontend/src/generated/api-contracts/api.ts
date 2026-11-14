@@ -15655,7 +15655,7 @@ export const getAgentccGuardrailPoliciesApplyUrl = (id: string) => {
 };
 
 /**
- * Apply this policy to specific keys or projects.
+ * Apply to dashboard key UUIDs, or persist a project-only assignment.
  */
 export const agentccGuardrailPoliciesApply = async (
   id: string,
