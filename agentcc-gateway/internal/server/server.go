@@ -78,6 +78,9 @@ type Server struct {
 	httpsServer    *http.Server
 	certs          *certReloader
 	stopCertReload context.CancelFunc
+	// listenAddrs is each open listener's address by name ("http",
+	// "https"), set before ready.
+	listenAddrs map[string]string
 }
 
 // PriceTableName is the name the price table keys a provider's models under,
@@ -1072,6 +1075,10 @@ func (s *Server) Start() error {
 	if err != nil {
 		return err
 	}
+	s.listenAddrs = make(map[string]string, len(lns))
+	for _, l := range lns {
+		s.listenAddrs[l.name] = l.ln.Addr().String()
+	}
 	if s.videoWorker != nil {
 		s.videoWorker.Start()
 	}
@@ -1092,7 +1099,7 @@ func (s *Server) Start() error {
 		"plugins", s.engine.PluginCount(),
 	}
 	for _, l := range lns {
-		attrs = append(attrs, l.name+"_addr", l.ln.Addr().String())
+		attrs = append(attrs, l.name+"_addr", s.listenAddrs[l.name])
 	}
 	slog.Info("agentcc gateway starting", attrs...)
 

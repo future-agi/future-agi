@@ -1168,6 +1168,22 @@ class _Server:
         self.httpd.server_close()
 
 
+class _TLSServer(_Server):
+    """_Server behind TLS, with a throwaway self-signed certificate."""
+
+    def __init__(self, certfile: str, keyfile: str):
+        self.certfile, self.keyfile = certfile, keyfile
+
+    def __enter__(self):
+        import ssl
+
+        super().__enter__()
+        context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        context.load_cert_chain(self.certfile, self.keyfile)
+        self.httpd.socket = context.wrap_socket(self.httpd.socket, server_side=True)
+        return self
+
+
 def _closed_port() -> int:
     with socket.socket() as sock:
         sock.bind(("127.0.0.1", 0))
@@ -1344,6 +1360,29 @@ class GoProbe(unittest.TestCase):
             self.run_probe(f"http://127.0.0.1:{_closed_port()}/healthz"), 1
         )
         self.assertEqual(self.run_probe(), 1)  # no URL: usage error
+
+    @unittest.skipUnless(shutil.which("openssl"), "needs openssl")
+    def test_https_2xx_is_healthy_without_verifying_the_certificate(self):
+        # A self-signed certificate for another name: the probe checks the
+        # container's own listener is up, not who it is.
+        cert, key = Path(self.tmp.name) / "tls.crt", Path(self.tmp.name) / "tls.key"
+        subprocess.run(
+            ["openssl", "req", "-x509", "-newkey", "ec", "-pkeyopt",
+             "ec_paramgen_curve:P-256", "-nodes", "-days", "1", "-subj",
+             "/CN=gateway.example", "-keyout", str(key), "-out", str(cert)],
+            check=True, capture_output=True,
+        )  # fmt: skip
+        with _TLSServer(str(cert), str(key)) as server:
+            base = f"https://127.0.0.1:{server.port}"
+            self.assertEqual(self.run_probe(f"{base}/healthz"), 0)
+            self.assertEqual(self.run_probe(f"{base}/bad"), 1)
+            self.assertEqual(self.run_probe(HEALTHCHECK_URL=f"{base}/healthz"), 0)
+        with _Server() as server:
+            # TLS against a plain HTTP listener fails the handshake.
+            self.assertEqual(
+                self.run_probe(f"https://127.0.0.1:{server.port}/healthz"), 1
+            )
+        self.assertEqual(self.run_probe(f"ftp://127.0.0.1:{_closed_port()}/"), 1)
 
     @unittest.skipUnless(sys.platform.startswith("linux"), "needs /proc")
     def test_pid1_mismatch_skips_the_probe(self):
