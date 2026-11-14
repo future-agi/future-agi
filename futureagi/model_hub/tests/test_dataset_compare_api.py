@@ -357,3 +357,844 @@ def test_compare_pagination_tolerates_eval_columns_without_source_id(
     assert {column["source_id"] for column in eval_configs} == {None}
     assert result["table"][0][str(base_eval.id)]["cell_value"] == "pass"
     assert result["table"][0][str(other_eval.id)]["cell_value"] == "fail"
+
+
+@pytest.fixture
+def comparison_page_store(monkeypatch, tmp_path):
+    import json
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("COMPARE_DATASET_LOCAL_ROOT", str(tmp_path / "compare"))
+    pages = {}
+
+    def upload(*, compare_id, compare_json, page_name):
+        pages[f"compare/{compare_id}/{page_name}"] = json.loads(
+            json.dumps(compare_json)
+        )
+
+    def download(object_key):
+        return pages[object_key]
+
+    monkeypatch.setattr(
+        "model_hub.views.develop_dataset.upload_compare_json_to_s3", upload
+    )
+    monkeypatch.setattr(
+        "model_hub.views.develop_dataset.download_json_from_s3", download
+    )
+    return pages
+
+
+@pytest.fixture
+def comparison_cell_reads(monkeypatch):
+    from model_hub.views import develop_dataset
+
+    calls = []
+    original = CompareDatasetsView.process_base_values
+    original_prepare = develop_dataset._prepare_compare_dataset_impl
+
+    def read_base(self, *args, **kwargs):
+        calls.append("base")
+        return original(self, *args, **kwargs)
+
+    def prepare(*args, **kwargs):
+        calls.append("prepare")
+        return original_prepare(*args, **kwargs)
+
+    monkeypatch.setattr(CompareDatasetsView, "process_base_values", read_base)
+    monkeypatch.setattr(develop_dataset, "_prepare_compare_dataset_impl", prepare)
+    return calls
+
+
+@pytest.fixture
+def other_org_dataset(db):
+    from accounts.models.organization import Organization
+
+    org = Organization.objects.create(name="Second organization")
+    dataset = Dataset.objects.create(name="Second dataset", organization=org)
+    input_column = Column.objects.create(
+        name="input",
+        dataset=dataset,
+        data_type=DataTypeChoices.TEXT.value,
+        source=SourceChoices.OTHERS.value,
+    )
+    output_column = Column.objects.create(
+        name="judge",
+        dataset=dataset,
+        data_type=DataTypeChoices.TEXT.value,
+        source=SourceChoices.OTHERS.value,
+    )
+    row = Row.objects.create(dataset=dataset, order=0)
+    Cell.objects.create(dataset=dataset, column=input_column, row=row, value="alpha")
+    Cell.objects.create(
+        dataset=dataset, column=output_column, row=row, value="other-org-row"
+    )
+    return dataset
+
+
+def _compare_request(client, base, compared, *, download=False, compare_id=None):
+    payload = {
+        "dataset_ids": [str(compared.id)],
+        "base_column_name": "input",
+        "page_size": 10,
+        "current_page_index": 0,
+    }
+    if compare_id is not None:
+        payload["compare_id"] = compare_id
+    if download:
+        payload["dataset_info"] = {
+            "alpha": {
+                str(base.id): str(Row.objects.get(dataset=base).id),
+                str(compared.id): str(Row.objects.get(dataset=compared).id),
+            }
+        }
+        payload["common_column_names"] = ["judge"]
+    endpoint = "compare-datasets/download/" if download else "compare-datasets/"
+    response = client.post(
+        f"/model-hub/datasets/{base.id}/{endpoint}", payload, format="json"
+    )
+    if response.streaming:
+        response._proof_body = b"".join(response.streaming_content)
+    return response
+
+
+def _assert_no_comparison_cells(response, cell_reads, captured):
+    body = response._proof_body if response.streaming else response.content
+    assert response.status_code == status.HTTP_404_NOT_FOUND, body
+    assert not cell_reads
+    assert not any(
+        '"model_hub_cell"' in query["sql"] for query in captured.captured_queries
+    )
+
+
+@pytest.mark.django_db(transaction=True)
+def test_compare_without_organization_returns_not_found_before_cells(
+    compare_datasets, comparison_page_store, comparison_cell_reads
+):
+    from django.db import connection
+    from django.test.utils import CaptureQueriesContext
+
+    from accounts.models.user import User
+    from conftest import WorkspaceAwareAPIClient
+
+    user = User.objects.create_user(
+        email=f"compare-{uuid.uuid4().hex[:8]}@futureagi.com",
+        password="testpassword123",
+        name="Comparison user",
+        organization=None,
+    )
+    User.objects.filter(pk=user.pk).update(organization=None)
+    user.refresh_from_db()
+    client = WorkspaceAwareAPIClient()
+    client.force_authenticate(user=user)
+    base = compare_datasets["base_dataset"]
+    compared = compare_datasets["other_dataset"]
+    with CaptureQueriesContext(connection) as captured:
+        response = _compare_request(client, base, compared)
+    _assert_no_comparison_cells(response, comparison_cell_reads, captured)
+
+
+@pytest.mark.django_db(transaction=True)
+def test_compare_with_organization_and_no_workspace_checks_compared_dataset(
+    user,
+    compare_datasets,
+    other_org_dataset,
+    comparison_page_store,
+    comparison_cell_reads,
+    monkeypatch,
+):
+    from django.db import connection
+    from django.test.utils import CaptureQueriesContext
+    from rest_framework.views import APIView
+
+    from conftest import WorkspaceAwareAPIClient
+
+    initial = APIView.initial
+
+    def bound_initial(view, request, *args, **kwargs):
+        request.organization = compare_datasets["base_dataset"].organization
+        request.workspace = None
+        return initial(view, request, *args, **kwargs)
+
+    monkeypatch.setattr(APIView, "initial", bound_initial)
+    client = WorkspaceAwareAPIClient()
+    client.force_authenticate(user=user)
+    with CaptureQueriesContext(connection) as captured:
+        response = _compare_request(
+            client, compare_datasets["base_dataset"], other_org_dataset
+        )
+    _assert_no_comparison_cells(response, comparison_cell_reads, captured)
+
+
+@pytest.mark.django_db(transaction=True)
+def test_compare_checks_base_dataset_with_organization_and_no_workspace(
+    user,
+    compare_datasets,
+    other_org_dataset,
+    comparison_page_store,
+    comparison_cell_reads,
+    monkeypatch,
+):
+    from django.db import connection
+    from django.test.utils import CaptureQueriesContext
+    from rest_framework.views import APIView
+
+    from conftest import WorkspaceAwareAPIClient
+
+    initial = APIView.initial
+
+    def bound_initial(view, request, *args, **kwargs):
+        request.organization = user.organization
+        request.workspace = None
+        return initial(view, request, *args, **kwargs)
+
+    monkeypatch.setattr(APIView, "initial", bound_initial)
+    client = WorkspaceAwareAPIClient()
+    client.force_authenticate(user=user)
+    with CaptureQueriesContext(connection) as captured:
+        response = _compare_request(
+            client, other_org_dataset, compare_datasets["other_dataset"]
+        )
+    _assert_no_comparison_cells(response, comparison_cell_reads, captured)
+
+
+@pytest.mark.django_db(transaction=True)
+def test_compare_removed_member_returns_not_found_before_cells(
+    organization, compare_datasets, comparison_page_store, comparison_cell_reads
+):
+    from django.db import connection
+    from django.test.utils import CaptureQueriesContext
+
+    from accounts.models.organization_membership import OrganizationMembership
+    from accounts.models.user import User
+    from conftest import WorkspaceAwareAPIClient
+
+    member = User.objects.create_user(
+        email=f"compare-{uuid.uuid4().hex[:8]}@futureagi.com",
+        password="testpassword123",
+        name="Previous member",
+        organization=organization,
+    )
+    OrganizationMembership.no_workspace_objects.create(
+        user=member, organization=organization, is_active=False
+    )
+    assert member.organization_id == organization.id
+    client = WorkspaceAwareAPIClient()
+    client.force_authenticate(user=member)
+    with CaptureQueriesContext(connection) as captured:
+        response = _compare_request(
+            client, compare_datasets["base_dataset"], compare_datasets["other_dataset"]
+        )
+    _assert_no_comparison_cells(response, comparison_cell_reads, captured)
+
+
+@pytest.mark.django_db(transaction=True)
+def test_compare_own_datasets_returns_rows(
+    auth_client, compare_datasets, comparison_page_store
+):
+    response = _compare_request(
+        auth_client, compare_datasets["base_dataset"], compare_datasets["other_dataset"]
+    )
+    assert response.status_code == status.HTTP_200_OK, response.content
+    assert response.data["result"]["table"]
+    assert '"cell_value":"fail"' in response.content.decode()
+
+
+@pytest.mark.django_db(transaction=True)
+def test_compare_cached_page_checks_dataset_scope(
+    auth_client,
+    user,
+    compare_datasets,
+    other_org_dataset,
+    comparison_page_store,
+    comparison_cell_reads,
+    monkeypatch,
+):
+    from django.db import connection
+    from django.test.utils import CaptureQueriesContext
+    from rest_framework.views import APIView
+
+    from conftest import WorkspaceAwareAPIClient
+
+    base = compare_datasets["base_dataset"]
+    own = compare_datasets["other_dataset"]
+    built = _compare_request(auth_client, base, own)
+    assert built.status_code == status.HTTP_200_OK, built.content
+    compare_id = built.data["result"]["metadata"]["compare_id"]
+    comparison_cell_reads.clear()
+    initial = APIView.initial
+
+    def bound_initial(view, request, *args, **kwargs):
+        request.organization = other_org_dataset.organization
+        request.workspace = None
+        return initial(view, request, *args, **kwargs)
+
+    monkeypatch.setattr(APIView, "initial", bound_initial)
+    client = WorkspaceAwareAPIClient()
+    client.force_authenticate(user=user)
+    with CaptureQueriesContext(connection) as captured:
+        response = _compare_request(client, base, own, compare_id=compare_id)
+    _assert_no_comparison_cells(response, comparison_cell_reads, captured)
+
+
+@pytest.mark.django_db(transaction=True)
+def test_compare_download_checks_compared_dataset_before_cells(
+    user, compare_datasets, other_org_dataset, comparison_page_store, monkeypatch
+):
+    from django.db import connection
+    from django.test.utils import CaptureQueriesContext
+    from rest_framework.views import APIView
+
+    from conftest import WorkspaceAwareAPIClient
+
+    initial = APIView.initial
+
+    def bound_initial(view, request, *args, **kwargs):
+        request.organization = user.organization
+        request.workspace = None
+        return initial(view, request, *args, **kwargs)
+
+    monkeypatch.setattr(APIView, "initial", bound_initial)
+    client = WorkspaceAwareAPIClient()
+    client.force_authenticate(user=user)
+    with CaptureQueriesContext(connection) as captured:
+        response = _compare_request(
+            client, compare_datasets["base_dataset"], other_org_dataset, download=True
+        )
+    _assert_no_comparison_cells(response, [], captured)
+
+
+@pytest.mark.django_db(transaction=True)
+def test_compare_download_checks_base_dataset_before_cells(
+    user, compare_datasets, other_org_dataset, comparison_page_store, monkeypatch
+):
+    from django.db import connection
+    from django.test.utils import CaptureQueriesContext
+    from rest_framework.views import APIView
+
+    from conftest import WorkspaceAwareAPIClient
+
+    initial = APIView.initial
+
+    def bound_initial(view, request, *args, **kwargs):
+        request.organization = user.organization
+        request.workspace = None
+        return initial(view, request, *args, **kwargs)
+
+    monkeypatch.setattr(APIView, "initial", bound_initial)
+    client = WorkspaceAwareAPIClient()
+    client.force_authenticate(user=user)
+    with CaptureQueriesContext(connection) as captured:
+        response = _compare_request(
+            client, other_org_dataset, compare_datasets["other_dataset"], download=True
+        )
+    _assert_no_comparison_cells(response, [], captured)
+
+
+@pytest.mark.django_db(transaction=True)
+def test_compare_download_without_organization_returns_not_found_before_cells(
+    compare_datasets,
+):
+    from django.db import connection
+    from django.test.utils import CaptureQueriesContext
+
+    from accounts.models.user import User
+    from conftest import WorkspaceAwareAPIClient
+
+    member = User.objects.create_user(
+        email=f"compare-{uuid.uuid4().hex[:8]}@futureagi.com",
+        password="testpassword123",
+        name="Comparison user",
+        organization=None,
+    )
+    User.objects.filter(pk=member.pk).update(organization=None)
+    member.refresh_from_db()
+    client = WorkspaceAwareAPIClient()
+    client.force_authenticate(user=member)
+    with CaptureQueriesContext(connection) as captured:
+        response = _compare_request(
+            client,
+            compare_datasets["base_dataset"],
+            compare_datasets["other_dataset"],
+            download=True,
+        )
+    _assert_no_comparison_cells(response, [], captured)
+
+
+@pytest.mark.django_db(transaction=True)
+def test_compare_download_own_datasets_returns_rows(auth_client, compare_datasets):
+    response = _compare_request(
+        auth_client,
+        compare_datasets["base_dataset"],
+        compare_datasets["other_dataset"],
+        download=True,
+    )
+    assert response.status_code == status.HTTP_200_OK
+    assert b"fail" in response._proof_body
+
+
+@pytest.mark.django_db(transaction=True)
+def test_compare_download_removed_member_returns_not_found_before_cells(
+    organization, compare_datasets
+):
+    from django.db import connection
+    from django.test.utils import CaptureQueriesContext
+
+    from accounts.models.organization_membership import OrganizationMembership
+    from accounts.models.user import User
+    from conftest import WorkspaceAwareAPIClient
+
+    member = User.objects.create_user(
+        email=f"compare-{uuid.uuid4().hex[:8]}@futureagi.com",
+        password="testpassword123",
+        name="Previous member",
+        organization=organization,
+    )
+    OrganizationMembership.no_workspace_objects.create(
+        user=member, organization=organization, is_active=False
+    )
+    client = WorkspaceAwareAPIClient()
+    client.force_authenticate(user=member)
+    with CaptureQueriesContext(connection) as captured:
+        response = _compare_request(
+            client,
+            compare_datasets["base_dataset"],
+            compare_datasets["other_dataset"],
+            download=True,
+        )
+    _assert_no_comparison_cells(response, [], captured)
+
+
+@pytest.mark.django_db(transaction=True)
+def test_compare_download_uses_rows_from_resolved_datasets(
+    auth_client, compare_datasets, other_org_dataset
+):
+    base = compare_datasets["base_dataset"]
+    compared = compare_datasets["other_dataset"]
+    second_row = Row.objects.get(dataset=other_org_dataset)
+    response = auth_client.post(
+        f"/model-hub/datasets/{base.id}/compare-datasets/download/",
+        {
+            "dataset_ids": [str(compared.id)],
+            "base_column_name": "input",
+            "dataset_info": {
+                "alpha": {
+                    str(base.id): str(compare_datasets["base_row"].id),
+                    str(compared.id): str(second_row.id),
+                }
+            },
+            "common_column_names": ["judge"],
+        },
+        format="json",
+    )
+    assert response.status_code == status.HTTP_200_OK
+    csv = b"".join(response.streaming_content).decode()
+    assert "pass" in csv
+    assert "other-org-row" not in csv
+    assert "judge-Other Compare Dataset" not in csv
+
+
+@pytest.mark.django_db(transaction=True)
+def test_compare_download_ignores_rows_from_another_dataset_in_organization(
+    auth_client, compare_datasets
+):
+    base = compare_datasets["base_dataset"]
+    compared = compare_datasets["other_dataset"]
+    another = Dataset.objects.create(
+        name="Additional Compare Dataset",
+        organization=base.organization,
+        workspace=base.workspace,
+    )
+    column = Column.objects.create(
+        name="judge",
+        dataset=another,
+        data_type=DataTypeChoices.TEXT.value,
+        source=SourceChoices.EVALUATION.value,
+    )
+    row = Row.objects.create(dataset=another, order=0)
+    Cell.objects.create(dataset=another, column=column, row=row, value="extra-row")
+    response = auth_client.post(
+        f"/model-hub/datasets/{base.id}/compare-datasets/download/",
+        {
+            "dataset_ids": [str(compared.id)],
+            "base_column_name": "input",
+            "dataset_info": {
+                "alpha": {
+                    str(base.id): str(compare_datasets["base_row"].id),
+                    str(compared.id): str(row.id),
+                }
+            },
+            "common_column_names": ["judge"],
+        },
+        format="json",
+    )
+    assert response.status_code == status.HTTP_200_OK, response.content
+    csv = b"".join(response.streaming_content).decode()
+    assert "pass" in csv
+    assert "extra-row" not in csv
+    assert "judge-Other Compare Dataset" not in csv
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.parametrize("download", [False, True])
+@pytest.mark.parametrize("repeat_base", [False, True])
+def test_compare_repeated_dataset_ids_return_bad_request(
+    auth_client, compare_datasets, download, repeat_base
+):
+    base = compare_datasets["base_dataset"]
+    compared = compare_datasets["other_dataset"]
+    dataset_ids = (
+        [str(base.id)] if repeat_base else [str(compared.id), str(compared.id)]
+    )
+    endpoint = "compare-datasets/download/" if download else "compare-datasets/"
+    payload: dict[str, object] = {
+        "dataset_ids": dataset_ids,
+        "base_column_name": "input",
+        "page_size": 10,
+        "current_page_index": 0,
+    }
+    if download:
+        payload["dataset_info"] = {
+            "alpha": {
+                str(base.id): str(compare_datasets["base_row"].id),
+                str(compared.id): str(compare_datasets["other_row"].id),
+            }
+        }
+        payload["common_column_names"] = ["judge"]
+    response = auth_client.post(
+        f"/model-hub/datasets/{base.id}/{endpoint}", payload, format="json"
+    )
+    if download:
+        assert response.status_code == status.HTTP_200_OK, response.content
+        csv = b"".join(response.streaming_content).decode()
+        assert "judge-Base Compare Dataset" in csv
+        assert csv.count("judge-Other Compare Dataset") == (0 if repeat_base else 1)
+        assert csv.count("pass") == 1
+        assert csv.count("fail") == (0 if repeat_base else 1)
+    else:
+        assert response.status_code == status.HTTP_400_BAD_REQUEST, response.content
+        assert "Invalid dataset IDs provided." in response.content.decode()
+
+
+@pytest.mark.django_db(transaction=True)
+def test_compare_download_resolves_repeated_dataset_once(auth_client, compare_datasets):
+    from django.db import connection
+    from django.test.utils import CaptureQueriesContext
+
+    base = compare_datasets["base_dataset"]
+    compared = compare_datasets["other_dataset"]
+    with CaptureQueriesContext(connection) as queries:
+        response = auth_client.post(
+            f"/model-hub/datasets/{base.id}/compare-datasets/download/",
+            {
+                "dataset_ids": [str(compared.id), str(compared.id)],
+                "base_column_name": "input",
+                "dataset_info": {
+                    "alpha": {
+                        str(base.id): str(compare_datasets["base_row"].id),
+                        str(compared.id): str(compare_datasets["other_row"].id),
+                    }
+                },
+                "common_column_names": ["judge"],
+            },
+            format="json",
+        )
+    assert response.status_code == status.HTTP_200_OK, response.content
+    compared_lookups = [
+        query
+        for query in queries
+        if f'FROM "{Dataset._meta.db_table}"' in query["sql"]
+        and compared.id.hex in query["sql"]
+    ]
+    assert len(compared_lookups) == 1
+
+
+@pytest.mark.django_db(transaction=True)
+def test_compare_download_base_in_selected_ids_returns_rows(
+    auth_client, compare_datasets
+):
+    base = compare_datasets["base_dataset"]
+    compared = compare_datasets["other_dataset"]
+    response = auth_client.post(
+        f"/model-hub/datasets/{base.id}/compare-datasets/download/",
+        {
+            "dataset_ids": [str(base.id), str(compared.id)],
+            "base_column_name": "input",
+            "dataset_info": {
+                "alpha": {
+                    str(base.id): str(compare_datasets["base_row"].id),
+                    str(compared.id): str(compare_datasets["other_row"].id),
+                }
+            },
+            "common_column_names": ["judge"],
+        },
+        format="json",
+    )
+    assert response.status_code == status.HTTP_200_OK, response.content
+    csv = b"".join(response.streaming_content).decode()
+    assert csv.count("judge-Base Compare Dataset") == 1
+    assert csv.count("judge-Other Compare Dataset") == 1
+    assert "pass" in csv and "fail" in csv
+
+
+@pytest.mark.django_db(transaction=True)
+def test_compare_cached_page_repeated_ids_return_bad_request(
+    auth_client, compare_datasets, comparison_page_store
+):
+    base = compare_datasets["base_dataset"]
+    compared = compare_datasets["other_dataset"]
+    built = _compare_request(auth_client, base, compared)
+    assert built.status_code == status.HTTP_200_OK, built.content
+    compare_id = built.data["result"]["metadata"]["compare_id"]
+    response = auth_client.post(
+        f"/model-hub/datasets/{base.id}/compare-datasets/",
+        {
+            "dataset_ids": [str(compared.id), str(compared.id)],
+            "base_column_name": "input",
+            "page_size": 10,
+            "current_page_index": 0,
+            "compare_id": compare_id,
+        },
+        format="json",
+    )
+    assert response.status_code == status.HTTP_400_BAD_REQUEST, response.content
+    assert "Invalid dataset IDs provided." in response.content.decode()
+
+
+def _new_compare_pair(organization, workspace, label, base_value="alpha"):
+    datasets = []
+    for index in range(2):
+        dataset = Dataset.objects.create(
+            name=f"{label} {index}", organization=organization, workspace=workspace
+        )
+        row = Row.objects.create(dataset=dataset, order=0)
+        for name, value in (("input", base_value), ("judge", f"{label}-{index}")):
+            column = Column.objects.create(
+                name=name,
+                dataset=dataset,
+                data_type=DataTypeChoices.TEXT.value,
+                source=SourceChoices.OTHERS.value,
+            )
+            Cell.objects.create(dataset=dataset, column=column, row=row, value=value)
+        datasets.append(dataset)
+    return datasets
+
+
+@pytest.fixture
+def compare_member_client(organization, workspace):
+    from accounts.models.organization_membership import OrganizationMembership
+    from accounts.models.user import User
+    from accounts.models.workspace import WorkspaceMembership
+    from conftest import WorkspaceAwareAPIClient
+    from tfc.constants.levels import Level
+
+    member = User.objects.create_user(
+        email=f"compare-member-{uuid.uuid4().hex[:8]}@futureagi.com",
+        password="testpassword123",
+        name="Comparison member",
+        organization=organization,
+    )
+    org_membership = OrganizationMembership.no_workspace_objects.create(
+        user=member, organization=organization, level=Level.MEMBER, is_active=True
+    )
+    WorkspaceMembership.no_workspace_objects.create(
+        user=member,
+        workspace=workspace,
+        level=Level.WORKSPACE_MEMBER,
+        is_active=True,
+        organization_membership=org_membership,
+    )
+    client = WorkspaceAwareAPIClient()
+    client.force_authenticate(user=member)
+    client.set_workspace(workspace)
+    yield client
+    client.stop_workspace_injection()
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.parametrize("download", [False, True])
+@pytest.mark.parametrize("scope", ["another_organization", "another_workspace"])
+def test_compare_cached_id_requires_requested_datasets(
+    auth_client,
+    compare_member_client,
+    compare_datasets,
+    comparison_page_store,
+    organization,
+    workspace,
+    scope,
+    download,
+):
+    from accounts.models.organization import Organization
+    from accounts.models.organization_membership import OrganizationMembership
+    from accounts.models.user import User
+    from accounts.models.workspace import Workspace, WorkspaceMembership
+    from conftest import WorkspaceAwareAPIClient
+    from tfc.constants.levels import Level
+
+    if scope == "another_organization":
+        other_organization = Organization.objects.create(name="Additional organization")
+        other_user = User.objects.create_user(
+            email=f"compare-owner-{uuid.uuid4().hex[:8]}@futureagi.com",
+            password="testpassword123",
+            name="Comparison owner",
+            organization=other_organization,
+        )
+        membership = OrganizationMembership.no_workspace_objects.create(
+            user=other_user,
+            organization=other_organization,
+            level=Level.OWNER,
+            is_active=True,
+        )
+        other_workspace = Workspace.objects.create(
+            name="Additional workspace",
+            organization=other_organization,
+            is_default=True,
+            is_active=True,
+            created_by=other_user,
+        )
+        WorkspaceMembership.no_workspace_objects.create(
+            user=other_user,
+            workspace=other_workspace,
+            level=Level.OWNER,
+            is_active=True,
+            organization_membership=membership,
+        )
+        builder = WorkspaceAwareAPIClient()
+        builder.force_authenticate(user=other_user)
+    else:
+        other_organization = organization
+        other_workspace = Workspace.objects.create(
+            name="Additional workspace",
+            organization=organization,
+            is_default=False,
+            is_active=True,
+            created_by=workspace.created_by,
+        )
+        builder = WorkspaceAwareAPIClient()
+        builder.force_authenticate(user=workspace.created_by)
+
+    builder.set_workspace(other_workspace)
+    cached_base, cached_other = _new_compare_pair(
+        other_organization, other_workspace, "Cached pair", "cached-alpha"
+    )
+    built = _compare_request(builder, cached_base, cached_other)
+    assert built.status_code == status.HTTP_200_OK, built.content
+    compare_id = built.data["result"]["metadata"]["compare_id"]
+    builder.stop_workspace_injection()
+
+    base, compared = _new_compare_pair(organization, workspace, "Requested pair")
+    response = _compare_request(
+        compare_member_client, base, compared, download=download, compare_id=compare_id
+    )
+    assert response.status_code == status.HTTP_404_NOT_FOUND, (
+        response._proof_body if response.streaming else response.content
+    )
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.parametrize("download", [False, True])
+def test_compare_member_without_workspace_returns_not_found(
+    compare_member_client,
+    compare_datasets,
+    comparison_page_store,
+    organization,
+    workspace,
+    monkeypatch,
+    download,
+):
+    from django.db import connection
+    from django.test.utils import CaptureQueriesContext
+    from rest_framework.views import APIView
+
+    from accounts.models.workspace import Workspace
+
+    another_workspace = Workspace.objects.create(
+        name="Additional workspace",
+        organization=organization,
+        is_default=False,
+        is_active=True,
+        created_by=workspace.created_by,
+    )
+    base, compared = _new_compare_pair(organization, another_workspace, "Other pair")
+    compare_member_client.stop_workspace_injection()
+    from conftest import WorkspaceAwareAPIClient
+
+    client = WorkspaceAwareAPIClient()
+    client.force_authenticate(user=compare_member_client.handler._force_user)
+    initial = APIView.initial
+
+    def bound_initial(view, request, *args, **kwargs):
+        request.organization = organization
+        request.workspace = None
+        return initial(view, request, *args, **kwargs)
+
+    monkeypatch.setattr(APIView, "initial", bound_initial)
+    with CaptureQueriesContext(connection) as captured:
+        response = _compare_request(client, base, compared, download=download)
+    _assert_no_comparison_cells(response, [], captured)
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.parametrize("download", [False, True])
+def test_compare_member_bound_to_another_workspace_returns_not_found(
+    compare_member_client,
+    compare_datasets,
+    comparison_page_store,
+    organization,
+    workspace,
+    monkeypatch,
+    download,
+):
+    from django.db import connection
+    from django.test.utils import CaptureQueriesContext
+    from rest_framework.views import APIView
+
+    from accounts.models.workspace import Workspace
+
+    another_workspace = Workspace.objects.create(
+        name="Additional workspace",
+        organization=organization,
+        is_default=False,
+        is_active=True,
+        created_by=workspace.created_by,
+    )
+    base, compared = _new_compare_pair(organization, another_workspace, "Other pair")
+    compare_member_client.stop_workspace_injection()
+    from conftest import WorkspaceAwareAPIClient
+
+    client = WorkspaceAwareAPIClient()
+    client.force_authenticate(user=compare_member_client.handler._force_user)
+    initial = APIView.initial
+
+    def bound_initial(view, request, *args, **kwargs):
+        request.organization = organization
+        request.workspace = workspace
+        return initial(view, request, *args, **kwargs)
+
+    monkeypatch.setattr(APIView, "initial", bound_initial)
+    with CaptureQueriesContext(connection) as captured:
+        response = _compare_request(client, base, compared, download=download)
+    _assert_no_comparison_cells(response, [], captured)
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.parametrize("download", [False, True])
+def test_compare_owner_without_workspace_keeps_organization_scope(
+    auth_client, compare_datasets, comparison_page_store, monkeypatch, download
+):
+    from rest_framework.views import APIView
+
+    initial = APIView.initial
+
+    def bound_initial(view, request, *args, **kwargs):
+        request.organization = compare_datasets["base_dataset"].organization
+        request.workspace = None
+        return initial(view, request, *args, **kwargs)
+
+    monkeypatch.setattr(APIView, "initial", bound_initial)
+    response = _compare_request(
+        auth_client,
+        compare_datasets["base_dataset"],
+        compare_datasets["other_dataset"],
+        download=download,
+    )
+    assert response.status_code == status.HTTP_200_OK, response.content

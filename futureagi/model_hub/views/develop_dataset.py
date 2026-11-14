@@ -364,6 +364,19 @@ def _request_workspace_filter(request, field_name="workspace"):
     return Q(**{field_name: workspace})
 
 
+def _compare_metadata_matches_request(
+    metadata, dataset_id, dataset_ids, base_column_name
+):
+    requested_ids = [str(dataset_id), *(str(ds_id) for ds_id in dataset_ids)]
+    stored_ids = metadata.get("comparison_datasets")
+    return (
+        isinstance(stored_ids, list)
+        and str(metadata.get("base_dataset_id")) == str(dataset_id)
+        and [str(ds_id) for ds_id in stored_ids] == requested_ids
+        and metadata.get("base_column_name") == base_column_name
+    )
+
+
 def _request_dataset_queryset(request):
     return Dataset.objects.filter(
         _request_workspace_filter(request),
@@ -14334,6 +14347,12 @@ class CompareDatasetsView(APIView):
         responses={200: CompareDatasetResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
     )
     def post(self, request, dataset_id, *args, **kwargs):
+        organization = getattr(request, "organization", None)
+        if organization is None or (
+            getattr(request, "workspace", None) is None
+            and not request.user.has_global_workspace_access(organization)
+        ):
+            return self._gm.not_found(get_error_message("DATASET_NOT_FOUND"))
         try:
             start_time = time.time()
             # Pagination parameters
@@ -14371,6 +14390,9 @@ class CompareDatasetsView(APIView):
             start_page = math.ceil((start + 1) / 10)
             end_page = start_page + num_pages_to_fetch
 
+            if validated_data.get("compare_id") and not os.path.exists(metadata_path):
+                return self._gm.not_found(get_error_message("DATASET_NOT_FOUND"))
+
             if os.path.exists(metadata_path):
                 metadata = self.read_metadata_safely(metadata_path)
                 if metadata.get("total_pages") < num_pages_to_fetch:
@@ -14401,7 +14423,9 @@ class CompareDatasetsView(APIView):
                 dataset_ids = [str(did) for did in validated_data["dataset_ids"]]
                 if not dataset_ids:
                     return self._gm.bad_request("No dataset IDs provided.")
-                ordered_ids = [dataset_id] + [str(did) for did in dataset_ids]
+                ordered_ids = [str(dataset_id)] + [str(did) for did in dataset_ids]
+                if len(set(ordered_ids)) != len(ordered_ids):
+                    return self._gm.bad_request("Invalid dataset IDs provided.")
 
                 # Create the Case/When expressions for ordering
                 preserved_order = Case(
@@ -14409,15 +14433,19 @@ class CompareDatasetsView(APIView):
                     output_field=IntegerField(),
                 )
 
-                datasets = Dataset.objects.filter(
-                    id__in=ordered_ids, deleted=False
-                ).order_by(preserved_order)
+                datasets = (
+                    _request_dataset_queryset(request)
+                    .filter(id__in=ordered_ids)
+                    .order_by(preserved_order)
+                )
                 if len(datasets) != len(dataset_ids) + 1:
-                    return self._gm.bad_request(
-                        get_error_message("INVALID_DATASET_IDS")
-                    )
+                    return self._gm.not_found(get_error_message("DATASET_NOT_FOUND"))
 
                 comparison_datasets = list(datasets)
+                if not _compare_metadata_matches_request(
+                    metadata, dataset_id, dataset_ids, base_column_name
+                ):
+                    return self._gm.not_found(get_error_message("DATASET_NOT_FOUND"))
                 columns_qs = (
                     Column.objects.filter(
                         dataset__in=comparison_datasets, deleted=False
@@ -14519,7 +14547,9 @@ class CompareDatasetsView(APIView):
                     return self._gm.bad_request("No dataset IDs provided.")
 
             # list dataset ids in order main_datset id then other dataset ids
-            ordered_ids = [dataset_id] + [str(did) for did in dataset_ids]
+            ordered_ids = [str(dataset_id)] + [str(did) for did in dataset_ids]
+            if len(set(ordered_ids)) != len(ordered_ids):
+                return self._gm.bad_request("Invalid dataset IDs provided.")
 
             # Create the Case/When expressions for ordering
             preserved_order = Case(
@@ -14528,13 +14558,15 @@ class CompareDatasetsView(APIView):
             )
 
             # Apply the filter and ordering
-            datasets = Dataset.objects.filter(
-                id__in=ordered_ids, deleted=False
-            ).order_by(preserved_order)
+            datasets = (
+                _request_dataset_queryset(request)
+                .filter(id__in=ordered_ids)
+                .order_by(preserved_order)
+            )
+            if len(datasets) != len(dataset_ids) + 1:
+                return self._gm.not_found(get_error_message("DATASET_NOT_FOUND"))
             for dst in datasets:
                 logger.info(f"Datasets: {dst.id}  {dst.name}")
-            if len(datasets) != len(dataset_ids) + 1:
-                return self._gm.bad_request(get_error_message("INVALID_DATASET_IDS"))
 
             comparison_datasets = list(datasets)
             columns_qs = (
@@ -14783,9 +14815,15 @@ class DownloadComparisonDatasetView(APIView):
         },
     )
     def post(self, request, dataset_id, *args, **kwargs):
+        organization = getattr(request, "organization", None)
+        if organization is None or (
+            getattr(request, "workspace", None) is None
+            and not request.user.has_global_workspace_access(organization)
+        ):
+            return self._gm.not_found(get_error_message("DATASET_NOT_FOUND"))
         try:
-            # Get main dataset and validate request data
-            get_object_or_404(Dataset, id=dataset_id, deleted=False)
+            # Validate request data before resolving the comparison datasets
+            datasets_in_scope = _request_dataset_queryset(request)
             validated_data = request.validated_data
             compare_id = (
                 str(validated_data["compare_id"])
@@ -14798,6 +14836,8 @@ class DownloadComparisonDatasetView(APIView):
             common_column_names = validated_data.get("common_column_names", [])
             if compare_id:
                 metadata_path = get_compare_metadata_path(compare_id)
+                if not os.path.exists(metadata_path):
+                    return self._gm.not_found(get_error_message("DATASET_NOT_FOUND"))
                 if os.path.exists(get_compare_local_dir(compare_id)):
                     metadata = {"status ": "processing"}
                     loop_start = time.time()
@@ -14819,12 +14859,22 @@ class DownloadComparisonDatasetView(APIView):
                 )
 
             # Ensure main dataset is included in comparison
-            if str(dataset_id) not in dataset_ids:
-                dataset_ids.insert(0, str(dataset_id))
-            comparison_datasets = [
-                get_object_or_404(Dataset, id=ds_id, deleted=False)
-                for ds_id in dataset_ids
-            ]
+            dataset_ids = [str(dataset_id)] + list(
+                dict.fromkeys(
+                    ds_id for ds_id in dataset_ids if ds_id != str(dataset_id)
+                )
+            )
+            comparison_datasets = []
+            for ds_id in dataset_ids:
+                dataset = datasets_in_scope.filter(id=ds_id).first()
+                if dataset is None:
+                    return self._gm.not_found(get_error_message("DATASET_NOT_FOUND"))
+                comparison_datasets.append(dataset)
+
+            if compare_id and not _compare_metadata_matches_request(
+                metadata, dataset_id, dataset_ids[1:], base_column_name
+            ):
+                return self._gm.not_found(get_error_message("DATASET_NOT_FOUND"))
 
             if not dataset_info or not common_column_names:
                 return self._gm.bad_request(
@@ -14861,6 +14911,7 @@ class DownloadComparisonDatasetView(APIView):
                         # Fetch all common columns for this row in one query
                         cells = Cell.objects.filter(
                             row_id=row_id,
+                            row__dataset=ds,
                             column__name__in=common_column_names,
                             deleted=False,
                         ).select_related("column")
