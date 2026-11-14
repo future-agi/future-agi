@@ -40,6 +40,7 @@ from simulate.services.harness_readiness.evidence import (
     pair_bundle,
     read_evidence,
 )
+from simulate.services.harness_readiness.release import current_harness_version
 from simulate.services.harness_readiness.rules import (
     answer,
     failed_actions,
@@ -228,15 +229,21 @@ def recheck(pairing: Pairing) -> validation.ValidationView:
     Raises:
         UsageLimitExceeded: the organization cannot spend on a build sandbox, which a
             validation runs in; a pairing already certified starts none unless its
-            agent version's tools are still to be read.
+            agent version's tools are still to be read or an earlier harness made
+            its certificate.
     """
     from simulate.services.harness_usage import require_harness_authoring
 
     agent = pairing.agent_version
-    if not certified(pair_bundle(pairing)) or (
-        agent is not None
-        and validation.needs_reading(
-            pairing.environment, agent, pairing.environment_version, pairing.runtime
+    bundle = pair_bundle(pairing)
+    if (
+        not certified(bundle)
+        or validation.recertifies(bundle)
+        or (
+            agent is not None
+            and validation.needs_reading(
+                pairing.environment, agent, pairing.environment_version, pairing.runtime
+            )
         )
     ):
         require_harness_authoring(str(pairing.environment.organization_id))
@@ -337,6 +344,8 @@ def _report_key(pairing: Pairing, bundle: HarnessAssembledBundle | None) -> str:
         check,
         newest,
         setup,
+        # A newer harness makes every certificate made before it Stale.
+        current_harness_version(pairing.environment.organization_id),
     )
     return (
         "harness-readiness-report:" + hashlib.sha256(repr(parts).encode()).hexdigest()

@@ -24,6 +24,7 @@ from simulate.services.agent_setup import store_agent
 from simulate.services.harness_readiness import evidence as evidence_module
 from simulate.services.harness_readiness import report as report_module
 from simulate.services.harness_versioning import archives, assembly
+from simulate.services.harness_versioning import validation as validation_module
 from simulate.services.hosted_harness import HostedHarnessError
 from simulate.tests.test_agent_setup_service import source_agent
 from simulate.tests.test_harness_agent_versions import (
@@ -1193,6 +1194,26 @@ class TestApi:
         assert response.json()["validation"]["state"] == "validating"
         assert _row(environment).state == "pending"
 
+    def test_recheck_certifies_again_a_pairing_an_earlier_harness_checked(
+        self, user, workspace, storage, auth_client
+    ):
+        environment, a2 = _with_a2(user, workspace, storage, "rd-api-harness")
+        _made_by({"id": _row(environment).id}, harness_version="0.3.0")
+        _certify(environment, storage, agent=a2)
+        _made_by(
+            {"job_id": environment.id, "agent_version_id": a2.id},
+            harness_version="0.3.1",
+        )
+
+        response = _recheck(auth_client, environment.id)
+
+        assert response.status_code == 202, response.content
+        assert response.json()["validation"]["state"] == "validating"
+        assert _row(environment).state == "pending"
+        # The pairing the newer harness checked is reused, not checked again.
+        again = _recheck(auth_client, environment.id, agent_version_id=str(a2.id))
+        assert again.json()["validation"]["state"] == "ready"
+
     def test_recheck_is_unavailable_without_certifying(
         self, user, workspace, storage, auth_client, settings
     ):
@@ -1780,7 +1801,7 @@ class TestConsequence:
             "Audio checks do not apply to a chat connection"
         )
         assert rows["browser"]["consequence"].startswith("No check measures this yet")
-        assert report["rules_version"] == "8"
+        assert report["rules_version"] == "9"
         HarnessCapabilityReportSerializer(data=report).is_valid(raise_exception=True)
 
     @pytest.mark.parametrize(
@@ -2496,6 +2517,143 @@ class TestStaleVersions:
 
         assert report["pairing"]["evidence"] == "pair_certificate"
         assert not [row for row in report["rows"] if row["status"] == "stale"]
+
+
+def _made_by(bundle_filter, **runtime):
+    """Record on the matching bundles' certificates what made them."""
+    for bundle in HarnessAssembledBundle._base_manager.filter(**bundle_filter):
+        certificate = dict(bundle.certificate or {})
+        certificate["runtime"] = {
+            "validation_attempts": 1,
+            **(certificate.get("runtime") or {}),
+            **runtime,
+        }
+        HarnessAssembledBundle._base_manager.filter(id=bundle.id).update(
+            certificate=certificate
+        )
+
+
+def _built_by(environment, **runtime):
+    """Record on the default environment version's build certificate what made it."""
+    version = environment.environment_version
+    documents = dict(version.documents or {})
+    outputs = []
+    for one in documents.get("stage_outputs") or []:
+        if one.get("kind") == "certification":
+            data = dict(one["data"])
+            data["certificate"] = {
+                **data["certificate"],
+                "runtime": {"validation_attempts": 1, **runtime},
+            }
+            one = {**one, "data": data}
+        outputs.append(one)
+    documents["stage_outputs"] = outputs
+    HarnessEnvironmentVersion.no_workspace_objects.filter(id=version.id).update(
+        documents=documents
+    )
+    environment.refresh_from_db()
+
+
+class TestStale:
+    """A certificate made by an earlier harness, or with other framework versions."""
+
+    def test_a_harness_release_after_the_check_reads_stale(
+        self, user, workspace, storage
+    ):
+        environment, a2 = _with_a2(user, workspace, storage, "rd-harness")
+        _certify(environment, storage)
+        _made_by({"job_id": environment.id}, harness_version="0.3.0")
+        # A later check, of another agent version, ran on the newer harness.
+        _certify(environment, storage, agent=a2)
+        _made_by(
+            {"job_id": environment.id, "agent_version_id": a2.id},
+            harness_version="0.3.1",
+        )
+
+        report = _report(environment)
+        start = _rows(report)["start"]
+
+        assert report["pairing"]["evidence"] == "pair_certificate"
+        assert (start["status"], start["reason_code"], start["stale_because"]) == (
+            "stale",
+            "harness_changed",
+            "harness_version",
+        )
+        assert start["was"] == "supported"
+        assert start["reason"] == "Checked with harness 0.3.0; runs now use 0.3.1"
+        # Checking the pairing again certifies it on the harness runs use now.
+        assert start["fix"]["type"] == "recheck"
+        assert start["fix"]["recheck"]["scope"] == "pair"
+        assert report["answer"]["kind"] == "stale"
+        assert validation_module.recertifies(_bundle(environment))
+        assert not validation_module.recertifies(_bundle(environment, a2))
+
+    @pytest.mark.parametrize("unknown", ["checked", "current"])
+    def test_an_unknown_harness_version_is_not_stale(
+        self, user, workspace, storage, unknown
+    ):
+        environment, a2 = _with_a2(user, workspace, storage, f"rd-harness-{unknown}")
+        _certify(environment, storage)
+        if unknown == "current":
+            # The only certificate recording a version is the pairing's own.
+            _made_by({"job_id": environment.id}, harness_version="0.3.0")
+        else:
+            # The pairing's certificate records none; a newer one does.
+            _certify(environment, storage, agent=a2)
+            _made_by(
+                {"job_id": environment.id, "agent_version_id": a2.id},
+                harness_version="0.3.1",
+            )
+
+        report = _report(environment)
+
+        assert not [row for row in report["rows"] if row["status"] == "stale"]
+        assert report["answer"]["kind"] == "ready"
+
+    def test_a_framework_bump_names_the_framework(self, user, workspace, storage):
+        environment, a2 = _with_a2(user, workspace, storage, "rd-framework")
+        _built(environment)
+        _built_by(environment, frameworks={"langchain-core": "0.3.10"})
+        # A certificate of the picked agent version, on another environment version.
+        HarnessAssembledBundle._base_manager.create(
+            organization_id=environment.organization_id,
+            job_id=environment.id,
+            assembly_key="sha256:" + uuid.uuid4().hex * 2,
+            agent_version_id=a2.id,
+            environment_version_id=environment.environment_version.id,
+            suite_version_id=environment.suite_version.id,
+            state="ready",
+            object_key=f"harness-sealed/{environment.id}/elsewhere.tar.gz",
+            certificate={
+                "checks": PASSED,
+                "runtime": {
+                    "validation_attempts": 1,
+                    "frameworks": {"langchain-core": "0.3.12"},
+                },
+            },
+        )
+
+        start = _rows(_report(environment, a2))["start"]
+
+        assert (start["status"], start["stale_because"]) == ("stale", "agent_version")
+        assert start["reason_code"] == "framework_changed"
+        assert start["reason"] == (
+            "Checked with langchain-core 0.3.10; this agent version uses 0.3.12"
+        )
+
+    def test_an_unchanged_framework_keeps_the_agent_text(
+        self, user, workspace, storage
+    ):
+        environment, a2 = _with_a2(user, workspace, storage, "rd-framework-same")
+        _built(environment)
+        _built_by(environment, frameworks={"langchain-core": "0.3.10"})
+
+        start = _rows(_report(environment, a2))["start"]
+
+        assert (start["reason_code"], start["reason"]) == (
+            "agent_changed",
+            "Checked with the agent version the environment was built with",
+        )
 
 
 def _ran(environment, *, key, turns=None, attempts=(1,), recording=None, agent=None):

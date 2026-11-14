@@ -434,6 +434,10 @@ def start_validation(
         certified = (
             bundle.state == HarnessAssembledBundle.State.READY and bundle.object_key
         )
+        if certified and purpose == "recheck" and recertifies(bundle):
+            # Made by an earlier harness than runs use now: certify it again.
+            assembly.reset_outdated(bundle)
+            certified = False
         if certified and read and live_validation(bundle.id) is None:
             job = _create_job(
                 locked,
@@ -498,6 +502,18 @@ def start_validation(
         caller=move["caller"] if move else None,
     )
     return Validation("validating", bundle, purpose, job)
+
+
+def recertifies(bundle: HarnessAssembledBundle | None) -> bool:
+    """Whether a Re-check certifies ``bundle`` again: its certificate was made by an
+    earlier harness version than the organization's runs use now."""
+    from simulate.services.harness_readiness.release import harness_outdated
+
+    return (
+        bundle is not None
+        and bundle.state == HarnessAssembledBundle.State.READY
+        and harness_outdated(bundle.certificate, bundle.organization_id) is not None
+    )
 
 
 def _carry_move(job: HostedHarnessJob, move: AgentMove) -> bool:
