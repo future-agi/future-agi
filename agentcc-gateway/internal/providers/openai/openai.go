@@ -33,6 +33,13 @@ type Provider struct {
 	// max_tokens/max_completion_tokens handling differs from other OpenAI-format
 	// upstreams. See normalizeMaxTokens.
 	openAIAPI bool
+	// configType is the provider config's type ("deepinfra", "openrouter", …),
+	// "" when the config sets none.
+	configType string
+	// baseURLHost is base_url's hostname, lower-cased, without a trailing dot.
+	baseURLHost string
+	// ignoreProviderCost is the config's ignore_provider_cost.
+	ignoreProviderCost bool
 }
 
 // officialAPIHost is the host of the official OpenAI API. Other upstreams speak
@@ -100,7 +107,20 @@ func New(id string, cfg config.ProviderConfig) (*Provider, error) {
 		decisionHTTPClient: decisionClient,
 		semaphore:          make(chan struct{}, maxConcurrent),
 		openAIAPI:          isOfficialAPI(cfg.BaseURL),
+		configType:         cfg.Type,
+		baseURLHost:        hostname(cfg.BaseURL),
+		ignoreProviderCost: cfg.IgnoreProviderCost,
 	}, nil
+}
+
+// hostname is baseURL's hostname, lower-cased and without a trailing dot, or
+// "" when baseURL does not parse.
+func hostname(baseURL string) string {
+	u, err := url.Parse(baseURL)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSuffix(strings.ToLower(u.Hostname()), ".")
 }
 
 // normalizeMaxTokens rewrites max_tokens to max_completion_tokens for the official
@@ -132,6 +152,15 @@ func (p *Provider) endpoint(path string) string {
 }
 
 func (p *Provider) ID() string { return p.id }
+
+// ConfiguredType is the type the provider's config records, or "".
+func (p *Provider) ConfiguredType() string { return p.configType }
+
+// BaseURLHost is the hostname of the provider's base_url, lower-cased.
+func (p *Provider) BaseURLHost() string { return p.baseURLHost }
+
+// IgnoresProviderCost reports the config's ignore_provider_cost.
+func (p *Provider) IgnoresProviderCost() bool { return p.ignoreProviderCost }
 
 // ClientTimeout reports the timeout on this provider's HTTP client. It bounds
 // the whole exchange, a streamed body included, so it is a hard ceiling on any

@@ -86,6 +86,27 @@ func (s *Server) PriceTableName(orgID, providerID string) string {
 	return providers.PriceTableName(p)
 }
 
+// ReportedCostVendor is the vendor whose own statement of what rc cost the
+// cost plugin may record, judged on the provider instance that served rc (the
+// org's own instance when it served the request, else the config.yaml
+// provider), or "" when rc is priced from the catalogue. See
+// providers.ReportedCostVendor for the rule.
+//
+// It asks which instance served the same way the handlers do, not "the org's
+// instance whenever it has one": an internal key is served by the operator's
+// provider even when its org has an instance of the same ID, and the trust
+// must follow the upstream that actually answered.
+func (s *Server) ReportedCostVendor(rc *models.RequestContext) string {
+	if s.handlers == nil {
+		return ""
+	}
+	p, ok := s.handlers.servingProvider(rc)
+	if !ok {
+		return ""
+	}
+	return providers.ReportedCostVendor(p, rc.Provider)
+}
+
 // SetKeyRevocationPublisher attaches a pub/sub broadcaster for multi-replica
 // key revocation. Call after New() and before Start().
 func (s *Server) SetKeyRevocationPublisher(pub KeyRevocationPublisher) {

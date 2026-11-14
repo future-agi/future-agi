@@ -579,6 +579,7 @@ func main() {
 	// Create and start server (shares the same ModelDB pointer for hot-reload).
 	srv := server.New(cfg, *configPath, registry, engine, keyStore, grEngine, policyStore, metricsRegistry, &sharedModelDB, tenantStore, onOrgConfigChange, redisClient)
 	costPlugin.SetPriceTables(srv.PriceTableName)
+	costPlugin.SetReportedCostVendors(srv.ReportedCostVendor)
 
 	// Register onChange callback on tenantStore so that periodic sync (MergeBulk)
 	// evicts the OrgProviderCache for any org whose config changed. Without this,
