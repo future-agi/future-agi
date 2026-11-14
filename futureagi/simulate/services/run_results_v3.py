@@ -647,7 +647,7 @@ def _actor_missing_reason(receipt: Mapping[str, Any]) -> str | None:
 
 
 # Failures whose message the harness writes for the reader of a run, shown as it is.
-_READER_FAILURES = frozenset({"duplicate_commit"})
+_READER_FAILURES = frozenset({"duplicate_commit", "evidence_unmeasured"})
 
 
 def _reader_failure_reason(receipt: Mapping[str, Any]) -> str | None:

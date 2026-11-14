@@ -1728,6 +1728,80 @@ def test_a_write_committed_twice_is_kept_on_the_trial_and_named_in_the_call_s_re
     )
 
 
+def test_world_changes_keep_records_start_and_why_they_were_not_recorded(
+    organization, workspace
+):
+    from simulate.models import CallExecution
+    from simulate.services.hosted_harness_ingestion import TRIAL_STATE_KEY
+    from simulate.tests.test_harness_call_actors import _ingest
+    from simulate.views.run_results_v3 import TrialStateSerializer
+
+    change = {
+        "table": "orders",
+        "key": [1042],
+        "kind": "changed",
+        "before": {"id": 1042, "status": "paid"},
+        "after": {"id": 1042, "status": "refunded"},
+        "fields": ["status"],
+    }
+    world = {
+        "state_changes": [],
+        "records": {
+            "changes": [change],
+            "skipped": [{"table": "audit", "why": "no primary key"}],
+            "truncated": 3,
+        },
+        "start": {"state": "differs", "tables": ["orders"]},
+    }
+    recorded: dict = {}
+    _ingest(
+        organization,
+        workspace,
+        "records",
+        CallExecution.SimulationCallType.TEXT,
+        {"messages": [], "world_actors": world},
+        recorded,
+    )
+    trial = recorded[TRIAL_STATE_KEY]
+    assert trial["records"] == {
+        "changes": [change],
+        "skipped": [{"table": "audit", "why": "no primary key"}],
+        "truncated": 3,
+    }
+    assert trial["start"] == {"state": "differs", "tables": ["orders"]}
+    assert TrialStateSerializer(data=trial).is_valid(), TrialStateSerializer(
+        data=trial
+    ).errors
+
+    in_process: dict = {}
+    _ingest(
+        organization,
+        workspace,
+        "in-process",
+        CallExecution.SimulationCallType.TEXT,
+        {
+            "messages": [],
+            "world_actors": {"recorded": False, "why": "in_process_tools"},
+        },
+        in_process,
+    )
+    assert in_process[TRIAL_STATE_KEY] == {"recorded": False, "why": "in_process_tools"}
+
+    unreadable: dict = {}
+    _ingest(
+        organization,
+        workspace,
+        "unreadable",
+        CallExecution.SimulationCallType.TEXT,
+        {
+            "messages": [],
+            "world_actors": {"state_changes": [], "records": {"unreadable": True}},
+        },
+        unreadable,
+    )
+    assert unreadable[TRIAL_STATE_KEY] == {"state_changes": [], "unreadable": True}
+
+
 def test_an_actor_is_offered_and_given_only_the_environment_s_own_files_and_records(
     user, workspace, storage, auth_client
 ):

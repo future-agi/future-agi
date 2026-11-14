@@ -510,4 +510,123 @@ describe("TrialChangesPanel", () => {
       screen.getByText("Committed twice: issue_refund"),
     ).toBeInTheDocument();
   });
+
+  it("shows each changed record before and after", () => {
+    render(
+      <TrialChangesPanel
+        trialState={{
+          state_changes: [],
+          decisions: [],
+          records: {
+            changes: [
+              {
+                table: "orders",
+                key: [1042],
+                kind: "changed",
+                fields: ["status"],
+                before: { id: 1042, status: "paid" },
+                after: { id: 1042, status: "refunded" },
+              },
+              {
+                table: "refunds",
+                key: [1],
+                kind: "added",
+                fields: [],
+                before: null,
+                after: { id: 1, order_id: 1042 },
+              },
+            ],
+            skipped: [{ table: "audit", why: "no primary key" }],
+            truncated: 2,
+          },
+        }}
+      />,
+    );
+    expect(screen.getByText("Records before and after")).toBeInTheDocument();
+    expect(
+      screen.getByText("orders [1042] · Changed: status"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("Before: id: 1042, status: paid"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("After: id: 1042, status: refunded"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("refunds [1] · Added")).toBeInTheDocument();
+    expect(
+      screen.getByText("Not compared: audit (no primary key)"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("And 2 more changes.")).toBeInTheDocument();
+  });
+
+  it("says no record changed when the trial changed none", () => {
+    render(
+      <TrialChangesPanel
+        trialState={{
+          state_changes: [],
+          decisions: [],
+          records: { changes: [], skipped: [], truncated: 0 },
+        }}
+      />,
+    );
+    expect(
+      screen.getByText("No record changed in this trial."),
+    ).toBeInTheDocument();
+  });
+
+  it.each([
+    [
+      { state: "seeded", tables: [] },
+      "Started from the seeded records, as every trial does",
+    ],
+    [
+      { state: "differs", tables: ["orders"] },
+      "Did not start from the seeded records: orders differed. Results of this trial may not repeat.",
+    ],
+    [
+      { state: "unknown", tables: [] },
+      "Whether this trial started from the seeded records could not be checked.",
+    ],
+  ])(
+    "says whether the trial started from the seeded records (%o)",
+    (start, line) => {
+      render(
+        <TrialChangesPanel
+          trialState={{ state_changes: [], decisions: [], start }}
+        />,
+      );
+      expect(screen.getByText(line)).toBeInTheDocument();
+    },
+  );
+
+  it("puts a trial that did not start clean under Worth knowing about this trial", () => {
+    render(
+      <TrialChangesPanel
+        trialState={{
+          state_changes: [],
+          decisions: [],
+          start: { state: "differs", tables: ["orders"] },
+        }}
+      />,
+    );
+    expect(
+      screen.getByText("Worth knowing about this trial"),
+    ).toBeInTheDocument();
+  });
+
+  it("says what changed could not be read, never that nothing changed", () => {
+    render(
+      <TrialChangesPanel
+        trialState={{ state_changes: [], decisions: [], unreadable: true }}
+      />,
+    );
+    expect(
+      screen.getByText(
+        "What changed in the world could not be read for this trial. Checks that needed it read Unmeasured.",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText("Nothing changed in the world in this trial."),
+    ).toBeNull();
+  });
 });

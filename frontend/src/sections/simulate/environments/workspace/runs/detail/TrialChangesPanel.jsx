@@ -30,9 +30,95 @@ const usageLines = (rows, name) => {
   return [...lines, { key: "all", text: C.usageTotal(C.usage(...sum(rows))) }];
 };
 
+// A record's values as one short line, for the before and after columns.
+const values = (row) =>
+  row
+    ? Object.entries(row)
+        .map(
+          ([key, value]) =>
+            `${key}: ${typeof value === "object" ? JSON.stringify(value) : value}`,
+        )
+        .join(", ")
+    : "";
+
+// The records the trial added, changed or removed, each with its values before and after.
+function RecordsSection({ records }) {
+  const changes = records?.changes || [];
+  return (
+    <Box data-testid="records-before-after">
+      <Typography sx={{ typography: "s2", fontWeight: 600 }}>
+        {C.recordsHeading}
+      </Typography>
+      {changes.length === 0 && (
+        <Typography sx={quiet}>{C.recordsEmpty}</Typography>
+      )}
+      {changes.map((one, index) => (
+        <Box key={`${one.table}-${index}`} sx={{ mt: 0.75 }}>
+          <Typography sx={{ typography: "s3", fontWeight: 600 }}>
+            {`${one.table} ${JSON.stringify(one.key)} · ${
+              one.kind === "changed"
+                ? C.recordChanged(one.fields || [])
+                : C.recordKinds[one.kind] || one.kind
+            }`}
+          </Typography>
+          <Box
+            sx={{
+              display: "grid",
+              gridTemplateColumns: "1fr 1fr",
+              columnGap: 2,
+            }}
+          >
+            <Typography
+              sx={quiet}
+            >{`${C.before}: ${values(one.before) || "-"}`}</Typography>
+            <Typography
+              sx={quiet}
+            >{`${C.after}: ${values(one.after) || "-"}`}</Typography>
+          </Box>
+        </Box>
+      ))}
+      {(records?.skipped || []).map((one) => (
+        <Typography key={`skipped-${one.table}`} sx={quiet}>
+          {C.notCompared(one.table, one.why)}
+        </Typography>
+      ))}
+      {records?.truncated > 0 && (
+        <Typography sx={quiet}>{C.truncated(records.truncated)}</Typography>
+      )}
+    </Box>
+  );
+}
+
+RecordsSection.propTypes = {
+  records: PropTypes.shape({
+    changes: PropTypes.arrayOf(PropTypes.object),
+    skipped: PropTypes.arrayOf(PropTypes.object),
+    truncated: PropTypes.number,
+  }),
+};
+
+// Whether the trial started from the seeded records, said first.
+const startLine = (start) => {
+  if (!start?.state) return null;
+  if (start.state === "differs") return C.start.differs(start.tables || []);
+  return C.start[start.state] || null;
+};
+
 // A trial's world changes per participant (the agent and each actor), and what each actor chose. Kept apart:
-// attempted, refused and committed are never summed into one number.
+// attempted, refused and committed are never summed into one number. A trial with no record says why.
 export default function TrialChangesPanel({ trialState }) {
+  if (!trialState)
+    return <Typography sx={{ ...quiet, p: 2 }}>{C.notRecorded}</Typography>;
+  if (trialState.recorded === false)
+    return <Typography sx={{ ...quiet, p: 2 }}>{C.inProcess}</Typography>;
+  return <WorldChanges trialState={trialState} />;
+}
+
+TrialChangesPanel.propTypes = {
+  trialState: PropTypes.object,
+};
+
+function WorldChanges({ trialState }) {
   const changes = trialState?.state_changes || [];
   const all = trialState?.decisions || [];
   // A message written before the run is the trial's starting point, shown apart from what actors chose in it.
@@ -41,8 +127,20 @@ export default function TrialChangesPanel({ trialState }) {
   const approvals = trialState?.approvals || [];
   const usage = trialState?.usage || [];
   const duplicates = trialState?.duplicates || [];
-  // How the trial ran that the reader must know, e.g. a scenario fault that did not take effect: said first.
-  const notices = (trialState?.notices || []).filter((one) => one?.message);
+  // How the trial ran that the reader must know, e.g. a scenario fault that did not take effect: said first. A trial
+  // that did not start from the seeded records is one of them.
+  const started = startLine(trialState?.start);
+  const notices = [
+    ...(trialState?.start?.state === "differs"
+      ? [{ code: "start_differs", message: started }]
+      : []),
+    ...(trialState?.notices || []),
+  ].filter((one) => one?.message);
+  const unreadable = trialState?.unreadable || trialState?.records?.unreadable;
+  const records =
+    trialState?.records && !trialState.records.unreadable
+      ? trialState.records
+      : null;
   const noticeList = notices.length > 0 && (
     <Box>
       <Typography
@@ -57,14 +155,26 @@ export default function TrialChangesPanel({ trialState }) {
       ))}
     </Box>
   );
+  const headLines = (
+    <>
+      {started && trialState?.start?.state !== "differs" && (
+        <Typography sx={quiet}>{started}</Typography>
+      )}
+      {unreadable && (
+        <Typography sx={{ ...quiet, color: "warning.dark" }}>
+          {C.unreadable}
+        </Typography>
+      )}
+    </>
+  );
   if (!changes.length && !all.length)
-    return notices.length ? (
+    return (
       <Stack spacing={1.5} sx={{ p: 2 }}>
+        {headLines}
         {noticeList}
-        <Typography sx={quiet}>{C.empty}</Typography>
+        {!unreadable && <Typography sx={quiet}>{C.empty}</Typography>}
+        {records && <RecordsSection records={records} />}
       </Stack>
-    ) : (
-      <Typography sx={{ ...quiet, p: 2 }}>{C.empty}</Typography>
     );
   const names = Object.fromEntries(changes.map((one) => [one.who, one.name]));
   const name = (id) => names[id] || id;
@@ -90,6 +200,7 @@ export default function TrialChangesPanel({ trialState }) {
         </Typography>
         <Typography sx={quiet}>{C.about}</Typography>
       </Box>
+      {headLines}
       {noticeList}
       {duplicates.map((one, index) => (
         <Typography
@@ -123,6 +234,7 @@ export default function TrialChangesPanel({ trialState }) {
           )}
         </Box>
       ))}
+      {records && <RecordsSection records={records} />}
       {preRun.length > 0 && (
         <Box>
           <Typography sx={{ typography: "s2", fontWeight: 600 }}>
@@ -184,12 +296,19 @@ export default function TrialChangesPanel({ trialState }) {
   );
 }
 
-TrialChangesPanel.propTypes = {
+WorldChanges.propTypes = {
   trialState: PropTypes.shape({
     state_changes: PropTypes.arrayOf(PropTypes.object),
     decisions: PropTypes.arrayOf(PropTypes.object),
     approvals: PropTypes.arrayOf(PropTypes.object),
     usage: PropTypes.arrayOf(PropTypes.object),
+    records: PropTypes.object,
+    start: PropTypes.shape({
+      state: PropTypes.string,
+      tables: PropTypes.arrayOf(PropTypes.string),
+    }),
+    unreadable: PropTypes.bool,
+    recorded: PropTypes.bool,
     duplicates: PropTypes.arrayOf(
       PropTypes.shape({ action: PropTypes.string, name: PropTypes.string }),
     ),

@@ -780,12 +780,49 @@ class DuplicateCommitSerializer(serializers.Serializer):
     )
 
 
+class RecordSkippedSerializer(serializers.Serializer):
+    table = serializers.CharField()
+    why = serializers.CharField()
+
+
+class TrialRecordsSerializer(serializers.Serializer):
+    # Each `{table, key, kind: added|changed|removed, before, after, fields}`; `fields` names the changed columns.
+    changes = serializers.ListField(child=serializers.JSONField())
+    skipped = RecordSkippedSerializer(many=True, required=False)
+    truncated = serializers.IntegerField(
+        required=False, help_text="Changes past the cap, counted, not listed."
+    )
+
+
+class TrialStartSerializer(serializers.Serializer):
+    state = serializers.ChoiceField(choices=("seeded", "differs", "unknown"))
+    tables = serializers.ListField(child=serializers.CharField(), required=False)
+
+
 class TrialStateSerializer(serializers.Serializer):
     state_changes = TrialStateChangeSerializer(many=True, required=False)
     duplicates = DuplicateCommitSerializer(
         many=True,
         required=False,
         help_text="Writes the world committed twice after the agent's answer was lost; the trial fails on them.",
+    )
+    recorded = serializers.BooleanField(
+        required=False,
+        help_text="False when World changes are not recorded for this agent: its tools run inside it.",
+    )
+    why = serializers.CharField(
+        required=False, allow_blank=True, help_text="Why they were not recorded."
+    )
+    unreadable = serializers.BooleanField(
+        required=False,
+        help_text="True when what changed in the world could not be read; checks that needed it read Unmeasured.",
+    )
+    records = TrialRecordsSerializer(
+        required=False, help_text="The records the trial changed, before and after."
+    )
+    start = TrialStartSerializer(
+        required=False,
+        help_text="Whether the trial started from the seeded records, as every trial should.",
     )
     decisions = ActorDecisionSerializer(many=True, required=False)
     approvals = ApprovalLineSerializer(many=True, required=False)

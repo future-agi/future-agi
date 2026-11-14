@@ -114,17 +114,13 @@ export default function VoiceCallDrawer({
           />
         ),
       },
-      // Only a call whose world had actors or faults records what changed in it.
-      ...(data?.trial_state
-        ? [
-            {
-              label: TRIAL_CHANGES_COPY.tab,
-              value: "world_changes",
-              icon: "solar:global-linear",
-              content: <TrialChangesPanel trialState={data.trial_state} />,
-            },
-          ]
-        : []),
+      // Every trial has World changes: what changed, or why it was not recorded.
+      {
+        label: TRIAL_CHANGES_COPY.tab,
+        value: "world_changes",
+        icon: "solar:global-linear",
+        content: <TrialChangesPanel trialState={data?.trial_state ?? null} />,
+      },
     ],
     [
       data?.trial_state,

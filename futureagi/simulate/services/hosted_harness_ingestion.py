@@ -1418,6 +1418,44 @@ def _call_actor_record(raw: object) -> CallCallActors | None:
     return record or None
 
 
+_START_STATES = ("seeded", "differs", "unknown")
+
+
+def _world_change_fields(world: dict[str, Any]) -> dict[str, Any]:
+    """World changes beyond each participant's attempts: why they were not recorded (an agent whose tools run
+    inside it), whether they could be read, the records before and after, and whether the trial started from the
+    seeded records. Lists are capped at MAX_RECORDED_ENTRIES; what is cut is counted in `truncated`."""
+    kept: dict[str, Any] = {}
+    if world.get("recorded") is False:
+        kept["recorded"] = False
+        kept["why"] = str(world.get("why") or "")[:64]
+    records = world.get("records")
+    if world.get("unreadable") or (
+        isinstance(records, dict) and records.get("unreadable")
+    ):
+        kept["unreadable"] = True
+    elif isinstance(records, dict):
+        changes = [one for one in records.get("changes") or [] if isinstance(one, dict)]
+        try:
+            truncated = max(int(records.get("truncated") or 0), 0)
+        except (TypeError, ValueError):
+            truncated = 0
+        kept["records"] = {
+            "changes": changes[:MAX_RECORDED_ENTRIES],
+            "skipped": _entries(records.get("skipped")),
+            "truncated": truncated + max(len(changes) - MAX_RECORDED_ENTRIES, 0),
+        }
+    start = world.get("start")
+    if isinstance(start, dict) and start.get("state") in _START_STATES:
+        kept["start"] = {
+            "state": start["state"],
+            "tables": [
+                str(one) for one in start.get("tables") or [] if isinstance(one, str)
+            ][:MAX_RECORDED_ENTRIES],
+        }
+    return kept
+
+
 def _placed_world_actions(
     metadata: dict[str, Any] | None, base_time: float | None
 ) -> float | None:
@@ -1481,6 +1519,8 @@ def _ingest_hosted_transcript(
             # The limits the trial ran with, so the record says which applied.
             if isinstance(world, dict) and isinstance(world.get("limits"), dict):
                 trial["limits"] = _actor_limits(world["limits"])
+            if isinstance(world, dict):
+                trial.update(_world_change_fields(world))
             # What the person should know about how the trial ran, e.g. a fault that did not take effect.
             notices = payload.get("notices") if isinstance(payload, dict) else None
             notices = [

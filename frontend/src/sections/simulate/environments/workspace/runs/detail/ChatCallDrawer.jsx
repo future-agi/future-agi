@@ -117,8 +117,8 @@ export default function ChatCallDrawer({
   const { callDetail, isLoading } = useCallDetail(task.id);
   const callTraces = useCallTraces(executionId, task.id);
   const showTraces = artifact === "traces";
-  const showChanges =
-    artifact === "world_changes" && Boolean(callDetail?.trial_state);
+  // Every trial has World changes: what changed, or why it was not recorded.
+  const showChanges = artifact === "world_changes";
 
   // The header and chips paint from the already-loaded row immediately, then
   // hydrate from the call detail once it resolves.
@@ -262,9 +262,7 @@ export default function ChatCallDrawer({
           >
             <Tab value="transcript" label="Transcript" />
             <Tab value="traces" label={CALL_TRACES_COPY.tab} />
-            {callDetail?.trial_state && (
-              <Tab value="world_changes" label={TRIAL_CHANGES_COPY.tab} />
-            )}
+            <Tab value="world_changes" label={TRIAL_CHANGES_COPY.tab} />
           </CustomTabs>
 
           <Box
@@ -272,7 +270,7 @@ export default function ChatCallDrawer({
             sx={{ flex: 1, minHeight: 0, overflow: "auto", outline: "none" }}
           >
             {showChanges ? (
-              <TrialChangesPanel trialState={callDetail.trial_state} />
+              <TrialChangesPanel trialState={callDetail?.trial_state ?? null} />
             ) : showTraces ? (
               <Box
                 sx={{

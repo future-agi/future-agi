@@ -85,4 +85,26 @@ export const TRIAL_CHANGES_COPY = {
   usageTotal: (line) => `In all: ${line}, counted in the simulator's usage`,
   nothing: "Did nothing",
   empty: "Nothing changed in the world in this trial.",
+  // No record at all: a trial from before World changes were kept on every trial.
+  notRecorded: "World changes were not recorded for this trial.",
+  // The agent runs its tools where the test world cannot see them.
+  inProcess:
+    "World changes are not recorded for this agent: its tools run inside it, where the test world cannot see them.",
+  unreadable:
+    "What changed in the world could not be read for this trial. Checks that needed it read Unmeasured.",
+  start: {
+    seeded: "Started from the seeded records, as every trial does",
+    differs: (tables) =>
+      `Did not start from the seeded records: ${tables.join(", ")} differed. Results of this trial may not repeat.`,
+    unknown:
+      "Whether this trial started from the seeded records could not be checked.",
+  },
+  recordsHeading: "Records before and after",
+  recordsEmpty: "No record changed in this trial.",
+  recordKinds: { added: "Added", changed: "Changed", removed: "Removed" },
+  recordChanged: (fields) => `Changed: ${fields.join(", ")}`,
+  before: "Before",
+  after: "After",
+  notCompared: (table, why) => `Not compared: ${table} (${why})`,
+  truncated: (n) => `And ${n} more changes.`,
 };
