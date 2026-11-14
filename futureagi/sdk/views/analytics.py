@@ -616,6 +616,35 @@ class SimulationAnalyticsView(APIView):
         return self._gm.success_response(output)
 
     def _build_eval_averages(self, eval_rows):
+        metric_keys = {}
+        for metric_id, name, output_type, avg_value, choice_value, _ in eval_rows:
+            normalized_name = name.lower().replace(" ", "_")
+            if output_type in ("Pass/Fail", "score") or (
+                output_type == "choices" and avg_value is not None
+            ):
+                role, key = "avg", f"avg_{normalized_name}"
+            elif output_type == "choices" and choice_value is not None:
+                role, key = "choices", normalized_name
+            else:
+                continue
+            metric_keys[(metric_id, name, output_type, role)] = key
+
+        reserved_keys = set(metric_keys.values())
+        if len(reserved_keys) < len(metric_keys):
+            used_keys = set()
+            for metric, key in sorted(
+                metric_keys.items(), key=lambda item: item[0][2] == "choices"
+            ):
+                if key in used_keys:
+                    alias = f"{key}__{metric[0]}"
+                    while alias in reserved_keys:
+                        alias += "_"
+                    key = alias
+                    reserved_keys.add(key)
+                metric_keys[metric] = key
+                used_keys.add(key)
+            eval_rows = sorted(eval_rows, key=lambda row: row[2] == "choices")
+
         eval_averages = {}
         for (
             _metric_id,
@@ -626,14 +655,16 @@ class SimulationAnalyticsView(APIView):
             choice_count,
         ) in eval_rows:
             if output_type in ("Pass/Fail", "score"):
-                field_name = f"avg_{metric_name.lower().replace(' ', '_')}"
+                field_name = metric_keys[(_metric_id, metric_name, output_type, "avg")]
                 eval_averages[field_name] = float(avg_value) if avg_value else 0
             elif output_type == "choices" and choice_value is not None:
-                base_name = metric_name.lower().replace(" ", "_")
+                base_name = metric_keys[
+                    (_metric_id, metric_name, output_type, "choices")
+                ]
                 if base_name not in eval_averages:
                     eval_averages[base_name] = {}
                 eval_averages[base_name][choice_value.lower()] = choice_count
             elif output_type == "choices" and avg_value is not None:
-                field_name = f"avg_{metric_name.lower().replace(' ', '_')}"
+                field_name = metric_keys[(_metric_id, metric_name, output_type, "avg")]
                 eval_averages[field_name] = float(avg_value)
         return eval_averages

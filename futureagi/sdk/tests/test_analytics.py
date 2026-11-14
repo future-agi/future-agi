@@ -9,6 +9,7 @@ Tests for the three simulation analytics endpoints:
 These endpoints use APIKeyAuthentication (x-api-key / x-secret-key headers).
 """
 
+import json
 import uuid
 from unittest.mock import MagicMock, patch
 
@@ -858,7 +859,7 @@ class TestSimulationRunsView:
 class TestSimulationAnalyticsView:
     """Happy path tests for GET /sdk/api/v1/simulation/analytics/."""
 
-    def _mock_connection_for_analytics(self, mock_conn):
+    def _mock_connection_for_analytics(self, mock_conn, eval_rows=FAKE_EVAL_ROWS):
         """Set up mock connection returning eval and kpi cursors."""
         mock_cursor_eval = _build_mock_cursor(
             [
@@ -869,7 +870,7 @@ class TestSimulationAnalyticsView:
                 "choice_value",
                 "choice_count",
             ],
-            FAKE_EVAL_ROWS,
+            eval_rows,
             single=False,
         )
         mock_cursor_kpi = _build_mock_cursor(FAKE_KPI_COLUMNS, FAKE_KPI_ROW)
@@ -948,6 +949,79 @@ class TestSimulationAnalyticsView:
         assert eval_averages["avg_accuracy"] == 50.0
         assert "avg_fluency" in eval_averages
         assert eval_averages["avg_fluency"] == 0.85
+
+    @pytest.mark.parametrize(
+        ("eval_rows", "expected_json"),
+        [
+            (
+                [
+                    ("eval-score", "Tone", "score", 75.0, None, None),
+                    ("eval-choice", "Avg Tone", "choices", None, "positive", 4),
+                ],
+                '{"avg_tone":75.0,"avg_tone__eval-choice":{"positive":4}}',
+            ),
+            (
+                [
+                    ("eval-choice", "Avg Tone", "choices", None, "positive", 4),
+                    ("eval-score", "Tone", "score", 75.0, None, None),
+                ],
+                '{"avg_tone":75.0,"avg_tone__eval-choice":{"positive":4}}',
+            ),
+            (
+                [
+                    ("eval-score", "Tone", "score", 75.0, None, None),
+                    ("eval-choice", "Avg Tone", "choices", None, "positive", 4),
+                    ("eval-other", "Avg Tone__eval-choice", "choices", None, "no", 2),
+                ],
+                '{"avg_tone":75.0,"avg_tone__eval-choice_":{"positive":4},'
+                '"avg_tone__eval-choice":{"no":2}}',
+            ),
+            (
+                [
+                    ("eval-numeric", "Tone", "choices", 4.0, None, 0),
+                    ("eval-score", "Tone", "score", 75.0, None, None),
+                ],
+                '{"avg_tone":75.0,"avg_tone__eval-numeric":4.0}',
+            ),
+            (
+                [
+                    ("eval-first", "Tone", "score", 75.0, None, None),
+                    ("eval-second", "tone", "score", 65.0, None, None),
+                ],
+                '{"avg_tone":75.0,"avg_tone__eval-second":65.0}',
+            ),
+            (
+                [
+                    ("eval-score", "Tone", "score", 75.0, None, None),
+                    ("eval-choice", "Sentiment", "choices", None, "positive", 4),
+                ],
+                '{"avg_tone":75.0,"sentiment":{"positive":4}}',
+            ),
+        ],
+    )
+    def test_execution_id_eval_averages_keep_distinct_metrics(
+        self, sdk_client, test_execution, call_execution, eval_rows, expected_json
+    ):
+        with (
+            patch("sdk.views.analytics.connection") as mock_conn,
+            patch("sdk.views.analytics._get_eval_configs_with_template") as mock_eval,
+            patch("sdk.views.analytics._get_completed_call_executions"),
+            patch("sdk.views.analytics._build_template_statistics"),
+            patch(
+                "sdk.views.analytics._calculate_final_template_summaries",
+                return_value=[],
+            ),
+        ):
+            mock_eval.return_value = MagicMock(filter=MagicMock(return_value=[]))
+            self._mock_connection_for_analytics(mock_conn, eval_rows)
+            response = sdk_client.get(
+                ANALYTICS_URL,
+                {"execution_id": str(test_execution.id)},
+            )
+
+        assert response.status_code == status.HTTP_200_OK
+        averages = response.json()["result"]["eval_averages"]
+        assert json.dumps(averages, separators=(",", ":")) == expected_json
 
     def test_execution_id_system_summary_populated(
         self, sdk_client, test_execution, call_execution
