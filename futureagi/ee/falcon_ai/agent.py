@@ -67,6 +67,8 @@ class AgentLoop:
         self._budget_warned = False
         # Partial state — accessible after cancellation for saving
         self.partial_content = ""
+        # Text of the last turn alone; ``partial_content`` joins all turns.
+        self.final_turn_content = ""
         self.partial_tool_calls = []
         self.assistant_message_id = None
 
@@ -373,6 +375,7 @@ class AgentLoop:
             # Stream LLM response with retry
             tool_calls_accumulator = {}
             current_content = ""
+            self.final_turn_content = ""
             finish_reason = None
 
             # Debug: log message structure for eval debugging
@@ -489,6 +492,7 @@ class AgentLoop:
 
             full_content += current_content
             self.partial_content = full_content
+            self.final_turn_content = current_content
             self.partial_tool_calls = all_tool_calls_log
 
             # If LLM returned nothing (no text and no tool calls), break to prevent empty iterations

@@ -2,6 +2,9 @@
 
 import asyncio
 import json
+import time
+from datetime import UTC, datetime, timedelta
+from email.utils import format_datetime
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
@@ -69,6 +72,13 @@ def drive(monkeypatch):
             calls.append(
                 {"tools": tools, "messages": messages, "format": client.response_format}
             )
+            interim = None
+            if isinstance(response, tuple) and response[0] == "TOOL":
+                # A turn that writes text and then calls a tool.
+                interim = response[1]
+                response = "TOOL"
+            if interim:
+                yield {"choices": [{"delta": {"content": interim}}]}
             if response == "TOOL":
                 yield {
                     "choices": [
@@ -358,3 +368,125 @@ def test_grading_error_does_not_lower_simulation_pass_rate(drive):
     assert summary["total_cells"] == 1
     assert summary["output"]["pass"] == 100
     assert summary["output"]["fail_count"] == 0
+
+
+FAIL_VERDICT = '{"result": "Fail", "explanation": "Not checked yet."}'
+
+
+def test_interim_verdict_is_not_graded_when_the_final_answer_is_invalid(drive):
+    """Turn 1 writes a Pass and calls a tool; the final answer is truncated.
+
+    The loop joins every turn's text, so the interim Pass used to be graded.
+    """
+    _, result, error, calls, _ = drive(
+        [("TOOL", VALID), TRUNCATED, TRUNCATED], with_tool=True
+    )
+    assert result is None
+    assert error.code == "invalid_output"
+    # The interim turn, the truncated final answer, one structured recovery.
+    assert len(calls) == 3
+
+
+def test_final_answer_is_graded_over_an_interim_verdict(drive):
+    _, result, error, calls, _ = drive([("TOOL", FAIL_VERDICT), VALID], with_tool=True)
+    assert error is None
+    assert result.eval_results[0]["data"]["result"] == "Pass"
+    assert len(calls) == 2
+
+
+def test_chat_rate_limit_ignores_an_http_date_retry_after(monkeypatch):
+    """Chat honours only seconds; an HTTP date keeps its normal backoff."""
+    sleep = AsyncMock()
+    monkeypatch.setattr("ee.falcon_ai.llm_client.asyncio.sleep", sleep)
+    monkeypatch.setattr("ee.falcon_ai.llm_client.random.random", lambda: 0.0)
+    calls = []
+    in_an_hour = format_datetime(datetime.now(UTC) + timedelta(hours=1), usegmt=True)
+
+    async def upstream(client, messages, tools=None):
+        calls.append(messages)
+        if len(calls) == 1:
+            raise http_error(429, retry_after=in_an_hour)
+        yield {"choices": [{"delta": {"content": "Hello"}, "finish_reason": "stop"}]}
+
+    client = FalconLLMClient()
+
+    async def consume():
+        return [chunk async for chunk in client.stream_with_retry([])]
+
+    with patch.object(FalconLLMClient, "stream_completion", upstream):
+        chunks = asyncio.run(consume())
+    assert len(chunks) == 1
+    assert len(calls) == 2
+    sleep.assert_awaited_once_with(1.0)
+
+
+FLASH_SAFE = "Harmful request: no\nResponse refusal: n/a\nHarmful response: n/a"
+FLASH_HARMFUL = "Harmful request: yes\nResponse refusal: n/a\nHarmful response: n/a"
+
+
+def _run_protect(call_type, content):
+    from ee.protect.helper import ProtectHelper
+
+    evaluator = AgentEvaluator(rule_prompt="Toxicity", output_type="Pass/Fail")
+    # _evaluate() sets these before it reaches the Protect path.
+    evaluator._current_eval_id = "synthetic-protect-eval"
+    evaluator._reverse_output = False
+    response = SimpleNamespace(
+        choices=[SimpleNamespace(message=SimpleNamespace(content=content))],
+        usage=None,
+    )
+    with (
+        patch("agentic_eval.core.llm.llm.LLM") as llm,
+        patch.object(ProtectHelper, "resolve_alias", return_value="protect_toxicity"),
+    ):
+        llm.return_value._try_gateway_completion.return_value = response
+        return evaluator._run_protect(
+            kwargs={"eval_name": "Toxicity", "input": "hello"},
+            call_type=call_type,
+            start_time=time.time(),
+        )
+
+
+@pytest.mark.parametrize("call_type", ["protect", "protect_flash"])
+@pytest.mark.parametrize(
+    ("content", "code"),
+    [
+        ("", "empty_output"),
+        (None, "empty_output"),
+        ("I cannot classify this.", "invalid_output"),
+        ("<label>maybe</label>", "invalid_output"),
+    ],
+)
+def test_unreadable_protect_output_is_ungraded(call_type, content, code):
+    from ee.evals.llm.agent_evaluator.evaluator import GradingError
+
+    with pytest.raises(GradingError) as exc:
+        _run_protect(call_type, content)
+    assert exc.value.code == code
+
+
+@pytest.mark.parametrize(
+    ("call_type", "content", "label"),
+    [
+        ("protect", "<label>Passed</label><explanation>Fine.</explanation>", "Passed"),
+        ("protect", "<label>Failed</label><explanation>Toxic.</explanation>", "Failed"),
+        ("protect_flash", FLASH_SAFE, "Passed"),
+        ("protect_flash", FLASH_HARMFUL, "Failed"),
+    ],
+)
+def test_readable_protect_output_is_graded(call_type, content, label):
+    result = _run_protect(call_type, content)
+    assert result["output"] == label
+    assert result["failure"] is (label == "Failed")
+
+
+def test_protect_runtime_parsing_is_unchanged():
+    """The Protect runtime path keeps its parse defaults for unreadable output."""
+    from ee.protect.helper import ProtectHelper
+
+    assert ProtectHelper.parse_response("garbage", is_flash=False)["choices"] == [
+        "Failed"
+    ]
+    assert ProtectHelper.parse_response("garbage", is_flash=True)["choices"] == [
+        "Passed"
+    ]

@@ -154,6 +154,18 @@ class ProtectHelper:
     # -- Response parsing ----------------------------------------------------
 
     @staticmethod
+    def has_verdict(content: str, *, is_flash: bool) -> bool:
+        """Whether the model output carries a verdict ``parse_response`` read.
+
+        ``parse_response`` keeps its defaults for unreadable output (Failed
+        for Protect, safe for Protect Flash); evaluations ask this first so
+        unreadable output is not recorded as a grade.
+        """
+        if is_flash:
+            return _FLASH_OUTPUT_RE.match(content or "") is not None
+        return _LABEL_RE.search(content or "") is not None
+
+    @staticmethod
     def parse_response(content: str, *, is_flash: bool) -> Dict[str, Any]:
         """Parse the model response into a structured result."""
         if is_flash:

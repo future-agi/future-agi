@@ -67,6 +67,16 @@ def _inline_refs(schema, _defs=None, _depth=0):
     }
 
 
+def _seconds_retry_after(value: str | None) -> float | None:
+    """A Retry-After given as seconds, or None (chat ignores HTTP dates)."""
+    if not value:
+        return None
+    try:
+        return max(0.0, float(value))
+    except ValueError:
+        return None
+
+
 class EmptyStreamError(RuntimeError):
     """Raised when an upstream streaming response closes without events."""
 
@@ -806,11 +816,15 @@ class FalconLLMClient:
             except httpx.HTTPStatusError as e:
                 status = e.response.status_code
                 evaluation = self.retry_budget is not None
-                retry_after = (
-                    parse_retry_after(e.response.headers.get("Retry-After"))
-                    if status == 429
-                    else None
-                )
+                header = e.response.headers.get("Retry-After")
+                if status != 429:
+                    retry_after = None
+                elif evaluation:
+                    retry_after = parse_retry_after(header)
+                else:
+                    # Chat honours only a number of seconds; an HTTP date
+                    # falls back to its normal backoff, as before.
+                    retry_after = _seconds_retry_after(header)
                 if (
                     status not in RETRYABLE_STATUS_CODES
                     or attempt >= max_retries - 1

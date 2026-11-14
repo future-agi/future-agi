@@ -1321,11 +1321,22 @@ class AgentEvaluator:
         # 2b. Protect fast path — single gateway call, no agent loop.
         call_type = kwargs.get("call_type", "")
         if self._is_protect or call_type in ("protect", "protect_flash"):
-            return self._run_protect(
-                kwargs=kwargs,
-                call_type=call_type,
-                start_time=start_time,
-            )
+            try:
+                return self._run_protect(
+                    kwargs=kwargs,
+                    call_type=call_type,
+                    start_time=start_time,
+                )
+            except GradingError as e:
+                # The same terminal event as the agent path below.
+                logger.error(
+                    "agent_evaluator_error",
+                    error_code=e.code,
+                    eval_id=self._current_eval_id,
+                    model=self._model,
+                    **e.diagnostics,
+                )
+                raise
 
         # 3. Run the agent loop
         logger.info(
@@ -1497,6 +1508,14 @@ class AgentEvaluator:
             alias=alias,
             content=content[:500] if content else "EMPTY",
         )
+
+        # Unreadable output has no verdict: never record parse defaults
+        # (Failed, or safe for Flash) as a grade.
+        if not ProtectHelper.has_verdict(content, is_flash=is_flash):
+            raise GradingError(
+                "invalid_output" if (content or "").strip() else "empty_output",
+                content_length=len(content or ""),
+            )
 
         # Parse using ProtectHelper
         parsed = ProtectHelper.parse_response(content, is_flash=is_flash)
@@ -2265,6 +2284,10 @@ class AgentEvaluator:
                 precontent_blocks=gt_blocks if gt_blocks else None,
                 raise_on_stream_error=True,
             )
+            # Grade the final answer only. The loop's content joins every
+            # turn, and an earlier turn can hold an interim verdict that the
+            # final answer does not repeat.
+            agent_result["content"] = agent.final_turn_content
 
             # Deterministic-failure check: did the L4 budget cascade
             # flag this run as oversized? Two sub-cases:
