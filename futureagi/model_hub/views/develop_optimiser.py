@@ -89,39 +89,41 @@ class DevelopOptimizer:
 
     def _calculate_tokens_and_deduct(self):
         try:
-            column = Column.objects.get(
-                id=self.optimize_dataset.column_id, dataset=self.dataset
-            )
-            column_id = str(column.id)
+            column_id = ""
             opt_column_token_count = 0
-            cells = Cell.objects.filter(
-                column=column,
-                dataset=self.dataset,
-                row__dataset=self.dataset,
-                deleted=False,
-            )
-            cell_values_strings = []
-            cell_values_image_urls = []
-            for cell in cells:
-                if cell.status == CellStatus.ERROR.value:
-                    continue
-                try:
-                    if cell.column.data_type == DataTypeChoices.IMAGE.value:
-                        cell_values_image_urls.append(cell.value)
-                    else:
-                        cell_values_strings.append(cell.value)
-                except Exception:
-                    logger.error(f"cell not found for column id : {column_id}")
-                    cell_values_strings.append("")
-
-            input_words_string = " ".join(cell_values_strings)
-            opt_column_token_count = (
-                count_tiktoken_tokens(
-                    input_words_string, input_image_urls=cell_values_image_urls
+            if self.optimize_dataset.column_id is not None:
+                column = Column.objects.get(
+                    id=self.optimize_dataset.column_id, dataset=self.dataset
                 )
-                if count_tiktoken_tokens
-                else 0
-            )
+                column_id = str(column.id)
+                cells = Cell.objects.filter(
+                    column=column,
+                    dataset=self.dataset,
+                    row__dataset=self.dataset,
+                    deleted=False,
+                )
+                cell_values_strings = []
+                cell_values_image_urls = []
+                for cell in cells:
+                    if cell.status == CellStatus.ERROR.value:
+                        continue
+                    try:
+                        if cell.column.data_type == DataTypeChoices.IMAGE.value:
+                            cell_values_image_urls.append(cell.value)
+                        else:
+                            cell_values_strings.append(cell.value)
+                    except Exception:
+                        logger.error(f"cell not found for column id : {column_id}")
+                        cell_values_strings.append("")
+
+                input_words_string = " ".join(cell_values_strings)
+                opt_column_token_count = (
+                    count_tiktoken_tokens(
+                        input_words_string, input_image_urls=cell_values_image_urls
+                    )
+                    if count_tiktoken_tokens
+                    else 0
+                )
 
             # print("optimisation token_count : ", opt_column_token_count)
             reference_id = str(self.optimize_dataset.id)
@@ -131,7 +133,7 @@ class DevelopOptimizer:
                 "reference_id": reference_id,
                 "input": column_id,
             }
-            organization = column.dataset.organization
+            organization = self.dataset.organization
             api_call_type = APICallTypeChoices.DATASET_OPTIMIZATION.value
             if log_and_deduct_cost_for_api_request is not None:
                 self.api_call_log_row = log_and_deduct_cost_for_api_request(
@@ -139,7 +141,7 @@ class DevelopOptimizer:
                     api_call_type,
                     config,
                     source="optimisation",
-                    workspace=column.dataset.workspace,
+                    workspace=self.dataset.workspace,
                 )
 
             # Non-chargeable tracking event — optimisation uses user's own API keys.
