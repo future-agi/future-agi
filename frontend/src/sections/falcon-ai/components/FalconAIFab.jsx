@@ -1,7 +1,10 @@
-import React, { useCallback, useEffect } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import Fab from "@mui/material/Fab";
 import SvgIcon from "@mui/material/SvgIcon";
+import { useTheme } from "@mui/material/styles";
+import useMediaQuery from "@mui/material/useMediaQuery";
+import { paths } from "src/routes/paths";
 import CustomTooltip from "src/components/tooltip";
 import useFalconStore from "../store/useFalconStore";
 import { useFeatureAllowed } from "src/hooks/useCapabilities";
@@ -59,8 +62,31 @@ function FalconIcon(props) {
   );
 }
 
+// Skills task footers mark themselves with [data-sticky-footer]; on a phone the
+// FAB steps aside while one is mounted instead of covering its actions.
+function useStickyFooterMounted(active) {
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => {
+    if (!active || typeof MutationObserver === "undefined") {
+      setMounted(false);
+      return undefined;
+    }
+    const check = () => setMounted(Boolean(document.querySelector("[data-sticky-footer]")));
+    check();
+    const observer = new MutationObserver(check);
+    observer.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ["data-sticky-footer"] });
+    return () => observer.disconnect();
+  }, [active]);
+  return mounted;
+}
+
 export default function FalconAIFab() {
   const { pathname } = useLocation();
+  const theme = useTheme();
+  const phone = useMediaQuery(theme.breakpoints.down("sm"));
+  const skillsRoot = paths.dashboard.skills.root;
+  const inSkills = pathname === skillsRoot || pathname.startsWith(`${skillsRoot}/`);
+  const footerMounted = useStickyFooterMounted(inSkills && phone);
   const navigate = useNavigate();
   const { allowed: falconAllowed } = useFeatureAllowed("falcon_ai");
   const isSidebarOpen = useFalconStore((s) => s.isSidebarOpen);
@@ -95,6 +121,13 @@ export default function FalconAIFab() {
   // Hide FAB when sidebar is open
   if (isSidebarOpen) return null;
 
+  // Skills: the FAB sits 16px from the edges, under drawers and dialogs, and
+  // never over a phone task footer. Elsewhere it keeps its original placement.
+  if (inSkills && phone && footerMounted) return null;
+  const placement = inSkills
+    ? { bottom: 16, right: 16, zIndex: theme.zIndex.speedDial }
+    : { bottom: 72, right: 12, zIndex: 1200 };
+
   return (
     <CustomTooltip title="Falcon AI (⌘K)" show={true} placement="left" arrow>
       <Fab
@@ -102,9 +135,7 @@ export default function FalconAIFab() {
         size="medium"
         sx={{
           position: "fixed",
-          bottom: 72,
-          right: 12,
-          zIndex: 1200,
+          ...placement,
           bgcolor: "primary.main",
           color: "primary.contrastText",
           width: 40,

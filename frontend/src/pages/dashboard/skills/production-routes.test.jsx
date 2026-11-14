@@ -174,6 +174,22 @@ it('exposes rollouts only after the server capability is enabled', async () => {
   mount('/dashboard/skills/contexts');
   expect(await screen.findByRole('tab', { name: 'Repository rollouts' })).not.toBeDisabled();
 });
+it('shortens the rollouts tab on phones without changing its accessible name, and keeps tabs scrollable', async () => {
+  identity.campaigns = true;
+  const original = window.matchMedia;
+  // Every max-width query matches: the viewport is below sm.
+  window.matchMedia = (query) => ({ matches: /max-width/.test(query), media: query, onchange: null, addListener() {}, removeListener() {}, addEventListener() {}, removeEventListener() {}, dispatchEvent: () => false });
+  try {
+    mount('/dashboard/skills/contexts');
+    const tab = await screen.findByRole('tab', { name: 'Repository rollouts' });
+    await waitFor(() => expect(tab).toHaveTextContent(/^Rollouts$/));
+    const tablist = screen.getByRole('tablist', { name: 'Skills views' });
+    expect(tablist.closest('.MuiTabs-scrollableX')).not.toBeNull();
+    expect(screen.getByRole('tab', { name: 'Agent contexts' })).toHaveAttribute('aria-selected', 'true');
+  } finally {
+    window.matchMedia = original;
+  }
+});
 it('starts editing from the explicitly viewed release, recognizing normalized missing-draft errors', async () => {
   mount(`/dashboard/skills/contexts/${id}?version=4`);
   await screen.findByText('# Exact policy');

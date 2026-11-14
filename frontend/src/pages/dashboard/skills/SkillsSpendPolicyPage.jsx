@@ -4,8 +4,7 @@ import { useSearchParams } from 'react-router-dom';
 import { Stack } from '@mui/material';
 import { useSkillV11Scope } from 'src/api/skills/testing';
 import { spendPolicyReady, useSkillsSpendPolicy, useUpdateSkillsSpendPolicy } from 'src/api/skills/r3-spend';
-import { useOrganization } from 'src/contexts/OrganizationContext';
-import { useWorkspace } from 'src/contexts/WorkspaceContext';
+import { useSkillsAccess } from 'src/sections/skills/utils/access';
 import PageHeader from 'src/components/page-header';
 import SpendPolicyPanel from 'src/sections/skills/review/SpendPolicyPanel';
 
@@ -14,7 +13,7 @@ function ScopedAllowance({ scopeKey, canManage }) {
   const update = useUpdateSkillsSpendPolicy();
   const [params] = useSearchParams();
   const requested = params.get('state');
-  const state = ['loading', 'error', 'empty'].includes(requested) ? requested
+  const state = ['loading', 'error', 'empty', 'denied'].includes(requested) ? requested
     : query.isLoading ? 'loading' : query.isError ? 'error' : query.data ? 'ready' : 'empty';
   return <SpendPolicyPanel scopeKey={scopeKey} state={state} policy={query.data} canManage={canManage}
     onRetry={query.refetch} onRefresh={query.refetch} onSave={update.mutateAsync} />;
@@ -23,19 +22,14 @@ ScopedAllowance.propTypes = { scopeKey: PropTypes.string.isRequired, canManage: 
 
 export default function SkillsSpendPolicyPage() {
   const access = useSkillV11Scope();
-  const organization = useOrganization();
-  const workspace = useWorkspace();
-  // These are the currently selected scope contexts, not a default-workspace
-  // role from user-info. The service rechecks effective membership on every PUT.
-  const sameScope = organization.isReady && workspace.isReady
-    && organization.currentOrganizationId === access.scope.organizationId
-    && workspace.currentWorkspaceId === access.scope.workspaceId;
-  const canManage = Boolean(sameScope && Math.max(organization.orgLevel || 0, workspace.wsLevel || 0) >= 8);
+  // The selected organization/workspace role, only when it belongs to the
+  // Skills scope; the service rechecks effective membership on every PUT.
+  const { sameScope, canAdmin } = useSkillsAccess();
   return <Stack sx={{ p: { xs: 2, md: 3 }, minWidth: 0 }} spacing={1.5}>
     <Helmet><title>Workspace allowance · Skills</title></Helmet>
-    <PageHeader title="Workspace allowance" description="An administrator authorizes spending explicitly. No amount is enabled by default." />
+    <PageHeader title="Workspace allowance" description="A monthly limit for paid test runs in this workspace." />
     {access.enabled && sameScope && spendPolicyReady()
-      ? <ScopedAllowance key={access.identity} scopeKey={access.identity} canManage={canManage} />
+      ? <ScopedAllowance key={access.identity} scopeKey={access.identity} canManage={canAdmin} />
       : <SpendPolicyPanel scopeKey={access.enabled ? access.identity : undefined} state="unavailable" />}
   </Stack>;
 }

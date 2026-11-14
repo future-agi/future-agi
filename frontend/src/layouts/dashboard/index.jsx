@@ -20,9 +20,19 @@ import useFalconStore from "src/sections/falcon-ai/store/useFalconStore";
 import CreateWorkspaceModal from "./WorkspaceSwitcher/CreateWorkspaceModal";
 import TwoFactorBanner from "src/components/two-factor-enforcement/TwoFactorBanner";
 import HostUpdateNotice from "src/components/host-update-status/HostUpdateNotice";
-import { Button, Typography } from "@mui/material";
+import { IconButton, Stack, Typography } from "@mui/material";
+import { addIcon } from "@iconify/react";
+import Iconify from "src/components/iconify";
+import Logo from "src/components/logo";
 import { ShowComponent } from "../../components/show";
 import { useFeatureAllowed } from "src/hooks/useCapabilities";
+
+// Bundled locally so the phone navigation control never depends on the icon CDN.
+addIcon("solar:hamburger-menu-linear", {
+  width: 24,
+  height: 24,
+  body: '<path fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.5" d="M20 7H4m16 5H4m16 5H4"/>',
+});
 
 // ----------------------------------------------------------------------
 
@@ -87,7 +97,20 @@ export default function DashboardLayout({ children }) {
 
   return (
     <>
-      {!lgUp && <Box sx={{ p: 1, bgcolor: 'background.paper' }}><Button color="inherit" onClick={nav.onTrue} aria-label="Open navigation">Menu</Button></Box>}
+      {/* Below md the sidebar is a drawer: one 56px bar with the menu control and the mark, no text. */}
+      {!lgUp && (
+        <Stack
+          direction="row"
+          alignItems="center"
+          spacing={1}
+          sx={{ height: 56, px: 1, bgcolor: "background.paper", borderBottom: 1, borderColor: "divider" }}
+        >
+          <IconButton onClick={nav.onTrue} aria-label="Open navigation" sx={{ color: "text.primary" }}>
+            <Iconify icon="solar:hamburger-menu-linear" width={24} />
+          </IconButton>
+          <Logo disabledLink aria-hidden="true" width={28} height={28} sx={{ width: 28, height: 28, alignItems: "center" }} />
+        </Stack>
+      )}
       <TwoFactorBanner />
       <CreateWorkspaceModal />
       <ShowComponent condition={isSOSMode}>
@@ -116,8 +139,8 @@ export default function DashboardLayout({ children }) {
       <Box sx={boxStyles}>
         {navComponent}
         <NavGatewayPanel />
-        <Main>
-          {!lgUp && <Button aria-label="Open navigation" onClick={nav.onTrue} sx={{ alignSelf: "flex-start", m: 1 }}>Menu</Button>}
+        {/* The phone bar sits above the scrolling panel; keep the panel inside the viewport. */}
+        <Main sx={lgUp ? undefined : { height: "calc(100vh - 56px)" }}>
           <HostUpdateNotice />
           {children}
         </Main>

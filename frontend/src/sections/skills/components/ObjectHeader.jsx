@@ -1,19 +1,42 @@
+import { cloneElement, isValidElement, useRef } from 'react';
 import PropTypes from 'prop-types';
 import { Link as RouterLink } from 'react-router-dom';
 import { Box, Breadcrumbs, Link, Stack, Typography } from '@mui/material';
 import PageHeader from 'src/components/page-header';
+import { scrollTabsProps, scrollTabsSx, useActiveTabInView } from './tabStrip';
+
+const crumbSx = (index, count) => {
+  const last = index === count - 1;
+  const middle = index > 0 && !last;
+  return {
+    display: 'block', minWidth: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+    // On phones the middle crumb gives way first; the current page keeps the rest.
+    ...(middle ? { maxWidth: { xs: 96, sm: 240 } } : {}),
+    ...(index === 0 && count > 1 ? { flexShrink: 0 } : {}),
+  };
+};
 
 export default function ObjectHeader({ crumbs = [], title, purpose, badge, identity, actions, tabs, sx }) {
-  // Flex gap keeps the compact header rhythm when mobile breadcrumbs are hidden.
-  return <Stack useFlexGap spacing={{ xs: 1, sm: 1.5 }} sx={{ minWidth: 0, ...sx }}>
-    {crumbs.length > 0 && <Breadcrumbs aria-label="Breadcrumb" sx={{ typography: 's3', overflowWrap: 'anywhere' }}>
-      {crumbs.map((crumb, index) => index < crumbs.length - 1 && crumb.to
-        ? <Link key={`${crumb.to}-${index}`} component={RouterLink} to={crumb.to} color="inherit" underline="hover">{crumb.label}</Link>
-        : <Typography key={`${crumb.label}-${index}`} variant="s3" color="text.secondary" aria-current={index === crumbs.length - 1 ? 'page' : undefined}>{crumb.label}</Typography>)}
-    </Breadcrumbs>}
-    <PageHeader title={title} description={purpose} badge={badge} actions={actions} sx={{ mb: 0, flexDirection: { xs: 'column', sm: 'row' }, flexWrap: 'wrap', gap: 1.5, '& > .MuiStack-root': { minWidth: 0, maxWidth: 1, ml: { xs: 0 } }, '& h1': { whiteSpace: 'normal', overflowWrap: 'anywhere' } }} />
+  const tabsRef = useRef(null);
+  const strip = isValidElement(tabs) && typeof tabs.type !== 'string';
+  useActiveTabInView(tabsRef, strip ? tabs.props.value : undefined);
+  // Object tabs scroll on phones, start on the route gutter, and keep the active tab in view.
+  const tabStrip = strip
+    ? cloneElement(tabs, { ...scrollTabsProps, sx: [scrollTabsSx, ...(Array.isArray(tabs.props.sx) ? tabs.props.sx : [tabs.props.sx])] })
+    : tabs;
+  return <Stack useFlexGap spacing={1.5} sx={{ minWidth: 0, ...sx }}>
+    {/* The breadcrumb stays at every width: one line, the middle crumb truncates. */}
+    {crumbs.length > 0 && <Box sx={{ minWidth: 0 }}>
+      <Breadcrumbs aria-label="Breadcrumb" sx={{ typography: 's3', minWidth: 0, '& .MuiBreadcrumbs-ol': { flexWrap: 'nowrap' }, '& .MuiBreadcrumbs-li': { minWidth: 0 }, '& .MuiBreadcrumbs-li:first-of-type': { flexShrink: 0 }, '& .MuiBreadcrumbs-separator': { flexShrink: 0 } }}>
+        {crumbs.map((crumb, index) => index < crumbs.length - 1 && crumb.to
+          ? <Link key={`${crumb.to}-${index}`} component={RouterLink} to={crumb.to} color="inherit" underline="hover" title={crumb.label} sx={crumbSx(index, crumbs.length)}>{crumb.label}</Link>
+          : <Typography key={`${crumb.label}-${index}`} variant="s3" color="text.secondary" title={crumb.label} aria-current={index === crumbs.length - 1 ? 'page' : undefined} sx={crumbSx(index, crumbs.length)}>{crumb.label}</Typography>)}
+      </Breadcrumbs>
+    </Box>}
+    {/* Actions are buttons only and sit vertically centred against the title block. */}
+    <PageHeader title={title} description={purpose} badge={badge} actions={actions} sx={{ mb: 0, flexDirection: { xs: 'column', sm: 'row' }, alignItems: { xs: 'flex-start', sm: 'center' }, flexWrap: 'wrap', gap: 1.5, '& > .MuiStack-root': { minWidth: 0, maxWidth: 1, ml: { xs: 0 } }, '& > .MuiStack-root:last-of-type': { flexWrap: 'wrap', rowGap: 1 }, '& h1': { whiteSpace: 'normal', overflowWrap: 'anywhere' } }} />
     {identity}
-    {tabs && <Box sx={{ minWidth: 0 }}>{tabs}</Box>}
+    {tabs && <Box ref={tabsRef} sx={{ minWidth: 0 }}>{tabStrip}</Box>}
   </Stack>;
 }
 

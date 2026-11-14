@@ -5,107 +5,134 @@ import {
   Button,
   Checkbox,
   FormControlLabel,
+  InputAdornment,
   Stack,
   TextField,
   Typography,
 } from "@mui/material";
 import Section from "src/components/section";
+import ContentSkeleton from "src/components/content-skeleton";
+import EmptyState from "src/components/empty-state";
+import ErrorState from "src/components/error-state";
 import { ConfirmDialog } from "src/components/custom-dialog";
-import { IdentityValue, ReviewState } from "./ReleaseReviewBody";
+import { IdentityValue } from "./ReleaseReviewBody";
 import { OperationFeedback, useReviewedOperation } from "./ReleaseRequestPanel";
 import TechnicalDetails from "../components/TechnicalDetails";
+import CapabilityNotice from "../components/CapabilityNotice";
+import ActionReason, { reasonProps } from "../components/ActionReason";
 import { periodLabel, usd } from "../utils/conclusions";
+import { allowanceInput } from "../utils/format";
+
+const DECIMAL = /^(?:0|[1-9]\d{0,9})(?:\.\d{1,8})?$/;
+const SAVE_REASON_ID = "allowance-save-reason";
 
 function PolicyForm({ policy, canManage, onSave, onRefresh }) {
   const [revision, setRevision] = useState(policy.revision);
-  const [amount, setAmount] = useState(policy.periodLimitUsd ?? "");
-  // A workspace with no saved policy (revision 0) authorizes nothing: the switch starts off.
-  const [enabled, setEnabled] = useState(policy.revision > 0 ? policy.enabled : false);
+  const initialAmount = allowanceInput(policy.periodLimitUsd);
+  const [amount, setAmount] = useState(initialAmount);
+  // A workspace with no saved policy (revision 0) authorizes nothing: the box starts unticked.
+  const initialEnabled = policy.revision > 0 ? policy.enabled : false;
+  const [enabled, setEnabled] = useState(initialEnabled);
   const [confirm, setConfirm] = useState(false);
   const operation = useReviewedOperation();
   const stale = revision !== policy.revision;
   // Preserve decimal text all the way to the mapper. Never authorize a default.
-  const valid =
-    /^(?:0|[1-9]\d{0,9})(?:\.\d{1,8})?$/.test(amount) &&
-    (!enabled || /[1-9]/.test(amount));
+  const wellFormed = DECIMAL.test(amount);
+  const valid = wellFormed && (!enabled || /[1-9]/.test(amount));
+  const unchanged = policy.revision > 0 && amount === initialAmount && enabled === initialEnabled;
   const locked =
     operation.busy || operation.uncertain || Boolean(operation.result);
   const period = periodLabel(policy.startsAt, policy.endsAt);
-  const used = usd(policy.knownEstimateUsd) ?? '$0.00';
-  const limit = policy.enabled ? usd(policy.periodLimitUsd) : null;
+  const used = usd(policy.knownEstimateUsd) ?? "$0.00";
+  const inForce = policy.revision > 0 && policy.enabled;
+  const limit = inForce ? usd(policy.periodLimitUsd) : null;
   const uncertain = Number(policy.unknownReservedUsd) > 0 ? usd(policy.unknownReservedUsd) : null;
+  const amountError = amount === "" ? null : !wellFormed ? "Enter an amount such as 25 or 25.50." : !valid ? "Enter an amount above $0.00 to allow paid runs." : null;
+  // Empty is never saved (a saved allowance always has a limit), so the hint is
+  // literal only while nothing is in force; otherwise it points at the box.
+  const emptyHint = inForce
+    ? "Monthly limit in USD. To block paid runs, untick the box below."
+    : "Monthly limit in USD. Leave empty to block paid runs.";
+  const saveReason = locked || !onSave ? null
+    : stale ? "Review the current allowance first."
+      : amount === "" ? "Enter an amount."
+        : !valid ? "Fix the amount."
+          : unchanged ? "Nothing changed yet."
+            : null;
   return (
     <Section title="Spending allowance">
       <Stack spacing={1.5}>
         {/* Conclusion first: what is allowed now and what has been used this period. */}
         <Typography variant="m3" role="status">
-          {limit ? `${limit} allowance` : policy.revision > 0 && policy.enabled ? 'No limit set; application runs need an allowance' : 'No spending allowance set'} · {used} used this period{period ? ` (${period})` : ''}
+          {limit ? `Paid test runs are allowed up to ${limit} this period. ${used} used.` : "Paid test runs are off for this workspace."}
         </Typography>
-        {limit && usd(policy.remainingUsd) && <Typography variant="s1">{usd(policy.remainingUsd)} left this period.</Typography>}
-        {uncertain && <Typography variant="s1">{uncertain} is held by runs whose final cost isn&apos;t settled yet.</Typography>}
         <Typography variant="s3" color="text.secondary">
-          Paid test runs on the application and with a model stay blocked until an admin sets an allowance. Estimates are not invoices.
+          {[period ? `Period ${period} (UTC)` : null, limit && usd(policy.remainingUsd) ? `${usd(policy.remainingUsd)} left` : null, !limit && Number(policy.knownEstimateUsd) > 0 ? `${used} used` : null, "Amounts are estimates, not invoices."].filter(Boolean).join(" · ")}
         </Typography>
-        {!canManage && (
-          <Typography variant="s3">
-            Only a workspace admin can change the allowance. No spending is allowed by default.
-          </Typography>
-        )}
-        <TextField
-          label="Period allowance (USD)"
-          size="small"
-          sx={{ maxWidth: 320 }}
-          value={amount}
-          disabled={!canManage || locked}
-          onChange={(event) => setAmount(event.target.value)}
-          inputProps={{ inputMode: "decimal" }}
-          error={amount !== "" && !valid}
-          helperText={amount !== "" && !valid ? "Enter an amount such as 25 or 25.50." : "No amount is filled in for you."}
-        />
-        <FormControlLabel
-          control={
-            <Checkbox
-              checked={enabled}
-              disabled={!canManage || locked}
-              onChange={(_, value) => setEnabled(value)}
-            />
-          }
-          label="Allow paid test runs up to this amount"
-        />
-        {stale && (
-          <Alert severity="warning">
-            The allowance changed while you were editing. Review the current
-            allowance before saving your preserved input.
-          </Alert>
-        )}
-        {stale && (
-          <Button
+        {uncertain && <Typography variant="s1">{uncertain} is held by runs whose final cost isn&apos;t settled yet.</Typography>}
+        {!canManage && <Typography variant="s1">Only workspace admins can change this.</Typography>}
+        {canManage && <>
+          <TextField
+            label="Period allowance (USD)"
+            size="small"
+            sx={{ maxWidth: 320 }}
+            value={amount}
             disabled={locked}
-            onClick={() => setRevision(policy.revision)}
-          >
-            I reviewed the current allowance
-          </Button>
-        )}
-        <OperationFeedback operation={operation} />
-        {operation.result && (
-          <Alert severity="success">
-            Allowance saved. Spending already recorded is unchanged.
-          </Alert>
-        )}
-        <Stack direction="row" spacing={1}>
-          <Button
-            variant="contained"
-            color="primary"
-            disabled={!canManage || !onSave || !valid || stale || locked}
-            onClick={() => setConfirm(true)}
-          >
-            Save
-          </Button>
+            onChange={(event) => setAmount(event.target.value)}
+            InputProps={{ startAdornment: <InputAdornment position="start">$</InputAdornment> }}
+            inputProps={{ inputMode: "decimal", step: 0.01 }}
+            error={Boolean(amountError)}
+            helperText={amountError || (amount === "" ? emptyHint : undefined)}
+          />
+          <FormControlLabel
+            control={
+              <Checkbox
+                checked={enabled}
+                disabled={locked}
+                onChange={(_, value) => setEnabled(value)}
+              />
+            }
+            label="Allow paid test runs up to this amount"
+          />
+          {stale && (
+            <Alert severity="warning">
+              The allowance changed while you were editing. Review the current
+              allowance before saving your preserved input.
+            </Alert>
+          )}
+          {stale && (
+            <Button
+              disabled={locked}
+              onClick={() => setRevision(policy.revision)}
+            >
+              I reviewed the current allowance
+            </Button>
+          )}
+          <OperationFeedback operation={operation} />
+          {operation.result && (
+            <Alert severity="success">
+              Allowance saved. Spending already recorded is unchanged.
+            </Alert>
+          )}
+        </>}
+        <Stack direction="row" spacing={1} useFlexGap alignItems="center" sx={{ flexWrap: "wrap" }}>
+          {canManage && (
+            <Button
+              variant="contained"
+              color="primary"
+              disabled={!onSave || !valid || stale || locked || unchanged}
+              onClick={() => setConfirm(true)}
+              {...reasonProps(SAVE_REASON_ID, saveReason)}
+            >
+              Save
+            </Button>
+          )}
           {onRefresh && (
             <Button disabled={operation.busy} onClick={onRefresh}>
               Refresh
             </Button>
           )}
+          {canManage && <ActionReason id={SAVE_REASON_ID} reason={saveReason} />}
         </Stack>
         <TechnicalDetails title="Accounting details">
           <Stack spacing={1}>
@@ -125,14 +152,14 @@ function PolicyForm({ policy, canManage, onSave, onRefresh }) {
           </Stack>
         </TechnicalDetails>
       </Stack>
-      <ConfirmDialog
+      {canManage && <ConfirmDialog
         open={confirm}
         onClose={() => {
           if (!operation.busy) setConfirm(false);
         }}
         closeDisabled={operation.busy}
         title="Change workspace allowance?"
-        content={enabled ? `Allow paid test runs up to USD ${amount} this period. Spending already recorded stays recorded. Saving makes no model call.` : `Paid test runs stay blocked. The allowance is recorded as USD ${amount}. Spending already recorded stays recorded.`}
+        content={enabled ? `Allow paid test runs up to $${amount} this period. Spending already recorded stays recorded. Saving makes no model call.` : `Paid test runs stay off. The allowance is recorded as $${amount}. Spending already recorded stays recorded.`}
         action={
           <Button
             variant="contained"
@@ -150,7 +177,7 @@ function PolicyForm({ policy, canManage, onSave, onRefresh }) {
             Save allowance
           </Button>
         }
-      />
+      />}
     </Section>
   );
 }
@@ -160,6 +187,7 @@ PolicyForm.propTypes = {
   onSave: PropTypes.func,
   onRefresh: PropTypes.func,
 };
+// The allowance page's own states; never the release-review wording.
 export default function SpendPolicyPanel({
   scopeKey,
   state = "unavailable",
@@ -167,10 +195,15 @@ export default function SpendPolicyPanel({
   onRetry,
   ...props
 }) {
-  if (!scopeKey || state !== "ready" || !policy)
-    return (
-      <ReviewState state={!scopeKey ? "forbidden" : state} onRetry={onRetry} />
-    );
+  if (!scopeKey || state === "unavailable" || state === "off")
+    return <CapabilityNotice title="Workspace allowance isn't available here" description="Paid test runs stay off. Open Skills in the workspace you want to manage, or ask a workspace admin." />;
+  if (state === "denied" || state === "forbidden")
+    return <ErrorState title="You don't have access to this workspace's allowance." detail="Ask a workspace admin to check your access." />;
+  if (state === "loading") return <ContentSkeleton variant="panel" label="Loading workspace allowance" rows={4} />;
+  if (state === "error")
+    return <ErrorState title="Couldn't load the workspace allowance." detail="Nothing was changed." onRetry={onRetry} />;
+  if (state !== "ready" || !policy)
+    return <EmptyState variant="no-results" title="No allowance saved yet" description="Paid test runs are off for this workspace." />;
   return <PolicyForm key={scopeKey} {...props} policy={policy} />;
 }
 SpendPolicyPanel.propTypes = {
