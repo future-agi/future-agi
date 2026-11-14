@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -238,6 +239,99 @@ func TestSync_RunFetchesAtStartup(t *testing.T) {
 
 	if c.Info().Source != SourceFetched {
 		t.Error("Run did not fetch at startup")
+	}
+}
+
+// eventually waits up to two seconds for cond.
+func eventually(t *testing.T, what string, cond func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for !cond() {
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting for %s", what)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
+// Run fetches again on every interval: a price changed after startup reaches
+// the live catalogue without a restart.
+func TestSync_RunPublishesAScheduledRefresh(t *testing.T) {
+	f := newFakeCatalogue(t, catalogueJSON(60, 1e-6))
+	s, ptr, _ := newTestSyncer(f.URL, 100)
+	s.interval = 20 * time.Millisecond
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { s.Run(ctx); close(done) }()
+	defer func() { cancel(); <-done }()
+
+	price := func() float64 {
+		p, ok := ptr.Load().GetPricing("fetched-7")
+		if !ok {
+			return 0
+		}
+		return p.InputPerToken
+	}
+	eventually(t, "the startup fetch", func() bool { return price() == 1e-6 })
+	f.body.Store(catalogueJSON(60, 3e-6))
+	eventually(t, "a scheduled refresh to publish the new price", func() bool { return price() == 3e-6 })
+	if hits := f.hits.Load(); hits < 2 {
+		t.Errorf("catalogue fetched %d times, want a startup fetch and a scheduled one", hits)
+	}
+}
+
+// A fetch and a config reload can land at once. Both rebuild under the
+// Catalogue's lock, so the result holds the fetched models and the overrides,
+// and a reader always sees a whole catalogue.
+func TestCatalogue_ConcurrentOverlayAndSetOverrides(t *testing.T) {
+	var ptr atomic.Pointer[ModelDB]
+	c := NewCatalogue(&ptr, nil)
+	fetched, err := parseLiteLLM([]byte(catalogueJSON(60, 1e-6)), true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	price := 5e-6
+	overrides := map[string]ModelOverride{"fetched-7": {Pricing: &PricingOverride{InputPerToken: &price}}}
+
+	start, stop := make(chan struct{}), make(chan struct{})
+	var readers, writers sync.WaitGroup
+	for i := 0; i < 4; i++ {
+		readers.Add(1)
+		go func() {
+			defer readers.Done()
+			<-start
+			for {
+				select {
+				case <-stop:
+					return
+				default:
+				}
+				if _, ok := ptr.Load().Get("gpt-4o"); !ok {
+					t.Error("a reader saw a catalogue without the bundled gpt-4o")
+					return
+				}
+			}
+		}()
+	}
+	for i := 0; i < 50; i++ {
+		writers.Add(2)
+		go func() { defer writers.Done(); <-start; c.Overlay(fetched, "http://catalogue.test") }()
+		go func() { defer writers.Done(); <-start; c.SetOverrides(overrides) }()
+	}
+	close(start)
+	writers.Wait()
+	close(stop)
+	readers.Wait()
+
+	db := ptr.Load()
+	if p, ok := db.GetPricing("fetched-7"); !ok || p.InputPerToken != price {
+		t.Errorf("fetched-7 = %+v (ok %v), want the override's %v", p, ok, price)
+	}
+	if p, ok := db.GetPricing("fetched-8"); !ok || p.InputPerToken != 1e-6 {
+		t.Errorf("fetched-8 = %+v (ok %v), want the fetched 1e-6", p, ok)
+	}
+	if _, ok := db.Get("gpt-4o"); !ok {
+		t.Error("bundled gpt-4o missing")
 	}
 }
 

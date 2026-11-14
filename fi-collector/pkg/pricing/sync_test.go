@@ -396,6 +396,35 @@ func TestSync_RunFetchesAtStartup(t *testing.T) {
 	}
 }
 
+// Run fetches again on every interval: a price changed after startup reaches
+// the pricer without a restart.
+func TestSync_RunPublishesAScheduledRefresh(t *testing.T) {
+	f := newFakeCatalogue(t, tableJSON(60, 1e-6))
+	s, p := newTestSyncer(t, f.URL, 100)
+	s.interval = 20 * time.Millisecond
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { s.Run(ctx); close(done) }()
+	defer func() { cancel(); <-done }()
+
+	waitFor := func(what string, want float64) {
+		t.Helper()
+		deadline := time.Now().Add(2 * time.Second)
+		for math.Abs(cost(p, "fetched-7")-want) > 1e-12 {
+			if time.Now().After(deadline) {
+				t.Fatalf("timed out waiting for %s: fetched-7 cost = %v, want %v", what, cost(p, "fetched-7"), want)
+			}
+			time.Sleep(5 * time.Millisecond)
+		}
+	}
+	waitFor("the startup fetch", 0.002)
+	f.body.Store(tableJSON(60, 3e-6))
+	waitFor("a scheduled refresh to publish the new price", 0.006)
+	if hits := f.hits.Load(); hits < 2 {
+		t.Errorf("catalogue fetched %d times, want a startup fetch and a scheduled one", hits)
+	}
+}
+
 func TestNewSyncer_Interval(t *testing.T) {
 	base := startingTable(t, 1)
 	p := New(base, nil)
