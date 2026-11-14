@@ -20,7 +20,7 @@ import { evidenceTitle, evidenceCoverage, evidenceOutcome } from '../utils/revie
 import EvidenceSummary from '../components/EvidenceSummary';
 import TechnicalDetails from '../components/TechnicalDetails';
 import { suggestedEvidence } from './evidenceSuggestions';
-import { useStickyFooterHeight } from '../components/SkillsWorkspaceLayout';
+import { useStickyFooterHeight } from '../components/stickyFooter';
 import { configurationDate, counted, responsiveEvidenceSx } from './reviewPresentation';
 
 // Intent: choose immutable records by name, inspect a frozen packet, then assign

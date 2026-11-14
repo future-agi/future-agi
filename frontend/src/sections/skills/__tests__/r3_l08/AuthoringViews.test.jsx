@@ -26,7 +26,8 @@ const renderDetail = (ui) => {
 describe("scope-safe context library", () => {
   it("shows independent production/latest/draft and leaves unobserved delivery unknown", () => {
     render(<ContextLibraryView scopeKey={scopeKey} query={query} />);
-    expect(screen.getByText("Production v3")).toBeVisible(); expect(screen.getByText("Latest v6")).toBeVisible(); expect(screen.getByText("Your draft")).toBeVisible(); expect(screen.queryByText(/Delivered/)).not.toBeInTheDocument();
+    // The Production and Latest columns carry their names; cells show the bare version.
+    expect(screen.getByText("v3")).toBeVisible(); expect(screen.getByText("v6")).toBeVisible(); expect(screen.getByText("Your draft")).toBeVisible(); expect(screen.queryByText(/Delivered/)).not.toBeInTheDocument();
   });
   it("does not expose old-scope rows or counts while the scoped query changes", () => {
     render(<ContextLibraryView scopeKey="other-scope" query={query} />);

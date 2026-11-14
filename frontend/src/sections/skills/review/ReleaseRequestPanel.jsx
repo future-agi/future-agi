@@ -13,7 +13,7 @@ import {
 } from "@mui/material";
 import { isDefiniteRejection, operationStatus } from "src/api/skills/operation-errors";
 import SharedOperationFeedback from '../components/OperationFeedback';
-import { useStickyFooterHeight } from '../components/SkillsWorkspaceLayout';
+import { useStickyFooterHeight } from '../components/stickyFooter';
 import TechnicalDetails from '../components/TechnicalDetails';
 import { reviewPersonName, relativeReviewTime } from '../utils/review-display';
 import PeoplePicker from "../components/PeoplePicker";

@@ -132,9 +132,9 @@ it.each([true, false])('disables editing for viewer or denied server permission 
   expect(screen.getByRole('button', { name: 'Edit viewed v2' })).toBeDisabled();
   if (viewer) expect(screen.getByText("Viewers can't edit. Ask a workspace admin for edit access.")).toBeVisible();
 });
-it('keeps breadcrumbs and a return link for a missing context', () => {
+it('keeps a return link for a missing context (the shared not-found recipe)', () => {
   mount(<ContextDetailView scopeKey="scope" query={{ scopeKey: 'scope', error: { status: 404 } }} versionQuery={{ scopeKey: 'scope' }} fileQuery={{ scopeKey: 'scope' }} />);
-  expect(screen.getByText('Agent context not found. It may have been archived or belong to another workspace.')).toBeVisible();
-  expect(screen.getByRole('link', { name: 'Back to agent contexts' })).toHaveAttribute('href', '/dashboard/skills/contexts');
-  expect(screen.getByRole('navigation', { name: 'Breadcrumb' })).toBeVisible();
+  expect(screen.getByText('Agent context not found')).toBeVisible();
+  expect(screen.getByText('It may have been archived or belong to another workspace.')).toBeVisible();
+  expect(screen.getByRole('link', { name: 'Back to Agent contexts' })).toHaveAttribute('href', '/dashboard/skills/contexts');
 });

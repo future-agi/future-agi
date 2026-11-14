@@ -37,6 +37,8 @@ vi.mock('src/sections/skills/components/FileTree', () => ({ default: () => null 
 vi.mock('src/sections/skills/components/TextDiff', () => ({ default: ({ fromText, toText }) => <div>{fromText} → {toText}</div> }));
 vi.mock('src/sections/skills/tests/EditorTestsPanel', () => ({ default: ({ draft, isDirty }) => <output aria-label="Session snapshot">r{draft.revision} {isDirty ? 'dirty' : 'saved'}</output> }));
 vi.mock('notistack', () => ({ enqueueSnackbar: vi.fn() }));
+// An author in the Skills scope; the editor gates viewers before mounting the session.
+vi.mock('../utils/access', () => ({ useSkillsAccess: () => ({ ready: true, sameScope: true, isViewer: false, canWrite: true, canAdmin: false }) }));
 
 beforeEach(() => {
   vi.clearAllMocks();

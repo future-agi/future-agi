@@ -3,6 +3,7 @@ import PropTypes from "prop-types";
 import {
   Box,
   Button,
+  ButtonBase,
   IconButton,
   ListItemIcon,
   Menu,
@@ -90,14 +91,14 @@ function InboxRows({
       ) : (
         <>
           {mobile ? <Stack aria-label="Assigned release reviews">{rows.map((item) => <Stack key={item.id} direction="row" gap={1} alignItems="center" sx={{ py: 1.5, borderBottom: 1, borderColor: 'divider' }}>
-            <Button color="inherit" aria-label={item.name} onClick={() => onOpen(item)} sx={{ p: 0, minWidth: 0, flex: 1, textAlign: 'left', justifyContent: 'flex-start', whiteSpace: 'normal', height: 'auto' }}>
+            <ButtonBase aria-label={item.name} onClick={() => onOpen(item)} sx={{ minWidth: 0, flex: 1, textAlign: 'left', justifyContent: 'flex-start', borderRadius: 1, '&.Mui-focusVisible': { outline: '2px solid', outlineColor: 'primary.main', outlineOffset: 2 } }}>
               <Stack spacing={0.5} sx={{ minWidth: 0 }}>
                 <Stack direction="row" gap={1} alignItems="center">{item.unread && item.status === 'pending' && <><Box component="span" aria-hidden="true" sx={{ width: 8, height: 8, borderRadius: '50%', bgcolor: 'primary.main', flexShrink: 0, mr: 1 }} /><Box component="span" sx={visuallyHidden}>Unread</Box></>}<Typography variant="s1" sx={{ fontWeight: item.unread ? 600 : 400, overflowWrap: 'anywhere' }}>{item.name}</Typography></Stack>
                 {item.transition && <Typography variant="s1">{releaseTitle(item.transition)}</Typography>}
                 {item.status === 'pending' && <Typography variant="s3" color="text.secondary">Waiting on {item.recipients?.map((person) => reviewPersonName(person.name)).join(', ') || 'the assigned reviewer'}</Typography>}
                 <Typography variant="s3" color="text.secondary">Requested by {reviewPersonName(item.authorName)} · {item.subjectKind === 'agent_context' ? 'Agent context' : 'Skill'} · <When value={item.updatedAt} fallback="Time not reported" /></Typography>
               </Stack>
-            </Button>
+            </ButtonBase>
             {item.status === 'pending' && <Button size="small" variant="outlined" onClick={() => onOpen(item)}>Review</Button>}
             <Stack alignItems="flex-end" spacing={0.5}><StatusBadge status={item.status === 'pending' ? 'in_review' : item.status === 'changes_requested' ? 'needs_changes' : item.status} /><IconButton size="small" aria-label={`Actions for ${item.name}`} onClick={(event) => setMenu({ id: item.id, anchor: event.currentTarget })}><Iconify icon="solar:menu-dots-bold" width={16} /></IconButton></Stack>
           </Stack>)}</Stack> : <TableContainer sx={{ maxWidth: 1 }}>

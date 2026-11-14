@@ -64,7 +64,7 @@ function FalconIcon(props) {
 
 // Skills task footers mark themselves with [data-sticky-footer] and publish
 // their height as --skills-sticky-footer-height (useStickyFooterHeight in
-// SkillsWorkspaceLayout). The FAB also measures any marked footer that is on
+// components/stickyFooter). The FAB also measures any marked footer that is on
 // screen, so it clears footers that have not adopted the hook yet. It reports
 // whether a modal surface (dialog, drawer, menu) is open, because on a phone
 // the FAB steps aside for those and for footers instead of covering them.

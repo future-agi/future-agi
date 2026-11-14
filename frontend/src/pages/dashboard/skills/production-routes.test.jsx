@@ -289,7 +289,8 @@ it.each(['agent_context', 'skill'])('opens, approves and executes a %s request t
   fireEvent.click(await screen.findByRole('button', { name: 'Assigned candidate' }));
   const acknowledge = await screen.findByRole('checkbox', { name: /I reviewed this exact candidate/ });
   await waitFor(() => expect(acknowledge).toBeEnabled());
-  if (kind === 'agent_context') expect(screen.getByText(/2 connected consumers follow this label and move with it; 1 is pinned and stays put/)).toBeVisible();
+  // The conclusion card and the Who is affected section both state the impact.
+  if (kind === 'agent_context') screen.getAllByText(/2 connected consumers follow this label and move with it; 1 is pinned and stays put/).forEach((node) => expect(node).toBeVisible());
   fireEvent.click(acknowledge);
   fireEvent.click(screen.getByRole('button', { name: 'Approve release' }));
   await waitFor(() => expect(axios.post.mock.calls.some(([url]) => url.endsWith('/decisions/'))).toBe(true));
@@ -306,7 +307,8 @@ it.each(['agent_context', 'skill'].flatMap((kind) => ['pending', 'approved'].map
   expect(await screen.findByRole('checkbox', { name: /I reviewed this exact candidate/ })).toBeDisabled();
   if (status === 'pending') {
     expect(screen.getByRole('button', { name: 'Approve release' })).toBeDisabled();
-    expect(screen.queryByRole('button', { name: 'Release to production' })).not.toBeInTheDocument();
+    // A paused request keeps its release action in place, disabled until renewed and approved.
+    expect(screen.getByRole('button', { name: 'Release to production' })).toBeDisabled();
   } else {
     expect(screen.queryByRole('button', { name: 'Approve release' })).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Release to production' })).toBeDisabled();

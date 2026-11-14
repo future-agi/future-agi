@@ -10,7 +10,8 @@ import { useSettingsContext } from "src/components/settings";
 import { usePathname, useRouter } from "src/routes/hooks";
 import { paths } from "src/routes/paths";
 
-import Main, { dashboardFrameSx, PHONE_BAR_HEIGHT } from "./main";
+import Main from "./main";
+import { dashboardFrameSx, PHONE_BAR_HEIGHT } from "./frame";
 import NavMini from "./nav-mini";
 import NavVertical from "./nav-vertical";
 import NavHorizontal from "./nav-horizontal";
