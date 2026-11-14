@@ -1,5 +1,8 @@
+import base64
+import io
 import json
-from unittest.mock import patch
+import wave
+from unittest.mock import Mock, patch
 
 import pytest
 from rest_framework import status
@@ -860,3 +863,102 @@ def test_update_cell_value_clears_cell_for_non_string_value(
     assert cell.value is None
     assert cell.status == CellStatus.PASS.value
     assert "audio_duration_seconds" not in (cell.column_metadata or {})
+
+
+@pytest.mark.parametrize("new_value", ["", None, " \t ", 12345])
+def test_clear_audio_preserves_other_metadata(auth_client, audio_col_seed, new_value):
+    dataset, row, column = audio_col_seed
+    cell = Cell.objects.create(
+        dataset=dataset,
+        row=row,
+        column=column,
+        value="https://example.invalid/old.wav",
+        column_metadata={"audio_duration_seconds": 3.0, "custom_key": "retained"},
+    )
+    response = auth_client.post(
+        f"/model-hub/develops/{dataset.id}/update_cell_value/",
+        {"row_id": str(row.id), "column_id": str(column.id), "new_value": new_value},
+        format="json",
+    )
+    assert response.status_code == status.HTTP_200_OK
+    cell.refresh_from_db()
+    assert cell.value is None
+    assert cell.column_metadata == {"custom_key": "retained"}
+    cell.full_clean()
+    assert (
+        _apply(dataset, [_filter(column.id, "number", "greater_than", 1)], [column])
+        == []
+    )
+
+
+def test_real_audio_decode_edit_replace_clear_and_filter(
+    monkeypatch, auth_client, audio_col_seed
+):
+    """Decode real WAV bytes; stub only the object-storage boundary."""
+    pytest.importorskip("av", reason="requires the optional audio extra")
+    dataset, row, column = audio_col_seed
+    stored = []
+
+    def put_object(**kwargs):
+        stored.append(kwargs["data"].read())
+
+    storage = Mock()
+    storage.put_object.side_effect = put_object
+    monkeypatch.setattr("tfc.utils.storage.get_storage_client", lambda: storage)
+    monkeypatch.setattr("tfc.utils.storage.ensure_bucket", lambda *args: None)
+    monkeypatch.setattr(
+        "tfc.utils.storage.get_object_url",
+        lambda bucket, key: f"https://example.invalid/{key}",
+    )
+    cell = Cell.objects.create(
+        dataset=dataset,
+        row=row,
+        column=column,
+        value="",
+        column_metadata={"audio_duration_seconds": 0.0, "custom_key": "retained"},
+    )
+
+    for seconds in (2, 5):
+        output = io.BytesIO()
+        with wave.open(output, "wb") as audio:
+            audio.setnchannels(1)
+            audio.setsampwidth(2)
+            audio.setframerate(8000)
+            audio.writeframes(b"\x00\x00" * 8000 * seconds)
+        encoded = base64.b64encode(output.getvalue()).decode("ascii")
+        response = auth_client.post(
+            f"/model-hub/develops/{dataset.id}/update_cell_value/",
+            {
+                "row_id": str(row.id),
+                "column_id": str(column.id),
+                "new_value": f"data:audio/wav;base64,{encoded}",
+            },
+            format="json",
+        )
+        assert response.status_code == status.HTTP_200_OK
+        cell.refresh_from_db()
+        assert cell.column_metadata == {
+            "audio_duration_seconds": float(seconds),
+            "custom_key": "retained",
+        }
+        assert stored[-1] == output.getvalue()
+        assert _apply(
+            dataset, [_filter(column.id, "number", "greater_than", 3)], [column]
+        ) == ([row] if seconds == 5 else [])
+        assert _apply(
+            dataset, [_filter(column.id, "number", "less_than", 3)], [column]
+        ) == ([row] if seconds == 2 else [])
+
+    response = auth_client.post(
+        f"/model-hub/develops/{dataset.id}/update_cell_value/",
+        {"row_id": str(row.id), "column_id": str(column.id), "new_value": ""},
+        format="json",
+    )
+    assert response.status_code == status.HTTP_200_OK
+    cell.refresh_from_db()
+    assert cell.column_metadata == {"custom_key": "retained"}
+    assert len(stored) == 2
+    assert (
+        _apply(dataset, [_filter(column.id, "number", "greater_than", 0)], [column])
+        == []
+    )
