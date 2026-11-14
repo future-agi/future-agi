@@ -44,3 +44,33 @@ func TestBudgetStore_Redis_TinyCostsInMicros(t *testing.T) {
 		})
 	}
 }
+
+// A huge cost (org custom pricing has no upper bound) is recorded in the
+// shared ledger, saturated at MaxInt64 micro-dollars, so the ledger the budget
+// checks read blocks the org. Before, the write failed and the ledger, still
+// authoritative while readable, kept letting requests through.
+func TestBudgetStore_Redis_HugeCostIsRecorded(t *testing.T) {
+	client := skipIfNoRedis(t)
+	defer client.Close()
+	ts := time.Now().Format("150405.000000")
+	bs := NewBudgetStore(client, "test:budget:huge:"+ts+":")
+
+	// Control: a large cost that fits a double exactly.
+	total, ok := bs.RecordSpend("org-a-"+ts, "org", "", "daily", "m", 5e8)
+	if !ok || total != 5e8 {
+		t.Fatalf("RecordSpend(5e8): total %g ok=%v; want 5e8", total, ok)
+	}
+	total, allowed, ok := bs.CheckAndRecordSpend("org-b-"+ts, "org", "", "daily", "m", 5e8, 0, 0)
+	if !ok || !allowed || total != 5e8 {
+		t.Fatalf("CheckAndRecordSpend(5e8, no limit): total %g allowed=%v ok=%v; want 5e8", total, allowed, ok)
+	}
+
+	// 1e13 USD saturates at MaxInt64 micro-dollars.
+	total, ok = bs.RecordSpend("org-c-"+ts, "org", "", "daily", "m", 1e13)
+	if !ok || total <= 9e12 {
+		t.Fatalf("RecordSpend(1e13): total %g ok=%v; want the saturated ~9.22e12", total, ok)
+	}
+	if spent, _, ok := bs.GetSpend("org-c-"+ts, "org", "", "daily"); !ok || spent <= 9e12 {
+		t.Fatalf("GetSpend after 1e13: %g ok=%v; want ~9.22e12", spent, ok)
+	}
+}
