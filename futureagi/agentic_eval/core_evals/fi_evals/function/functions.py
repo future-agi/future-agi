@@ -3130,6 +3130,7 @@ _CLASSIFICATION_LABEL_PAIRS = (
 def _classification_counts(preds, labels, positive_label):
     """Return per-class (TP, FP, FN) and the binary/macro policy description."""
     classes = set(preds) | set(labels)
+    positive: str | None
     if positive_label is not None:
         positive = str(positive_label).lower()
     else:
