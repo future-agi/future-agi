@@ -355,7 +355,12 @@ def graph_tag_overlay_params(
     if not project_ids or (window_start is None) != (window_end is None):
         raise TagReadUnavailable("tag_scope_required")
     reader = execute or (graph_overlay_executor() if window_start is not None else None)
-    phase = 0  # matching assignment walk; suppression uses a different PG predicate
+    phase: int | None = 0  # only paged walks justify a history probe
+
+    def suppression_walk_started() -> None:
+        nonlocal phase
+        phase = 1
+
     try:
         overlay = read_tag_overlay(
             project_ids=project_ids,
@@ -368,7 +373,7 @@ def graph_tag_overlay_params(
             classify_deadline=False,
         )
         if overlay.unmatched_trace_assignments:
-            phase = 1
+            phase = None
             # Only window-live traces can be in the graph: older curated tags
             # their assignments hide must not spend the suppression budget.
             overlay.assigned |= legacy_suppressions(
@@ -379,6 +384,7 @@ def graph_tag_overlay_params(
                 window_start=window_start,
                 window_end=window_end,
                 classify_deadline=False,
+                on_walk_start=suppression_walk_started,
             )
         trace_keys, span_keys, assigned = overlay.keys(values)
         params = {
@@ -397,10 +403,13 @@ def graph_tag_overlay_params(
         )
         return params, rendered
     except TagReadUnavailable as error:
-        # The same deadline covers every phase, not just the two paged walks:
-        # a slow curated read or sparse assignment lookup is classified by
-        # the leaf's actual PG history, never by time or scanned page count.
-        if error.code != "tag_overlay_budget_exceeded" and window_start is not None:
+        # Only a started paged walk can make a spent deadline over budget;
+        # curated reads and sparse suppression lookups do not walk that history.
+        if (
+            error.code != "tag_overlay_budget_exceeded"
+            and window_start is not None
+            and phase is not None
+        ):
             try:
                 deadline.remaining_ms()
             except ReadDeadlineExceeded:
@@ -849,6 +858,7 @@ def legacy_suppressions(
     window_start: datetime | None = None,
     window_end: datetime | None = None,
     classify_deadline: bool = True,
+    on_walk_start: Callable[[], None] | None = None,
 ) -> set[tuple[str, str]]:
     """Trace assignments that hide a curated tag the leaf would otherwise match.
 
@@ -939,6 +949,8 @@ def legacy_suppressions(
     live_hit_pages = 0
     scanned = 0
     try:
+        if on_walk_start is not None:
+            on_walk_start()
         for page_number, page in enumerate(
             _assignment_pages(unmatched, deadline=deadline), start=1
         ):

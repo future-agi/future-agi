@@ -951,14 +951,9 @@ def test_matching_walk_does_not_charge_unwalked_suppression_history(
     assert raised.value.code == "tag_source_unavailable"
 
 
-@pytest.mark.parametrize(
-    "history,expected",
-    [(9, "tag_source_unavailable"), (12, "tag_overlay_budget_exceeded")],
-)
-def test_expired_curated_read_checks_suppression_history(
-    stores, monkeypatch, history, expected
-):
-    """A stall before suppression paging uses the same history-only rule."""
+@pytest.mark.parametrize("history", [9, 12])
+def test_expired_curated_read_checks_suppression_history(stores, monkeypatch, history):
+    """A stalled curated read cannot prove the suppression walk is too broad."""
     import time
 
     lifetime_assignments(names=("other",), count=history)
@@ -980,7 +975,91 @@ def test_expired_curated_read_checks_suppression_history(
             window_end=END,
             execute=stalled,
         )
+    assert raised.value.code == "tag_source_unavailable"
+
+
+@pytest.mark.parametrize(
+    "history,expected",
+    [(9, "tag_source_unavailable"), (12, "tag_overlay_budget_exceeded")],
+)
+def test_expired_suppression_page_checks_walked_history(
+    stores, monkeypatch, history, expected
+):
+    import time
+
+    lifetime_assignments(names=("other",), count=history)
+    monkeypatch.setattr(effective_tags, "_ASSIGNMENT_PAGE_SIZE", 1)
+    monkeypatch.setattr(effective_tags, "MAX_GRAPH_OVERLAY_SCAN_PAGES", 10)
+    deadline = ReadDeadline.start(60_000)
+    walks = {"n": 0}
+    scoped_reads = {"n": 0}
+    curated = [
+        {"legacy_project": PROJECT, "legacy_trace": f"curated-{index}"}
+        for index in range(effective_tags.MAX_CURATED_SUPPRESSION_CANDIDATES + 1)
+    ]
+
+    def pages(*_args, **_kwargs):
+        walks["n"] += 1
+        if walks["n"] == 1:
+            return iter(())  # matching assignment walk
+        return _dead_trace_pages(9, size=1)
+
+    def stalled(_sql, params, **_kwargs):
+        if not params["tag_suppress_scoped"]:
+            return SimpleNamespace(data=curated)
+        scoped_reads["n"] += 1
+        if scoped_reads["n"] == 9:
+            object.__setattr__(deadline, "started", time.monotonic() - 61)
+            raise ReadDeadlineExceeded("read deadline exceeded")
+        return SimpleNamespace(data=[])
+
+    monkeypatch.setattr(effective_tags, "_assignment_pages", pages)
+    with pytest.raises(TagReadUnavailable) as raised:
+        effective_tags.graph_tag_overlay_params(
+            "test",
+            project_ids=(PROJECT,),
+            values=("wanted",),
+            deadline=deadline,
+            window_start=BEGIN,
+            window_end=END,
+            execute=stalled,
+        )
+    assert walks["n"] == 2
     assert raised.value.code == expected
+
+
+def test_expired_sparse_suppression_lookup_is_retryable(stores, monkeypatch):
+    import time
+
+    lifetime_assignments(names=("other",), count=12)
+    monkeypatch.setattr(effective_tags, "_ASSIGNMENT_PAGE_SIZE", 1)
+    monkeypatch.setattr(effective_tags, "MAX_GRAPH_OVERLAY_SCAN_PAGES", 10)
+    deadline = ReadDeadline.start(60_000)
+    original = effective_tags._query_assignments
+
+    def stalled_lookup(predicate, *, deadline, limit):
+        if limit == effective_tags.MAX_TAG_OVERLAY_KEYS:
+            object.__setattr__(deadline, "started", time.monotonic() - 61)
+            raise TagReadUnavailable("tag_assignment_unavailable")
+        return original(predicate, deadline=deadline, limit=limit)
+
+    def curated(_sql, _params, **_kwargs):
+        return SimpleNamespace(
+            data=[{"legacy_project": PROJECT, "legacy_trace": "curated"}]
+        )
+
+    monkeypatch.setattr(effective_tags, "_query_assignments", stalled_lookup)
+    with pytest.raises(TagReadUnavailable) as raised:
+        effective_tags.graph_tag_overlay_params(
+            "test",
+            project_ids=(PROJECT,),
+            values=("wanted",),
+            deadline=deadline,
+            window_start=BEGIN,
+            window_end=END,
+            execute=curated,
+        )
+    assert raised.value.code == "tag_assignment_unavailable"
 
 
 @pytest.mark.unit
@@ -995,12 +1074,11 @@ def test_failed_history_probe_is_not_too_broad(monkeypatch):
 
 
 @pytest.mark.unit
-def test_later_leaf_deadline_probes_preceding_leaf(monkeypatch):
+def test_later_leaf_deadline_stays_retryable_without_preceding_leaf_probe(monkeypatch):
     import time
 
     from tracer.services.clickhouse.query_builders.exact_graph_predicates import (
         EffectiveTagGraphCompiler,
-        GraphTagFilterTooBroadError,
     )
 
     calls = {"n": 0}
@@ -1016,13 +1094,19 @@ def test_later_leaf_deadline_probes_preceding_leaf(monkeypatch):
         return {f"{prefix}_names": ["wanted"]}, 0
 
     monkeypatch.setattr(effective_tags, "graph_tag_overlay_params", overlay)
-    monkeypatch.setattr(
-        effective_tags, "_history_exceeds_graph_cap", lambda *_args, **_kwargs: True
-    )
+    probes = {"n": 0}
+
+    def probe(*_args, **_kwargs):
+        probes["n"] += 1
+        return True
+
+    monkeypatch.setattr(effective_tags, "_history_exceeds_graph_cap", probe)
     config = {"filter_op": "equals", "filter_value": "wanted"}
     compiler.requirement(column_id="tag", config=config, filter_index=0)
-    with pytest.raises(GraphTagFilterTooBroadError):
+    with pytest.raises(BoundedGraphReadError) as raised:
         compiler.requirement(column_id="tag", config=config, filter_index=1)
+    assert raised.value.retryable
+    assert probes["n"] == 0
 
 
 @pytest.mark.unit
