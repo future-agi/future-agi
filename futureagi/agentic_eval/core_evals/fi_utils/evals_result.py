@@ -9,10 +9,12 @@ class OpenAiPromptMessage(TypedDict):
     role: str
     content: str
 
+
 class DataPoint(TypedDict, total=False):
     """Data point for a single inference."""
 
     response: str
+
 
 class EvalResultMetric(TypedDict):
     """

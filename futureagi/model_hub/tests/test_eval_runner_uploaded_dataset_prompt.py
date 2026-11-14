@@ -160,9 +160,7 @@ class TestProcessMappingPromptInstructionAdherence:
 class TestProcessMappingRunPromptColumnInference:
     """output->input auto-inference under run_prompt_column in process_mapping."""
 
-    def test_uploaded_dataset_skips_inference_without_run_prompter(
-        self, dataset, row
-    ):
+    def test_uploaded_dataset_skips_inference_without_run_prompter(self, dataset, row):
         """Without a RunPrompter, inference must be skipped gracefully instead
         of raising DoesNotExist (previously unguarded ORM lookups)."""
         output_col = _make_column(dataset, "output")

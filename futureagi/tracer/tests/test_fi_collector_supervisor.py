@@ -4,6 +4,7 @@ We test the supervisor against a stub binary (a shell script that
 sleeps for a configurable duration) so the tests are hermetic — no
 network, no real CH, no real fi-collector binary required.
 """
+
 from __future__ import annotations
 
 import os

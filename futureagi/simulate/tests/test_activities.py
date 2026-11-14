@@ -719,7 +719,10 @@ class TestDatasetScenarioSourceOrgScope:
             languages=["en"],
         )
         sim_agent = SimulatorAgent.objects.create(
-            name="sa", prompt="p", organization=organization, workspace=workspace,
+            name="sa",
+            prompt="p",
+            organization=organization,
+            workspace=workspace,
         )
         scenario = Scenarios.objects.create(
             name="s",

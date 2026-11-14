@@ -15,7 +15,11 @@ from django.utils import timezone
 
 from simulate.models import AgentFixRun
 from simulate.pydantic_schemas.agent_fix import EngineCapability, EngineModels
-from simulate.selectors.agent_fix import fix_deadline, queue_deadline, recent_lost_models
+from simulate.selectors.agent_fix import (
+    fix_deadline,
+    queue_deadline,
+    recent_lost_models,
+)
 from simulate.services.agent_fix_runs import close_fix_run
 from simulate.services.hosted_harness import HostedHarnessError, hash_secret
 from simulate.services.hosted_harness_gateway import (
