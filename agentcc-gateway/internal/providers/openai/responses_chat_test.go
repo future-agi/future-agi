@@ -527,16 +527,16 @@ func TestChatCompletionTakesTheResponsesRouteItself(t *testing.T) {
 				var req struct {
 					Stream bool `json:"stream"`
 				}
-				json.NewDecoder(r.Body).Decode(&req)
+				_ = json.NewDecoder(r.Body).Decode(&req)
 				switch {
 				case r.URL.Path == "/v1/responses" && req.Stream:
 					sse(w, toolStreamEvents...)
 				case r.URL.Path == "/v1/responses":
-					io.WriteString(w, completedResponse)
+					_, _ = io.WriteString(w, completedResponse)
 				case req.Stream:
 					sse(w, `{"id":"chatcmpl-1","object":"chat.completion.chunk","model":"gpt-5.6-terra","choices":[{"index":0,"delta":{"content":"ok"},"finish_reason":"stop"}]}`, `[DONE]`)
 				default:
-					io.WriteString(w, `{"id":"chatcmpl-1","object":"chat.completion","model":"gpt-5.6-terra","choices":[{"index":0,"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}]}`)
+					_, _ = io.WriteString(w, `{"id":"chatcmpl-1","object":"chat.completion","model":"gpt-5.6-terra","choices":[{"index":0,"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}]}`)
 				}
 			}))
 			defer ts.Close()
@@ -745,10 +745,10 @@ func TestViaResponsesFailsOnACallItemItCannotCarry(t *testing.T) {
 		var req struct {
 			Stream bool `json:"stream"`
 		}
-		json.NewDecoder(r.Body).Decode(&req)
+		_ = json.NewDecoder(r.Body).Decode(&req)
 		final := `{"id":"resp_1","object":"response","created_at":1761580000,"status":"completed","model":"gpt-5.6-terra","output":[` + customCall + `],"usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}`
 		if !req.Stream {
-			io.WriteString(w, final)
+			_, _ = io.WriteString(w, final)
 			return
 		}
 		sse(w,

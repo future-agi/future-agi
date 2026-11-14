@@ -35,7 +35,7 @@ func TestScheduledCompletionCarriesGPT56ToolsOverResponses(t *testing.T) {
 	done := make(chan outcome, 1)
 	hook := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var got outcome
-		json.NewDecoder(r.Body).Decode(&got)
+		_ = json.NewDecoder(r.Body).Decode(&got)
 		select {
 		case done <- got:
 		default:

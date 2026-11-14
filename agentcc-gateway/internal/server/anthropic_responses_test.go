@@ -95,7 +95,7 @@ func (u *openAIUpstream) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case "/v1/responses":
 		if msg := responsesShapeError(raw); msg != "" {
 			w.WriteHeader(http.StatusBadRequest)
-			fmt.Fprintf(w, `{"error":{"message":%q,"type":"invalid_request_error","param":null,"code":null}}`, msg)
+			_, _ = fmt.Fprintf(w, `{"error":{"message":%q,"type":"invalid_request_error","param":null,"code":null}}`, msg)
 			return
 		}
 		if failResponses {
@@ -208,7 +208,7 @@ func responsesShapeError(raw []byte) string {
 			Name     string          `json:"name"`
 			Function json.RawMessage `json:"function"`
 		}
-		json.Unmarshal(req.ToolChoice, &choice)
+		_ = json.Unmarshal(req.ToolChoice, &choice)
 		if choice.Type != "function" || choice.Name == "" || choice.Function != nil {
 			return "Invalid value for 'tool_choice'."
 		}
