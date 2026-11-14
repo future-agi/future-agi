@@ -502,14 +502,14 @@ describe("reviewed examples", () => {
     expect(
       screen.getByText("Does this skill handle your real requests?"),
     ).toBeInTheDocument();
-    const first = screen.getByRole("button", { name: "Add first example" });
+    const first = screen.getByRole("button", { name: "Add first test case" });
     expect(first).toBeEnabled();
     expect(first).toHaveClass("MuiButton-containedPrimary");
     // Unrelated domains are not offered for a refund skill, and the privacy note waits for a case.
     expect(
       screen.queryByRole("button", { name: "Tenant isolation in a supplied patch" }),
     ).not.toBeInTheDocument();
-    expect(screen.queryByText(/Saved examples are visible to your workspace/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Saved test cases are visible to your workspace/)).not.toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: "Customer asks for a refund on a damaged item" }),
     ).toBeVisible();
@@ -625,12 +625,12 @@ describe("reviewed examples", () => {
     api.saveSuite.mockRejectedValue({ code: "test_suite_conflict" });
     mount(<TestsTab skill={skill} />);
     fireEvent.click(screen.getByLabelText("Actions for Eligible refund"));
-    fireEvent.click(screen.getByText("Review or edit example"));
+    fireEvent.click(screen.getByText("Review or edit test case"));
     fireEvent.change(screen.getByLabelText("Request"), {
       target: { value: "Keep my unsaved request" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Save example" }));
-    await screen.findAllByText(/Someone changed the saved examples/);
+    await screen.findAllByText(/Someone changed the saved test cases/);
     expect(screen.getByLabelText("Request")).toHaveValue(
       "Keep my unsaved request",
     );
@@ -652,7 +652,7 @@ describe("reviewed examples", () => {
         expect(
           screen.getByText(
             state === "error"
-              ? "Could not load saved examples"
+              ? "Could not load saved test cases"
               : "Does this skill handle your real requests?",
           ),
         ).toBeInTheDocument();
@@ -660,7 +660,7 @@ describe("reviewed examples", () => {
   );
   it("clears private editor form state when the principal changes", () => {
     const view = mount(<TestsTab skill={skill} />);
-    fireEvent.click(screen.getByRole("button", { name: "Add example" }));
+    fireEvent.click(screen.getByRole("button", { name: "Add test case" }));
     fireEvent.change(screen.getByLabelText("Request"), {
       target: { value: "Private unsaved text" },
     });

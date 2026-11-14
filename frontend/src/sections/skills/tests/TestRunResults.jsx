@@ -36,7 +36,7 @@ import { fDateTime } from "src/utils/format-time";
 import TestAttemptDrawer from "./TestAttemptDrawer";
 
 const FILTERS = {
-  all: "All examples",
+  all: "All test cases",
   regressions: "Regressions (including mixed)",
   wrong_selection: "Wrong selection",
   inconsistent: "Inconsistent",
@@ -44,11 +44,11 @@ const FILTERS = {
   not_graded: "Not graded",
 };
 const TITLES = {
-  works_on_examples: "Expectations met on these examples.",
+  works_on_examples: "Expectations met on these test cases.",
   needs_changes: "Needs changes. Review the failed candidate expectations.",
   inconclusive:
     "Comparison incomplete. Some expectations could not be verified.",
-  routing_only: "Selection matched these examples. Answers were not graded.",
+  routing_only: "Selection matched these test cases. Answers were not graded.",
   diagnostic:
     "Diagnostic check: these results are not independent improvement evidence.",
 };
@@ -246,13 +246,13 @@ export default function TestRunResults({
         {run.counts.notStarted} not started
       </Typography>
       <Typography variant="s3" color="text.secondary">
-        {run.selectedCaseIds.length} unique examples · {run.repetitions}{" "}
+        {run.selectedCaseIds.length} unique test cases · {run.repetitions}{" "}
         attempt(s) per arm · {run.competitors.length} selected competitors · In
         this text-only test, no scripts or external actions
       </Typography>
       {run.profile === "quick" && (
         <Typography variant="s3" color="text.secondary">
-          One attempt per example; not a reliability estimate.
+          One attempt per test case; not a reliability estimate.
         </Typography>
       )}
       {run.parentRunId && (
@@ -281,7 +281,7 @@ export default function TestRunResults({
       )}
       {run.currentness.suite === false && (
         <Alert severity="info">
-          The saved examples changed after this run. These results use the
+          The saved test cases changed after this run. These results use the
           frozen cases.
         </Alert>
       )}
@@ -308,7 +308,7 @@ export default function TestRunResults({
           />
           <Typography variant="s3" color="text.secondary">
             {fDateTime(run.createdAt)} ·{" "}
-            {run.fullSuite ? "Full saved suite" : "Selected examples only"} ·
+            {run.fullSuite ? "Full saved suite" : "Selected test cases only"} ·
             detailed evidence expires {fDateTime(run.payloadExpiresAt)}
           </Typography>
         </Stack>
@@ -351,7 +351,7 @@ export default function TestRunResults({
             disabled={active || !retryIds.length || run.payloadExpired}
             onClick={() => onRetryCases(retryIds, run.id)}
           >
-            Retry selected examples as diagnostic
+            Retry selected test cases as diagnostic
           </Button>
         )}
       </Stack>
@@ -379,7 +379,7 @@ export default function TestRunResults({
           >
             Against {variantTitle(comparison.baseline, run)}:{" "}
             {comparison.matchedCases}/{comparison.expectedCases} matched
-            examples ·{" "}
+            test cases ·{" "}
             {run.validity === "diagnostic" ||
             comparison.deltaPercentagePoints === null
               ? "No answer delta reported"
@@ -433,11 +433,11 @@ export default function TestRunResults({
             <ContentSkeleton
               variant="rows"
               rows={5}
-              label="Loading example results"
+              label="Loading test case results"
             />
           ) : results.isError ? (
             <ErrorState
-              title="Could not load example results"
+              title="Could not load test case results"
               onRetry={results.refetch}
             />
           ) : !rows.length ? (
@@ -445,22 +445,22 @@ export default function TestRunResults({
               title={
                 active
                   ? "Waiting for the first results"
-                  : "No examples match this filter"
+                  : "No test cases match this filter"
               }
               description={
                 active
                   ? "Completed evidence appears as the run settles."
-                  : "Choose All examples to inspect the rest of the comparison."
+                  : "Choose All test cases to inspect the rest of the comparison."
               }
             />
           ) : (
             <>
               <TableContainer sx={{ maxWidth: "100%" }}>
-                <Table size="small" aria-label="Example comparisons">
+                <Table size="small" aria-label="Test case comparisons">
                   <TableHead>
                     <TableRow sx={{ height: TABLE_HEADER_HEIGHT.default }}>
                       {onRetryCases && <TableCell>Select</TableCell>}
-                      <TableCell>Example</TableCell>
+                      <TableCell>Test case</TableCell>
                       <TableCell>Expected</TableCell>
                       {variants.map((variant) => (
                         <TableCell key={variant}>

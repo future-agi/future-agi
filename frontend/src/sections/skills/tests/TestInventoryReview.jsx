@@ -28,6 +28,8 @@ export default function TestInventoryReview({
   subjectKind,
   subjectId,
   subjectName,
+  consentHeading,
+  children,
 }) {
   // Keep the complete inventory one click away; required findings and unticked
   // acknowledgments stay inline at the decision, never inside the disclosure.
@@ -122,12 +124,12 @@ export default function TestInventoryReview({
   return (
     <Stack spacing={2}>
       <Section
-        title="Review every model-visible file"
+        title="Review every file sent to the model"
         description="All listed files remain available. To remove answer keys, edit the real draft and preview again."
       >
         <Stack spacing={1.5}>
           <Typography variant="s1">{files.length} files · {flaggedCount} flagged · {bytes < 1024 ? `${bytes} bytes` : `${(bytes / 1024).toFixed(1)} KB`}</Typography>
-          <TechnicalDetails title="View all model-visible files">
+          <TechnicalDetails title="View all files sent to the model">
           <TableContainer><Table size="small" aria-label="Model-visible inventory">
             <TableHead><TableRow sx={{ height: TABLE_HEADER_HEIGHT.default }}><TableCell>File</TableCell><TableCell>Source/version</TableCell><TableCell>Flags</TableCell><TableCell>Size</TableCell><TableCell /></TableRow></TableHead>
             <TableBody>{preview.inventory.flatMap((bundle, index) => bundle.files.map((file) => <TableRow key={`${index}:${file.path}`} hover sx={{ height: ROW_HEIGHT.default }}>
@@ -300,32 +302,38 @@ export default function TestInventoryReview({
           </Stack>
         </Section>
       )}
-      <Typography variant="s3" color="text.secondary">Read the files above and check what will be sent to the model before confirming.</Typography>
-      <FormControlLabel
-        control={
-          <Checkbox
-            disabled={disabled}
-            checked={value.noKnownAnswerKeys}
-            onChange={(event) =>
-              update({ noKnownAnswerKeys: event.target.checked })
-            }
-          />
-        }
-        label="The files sent to the model contain no answer keys or grading material."
-      />
-      <FormControlLabel
-        control={
-          <Checkbox
-            disabled={disabled}
-            checked={value.reviewedAllFiles}
-            onChange={(event) =>
-              update({ reviewedAllFiles: event.target.checked })
-            }
-          />
-        }
-        label="I reviewed every file and input that will be sent to the model."
-      />
-      <TechnicalDetails title="About diagnostic runs"><Typography variant="s3" color="text.secondary">
+      {/* The acknowledgments stay separate, unticked and in this order. A caller may group them, with
+          its own consents after these (children), under one heading at the point of decision. */}
+      <Stack spacing={consentHeading ? 0.5 : 2} {...(consentHeading ? { role: "group", "aria-labelledby": "test-consents-heading" } : {})}>
+        {consentHeading && <Typography id="test-consents-heading" component="h3" variant="m3">{consentHeading}</Typography>}
+        <Typography variant="s3" color="text.secondary">Read the files above and check what will be sent to the model before confirming.</Typography>
+        <FormControlLabel
+          control={
+            <Checkbox
+              disabled={disabled}
+              checked={value.noKnownAnswerKeys}
+              onChange={(event) =>
+                update({ noKnownAnswerKeys: event.target.checked })
+              }
+            />
+          }
+          label="The files sent to the model contain no answer keys or grading material."
+        />
+        <FormControlLabel
+          control={
+            <Checkbox
+              disabled={disabled}
+              checked={value.reviewedAllFiles}
+              onChange={(event) =>
+                update({ reviewedAllFiles: event.target.checked })
+              }
+            />
+          }
+          label="I reviewed every file and input that will be sent to the model."
+        />
+        {children}
+      </Stack>
+      <TechnicalDetails title="About this preview"><Typography variant="s3" color="text.secondary">
         Detection is not proof of independence. A diagnostic run keeps all files
         and cannot claim answer improvement.
       </Typography></TechnicalDetails>
@@ -340,4 +348,7 @@ TestInventoryReview.propTypes = {
   subjectKind: PropTypes.string,
   subjectId: PropTypes.string,
   subjectName: PropTypes.string,
+  /** Opt-in heading that groups the acknowledgments (and any `children` consents) at the decision. */
+  consentHeading: PropTypes.string,
+  children: PropTypes.node,
 };

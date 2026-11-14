@@ -117,11 +117,11 @@ it('opens an attempt with the keyboard, shows disagreement scope and returns foc
 });
 it('continues to the composer with the complete candidate, target and shared run identity', () => {
   h.detail.decision = { state: 'release_ready', reasons: [] };
-  h.detail.arms[0] = { variant: 'candidate', version: 6, versionId: 'candidate-id', digest: 'sha256:full-digest' };
+  h.detail.arms[0] = { variant: 'candidate', version: 7, versionId: 'candidate-id', digest: 'sha256:full-digest' };
   h.prepared = { fingerprint: 'sha256:packet', targetDigest: 'sha256:target' };
   renderPanel();
   const url = new URL(screen.getByRole('link', { name: 'Continue to release review' }).href);
-  expect(Object.fromEntries(url.searchParams)).toMatchObject({ kind: 'agent_context', subject: 'context', name: 'Support context', candidate: 'candidate-id', number: '6', digest: 'sha256:full-digest', evidence: 'simulation_native:previous', target: 'binding', label: 'production' });
+  expect(Object.fromEntries(url.searchParams)).toMatchObject({ kind: 'agent_context', subject: 'context', name: 'Support context', candidate: 'candidate-id', number: '7', digest: 'sha256:full-digest', evidence: 'simulation_native:previous', target: 'binding', label: 'production' });
   expect(url.searchParams.has('annotation_revision')).toBe(false);
   expect(screen.getByText(/Packet ready/)).toBeVisible();
 });
@@ -131,11 +131,12 @@ it('chooses the newest result across both run types and keeps a combined history
   renderPanel({ answerHistory: { data: { results: [{ id: 'answer', status: 'completed', created_at: '2026-11-12T12:00:00Z', candidate: { version: 7 } }] } }, renderAnswer: (id) => <p>Answer result {id}</p> });
   expect(screen.getByText('Answer result answer')).toBeVisible();
   expect(screen.getByRole('table', { name: 'Test history' })).toHaveTextContent('Answer check');
-  expect(screen.getByRole('table', { name: 'Test history' })).toHaveTextContent('Application verification');
+  expect(screen.getByRole('table', { name: 'Test history' })).toHaveTextContent('Verify on the application');
 });
 it('explains disabled packet prerequisites and marks the earlier-run scope', () => {
   h.detail.decision = { state: 'release_ready', reasons: [] };
-  renderPanel();
+  // The earlier run tested v6 while production is v4, so its release packet can still be prepared.
+  renderPanel({ productionVersion: 4 });
   expect(screen.getByRole('button', { name: 'Attach your CI run (optional)' })).toHaveAttribute('aria-expanded', 'true');
   expect(screen.getByText('Fill in the three CI fields to attach your CI run.')).toBeVisible();
   expect(screen.getByRole('button', { name: 'Share run and attach CI result' })).toBeDisabled();
@@ -230,7 +231,8 @@ it('hands the primary to the chosen answer form when the packet belongs to an ea
   h.detail.decision = { state: 'release_ready', reasons: [] };
   h.prepared = { fingerprint: 'sha256:packet', targetDigest: 'sha256:target' };
   const renderForm = vi.fn(() => null);
-  renderPanel({ children: renderForm });
+  // The earlier result tested v6 while production is v4, so it still offers the release review.
+  renderPanel({ children: renderForm, productionVersion: 4 });
   fireEvent.click(screen.getByRole('radio', { name: /^Check answers with this context/ }));
   expect(renderForm).toHaveBeenLastCalledWith(true);
   expect(screen.getByRole('button', { name: 'Run on current selection' })).toHaveClass('MuiButton-outlined');
@@ -350,7 +352,7 @@ it('drops the visible Latest result heading but keeps the region name', () => {
   renderPanel();
   expect(screen.getByRole('region', { name: 'Latest result' })).toBeInTheDocument();
   expect(screen.queryByText('Latest result')).not.toBeInTheDocument();
-  expect(screen.getByRole('heading', { name: 'Application verification', level: 2 })).toBeVisible();
+  expect(screen.getByRole('heading', { name: 'Verify on the application', level: 2 })).toBeVisible();
 });
 it('puts the per-case table before the CI attachment, and both before History and the setup', () => {
   h.detail.arms[0] = { variant: 'candidate', version: 7 };
@@ -365,9 +367,9 @@ it('describes each History row by comparison, coverage and a separate outcome', 
   h.detail.decision = { state: 'release_ready', reasons: [] };
   renderPanel({ answerHistory: { data: { results: [{ id: 'answer', status: 'completed', created_at: '2026-11-10T12:00:00Z', candidate: { version: 7 }, reference: { version: 6 }, selected_case_ids: ['one'], decision: { state: 'needs_changes' } }] } }, renderAnswer: (id) => <p>Answer result {id}</p> });
   const history = screen.getByRole('table', { name: 'Test history' });
-  const application = within(history).getByText('Application verification · v6 vs recorded v4 · 2 cases').closest('tr');
+  const application = within(history).getByText('Verify on the application · v6 vs recorded v4 · 2 cases').closest('tr');
   expect(within(application).getByText('Passed')).toBeVisible();
-  expect(within(application).getByRole('button', { name: 'Inspect Application verification · v6 vs recorded v4 · 2 cases' })).toBeVisible();
+  expect(within(application).getByRole('button', { name: 'Inspect Verify on the application · v6 vs recorded v4 · 2 cases' })).toBeVisible();
   const answer = within(history).getByText('Answer check · v7 vs v6 · 1 case').closest('tr');
   expect(within(answer).getByText('Needs changes')).toBeVisible();
   // The precise time is the shared When tooltip on the relative time.
@@ -376,7 +378,7 @@ it('describes each History row by comparison, coverage and a separate outcome', 
 it('never shows a verdict for an application row before its detail loads', () => {
   h.detail = { ...h.detail, decision: undefined };
   renderPanel();
-  const row = within(screen.getByRole('table', { name: 'Test history' })).getByText(/^Application verification/).closest('tr');
+  const row = within(screen.getByRole('table', { name: 'Test history' })).getByText(/^Verify on the application ·/).closest('tr');
   expect(within(row).getByText('Loading…')).toBeVisible();
   expect(within(row).queryByText('Passed')).not.toBeInTheDocument();
 });
@@ -428,9 +430,40 @@ it('reads an application row whose detail fails as not reported, never loading f
   h.detailError = true;
   try {
     renderPanel({ answerHistory: { data: { results: [] } }, renderAnswer: () => null });
-    const row = within(screen.getByRole('table', { name: 'Test history' })).getByText(/^Application verification/).closest('tr');
+    const row = within(screen.getByRole('table', { name: 'Test history' })).getByText(/^Verify on the application ·/).closest('tr');
     const outcome = row.querySelectorAll('td')[1];
     expect(outcome).toHaveTextContent('Not reported');
     expect(within(row).queryByText('Loading…')).not.toBeInTheDocument();
   } finally { h.detailError = false; }
+});
+
+it('confirms a passing result for the version production already serves, with no release request', () => {
+  h.detail.decision = { state: 'release_ready', reasons: ['All selected cases passed.'] };
+  h.detail.configurationDigest = `sha256:${'c'.repeat(64)}`;
+  h.detail.arms[0] = { variant: 'candidate', version: 6, versionId: 'v6-id', digest: 'sha256:v6' };
+  renderPanel({ productionVersion: 6 });
+  expect(screen.getByText('Already in production')).toBeVisible();
+  expect(screen.getByText('v6 is already in production. This result confirms the release.')).toBeVisible();
+  expect(screen.queryByText('Ready for release review')).not.toBeInTheDocument();
+  expect(screen.queryByRole('link', { name: 'Continue to release review' })).not.toBeInTheDocument();
+  expect(document.querySelector('a[href*="/review"]')).toBeNull();
+  // v7 is newer than the tested v6, so the next step is testing it.
+  expect(screen.getByRole('link', { name: 'Test a newer draft' })).toHaveAttribute('href', '/dashboard/skills/contexts/context/edit');
+  // No release packet is prepared for a version production already serves.
+  expect(screen.queryByRole('button', { name: 'Attach your CI run (optional)' })).not.toBeInTheDocument();
+});
+it('keeps the configuration identity in "How it was decided", and the pinned state visible', async () => {
+  h.detail.decision = { state: 'release_ready', reasons: ['All selected cases passed.'] };
+  h.detail.configurationDigest = `sha256:${'c'.repeat(64)}`;
+  h.detail.arms[0] = { variant: 'candidate', version: 7, versionId: 'v7-id', digest: 'sha256:v7' };
+  renderPanel();
+  const region = screen.getByRole('region', { name: 'Latest result' });
+  const disclosure = within(region).getByRole('button', { name: 'How it was decided' });
+  expect(disclosure).toHaveAttribute('aria-expanded', 'false');
+  // The configuration identity is not in the status row; it opens with the decision.
+  expect(within(region).queryByText(/c{12}/)).not.toBeInTheDocument();
+  fireEvent.click(disclosure);
+  expect(await within(region).findByText('All selected cases passed.')).toBeVisible();
+  expect(within(region).getByText(/c{12}/)).toBeVisible();
+  expect(screen.getAllByText('Configuration pinned')).toHaveLength(1);
 });

@@ -100,7 +100,7 @@ const PREVIEW_STATES = {
   expired:
     "Detailed evidence expired. Summaries remain, but payloads are no longer inspectable.",
   forbidden:
-    "Workspace write access is required to save examples and run tests.",
+    "Workspace write access is required to save test cases and run tests.",
 };
 
 function RunHistory({ skillId, onOpen }) {
@@ -118,7 +118,7 @@ function RunHistory({ skillId, onOpen }) {
     return (
       <EmptyState
         title="No test runs yet"
-        description="Review an example and a spend preview before starting your first comparison."
+        description="Review a test case and a spend preview before starting your first comparison."
       />
     );
   return (
@@ -241,8 +241,8 @@ function TestsContent({ skill }) {
     } catch (error) {
       setSaveError(
         getSkillErrorCode(error) === "test_suite_conflict"
-          ? "Someone changed the saved examples. Your open example is preserved. Reload the latest set, review it, then save again."
-          : "Could not save examples. Your inputs are preserved; check workspace access and try again.",
+          ? "Someone changed the saved test cases. Your open test case is preserved. Reload the latest set, review it, then save again."
+          : "Could not save test cases. Your inputs are preserved; check workspace access and try again.",
       );
       return false;
     }
@@ -254,7 +254,7 @@ function TestsContent({ skill }) {
   if (state === "error" || suiteQuery.isError)
     return (
       <ErrorState
-        title="Could not load saved examples"
+        title="Could not load saved test cases"
         onRetry={suiteQuery.refetch}
       />
     );
@@ -262,7 +262,7 @@ function TestsContent({ skill }) {
     return (
       <EmptyState
         title="Select a workspace"
-        description="Saved examples and test evidence are workspace-scoped."
+        description="Saved test cases and test evidence are workspace-scoped."
       />
     );
   const empty = state === "empty" || suite.cases.length === 0;
@@ -358,12 +358,12 @@ function TestsContent({ skill }) {
                       setSaveError("");
                     }}
                   >
-                    Add first example
+                    Add first test case
                   </Button>
                 }
               />
               <Section
-                title="Start from an editable example"
+                title="Start from an editable test case"
                 description="These facts and policies are illustrative. Replace them with approved context before reviewing."
               >
                 <Stack spacing={1} alignItems="start">
@@ -393,7 +393,7 @@ function TestsContent({ skill }) {
                 alignItems="center"
               >
                 <Typography variant="m3" sx={{ flex: 1 }}>
-                  {suite.cases.length} saved examples · {caseIds.length}{" "}
+                  {suite.cases.length} saved test cases · {caseIds.length}{" "}
                   selected
                 </Typography>
                 <Button
@@ -404,11 +404,11 @@ function TestsContent({ skill }) {
                     setSaveError("");
                   }}
                 >
-                  Add example
+                  Add test case
                 </Button>
               </Stack>
               <TableContainer>
-                <Table size="small" aria-label="Saved examples">
+                <Table size="small" aria-label="Saved test cases">
                   <TableHead>
                     <TableRow sx={{ height: TABLE_HEADER_HEIGHT.default }}>
                       <TableCell padding="checkbox">
@@ -418,7 +418,7 @@ function TestsContent({ skill }) {
                             caseIds.length > 0 &&
                             caseIds.length < suite.cases.length
                           }
-                          inputProps={{ "aria-label": "Select all examples" }}
+                          inputProps={{ "aria-label": "Select all test cases" }}
                           onChange={(event) =>
                             setSelected(
                               event.target.checked
@@ -428,7 +428,7 @@ function TestsContent({ skill }) {
                           }
                         />
                       </TableCell>
-                      <TableCell>Example</TableCell>
+                      <TableCell>Test case</TableCell>
                       <TableCell>Use skill?</TableCell>
                       <TableCell>Checks</TableCell>
                       <TableCell>Review</TableCell>
@@ -513,11 +513,11 @@ function TestsContent({ skill }) {
                 </Table>
               </TableContainer>
               <Typography variant="s3" color="text.secondary">
-                Saved examples are visible to your workspace. Draft runs stay
+                Saved test cases are visible to your workspace. Draft runs stay
                 private until you share them.
               </Typography>
               {canWrite && (
-                <Section title="Compare reviewed examples">
+                <Section title="Compare reviewed test cases">
                   <Stack spacing={2}>
                     <TextField
                       size="small"
@@ -610,7 +610,7 @@ function TestsContent({ skill }) {
           <ListItemIcon>
             <Iconify icon="solar:pen-linear" width={16} />
           </ListItemIcon>
-          Review or edit example
+          Review or edit test case
         </MenuItem>
         <MenuItem
           disabled={!canWrite}
@@ -622,7 +622,7 @@ function TestsContent({ skill }) {
           <ListItemIcon>
             <Iconify icon="solar:trash-bin-trash-linear" width={16} />
           </ListItemIcon>
-          Remove example
+          Remove test case
         </MenuItem>
       </Menu>
       {editor && (
@@ -652,8 +652,8 @@ function TestsContent({ skill }) {
           if (!save.isPending) setRemove(null);
         }}
         closeDisabled={save.isPending}
-        title="Remove example?"
-        content="This removes it from the saved suite. Historical runs retain their frozen example and evidence."
+        title="Remove test case?"
+        content="This removes it from the saved suite. Historical runs retain their frozen test case and evidence."
         action={
           <Button
             variant="contained"
@@ -668,7 +668,7 @@ function TestsContent({ skill }) {
                 setRemove(null);
             }}
           >
-            Remove example
+            Remove test case
           </Button>
         }
       />

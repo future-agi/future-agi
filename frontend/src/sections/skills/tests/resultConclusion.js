@@ -89,3 +89,13 @@ export function answerOutcome(run) {
   if (run.decision?.state === 'needs_changes') return ['held', 'Needs changes'];
   return ['unknown', 'Not reported'];
 }
+
+// Readiness is read against current production. A passing result for the version production already
+// serves confirms that release: it never offers a new release request, which the composer would refuse.
+// An unknown production version is never treated as "in production".
+/** True when the tested version is the one production serves now. */
+export function isInProduction(version, productionVersion) {
+  return version != null && productionVersion != null && Number(version) === Number(productionVersion);
+}
+/** The hint beside the neutral "Already in production" badge. */
+export const inProductionHint = (version) => `v${version} is already in production. This result confirms the release.`;
