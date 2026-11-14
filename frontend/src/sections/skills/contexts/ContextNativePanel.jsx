@@ -427,6 +427,9 @@ export default function ContextNativePanel({ contextId, versions, viewed, cases,
   const runtimeOff = state === 'off' || (targets.data && !targets.data.runtime?.available);
   const defaultKind = seed ? 'application' : draftHandoff || runtimeOff ? 'answers' : targets.data ? (targets.data.targets.length ? 'application' : 'answers') : (cases.length ? 'application' : 'answers');
   const kind = chosenKind ?? defaultKind;
+  // The default depends on the registered targets, so the choice waits for them: showing a
+  // provisional default would flip under the reviewer (and swallow a click on the flipped option).
+  const kindPending = !chosenKind && !seed && !draftHandoff && !runtimeOff && !targets.data && !targets.isError && state !== 'error';
   // "Run a test" starts open unless a current result is the subject of the page. The form stays
   // mounted while collapsed: it owns the run's idempotency key and the selection that marks an
   // earlier result, and neither may be lost by folding the section.
@@ -473,13 +476,13 @@ export default function ContextNativePanel({ contextId, versions, viewed, cases,
       <Collapse in={runOpen} id="run-a-test-body" role="region" aria-labelledby="run-a-test-heading">
         <Stack spacing={2} sx={{ pt: 1.5 }}>
           <FormControl><FormLabel id="test-kind-label" sx={{ color: 'text.primary' }}>Choose what to test</FormLabel>
-            <RadioGroup aria-labelledby="test-kind-label" value={kind} onChange={(event) => { setKind(event.target.value); setStartedForm(true); setCurrentForm(true); }} sx={{ flexDirection: { xs: 'column', sm: 'row' }, gap: 1.5 }}>
+            {kindPending ? <ContentSkeleton variant="rows" rows={1} label="Loading test options" /> : <RadioGroup aria-labelledby="test-kind-label" value={kind} onChange={(event) => { setKind(event.target.value); setStartedForm(true); setCurrentForm(true); }} sx={{ flexDirection: { xs: 'column', sm: 'row' }, gap: 1.5 }}>
               <FormControlLabel value="answers" control={<Radio size="small" />} label={<Stack><Typography variant="s1">Check answers with this context</Typography><Typography variant="s3" color="text.secondary">Compare answers using your instructions and linked skills.</Typography></Stack>} />
               <FormControlLabel value="application" control={<Radio size="small" />} label={<Stack><Typography variant="s1">Verify on the application</Typography><Typography variant="s3" color="text.secondary">Check skill selection, delivered files, actions and answers.</Typography></Stack>} />
-            </RadioGroup>
+            </RadioGroup>}
           </FormControl>
-          <Box ref={answerForm} hidden={kind !== 'answers'}>{typeof children === 'function' ? children(formPrimary && kind === 'answers') : children}</Box>
-          <Box ref={applicationForm} hidden={kind !== 'application'}><Stack spacing={2}>
+          <Box ref={answerForm} hidden={kindPending || kind !== 'answers'}>{typeof children === 'function' ? children(formPrimary && kind === 'answers') : children}</Box>
+          <Box ref={applicationForm} hidden={kindPending || kind !== 'application'}><Stack spacing={2}>
             {state === 'loading' || (targets.isLoading && !targets.data) ? <ContentSkeleton variant="panel" label="Loading application target" /> : state === 'error' || targets.isError ? <ErrorState title="Couldn't load application test options." detail="You can still open past results and reviewed cases." onRetry={targets.refetch} sx={{ alignItems: 'flex-start', textAlign: 'left', py: 1.5, px: 0 }} /> : state === 'off' || !targets.data?.runtime.available ? <CapabilityNotice title="Application verification is off" description="This workspace has no hosted application runtime. You can still check answers with the whole context; text results don't prove an application repair." /> : <>
               <TargetSection contextId={contextId} version={viewed} canWrite={canWrite} targets={targets} />
               <PlanSection contextId={contextId} versions={versions} viewed={viewed} cases={cases} target={target} canWrite={canWrite} onStarted={(id) => { setSelected({ type: 'application', id }); setFormOpen(null); setStartedForm(false); }} onSelectionChange={setSelection} runs={runs.data} productionVersion={productionVersion} seed={seed} primary={formPrimary && kind === 'application'} />

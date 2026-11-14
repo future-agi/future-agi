@@ -190,7 +190,7 @@ test('SKILLS-E2E-002: review a policy repair and deliberately release its exact 
       await page.getByRole('button', { name: 'Append review', exact: true }).click();
       const annotated = await annotationResponse;
       expect(annotated.status(), await annotated.text()).toBe(201);
-      await expect(page.getByText(/Annotation recorded. Machine grade unchanged/)).toBeVisible();
+      await expect(page.getByText(/Review recorded\. The automatic result is unchanged/)).toBeVisible();
       const submitted = annotated.request().postDataJSON();
       expect(submitted).toMatchObject({ annotation_revision: 0, verdict: 'agree', cited_text: '{"eligible":false}' });
       expect(await probe.pg('SELECT actor_id::text, check_id::text, attempt_id::text, revision, verdict, cited_text FROM model_hub_hubskillevidenceannotation WHERE source_id = $1', [first.id]))
