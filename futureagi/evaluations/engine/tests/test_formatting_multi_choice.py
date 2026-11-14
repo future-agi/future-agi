@@ -29,7 +29,9 @@ def _result(picks):
 
 
 def test_multi_choice_score_is_mean_of_picks():
-    value = format_eval_value(_result(["Love", "Anger", "Sadness"]), _template(CHOICE_SCORES))
+    value = format_eval_value(
+        _result(["Love", "Anger", "Sadness"]), _template(CHOICE_SCORES)
+    )
     assert value["choices"] == ["Love", "Anger", "Sadness"]
     assert value["score"] == (1.0 + 0.0 + 0.0) / 3
 

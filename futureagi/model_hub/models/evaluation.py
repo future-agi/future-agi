@@ -1,4 +1,5 @@
 import uuid
+from typing import Any
 
 from django.db import models
 
@@ -117,7 +118,8 @@ class Evaluation(BaseModel):
         """
         if self.value is not None:
             try:
-                data = self.value
+                # Before persistence this TextField can still hold native values.
+                data: Any = self.value
 
                 if isinstance(data, bool) or data in [["Passed"], ["Failed"]]:
                     self.output_bool = data == ["Passed"] or data is True

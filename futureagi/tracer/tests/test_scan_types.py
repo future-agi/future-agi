@@ -40,7 +40,9 @@ def test_embedding_text_is_brief_only():
         brief="Agent ignored the user's stated currency preference.",
         key_moments=["user said USD", "agent replied in EUR"],
     )
-    assert issue.embedding_text == "Agent ignored the user's stated currency preference."
+    assert (
+        issue.embedding_text == "Agent ignored the user's stated currency preference."
+    )
 
 
 def test_embedding_text_ignores_empty_key_moments():
@@ -62,7 +64,10 @@ def test_distilled_phrase_is_what_gets_embedded():
         brief="Stated NVDA gain of $5,014.68 for client Arjun Malhotra without a tool call",
         distilled="agent states portfolio figures without calling data tools",
     )
-    assert issue.embedding_text == "agent states portfolio figures without calling data tools"
+    assert (
+        issue.embedding_text
+        == "agent states portfolio figures without calling data tools"
+    )
 
 
 def test_distillation_collapses_briefs_that_differ_only_by_entity():

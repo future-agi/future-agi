@@ -16,7 +16,12 @@ describe("LoadingScreen", () => {
   });
 
   it("applies custom sx props correctly", () => {
-    render(<LoadingScreen data-testid="loading-wrapper" sx={{ backgroundColor: "red" }} />);
+    render(
+      <LoadingScreen
+        data-testid="loading-wrapper"
+        sx={{ backgroundColor: "red" }}
+      />,
+    );
     expect(screen.getByTestId("loading-wrapper")).toBeInTheDocument();
   });
 
@@ -39,7 +44,10 @@ describe("LoadingScreen", () => {
 
   it("renders a custom message override", () => {
     render(<LoadingScreen message="Custom message" />);
-    expect(screen.getByRole("status")).toHaveAttribute("aria-label", "Custom message");
+    expect(screen.getByRole("status")).toHaveAttribute(
+      "aria-label",
+      "Custom message",
+    );
   });
 
   describe("accessibility", () => {

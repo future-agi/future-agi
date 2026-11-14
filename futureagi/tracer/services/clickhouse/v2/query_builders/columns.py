@@ -9,40 +9,46 @@ Used by:
 Every column reference in v2 query builders MUST come through this module,
 not hard-coded strings. This makes a future schema change a one-file edit.
 """
+
 from __future__ import annotations
 
 from typing import Final
 
 
 # ─── Soft-delete + dedup ─────────────────────────────────────────────────────
-IS_DELETED: Final[str] = "is_deleted"             # v1: _peerdb_is_deleted
-VERSION:    Final[str] = "_version"               # v1: _peerdb_version
+IS_DELETED: Final[str] = "is_deleted"  # v1: _peerdb_is_deleted
+VERSION: Final[str] = "_version"  # v1: _peerdb_version
 
 # ─── Typed attribute Maps ────────────────────────────────────────────────────
-ATTRS_STRING: Final[str] = "attrs_string"         # v1: span_attr_str
-ATTRS_NUMBER: Final[str] = "attrs_number"         # v1: span_attr_num
-ATTRS_BOOL:   Final[str] = "attrs_bool"           # v1: span_attr_bool
+ATTRS_STRING: Final[str] = "attrs_string"  # v1: span_attr_str
+ATTRS_NUMBER: Final[str] = "attrs_number"  # v1: span_attr_num
+ATTRS_BOOL: Final[str] = "attrs_bool"  # v1: span_attr_bool
 
 # ─── Typed JSON overflow ─────────────────────────────────────────────────────
-ATTRIBUTES_EXTRA: Final[str] = "attributes_extra" # v1: span_attributes_raw  (String JSON)
-RESOURCE_ATTRS:   Final[str] = "resource_attrs"   # v1: resource_attributes_raw (String JSON)
-METADATA_JSON:    Final[str] = "metadata"         # v1: metadata_map (Map)
+ATTRIBUTES_EXTRA: Final[str] = (
+    "attributes_extra"  # v1: span_attributes_raw  (String JSON)
+)
+RESOURCE_ATTRS: Final[str] = (
+    "resource_attrs"  # v1: resource_attributes_raw (String JSON)
+)
+METADATA_JSON: Final[str] = "metadata"  # v1: metadata_map (Map)
 
 # ─── MATERIALIZED hot keys (NEW in v2 — surface them so builders can use directly) ─
-LLM_REQUEST_MODEL:  Final[str] = "llm_request_model"
+LLM_REQUEST_MODEL: Final[str] = "llm_request_model"
 LLM_RESPONSE_MODEL: Final[str] = "llm_response_model"
-LLM_FINISH_REASON:  Final[str] = "llm_finish_reason"
-EMBEDDING_MODEL:    Final[str] = "embedding_model"
-STREAMING:          Final[str] = "streaming"
-TEMPERATURE:        Final[str] = "temperature"
-TOP_P:              Final[str] = "top_p"
-MAX_TOKENS:         Final[str] = "max_tokens"
+LLM_FINISH_REASON: Final[str] = "llm_finish_reason"
+EMBEDDING_MODEL: Final[str] = "embedding_model"
+STREAMING: Final[str] = "streaming"
+TEMPERATURE: Final[str] = "temperature"
+TOP_P: Final[str] = "top_p"
+MAX_TOKENS: Final[str] = "max_tokens"
 
 
 # ─── JSON path-access helpers ────────────────────────────────────────────────
 # CH 25.x typed JSON columns are queried via path access, NOT via JSONExtract*.
 # Helper functions produce the correct expression text given a JSON column name,
 # a dotted path, and a CH type hint.
+
 
 def json_path(column: str, path: str, ch_type: str) -> str:
     """
@@ -84,11 +90,11 @@ def json_path_bool(column: str, path: str) -> str:
 # query's WHERE-clause column refs to v2 equivalents and verify the diff is
 # only the renames (not a semantic drift).
 V1_TO_V2: Final[dict[str, str]] = {
-    "_peerdb_is_deleted":     IS_DELETED,
-    "_peerdb_version":        VERSION,
-    "span_attr_str":          ATTRS_STRING,
-    "span_attr_num":          ATTRS_NUMBER,
-    "span_attr_bool":         ATTRS_BOOL,
+    "_peerdb_is_deleted": IS_DELETED,
+    "_peerdb_version": VERSION,
+    "span_attr_str": ATTRS_STRING,
+    "span_attr_num": ATTRS_NUMBER,
+    "span_attr_bool": ATTRS_BOOL,
     # NOTE: span_attributes_raw / metadata_map don't have a simple rename
     # because their TYPES differ. The query builder MUST manually rewrite.
 }

@@ -4,7 +4,7 @@ import { ROW_HEIGHT, TABLE_HEADER_HEIGHT } from "./sizes";
 
 // ----------------------------------------------------------------------
 // AG Grid params, derived from the Future AGI Design System palette so grids
-// match MUI tables: no outer box, 13px cells, 12px/500 headers in fg.tertiary
+// match MUI tables: no outer box, 12px cells, 12px/500 headers in fg.tertiary
 // with no fill, border.default row lines, bg.hover / bg.selected rows,
 // control.checked boxes.
 // ----------------------------------------------------------------------
