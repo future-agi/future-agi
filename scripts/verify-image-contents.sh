@@ -16,9 +16,9 @@ set -euo pipefail
 #   OSS_FFMPEG_FLAVOR: the FFMPEG_FLAVOR OSS_IMAGE was built with (minimal,
 #   the default of both variants; debian; none). Default: debian for a
 #   standard tag up to v1.58 (LAST_DEBIAN_FFMPEG_RELEASE below: every
-#   standard release up to it shipped Debian's ffmpeg), else minimal. A tag
-#   without a version (latest, a local build) is read from the image's
-#   org.opencontainers.image.version label.
+#   standard release up to it shipped Debian's ffmpeg), else minimal. A
+#   digest reference, or a tag without a version (latest, a local build), is
+#   judged by the image's org.opencontainers.image.version label.
 
 VERSION="${1:-latest}"
 FLAVOR="${2:-all}"
@@ -39,17 +39,31 @@ esac
 # releases after it ship the minimal build.
 LAST_DEBIAN_FFMPEG_RELEASE="1.58"
 
-# The vMAJOR.MINOR of OSS_IMAGE: from its tag, else from its version label.
+# The image's org.opencontainers.image.version label (pulled if needed).
+image_version_label() {
+  local format='{{ index .Config.Labels "org.opencontainers.image.version" }}'
+  docker image inspect -f "$format" "$OSS_IMAGE" 2>/dev/null \
+    || { docker pull -q "$OSS_IMAGE" >/dev/null 2>&1 \
+      && docker image inspect -f "$format" "$OSS_IMAGE" 2>/dev/null; } \
+    || true
+}
+
+# "MAJOR MINOR" of OSS_IMAGE. A digest pins the image whatever its tag says,
+# so a digest reference, or a tag without a version (latest, a local build),
+# is judged by the image's version label, then by the tag.
 oss_image_version() {
-  local ref="${OSS_IMAGE%%@*}" tag=""
+  local ref="${OSS_IMAGE%%@*}" tag="" label="" version
   [[ "${ref##*/}" == *:* ]] && tag="${ref##*:}"
-  if [[ ! "$tag" =~ ^v?[0-9]+\.[0-9]+ ]]; then
-    tag="$(docker image inspect -f '{{ index .Config.Labels "org.opencontainers.image.version" }}' "$OSS_IMAGE" 2>/dev/null \
-      || { docker pull -q "$OSS_IMAGE" >/dev/null 2>&1 \
-        && docker image inspect -f '{{ index .Config.Labels "org.opencontainers.image.version" }}' "$OSS_IMAGE" 2>/dev/null; } \
-      || true)"
+  if [[ "$OSS_IMAGE" == *@* || ! "$tag" =~ ^v?[0-9]+\.[0-9]+ ]]; then
+    label="$(image_version_label)"
   fi
-  [[ "$tag" =~ ^v?([0-9]+)\.([0-9]+) ]] && echo "${BASH_REMATCH[1]} ${BASH_REMATCH[2]}"
+  for version in "$label" "$tag"; do
+    if [[ "$version" =~ ^v?([0-9]+)\.([0-9]+) ]]; then
+      echo "$((10#${BASH_REMATCH[1]})) $((10#${BASH_REMATCH[2]}))"
+      return 0
+    fi
+  done
+  return 1
 }
 
 default_ffmpeg_flavor() {

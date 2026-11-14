@@ -1099,6 +1099,20 @@ exit 0
         self.assertEqual(proc.returncode, 0, proc.stdout)
         self.assertIn("ffmpeg flavor: minimal", proc.stdout)
 
+    def test_a_digest_is_judged_by_the_image_it_pins(self):
+        """A digest wins over the tag in Docker, so its label decides."""
+        image = "localhost:5000/future-agi:v1.58.0@sha256:" + "1" * 64
+        proc = self.run_script(image, FAKE_IMAGE_VERSION="v1.59.0")
+        self.assertEqual(proc.returncode, 0, proc.stdout)
+        self.assertIn("ffmpeg flavor: minimal", proc.stdout)
+        self.assertIn("org.opencontainers.image.version", proc.docker_log)
+
+    def test_zero_padded_versions_compare_as_decimal(self):
+        proc = self.run_script("futureagi/future-agi:v1.08.1", FAKE_DEBIAN_FFMPEG="1")
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertNotIn("value too great", proc.stderr)
+        self.assertIn("ffmpeg flavor: debian", proc.stdout)
+
     def test_an_explicit_ffmpeg_flavor_wins_over_the_tag(self):
         proc = self.run_script(
             "futureagi/future-agi:v1.58.0", OSS_FFMPEG_FLAVOR="minimal"
