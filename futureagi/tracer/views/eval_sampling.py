@@ -16,17 +16,6 @@ from tracer.serializers.eval_sampling import (
     SamplingPreviewRequestSerializer,
     SamplingPreviewResponseSerializer,
 )
-from tracer.services.eval_tasks.sampling.audit import (
-    SamplingAuditIncomplete,
-    SamplingAuditNotFound,
-    SamplingAuditTooLarge,
-    sampling_audit,
-)
-from tracer.services.eval_tasks.sampling.policy import (
-    InvalidSamplingPolicy,
-    policy_task_filters,
-    population_changed,
-)
 from tracer.services.eval_tasks.sampling.preview_guard import (
     PreviewGuardUnavailable,
     PreviewThrottled,
@@ -39,6 +28,18 @@ from tracer.services.eval_tasks.sampling.service import (
 from tracer.services.filter_principal_context import (
     FilterPrincipalContextError,
     bind_request_my_annotations_principal,
+)
+
+from tracer.services.eval_tasks.sampling.audit import (
+    SamplingAuditIncomplete,
+    SamplingAuditNotFound,
+    SamplingAuditTooLarge,
+    sampling_audit,
+)
+from tracer.services.eval_tasks.sampling.policy import (
+    InvalidSamplingPolicy,
+    policy_task_filters,
+    population_changed,
 )
 
 _UNAVAILABLE = (
