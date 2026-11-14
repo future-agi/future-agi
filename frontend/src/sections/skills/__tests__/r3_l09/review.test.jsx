@@ -98,11 +98,11 @@ describe("typed release evidence", () => {
     expect(screen.getByText("Application verification · v7 vs v4")).toBeVisible();
     // The evidence row itself names grading completeness; Inspect adds the full record.
     expect(
-      screen.getByText(/2\/4 attempts graded · 2 incomplete · 1 regressions/),
+      screen.getByText(/2\/4 attempts graded · 2 incomplete · 1 regression/),
     ).toBeVisible();
     fireEvent.click(screen.getAllByRole("button", { name: "Inspect", exact: true })[1]);
     expect(
-      screen.getAllByText(/2\/4 attempts graded · 2 incomplete · 1 regressions/),
+      screen.getAllByText(/2\/4 attempts graded · 2 incomplete · 1 regression/),
     ).toHaveLength(2);
     expect(screen.getAllByText(/human disagreement/).length).toBeGreaterThan(0);
     expect(screen.getByText(/Operator-recorded, unimported/)).toBeVisible();
@@ -111,7 +111,7 @@ describe("typed release evidence", () => {
       screen.getByRole("link", { name: "Open retained pipeline result" }),
     ).toHaveAttribute("rel", "noopener noreferrer");
     expect(screen.getAllByText(/AGENTS.md · modified/)[0]).toBeVisible();
-    expect(screen.getByText("Execution-related changes")).toBeVisible();
+    expect(screen.getByText("Permissions")).toBeVisible();
   });
   it.each([
     [{ visibility: "private" }, "Private"],
@@ -471,7 +471,7 @@ function Arrival() {
     <ReleaseInbox
       scopeKey="scope"
       state="ready"
-      data={inbox}
+      data={{ ...inbox, pendingCount: 1 }}
       onStatusChange={() => {}}
       onPageChange={() => {}}
       onOpen={() => setOpened(true)}
@@ -481,9 +481,9 @@ function Arrival() {
 describe("reviewer arrival and annotation", () => {
   it("finds the exact review from a server-backed inbox without a supplied detail URL", () => {
     render(<Arrival />);
-    expect(screen.getByText("1 request waiting for you")).toBeVisible();
+    expect(screen.getByText("1 request waiting for your decision")).toBeVisible();
     click("refund-context");
-    expect(screen.getByText("Release")).toBeVisible();
+    expect(screen.getByText(/Move production from/)).toBeVisible();
     expect(
       screen.getByRole("button", { name: "Approve release" }),
     ).toBeDisabled();
@@ -493,16 +493,16 @@ describe("reviewer arrival and annotation", () => {
       <ReleaseInbox
         scopeKey="scope"
         state="ready"
-        data={inbox}
+        data={{ ...inbox, pendingCount: 1 }}
         onStatusChange={() => {}}
         onPageChange={() => {}}
         onOpen={() => {}}
       />,
     );
-    rerender(<ReleaseInbox scopeKey="scope" state="forbidden" data={inbox} />);
+    rerender(<ReleaseInbox scopeKey="scope" state="forbidden" data={{ ...inbox, pendingCount: 1 }} />);
     expect(screen.queryByText(/1 unread/)).not.toBeInTheDocument();
     expect(screen.queryByText("refund-context")).not.toBeInTheDocument();
-    expect(screen.getByText(/don't have access to reviews in this workspace/)).toBeVisible();
+    expect(screen.getByText(/don't have access to reviews/)).toBeVisible();
   });
   it("marks only the observed revision seen, without pretending that it is approved", async () => {
     const seen = vi.fn().mockResolvedValue({});
@@ -510,7 +510,7 @@ describe("reviewer arrival and annotation", () => {
       <ReleaseInbox
         scopeKey="scope"
         state="ready"
-        data={inbox}
+        data={{ ...inbox, pendingCount: 1 }}
         onStatusChange={() => {}}
         onPageChange={() => {}}
         onOpen={() => {}}
@@ -523,7 +523,7 @@ describe("reviewer arrival and annotation", () => {
     );
     await waitFor(() => expect(seen).toHaveBeenCalledTimes(1));
     expect(seen.mock.calls[0][0]).toMatchObject({ requestId: ID, revision: 2 });
-    expect(screen.getByText("1 request waiting for you")).toBeVisible();
+    expect(screen.getByText("1 request waiting for your decision")).toBeVisible();
   });
   it("preserves machine verdict and appends an attributed disagreement with revision CAS", async () => {
     const append = vi.fn().mockResolvedValue({ id: ID });
@@ -597,7 +597,7 @@ describe("publication and explicit spending", () => {
     );
     fireEvent.click(
       screen.getByRole("checkbox", {
-        name: /saved candidate against its content origin/,
+        name: /these changes against the current published version/,
       }),
     );
     click("Publish version");
@@ -624,7 +624,7 @@ describe("publication and explicit spending", () => {
     );
     fireEvent.click(
       screen.getByRole("checkbox", {
-        name: /saved candidate against its content origin/,
+        name: /these changes against the current published version/,
       }),
     );
     rerender(
@@ -651,14 +651,14 @@ describe("publication and explicit spending", () => {
     const props = { scopeKey: "scope", state: "ready", canPublish: true, onAcknowledgeHead: acknowledgeHead, onPublish: vi.fn() };
     const { rerender } = render(<ContextReleaseReview {...props} draftReview={warned} />);
     fireEvent.change(screen.getByRole("textbox", { name: "Version note" }), { target: { value: "Cap refunds" } });
-    fireEvent.click(screen.getByRole("checkbox", { name: /saved candidate against its content origin/ }));
+    fireEvent.click(screen.getByRole("checkbox", { name: /these changes against the current published version/ }));
     fireEvent.click(screen.getByRole("checkbox", { name: /static warnings/ }));
-    click("Acknowledge reviewed head");
+    click("Confirm review");
     await waitFor(() => expect(acknowledgeHead).toHaveBeenCalledTimes(1));
     // The reloaded review is for the same candidate, head and warnings with a new fingerprint.
     const acknowledged = { ...warned, headAcknowledged: true, revision: 9, reviewFingerprint: CONFIG };
     rerender(<ContextReleaseReview {...props} draftReview={acknowledged} />);
-    expect(screen.getByRole("checkbox", { name: /saved candidate against its content origin/ })).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: /these changes against the current published version/ })).toBeChecked();
     expect(screen.getByRole("checkbox", { name: /static warnings/ })).toBeChecked();
     expect(screen.getByRole("textbox", { name: "Version note" })).toHaveValue("Cap refunds");
     expect(screen.getByRole("button", { name: "Publish version" })).toBeEnabled();

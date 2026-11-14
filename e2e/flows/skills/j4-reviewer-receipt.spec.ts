@@ -67,12 +67,12 @@ test('SKILLS-E2E-040: an assigned reviewer releases an exact packet and reopens 
     await authorPage.goto('/dashboard/skills');
     await authorPage.getByRole('tab', { name: 'Reviews', exact: true }).click();
     await authorPage.getByRole('button', { name: 'Request review', exact: true }).click();
-    await authorPage.getByLabel('Release resource').click();
+    await authorPage.getByLabel('Name', { exact: true }).click();
     await authorPage.getByRole('option', { name, exact: true }).click();
     await authorPage.getByLabel('Published candidate').click();
     await authorPage.getByRole('option', { name: /^v2/ }).click();
     const preparedResponse = authorPage.waitForResponse(res => res.url().endsWith('/release-requests/preview/') && res.request().method() === 'POST');
-    await authorPage.getByRole('button', { name: 'Prepare exact review', exact: true }).click();
+    await authorPage.getByRole('button', { name: 'Prepare review', exact: true }).click();
     preview = (await (await preparedResponse).json()).result;
     await authorPage.getByLabel('Assigned reviewer').click();
     const reviewerOption = authorPage.getByRole('option', { name: `E2E ${scopeActors.prefix}-a`, exact: true });
@@ -89,7 +89,7 @@ test('SKILLS-E2E-040: an assigned reviewer releases an exact packet and reopens 
     await authorPage.evaluate(() => { const value = JSON.parse(localStorage.getItem('settings') || '{}'); localStorage.setItem('settings', JSON.stringify({ ...value, themeMode: 'dark' })); });
     await authorPage.reload();
     await authorPage.getByRole('button', { name: 'Request review', exact: true }).click();
-    await expect(authorPage.getByLabel('Release resource')).toBeVisible();
+    await expect(authorPage.getByLabel('Name', { exact: true })).toBeVisible();
     await authorPage.screenshot({ path: `${output}/shots/06-author-composer-dark.png` });
   } finally {
     if (!submitted) await authorPage.screenshot({ path: `${output}/shots/author-failure.png` }).catch(() => {});
@@ -117,6 +117,9 @@ test('SKILLS-E2E-040: an assigned reviewer releases an exact packet and reopens 
     const acknowledged = page.getByRole('checkbox', { name: 'I reviewed this exact candidate, target, evidence and release consequence.', exact: true });
     await expect(acknowledged).toBeEnabled();
     await expect(page.getByText('Candidate policy requiring independent approval.', { exact: false }).first()).toBeVisible();
+    const otherChecks = page.getByRole('button', { name: 'Other checks', exact: true });
+    if (await otherChecks.count()) await otherChecks.click();
+    await page.getByRole('button', { name: 'Compared content', exact: true }).click();
     await expect(page.getByText('No changes in recognized static declarations. This is not a safety certification.', { exact: true })).toBeVisible();
     const inspected = await api(reviewer, 'POST', 'release-requests/inspection/', {
       resource_id: id, kind: 'skill', candidate_version_id: candidate.version.id, label: 'production',
@@ -164,13 +167,13 @@ test('SKILLS-E2E-040: an assigned reviewer releases an exact packet and reopens 
     try {
       await renewalPage.goto('/dashboard/skills');
       await renewalPage.getByRole('tab', { name: 'Reviews', exact: true }).click();
-      await renewalPage.getByRole('button', { name: 'My requests', exact: true }).click();
+      await renewalPage.getByRole('tab', { name: 'My requests', exact: true }).click();
       await renewalPage.getByRole('button', { name, exact: true }).click();
       await renewalPage.getByRole('button', { name: 'Revise request', exact: true }).click();
       await expect(renewalPage.getByRole('heading', { name: 'Renew release review', exact: true })).toBeVisible();
       await renewalPage.getByLabel('Published candidate').click();
       await renewalPage.getByRole('option', { name: /^v2/ }).click();
-      await renewalPage.getByRole('button', { name: 'Prepare exact review', exact: true }).click();
+      await renewalPage.getByRole('button', { name: 'Prepare review', exact: true }).click();
       await renewalPage.getByLabel('Assigned reviewer').click();
       await renewalPage.getByRole('option', { name: `E2E ${scopeActors.prefix}-a`, exact: true }).click();
       await renewalPage.getByRole('checkbox', { name: 'I reviewed this exact candidate, target, evidence and release consequence.', exact: true }).check();

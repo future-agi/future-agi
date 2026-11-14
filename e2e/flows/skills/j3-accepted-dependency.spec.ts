@@ -226,12 +226,12 @@ test('SKILLS-E2E-030: retain accepted child versions while upstream advances dur
       await shot(`whole-context-result-${parent.name}`);
       await page.goto(`${UI}/${parent.id}/edit`);
       await page.getByRole('button', { name: 'Review changes', exact: true }).click();
-      const reviewed = page.getByRole('checkbox', { name: 'I reviewed the saved candidate against its content origin and current publication head.', exact: true });
+      const reviewed = page.getByRole('checkbox', { name: 'I reviewed these changes against the current published version.', exact: true });
       await reviewed.check();
       const warning = page.getByRole('checkbox', { name: 'I acknowledge the static warnings for this exact candidate.', exact: true });
       if (await warning.count()) await warning.check();
       await shot(`review-${parent.name}`);
-      await page.getByRole('button', { name: 'Acknowledge reviewed head', exact: true }).click();
+      await page.getByRole('button', { name: 'Confirm review', exact: true }).click();
       // Acknowledgment invalidates the draft and remounts the digest-bound
       // review. Do not tick the old controls while that refresh is in flight.
       await expect(page.getByRole('button', { name: 'Publish version', exact: true })).toBeVisible({ timeout: UI_READY });
@@ -302,7 +302,7 @@ test('SKILLS-E2E-030: retain accepted child versions while upstream advances dur
         await page.goto(`${UI}/${parent.id}?version=2`);
         await page.getByRole('tab', { name: 'Versions', exact: true }).click();
         await page.getByRole('button', { name: 'Request release review', exact: true }).click();
-        await page.getByRole('button', { name: 'Prepare exact review', exact: true }).click();
+        await page.getByRole('button', { name: 'Prepare review', exact: true }).click();
         await page.getByLabel('Assigned reviewer').click();
         await page.getByRole('option', { name: `E2E ${scopeActors.prefix}-a`, exact: true }).click();
         await page.getByRole('checkbox', { name: 'I reviewed this exact candidate, target, evidence and release consequence.', exact: true }).check();

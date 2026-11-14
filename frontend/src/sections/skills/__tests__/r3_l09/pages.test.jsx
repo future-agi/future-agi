@@ -62,7 +62,7 @@ describe("route wrappers and unavailable integration boundary", () => {
     mount(SkillsReviewsPage, "/dashboard/skills/reviews?state=empty", {
       Controller,
     });
-    expect(screen.getByText(/don't have access to reviews in this workspace/)).toBeVisible();
+    expect(screen.getByText(/don't have access to reviews/)).toBeVisible();
     expect(screen.queryByText("Nothing to review")).not.toBeInTheDocument();
   });
   it("passes only exact context/request identities and no private text in route state", () => {

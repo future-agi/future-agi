@@ -54,7 +54,7 @@ const cause = (path) => {
   if (path.startsWith('evidence')) return 'Attached evidence changed.';
   return 'This setting changed since the review.';
 };
-const shown = (path, value, side) => (/_revision$/.test(path) && Number.isInteger(value) ? `Revision ${value}` : show(value, side));
+const shown = (path, value, side) => show(value, side);
 
 const REASONS = {
   evidence_expired: "Detailed evidence expired",
@@ -99,7 +99,7 @@ export default function ReleaseRenewalDialog({
       open={open}
       onClose={close}
       title="Renew release review"
-      subTitle="Inspect every change since the reviewed revision. The previous approval does not carry forward."
+      subTitle={value?.changes.some((row) => row.item.endsWith('expected_security_revision')) ? "The security policy changed after this request was made, so the approval no longer applies. Review the change and approve again." : "This request changed after it was reviewed, so the approval no longer applies. Review the changes and approve again."}
       actionBtnTitle="Approve renewed revision"
       isValid={acknowledged && !busy && !uncertain && !done}
       isLoading={operation.busy}
@@ -154,10 +154,6 @@ export default function ReleaseRenewalDialog({
         )}
         {value && (
           <>
-            <Typography variant="s1">
-              Revision {value.revision} becomes revision {value.revision + 1}{" "}
-              for the same candidate, transition and target.
-            </Typography>
             <Table size="small" aria-label="Changed preconditions" sx={{ '& thead': { display: { xs: 'none', sm: 'table-header-group' } }, '& tbody': { display: { xs: 'block', sm: 'table-row-group' } }, '& tbody tr': { display: { xs: 'grid', sm: 'table-row' }, gridTemplateColumns: '1fr 1fr' }, '& td': { minWidth: 0 }, '& td:first-of-type': { gridColumn: '1 / -1' } }}>
               <TableHead>
                 <TableRow sx={{ height: TABLE_HEADER_HEIGHT.default }}>
@@ -215,10 +211,10 @@ export default function ReleaseRenewalDialog({
           </>
         )}
         <OperationFeedback operation={operation} />
-        <Button variant="text" sx={{ alignSelf: 'flex-start' }} disabled={!acknowledged || busy || uncertain || done} onClick={async () => {
+        <Button variant="outlined" sx={{ alignSelf: 'flex-start' }} disabled={!acknowledged || busy || uncertain || done} onClick={async () => {
           const result = await operation.run(renew.mutateAsync, renewInput);
           if (result) close();
-        }}>Create renewed revision</Button>
+        }}>Renew without approving</Button>
         <Typography variant="s3" color="text.secondary">Creates a pending revision without approval, if you need more time to decide.</Typography>
       </Stack>
     </ModalWrapper>

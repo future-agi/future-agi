@@ -31,8 +31,8 @@ it('shows every changed precondition and removed evidence before creating the ne
   expect(row).toBeVisible();
   expect(row).toHaveTextContent('Release revision');
   expect(row).toHaveTextContent('A label moved or label protection was edited.');
-  expect(row).toHaveTextContent('Revision 1');
-  expect(row).toHaveTextContent('Revision 3');
+  expect(row.children[1]).toHaveTextContent('1');
+  expect(row.children[2]).toHaveTextContent('3');
   expect(screen.queryByText('transition.expected_release_revision')).not.toBeInTheDocument();
   expect(screen.getByText(/is removed from the renewed request/)).toBeVisible();
   expect(screen.queryByText(/packet/)).not.toBeInTheDocument();
@@ -150,4 +150,16 @@ it('blocks a second submit for the revision it already renewed', async () => {
   await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(1));
   await waitFor(() => expect(screen.getByRole('button', { name: 'Approve renewed revision' })).toBeDisabled());
   expect(screen.getByRole('button', { name: 'Approve renewed revision' })).toBeDisabled();
+});
+
+it('renews without approval only after acknowledgment and retains the fingerprint', async () => {
+  useRenewalPreview.mockReturnValue({ data: { ...preview, changes: [{ item: 'transition.expected_security_revision', before: 0, after: 2 }] } });
+  render(<ReleaseRenewalDialog open requestId="request" onClose={vi.fn()} />);
+  expect(screen.getByText('The security policy changed after this request was made, so the approval no longer applies. Review the change and approve again.')).toBeVisible();
+  const renewOnly = screen.getByRole('button', { name: 'Renew without approving' });
+  expect(renewOnly).toBeDisabled();
+  fireEvent.click(screen.getByRole('checkbox', { name: 'I inspected every change. Approval is required again.' }));
+  fireEvent.click(renewOnly);
+  await waitFor(() => expect(mutateAsync).toHaveBeenCalledWith(expect.objectContaining({ revision: 2, expectedFingerprint: 'renewed' })));
+  expect(decideAsync).not.toHaveBeenCalled();
 });

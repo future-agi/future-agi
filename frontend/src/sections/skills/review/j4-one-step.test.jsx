@@ -2,9 +2,11 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import PropTypes from 'prop-types';
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
-import { ContextReviewController, RequestReviewController } from './SkillsReviewControllers';
+import { ContextReviewController, RequestReviewController, ReviewInboxController } from './SkillsReviewControllers';
 import ReleaseRequestComposer from './ReleaseRequestComposer';
-import { useExecuteReleaseRequest, useReleaseRequest, useRenewalPreview } from 'src/api/skills/review-production';
+import ReleaseRequestPanel from './ReleaseRequestPanel';
+import ReleaseInbox from './ReleaseInbox';
+import { useExecuteReleaseRequest, useReleaseRequest, useRenewalPreview, useReviewInbox } from 'src/api/skills/review-production';
 import { useSkillV11Query } from 'src/api/skills/testing';
 import { useContextDetail, useContextDraft } from 'src/api/skills/context-authoring';
 import { useAcknowledgeContextHead, usePublishContext } from 'src/api/skills/context-production';
@@ -76,11 +78,14 @@ it('carries the published candidate forward, preselects the only target and shar
   useShareReleaseEvidence.mockReturnValue({ mutateAsync: share });
   render(<MemoryRouter><ReleaseRequestComposer scopeKey="org:ws:author" prefill={{ kind: 'agent_context', subjectId: 'context', name: 'Refund policy', candidate: { id: 'v2', number: 2, digest: 'sha256:candidate' } }} /></MemoryRouter>);
   // Carried forward even when the version list has not loaded this candidate.
-  expect(screen.getByText('Refund policy · production v1 → v2')).toBeVisible();
+  expect(screen.getByLabelText('Name')).toHaveValue('Refund policy');
+  expect(screen.getByLabelText('Published candidate')).toHaveValue('v2');
+  expect(screen.getByLabelText('Type')).toHaveAttribute('aria-disabled', 'true');
   expect(useReviewOptions).toHaveBeenLastCalledWith('agent_context', 'context', 'v2');
   expect(screen.getAllByRole('checkbox', { name: /^Attach Text comparison/ })).toHaveLength(2);
   screen.getAllByRole('checkbox', { name: /^Attach Text comparison/ }).forEach((checkbox) => expect(checkbox).toBeDisabled());
   fireEvent.click(screen.getByRole('button', { name: 'Share and attach 2 results' }));
+  fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Details', exact: true }));
   expect(screen.getAllByTitle('run-a').length).toBeGreaterThan(0);
   expect(screen.getAllByTitle('run-b').length).toBeGreaterThan(0);
   expect(screen.queryByText('No matching test evidence. Not tested is not a pass.')).not.toBeInTheDocument();
@@ -160,7 +165,7 @@ it('keeps the form open instead of preparing when the optional pipeline record i
   expect(screen.queryByRole('button', { name: 'Attach 1 result' })).not.toBeInTheDocument();
   await waitFor(() => expect(screen.getByRole('checkbox', { name: /^Attach Text comparison/ })).toBeChecked());
   expect(prepare).not.toHaveBeenCalled();
-  expect(screen.getByRole('button', { name: 'Prepare exact review' })).toBeDisabled();
+  expect(screen.getByRole('button', { name: 'Prepare review' })).toBeDisabled();
 });
 
 it('fences a confirmed receipt to its request and authenticated scope while queries refresh', async () => {
@@ -175,4 +180,79 @@ it('fences a confirmed receipt to its request and authenticated scope while quer
   expect(View.mock.calls.at(-1)[0].receipt).toBeNull();
   rerender(<MemoryRouter><RequestReviewController scopeKey="org:ws:another-login" requestId="request" View={View} /></MemoryRouter>);
   expect(View.mock.calls.at(-1)[0].receipt).toBeNull();
+});
+
+it('blocks a same-version release, including the batch-share prepare path', async () => {
+  useReviewSubjects.mockReturnValue({ data: { results: [], total_pages: 1 } });
+  useReviewCandidates.mockReturnValue({ data: { results: [{ id: 'v2', number: 2, digest: 'sha256:candidate' }], total_pages: 1 } });
+  const data = { subject: { labels: [{ name: 'production', version: 2 }] }, targets: [], evidence: [ref('run-a')], recipients: [] };
+  useReviewOptions.mockReturnValue({ data, refetch: vi.fn().mockResolvedValue({ data: { ...data, evidence: [ref('run-a', 'workspace')] } }) });
+  const prepare = vi.fn();
+  usePrepareReleaseReview.mockReturnValue({ mutateAsync: prepare, isPending: false });
+  useShareReleaseEvidence.mockReturnValue({ mutateAsync: vi.fn().mockResolvedValue({}) });
+  render(<MemoryRouter><ReleaseRequestComposer scopeKey="org:ws:author" prefill={{ kind: 'agent_context', subjectId: 'context', name: 'Support agent', candidate: { id: 'v2', number: 2, digest: 'sha256:candidate' } }} /></MemoryRouter>);
+  expect(screen.getByLabelText('Published candidate')).toHaveValue('v2 (in production)');
+  expect(screen.getAllByText('v2 is already in production. Choose another version to release.').length).toBeGreaterThan(0);
+  expect(screen.getByRole('button', { name: 'Prepare review' })).toBeDisabled();
+  expect(screen.queryByRole('button', { name: 'Next versions' })).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: 'Share and attach 1 result' }));
+  fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Share and attach' }));
+  await waitFor(() => expect(useReviewOptions.mock.results.at(-1).value.refetch).toHaveBeenCalled());
+  expect(prepare).not.toHaveBeenCalled();
+  await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+  fireEvent.click(screen.getByRole('button', { name: 'Choose another version' }));
+  expect(screen.getByLabelText('Name')).toHaveAttribute('readonly');
+  fireEvent.mouseDown(screen.getByRole('combobox', { name: 'Published candidate' }));
+  expect(screen.getByRole('option', { name: 'v2 (in production)' })).toBeVisible();
+});
+
+it('explains label movement and keeps the release write bound to its reviewed identity', async () => {
+  const execute = vi.fn().mockResolvedValue({});
+  const packet = { subjectKind: 'agent_context', candidateVersionId: 'v2', candidateDigest: 'digest', evidence: [], target: null, transition: { label: 'production', expectedVersion: 1, version: 2 } };
+  render(<ReleaseRequestPanel scopeKey="reviewer" state="ready" preview={{ packet, fingerprint: 'fp', current: true }} review={{ complete: true }} request={{ id: 'request', name: 'support-agent', revision: 3, status: 'approved' }} permissions={{ canExecute: true }} reviewedIdentity="3:fp" onExecute={execute} />);
+  fireEvent.click(screen.getByRole('button', { name: 'Release to production' }));
+  expect(screen.getByText("Production for support-agent will point to v2. Apps that follow production pick it up the next time they fetch it; check Consumers to confirm delivery. Running conversations aren't changed. Approval is checked again before the move.")).toBeVisible();
+  expect(execute).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole('button', { name: 'Move production' }));
+  await waitFor(() => expect(execute).toHaveBeenCalledWith(expect.objectContaining({ requestId: 'request', revision: 3, expectedFingerprint: 'fp' })));
+});
+
+it('shows disabled decision reasons without requiring acknowledgment to request changes', async () => {
+  const decide = vi.fn().mockResolvedValue({});
+  const packet = { candidateVersionId: 'v2', evidence: [], target: null, transition: { label: 'production', expectedVersion: 1, version: 2 } };
+  render(<ReleaseRequestPanel scopeKey="reviewer" state="ready" preview={{ packet, fingerprint: 'fp', current: true }} review={{ complete: true }} request={{ id: 'request', revision: 3, status: 'pending' }} permissions={{ canDecide: true }} onDecide={decide} />);
+  expect(screen.getByText('Tick the acknowledgment to approve')).toBeVisible();
+  expect(screen.getByText('Add a comment to request changes')).toBeVisible();
+  fireEvent.change(screen.getByLabelText('Review comment'), { target: { value: 'Please revise the instructions.' } });
+  expect(screen.getByRole('button', { name: 'Approve release' })).toBeDisabled();
+  fireEvent.click(screen.getByRole('button', { name: 'Request changes' }));
+  await waitFor(() => expect(decide).toHaveBeenCalledWith(expect.objectContaining({ decision: 'request_changes', revision: 3, expectedFingerprint: 'fp' })));
+});
+
+it('gets the assigned waiting count from pending requests, not released unread records', () => {
+  useReviewInbox.mockImplementation(({ status }) => ({ data: { results: [], count: status === 'pending' ? 1 : 7, unreadCount: 7 } }));
+  const View = vi.fn(() => null);
+  render(<MemoryRouter><ReviewInboxController scopeKey="reviewer" View={View} /></MemoryRouter>);
+  expect(View.mock.calls.at(-1)[0].data.pendingCount).toBe(1);
+  expect(View.mock.calls.at(-1)[0].status).toBe('');
+});
+
+it('renders denied review access instead of an error and hides creation even on a compose URL', () => {
+  useReviewInbox.mockReturnValue({ isError: true, error: { statusCode: 403 } });
+  render(<MemoryRouter initialEntries={['/dashboard/skills/reviews?compose=1']}><ReviewInboxController scopeKey="viewer" View={ReleaseInbox} /></MemoryRouter>);
+  expect(screen.getByText("You don't have access to reviews.")).toBeVisible();
+  expect(screen.getByText('Ask a workspace admin for reviewer access.')).toBeVisible();
+  expect(screen.queryByRole('button', { name: 'Request review' })).not.toBeInTheDocument();
+  expect(screen.queryByText("Couldn't load reviews.")).not.toBeInTheDocument();
+});
+
+it('uses recipient names only from metadata matching the inbox revision', () => {
+  useReviewInbox.mockReturnValue({ data: { results: [{ id: 'request', revision: 2, status: 'pending' }], count: 1 } });
+  useSkillV11Query.mockReturnValue({ data: [{ id: 'request', revision: 2, recipients: [{ id: 'reviewer', name: 'Maya Chen' }] }] });
+  const View = vi.fn(() => null);
+  const { rerender } = render(<MemoryRouter><ReviewInboxController scopeKey="reviewer" View={View} /></MemoryRouter>);
+  expect(View.mock.calls.at(-1)[0].data.results[0].recipients).toEqual([{ id: 'reviewer', name: 'Maya Chen' }]);
+  useSkillV11Query.mockReturnValue({ data: [{ id: 'request', revision: 1, recipients: [{ id: 'old-reviewer', name: 'Earlier reviewer' }] }] });
+  rerender(<MemoryRouter><ReviewInboxController scopeKey="reviewer" View={View} /></MemoryRouter>);
+  expect(View.mock.calls.at(-1)[0].data.results[0].recipients).toBeUndefined();
 });
