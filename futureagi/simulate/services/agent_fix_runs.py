@@ -377,7 +377,11 @@ def close_fix_run(
             logger.info("agent_fix_run_closed", fix_run=str(locked.id), state=state)
     _cancel_open_check_runs(locked)
     _set_aside_rejected(locked)
-    _drop_variation_rows(locked)
+    drop_variation_rows(locked)
+    # Imported here: the variations step imports this module.
+    from simulate.services.agent_fix_variations import stop_writing
+
+    stop_writing(locked)
     return locked
 
 
@@ -412,14 +416,21 @@ def _set_aside_rejected(fix_run: AgentFixRun) -> None:
             )
 
 
-def _drop_variation_rows(fix_run: AgentFixRun) -> None:
+def drop_variation_rows(fix_run: AgentFixRun) -> bool:
     """Remove the dataset rows a run of the fix's variations added, so the environment's
     dataset is as it was. Each variation is unbound too: a later run of it (a retry's)
-    binds a row of its own. Fail open: the fix's ending stands, and the next close of it
-    tries again."""
+    binds a row of its own. Only the newest fix on a private suite owns its rows: a retry
+    runs the same variations, so an older fix's late close leaves them to it.
+
+    True once nothing the fix owns is left bound. Fail open: the fix's ending stands, and
+    the sweep tries again (sweep_variation_rows)."""
     variations = written_variations(fix_run.suite_version)
     if not variations:
-        return
+        return True
+    if AgentFixRun.no_workspace_objects.filter(
+        suite_version_id=fix_run.suite_version_id, created_at__gt=fix_run.created_at
+    ).exists():
+        return True
     try:
         with transaction.atomic():
             bound = list(
@@ -430,7 +441,7 @@ def _drop_variation_rows(fix_run: AgentFixRun) -> None:
                 )
             )
             if not bound:
-                return
+                return True
             now = timezone.now()
             rows = [one.dataset_row_id for one in bound if one.dataset_row_id]
             Row.all_objects.filter(id__in=rows).update(deleted=True, deleted_at=now)
@@ -462,8 +473,10 @@ def _drop_variation_rows(fix_run: AgentFixRun) -> None:
         logger.info(
             "agent_fix_variation_rows_dropped", fix_run=str(fix_run.id), rows=len(bound)
         )
+        return True
     except Exception:
         logger.exception("agent_fix_variation_rows_kept", fix_run=str(fix_run.id))
+        return False
 
 
 def require_shippable(candidate: AgentFixCandidate, *, override_reason: str) -> None:
