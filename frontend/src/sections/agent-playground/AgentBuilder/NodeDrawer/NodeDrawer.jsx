@@ -439,16 +439,24 @@ export default function NodeDrawer({
                     />
                   </>
                 )}
-                <IconButton
+                <CustomTooltip
+                  show
+                  title="Close"
                   size="small"
-                  onClick={handleClose}
-                  sx={{ color: "text.primary" }}
+                  arrow
+                  placement="bottom"
                 >
-                  <SvgColor
-                    src="/assets/icons/ic_close.svg"
-                    sx={{ height: 20, width: 20 }}
-                  />
-                </IconButton>
+                  <IconButton
+                    size="small"
+                    onClick={handleClose}
+                    sx={{ color: "text.primary" }}
+                  >
+                    <SvgColor
+                      src="/assets/icons/ic_close.svg"
+                      sx={{ height: 20, width: 20 }}
+                    />
+                  </IconButton>
+                </CustomTooltip>
               </Stack>
             </Stack>
             <Divider
