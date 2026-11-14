@@ -1,4 +1,5 @@
 import {
+  Alert,
   Box,
   Button,
   Drawer,
@@ -9,11 +10,19 @@ import {
   Typography,
   useTheme,
 } from "@mui/material";
-import React, { lazy, Suspense, useEffect, useMemo, useState } from "react";
+import React, {
+  lazy,
+  Suspense,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import BackButton from "src/sections/develop-detail/Common/BackButton";
 import SvgColor from "src/components/svg-color";
 import TracingControls from "src/sections/projects/LLMTracing/TracingControls";
 import {
+  alertThresholdBand,
   getCompareChartConfig,
   getDefaultDateRange,
   getSimpleLineChartConfig,
@@ -29,6 +38,12 @@ import { useAlertSheetView } from "../../store/useAlertSheetView";
 import { AlertTableSkeleton } from "../AlertSkeletons";
 import _ from "lodash";
 import { isAlertMuted } from "../../common";
+import {
+  keepPreviousMonitorGraphData,
+  MONITOR_GRAPH_ERROR_MESSAGE,
+  monitorGraphDisplayState,
+  monitorGraphRequestConfig,
+} from "../../../monitor_graph_read";
 const Issues = lazy(() => import("./Issues"));
 const AlertDetails = lazy(() => import("./AlertDetails"));
 
@@ -54,6 +69,7 @@ export default function AlertsSheetView() {
   } = useAlertSheetView();
   const [dateFilter, setDateFilter] = useState(getDefaultDateRange());
   const [duplicateModal, setDuplicateModal] = useState(false);
+  const retainedGraphDataRef = useRef();
   const { mutate: mutateAlerts, isPending: isMutingAlerts } =
     useMuteAlertsMutation({
       onSuccessCallback: () => {
@@ -63,25 +79,48 @@ export default function AlertsSheetView() {
     });
   const alertIsMuted = isAlertMuted(alertRuleDetails);
   const hasLoadedAlertDetails = Boolean(alertRuleDetails?.id);
+  // The trace link is built from the details response (project, filters,
+  // window), so the button waits for it rather than silently doing nothing.
+  const canViewTrace =
+    hasLoadedAlertDetails && Boolean(alertRuleDetails?.project);
 
   const handleDuplicateAlert = () => {
     setDuplicateModal(false);
     handleStartCreatingAlerts();
   };
 
-  const { data } = useQuery({
+  const {
+    data: latestGraphData,
+    isError: isGraphError,
+    isFetching: isGraphFetching,
+    refetch: refetchGraph,
+  } = useQuery({
     queryKey: ["alert-graph", openSheetView, dateFilter],
-    queryFn: () =>
-      axiosInstance.get(endpoints.project.getAlertGraph(openSheetView), {
-        params: {
-          start_date: dateFilter?.dateFilter[0],
-          end_date: dateFilter?.dateFilter[1],
-        },
-      }),
-    refetchInterval: 10 * 1000,
+    queryFn: ({ signal }) =>
+      axiosInstance.get(
+        endpoints.project.getAlertGraph(openSheetView),
+        monitorGraphRequestConfig({ signal, dateFilter }),
+      ),
+    refetchInterval: (query) =>
+      query.state.status === "error" ? false : 10 * 1000,
     enabled: !!openSheetView,
     select: (data) => data?.data,
+    placeholderData: keepPreviousMonitorGraphData,
+    retry: false,
   });
+
+  useEffect(() => {
+    if (latestGraphData !== undefined) {
+      retainedGraphDataRef.current = latestGraphData;
+    }
+  }, [latestGraphData]);
+
+  const graphState = monitorGraphDisplayState({
+    latestData: latestGraphData,
+    retainedData: retainedGraphDataRef.current,
+    isError: isGraphError,
+  });
+  const data = graphState.data;
 
   const [chartKey] = useState(0);
 
@@ -117,51 +156,51 @@ export default function AlertsSheetView() {
               {
                 value: max,
                 y2: alertRuleDetails?.warningThresholdValue,
-                fillColor: "#00A25108",
-                borderColor: "#00A251",
+                ...alertThresholdBand(theme, "success", 0.03),
               },
               {
                 value: alertRuleDetails?.warningThresholdValue,
                 y2: alertRuleDetails?.criticalThresholdValue,
-                fillColor: "#E9690C08",
-                borderColor: "#F49A54",
+                ...alertThresholdBand(theme, "warning", 0.03),
               },
               {
                 value: alertRuleDetails?.criticalThresholdValue,
                 y2: min,
-                fillColor: "#D92D200D",
-                borderColor: "#D92D20",
+                ...alertThresholdBand(theme, "danger", 0.05),
               },
             ]
           : [
               {
                 value: max,
                 y2: alertRuleDetails?.criticalThresholdValue,
-                fillColor: "#D92D200D",
-                borderColor: "#D92D20",
+                ...alertThresholdBand(theme, "danger", 0.05),
               },
               {
                 value: alertRuleDetails?.criticalThresholdValue,
                 y2: alertRuleDetails?.warningThresholdValue,
-                fillColor: "#E9690C08",
-                borderColor: "#F49A54",
+                ...alertThresholdBand(theme, "warning", 0.03),
               },
               {
                 value: alertRuleDetails?.warningThresholdValue,
                 y2: min,
-                fillColor: "#00A25108",
-                borderColor: "#00A251",
+                ...alertThresholdBand(theme, "success", 0.03),
               },
             ];
 
-        chartConfig = getSimpleLineChartConfig(data, {
-          seriesName: _.startCase(_.toLower(alertRuleDetails.metricType)),
-          thresholds,
-        });
+        chartConfig = getSimpleLineChartConfig(
+          data,
+          {
+            seriesName: _.startCase(_.toLower(alertRuleDetails.metricType)),
+            thresholds,
+          },
+          { isDark, theme },
+        );
       } else if (selectedThresHoldType === "percentage_change") {
-        chartConfig = getCompareChartConfig(data, {
-          seriesName: _.startCase(_.toLower(alertRuleDetails.metricType)),
-        });
+        chartConfig = getCompareChartConfig(
+          data,
+          { seriesName: _.startCase(_.toLower(alertRuleDetails.metricType)) },
+          { isDark, theme },
+        );
       }
 
       if (!chartConfig) return { series: [], options: {} };
@@ -182,7 +221,7 @@ export default function AlertsSheetView() {
     } catch (err) {
       return { series: [], options: {} };
     }
-  }, [selectedThresHoldType, data, alertRuleDetails]);
+  }, [selectedThresHoldType, data, alertRuleDetails, isDark]);
 
   // Render chart with proper loading states
   const renderChart = () => {
@@ -196,7 +235,7 @@ export default function AlertsSheetView() {
             type: "datetime",
             convertedCatToNumeric: false, // include this explicitly
             labels: {
-              style: { fontSize: "12px", colors: isDark ? "#a1a1aa" : "#666" },
+              style: { fontSize: "12px", colors: theme.palette.text.tertiary },
             },
           },
         }}
@@ -226,7 +265,7 @@ export default function AlertsSheetView() {
   };
 
   const handleViewTraceClick = () => {
-    if (!alertRuleDetails?.id) return;
+    if (!canViewTrace) return;
     trackEvent(Events.alertViewTracesClicked, {
       [PropertyName.id]: alertRuleDetails.id,
     });
@@ -381,6 +420,7 @@ export default function AlertsSheetView() {
                   size="small"
                   data-alert-sheet-action="view-trace"
                   startIcon={<SvgColor src="/assets/icons/custom/eye.svg" />}
+                  disabled={!canViewTrace}
                   onClick={handleViewTraceClick}
                 >
                   View Trace
@@ -398,7 +438,25 @@ export default function AlertsSheetView() {
               </Stack>
             </Stack>
           </Stack>
-          {renderChart()}
+          {graphState.showError && (
+            <Alert
+              severity="error"
+              sx={{ mb: 2 }}
+              action={
+                <Button
+                  color="inherit"
+                  size="small"
+                  disabled={isGraphFetching}
+                  onClick={() => refetchGraph()}
+                >
+                  {isGraphFetching ? "Retrying…" : "Retry"}
+                </Button>
+              }
+            >
+              {MONITOR_GRAPH_ERROR_MESSAGE}
+            </Alert>
+          )}
+          {graphState.showGraph && renderChart()}
           <Grid
             container
             sx={{

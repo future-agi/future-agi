@@ -20,8 +20,8 @@ const headerData = [
     value: 0,
     valueKey: "avgTokens",
     unit: "",
-    backgroundColor: "orange.o5",
-    color: "orange.500",
+    backgroundColor: "status.warning.bg",
+    color: "status.warning.fg",
   },
   {
     id: "2",
@@ -30,8 +30,8 @@ const headerData = [
     value: 0,
     valueKey: "avgTime",
     unit: "ms",
-    backgroundColor: "blue.o5",
-    color: "blue.500",
+    backgroundColor: "status.info.bg",
+    color: "status.info.fg",
   },
   {
     id: "3",
@@ -40,8 +40,8 @@ const headerData = [
     value: 0,
     valueKey: "avgCost",
     unit: "$",
-    backgroundColor: "green.o5",
-    color: "green.500",
+    backgroundColor: "status.success.bg",
+    color: "status.success.fg",
   },
 ];
 
@@ -145,7 +145,7 @@ const PromptCard = ({
           sx={{
             border: "1px solid",
             borderColor: "divider",
-            borderRadius: 1.5,
+            borderRadius: "8px",
             padding: "12px",
           }}
         >

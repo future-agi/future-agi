@@ -24,14 +24,22 @@ from tracer.views.feed.linear_issue_view import (
 # ---------------------------------------------------------------------------
 
 
-@override_settings(APP_URL="app.futureagi.com", ssl="https://")
+@override_settings(APP_BASE_URL="https://app.futureagi.com")
 class TestClusterUrl(SimpleTestCase):
     def test_builds_url_from_app_url_and_scheme(self):
         url = _cluster_url("E-ABC123")
         assert url == "https://app.futureagi.com/dashboard/error-feed/E-ABC123"
 
 
-@override_settings(APP_URL=None)
+@override_settings(APP_BASE_URL="http://localhost:3000")
+class TestClusterUrlOnALoopbackInstall(SimpleTestCase):
+    def test_keeps_http_for_localhost(self):
+        assert _cluster_url("E-ABC123") == (
+            "http://localhost:3000/dashboard/error-feed/E-ABC123"
+        )
+
+
+@override_settings(APP_BASE_URL="")
 class TestClusterUrlWithoutAppUrl(SimpleTestCase):
     def test_returns_empty_when_app_url_unset(self):
         # No APP_URL configured (some envs); helper returns "" so the
@@ -67,7 +75,7 @@ def _cluster(
     )
 
 
-@override_settings(APP_URL="app.futureagi.com", ssl="https://")
+@override_settings(APP_BASE_URL="https://app.futureagi.com")
 class TestBuildIssueDescriptionBacklink(SimpleTestCase):
     """The backlink must always be the first line — it's the only piece
     of context that lets a Linear assignee actually find the cluster."""
@@ -87,7 +95,7 @@ class TestBuildIssueDescriptionBacklink(SimpleTestCase):
         assert "Evidence traces:" not in body
 
 
-@override_settings(APP_URL=None)
+@override_settings(APP_BASE_URL="")
 class TestBuildIssueDescriptionWithoutAppUrl(SimpleTestCase):
     def test_falls_back_to_plain_cluster_mention(self):
         body = _build_issue_description(_cluster("E-1"), trace_id=None)
@@ -97,7 +105,7 @@ class TestBuildIssueDescriptionWithoutAppUrl(SimpleTestCase):
         assert "`E-1`" in first
 
 
-@override_settings(APP_URL="app.futureagi.com", ssl="https://")
+@override_settings(APP_BASE_URL="https://app.futureagi.com")
 class TestBuildIssueDescriptionRca(SimpleTestCase):
     def test_synthesis_fix_and_confidence_rendered(self):
         cluster = _cluster(
@@ -153,7 +161,7 @@ class TestBuildIssueDescriptionRca(SimpleTestCase):
         assert real[5] not in body
 
 
-@override_settings(APP_URL="app.futureagi.com", ssl="https://")
+@override_settings(APP_BASE_URL="https://app.futureagi.com")
 class TestBuildIssueDescriptionTraceJudge(SimpleTestCase):
     @patch("tracer.views.feed.linear_issue_view.trace_judge")
     def test_evaluator_reasoning_rendered_with_score(self, mock_judge):

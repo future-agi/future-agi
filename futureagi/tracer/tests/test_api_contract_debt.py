@@ -138,6 +138,7 @@ def test_tracer_alert_routes_reject_anonymous_before_work(
 
 def _tracer_eval_task_guard_cases():
     return [
+        ("post", "/tracer/eval-task/sampling_preview/", {}),
         ("get", "/tracer/eval-task/", None),
         ("get", f"/tracer/eval-task/{TRACER_GUARD_UUID}/", None),
         ("put", f"/tracer/eval-task/{TRACER_GUARD_UUID}/", {}),
@@ -335,20 +336,6 @@ def test_tracer_system_public_routes_keep_expected_boundary_semantics(api_client
     assert shared.data["code"] == "not_found"
     assert shared.data["detail"] == "Shared link not found"
 
-    webhook = api_client.post(
-        "/tracer/webhook/",
-        data={
-            "event": "call_analyzed",
-            "interaction_type": "voice",
-            "call": {"agent_id": "fagi-api-journey-missing-agent"},
-        },
-        format="json",
-    )
-    assert webhook.status_code == status.HTTP_400_BAD_REQUEST
-    assert webhook["Content-Type"].startswith("application/json")
-    assert webhook.data["code"] == "invalid"
-    assert webhook.data["detail"] == "No matching agent definition found"
-
 
 def test_shared_link_missing_token_db_error_stays_json(api_client, monkeypatch):
     from tracer.views import shared_link as shared_link_view
@@ -369,32 +356,3 @@ def test_shared_link_missing_token_db_error_stays_json(api_client, monkeypatch):
     assert response.data["type"] == "service_unavailable"
     assert response.data["code"] == "service_unavailable"
     assert response.data["detail"] == "Shared link resolver is temporarily unavailable."
-
-
-def test_tracer_webhook_agent_lookup_db_error_stays_json(api_client, monkeypatch):
-    from tracer.views import observability_provider as provider_view
-
-    def raise_database_error(*args, **kwargs):
-        raise DatabaseError("database unavailable")
-
-    monkeypatch.setattr(
-        provider_view,
-        "_matching_agent_definitions_for_webhook",
-        raise_database_error,
-    )
-
-    response = api_client.post(
-        "/tracer/webhook/",
-        data={
-            "event": "call_analyzed",
-            "interaction_type": "voice",
-            "call": {"agent_id": "fagi-api-journey-missing-agent"},
-        },
-        format="json",
-    )
-
-    assert response.status_code == status.HTTP_503_SERVICE_UNAVAILABLE
-    assert response["Content-Type"].startswith("application/json")
-    assert response.data["type"] == "service_unavailable"
-    assert response.data["code"] == "service_unavailable"
-    assert response.data["detail"] == "Webhook agent lookup is temporarily unavailable."

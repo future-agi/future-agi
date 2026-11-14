@@ -7,7 +7,9 @@ Tests for user registration, logout, password reset, and account management.
 import os
 
 import pytest
+from django.conf import settings
 from django.contrib.auth.tokens import default_token_generator
+from django.test import override_settings
 from rest_framework import status
 from rest_framework.test import APIClient
 from unittest.mock import patch
@@ -993,6 +995,18 @@ class TestActivateAccountAPI:
         user.refresh_from_db()
         assert user.is_active is False
 
+    @pytest.mark.parametrize("bad_uid", ["a", "_w", "bm90LWEtdXVpZA", "4piD", "bnVsbA"])
+    def test_activate_account_malformed_uid_returns_bad_request(
+        self, api_client, db, bad_uid
+    ):
+        """Malformed base64, UTF-8 or UUID identifiers return 400, not 500."""
+        from django.core.cache import cache
+
+        cache.clear()
+        response = api_client.get(f"/accounts/activate/{bad_uid}/any-token/")
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert "Activation link is invalid or has expired." in response.json()["result"]
+
     def test_activate_account_unknown_user(self, api_client, db):
         """Unknown uid returns bad request."""
         from django.core.cache import cache
@@ -1244,6 +1258,19 @@ class TestActivateAccountReplay:
 @pytest.mark.api
 class TestPasswordResetConfirmEdgeCases:
     """Edge-case tests for POST /accounts/password-reset-confirm/<uidb64>/<token>/."""
+
+    @pytest.mark.parametrize("bad_uid", ["a", "_w", "bm90LWEtdXVpZA", "4piD", "bnVsbA"])
+    def test_password_reset_confirm_malformed_uid_returns_bad_request(
+        self, api_client, db, bad_uid
+    ):
+        """Malformed base64, UTF-8 or UUID identifiers return 400, not 500."""
+        response = api_client.post(
+            f"/accounts/password-reset-confirm/{bad_uid}/any-token/",
+            {"new_password": "BrandNewPass123!", "repeat_password": "BrandNewPass123!"},
+            format="json",
+        )
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert "Invalid reset link." in response.json()["result"]
 
     def test_inactive_auth_token_rejected(self, api_client, user):
         """Reset confirm rejects when the AuthToken is inactive."""
@@ -1999,6 +2026,107 @@ class TestCloudPasswordResetUnchanged:
         assert set(known["result"]) == set(unknown["result"]) == {"message"}
 
 
+CONSOLE_EMAIL_BACKEND = "django.core.mail.backends.console.EmailBackend"
+
+
+@pytest.mark.unit
+class TestOssResetUnavailableMessage:
+    @pytest.mark.parametrize(
+        "setup, command",
+        [
+            ("standalone", "docker compose exec app python manage.py"),
+            ("distributed", "docker compose exec backend python manage.py"),
+            (
+                "helm",
+                "kubectl -n <namespace> exec -it deploy/<release>-futureagi-backend "
+                "-c backend -- python manage.py",
+            ),
+        ],
+    )
+    def test_names_the_recovery_command_of_the_setup(self, setup, command):
+        """There is no container called futureagi-backend-1 in any setup."""
+        from accounts.views.signup import oss_reset_unavailable_message
+
+        with patch("tfc.utils.install_setup.current_setup", return_value=setup):
+            message = oss_reset_unavailable_message()
+
+        assert f"`{command} reset_password --email <address>`" in message
+        assert "MAILGUN_API_KEY" in message
+
+
+@pytest.mark.integration
+@pytest.mark.api
+class TestOssPasswordResetByEmail:
+    """A self-hosted install with email delivery configured mails the reset
+    link like Cloud does; without it, the answer names the recovery command."""
+
+    @pytest.fixture(autouse=True)
+    def _link_withheld(self):
+        with patch.dict(
+            os.environ,
+            {"OSS_RETURN_PASSWORD_RESET_LINK": "false", "MAILGUN_API_KEY": "key-test"},
+        ):
+            yield
+
+    def test_the_link_is_mailed_once_email_is_configured(
+        self, api_client, user, no_outbound_email
+    ):
+        # The test settings' locmem backend stands in for Mailgun.
+        with _oss():
+            response = api_client.post(
+                "/accounts/password-reset-initiate/",
+                {"email": user.email},
+                format="json",
+            )
+
+        assert response.status_code == status.HTTP_200_OK
+        assert "reset_link" not in response.json()["result"]
+        no_outbound_email.assert_called_once()
+        assert no_outbound_email.call_args.args[1] == "reset_password.html"
+        assert no_outbound_email.call_args.args[3] == [user.email]
+
+    def test_unknown_address_gets_the_same_answer(
+        self, api_client, user, db, no_outbound_email
+    ):
+        """With the link mailed, naming the address would make the endpoint
+        an account-existence oracle, as it would on Cloud."""
+        with _oss():
+            known = api_client.post(
+                "/accounts/password-reset-initiate/",
+                {"email": user.email},
+                format="json",
+            ).json()
+            unknown = api_client.post(
+                "/accounts/password-reset-initiate/",
+                {"email": "nobody-oss@futureagi.com"},
+                format="json",
+            ).json()
+
+        assert set(known["result"]) == set(unknown["result"]) == {"message"}
+        no_outbound_email.assert_called_once()
+
+    @override_settings(EMAIL_BACKEND=CONSOLE_EMAIL_BACKEND)
+    def test_without_delivery_the_answer_names_the_recovery_command(
+        self, api_client, user, no_outbound_email, monkeypatch
+    ):
+        monkeypatch.setenv("FI_EMBEDDED_TEMPORAL_WORKER", "true")
+        monkeypatch.delenv("KUBERNETES_SERVICE_HOST", raising=False)
+        with _oss():
+            response = api_client.post(
+                "/accounts/password-reset-initiate/",
+                {"email": user.email},
+                format="json",
+            )
+
+        assert response.status_code == status.HTTP_200_OK
+        message = response.json()["result"]["message"]
+        assert (
+            "docker compose exec app python manage.py reset_password "
+            "--email <address>" in message
+        )
+        no_outbound_email.assert_not_called()
+
+
 def _oss_gate(enabled=True):
     return patch("tfc.ee_gating.is_oss", return_value=enabled)
 
@@ -2012,10 +2140,78 @@ def _first_signup_payload(email):
     }
 
 
+@pytest.mark.django_db
+@pytest.mark.parametrize("supplied_password", [True, False])
+def test_every_signup_dispatches_demo_seeding_after_commit(
+    supplied_password, no_outbound_email, django_capture_on_commit_callbacks
+):
+    from accounts.utils import first_signup
+
+    payload = _first_signup_payload("demo-seed@futureagi.com")
+    if not supplied_password:
+        payload.pop("password")
+    with (
+        patch("accounts.utils.process_post_registration") as dispatch,
+        patch("accounts.utils.is_cloud_env", return_value=False),
+        patch("accounts.utils._fire_deployment_telemetry_registration"),
+        patch("accounts.utils._record_signup_api_key_event"),
+    ):
+        with django_capture_on_commit_callbacks(execute=True):
+            user = first_signup(payload)
+            dispatch.assert_not_called()
+        dispatch.assert_called_once()
+        user_id, generated_password = dispatch.call_args.args
+        assert user_id == user.id
+        if supplied_password:
+            assert generated_password is None
+        else:
+            assert generated_password
+
+
+@pytest.mark.django_db
+def test_signup_survives_unavailable_post_registration_worker(
+    no_outbound_email, django_capture_on_commit_callbacks, caplog
+):
+    from accounts.utils import first_signup
+
+    payload = _first_signup_payload("demo-seed-worker-down@futureagi.com")
+    with (
+        patch(
+            "accounts.utils.process_post_registration",
+            side_effect=RuntimeError("Temporal unavailable"),
+        ) as dispatch,
+        patch("accounts.utils.is_cloud_env", return_value=False),
+        patch("accounts.utils._fire_deployment_telemetry_registration") as telemetry,
+        patch("accounts.utils._record_signup_api_key_event"),
+    ):
+        with django_capture_on_commit_callbacks(execute=True):
+            user = first_signup(payload)
+            dispatch.assert_not_called()
+        dispatch.assert_called_once_with(user.id, None)
+        telemetry.assert_called_once()
+
+    user.refresh_from_db()
+    assert user.check_password(payload["password"])
+    assert "Temporal unavailable" in caplog.text
+
+
+def _deployment(monkeypatch, *, cloud=False, ee=False):
+    """Set the deployment identity the signup gate actually reads.
+
+    The gate keys on CLOUD_DEPLOYMENT, not on is_oss(), so an EE licence must
+    be able to sit on a self-hosted install without turning the gate on.
+    Both are read off `settings`, which parses the env once at import — setting
+    the env var here would not reach the gate.
+    """
+    monkeypatch.setattr(settings, "CLOUD_DEPLOYMENT", "US" if cloud else "")
+    monkeypatch.setattr(settings, "EE_LICENSE_KEY", "test-licence" if ee else "")
+
+
 @pytest.mark.integration
 class TestWorkEmailGate:
-    """Self-hosters run on personal addresses, so OSS accepts any domain.
-    Cloud still requires a work email unless an operator opts out."""
+    """Self-hosters run on personal addresses, so every self-hosted install —
+    licensed or not — accepts any domain. Only managed cloud requires a work
+    email, and an operator can opt out of that."""
 
     def test_oss_accepts_a_free_provider_address(
         self, db, no_outbound_email, monkeypatch
@@ -2023,9 +2219,23 @@ class TestWorkEmailGate:
         from accounts.utils import first_signup
 
         monkeypatch.delenv("ALLOW_ANY_EMAIL", raising=False)
+        _deployment(monkeypatch)
 
-        with _oss_gate(True):
-            user = first_signup(_first_signup_payload("solo.dev@gmail.com"))
+        user = first_signup(_first_signup_payload("solo.dev@gmail.com"))
+
+        assert user.email == "solo.dev@gmail.com"
+
+    def test_ee_accepts_a_free_provider_address(
+        self, db, no_outbound_email, monkeypatch
+    ):
+        """An EE licence buys features, not a different signup policy — the
+        install is still self-hosted."""
+        from accounts.utils import first_signup
+
+        monkeypatch.delenv("ALLOW_ANY_EMAIL", raising=False)
+        _deployment(monkeypatch, ee=True)
+
+        user = first_signup(_first_signup_payload("solo.dev@gmail.com"))
 
         assert user.email == "solo.dev@gmail.com"
 
@@ -2035,22 +2245,48 @@ class TestWorkEmailGate:
         from accounts.utils import first_signup
 
         monkeypatch.delenv("ALLOW_ANY_EMAIL", raising=False)
+        _deployment(monkeypatch, cloud=True)
 
-        with _oss_gate(False):
-            with pytest.raises(Exception, match="not work email"):
-                first_signup(_first_signup_payload("solo.dev@gmail.com"))
+        with pytest.raises(Exception, match="work email address"):
+            first_signup(_first_signup_payload("solo.dev@gmail.com"))
 
-    def test_explicit_false_still_overrides_the_oss_default(
+    @pytest.mark.parametrize("region", ["us", " EU "])
+    def test_any_spelling_of_a_cloud_region_rejects_a_free_provider_address(
+        self, db, no_outbound_email, monkeypatch, region
+    ):
+        from accounts.utils import first_signup
+
+        monkeypatch.delenv("ALLOW_ANY_EMAIL", raising=False)
+        monkeypatch.setattr(settings, "CLOUD_DEPLOYMENT", region)
+
+        with pytest.raises(Exception, match="work email address"):
+            first_signup(_first_signup_payload("solo.dev@gmail.com"))
+
+    def test_cloud_rejects_every_domain_on_the_list(
+        self, db, no_outbound_email, monkeypatch
+    ):
+        """The list is mirrored in frontend/src/utils/workEmail.js — a domain
+        added to one and not the other puts the form and the server at odds."""
+        from accounts.utils import first_signup
+
+        monkeypatch.delenv("ALLOW_ANY_EMAIL", raising=False)
+        _deployment(monkeypatch, cloud=True)
+
+        for domain in ("zoho.com", "icloud.com", "proton.me", "rediffmail.com"):
+            with pytest.raises(Exception, match="work email address"):
+                first_signup(_first_signup_payload(f"solo.dev@{domain}"))
+
+    def test_explicit_false_still_overrides_the_self_hosted_default(
         self, db, no_outbound_email, monkeypatch
     ):
         """An operator who sets it explicitly outranks the deployment default."""
         from accounts.utils import first_signup
 
         monkeypatch.setenv("ALLOW_ANY_EMAIL", "false")
+        _deployment(monkeypatch)
 
-        with _oss_gate(True):
-            with pytest.raises(Exception, match="not work email"):
-                first_signup(_first_signup_payload("solo.dev@gmail.com"))
+        with pytest.raises(Exception, match="work email address"):
+            first_signup(_first_signup_payload("solo.dev@gmail.com"))
 
     def test_explicit_true_still_opens_cloud_up(
         self, db, no_outbound_email, monkeypatch
@@ -2058,23 +2294,81 @@ class TestWorkEmailGate:
         from accounts.utils import first_signup
 
         monkeypatch.setenv("ALLOW_ANY_EMAIL", "true")
+        _deployment(monkeypatch, cloud=True)
 
-        with _oss_gate(False):
-            user = first_signup(_first_signup_payload("solo.dev@gmail.com"))
+        user = first_signup(_first_signup_payload("solo.dev@gmail.com"))
 
         assert user.email == "solo.dev@gmail.com"
 
-    def test_work_email_is_accepted_on_either_deployment(
+    def test_work_email_is_accepted_on_every_deployment(
         self, db, no_outbound_email, monkeypatch
     ):
         from accounts.utils import first_signup
 
         monkeypatch.delenv("ALLOW_ANY_EMAIL", raising=False)
+        _deployment(monkeypatch, cloud=True)
 
-        with _oss_gate(False):
-            user = first_signup(_first_signup_payload("owner@acmecorp.dev"))
+        user = first_signup(_first_signup_payload("owner@acmecorp.dev"))
 
         assert user.email == "owner@acmecorp.dev"
+
+
+@pytest.mark.unit
+class TestDisposableEmailDomains:
+    """The packaged blocklist and the hand-maintained free-provider set cover
+    different things, so the gate has to consult both."""
+
+    def test_a_listed_throwaway_provider_is_disposable(self):
+        from accounts.utils import is_disposable_email_domain
+
+        assert is_disposable_email_domain("mailinator.com")
+
+    def test_subdomains_of_a_listed_provider_are_disposable(self):
+        """Mailinator hands out `anything.mailinator.com`; matching the exact
+        domain alone would let every one of those through."""
+        from accounts.utils import is_disposable_email_domain
+
+        assert is_disposable_email_domain("inbox.mailinator.com")
+        assert is_disposable_email_domain("deep.nested.mailinator.com")
+
+    def test_a_company_domain_is_not_disposable(self):
+        from accounts.utils import is_disposable_email_domain
+
+        assert not is_disposable_email_domain("futureagi.com")
+        assert not is_disposable_email_domain("mail.futureagi.com")
+
+    def test_the_bare_tld_is_never_matched(self):
+        """The walk stops before the last label, so a stray `.com` in the
+        blocklist could not take out every commercial domain."""
+        from accounts.utils import is_disposable_email_domain
+
+        assert not is_disposable_email_domain("com")
+
+    def test_locally_added_providers_are_disposable(self):
+        """Domains we saw at signup before upstream listed them. The packaged
+        list is regenerated wholesale, so these live in a separate set that the
+        weekly refresh cannot clobber."""
+        from accounts.utils import is_disposable_email_domain
+
+        assert is_disposable_email_domain("insight-travel.my.id")
+        assert is_disposable_email_domain("uberip.com")
+        assert is_disposable_email_domain("mail.uberip.com")
+
+    def test_the_local_set_does_not_swallow_its_parent_domain(self):
+        """`insight-travel.my.id` is one host under the `my.id` public suffix,
+        not the whole namespace -- listing it must not block every `.my.id`."""
+        from accounts.utils import is_disposable_email_domain
+
+        assert not is_disposable_email_domain("acme.my.id")
+
+    def test_free_providers_are_absent_from_the_package_list(self):
+        """gmail and friends are permanent mailboxes, not throwaways, so the
+        package does not list them. Dropping the hand-maintained set in favour
+        of the package alone would silently reopen the gate to them."""
+        from accounts.utils import DISPOSABLE_EMAIL_DOMAINS
+
+        assert "gmail.com" not in DISPOSABLE_EMAIL_DOMAINS
+        assert "yahoo.com" not in DISPOSABLE_EMAIL_DOMAINS
 
 
 @pytest.mark.unit
@@ -2093,6 +2387,22 @@ class TestAuthLinkBuilders:
 
         assert "/auth/jwt/invitation/accept/" in build_invite_accept_link(user)
         assert "/auth/jwt/verify/" in build_password_reset_link("u", "t")
+
+    @override_settings(APP_URL="localhost:3000", APP_BASE_URL="http://localhost:3000")
+    def test_links_carry_a_scheme(self):
+        """APP_URL is a bare host; a link built from it alone
+        (``localhost:3000/auth/...``) does not open from a copied invite."""
+        from accounts.models import User
+        from accounts.utils import build_invite_accept_link, build_password_reset_link
+
+        invitee = User(email="invitee-oss@futureagi.com")
+
+        assert build_invite_accept_link(invitee).startswith(
+            "http://localhost:3000/auth/jwt/invitation/accept/"
+        )
+        assert build_password_reset_link("UID123", "TOKEN456") == (
+            "http://localhost:3000/auth/jwt/verify/UID123/TOKEN456"
+        )
 
 
 @pytest.fixture

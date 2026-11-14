@@ -116,6 +116,9 @@
   --score-green-light: #00a2511a;
   --score-green-strong: #00a25133;
 
+  --eval-score-yellow-bg: #fff9e6;
+  --eval-score-yellow-text: #997a00;
+
   /* Monaco editor */
   --monaco-bg: rgba(243, 243, 243, 1);
   --monaco-gutter-bg: rgba(231, 231, 231, 1);
@@ -225,6 +228,9 @@
   --score-yellow: rgba(230, 184, 0, 0.14);
   --score-green-light: rgba(0, 162, 81, 0.14);
   --score-green-strong: rgba(0, 162, 81, 0.25);
+
+  --eval-score-yellow-bg: rgba(75, 57, 1, 0.5);
+  --eval-score-yellow-text: #edbe00;
 
   /* Monaco editor */
   --monaco-bg: #111111;

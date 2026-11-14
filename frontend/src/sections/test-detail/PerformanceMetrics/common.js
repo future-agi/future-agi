@@ -60,29 +60,29 @@ const ICON_MAP = {
 };
 
 const ICON_COLOR_MAP = {
-  total_calls: "blue.500",
-  connected_calls: "green.500",
-  failed_calls: "red.500",
-  avg_bot_wpm: "blue.500",
-  talk_ratio: "green.500",
-  avg_agent_latency: "orange.400",
-  avg_stop_time_after_interruption: "pink.400",
-  avg_score: "green.500",
-  avg_response: "primary.main",
-  calls_connected_percentage: "blue.500",
-  avg_user_interruption_count: "red.500",
-  avg_user_interruption_rate: "green.500",
-  avg_ai_interruption_count: "blue.300",
-  avg_ai_interruption_rate: "red.500",
-  avg_user_wpm: "pink.500",
-  avg_talk_ratio: "green.500",
+  total_calls: "text.secondary",
+  connected_calls: "text.secondary",
+  failed_calls: "text.secondary",
+  avg_bot_wpm: "text.secondary",
+  talk_ratio: "text.secondary",
+  avg_agent_latency: "text.secondary",
+  avg_stop_time_after_interruption: "text.secondary",
+  avg_score: "text.secondary",
+  avg_response: "text.secondary",
+  calls_connected_percentage: "text.secondary",
+  avg_user_interruption_count: "text.secondary",
+  avg_user_interruption_rate: "text.secondary",
+  avg_ai_interruption_count: "text.secondary",
+  avg_ai_interruption_rate: "text.secondary",
+  avg_user_wpm: "text.secondary",
+  avg_talk_ratio: "text.secondary",
 
-  avg_total_tokens: "primary.main", // total tokens — informational
-  avg_input_tokens: "blue.500", // input tokens — blue for inbound/input
-  avg_output_tokens: "green.500", // output tokens — green for agent output
-  avg_chat_latency_ms: "orange.400", // chat latency — warning-like color
-  avg_turn_count: "pink.500", // conversation turns — distinct accent
-  avg_csat_score: "green.500", // CSAT score — green for positive scoring
+  avg_total_tokens: "text.secondary", // total tokens — informational
+  avg_input_tokens: "text.secondary", // input tokens — blue for inbound/input
+  avg_output_tokens: "text.secondary", // output tokens — green for agent output
+  avg_chat_latency_ms: "text.secondary", // chat latency — warning-like color
+  avg_turn_count: "text.secondary", // conversation turns — distinct accent
+  avg_csat_score: "text.secondary", // CSAT score — green for positive scoring
 };
 
 const TOOLTIP_MAP = {
@@ -147,13 +147,13 @@ export const getIconColor = (key) => {
       ICON_COLOR_MAP["avg_agent_latency"]
     );
   }
-  return ICON_COLOR_MAP[key] || "text.primary";
+  return ICON_COLOR_MAP[key] || "text.secondary";
 };
 
 export const getColor = (value) => {
-  if (value < 40) return "red.400"; // Low score
-  if (value < 70) return "orange.300"; // Medium score
-  return "green.400"; // High score
+  if (value < 40) return "status.danger.fg"; // Low score
+  if (value < 70) return "status.warning.fg"; // Medium score
+  return "status.success.fg"; // High score
 };
 
 // utils/colorUtils.js or wherever you keep utility functions
@@ -220,25 +220,25 @@ export const getChatOverrides = {
   total_calls: {
     label: "Total Chats",
     icon: "/assets/icons/ic_square_message.svg",
-    iconColor: "blue.500",
+    iconColor: "text.secondary",
     suffix: "",
   },
   connected_calls: {
     label: "Completed",
     icon: "/assets/icons/ic_message.svg",
-    iconColor: "green.500",
+    iconColor: "text.secondary",
     suffix: "",
   },
   failed_calls: {
     label: "Failed",
     icon: "/assets/icons/components/ic_end_call.svg",
-    iconColor: "red.500",
+    iconColor: "text.secondary",
     suffix: "",
   },
   calls_connected_percentage: {
     label: "Completion(%)",
     icon: "/assets/icons/components/ic_call_connected_percentage.svg",
-    iconColor: "blue.500",
+    iconColor: "text.secondary",
     suffix: "%",
   },
 };

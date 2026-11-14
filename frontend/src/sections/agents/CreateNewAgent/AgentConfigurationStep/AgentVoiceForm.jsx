@@ -5,6 +5,8 @@ import {
   Grid,
   Link,
   Stack,
+  ToggleButton,
+  ToggleButtonGroup,
   Typography,
 } from "@mui/material";
 import PropTypes from "prop-types";
@@ -15,8 +17,12 @@ import {
   AUTH_METHODS_BY_PROVIDER,
   defaultAuthMethodForProvider,
   INBOUND_OUTBOUND_COPY,
+  TARGET_SPEAKS_FIRST_COPY,
   VOICE_CHAT_PROVIDERS,
+  VOICE_TRANSPORT,
+  VOICE_TRANSPORT_COPY,
   isLiveKitProvider,
+  supportsConcurrency,
   validateLiveKitCredentials,
 } from "../../constants";
 import { ShowComponent } from "src/components/show";
@@ -66,6 +72,11 @@ export default function AgentVoiceForm() {
     control,
     name: "observabilityEnabled",
     defaultValue: getValues("observabilityEnabled"),
+  });
+  const voiceTransport = useWatch({
+    control,
+    name: "voiceTransport",
+    defaultValue: getValues("voiceTransport") || VOICE_TRANSPORT.WEBRTC,
   });
 
   const selectedProvider = useWatch({
@@ -267,7 +278,7 @@ export default function AgentVoiceForm() {
               flexDirection: "row",
               alignItems: "center",
               gap: 1,
-              color: "blue.600",
+              color: "status.info.fg",
             }}
           >
             <SvgColor
@@ -290,12 +301,12 @@ export default function AgentVoiceForm() {
               flexDirection: "row",
               alignItems: "center",
               gap: 0.5,
-              color: "green.600",
+              color: "status.success.fg",
             }}
           >
             <SvgColor
               src="/assets/icons/ic_success_fill.svg"
-              sx={{ width: 16, height: 16, color: "green.600" }}
+              sx={{ width: 16, height: 16, color: "status.success.fg" }}
             />
             <Typography typography={"s3"} fontWeight={"fontWeightMedium"}>
               {`Synced with ${selectedProvider}`}
@@ -324,36 +335,19 @@ export default function AgentVoiceForm() {
           options={VOICE_CHAT_PROVIDERS}
           onChange={(e) => {
             const value = e.target.value;
-            const mainProviders = [
-              "vapi",
-              "retell",
-              "elevenlabs",
-              "livekit",
-              "livekit_bridge",
-            ];
-            // "bland" is intentionally excluded: its raw-authorization key is
-            // distinct from these Bearer providers, so switching into or out of
-            // Bland must clear the key rather than carry a stale one.
-
-            // Clear authenticationMethod only if switching to or from "others"
-            const isPrevMain = mainProviders.includes(selectedProvider);
-            const isNextMain = mainProviders.includes(value);
 
             if (value !== selectedProvider) {
               // Providers with only one selectable method get it preselected,
               // so the required field is never left empty after a switch.
-              const nextAuthMethod = defaultAuthMethodForProvider(value);
-              if (isPrevMain && isNextMain) {
-                // between vapi/retell/elevenlabs → keep the key, but realign
-                // the method to the provider now selected
-                if (nextAuthMethod) {
-                  setValue("authenticationMethod", nextAuthMethod);
-                }
-              } else {
-                setValue("authenticationMethod", nextAuthMethod);
-                setValue("apiKey", "");
-                clearErrors("apiKey");
-              }
+              setValue(
+                "authenticationMethod",
+                defaultAuthMethodForProvider(value),
+              );
+
+              setValue("apiKey", "");
+              setValue("assistantId", "");
+              clearErrors(["apiKey", "assistantId"]);
+              setShowSuccess(false);
               // Clear LiveKit fields when switching away from livekit
               if (isLiveKitProvider(selectedProvider)) {
                 setValue("livekitUrl", "");
@@ -361,7 +355,7 @@ export default function AgentVoiceForm() {
                 setValue("livekitApiSecret", "");
                 setValue("livekitAgentName", "");
                 setValue("livekitConfigJson", {});
-                setValue("livekitMaxConcurrency", 2);
+                setValue("livekitMaxConcurrency", 5);
               }
               // "others" provider has no outbound path (user's own
               // endpoint, nothing for us to call), so snap back to
@@ -409,6 +403,7 @@ export default function AgentVoiceForm() {
           <FormTextFieldV2
             control={control}
             fieldName="apiKey"
+            fieldType="password"
             label="Provider API Key"
             placeholder="Enter your provider’s API key to authenticate the agent"
             required={observabilityEnabled || keysRequired}
@@ -481,11 +476,11 @@ export default function AgentVoiceForm() {
                 </Typography>
                 <Link
                   href="https://docs.futureagi.com/docs/observe"
-                  color="blue.500"
+                  color="status.info.fg"
                   target="_blank"
                   rel="noopener noreferrer"
                   fontWeight="fontWeightMedium"
-                  fontSize="13px"
+                  fontSize="12px"
                   sx={{ textDecoration: "underline" }}
                 >
                   Learn more
@@ -500,13 +495,6 @@ export default function AgentVoiceForm() {
                 size="small"
                 arrow
                 type="black"
-                slotProps={{
-                  tooltip: {
-                    sx: {
-                      maxWidth: "200px !important",
-                    },
-                  },
-                }}
               >
                 <Box>
                   <SwitchField
@@ -539,11 +527,13 @@ export default function AgentVoiceForm() {
           <FormTextFieldV2
             control={control}
             fieldName="livekitApiKey"
+            type="password"
             placeholder="APIxxxxxxxxxxxxxxxx"
             label="LiveKit API Key"
             required
             fullWidth
             size="small"
+            autoComplete="new-password"
           />
           <FormTextFieldV2
             control={control}
@@ -554,6 +544,7 @@ export default function AgentVoiceForm() {
             required
             fullWidth
             size="small"
+            autoComplete="new-password"
           />
           <Stack direction="row" spacing={1.5} alignItems="flex-start">
             <FormTextFieldV2
@@ -576,16 +567,10 @@ export default function AgentVoiceForm() {
                 !livekitApiSecret
               }
               sx={{
-                textTransform: "none",
-                fontWeight: "fontWeightMedium",
-                fontSize: 13,
                 borderColor: "action.selected",
                 color: "text.primary",
-                height: 40,
                 minWidth: 160,
                 mt: 0.25,
-                px: 2.5,
-                borderRadius: 0.5,
                 flexShrink: 0,
               }}
             >
@@ -605,12 +590,12 @@ export default function AgentVoiceForm() {
             <Box display="flex" alignItems="center" gap={0.5}>
               <SvgColor
                 src="/assets/icons/ic_success_fill.svg"
-                sx={{ width: 16, height: 16, color: "green.600" }}
+                sx={{ width: 16, height: 16, color: "status.success.fg" }}
               />
               <Typography
                 typography="s2"
                 fontWeight="fontWeightMedium"
-                color="green.600"
+                color="status.success.fg"
               >
                 Connection successful
               </Typography>
@@ -620,12 +605,12 @@ export default function AgentVoiceForm() {
             <Box display="flex" alignItems="center" gap={0.5}>
               <SvgColor
                 src="/assets/icons/ic_failed.svg"
-                sx={{ width: 16, height: 16, color: "red.600" }}
+                sx={{ width: 16, height: 16, color: "status.danger.fg" }}
               />
               <Typography
                 typography="s2"
                 fontWeight="fontWeightMedium"
-                color="red.600"
+                color="status.danger.fg"
               >
                 {livekitValidationError}
               </Typography>
@@ -641,6 +626,8 @@ export default function AgentVoiceForm() {
             multiline
             rows={6}
           />
+        </ShowComponent>
+        <ShowComponent condition={supportsConcurrency(selectedProvider)}>
           <FormTextFieldV2
             control={control}
             fieldName="livekitMaxConcurrency"
@@ -704,99 +691,140 @@ export default function AgentVoiceForm() {
           <AddHeadersSection control={control} />
         </ShowComponent>
       </Box>
-      <ShowComponent condition={!isLiveKitProvider(selectedProvider)}>
+      <ShowComponent condition={true}>
         <CreateNewAgentCards
           title={"Contact Information"}
-          subtitle={
-            "Calls will be routed to(inbound)/from(Outbound) this phone number. Ensure it is correct."
-          }
+          subtitle={"Choose how test calls reach the agent."}
         >
-          <Typography
-            typography="s1"
-            fontWeight={"fontWeightMedium"}
-            color={"text.primary"}
-          >
-            Use a valid phone number capable of receiving calls
-          </Typography>
           <Box display="flex" flexDirection="column" gap={3}>
-            <Grid container spacing={2} alignItems="flex-start">
-              <Grid item xs={3.5}>
-                <FormSearchSelectFieldControl
-                  control={control}
-                  fullWidth
-                  fieldName="countryCode"
-                  label="Country Code"
-                  required
-                  size="small"
-                  placeholder="+1"
-                  options={pinCodeOptions.map((pinCodeOption) => ({
-                    label:
-                      `${pinCodeOption.label} (+${pinCodeOption.value})`
-                        .length > 20
-                        ? `${pinCodeOption.label.slice(0, 13)}... (+${pinCodeOption.value})`
-                        : `${pinCodeOption.label} (+${pinCodeOption.value})`,
-                    value: pinCodeOption.value,
-                    component: (
-                      <Box
-                        sx={{
-                          py: 1,
-                          pr: 1,
-                          display: "flex",
-                          flexDirection: "row",
-                          width: "100%",
-                          alignItems: "center",
-                          justifyContent: "space-between",
-                        }}
-                      >
-                        <Box display="flex" alignItems="center" gap={1}>
-                          <Image
-                            src={pinCodeOption.countryFlag}
-                            width="20px"
-                            wrapperProps={{
-                              style: {
-                                display: "flex",
-                                alignItems: "center",
-                              },
-                            }}
-                          />
+            <Box
+              display="flex"
+              justifyContent="space-between"
+              alignItems="center"
+              gap={2}
+              border={"1px solid"}
+              borderColor={"background.neutral"}
+              borderRadius={"8px !important"}
+              bgcolor={"background.neutral"}
+              p={1.5}
+            >
+              <Box display={"flex"} flexDirection={"column"}>
+                <Typography
+                  typography="s1"
+                  fontWeight={"fontWeightMedium"}
+                  color={"text.primary"}
+                >
+                  {VOICE_TRANSPORT_COPY[voiceTransport]?.title}
+                </Typography>
+                <Typography
+                  typography="s2_1"
+                  fontWeight={"fontWeightRegular"}
+                  color={"text.secondary"}
+                >
+                  {VOICE_TRANSPORT_COPY[voiceTransport]?.description}
+                </Typography>
+              </Box>
+              <ToggleButtonGroup
+                value={voiceTransport}
+                exclusive
+                size="small"
+                onChange={(_, value) => {
+                  if (!value) return;
+                  setFormValue("voiceTransport", value);
+                  if (value === VOICE_TRANSPORT.WEBRTC) {
+                    clearErrors(["countryCode", "contactNumber"]);
+                  }
+                }}
+              >
+                <ToggleButton value={VOICE_TRANSPORT.WEBRTC}>
+                  {VOICE_TRANSPORT_COPY[VOICE_TRANSPORT.WEBRTC].label}
+                </ToggleButton>
+                <ToggleButton value={VOICE_TRANSPORT.TELEPHONY}>
+                  {VOICE_TRANSPORT_COPY[VOICE_TRANSPORT.TELEPHONY].label}
+                </ToggleButton>
+              </ToggleButtonGroup>
+            </Box>
+            <ShowComponent
+              condition={voiceTransport === VOICE_TRANSPORT.TELEPHONY}
+            >
+              <Grid container spacing={2} alignItems="flex-start">
+                <Grid item xs={3.5}>
+                  <FormSearchSelectFieldControl
+                    control={control}
+                    fullWidth
+                    fieldName="countryCode"
+                    label="Country Code"
+                    size="small"
+                    placeholder="+1"
+                    options={pinCodeOptions.map((pinCodeOption) => ({
+                      label:
+                        `${pinCodeOption.label} (+${pinCodeOption.value})`
+                          .length > 20
+                          ? `${pinCodeOption.label.slice(0, 13)}... (+${pinCodeOption.value})`
+                          : `${pinCodeOption.label} (+${pinCodeOption.value})`,
+                      value: pinCodeOption.value,
+                      component: (
+                        <Box
+                          sx={{
+                            py: 1,
+                            pr: 1,
+                            display: "flex",
+                            flexDirection: "row",
+                            width: "100%",
+                            alignItems: "center",
+                            justifyContent: "space-between",
+                          }}
+                        >
+                          <Box display="flex" alignItems="center" gap={1}>
+                            <Image
+                              src={pinCodeOption.countryFlag}
+                              width="20px"
+                              wrapperProps={{
+                                style: {
+                                  display: "flex",
+                                  alignItems: "center",
+                                },
+                              }}
+                            />
+                            <Typography
+                              variant="body2"
+                              maxWidth={"100px"}
+                              noWrap
+                              textOverflow={"ellipsis"}
+                            >
+                              {pinCodeOption.label}
+                            </Typography>
+                          </Box>
                           <Typography
                             variant="body2"
-                            maxWidth={"100px"}
-                            noWrap
-                            textOverflow={"ellipsis"}
+                            fontWeight="fontWeightRegular"
                           >
-                            {pinCodeOption.label}
+                            +{pinCodeOption.value}
                           </Typography>
                         </Box>
-                        <Typography
-                          variant="body2"
-                          fontWeight="fontWeightRegular"
-                        >
-                          +{pinCodeOption.value}
-                        </Typography>
-                      </Box>
-                    ),
-                  }))}
-                />
+                      ),
+                    }))}
+                  />
+                </Grid>
+                <Grid item xs={8.5}>
+                  <FormTextFieldV2
+                    control={control}
+                    label="Contact Number"
+                    type="number"
+                    fieldName="contactNumber"
+                    placeholder="Number to call for the simulation"
+                    required
+                    size="small"
+                    fullWidth
+                    sx={{
+                      "& .MuiInputLabel-root": {
+                        fontWeight: 500,
+                      },
+                    }}
+                  />
+                </Grid>
               </Grid>
-              <Grid item xs={8.5}>
-                <FormTextFieldV2
-                  control={control}
-                  label="Contact Number"
-                  required
-                  type="number"
-                  fieldName="contactNumber"
-                  placeholder="Contact number"
-                  size="small"
-                  fullWidth
-                  sx={{
-                    "& .MuiInputLabel-root": {
-                      fontWeight: 500,
-                    },
-                  }}
-                />
-              </Grid>
-            </Grid>
+            </ShowComponent>
 
             <Box
               display="flex"
@@ -841,13 +869,6 @@ export default function AgentVoiceForm() {
                 arrow
                 size="small"
                 type="black"
-                slotProps={{
-                  tooltip: {
-                    sx: {
-                      maxWidth: "200px !important",
-                    },
-                  },
-                }}
               >
                 <Box>
                   <SwitchField
@@ -872,70 +893,52 @@ export default function AgentVoiceForm() {
                 uses your own endpoint, which we can only receive calls into.
               </Typography>
             )}
+
+            <Box
+              display="flex"
+              justifyContent="space-between"
+              alignItems="center"
+              border={"1px solid"}
+              borderColor={"background.neutral"}
+              borderRadius={"8px !important"}
+              p={1.5}
+            >
+              <Box display={"flex"} flexDirection={"column"}>
+                <Typography
+                  typography="s1"
+                  fontWeight={"fontWeightMedium"}
+                  color={"text.primary"}
+                >
+                  {TARGET_SPEAKS_FIRST_COPY.title}
+                </Typography>
+                <Typography
+                  typography="s2_1"
+                  fontWeight={"fontWeightRegular"}
+                  color={"text.secondary"}
+                >
+                  {TARGET_SPEAKS_FIRST_COPY.description}
+                </Typography>
+              </Box>
+              <CustomTooltip
+                show={true}
+                title={TARGET_SPEAKS_FIRST_COPY.tooltip}
+                placement="bottom"
+                arrow
+                size="small"
+                type="black"
+              >
+                <Box>
+                  <SwitchField
+                    control={control}
+                    fieldName="targetSpeaksFirst"
+                    label=""
+                    labelPlacement="end"
+                  />
+                </Box>
+              </CustomTooltip>
+            </Box>
           </Box>
         </CreateNewAgentCards>
-      </ShowComponent>
-      {/* Inbound/Outbound toggle for LiveKit (no phone number needed) */}
-      <ShowComponent condition={isLiveKitProvider(selectedProvider)}>
-        <Box
-          display="flex"
-          justifyContent="space-between"
-          alignItems="center"
-          border={"1px solid"}
-          borderColor={"background.neutral"}
-          borderRadius={"8px !important"}
-          p={1.5}
-          mt={2}
-        >
-          <Box display={"flex"} flexDirection={"column"}>
-            <Typography
-              typography="s1"
-              fontWeight={"fontWeightMedium"}
-              color={"text.primary"}
-            >
-              {inbound
-                ? INBOUND_OUTBOUND_COPY.inbound.title
-                : INBOUND_OUTBOUND_COPY.outbound.title}
-            </Typography>
-            <Typography
-              typography="s2_1"
-              fontWeight={"fontWeightRegular"}
-              color={"text.primary"}
-            >
-              {inbound
-                ? INBOUND_OUTBOUND_COPY.inbound.description
-                : INBOUND_OUTBOUND_COPY.outbound.description}
-            </Typography>
-          </Box>
-          <CustomTooltip
-            show={true}
-            title={
-              inbound
-                ? INBOUND_OUTBOUND_COPY.inbound.tooltip
-                : INBOUND_OUTBOUND_COPY.outbound.tooltip
-            }
-            placement="bottom"
-            arrow
-            size="small"
-            type="black"
-            slotProps={{
-              tooltip: {
-                sx: {
-                  maxWidth: "200px !important",
-                },
-              },
-            }}
-          >
-            <Box>
-              <SwitchField
-                control={control}
-                fieldName="inbound"
-                label=""
-                labelPlacement="end"
-              />
-            </Box>
-          </CustomTooltip>
-        </Box>
       </ShowComponent>
     </>
   );
