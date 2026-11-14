@@ -113,6 +113,12 @@ def _coerce_huggingface_document_for_upload(value, fallback_name):
     return value, document_name
 
 
+class HuggingFaceDatasetInfoError(Exception):
+    def __init__(self, status_code):
+        super().__init__(f"{status_code}")
+        self.status_code = status_code
+
+
 def get_huggingface_dataset_info(dataset_path, organization_id):
     if not organization_id:
         raise Exception("Organization not found")
@@ -133,7 +139,7 @@ def get_huggingface_dataset_info(dataset_path, organization_id):
         timeout=_HUGGINGFACE_DATASET_INFO_TIMEOUT_SECONDS,
     )
     if response.status_code != 200:
-        raise Exception(f"{response.status_code}")
+        raise HuggingFaceDatasetInfoError(response.status_code)
     response = response.json()
 
     config_keys = list(response.get("dataset_info", {}).keys())
