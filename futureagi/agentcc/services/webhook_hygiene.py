@@ -65,7 +65,7 @@ def _batched_update(queryset, budget_ends=None, **values):
     changed and, per webhook, how many of them were its own.
     """
     changed = 0
-    per_webhook = Counter()
+    per_webhook: Counter = Counter()
     while budget_ends is None or time.monotonic() < budget_ends:
         with transaction.atomic():
             batch = list(
@@ -193,7 +193,7 @@ def enforce_pending_cap(webhook_ids, budget_ends=None):
     Returns the number dropped, per webhook id.
     """
     cap = settings.AGENTCC_WEBHOOK_MAX_PENDING_PER_WEBHOOK
-    dropped = {}
+    dropped: dict = {}
     if cap <= 0:
         return dropped
     now = timezone.now()
@@ -330,11 +330,13 @@ def purge_webhook_events(
             continue
         deleted = 0
         while True:
-            ids = list(queryset.order_by().values_list("pk", flat=True)[:batch_size])
+            ids = _purge_batch_ids(queryset, batch_size)
             if not ids:
                 break
             with transaction.atomic():
-                count, _ = AgentccWebhookEvent.all_objects.filter(pk__in=ids).delete()
+                # Re-check the selection: a Retry may have made a selected
+                # event pending again since it was read.
+                count, _ = queryset.filter(pk__in=ids).delete()
             deleted += count
             if len(ids) < batch_size:
                 break
@@ -342,6 +344,10 @@ def purge_webhook_events(
                 time.sleep(sleep_seconds)
         counts[category] = deleted
     return counts
+
+
+def _purge_batch_ids(queryset, batch_size):
+    return list(queryset.order_by().values_list("pk", flat=True)[:batch_size])
 
 
 @temporal_activity(max_retries=0, time_limit=600, queue="default")

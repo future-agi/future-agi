@@ -483,3 +483,64 @@ class TestLogsEndpointErrors:
             HTTP_X_WEBHOOK_SECRET="wrong",
         )
         assert response.status_code == 400
+
+
+@pytest.mark.integration
+class TestLateResults:
+    """A POST that returns after its event was cancelled or dropped must not
+    undo that."""
+
+    @pytest.mark.parametrize("meanwhile", ["delete", "cap"])
+    @patch(URL_CHECK)
+    @patch(SESSION)
+    def test_a_late_success_keeps_the_terminal_status(
+        self, mock_session, _mock_url_check, meanwhile, auth_client, user
+    ):
+        from django.test import override_settings
+
+        from agentcc.services.webhook_hygiene import enforce_pending_cap
+
+        url = "https://hooks.example.com/ok"
+        webhook = _webhook(user.organization, f"late-{meanwhile}", url)
+        (event,) = _events(webhook, 1)
+        _events(webhook, 1, start_minutes_ago=1)  # a newer one for the cap to keep
+
+        def post(*args, **kwargs):
+            # While this POST is in flight:
+            if meanwhile == "delete":
+                assert (
+                    auth_client.delete(f"/agentcc/webhooks/{webhook.id}/").status_code
+                    == 200
+                )
+            else:
+                with override_settings(AGENTCC_WEBHOOK_MAX_PENDING_PER_WEBHOOK=1):
+                    enforce_pending_cap([webhook.pk])
+            return _response(200)
+
+        http = MagicMock()
+        http.post.side_effect = post
+        mock_session.return_value = http
+
+        deliver_webhook(webhook.pk, event_ids=[event.pk])
+
+        event.refresh_from_db()
+        assert event.status == ("cancelled" if meanwhile == "delete" else "dropped")
+
+    @patch(URL_CHECK)
+    @patch(SESSION)
+    def test_each_post_names_its_event(
+        self, mock_session, _mock_url_check, organization
+    ):
+        url = "https://hooks.example.com/ok"
+        http = _session({url: 200})
+        mock_session.return_value = http
+        webhook = _webhook(
+            organization, "named", url, headers={"X-Agentcc-Event-Id": "spoofed"}
+        )
+        (event,) = _events(webhook, 1)
+
+        deliver_webhook(webhook.pk)
+
+        assert http.post.call_args.kwargs["headers"]["X-Agentcc-Event-Id"] == str(
+            event.pk
+        )

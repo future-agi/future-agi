@@ -507,3 +507,25 @@ def test_the_purge_command_may_run_as_an_operator_job():
     from model_hub.apps import OPERATOR_STARTUP_MUTATION_COMMANDS
 
     assert "purge_agentcc_webhook_events" in OPERATOR_STARTUP_MUTATION_COMMANDS
+
+
+@pytest.mark.integration
+def test_purge_rechecks_each_batch_before_deleting(organization):
+    """A Retry can make a selected event pending again before its batch is
+    deleted; the purge must leave it."""
+    webhook = _webhook(organization)
+    old = _event(webhook, status="dead_letter", age=timedelta(days=40))
+    real = webhook_hygiene._purge_batch_ids
+
+    def select_then_retry(queryset, batch_size):
+        ids = real(queryset, batch_size)
+        EVENTS.filter(pk=old.pk).update(status="pending")  # the user's Retry
+        return ids
+
+    with patch.object(webhook_hygiene, "_purge_batch_ids", select_then_retry):
+        counts = webhook_hygiene.purge_webhook_events(
+            terminal_older_than_days=30, sleep_seconds=0
+        )
+
+    assert counts == {"terminal": 0}
+    assert EVENTS.get(pk=old.pk).status == "pending"

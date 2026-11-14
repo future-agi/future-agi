@@ -83,6 +83,9 @@ def _signed_request(webhook, event):
     body = json.dumps(event.payload)
     headers = {"Content-Type": "application/json"}
     headers.update(webhook.headers or {})
+    # Stable per event, so a receiver can drop the repeat it gets when a worker
+    # died after the POST but before recording it, and the lease ran out.
+    headers["X-Agentcc-Event-Id"] = str(event.pk)
     if webhook.secret:
         sig = hmac.new(
             webhook.secret.encode(),
@@ -94,32 +97,39 @@ def _signed_request(webhook, event):
 
 
 def _record_attempt(event, response_code, error):
-    """Save one attempt's outcome. Returns True when it was delivered."""
-    event.last_attempt_at = timezone.now()
-    event.attempts += 1
-    event.last_response_code = response_code
-    fields = [
-        "status",
-        "last_response_code",
-        "last_attempt_at",
-        "attempts",
-        "last_error",
-        "next_retry_at",
-        "updated_at",
-    ]
+    """Save one attempt's outcome. Returns True when it was delivered.
+
+    The write is conditional on the event still being pending: while the POST
+    was in flight, deleting its webhook may have cancelled it, or the pending
+    cap dropped it, and a late result must not undo that.
+    """
+    now = timezone.now()
+    attempts = event.attempts + 1
+    values = {
+        "last_attempt_at": now,
+        "attempts": attempts,
+        "last_response_code": response_code,
+        "updated_at": now,
+    }
     if error is None:
-        event.status = AgentccWebhookEvent.DELIVERED
-        event.last_error = ""
-        event.next_retry_at = None
+        values.update(
+            status=AgentccWebhookEvent.DELIVERED, last_error="", next_retry_at=None
+        )
+    elif attempts >= event.max_attempts:
+        values.update(
+            status=AgentccWebhookEvent.DEAD_LETTER,
+            last_error=error,
+            next_retry_at=None,
+        )
     else:
-        event.last_error = error
-        if event.attempts >= event.max_attempts:
-            event.status = AgentccWebhookEvent.DEAD_LETTER
-            event.next_retry_at = None
-        else:
-            event.status = AgentccWebhookEvent.PENDING
-            event.next_retry_at = timezone.now() + _backoff(event.attempts)
-    event.save(update_fields=fields)
+        values.update(
+            status=AgentccWebhookEvent.PENDING,
+            last_error=error,
+            next_retry_at=now + _backoff(attempts),
+        )
+    AgentccWebhookEvent.all_objects.filter(
+        pk=event.pk, status=AgentccWebhookEvent.PENDING
+    ).update(**values)
     return error is None
 
 
