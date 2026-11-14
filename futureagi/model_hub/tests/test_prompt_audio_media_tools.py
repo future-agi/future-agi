@@ -98,3 +98,39 @@ def test_other_audio_errors_keep_the_old_fallback(monkeypatch):
 
     monkeypatch.setattr(prompt_template, "safe_fetch", failing_fetch)
     assert prompt_template.handle_media(_audio_item(), "gpt-4o-audio-preview") is None
+
+
+@pytest.fixture
+def stt_audio_url_without_ffmpeg(audio_url_without_ffmpeg, monkeypatch):
+    """The same setup with a speech-to-text model."""
+    from model_hub.views import prompt_template
+
+    monkeypatch.setattr(prompt_template, "get_model_mode", lambda model: "stt")
+
+
+def test_handle_media_passes_an_stt_audio_item_through(stt_audio_url_without_ffmpeg):
+    """Speech-to-text reads the audio_url item itself and sends the audio
+    unconverted without ffmpeg, so the item is kept, not failed."""
+    from model_hub.views.prompt_template import handle_media
+
+    item = _audio_item()
+    assert handle_media(item, "whisper-1") == item
+
+
+def test_agent_playground_stt_node_keeps_the_audio_url(stt_audio_url_without_ffmpeg):
+    """An agent-playground prompt node on whisper-1 still renders the original
+    audio_url item, as it did before the named error, so it transcribes."""
+    from agent_playground.services.engine.runners.llm_prompt import LLMPromptRunner
+
+    messages = [{"role": "user", "content": [_audio_item()]}]
+    rendered = LLMPromptRunner()._render_messages(messages, {}, "whisper-1")
+    assert rendered == [{"role": "user", "content": [_audio_item()]}]
+
+
+def test_replace_variables_keeps_an_stt_audio_item(stt_audio_url_without_ffmpeg):
+    """Prompt workbench on an STT model: the run gets the audio item, not a
+    None that crashed it before."""
+    from model_hub.views.prompt_template import replace_variables
+
+    messages = [{"role": "user", "content": [_audio_item()]}]
+    assert replace_variables(messages, {}, "whisper-1") == messages
