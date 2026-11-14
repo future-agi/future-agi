@@ -35,21 +35,26 @@ func TestSpendMicrosSaturates(t *testing.T) {
 		usd  float64
 		want int64
 	}{
-		{1e13, math.MaxInt64},
-		{9.3e12, math.MaxInt64},
-		{math.Inf(1), math.MaxInt64},
-		{math.MaxFloat64, math.MaxInt64},
-		{-1e13, math.MinInt64},
-		{math.Inf(-1), math.MinInt64},
+		{1e13, MaxSpendMicros},
+		{9.3e12, MaxSpendMicros},
+		{9.1e9, MaxSpendMicros},
+		{math.Inf(1), MaxSpendMicros},
+		{math.MaxFloat64, MaxSpendMicros},
+		{-1e13, -MaxSpendMicros},
+		{math.Inf(-1), -MaxSpendMicros},
 		{math.NaN(), 0},
-		{9e12, 9_000_000_000_000_000_000},
+		{9e9, 9_000_000_000_000_000},
 	} {
 		if got := SpendMicros(tc.usd); got != tc.want {
 			t.Errorf("SpendMicros(%g) = %d, want %d", tc.usd, got, tc.want)
 		}
 	}
-	if got := SpendUSD(1e13); got <= 0 || got != float64(math.MaxInt64)/1_000_000 {
-		t.Errorf("SpendUSD(1e13) = %g, want the saturated, positive %g", got, float64(math.MaxInt64)/1_000_000)
+	if got := SpendUSD(1e13); got <= 0 || got != float64(MaxSpendMicros)/1_000_000 {
+		t.Errorf("SpendUSD(1e13) = %g, want the saturated, positive %g", got, float64(MaxSpendMicros)/1_000_000)
+	}
+	// A thousand saturated charges still add up without overflowing int64.
+	if MaxSpendMicros > math.MaxInt64/1000 {
+		t.Errorf("MaxSpendMicros %d leaves no room for 1000 charges", int64(MaxSpendMicros))
 	}
 	if got := SpendUSD(math.NaN()); got != 0 {
 		t.Errorf("SpendUSD(NaN) = %g, want 0", got)

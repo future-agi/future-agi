@@ -60,3 +60,24 @@ func TestCreditsUsedReportsTheDeductedMicros(t *testing.T) {
 		}
 	}
 }
+
+// Huge charges (org custom pricing has no upper bound) deduct the saturated
+// amount: the balance stays negative after more of them, and the header shows
+// exactly what was deducted.
+func TestCreditsHugeChargesKeepTheBalanceNegative(t *testing.T) {
+	ks := newKeyStore()
+	managed := findKey(ks, "managed")
+	p := New(true, ks)
+	for i := 1; i <= 3; i++ {
+		rc := makeRC(managed.ID, "managed")
+		rc.Metadata["cost"] = "10000000000000"
+		p.ProcessResponse(context.Background(), rc)
+		if got := rc.Metadata["credits_used"]; got != "9007199254.740992" {
+			t.Fatalf("charge %d: credits_used = %q; want 9007199254.740992", i, got)
+		}
+		rc.Release()
+		if managed.BalanceMicros() >= 0 {
+			t.Fatalf("charge %d: balance %d; want negative", i, managed.BalanceMicros())
+		}
+	}
+}
