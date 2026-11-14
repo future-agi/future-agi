@@ -14,15 +14,13 @@ import FormTextFieldV2 from "src/components/FormTextField/FormTextFieldV2";
 import { useForm } from "react-hook-form";
 import { CreateWorkspaceValidation } from "./validation";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
-import axios, { endpoints } from "src/utils/axios";
+import { useCreateWorkspace } from "src/api/workspaces/create";
 import { LoadingButton } from "@mui/lab";
 import { Events, PropertyName, trackEvent } from "src/utils/Mixpanel";
 import WorkspaceSuccess from "./WorkspaceSuccess";
 
 const CreateWorkspaceForm = () => {
   const { setOpen } = useCreateWorkspaceModal();
-  const queryClient = useQueryClient();
   const [successData, setSuccessData] = useState(null);
   const { control, handleSubmit } = useForm({
     defaultValues: {
@@ -31,14 +29,12 @@ const CreateWorkspaceForm = () => {
     resolver: zodResolver(CreateWorkspaceValidation),
   });
 
-  const { mutate: createWorkspace, isPending: isLoading } = useMutation({
-    mutationFn: (data) => axios.post(endpoints.workspaces.create, data),
+  const { mutate: createWorkspace, isPending: isLoading } = useCreateWorkspace({
     onSuccess: (response) => {
       setSuccessData(response?.data?.result);
       trackEvent(Events.workspaceCreateRequestSubmitted, {
         [PropertyName.click]: "click",
       });
-      queryClient.invalidateQueries({ queryKey: ["workspaces-list"] });
     },
   });
 
@@ -74,7 +70,7 @@ const CreateWorkspaceForm = () => {
         >
           Create new workspace
           <IconButton size="small" onClick={() => setOpen(false)}>
-            <Iconify icon="akar-icons:cross" sx={{ color: "text.primary" }} />
+            <Iconify icon="solar:close-linear" sx={{ color: "text.primary" }} />
           </IconButton>
         </Box>
       </DialogTitle>
@@ -123,7 +119,13 @@ const CreateWorkspaceForm = () => {
 const CreateWorkspaceModal = () => {
   const { open, setOpen } = useCreateWorkspaceModal();
   return (
-    <Dialog open={open} onClose={() => setOpen(false)} fullWidth maxWidth="sm">
+    <Dialog
+      open={open}
+      onClose={() => setOpen(false)}
+      fullWidth
+      maxWidth={false}
+      PaperProps={{ sx: { maxWidth: 720 } }}
+    >
       <CreateWorkspaceForm />
     </Dialog>
   );

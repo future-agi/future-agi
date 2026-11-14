@@ -46,11 +46,8 @@ const RunTestsActionRenderer = (params) => {
         sx={{
           display: "flex",
           gap: 1,
-          borderRadius: theme.spacing(1),
           borderColor: `${theme.palette.divider} !important`,
           minWidth: 71,
-          px: 1,
-          py: 0.25,
         }}
       >
         <SvgColor
@@ -78,7 +75,7 @@ const RunTestsActionRenderer = (params) => {
         PaperProps={{
           sx: {
             mt: 1,
-            minWidth: 100,
+            minWidth: 200,
             p: 0.5,
           },
         }}
@@ -90,8 +87,8 @@ const RunTestsActionRenderer = (params) => {
             <SvgColor
               src="/assets/icons/ic_hide.svg"
               sx={{
-                width: 20,
-                height: 20,
+                width: 16,
+                height: 16,
               }}
             />
           </ListItemIcon>
@@ -103,16 +100,13 @@ const RunTestsActionRenderer = (params) => {
             }}
           />
         </MenuItem>
-        <MenuItem
-          onClick={handleDelete}
-          sx={{ color: "error.main", px: 1.25, py: 0.75 }}
-        >
+        <MenuItem onClick={handleDelete} sx={{ px: 1.25, py: 0.75 }}>
           <ListItemIcon sx={{ minWidth: "unset", mr: 0 }}>
             <SvgColor
               src="/assets/icons/ic_delete.svg"
               sx={{
-                height: 20,
-                width: 20,
+                height: 16,
+                width: 16,
               }}
             />
           </ListItemIcon>
