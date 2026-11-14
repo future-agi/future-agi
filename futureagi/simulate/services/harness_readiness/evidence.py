@@ -781,7 +781,8 @@ def observed(pairing: Pairing) -> dict[str, Reading]:
         "files": Reading(
             "not_run",
             "files_not_recorded",
-            "No run records the files an agent produces yet",
+            "Nothing records the files the agent writes yet, so checks on files are"
+            " not verified",
         ),
         "resume": _resume(runs),
         "cost": _cost(runs),

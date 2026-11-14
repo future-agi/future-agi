@@ -2666,6 +2666,29 @@ class TestObservedRows:
             [{"check": "attempt", "result": "2"}],
         )
 
+    @pytest.mark.parametrize(
+        ("row_id", "lacks"),
+        [
+            ("files", "Nothing records the files the agent writes yet"),
+            ("browser", "Nothing records the agent's browser yet"),
+            ("hidden_material", "Treat this run as not blind"),
+        ],
+    )
+    def test_each_unmeasured_row_names_what_it_lacks(
+        self, user, workspace, storage, row_id, lacks
+    ):
+        environment = _environment(user, workspace, storage, f"ob-lacks-{row_id}")
+        _certify(environment, storage)
+
+        report = _report(environment)
+        row = _rows(report)[row_id]
+
+        assert row["status"] == "untested"
+        assert lacks in row["reason"]
+        assert row["reason"] != "No check measures this yet"
+        # Naming what is missing changes no status and holds no case.
+        assert report["answer"]["kind"] == "ready"
+
     def test_a_run_nothing_measured_reads_no_cost(self, user, workspace, storage):
         environment = _environment(user, workspace, storage, "ob-cost-none")
         _certify(environment, storage)
