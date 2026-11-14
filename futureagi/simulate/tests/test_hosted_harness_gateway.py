@@ -899,6 +899,38 @@ def test_authoring_stage_outputs_exposes_generic_certification_evidence():
     assert certification["data"]["certificate"]["fingerprint"] == "sha256:test"
 
 
+def test_call_actor_stage_output_keeps_actors_without_a_channel():
+    from simulate.services.hosted_harness_gateway import (
+        authoring_stage_outputs_from_archive,
+    )
+
+    actors = {
+        "actors": [
+            {"id": "spouse", "name": "Sam", "channel": "audio_mix"},
+            {
+                "id": "claims_supervisor",
+                "name": "Dana Brooks",
+                "permitted_actions": ["approvals.put"],
+            },
+        ]
+    }
+    body = io.BytesIO()
+    with tarfile.open(fileobj=body, mode="w:gz") as archive:
+        payload = json.dumps(actors).encode()
+        member = tarfile.TarInfo("actors.json")
+        member.size = len(payload)
+        archive.addfile(member, io.BytesIO(payload))
+
+    outputs = authoring_stage_outputs_from_archive(body.getvalue())
+
+    listing = next(item for item in outputs if item["kind"] == "call_actors")
+    assert [one["id"] for one in listing["data"]["call_actors"]] == [
+        "spouse",
+        "claims_supervisor",
+    ]
+    assert listing["summary"] == "2 actors"
+
+
 def test_fresh_authoring_archive_rejects_missing_scenarios(tmp_path):
     (tmp_path / "contract.json").write_text("{}", encoding="utf-8")
 

@@ -2167,7 +2167,7 @@ def _persist_bundle_stage_outputs(
                 )
             )
     if "call_actors" not in existing:
-        listing = speaking_actors(_load_bundle_file(manifest, "actors.json", job))
+        listing = all_actors(_load_bundle_file(manifest, "actors.json", job))
         if isinstance(listing, dict) and listing.get("call_actors"):
             outputs.append(
                 HostedHarnessStageOutput(
@@ -3871,7 +3871,7 @@ class HostedHarnessGateway:
             )
         authored_bundle = _json("/work/authoring/environment-bundle/manifest.json")
         sub_goals = _json("/work/authoring/sub_goals.json")
-        call_actors = speaking_actors(_json("/work/authoring/actors.json"))
+        call_actors = all_actors(_json("/work/authoring/actors.json"))
         bundle = _json("/work/bundle/manifest.json")
         # Written when the world is sealed, so it appears later than the authoring
         # documents above and only once a store has actually been built.
@@ -5424,16 +5424,14 @@ def _record_harness_spend(
     job.updated_at = locked.updated_at
 
 
-def speaking_actors(actors_file: Any) -> dict[str, Any] | None:
-    """The environment's actors that speak in the conversation (those with a channel), from its one `actors.json`,
-    in the shape the actor list stage output keeps."""
+def all_actors(actors_file: Any) -> dict[str, Any] | None:
+    """Every actor in the environment's one `actors.json`, speaking or acting only through the world, in the shape the
+    actor list stage output keeps: the scenarios list and drawer name each one, channel or not."""
     if not isinstance(actors_file, dict):
         return None
     return {
         "call_actors": [
-            one
-            for one in actors_file.get("actors") or []
-            if isinstance(one, dict) and one.get("channel")
+            one for one in actors_file.get("actors") or [] if isinstance(one, dict)
         ]
     }
 
@@ -5671,7 +5669,7 @@ def authoring_stage_outputs_from_archive(
         repair_history=documents.get("repair-history.json"),
         action_certification=documents.get("action-certification.json"),
         coverage=documents.get("coverage.json"),
-        call_actors=speaking_actors(documents.get("actors.json")),
+        call_actors=all_actors(documents.get("actors.json")),
     )
 
 
