@@ -395,9 +395,14 @@
       "returned": { "status": 413, "code": "request_too_large" }
     },
     {
+      "name": "upstream_409",
+      "upstream": { "status": 409, "body": { "error": { "message": "Unsupported criteria shape" } } },
+      "returned": { "status": 409, "code": "upstream_rejected" }
+    },
+    {
       "name": "upstream_415",
       "upstream": { "status": 415, "body_raw": "" },
-      "returned": { "status": 502, "code": "upstream_error" }
+      "returned": { "status": 415, "code": "upstream_rejected" }
     },
     {
       "name": "upstream_429_retry_after",

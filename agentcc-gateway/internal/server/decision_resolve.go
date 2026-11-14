@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/futureagi/agentcc-gateway/internal/middleware"
+	"github.com/futureagi/agentcc-gateway/internal/modeldb"
 	"github.com/futureagi/agentcc-gateway/internal/models"
 	"github.com/futureagi/agentcc-gateway/internal/providers"
 	"github.com/futureagi/agentcc-gateway/internal/providers/systemone"
@@ -40,6 +41,9 @@ type decisionCandidate struct {
 	// apiFormat is the api_format it was saved with, for the error that
 	// explains why it cannot serve a decision. "" when not known.
 	apiFormat string
+	// openRouterChat is set for an OpenAI-format OpenRouter connection, which
+	// serves its decision models and refuses its chat models as decisions.
+	openRouterChat bool
 }
 
 // resolveDecision picks the provider and key for a decision call. In order:
@@ -159,7 +163,13 @@ func (h *Handlers) orgDecisionTarget(rc *models.RequestContext, header http.Head
 			}
 			continue
 		}
-		p, err := h.orgProviderCache.GetOrCreateWithTenantConfig(orgID, id, pcfg.APIKey, pcfg)
+		var p providers.Provider
+		var err error
+		if h.servesOpenRouterDecision(id, pcfg, stripProviderPrefix(req.Model, id)) {
+			p, err = h.orgProviderCache.GetOrCreateOpenRouterDecision(orgID, id, pcfg.APIKey, pcfg)
+		} else {
+			p, err = h.orgProviderCache.GetOrCreateWithTenantConfig(orgID, id, pcfg.APIKey, pcfg)
+		}
 		if err != nil {
 			slog.Warn("failed to create org decision provider", "org_id", orgID, "provider", id, "error", err)
 			if buildErr == nil {
@@ -171,9 +181,12 @@ func (h *Handlers) orgDecisionTarget(rc *models.RequestContext, header http.Head
 		if apiFormat == "" {
 			apiFormat = "unset"
 		}
+		// The effective base_url, as the listing judges it: an entry with
+		// none of its own is built on config.yaml's provider of that ID.
 		candidates = append(candidates, decisionCandidate{
 			id: id, provider: p, apiFormat: apiFormat,
-			format: decisionFormatOf(p, id, pcfg.BaseURL),
+			format:         decisionFormatOf(p, id, h.orgProviderCache.BaseURL(id, pcfg)),
+			openRouterChat: h.isOrgOpenRouterChat(id, pcfg),
 		})
 	}
 	if len(candidates) == 0 {
@@ -212,17 +225,82 @@ func (h *Handlers) registryDecisionTarget(rc *models.RequestContext, header http
 		if !slices.Contains(exact, id) && !(hasPrefix && strings.EqualFold(prefix, id) && slices.Contains(bare, id)) {
 			continue
 		}
-		p, ok := h.registry.GetProvider(id)
+		p, format, openRouterChat, ok := h.registryDecisionFormat(id, stripProviderPrefix(req.Model, id))
 		if !ok {
 			continue
 		}
-		candidates = append(candidates, decisionCandidate{id: id, provider: p, format: decisionFormatOf(p, id, "")})
+		candidates = append(candidates, decisionCandidate{id: id, provider: p, format: format, openRouterChat: openRouterChat})
 	}
 	if len(candidates) == 0 {
 		return nil, models.ErrNotFound("model_not_found",
 			fmt.Sprintf("model %q is not listed by any decision provider in the gateway config", req.Model))
 	}
 	return chooseDecisionCandidate(req, candidates)
+}
+
+// servesOpenRouterDecision reports whether an org provider serves model as a
+// decision through OpenRouter's decisions endpoint: it is an OpenRouter
+// connection saved with the OpenAI format (see providers.IsOpenRouterChat) and
+// the model is one of its decision models, not one of its chat models.
+func (h *Handlers) servesOpenRouterDecision(id string, pcfg *tenant.ProviderConfig, model string) bool {
+	return h.isOrgOpenRouterChat(id, pcfg) && isOpenRouterDecisionModel(h.ModelDB(), model)
+}
+
+// isOrgOpenRouterChat reports whether an org provider is an OpenAI-format
+// OpenRouter connection, judged by the api_format and base_url it is built
+// with: an org entry that states no base_url takes config.yaml's.
+func (h *Handlers) isOrgOpenRouterChat(id string, pcfg *tenant.ProviderConfig) bool {
+	apiFormat, ok := h.orgProviderCache.APIFormat(id, pcfg)
+	return ok && providers.IsOpenRouterChat(apiFormat, id, h.orgProviderCache.BaseURL(id, pcfg))
+}
+
+// registryDecisionProvider returns the config.yaml provider that serves model
+// as a decision: an OpenAI-format OpenRouter connection's System One provider
+// for one of its decision models, else the provider itself.
+func (h *Handlers) registryDecisionProvider(id, model string) (providers.Provider, bool) {
+	p, ok := h.registry.GetProvider(id)
+	if !ok {
+		return nil, false
+	}
+	if dp, _ := h.registry.DecisionProvider(id); dp != p && isOpenRouterDecisionModel(h.ModelDB(), model) {
+		return dp, true
+	}
+	return p, true
+}
+
+// registryDecisionFormat returns the config.yaml provider that serves model as
+// a decision and the decision format it speaks. On an OpenAI-format OpenRouter
+// connection a chat model speaks none: it is neither an OpenAI decision (the
+// chat provider is not a decisions endpoint) nor routed to OpenRouter's.
+func (h *Handlers) registryDecisionFormat(id, model string) (p providers.Provider, format string, openRouterChat, ok bool) {
+	p, ok = h.registryDecisionProvider(id, model)
+	if !ok {
+		return nil, "", false, false
+	}
+	dp, _ := h.registry.DecisionProvider(id)
+	chat, _ := h.registry.GetProvider(id)
+	openRouterChat = dp != chat
+	if openRouterChat && p == chat {
+		return p, "", true, true
+	}
+	return p, decisionFormatOf(p, id, ""), openRouterChat, true
+}
+
+// isOpenRouterDecisionModel reports whether a model an OpenAI-format
+// OpenRouter connection lists is a decision model: a TypeSafe Jev model, or
+// one with a decision price under its exact name. Its chat models are neither
+// listed nor routed as decisions, including chat IDs whose bare name is a
+// priced decision model ("openai/gpt-6-luna"); a provider saved with the
+// System One format serves any model.
+func isOpenRouterDecisionModel(db *modeldb.ModelDB, model string) bool {
+	if strings.HasPrefix(model, "typesafe/jev-") || strings.HasPrefix(model, "~typesafe/jev-") {
+		return true
+	}
+	if db == nil {
+		return false
+	}
+	_, ok := db.DecisionPricingExact(model)
+	return ok
 }
 
 // decisionNarrowing returns the one provider a request is narrowed to, or ""
@@ -271,7 +349,7 @@ func chooseDecisionCandidate(req *models.DecisionRequest, candidates []decisionC
 			return nil, errFormatMismatch(req.Model, c.id, c.format)
 		}
 	}
-	return nil, errDecisionWrongFormat(candidates[0], req.Format)
+	return nil, errDecisionWrongFormat(candidates[0], req.Format, req.Model)
 }
 
 func newDecisionTarget(id, upstreamModel string, p providers.Provider, format string) *decisionTarget {
@@ -287,6 +365,10 @@ func newDecisionTarget(id, upstreamModel string, p providers.Provider, format st
 // decisionFormatOf returns the decision format a built provider speaks. An
 // OpenAI-format provider whose ID or base_url names a System One vendor is a
 // System One credential saved with the wrong api_format, not an OpenAI one.
+// An OpenRouter connection saved with the OpenAI format serves decisions
+// through the System One provider built for it (registryDecisionProvider,
+// servesOpenRouterDecision), which is what is passed here for its decision
+// models.
 func decisionFormatOf(p providers.Provider, id, baseURL string) string {
 	if _, ok := p.(providers.SystemOneProvider); ok {
 		return models.DecisionFormatSystemOne
@@ -298,11 +380,12 @@ func decisionFormatOf(p providers.Provider, id, baseURL string) string {
 }
 
 // apiFormatDecisionFormat is decisionFormatOf for a provider not built yet:
-// a System One api_format builds a System One provider, "openai" the only
-// provider that serves OpenAI Decisions.
+// a System One api_format builds a System One provider, as does an
+// OpenAI-format OpenRouter connection for its decision models; "openai" is
+// the only provider that serves OpenAI Decisions.
 func apiFormatDecisionFormat(apiFormat, id, baseURL string) string {
 	switch {
-	case providers.IsSystemOneFormat(apiFormat):
+	case providers.IsSystemOneFormat(apiFormat), providers.IsOpenRouterChat(apiFormat, id, baseURL):
 		return models.DecisionFormatSystemOne
 	case apiFormat == "openai" && !systemone.IsVendor(id, baseURL):
 		return models.DecisionFormatOpenAI
@@ -403,7 +486,13 @@ func errDecisionModelNotListed(model, providerID, vendor string) *models.APIErro
 	}
 }
 
-func errDecisionWrongFormat(c decisionCandidate, want string) *models.APIError {
+func errDecisionWrongFormat(c decisionCandidate, want, model string) *models.APIError {
+	if c.openRouterChat && want == models.DecisionFormatSystemOne {
+		// Switching this connection to System One would break its chat
+		// traffic; the model is simply not a decision model on it.
+		return &models.APIError{Status: http.StatusForbidden, Type: models.ErrTypePermission, Code: models.CodeDecisionProviderWrongFormat, Message: fmt.Sprintf(
+			"Model %q is not a decision model on OpenRouter connection %q. That connection serves its chat models over the OpenAI format and only its decision models (typesafe/jev-*) as decisions.", model, c.id)}
+	}
 	saved := ""
 	if c.apiFormat != "" {
 		saved = fmt.Sprintf(" is saved with api_format %q, which", c.apiFormat)

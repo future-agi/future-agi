@@ -63,6 +63,17 @@ const PROVIDER_PRESETS = {
     keyPlaceholder: "sk-...",
     supportedFormats: ["openai", "anthropic"],
   },
+  openrouter: {
+    label: "OpenRouter",
+    baseUrl: "https://openrouter.ai/api/v1",
+    apiFormat: "openai",
+    keyPlaceholder: "Enter your OpenRouter API key",
+    // The OpenAI format serves OpenRouter's chat models and its Jev decision
+    // models. System One is not offered: with this preset's /api/v1 base URL
+    // it would post to /api/v1/api/alpha/decisions. A provider saved as
+    // System One before keeps its format when edited.
+    supportedFormats: ["openai"],
+  },
   anthropic: {
     label: "Anthropic",
     baseUrl: "https://api.anthropic.com",
@@ -175,7 +186,8 @@ const PROVIDER_PRESETS = {
     apiFormat: SYSTEMONE_API_FORMAT,
     keyPlaceholder: "Enter API key",
     supportedFormats: [SYSTEMONE_API_FORMAT],
-    baseUrlHelp: "Required — the gateway posts to this URL plus /v1/systemone",
+    baseUrlHelp:
+      "Required — enter your endpoint's base URL; the gateway uses its System One dialect path",
     models: [],
   },
 };
@@ -199,13 +211,14 @@ const parseProviderBaseUrl = (value) => {
 };
 
 // Mirror the gateway's vendor recognition: a custom label cannot turn a
-// TypeSafe, Perplexity or OpenAI endpoint into a keyless self-hosted provider.
+// TypeSafe, Perplexity, OpenAI or OpenRouter endpoint into a keyless self-hosted provider.
 const allowsKeylessSystemOne = (name, apiFormat, baseUrl) => {
   if (!isSystemOneFormat(apiFormat)) return false;
   const url = parseProviderBaseUrl(baseUrl);
-  if (!url || /^(typesafe|perplexity|openai)/i.test(name)) return false;
+  if (!url || /^(typesafe|perplexity|openai|openrouter)/i.test(name))
+    return false;
   const host = url.hostname.toLowerCase().replace(/\.$/, "");
-  return !["typesafe.ai", "perplexity.ai", "openai.com"].some(
+  return !["typesafe.ai", "perplexity.ai", "openai.com", "openrouter.ai"].some(
     (vendor) => host === vendor || host.endsWith(`.${vendor}`),
   );
 };
@@ -653,9 +666,12 @@ const AddProviderDialog = ({
       } else {
         setBaseUrl(preset.baseUrl);
       }
-      // Reset apiFormat to preset default if the current value isn't supported
+      // Reset apiFormat to the preset default if the current value isn't
+      // supported, or if it is a System One format carried over from a
+      // decision preset into one that defaults to chat (OpenRouter).
       setApiFormat((prev) =>
-        preset.supportedFormats && !preset.supportedFormats.includes(prev)
+        (preset.supportedFormats && !preset.supportedFormats.includes(prev)) ||
+        (isSystemOneFormat(prev) && !isSystemOneFormat(preset.apiFormat))
           ? preset.apiFormat
           : prev,
       );
@@ -1186,8 +1202,12 @@ const AddProviderDialog = ({
           {(() => {
             const currentPreset = PROVIDER_PRESETS[name];
             const visibleFormats = currentPreset?.supportedFormats?.length
-              ? API_FORMATS.filter((f) =>
-                  currentPreset.supportedFormats.includes(f),
+              ? API_FORMATS.filter(
+                  (f) =>
+                    currentPreset.supportedFormats.includes(f) ||
+                    // A saved provider keeps showing the format it has.
+                    (isEditMode &&
+                      f === normalizeApiFormat(provider?.config?.api_format)),
                 )
               : API_FORMATS;
             const isFiltered = visibleFormats.length < API_FORMATS.length;

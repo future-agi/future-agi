@@ -81,7 +81,7 @@ def _gateway_error(status, code=None, retry_after=None, upstream_status=None):
         return JevGatewayError()
     if status == 502 and upstream_status is not None:
         # TypeSafe answered with a status the gateway does not map (500, 501,
-        # 415, a redirect...): retry only what the direct transport retries.
+        # a redirect...): retry only what the direct transport retries.
         # A 502 without one is the gateway getting no answer, and is retried.
         return JevGatewayError(
             "JEV_PROVIDER_ERROR", upstream_status in (500, 502, 503), retry_after

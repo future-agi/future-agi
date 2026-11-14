@@ -72,6 +72,12 @@ type Server struct {
 	ready            atomic.Bool
 }
 
+// SetOrgInputGuardrails tells the handlers which orgs have input-stage
+// guardrail checks, so decision text is extracted only when one applies.
+func (s *Server) SetOrgInputGuardrails(has func(orgID string) bool) {
+	s.handlers.orgInputGuardrails = has
+}
+
 // PriceTableName is the name the price table keys a provider's models under,
 // as the provider that served an org's request states it: the org's own
 // instance when the org has one, else the config.yaml provider with that ID.

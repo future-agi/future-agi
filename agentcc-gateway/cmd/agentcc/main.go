@@ -257,6 +257,7 @@ func main() {
 	}
 
 	// Create guardrail plugin.
+	var guardrailPlugin *guardrails.GuardrailPlugin
 	var grEngine *guardrails.Engine
 	var policyStore *policy.Store
 	var onOrgConfigChange func(string) // called when an org config changes (e.g. invalidate guardrail cache)
@@ -364,7 +365,7 @@ func main() {
 			return nil
 		}
 
-		guardrailPlugin := guardrails.NewPlugin(grEngine, guardrailRegistry, dynamicFactory, policyStore, tenantStore)
+		guardrailPlugin = guardrails.NewPlugin(grEngine, guardrailRegistry, dynamicFactory, policyStore, tenantStore)
 		plugins = append(plugins, guardrailPlugin)
 		onOrgConfigChange = func(orgID string) {
 			guardrailPlugin.InvalidateDynamicCache(orgID)
@@ -579,6 +580,9 @@ func main() {
 	// Create and start server (shares the same ModelDB pointer for hot-reload).
 	srv := server.New(cfg, *configPath, registry, engine, keyStore, grEngine, policyStore, metricsRegistry, &sharedModelDB, tenantStore, onOrgConfigChange, redisClient)
 	costPlugin.SetPriceTables(srv.PriceTableName)
+	if guardrailPlugin != nil {
+		srv.SetOrgInputGuardrails(guardrailPlugin.HasOrgInputChecks)
+	}
 
 	// Register onChange callback on tenantStore so that periodic sync (MergeBulk)
 	// evicts the OrgProviderCache for any org whose config changed. Without this,

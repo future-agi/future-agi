@@ -54,6 +54,20 @@ func NewPlugin(engine *Engine, registry map[string]Guardrail, dynamicFactory Dyn
 func (p *GuardrailPlugin) Name() string  { return "guardrails" }
 func (p *GuardrailPlugin) Priority() int { return 50 } // After auth (20), RBAC (30), budget (40). Before cache (200).
 
+// HasOrgInputChecks reports whether the org's config holds an enabled check
+// that runs on input (a pre-stage guardrail the static rules do not already
+// cover). A post-stage-only check, such as hallucination, does not count.
+func (p *GuardrailPlugin) HasOrgInputChecks(orgID string) bool {
+	if p == nil || p.tenantStore == nil || orgID == "" {
+		return false
+	}
+	orgCfg := p.tenantStore.Get(orgID)
+	if orgCfg == nil || orgCfg.Guardrails == nil || len(orgCfg.Guardrails.Checks) == 0 {
+		return false
+	}
+	return len(p.collectOrgChecks(orgID, orgCfg.Guardrails, StagePre)) > 0
+}
+
 // ProcessRequest runs pre-stage guardrails.
 func (p *GuardrailPlugin) ProcessRequest(ctx context.Context, rc *models.RequestContext) pipeline.PluginResult {
 	// Speech has no chat body at admission. The relay binds this plugin after auth

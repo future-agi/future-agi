@@ -57,6 +57,19 @@ providers:
     conn_pool_size: 100
     models: [openai/gpt-6-luna-decisions, typesafe/jev-1.13, typesafe/jev-1.14, "~typesafe/jev-latest"]
 
+  # An OpenRouter connection as the dashboard preset saves it: the OpenAI
+  # format, a /api/v1 base_url. Chat goes to its chat route; Jev decision
+  # models go to the origin's /api/alpha/decisions. GW-E2E-005 layers the
+  # org's own key onto it (an org base_url of "" keeps this upstream).
+  openrouter-chat:
+    base_url: "http://mock-llm:8080/api/v1"
+    api_key: "e2e-mock"
+    api_format: "openai"
+    default_timeout: 60s
+    max_concurrent: 100
+    conn_pool_size: 100
+    models: [typesafe/jev-1.13, "~typesafe/jev-latest"]
+
   # anthropic:
   #   base_url: "https://api.anthropic.com"
   #   api_key: "${ANTHROPIC_API_KEY}"

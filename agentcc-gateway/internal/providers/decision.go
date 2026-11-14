@@ -3,6 +3,7 @@ package providers
 import (
 	"fmt"
 	"net/http"
+	"net/url"
 	"sort"
 	"strings"
 	"time"
@@ -101,4 +102,48 @@ func NewKeyedDecisionProvider(dialect, baseURL, apiKey string) (Provider, error)
 	}
 	cfg.APIFormat = APIFormatSystemOne
 	return systemone.NewForDialect(d.Name, cfg, d)
+}
+
+// IsOpenRouterChat reports whether a provider saved with the OpenAI format is
+// an OpenRouter connection: its base_url's host, or else its ID, names
+// OpenRouter. Such a provider serves chat on its OpenAI-compatible API and
+// System One decisions on OpenRouter's decisions endpoint, on the same key.
+// TypeSafe or Perplexity saved with the OpenAI format is not one.
+func IsOpenRouterChat(apiFormat, providerID, baseURL string) bool {
+	if apiFormat != "openai" {
+		return false
+	}
+	d, err := systemone.DialectFor(providerID, baseURL)
+	return err == nil && d.Name == systemone.OpenRouter.Name
+}
+
+// NewOpenRouterDecisionProvider builds the System One provider an OpenAI-format
+// OpenRouter connection serves decisions with. It keeps the connection's key,
+// timeouts and dialer, and posts to the origin of its base_url (scheme, host
+// and port: "https://openrouter.ai/api/v1" posts to
+// "https://openrouter.ai/api/alpha/decisions"), or to OpenRouter's own when it
+// states none. The chat path prefix is never used. A connection with no dialer
+// of its own takes the operator's decision proxy, as other decision providers.
+func NewOpenRouterDecisionProvider(id string, cfg config.ProviderConfig) (Provider, error) {
+	cfg.APIFormat = APIFormatSystemOne
+	cfg.BaseURL = baseURLOrigin(cfg.BaseURL)
+	cfg.APIPathPrefix = nil
+	if cfg.Proxy == nil && cfg.DialContext == nil {
+		cfg.Proxy = decisionProxy
+	}
+	return systemone.NewForDialect(id, cfg, systemone.OpenRouter)
+}
+
+// baseURLOrigin returns scheme://host[:port] of a base URL, "" for none. A
+// URL that does not parse is returned as is, for the provider to refuse.
+func baseURLOrigin(baseURL string) string {
+	baseURL = strings.TrimSpace(baseURL)
+	if baseURL == "" {
+		return ""
+	}
+	u, err := url.Parse(baseURL)
+	if err != nil || u.Scheme == "" || u.Host == "" {
+		return baseURL
+	}
+	return u.Scheme + "://" + u.Host
 }
