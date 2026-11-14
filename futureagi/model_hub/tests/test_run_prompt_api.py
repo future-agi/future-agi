@@ -1441,6 +1441,7 @@ class TestRetrieveRunPromptOptionsView:
     def test_retrieve_run_prompt_options_keeps_model_status_per_request(
         self, auth_client, organization
     ):
+        """Test that each options response has its own model availability."""
         catalog_before = [model.copy() for model in AVAILABLE_MODELS]
         model_name = next(
             model["model_name"]
@@ -1450,7 +1451,9 @@ class TestRetrieveRunPromptOptionsView:
         ApiKey.objects.create(
             provider="openai", organization=organization, key="test-api-key"
         )
-        other_organization = Organization.objects.create(name="Other Model Organization")
+        other_organization = Organization.objects.create(
+            name="Other Model Organization"
+        )
         other_user = User.objects.create_user(
             email="othermodel@example.com",
             password="testpassword123",
