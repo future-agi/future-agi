@@ -218,6 +218,15 @@ export function textField(theme) {
             fontWeight: 500,
             color: theme.palette.text.primary,
           },
+          // The legacy notched-label patch (MuiFormControl in select.js adds a
+          // paper background and 5px side padding to a focused shrunk label)
+          // pushed a focused label 5px right of its field. A label above the
+          // field keeps the field's left edge and the surface behind it in
+          // every state.
+          [`&&&.${inputLabelClasses.shrink}.${inputLabelClasses.focused}`]: {
+            padding: 0,
+            backgroundColor: "transparent",
+          },
           // A field without a label reserves no space above it, so it lines
           // up with the buttons beside it.
           "&&&:empty": { display: "none" },

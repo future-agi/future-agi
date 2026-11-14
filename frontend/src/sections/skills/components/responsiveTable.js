@@ -88,3 +88,14 @@ export function ScrollTable({ children, label, sx }) {
     }));
 }
 ScrollTable.propTypes = { children: PropTypes.node, label: PropTypes.string.isRequired, sx: PropTypes.object };
+
+/**
+ * Opt-in `sx` for a Skills table whose last column ends at the right edge of
+ * the page: on desktop the last column keeps 72px clear on its right, so the
+ * floating assistant (40px, 16px from the edge) never sits over a row action.
+ */
+export const fabGutterSx = (theme) => ({
+  [theme.breakpoints.up('md')]: {
+    '& tr > th:last-of-type, & tr > td:last-of-type': { pr: 9 },
+  },
+});

@@ -1,11 +1,21 @@
 // Plain-language summaries for Skills views. Each derives only from server data; when data is
 // missing or partial they say so instead of inferring a result.
 import { isActiveSkillJob } from 'src/api/skills/testing';
+import { DESCRIPTOR_PATH, linkChanges } from 'src/api/skills/j6-recovery';
 
 export const passedAll = (variant) => Boolean(variant?.attempts?.length) && variant.attempts.every((item) => item.answer_verdict === 'pass');
 
+// Attempts that have not begun. A running job whose every attempt is still waiting reads as queued.
+const WAITING = new Set(['queued', 'pending', 'not_started']);
+const allWaiting = (rows = []) => {
+  const attempts = rows.flatMap((row) => (row.variants || []).flatMap((variant) => variant.attempts || []));
+  return attempts.length > 0 && attempts.every((attempt) => WAITING.has(attempt.status));
+};
 // One sentence that says what the answer check found, before any identifiers.
-export function answerConclusion({ status, subject, rows, complete }) {
+// It follows the reconciled job state: queued, running, stopping, finished or stopped.
+export function answerConclusion({ status, subject, rows = [], complete }) {
+  if (status === 'queued' || (status === 'running' && allWaiting(rows))) return `Answer check queued for ${subject}.`;
+  if (status === 'cancelling') return `Answer check stopping for ${subject}.`;
   if (isActiveSkillJob(status)) return `Answer check running for ${subject}.`;
   if (status !== 'completed') return `Answer check ${String(status || 'stopped').replaceAll('_', ' ')} for ${subject}. No result is inferred.`;
   if (!complete || !rows.length) return `Answer check finished for ${subject}.`;
@@ -15,18 +25,32 @@ export function answerConclusion({ status, subject, rows, complete }) {
   return `${lead}${baseline && rows.some((row) => row.variants.length > 1) ? ' (also passes without the context)' : ''}.`;
 }
 export const mountName = (mount) => String(mount || "").replace(/^skills\//, "").replace(/\/$/, "");
-// "Publishing creates billing-agent v2: refund-policy v2, no instruction changes".
+const ROOT_INSTRUCTIONS = 'AGENTS.md';
+const plural = (count, one, many) => `${count} ${count === 1 ? one : many}`;
+// "Publishing creates support-agent v2: refund-policy v1 → v2; AGENTS.md is unchanged."
+// Linked-skill moves come from the descriptor diff; the clause after ";" is always about the
+// context's own AGENTS.md (and any other context files), never a blanket "no instruction changes".
 export function publishSentence(name, review) {
   const next = (review.expectedHeadVersion ?? 0) + 1;
-  const paths = (review.changes || []).map((file) => file.path);
-  const instructions = paths.filter((path) => !path.startsWith("skills/") && !path.startsWith(".futureagi/")).length;
-  const skills = [...new Set(paths.filter((path) => path.startsWith("skills/")).map((path) => path.split("/")[1]))];
+  const changes = review.changes || [];
+  const paths = changes.map((file) => file.path);
+  const descriptor = changes.find((file) => file.path === DESCRIPTOR_PATH);
+  const moves = descriptor ? linkChanges(descriptor.fromText ?? null, descriptor.toText ?? null) : null;
   const locked = new Map((review.acceptedLock?.links || []).map((link) => [mountName(link.mount), link.version]));
-  const parts = [
-    ...skills.map((skill) => (locked.has(skill) ? `${skill} v${locked.get(skill)}` : `${skill} changes`)),
-    instructions ? `${instructions} instruction file${instructions === 1 ? "" : "s"} change${instructions === 1 ? "s" : ""}` : "no instruction changes",
+  const moved = new Set((moves || []).map((row) => row.name));
+  const skills = [
+    ...(moves || []).map((row) => (row.from == null ? `${row.name} v${row.to} added` : row.to == null ? `${row.name} removed` : `${row.name} v${row.from} → v${row.to}`)),
+    // Skill files that changed without a readable descriptor move: name the locked version when known.
+    ...[...new Set(paths.filter((path) => path.startsWith('skills/')).map((path) => path.split('/')[1]))]
+      .filter((skill) => !moved.has(skill))
+      .map((skill) => (locked.has(skill) ? `${skill} v${locked.get(skill)}` : `${skill} changes`)),
   ];
-  return `Publishing creates ${name || "this context"} v${next}: ${parts.join(", ")}`;
+  const others = paths.filter((path) => path !== ROOT_INSTRUCTIONS && path !== DESCRIPTOR_PATH && !path.startsWith('skills/') && !path.startsWith('.futureagi/')).length;
+  const own = [
+    paths.includes(ROOT_INSTRUCTIONS) ? `${ROOT_INSTRUCTIONS} changes` : `${ROOT_INSTRUCTIONS} is unchanged`,
+    ...(others ? [`${plural(others, 'other context file changes', 'other context files change')}`] : []),
+  ].join(', ');
+  return `Publishing creates ${name || 'this context'} v${next}: ${skills.length ? skills.join(', ') : 'no linked-skill changes'}; ${own}.`;
 }
 // "Preview expires in 30 min": relative to the review clock; the exact UTC time is in details.
 export function expiresIn(expiresAt, now) {
