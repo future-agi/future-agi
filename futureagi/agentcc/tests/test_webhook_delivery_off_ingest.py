@@ -5,6 +5,7 @@ from datetime import timedelta
 from unittest.mock import MagicMock, patch
 
 import pytest
+from django.db import OperationalError
 from django.utils import timezone
 
 from agentcc.models import AgentccAPIKey
@@ -460,9 +461,9 @@ class TestLogsEndpointErrors:
     @patch("agentcc.views.webhook.AGENTCC_WEBHOOK_SECRET", "test-ingest-secret")
     @patch(
         "agentcc.views.webhook.ingest_request_logs",
-        side_effect=RuntimeError("database went away"),
+        side_effect=OperationalError("database went away"),
     )
-    def test_an_unexpected_ingest_error_asks_the_gateway_to_retry(
+    def test_a_database_outage_asks_the_gateway_to_retry(
         self, _mock_ingest, api_client
     ):
         response = api_client.post(

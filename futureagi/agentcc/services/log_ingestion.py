@@ -4,6 +4,7 @@ from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 
 import structlog
+from django.db import DatabaseError, OperationalError, transaction
 
 from agentcc.models import AgentccAPIKey, AgentccRequestLog, AgentccSession
 
@@ -215,6 +216,18 @@ def _sanitize_session_id(sid):
     return sid
 
 
+def _bounded(value, max_length):
+    """``value`` as a string cut to its column's length.
+
+    The gateway copies some of these from the caller's request (the OpenAI
+    ``user`` field becomes ``user_id``), so their length is not ours to trust.
+    """
+    if value is None:
+        return ""
+    value = str(value)
+    return value[:max_length]
+
+
 def _sanitize_headers(headers):
     if not headers or not isinstance(headers, dict):
         return headers
@@ -314,6 +327,40 @@ def _compute_cost(entry):
     return 0
 
 
+def _store_request_logs(objects):
+    """Insert the rows, skipping only the ones the database refuses.
+
+    A row the database refuses (a value too long for its column, a NUL byte
+    in text, a duplicate key outside ``ignore_conflicts``) fails the whole
+    INSERT. The batch is then split in halves until each refused row is on
+    its own, so one bad entry costs only itself, not every org's rows in the
+    gateway batch. A lost connection or other operational error is not a
+    row's fault: it propagates, and the gateway sends the batch again.
+    Returns the number of rows refused.
+    """
+    try:
+        with transaction.atomic():
+            AgentccRequestLog.no_workspace_objects.bulk_create(
+                objects, ignore_conflicts=True
+            )
+        return 0
+    except OperationalError:
+        raise
+    except (DatabaseError, ValueError, TypeError) as exc:
+        if len(objects) == 1:
+            logger.warning(
+                "request_log_entry_refused",
+                request_id=str(objects[0].request_id)[:255],
+                error_type=type(exc).__name__,
+                error=str(exc)[:300],
+            )
+            return 1
+        middle = len(objects) // 2
+        return _store_request_logs(objects[:middle]) + _store_request_logs(
+            objects[middle:]
+        )
+
+
 def ingest_request_logs(logs):
     if not logs:
         return 0
@@ -334,9 +381,9 @@ def _ingest_org_logs(org, logs):
             obj = AgentccRequestLog(
                 organization=org,
                 request_id=entry.get("request_id", ""),
-                model=entry.get("model", ""),
-                provider=entry.get("provider", ""),
-                resolved_model=entry.get("resolved_model", ""),
+                model=_bounded(entry.get("model", ""), 255),
+                provider=_bounded(entry.get("provider", ""), 255),
+                resolved_model=_bounded(entry.get("resolved_model", ""), 255),
                 latency_ms=int(entry.get("latency_ms", 0)),
                 started_at=_parse_datetime(
                     entry.get("timestamp") or entry.get("started_at")
@@ -357,10 +404,12 @@ def _ingest_org_logs(org, logs):
                 cache_hit=bool(entry.get("cache_hit", False)),
                 fallback_used=bool(entry.get("fallback_used", False)),
                 guardrail_triggered=bool(entry.get("guardrail_triggered", False)),
-                api_key_id=entry.get("auth_key_id") or entry.get("api_key_id") or "",
-                user_id=entry.get("user_id", ""),
+                api_key_id=_bounded(
+                    entry.get("auth_key_id") or entry.get("api_key_id"), 255
+                ),
+                user_id=_bounded(entry.get("user_id", ""), 255),
                 session_id=_sanitize_session_id(entry.get("session_id", "")),
-                routing_strategy=entry.get("routing_strategy", ""),
+                routing_strategy=_bounded(entry.get("routing_strategy", ""), 100),
                 metadata=entry.get("metadata") or {},
                 request_body=_truncate_json(entry.get("request_body")),
                 response_body=_truncate_json(entry.get("response_body")),
@@ -380,7 +429,7 @@ def _ingest_org_logs(org, logs):
             )
 
     if objects:
-        AgentccRequestLog.no_workspace_objects.bulk_create(objects, ignore_conflicts=True)
+        _store_request_logs(objects)
         # The gateway resends a batch whose response it did not get in time, so a
         # batch can hold rows saved already. The unique request ID skips those;
         # only the rows saved now go on to webhooks and metering.
