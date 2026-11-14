@@ -88,8 +88,10 @@ def is_own_storage_url(value, bucket_name):
             own_host = (urlparse(endpoint).hostname or "").lower()
         except Exception:
             own_host = ""
-        if own_host and host == own_host and (
-            path.startswith(bucket_path + "/") or path == bucket_path
+        if (
+            own_host
+            and host == own_host
+            and (path.startswith(bucket_path + "/") or path == bucket_path)
         ):
             return True
 
@@ -125,6 +127,7 @@ def get_compare_local_dir(compare_id):
 
 def get_compare_metadata_path(compare_id):
     return os.path.join(get_compare_local_dir(compare_id), "metadata.json")
+
 
 # Map raw format names from detect_audio_format() (ffmpeg) to proper MIME types.
 # Shared by upload_audio_to_s3() and upload_audio_to_s3_duration().
@@ -549,15 +552,19 @@ def upload_document_to_s3(
                 except ImportError:
                     emit = None
 
-                if emit is not None and UsageEvent is not None and BillingEventType is not None:
+                if (
+                    emit is not None
+                    and UsageEvent is not None
+                    and BillingEventType is not None
+                ):
                     emit(
-                    UsageEvent(
-                        org_id=str(org_id),
-                        event_type=BillingEventType.OBSERVE_ADD,
-                        amount=len(doc_bytes),
-                        properties={"source": "dataset_document"},
+                        UsageEvent(
+                            org_id=str(org_id),
+                            event_type=BillingEventType.OBSERVE_ADD,
+                            amount=len(doc_bytes),
+                            properties={"source": "dataset_document"},
+                        )
                     )
-                )
             except ImportError:
                 pass
 
@@ -635,7 +642,9 @@ def upload_image_to_s3(
         try:
             img = Image.open(BytesIO(img_bytes))
         except Image.UnidentifiedImageError as e:
-            logger.warning(f"Skipping image upload: payload is not a valid image file: {str(e)}")
+            logger.warning(
+                f"Skipping image upload: payload is not a valid image file: {str(e)}"
+            )
             raise ValueError(get_error_message("INVALID_IMAGE")) from e
         format_detected = img.format
         if format_detected:
@@ -676,15 +685,19 @@ def upload_image_to_s3(
             except ImportError:
                 emit = None
 
-            if emit is not None and UsageEvent is not None and BillingEventType is not None:
+            if (
+                emit is not None
+                and UsageEvent is not None
+                and BillingEventType is not None
+            ):
                 emit(
-                UsageEvent(
-                    org_id=str(org_id),
-                    event_type=BillingEventType.OBSERVE_ADD,
-                    amount=len(img_bytes),
-                    properties={"source": "trace_image"},
+                    UsageEvent(
+                        org_id=str(org_id),
+                        event_type=BillingEventType.OBSERVE_ADD,
+                        amount=len(img_bytes),
+                        properties={"source": "trace_image"},
+                    )
                 )
-            )
 
         # Generate and return the public URL of the uploaded image
         url = get_object_url(bucket_name, object_key)
@@ -910,15 +923,19 @@ def upload_audio_to_s3_duration(
                 except ImportError:
                     emit = None
 
-                if emit is not None and UsageEvent is not None and BillingEventType is not None:
+                if (
+                    emit is not None
+                    and UsageEvent is not None
+                    and BillingEventType is not None
+                ):
                     emit(
-                    UsageEvent(
-                        org_id=str(org_id),
-                        event_type=BillingEventType.OBSERVE_ADD,
-                        amount=len(audio_bytes),
-                        properties={"source": "dataset_audio"},
+                        UsageEvent(
+                            org_id=str(org_id),
+                            event_type=BillingEventType.OBSERVE_ADD,
+                            amount=len(audio_bytes),
+                            properties={"source": "dataset_audio"},
+                        )
                     )
-                )
             except ImportError:
                 pass
 
@@ -1287,18 +1304,22 @@ def upload_file_to_s3(
             except ImportError:
                 emit = None
 
-            if emit is not None and UsageEvent is not None and BillingEventType is not None:
+            if (
+                emit is not None
+                and UsageEvent is not None
+                and BillingEventType is not None
+            ):
                 emit(
-                UsageEvent(
-                    org_id=str(org_id),
-                    event_type=BillingEventType.KB_STORAGE,
-                    amount=len(file_bytes),
-                    properties={
-                        "source": "kb_upload",
-                        "kb_id": str(kb_id) if kb_id else None,
-                    },
+                    UsageEvent(
+                        org_id=str(org_id),
+                        event_type=BillingEventType.KB_STORAGE,
+                        amount=len(file_bytes),
+                        properties={
+                            "source": "kb_upload",
+                            "kb_id": str(kb_id) if kb_id else None,
+                        },
+                    )
                 )
-            )
 
         # Generate and return the public URL of the uploaded file
         url = get_object_url(bucket_name, object_key)
@@ -1915,7 +1936,12 @@ def upload_audio_to_s3(
         ensure_bucket(minio_client, bucket_name)
 
         # Upload the audio bytes to S3
-        logger.info("s3_upload_start", bucket=bucket_name, object_key=object_key, bytes=len(audio_bytes))
+        logger.info(
+            "s3_upload_start",
+            bucket=bucket_name,
+            object_key=object_key,
+            bytes=len(audio_bytes),
+        )
         with BytesIO(audio_bytes) as audio_buffer:
             minio_client.put_object(
                 bucket_name=bucket_name,
@@ -1944,15 +1970,19 @@ def upload_audio_to_s3(
             except ImportError:
                 emit = None
 
-            if emit is not None and UsageEvent is not None and BillingEventType is not None:
+            if (
+                emit is not None
+                and UsageEvent is not None
+                and BillingEventType is not None
+            ):
                 emit(
-                UsageEvent(
-                    org_id=str(org_id),
-                    event_type=BillingEventType.OBSERVE_ADD,
-                    amount=len(audio_bytes),
-                    properties={"source": "trace_audio"},
+                    UsageEvent(
+                        org_id=str(org_id),
+                        event_type=BillingEventType.OBSERVE_ADD,
+                        amount=len(audio_bytes),
+                        properties={"source": "trace_audio"},
+                    )
                 )
-            )
 
         # Generate and return the public URL of the uploaded audio
         url = get_object_url(bucket_name, object_key)
@@ -1961,7 +1991,13 @@ def upload_audio_to_s3(
 
     except Exception as e:
         error_code = str(e.code) if hasattr(e, "code") else str(e)
-        logger.error("s3_upload_failed", bucket=bucket_name, object_key=object_key, error_code=error_code, exc_info=True)
+        logger.error(
+            "s3_upload_failed",
+            bucket=bucket_name,
+            object_key=object_key,
+            error_code=error_code,
+            exc_info=True,
+        )
         raise ValueError(get_error_message("ERROR_AUDIO_UPLOAD").format(str(e))) from e
 
 
@@ -2141,15 +2177,19 @@ def upload_video_to_s3(
                     except ImportError:
                         emit = None
 
-                    if emit is not None and UsageEvent is not None and BillingEventType is not None:
+                    if (
+                        emit is not None
+                        and UsageEvent is not None
+                        and BillingEventType is not None
+                    ):
                         emit(
-                        UsageEvent(
-                            org_id=str(org_id),
-                            event_type=BillingEventType.OBSERVE_ADD,
-                            amount=len(video_bytes) + len(thumbnail_bytes),
-                            properties={"source": "trace_video"},
+                            UsageEvent(
+                                org_id=str(org_id),
+                                event_type=BillingEventType.OBSERVE_ADD,
+                                amount=len(video_bytes) + len(thumbnail_bytes),
+                                properties={"source": "trace_video"},
+                            )
                         )
-                    )
 
                 thumbnail_url = get_object_url(bucket_name, thumbnail_object_key)
                 return url, thumbnail_url
@@ -2169,15 +2209,19 @@ def upload_video_to_s3(
                     except ImportError:
                         emit = None
 
-                    if emit is not None and UsageEvent is not None and BillingEventType is not None:
+                    if (
+                        emit is not None
+                        and UsageEvent is not None
+                        and BillingEventType is not None
+                    ):
                         emit(
-                        UsageEvent(
-                            org_id=str(org_id),
-                            event_type=BillingEventType.OBSERVE_ADD,
-                            amount=len(video_bytes),
-                            properties={"source": "trace_video"},
+                            UsageEvent(
+                                org_id=str(org_id),
+                                event_type=BillingEventType.OBSERVE_ADD,
+                                amount=len(video_bytes),
+                                properties={"source": "trace_video"},
+                            )
                         )
-                    )
                 return url, None
         else:
             if org_id:
@@ -2194,15 +2238,19 @@ def upload_video_to_s3(
                 except ImportError:
                     emit = None
 
-                if emit is not None and UsageEvent is not None and BillingEventType is not None:
+                if (
+                    emit is not None
+                    and UsageEvent is not None
+                    and BillingEventType is not None
+                ):
                     emit(
-                    UsageEvent(
-                        org_id=str(org_id),
-                        event_type=BillingEventType.OBSERVE_ADD,
-                        amount=len(video_bytes),
-                        properties={"source": "trace_video"},
+                        UsageEvent(
+                            org_id=str(org_id),
+                            event_type=BillingEventType.OBSERVE_ADD,
+                            amount=len(video_bytes),
+                            properties={"source": "trace_video"},
+                        )
                     )
-                )
             return url
     except Exception as e:
         logger.exception(f"Error uploading video to S3: {str(e)}")

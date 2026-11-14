@@ -164,9 +164,7 @@ def test_submit_and_complete_trace_label_writes_score_and_legacy_annotation(
     submit_resp = auth_client.post(
         _submit_url(queue.id, item.id),
         {
-            "annotations": [
-                {"label_id": str(label.id), "value": {"text": "ship it"}}
-            ],
+            "annotations": [{"label_id": str(label.id), "value": {"text": "ship it"}}],
             "notes": "queue note",
         },
         format="json",
@@ -182,7 +180,9 @@ def test_submit_and_complete_trace_label_writes_score_and_legacy_annotation(
     assert score.trace_id == trace.id
     assert score.value == {"text": "ship it"}
 
-    complete_resp = auth_client.post(_complete_url(queue.id, item.id), {}, format="json")
+    complete_resp = auth_client.post(
+        _complete_url(queue.id, item.id), {}, format="json"
+    )
     assert complete_resp.status_code == status.HTTP_200_OK, complete_resp.data
     item.refresh_from_db()
     assert item.status == QueueItemStatus.COMPLETED.value
@@ -283,7 +283,9 @@ def test_reservation_blocks_other_user_until_timeout(
     # Assign item to both users so the detail endpoint allows access
     QueueItemAssignment.objects.get_or_create(queue_item=item, user=other_user)
 
-    first_resp = auth_client.get(_annotate_detail_url(queue.id, item.id), {"reserve": "true"})
+    first_resp = auth_client.get(
+        _annotate_detail_url(queue.id, item.id), {"reserve": "true"}
+    )
     assert first_resp.status_code == status.HTTP_200_OK, first_resp.data
     item.refresh_from_db()
     assert item.reserved_by_id == user.id
@@ -361,7 +363,9 @@ def test_import_annotations_dual_writes_score_and_legacy_trace_annotation(
     trace = _create_trace(_create_trace_project(organization, workspace))
     queue, item = _create_trace_queue(organization, workspace, user, trace, label)
 
-    annotator = _make_user(organization, "imported-annotator@example.com", workspace=workspace)
+    annotator = _make_user(
+        organization, "imported-annotator@example.com", workspace=workspace
+    )
     AnnotationQueueAnnotator.objects.get_or_create(
         queue=queue,
         user=annotator,

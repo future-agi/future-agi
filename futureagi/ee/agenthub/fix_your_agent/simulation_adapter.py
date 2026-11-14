@@ -937,8 +937,7 @@ class SimulationAdapter:
         """Build a compact performance summary for the domain prompt."""
         if not selected_branches:
             return (
-                "No branch-level evaluation data was available for "
-                "domain analysis.\n"
+                "No branch-level evaluation data was available for domain analysis.\n"
             )
 
         lines: List[str] = []

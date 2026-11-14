@@ -16,6 +16,7 @@ not robust enough for prod-K8s graceful drain on pod preemption (codex
 review High-1). Treat this module as suitable for single-host / docker-
 compose / local dev only, and use the sidecar pattern in K8s.
 """
+
 from __future__ import annotations
 
 import atexit
@@ -32,7 +33,7 @@ log = logging.getLogger(__name__)
 # Module-level state — there's only one collector per Django process.
 _proc: Optional[subprocess.Popen] = None
 _stop = threading.Event()
-_starting = False                                                # codex H-2: guard against concurrent start() races
+_starting = False  # codex H-2: guard against concurrent start() races
 _lock = threading.Lock()
 _log_thread: Optional[threading.Thread] = None
 
@@ -69,10 +70,12 @@ def start(
             log.debug("fi-collector supervisor: another caller is starting")
             return
         if _proc is not None and _proc.poll() is None:
-            log.debug("fi-collector supervisor: already running", extra={"pid": _proc.pid})
+            log.debug(
+                "fi-collector supervisor: already running", extra={"pid": _proc.pid}
+            )
             return
         _starting = True
-        _stop.clear()                                            # H-2: allow restart after a prior stop()
+        _stop.clear()  # H-2: allow restart after a prior stop()
 
     try:
         env = os.environ.copy()
@@ -84,7 +87,12 @@ def start(
 
         threading.Thread(
             target=_supervise,
-            args=(binary_path, env, restart_backoff_initial_sec, restart_backoff_max_sec),
+            args=(
+                binary_path,
+                env,
+                restart_backoff_initial_sec,
+                restart_backoff_max_sec,
+            ),
             daemon=True,
             name="fi-collector-supervisor",
         ).start()
@@ -102,8 +110,10 @@ def start(
                 # in that case — atexit is the fallback.
                 pass
         atexit.register(stop)
-        log.info("fi-collector supervisor: started",
-                 extra={"binary": binary_path, "grpc_addr": grpc_addr})
+        log.info(
+            "fi-collector supervisor: started",
+            extra={"binary": binary_path, "grpc_addr": grpc_addr},
+        )
     finally:
         with _lock:
             _starting = False
@@ -171,7 +181,9 @@ def _supervise(binary: str, env: dict, backoff_init: float, backoff_max: float) 
         # Pipe child output into Django's logger so log aggregation
         # captures it without a separate sidecar log shipper.
         log_thread = threading.Thread(
-            target=_stream_logs, args=(proc,), daemon=True,
+            target=_stream_logs,
+            args=(proc,),
+            daemon=True,
             name="fi-collector-logs",
         )
         log_thread.start()
@@ -184,7 +196,7 @@ def _supervise(binary: str, env: dict, backoff_init: float, backoff_max: float) 
         try:
             if proc.stdout is not None:
                 proc.stdout.close()
-        except Exception:                                        # noqa: BLE001
+        except Exception:  # noqa: BLE001
             pass
         log_thread.join(timeout=2)
 
@@ -217,7 +229,9 @@ def _stream_logs(proc: subprocess.Popen) -> None:
         for line in iter(proc.stdout.readline, b""):
             if not line:
                 break
-            log.info("fi-collector", extra={"line": line.decode(errors="replace").rstrip()})
+            log.info(
+                "fi-collector", extra={"line": line.decode(errors="replace").rstrip()}
+            )
     except ValueError:
         # Raised on read from a closed pipe — expected during shutdown.
         return

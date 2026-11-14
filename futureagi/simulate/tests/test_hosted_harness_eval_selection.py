@@ -233,9 +233,9 @@ def test_cap_filler_names_are_still_catalog_keys():
     """
     known = offerable_eval_names()
     for name in [*CAP_FILLERS, ONE_TOO_MANY]:
-        assert (
-            name in known
-        ), f"{name} is no longer offered; update CAP_FILLERS/ONE_TOO_MANY"
+        assert name in known, (
+            f"{name} is no longer offered; update CAP_FILLERS/ONE_TOO_MANY"
+        )
 
 
 # --- A failed read of the eval definitions is never memoised -------------------
@@ -358,8 +358,7 @@ def test_pick_winner_breaks_a_tie_between_two_of_a_tenants_own_templates_by_crea
 
     assert harness_evals._pick_winner([older, newer]).id == "newer"
     assert harness_evals._pick_winner([newer, older]).id == "newer", (
-        "the newest must win regardless of which element the candidate "
-        "list puts first"
+        "the newest must win regardless of which element the candidate list puts first"
     )
 
 

@@ -538,8 +538,9 @@ class TestLaunchHit:
         second.refresh_from_db()
         assert len(composed) == 1
         download.assert_not_called()
-        assert second.payload["metadata"]["authoring_object_key"] == (
-            first.payload["metadata"]["authoring_object_key"]
+        assert (
+            second.payload["metadata"]["authoring_object_key"]
+            == (first.payload["metadata"]["authoring_object_key"])
         )
 
     def test_a_row_without_a_source_digest_checks_the_certificates(
@@ -762,8 +763,9 @@ class TestLaunchFailure:
 
         assert attempt.state == HostedHarnessAttempt.State.RUNNING
         assert "source_fingerprint" not in _command(gateway)
-        assert gateway.client.sandbox.fs.uploads["/work/authoring.tar.gz"] == (
-            storage.objects[default_pair]
+        assert (
+            gateway.client.sandbox.fs.uploads["/work/authoring.tar.gz"]
+            == (storage.objects[default_pair])
         )
 
     def test_a_run_of_other_versions_fails_without_a_retry(
@@ -803,8 +805,9 @@ class TestLaunchMiss:
         assert "source_fingerprint" not in command
         assert "cp -a /work/authoring/environment-bundle /work/bundle" in command
         assert "/work/certify-job.json" not in gateway.client.sandbox.fs.uploads
-        assert gateway.client.sandbox.fs.uploads["/work/authoring.tar.gz"] == (
-            storage.objects[default_pair]
+        assert (
+            gateway.client.sandbox.fs.uploads["/work/authoring.tar.gz"]
+            == (storage.objects[default_pair])
         )
 
     def test_certifying_is_off_so_other_pins_cannot_run(self, user, workspace, storage):
@@ -1413,8 +1416,9 @@ class TestRerun:
         assert run.payload["metadata"]["rerun_of"] == str(source.id)
         assert run.payload["metadata"]["assembly"]["defaults"] is True
         assert run.payload["source"] == source.payload["source"]
-        assert run.payload["metadata"]["authoring_object_key"] == (
-            environment.payload["metadata"]["authoring_object_key"]
+        assert (
+            run.payload["metadata"]["authoring_object_key"]
+            == (environment.payload["metadata"]["authoring_object_key"])
         )
         assert assembly.prepare_launch(run) is None
 
@@ -1498,8 +1502,9 @@ class TestRerun:
             environment.environment_version_id
         )
         assert run.payload["source"] == environment.payload["source"]
-        assert metadata["authoring_object_key"] == (
-            environment.payload["metadata"]["authoring_object_key"]
+        assert (
+            metadata["authoring_object_key"]
+            == (environment.payload["metadata"]["authoring_object_key"])
         )
 
     def test_a_rerun_certifies_its_sources_pins_when_they_are_not_cached(

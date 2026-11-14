@@ -98,7 +98,9 @@ class EvaluateWithAgentTool(BaseTool):
             )
         except ImportError:
             if settings.DEBUG:
-                logger.warning("Could not import ee.agenthub.eval_orchestrator", exc_info=True)
+                logger.warning(
+                    "Could not import ee.agenthub.eval_orchestrator", exc_info=True
+                )
             return ToolResult.feature_unavailable(EEFeature.AGENTIC_EVAL.value)
 
         if params.input_scope not in self._VALID_SCOPES:
