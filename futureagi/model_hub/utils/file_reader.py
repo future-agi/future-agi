@@ -127,9 +127,11 @@ class FileProcessor:
             # Restrict Sniffer to real CSV delimiters; otherwise it will
             # happily pick a letter (e.g. 'n' from "first_name") whenever
             # that character happens to split rows into equal counts.
-            delimiter = csv.Sniffer().sniff(
-                sample, delimiters="".join(fallback_delimiters)
-            ).delimiter
+            delimiter = (
+                csv.Sniffer()
+                .sniff(sample, delimiters="".join(fallback_delimiters))
+                .delimiter
+            )
         except csv.Error:
             delimiter = None
 
@@ -158,9 +160,7 @@ class FileProcessor:
         saw_wider_inconsistent = False
         for delim in delimiters_to_try:
             try:
-                rows = list(
-                    csv.reader(StringIO(text), delimiter=delim, quotechar='"')
-                )
+                rows = list(csv.reader(StringIO(text), delimiter=delim, quotechar='"'))
             except (csv.Error, ValueError):
                 # ValueError: csv.reader rejects the delimiter char itself
                 # (e.g. a quote or newline) — skip it, never abort the whole
@@ -213,10 +213,8 @@ class FileProcessor:
                 max_row_count = 0
                 saw_wider_inconsistent = False
                 for candidate in candidates:
-                    df, cols, rows_seen, saw_wider = (
-                        FileProcessor._try_parse_csv_text(
-                            candidate, fallback_delimiters
-                        )
+                    df, cols, rows_seen, saw_wider = FileProcessor._try_parse_csv_text(
+                        candidate, fallback_delimiters
                     )
                     if df is not None and cols > best_cols:
                         best_df = df

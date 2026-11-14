@@ -84,15 +84,11 @@ class TestAliasFilterResolution:
         assert out["trace_id"] == [self.TRACE_UUID, self.TRACE_UUID]
 
     def test_dsl_dict_op_resolves(self):
-        out = self._agent()._resolve_filter_aliases(
-            {"session_id": {"in": ["Sess01"]}}
-        )
+        out = self._agent()._resolve_filter_aliases({"session_id": {"in": ["Sess01"]}})
         assert out["session_id"] == {"in": [self.SESSION_UUID]}
 
     def test_eq_op_resolves(self):
-        out = self._agent()._resolve_filter_aliases(
-            {"trace_id": {"eq": "T01"}}
-        )
+        out = self._agent()._resolve_filter_aliases({"trace_id": {"eq": "T01"}})
         assert out["trace_id"] == {"eq": self.TRACE_UUID}
 
     def test_non_id_key_passes_through_untouched(self):
@@ -154,9 +150,7 @@ class TestEvalScopeQ:
         # Reverting to a trace-only filter drops the session-target eval rows
         # (trace FK NULL) — the single most important signal for a session
         # cluster. Pin both legs of the OR.
-        expected = Q(trace_id__in=["trace-1"]) | Q(
-            trace_session_id__in=session_uuids
-        )
+        expected = Q(trace_id__in=["trace-1"]) | Q(trace_session_id__in=session_uuids)
         assert str(q) == str(expected)
 
     def test_non_session_cluster_is_trace_only(self):
@@ -269,9 +263,7 @@ class TestDeadAirBackstop:
         fake_raw.cost_usd = 0.0
         fake_raw.response = fake_response
 
-        with patch(
-            "ee.agenthub.cluster_rca.agent.call_llm_raw", return_value=fake_raw
-        ):
+        with patch("ee.agenthub.cluster_rca.agent.call_llm_raw", return_value=fake_raw):
             agent._force_synthesis(messages=[], turn=5)
 
         assert agent.synthesis is not None

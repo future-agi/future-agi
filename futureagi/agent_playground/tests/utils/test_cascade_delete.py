@@ -221,7 +221,9 @@ class TestCascadeSoftDeleteGraph:
         assert row.deleted is True
         assert all(column.deleted for column in dataset_columns)
         assert all(cell.deleted for cell in cells)
-        assert not GraphDataset.no_workspace_objects.filter(id=graph_dataset.id).exists()
+        assert not GraphDataset.no_workspace_objects.filter(
+            id=graph_dataset.id
+        ).exists()
         assert not Dataset.no_workspace_objects.filter(id=dataset.id).exists()
         assert not Row.no_workspace_objects.filter(id=row.id).exists()
         assert not Column.no_workspace_objects.filter(

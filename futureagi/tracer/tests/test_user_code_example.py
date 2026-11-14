@@ -33,7 +33,7 @@ def test_user_code_example_without_project_uses_default_project_name(auth_client
     assert response.status_code == status.HTTP_200_OK
     code_example = response.json()["result"]
     assert 'project_name="New Project"' in code_example
-    assert "user_id=\"newuser@example.com\"" in code_example
+    assert 'user_id="newuser@example.com"' in code_example
 
 
 @pytest.mark.django_db

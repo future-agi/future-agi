@@ -125,7 +125,9 @@ def test_application_marker_drops_abort_caps_without_mutating_inputs(
 
 
 @pytest.mark.parametrize("requested, expected", [(0, 64), (-1, 64), (12, 12), (99, 64)])
-def test_application_memory_ceiling_and_default_concurrency(requested, expected, settings):
+def test_application_memory_ceiling_and_default_concurrency(
+    requested, expected, settings
+):
     settings.CLICKHOUSE_APPLICATION_READ_MAX_MEMORY_BYTES = 64 * 1024**3
     settings.CLICKHOUSE_APPLICATION_READ_DEFAULT_THREADS = 6
     result = clickhouse_module._normalized_read_settings(
@@ -136,7 +138,9 @@ def test_application_memory_ceiling_and_default_concurrency(requested, expected,
 
 
 @pytest.mark.parametrize("entrypoint", ["execute", "execute_read", "execute_paginated"])
-def test_explicit_false_keeps_maintenance_bounded_inside_application_context(entrypoint):
+def test_explicit_false_keeps_maintenance_bounded_inside_application_context(
+    entrypoint,
+):
     driver = _Driver()
     client = _client(driver)
     with application_read_context():
@@ -176,7 +180,9 @@ def test_paginated_application_reads_keep_sql_count_and_page_limits(explicit):
         )
     else:
         with application_read_context():
-            result = client.execute_paginated("SELECT value FROM events", {"id": 7}, 2, 10)
+            result = client.execute_paginated(
+                "SELECT value FROM events", {"id": 7}, 2, 10
+            )
     assert result == ([(1,)], 3)
     assert [call[0] for call in driver.calls] == [
         "SELECT count() FROM (SELECT value FROM events)",
@@ -191,14 +197,20 @@ def test_paginated_application_reads_keep_sql_count_and_page_limits(explicit):
 @pytest.mark.parametrize("timeout", [None, 300.0])
 def test_lazy_and_reused_transports_are_not_given_a_statement_wall(connected, timeout):
     driver = _Driver(connected=connected, timeout=timeout)
-    assert _client(driver).execute_read("SELECT 1", application_read_policy=True) == [(1,)]
+    assert _client(driver).execute_read("SELECT 1", application_read_policy=True) == [
+        (1,)
+    ]
     assert driver.calls[0][3:] == (10.0, timeout, timeout)
     assert driver.connection.socket.changes == []
     assert driver.connection.send_receive_timeout == timeout
 
 
-@pytest.mark.parametrize("failure", [errors.NetworkError("network"), RuntimeError("bug")])
-def test_application_error_propagates_without_retry_or_policy_leak(failure, monkeypatch):
+@pytest.mark.parametrize(
+    "failure", [errors.NetworkError("network"), RuntimeError("bug")]
+)
+def test_application_error_propagates_without_retry_or_policy_leak(
+    failure, monkeypatch
+):
     driver = _Driver()
     driver.failure = failure
     client = _client(driver)
@@ -222,7 +234,9 @@ def test_application_error_propagates_without_retry_or_policy_leak(failure, monk
 
 
 @pytest.mark.parametrize("resource", ["admission", "client_lock"])
-def test_application_queue_admission_is_separate_and_still_bounded(resource, monkeypatch):
+def test_application_queue_admission_is_separate_and_still_bounded(
+    resource, monkeypatch
+):
     driver = _Driver()
     gate = Mock()
     gate.acquire.return_value = resource != "admission"
@@ -245,7 +259,9 @@ def test_application_queue_admission_is_separate_and_still_bounded(resource, mon
 
 def test_admission_time_does_not_become_an_application_execution_deadline(monkeypatch):
     clock = SimpleNamespace(now=0.0)
-    monkeypatch.setattr(clickhouse_module, "time", SimpleNamespace(monotonic=lambda: clock.now))
+    monkeypatch.setattr(
+        clickhouse_module, "time", SimpleNamespace(monotonic=lambda: clock.now)
+    )
 
     def admit(**kwargs):
         clock.now += 4
@@ -262,7 +278,9 @@ def test_admission_time_does_not_become_an_application_execution_deadline(monkey
         return execute(*args, **kwargs)
 
     driver.execute = long_query
-    assert _client(driver).execute_read("SELECT 1", application_read_policy=True) == [(1,)]
+    assert _client(driver).execute_read("SELECT 1", application_read_policy=True) == [
+        (1,)
+    ]
     _assert_application_settings(driver.calls[0][2]["settings"])
     assert driver.calls[0][5] == 300.0
     gate.release.assert_called_once_with()
@@ -273,7 +291,9 @@ def test_worker_requires_its_own_marker_and_does_not_inherit_request_context():
     client = _client(driver)
     with ThreadPoolExecutor(max_workers=1) as executor, application_read_context():
         executor.submit(client.execute_read, "SELECT 1").result()
-        executor.submit(client.execute_read, "SELECT 2", application_read_policy=True).result()
+        executor.submit(
+            client.execute_read, "SELECT 2", application_read_policy=True
+        ).result()
         executor.submit(client.execute_read, "SELECT 3").result()
     assert driver.calls[0][2]["settings"]["max_execution_time"] > 0
     _assert_application_settings(driver.calls[1][2]["settings"])
@@ -284,7 +304,9 @@ def test_worker_requires_its_own_marker_and_does_not_inherit_request_context():
 def test_invalid_policy_marker_is_not_an_implicit_opt_in(entrypoint):
     driver = _Driver()
     with pytest.raises(TypeError, match="application_read_policy"):
-        getattr(_client(driver), entrypoint)("SELECT 1", application_read_policy="false")
+        getattr(_client(driver), entrypoint)(
+            "SELECT 1", application_read_policy="false"
+        )
     assert not driver.calls
 
 

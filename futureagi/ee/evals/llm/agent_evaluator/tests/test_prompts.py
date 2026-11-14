@@ -91,9 +91,7 @@ def test_output_format_choices_multi_returns_array_instruction():
 
 
 def test_output_format_choices_multi_does_not_say_exactly_one():
-    out = output_format_instruction(
-        "choices", ["A", "B"], multi_choice=True
-    )
+    out = output_format_instruction("choices", ["A", "B"], multi_choice=True)
     assert "exactly one" not in out.lower()
 
 
