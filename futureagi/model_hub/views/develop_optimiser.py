@@ -527,8 +527,8 @@ class DevelopOptimizer:
                 prompt=self.prompt,
                 train_data=df_temp,
                 model_name=config["model_name"],
-                temperature=config["temperature"],
-                max_tokens=config["max_tokens"],
+                temperature=config.get("temperature") or 0.0,
+                max_tokens=config.get("max_tokens") or 4000,
                 provider=provider,
                 optimizer=self.optimize_dataset,
                 config={
