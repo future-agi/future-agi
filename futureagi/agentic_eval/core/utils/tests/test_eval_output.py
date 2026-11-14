@@ -40,9 +40,9 @@ class TestResponseFormatSchema:
         )
 
     def test_choices_returns_enum_with_choices(self):
-        assert response_format_schema("choices", ["High", "Medium", "Low"]) == _envelope(
-            {"type": "string", "enum": ["High", "Medium", "Low"]}
-        )
+        assert response_format_schema(
+            "choices", ["High", "Medium", "Low"]
+        ) == _envelope({"type": "string", "enum": ["High", "Medium", "Low"]})
 
     def test_choices_multi_returns_array_schema(self):
         # OpenAI strict mode rejects minItems/uniqueItems; helper deliberately omits them.
@@ -81,7 +81,10 @@ class TestResponseFormatSchema:
         choices = ["A", "B"]
         schema = response_format_schema("choices", choices)
         choices.append("C")
-        assert schema["json_schema"]["schema"]["properties"]["result"]["enum"] == ["A", "B"]
+        assert schema["json_schema"]["schema"]["properties"]["result"]["enum"] == [
+            "A",
+            "B",
+        ]
 
     def test_choices_list_is_copied_for_multi_too(self):
         choices = ["A", "B"]
@@ -119,7 +122,9 @@ class TestComputeChoicesFailure:
     SCORES = {"Passed": 1.0, "Failed": 0.0}
 
     def test_single_with_scores_passes_above_threshold(self):
-        assert compute_choices_failure("Passed", self.CHOICES, self.SCORES, 0.5) is False
+        assert (
+            compute_choices_failure("Passed", self.CHOICES, self.SCORES, 0.5) is False
+        )
 
     def test_single_with_scores_fails_below_threshold(self):
         assert compute_choices_failure("Failed", self.CHOICES, self.SCORES, 0.5) is True
@@ -128,7 +133,9 @@ class TestComputeChoicesFailure:
         assert compute_choices_failure("Other", self.CHOICES, self.SCORES, 0.5) is True
 
     def test_single_with_scores_case_insensitive(self):
-        assert compute_choices_failure("passed", self.CHOICES, self.SCORES, 0.5) is False
+        assert (
+            compute_choices_failure("passed", self.CHOICES, self.SCORES, 0.5) is False
+        )
 
     def test_single_with_scores_invalid_score_value_fails(self):
         scores = {"Passed": "not_a_number"}
@@ -148,7 +155,11 @@ class TestComputeChoicesFailure:
 
     def test_multi_with_scores_mean_below_threshold(self):
         result = compute_choices_failure(
-            ["Passed", "Failed", "Failed"], self.CHOICES, self.SCORES, 0.5, multi_choice=True
+            ["Passed", "Failed", "Failed"],
+            self.CHOICES,
+            self.SCORES,
+            0.5,
+            multi_choice=True,
         )
         assert result is True  # (1+0+0)/3 = 0.333 < 0.5
 
@@ -178,9 +189,12 @@ class TestComputeChoicesFailure:
 
     def test_multi_flag_with_string_value_falls_back_to_single(self):
         # multi_choice=True but result is a string — treated as single-choice
-        assert compute_choices_failure(
-            "Passed", self.CHOICES, self.SCORES, 0.5, multi_choice=True
-        ) is False
+        assert (
+            compute_choices_failure(
+                "Passed", self.CHOICES, self.SCORES, 0.5, multi_choice=True
+            )
+            is False
+        )
 
 
 class TestIsValidChoicesResult:
@@ -196,22 +210,24 @@ class TestIsValidChoicesResult:
         assert is_valid_choices_result("Joy", self.CHOICES) is False
 
     def test_multi_all_valid(self):
-        assert is_valid_choices_result(
-            ["Love", "Sadness"], self.CHOICES, multi_choice=True
-        ) is True
+        assert (
+            is_valid_choices_result(
+                ["Love", "Sadness"], self.CHOICES, multi_choice=True
+            )
+            is True
+        )
 
     def test_multi_one_invalid(self):
-        assert is_valid_choices_result(
-            ["Love", "Joy"], self.CHOICES, multi_choice=True
-        ) is False
+        assert (
+            is_valid_choices_result(["Love", "Joy"], self.CHOICES, multi_choice=True)
+            is False
+        )
 
     def test_multi_empty_list_invalid(self):
         assert is_valid_choices_result([], self.CHOICES, multi_choice=True) is False
 
     def test_multi_flag_with_string_falls_back_to_single(self):
-        assert is_valid_choices_result(
-            "Love", self.CHOICES, multi_choice=True
-        ) is True
+        assert is_valid_choices_result("Love", self.CHOICES, multi_choice=True) is True
 
 
 class TestJudgeInstructions:

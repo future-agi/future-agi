@@ -101,17 +101,13 @@ def seed_builtin_skills(skill_model=None, conversation_model=None) -> tuple[int,
                 existing.save()
                 updated += 1
         else:
-            skill_model.objects.create(
-                organization=None, slug=slug, **defaults
-            )
+            skill_model.objects.create(organization=None, slug=slug, **defaults)
             created += 1
 
     return created, updated
 
 
-def consolidate_per_org_builtins(
-    skill_model, conversation_model
-) -> int:
+def consolidate_per_org_builtins(skill_model, conversation_model) -> int:
     """One-time dedupe for installs that seeded per-org builtins previously.
 
     For each builtin slug, promotes the oldest existing row to global
@@ -143,9 +139,9 @@ def consolidate_per_org_builtins(
 
         other_ids = [r.id for r in rows[1:]]
         if other_ids:
-            conversation_model.objects.filter(
-                active_skill_id__in=other_ids
-            ).update(active_skill=canonical)
+            conversation_model.objects.filter(active_skill_id__in=other_ids).update(
+                active_skill=canonical
+            )
             skill_model.objects.filter(id__in=other_ids).delete()
             deleted += len(other_ids)
 

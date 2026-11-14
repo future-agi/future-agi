@@ -57,7 +57,8 @@ def generate_scan_cluster_severity(category: str, brief: str) -> str | None:
 
 
 def generate_eval_cluster_meta(
-    eval_name: str, reasoning: str,
+    eval_name: str,
+    reasoning: str,
 ) -> EvalClusterMeta | None:
     """LLM-generated title + fix_layer + severity for an eval cluster.
     Returns None on OSS or LLM failure (caller falls back to deterministic title)."""
@@ -136,8 +137,7 @@ def attribute_key_moments(
             return key_moments
         trace_dict = traces[0].to_dict()
         quotes = [
-            (km.get("kevinified") or km.get("verbatim") or "")
-            for km in key_moments
+            (km.get("kevinified") or km.get("verbatim") or "") for km in key_moments
         ]
         attribution = _attribute_key_moments(quotes, trace_dict)
         return [

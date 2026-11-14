@@ -1283,21 +1283,39 @@ def test_native_dashboard_fallback_resolves_winners_before_exact_time(
     run, insert = root_final_native
     start, end = END.replace(minute=15), END.replace(minute=30)
     base = {
-        "project_id": PROJECT, "start_time": END.replace(minute=20),
-        "attrs_bool": {"ready": 0}, "attrs_number": {"ready": 0},
-        "attrs_string": {"ready": "zero"}, "latency_ms": 90,
+        "project_id": PROJECT,
+        "start_time": END.replace(minute=20),
+        "attrs_bool": {"ready": 0},
+        "attrs_number": {"ready": 0},
+        "attrs_string": {"ready": "zero"},
+        "latency_ms": 90,
     }
 
     def add(name, **changes):
         insert(**{**base, "id": name, **changes})
 
-    for name, time in (("before", start - timedelta(minutes=5)),
-                       ("after", end + timedelta(minutes=10))):
+    for name, time in (
+        ("before", start - timedelta(minutes=5)),
+        ("after", end + timedelta(minutes=10)),
+    ):
         add(name)
         add(name, _version=2, start_time=time)
     add("clear")
-    add("clear", _version=2, attrs_bool={}, attrs_number={}, attrs_string={}, latency_ms=70)
-    add("wrong-type", attrs_bool={}, attrs_number={}, attrs_string={"ready": "other"}, latency_ms=20)
+    add(
+        "clear",
+        _version=2,
+        attrs_bool={},
+        attrs_number={},
+        attrs_string={},
+        latency_ms=70,
+    )
+    add(
+        "wrong-type",
+        attrs_bool={},
+        attrs_number={},
+        attrs_string={"ready": "other"},
+        latency_ms=20,
+    )
     add("child", parent_span_id="parent")
     add("nil-parent", parent_span_id="00000000-0000-0000-0000-000000000000")
     add("root-to-child")
@@ -1309,8 +1327,13 @@ def test_native_dashboard_fallback_resolves_winners_before_exact_time(
     for positive in (False, True):
         if positive:
             add("zero", latency_ms=10, parent_span_id="")
-            add("one", attrs_bool={"ready": 1}, attrs_number={"ready": 1},
-                attrs_string={"ready": "one"}, latency_ms=30)
+            add(
+                "one",
+                attrs_bool={"ready": 1},
+                attrs_number={"ready": 1},
+                attrs_string={"ready": "one"},
+                latency_ms=30,
+            )
             add("reverse", start_time=start - timedelta(minutes=5))
             add("reverse", _version=2, latency_ms=50)
             add("zero", service_name="other-service", latency_ms=17)
@@ -1320,13 +1343,24 @@ def test_native_dashboard_fallback_resolves_winners_before_exact_time(
             add("nullable", latency_ms=None)
 
         # Complete physical winners, materialized before ANY mutable filter.
-        winners = run("SELECT project_id,start_time,is_deleted,parent_span_id,"
-                      "attrs_bool,attrs_number,attrs_string,latency_ms FROM spans FINAL")
-        roots = [r for r in winners if r["project_id"] == PROJECT and not r["is_deleted"]
-                 and r["parent_span_id"] in (None, "")
-                 and start <= r["start_time"].replace(tzinfo=UTC) < end]
+        winners = run(
+            "SELECT project_id,start_time,is_deleted,parent_span_id,"
+            "attrs_bool,attrs_number,attrs_string,latency_ms FROM spans FINAL"
+        )
+        roots = [
+            r
+            for r in winners
+            if r["project_id"] == PROJECT
+            and not r["is_deleted"]
+            and r["parent_span_id"] in (None, "")
+            and start <= r["start_time"].replace(tzinfo=UTC) < end
+        ]
         if kind:
-            column = {"boolean": "attrs_bool", "number": "attrs_number", "text": "attrs_string"}[kind]
+            column = {
+                "boolean": "attrs_bool",
+                "number": "attrs_number",
+                "text": "attrs_string",
+            }[kind]
 
             def matches(row, column=column):
                 attrs = row[column]
@@ -1346,14 +1380,39 @@ def test_native_dashboard_fallback_resolves_winners_before_exact_time(
             roots = [r for r in roots if matches(r)]
         values = [r["latency_ms"] for r in roots if r["latency_ms"] is not None]
         body = _config(filtered=False)
-        body.update(breakdowns=[], time_range={"custom_start": start.isoformat(), "custom_end": end.isoformat()})
-        filters = [{"column_id": "ready", "filter_config": {
-            "col_type": "SPAN_ATTRIBUTE", "filter_type": kind,
-            "filter_op": operation, "filter_value": value,
-        }}] if kind else []
+        body.update(
+            breakdowns=[],
+            time_range={
+                "custom_start": start.isoformat(),
+                "custom_end": end.isoformat(),
+            },
+        )
+        filters = (
+            [
+                {
+                    "column_id": "ready",
+                    "filter_config": {
+                        "col_type": "SPAN_ATTRIBUTE",
+                        "filter_type": kind,
+                        "filter_op": operation,
+                        "filter_value": value,
+                    },
+                }
+            ]
+            if kind
+            else []
+        )
         body["filters"] = [] if per_metric else filters
-        body["metrics"] = [{"id": "latency", "name": "latency", "type": "system_metric",
-            "source": "traces", "aggregation": "avg", "filters": filters if per_metric else []}]
+        body["metrics"] = [
+            {
+                "id": "latency",
+                "name": "latency",
+                "type": "system_metric",
+                "source": "traces",
+                "aggregation": "avg",
+                "filters": filters if per_metric else [],
+            }
+        ]
         builder = _builder(body)
         sql, params = builder.build_metric_query(builder.metrics[0])
         assert "parent_span_id" in sql and "avg(latency_ms)" in sql

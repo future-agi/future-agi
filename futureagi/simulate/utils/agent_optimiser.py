@@ -1099,9 +1099,7 @@ def get_full_test_execution_data(test_execution_id: str) -> dict | None:
             test_execution.agent_definition_id, test_execution.agent_version_id
         )
         if agent_prompt is None:
-            agent_prompt = _get_prompt_from_run_test(
-                test_execution.run_test
-            )
+            agent_prompt = _get_prompt_from_run_test(test_execution.run_test)
         call_executions = get_call_executions_with_details(test_execution_id)
 
         return {

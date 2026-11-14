@@ -461,9 +461,7 @@ def _evaluator_percentage_band(
     result = analytics.execute_ch_query(
         query,
         params,
-        timeout_ms=deadline.remaining_ms(
-            MONITOR_GRAPH_CH_TIMEOUT_CAP_MS, floor_ms=1
-        ),
+        timeout_ms=deadline.remaining_ms(MONITOR_GRAPH_CH_TIMEOUT_CAP_MS, floor_ms=1),
         settings=MONITOR_CH_SETTINGS,
     )
     deadline.remaining_ms(floor_ms=1)

@@ -182,7 +182,6 @@ class GraphExecutionWorkflow:
         running: dict[asyncio.Task, str] = {}  # task -> node_id
 
         while True:
-
             if len(running) < input.max_concurrent_nodes:
                 # Get ready, skip, and pending nodes
                 ready_result = await workflow.execute_activity(

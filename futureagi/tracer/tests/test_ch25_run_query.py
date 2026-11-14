@@ -14,6 +14,7 @@ Pin the v1↔v2 shadow runner behavior end-to-end (in-process, no CH).
 
 Fake builders are used so the test runs without a CH cluster.
 """
+
 from __future__ import annotations
 
 from typing import Any, Tuple
@@ -43,6 +44,7 @@ class _FakeV2:
 @pytest.fixture(autouse=True)
 def register_fake_dispatch_entry():
     from tracer.services.clickhouse.v2.dispatch import _BuilderEntry, _REGISTRY
+
     # Inject a fake registry row — the dispatcher resolves classes by importpath,
     # so register the test classes by writing the entry directly.
     _REGISTRY["FAKE_QUERY_TYPE"] = _BuilderEntry(
@@ -58,9 +60,9 @@ def register_fake_dispatch_entry():
 def _override_routing(**kw):
     base = {
         "QUERY_TYPES_V2_PRIMARY": "",
-        "QUERY_TYPES_V2_ONLY":    "",
-        "QUERY_TYPES_SHADOW":     "",
-        "QUERY_TYPES_DISABLED":   "",
+        "QUERY_TYPES_V2_ONLY": "",
+        "QUERY_TYPES_SHADOW": "",
+        "QUERY_TYPES_DISABLED": "",
     }
     base.update(kw)
     return override_settings(CLICKHOUSE_V2=base)
@@ -69,6 +71,7 @@ def _override_routing(**kw):
 # ─── V1_ONLY ────────────────────────────────────────────────────────────────
 def test_v1_only_runs_only_v1():
     from tracer.services.clickhouse.v2.run_query import run_with_v2_shadow
+
     seen_classes = []
 
     def build(Cls):
@@ -80,7 +83,9 @@ def test_v1_only_runs_only_v1():
 
     with _override_routing():  # default = V1_ONLY
         result = run_with_v2_shadow(
-            query_type="FAKE_QUERY_TYPE", build=build, execute=execute,
+            query_type="FAKE_QUERY_TYPE",
+            build=build,
+            execute=execute,
         )
 
     assert result == ("v1_result", "SELECT 'v1' AS source")
@@ -91,6 +96,7 @@ def test_v1_only_runs_only_v1():
 # ─── V2_ONLY ────────────────────────────────────────────────────────────────
 def test_v2_only_runs_only_v2():
     from tracer.services.clickhouse.v2.run_query import run_with_v2_shadow
+
     seen_classes = []
 
     def build(Cls):
@@ -102,7 +108,9 @@ def test_v2_only_runs_only_v2():
 
     with _override_routing(QUERY_TYPES_V2_ONLY="FAKE_QUERY_TYPE"):
         result = run_with_v2_shadow(
-            query_type="FAKE_QUERY_TYPE", build=build, execute=execute,
+            query_type="FAKE_QUERY_TYPE",
+            build=build,
+            execute=execute,
         )
 
     assert result == ("result", "SELECT 'v2' AS source")
@@ -113,6 +121,7 @@ def test_v2_only_runs_only_v2():
 # ─── SHADOW ──────────────────────────────────────────────────────────────────
 def test_shadow_runs_both_and_returns_v1():
     from tracer.services.clickhouse.v2.run_query import run_with_v2_shadow
+
     seen_classes = []
 
     def build(Cls):
@@ -124,7 +133,9 @@ def test_shadow_runs_both_and_returns_v1():
 
     with _override_routing(QUERY_TYPES_SHADOW="FAKE_QUERY_TYPE"):
         result = run_with_v2_shadow(
-            query_type="FAKE_QUERY_TYPE", build=build, execute=execute,
+            query_type="FAKE_QUERY_TYPE",
+            build=build,
+            execute=execute,
         )
 
     # Both classes built; result returned is v1
@@ -145,7 +156,9 @@ def test_v2_primary_runs_both_and_returns_v2():
 
     with _override_routing(QUERY_TYPES_V2_PRIMARY="FAKE_QUERY_TYPE"):
         result = run_with_v2_shadow(
-            query_type="FAKE_QUERY_TYPE", build=build, execute=execute,
+            query_type="FAKE_QUERY_TYPE",
+            build=build,
+            execute=execute,
         )
 
     assert result == ("result", "SELECT 'v2' AS source")
@@ -153,6 +166,7 @@ def test_v2_primary_runs_both_and_returns_v2():
 
 def test_v2_primary_falls_back_to_v1_when_v2_raises():
     from tracer.services.clickhouse.v2.run_query import run_with_v2_shadow
+
     call_count = {"v1": 0, "v2": 0}
 
     def build(Cls):
@@ -167,7 +181,9 @@ def test_v2_primary_falls_back_to_v1_when_v2_raises():
 
     with _override_routing(QUERY_TYPES_V2_PRIMARY="FAKE_QUERY_TYPE"):
         result = run_with_v2_shadow(
-            query_type="FAKE_QUERY_TYPE", build=build, execute=execute,
+            query_type="FAKE_QUERY_TYPE",
+            build=build,
+            execute=execute,
         )
 
     assert result == ("v1_result", "SELECT 'v1' AS source")
@@ -186,7 +202,9 @@ def test_shadow_detects_diff_when_results_differ(caplog):
 
     with _override_routing(QUERY_TYPES_SHADOW="FAKE_QUERY_TYPE"):
         result = run_with_v2_shadow(
-            query_type="FAKE_QUERY_TYPE", build=build, execute=execute,
+            query_type="FAKE_QUERY_TYPE",
+            build=build,
+            execute=execute,
         )
 
     # user-facing result is v1
@@ -209,7 +227,9 @@ def test_disabled_short_circuits():
 
     with _override_routing(QUERY_TYPES_DISABLED="FAKE_QUERY_TYPE"):
         result = run_with_v2_shadow(
-            query_type="FAKE_QUERY_TYPE", build=build, execute=execute,
+            query_type="FAKE_QUERY_TYPE",
+            build=build,
+            execute=execute,
         )
 
     assert result is None
