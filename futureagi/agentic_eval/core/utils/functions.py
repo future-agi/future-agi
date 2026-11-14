@@ -508,6 +508,9 @@ def detect_input_type(input_item: Any) -> dict:
     """
     Detect the type of input (text, image, audio, file) based on content.
 
+    Reachable video URLs remain text: downstream evaluators and embeddings
+    receive the URL string, not decoded video or an audio-duration charge.
+
     Args:
         input_item: The input to analyze. Can be a single value, dict, or list.
                    For lists, detects if all items are of the same media type (e.g., all images).

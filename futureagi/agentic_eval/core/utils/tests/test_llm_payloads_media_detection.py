@@ -5,8 +5,10 @@ from unittest.mock import MagicMock, Mock
 import pytest
 
 from agentic_eval.core.utils import functions, llm_payloads
+from agentic_eval.core_evals.fi_evals.llm.custom_prompt_evaluator.evaluator import (
+    CustomPromptEvaluator,
+)
 from agentic_eval.core_evals.fi_utils.exceptions import MediaNotAccessibleError
-
 
 _MP4_HEADER = b"\x00\x00\x00\x18ftypmp42\x00\x00\x00\x00mp42isom"
 _PNG_HEADER = b"\x89PNG\r\n\x1a\n" + b"\x00\x00\x00\rIHDR" + b"\x00" * 16
@@ -73,7 +75,9 @@ def test_mp4_extension_does_not_override_sniffed_image(media_io):
     download_image.assert_called_once_with(url)
 
 
-@pytest.mark.parametrize("extension", ["png", "jpg", "jpeg", "gif", "webp", "svg", "bmp", "tiff"])
+@pytest.mark.parametrize(
+    "extension", ["png", "jpg", "jpeg", "gif", "webp", "svg", "bmp", "tiff"]
+)
 def test_image_extensions_keep_the_fast_path(media_io, extension):
     _, fetch, download_image = media_io
     url = f"https://cdn.example.com/picture.{extension}?download=1"
@@ -125,3 +129,39 @@ def test_explicit_image_type_still_validates_mp4_url_as_image(media_io):
 
     fetch.assert_not_called()
     download_image.assert_called_once_with(url)
+
+
+@pytest.mark.parametrize(
+    "body,content_type",
+    [(_MP4_HEADER, "application/octet-stream"), (b"unknown", "video/mp4")],
+    ids=["video-magic", "video-content-type"],
+)
+def test_video_url_reaches_eval_judge_as_text(
+    media_io, monkeypatch, body, content_type
+):
+    response, fetch, download_image = media_io
+    response.iter_content.return_value = [body]
+    response.headers = {"Content-Type": content_type}
+    url = "https://cdn.example.com/clip.mp4"
+    evaluator = CustomPromptEvaluator(
+        rule_prompt="Assess the URL text, not video content: {{clip}}",
+        output_type="score",
+        model="gpt-4o",
+        provider="openai",
+        api_key="synthetic-test-key",
+    )
+    judge = Mock(return_value='{"result": 0.75, "explanation": "URL text only"}')
+    monkeypatch.setattr(evaluator, "call_llm", judge)
+    download_image.side_effect = ValueError("Video bytes are not an image")
+
+    result = evaluator._evaluate(clip=url, required_keys=["clip"])
+
+    assert result["data"]["result"] == 0.75
+    assert result["reason"] == "URL text only"
+    judge.assert_called_once()
+    user_message = judge.call_args.kwargs["prompt"][-1]
+    assert user_message["role"] == "user"
+    assert isinstance(user_message["content"], str)
+    assert f"<clip>{url}</clip>" in user_message["content"]
+    fetch.assert_called_once_with(url, timeout=100, stream=True)
+    download_image.assert_not_called()
