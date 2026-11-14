@@ -57,6 +57,22 @@ type GuardrailConfig struct {
 	FailOpen     bool                       `json:"fail_open,omitempty"`
 	TimeoutMs    int                        `json:"timeout_ms,omitempty"`
 	Checks       map[string]*GuardrailCheck `json:"checks,omitempty"`
+
+	// KeyPolicies are guardrail policies scoped to chosen API keys. They run
+	// after the org checks above, only for requests authenticated with one of
+	// their KeyIDs, and can never weaken an org-level check.
+	KeyPolicies []*KeyGuardrailPolicy `json:"key_policies,omitempty"`
+}
+
+// KeyGuardrailPolicy is a named set of guardrail checks applied only to
+// requests made with one of KeyIDs (gateway key IDs, as in auth_key_id).
+type KeyGuardrailPolicy struct {
+	ID       string                     `json:"id"`
+	Name     string                     `json:"name,omitempty"`
+	Mode     string                     `json:"mode,omitempty"` // "enforce" (default) or "monitor"
+	Priority int                        `json:"priority,omitempty"`
+	KeyIDs   []string                   `json:"key_ids"`
+	Checks   map[string]*GuardrailCheck `json:"checks,omitempty"`
 }
 
 // GuardrailCheck configures a single guardrail check for an org.

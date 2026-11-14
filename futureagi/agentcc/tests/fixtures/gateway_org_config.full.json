@@ -25,7 +25,24 @@
           "redact": true
         }
       }
-    }
+    },
+    "key_policies": [
+      {
+        "id": "7d3f9f0e-1c2b-4a5d-9e8f-0a1b2c3d4e5f",
+        "name": "payments-rollout",
+        "mode": "monitor",
+        "priority": 100,
+        "key_ids": ["key-gateway-1"],
+        "checks": {
+          "secret-detection": {
+            "enabled": true,
+            "action": "block",
+            "confidence_threshold": 0.8,
+            "config": {}
+          }
+        }
+      }
+    ]
   },
   "routing": {
     "strategy": "weighted",

@@ -32,6 +32,16 @@ type GuardrailConfig struct {
 	FailOpen     *bool                      `json:"fail_open,omitempty"`
 	TimeoutMs    *int                       `json:"timeout_ms,omitempty"`
 	Checks       map[string]*GuardrailCheck `json:"checks,omitempty"`
+	KeyPolicies  []*KeyGuardrailPolicy      `json:"key_policies,omitempty"`
+}
+
+type KeyGuardrailPolicy struct {
+	ID       string                     `json:"id"`
+	Name     *string                    `json:"name,omitempty"`
+	Mode     *string                    `json:"mode,omitempty"`
+	Priority *int                       `json:"priority,omitempty"`
+	KeyIds   []string                   `json:"key_ids"`
+	Checks   map[string]*GuardrailCheck `json:"checks,omitempty"`
 }
 
 type ConditionalRoute struct {
