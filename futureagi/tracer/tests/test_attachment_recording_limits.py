@@ -12,7 +12,7 @@ from datetime import timedelta
 
 import pytest
 from django.db import connection
-from django.db.models import deletion
+from django.db.models import F, deletion
 from django.test.utils import CaptureQueriesContext
 from django.utils import timezone
 
@@ -294,9 +294,14 @@ def test_finished_and_dead_segments_leave_the_queue_and_stay(rec):
         is None
     )
     # A disabled scope is not terminal: its open segment stays queued.
-    AttachmentScope.objects.filter(pk=rec.scope.pk).update(enabled=False)
+    # ``enabled`` is in the 0133 fence's policy tuple: bump the version with it.
+    AttachmentScope.objects.filter(pk=rec.scope.pk).update(
+        enabled=False, policy_version=F("policy_version") + 1
+    )
     assert derivatives.purge(limit=100) == 0
-    AttachmentScope.objects.filter(pk=rec.scope.pk).update(enabled=True)
+    AttachmentScope.objects.filter(pk=rec.scope.pk).update(
+        enabled=True, policy_version=F("policy_version") + 1
+    )
     assert [pk for pk, _ in derivatives.pending(limit=20)] == [open_.pk]
 
 
