@@ -69,7 +69,7 @@ test('SKILLS-E2E-013: preview one inventory packet, publish the reviewed set and
   try {
     await page.goto('/dashboard/skills');
     await page.getByRole('button', { name: /^(Import a folder or ZIP|Import)$/ }).click();
-    await page.getByRole('tab', { name: 'Review sources', exact: true }).click();
+    await page.getByRole('tab', { name: 'From another tool', exact: true }).click();
     const previews: Response[] = [];
     page.on('response', response => { if (response.request().method() === 'POST' && /\/skills\/intake\/(langfuse\/)?preview\/$/.test(response.url())) previews.push(response); });
     await page.getByLabel('Inventory migration packet', { exact: true }).setInputFiles({ name: 'migration-packet.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(packet)) });
@@ -92,7 +92,7 @@ test('SKILLS-E2E-013: preview one inventory packet, publish the reviewed set and
     const submit = page.getByRole('button', { name: 'Import and publish 3 items', exact: true });
     await page.getByRole('checkbox', { name: /^I confirm my rights to copy all 3 items/ }).check();
     await expect(submit).toBeDisabled();
-    await page.getByRole('checkbox', { name: /^Leave out 1 blocked member/ }).check();
+    await page.getByRole('checkbox', { name: /^Leave out 1 skill/ }).check();
     await submit.click();
     await expect(page.getByText('3 versions published without labels. Production was not changed.', { exact: true })).toBeVisible({ timeout: 180_000 });
     const receipts: Receipt[] = [];

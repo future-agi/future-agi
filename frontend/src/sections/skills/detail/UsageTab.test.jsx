@@ -68,6 +68,8 @@ describe("Usage tab", () => {
     "uses the %s data palette and stacked daily series",
     (mode) => {
       show("", mode);
+      fireEvent.click(screen.getByRole("button", { name: "Fetch counts and details" }));
+      fireEvent.click(screen.getByRole("button", { name: "What fetches mean" }));
       const props = ReactApexChart.mock.calls.at(-1)[0];
       expect(props.type).toBe("bar");
       expect(props.options.chart.stacked).toBe(true);
@@ -108,6 +110,7 @@ describe("Usage tab", () => {
   });
   it("provides exact daily counts and a consumer table without relying on chart colors", () => {
     show();
+    fireEvent.click(screen.getByRole("button", { name: "Fetch counts and details" }));
     fireEvent.click(screen.getByRole("tab", { name: "Table", exact: true }));
     const daily = within(
       screen.getByRole("table", { name: "Daily fetches by version" }),
@@ -130,6 +133,7 @@ describe("Usage tab", () => {
     );
     show();
     expect(screen.getByText("No fetches in this period")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "What fetches mean" }));
     expect(screen.getByText(/A fetch doesn't prove/)).toBeInTheDocument();
     expect(ReactApexChart).not.toHaveBeenCalled();
   });
@@ -157,4 +161,11 @@ describe("Usage tab", () => {
   });
 });
 
-vi.mock("src/sections/skills/governance/AdoptionPanel", () => ({ default: () => <div>Adoption panel</div> }));
+vi.mock("src/sections/skills/governance/AdoptionPanel", () => ({ default: ({ summary }) => <div>Adoption panel{summary}</div> }));
+
+it('shows one time control and keeps detailed counts disclosed by default', () => {
+  show();
+  expect(screen.getAllByRole('combobox')).toHaveLength(1);
+  expect(screen.getByRole('button', { name: 'Fetch counts and details' })).toHaveAttribute('aria-expanded', 'false');
+  expect(ReactApexChart).not.toHaveBeenCalled();
+});

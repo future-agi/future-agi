@@ -24,7 +24,6 @@ import VersionSelect from "src/sections/skills/components/VersionSelect";
 import { usePreviewState } from "src/sections/skills/components/SkillsStatePreview";
 import IdentityChip from "../components/IdentityChip";
 import RestoreVersionDialog from "../versions/RestoreVersionDialog";
-import CompareSummary from "./CompareSummary";
 
 function parseRef(value, fallback) {
   if (value == null) return fallback;
@@ -117,12 +116,12 @@ export default function SkillCompareView() {
   const showEmpty = preview === "empty" || noVersions || files.length === 0;
 
   return (
-    <Stack spacing={2} sx={{ p: 3, minWidth: 0, flex: 1 }}>
+    <Stack spacing={2} sx={{ p: { xs: 2, md: 3 }, minWidth: 0, flex: 1 }}>
       <ObjectHeader
         crumbs={[{ label: "Skills", to: paths.dashboard.skills.root }, { label: skill.data?.name || "Skill", to: paths.dashboard.skills.detail(skillId) }, { label: "Compare" }]}
         title="Compare versions"
         purpose="Review file changes before choosing a version."
-        actions={<Button variant="contained" color="primary" onClick={() => router.push(returnTo)}>{returnLabel}</Button>}
+        actions={<><Button variant="text" onClick={() => router.push(returnTo)}>{returnLabel}</Button>{!showLoading && !showError && !showEmpty && skill.data && [...new Set([resolvedFrom, resolvedTo])].filter((ref) => typeof ref === "number" && ref !== latest).map((number) => <Button key={number} variant="outlined" onClick={() => setRestore(number)}>Restore v{number} as new version</Button>)}</>}
       />
       {skill.data && (
         <Stack
@@ -186,7 +185,6 @@ export default function SkillCompareView() {
       ) : (
         <Stack spacing={2}>
           <Typography variant="s1">{files.every((file) => file.status === 'unchanged') ? `No files changed between ${refTitle(resolvedFrom)} and ${refTitle(resolvedTo)}.` : `${files.filter((file) => file.status !== 'unchanged').length} ${files.filter((file) => file.status !== 'unchanged').length === 1 ? 'file changed' : 'files changed'} between ${refTitle(resolvedFrom)} and ${refTitle(resolvedTo)}: ${files.filter((file) => file.status !== 'unchanged').map((file) => file.path).join(', ')}`}</Typography>
-          <CompareSummary summary={compare.data.summary} />
           {selected && <TechnicalDetails><Stack direction="row" useFlexGap flexWrap="wrap" spacing={1.5}>
             {selected.fromSha256 && <IdentityChip value={selected.fromSha256} label={`${refTitle(resolvedFrom)} file digest`} />}
             {selected.toSha256 && <IdentityChip value={selected.toSha256} label={`${refTitle(resolvedTo)} file digest`} />}
@@ -232,7 +230,6 @@ export default function SkillCompareView() {
               <Box sx={{ minWidth: 0, flex: 1 }}>
                 <Section
                   title={selected.path}
-                  actions={<FileStatusBadge status={selected.status} />}
                 >
                   {selected.status === "unchanged" ? (
                     <Typography
@@ -256,21 +253,7 @@ export default function SkillCompareView() {
               </Box>
             )}
           </Stack>
-          {skill.data && (
-            <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap">
-              {[...new Set([resolvedFrom, resolvedTo])]
-                .filter((ref) => typeof ref === "number" && ref !== latest)
-                .map((number) => (
-                  <Button
-                    key={number}
-                    variant="outlined"
-                    onClick={() => setRestore(number)}
-                  >
-                    Restore v{number} as new version
-                  </Button>
-                ))}
-            </Stack>
-          )}
+
         </Stack>
       )}
       {restore !== null && skill.data && (

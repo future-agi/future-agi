@@ -2,11 +2,13 @@ import { useEffect, useRef, useState } from "react";
 import PropTypes from "prop-types";
 import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import { enqueueSnackbar } from "notistack";
-import { Alert, Box, Button, Stack, Tab, TextField, Tooltip, Typography } from "@mui/material";
+import { Alert, Box, Button, IconButton, Menu, MenuItem, Stack, Tab, TextField, Tooltip, Typography } from "@mui/material";
 
 import { useDiscardSkillDraft } from "src/api/skills";
 import { useSkillTestingOptions } from "src/api/skills/testing";
 import { paths } from "src/routes/paths";
+import Iconify from "src/components/iconify";
+import ActionReason from "../components/ActionReason";
 import ObjectHeader from "../components/ObjectHeader";
 import useDraftChecks from "./useDraftChecks";
 import ContentSkeleton from "src/components/content-skeleton";
@@ -52,6 +54,8 @@ function EditorSession({ skill, initialDraft, refetchDraft, kind = 'skill', reso
     return next;
   });
   const closeAssist = () => setParams((previous) => { const next = new URLSearchParams(previous); next.delete('assist'); return next; });
+  const [actionAnchor, setActionAnchor] = useState(null);
+  const [hasEdited, setHasEdited] = useState(false);
   const [discardOpen, setDiscardOpen] = useState(false);
   const [conflictOpen, setConflictOpen] = useState(false);
   const [publishDraft, setPublishDraft] = useState(null);
@@ -64,6 +68,7 @@ function EditorSession({ skill, initialDraft, refetchDraft, kind = 'skill', reso
   // explicit flush binds the checkpoint to the current saved recovery digest.
   const migrationRecovery = !isContext && params.get('preserve') === 'migration';
   const session = useDraftSession(skill.id, initialDraft, migrationRecovery || preparing || discardOpen || Boolean(publishDraft), resourceApi);
+  useEffect(() => { if (session.dirty || ['saving', 'error', 'conflict'].includes(session.status) || session.revision !== initialDraft.revision) setHasEdited(true); }, [session.dirty, session.status, session.revision, initialDraft.revision]);
   const validation = useDraftChecks(session.files, skill.name, 600, !isContext);
   const publishPending = !isContext && (savingState(session) || !validation.current);
   const latestSession = useRef(session);
@@ -179,14 +184,19 @@ function EditorSession({ skill, initialDraft, refetchDraft, kind = 'skill', reso
       crumbs={[{ label: isContext ? 'Agent contexts' : 'Skills', to: isContext ? paths.dashboard.skills.contexts : paths.dashboard.skills.root }, { label: skill.name, to: detailPath }, { label: 'Draft' }]}
       purpose={isContext ? `${session.baseVersion == null ? 'New context' : `Based on v${session.baseVersion}`} · ${session.resolvedLock?.links?.length || 0} linked skill${session.resolvedLock?.links?.length === 1 ? '' : 's'}` : session.baseVersion === null ? 'New skill' : `Draft based on v${session.baseVersion}`}
       actions={<Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', justifyContent: 'flex-end', alignItems: 'center' }}>
-        <Typography role="status" variant="s3" color="text.secondary">{saveLabel}</Typography>
+        {(hasEdited || session.status === 'error' || session.status === 'conflict') && <Typography role="status" variant="s3" color="text.secondary">{saveLabel}</Typography>}
         {session.status === 'error' && <Button size="small" disabled={Boolean(session.mutationError)} onClick={() => session.save()}>Retry</Button>}
         {session.status === 'conflict' && <Button size="small" onClick={() => setConflictOpen(true)}>Resolve conflict</Button>}
-        {!isContext && <Tooltip title={!skill.permissions?.canRunTests ? 'You need test permissions to use AI assistance.' : !options.data?.assistEnabled ? 'AI assistance is not enabled for this workspace.' : locked ? 'Finish the current review first.' : ''}><span><Button variant="outlined" disabled={locked || !skill.permissions?.canRunTests || !options.data?.assistEnabled} onClick={() => openAssist('draft')}>Draft with AI</Button></span></Tooltip>}
-        <Button variant="outlined" disabled={locked || saving} onClick={() => setDiscardOpen(true)}>Discard draft</Button>
-        {publishPending && <Typography variant="s3" color="text.secondary">{savingState(session) ? 'Save and checks pending' : validation.error ? 'Retry checks to publish' : 'Checking…'}</Typography>}
-        <Button variant="contained" color="primary" disabled={locked || publishPending || session.status === 'conflict' || session.status === 'error' || (isContext && !onReview)} onClick={startPublish}>{isContext ? 'Review changes' : 'Publish'}</Button>
+        {!isContext && <Box sx={{ display: { xs: 'none', sm: 'block' } }}><Tooltip title={!skill.permissions?.canRunTests ? 'You need test permissions to use AI assistance.' : !options.data?.assistEnabled ? 'AI assistance is not enabled for this workspace.' : locked ? 'Finish the current review first.' : ''}><span><Button variant="outlined" disabled={locked || !skill.permissions?.canRunTests || !options.data?.assistEnabled} onClick={() => openAssist('draft')}>Draft with AI</Button></span></Tooltip></Box>}
+        <Button sx={{ display: { xs: "none", sm: "inline-flex" } }} variant="outlined" disabled={locked || saving} onClick={() => setDiscardOpen(true)}>Discard draft</Button>
+        <Button variant="contained" color="primary" disabled={locked || publishPending || session.status === 'conflict' || session.status === 'error' || (isContext && !onReview)} sx={{ order: { xs: -1, sm: 0 } }} onClick={startPublish}>{isContext ? 'Review changes' : 'Publish'}</Button>
+        <IconButton aria-label="Draft actions" sx={{ display: { xs: 'inline-flex', sm: 'none' } }} onClick={(event) => setActionAnchor(event.currentTarget)}><Iconify icon="solar:menu-dots-bold" /></IconButton>
+        <Menu anchorEl={actionAnchor} open={Boolean(actionAnchor)} onClose={() => setActionAnchor(null)}>
+          {!isContext && <MenuItem disabled={locked || !skill.permissions?.canRunTests || !options.data?.assistEnabled} onClick={() => { setActionAnchor(null); openAssist('draft'); }}>Draft with AI</MenuItem>}
+          <MenuItem disabled={locked || saving} onClick={() => { setActionAnchor(null); setDiscardOpen(true); }}>Discard draft</MenuItem>
+        </Menu>
       </Box>} sx={{ flexWrap: 'wrap', rowGap: 1.5, flexShrink: 0 }} />
+    {!isContext && !assistKind && !options.data?.assistEnabled && <ActionReason sx={{ flexBasis: "auto", flexShrink: 0 }} id="editor-action-reason-1" reason="AI drafting is off for this workspace" />}
     {operationError && <Alert severity="error">{operationError}</Alert>}
     {stale && <Alert severity="warning" sx={{ flexShrink: 0 }} action={!isContext && <Button color="inherit" disabled={locked || saving || session.status === 'conflict'} onClick={compareLatest}>Compare</Button>}>
       {isContext ? `The content origin remains v${session.baseVersion}. Latest is v${skill.latestVersion}; review it separately without copying its files.` : `v${skill.latestVersion} was published after you started. Compare your saved draft with the latest version before publishing.`}

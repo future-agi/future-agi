@@ -164,7 +164,7 @@ it('does not repopulate assistance after switching the session scope during prev
 it('does not expose paid generation when only text comparisons are enabled', async () => {
   api.assistEnabled = false;
   render(tree());
-  expect(await screen.findByText('Paid assistance is unavailable')).toBeInTheDocument();
+  expect(await screen.findByText('AI drafting is off for this workspace')).toBeInTheDocument();
   expect(screen.getByRole('button', { name: 'Draft with AI' })).toBeDisabled();
   expect(screen.queryByRole('button', { name: 'Generate proposal' })).not.toBeInTheDocument();
   expect(api.preview).not.toHaveBeenCalled();

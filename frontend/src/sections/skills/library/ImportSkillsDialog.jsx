@@ -13,6 +13,7 @@ import { Upload } from "src/components/upload";
 import ChecksList from "src/sections/skills/components/ChecksList";
 import { LIMITS } from "src/sections/skills/constants";
 import ImportPreviewTable from "./ImportPreviewTable";
+import ActionReason from "../components/ActionReason";
 import RetainedMigrationPanel from "./RetainedMigrationPanel";
 
 function uploadForm(files) {
@@ -99,9 +100,10 @@ function ImportSkillsDialogContent({ open, onClose, initialTab, reopenPlanIds })
   return (
     <ModalWrapper open={open} onClose={onClose} title="Import skills" modalWidth={tab === "migration" ? "1200px" : "880px"} paperSx={{ maxWidth: tab === "migration" ? "lg" : 880, overflow: "hidden" }}
       subTitle={tab === "migration" ? migrationConsequence : tab === "github" ? "Review the source, then import as an unpublished draft." : "Review files and checks before publishing versions to your workspace."}
+      actionBtnProps={{ "aria-describedby": tab === "upload" && !preview && !files.length ? "import-action-reason-1" : undefined }}
       isLoading={busy} isValid={Boolean(result) || (preview ? canImport : files.length > 0)}
       dialogActionSx={tab === "migration" ? { display: "none" } : {}} onSubmit={submit} actionBtnSx={tab !== "upload" ? { display: "none" } : {}} actionBtnTitle={result ? "Done" : preview ? "Import" : "Preview import"}>
-      <CustomTabs value={tab} onChange={(_, value) => setTab(value)} aria-label="Import method"><Tab value="upload" label="Upload" disabled={busy} /><Tab value="github" label="GitHub" disabled={busy} /><Tab value="migration" label="Review sources" disabled={busy} /></CustomTabs>
+      <CustomTabs value={tab} onChange={(_, value) => setTab(value)} aria-label="Import method"><Tab value="upload" label="Upload" disabled={busy} /><Tab value="github" label="GitHub" disabled={busy} /><Tab value="migration" label="From another tool" disabled={busy} /></CustomTabs>
       {tab === 'migration' ? <RetainedMigrationPanel footerTarget={migrationFooter} onConsequenceChange={setMigrationConsequence} onBusyChange={setMigrationBusy} onClose={onClose} initialPlanIds={reopenPlanIds} /> : tab === 'github' ? <Box sx={{ minWidth: 0, overflowY: 'auto' }}><GitHubImportPanel onStaged={(receipt) => {
         const id = receipt.consumed?.skillId ?? receipt.skill?.id;
         if (id) { onClose(); navigate(`${paths.dashboard.skills.edit(id)}?tab=tests`); }
@@ -157,6 +159,7 @@ function ImportSkillsDialogContent({ open, onClose, initialTab, reopenPlanIds })
           {result.failed.length > 0 && <Typography variant="s3" color="text.secondary">Successful imports are saved. Fix the failed skills and import them again.</Typography>}
         </>}
       </Stack>}
+      {tab === "upload" && !preview && !files.length && <ActionReason id="import-action-reason-1" reason="Choose a file or folder first" />}
       {tab === "migration" && <Box ref={setMigrationFooter} sx={{ flexShrink: 0, bgcolor: "background.paper" }} />}
     </ModalWrapper>
   );

@@ -1,7 +1,6 @@
 import PropTypes from "prop-types";
 import { Stack, Typography } from "@mui/material";
 
-import FileStatusBadge from "src/sections/skills/components/FileStatusBadge";
 
 const STATUSES = ["added", "removed", "modified", "unchanged"];
 
@@ -17,9 +16,8 @@ export default function CompareSummary({ summary }) {
       {STATUSES.filter((status) => summary[status] > 0).map((status) => (
         <Stack key={status} direction="row" alignItems="center" spacing={0.5}>
           <Typography variant="s1" sx={{ fontVariantNumeric: "tabular-nums" }}>
-            {summary[status] ?? 0}
+            {summary[status] ?? 0} {summary[status] === 1 ? "file" : "files"} {status}
           </Typography>
-          <FileStatusBadge status={status} />
         </Stack>
       ))}
     </Stack>

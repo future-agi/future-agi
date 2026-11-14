@@ -2,7 +2,8 @@ import PropTypes from "prop-types";
 import { Button } from "@mui/material";
 import EmptyState from "src/components/empty-state";
 
-export default function LibraryEmptyState({ onCreate, onImport }) {
+export default function LibraryEmptyState({ onCreate, onImport, isViewer = false }) {
+  if (isViewer) return <EmptyState variant="first-run" title="No skills yet." description="Ask a workspace member to create one." />;
   return (
     <EmptyState variant="first-run" title="Give your agents a shared library" icon="solar:book-bookmark-linear"
       description="Skills are instructions an agent loads when it needs them. Agent contexts combine standing instructions with linked skills."
@@ -11,4 +12,4 @@ export default function LibraryEmptyState({ onCreate, onImport }) {
   );
 }
 
-LibraryEmptyState.propTypes = { onCreate: PropTypes.func.isRequired, onImport: PropTypes.func.isRequired };
+LibraryEmptyState.propTypes = { isViewer: PropTypes.bool, onCreate: PropTypes.func.isRequired, onImport: PropTypes.func.isRequired };

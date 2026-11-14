@@ -363,13 +363,13 @@ it('keeps publish entry closed until checks match the current files', async () =
   const view = mount();
   await screen.findByLabelText('File content');
   expect(screen.getByRole('button', { name: 'Publish', exact: true })).toBeDisabled();
-  expect(screen.getByText('Checking…')).toBeVisible();
+  expect(screen.queryByText('Checking…')).not.toBeInTheDocument();
   api.validation = { current: true, pending: false };
   view.refresh();
   expect(screen.getByRole('button', { name: 'Publish', exact: true })).toBeEnabled();
   api.validation = { current: false, pending: false, error: new Error('offline') };
   view.refresh();
   expect(screen.getByRole('button', { name: 'Publish', exact: true })).toBeDisabled();
-  expect(screen.getByText('Retry checks to publish')).toBeVisible();
+  expect(screen.getByRole('button', { name: 'Open check' })).toBeInTheDocument();
   expect(api.save).not.toHaveBeenCalled();
 });

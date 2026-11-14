@@ -45,7 +45,7 @@ const result = (rows = [row(3), row(2), row(1)]) => ({
 const checkRow = (number) =>
   fireEvent.click(
     within(
-      screen.getByText(`Release ${number}`).closest('[role="row"]'),
+      screen.getByText(`Release ${number}`).closest('tr'),
     ).getByRole("checkbox"),
   );
 

@@ -7,12 +7,12 @@ import NewSkillDialog from "./NewSkillDialog";
 import ImportSkillsDialog from "./ImportSkillsDialog";
 
 const api = vi.hoisted(() => ({
-  list: vi.fn(), templates: vi.fn(), create: vi.fn(), archive: vi.fn(),
+  isViewer: false, canArchive: true, list: vi.fn(), templates: vi.fn(), create: vi.fn(), archive: vi.fn(),
   assistEnabled: true, canMove: true, preview: vi.fn(), importSkills: vi.fn(), download: vi.fn(), refetch: vi.fn(),
 }));
 vi.mock("src/api/skills", () => ({
   useSkillsList: api.list,
-  useSkill: () => ({ data: { ...skill, labels: skill.labels.map((label) => ({ ...label, canMove: api.canMove })), protectedLabelNames: ["production"], permissions: { canArchive: true, canManageLabelProtection: api.canMove }, releaseRevision: 3 } }),
+  useSkill: () => ({ data: { ...skill, labels: skill.labels.map((label) => ({ ...label, canMove: api.canMove })), protectedLabelNames: ["production"], permissions: { canArchive: api.canArchive, canManageLabelProtection: api.canMove }, releaseRevision: 3 } }),
   useSkillTemplates: api.templates,
   useCreateSkill: () => ({ mutateAsync: api.create, isPending: false }),
   useArchiveSkill: () => ({ mutateAsync: api.archive, isPending: false }),
@@ -21,6 +21,7 @@ vi.mock("src/api/skills", () => ({
   downloadSkillsZip: api.download,
   getSkillErrorCode: (error) => error.code,
 }));
+vi.mock("../utils/access", () => ({ useSkillsAccess: () => ({ ready: true, isViewer: api.isViewer, canWrite: !api.isViewer }) }));
 vi.mock("notistack", () => ({ enqueueSnackbar: vi.fn() }));
 
 const skill = {
@@ -45,6 +46,7 @@ const bundle = (key, status = "new", warnings = 0, errors = 0) => ({
 
 beforeEach(() => {
   vi.clearAllMocks();
+  api.isViewer = false; api.canArchive = true;
   api.canMove = true; api.assistEnabled = true;
   api.list.mockReturnValue(listResult());
   api.templates.mockReturnValue({ data: templates, isPending: false, isError: false, refetch: vi.fn() });
@@ -115,7 +117,7 @@ describe("Skills library", () => {
   it("keeps workspace metrics when search returns no results and clears only filters", () => {
     api.list.mockReturnValue(listResult({ results: [], count: 0 }));
     renderLibrary("?search=missing&tag=support&label=production&page=3&sort=name&order=asc&keep=yes");
-    expect(screen.getByText("No skills found")).toBeInTheDocument();
+    expect(screen.getByText("No skills match these filters.")).toBeInTheDocument();
     expect(screen.getByText(/719 fetches/)).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Write from scratch" })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /Clear filters/i }));
@@ -128,14 +130,14 @@ describe("Skills library", () => {
   it("renders a recoverable error without a misleading empty state", () => {
     api.list.mockReturnValue({ ...listResult(), isError: true });
     renderLibrary();
-    expect(screen.getByText("Couldn't load skills")).toBeInTheDocument();
+    expect(screen.getByText("Couldn't load skills.")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Retry" }));
     expect(api.refetch).toHaveBeenCalledOnce();
   });
 
   it.each(["loading", "error", "empty"])("allows the %s state through the URL", (state) => {
     renderLibrary(`?state=${state}`);
-    const text = { loading: "Loading skills", error: "Couldn't load skills", empty: "Give your agents a shared library" };
+    const text = { loading: "Loading skills", error: "Couldn't load skills.", empty: "Give your agents a shared library" };
     if (state === "loading") expect(screen.getByLabelText(text[state])).toBeInTheDocument();
     else expect(screen.getByText(text[state])).toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "support-policy" })).not.toBeInTheDocument();
@@ -223,8 +225,8 @@ describe("Skills library", () => {
   it("recovers from an empty last page after archiving", () => {
     api.list.mockReturnValue(listResult({ results: [], count: 25, totalPages: 1 }));
     renderLibrary("?page=2");
-    expect(screen.getByText("No skills on this page")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Go to first page" }));
+    expect(screen.getByText("Page 2 doesn't exist.")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Go to page 1" }));
     expect(api.list).toHaveBeenLastCalledWith(expect.objectContaining({ page: 1 }));
   });
 
@@ -454,7 +456,40 @@ it('keeps the new-skill paid entry disabled when assistance is unavailable', asy
 it('supports the filtered-empty state preview without presenting a first-run library', () => {
   api.list.mockReturnValue(listResult());
   renderLibrary('?state=filtered-empty');
-  expect(screen.getByText('No skills found')).toBeInTheDocument();
+  expect(screen.getByText('No skills match these filters.')).toBeInTheDocument();
   expect(screen.getByRole('button', { name: 'New skill', exact: true })).toBeInTheDocument();
   expect(screen.queryByRole('button', { name: 'Create your first skill' })).not.toBeInTheDocument();
+});
+
+
+describe('library access presentation', () => {
+  it('omits create and import destinations for viewers', () => {
+    api.isViewer = true;
+    renderLibrary();
+    expect(screen.queryByRole('button', { name: 'New skill' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Import', exact: true })).not.toBeInTheDocument();
+  });
+  it('gives a viewer an actionable first-run explanation without creation controls', () => {
+    api.isViewer = true;
+    api.list.mockReturnValue(listResult({ results: [], count: 0, stats: { total: 0 } }));
+    renderLibrary();
+    expect(screen.getByText('No skills yet.')).toBeInTheDocument();
+    expect(screen.getByText('Ask a workspace member to create one.')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Create your first skill' })).not.toBeInTheDocument();
+  });
+  it('keeps member creation and disables archive using server permission', async () => {
+    api.canArchive = false;
+    renderLibrary();
+    expect(screen.getByRole('button', { name: 'New skill' })).toBeEnabled();
+    fireEvent.click(screen.getByRole('button', { name: 'Actions for support-policy' }));
+    expect(screen.getByRole('menuitem', { name: 'Archive' })).toHaveAttribute('aria-disabled', 'true');
+    expect(screen.getByText("You can't archive this skill. Ask a workspace admin.")).toBeInTheDocument();
+  });
+  it('distinguishes an invalid page response from a network error', () => {
+    api.list.mockReturnValue({ isError: true, error: { response: { status: 404 } }, refetch: api.refetch });
+    renderLibrary('?page=99');
+    expect(screen.getByText("Page 99 doesn't exist.")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Go to page 1' }));
+    expect(new URLSearchParams(window.location.search).get('page')).toBe('1');
+  });
 });

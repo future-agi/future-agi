@@ -25,7 +25,7 @@ function Archived({ scopeKey, query, onPageChange, onInspect, onReview, onUnarch
   return <Stack spacing={1.5} sx={{ minWidth: 0 }}>
     <PageHeader title="Archived skills" description="Inspect and recover original identities, versions and retained label policies." />
     <AuthoringError error={operation.error} />
-    {!scoped || query.isLoading ? <ContentSkeleton /> : query.error ? <ErrorState title="Archived skills unavailable" detail="Access is checked before listing or counting archived identities." onRetry={query.refetch} /> : !rows.length ? <EmptyState title="No archived skills" description="No authorized archived identities were returned." /> : <>
+    {!scoped || query.isLoading ? <ContentSkeleton /> : query.error ? <ErrorState title="Couldn't load archived skills." detail="Try loading the list again." onRetry={query.refetch} /> : !rows.length ? <EmptyState title="No archived skills" description="No authorized archived identities were returned." /> : <>
       <TableContainer><Table size="small" aria-label="Archived skill identities"><TableHead><TableRow sx={{ height: TABLE_HEADER_HEIGHT.default }}><TableCell>Original identity</TableCell><TableCell>Retained labels</TableCell><TableCell>Actions</TableCell></TableRow></TableHead>
         <TableBody>{rows.map((skill) => <TableRow hover key={skill.id} sx={{ height: ROW_HEIGHT.default }}>
           <TableCell><Typography variant="s1" display="block">{skill.name}</Typography><Typography variant="s3" display="block" sx={{ overflowWrap: "anywhere" }}>{skill.id}</Typography></TableCell>

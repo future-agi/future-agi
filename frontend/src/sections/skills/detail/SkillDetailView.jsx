@@ -34,6 +34,8 @@ import ContentSkeleton from "src/components/content-skeleton";
 import EmptyState from "src/components/empty-state";
 import ErrorState from "src/components/error-state";
 import Iconify from "src/components/iconify";
+import ActionReason from "../components/ActionReason";
+import { useSkillsAccess } from "../utils/access";
 import ObjectHeader from "../components/ObjectHeader";
 import VersionSelect from "../components/VersionSelect";
 import { ClosableDialog } from "src/components/custom-dialog";
@@ -45,7 +47,7 @@ import { usePreviewState } from "../components/SkillsStatePreview";
 import { buildInstallCommand } from "../utils/install";
 import TestsTab from '../tests/TestsTab';
 import ContextDependentsPanel from '../contexts/ContextDependentsPanel';
-import GitHubSourcePanel from '../sources/GitHubSourcePanel';
+import GitHubSourcePanel, { GitHubSourceStatus } from '../sources/GitHubSourcePanel';
 import VersionsTab from "../versions/VersionsTab";
 import FilesTab from "./FilesTab";
 import J1MigrationExport from './J1MigrationExport';
@@ -59,12 +61,14 @@ const TAB_LABELS = {
   tests: "Tests",
   dependents: "Dependents",
   versions: "Versions",
-  usage: "Usage",
+  usage: "Activity",
   use: "Use",
 };
 
 function DetailContent({ skill, preview }) {
   const navigate = useNavigate();
+  const { isViewer, canWrite } = useSkillsAccess();
+  const [sourceOpen, setSourceOpen] = useState(false);
   const [params, setParams] = useSearchParams();
   const archive = useArchiveSkill();
   const [menuAnchor, setMenuAnchor] = useState(null);
@@ -136,19 +140,21 @@ function DetailContent({ skill, preview }) {
         crumbs={[{ label: "Skills", to: paths.dashboard.skills.root }, { label: skill.name }]}
         title={skill.name}
         purpose={skill.description}
-        identity={<VersionIdentityRow viewing={{ number: downloadNumber, digest: viewedVersion.data?.digest }} latest={{ number: skill.latestVersion }} production={production ? { number: production.version } : null} draft={skill.hasDraft ? { baseNumber: skill.drafts?.find((draft) => draft.isMine)?.baseVersion } : null} />}
+        identity={<VersionIdentityRow picker={<Box sx={{ minWidth: 140 }}><VersionSelect ariaLabel="Viewing" includeLabels={false} annotate skillId={skill.id} value={downloadNumber} onChange={(value) => setParams((previous) => { const next = new URLSearchParams(previous); next.set('version', String(value)); next.set('path', 'SKILL.md'); return next; })} /></Box>} viewing={{ number: downloadNumber, digest: viewedVersion.data?.digest }} latest={{ number: skill.latestVersion }} production={production ? { number: production.version } : null} draft={skill.hasDraft ? { baseNumber: skill.drafts?.find((draft) => draft.isMine)?.baseVersion } : null} />}
         sx={{ flexWrap: "wrap", gap: 1.5 }}
         actions={
           <>
-            <Box sx={{ minWidth: 140 }}><VersionSelect label="Viewing" skillId={skill.id} value={resolveViewedVersion(skill, params.get("version")).value} onChange={(value) => setParams((previous) => { const next = new URLSearchParams(previous); next.set('version', String(value)); next.set('path', 'SKILL.md'); return next; })} /></Box>
-            <Button variant="outlined" onClick={() => changeTab("use")}>
+
+            {isViewer && <Button variant="contained" color="primary" onClick={() => changeTab("use")}>
               Use skill
-            </Button>
+            </Button>}
             <Button
-              variant={['tests', 'dependents'].includes(tab) ? 'outlined' : 'contained'}
+              aria-describedby={isViewer ? "detail-action-reason-1" : undefined}
+              disabled={!canWrite}
+              variant={isViewer || ['tests', 'dependents', 'use'].includes(tab) ? 'outlined' : 'contained'}
               color="primary"
-              component={RouterLink}
-              to={paths.dashboard.skills.edit(skill.id)}
+              component={!canWrite ? "button" : RouterLink}
+              to={!canWrite ? undefined : paths.dashboard.skills.edit(skill.id)}
             >
               {skill.hasDraft ? 'Resume your draft' : skill.latestVersion ? `Edit latest v${skill.latestVersion}` : 'Edit unpublished draft'}
             </Button>
@@ -164,6 +170,7 @@ function DetailContent({ skill, preview }) {
           </>
         }
       />
+      {isViewer && <ActionReason id="detail-action-reason-1" reason="Viewers can't edit. Ask a workspace admin for edit access." />}
       {!skill.hasDraft && downloadNumber && downloadNumber !== skill.latestVersion && <Typography variant="s3" color="text.secondary" sx={{ mb: 1.5 }}>Editing starts from latest v{skill.latestVersion}, not the v{downloadNumber} you&apos;re viewing.</Typography>}
       {operationError && <OperationFeedback {...operationError} onRetry={operationError.action.startsWith('download') ? download : undefined} onRefresh={() => window.location.reload()} onReconcile={() => window.location.reload()} />}
       {otherDrafts.length > 0 && (
@@ -203,7 +210,7 @@ function DetailContent({ skill, preview }) {
               description="Your files are in a draft. Publish a version to browse it here."
             />
           ) : (
-            <Stack spacing={3}><FilesTab skill={skill} /><GitHubSourcePanel skill={skill} /></Stack>
+            <FilesTab skill={skill} />
           ))}
         {tab === "tests" && <TestsTab skill={skill} />}
         {tab === "dependents" && <ContextDependentsPanel skillId={skill.id} state={preview} />}
@@ -217,7 +224,7 @@ function DetailContent({ skill, preview }) {
         open={Boolean(menuAnchor)}
         onClose={() => setMenuAnchor(null)}
       >
-        <MenuItem disabled={!downloadNumber} onClick={() => { setMenuAnchor(null); setExportOpen(true); }}><ListItemIcon><Iconify icon="solar:download-linear" width={16} /></ListItemIcon>Export with source mapping</MenuItem>
+        <MenuItem disabled={!downloadNumber} onClick={() => { setMenuAnchor(null); setExportOpen(true); }}><ListItemIcon><Iconify icon="solar:download-linear" width={16} /></ListItemIcon>Export with source paths</MenuItem>
         <MenuItem disabled={!downloadNumber || downloading} onClick={download}>
           <ListItemIcon>
             <Iconify icon="solar:download-linear" width={16} />
@@ -248,6 +255,7 @@ function DetailContent({ skill, preview }) {
           </Typography>
         )}
         <MenuItem
+          aria-describedby={skill.permissions?.canArchive !== true ? "detail-action-reason-2" : undefined}
           disabled={skill.permissions?.canArchive !== true}
           onClick={() => {
             setMenuAnchor(null);
@@ -260,8 +268,11 @@ function DetailContent({ skill, preview }) {
           </ListItemIcon>
           Archive
         </MenuItem>
+        {skill.permissions?.canArchive !== true && <ActionReason id="detail-action-reason-2" reason="You can't archive this skill. Ask a workspace admin." />}
+        <GitHubSourceStatus skill={skill} onOpen={() => { setMenuAnchor(null); setSourceOpen(true); }} />
       </Menu>
-      <ClosableDialog open={exportOpen} onClose={() => setExportOpen(false)} aria-label="Export with source mapping"><Box sx={{ p: 2, pr: 6 }}><J1MigrationExport resourceId={skill.id} number={downloadNumber} /></Box></ClosableDialog>
+      <ClosableDialog open={sourceOpen} onClose={() => setSourceOpen(false)} aria-label="GitHub source"><Box sx={{ p: 2, pr: 6 }}><GitHubSourcePanel skill={skill} /></Box></ClosableDialog>
+      <ClosableDialog open={exportOpen} onClose={() => setExportOpen(false)} aria-label="Export with source paths"><Box sx={{ p: 2, pr: 6 }}><J1MigrationExport resourceId={skill.id} number={downloadNumber} /></Box></ClosableDialog>
       <ConfirmDialog
         open={confirmOpen}
         onClose={() => {

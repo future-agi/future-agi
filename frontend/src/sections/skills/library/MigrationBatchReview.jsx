@@ -1,9 +1,10 @@
 import { useEffect, useId, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import PropTypes from "prop-types";
-import { Alert, Button, Checkbox, FormControlLabel, MenuItem, TextField, Radio, RadioGroup, Stack, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, Typography } from "@mui/material";
+import { Button, Checkbox, FormControlLabel, MenuItem, TextField, Radio, RadioGroup, Stack, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, Typography } from "@mui/material";
 import { ROW_HEIGHT, TABLE_HEADER_HEIGHT } from "src/theme/sizes";
 import { isDefiniteRejection } from "src/api/skills/operation-errors";
+import { stackedTableSx } from "../components/responsiveTable";
 import StatusBadge from "src/components/status-badge";
 import EmptyState from "src/components/empty-state";
 import IdentityChip from "../components/IdentityChip";
@@ -64,7 +65,9 @@ export default function MigrationBatchReview({ plans, onAccept, onKeep, onPublis
   const importCount = pending.filter((row) => decisionOf(row) !== "keep").length;
   const needsDecision = held.length + undecided.length;
   const started = running || Object.keys(outcomes).length > 0;
-  const consequence = !importCount && needsDecision ? `${needsDecision} ${needsDecision === 1 ? 'item needs' : 'items need'} your decision before anything can be imported.` : publish
+  const completed = rows.filter((row) => outcomes[row.key]?.done && !outcomes[row.key]?.kept);
+  const done = started && !running && !pending.length && !held.length && completed.length > 0;
+  const consequence = done ? `Imported ${completed.length} ${completed.length === 1 ? "skill" : "skills"}. Production labels did not change.` : !importCount && needsDecision ? `${needsDecision} ${needsDecision === 1 ? 'item needs' : 'items need'} your decision before anything can be imported.` : publish
     ? `Imports ${importCount} items as new published versions. Production labels don't change.`
     : `Imports ${importCount} items as unpublished drafts.`;
   useEffect(() => { onConsequenceChange?.(consequence); }, [consequence, onConsequenceChange]);
@@ -130,8 +133,8 @@ export default function MigrationBatchReview({ plans, onAccept, onKeep, onPublis
     : failed ? `Retry ${pending.length} remaining with the same decisions` : `${verb} ${pending.length} ${pending.length === 1 ? "item" : "items"}`;
   const disabledReason = !pending.length ? held.length ? 'Resolve the held items, then preview again' : 'No items ready to import' : undecided.length ? 'Choose keep or replace to continue' : excluded.length && !excludeAcknowledged ? 'Confirm the excluded items to continue' : !rights || rightsKey !== reviewKey ? 'Confirm your rights to continue' : warningRows.length && !warningsAcknowledged ? 'Review the publication warnings to continue' : !ready ? 'Import is unavailable for this selection' : '';
   const footer = <Stack spacing={0.5} sx={{ borderTop: 1, borderColor: "divider", pt: 1.5, bgcolor: "background.paper" }}>
-    {excluded.map((row) => <Typography key={row.key} variant="s3" sx={{ overflowWrap: 'anywhere' }}>{row.item.name || row.item.root} can’t be imported: {importBlockerSummary(row.item)}.</Typography>)}
-    {excluded.length > 0 && <FormControlLabel control={<Checkbox checked={excludeAcknowledged} disabled={running} onChange={(event) => setExcludeAcknowledged(event.target.checked)} />} label={`Leave out ${excluded.length} blocked ${excluded.length === 1 ? "member" : "members"}. This is a supported-subset trial, not a complete migration.`} />}
+    {excluded.map((row) => <Typography key={row.key} variant="s3" sx={{ overflowWrap: 'anywhere' }}>Left out: {importBlockerSummary(row.item)}.</Typography>)}
+    {excluded.length > 0 && <FormControlLabel control={<Checkbox checked={excludeAcknowledged} disabled={running} onChange={(event) => setExcludeAcknowledged(event.target.checked)} />} label={`Leave out ${excluded.length} ${excluded.length === 1 ? "skill" : "skills"} that can't be imported. The others import without ${excluded.length === 1 ? "it" : "them"}.`} />}
     {pending.length > 0 && <FormControlLabel control={<Checkbox checked={publish} disabled={running} onChange={(event) => setPublish(event.target.checked)} />} label="Publish each imported draft as a new version without labels" />}
     {decided.length > 0 && <FormControlLabel control={<Checkbox checked={rights} disabled={running} onChange={(event) => { setRights(event.target.checked); setRightsKey(reviewKey); }} />} label={`I confirm my rights to copy all ${decided.length} items, including their licenses and retained notices.`} />}
     {warningRows.length > 0 && <FormControlLabel control={<Checkbox checked={warningsAcknowledged} disabled={running} onChange={(event) => setWarningsAcknowledged(event.target.checked)} />} label={`I reviewed the publication warnings for ${warningRows.length} ${warningRows.length === 1 ? "item" : "items"} and want to publish ${warningRows.length === 1 ? "it" : "them"}.`} />}
@@ -139,28 +142,28 @@ export default function MigrationBatchReview({ plans, onAccept, onKeep, onPublis
     <Stack direction="row" justifyContent="flex-end" useFlexGap flexWrap="wrap" spacing={1} alignItems="center">{!ready && <Typography variant="s3" color="text.secondary" role="status">{disabledReason}</Typography>}{onClose && <Button variant="outlined" disabled={running} onClick={onClose}>Cancel</Button>}{pending.length > 0 && <Button variant="contained" color="primary" disabled={!ready || running} onClick={apply}>{label}</Button>}</Stack>
   </Stack>;
   return <Stack spacing={1.5} sx={{ minWidth: 0 }}>
-    <Stack direction="row" alignItems="center" justifyContent="space-between" spacing={1}>
-      <Stack spacing={0.5}><Typography variant="m3" component="h2">Review all items</Typography><Typography variant="s3" color="text.secondary">{pending.length - undecided.length} ready · {excluded.length} blocked {excluded.length === 1 ? 'member' : 'members'} · {undecided.length} needs a decision · {held.length} held</Typography></Stack>
+    <Stack direction={{ xs: "column", sm: "row" }} alignItems={{ sm: "center" }} justifyContent="space-between" spacing={1}>
+      <Stack spacing={0.5}><Typography variant="m3" component="h2">{done ? `Imported ${completed.length} ${completed.length === 1 ? "skill" : "skills"}` : "Review all items"}</Typography><Typography variant="s3" color="text.secondary">{done ? published.length ? `${published.length} ${published.length === 1 ? "version" : "versions"} published without labels. Production was not changed.` : "Your skills are saved as drafts. Production labels did not change." : [`${pending.length - undecided.length} ready to import`, excluded.length > 0 && `${excluded.length} can't be imported`, undecided.length > 0 && `${undecided.length} need a decision`, held.length > 0 && `${held.length} held`].filter(Boolean).join(" · ")}</Typography></Stack>
       <TextField id={`${formId}-status`} SelectProps={{ SelectDisplayProps: { "aria-labelledby": `${formId}-status-label` } }} select size="small" label="Item status" value={filter} onChange={(event) => setFilter(event.target.value)} sx={{ minWidth: 180 }}>
         <MenuItem value="all">All items ({rows.length})</MenuItem><MenuItem value="choice">Needs a decision ({choiceRows.length})</MenuItem><MenuItem value="held">Held ({held.length})</MenuItem><MenuItem value="excluded">Excluded ({excluded.length})</MenuItem>
       </TextField>
     </Stack>
     <TableContainer sx={{ maxWidth: "100%" }}>
-      <Table size="small" aria-label="Retained migration items" sx={{ "& td": { py: 0.5 } }}>
+      <Table size="small" aria-label="Retained migration items" sx={[stackedTableSx, { "& td": { py: { sm: 0.5 } } }]}>
         <TableHead><TableRow sx={{ height: TABLE_HEADER_HEIGHT.default }}>
-          <TableCell>Item</TableCell><TableCell>Destination</TableCell><TableCell>Decision</TableCell><TableCell>Details</TableCell>{started && <TableCell>Result</TableCell>}
+          <TableCell>Item</TableCell><TableCell>Destination and decision</TableCell><TableCell>Details</TableCell>{started && <TableCell>Result</TableCell>}
         </TableRow></TableHead>
         <TableBody>{visibleRows.map((row) => <TableRow hover key={row.key} sx={{ height: ROW_HEIGHT.default, verticalAlign: "top" }}>
           <TableCell sx={{ overflowWrap: "anywhere" }}>
             <Typography variant="s1" display="block">{row.item.name || row.item.root}</Typography>
             {row.item.root && row.item.root !== row.item.name && <Typography variant="s3" display="block" color="text.secondary">{row.item.root}</Typography>}
           </TableCell>
-          <TableCell><Typography variant="s1">{row.item.destinationId ? `${row.item.destinationName || row.item.name || row.item.root} v${row.item.expectedHeadVersion ?? "—"}` : "New skill"}</Typography></TableCell>
-          <TableCell sx={{ minWidth: 200 }}>
+          <TableCell data-cell="actions" sx={{ minWidth: { sm: 200 } }}>
+            {row.item.destinationId && <Typography variant="s1" display="block">{`${row.item.destinationName || row.item.name || row.item.root} v${row.item.expectedHeadVersion ?? "—"}`}</Typography>}
             {/* One click per exception; nothing is preselected for a diverged item. */}
             {row.kind === "choice" ? <RadioGroup id={`${formId}-${row.key}`} aria-label={`Decision for ${row.item.name || row.item.root}`} value={choices[row.key] || ""} onChange={(event) => setChoices((current) => ({ ...current, [row.key]: event.target.value }))}>
               {[["keep", "Keep Hub content"], ["replace", "Replace with reviewed source"]].map(([value, label]) => <FormControlLabel key={value} value={value} label={label} disabled={running || Boolean(outcomes[row.key]?.receipt)} control={<Radio size="small" />} />)}
-            </RadioGroup> : <Typography variant="s1">{row.kind === "default" ? row.note : row.kind === "excluded" ? "Excluded" : "Held"}</Typography>}
+            </RadioGroup> : <Typography variant="s1">{row.kind === "default" ? row.note : row.kind === "excluded" ? "Left out" : "Held"}</Typography>}
             {row.kind !== "default" && <Typography variant="s3" display="block" color="text.secondary">{row.note}</Typography>}
             {row.kind === "held" && row.item.hasDraft && onPreserveDraft && <Button size="small" disabled={running} onClick={() => onPreserveDraft(row.item)}>{`Preserve draft for ${row.item.name || row.item.root}`}</Button>}
             {row.kind === "choice" && <TechnicalDetails title="Review file differences" defaultOpen>
@@ -171,27 +174,28 @@ export default function MigrationBatchReview({ plans, onAccept, onKeep, onPublis
               </>}
             </TechnicalDetails>}
           </TableCell>
-          <TableCell><TechnicalDetails><Stack spacing={1}>
+          <TableCell data-cell="actions"><TechnicalDetails><Stack spacing={1}>
             <Typography variant="s3">{row.item.fileCount ?? "—"} files · {row.item.totalBytes ?? "—"} bytes</Typography>
             <Typography variant="s3" sx={{ overflowWrap: 'anywhere' }}>{[row.item.sourceOrigin, row.item.sourceProject, row.item.sourceResource, row.item.sourceRevision].filter(Boolean).join(' / ')}</Typography>
-            {row.kind === 'excluded' && <><StatusBadge status="blocked" label="Blocked member" /><Typography variant="s3">{row.note}</Typography></>}
+            {row.kind === 'excluded' && <><StatusBadge status="blocked" label="Left out" /><Typography variant="s3">{row.note}</Typography></>}
             {row.item.destinationId && <IdentityChip value={row.item.destinationId} kind="id" label="Destination" />}
             <IdentityChip value={row.plan.fingerprint} label="Fingerprint" />
             {row.item.expectedHeadDigest && <IdentityChip value={row.item.expectedHeadDigest} label="Digest" />}
             {row.kind === "default" && Array.isArray(row.item.sourceHubChanges) && (row.item.destinationId ? <FileChanges files={row.item.sourceHubChanges} beforeTitle="Reviewed source" afterTitle="Current Hub" /> : <FileChanges files={row.item.sourceHubChanges.map((file) => ({ path: file.path, status: "added", fromText: "", toText: file.fromText }))} beforeTitle="Not in Hub yet" afterTitle="Reviewed source" />)}
           </Stack></TechnicalDetails></TableCell>
-          {started && <TableCell><Typography variant="s3">{outcomeText(outcomes[row.key])}</Typography>
+          {started && <TableCell data-cell="actions"><Typography variant="s3">{row.kind === "excluded" ? "Left out" : outcomeText(outcomes[row.key])}</Typography>
             {outcomes[row.key]?.warnings && !outcomes[row.key]?.done && <TechnicalDetails title="Inspect warnings"><ChecksList checks={outcomes[row.key].warnings} dense /></TechnicalDetails>}
           </TableCell>}
         </TableRow>)}
-          {!visibleRows.length && <TableRow><TableCell colSpan={started ? 5 : 4}><EmptyState variant="no-results" title="No items match this status" onClearFilters={() => setFilter('all')} /></TableCell></TableRow>}
+          {!visibleRows.length && <TableRow><TableCell colSpan={started ? 4 : 3}><EmptyState variant="no-results" title="No items match this status" onClearFilters={() => setFilter('all')} /></TableCell></TableRow>}
         </TableBody>
       </Table>
     </TableContainer>
-    {footerTarget ? createPortal(footer, footerTarget) : footer}
-    {published.length > 0 && !pending.length && <Alert severity="success" action={onCreateContext && !contextProposal && <Button disabled={running} onClick={() => onCreateContext(published.map((outcome) => ({ skillId: outcome.resourceId, version: outcome.version })))}>Create agent context from these skills</Button>}>
-      {published.length} {published.length === 1 ? "version" : "versions"} published without labels. Production was not changed.
-    </Alert>}
+    {!done && (footerTarget ? createPortal(footer, footerTarget) : footer)}
+    {done && <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
+      {published.length > 0 && onCreateContext && !contextProposal && <Button variant="contained" color="primary" onClick={() => onCreateContext(published.map((outcome) => ({ skillId: outcome.resourceId, version: outcome.version })))}>Create agent context from these skills</Button>}
+      {onClose && <Button variant="outlined" onClick={onClose}>Done</Button>}
+    </Stack>}
     {/* A packet from the local inventory carries the proposed context, so the
         published set is assembled here instead of on another screen. */}
     {contextProposal && published.length > 0 && !pending.length && <MigrationContextAssembly proposal={contextProposal} onBusyChange={onBusyChange}

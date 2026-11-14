@@ -22,7 +22,7 @@ export default function DraftChecksPanel({ files, onSelect, validation }) {
         {pending && <StatusBadge status="checking" label="Checking your latest changes…" />}
         {pending && !previous && <ContentSkeleton variant="rows" rows={3} label="Checking files" />}
         {error && <ErrorState title="Couldn't run checks" onRetry={retry} />}
-        {findings && <Box sx={{ color: checks ? 'text.primary' : 'text.secondary' }}>
+        {findings && <Box sx={{ color: checks ? 'text.primary' : 'text.secondary', '& section[aria-label="Warnings"] li .MuiStack-root > span:first-of-type': { display: 'none' } }}>
           {!checks && <Typography variant="s3" component="p" color="text.secondary" sx={{ mb: 0.5 }}>Previous result</Typography>}
           <ChecksList checks={findings} onSelect={onSelect} dense />
         </Box>}

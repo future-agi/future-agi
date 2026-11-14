@@ -351,7 +351,7 @@ test('SKILLS-E2E-001: author, restore and consume the reviewed workspace skill',
       await page.goto(`${LIBRARY}/${id}?tab=use`);
       await page.getByRole('combobox', { name: /^Coding client/ }).click();
       await page.getByRole('option', { name: 'Claude Code', exact: true }).click();
-      await page.getByRole('button', { name: 'Copy code', exact: true }).click();
+      await page.getByRole('button', { name: 'Copy', exact: true }).click();
       command = await page.evaluate(() => navigator.clipboard.readText());
       expect(command.includes(credentials.apiKey)).toBe(false);
       beforeUsage = await read<Usage>(`${SKILLS}${id}/usage/`, { days: 7 });
@@ -400,7 +400,8 @@ test('SKILLS-E2E-001: author, restore and consume the reviewed workspace skill',
       // One REST resolve, one install ZIP, one MCP manifest plus offset-zero read per file.
       expect(deltas).toEqual({ api: 1, download: 1, mcp: 1 + v1Files.length });
       await testInfo.attach('fetch-deltas', { body: JSON.stringify(deltas), contentType: 'application/json' });
-      await page.getByRole('tab', { name: 'Usage', exact: true }).click();
+      await page.getByRole('tab', { name: 'Activity', exact: true }).click();
+      await page.getByRole('button', { name: 'What fetches mean', exact: true }).click();
       await expect(page.getByText(FETCH_CAVEAT, { exact: true })).toBeVisible({ timeout: UI_READY });
     }, { timeout: UI_READY });
 

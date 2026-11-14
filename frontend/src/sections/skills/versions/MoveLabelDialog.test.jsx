@@ -12,6 +12,7 @@ const mocks = vi.hoisted(() => ({
 }));
 vi.mock("src/api/skills", () => ({
   useSkillLabels: mocks.labels,
+  useSkillVersions: () => ({ data: { results: [{ number: 3 }, { number: 2 }, { number: 1 }] } }),
   useSkill: () => ({ data: { ...skill, labels: mocks.labels().data }, refetch: async () => { const response = await mocks.refetch(); return { ...response, data: response.data ? { ...skill, labels: response.data } : undefined }; } }),
   useSkillVersion: () => ({ data: { digest: 'sha256:target' } }),
   useSkillCompare: mocks.compare,
@@ -72,7 +73,7 @@ describe("MoveLabelDialog", () => {
       />,
     );
     expect(screen.getByText("Currently points to v1.")).toBeInTheDocument();
-    expect(screen.getByText("Modified")).toBeInTheDocument();
+    expect(screen.getByText("2 files modified")).toBeInTheDocument();
     fireEvent.click(
       screen.getByRole("button", { name: /Move production from .* to v3/ }),
     );
@@ -237,3 +238,14 @@ describe("MoveLabelDialog", () => {
 });
 
 vi.mock("src/sections/skills/tests/TestEvidence", () => ({ default: () => <div>Test evidence</div> }));
+
+it('defaults to the newest different version and explains an explicit no-op', async () => {
+  mocks.labels.mockReturnValue(labelsResult(3));
+  render(<MoveLabelDialog open onClose={vi.fn()} skill={skill} label="production" />);
+  expect(screen.getByRole('combobox', { name: 'Version' })).toHaveValue('2');
+  fireEvent.change(screen.getByRole('combobox', { name: 'Version' }), { target: { value: '3' } });
+  expect(screen.getByText('Production already points to v3.')).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Move production', exact: true })).toBeDisabled();
+  expect(screen.getByText('Choose a different version')).toBeInTheDocument();
+  expect(mocks.move).not.toHaveBeenCalled();
+});

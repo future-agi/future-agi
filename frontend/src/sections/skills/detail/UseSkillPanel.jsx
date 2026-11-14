@@ -4,6 +4,7 @@ import { Link as RouterLink } from "react-router-dom";
 import {
   Alert,
   Box,
+  Button,
   Link,
   MenuItem,
   Stack,
@@ -15,6 +16,9 @@ import {
 import { HOST_API } from "src/config-global";
 import { paths } from "src/routes/paths";
 import CodeBlock from "src/components/code-block";
+import Iconify from "src/components/iconify";
+import { enqueueSnackbar } from "notistack";
+import TechnicalDetails from "../components/TechnicalDetails";
 import Section from "src/components/section";
 import EmptyState from "src/components/empty-state";
 import { SegmentedTabs } from "src/components/tabs/tabs";
@@ -27,6 +31,16 @@ import {
   buildTypeScriptSnippet,
   buildMcpSnippet,
 } from "../utils/install";
+
+function CopyableCode({ code }) {
+  const [error, setError] = useState('');
+  const copy = async () => {
+    try { await navigator.clipboard.writeText(code); setError(''); enqueueSnackbar('Copied'); }
+    catch { setError("Couldn't copy. Select the command and copy it manually."); }
+  };
+  return <Stack spacing={0.5}><CodeBlock code={code} wrap action={<Button variant="outlined" size="small" startIcon={<Iconify icon="solar:copy-linear" />} onClick={copy}>Copy</Button>} />{error && <Typography variant="s3" role="status">{error}</Typography>}</Stack>;
+}
+CopyableCode.propTypes = { code: PropTypes.string.isRequired };
 
 const CLIENTS = [
   ...INSTALL_CLIENTS,
@@ -64,7 +78,7 @@ export default function UseSkillPanel({ skill }) {
     if (clientId === "curl") return buildCurlResolve(args);
     if (clientId === "python") return buildPythonSnippet(args);
     if (clientId === "typescript") return buildTypeScriptSnippet(args);
-    return buildMcpSnippet(args);
+    return `get_skill(${JSON.stringify({ name: skill.name, ...(version != null ? { version } : { label }) }, null, 2)})`;
   };
 
   if (!skill.latestVersion) {
@@ -84,6 +98,7 @@ export default function UseSkillPanel({ skill }) {
         "& pre": { overflowWrap: "anywhere", wordBreak: "break-word" },
       }}
     >
+      <Typography variant="s1">{installClient ? `Install ${skill.name} into ${client.label}.` : `Fetch ${skill.name} with ${client.label}.`} {skill.labels.some((item) => item.name === 'production') ? `Production is v${skill.labels.find((item) => item.name === 'production').version}.` : 'Production is not assigned.'}</Typography>
       <Section
         title="Choose what agents receive"
         description="A label follows promotions. A pinned version stays unchanged."
@@ -92,7 +107,7 @@ export default function UseSkillPanel({ skill }) {
           <TextField
             select
             size="small"
-            label="Use label or version"
+            label="Version to install"
             value={selector}
             onChange={(event) => setSelector(event.target.value)}
             sx={{ minWidth: 200 }}
@@ -144,10 +159,10 @@ export default function UseSkillPanel({ skill }) {
           </SegmentedTabs>
         </Box>
         <Stack spacing={1.5} sx={{ mt: 1.5, minWidth: 0 }}>
-          {group !== 'mcp' && <TextField select size="small" label={group === 'coding' ? 'Coding client' : 'Application transport'} value={clientId} onChange={(event) => setClientId(event.target.value)}>
+          {group !== 'mcp' && <TextField select size="small" label={group === 'coding' ? 'Coding client' : 'Fetch with'} value={clientId} onChange={(event) => setClientId(event.target.value)}>
             {CLIENTS.filter((item) => group === 'coding' ? Boolean(item.projectDir) : ['curl', 'python', 'typescript'].includes(item.id)).map((item) => <MenuItem key={item.id} value={item.id}>{item.label}</MenuItem>)}
           </TextField>}
-          {installClient && <Alert severity="warning">Legacy ZIP installation, not a safe updater. Extraction can overwrite local changes and does not remove deleted managed files. Use an empty reviewed destination; keep existing files and locks before replacing them. Installed files are not proof of model delivery.</Alert>}
+          {installClient && <><Typography variant="s1" color="text.secondary">This copies the files. It won&apos;t update them later or remove files you delete.</Typography><TechnicalDetails title="Installation details"><Typography variant="s3">Extraction can overwrite local changes. Use an empty reviewed destination; keep existing files and locks before replacing them. Installed files are not proof of model delivery.</Typography></TechnicalDetails></>}
           {installClient && (
             <SegmentedTabs
               value={location}
@@ -169,8 +184,10 @@ export default function UseSkillPanel({ skill }) {
             API keys carry their existing access permissions; these commands do
             not make them read-only. Keep credentials out of source control.
           </Typography>
+          {group === "mcp" && <Typography variant="s1">Ask your connected MCP server for the selected skill, then read its files using the returned version.</Typography>}
+          {group === "mcp" && <TechnicalDetails title="MCP file-reading protocol"><Typography variant="s3" sx={{ whiteSpace: "pre-wrap" }}>{buildMcpSnippet(args)}</Typography></TechnicalDetails>}
           {selectorReady ? (
-            <CodeBlock code={snippet()} wrap />
+            <CopyableCode code={snippet()} />
           ) : (
             <Alert severity="info">
               Choose a published version to see the command.
@@ -211,8 +228,7 @@ export default function UseSkillPanel({ skill }) {
                 specific to one skill.
               </Alert>
             ) : (
-              <CodeBlock
-                wrap
+              <CopyableCode
                 code={buildInstallCommand({ ...args, names: [], tag })}
               />
             )}
