@@ -252,6 +252,7 @@ import { getDefaultDateRangeForMode } from "../dateRangeDefaults";
 import { useCursorAttributeInventory } from "./useCursorAttributeInventory";
 import { useWorkspace } from "src/contexts/WorkspaceContext";
 import { isGridApiLive, withLiveGridApi } from "src/utils/gridApi";
+import applySavedEntityTags from "./applySavedEntityTags";
 
 const USER_DETAIL_TAB_TYPE = "user_detail";
 const getLiveGridRefApi = (gridRef) => {
@@ -4806,33 +4807,35 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                 open={Boolean(tagsAnchorEl)}
                 anchorEl={tagsAnchorEl}
                 onClose={() => {
-                  // onClose (not onSuccess) does the deselect/refresh —
-                  // the popover stays open across multiple tag adds; we
-                  // only want to flush selection state when the user is
-                  // done and closes the popover.
+                  // Keep selection until the user finishes editing tags.
                   if (projectSource === PROJECT_SOURCE.SIMULATOR) {
                     primaryCallLogsGridRef.current?.deselectAll?.();
                     compareCallLogsGridRef.current?.deselectAll?.();
                     setSelectedCallIds([]);
                   } else if (selectedTab === "trace") {
-                    refreshGridRef(primaryTraceGridRef, { purge: true });
                     deselectGridRef(primaryTraceGridRef);
                   } else {
-                    refreshGridRef(primarySpanGridRef, { purge: true });
                     deselectGridRef(primarySpanGridRef);
                   }
                   setTagsAnchorEl(null);
                   setTagsBulkItems([]);
                 }}
                 bulkItems={tagsBulkItems}
-                // The close-time purge can run before the writes land, so
-                // reload the grid the bulk save wrote to once it settles.
-                onBulkSettled={(type) => {
+                onTagsSaved={(savedList) => {
                   if (projectSource === PROJECT_SOURCE.SIMULATOR) return;
-                  refreshGridRef(
-                    type === "span" ? primarySpanGridRef : primaryTraceGridRef,
-                    { purge: true },
-                  );
+                  for (const saved of savedList) {
+                    for (const [gridKind, refs] of [
+                      ["trace", [primaryTraceGridRef, compareTraceGridRef]],
+                      ["span", [primarySpanGridRef, compareSpanGridRef]],
+                    ]) {
+                      for (const ref of refs) {
+                        applySavedEntityTags(ref.current?.api, {
+                          ...saved,
+                          gridKind,
+                        });
+                      }
+                    }
+                  }
                 }}
               />
             </Suspense>

@@ -24,7 +24,7 @@ const AddTagsPopover = ({
   bulkItems,
   currentTags = EMPTY_TAGS,
   onSuccess,
-  onBulkSettled,
+  onTagsSaved,
 }) => {
   const items = React.useMemo(
     () => (Array.isArray(bulkItems) ? bulkItems : EMPTY_TAGS),
@@ -61,6 +61,8 @@ const AddTagsPopover = ({
   const baseState = React.useRef({ key: null, state: null });
   const selectedEntityRef = React.useRef(selectedEntity);
   selectedEntityRef.current = selectedEntity;
+  const onTagsSavedRef = React.useRef(onTagsSaved);
+  onTagsSavedRef.current = onTagsSaved;
 
   const seed = () => {
     if (isBulk) return [];
@@ -122,24 +124,24 @@ const AddTagsPopover = ({
             });
           }),
         ).then((results) => {
-          results.forEach((result, index) => {
-            if (result.status === "fulfilled") {
-              const key = tagTargetKey(
-                savedItems[index].entity,
-                savedItems[index].type,
-              );
-              const previous = acknowledged.current.get(key);
-              if (
-                !previous ||
-                result.value.tag_revision >= previous.tag_revision
-              ) {
-                acknowledged.current.set(key, result.value);
-              }
+          const saved = results.flatMap((outcome, index) => {
+            if (outcome.status !== "fulfilled") return [];
+            const { entity, type } = savedItems[index];
+            const key = tagTargetKey(entity, type);
+            const previous = acknowledged.current.get(key);
+            if (
+              !previous ||
+              outcome.value.tag_revision >= previous.tag_revision
+            ) {
+              acknowledged.current.set(key, outcome.value);
             }
+            return [{ result: outcome.value, entity, type }];
           });
-          const failed = results.find((result) => result.status === "rejected");
-          if (failed) throw failed.reason;
-          return results;
+          const failed = results.find(
+            (outcome) => outcome.status === "rejected",
+          );
+          if (failed) throw { reason: failed.reason, saved };
+          return saved;
         });
       }
       return saveEntityTags({
@@ -176,26 +178,24 @@ const AddTagsPopover = ({
         bulk ? `Tags applied to ${itemCount} items` : "Tags updated",
         { variant: "success" },
       );
-      // Refreshes the trace-detail and voice drawers. The LLM tracing grid is
-      // AG-Grid server-side (not React Query), so it relies on onSuccess and
-      // onBulkSettled instead.
+      // Detail drawers use React Query; server-side grid rows need the
+      // acknowledged revision applied directly, including after close.
       queryClient.invalidateQueries({ queryKey: ["trace-detail"] });
       queryClient.invalidateQueries({ queryKey: ["voiceCallDetail"] });
-      if (bulk) onBulkSettled?.(type);
-      // A single save also hands back the acknowledged result and the saved
-      // entity, so a grid can update that row without reloading the list.
+      onTagsSavedRef.current?.(
+        bulk ? result : [{ result, entity: savedEntity, type }],
+      );
       onSuccess?.(result, bulk ? undefined : { entity: savedEntity, type });
     },
-    onError: (error, { bulk, sessionId, type }) => {
+    onError: (error, { bulk, sessionId }) => {
       if (!bulk || sessionId === session.current.id) {
         setTags(confirmedTags.current);
       }
       queryClient.invalidateQueries({ queryKey: ["trace-detail"] });
       queryClient.invalidateQueries({ queryKey: ["voiceCallDetail"] });
-      // Some items of a failed bulk save may have been written.
-      if (bulk) onBulkSettled?.(type);
+      if (bulk && error.saved.length) onTagsSavedRef.current?.(error.saved);
       enqueueSnackbar(
-        `${bulk ? "Some items may have been updated. " : ""}${tagUpdateErrorMessage(error)}`,
+        `${bulk ? "Some items may have been updated. " : ""}${tagUpdateErrorMessage(bulk ? error.reason : error)}`,
         { variant: "error" },
       );
     },
@@ -309,9 +309,8 @@ AddTagsPopover.propTypes = {
   ),
   currentTags: PropTypes.array,
   onSuccess: PropTypes.func,
-  // Called with the saved type ("trace" | "span") once a bulk save settles,
-  // also after the popover closed, so the grid can show what was written.
-  onBulkSettled: PropTypes.func,
+  // Called with acknowledged { result, entity, type } saves, even after close.
+  onTagsSaved: PropTypes.func,
 };
 
 export default React.memo(AddTagsPopover);

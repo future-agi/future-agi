@@ -229,7 +229,9 @@ describe("scoped entity tag writes", () => {
   });
 
   it("edits the sole selected bulk item rather than an undefined trace", async () => {
+    const onTagsSaved = vi.fn();
     renderEditor({
+      onTagsSaved,
       entity: undefined,
       bulkItems: [
         { id: "span-1", type: "span", entity, currentTags: entity.tags },
@@ -243,11 +245,18 @@ describe("scoped entity tag writes", () => {
       ),
     );
     expect(axios.patch).not.toHaveBeenCalled();
+    await waitFor(() =>
+      expect(onTagsSaved).toHaveBeenCalledWith([
+        { result: success().data.result, entity, type: "span" },
+      ]),
+    );
   });
 
   it("preserves each bulk item's target/revision and reports partial failure honestly", async () => {
     axios.post.mockRejectedValue({ statusCode: 409 });
+    const onTagsSaved = vi.fn();
     renderEditor({
+      onTagsSaved,
       bulkItems: [
         { id: "trace-1", type: "trace", entity, currentTags: entity.tags },
         {
@@ -278,6 +287,9 @@ describe("scoped entity tag writes", () => {
       "Tags applied to 2 items",
       expect.anything(),
     );
+    expect(onTagsSaved).toHaveBeenCalledWith([
+      { result: success().data.result, entity, type: "trace" },
+    ]);
   });
 
   it("builds each successive bulk add on each item's acknowledged result", async () => {
@@ -545,10 +557,11 @@ describe("scoped entity tag writes", () => {
       { id: "other", type: "span", entity: other, currentTags: other.tags },
     ];
     const onSuccess = vi.fn();
-    const onBulkSettled = vi.fn();
+    const onTagsSaved = vi.fn();
+    const latestOnTagsSaved = vi.fn();
     const client = new QueryClient();
     const invalidate = vi.spyOn(client, "invalidateQueries");
-    const popover = (open, bulkItems) => (
+    const popover = (open, bulkItems, callback = onTagsSaved) => (
       <QueryClientProvider client={client}>
         <AddTagsPopover
           open={open}
@@ -556,7 +569,7 @@ describe("scoped entity tag writes", () => {
           onClose={vi.fn()}
           bulkItems={bulkItems}
           onSuccess={onSuccess}
-          onBulkSettled={onBulkSettled}
+          onTagsSaved={callback}
         />
       </QueryClientProvider>
     );
@@ -564,9 +577,10 @@ describe("scoped entity tag writes", () => {
     nextTag.name = "a";
     fireEvent.click(screen.getByText("Add test tag"));
     await waitFor(() => expect(axios.patch).toHaveBeenCalledTimes(1));
-    rerender(popover(false, first));
-    rerender(popover(true, second));
+    rerender(popover(false, first, latestOnTagsSaved));
     await act(async () => resolveOld(success()));
+    await waitFor(() => expect(latestOnTagsSaved).toHaveBeenCalledOnce());
+    rerender(popover(true, second, latestOnTagsSaved));
     await waitFor(() =>
       expect(screen.getByText("Add test tag")).not.toBeDisabled(),
     );
@@ -575,8 +589,11 @@ describe("scoped entity tag writes", () => {
     });
     expect(invalidate).toHaveBeenCalledWith({ queryKey: ["trace-detail"] });
     expect(onSuccess).toHaveBeenCalledTimes(1);
-    // The grid reloads after the late writes landed, not only on close.
-    expect(onBulkSettled).toHaveBeenCalledWith("trace");
+    expect(onTagsSaved).not.toHaveBeenCalled();
+    expect(latestOnTagsSaved).toHaveBeenCalledWith([
+      { result: success().data.result, entity, type: "trace" },
+      { result: success().data.result, entity: child, type: "span" },
+    ]);
     expect(screen.getByText("sdk")).toBeInTheDocument();
     expect(screen.queryByText("a")).not.toBeInTheDocument();
 
@@ -606,7 +623,7 @@ describe("scoped entity tag writes", () => {
     ];
     const client = new QueryClient();
     const invalidate = vi.spyOn(client, "invalidateQueries");
-    const onBulkSettled = vi.fn();
+    const onTagsSaved = vi.fn();
     const popover = (items) => (
       <QueryClientProvider client={client}>
         <AddTagsPopover
@@ -614,7 +631,7 @@ describe("scoped entity tag writes", () => {
           anchorEl={document.body}
           onClose={vi.fn()}
           bulkItems={items}
-          onBulkSettled={onBulkSettled}
+          onTagsSaved={onTagsSaved}
         />
       </QueryClientProvider>
     );
@@ -630,8 +647,9 @@ describe("scoped entity tag writes", () => {
     expect(invalidate).toHaveBeenCalledWith({ queryKey: ["trace-detail"] });
     // The voice drawer edits tags on its own payload.
     expect(invalidate).toHaveBeenCalledWith({ queryKey: ["voiceCallDetail"] });
-    // Some items may have been written: the grid reloads.
-    expect(onBulkSettled).toHaveBeenCalledWith("trace");
+    expect(onTagsSaved).toHaveBeenCalledWith([
+      { result: success().data.result, entity: child, type: "span" },
+    ]);
     expect(screen.getByText("sdk")).toBeInTheDocument();
   });
 
