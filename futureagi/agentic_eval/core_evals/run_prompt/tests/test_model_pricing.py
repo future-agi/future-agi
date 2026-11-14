@@ -224,6 +224,186 @@ class TestCharacterBasedPricing:
 
 
 # =============================================================================
+# Unit Tests - Per-1k-Character Pricing (Gemini chat/embedding models)
+# =============================================================================
+
+
+@pytest.mark.unit
+class TestPer1kCharacterPricing:
+    """Test per-1k-character pricing.
+
+    Several Gemini models (e.g. gemini-1.5-pro / -flash, gemini/gemini-2.5-*,
+    openrouter/google/gemini-pro-1.5) are priced with
+    ``input_per_1k_characters`` / ``output_per_1k_characters``. Before the fix
+    ``calculate_total_cost`` only handled the per-1M-character (TTS) branch, so
+    every per-1k-character model fell through to the "unknown pricing" path and
+    returned a hard $0.
+
+    These tests exercise the catalog's declared units, not current provider
+    invoices. Character pricing requires real counts for every priced side.
+    Token-only usage receives a labelled default estimate, never a character
+    count derived from tokens.
+    """
+
+    def test_gemini_1_5_pro_per_1k_char_pricing_lookup(self):
+        """Gemini 1.5 Pro is priced per 1k characters, not per 1M tokens."""
+        pricing = get_model_pricing("gemini-1.5-pro")
+
+        assert pricing is not None
+        assert "input_per_1k_characters" in pricing
+        assert "output_per_1k_characters" in pricing
+        # This branch does NOT use token-based keys.
+        assert "input_per_1M_tokens" not in pricing
+
+    def test_calculate_cost_per_1k_char_with_explicit_characters_is_non_zero(self):
+        """Regression: with REAL character counts a per-1k-char chat model must
+        no longer cost a hard $0.
+
+        Fails without the per-1k-character branch (falls through to Unknown ->
+        $0); passes with it.
+        """
+        # Real character counts are supplied, so this branch prices correctly.
+        token_usage = {"input_characters": 50000, "output_characters": 10000}
+
+        result = calculate_total_cost("gemini-1.5-pro", token_usage)
+
+        # Vertex AI short-context online text: $0.0003125/$0.00125 per 1k chars.
+        expected_prompt_cost = round((50000 / 1_000) * 0.0003125, 6)
+        expected_completion_cost = round((10000 / 1_000) * 0.00125, 6)
+
+        assert result["total_cost"] > 0.0  # the core regression assertion
+        assert result["prompt_cost"] == expected_prompt_cost
+        assert result["completion_cost"] == expected_completion_cost
+        assert result["total_cost"] == round(
+            expected_prompt_cost + expected_completion_cost, 6
+        )
+
+    def test_calculate_cost_per_1k_char_uses_only_real_characters(self):
+        """The branch prices from character counts only; token counts that
+        happen to be present alongside them are ignored (not added in)."""
+        token_usage = {
+            "input_characters": 50000,
+            "output_characters": 10000,
+            # Token counts are present but MUST NOT influence the char cost.
+            "prompt_tokens": 999999,
+            "completion_tokens": 999999,
+        }
+
+        result = calculate_total_cost("gemini-1.5-pro", token_usage)
+
+        expected_prompt_cost = round((50000 / 1_000) * 0.0003125, 6)
+        expected_completion_cost = round((10000 / 1_000) * 0.00125, 6)
+
+        assert result["prompt_cost"] == expected_prompt_cost
+        assert result["completion_cost"] == expected_completion_cost
+
+    def test_calculate_cost_per_1k_char_tokens_only_does_not_fabricate(self):
+        """Token-only usage receives a token fallback, not a character price."""
+        token_usage = {"prompt_tokens": 10000, "completion_tokens": 2000}
+
+        result = calculate_total_cost("gemini-1.5-pro", token_usage)
+
+        assert result["pricing_source"] == "default"
+        assert result["prompt_cost"] == 0.0015
+        assert result["completion_cost"] == 0.0012
+        assert result["total_cost"] == 0.0027
+
+    def test_calculate_cost_per_1k_char_handles_na_placeholder_price(self):
+        """Placeholder character rates receive a labelled fallback estimate."""
+        token_usage = {"input_characters": 1000, "output_characters": 0}
+
+        result = calculate_total_cost("text-multilingual-embedding-002", token_usage)
+
+        assert result["pricing_source"] == "default"
+        assert result["total_cost"] == 0.015
+        assert result["prompt_cost"] == 0.015
+        assert result["completion_cost"] == 0.0
+
+
+# =============================================================================
+# Unit Tests - Official Gemini 1.5 online text rates
+# =============================================================================
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("model", "side", "rate"),
+    [
+        ("gemini-1.5-pro", "input", 0.0003125),
+        ("gemini-1.5-pro", "output", 0.00125),
+        ("gemini-1.5-pro-002", "input", 0.0003125),
+        ("gemini-1.5-pro-002", "output", 0.00125),
+        ("gemini-1.5-flash", "input", 0.00001875),
+        ("gemini-1.5-flash", "output", 0.000075),
+        ("gemini-1.5-flash-002", "input", 0.00001875),
+        ("gemini-1.5-flash-002", "output", 0.000075),
+    ],
+)
+def test_gemini_character_catalog_rate_and_unit(model, side, rate):
+    """Google's 2026-11-14 page: online text, <=128K input-token tier.
+
+    Source: https://cloud.google.com/vertex-ai/generative-ai/pricing
+    Assert each quoted side separately; no inferred tokens-to-characters ratio.
+    The existing flat catalog does not represent the long-context tier.
+    """
+    pricing = get_model_pricing(model)
+    assert set(pricing) == {
+        "input_per_1k_characters",
+        "output_per_1k_characters",
+    }
+    assert pricing[f"{side}_per_1k_characters"] == rate
+    usage = {"input_characters": 0, "output_characters": 0}
+    usage[f"{side}_characters"] = 1_000_000
+    cost = calculate_total_cost(model, usage)
+    assert cost["pricing_source"] == "available_models"
+    assert cost["total_cost"] == round(1000 * rate, 6)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("alias", "canonical"),
+    [
+        ("gemini-1.5-pro-001", "gemini-1.5-pro"),
+        ("gemini-1.5-pro-20240924", "gemini-1.5-pro"),
+        ("vertex_ai/gemini-1.5-pro", "gemini-1.5-pro"),
+        ("vertex_ai/gemini-1.5-pro-001", "gemini-1.5-pro"),
+        ("gemini/gemini-1.5-pro-latest", "gemini-1.5-pro"),
+        ("gemini-1.5-flash-001", "gemini-1.5-flash"),
+        ("gemini-1.5-flash-20240924", "gemini-1.5-flash"),
+        ("vertex_ai/gemini-1.5-flash", "gemini-1.5-flash"),
+        ("vertex_ai/gemini-1.5-flash-001", "gemini-1.5-flash"),
+        ("gemini/gemini-1.5-flash-latest", "gemini-1.5-flash"),
+    ],
+)
+def test_gemini_character_aliases_retain_catalog_resolution(alias, canonical):
+    """Existing family fallbacks inherit rates, not historical SKU guarantees."""
+    assert get_model_pricing(alias) == get_model_pricing(canonical)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("model", "pricing"),
+    [
+        (
+            "vertex_ai/gemini-1.5-pro-002",
+            {"input_per_1M_tokens": 3.5, "output_per_1M_tokens": 10.5},
+        ),
+        (
+            "vertex_ai/gemini-1.5-flash-002",
+            {"input_per_1M_tokens": 0.35, "output_per_1M_tokens": 1.05},
+        ),
+        (
+            "openrouter/google/gemini-pro-1.5",
+            {"input_per_1k_characters": 0.0025, "output_per_1k_characters": 0.0025},
+        ),
+    ],
+)
+def test_gemini_token_and_other_provider_catalog_entries_unchanged(model, pricing):
+    """A Vertex text-character quote does not establish other units/providers."""
+    assert get_model_pricing(model) == pricing
+
+
+# =============================================================================
 # Unit Tests - Minute-Based Pricing (STT Models)
 # =============================================================================
 
@@ -263,6 +443,37 @@ class TestMinuteBasedPricing:
         assert result["prompt_cost"] == expected_cost
         assert result["completion_cost"] == 0.0
         assert result["total_cost"] == expected_cost
+
+    def test_azure_whisper_pricing_uses_per_minute_audio_alias(self):
+        """azure/whisper-1 is priced with the `per_minute_audio` alias key."""
+        pricing = get_model_pricing("azure/whisper-1")
+
+        assert pricing is not None
+        assert "per_minute_audio" in pricing
+        assert pricing["per_minute_audio"] == 0.006
+
+    def test_calculate_cost_azure_whisper_equals_openai_whisper(self):
+        """Regression: azure/whisper-1 must cost the same as openai whisper-1.
+
+        Both are $0.006/min, but azure/whisper-1 uses the `per_minute_audio`
+        alias. Before the fix the STT branch only handled `input_per_minute`,
+        so azure/whisper-1 fell through to Unknown -> $0.
+
+        Fails without the alias (azure -> $0.0 != whisper-1 -> $0.06);
+        passes with it.
+        """
+        token_usage = {"audio_seconds": 600.0}  # 10 minutes
+
+        azure_result = calculate_total_cost("azure/whisper-1", token_usage)
+        openai_result = calculate_total_cost("whisper-1", token_usage)
+
+        # 10 min * $0.006 = $0.06
+        expected_cost = round((600.0 / 60.0) * 0.006, 6)
+
+        assert azure_result["total_cost"] > 0.0  # the core regression assertion
+        assert azure_result["prompt_cost"] == expected_cost
+        assert azure_result["completion_cost"] == 0.0
+        assert azure_result["total_cost"] == openai_result["total_cost"]
 
 
 # =============================================================================
@@ -580,6 +791,156 @@ class TestFallbackPricing:
         assert result["pricing_source"] == "fallback"
         assert result["prompt_cost"] == expected_prompt
         assert result["completion_cost"] == expected_completion
+
+
+# =============================================================================
+# Unit Tests - Unrecognized / Placeholder Pricing Are Not Silent $0
+# =============================================================================
+
+
+@pytest.mark.unit
+class TestUnrecognizedPricingNotSilentZero:
+    """Regression tests: pricing that is present but not priceable must NOT be
+    billed as a silent $0 with source "available_models".
+
+    Two root causes are covered:
+      (A) An unrecognized-but-present pricing structure (numeric values, but no
+          key shape the cost calculator understands) used to fall through to a
+          $0 cost while still reporting source "available_models" -- making it
+          indistinguishable from a legitimate $0. It must now fall back to a
+          real estimate and stamp a detectable source ("default"/"fallback").
+      (B) Placeholder / non-numeric pricing (e.g. azure_ai "details" strings or
+          together_ai "pay-per-token" strings) is returned as a non-None dict by
+          get_model_pricing, so the fallback never runs. get_model_pricing must
+          treat such pricing as missing (return None) so a real estimate applies.
+    """
+
+    UNRECOGNIZED_PRICING_MOD = (
+        "agentic_eval.core_evals.run_prompt.model_pricing.get_model_pricing"
+    )
+
+    # ---- (A) unrecognized-but-present numeric pricing ----------------------
+
+    def test_unrecognized_pricing_falls_back_not_silent_zero(self, monkeypatch):
+        """Unrecognized (but numeric) pricing -> fallback estimate, detectable source.
+
+        Fails on old code: old behavior returned total_cost 0.0 with
+        pricing_source "available_models".
+        """
+        # e.g. an embedding-style entry that only carries an input price, which
+        # the token cost path (needs BOTH input and output) does not recognize.
+        unrecognized = {"input_per_1M_tokens": 5.0}
+        monkeypatch.setattr(self.UNRECOGNIZED_PRICING_MOD, lambda name: unrecognized)
+
+        token_usage = {"prompt_tokens": 1000, "completion_tokens": 500}
+        result = calculate_total_cost("some-model-with-weird-pricing", token_usage)
+
+        # The whole point of the fix: not a silent $0 attributed to the catalog.
+        assert result["pricing_source"] != "available_models"
+        assert result["pricing_source"] == "default"
+        assert result["total_cost"] > 0.0
+
+        # Should equal the standard default fallback estimate.
+        expected_prompt = round(
+            (1000 / 1_000_000) * DEFAULT_FALLBACK_PRICING["input_per_1M_tokens"], 6
+        )
+        expected_completion = round(
+            (500 / 1_000_000) * DEFAULT_FALLBACK_PRICING["output_per_1M_tokens"], 6
+        )
+        assert result["prompt_cost"] == expected_prompt
+        assert result["completion_cost"] == expected_completion
+
+    def test_unrecognized_pricing_honors_custom_fallback(self, monkeypatch):
+        """Custom fallback pricing is used (source 'fallback') on the unrecognized path."""
+        monkeypatch.setattr(
+            self.UNRECOGNIZED_PRICING_MOD, lambda name: {"per_1000_pairs": 2.0}
+        )
+        custom_fallback = {"input_per_1M_tokens": 1.0, "output_per_1M_tokens": 2.0}
+
+        token_usage = {"prompt_tokens": 1000, "completion_tokens": 500}
+        result = calculate_total_cost(
+            "reranker-weird", token_usage, fallback_pricing=custom_fallback
+        )
+
+        assert result["pricing_source"] == "fallback"
+        assert result["prompt_cost"] == round((1000 / 1_000_000) * 1.0, 6)
+        assert result["completion_cost"] == round((500 / 1_000_000) * 2.0, 6)
+
+    def test_genuine_zero_pricing_stays_available_models(self, monkeypatch):
+        """A real $0 (recognized zero pricing) must stay source 'available_models'.
+
+        This is the distinction the fix preserves: a true $0 is detectable
+        apart from a missed/unrecognized $0.
+        """
+        monkeypatch.setattr(
+            self.UNRECOGNIZED_PRICING_MOD,
+            lambda name: {"input_per_1M_tokens": 0.0, "output_per_1M_tokens": 0.0},
+        )
+        token_usage = {"prompt_tokens": 1000, "completion_tokens": 500}
+        result = calculate_total_cost("free-model", token_usage)
+
+        assert result["pricing_source"] == "available_models"
+        assert result["total_cost"] == 0.0
+
+    # ---- (B) placeholder / non-numeric pricing in the real catalog ---------
+
+    def test_has_numeric_pricing_helper(self):
+        """_has_numeric_pricing distinguishes priceable from placeholder dicts."""
+        from agentic_eval.core_evals.run_prompt.model_pricing import (
+            _has_numeric_pricing,
+        )
+
+        assert _has_numeric_pricing(
+            {"input_per_1M_tokens": 5, "output_per_1M_tokens": 15}
+        )
+        assert _has_numeric_pricing({"per_image": 0.04})
+        assert _has_numeric_pricing({"input_per_1M_tokens": 0.0})  # real $0 counts
+        # Placeholders have no numeric values:
+        assert not _has_numeric_pricing({"details": "Varies by deployment and usage"})
+        assert not _has_numeric_pricing({"per_1M_tokens": "pay-per-token"})
+        assert not _has_numeric_pricing({"per_image": "N/A"})
+        # bool must not count as numeric:
+        assert not _has_numeric_pricing({"free": True})
+
+    def test_azure_ai_details_placeholder_returns_none(self):
+        """azure_ai '{details: ...}' placeholder pricing -> None (so fallback runs)."""
+        assert get_model_pricing("azure_ai/mistral-large") is None
+
+    def test_together_ai_string_placeholder_returns_none(self):
+        """together_ai '{per_1M_tokens: "pay-per-token"}' placeholder -> None."""
+        assert get_model_pricing("together-ai-8.1b-21b") is None
+
+    def test_azure_ai_placeholder_model_routes_to_fallback(self):
+        """A catalogued placeholder model now yields a real estimate, not silent $0."""
+        token_usage = {"prompt_tokens": 1000, "completion_tokens": 500}
+        result = calculate_total_cost("azure_ai/mistral-large", token_usage)
+
+        assert result["pricing_source"] != "available_models"
+        assert result["pricing_source"] == "default"
+        assert result["total_cost"] > 0.0
+
+    def test_together_ai_placeholder_model_routes_to_fallback(self):
+        """together_ai string-priced model routes to fallback estimate."""
+        token_usage = {"prompt_tokens": 1000, "completion_tokens": 500}
+        result = calculate_total_cost("together-ai-8.1b-21b", token_usage)
+
+        assert result["pricing_source"] != "available_models"
+        assert result["pricing_source"] == "default"
+        assert result["total_cost"] > 0.0
+
+    def test_real_pricing_unchanged(self):
+        """Sanity: a normally-priced model is unaffected by the fix."""
+        assert get_model_pricing("gpt-4o") == {
+            "input_per_1M_tokens": 5,
+            "output_per_1M_tokens": 15,
+        }
+        result = calculate_total_cost(
+            "gpt-4o", {"prompt_tokens": 1000, "completion_tokens": 500}
+        )
+        assert result["pricing_source"] == "available_models"
+        assert result["total_cost"] == round(
+            (1000 / 1_000_000) * 5 + (500 / 1_000_000) * 15, 6
+        )
 
 
 # =============================================================================

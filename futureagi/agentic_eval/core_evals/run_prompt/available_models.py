@@ -3504,6 +3504,11 @@ OSS_AVAILABLE_MODELS = [
         "latency": 200,
         "pricing": {"input_per_1M_tokens": 0.35, "output_per_1M_tokens": 1.05},
     },
+    # Vertex AI Gemini 1.5 online text rates, checked 2026-11-14:
+    # https://cloud.google.com/vertex-ai/generative-ai/pricing
+    # These four character-billed entries use the <=128K input-token tier.
+    # This flat catalog does not select long-context, batch or modality tiers.
+    # Exact token-billed prefixed entries above retain their existing units/rates.
     {
         "model_name": "gemini-1.5-pro",
         "providers": "vertex_ai",
@@ -3522,8 +3527,8 @@ OSS_AVAILABLE_MODELS = [
         },
         "latency": 50,
         "pricing": {
-            "input_per_1k_characters": 0.007,
-            "output_per_1k_characters": 0.007,
+            "input_per_1k_characters": 0.0003125,
+            "output_per_1k_characters": 0.00125,
         },
     },
     {
@@ -3544,8 +3549,8 @@ OSS_AVAILABLE_MODELS = [
         },
         "latency": 50,
         "pricing": {
-            "input_per_1k_characters": 0.007,
-            "output_per_1k_characters": 0.007,
+            "input_per_1k_characters": 0.0003125,
+            "output_per_1k_characters": 0.00125,
         },
     },
     {
@@ -3562,8 +3567,8 @@ OSS_AVAILABLE_MODELS = [
         },
         "latency": 40,
         "pricing": {
-            "input_per_1k_characters": 0.004,
-            "output_per_1k_characters": 0.004,
+            "input_per_1k_characters": 0.00001875,
+            "output_per_1k_characters": 0.000075,
         },
     },
     {
