@@ -482,23 +482,34 @@ def put_back_dropped_replacements(dropped_ids) -> int:
     eval config, span, trace or session was deleted, or a newer live entry
     holds its slot (``_put_previous_back``).
 
-    Runs in the reconciler's transaction and locks the ``EvalRecalculation``
-    rows before the entries, as the request and the sweep do. Returns how
-    many of ``dropped_ids`` it retired; the caller retires the rest."""
+    Runs in the reconciler's transaction. Only a replacement still
+    ``PENDING`` is retired: one the drain claimed after the reconciler chose
+    it is running, so it, its previous result and its ``EvalRecalculation``
+    row are left as they are. A row another transaction holds (the request
+    or the sweep finishing it) is skipped, not waited for: the reconciler may
+    already hold the entry's lock, and they take the row's lock first.
+    Returns how many of ``dropped_ids`` it retired."""
     dropped_ids = list(dropped_ids)
     if not dropped_ids:
         return 0
     journals = list(
         _journal()
-        .select_for_update()
+        .select_for_update(skip_locked=True)
         .filter(replacement_id__in=dropped_ids)
         .order_by("pk")
     )
     retired = 0
     for journal in journals:
-        retired += soft_delete_eval_results(
-            _rows().filter(pk=journal.replacement_id, deleted=False)
+        dropped = soft_delete_eval_results(
+            _rows().filter(
+                pk=journal.replacement_id,
+                deleted=False,
+                status=EvalEntryStatus.PENDING,
+            )
         )
+        if not dropped:
+            continue
+        retired += dropped
         outcome = RESTORED if _put_previous_back(journal) else LEFT_RETIRED
         journal.delete()
         logger.info(
@@ -525,8 +536,19 @@ def drop_pending_entries(entries) -> int:
     ids = list(entries.using("default").values_list("pk", flat=True))
     if not ids:
         return 0
+    # Replacements are finished by put_back_dropped_replacements alone, even
+    # when it skips one (claimed, or its row held elsewhere).
+    journaled = set(
+        _journal()
+        .filter(replacement_id__in=ids)
+        .values_list("replacement_id", flat=True)
+    )
     retired = put_back_dropped_replacements(ids)
-    return retired + soft_delete_eval_results(_rows().filter(pk__in=ids, deleted=False))
+    rest = [pk for pk in ids if pk not in journaled]
+    # Still PENDING: an entry the drain claimed since it was chosen runs on.
+    return retired + soft_delete_eval_results(
+        _rows().filter(pk__in=rest, deleted=False, status=EvalEntryStatus.PENDING)
+    )
 
 
 # -- results with no eval task ------------------------------------------------

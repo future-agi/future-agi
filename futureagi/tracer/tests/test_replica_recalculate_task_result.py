@@ -1915,6 +1915,57 @@ def test_composite_task_result_whose_write_fails_keeps_the_previous_result(
     assert not _recalculation_rows().exists()
 
 
+def test_reconcile_drop_leaves_entries_the_drain_claimed_meanwhile(
+    replica,
+    auth_client,
+    user,
+    observation_span,
+    custom_eval_config,
+    eval_task,
+    monkeypatch,
+):
+    """The reconciler chose these entries while they were PENDING; the drain
+    claimed them before the drop. A claimed entry runs on: neither it nor a
+    Recalculate replacement is retired, and the replacement's previous result
+    is not put back under it."""
+    from tracer.models.observation_span import ObservationSpan as Span
+    from tracer.services.eval_tasks.recalculate import drop_pending_entries
+
+    previous, replacement_id, _issue, _member = _crashed_recalculation(
+        monkeypatch,
+        auth_client,
+        user,
+        replica,
+        eval_task,
+        observation_span,
+        custom_eval_config,
+    )
+    other_span = Span.objects.using("default").create(
+        id=f"{observation_span.id}-b",
+        project=observation_span.project,
+        trace=observation_span.trace,
+        name="second span",
+        observation_type="llm",
+    )
+    claimed = _task_result(
+        eval_task, other_span, custom_eval_config, status=EvalEntryStatus.RUNNING
+    )
+    assert _stored(replacement_id).status == EvalEntryStatus.RUNNING
+
+    from django.db import transaction
+
+    with transaction.atomic():  # the reconciler's transaction
+        dropped = drop_pending_entries(
+            EvalLogger.objects.filter(id__in=[replacement_id, claimed.pk])
+        )
+
+    assert dropped == 0
+    assert _stored(replacement_id).deleted is False
+    assert _stored(claimed.pk).deleted is False
+    assert _stored(previous.pk).deleted is True
+    assert _recalculation_rows().count() == 1
+
+
 # -- round 9: Recalculate on a result with no eval task -------------------------
 
 
@@ -2680,6 +2731,10 @@ def test_reconcile_dropping_a_replacement_of_a_deleted_trace_keeps_it_retired(
         replica, eval_task, observation_span, custom_eval_config, user
     )
     entry = begin_recalculation(previous)
+    # The reconciler drops pending work: the replacement was requeued.
+    EvalLogger.objects.using("default").filter(pk=entry.pk).update(
+        status=EvalEntryStatus.PENDING, attempts=1
+    )
     Trace._base_manager.filter(pk=observation_span.trace_id).update(
         deleted=True, deleted_at=timezone.now()
     )
