@@ -4,7 +4,7 @@ from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 
 import structlog
-from django.db import DatabaseError, OperationalError, transaction
+from django.db import DatabaseError, InterfaceError, OperationalError, transaction
 
 from agentcc.models import AgentccAPIKey, AgentccRequestLog, AgentccSession
 
@@ -344,7 +344,7 @@ def _store_request_logs(objects):
                 objects, ignore_conflicts=True
             )
         return 0
-    except OperationalError:
+    except (OperationalError, InterfaceError):
         raise
     except (DatabaseError, ValueError, TypeError) as exc:
         if len(objects) == 1:

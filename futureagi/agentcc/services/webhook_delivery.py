@@ -68,6 +68,11 @@ DELIVERY_TIME_BUDGET_SECONDS = 60
 DELIVERY_LEASE_SECONDS = 120
 # Bounds the per-webhook activity; above the budget plus one POST.
 DELIVERY_ACTIVITY_TIME_LIMIT = 120
+# A dispatched run that has not started within this long (the default queue
+# is busy) is dropped by Temporal. It is shorter than the dispatcher's lease,
+# so a run can never start after its lease, and its slot, has run out.
+DELIVERY_SCHEDULE_TO_START_TIMEOUT = 90
+DELIVERY_WORKFLOW_RUN_TIMEOUT = 300
 DISPATCH_ACTIVITY_TIME_LIMIT = 60
 # A run stops after this many failed attempts in a row.
 RUN_MAX_CONSECUTIVE_FAILURES = 3
@@ -201,9 +206,13 @@ def _usable_webhook(webhook_id):
     return webhook
 
 
-def _end_run(webhook_id, paused):
-    """Release the run's lease; a run that stopped on failures pauses the next."""
-    values = {"delivery_lease_until": None, "next_delivery_at": None}
+def _end_run(webhook_id, paused, release_lease):
+    """End a run: a run that stopped on failures pauses the next. A scheduled
+    run also releases its lease; a direct call holds none, so it must not free
+    the slot of a scheduled run that may be going at the same time."""
+    values = {"next_delivery_at": None}
+    if release_lease:
+        values["delivery_lease_until"] = None
     if paused:
         streak = (
             AgentccWebhook.all_objects.filter(pk=webhook_id)
@@ -220,23 +229,25 @@ def deliver_webhook(
     event_ids=None,
     time_budget_seconds=DELIVERY_TIME_BUDGET_SECONDS,
     page_size=DELIVERY_PAGE_SIZE,
+    release_lease=False,
 ):
     """Deliver one webhook's due events, oldest first.
 
-    Stops when none is due, the budget is spent, or the receiver looks down
-    (see the module docstring). ``event_ids`` limits the run to those
-    events. Returns counts.
+    Stops when none is due, the budget is spent, the receiver looks down (see
+    the module docstring), or the webhook was disabled. ``event_ids`` limits
+    the run to those events. ``release_lease`` is for the scheduled run,
+    which holds the dispatcher's lease. Returns counts.
     """
     result = {"delivered": 0, "failed": 0, "retired": 0}
     webhook = AgentccWebhook.all_objects.filter(pk=webhook_id).first()
     if webhook is None or webhook.deleted:
         result["retired"] = cancel_events_for_webhook(webhook_id)
-        _end_run(webhook_id, paused=False)
+        _end_run(webhook_id, paused=False, release_lease=release_lease)
         return result
     if not webhook.is_active:
         # Kept pending: re-enabling it resumes delivery, and the age limit
         # expires what waits too long.
-        _end_run(webhook_id, paused=False)
+        _end_run(webhook_id, paused=False, release_lease=release_lease)
         return result
 
     events = AgentccWebhookEvent.all_objects.filter(webhook_id=webhook_id)
@@ -273,7 +284,12 @@ def deliver_webhook(
                 http, response_code, error = _post(http, webhook, event)
 
                 delivered = _record_attempt(event, response_code, error)
-                record_delivery_result(webhook.pk, delivered, error or "")
+                disabled = record_delivery_result(webhook.pk, delivered, error or "")
+                if disabled:
+                    # This failure disabled it: no further POST in this run.
+                    result["failed"] += 1
+                    stopped_on_failure = True
+                    break
                 if delivered:
                     result["delivered"] += 1
                     failures_in_a_row = 0
@@ -289,7 +305,9 @@ def deliver_webhook(
     finally:
         if http is not None:
             http.close()
-        paused_until = _end_run(webhook_id, paused=stopped_on_failure)
+        paused_until = _end_run(
+            webhook_id, paused=stopped_on_failure, release_lease=release_lease
+        )
         logger.info(
             "webhook_events_processed",
             webhook_id=str(webhook_id),
@@ -344,9 +362,15 @@ def deliveries_in_flight(now=None):
 
 
 def _take_delivery_lease(webhook_id, now):
-    lease = Q(delivery_lease_until__isnull=True) | Q(delivery_lease_until__lte=now)
+    """Lease the webhook for a run, unless something changed since it was
+    listed: a run took it, a run that just ended paused it, or it was turned
+    off or deleted."""
+    free = Q(delivery_lease_until__isnull=True) | Q(delivery_lease_until__lte=now)
+    not_paused = Q(next_delivery_at__isnull=True) | Q(next_delivery_at__lte=now)
     return bool(
-        AgentccWebhook.all_objects.filter(lease, pk=webhook_id).update(
+        AgentccWebhook.all_objects.filter(
+            free, not_paused, pk=webhook_id, is_active=True, deleted=False
+        ).update(
             delivery_lease_until=now + timedelta(seconds=DELIVERY_ACTIVITY_TIME_LIMIT)
         )
     )
@@ -371,7 +395,11 @@ def delivery_task_id(webhook_id):
 
 
 @temporal_activity(
-    max_retries=0, time_limit=DELIVERY_ACTIVITY_TIME_LIMIT, queue="default"
+    max_retries=0,
+    time_limit=DELIVERY_ACTIVITY_TIME_LIMIT,
+    queue="default",
+    schedule_to_start_timeout=DELIVERY_SCHEDULE_TO_START_TIMEOUT,
+    workflow_run_timeout=DELIVERY_WORKFLOW_RUN_TIMEOUT,
 )
 def deliver_webhook_activity(webhook_id):
     """One webhook's delivery run. A failed run leaves its events due."""
@@ -380,7 +408,7 @@ def deliver_webhook_activity(webhook_id):
         delivery_lease_until=timezone.now()
         + timedelta(seconds=DELIVERY_ACTIVITY_TIME_LIMIT)
     )
-    return deliver_webhook(webhook_id)
+    return deliver_webhook(webhook_id, release_lease=True)
 
 
 @temporal_activity(

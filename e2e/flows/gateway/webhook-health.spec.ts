@@ -48,7 +48,7 @@ test('GW-E2E-006: a webhook that keeps failing is disabled with its reason, re-e
       'delete the webhook from the row actions',
     ],
     backendChecks: [
-      'log ingest answers at once and leaves its five events pending with no attempt',
+      'log ingest answers at once and leaves its five events pending, none delivered',
       'after its first failed delivery the webhook in PG agentcc_webhook is still active with a failure streak',
       'the webhook in PG agentcc_webhook is inactive with a reason naming three consecutive failed deliveries, and its five events are still pending',
       'enabling it stores is_active true with the failure streak and reason cleared',
@@ -133,16 +133,35 @@ test('GW-E2E-006: a webhook that keeps failing is disabled with its reason, re-e
   });
 
   const row = page.getByRole('row').filter({ hasText: name });
+  // Holds the webhook's next run back (its failure pause) while the page is
+  // read, so a slow runner cannot reach the third failure mid-check; then lets
+  // delivery go on. A seeding write, on its own connection like the repoint.
+  const holdDelivery = async (hold: boolean) => {
+    const client = new pg.Client({ connectionString: E2E.pgUrl });
+    await client.connect();
+    try {
+      const held = await client.query(
+        `UPDATE agentcc_webhook SET next_delivery_at = ${hold ? "now() + interval '10 minutes'" : 'NULL'}
+          WHERE id = $1 AND organization_id = $2`,
+        [webhookId, actor.organizationId],
+      );
+      expect(held.rowCount).toBe(1);
+    } finally {
+      await client.end();
+    }
+  };
   await test.step('while it is still active the dashboard shows it failing', async () => {
-    // The first failed run pauses the webhook 10 s and the second 20 s, so it
-    // stays active with a streak of one or two for about 30 s.
+    // The first failed run pauses the webhook 10 s, so it is active with a
+    // streak of one when the poll sees the failure.
     await expect.poll(async () => (await stored()).consecutive_failures, DISABLED_WITHIN).toBeGreaterThan(0);
+    await holdDelivery(true);
     const failing = await stored();
     expect(failing.is_active).toBe(true);
     await page.goto(WEBHOOKS_ROUTE);
     await expect(row).toHaveCount(1, { timeout: UI_READY });
     await expect(row.getByText('Active', { exact: true })).toBeVisible({ timeout: UI_READY });
-    await expect(row.getByText(/^[12] failed deliver(y|ies) in a row$/)).toBeVisible({ timeout: UI_READY });
+    await expect(row.getByText(`${failing.consecutive_failures} failed ${failing.consecutive_failures === 1 ? 'delivery' : 'deliveries'} in a row`, { exact: true })).toBeVisible({ timeout: UI_READY });
+    await holdDelivery(false);
   });
 
   await test.step('the delivery schedule disables the webhook after three failures', async () => {

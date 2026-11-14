@@ -1625,7 +1625,7 @@
 
 **Backend state verified:**
 
-- log ingest answers at once and leaves its five events pending with no attempt
+- log ingest answers at once and leaves its five events pending, none delivered
 - after its first failed delivery the webhook in PG agentcc_webhook is still active with a failure streak
 - the webhook in PG agentcc_webhook is inactive with a reason naming three consecutive failed deliveries, and its five events are still pending
 - enabling it stores is_active true with the failure streak and reason cleared

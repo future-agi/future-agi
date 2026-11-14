@@ -773,7 +773,7 @@ class TestDeliveryConcurrencyCap:
             # One run ends and frees its slot.
             with patch(SESSION) as mock_session, patch(URL_CHECK):
                 mock_session.return_value = _session({"https://h0.example.com/x": 200})
-                deliver_webhook(hooks[0].pk)
+                deliver_webhook(hooks[0].pk, release_lease=True)
             third, started = self._dispatch()
             assert started == [str(hooks[2].pk)]
             assert third["running"] == 1
@@ -840,3 +840,77 @@ class TestDeliveryConcurrencyCap:
 
         assert settings.AGENTCC_WEBHOOK_MAX_CONCURRENT_DELIVERIES == 3
         assert settings.AGENTCC_WEBHOOK_DISABLE_AFTER_MINUTES == 60
+
+    def test_a_direct_run_does_not_free_a_scheduled_runs_slot(self, organization):
+        url = "https://hooks.example.com/ok"
+        webhook = _webhook(organization, "held", url)
+        _events(webhook, 1)
+        held_until = timezone.now() + timedelta(seconds=100)
+        AgentccWebhook.all_objects.filter(pk=webhook.pk).update(
+            delivery_lease_until=held_until
+        )
+
+        with patch(SESSION, return_value=_session({url: 200})), patch(URL_CHECK):
+            deliver_webhook_events()  # an operator's run, beside the scheduled one
+
+        webhook.refresh_from_db()
+        assert webhook.delivery_lease_until == held_until
+
+    def test_no_lease_for_a_webhook_paused_or_turned_off_since_it_was_listed(
+        self, organization
+    ):
+        from agentcc.services.webhook_delivery import _take_delivery_lease
+
+        now = timezone.now()
+        paused = _webhook(
+            organization,
+            "paused-now",
+            "https://a.example.com/x",
+            next_delivery_at=now + timedelta(seconds=40),
+        )
+        off = _webhook(
+            organization, "off-now", "https://b.example.com/x", is_active=False
+        )
+        ready = _webhook(organization, "ready-now", "https://c.example.com/x")
+
+        assert not _take_delivery_lease(paused.pk, now)
+        assert not _take_delivery_lease(off.pk, now)
+        assert _take_delivery_lease(ready.pk, now)
+        assert not _take_delivery_lease(ready.pk, now)  # already held
+
+    def test_a_queued_run_cannot_start_after_its_lease_ends(self):
+        meta = webhook_delivery.deliver_webhook_activity._metadata
+        assert (
+            meta["schedule_to_start_timeout"]
+            < webhook_delivery.DELIVERY_ACTIVITY_TIME_LIMIT
+        )
+        assert meta["workflow_run_timeout"] > (
+            meta["schedule_to_start_timeout"] + meta["time_limit"]
+        )
+
+
+@pytest.mark.integration
+class TestARunStopsWhenItDisablesTheWebhook:
+    @patch(URL_CHECK)
+    @patch(SESSION)
+    def test_no_post_after_the_failure_that_disabled_it(
+        self, mock_session, _mock_url_check, organization
+    ):
+        from django.test import override_settings
+
+        url = "https://hooks.example.com/500"
+        http = _session({url: 500})
+        mock_session.return_value = http
+        webhook = _webhook(organization, "nearly-off", url, consecutive_failures=9)
+        _events(webhook, 10)
+
+        with override_settings(
+            AGENTCC_WEBHOOK_DISABLE_AFTER_FAILURES=10,
+            AGENTCC_WEBHOOK_DISABLE_AFTER_MINUTES=0,
+        ):
+            result = deliver_webhook(webhook.pk)
+
+        assert http.post.call_count == 1
+        assert result["failed"] == 1
+        webhook.refresh_from_db()
+        assert webhook.is_active is False

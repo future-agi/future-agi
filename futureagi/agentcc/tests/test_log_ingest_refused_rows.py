@@ -144,3 +144,20 @@ class TestIngestErrorStatus:
 
         assert response.status_code == 400
         assert "character varying" not in response.content.decode()
+
+
+@pytest.mark.integration
+@patch("agentcc.views.webhook.AGENTCC_WEBHOOK_SECRET", SECRET)
+@pytest.mark.parametrize(
+    "error", [InterfaceError("connection already closed"), OperationalError("gone")]
+)
+def test_a_connection_lost_mid_insert_is_retried_not_skipped(
+    api_client, two_orgs, error
+):
+    with patch(
+        "agentcc.services.log_ingestion.AgentccRequestLog.no_workspace_objects.bulk_create",
+        side_effect=error,
+    ):
+        response = _post(api_client, [_entry("kept-for-resend", "key-a")])
+
+    assert response.status_code == 503
