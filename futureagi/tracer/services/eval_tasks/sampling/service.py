@@ -682,11 +682,18 @@ def reconcile_policy(task: EvalTask) -> ReconcileResult:
                         member, policy, version, frozen_at=cohort.frozen_at
                     )
             trace_witnesses = witnesses.read(metadata.keys())
-            materialize_options = {"sampling_metadata": metadata}
-            if trace_witnesses:
-                materialize_options["trace_filter_witnesses"] = trace_witnesses
             with fence.write() as locked:
-                materialize_pending(locked, metadata.keys(), **materialize_options)
+                if trace_witnesses:
+                    materialize_pending(
+                        locked,
+                        metadata.keys(),
+                        sampling_metadata=metadata,
+                        trace_filter_witnesses=trace_witnesses,
+                    )
+                else:
+                    materialize_pending(
+                        locked, metadata.keys(), sampling_metadata=metadata
+                    )
                 requeued, dropped = _requeue_and_drop(
                     locked,
                     resolved=ResolvedRowSet(tuple(candidates), tuple(metadata), full),

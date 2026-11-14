@@ -2,6 +2,8 @@
 
 import mimetypes
 import re
+from collections.abc import Iterator
+from typing import cast
 from uuid import UUID
 
 from asgiref.sync import sync_to_async
@@ -36,6 +38,10 @@ class _StorageDownload:
 _STREAM_END = object()
 
 
+def _next_chunk(chunks: Iterator[bytes]) -> bytes | object:
+    return next(chunks, _STREAM_END)
+
+
 class _StorageStreamingResponse(StreamingHttpResponse):
     """Stream storage chunks one at a time under both WSGI and ASGI.
 
@@ -49,10 +55,11 @@ class _StorageStreamingResponse(StreamingHttpResponse):
     """
 
     async def __aiter__(self):
-        chunks = iter(self.streaming_content)
-        read_chunk = sync_to_async(next)
+        # _StorageDownload only supplies synchronous byte chunks.
+        chunks = iter(cast(Iterator[bytes], self.streaming_content))
+        read_chunk = sync_to_async(_next_chunk)
         while True:
-            chunk = await read_chunk(chunks, _STREAM_END)
+            chunk = await read_chunk(chunks)
             if chunk is _STREAM_END:
                 return
             yield chunk
@@ -145,7 +152,9 @@ def download_knowledge_base_file(request, kb_id, file_id):
         _StorageDownload(stored),
         content_type=mimetypes.guess_type(filename)[0] or "application/octet-stream",
     )
-    response["Content-Disposition"] = content_disposition_header(True, filename)
+    disposition = content_disposition_header(True, filename)
+    assert disposition is not None  # The sanitized filename is nonempty.
+    response["Content-Disposition"] = disposition
     response["Cache-Control"] = "private, no-store"
     response["X-Content-Type-Options"] = "nosniff"
     return response
