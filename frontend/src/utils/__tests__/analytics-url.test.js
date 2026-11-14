@@ -32,9 +32,6 @@ describe("analyticsUrl", () => {
     "oauth_code",
     "onboarding_token",
     "onboarding_gcp_token",
-    "code",
-    "state",
-    "request_id",
     "code_challenge",
     "SAMLResponse",
     "SAMLRequest",
@@ -46,6 +43,106 @@ describe("analyticsUrl", () => {
       ),
     ).toBe("https://app.example.test/dashboard/develop?tab=all&page=2");
     expect(analyticsUrl(`/dashboard?${name}=${CODE}`)).toBe("/dashboard");
+  });
+
+  it.each([
+    "/saml2_auth/github/callback/",
+    "/saml2_auth/microsoft/callback/",
+    "/saml2_auth/auth/callback/",
+    "/integrations/slack/callback/",
+    "/falcon-ai/mcp-connectors/2b0c5e1e-0000-4000-8000-000000000001/oauth/callback/",
+    "/mcp/authorize",
+  ])("removes code and state on the sign-in step %s", (path) => {
+    expect(
+      analyticsUrl(
+        `https://app.example.test${path}?code=${CODE}&state=${CODE}&lang=en`,
+      ),
+    ).toBe(`https://app.example.test${path}?lang=en`);
+  });
+
+  it("removes the c parameter on the SAML completion step only", () => {
+    expect(
+      analyticsUrl(`https://api.example.test/saml2_auth/complete/?c=${CODE}`),
+    ).toBe("https://api.example.test/saml2_auth/complete/");
+    expect(analyticsUrl("/dashboard/charts?c=3")).toBe("/dashboard/charts?c=3");
+  });
+
+  it("removes request_id, code and state from the authorization page address", () => {
+    expect(
+      analyticsUrl(
+        `https://app.example.test/mcp/authorize?request_id=${CODE}&client_id=synthetic-client&state=${CODE}`,
+      ),
+    ).toBe("https://app.example.test/mcp/authorize?client_id=synthetic-client");
+    expect(analyticsUrl(`/mcp/authorize/?request_id=${CODE}`)).toBe(
+      "/mcp/authorize/",
+    );
+  });
+
+  it.each([
+    "https://app.example.test/dashboard/gateway/logs?request_id=req-synthetic-01&page=2",
+    "/dashboard/gateway/logs?request_id=req-synthetic-01",
+    "https://app.example.test/dashboard/develop?code=python&state=open",
+    "https://app.example.test/dashboard/settings?access=read&refresh=daily",
+  ])("sends the ordinary page address %s unchanged", (href) => {
+    expect(analyticsUrl(href)).toBe(href);
+  });
+
+  it("removes access and refresh from the support sign-in page address", () => {
+    expect(
+      analyticsUrl(
+        `https://app.example.test/sos?access=${CODE}&refresh=${CODE}`,
+      ),
+    ).toBe("https://app.example.test/sos");
+    expect(analyticsUrl(`/SOS/?refresh=${CODE}&access=${CODE}&x=1`)).toBe(
+      "/SOS/?x=1",
+    );
+  });
+
+  it("cleans a hashbang route and a query inside a plain fragment", () => {
+    expect(analyticsUrl(`https://app.example.test/#!/shared/${CODE}`)).toBe(
+      "https://app.example.test/#!/shared/:token",
+    );
+    expect(
+      analyticsUrl(`https://app.example.test/dashboard#tab?sso_token=${CODE}`),
+    ).toBe("https://app.example.test/dashboard#tab");
+    expect(
+      analyticsUrl(
+        `https://app.example.test/dashboard#tab?sso_token=${CODE}&view=grid`,
+      ),
+    ).toBe("https://app.example.test/dashboard#tab?view=grid");
+  });
+
+  it("cleans a link that was percent-encoded twice inside a parameter", () => {
+    const twice = encodeURIComponent(
+      encodeURIComponent(`/shared/${CODE}?sso_token=${CODE}`),
+    );
+    const result = analyticsUrl(`/auth/jwt/login?returnTo=${twice}`);
+
+    expect(result).not.toContain(CODE);
+    expect(decodeURIComponent(decodeURIComponent(result))).toContain(
+      "/shared/:token",
+    );
+  });
+
+  it("drops a nested link value deeper than the cleaning limit", () => {
+    let nested = `/shared/${CODE}`;
+    for (let level = 0; level < 8; level += 1) {
+      nested = `/auth/jwt/login?returnTo=${encodeURIComponent(nested)}`;
+    }
+
+    expect(analyticsUrl(nested)).not.toContain(CODE);
+    expect(analyticsUrl(`https://app.example.test${nested}`)).not.toContain(
+      CODE,
+    );
+  });
+
+  it.each([
+    "shared/platform",
+    "auth/jwt/verify/a/b",
+    "Synthetic Org ?sso_token=1",
+    "notes#sso_token=x",
+  ])("leaves the text %s that is not a URL unchanged", (text) => {
+    expect(analyticsUrl(text)).toBe(text);
   });
 
   it("removes a fragment that carries a sign-in parameter", () => {

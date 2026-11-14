@@ -46,17 +46,24 @@ let mixpanelReplayStopScript = null;
 // the route pattern, one-time query parameters removed.
 const URL_PROPERTIES = ["$current_url", "$referrer", "$initial_referrer"];
 
-// Cleans every top-level text value as a URL just before sending: the URL
+// Cleans top-level text values that are URLs just before sending: the URL
 // properties above and values the library collects itself, such as campaign
-// (utm_*) parameters. Text that is not a link URL is left as it is.
-const cleanUrlProperties = (properties) => {
+// (utm_*) parameters. analyticsUrl leaves text that is not a URL, and URLs
+// without a link code or one-time parameter, as they are.
+const cleanUrlProperties = (properties, isUrlProperty = () => true) => {
   if (!properties || typeof properties !== "object") return;
   Object.keys(properties).forEach((name) => {
-    if (typeof properties[name] === "string") {
+    if (typeof properties[name] === "string" && isUrlProperty(name)) {
       properties[name] = analyticsUrl(properties[name]);
     }
   });
 };
+
+// Profile properties the library adds itself: the first referrer and the
+// first campaign values. Profile properties the app sets, such as names, are
+// sent as they are.
+const isLibraryProfileUrlProperty = (name) =>
+  name === "$initial_referrer" || name.startsWith("initial_utm_");
 
 // The values the library would add to an event now, where they differ from
 // what analyticsUrl reports. Empty on ordinary pages.
@@ -118,8 +125,8 @@ if (MIXPANEL_ENABLED) {
           return data;
         },
         before_send_people: (data) => {
-          cleanUrlProperties(data?.$set);
-          cleanUrlProperties(data?.$set_once);
+          cleanUrlProperties(data?.$set, isLibraryProfileUrlProperty);
+          cleanUrlProperties(data?.$set_once, isLibraryProfileUrlProperty);
           return data;
         },
       },

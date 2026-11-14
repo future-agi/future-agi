@@ -67,12 +67,16 @@ const sent = vi.hoisted(() => {
 import mixpanel from "mixpanel-browser";
 import { Events } from "../EventNames";
 import { identifyUser, trackError, trackEvent } from "../mixpanel";
+import { runPromptEventFields } from "src/sections/develop-detail/RunPrompt/runPromptEventFields";
 
 const ORIGIN = window.location.origin;
 const USER = "synthetic-user-7c1d";
 const CODE = "SYNTHETIC-LINK-CODE-2f9e";
 const SSO_VALUE = "SYNTHETIC-SSO-VALUE-81b4";
 const PROMPT_TEXT = "SYNTHETIC PROMPT TEXT 5d02";
+const SUPPORT_ACCESS = "SYNTHETIC-ACCESS-VALUE-6a13";
+const SUPPORT_REFRESH = "SYNTHETIC-REFRESH-VALUE-9e40";
+const SCHEMA_TEXT = "SYNTHETIC SCHEMA FIELD 77c1";
 
 const TOKEN_ROUTES = [
   [`/auth/jwt/verify/${USER}/${CODE}`, "/auth/jwt/verify/:uuid/:token"],
@@ -104,6 +108,11 @@ const flushSentRequests = async () => {
   sent.requests.length = 0;
   return requests;
 };
+
+const eventsIn = (requests) =>
+  requests
+    .filter((request) => request.url.includes("/track"))
+    .flatMap((request) => request.items);
 
 const flushSentEvents = async () =>
   (await flushSentRequests())
@@ -319,6 +328,143 @@ describe("properties sent by mixpanel-browser", () => {
     );
     expect(properties.id).toBe("dataset-1");
     expect(properties.model_name).toBe("synthetic-model");
+    expect(JSON.stringify(properties)).not.toContain(PROMPT_TEXT);
+  });
+  it("leaves access and refresh out of everything sent from the support sign-in page", async () => {
+    const supportPage = `/sos?access=${SUPPORT_ACCESS}&refresh=${SUPPORT_REFRESH}`;
+    visit(supportPage, `${ORIGIN}${supportPage}`);
+
+    identifyUser({ id: "synthetic-user-id-2", email: "support@example.test" });
+    trackError({ error: "synthetic failure" });
+
+    const requests = await flushSentRequests();
+    const { properties } = sentEvent(eventsIn(requests), "Client Error : /sos");
+    expect(properties.$current_url).toBe(`${ORIGIN}/sos`);
+    expect(properties.$referrer).toBe(`${ORIGIN}/sos`);
+    expect(JSON.stringify(requests)).not.toContain(SUPPORT_ACCESS);
+    expect(JSON.stringify(requests)).not.toContain(SUPPORT_REFRESH);
+
+    visit("/dashboard/develop", `${ORIGIN}${supportPage}`);
+    trackEvent("Synthetic page after support sign-in", { count: 6 });
+    const later = sentEvent(
+      await flushSentEvents(),
+      "Synthetic page after support sign-in",
+    );
+    expect(later.properties.$referrer).toBe(`${ORIGIN}/sos`);
+  });
+
+  it.each([
+    "/dashboard/gateway/logs?request_id=req-synthetic-01&page=2",
+    "/dashboard/settings/user-management?access=read",
+    "/dashboard/develop?code=python&state=open",
+  ])("sends the ordinary page address %s unchanged", async (path) => {
+    visit(path, `${ORIGIN}${path}`);
+
+    trackEvent("Synthetic ordinary filter event", { count: 7 });
+
+    const { properties } = sentEvent(
+      await flushSentEvents(),
+      "Synthetic ordinary filter event",
+    );
+    expect(properties.$current_url).toBe(`${ORIGIN}${path}`);
+    expect(properties.$referrer).toBe(`${ORIGIN}${path}`);
+  });
+
+  it("leaves request_id, code and state out of the authorization page address", async () => {
+    visit(
+      `/mcp/authorize?request_id=${CODE}&state=${CODE}&client_id=synthetic-client`,
+    );
+
+    trackEvent("Synthetic authorize event", { count: 8 });
+
+    const { properties } = sentEvent(
+      await flushSentEvents(),
+      "Synthetic authorize event",
+    );
+    expect(properties.$current_url).toBe(
+      `${ORIGIN}/mcp/authorize?client_id=synthetic-client`,
+    );
+    expect(JSON.stringify(properties)).not.toContain(CODE);
+  });
+
+  it("sends text values that are not URLs, and profile names, unchanged", async () => {
+    visit("/dashboard/develop");
+
+    identifyUser({
+      id: "synthetic-user-id-3",
+      email: "member@example.test",
+      organization: { id: "synthetic-org-1", name: "shared/platform" },
+    });
+    trackEvent("Synthetic team event", {
+      team: "shared/platform",
+      label: "Synthetic Org ?sso_token=1",
+    });
+
+    const requests = await flushSentRequests();
+    const { properties } = sentEvent(
+      eventsIn(requests),
+      "Synthetic team event",
+    );
+    expect(properties.team).toBe("shared/platform");
+    expect(properties.label).toBe("Synthetic Org ?sso_token=1");
+    const orgNames = requests
+      .filter((request) => request.url.includes("/engage"))
+      .flatMap((request) => request.items)
+      .map((item) => item.$set_once?.["Org Name"])
+      .filter(Boolean);
+    expect(orgNames).toEqual(["shared/platform"]);
+  });
+
+  it("sends the run-prompt settings, tool ids and saved schema id, not the schema", async () => {
+    visit("/dashboard/develop/dataset-1");
+
+    trackEvent(
+      Events.datasetRunpromptRunClicked,
+      runPromptEventFields("dataset-1", {
+        dataset_id: "dataset-1",
+        name: "Synthetic column",
+        config: {
+          model: "synthetic-model",
+          concurrency: 5,
+          messages: [
+            { role: "user", content: [{ type: "text", text: PROMPT_TEXT }] },
+          ],
+          tools: ["tool-1", "tool-2"],
+          tool_choice: "auto",
+          response_format: {
+            id: "schema-1",
+            name: "Synthetic schema",
+            description: SCHEMA_TEXT,
+            schema: { type: "object", properties: { [SCHEMA_TEXT]: {} } },
+          },
+          run_prompt_config: {
+            model_type: "llm",
+            temperature: 0.2,
+            top_p: 1,
+            max_tokens: 256,
+            presence_penalty: 0,
+          },
+        },
+      }),
+    );
+
+    const { properties } = sentEvent(
+      await flushSentEvents(),
+      Events.datasetRunpromptRunClicked,
+    );
+    expect(properties.tools_config).toEqual({
+      toolChoice: "auto",
+      tools: ["tool-1", "tool-2"],
+    });
+    expect(properties.model_options).toEqual({
+      maxTokens: 256,
+      presencePenalty: 0,
+      temperature: 0.2,
+      topP: 1,
+      responseFormat: "json_schema",
+      responseSchemaId: "schema-1",
+    });
+    expect(JSON.stringify(properties)).not.toContain(SCHEMA_TEXT);
     expect(JSON.stringify(properties)).not.toContain(PROMPT_TEXT);
   });
 });
