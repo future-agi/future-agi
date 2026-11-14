@@ -628,6 +628,39 @@ def test_workspace_cursor_reauthorizes_embedded_batch_and_rejects_mismatch(
 
 
 @pytest.mark.unit
+@pytest.mark.parametrize("project_count", [1, 65])
+@pytest.mark.parametrize("metric_name", ["tag", "tags", "ended_reason"])
+def test_legacy_system_values_use_raw_tags_only_in_batched_scope(
+    monkeypatch, project_count, metric_name
+):
+    projects = _ProjectQuery(
+        [_uuid(index) for index in range(1, project_count + 1)], []
+    )
+    _install_scope_and_seen_state(monkeypatch, projects)
+    monkeypatch.setattr(dashboard_view, "V2AnalyticsQueryService", object)
+    observed = []
+
+    def read_values(_analytics, **kwargs):
+        observed.append(kwargs.get("effective_tags", True))
+        now = datetime.now(UTC)
+        return FilterValueRead(("sample",), True, None, now - timedelta(days=7), now)
+
+    monkeypatch.setattr(dashboard_view, "read_span_system_filter_values", read_values)
+    _result(
+        _invoke(
+            {
+                "metric_name": metric_name,
+                "metric_type": "system_metric",
+                "source": "traces",
+                "project_ids": [_uuid(1)] if project_count == 1 else [],
+                "search": "",
+            }
+        )
+    )
+    assert observed == [not (project_count > 64 and metric_name in {"tag", "tags"})]
+
+
+@pytest.mark.unit
 def test_workspace_legacy_values_report_first_batch_as_sampled(monkeypatch):
     project_ids = [_uuid(index) for index in range(1, 66)]
     slice_limits = []

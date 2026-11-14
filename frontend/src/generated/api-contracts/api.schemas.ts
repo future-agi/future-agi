@@ -29,18 +29,17 @@ export const AccountsErrorResponseApiType = {
   api_error: "api_error",
 } as const;
 
-/**
- * String error message or structured account/login error metadata.
- */
-export type AccountsErrorResponseApiResult = {
-  error?: string;
-  error_code?: string;
-  message?: string;
-  blocked?: boolean;
-  remaining_attempts?: number;
-  block_time?: number;
-  block_time_remaining?: number;
-};
+export type AccountsErrorResponseApiResult =
+  | string
+  | {
+      error?: string;
+      error_code?: string;
+      message?: string;
+      blocked?: boolean;
+      remaining_attempts?: number;
+      block_time?: number;
+      block_time_remaining?: number;
+    };
 
 export type AccountsErrorResponseApiDetails = { [key: string]: string[] };
 
@@ -49,7 +48,6 @@ export interface AccountsErrorResponseApi {
   type?: AccountsErrorResponseApiType;
   code?: string;
   detail?: string;
-  /** String error message or structured account/login error metadata. */
   result?: AccountsErrorResponseApiResult;
   message?: string;
   error?: string;
@@ -1268,21 +1266,20 @@ export const TeamCreateErrorResponseApiType = {
   api_error: "api_error",
 } as const;
 
-/**
- * String error message or structured account/login error metadata.
- */
-export type TeamCreateErrorResponseApiResult = {
-  error?: string;
-  error_code?: string;
-  message?: string;
-  blocked?: boolean;
-  remaining_attempts?: number;
-  block_time?: number;
-  block_time_remaining?: number;
-  created_members?: TeamCreatedMemberResponseApi[];
-  workspace?: WorkspaceSummaryApi;
-  errors?: TeamCreateErrorItemApi[];
-};
+export type TeamCreateErrorResponseApiResult =
+  | string
+  | {
+      error?: string;
+      error_code?: string;
+      message?: string;
+      blocked?: boolean;
+      remaining_attempts?: number;
+      block_time?: number;
+      block_time_remaining?: number;
+      created_members?: TeamCreatedMemberResponseApi[];
+      workspace?: WorkspaceSummaryApi;
+      errors?: TeamCreateErrorItemApi[];
+    };
 
 export type TeamCreateErrorResponseApiDetails = { [key: string]: string[] };
 
@@ -1291,7 +1288,6 @@ export interface TeamCreateErrorResponseApi {
   type?: TeamCreateErrorResponseApiType;
   code?: string;
   detail?: string;
-  /** String error message or structured account/login error metadata. */
   result?: TeamCreateErrorResponseApiResult;
   message?: string;
   error?: string;
@@ -30301,14 +30297,13 @@ export const InstantEvalBadRequestApiType = {
   api_error: "api_error",
 } as const;
 
-/**
- * String or JSON object.
- */
-export type InstantEvalBadRequestApiResult = {
-  message?: string;
-  error_code?: string;
-  settings_path?: string;
-};
+export type InstantEvalBadRequestApiResult =
+  | string
+  | {
+      message?: string;
+      error_code?: string;
+      settings_path?: string;
+    };
 
 export type InstantEvalBadRequestApiDetails = { [key: string]: string[] };
 
@@ -30317,7 +30312,6 @@ export interface InstantEvalBadRequestApi {
   type?: InstantEvalBadRequestApiType;
   code?: string;
   detail?: string;
-  /** String or JSON object. */
   result?: InstantEvalBadRequestApiResult;
   message?: string;
   error?: string;
@@ -32774,6 +32768,70 @@ export type RootSpansResponseApiResult = { [key: string]: string };
 export interface RootSpansResponseApi {
   status?: boolean;
   result: RootSpansResponseApiResult;
+}
+
+export type SpanTagsUpdateApiTagsItem =
+  | string
+  | {
+      /** @maxLength 256 */
+      name: string;
+      /** @pattern ^#[0-9a-fA-F]{6}$ */
+      color?: string;
+    };
+
+export interface SpanTagsUpdateApi {
+  /** @maxItems 100 */
+  tags: SpanTagsUpdateApiTagsItem[];
+  project_id: string;
+  /**
+   * @minLength 1
+   * @maxLength 128
+   */
+  trace_id: string;
+  /**
+   * @minLength 1
+   * @maxLength 128
+   */
+  span_id: string;
+  start_hour: string;
+  /** @maxLength 64 */
+  observation_type: string;
+  /** @maxLength 255 */
+  service_name: string;
+  expected_start_time: string;
+  /** @minLength 1 */
+  expected_version: string;
+  /**
+   * 0 for no assignment; otherwise the last returned tag_revision.
+   * @minimum 0
+   * @maximum 9007199254740990
+   */
+  expected_tag_revision: number;
+}
+
+export interface TagItemApi {
+  /** @minLength 1 */
+  name: string;
+  /**
+   * @minLength 1
+   * @pattern ^#[0-9a-fA-F]{6}$
+   */
+  color?: string;
+}
+
+export interface EntityTagsResultApi {
+  /** @minLength 1 */
+  id: string;
+  tags: TagItemApi[];
+  manual_tags: TagItemApi[];
+  source_tag_names: string[];
+  /** @minimum 1 */
+  tag_revision: number;
+}
+
+export interface EntityTagsResponseApi {
+  status: boolean;
+  result: EntityTagsResultApi;
 }
 
 export type ObservationSpanDetailResultApiObservationSpan = {
@@ -35568,8 +35626,43 @@ export interface TraceVoiceCallDetailResponseApi {
   result: TraceVoiceCallDetailResultApi;
 }
 
+export type TraceTagsUpdateApiTagsItem =
+  | string
+  | {
+      /** @maxLength 256 */
+      name: string;
+      /** @pattern ^#[0-9a-fA-F]{6}$ */
+      color?: string;
+    };
+
 export interface TraceTagsUpdateApi {
-  tags: string[];
+  /** @maxItems 100 */
+  tags: TraceTagsUpdateApiTagsItem[];
+  project_id: string;
+  /**
+   * @minLength 1
+   * @maxLength 128
+   */
+  trace_id: string;
+  /**
+   * @minLength 1
+   * @maxLength 128
+   */
+  span_id: string;
+  start_hour: string;
+  /** @maxLength 64 */
+  observation_type: string;
+  /** @maxLength 255 */
+  service_name: string;
+  expected_start_time: string;
+  /** @minLength 1 */
+  expected_version: string;
+  /**
+   * 0 for no assignment; otherwise the last returned tag_revision.
+   * @minimum 0
+   * @maximum 9007199254740990
+   */
+  expected_tag_revision: number;
 }
 
 export type UserAlertMonitorLogApiType =

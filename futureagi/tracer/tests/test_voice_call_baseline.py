@@ -287,6 +287,9 @@ def _collector_row(readable: Any, *, project_id: str) -> dict:
         "id": format(readable.context.span_id, "016x"),
         "trace_id": str(uuid.UUID(int=readable.context.trace_id)),
         "parent_span_id": parent,
+        "service_name": readable.resource.attributes["service.name"],
+        "start_hour": start.replace(minute=0, second=0, microsecond=0),
+        "_version": str(ROW_VERSION),
         "name": readable.name,
         "observation_type": observation_type,
         "start_time": start,
@@ -525,10 +528,29 @@ def _run_detail(patch: pytest.MonkeyPatch, row: dict, *, start_us: int) -> dict:
         user=SimpleNamespace(pk="baseline-user", organization=organization),
         query_params={},
     )
+    legacy_reads: list[dict] = []
+
+    class _LegacyTraceTags:
+        # The drawer's root must carry the curated tags the trace list shows.
+        def execute_ch_query(self, query, params, *, timeout_ms, settings):
+            assert "FROM traces" in query, query
+            assert "argMax(tuple(tags, is_deleted), _version)" in query, query
+            legacy_reads.append(params)
+            return QueryResult(
+                data=[], row_count=0, backend_used="clickhouse", query_time_ms=0.0
+            )
+
+    patch.setattr(trace_views, "V2AnalyticsQueryService", _LegacyTraceTags)
     response = trace_views.TraceView()._voice_call_detail_clickhouse(
         request, row["trace_id"], detail, []
     )
     assert response.status_code == 200, response.data
+    assert legacy_reads == [
+        {
+            "legacy_projects": (str(row["project_id"]),),
+            "legacy_traces": (row["trace_id"],),
+        }
+    ]
     assert len(lookups) == 1
     assert lookups[0]["organization_id"] == ORGANIZATION_ID
 
@@ -694,6 +716,11 @@ def baseline():
     call = _load("vapi_call.json")
     with pytest.MonkeyPatch.context() as patch:
         patch.setattr(BaseDatabaseWrapper, "ensure_connection", _refuse)
+        from tracer.models.entity_tag_assignment import EntityTagAssignment
+
+        assignments = mock.MagicMock()
+        assignments.using.return_value.filter.return_value.values.return_value.__getitem__.return_value = []
+        patch.setattr(EntityTagAssignment, "objects", assignments)
         # The normaliser keeps the call object as raw_log and the transcript
         # step rewrites its messages in place; hand it a copy.
         top_span, readable = _run_top_span(patch, copy.deepcopy(call))

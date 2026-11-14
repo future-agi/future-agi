@@ -131,13 +131,37 @@ class TestTraceWorkspaceScopeAPI:
             organization, user
         )
 
-        response = auth_client.patch(
-            f"/tracer/trace/{other_trace.id}/tags/",
-            {"tags": ["leaked"]},
-            format="json",
-        )
+        from unittest.mock import patch
 
-        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        from tracer.models.entity_tag_assignment import EntityTagAssignment
+
+        # A complete, well-formed target: the request must be refused by
+        # project authorization, not by the 400 for a missing target.
+        body = {
+            "project_id": str(other_trace.project_id),
+            "trace_id": str(other_trace.id),
+            "span_id": "root-span",
+            "start_hour": "2026-01-01T10:00:00Z",
+            "observation_type": "span",
+            "service_name": "svc",
+            "expected_start_time": "2026-01-01T10:15:00Z",
+            "expected_version": "1",
+            "expected_tag_revision": 0,
+            "tags": ["leaked"],
+        }
+        with patch(
+            "tracer.services.entity_tag_assignments.V2AnalyticsQueryService"
+        ) as clickhouse:
+            response = auth_client.patch(
+                f"/tracer/trace/{other_trace.id}/tags/", body, format="json"
+            )
+
+        assert response.status_code == status.HTTP_404_NOT_FOUND
+        assert response.json()["code"] == "tag_target_not_found"
+        clickhouse.assert_not_called()
+        assert not EntityTagAssignment.objects.filter(
+            project_id=other_trace.project_id
+        ).exists()
         other_trace.refresh_from_db()
         assert other_trace.tags == ["hidden"]
 

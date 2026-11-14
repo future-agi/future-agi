@@ -848,6 +848,30 @@ and pin the chart, review the exact migration path, and establish recovery befor
 changing the release. The chart does not inherit Compose's automatic-update
 qualification.
 
+When introducing the trace/span tag editor to an existing install, perform
+this manual [tag reconciliation](UPGRADING.md#direct-helm) with a one-off Job
+rendered from the **new** chart's bootstrap Job (not a new Helm hook):
+
+1. Run `python manage.py reconcile_legacy_trace_tags --dry-run` and review the
+   count against the live PostgreSQL and ClickHouse stores.
+2. Run `python manage.py reconcile_legacy_trace_tags` before the old backend
+   stops serving; legacy PATCH requests can still update PG tags after this pass.
+3. Complete the `helm upgrade` below and wait for the new backend rollout.
+4. Run `python manage.py reconcile_legacy_trace_tags` again immediately after
+   rollout. The tag editor can be used before this second apply; there is no
+   editor gate, so run the second apply immediately and minimize this unavoidable
+   window. Rerun if it reports rows changed during the scan. For Argo CD/Flux,
+   use the same two-pass handoff around the controller-managed rollout. The
+   bootstrap hook only runs `bootstrap_install`, so it does not do this for you.
+
+The new editor writes manual assignments rather than PG `tracer_trace.tags`;
+Langfuse ingestion still updates PG tags and mirrors traces to ClickHouse.
+See the runbook for the Job command and operator authorization pair. For
+[Standalone](UPGRADING.md#standalone), use the new app image to run the same
+`reconcile_legacy_trace_tags --dry-run`, then apply, `docker compose up -d`,
+then apply again immediately to minimize the window when its tag editor can
+be used; its bootstrap script also does not perform this handoff.
+
 - **Supported paths:** follow the release-specific migration and chart upgrade
   notes. A patch or adjacent minor version is not itself proof of compatibility.
 - **Migrations:** existing pods can keep serving while the bootstrap job runs.

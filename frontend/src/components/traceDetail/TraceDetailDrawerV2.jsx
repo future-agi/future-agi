@@ -148,6 +148,7 @@ const TraceDetailDrawerV2 = ({
   keepInitialSpanVisible = false,
   initialEvalFocus = false,
   refreshParentGrid,
+  onTagsSaved,
   hideOpenInNewTab = false,
   disablePortal = false,
   readOnly = false,
@@ -1329,6 +1330,7 @@ const TraceDetailDrawerV2 = ({
                     readOnly={readOnly}
                     onSelectSpan={handleViewSpan}
                     initialEvalFocus={initialEvalFocus}
+                    onTagsSaved={onTagsSaved}
                     drawerOpen={open}
                   />
                 </Box>
@@ -1414,6 +1416,7 @@ const TraceDetailDrawerV2 = ({
                     readOnly={readOnly}
                     onSelectSpan={handleViewSpan}
                     initialEvalFocus={initialEvalFocus}
+                    onTagsSaved={onTagsSaved}
                     drawerOpen={open}
                   />
                 ) : (
@@ -1614,13 +1617,16 @@ const TraceDetailDrawerV2 = ({
             anchorEl={tagsAnchorEl}
             open={Boolean(tagsAnchorEl)}
             onClose={() => setTagsAnchorEl(null)}
-            traceId={traceId}
+            entity={selectedSpanId ? getSpan(selectedSpanData) : data?.trace}
             spanId={selectedSpanId}
             currentTags={
-              selectedSpanData
+              selectedSpanId
                 ? getSpan(selectedSpanData)?.tags || []
                 : data?.trace?.tags || []
             }
+            // The grid updates this entity's row in place (tags and
+            // revision); a full grid refresh would reset it to page 1.
+            onSuccess={onTagsSaved}
           />
         )}
 
@@ -1685,6 +1691,8 @@ TraceDetailDrawerV2.propTypes = {
   keepInitialSpanVisible: PropTypes.bool,
   initialEvalFocus: PropTypes.bool,
   refreshParentGrid: PropTypes.func,
+  // Called with (result, entity) after a tag save in the drawer.
+  onTagsSaved: PropTypes.func,
   hideOpenInNewTab: PropTypes.bool,
   disablePortal: PropTypes.bool,
   readOnly: PropTypes.bool,

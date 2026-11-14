@@ -119,6 +119,33 @@ function normalizeHostStatusSchema(schema) {
   return nullable ? { anyOf: [result, { type: "null" }] } : result;
 }
 
+// Rich StringOrObjectField subclasses (such as tag items) carry a typed object
+// branch. Express their union before generation; the legacy description-based
+// rewrites below cover only unstructured JSON objects, not these schemas.
+function normalizeTypedStringOrObject(schema) {
+  if (!schema || typeof schema !== "object") return schema;
+  if (Array.isArray(schema)) return schema.map(normalizeTypedStringOrObject);
+  const result = Object.fromEntries(
+    Object.entries(schema).map(([key, value]) => [
+      key,
+      normalizeTypedStringOrObject(value),
+    ]),
+  );
+  if (
+    result["x-string-or-object"] &&
+    Object.keys(result.properties || {}).length
+  ) {
+    delete result["x-string-or-object"];
+    return { anyOf: [{ type: "string" }, result] };
+  }
+  return result;
+}
+
+// Schemas whose typed string-or-object union is already produced by a
+// dedicated post-processing rewrite below; normalizing them here as well would
+// remove that rewrite's anchor.
+const TYPED_STRING_OR_OBJECT_REWRITTEN = new Set(["GatewayHealthErrorResult"]);
+
 // The Orval input transformer runs AFTER its validated Swagger-to-OpenAPI 3.1
 // upgrade. Never insert native unions/null types into the Swagger 2 input, or
 // disable validation to make a nonconforming input pass.
@@ -128,16 +155,22 @@ function normalizeHostStatusSpec(spec) {
     components: {
       ...spec.components,
       schemas: Object.fromEntries(
-        Object.entries(spec.components?.schemas || {}).map(([name, schema]) => [
-          name,
-          name.startsWith("HostUpdateStatusResponse") ||
-          // Every non-ready source state sends kind and the ids as explicit null.
-          name === "EvalLogSourceNavigation" ||
-          // A log row sends explicit null for ids its source does not have.
-          name === "EvalApiLogRowResponseResult"
-            ? normalizeHostStatusSchema(schema)
-            : schema,
-        ]),
+        Object.entries(spec.components?.schemas || {}).map(([name, schema]) => {
+          const normalized =
+            name.startsWith("HostUpdateStatusResponse") ||
+            // Every non-ready source state sends kind and the ids as explicit null.
+            name === "EvalLogSourceNavigation" ||
+            // A log row sends explicit null for ids its source does not have.
+            name === "EvalApiLogRowResponseResult"
+              ? normalizeHostStatusSchema(schema)
+              : schema;
+          return [
+            name,
+            TYPED_STRING_OR_OBJECT_REWRITTEN.has(name)
+              ? normalized
+              : normalizeTypedStringOrObject(normalized),
+          ];
+        }),
       ),
     },
   };
@@ -1663,7 +1696,8 @@ const jsonValueSchema: zod.ZodType<JsonValue> =
       "TracerTraceVoiceCallDetailResponse.eval_rollup nullable",
     );
 
-    const modelListResponse = "export const ModelHubApiModelsListListResponse = zod.object({";
+    const modelListResponse =
+      "export const ModelHubApiModelsListListResponse = zod.object({";
     for (const [field, schema] of [
       ["next", "zod.string()"],
       ["previous", "zod.string()"],

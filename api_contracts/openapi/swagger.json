@@ -69937,22 +69937,52 @@
         "/tracer/observation-span/update-tags/": {
             "post": {
                 "operationId": "tracer_observation-span_update_tags",
-                "description": "Update tags for an observation span.",
+                "description": "Assign tags to an exact CH span; verified roots alias trace assignments.",
                 "parameters": [
                     {
                         "name": "data",
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/ObservationSpan"
+                            "$ref": "#/definitions/SpanTagsUpdate"
                         }
                     }
                 ],
                 "responses": {
-                    "201": {
+                    "200": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ObservationSpan"
+                            "$ref": "#/definitions/EntityTagsResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
                         }
                     },
                     "default": {
@@ -69964,7 +69994,9 @@
                 },
                 "tags": [
                     "tracer"
-                ]
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
             },
             "parameters": []
         },
@@ -75912,7 +75944,7 @@
         "/tracer/trace/{id}/tags/": {
             "patch": {
                 "operationId": "tracer_trace_update_tags",
-                "description": "Update tags for a trace.",
+                "description": "Assign manual tags to a verified ClickHouse root, without PG telemetry.",
                 "parameters": [
                     {
                         "name": "data",
@@ -75927,7 +75959,37 @@
                     "200": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/TraceTagsUpdate"
+                            "$ref": "#/definitions/EntityTagsResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
                         }
                     },
                     "default": {
@@ -75940,7 +76002,8 @@
                 "tags": [
                     "tracer"
                 ],
-                "x-runtime-request-validation": true
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
             },
             "parameters": [
                 {
@@ -172974,6 +173037,171 @@
                 }
             }
         },
+        "SpanTagsUpdate": {
+            "required": [
+                "tags",
+                "project_id",
+                "trace_id",
+                "span_id",
+                "start_hour",
+                "observation_type",
+                "service_name",
+                "expected_start_time",
+                "expected_version",
+                "expected_tag_revision"
+            ],
+            "type": "object",
+            "properties": {
+                "tags": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "x-string-or-object": true,
+                        "required": [
+                            "name"
+                        ],
+                        "properties": {
+                            "name": {
+                                "type": "string",
+                                "maxLength": 256
+                            },
+                            "color": {
+                                "type": "string",
+                                "pattern": "^#[0-9a-fA-F]{6}$"
+                            }
+                        },
+                        "additionalProperties": false,
+                        "description": "Exact tag name, or {name, color}; color is an optional six-digit hex value."
+                    },
+                    "maxItems": 100
+                },
+                "project_id": {
+                    "title": "Project id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "trace_id": {
+                    "title": "Trace id",
+                    "type": "string",
+                    "maxLength": 128,
+                    "minLength": 1
+                },
+                "span_id": {
+                    "title": "Span id",
+                    "type": "string",
+                    "maxLength": 128,
+                    "minLength": 1
+                },
+                "start_hour": {
+                    "title": "Start hour",
+                    "type": "string",
+                    "format": "date-time"
+                },
+                "observation_type": {
+                    "title": "Observation type",
+                    "type": "string",
+                    "maxLength": 64
+                },
+                "service_name": {
+                    "title": "Service name",
+                    "type": "string",
+                    "maxLength": 255
+                },
+                "expected_start_time": {
+                    "title": "Expected start time",
+                    "type": "string",
+                    "format": "date-time"
+                },
+                "expected_version": {
+                    "title": "Expected version",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "expected_tag_revision": {
+                    "title": "Expected tag revision",
+                    "description": "0 for no assignment; otherwise the last returned tag_revision.",
+                    "type": "integer",
+                    "maximum": 9007199254740990,
+                    "minimum": 0
+                }
+            }
+        },
+        "TagItem": {
+            "required": [
+                "name"
+            ],
+            "type": "object",
+            "properties": {
+                "name": {
+                    "title": "Name",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "color": {
+                    "title": "Color",
+                    "type": "string",
+                    "pattern": "^#[0-9a-fA-F]{6}$",
+                    "minLength": 1
+                }
+            }
+        },
+        "EntityTagsResult": {
+            "required": [
+                "id",
+                "tags",
+                "manual_tags",
+                "source_tag_names",
+                "tag_revision"
+            ],
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "tags": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/TagItem"
+                    }
+                },
+                "manual_tags": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/TagItem"
+                    }
+                },
+                "source_tag_names": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    }
+                },
+                "tag_revision": {
+                    "title": "Tag revision",
+                    "type": "integer",
+                    "minimum": 1
+                }
+            }
+        },
+        "EntityTagsResponse": {
+            "required": [
+                "status",
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean"
+                },
+                "result": {
+                    "$ref": "#/definitions/EntityTagsResult"
+                }
+            }
+        },
         "ObservationSpanDetailResult": {
             "required": [
                 "observation_span",
@@ -179192,16 +179420,90 @@
         },
         "TraceTagsUpdate": {
             "required": [
-                "tags"
+                "tags",
+                "project_id",
+                "trace_id",
+                "span_id",
+                "start_hour",
+                "observation_type",
+                "service_name",
+                "expected_start_time",
+                "expected_version",
+                "expected_tag_revision"
             ],
             "type": "object",
             "properties": {
                 "tags": {
                     "type": "array",
                     "items": {
-                        "type": "string",
-                        "minLength": 1
-                    }
+                        "type": "object",
+                        "x-string-or-object": true,
+                        "required": [
+                            "name"
+                        ],
+                        "properties": {
+                            "name": {
+                                "type": "string",
+                                "maxLength": 256
+                            },
+                            "color": {
+                                "type": "string",
+                                "pattern": "^#[0-9a-fA-F]{6}$"
+                            }
+                        },
+                        "additionalProperties": false,
+                        "description": "Exact tag name, or {name, color}; color is an optional six-digit hex value."
+                    },
+                    "maxItems": 100
+                },
+                "project_id": {
+                    "title": "Project id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "trace_id": {
+                    "title": "Trace id",
+                    "type": "string",
+                    "maxLength": 128,
+                    "minLength": 1
+                },
+                "span_id": {
+                    "title": "Span id",
+                    "type": "string",
+                    "maxLength": 128,
+                    "minLength": 1
+                },
+                "start_hour": {
+                    "title": "Start hour",
+                    "type": "string",
+                    "format": "date-time"
+                },
+                "observation_type": {
+                    "title": "Observation type",
+                    "type": "string",
+                    "maxLength": 64
+                },
+                "service_name": {
+                    "title": "Service name",
+                    "type": "string",
+                    "maxLength": 255
+                },
+                "expected_start_time": {
+                    "title": "Expected start time",
+                    "type": "string",
+                    "format": "date-time"
+                },
+                "expected_version": {
+                    "title": "Expected version",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "expected_tag_revision": {
+                    "title": "Expected tag revision",
+                    "description": "0 for no assignment; otherwise the last returned tag_revision.",
+                    "type": "integer",
+                    "maximum": 9007199254740990,
+                    "minimum": 0
                 }
             }
         },

@@ -180,6 +180,10 @@ const apiColTypeForFilterField = (field, category) => {
 // ---------------------------------------------------------------------------
 // Trace filter fields (for Query tab via shared FilterPanel)
 // ---------------------------------------------------------------------------
+const TAG_FILTER_OPERATORS = ["in", "not_in", "is_null", "is_not_null"];
+// Ids of the effective tag field. The Sessions list cannot filter by it.
+const TAG_FIELD_IDS = new Set(["tag", "tags"]);
+
 const BASE_TRACE_FILTER_FIELDS = [
   { value: "name", label: "Trace Name", type: "string" },
   {
@@ -197,7 +201,14 @@ const BASE_TRACE_FILTER_FIELDS = [
   },
   { value: "service_name", label: "Service Name", type: "string" },
   { value: "provider", label: "Provider", type: "string" },
-  { value: "tag", label: "Tag", type: "string" },
+  // A tag filter is exact name membership: the API has no substring or
+  // prefix/suffix form for tags, so offer only the operators it accepts.
+  {
+    value: "tag",
+    label: "Tag",
+    type: "string",
+    operators: TAG_FILTER_OPERATORS,
+  },
 ];
 
 // Users discover custom attributes through the trace catalog, but these row
@@ -308,11 +319,17 @@ export const toStaticFilterProperty = (
     ...(field.allowCustomValue !== undefined
       ? { allowCustomValue: field.allowCustomValue }
       : {}),
+    ...(field.operators ? { operators: field.operators } : {}),
   };
   return attachPropertyRegistryIdentity(property, source, propertyNamespace, {
     suppliedRegistryId: field.registryId || field.property_id,
   });
 };
+
+// The effective tag field (native, not a raw span attribute named "tag").
+const isEffectiveTagProperty = (property) =>
+  TAG_FIELD_IDS.has(property?.id) &&
+  (property?.category === "system" || property?.apiColType === "SYSTEM_METRIC");
 
 // Static fields are authoritative for their own ids. Voice fields also own a
 // small set of legacy/system aliases published by the dashboard catalog. Only
@@ -400,7 +417,13 @@ export function mergeTraceFilterProperties({
         { suppliedRegistryId: field.registryId || field.property_id },
       );
     });
-  return [...staticProps, ...dynamicExtras, ...fieldExtras];
+  const merged = [...staticProps, ...dynamicExtras, ...fieldExtras];
+  // The Sessions list cannot filter by tag (the API answers 400), so do not
+  // offer it there from any source. A raw span attribute named "tag" stays.
+  if (effectivePropertyNamespace === "sessions") {
+    return merged.filter((property) => !isEffectiveTagProperty(property));
+  }
+  return merged;
 }
 
 const propertyMetricType = (property, source) => {
@@ -752,6 +775,18 @@ const getOperatorsForFilter = (filter, property) => {
   )
     return ID_ONLY_OPS;
   const ops = getOperators(filter?.fieldType);
+  // The native Tag field accepts exact membership only, whichever registry
+  // entry (static, catalog or a saved row) describes it.
+  if (
+    TAG_FIELD_IDS.has(filter?.field) &&
+    isNativeColumnType(
+      filter?.apiColType ||
+        filter?.fieldCategory ||
+        property?.apiColType ||
+        property?.category,
+    )
+  )
+    return ops.filter((op) => TAG_FILTER_OPERATORS.includes(op.value));
   // A property may narrow its own operators — e.g. span type, where the API
   // takes a value list and has nowhere to put an operator, so anything but
   // "is one of" would be a no-op or an inversion.
@@ -778,10 +813,19 @@ const getEquivalentPanelOperator = (operator) => {
   return operator;
 };
 
+// Tag "contains" was exact name membership; keep a saved row's polarity.
+const TAG_MEMBERSHIP_EQUIVALENT = { contains: "in", not_contains: "not_in" };
+
 export const normalizeFilterRowOperator = (filter) => {
   const ops = getOperatorsForFilter(filter);
   if (ops.some((op) => op.value === filter?.operator)) return filter;
 
+  const tagOperator =
+    TAG_FIELD_IDS.has(filter?.field) &&
+    TAG_MEMBERSHIP_EQUIVALENT[filter?.operator];
+  if (tagOperator && ops.some((op) => op.value === tagOperator)) {
+    return { ...filter, operator: tagOperator };
+  }
   const equivalentOperator = getEquivalentPanelOperator(filter?.operator);
   const operator = ops.some((op) => op.value === equivalentOperator)
     ? equivalentOperator
@@ -4559,7 +4603,13 @@ const TraceFilterPanel = ({
             label: p.name,
             category: p.category,
             type,
-            operators: getOperators(p.type).map((o) => o.value),
+            // A property that narrows its operators (e.g. Tag) narrows the
+            // AI's choice too, so the AI cannot build a filter the API refuses.
+            operators: getOperators(p.type)
+              .map((o) => o.value)
+              .filter(
+                (op) => !Array.isArray(p.operators) || p.operators.includes(op),
+              ),
             ...(Array.isArray(p.choices) && p.choices.length
               ? { choices: p.choices }
               : {}),

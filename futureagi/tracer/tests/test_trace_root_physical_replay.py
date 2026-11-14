@@ -14,6 +14,7 @@ from tracer.services.clickhouse.server_readonly import without_query_settings
 from tracer.services.clickhouse.v2.query_builders.trace_list import (
     TraceListQueryBuilderV2,
 )
+from tracer.tests.tag_read_fixtures import empty_tag_assignments  # noqa: F401
 
 pytestmark = pytest.mark.unit
 PROJECT = "11111111-1111-4111-8111-111111111111"
@@ -271,7 +272,8 @@ def execute(engine, builder, rows, sql_and_params, *, tag_rows=None, join_use_nu
             CAST(NULL, 'Nullable(UUID)') AS trace_session_id,
             map('company_id', 'company') AS attrs_string,
             map('duration', 2.0) AS attrs_number, map('flag', toUInt8(1)) AS attrs_bool,
-            '{{}}' AS attributes_extra, map('source', 'fixture') AS metadata
+            '{{}}' AS attributes_extra, map('source', 'fixture') AS metadata,
+            '[]' AS tags
         FROM values({params["columns"]}, {params["rows"][1:-1]})
     ), traces AS ({traces_relation})
     {sql} SETTINGS max_threads=1, max_memory_usage=536870912,

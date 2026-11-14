@@ -832,6 +832,74 @@ describe("PrimaryGraph", () => {
     expect(screen.queryByText(/Stack trace/i)).not.toBeInTheDocument();
   });
 
+  const TOO_BROAD_MESSAGE =
+    "The graph cannot apply this Tag filter: too many traces and spans " +
+    "were tagged with it in the app. The list below is still filtered by it.";
+
+  it("says why a Tag filter is too broad for the graph instead of asking to retry", async () => {
+    // The shape the shared src/utils/axios interceptor rejects with: the
+    // response body flattened, plus statusCode and transportCode.
+    axios.post.mockRejectedValue({
+      status: false,
+      code: "tag_filter_too_broad",
+      message: TOO_BROAD_MESSAGE,
+      statusCode: 400,
+      transportCode: "ERR_BAD_REQUEST",
+    });
+
+    renderWithQueryClient(
+      <PrimaryGraph observeIdOverride="project-override" />,
+    );
+
+    expect(await screen.findByText(TOO_BROAD_MESSAGE)).toBeInTheDocument();
+    expect(
+      screen.queryByText(
+        "We couldn't load this data. Please retry in a moment.",
+      ),
+    ).not.toBeInTheDocument();
+  });
+
+  it("also shows the too-broad copy for a raw Axios error", async () => {
+    axios.post.mockRejectedValue({
+      message: "Request failed with status code 400",
+      code: "ERR_BAD_REQUEST",
+      response: {
+        status: 400,
+        data: {
+          status: false,
+          code: "tag_filter_too_broad",
+          message: TOO_BROAD_MESSAGE,
+        },
+      },
+    });
+
+    renderWithQueryClient(
+      <PrimaryGraph observeIdOverride="project-override" />,
+    );
+
+    expect(await screen.findByText(TOO_BROAD_MESSAGE)).toBeInTheDocument();
+  });
+
+  it("keeps the generic copy for any other request error", async () => {
+    axios.post.mockRejectedValue({
+      status: false,
+      code: "bad_request",
+      message: "Graph filter configuration is invalid",
+      statusCode: 400,
+      transportCode: "ERR_BAD_REQUEST",
+    });
+
+    renderWithQueryClient(
+      <PrimaryGraph observeIdOverride="project-override" />,
+    );
+
+    expect(
+      await screen.findByText(
+        "We couldn't load this data. Please retry in a moment.",
+      ),
+    ).toBeInTheDocument();
+  });
+
   it("keeps exact data visible when an explicit refresh is not exact", async () => {
     const exactCompletion = vi.fn();
     window.addEventListener("observe-aggregation-completed", exactCompletion, {

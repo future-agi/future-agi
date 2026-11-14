@@ -10,6 +10,7 @@ import ImagineTab from "src/components/imagine/ImagineTab";
 import ConfirmDialog from "src/components/custom-dialog/confirm-dialog";
 import { ShareDialog } from "src/components/share-dialog";
 import AddTagsPopover from "src/components/traceDetail/AddTagsPopover";
+import { useGetTraceDetail } from "src/api/project/trace-detail";
 import AddToQueueDialog from "src/sections/annotations/queues/components/add-to-queue-dialog";
 import AddDataset from "src/components/traceDetailDrawer/addToDataset/add-dataset";
 import { LLM_TABS } from "src/sections/projects/LLMTracing/common";
@@ -57,6 +58,12 @@ const ChatDetailDrawerV2 = ({
   const queryClient = useQueryClient();
   const { observeId } = useParams();
   const projectId = observeId || data?.project_id;
+  const { data: tagDetail } = useGetTraceDetail(
+    !projectId || data?.tag_target || data?.trace?.tag_target
+      ? null
+      : data?.trace_id,
+    { projectId },
+  );
   const shareResource = shareResourceFor(data);
 
   const [leftPanelWidth, setLeftPanelWidth] = useState(50);
@@ -505,8 +512,12 @@ const ChatDetailDrawerV2 = ({
           anchorEl={tagsAnchorEl}
           open={Boolean(tagsAnchorEl)}
           onClose={() => setTagsAnchorEl(null)}
-          traceId={data.trace_id}
-          currentTags={data?.tags || data?.trace?.tags || []}
+          entity={
+            tagDetail?.trace || (data?.tag_target ? data : data?.trace || data)
+          }
+          currentTags={
+            tagDetail?.trace?.tags || data?.tags || data?.trace?.tags || []
+          }
           onSuccess={() =>
             queryClient.invalidateQueries({ queryKey: ["chatCallDetail"] })
           }

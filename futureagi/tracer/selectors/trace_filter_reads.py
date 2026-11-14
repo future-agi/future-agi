@@ -18,7 +18,15 @@ from tracer.selectors.filter_seed_width import (
 )
 from tracer.services.clickhouse.query_builders.base import BaseQueryBuilder
 from tracer.services.clickhouse.query_service import QueryResult
-from tracer.services.clickhouse.read_budget import is_read_budget_error
+from tracer.services.clickhouse.read_budget import (
+    ReadDeadline,
+    is_clickhouse_query_size_error,
+    is_read_budget_error,
+)
+from tracer.services.clickhouse.v2.effective_tags import (
+    EffectiveTagRelation,
+    prepare_effective_tag_params,
+)
 
 _INITIAL_SLICE = timedelta(minutes=5)
 _MAX_SLICE = timedelta(days=2)
@@ -2224,14 +2232,59 @@ def read_bounded_filter_page(
                     result_overflow_mode="throw",
                     timeout_overflow_mode="throw",
                 )
+            tag_query = any(
+                isinstance(value, EffectiveTagRelation) for value in params.values()
+            )
+            if tag_query:
+                if (
+                    getattr(analytics, "supports_per_query_read_settings", True)
+                    is False
+                ):
+                    raise _BudgetExceeded("tag_source_unavailable")
+                tag_deadline = ReadDeadline.start(remaining_ms, enforce_on_server=True)
+
+                def read_tag_source(
+                    source_query,
+                    source_params,
+                    *,
+                    timeout_ms,
+                    settings,
+                    server_execution_cap_ms,
+                ):
+                    return execute(
+                        kind="tag_source",
+                        query=source_query,
+                        params=source_params,
+                        active_start=active_start,
+                        active_end=active_end,
+                        result_limit=settings["max_result_rows"],
+                        timeout_cap_ms=timeout_ms,
+                        max_bytes_to_read_cap=settings.get("max_bytes_to_read"),
+                    )
+
+                params = prepare_effective_tag_params(
+                    read_tag_source,
+                    params,
+                    deadline=tag_deadline,
+                )
+                statement_timeout_ms = tag_deadline.remaining_ms(statement_timeout_ms)
+                if budgeted_query_count() >= active_query_limit:
+                    raise _BudgetExceeded("query_budget_exceeded")
             result = analytics.execute_ch_query(
                 query,
                 params,
                 timeout_ms=statement_timeout_ms,
                 settings=settings,
+                **(
+                    {"server_execution_cap_ms": statement_timeout_ms}
+                    if kind == "tag_source" or tag_query
+                    else {}
+                ),
             )
         except Exception as exc:
-            if is_read_budget_error(exc):
+            if is_read_budget_error(exc) or is_clickhouse_query_size_error(exc):
+                # A statement over max_query_size is a bounded-read refusal
+                # (503 at the API), never an unexplained server error.
                 error_code = "read_budget_exceeded"
             elif (
                 kind in {"prefilter", "micro_seed", "zero_probe", "seed_density_probe"}
@@ -4519,6 +4572,7 @@ def read_bounded_filter_neighbors(
         active_deadline: float,
         side_query_limit: int | None = None,
         side_query_start: int = 0,
+        tag_source: bool = False,
     ) -> QueryResult:
         nonlocal query_count
         remaining_ms = int((min(deadline, active_deadline) - monotonic()) * 1000)
@@ -4538,11 +4592,49 @@ def read_bounded_filter_neighbors(
             "max_result_rows": result_limit,
         }
         try:
+            tag_query = any(
+                isinstance(value, EffectiveTagRelation) for value in params.values()
+            )
+            if tag_query:
+                if (
+                    getattr(analytics, "supports_per_query_read_settings", True)
+                    is False
+                ):
+                    raise _BudgetExceeded("tag_source_unavailable")
+                tag_deadline = ReadDeadline.start(remaining_ms, enforce_on_server=True)
+
+                def read_tag_source(
+                    source_query,
+                    source_params,
+                    *,
+                    timeout_ms,
+                    settings,
+                    server_execution_cap_ms,
+                ):
+                    return execute(
+                        source_query,
+                        source_params,
+                        result_limit=settings["max_result_rows"],
+                        active_deadline=active_deadline,
+                        side_query_limit=side_query_limit,
+                        side_query_start=side_query_start,
+                        tag_source=True,
+                    )
+
+                params = prepare_effective_tag_params(
+                    read_tag_source, params, deadline=tag_deadline
+                )
+                remaining_ms = tag_deadline.remaining_ms()
             return analytics.execute_ch_query(
                 query,
                 params,
                 timeout_ms=min(_QUERY_TIMEOUT_MS, remaining_ms),
                 settings=settings,
+                **(
+                    {"server_execution_cap_ms": remaining_ms}
+                    if tag_source or tag_query
+                    else {}
+                ),
             )
         except Exception as exc:
             code = (

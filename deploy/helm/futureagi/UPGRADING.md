@@ -75,8 +75,125 @@ helm history futureagi --kube-context CONTEXT -n futureagi
 kubectl --context CONTEXT -n futureagi get deployments,statefulsets,jobs,pvc
 ```
 
-Complete the release/backup review above. Use the verified local chart, the
-intended context/namespace and the complete current values file:
+Complete the release/backup review above. For upgrades introducing the
+trace/span tag editor, reconcile legacy PG tags before **and** after the
+rollout. This is a documented one-off Job, not a new chart hook: the chart's
+pre-upgrade bootstrap Job only runs `bootstrap_install`, and it completes
+*before* the old backend stops accepting PG-only tag PATCH requests. A hook
+would miss edits made after its scan. Use the **verified new backend image**,
+current values, namespace and bootstrap Job's existing datastore credentials,
+mounts and operator environment (`SERVICE_TYPE=bootstrap` and
+`STARTUP_DB_MUTATION_MODE=operator`); an ordinary backend pod's
+`NO_STARTUP_DB_MUTATIONS=true` does not authorize this command.
+
+Render only the bootstrap Job from the verified chart. The following one-off
+Job reuses its backend image, service account, env and volume configuration,
+changes its name and command, removes hook annotations and the bootstrap's
+18-minute `activeDeadlineSeconds` and its `ttlSecondsAfterFinished` (so the
+Job and its logs stay until this function deletes it), and disables automatic
+retries by setting `backoffLimit` to `0`. A large scan may run longer than the bootstrap Job;
+watch its progress logs from another shell if needed.
+Python 3 with PyYAML is already a prerequisite for preparing the signed release.
+Check any release-specific schema prerequisites before running it against the
+old schema. Leave the old backend serving until the first apply finishes. There
+is no editor gate during the rollout: run the second apply immediately after
+rollout to minimize the window in which new-editor edits can occur. Do not
+publish the rendered Job if its env or values contain credentials.
+
+Run in bash (no `set -e`): the function prints logs even when the Job fails,
+then preserves that failed Job for inspection. The two condition waits poll
+until either Complete or Failed, for at most `RECONCILE_WAIT_TIMEOUT_SECONDS`
+(default 7200 seconds). Set a larger positive number in the operator shell for
+large scans; the Job itself has no scan deadline. On a wait timeout the function
+prints the logs and last cursor and returns nonzero, but the Job may still be
+running: inspect or stop it before retrying. If you interrupt the shell, inspect
+the Job and its logs before retrying.
+
+```bash
+set -o pipefail
+NEW=X.Y.Z
+reconcile_tags() {
+  local wait_seconds="${RECONCILE_WAIT_TIMEOUT_SECONDS:-7200}"
+  if [[ ! "$wait_seconds" =~ ^[1-9][0-9]*$ ]] ||
+     (( ${#wait_seconds} > 5 )) || (( wait_seconds > 86400 )); then
+    echo 'RECONCILE_WAIT_TIMEOUT_SECONDS must be 1..86400 seconds' >&2
+    return 1
+  fi
+  helm template futureagi "$HOME/futureagi-release-$NEW/futureagi-$NEW.tgz" \
+    -n futureagi -f my-values.yaml --show-only templates/bootstrap/job.yaml |
+    python3 -c '
+import sys, yaml
+job = yaml.safe_load(sys.stdin)
+job["metadata"]["name"] = "futureagi-reconcile-legacy-tags"
+job["metadata"].pop("annotations", None)
+job["spec"].pop("activeDeadlineSeconds", None)
+job["spec"]["backoffLimit"] = 0
+job["spec"].pop("ttlSecondsAfterFinished", None)
+container = job["spec"]["template"]["spec"]["containers"][0]
+container["command"] = ["python", "manage.py", "reconcile_legacy_trace_tags"]
+container["args"] = sys.argv[1:]
+yaml.safe_dump(job, sys.stdout)
+' "$@" | kubectl --context CONTEXT -n futureagi create -f - || return 1
+  local complete=false timed_out=false logs last_cursor logs_status=0
+  local deadline=$((SECONDS + wait_seconds))
+  while :; do
+    if (( SECONDS >= deadline )); then
+      timed_out=true
+      break
+    fi
+    if kubectl --context CONTEXT -n futureagi wait \
+      --for=condition=complete job/futureagi-reconcile-legacy-tags --timeout=10s >/dev/null 2>&1; then
+      complete=true
+      break
+    fi
+    if kubectl --context CONTEXT -n futureagi wait \
+      --for=condition=failed job/futureagi-reconcile-legacy-tags --timeout=1s >/dev/null 2>&1; then
+      break
+    fi
+  done
+  logs=$(kubectl --context CONTEXT -n futureagi logs job/futureagi-reconcile-legacy-tags 2>&1) || logs_status=$?
+  printf '%s\n' "$logs"
+  last_cursor=$(printf '%s\n' "$logs" | sed -nE 's/.*resume with --after-id ([[:xdigit:]-]{36}).*/\1/p' | tail -n 1)
+  if [ "$timed_out" = true ]; then
+    echo "Reconcile Job wait timed out; last cursor: ${last_cursor:-none}. Job may still be running; inspect or stop it before retrying." >&2
+    return 1
+  fi
+  if (( logs_status != 0 )); then
+    echo "Could not read Reconcile Job logs; inspect the Job before retrying." >&2
+    return 1
+  fi
+  if [ "$complete" != true ]; then
+    echo "Reconcile Job failed; last cursor: ${last_cursor:-none}. Keep it for inspection, then delete and resume the same pass." >&2
+    return 1
+  fi
+  kubectl --context CONTEXT -n futureagi delete job futureagi-reconcile-legacy-tags --wait=true
+}
+# Review the dry-run counts; the first apply runs only if the dry-run succeeds.
+reconcile_tags --dry-run && reconcile_tags  # first apply while the old backend serves
+```
+
+Inspect the final `changed during scan` count in each Job's logs (including the
+second apply below). After a resume with `--after-id`, check each run's own
+`changed during scan` count: if any run of that pass reported a nonzero count,
+repeat the whole pass from the beginning, without `--after-id`, before moving
+to the next step. The Job completes successfully despite concurrent edits so
+it does not block the scripted two-pass rollout; operators must act on the
+logged count.
+
+On a failure, read the printed logs: each progress line includes a final
+`resume with --after-id <cursor>`. Diagnose and repair the failure, retain the
+logs, then **delete the failed Job** with
+`kubectl --context CONTEXT -n futureagi delete job futureagi-reconcile-legacy-tags --wait=true`.
+Rerun the *same* pass with its original flags plus the cursor. A failed dry-run
+resumes with `reconcile_tags --dry-run --after-id <cursor> && reconcile_tags`:
+the first apply still scans from the beginning. A failed apply resumes with
+`reconcile_tags --after-id <cursor>`. With no cursor, restart that pass without
+`--after-id`. On a timeout, the Job may still be running: inspect or stop it
+before deleting it; never start another Job over a running scan. Do not proceed
+to the rollout until the first apply succeeds. A failed Job cannot be retried
+by applying or creating another Job with the same name.
+Use the verified local chart, intended context/namespace and complete current
+values file:
 
 ```sh
 helm upgrade futureagi "$HOME/futureagi-release-X.Y.Z/futureagi-X.Y.Z.tgz" \
@@ -92,6 +209,64 @@ leave changed data even when no new Deployment was rolled out.
 The bootstrap Job has its own deadline. A Helm timeout is not evidence that the
 Job stopped: inspect its terminal state before another upgrade, rollback or
 restore. Keep failed Job diagnostics; do not repeatedly replace a running Job.
+
+For the trace/span tag-editor upgrade, run the second apply immediately after
+the new backend rollout. The new editor is already available during this window;
+there is no built-in gate to hold it back. Run this in the **same operator shell**
+as the first pass (or redefine `reconcile_tags` from the first block before
+proceeding):
+
+```sh
+kubectl --context CONTEXT -n futureagi rollout status deployment/futureagi-backend --timeout=20m
+reconcile_tags            # second apply after rollout; catch old-backend edits
+# If it reports rows changed during the scan, rerun the apply.
+```
+
+The new editor stores manual assignments, not PG `tracer_trace.tags`.
+Langfuse ingestion still updates that PG column and mirrors traces to CH;
+this one-time handoff does not replace ongoing ingestion mirroring or protect
+against later collector root-span resets. For Argo CD/Flux, run the same dry-run
+and apply before syncing the reviewed release, and run the second apply immediately
+after the new backend is healthy. Automated promotion can expose the editor
+between passes; minimize that window rather than assuming it can be gated.
+
+## Standalone
+
+Standalone's `app` service also has no reconciliation step in its
+`deploy/standalone/bin/bootstrap.py`. This is an operator-run one-time upgrade
+handoff, not a step to run on every boot. With a cold stop of the old app, one
+apply after its last write is sufficient; when the old app keeps serving during
+image staging, use the two applies below to catch edits between the first scan
+and the swap. From the repository root, back up both stores and pin/pull the
+new Standalone image without replacing the old `app` container first. Use
+`docker compose run` with the new image and existing PostgreSQL/ClickHouse
+services: `--no-deps` leaves the old app serving, and
+`--entrypoint python` bypasses the standalone supervisord startup. The
+operator authorization pair is needed even for the dry-run because the startup
+guard treats this management command as mutating.
+
+```sh
+docker compose pull app
+# Review any release-specific schema prerequisites before reconciling.
+docker compose run --rm --no-deps -e SERVICE_TYPE=bootstrap -e STARTUP_DB_MUTATION_MODE=operator \
+  --entrypoint python app manage.py reconcile_legacy_trace_tags --dry-run
+# Review the reported count before applying.
+docker compose run --rm --no-deps -e SERVICE_TYPE=bootstrap -e STARTUP_DB_MUTATION_MODE=operator \
+  --entrypoint python app manage.py reconcile_legacy_trace_tags
+docker compose up -d --wait
+# Old-app PATCH writes between the first pass and the swap need this second pass;
+# run the second apply immediately after rollout. The editor may already be live.
+docker compose run --rm --no-deps -e SERVICE_TYPE=bootstrap -e STARTUP_DB_MUTATION_MODE=operator \
+  --entrypoint python app manage.py reconcile_legacy_trace_tags
+# Rerun the apply if it reports rows changed during the scan.
+```
+
+The Standalone image's Django config uses the `clickhouse` service address for
+this one-off container, not the in-app collector's loopback address. If the
+release needs migrations before the first pass, follow its reviewed maintenance
+plan; never bring up a new backend on an old schema just to run the command.
+Automatic updates have a separate lifecycle; pause them and follow the safe
+handoff before manual changes.
 
 ## Argo CD
 

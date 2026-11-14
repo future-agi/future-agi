@@ -16,6 +16,7 @@ required read fails. Only a complete result may replace the prior snapshot in
 from __future__ import annotations
 
 import json
+import re
 from collections import defaultdict
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -2485,6 +2486,8 @@ def _compile_membership_filter(
     filters: list[dict[str, Any]],
     observe_type: str,
     annotation_label_ids: tuple[str, ...] | None = None,
+    window_start: datetime | None = None,
+    window_end: datetime | None = None,
 ) -> tuple[str, dict[str, Any]]:
     return compile_exact_graph_filter_predicates(
         filters,
@@ -2495,6 +2498,8 @@ def _compile_membership_filter(
             if annotation_label_ids is None
             else annotation_label_ids
         ),
+        window_start=window_start,
+        window_end=window_end,
     )
 
 
@@ -2521,12 +2526,21 @@ def _matching_trace_ids(
     predicate_params: dict[str, Any],
     timeout_ms: int,
     settings: dict[str, Any],
+    candidate_param: str = "candidate_trace_ids",
 ) -> set[str]:
+    """Return the batch's traces the predicate selects.
+
+    ``candidate_param`` names the batch parameter. ``candidate_trace_ids`` is
+    also the Tag binder's scope, which is right when the predicate judges each
+    trace on its own. The Users selector judges the whole user over the
+    snapshot window, so that caller passes another name: the binder then
+    scopes each Tag leaf to the window instead of the batch.
+    """
     if not trace_ids:
         return set()
     source = latest_span_membership_source_sql(
         predicate=predicate or "1",
-        identity_scope="AND trace_id IN %(candidate_trace_ids)s",
+        identity_scope=f"AND trace_id IN %({candidate_param})s",
     )
     result = analytics.execute_ch_query(
         f"""
@@ -2541,7 +2555,7 @@ def _matching_trace_ids(
             "end_date": end_date,
             "snapshot_start_date": start_date,
             "snapshot_end_date": end_date,
-            "candidate_trace_ids": trace_ids,
+            candidate_param: trace_ids,
         },
         timeout_ms=timeout_ms,
         settings=settings,
@@ -2669,13 +2683,20 @@ def read_exact_annotation_graph(
         )
 
     settings: dict[str, Any] = {**EXACT_GRAPH_READ_SETTINGS}
+    # The Users selector judges each user over the whole snapshot window and
+    # binds its Tag leaves there; the Score batch must not become their scope.
+    trace_candidate_param = (
+        "aggregate_candidate_trace_ids"
+        if aggregation_context == "user"
+        else "candidate_trace_ids"
+    )
     if aggregation_context == "session":
         session_trace_sql, session_trace_params = _session_trace_membership_sql(
             project_id=str(project_id),
             filters=filters,
             start_date=start_date,
             end_date=end_date,
-            candidate_trace_ids_param="candidate_trace_ids",
+            candidate_trace_ids_param=trace_candidate_param,
         )
         trace_predicate = f"trace_id IN ({session_trace_sql})"
         trace_params = session_trace_params
@@ -2697,7 +2718,7 @@ def read_exact_annotation_graph(
             filters=filters,
             start_date=start_date,
             end_date=end_date,
-            candidate_trace_ids_param="candidate_trace_ids",
+            candidate_trace_ids_param=trace_candidate_param,
             started=started,
             remaining_read_ms=getattr(analytics, "remaining_read_ms", None),
         )
@@ -2724,12 +2745,16 @@ def read_exact_annotation_graph(
             filters=filters,
             observe_type="trace",
             annotation_label_ids=annotation_label_ids,
+            window_start=start_date,
+            window_end=end_date,
         )
         span_predicate, span_params = _compile_membership_filter(
             project_id=project_id,
             filters=filters,
             observe_type="span",
             annotation_label_ids=annotation_label_ids,
+            window_start=start_date,
+            window_end=end_date,
         )
     bucket_values: dict[datetime, list[float]] = defaultdict(list)
     query_count = 0
@@ -2791,6 +2816,7 @@ def read_exact_annotation_graph(
                         predicate_params=trace_params,
                         timeout_ms=remaining_statement_timeout_ms(),
                         settings=settings,
+                        candidate_param=trace_candidate_param,
                     )
                     if observe_type == "trace"
                     else set()
@@ -3142,6 +3168,8 @@ def _session_membership_plan(
     *,
     project_id: str,
     filters: list[dict[str, Any]],
+    window_start: datetime | None = None,
+    window_end: datetime | None = None,
 ) -> _SessionMembershipPlan:
     """Compile independent trace leaves for session-level intersection.
 
@@ -3267,6 +3295,8 @@ def _session_membership_plan(
             [item],
             project_id=project_id,
             observe_type="span",
+            window_start=window_start,
+            window_end=window_end,
         )
         if not predicate:
             continue
@@ -3302,6 +3332,8 @@ def _session_membership_plan(
             project_id=project_id,
             observe_type="trace",
             annotation_label_ids=annotation_label_ids,
+            window_start=window_start,
+            window_end=window_end,
         )
         if not predicate:
             continue
@@ -3434,6 +3466,8 @@ def _session_aggregate_source_sql(
     membership_plan = _session_membership_plan(
         project_id=project_id,
         filters=span_filters,
+        window_start=start_date,
+        window_end=end_date,
     )
     resolved_session_id = (
         "if(ts_remap.survivor_id IS NULL OR "
@@ -4026,14 +4060,32 @@ def _user_membership_parts(
     }
 
     def compile_leaf(item: dict[str, Any], prefix: str) -> str:
+        from tracer.services.clickhouse.v2.effective_tags import EffectiveTagRelation
+
         predicate, _, leaf_params, _ = _user_filter_clauses(
             [item], project_id=project_id
         )
         for name, value in leaf_params.items():
+            new_name = f"{prefix}_{name}"
+            if isinstance(value, EffectiveTagRelation):
+                # A Tag leaf's relation is read through derived names
+                # (``<name>_projects``, ``<name>_trace_keys`` ...) that the
+                # binder adds. Each leaf's builder numbers from 1, so the
+                # relation must be renamed with them, or one leaf would read
+                # another's UI assignments or an unbound relation.
+                derived = re.compile(r"%\(" + re.escape(name) + r"_([a-z_]+)\)s")
+                if not derived.search(predicate):
+                    continue
+
+                def renamed(match: re.Match[str], new: str = new_name) -> str:
+                    return f"%({new}_{match.group(1)})s"
+
+                predicate = derived.sub(renamed, predicate)
+                params[new_name] = value
+                continue
             placeholder = f"%({name})s"
             if placeholder not in predicate:
                 continue
-            new_name = f"{prefix}_{name}"
             predicate = predicate.replace(placeholder, f"%({new_name})s")
             params[new_name] = value
         return predicate
@@ -4187,9 +4239,20 @@ def _user_aggregate_source_sql(
     if reuse_outer_snapshot and (not all_snapshot_users or include_trace_ids):
         raise ValueError("outer user snapshot reuse requires full system-graph scope")
 
+    from tracer.services.clickhouse.v2.effective_tags import EffectiveTagRelation
+
     _, user_predicate, filter_params, needs_eval = _user_filter_clauses(
         filters, project_id=project_id
     )
+    # The raw-span clause is not used here: Tag leaves reach this selector
+    # through the membership terms below, under their own names. A relation
+    # left over from that clause would be bound, read and counted against the
+    # overlay budget for nothing.
+    filter_params = {
+        name: value
+        for name, value in filter_params.items()
+        if not isinstance(value, EffectiveTagRelation)
+    }
     user_membership_rows, user_membership, membership_params = _user_membership_having(
         filters, project_id=project_id
     )
@@ -4964,6 +5027,14 @@ def session_graph_reads_lean_roots(
     if _session_filters_need_message_aggregates(filters):
         return False
     span_filters = _session_span_filters(filters)
+    # Tag leaves need a window-scoped assignment overlay; the lean-shape
+    # probe must not compile an unwindowed overlay on the request path.
+    if any(
+        not _is_raw_attribute_filter(item)
+        and (item.get("column_id") or item.get("columnId")) in {"tag", "tags"}
+        for item in span_filters
+    ):
+        return False
     if any(
         not _is_raw_attribute_filter(item)
         and (item.get("column_id") or item.get("columnId")) == "has_annotation"

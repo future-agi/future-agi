@@ -48,6 +48,7 @@ from tracer.serializers.project import (
     ProjectUsersAggregateGraphDataRequestSerializer,
     ProjectViewSetListQuerySerializer,
 )
+from tracer.services.clickhouse.bounded_graph_reads import BoundedGraphReadError
 from tracer.services.clickhouse.graph_action_deadline import (
     GraphActionUnavailable,
     finish_graph_action_response,
@@ -64,6 +65,9 @@ from tracer.services.clickhouse.graph_dispatch import (
 )
 from tracer.services.clickhouse.graph_metric_statistic import (
     chart_bundle_statistics,
+)
+from tracer.services.clickhouse.query_builders.exact_graph_predicates import (
+    GraphTagFilterTooBroadError,
 )
 from tracer.services.clickhouse.query_builders.latest_filter_predicates import (
     UnsupportedFilterShapeError,
@@ -82,6 +86,7 @@ from tracer.services.clickhouse.v2.query_builders.user_time_series import (
     UserDetailTimeSeriesQueryBuilderV2,
 )
 from tracer.services.clickhouse.v2.query_service import V2AnalyticsQueryService
+from tracer.services.entity_tags import TagReadUnavailable
 from tracer.services.filter_principal_context import (
     FilterPrincipalContextError,
     bind_request_my_annotations_principal,
@@ -1287,6 +1292,34 @@ class ProjectView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
             # Fallback: empty
             return finish(
                 self._gm.success_response({"metric_name": metric_id, "data": []})
+            )
+        except GraphTagFilterTooBroadError as exc:
+            return finish(
+                self._gm.custom_error_response(
+                    status.HTTP_400_BAD_REQUEST, exc.message, code=exc.code
+                )
+            )
+        except (BoundedGraphReadError, TagReadUnavailable) as exc:
+            if (
+                isinstance(exc, TagReadUnavailable)
+                and exc.code == "tag_overlay_budget_exceeded"
+            ):
+                # Deterministic for this project and filter: a request error
+                # with the Tag filter copy, never a 503 that asks for a retry.
+                too_broad = GraphTagFilterTooBroadError()
+                return finish(
+                    self._gm.custom_error_response(
+                        status.HTTP_400_BAD_REQUEST,
+                        too_broad.message,
+                        code=too_broad.code,
+                    )
+                )
+            return finish(
+                self._gm.custom_error_response(
+                    status.HTTP_503_SERVICE_UNAVAILABLE,
+                    "User graph data is temporarily unavailable. Please retry.",
+                    code="service_unavailable",
+                )
             )
         except GraphActionUnavailable:
             if deadline_injected:

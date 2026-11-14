@@ -252,6 +252,7 @@ import { getDefaultDateRangeForMode } from "../dateRangeDefaults";
 import { useCursorAttributeInventory } from "./useCursorAttributeInventory";
 import { useWorkspace } from "src/contexts/WorkspaceContext";
 import { isGridApiLive, withLiveGridApi } from "src/utils/gridApi";
+import applySavedEntityTags from "./applySavedEntityTags";
 
 const USER_DETAIL_TAB_TYPE = "user_detail";
 const getLiveGridRefApi = (gridRef) => {
@@ -4382,12 +4383,8 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                           .then((res) => ({
                             id,
                             type: "trace",
-                            currentTags: res?.data?.result?.tags || [],
-                          }))
-                          .catch(() => ({
-                            id,
-                            type: "trace",
-                            currentTags: [],
+                            entity: res?.data?.result?.trace,
+                            currentTags: res?.data?.result?.trace?.tags || [],
                           })),
                       ),
                     )
@@ -4395,6 +4392,12 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                         setTagsBulkItems(items);
                         setTagsAnchorEl(anchor);
                       })
+                      .catch(() =>
+                        enqueueSnackbar(
+                          "Could not load tag editing details. Refresh and try again.",
+                          { variant: "error" },
+                        ),
+                      )
                       .finally(() => setTagsFetching(false));
                   }
                   return;
@@ -4473,6 +4476,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                               : n.data?.span_id,
                           type: selectedTab === "trace" ? "trace" : "span",
                           currentTags: n.data?.tags || [],
+                          entity: n.data,
                         }))
                         .filter((i) => i.id),
                     );
@@ -4803,25 +4807,36 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                 open={Boolean(tagsAnchorEl)}
                 anchorEl={tagsAnchorEl}
                 onClose={() => {
-                  // onClose (not onSuccess) does the deselect/refresh —
-                  // the popover stays open across multiple tag adds; we
-                  // only want to flush selection state when the user is
-                  // done and closes the popover.
+                  // Keep selection until the user finishes editing tags.
                   if (projectSource === PROJECT_SOURCE.SIMULATOR) {
                     primaryCallLogsGridRef.current?.deselectAll?.();
                     compareCallLogsGridRef.current?.deselectAll?.();
                     setSelectedCallIds([]);
                   } else if (selectedTab === "trace") {
-                    refreshGridRef(primaryTraceGridRef, { purge: true });
                     deselectGridRef(primaryTraceGridRef);
                   } else {
-                    refreshGridRef(primarySpanGridRef, { purge: true });
                     deselectGridRef(primarySpanGridRef);
                   }
                   setTagsAnchorEl(null);
                   setTagsBulkItems([]);
                 }}
                 bulkItems={tagsBulkItems}
+                onTagsSaved={(savedList) => {
+                  if (projectSource === PROJECT_SOURCE.SIMULATOR) return;
+                  for (const saved of savedList) {
+                    for (const [gridKind, refs] of [
+                      ["trace", [primaryTraceGridRef, compareTraceGridRef]],
+                      ["span", [primarySpanGridRef, compareSpanGridRef]],
+                    ]) {
+                      for (const ref of refs) {
+                        applySavedEntityTags(ref.current?.api, {
+                          ...saved,
+                          gridKind,
+                        });
+                      }
+                    }
+                  }
+                }}
               />
             </Suspense>
             <Suspense fallback={null}>

@@ -72876,123 +72876,108 @@ export const TracerObservationSpanSubmitFeedbackActionTypeBody = zod.object({
 });
 
 /**
- * Update tags for an observation span.
+ * Assign tags to an exact CH span; verified roots alias trace assignments.
  */
-export const tracerObservationSpanUpdateTagsBodyParentSpanIdMax = 255;
+export const tracerObservationSpanUpdateTagsBodyTagsItemTwoNameMax = 256;
 
-export const tracerObservationSpanUpdateTagsBodyNameMax = 2000;
+export const tracerObservationSpanUpdateTagsBodyTagsItemTwoColorRegExp =
+  new RegExp("^#[0-9a-fA-F]{6}$");
+export const tracerObservationSpanUpdateTagsBodyTagsMax = 100;
 
-export const tracerObservationSpanUpdateTagsBodyModelMax = 255;
+export const tracerObservationSpanUpdateTagsBodyTraceIdMax = 128;
 
-export const tracerObservationSpanUpdateTagsBodyLatencyMsMin = -2147483648;
-export const tracerObservationSpanUpdateTagsBodyLatencyMsMax = 2147483647;
+export const tracerObservationSpanUpdateTagsBodySpanIdMax = 128;
 
-export const tracerObservationSpanUpdateTagsBodyPromptTokensMin = -2147483648;
-export const tracerObservationSpanUpdateTagsBodyPromptTokensMax = 2147483647;
+export const tracerObservationSpanUpdateTagsBodyObservationTypeMax = 64;
 
-export const tracerObservationSpanUpdateTagsBodyCompletionTokensMin =
-  -2147483648;
-export const tracerObservationSpanUpdateTagsBodyCompletionTokensMax = 2147483647;
+export const tracerObservationSpanUpdateTagsBodyServiceNameMax = 255;
 
-export const tracerObservationSpanUpdateTagsBodyTotalTokensMin = -2147483648;
-export const tracerObservationSpanUpdateTagsBodyTotalTokensMax = 2147483647;
-
-export const tracerObservationSpanUpdateTagsBodyEvalIdMax = 255;
-
-export const tracerObservationSpanUpdateTagsBodyProviderMax = 255;
+export const tracerObservationSpanUpdateTagsBodyExpectedTagRevisionMin = 0;
+export const tracerObservationSpanUpdateTagsBodyExpectedTagRevisionMax = 9007199254740990;
 
 export const TracerObservationSpanUpdateTagsBody = zod.object({
-  project: zod.string().uuid(),
-  project_version: zod.string().uuid().optional(),
-  trace: zod.string().uuid(),
-  parent_span_id: zod
+  tags: zod
+    .array(
+      zod.union([
+        zod.string(),
+        zod
+          .object({
+            name: zod
+              .string()
+              .max(tracerObservationSpanUpdateTagsBodyTagsItemTwoNameMax),
+            color: zod
+              .string()
+              .regex(tracerObservationSpanUpdateTagsBodyTagsItemTwoColorRegExp)
+              .optional(),
+          })
+          .describe(
+            "Exact tag name, or {name, color}; color is an optional six-digit hex value.",
+          ),
+      ]),
+    )
+    .max(tracerObservationSpanUpdateTagsBodyTagsMax),
+  project_id: zod.string().uuid(),
+  trace_id: zod
     .string()
-    .max(tracerObservationSpanUpdateTagsBodyParentSpanIdMax)
-    .optional(),
-  name: zod.string().min(1).max(tracerObservationSpanUpdateTagsBodyNameMax),
-  observation_type: zod.enum([
-    "tool",
-    "chain",
-    "llm",
-    "retriever",
-    "embedding",
-    "agent",
-    "reranker",
-    "unknown",
-    "guardrail",
-    "evaluator",
-    "conversation",
-    "internal",
-  ]),
-  start_time: zod.string().datetime({ offset: true }).optional(),
-  end_time: zod.string().datetime({ offset: true }).optional(),
-  input: zod.object({}).passthrough().optional(),
-  output: zod.object({}).passthrough().optional(),
-  model: zod
+    .min(1)
+    .max(tracerObservationSpanUpdateTagsBodyTraceIdMax),
+  span_id: zod
     .string()
-    .max(tracerObservationSpanUpdateTagsBodyModelMax)
-    .optional(),
-  model_parameters: zod.object({}).passthrough().optional(),
-  latency_ms: zod
-    .number()
-    .min(tracerObservationSpanUpdateTagsBodyLatencyMsMin)
-    .max(tracerObservationSpanUpdateTagsBodyLatencyMsMax)
-    .optional(),
-  org_id: zod.string().uuid().optional(),
-  org_user_id: zod.string().uuid().optional(),
-  prompt_tokens: zod
-    .number()
-    .min(tracerObservationSpanUpdateTagsBodyPromptTokensMin)
-    .max(tracerObservationSpanUpdateTagsBodyPromptTokensMax)
-    .optional(),
-  completion_tokens: zod
-    .number()
-    .min(tracerObservationSpanUpdateTagsBodyCompletionTokensMin)
-    .max(tracerObservationSpanUpdateTagsBodyCompletionTokensMax)
-    .optional(),
-  total_tokens: zod
-    .number()
-    .min(tracerObservationSpanUpdateTagsBodyTotalTokensMin)
-    .max(tracerObservationSpanUpdateTagsBodyTotalTokensMax)
-    .optional(),
-  response_time: zod.number().optional(),
-  eval_id: zod
+    .min(1)
+    .max(tracerObservationSpanUpdateTagsBodySpanIdMax),
+  start_hour: zod.string().datetime({ offset: true }),
+  observation_type: zod
     .string()
-    .max(tracerObservationSpanUpdateTagsBodyEvalIdMax)
-    .optional(),
-  cost: zod.number().optional(),
-  status: zod.enum(["UNSET", "OK", "ERROR"]).optional(),
-  status_message: zod.string().optional(),
-  tags: zod.object({}).passthrough().optional(),
-  metadata: zod.object({}).passthrough().optional(),
-  span_events: zod.object({}).passthrough().optional(),
-  provider: zod
+    .max(tracerObservationSpanUpdateTagsBodyObservationTypeMax),
+  service_name: zod
     .string()
-    .max(tracerObservationSpanUpdateTagsBodyProviderMax)
-    .optional(),
-  custom_eval_config: zod.string().uuid().optional(),
-  eval_status: zod
-    .enum([
-      "NotStarted",
-      "Queued",
-      "Running",
-      "Completed",
-      "Editing",
-      "Inactive",
-      "Failed",
-      "PartialRun",
-      "ExperimentEvaluation",
-      "Uploading",
-      "PartialExtracted",
-      "Processing",
-      "Deleting",
-      "PartialCompleted",
-      "OptimizationEvaluation",
-      "Error",
-      "Cancelled",
-    ])
-    .optional(),
-  prompt_version: zod.string().uuid().optional(),
+    .max(tracerObservationSpanUpdateTagsBodyServiceNameMax),
+  expected_start_time: zod.string().datetime({ offset: true }),
+  expected_version: zod.string().min(1),
+  expected_tag_revision: zod
+    .number()
+    .min(tracerObservationSpanUpdateTagsBodyExpectedTagRevisionMin)
+    .max(tracerObservationSpanUpdateTagsBodyExpectedTagRevisionMax)
+    .describe("0 for no assignment; otherwise the last returned tag_revision."),
+});
+
+export const tracerObservationSpanUpdateTagsResponseResultTagsItemColorRegExp =
+  new RegExp("^#[0-9a-fA-F]{6}$");
+
+export const tracerObservationSpanUpdateTagsResponseResultManualTagsItemColorRegExp =
+  new RegExp("^#[0-9a-fA-F]{6}$");
+
+export const TracerObservationSpanUpdateTagsResponse = zod.object({
+  status: zod.boolean(),
+  result: zod.object({
+    id: zod.string().min(1),
+    tags: zod.array(
+      zod.object({
+        name: zod.string().min(1),
+        color: zod
+          .string()
+          .min(1)
+          .regex(
+            tracerObservationSpanUpdateTagsResponseResultTagsItemColorRegExp,
+          )
+          .optional(),
+      }),
+    ),
+    manual_tags: zod.array(
+      zod.object({
+        name: zod.string().min(1),
+        color: zod
+          .string()
+          .min(1)
+          .regex(
+            tracerObservationSpanUpdateTagsResponseResultManualTagsItemColorRegExp,
+          )
+          .optional(),
+      }),
+    ),
+    source_tag_names: zod.array(zod.string().min(1)),
+    tag_revision: zod.number().min(1),
+  }),
 });
 
 export const TracerObservationSpanReadParams = zod.object({
@@ -80718,18 +80703,99 @@ export const TracerTraceDeleteParams = zod.object({
 });
 
 /**
- * Update tags for a trace.
+ * Assign manual tags to a verified ClickHouse root, without PG telemetry.
  */
 export const TracerTraceUpdateTagsParams = zod.object({
   id: zod.string(),
 });
 
+export const tracerTraceUpdateTagsBodyTagsItemTwoNameMax = 256;
+
+export const tracerTraceUpdateTagsBodyTagsItemTwoColorRegExp = new RegExp(
+  "^#[0-9a-fA-F]{6}$",
+);
+export const tracerTraceUpdateTagsBodyTagsMax = 100;
+
+export const tracerTraceUpdateTagsBodyTraceIdMax = 128;
+
+export const tracerTraceUpdateTagsBodySpanIdMax = 128;
+
+export const tracerTraceUpdateTagsBodyObservationTypeMax = 64;
+
+export const tracerTraceUpdateTagsBodyServiceNameMax = 255;
+
+export const tracerTraceUpdateTagsBodyExpectedTagRevisionMin = 0;
+export const tracerTraceUpdateTagsBodyExpectedTagRevisionMax = 9007199254740990;
+
 export const TracerTraceUpdateTagsBody = zod.object({
-  tags: zod.array(zod.string().min(1)),
+  tags: zod
+    .array(
+      zod.union([
+        zod.string(),
+        zod
+          .object({
+            name: zod.string().max(tracerTraceUpdateTagsBodyTagsItemTwoNameMax),
+            color: zod
+              .string()
+              .regex(tracerTraceUpdateTagsBodyTagsItemTwoColorRegExp)
+              .optional(),
+          })
+          .describe(
+            "Exact tag name, or {name, color}; color is an optional six-digit hex value.",
+          ),
+      ]),
+    )
+    .max(tracerTraceUpdateTagsBodyTagsMax),
+  project_id: zod.string().uuid(),
+  trace_id: zod.string().min(1).max(tracerTraceUpdateTagsBodyTraceIdMax),
+  span_id: zod.string().min(1).max(tracerTraceUpdateTagsBodySpanIdMax),
+  start_hour: zod.string().datetime({ offset: true }),
+  observation_type: zod
+    .string()
+    .max(tracerTraceUpdateTagsBodyObservationTypeMax),
+  service_name: zod.string().max(tracerTraceUpdateTagsBodyServiceNameMax),
+  expected_start_time: zod.string().datetime({ offset: true }),
+  expected_version: zod.string().min(1),
+  expected_tag_revision: zod
+    .number()
+    .min(tracerTraceUpdateTagsBodyExpectedTagRevisionMin)
+    .max(tracerTraceUpdateTagsBodyExpectedTagRevisionMax)
+    .describe("0 for no assignment; otherwise the last returned tag_revision."),
 });
 
+export const tracerTraceUpdateTagsResponseResultTagsItemColorRegExp =
+  new RegExp("^#[0-9a-fA-F]{6}$");
+
+export const tracerTraceUpdateTagsResponseResultManualTagsItemColorRegExp =
+  new RegExp("^#[0-9a-fA-F]{6}$");
+
 export const TracerTraceUpdateTagsResponse = zod.object({
-  tags: zod.array(zod.string().min(1)),
+  status: zod.boolean(),
+  result: zod.object({
+    id: zod.string().min(1),
+    tags: zod.array(
+      zod.object({
+        name: zod.string().min(1),
+        color: zod
+          .string()
+          .min(1)
+          .regex(tracerTraceUpdateTagsResponseResultTagsItemColorRegExp)
+          .optional(),
+      }),
+    ),
+    manual_tags: zod.array(
+      zod.object({
+        name: zod.string().min(1),
+        color: zod
+          .string()
+          .min(1)
+          .regex(tracerTraceUpdateTagsResponseResultManualTagsItemColorRegExp)
+          .optional(),
+      }),
+    ),
+    source_tag_names: zod.array(zod.string().min(1)),
+    tag_revision: zod.number().min(1),
+  }),
 });
 
 export const TracerUserAlertLogsListQueryParams = zod.object({

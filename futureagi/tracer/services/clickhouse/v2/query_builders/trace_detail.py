@@ -27,6 +27,11 @@ from tracer.services.clickhouse.query_builders.trace_detail import (
 )
 from tracer.services.clickhouse.v2.query_builders._rewrite import V2RewriteMixin
 from tracer.services.clickhouse.v2.span_reader import merge_span_attributes
+from tracer.services.entity_tag_reads import (
+    attach_legacy_trace_tags,
+    enrich_entity_tags,
+    tag_fields,
+)
 from tracer.services.eval_tiles import build_eval_rollup
 from tracer.utils.helper import _normalize_eval_output_type
 
@@ -198,6 +203,13 @@ def retrieve_trace_detail_ch(
         logger.exception("trace_detail: PG Trace lookup failed")
         raise
     trace_data = view.get_serializer(trace).data if trace is not None else None
+    if trace_data is not None:
+        for row in span_rows:
+            if row.get("parent_span_id") in (None, ""):
+                row["trace_tags"] = trace_data.get("tags")
+    # CH-only traces: the same curated traces row the list and filter read.
+    attach_legacy_trace_tags(analytics.execute_ch_query, span_rows)
+    enrich_entity_tags(span_rows, kind="span")
 
     # Build span tree
     span_map = {}  # id -> span data
@@ -280,7 +292,7 @@ def retrieve_trace_detail_ch(
             ),
             "status": row.get("status"),
             "status_message": row.get("status_message"),
-            "tags": _parse_json(row.get("tags"), default=[]),
+            **tag_fields(row),
             "metadata": metadata,
             "span_events": _parse_json(row.get("span_events"), default=[]),
             "provider": provider,
@@ -565,6 +577,20 @@ def retrieve_trace_detail_ch(
             "external_id": None,
             "tags": root_obs.get("tags") or [],
         }
+
+    if root_spans:
+        # Match the trace-list canonical root order, including malformed
+        # multi-root traces, without changing unrelated legacy metadata.
+        tag_root = max(
+            (row for row in span_rows if row.get("parent_span_id") in (None, "")),
+            key=lambda row: (
+                row["start_time"],
+                str(row["id"]),
+                str(row.get("observation_type", "")),
+                str(row.get("service_name", "")),
+            ),
+        )
+        trace_data.update(tag_fields(tag_root))
 
     result: TraceDetail = {
         "trace": trace_data,

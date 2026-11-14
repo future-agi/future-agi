@@ -2768,6 +2768,31 @@
 - the example API encodes the exact project name into one quoted Python literal
 - the visible Users setup code equals the exact example API result
 
+### OBS-E2E-063 — ClickHouse-only trace and child labels survive reload and filter without losing SDK tags
+
+**Goal:** A developer labels an ingested trace and child span, reloads, and finds only the intended trace through tag filtering without losing SDK labels
+
+**Spec:** `flows/observe/ch-only-tag-edit-filter.spec.ts:41`
+
+**Tags:** —
+
+**User steps:**
+
+1. ingest alpha and beta two-span traces with independently named SDK tags
+2. add a rich manual trace label through the grid and reload
+3. label alpha’s child in the drawer and reload
+4. discover the exact source and manual names through the native Tag picker
+5. filter to exactly alpha and replay the browser list request
+6. remove alpha’s manual trace label through the grid; its SDK label offers no remove action
+7. reload and reopen the Tag picker: the manual name is gone and the SDK tag still filters to exactly alpha
+
+**Backend state verified:**
+
+- A: exact ClickHouse source identities belong to the actor project and no PostgreSQL telemetry rows exist
+- B: only the intended trace/physical-child assignments and revisions change; fresh list/detail reads retain SDK names and rich colors
+- C: native picker choices and browser/API filtered trace IDs equal the independently seeded oracle and exclude beta
+- D: source versions, tags, attributes and usage remain unchanged after adding and removing manual labels
+
 ## prompts
 
 ### PROMPT-E2E-001 — a mock-run prompt exposes its current evaluation configuration lifecycle

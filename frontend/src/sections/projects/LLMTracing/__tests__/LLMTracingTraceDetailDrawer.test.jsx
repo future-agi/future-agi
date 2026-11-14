@@ -139,4 +139,20 @@ describe("LLMTracingTraceDetailDrawer project pin", () => {
       filters: [],
     });
   });
+
+  it("hands the trace grid's tag-save handler to the drawer", () => {
+    // The grid updates the saved entity's row in place; refreshGrid (which
+    // resets the list to page 1) stays for annotation saves.
+    const refreshGrid = vi.fn();
+    const onTagsSaved = vi.fn();
+    render(
+      <LLMTracingTraceDetailDrawer
+        refreshGrid={refreshGrid}
+        onTagsSaved={onTagsSaved}
+      />,
+    );
+
+    expect(lastDrawerProps().refreshParentGrid).toBe(refreshGrid);
+    expect(lastDrawerProps().onTagsSaved).toBe(onTagsSaved);
+  });
 });

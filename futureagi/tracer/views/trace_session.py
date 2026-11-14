@@ -127,6 +127,9 @@ from tracer.services.clickhouse.query_builders.eval_status import (
 from tracer.services.clickhouse.query_builders.latest_filter_predicates import (
     UnsupportedFilterShapeError,
 )
+from tracer.services.clickhouse.query_builders.session_list import (
+    SESSION_TAG_FILTER_UNSUPPORTED,
+)
 from tracer.services.clickhouse.query_builders.trace_usage import (
     capture_coverage_from_counts,
 )
@@ -3204,6 +3207,12 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
             if degraded_error_code == "unsupported_filter_shape":
                 raise UnsupportedFilterShapeError(
                     "session filter configuration is invalid"
+                )
+            if degraded_error_code == SESSION_TAG_FILTER_UNSUPPORTED:
+                # Deterministic for this request: a retry can never succeed.
+                return self._gm.bad_request(
+                    "Sessions cannot be filtered by tag. "
+                    "Filter the Traces tab by tag instead."
                 )
             return self._gm.custom_error_response(
                 drf_status.HTTP_503_SERVICE_UNAVAILABLE,

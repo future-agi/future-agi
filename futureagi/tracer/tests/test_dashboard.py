@@ -4658,9 +4658,14 @@ class TestMetricsEndpoint:
         auth_client,
         observe_project,
     ):
-        mock_analytics_cls.return_value.execute_ch_query.return_value = MagicMock(
-            data=[{"val": "production"}]
-        )
+        # Discovery aggregates projected source names in ClickHouse; only the
+        # human-scale UI/legacy overlay is resolved in Python.
+        def execute(sql, params=None, **kwargs):
+            if "SELECT DISTINCT name" in sql:
+                return MagicMock(data=[{"name": "production"}])
+            return MagicMock(data=[])
+
+        mock_analytics_cls.return_value.execute_ch_query.side_effect = execute
 
         response = auth_client.get(
             "/tracer/dashboard/filter_values/"
@@ -4669,12 +4674,72 @@ class TestMetricsEndpoint:
         )
 
         assert response.status_code == 200
-        sql_arg = mock_analytics_cls.return_value.execute_ch_query.call_args.args[0]
-        assert "argMax(tuple(tags), _version).1 AS raw_value" in sql_arg
-        assert (
-            "arrayJoin(JSONExtract(latest_spans.raw_value, 'Array(String)'))" in sql_arg
+        sql_arg = mock_analytics_cls.return_value.execute_ch_query.call_args_list[
+            0
+        ].args[0]
+        assert response.json()["result"]["values"] == [
+            {"value": "production", "label": "production"}
+        ]
+        assert "ARRAY JOIN src AS name" in sql_arg
+        assert "attrs_string['tag.tags']" in sql_arg
+        assert "JSONExtractRaw(attributes_extra, 'tag.tags')" in sql_arg
+        assert "attrs_string, attributes_extra" not in sql_arg
+        assert "PREWHERE project_id IN %(tag_values_projects)s" in sql_arg
+        assert "start_time >= %(tag_values_hour_start)s" in sql_arg
+        assert "start_time < %(tag_values_hour_end)s" in sql_arg
+        assert "HAVING etag_w.3 = 0" in sql_arg
+        assert "LIMIT %(tag_value_limit)s" in sql_arg
+
+    @pytest.mark.django_db
+    @patch("tracer.views.dashboard.is_clickhouse_enabled", return_value=True)
+    @patch("tracer.views.dashboard.V2AnalyticsQueryService")
+    def test_dashboard_widget_tag_picker_matches_the_widget_compiler(
+        self,
+        mock_analytics_cls,
+        _mock_ch_enabled,
+        auth_client,
+        observe_project,
+    ):
+        # Widget filters/breakdowns match raw spans.tags. The workspace-scoped
+        # widget picker must offer that vocabulary, not effective names a
+        # widget would chart as empty; Observe's project picker is effective.
+        queries = []
+
+        def execute(sql, params=None, **kwargs):
+            queries.append(sql)
+            if "SELECT DISTINCT name" in sql:
+                return MagicMock(data=[{"name": "manual-only"}])
+            if "AS raw_picker_value" in sql:
+                return MagicMock(data=[{"val": "production"}])
+            return MagicMock(data=[])
+
+        mock_analytics_cls.return_value.execute_ch_query.side_effect = execute
+
+        widget = auth_client.get(
+            "/tracer/dashboard/filter_values/"
+            "?metric_name=tag&metric_type=system_metric&source=traces&page_size=10"
         )
-        assert "trace_tags" not in sql_arg
+        assert widget.status_code == 200, widget.json()
+        assert [row["value"] for row in widget.json()["result"]["values"]] == [
+            "production"
+        ]
+        assert queries and all("ARRAY JOIN src AS name" not in sql for sql in queries)
+        assert any(
+            "arrayJoin(JSONExtract(latest_spans.raw_value, 'Array(String)'))" in sql
+            for sql in queries
+        )
+
+        queries.clear()
+        observe = auth_client.get(
+            "/tracer/dashboard/filter_values/"
+            "?metric_name=tag&metric_type=system_metric&source=traces&page_size=10"
+            f"&project_ids={observe_project.id}"
+        )
+        assert observe.status_code == 200, observe.json()
+        assert [row["value"] for row in observe.json()["result"]["values"]] == [
+            "manual-only"
+        ]
+        assert any("ARRAY JOIN src AS name" in sql for sql in queries)
 
     @pytest.mark.django_db
     @patch("tracer.views.dashboard.is_clickhouse_enabled", return_value=True)

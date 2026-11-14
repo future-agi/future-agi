@@ -133,6 +133,55 @@ backup. Stage right before the restart you plan: the database migrations run
 at that restart, and the backup they would be restored from is the one taken
 when you staged.
 
+**One-time trace/span tag-editor transition:** `./bin/update check` does not
+reconcile old PG trace tags, and `./bin/update apply` does not run
+`reconcile_legacy_trace_tags`. Before applying a release introducing the new
+editor, follow the [Standalone operator handoff](../helm/futureagi/UPGRADING.md#standalone):
+use `./bin/update apply --stage` to pull and verify the new app image without
+restarting the old app, then use that staged image for the dry-run and first
+apply while the old app still serves. Finish with `./bin/update apply`, then
+run the second apply immediately after update rollout.
+Stage immediately before this handoff: if the scan takes long while the old
+app keeps writing, the staged backup may be stale; follow the staged-backup
+guidance above before resuming. The editor can already be used between
+rollout and the second apply; there is no built-in gate. If the old app has
+been cold-stopped, one successful apply after its last old-editor write is
+enough. Rerun an apply if it reports rows
+changed during the scan. Automatic updates (apply mode) do not run this
+handoff either: pause them **before** the tag-editor update, complete the
+[safe handoff to manual operations](#safe-handoff-to-manual-operations), and
+reconcile as an operator. Do not assume unattended updates preserve legacy
+tags without this step; notify/download modes do not apply a release.
+
+For a **non-production Distributed** install (`./bin/install --distributed`),
+use `backend` instead of Standalone's `app`. The installer sets
+`COMPOSE_FILE` in `.env` to `docker-compose.distributed.yml`, plus the
+installer's override file (docker-compose.override.yml) when it wrote one. From the
+repository root, with no conflicting `COMPOSE_FILE` in the shell, plain
+`docker compose` uses that same file set (not the production overlay).
+After staging with `./bin/update apply --stage`, review any schema
+prerequisites and run the dry-run and first apply on the staged new backend
+image while the old backend serves. Finish the update, then run the second
+apply immediately after rollout (omit it only if the old backend could not
+write after the first apply, for example when it was cold-stopped before the
+first apply). Review counts and rerun any pass with rows changed during its
+scan.
+
+```bash
+docker compose run --rm --no-deps \
+  -e SERVICE_TYPE=bootstrap -e STARTUP_DB_MUTATION_MODE=operator \
+  --entrypoint python backend manage.py reconcile_legacy_trace_tags --dry-run
+# Review the dry-run count before applying.
+docker compose run --rm --no-deps \
+  -e SERVICE_TYPE=bootstrap -e STARTUP_DB_MUTATION_MODE=operator \
+  --entrypoint python backend manage.py reconcile_legacy_trace_tags
+./bin/update apply    # complete the staged update
+# Catch old-backend edits made between the first pass and rollout.
+docker compose run --rm --no-deps \
+  -e SERVICE_TYPE=bootstrap -e STARTUP_DB_MUTATION_MODE=operator \
+  --entrypoint python backend manage.py reconcile_legacy_trace_tags
+```
+
 `check` changes nothing. It prints the next command to run, or why the update
 is blocked: each reason names what fixes it. Step 3 is for a `.env` that
 `./bin/install` wrote; if yours uses `export`, indentation or spaces around
@@ -152,8 +201,29 @@ git fetch --tags && git checkout v1.53.0
 ./bin/update --production apply --stage   # back up, pin, pull, verify; restarts nothing
 # the release's initialization jobs (deploy/README.md › Upgrading a production
 # install): they run on the staged, verified images
+# For the one-time tag-editor upgrade, use the exact Compose command printed by
+# check/stage (shown below for the default production env file). Run after
+# migrations and CH setup, while the old backend still serves:
+COMPOSE="docker compose --env-file deploy/.env.production -f docker-compose.distributed.yml -f deploy/docker-compose.production.yml"
+$COMPOSE run --rm --no-deps -e SERVICE_TYPE=bootstrap -e STARTUP_DB_MUTATION_MODE=operator \
+  --entrypoint python backend manage.py reconcile_legacy_trace_tags --dry-run
+$COMPOSE run --rm --no-deps -e SERVICE_TYPE=bootstrap -e STARTUP_DB_MUTATION_MODE=operator \
+  --entrypoint python backend manage.py reconcile_legacy_trace_tags
 ./bin/update --production apply           # restart onto the release and verify it
+# Run the second apply immediately after rollout to catch old-backend edits:
+$COMPOSE run --rm --no-deps -e SERVICE_TYPE=bootstrap -e STARTUP_DB_MUTATION_MODE=operator \
+  --entrypoint python backend manage.py reconcile_legacy_trace_tags
 ```
+
+If the staged image's schema prerequisites require a maintenance outage,
+follow the reviewed release's migration plan instead of running the command
+against incompatible old tables. The editor is not gated after rollout; the
+second apply minimizes but cannot eliminate the window when it can be used.
+Rerun any apply if it reports rows changed during the scan. See the full
+[production handoff](../README.md#upgrading-a-production-install) for
+initialization order and the command's limits. `--production apply` does not
+run either pass on your behalf. For a custom `--env-file`, copy the Compose
+command from `check`/`apply --stage` instead of using this default example.
 
 A plain `apply` with nothing staged is refused before the backup. Between the
 two steps the old release keeps running; do not run `docker compose up` or

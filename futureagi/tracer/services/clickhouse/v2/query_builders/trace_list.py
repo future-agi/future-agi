@@ -17,7 +17,7 @@ import re
 from collections.abc import Callable, Iterable, Iterator, Mapping
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Any, Protocol, cast
 
 from django.conf import settings
 
@@ -328,8 +328,69 @@ class UserEnrichmentLimitExceeded(ReadDeadlineExceeded):
     """A page's remap fan-in exceeded the optional enrichment read bound."""
 
 
+class _TraceReplayHost(Protocol):
+    """Legacy trace-list hooks supplied by both trace and voice list builders."""
+
+    _FILTER_BUILDER_CLS: type[ClickHouseFilterBuilderV2]
+
+    def _bounded_match_filters(self) -> list[dict[str, Any]]: ...
+
+    def _partition_trace_filter_plans(
+        self, filters: list[dict[str, Any]]
+    ) -> tuple[list[LatestFilterPredicate], list[dict[str, Any]]]: ...
+
+
 class _TraceRootReplayV2:
     """CH25 physical replacement and hydration, independent of acquisition policy."""
+
+    TABLE: str  # Provided by the trace-list host.
+
+    def build_filter_match_query(self, candidate_ids, **kwargs):
+        # Both hosts inherit TraceListQueryBuilder immediately after this mixin.
+        query, params = TraceListQueryBuilder.build_filter_match_query(
+            cast(TraceListQueryBuilder, self), candidate_ids, **kwargs
+        )
+        from tracer.services.clickhouse.v2.effective_tags import EffectiveTagRelation
+
+        if (
+            any(isinstance(value, EffectiveTagRelation) for value in params.values())
+            and self._only_tag_leaves_read_children()
+        ):
+            # Tag membership is explicitly scoped to the requested event-time
+            # window inside its own relation. When no other leaf reads child
+            # spans, replay full physical hours before mutable time/liveness
+            # checks, rather than scanning the entire history of candidate IDs.
+            # Any other any-span or residual leaf keeps the base contract and
+            # replays every child version: a child may start long after its
+            # root, and a Tag leaf must not change what that leaf matches.
+            query = query.replace(
+                "AND trace_id IN %(candidate_trace_ids)s",
+                "AND trace_id IN %(candidate_trace_ids)s\n"
+                "AND start_time >= toStartOfHour(toDateTime64(%(start_date)s, 6, 'UTC'))\n"
+                "AND start_time < toStartOfHour(toDateTime64(%(end_date)s, 6, 'UTC')) + INTERVAL 1 HOUR",
+            )
+        return query, params
+
+    def _only_tag_leaves_read_children(self) -> bool:
+        """Whether every non-root membership leaf is an effective Tag leaf."""
+
+        from tracer.services.clickhouse.v2.effective_tags import EffectiveTagRelation
+
+        host = cast(_TraceReplayHost, self)
+        plans, residual_filters = host._partition_trace_filter_plans(
+            host._bounded_match_filters()
+        )
+        is_tag_leaf = getattr(
+            host._FILTER_BUILDER_CLS, "is_effective_tag_filter", lambda _item: False
+        )
+        return all(is_tag_leaf(item) for item in residual_filters) and all(
+            any(
+                isinstance(value, EffectiveTagRelation)
+                for value in plan.params.values()
+            )
+            for plan in plans
+            if plan.scope != "root"
+        )
 
     @staticmethod
     def filter_classifier_has_exact_start_time_identity() -> bool:
@@ -494,6 +555,7 @@ class _TraceRootReplayV2:
             ("attrs_bool", "attrs_bool"),
             ("attributes_extra", "attributes_extra"),
             ("metadata", "metadata"),
+            ("tags", "tags"),
         ]
 
     def _root_replay_content_extra_select(self) -> list[str]:

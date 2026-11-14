@@ -99,12 +99,14 @@ def _exact_observe_analytics() -> Iterator[Any]:
     from django.conf import settings
 
     from tracer.services.clickhouse.client import ClickHouseClient
-    from tracer.services.clickhouse.query_service import AnalyticsQueryService
     from tracer.services.clickhouse.read_budget import (
         ReadDeadline,
         WallCappedAnalytics,
     )
     from tracer.services.clickhouse.v2 import get_v2_config
+    from tracer.services.clickhouse.v2.query_service import (
+        EffectiveTagAnalyticsQueryService,
+    )
 
     config = get_v2_config()
     read_timeout_ceiling_ms = int(settings.GRAPH_BACKGROUND_WALL_MS)
@@ -118,8 +120,10 @@ def _exact_observe_analytics() -> Iterator[Any]:
         read_timeout_ceiling_ms=read_timeout_ceiling_ms,
     )
     try:
+        # A Users-graph Tag leaf reaches the worker as an unbound relation
+        # (ClickHouseFilterBuilderV2), so this service binds it within the wall.
         yield WallCappedAnalytics(
-            AnalyticsQueryService(
+            EffectiveTagAnalyticsQueryService(
                 ch_client=client,
                 read_timeout_ceiling_ms=read_timeout_ceiling_ms,
             ),

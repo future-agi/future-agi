@@ -531,7 +531,12 @@ class TestUsersExportStreaming:
         manager = self._manager()
         base_row = _row(user_id="u1", end_user_id=uuid.uuid4(), total_count=1)
 
-        def execute(query, _params, *, timeout_ms, settings):
+        def execute(
+            query, _params, *, timeout_ms, settings, server_execution_cap_ms=None
+        ):
+            # V2 forwards this existing base-client argument; ordinary user
+            # lists must still leave the explicit statement cap unset.
+            assert server_execution_cap_ms is None
             if "attributes_extra AS attributes_extra" in query:
                 return _ch_stub([])
             if "bool_eval_pass_rate" in query and "tracer_eval_logger" in query:
@@ -553,6 +558,7 @@ class TestUsersExportStreaming:
         assert execute_mock.call_count == 2
         for call in execute_mock.call_args_list:
             assert call.kwargs["timeout_ms"] is None
+            assert call.kwargs["server_execution_cap_ms"] is None
             settings = application_read_settings(call.kwargs["settings"])
             assert all(settings[name] == 0 for name in UNLIMITED_STATEMENT_SETTINGS)
             assert settings["max_memory_usage"] == 36 * 1024 * 1024 * 1024

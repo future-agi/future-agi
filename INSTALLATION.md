@@ -1004,6 +1004,52 @@ release this way; one whose version keys are set, by you or by `./bin/update`,
 keeps running those versions until you change the keys (or use
 `./bin/update`, below).
 
+**One-time trace/span tag-editor upgrade:** before upgrading an install that
+still uses legacy PG trace tags, follow the [Standalone handoff](deploy/helm/futureagi/UPGRADING.md#standalone)
+or [Distributed production handoff](deploy/README.md#upgrading-a-production-install).
+Run `reconcile_legacy_trace_tags --dry-run`, review the count, then apply with
+the new app/backend image and operator authorization; run the second apply
+immediately after rollout if the old backend could still write tags during
+staging. The
+new editor can already be available before that second apply. Neither
+`./bin/install` nor `./bin/update apply` performs this handoff automatically.
+If automatic updates are enabled, pause them **before** the release introducing
+the editor is applied, follow the [manual-operations handoff](deploy/update/README.md#safe-handoff-to-manual-operations),
+and use the operator-run reconciliation rather than assuming an unattended
+update will mirror legacy tags. A cold-stopped Standalone app needs only one
+successful apply after its last old-editor write; the linked two-pass procedure
+also covers upgrades where the old app serves during staging. Rerun an apply if
+it reports rows changed during the scan.
+
+For a **non-production Distributed** install (`./bin/install --distributed`),
+use `backend`, not Standalone's `app` or the production overlay's `$COMPOSE`.
+The installer records `COMPOSE_FILE=docker-compose.distributed.yml` in `.env`,
+or includes `docker-compose.override.yml` when an installer override exists.
+Run these commands from the repository root with no conflicting `COMPOSE_FILE`
+in your shell: plain `docker compose` then uses the same file set from `.env`
+as the installer. Stage with `./bin/update apply --stage` (which pins and pulls
+the new image without restarting the old backend); do not separately pull the
+old version on a pinned install. Review schema prerequisites, then run the
+dry-run and first apply while the old backend serves. Finish the staged update
+and run the second apply immediately after rollout. Skip the second apply only
+if the old backend could not write after the first apply (for example, it was
+cold-stopped before that apply).
+
+```bash
+./bin/update apply --stage    # pin and pull the new image without restarting
+# Review the dry-run count before the first apply.
+docker compose run --rm --no-deps \
+  -e SERVICE_TYPE=bootstrap -e STARTUP_DB_MUTATION_MODE=operator \
+  --entrypoint python backend manage.py reconcile_legacy_trace_tags --dry-run
+docker compose run --rm --no-deps \
+  -e SERVICE_TYPE=bootstrap -e STARTUP_DB_MUTATION_MODE=operator \
+  --entrypoint python backend manage.py reconcile_legacy_trace_tags
+./bin/update apply    # complete the staged update
+docker compose run --rm --no-deps \
+  -e SERVICE_TYPE=bootstrap -e STARTUP_DB_MUTATION_MODE=operator \
+  --entrypoint python backend manage.py reconcile_legacy_trace_tags
+```
+
 On Helm: `helm upgrade futureagi oci://ghcr.io/future-agi/charts/futureagi --version X.Y.Z --namespace futureagi -f my-values.yaml --timeout 20m`,
 always with your values file (never `--reuse-values` across versions);
 the bootstrap Job migrates before any Deployment is rolled. See the

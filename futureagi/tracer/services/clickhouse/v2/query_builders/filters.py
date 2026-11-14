@@ -41,6 +41,7 @@ from tracer.services.clickhouse.query_builders.filters import (
     _coerce_strict_bool,
 )
 from tracer.services.clickhouse.query_builders.latest_filter_predicates import (
+    UnsupportedFilterShapeError,
     _legacy_ascii_lower_bloom_predicate,
 )
 from tracer.services.clickhouse.v2.query_builders import columns as cols
@@ -417,6 +418,163 @@ class ClickHouseFilterBuilderV2(ClickHouseFilterBuilder):
     _TRACE_TAGS_TABLE = "traces"
     _TRACE_TAGS_VERSION = "_version"
     _TRACE_TAGS_DELETED = "is_deleted"
+
+    @classmethod
+    def _is_effective_tag_column(cls, col_id, col_type) -> bool:
+        return col_id in {"tag", "tags"} and col_type in {
+            "",
+            cls.NORMAL,
+            cls.SYSTEM_METRIC,
+        }
+
+    @classmethod
+    def is_effective_tag_filter(cls, item) -> bool:
+        """Whether one public filter leaf compiles to the effective Tag relation."""
+
+        if not isinstance(item, dict):
+            return False
+        col_id = item.get("column_id") or item.get("columnId")
+        config = item.get("filter_config") or item.get("filterConfig") or {}
+        col_type = config.get("col_type") or config.get("colType") or cls.NORMAL
+        return cls._is_effective_tag_column(col_id, col_type)
+
+    def _build_condition(
+        self,
+        col_id,
+        col_type,
+        filter_type,
+        filter_op,
+        filter_value,
+        *,
+        attribute_value_types=None,
+    ):
+        if self._is_effective_tag_column(col_id, col_type):
+            return self._effective_tag_condition(col_id, filter_op, filter_value)
+        return super()._build_condition(
+            col_id,
+            col_type,
+            filter_type,
+            filter_op,
+            filter_value,
+            attribute_value_types=attribute_value_types,
+        )
+
+    def _effective_tag_condition(self, column, operation, value):
+        from tracer.services.clickhouse.query_builders.filters import (
+            normalize_filter_op,
+        )
+        from tracer.services.clickhouse.query_builders.latest_filter_predicates import (
+            _normalize_json_array_values,
+        )
+        from tracer.services.clickhouse.v2.effective_tags import (
+            EffectiveTagRelation,
+            canonical_root_sql,
+            effective_match_sql,
+            live_tag_source_sql,
+            trace_overlay_sql,
+        )
+
+        operation = normalize_filter_op(operation)
+        if operation not in {
+            "equals",
+            "not_equals",
+            "in",
+            "not_in",
+            "contains",
+            "not_contains",
+            "is_null",
+            "is_not_null",
+        }:
+            # A request shape, not a server fault: every list handler answers
+            # 400 for it, as the graphs already do.
+            raise UnsupportedFilterShapeError("unsupported tag membership operation")
+        negate = operation in {"not_equals", "not_in", "not_contains", "is_null"}
+        relation = self._next_param("effective_tag_rows")
+        # ``{names}`` is the Array(String) of one source: the span's own source
+        # names, or a trace's curated names.
+        if operation in {"is_null", "is_not_null"}:
+            names = None
+            predicate = "notEmpty({names})"
+        else:
+            values = value if isinstance(value, list) else [value]
+            if not values or any(
+                not isinstance(item, str) or not item for item in values
+            ):
+                raise UnsupportedFilterShapeError(
+                    "tag membership requires non-empty tag names"
+                )
+            # Filter the source vocabulary with the public filter limits, not
+            # the narrower UI-assignment name limit. SDK names remain intact.
+            _normalize_json_array_values(
+                {"filter_op": "contains", "filter_value": values}
+            )
+            names = tuple(dict.fromkeys(values))
+            parameter = self._next_param("effective_tag_names")
+            self._params[parameter] = values
+            predicate = "hasAny({names}, %(" + parameter + ")s)"
+        # Source and curated trace tags are evaluated here, in ClickHouse,
+        # over the projected tag columns of the bound candidate/window scope.
+        # Preparation binds only that scope and the human-scale UI overlay.
+        self._params[relation] = EffectiveTagRelation(
+            tuple(self.project_ids or ()), names
+        )
+        live = live_tag_source_sql(relation)
+        source = predicate.format(names="src")
+        match = effective_match_sql(relation, predicate)
+        project = "toString(project_id), " if self._org_scoped else ""
+        selected_root = (
+            column == "tags"
+            and self.query_mode == self.QUERY_MODE_TRACE
+            and self.candidate_ids_param == "candidate_trace_ids"
+        )
+        if selected_root:
+            # The classifier has already selected the physical root after
+            # project-version and datetime exclusions. Match THAT row, not a
+            # second independently chosen root.
+            outer = (
+                f"tuple({project}toString(trace_id), toString(root_span_id), "
+                "toInt64(toUnixTimestamp(_root_start_hour)), "
+                "toString(_root_observation_type), toString(_root_service_name))"
+            )
+            inner = (
+                f"SELECT tuple({project}trace_id, id, "
+                "toInt64(toUnixTimestamp(start_hour)), toString(observation_type), "
+                f"toString(service_name)) FROM {live} WHERE {match}"
+            )
+        elif self.query_mode == self.QUERY_MODE_TRACE:
+            outer = (
+                "tuple(toString(project_id), toString(trace_id))"
+                if self._org_scoped
+                else "toString(trace_id)"
+            )
+            selected = (
+                "tuple(toString(project_id), trace_id)"
+                if self._org_scoped
+                else "trace_id"
+            )
+            if column == "tags":
+                # The trace's canonical root: its own source names plus the
+                # trace assignment (or unsuppressed legacy curated tags).
+                inner = (
+                    f"SELECT {selected} FROM {canonical_root_sql(relation)} "
+                    f"WHERE {source} OR "
+                    f"{trace_overlay_sql(relation, predicate, live_roots=True)}"
+                )
+            else:
+                inner = f"SELECT {selected} FROM {live} WHERE {match}"
+        else:
+            outer = (
+                "tuple(toString(project_id), toString(trace_id), toString(id), "
+                "toInt64(toUnixTimestamp(toStartOfHour(start_time))), "
+                "toString(observation_type), toString(service_name))"
+            )
+            inner = (
+                "SELECT tuple(toString(project_id), trace_id, id, "
+                "toInt64(toUnixTimestamp(start_hour)), toString(observation_type), "
+                f"toString(service_name)) FROM {live} WHERE {match}"
+            )
+        membership = "NOT IN" if negate else "IN"
+        return f"{outer} {membership} ({inner})"
 
     def _score_resolved_span_columns_sql(self) -> str:
         return "project_id, id, trace_id, start_time, observation_type, service_name"

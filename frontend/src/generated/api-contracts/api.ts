@@ -432,6 +432,7 @@ import type {
   EmbeddingsResponseApi,
   EmptyRequestApi,
   EnterpriseHeartbeatResponseApi,
+  EntityTagsResponseApi,
   ErrorResponseApi,
   EvalApiLogRowResponseApi,
   EvalApiLogTableResponseApi,
@@ -1296,6 +1297,7 @@ import type {
   SpanObserveListQueryApi,
   SpanObserveListResponseApi,
   SpanPrototypeListResponseApi,
+  SpanTagsUpdateApi,
   SpendSummaryResponseApi,
   StartEvalsProcessRequestApi,
   StopUserEvalRequestApi,
@@ -80487,24 +80489,55 @@ export const tracerObservationSpanSubmitFeedbackActionType = async (
   );
 };
 
-export type tracerObservationSpanUpdateTagsResponse201 = {
-  data: ObservationSpanApi;
-  status: 201;
+export type tracerObservationSpanUpdateTagsResponse200 = {
+  data: EntityTagsResponseApi;
+  status: 200;
+};
+
+export type tracerObservationSpanUpdateTagsResponse400 = {
+  data: ApiErrorResponseApi;
+  status: 400;
+};
+
+export type tracerObservationSpanUpdateTagsResponse403 = {
+  data: ApiErrorResponseApi;
+  status: 403;
+};
+
+export type tracerObservationSpanUpdateTagsResponse404 = {
+  data: ApiErrorResponseApi;
+  status: 404;
+};
+
+export type tracerObservationSpanUpdateTagsResponse409 = {
+  data: ApiErrorResponseApi;
+  status: 409;
+};
+
+export type tracerObservationSpanUpdateTagsResponse503 = {
+  data: ApiErrorResponseApi;
+  status: 503;
 };
 
 export type tracerObservationSpanUpdateTagsResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 201>;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 403 | 404 | 409 | 503>;
 };
 
 export type tracerObservationSpanUpdateTagsResponseSuccess =
-  tracerObservationSpanUpdateTagsResponse201 & {
+  tracerObservationSpanUpdateTagsResponse200 & {
     headers: ApiResponseHeaders;
   };
-export type tracerObservationSpanUpdateTagsResponseError =
-  tracerObservationSpanUpdateTagsResponseDefault & {
-    headers: ApiResponseHeaders;
-  };
+export type tracerObservationSpanUpdateTagsResponseError = (
+  | tracerObservationSpanUpdateTagsResponse400
+  | tracerObservationSpanUpdateTagsResponse403
+  | tracerObservationSpanUpdateTagsResponse404
+  | tracerObservationSpanUpdateTagsResponse409
+  | tracerObservationSpanUpdateTagsResponse503
+  | tracerObservationSpanUpdateTagsResponseDefault
+) & {
+  headers: ApiResponseHeaders;
+};
 
 export type tracerObservationSpanUpdateTagsResponse =
   | tracerObservationSpanUpdateTagsResponseSuccess
@@ -80515,10 +80548,10 @@ export const getTracerObservationSpanUpdateTagsUrl = () => {
 };
 
 /**
- * Update tags for an observation span.
+ * Assign tags to an exact CH span; verified roots alias trace assignments.
  */
 export const tracerObservationSpanUpdateTags = async (
-  observationSpanApi: NonReadonly<ObservationSpanApi>,
+  spanTagsUpdateApi: SpanTagsUpdateApi,
   options?: RequestInit,
 ): Promise<tracerObservationSpanUpdateTagsResponse> => {
   return apiMutator<tracerObservationSpanUpdateTagsResponse>(
@@ -80527,7 +80560,7 @@ export const tracerObservationSpanUpdateTags = async (
       ...options,
       method: "POST",
       headers: { "Content-Type": "application/json", ...options?.headers },
-      body: JSON.stringify(observationSpanApi),
+      body: JSON.stringify(spanTagsUpdateApi),
     },
   );
 };
@@ -87072,23 +87105,54 @@ export const tracerTraceDelete = async (
 };
 
 export type tracerTraceUpdateTagsResponse200 = {
-  data: TraceTagsUpdateApi;
+  data: EntityTagsResponseApi;
   status: 200;
+};
+
+export type tracerTraceUpdateTagsResponse400 = {
+  data: ApiErrorResponseApi;
+  status: 400;
+};
+
+export type tracerTraceUpdateTagsResponse403 = {
+  data: ApiErrorResponseApi;
+  status: 403;
+};
+
+export type tracerTraceUpdateTagsResponse404 = {
+  data: ApiErrorResponseApi;
+  status: 404;
+};
+
+export type tracerTraceUpdateTagsResponse409 = {
+  data: ApiErrorResponseApi;
+  status: 409;
+};
+
+export type tracerTraceUpdateTagsResponse503 = {
+  data: ApiErrorResponseApi;
+  status: 503;
 };
 
 export type tracerTraceUpdateTagsResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 200>;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 403 | 404 | 409 | 503>;
 };
 
 export type tracerTraceUpdateTagsResponseSuccess =
   tracerTraceUpdateTagsResponse200 & {
     headers: ApiResponseHeaders;
   };
-export type tracerTraceUpdateTagsResponseError =
-  tracerTraceUpdateTagsResponseDefault & {
-    headers: ApiResponseHeaders;
-  };
+export type tracerTraceUpdateTagsResponseError = (
+  | tracerTraceUpdateTagsResponse400
+  | tracerTraceUpdateTagsResponse403
+  | tracerTraceUpdateTagsResponse404
+  | tracerTraceUpdateTagsResponse409
+  | tracerTraceUpdateTagsResponse503
+  | tracerTraceUpdateTagsResponseDefault
+) & {
+  headers: ApiResponseHeaders;
+};
 
 export type tracerTraceUpdateTagsResponse =
   | tracerTraceUpdateTagsResponseSuccess
@@ -87099,7 +87163,7 @@ export const getTracerTraceUpdateTagsUrl = (id: string) => {
 };
 
 /**
- * Update tags for a trace.
+ * Assign manual tags to a verified ClickHouse root, without PG telemetry.
  */
 export const tracerTraceUpdateTags = async (
   id: string,

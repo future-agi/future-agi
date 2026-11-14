@@ -27,6 +27,7 @@ const mocks = vi.hoisted(() => ({
   toolbarProps: vi.fn(),
   headerProps: vi.fn(),
   spanPaneProps: vi.fn(),
+  tagsPopoverProps: vi.fn(),
   displayProps: vi.fn(),
   createView: vi.fn(),
   updateView: vi.fn(),
@@ -73,6 +74,13 @@ vi.mock("../DrawerHeader", () => ({
 vi.mock("../SpanDetailPane", () => ({
   default: (props) => {
     mocks.spanPaneProps(props);
+    return null;
+  },
+}));
+
+vi.mock("../AddTagsPopover", () => ({
+  default: (props) => {
+    mocks.tagsPopoverProps(props);
     return null;
   },
 }));
@@ -164,5 +172,26 @@ describe("TraceDetailDrawerV2 read-only", () => {
     }
     expect(mocks.spanPaneProps).toHaveBeenCalled();
     expect(mocks.spanPaneProps.mock.lastCall[0].readOnly).toBe(true);
+  });
+
+  it("hands each drawer tag save to the grid without a list refresh", () => {
+    // The grid row carries the trace's tag revision. A drawer save must reach
+    // the grid, or the next grid edit is refused as stale (409). A full grid
+    // refresh would also reset the list to page 1, so it is not used.
+    const refreshParentGrid = vi.fn();
+    const onTagsSaved = vi.fn();
+    renderDrawer({ refreshParentGrid, onTagsSaved });
+
+    const result = { id: "trace-1", tags: [], tag_revision: 2 };
+    const saved = {
+      entity: { tag_target: { trace_id: "trace-1", span_id: "root" } },
+      type: "trace",
+    };
+    mocks.tagsPopoverProps.mock.lastCall[0].onSuccess(result, saved);
+    mocks.spanPaneProps.mock.lastCall[0].onTagsSaved(result, saved);
+    expect(onTagsSaved).toHaveBeenCalledTimes(2);
+    expect(onTagsSaved).toHaveBeenNthCalledWith(1, result, saved);
+    expect(onTagsSaved).toHaveBeenNthCalledWith(2, result, saved);
+    expect(refreshParentGrid).not.toHaveBeenCalled();
   });
 });

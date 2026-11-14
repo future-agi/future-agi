@@ -3696,6 +3696,12 @@ def test_public_graph_wrappers_use_exact_snapshot_without_inline_reads(
         "read_or_schedule_exact_snapshot",
         _read_or_schedule,
     )
+    preflights = []
+    monkeypatch.setattr(
+        graph_dispatch,
+        "_preflight_scheduled_graph_tags",
+        lambda identity: preflights.append(identity),
+    )
     filters = [_date_filter(), _attribute_filter("final_status", "Rejected")]
     common = {
         "analytics": object(),
@@ -3714,13 +3720,22 @@ def test_public_graph_wrappers_use_exact_snapshot_without_inline_reads(
             },
             eval_name="quality",
         )
-    assert len(calls) == 1
-    actual_namespace, identity, options = calls[0]
-    assert actual_namespace == namespace
-    assert identity["project_id"] == PROJECT_ID
-    assert identity["filters"] == filters
-    assert identity["interval"] == "hour"
-    assert options["refresh"] is False
+    # The snapshot here is running (pending, refreshing): a cache-only probe
+    # finds it, then the poll goes through the normal refresh=False read, which
+    # can re-enqueue a claim the worker left terminal. It schedules no new
+    # graph, so no tag preflight runs.
+    assert [kwargs.get("schedule_on_miss", True) for _, _, kwargs in calls] == [
+        False,
+        True,
+    ]
+    assert not preflights
+    for actual_namespace, identity, options in calls:
+        assert actual_namespace == namespace
+        assert identity["project_id"] == PROJECT_ID
+        assert identity["filters"] == filters
+        assert identity["interval"] == "hour"
+        assert options["refresh"] is False
+    options = calls[-1][2]
     assert response == options["pending_payload"]
     pending_items = response if isinstance(response, list) else [response]
     assert all(item["query_status"] == "pending" for item in pending_items)

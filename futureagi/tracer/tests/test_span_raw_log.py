@@ -8,6 +8,7 @@ through, and every reader behind it then called ``.get`` on it.
 
 import json
 import uuid
+from types import SimpleNamespace
 
 import pytest
 from rest_framework import status
@@ -115,13 +116,23 @@ def test_voice_list_parses_each_call_payload_once():
     assert warning["span_id"] == "root-1"
 
 
+class _NoCuratedTraceTags:
+    """The drawer root's curated ``traces.tags`` lookup finds no row."""
+
+    def execute_ch_query(self, sql, params=None, **_kwargs):
+        assert "FROM traces" in sql and "legacy_traces" in params, sql
+        return SimpleNamespace(data=[])
+
+
 def _voice_detail(auth_client, user, monkeypatch, raw_log):
     _, workspace, project = _make_org_project(user, "Raw log")
     auth_client.set_workspace(workspace)
     trace_id = str(uuid.uuid4())
     detail = _detail(project.id, trace_id)
     detail.spans[0]["attrs_string"] = {"raw_log": raw_log}
-    monkeypatch.setattr("tracer.views.trace.V2AnalyticsQueryService", object)
+    monkeypatch.setattr(
+        "tracer.views.trace.V2AnalyticsQueryService", _NoCuratedTraceTags
+    )
     monkeypatch.setattr(
         "tracer.views.trace.read_trace_detail", lambda **_kwargs: detail
     )

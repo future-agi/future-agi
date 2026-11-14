@@ -6,6 +6,7 @@ import math
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, replace
+from datetime import datetime
 from functools import lru_cache
 from itertools import chain, product
 from typing import Any
@@ -1556,6 +1557,8 @@ def compile_exact_graph_filter_predicates(
     project_id: str,
     observe_type: str,
     annotation_label_ids: list[str] | tuple[str, ...] | None = None,
+    window_start: datetime | None = None,
+    window_end: datetime | None = None,
 ) -> tuple[str, dict[str, Any]]:
     """Compile exact graph filters, including overflow JSON arrays/maps.
 
@@ -1574,7 +1577,12 @@ def compile_exact_graph_filter_predicates(
     if normalized_observe_type not in {"trace", "span"}:
         raise UnsupportedFilterShapeError("observe_type must be trace or span")
 
-    # Lazy imports avoid the base-filter <-> v2-filter module cycle.
+    # Lazy imports avoid the base-filter <-> v2-filter module cycle, and the
+    # exact-graph predicate module imports this one.
+    from tracer.services.clickhouse.query_builders.exact_graph_predicates import (
+        EffectiveTagGraphCompiler,
+        is_effective_tag_leaf,
+    )
     from tracer.services.clickhouse.v2.query_builders.filters import (
         ClickHouseFilterBuilderV2,
         rewrite_v1_sql_to_v2,
@@ -1583,6 +1591,7 @@ def compile_exact_graph_filter_predicates(
     ordinary_filters: list[dict[str, Any]] = []
     structured_filters: list[tuple[int, dict[str, Any]]] = []
     trace_root_filters: list[tuple[int, dict[str, Any]]] = []
+    tag_filters: list[tuple[int, str, dict[str, Any]]] = []
     exclude_simulator_calls = False
     for index, item in enumerate(filters or []):
         if not isinstance(item, dict):
@@ -1600,6 +1609,13 @@ def compile_exact_graph_filter_predicates(
         col_type = config.get("col_type") or config.get("colType")
         raw_value = config.get("filter_value", config.get("filterValue"))
         filter_type = str(config.get("filter_type") or config.get("filterType") or "")
+        column_id = item.get("column_id") or item.get("columnId")
+        if is_effective_tag_leaf(column_id, col_type) and isinstance(column_id, str):
+            # The list's effective-tag relation reads spans again and binds its
+            # UI overlay only at execution. Graph statements also run where no
+            # preparation hook exists, so compile a self-contained row witness.
+            tag_filters.append((index, column_id, config))
+            continue
         if col_type == ClickHouseFilterBuilderV2.SPAN_ATTRIBUTE:
             normalized_type = normalize_span_attribute_filter_type(
                 filter_type,
@@ -1653,6 +1669,32 @@ def compile_exact_graph_filter_predicates(
                 WHERE matched
             )
             """
+        clauses.append(row_clause)
+        params.update(row_params)
+
+    tag_compiler = EffectiveTagGraphCompiler(
+        project_id=project_id,
+        observe_type=normalized_observe_type,
+        window_start=window_start,
+        window_end=window_end,
+    )
+    for index, column_id, config in tag_filters:
+        row_clause, required, row_params = tag_compiler.requirement(
+            column_id=column_id, config=config, filter_index=index
+        )
+        if normalized_observe_type == "trace":
+            # Absence keeps the positive witness: no live span of the trace
+            # matches, exactly as the lists' NOT IN.
+            membership = "IN" if required else "NOT IN"
+            row_clause = f"""
+            trace_id {membership} (
+                SELECT DISTINCT trace_id
+                FROM ({latest_span_membership_source_sql(predicate=row_clause)})
+                WHERE matched
+            )
+            """
+        elif not required:
+            row_clause = f"NOT ({row_clause})"
         clauses.append(row_clause)
         params.update(row_params)
 
@@ -2174,9 +2216,9 @@ def _is_candidate_residual_filter(item: dict[str, Any]) -> bool:
     col_type = str(config.get("col_type") or config.get("colType") or "").upper()
     if col_type == "SPAN_ATTRIBUTE":
         return False
-    if key == "tags" and col_type in {"", "NORMAL", "SYSTEM_METRIC"}:
-        # Native tags are a mutable trace dimension, not a per-span aggregate.
-        # The relational compiler replays the candidate trace records exactly.
+    if key in {"tag", "tags"} and col_type in {"", "NORMAL", "SYSTEM_METRIC"}:
+        # Effective tags include UI assignments absent from raw telemetry.
+        # Both native domains require exact residuals, never a source-only seed.
         return True
     return key in _CANDIDATE_RESIDUAL_KEYS or col_type in _CANDIDATE_RESIDUAL_TYPES
 

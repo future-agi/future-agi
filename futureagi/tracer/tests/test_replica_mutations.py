@@ -6,6 +6,7 @@ disabled because this suite exercises the PostgreSQL mutation contract.
 """
 
 import uuid
+from datetime import UTC, datetime
 from types import SimpleNamespace
 
 import pytest
@@ -18,6 +19,7 @@ from model_hub.models.choices import AnnotationTypeChoices
 from model_hub.models.develop_annotations import AnnotationsLabels
 from model_hub.models.score import Score
 from tfc.tests.lagging_replica import lagging_replica  # noqa: F401
+from tracer.models.entity_tag_assignment import EntityTagAssignment
 from tracer.models.observation_span import EvalLogger, EvalTargetType, ObservationSpan
 from tracer.models.project import Project
 from tracer.models.span_notes import SpanNotes
@@ -30,6 +32,7 @@ from tracer.views.trace import TraceView
 pytestmark = pytest.mark.django_db(transaction=True)
 
 SPAN_URL = "/tracer/observation-span/"
+EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
 TRACE_URL = "/tracer/trace/"
 
 
@@ -74,14 +77,55 @@ def _create_span(client, project, trace_id):
     return payload["id"]
 
 
-def _tag(client, entity, target_id, tags):
+@pytest.fixture
+def tag_targets(monkeypatch):
+    """Tag writes verify their target in ClickHouse and save an
+    EntityTagAssignment; they never read or write the PostgreSQL Trace or
+    ObservationSpan row (TH-7275). This suite keeps ClickHouse out, so the
+    verified target is the requested one. The PostgreSQL reads left on the
+    path (organization, membership, project) are the ones under test.
+    """
+    from tracer.services import entity_tag_assignments as assignments
+    from tracer.services.clickhouse.v2.entity_tag_targets import TagTarget
+
+    def resolve(*, authorized_project_id, reference, trace_id, **_):
+        # Every span this suite creates is parentless, i.e. its trace's root,
+        # and the real resolver keys a root span's tags on its trace (the
+        # entity_tag_assignment_shape trace key): the span-root POST and the
+        # trace PATCH address one assignment.
+        root_trace = trace_id if trace_id is not None else reference["trace_id"]
+        key = (str(authorized_project_id), "trace", str(root_trace), "", EPOCH, "", "")
+        return TagTarget(key=key, row={})
+
+    monkeypatch.setattr(assignments, "V2AnalyticsQueryService", lambda: None)
+    monkeypatch.setattr(assignments, "resolve_tag_target", resolve)
+
+
+def _tag(client, entity, project, trace_id, span_id, tags, revision=0):
+    """The tag editor's request: the complete target, then the tags."""
+    started = timezone.now().replace(microsecond=0)
+    body = {
+        "project_id": str(project.id),
+        "trace_id": trace_id,
+        "span_id": span_id,
+        "start_hour": started.replace(minute=0, second=0).isoformat(),
+        "observation_type": "llm",
+        "service_name": "svc",
+        "expected_start_time": started.isoformat(),
+        "expected_version": "1",
+        "tags": [{"name": name} for name in tags],
+        "expected_tag_revision": revision,
+    }
     if entity == "span":
-        return client.post(
-            SPAN_URL + "update-tags/",
-            {"span_id": target_id, "tags": tags},
-            format="json",
-        )
-    return client.patch(TRACE_URL + f"{target_id}/tags/", {"tags": tags}, format="json")
+        return client.post(SPAN_URL + "update-tags/", body, format="json")
+    return client.patch(TRACE_URL + f"{trace_id}/tags/", body, format="json")
+
+
+def _assignment(trace_id):
+    """The one assignment a root span's and its trace's tag writes share."""
+    return EntityTagAssignment.objects.using("default").get(
+        entity_kind="trace", trace_id=trace_id, span_id=""
+    )
 
 
 def test_c37_authenticated_create_accepts_just_bulk_created_trace(
@@ -176,18 +220,25 @@ def test_c65_c71_name_edit_preserves_acknowledged_tags(
     lagging_replica,  # noqa: F811
     auth_client,
     project,
+    tag_targets,
     entity,
     method,
 ):
+    """A name edit behind a lagging replica keeps the tags the user just saved.
+
+    Tags are an EntityTagAssignment now, not the row's ``tags`` column: the
+    edit must leave the acknowledged assignment, and the column, untouched.
+    """
     trace_id = _bulk_trace(auth_client, project)
     span_id = _create_span(auth_client, project, trace_id)
     target_id = span_id if entity == "span" else trace_id
     model = ObservationSpan if entity == "span" else Trace
     url = SPAN_URL if entity == "span" else TRACE_URL
+    column_before = model.objects.using("default").get(pk=target_id).tags
     lagging_replica.freeze()
-    response = _tag(auth_client, entity, target_id, ["acknowledged"])
+    response = _tag(auth_client, entity, project, trace_id, span_id, ["acknowledged"])
     assert response.status_code == 200, response.data
-    assert model.objects.get(pk=target_id).tags != ["acknowledged"]
+    assert response.data["result"]["tag_revision"] == 1
     data = {"name": "renamed"}
     if method == "put":
         data["project"] = str(project.id)
@@ -198,7 +249,10 @@ def test_c65_c71_name_edit_preserves_acknowledged_tags(
     assert response.status_code == 200, response.data
     current = model.objects.using("default").get(pk=target_id)
     assert current.name == "renamed"
-    assert current.tags == ["acknowledged"]
+    assert current.tags == column_before
+    saved = _assignment(trace_id)
+    assert saved.manual_tags == [{"name": "acknowledged"}]
+    assert saved.revision == 1
 
 
 @pytest.mark.parametrize("entity", ["span", "trace"])
@@ -227,20 +281,33 @@ def test_c67_c72_tag_just_returned_target_id(
     lagging_replica,  # noqa: F811
     auth_client,
     project,
+    tag_targets,
     entity,
 ):
+    """Tagging an id the create call just returned never waits for the replica:
+    the write reads no Trace or ObservationSpan row, and saves on the primary."""
     parent_id = _bulk_trace(auth_client, project)
     lagging_replica.freeze()
     if entity == "span":
-        target_id = _create_span(auth_client, project, parent_id)
-        model = ObservationSpan
+        trace_id = parent_id
+        span_id = _create_span(auth_client, project, parent_id)
+        target_id, model = span_id, ObservationSpan
     else:
-        target_id = _bulk_trace(auth_client, project)
-        model = Trace
+        trace_id = _bulk_trace(auth_client, project)
+        span_id = "root"
+        target_id, model = trace_id, Trace
     assert not model.objects.filter(pk=target_id).exists()
-    response = _tag(auth_client, entity, target_id, ["immediate"])
+    response = _tag(auth_client, entity, project, trace_id, span_id, ["immediate"])
     assert response.status_code == 200, response.data
-    assert model.objects.using("default").get(pk=target_id).tags == ["immediate"]
+    assert _assignment(trace_id).manual_tags == [{"name": "immediate"}]
+    # The root span's POST and its trace's PATCH address one assignment.
+    again = _tag(auth_client, "trace", project, trace_id, "root", ["again"], revision=1)
+    assert again.status_code == 200, again.data
+    assert again.data["result"]["tag_revision"] == 2
+    assert (
+        EntityTagAssignment.objects.using("default").filter(trace_id=trace_id).count()
+        == 1
+    )
 
 
 @pytest.fixture
@@ -473,6 +540,7 @@ def test_mutations_preserve_tenant_denial(
     project,
     user,
     annotation_label,
+    tag_targets,
     boundary,
 ):
     organization = (
@@ -512,8 +580,9 @@ def test_mutations_preserve_tenant_denial(
             {"spans": [_span_payload(foreign_project, trace.pk)]},
             format="json",
         ),
-        _tag(auth_client, "span", span.pk, ["leaked"]),
-        _tag(auth_client, "trace", str(trace.pk), ["leaked"]),
+        # A complete target in the foreign project: refused by its scope.
+        _tag(auth_client, "span", foreign_project, str(trace.pk), span.pk, ["leaked"]),
+        _tag(auth_client, "trace", foreign_project, str(trace.pk), "root", ["leaked"]),
     ]
     for url, pk in ((SPAN_URL, span.pk), (TRACE_URL, trace.pk)):
         responses.append(
@@ -532,6 +601,11 @@ def test_mutations_preserve_tenant_denial(
                 format="json",
             )
         )
+    # The tag writes are complete requests: each is refused by the project
+    # scope (404), not by request validation.
+    for tagged in responses[2:4]:
+        assert tagged.status_code == 404, tagged.data
+        assert tagged.data["code"] == "tag_target_not_found", tagged.data
     assert all(r.status_code in (400, 404) for r in responses), [
         (r.status_code, r.data) for r in responses
     ]
@@ -546,6 +620,7 @@ def test_mutations_preserve_tenant_denial(
         .exists()
     )
     assert not SpanNotes.objects.using("default").filter(span_id=span.pk).exists()
+    assert not EntityTagAssignment.objects.using("default").exists()
 
 
 def test_c39_span_under_soft_deleted_trace_validates_as_before(

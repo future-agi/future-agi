@@ -5,7 +5,7 @@ Run on the test sidecar protected by conftest's target guard, never a live DB.
 
 import json
 import uuid
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from django.utils import timezone
@@ -2228,3 +2228,129 @@ def test_large_integer_ids_never_match_their_rounded_neighbour(project, ch_seed,
     members = _rows(SamplingQuery(task, policy, version, sampling_clock()).members())
     expected = {"in": "exact", "not_in": "neighbour"}[op]
     assert {row[0] for row in members} == {sessions[expected]}
+
+
+def test_tag_filtered_preview_and_reconcile_include_sdk_and_manual_rows(
+    project, custom_eval_config, ch_seed, auth_client
+):
+    from django.core.cache import cache
+
+    from tracer.models.entity_tag_assignment import EntityTagAssignment
+
+    cache.clear()
+    sdk = seed_contact(project, None, {}, traces=1, seed=False)
+    sdk[0].span_attributes = {"tag.tags": '["cohort-sdk"]'}
+    seed_ch_spans(sdk)
+    manual = seed_contact(project, None, {}, traces=1)
+    seed_contact(project, None, {}, traces=1)
+    EntityTagAssignment.objects.create(
+        project=project,
+        entity_kind="trace",
+        trace_id=str(manual[0].trace_id),
+        span_id="",
+        start_hour=datetime(1970, 1, 1, tzinfo=UTC),
+        observation_type="",
+        service_name="",
+        manual_tags=[{"name": "cohort-manual", "color": "#123456"}],
+    )
+    policy = make_policy(sampling_unit="trace", default={"rate": 100})
+    filters = {
+        "filters": [
+            {
+                "column_id": "tag",
+                "filter_config": {
+                    "col_type": "SYSTEM_METRIC",
+                    "filter_type": "text",
+                    "filter_op": "in",
+                    "filter_value": ["cohort-sdk", "cohort-manual"],
+                },
+            }
+        ]
+    }
+    response = auth_client.post(
+        "/tracer/eval-task/sampling_preview/",
+        {"project": str(project.id), "sampling_policy": policy, "filters": filters},
+        format="json",
+    )
+    assert response.status_code == 200, response.content
+    assert (
+        sum(cell["eligible_rows"] for cell in response.json()["result"]["strata"]) == 2
+    )
+    created = auth_client.post(
+        "/tracer/eval-task/",
+        {
+            "project": str(project.id),
+            "name": "tag-filtered cohort",
+            "run_type": "historical",
+            "sampling_rate": 100,
+            "sampling_policy": policy,
+            "evals": [str(custom_eval_config.id)],
+            "filters": {"project_id": str(project.id), **filters},
+        },
+        format="json",
+    )
+    assert created.status_code == 200, created.data
+    task = EvalTask.objects.get(pk=created.data["result"]["id"])
+    reconcile(task)
+    assert set(
+        EvalLogger.objects.filter(eval_task_id=str(task.id)).values_list(
+            "observation_span_id", flat=True
+        )
+    ) == {str(sdk[0].id), str(manual[0].id)}
+
+
+def test_tag_filtered_preview_ignores_assignment_history_outside_the_window(
+    project, ch_seed, auth_client, monkeypatch
+):
+    """Only window-live assignments count against the overlay budget."""
+    from django.core.cache import cache
+
+    from tracer.models.entity_tag_assignment import EntityTagAssignment
+    from tracer.services.clickhouse.v2 import effective_tags
+
+    cache.clear()
+    # Scaled down: a 3-key budget and 2-row pages over 6 assignments.
+    monkeypatch.setattr(effective_tags, "MAX_TAG_OVERLAY_KEYS", 3)
+    monkeypatch.setattr(effective_tags, "_ASSIGNMENT_PAGE_SIZE", 2)
+    manual = seed_contact(project, None, {}, traces=1)
+    seed_contact(project, None, {}, traces=1)
+    sentinel = datetime(1970, 1, 1, tzinfo=UTC)
+    # Five older assignments of the same name whose traces are not in the window.
+    for trace_id in [str(manual[0].trace_id)] + [uuid.uuid4().hex for _ in range(5)]:
+        EntityTagAssignment.objects.create(
+            project=project,
+            entity_kind="trace",
+            trace_id=trace_id,
+            span_id="",
+            start_hour=sentinel,
+            observation_type="",
+            service_name="",
+            manual_tags=[{"name": "cohort-history"}],
+        )
+    response = auth_client.post(
+        "/tracer/eval-task/sampling_preview/",
+        {
+            "project": str(project.id),
+            "sampling_policy": make_policy(
+                sampling_unit="trace", default={"rate": 100}
+            ),
+            "filters": {
+                "filters": [
+                    {
+                        "column_id": "tag",
+                        "filter_config": {
+                            "col_type": "SYSTEM_METRIC",
+                            "filter_type": "text",
+                            "filter_op": "equals",
+                            "filter_value": "cohort-history",
+                        },
+                    }
+                ]
+            },
+        },
+        format="json",
+    )
+    assert response.status_code == 200, response.content
+    assert (
+        sum(cell["eligible_rows"] for cell in response.json()["result"]["strata"]) == 1
+    )

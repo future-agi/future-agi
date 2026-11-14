@@ -12,6 +12,7 @@ const {
   traceGridSetState,
   spanGridSetState,
   drawerStore,
+  drawerProps,
 } = vi.hoisted(() => ({
   getMock: vi.fn(),
   gridState: { api: null, props: null },
@@ -25,6 +26,7 @@ const {
     setSpanDetailDrawerOpen: vi.fn(),
     setVisibleTraces: vi.fn(),
   },
+  drawerProps: { trace: null, span: null },
 }));
 
 vi.mock("ag-grid-react", async () => {
@@ -151,8 +153,18 @@ vi.mock("../Renderers/IPOPTooltipComponent", () => ({
   default: () => null,
 }));
 vi.mock("../Renderers/IPOPCell", () => ({ default: () => null }));
-vi.mock("../LLMTracingTraceDetailDrawer", () => ({ default: () => null }));
-vi.mock("../LLMTracingSpanDetailDrawer", () => ({ default: () => null }));
+vi.mock("../LLMTracingTraceDetailDrawer", () => ({
+  default: (props) => {
+    drawerProps.trace = props;
+    return null;
+  },
+}));
+vi.mock("../LLMTracingSpanDetailDrawer", () => ({
+  default: (props) => {
+    drawerProps.span = props;
+    return null;
+  },
+}));
 
 import SpanGrid from "../SpanGrid";
 import TraceGrid from "../TraceGrid";
@@ -565,7 +577,10 @@ describe.each(["trace", "span"])("%s grid theme retention", (kind) => {
     expect(themeParamReferences.at(-1)).toBe(firstParams);
   });
 
-  const themedSubject = (subject, { color = "#123456", weight = 500, spacing = 8 } = {}) => (
+  const themedSubject = (
+    subject,
+    { color = "#123456", weight = 500, spacing = 8 } = {},
+  ) => (
     <ThemeProvider
       theme={createTheme({
         // Start from the app palette: the grids read palette.border.subtle.
@@ -1298,7 +1313,10 @@ describe.each([
 
 // Keep the actual SSRM loader: settling a datasource promise does not release
 // its outbound slot, whereas either AG Grid callback does, even for an old cache.
-const completionGrid = async (datasource, maxConcurrentDatasourceRequests = 1) => {
+const completionGrid = async (
+  datasource,
+  maxConcurrentDatasourceRequests = 1,
+) => {
   const { createGrid, ModuleRegistry } = await import("ag-grid-community");
   const { AllEnterpriseModule } = await import("ag-grid-enterprise");
   ModuleRegistry.registerModules([AllEnterpriseModule]);
@@ -1335,7 +1353,8 @@ const completionGrid = async (datasource, maxConcurrentDatasourceRequests = 1) =
   return {
     api,
     reads,
-    replace: (source) => act(() => api.setGridOption("serverSideDatasource", track(source))),
+    replace: (source) =>
+      act(() => api.setGridOption("serverSideDatasource", track(source))),
     close: () => {
       act(() => api.destroy());
       host.remove();
@@ -1367,34 +1386,50 @@ describe.each(["trace", "span"])("%s grid completion regression", (kind) => {
     project_id: "project-1",
     start_time: "2026-01-01T00:00:00Z",
   };
-  const changedFilters = [{
-    column_id: "company_id",
-    filter_config: { filter_type: "text", filter_op: "in", filter_value: ["new"] },
-  }];
+  const changedFilters = [
+    {
+      column_id: "company_id",
+      filter_config: {
+        filter_type: "text",
+        filter_op: "in",
+        filter_value: ["new"],
+      },
+    },
+  ];
 
   it.each(["success", "failure"])(
     "releases the real concurrency-one queue before cancelled transport late %s",
     async (outcome) => {
       const old = deferredCompletion();
       const current = deferredCompletion();
-      getMock.mockReturnValueOnce(old.promise).mockReturnValueOnce(current.promise);
+      getMock
+        .mockReturnValueOnce(old.promise)
+        .mockReturnValueOnce(current.promise);
       const props = baseProps();
       const ref = React.createRef();
-      const view = render(renderGridSubject({ kind, ref, props, filters: props.filters }));
+      const view = render(
+        renderGridSubject({ kind, ref, props, filters: props.filters }),
+      );
       const grid = await completionGrid(gridState.props.serverSideDatasource);
       try {
         await waitFor(() => expect(getMock).toHaveBeenCalledTimes(1));
         const oldSignal = getMock.mock.calls[0][1].signal;
-        view.rerender(renderGridSubject({ kind, ref, props, filters: changedFilters }));
+        view.rerender(
+          renderGridSubject({ kind, ref, props, filters: changedFilters }),
+        );
         // Updating the real datasource queues replacement; never call its
         // getRows directly, which would bypass the occupied loader slot.
         grid.replace(gridState.props.serverSideDatasource);
         expect(oldSignal.aborted).toBe(true);
-        await act(async () => { await grid.reads[0].settled; });
+        await act(async () => {
+          await grid.reads[0].settled;
+        });
         await waitFor(() => expect(getMock).toHaveBeenCalledTimes(2));
         expect(grid.reads[0].fail).toHaveBeenCalledOnce();
         expect(grid.reads[0].success).not.toHaveBeenCalled();
-        expect(JSON.parse(getMock.mock.calls[1][1].params.filters)).toEqual(changedFilters);
+        expect(JSON.parse(getMock.mock.calls[1][1].params.filters)).toEqual(
+          changedFilters,
+        );
 
         await act(async () => {
           if (outcome === "success") old.resolve(listResponse());
@@ -1433,12 +1468,15 @@ describe.each(["trace", "span"])("%s grid completion regression", (kind) => {
       const current = deferredCompletion();
       // Bypass transport cancellation only for the old page, so the product's
       // generation/error guards are exercised rather than ERR_CANCELED alone.
-      const loadPage = vi.spyOn(listCursorPagination, "loadExactListPage")
+      const loadPage = vi
+        .spyOn(listCursorPagination, "loadExactListPage")
         .mockReturnValueOnce(old.promise);
       getMock.mockReturnValueOnce(current.promise);
       const props = baseProps();
       const ref = React.createRef();
-      const view = render(renderGridSubject({ kind, ref, props, filters: props.filters }));
+      const view = render(
+        renderGridSubject({ kind, ref, props, filters: props.filters }),
+      );
       // Two is a supported override and lets the replacement own loading
       // before old completion; the independent queue regression stays at one.
       const grid = await completionGrid(
@@ -1448,15 +1486,19 @@ describe.each(["trace", "span"])("%s grid completion regression", (kind) => {
       const showOverlay = vi.spyOn(grid.api, "showNoRowsOverlay");
       try {
         await waitFor(() => expect(loadPage).toHaveBeenCalledOnce());
-        view.rerender(renderGridSubject({ kind, ref, props, filters: changedFilters }));
+        view.rerender(
+          renderGridSubject({ kind, ref, props, filters: changedFilters }),
+        );
         grid.replace(gridState.props.serverSideDatasource);
         if (scenario === "stale loading") {
           await waitFor(() => expect(getMock).toHaveBeenCalledOnce());
           expect(props.setLoading).toHaveBeenLastCalledWith(true);
         }
         await act(async () => {
-          if (scenario === "stale error") old.reject(new Error("obsolete page failure"));
-          else old.resolve({ rows: [], response: { data: {} }, isLastPage: true });
+          if (scenario === "stale error")
+            old.reject(new Error("obsolete page failure"));
+          else
+            old.resolve({ rows: [], response: { data: {} }, isLastPage: true });
           await grid.reads[0].settled;
         });
         expect.soft(showOverlay).not.toHaveBeenCalled();
@@ -1493,7 +1535,9 @@ describe.each(["trace", "span"])("%s grid completion regression", (kind) => {
     const first = deferredCompletion();
     getMock
       .mockReturnValueOnce(first.promise)
-      .mockResolvedValueOnce(listResponse({ rows: [currentRow], totalRows: 1 }));
+      .mockResolvedValueOnce(
+        listResponse({ rows: [currentRow], totalRows: 1 }),
+      );
     const props = baseProps();
     const ref = React.createRef();
     render(renderGridSubject({ kind, ref, props, filters: props.filters }));
@@ -1532,7 +1576,9 @@ describe.each(["trace", "span"])("%s grid completion regression", (kind) => {
     getMock
       .mockResolvedValueOnce(listResponse({ rows: [firstRow], totalRows: 1 }))
       .mockReturnValueOnce(refreshRead.promise)
-      .mockResolvedValueOnce(listResponse({ rows: [currentRow], totalRows: 1 }));
+      .mockResolvedValueOnce(
+        listResponse({ rows: [currentRow], totalRows: 1 }),
+      );
     const props = baseProps();
     const ref = React.createRef();
     render(renderGridSubject({ kind, ref, props, filters: props.filters }));
@@ -2061,5 +2107,169 @@ describe("trace grid empty-state lifecycle", () => {
     await waitFor(() => expect(gridState.props.loading).toBe(false));
     expect(gridState.props.noRowsOverlayComponent()).toBe("No traces found");
     expect(params.api.showNoRowsOverlay).not.toHaveBeenCalled();
+  });
+});
+
+// A tag save in the detail drawer must reach the grid row (its tags and tag
+// revision), or the next grid tag edit is refused as "changed, refresh". It
+// must not reset the list: the user stays on the page they were reading.
+describe.each(["trace", "span"])("%s grid after a drawer tag save", (kind) => {
+  beforeEach(() => {
+    getMock.mockReset();
+    gridState.api = null;
+    gridState.props = null;
+    drawerProps.trace = null;
+    drawerProps.span = null;
+  });
+
+  const row = (index, prefix = "") => {
+    const traceId = `${prefix}trace-${index}`;
+    const spanId = `${prefix}${kind === "trace" ? "root" : "span"}-${index}`;
+    return {
+      trace_id: traceId,
+      ...(kind === "span"
+        ? {
+            span_id: spanId,
+            // As the span list sends it: a root span shares its trace's tag
+            // assignment, and the grid keys a drawer save by it.
+            parent_span_id: "",
+            start_time: `2026-08-08T00:00:${String(index).padStart(2, "0")}Z`,
+          }
+        : {}),
+      project_id: "project-1",
+      tags: [{ name: "sdk" }],
+      manual_tags: [],
+      source_tag_names: ["sdk"],
+      tag_revision: 0,
+      tag_target: {
+        project_id: "project-1",
+        trace_id: traceId,
+        span_id: spanId,
+        start_hour: "2026-08-08T00:00:00+00:00",
+      },
+    };
+  };
+
+  it("updates only the saved row on page 2 and keeps the page", async () => {
+    const firstPage = Array.from({ length: 25 }, (_, index) => row(index));
+    const secondPage = [row(0, "p2-"), row(1, "p2-")];
+    getMock.mockResolvedValueOnce(
+      listResponse({
+        rows: firstPage,
+        hasMore: true,
+        nextCursor: "page-2-cursor",
+        totalRows: 27,
+        lowerBound: true,
+      }),
+    );
+    getMock.mockResolvedValueOnce(listResponse({ rows: secondPage }));
+
+    renderGrid(kind);
+    await waitFor(() => expect(gridState.props).not.toBeNull());
+    const firstParams = makeParams();
+    await getRows(firstParams);
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Go to page 2" }),
+      ).toBeEnabled(),
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Go to page 2" }));
+    const pageTwoParams = makeParams(25, 50);
+    await getRows(pageTwoParams);
+    await waitFor(() =>
+      expect(screen.queryByText("Loading page…")).not.toBeInTheDocument(),
+    );
+    const api = pageTwoParams.api;
+    const nodes = [
+      ...firstParams.success.mock.calls[0][0].rowData,
+      ...pageTwoParams.success.mock.calls[0][0].rowData,
+    ].map((data) => ({ data }));
+    api.forEachNode = vi.fn((visit) => nodes.forEach(visit));
+    api.refreshCells = vi.fn();
+    api.refreshServerSide.mockClear();
+    api.paginationGoToPage.mockClear();
+    const listReads = getMock.mock.calls.length;
+
+    const drawer = kind === "trace" ? drawerProps.trace : drawerProps.span;
+    const saved = secondPage[1];
+    const result = {
+      id: saved.trace_id,
+      tags: [{ name: "sdk" }, { name: "reviewed", color: "#123456" }],
+      manual_tags: [{ name: "reviewed", color: "#123456" }],
+      source_tag_names: ["sdk"],
+      tag_revision: 3,
+    };
+    act(() =>
+      // The drawer's entity is the trace, or the root span with its parent.
+      drawer.onTagsSaved(result, {
+        entity:
+          kind === "span"
+            ? { tag_target: saved.tag_target, parent_span_id: "" }
+            : { tag_target: saved.tag_target },
+        type: kind,
+      }),
+    );
+
+    const savedNode = nodes.find(
+      (node) => node.data.tag_target.span_id === saved.tag_target.span_id,
+    );
+    expect(savedNode.data).toMatchObject({
+      tags: result.tags,
+      manual_tags: result.manual_tags,
+      tag_revision: 3,
+      tag_target: saved.tag_target,
+    });
+    expect(api.refreshCells).toHaveBeenCalledWith({
+      rowNodes: [savedNode],
+      force: true,
+    });
+    nodes
+      .filter((node) => node !== savedNode)
+      .forEach((node) => expect(node.data.tag_revision).toBe(0));
+
+    // No list read, no refresh, no page change: the user stays on page 2.
+    expect(api.refreshServerSide).not.toHaveBeenCalled();
+    expect(api.paginationGoToPage).not.toHaveBeenCalled();
+    expect(api.paginationGoToFirstPage).not.toHaveBeenCalled();
+    expect(getMock).toHaveBeenCalledTimes(listReads);
+    expect(gridState.props.loading).toBe(false);
+    expect(
+      screen.getByRole("button", { name: "Go to page 2" }),
+    ).toHaveAttribute("aria-current", "page");
+
+    // An older acknowledgement never moves the row back, and a save in
+    // another project never touches it.
+    act(() =>
+      drawer.onTagsSaved(
+        { ...result, tags: [], tag_revision: 2 },
+        { entity: { tag_target: saved.tag_target }, type: kind },
+      ),
+    );
+    act(() =>
+      drawer.onTagsSaved(
+        { ...result, tags: [], tag_revision: 9 },
+        {
+          entity: {
+            tag_target: { ...saved.tag_target, project_id: "project-2" },
+          },
+          type: kind,
+        },
+      ),
+    );
+    expect(savedNode.data.tag_revision).toBe(3);
+    expect(savedNode.data.tags).toEqual(result.tags);
+
+    // If AG Grid evicts page 2 and reads it again, the datasource serves its
+    // cached rows; they carry the saved revision too.
+    const reread = makeParams(25, 50);
+    reread.api = api;
+    await act(async () => {
+      await gridState.props.serverSideDatasource.getRows(reread);
+    });
+    expect(getMock).toHaveBeenCalledTimes(listReads);
+    expect(reread.success.mock.calls[0][0].rowData[1]).toMatchObject({
+      tag_revision: 3,
+      tags: result.tags,
+    });
   });
 });

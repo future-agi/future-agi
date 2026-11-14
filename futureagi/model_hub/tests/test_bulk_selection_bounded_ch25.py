@@ -60,6 +60,7 @@ def spans_table(ch_client):
             created_at DateTime64(6, 'UTC'),
             input String,
             output String,
+            tags String DEFAULT '[]',
             attrs_string Map(String, String),
             attrs_number Map(String, Float64),
             attrs_bool Map(String, UInt8),

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import threading
+from typing import TYPE_CHECKING
 
 from django.conf import settings
 
@@ -51,7 +52,82 @@ def reset_v2_query_client() -> None:
         _client = None
 
 
-class V2AnalyticsQueryService(AnalyticsQueryService):
+if TYPE_CHECKING:
+    # The mixin always precedes an AnalyticsQueryService in a class's bases;
+    # type it against that service. At run time its base stays ``object``.
+    _TagBindingBase = AnalyticsQueryService
+else:
+    _TagBindingBase = object
+
+
+class EffectiveTagBindingMixin(_TagBindingBase):
+    """Bind effective-tag relations before a read is sent to ClickHouse.
+
+    A compiled Tag leaf carries an unbound ``EffectiveTagRelation`` in its
+    params; every executor that can receive one (the request path and the
+    exact-refresh worker alike) must bind it, or the statement references
+    placeholders it never got.
+    """
+
+    def execute_ch_query(
+        self,
+        query,
+        params=None,
+        timeout_ms=None,
+        settings=None,
+        *,
+        server_execution_cap_ms=None,
+    ):
+        # Selectors bind finite classifier batches themselves so preparation is
+        # charged to their query/deadline budget. Direct graph/count callers use
+        # the same relation, with a strict finite window/row cap (never an
+        # unbounded project assignment lookup or a source-only approximation).
+        from tracer.services.clickhouse.read_budget import ReadDeadline
+        from tracer.services.clickhouse.v2.effective_tags import (
+            EffectiveTagRelation,
+            prepare_effective_tag_params,
+        )
+        from tracer.services.entity_tags import TagReadUnavailable
+
+        if params and any(
+            isinstance(value, EffectiveTagRelation) for value in params.values()
+        ):
+            if not self.supports_per_query_read_settings:
+                raise TagReadUnavailable("tag_source_unavailable")
+            deadline = ReadDeadline.start(
+                min(
+                    timeout_ms or self.read_timeout_ceiling_ms,
+                    server_execution_cap_ms or self.read_timeout_ceiling_ms,
+                ),
+                enforce_on_server=True,
+            )
+            # A window scan (the Users graph, direct counts) budgets only the
+            # assignments live in its window, as graph leaves do; a project's
+            # aged assignments must not make every such read over budget.
+            params = prepare_effective_tag_params(
+                super().execute_ch_query,
+                params,
+                deadline=deadline,
+                allow_window_scan=True,
+                window_overlay=True,
+            )
+            timeout_ms = server_execution_cap_ms = deadline.remaining_ms()
+        return super().execute_ch_query(
+            query,
+            params,
+            timeout_ms=timeout_ms,
+            settings=settings,
+            server_execution_cap_ms=server_execution_cap_ms,
+        )
+
+
+class EffectiveTagAnalyticsQueryService(
+    EffectiveTagBindingMixin, AnalyticsQueryService
+):
+    """``AnalyticsQueryService`` on a caller-owned client that binds Tag leaves."""
+
+
+class V2AnalyticsQueryService(EffectiveTagBindingMixin, AnalyticsQueryService):
     """Run generic read SQL against the configured direct-write CH25 cluster."""
 
     def __init__(self, *, read_timeout_ceiling_ms: int | None = None) -> None:

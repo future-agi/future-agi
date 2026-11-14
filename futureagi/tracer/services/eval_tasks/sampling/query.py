@@ -831,9 +831,21 @@ def stream_query(
     from tracer.services.clickhouse.application_read_policy import (
         application_read_context,
     )
-    from tracer.services.clickhouse.v2.query_service import get_v2_query_client
+    from tracer.services.clickhouse.read_budget import ReadDeadline
+    from tracer.services.clickhouse.v2.effective_tags import (
+        EffectiveTagRelation,
+        prepare_effective_tag_params,
+    )
+    from tracer.services.clickhouse.v2.query_service import (
+        V2AnalyticsQueryService,
+        get_v2_query_client,
+    )
+    from tracer.services.entity_tags import TagReadUnavailable
     from tracer.services.eval_tasks.sampling.errors import (
+        DETERMINISTIC_TAG_READ_CODES,
+        SamplingReadPressure,
         SamplingStatementTooLarge,
+        SamplingTagFilterTooBroad,
         classify_read_error,
     )
 
@@ -865,14 +877,49 @@ def stream_query(
     # abort caps, so opt out rather than silently losing the selection budget.
     try:
         with application_read_context(enabled=False):
-            with get_v2_query_client().execute_read_block_stream(
+            client = get_v2_query_client()
+            timeout_ms = 30_000
+            if any(
+                isinstance(value, EffectiveTagRelation) for value in params.values()
+            ):
+                analytics = V2AnalyticsQueryService()
+                if not analytics.supports_per_query_read_settings:
+                    raise TagReadUnavailable("tag_source_unavailable")
+                deadline = ReadDeadline.start(timeout_ms, enforce_on_server=True)
+                params = prepare_effective_tag_params(
+                    analytics.execute_ch_query,
+                    params,
+                    deadline=deadline,
+                    allow_window_scan=True,
+                    window_overlay=True,
+                )
+                timeout_ms = deadline.remaining_ms()
+            with client.execute_read_block_stream(
                 sql,
                 native_parameters(params),
-                timeout_ms=30_000,
+                timeout_ms=timeout_ms,
                 block_size=BATCH_SIZE,
                 settings=read_settings,
             ) as blocks:
                 yield from blocks
+    except TagReadUnavailable as exc:
+        if exc.code == "tag_scope_required":
+            # No usable project or window to scope the tag read: narrowing
+            # the Tag filter would not help, so say what is missing.
+            raise SamplingTagFilterTooBroad(
+                "A Tag filter needs a project and a time window to read tags "
+                "from. Set both and try again."
+            ) from exc
+        if exc.code in DETERMINISTIC_TAG_READ_CODES:
+            # The same window and filter can never fit: fail fast (400 in a
+            # preview, a terminal task error in the worker).
+            raise SamplingTagFilterTooBroad(
+                "Too many traces and spans in this window carry the filtered "
+                "tag. Narrow the window or the Tag filter."
+            ) from exc
+        raise SamplingReadPressure(
+            "Sampling tag filters are temporarily unavailable. Retry shortly."
+        ) from exc
     except Exception as exc:
         typed = classify_read_error(exc, policy=policy, proof=proof)
         if typed is None:

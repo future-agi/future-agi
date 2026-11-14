@@ -510,8 +510,44 @@ $COMPOSE pull
 # run the release's initialization jobs: the commands of "Performing that
 # initialization" above that its release notes call for (every release with
 # database migrations needs step 1); `run --rm` starts nothing else
+# Before enabling the new trace/span tag editor, compare PG legacy tags against
+# curated CH tags, review the count, then apply. Run after migrations and native
+# CH setup while stores are up. Old backend PATCH requests can still change PG
+# tags after this scan; run the second apply immediately after up -d to minimize
+# the unavoidable window when the new editor can be used. Both applies need
+# the operator authorization pair or Django's startup guard refuses them.
+$COMPOSE run --rm --no-deps -e SERVICE_TYPE=bootstrap -e STARTUP_DB_MUTATION_MODE=operator \
+  --entrypoint python backend manage.py reconcile_legacy_trace_tags --dry-run
+$COMPOSE run --rm --no-deps -e SERVICE_TYPE=bootstrap -e STARTUP_DB_MUTATION_MODE=operator \
+  --entrypoint python backend manage.py reconcile_legacy_trace_tags
 $COMPOSE up -d --no-build --wait --wait-timeout 1200
+# Catch legacy PATCH writes made while the old backend was still serving,
+# including edits after the first scan. Run the second apply immediately after
+# rollout; there is no mechanism to gate the new editor in between.
+$COMPOSE run --rm --no-deps -e SERVICE_TYPE=bootstrap -e STARTUP_DB_MUTATION_MODE=operator \
+  --entrypoint python backend manage.py reconcile_legacy_trace_tags
+# If it reports rows changed during the scan, run this apply again.
 ```
+
+Check the final `changed during scan` count after each dry-run/apply. After a
+resume with `--after-id`, check each run's own count: if any run of that pass
+reported a nonzero `changed during scan` count, repeat the whole pass from the
+beginning (without `--after-id`) before moving to the next step. The command
+still exits successfully so the scripted two-pass rollout and Helm Job
+completion are not interrupted by a concurrent edit.
+
+The new trace/span tag PATCH stores manual assignments, **not**
+`tracer_trace.tags`. Langfuse ingestion (`tracer/utils/langfuse_upsert.py`)
+still writes that PG column from incoming trace tags, then best-effort mirrors
+its trace into ClickHouse; OTLP ingestion also mirrors PG traces on root writes.
+The second pass covers any legacy edits through cutover; it does not replace
+ongoing ingestion mirroring or protect later collector writes.
+
+**Known limits:** the collector's root-span writes carry `tags DEFAULT '[]'` and
+can reset `traces.tags` to `[]` on co-owned traces after reconciliation. Recheck
+those traces after collector writes; this one-time command does not prevent later
+collector resets. This is an operator-run upgrade step, not an automatic hook or
+migration.
 
 Do not run `up` (or `deploy/setup.sh`) between the pin and the initialization:
 it would start the new images on the old schema, and the check-only bootstrap

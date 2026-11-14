@@ -977,7 +977,7 @@ class SpanListQueryBuilderV2(V2RewriteMixin, SpanListQueryBuilder):
         content_columns_sql = (
             "project_id, trace_id, id, start_time, observation_type, "
             "service_name, _version, input, output, attributes_extra, "
-            "attrs_string, attrs_number, attrs_bool"
+            "attrs_string, attrs_number, attrs_bool, tags, parent_span_id"
         )
         source = self._filter_match_source_sql(
             scope, consumer_sql=f"{content_columns_sql} {project_version}"

@@ -368,13 +368,35 @@ class TestObservationSpanWorkspaceScopeAPI:
             organization, user, trace_type="observe"
         )
 
-        response = auth_client.post(
-            "/tracer/observation-span/update-tags/",
-            {"span_id": other_span.id, "tags": ["changed"]},
-            format="json",
-        )
+        from tracer.models.entity_tag_assignment import EntityTagAssignment
 
-        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        # A complete, well-formed target: the request must be refused by
+        # project authorization, not by the 400 for a missing target.
+        body = {
+            "project_id": str(other_span.project_id),
+            "trace_id": str(other_span.trace_id),
+            "span_id": str(other_span.id),
+            "start_hour": "2026-01-01T10:00:00Z",
+            "observation_type": "span",
+            "service_name": "svc",
+            "expected_start_time": "2026-01-01T10:15:00Z",
+            "expected_version": "1",
+            "expected_tag_revision": 0,
+            "tags": ["changed"],
+        }
+        with patch(
+            "tracer.services.entity_tag_assignments.V2AnalyticsQueryService"
+        ) as clickhouse:
+            response = auth_client.post(
+                "/tracer/observation-span/update-tags/", body, format="json"
+            )
+
+        assert response.status_code == status.HTTP_404_NOT_FOUND
+        assert response.json()["code"] == "tag_target_not_found"
+        clickhouse.assert_not_called()
+        assert not EntityTagAssignment.objects.filter(
+            project_id=other_span.project_id
+        ).exists()
         other_span.refresh_from_db()
         assert other_span.tags == ["hidden"]
 

@@ -1336,3 +1336,206 @@ def test_session_candidate_resolution_is_full_window_bounded_and_watermarked():
         SamplingQuery(task, clean, "v", NOW).live_session_rows(
             [str(i) for i in range(1001)]
         )
+
+
+@pytest.mark.parametrize("row_type", ["spans", "traces"])
+@pytest.mark.parametrize("unavailable", [False, True])
+def test_tag_filtered_sampling_stream_binds_effective_overlay(row_type, unavailable):
+    from contextlib import nullcontext
+
+    from tracer.services.clickhouse.v2.effective_tags import (
+        EffectiveTagRelation,
+        TagOverlay,
+    )
+    from tracer.services.entity_tags import TagReadUnavailable
+    from tracer.services.eval_tasks.sampling.errors import SamplingReadPressure
+    from tracer.services.eval_tasks.sampling.query import stream_query
+
+    task = SimpleNamespace(
+        project_id="ba052ed0-921f-4aa9-972d-7bbbc79e5d30",
+        row_type=row_type,
+        filters={
+            "filters": [
+                {
+                    "column_id": "tag",
+                    "filter_config": {
+                        "col_type": "SYSTEM_METRIC",
+                        "filter_type": "text",
+                        "filter_op": "equals",
+                        "filter_value": "cohort",
+                    },
+                }
+            ]
+        },
+    )
+    statement, params = SamplingQuery(
+        task, validate_policy(policy(), now=NOW), "v", NOW
+    ).preview()
+    seen = []
+
+    def execute_stream(sql, bound, **kwargs):
+        seen.append(bound)
+        return nullcontext([[(1,)]])
+
+    client = SimpleNamespace(execute_read_block_stream=execute_stream)
+    analytics = SimpleNamespace(
+        supports_per_query_read_settings=True,
+        execute_ch_query=lambda *args, **kwargs: SimpleNamespace(data=[]),
+    )
+    with (
+        patch(
+            "tracer.services.clickhouse.v2.query_service.get_v2_query_client",
+            return_value=client,
+        ),
+        patch(
+            "tracer.services.clickhouse.v2.query_service.V2AnalyticsQueryService",
+            return_value=analytics,
+        ),
+        patch(
+            "tracer.services.clickhouse.v2.effective_tags.read_tag_overlay",
+            side_effect=TagReadUnavailable("tag_source_unavailable")
+            if unavailable
+            else None,
+            return_value=TagOverlay(),
+        ),
+    ):
+        if unavailable:
+            with pytest.raises(SamplingReadPressure, match="temporarily unavailable"):
+                list(stream_query(statement, params))
+            assert not seen
+            return
+        assert list(stream_query(statement, params)) == [[(1,)]]
+    assert seen
+    assert "effective_tag_rows_1_projects" in seen[0]
+    assert "effective_tag_rows_1_hour_start" in seen[0]
+    assert not any(
+        isinstance(value, EffectiveTagRelation) for value in seen[0].values()
+    )
+
+
+@pytest.mark.parametrize(
+    ("code", "deterministic", "message"),
+    [
+        ("tag_overlay_budget_exceeded", True, "Too many traces and spans"),
+        # No usable scope or window: narrowing the tag would not help.
+        ("tag_scope_required", True, "needs a project and a time window"),
+        ("tag_assignment_unavailable", False, "temporarily unavailable"),
+        ("tag_source_unavailable", False, "temporarily unavailable"),
+    ],
+)
+def test_sampling_tag_read_failures_split_terminal_from_retryable(
+    code, deterministic, message
+):
+    """An over-budget Tag filter is a 400, never a read-pressure retry loop."""
+    from contextlib import nullcontext
+
+    from tracer.selectors.eval_tasks.row_resolver import EvalTaskSelectionRejected
+    from tracer.services.entity_tags import TagReadUnavailable
+    from tracer.services.eval_tasks.sampling.errors import SamplingReadPressure
+    from tracer.services.eval_tasks.sampling.query import stream_query
+
+    task = SimpleNamespace(
+        project_id="ba052ed0-921f-4aa9-972d-7bbbc79e5d30",
+        row_type="traces",
+        filters={
+            "filters": [
+                {
+                    "column_id": "tag",
+                    "filter_config": {
+                        "col_type": "SYSTEM_METRIC",
+                        "filter_type": "text",
+                        "filter_op": "equals",
+                        "filter_value": "cohort",
+                    },
+                }
+            ]
+        },
+    )
+    statement, params = SamplingQuery(
+        task, validate_policy(policy(), now=NOW), "v", NOW
+    ).preview()
+    client = SimpleNamespace(
+        execute_read_block_stream=lambda *a, **k: nullcontext([[(1,)]])
+    )
+    analytics = SimpleNamespace(
+        supports_per_query_read_settings=True,
+        execute_ch_query=lambda *args, **kwargs: SimpleNamespace(data=[]),
+    )
+    with (
+        patch(
+            "tracer.services.clickhouse.v2.query_service.get_v2_query_client",
+            return_value=client,
+        ),
+        patch(
+            "tracer.services.clickhouse.v2.query_service.V2AnalyticsQueryService",
+            return_value=analytics,
+        ),
+        patch(
+            "tracer.services.clickhouse.v2.effective_tags.read_tag_overlay",
+            side_effect=TagReadUnavailable(code),
+        ),
+        pytest.raises(
+            EvalTaskSelectionRejected if deterministic else SamplingReadPressure
+        ) as raised,
+    ):
+        list(stream_query(statement, params))
+    assert isinstance(raised.value, EvalTaskSelectionRejected) is deterministic
+    assert message in str(raised.value)
+    if code == "tag_scope_required":
+        assert "Too many" not in str(raised.value)
+
+
+def test_sampling_tag_overlay_reads_only_window_live_assignments():
+    """The cohort window scopes the assignment walk, as for graph leaves."""
+    from contextlib import nullcontext
+
+    from tracer.services.clickhouse.v2.effective_tags import TagOverlay
+    from tracer.services.eval_tasks.sampling.query import stream_query
+
+    task = SimpleNamespace(
+        project_id="ba052ed0-921f-4aa9-972d-7bbbc79e5d30",
+        row_type="spans",
+        filters={
+            "filters": [
+                {
+                    "column_id": "tag",
+                    "filter_config": {
+                        "col_type": "SYSTEM_METRIC",
+                        "filter_type": "text",
+                        "filter_op": "equals",
+                        "filter_value": "cohort",
+                    },
+                }
+            ]
+        },
+    )
+    statement, params = SamplingQuery(
+        task, validate_policy(policy(), now=NOW), "v", NOW
+    ).preview()
+    client = SimpleNamespace(
+        execute_read_block_stream=lambda *a, **k: nullcontext([[(1,)]])
+    )
+    execute = lambda *args, **kwargs: SimpleNamespace(data=[])  # noqa: E731
+    analytics = SimpleNamespace(
+        supports_per_query_read_settings=True, execute_ch_query=execute
+    )
+    with (
+        patch(
+            "tracer.services.clickhouse.v2.query_service.get_v2_query_client",
+            return_value=client,
+        ),
+        patch(
+            "tracer.services.clickhouse.v2.query_service.V2AnalyticsQueryService",
+            return_value=analytics,
+        ),
+        patch(
+            "tracer.services.clickhouse.v2.effective_tags.read_tag_overlay",
+            return_value=TagOverlay(),
+        ) as overlay,
+    ):
+        assert list(stream_query(statement, params)) == [[(1,)]]
+    kwargs = overlay.call_args.kwargs
+    assert kwargs["trace_ids"] is None
+    assert kwargs["window_start"] is not None and kwargs["window_end"] is not None
+    assert kwargs["window_start"] < kwargs["window_end"]
+    assert kwargs["execute"] is execute

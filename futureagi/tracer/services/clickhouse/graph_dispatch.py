@@ -15,6 +15,7 @@ from clickhouse_connect.driver.exceptions import (
 )
 from clickhouse_driver.errors import Error as ClickHouseDriverError
 from django.conf import settings
+from django.db import DatabaseError
 from django_redis.exceptions import ConnectionInterrupted
 from redis.exceptions import RedisError
 
@@ -1789,6 +1790,166 @@ def _affordable_raw_graph_seed(
     return seed_candidate, seed_probe_count
 
 
+def _scheduled_graph_tag_leaves(
+    identity: dict[str, Any],
+) -> list[tuple[int, str, dict[str, Any]]]:
+    from tracer.services.clickhouse.query_builders.exact_graph_predicates import (
+        is_effective_tag_leaf,
+    )
+
+    leaves = []
+    for index, item in enumerate(identity.get("filters") or []):
+        if not isinstance(item, dict):
+            continue
+        column_id = item.get("column_id") or item.get("columnId")
+        config = item.get("filter_config") or item.get("filterConfig") or {}
+        if (
+            isinstance(column_id, str)
+            and isinstance(config, dict)
+            and is_effective_tag_leaf(
+                column_id, config.get("col_type") or config.get("colType")
+            )
+        ):
+            leaves.append((index, column_id, config))
+    return leaves
+
+
+def _preflight_user_graph_tags(identity: dict[str, Any], analytics: Any) -> None:
+    """Bind a Users graph's Tag leaves as its worker will, before scheduling it.
+
+    The Users selector (the Users system graph and user-context eval and
+    annotation graphs) binds each Tag leaf as a window scan over the snapshot
+    window with the window overlay. A Tag over the overlay budget there fails
+    the worker the same way on every attempt, which the poll can only report
+    as a retryable 503. Binding the same relations here first makes it the
+    400 the interactive read gives. Only overlay and liveness reads run; no
+    graph SQL does.
+
+    Only that deterministic too-broad answer stops the read. The bind runs on
+    its own reader and its own bounded deadline, not the request's interactive
+    wall; any other failure (a slow or unreachable overlay, a timeout, an eval
+    ownership read that fails) is logged and the read is scheduled as before
+    this preflight existed, because the worker binds the same relations on its
+    own, wider wall and reports its own failures. ``analytics`` is the
+    request's reader; it is not used for the bind.
+    """
+    from tracer.services.clickhouse.exact_graph_reads import (
+        _snapshot_window,
+        _user_aggregate_source_sql,
+    )
+    from tracer.services.clickhouse.query_builders.exact_graph_predicates import (
+        GRAPH_TAG_OVERLAY_READ_MS,
+        GraphTagFilterTooBroadError,
+    )
+    from tracer.services.clickhouse.v2 import effective_tags
+    from tracer.services.entity_tags import TagReadUnavailable
+
+    del analytics  # The bind does not run on the request's wall.
+    if not _scheduled_graph_tag_leaves(identity):
+        return
+    filters = list(identity.get("filters") or [])
+    start, end, empty = _snapshot_window(filters)
+    if empty:
+        return
+    deadline = ReadDeadline.start(GRAPH_TAG_OVERLAY_READ_MS)
+    try:
+        _sql, params, _needs_eval = _user_aggregate_source_sql(
+            project_id=str(identity["project_id"]),
+            filters=filters,
+            start_date=start,
+            end_date=end,
+            include_trace_ids=False,
+            all_snapshot_users=True,
+            # An aggregate eval leaf proves eval ownership, which needs a
+            # deadline: the preflight's own.
+            started=monotonic(),
+            remaining_read_ms=deadline.remaining_ms,
+        )
+        if not any(
+            isinstance(value, effective_tags.EffectiveTagRelation)
+            for value in params.values()
+        ):
+            return
+        reader = effective_tags.graph_overlay_executor()
+
+        def execute(
+            query,
+            query_params,
+            *,
+            timeout_ms,
+            settings=None,
+            server_execution_cap_ms=None,
+            **_caps,
+        ):
+            # Not wall-capped itself: the server-side cap bounds each read.
+            return reader(
+                query,
+                query_params,
+                timeout_ms=timeout_ms,
+                settings=settings,
+                server_execution_cap_ms=server_execution_cap_ms,
+            )
+
+        effective_tags.prepare_effective_tag_params(
+            execute,
+            {**params, "start_date": start, "end_date": end},
+            deadline=deadline,
+            allow_window_scan=True,
+            window_overlay=True,
+        )
+    except TagReadUnavailable as exc:
+        if exc.code == "tag_overlay_budget_exceeded":
+            # Deterministic for this project and filter: retrying the same
+            # graph, here or in the worker, can never succeed.
+            raise GraphTagFilterTooBroadError() from exc
+        _log_users_preflight_skipped(identity, exc)
+    except (
+        ReadDeadlineExceeded,
+        TimeoutError,
+        ExactGraphReadError,
+        ClickHouseConnectError,
+        ClickHouseDriverError,
+        DatabaseError,
+        OSError,
+        EOFError,
+    ) as exc:
+        _log_users_preflight_skipped(identity, exc)
+
+
+def _log_users_preflight_skipped(identity: dict[str, Any], exc: BaseException) -> None:
+    logger.warning(
+        "users_graph_tag_preflight_skipped",
+        project_id=str(identity.get("project_id")),
+        error_type=type(exc).__name__,
+        error_code=getattr(exc, "code", None),
+    )
+
+
+def _preflight_scheduled_graph_tags(identity: dict[str, Any]) -> None:
+    """Resolve tag leaves before handing a raw graph to the Temporal worker.
+
+    Otherwise a deterministic 400 discovered only by the worker becomes a
+    failed-refresh pending envelope, which a browser cannot distinguish from
+    a retryable read failure. No non-tag filters or graph SQL run here.
+    """
+    from tracer.services.clickhouse.query_builders.exact_graph_predicates import (
+        EffectiveTagGraphCompiler,
+    )
+
+    leaves = _scheduled_graph_tag_leaves(identity)
+    if not leaves:
+        return
+    start, end = BaseQueryBuilder.parse_time_range(identity["filters"], strict=True)
+    compiler = EffectiveTagGraphCompiler(
+        project_id=str(identity["project_id"]),
+        observe_type=str(identity.get("observe_type") or "trace"),
+        window_start=start,
+        window_end=end,
+    )
+    for index, column_id, config in leaves:
+        compiler.requirement(column_id=column_id, config=config, filter_index=index)
+
+
 def _schedule_unaffordable_graph_read(
     *,
     metric_id: str,
@@ -1800,6 +1961,7 @@ def _schedule_unaffordable_graph_read(
     workspace_id: str | None,
     namespace: str = "observe-system-graph",
     fits_wall: Any = raw_graph_scan_fits_wall,
+    analytics: Any = None,
 ) -> dict[str, Any]:
     """Hand a read the interactive wall cannot run to the background lane.
 
@@ -1837,6 +1999,22 @@ def _schedule_unaffordable_graph_read(
         remaining_ms=GRAPH_WALL_DEADLINE_MS,
         **raw_log_cost,
     )
+    # Even when no background lane can run the raw scan, a deterministic
+    # tag-filter 400 takes precedence over a retryable scan-cost response.
+    # The Users selector binds its Tag leaves over the snapshot window, so
+    # its graphs get the same binding the worker will do.
+    user_selector = namespace == "observe-user-system-graph" or (
+        namespace in {"observe-eval-graph", "observe-annotation-graph"}
+        and identity.get("aggregation_context") == "user"
+    )
+    if user_selector and analytics is not None:
+        _preflight_user_graph_tags(identity, analytics)
+    elif namespace in {
+        "observe-system-graph",
+        "observe-eval-graph",
+        "observe-annotation-graph",
+    }:
+        _preflight_scheduled_graph_tags(identity)
     if organization_id and schedulable:
         try:
             scheduled = _read_or_refresh_exact_graph(
@@ -2072,6 +2250,9 @@ def fetch_system_metric_graph_ch(
         and graph_payload_is_publishable(cached, allow_sampled=False)
     ):
         if refresh and organization_id:
+            # A refresh can see changed tags despite a complete snapshot. The
+            # worker recompiles, but this preflight preserves a request-time 400.
+            _preflight_scheduled_graph_tags(identity)
             return _read_or_refresh_exact_graph(
                 namespace="observe-system-graph",
                 identity=dict(identity),
@@ -2084,6 +2265,7 @@ def fetch_system_metric_graph_ch(
     if isinstance(cached, dict) and cached.get("query_refreshing") is True:
         return cached
     if refresh and organization_id:
+        _preflight_scheduled_graph_tags(identity)
         return _read_or_refresh_exact_graph(
             namespace="observe-system-graph",
             identity=dict(identity),
@@ -2486,6 +2668,7 @@ def fetch_user_system_metric_graph_ch(
             workspace_id=workspace_id,
             namespace="observe-user-system-graph",
             fits_wall=user_graph_scan_fits_wall,
+            analytics=bounded_analytics,
         )
     try:
         response = read_exact_user_system_graph(
@@ -2868,6 +3051,7 @@ def fetch_eval_graph_ch(
             workspace_id=workspace_id,
             namespace="observe-eval-graph",
             fits_wall=raw_log_membership_fits_wall,
+            analytics=bounded_analytics,
         )
     try:
         response = read_exact_eval_graph(
@@ -2922,20 +3106,62 @@ def fetch_eval_chart_series_ch(
         "req_data_config": req_data_config,
         "eval_name": eval_name,
     }
-    return _read_or_refresh_exact_graph(
+    pending_payload = [
+        _pending_graph_payload(
+            str(req_data_config.get("id") or ""),
+            id=str(req_data_config.get("id") or ""),
+            name=str(eval_name or ""),
+        )
+    ]
+    if not refresh:
+        # A poll of an existing snapshot needs no tag preflight (and must not
+        # fail on a tag-source outage): it schedules no new graph.
+        cached = _read_or_refresh_exact_graph(
+            namespace="observe-eval-chart-series",
+            identity=dict(identity),
+            refresh=False,
+            pending_payload=pending_payload,
+            organization_id=organization_id,
+            workspace_id=workspace_id,
+            schedule_on_miss=False,
+        )
+        items = (
+            [item for item in cached if isinstance(item, dict)]
+            if isinstance(cached, list)
+            else []
+        )
+        if any(
+            item.get("query_status") != "pending"
+            or item.get("query_refresh_failed") is True
+            for item in items
+        ):
+            # Served or failed: the cached state is the answer.
+            return cached
+        if any(item.get("query_refreshing") is True for item in items):
+            # Running and not complete: poll through the normal read, which
+            # re-enqueues a dispatch claim the worker left terminal. Still no
+            # preflight: this re-runs the graph already scheduled.
+            polled: list[dict[str, Any]] = _read_or_refresh_exact_graph(
+                namespace="observe-eval-chart-series",
+                identity=identity,
+                refresh=False,
+                pending_payload=pending_payload,
+                organization_id=organization_id,
+                workspace_id=workspace_id,
+            )
+            return polled
+    # This read schedules the worker: a too-broad Tag filter is a 400 now, not
+    # a failed refresh that every later poll reports as retryable.
+    _preflight_scheduled_graph_tags(identity)
+    scheduled: list[dict[str, Any]] = _read_or_refresh_exact_graph(
         namespace="observe-eval-chart-series",
         identity=identity,
         refresh=bool(refresh),
-        pending_payload=[
-            _pending_graph_payload(
-                str(req_data_config.get("id") or ""),
-                id=str(req_data_config.get("id") or ""),
-                name=str(eval_name or ""),
-            )
-        ],
+        pending_payload=pending_payload,
         organization_id=organization_id,
         workspace_id=workspace_id,
     )
+    return scheduled
 
 
 def annotation_output_type(
@@ -3201,6 +3427,7 @@ def fetch_annotation_graph_ch(
             workspace_id=workspace_id,
             namespace="observe-annotation-graph",
             fits_wall=raw_log_membership_fits_wall,
+            analytics=bounded_analytics,
         )
     try:
         response = read_exact_annotation_graph(

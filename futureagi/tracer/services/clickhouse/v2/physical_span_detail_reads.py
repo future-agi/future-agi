@@ -49,6 +49,8 @@ def build_physical_span_detail_query(*, span_id, reference):
           AND observation_type = %(physical_observation_type)s
           AND service_name = %(physical_service_name)s
           AND toStartOfHour(start_time) = fromUnixTimestamp64Micro(%(physical_hour_us)s, 'UTC')
+          AND start_time >= fromUnixTimestamp64Micro(%(physical_hour_us)s, 'UTC')
+          AND start_time < fromUnixTimestamp64Micro(%(physical_hour_us)s, 'UTC') + INTERVAL 1 HOUR
           AND trace_id = %(physical_trace_id)s
           AND id = %(physical_span_id)s
     """,

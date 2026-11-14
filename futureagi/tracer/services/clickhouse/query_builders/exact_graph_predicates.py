@@ -21,6 +21,7 @@ from __future__ import annotations
 import re
 import uuid
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any
 
 from tracer.services.clickhouse.query_builders.base import BaseQueryBuilder
@@ -37,6 +38,8 @@ from tracer.services.clickhouse.query_builders.latest_filter_predicates import (
     is_internal_trace_root_filter,
     simulator_call_root_predicate,
 )
+from tracer.services.clickhouse.read_budget import ReadDeadline
+from tracer.services.entity_tags import TagReadUnavailable
 from tracer.utils.filter_operators import normalize_span_attribute_filter_type
 
 _OUTER_SOURCE_SENTINEL = "graph_outer_span_rows"
@@ -46,6 +49,28 @@ _SPANS_SOURCE_PATTERN = re.compile(
     re.IGNORECASE,
 )
 _ZERO_UUID = "00000000-0000-0000-0000-000000000000"
+# Shared deadline across paged UI assignments and CH liveness probes.
+GRAPH_TAG_OVERLAY_READ_MS = 5_000
+
+
+class GraphTagFilterTooBroadError(UnsupportedFilterShapeError):
+    """A graph Tag leaf whose UI tag overlay exceeds the statement budget.
+
+    A bounded graph binds live, in-window trace and span assignments carrying
+    a filtered name (any name for is null / is not null), plus trace assignments
+    that hide a matching curated tag. It is a property of the project's tags, not a
+    transient fault, so it is a request error with its own copy, never a 503
+    that asks the user to retry.
+    """
+
+    code = "tag_filter_too_broad"
+    message = (
+        "The graph cannot apply this Tag filter: too many traces and spans "
+        "were tagged with it in the app. The list below is still filtered by it."
+    )
+
+    def __init__(self) -> None:
+        super().__init__(self.message)
 
 
 @dataclass(frozen=True)
@@ -81,6 +106,11 @@ class ExactGraphRowPredicatePlan:
     # trace's root. Until ClickHouse merges them, a re-polled root has several
     # live physical versions, and a raw read must count that call once.
     root_contribution: bool = False
+    # Predicates whose witness must start inside the requested event-time
+    # window in every graph, including the Agent Graph, whose other membership
+    # witnesses are unbounded. Today only the effective Tag leaf: the list's tag
+    # relation reads that window, so a span tagged outside it never matches.
+    event_window_only: tuple[bool, ...] = ()
 
 
 def _filter_parts(item: dict[str, Any]) -> tuple[str, str, dict[str, Any]]:
@@ -540,6 +570,164 @@ def _compile_has_eval_filter(
     return predicate, required, params
 
 
+_TAG_MEMBERSHIP_OPERATIONS = frozenset(
+    {
+        "equals",
+        "not_equals",
+        "in",
+        "not_in",
+        "contains",
+        "not_contains",
+        "is_null",
+        "is_not_null",
+    }
+)
+_TAG_ABSENCE_OPERATIONS = frozenset({"not_equals", "not_in", "not_contains", "is_null"})
+
+
+def _compile_effective_tag_filter(
+    *,
+    column_id: str,
+    config: dict[str, Any],
+    project_id: str,
+    observe_type: str,
+    filter_index: int,
+    deadline: Any,
+    window_start: datetime | None = None,
+    window_end: datetime | None = None,
+) -> tuple[tuple[str, bool, dict[str, Any]], int]:
+    """Compile an effective ``tag``/``tags`` leaf to a current-row predicate.
+
+    The list readers match SDK tags, UI assignments and curated trace tags
+    (:mod:`tracer.services.clickhouse.v2.effective_tags`). A graph must apply
+    the same membership, so the row predicate evaluates the source names on
+    the physical row and binds the UI overlay as key literals. Absence
+    operators keep the positive witness and require that no sibling has it,
+    exactly as the lists' ``NOT IN``. Returns the requirement and the rendered
+    size of its bound overlay.
+    """
+
+    from tracer.services.clickhouse.query_builders.latest_filter_predicates import (
+        _normalize_json_array_values,
+    )
+    from tracer.services.clickhouse.v2.effective_tags import (
+        graph_row_tag_sql,
+        graph_tag_overlay_params,
+    )
+
+    operation = normalize_filter_op(
+        str(config.get("filter_op") or config.get("filterOp") or "")
+    )
+    if operation not in _TAG_MEMBERSHIP_OPERATIONS:
+        raise UnsupportedFilterShapeError(
+            f"graph filter {column_id!r} supports tag membership operators only"
+        )
+    prefix = f"etag_graph_{filter_index}"
+    params: dict[str, Any] = {}
+    if operation in {"is_null", "is_not_null"}:
+        values = None
+        names_predicate = "notEmpty({names})"
+    else:
+        raw_value = config.get("filter_value", config.get("filterValue"))
+        items = raw_value if isinstance(raw_value, list) else [raw_value]
+        if not items or any(not isinstance(item, str) or not item for item in items):
+            raise UnsupportedFilterShapeError(
+                f"graph filter {column_id!r} requires non-empty tag names"
+            )
+        # The list compiler's public limits, so both surfaces accept one shape.
+        _normalize_json_array_values({"filter_op": "contains", "filter_value": items})
+        values = tuple(dict.fromkeys(items))
+        params[f"{prefix}_names"] = list(values)
+        names_predicate = "hasAny({names}, %(" + prefix + "_names)s)"
+    overlay_params, rendered = graph_tag_overlay_params(
+        prefix,
+        project_ids=(str(project_id),),
+        values=values,
+        deadline=deadline,
+        window_start=window_start,
+        window_end=window_end,
+    )
+    params.update(overlay_params)
+    predicate = graph_row_tag_sql(
+        prefix,
+        names_predicate,
+        root_only=column_id == "tags" and observe_type == "trace",
+    )
+    required = operation not in _TAG_ABSENCE_OPERATIONS
+    return (predicate, required, params), rendered
+
+
+def is_effective_tag_leaf(column_id: object, col_type: object) -> bool:
+    """The routing of ClickHouseFilterBuilderV2._build_condition for tags.
+
+    ``tag``/``tags`` with a native (or absent) column type is the effective
+    tag leaf; an explicit SPAN_ATTRIBUTE ``tags`` stays a raw attribute.
+    """
+    return column_id in {"tag", "tags"} and str(col_type or "").strip().upper() in {
+        "",
+        "NORMAL",
+        "SYSTEM_METRIC",
+    }
+
+
+class EffectiveTagGraphCompiler:
+    """Compile the effective tag leaves of one graph statement.
+
+    Every leaf of the statement shares one overlay read deadline and one
+    rendered byte budget. Unavailable assignments are a retryable graph read
+    error (503); an overlay over its budget is a request error
+    (:class:`GraphTagFilterTooBroadError`, 400). Neither is ever an empty or
+    source-only graph.
+    """
+
+    def __init__(
+        self,
+        *,
+        project_id: str,
+        observe_type: str,
+        window_start: datetime | None = None,
+        window_end: datetime | None = None,
+    ) -> None:
+        self.project_id = str(project_id)
+        self.observe_type = observe_type
+        self.window_start = window_start
+        self.window_end = window_end
+        self._deadline: ReadDeadline | None = None
+        self._rendered = 0
+
+    def requirement(
+        self, *, column_id: str, config: dict[str, Any], filter_index: int
+    ) -> tuple[str, bool, dict[str, Any]]:
+        from tracer.services.clickhouse.bounded_graph_reads import (
+            BoundedGraphReadError,
+        )
+        from tracer.services.clickhouse.v2.effective_tags import MAX_TAG_OVERLAY_BYTES
+
+        if self._deadline is None:
+            self._deadline = ReadDeadline.start(GRAPH_TAG_OVERLAY_READ_MS)
+        try:
+            requirement, rendered = _compile_effective_tag_filter(
+                column_id=column_id,
+                config=config,
+                project_id=self.project_id,
+                observe_type=self.observe_type,
+                filter_index=filter_index,
+                deadline=self._deadline,
+                window_start=self.window_start,
+                window_end=self.window_end,
+            )
+            self._rendered += rendered
+            if self._rendered > MAX_TAG_OVERLAY_BYTES:
+                raise TagReadUnavailable("tag_overlay_budget_exceeded")
+        except TagReadUnavailable as exc:
+            if exc.code == "tag_overlay_budget_exceeded":
+                # Deterministic for this project and filter: retrying the
+                # same graph can never succeed.
+                raise GraphTagFilterTooBroadError() from exc
+            raise BoundedGraphReadError("query_failed", retryable=True) from exc
+        return requirement
+
+
 def _compile_end_user_filter(
     *,
     column_id: str,
@@ -624,6 +812,8 @@ def compile_exact_graph_row_predicates(
     project_id: str,
     observe_type: str,
     annotation_label_ids: list[str] | tuple[str, ...] | None = None,
+    window_start: datetime | None = None,
+    window_end: datetime | None = None,
 ) -> ExactGraphRowPredicatePlan:
     """Compile graph filters without adding another physical ``spans`` read.
 
@@ -647,11 +837,18 @@ def compile_exact_graph_row_predicates(
 
     predicates: list[str] = []
     output_window_only: list[bool] = []
+    event_window_only: list[bool] = []
     required_matches: list[bool] = []
     match_condition_groups: list[tuple[tuple[int, bool], ...]] = []
     contribution_predicates: list[str] = []
     root_contribution = False
     bound_params: dict[str, Any] = {}
+    tag_compiler = EffectiveTagGraphCompiler(
+        project_id=project_id,
+        observe_type=normalized_observe_type,
+        window_start=window_start,
+        window_end=window_end,
+    )
     for filter_index, original_item in enumerate(filters or []):
         column_id, config_key, config = _filter_parts(original_item)
         filter_type = str(config.get("filter_type") or config.get("filterType") or "")
@@ -667,6 +864,7 @@ def compile_exact_graph_row_predicates(
         raw_value = config.get("filter_value", config.get("filterValue"))
         structured_attribute = False
         relation_requirements: list[tuple[str, bool, dict[str, Any]]] | None = None
+        effective_tag_leaf = False
         normalized_col_type = str(col_type or "").strip().upper()
         # Explicit property provenance wins over legacy name aliases here,
         # before the native relation adapters bypass the shared compiler.
@@ -709,6 +907,13 @@ def compile_exact_graph_row_predicates(
                 project_id=project_id,
             )
             relation_requirements = [(relation_predicate, required, relation_params)]
+        elif is_effective_tag_leaf(column_id, normalized_col_type):
+            effective_tag_leaf = True
+            relation_requirements = [
+                tag_compiler.requirement(
+                    column_id=column_id, config=config, filter_index=filter_index
+                )
+            ]
 
         if relation_requirements is not None:
             requirement_predicate_indexes: list[int] = []
@@ -740,7 +945,11 @@ def compile_exact_graph_row_predicates(
                 bound_params.update(predicate_params)
                 requirement_predicate_indexes.append(len(predicates))
                 predicates.append(predicate)
-                output_window_only.append(False)
+                # An effective Tag leaf is scoped to the requested event-time
+                # window, as the list's tag relation is; other relations keep
+                # the wider witness envelope.
+                output_window_only.append(effective_tag_leaf)
+                event_window_only.append(effective_tag_leaf)
                 required_matches.append(required)
             annotation_filter_op = config.get("filter_op") or config.get("filterOp")
             if (
@@ -868,6 +1077,7 @@ def compile_exact_graph_row_predicates(
             root_contribution = True
         predicates.append(predicate)
         output_window_only.append(structured_attribute)
+        event_window_only.append(False)
         required_matches.append(True)
         match_condition_groups.append(((len(predicates) - 1, True),))
 
@@ -893,7 +1103,14 @@ def compile_exact_graph_row_predicates(
         contribution_predicates=tuple(contribution_predicates),
         params=bound_params,
         root_contribution=root_contribution,
+        event_window_only=tuple(event_window_only),
     )
 
 
-__all__ = ["ExactGraphRowPredicatePlan", "compile_exact_graph_row_predicates"]
+__all__ = [
+    "EffectiveTagGraphCompiler",
+    "ExactGraphRowPredicatePlan",
+    "GraphTagFilterTooBroadError",
+    "compile_exact_graph_row_predicates",
+    "is_effective_tag_leaf",
+]

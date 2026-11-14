@@ -33,6 +33,8 @@ const harness = vi.hoisted(() => {
 
   return {
     addItems: vi.fn(),
+    tagsPopoverProps: null,
+    gridApis: {},
     attributes: [],
     dashboardFilterValues: [],
     emptyFilters: [],
@@ -198,48 +200,58 @@ vi.mock("../states", async () => {
 vi.mock("../TraceGrid", async () => {
   const ReactModule = await import("react");
   return {
-    default: ReactModule.forwardRef(({ compareType, enabled }, _ref) => (
-      <div
-        data-testid={`${compareType}-trace-grid`}
-        data-enabled={String(enabled)}
-      >
-        <button
-          type="button"
-          onClick={() =>
-            harness.traceStore.set({
-              selectAll: true,
-              toggledNodes: ["trace-excluded"],
-            })
-          }
+    default: ReactModule.forwardRef(({ compareType, enabled }, ref) => {
+      ReactModule.useImperativeHandle(ref, () => ({
+        api: harness.gridApis[`${compareType}-trace`],
+      }));
+      return (
+        <div
+          data-testid={`${compareType}-trace-grid`}
+          data-enabled={String(enabled)}
         >
-          Header select all traces
-        </button>
-      </div>
-    )),
+          <button
+            type="button"
+            onClick={() =>
+              harness.traceStore.set({
+                selectAll: true,
+                toggledNodes: ["trace-excluded"],
+              })
+            }
+          >
+            Header select all traces
+          </button>
+        </div>
+      );
+    }),
   };
 });
 
 vi.mock("../SpanGrid", async () => {
   const ReactModule = await import("react");
   return {
-    default: ReactModule.forwardRef(({ compareType, enabled }, _ref) => (
-      <div
-        data-testid={`${compareType}-span-grid`}
-        data-enabled={String(enabled)}
-      >
-        <button
-          type="button"
-          onClick={() =>
-            harness.spanStore.set({
-              selectAll: true,
-              toggledNodes: [harness.spanExcludedPhysicalId],
-            })
-          }
+    default: ReactModule.forwardRef(({ compareType, enabled }, ref) => {
+      ReactModule.useImperativeHandle(ref, () => ({
+        api: harness.gridApis[`${compareType}-span`],
+      }));
+      return (
+        <div
+          data-testid={`${compareType}-span-grid`}
+          data-enabled={String(enabled)}
         >
-          Header select all spans
-        </button>
-      </div>
-    )),
+          <button
+            type="button"
+            onClick={() =>
+              harness.spanStore.set({
+                selectAll: true,
+                toggledNodes: [harness.spanExcludedPhysicalId],
+              })
+            }
+          >
+            Header select all spans
+          </button>
+        </div>
+      );
+    }),
   };
 });
 
@@ -376,7 +388,10 @@ vi.mock("src/components/tooltip", () => ({
   default: ({ children }) => children,
 }));
 vi.mock("src/components/traceDetail/AddTagsPopover", () => ({
-  default: () => null,
+  default: (props) => {
+    harness.tagsPopoverProps = props;
+    return null;
+  },
 }));
 vi.mock("src/components/traceDetailDrawer/addToDataset/add-dataset", () => ({
   default: (props) => {
@@ -460,6 +475,8 @@ describe("LLMTracingView header select-all annotation queue contract", () => {
   beforeEach(() => {
     window.localStorage?.clear();
     harness.addItems.mockReset();
+    harness.tagsPopoverProps = null;
+    harness.gridApis = {};
     harness.selectedGraph = "primary";
     harness.selectedTab = "trace";
     harness.validatedFilters = {
@@ -468,6 +485,72 @@ describe("LLMTracingView header select-all annotation queue contract", () => {
     };
     harness.traceStore.reset();
     harness.spanStore.reset();
+  });
+
+  it("applies settled tags to loaded primary and compare rows without purging on close", async () => {
+    const target = {
+      project_id: "project-1",
+      trace_id: "trace-1",
+      span_id: "root",
+    };
+    const savedEntity = { tag_target: target, tag_revision: 0 };
+    const result = {
+      tags: [{ name: "updated" }],
+      manual_tags: [{ name: "updated" }],
+      source_tag_names: [],
+      tag_revision: 1,
+    };
+    const spanTarget = { ...target, span_id: "child" };
+    const rows = [
+      { tag_target: target, tag_revision: 0, tags: [] },
+      { tag_target: target, tag_revision: 0, tags: [] },
+      {
+        tag_target: spanTarget,
+        parent_span_id: "root",
+        tag_revision: 0,
+        tags: [],
+      },
+      {
+        tag_target: spanTarget,
+        parent_span_id: "root",
+        tag_revision: 0,
+        tags: [],
+      },
+    ];
+    const apis = rows.map((row) => ({
+      forEachNode: (visit) => visit({ data: row }),
+      refreshCells: vi.fn(),
+      refreshServerSide: vi.fn(),
+      deselectAll: vi.fn(),
+      sizeColumnsToFit: vi.fn(),
+      getDisplayedRowCount: () => 1,
+      getFirstDisplayedRowIndex: () => 0,
+      getLastDisplayedRowIndex: () => 0,
+      getDisplayedRowAtIndex: () => ({ data: row }),
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      isDestroyed: () => false,
+    }));
+    harness.gridApis = {
+      "primary-trace": apis[0],
+      "compare-trace": apis[1],
+      "primary-span": apis[2],
+      "compare-span": apis[3],
+    };
+    await renderView();
+    await waitFor(() => expect(harness.tagsPopoverProps).toBeTruthy());
+    const { onClose, onTagsSaved } = harness.tagsPopoverProps;
+    act(() => onClose());
+    onTagsSaved([
+      { result, entity: savedEntity, type: "trace" },
+      { result, entity: { tag_target: spanTarget }, type: "span" },
+    ]);
+    for (let i = 0; i < apis.length; i += 1) {
+      expect(rows[i]).toMatchObject({ tags: result.tags, tag_revision: 1 });
+      expect(apis[i].refreshCells).toHaveBeenCalledOnce();
+      expect(apis[i].refreshServerSide).not.toHaveBeenCalled();
+    }
+    expect(apis[0].deselectAll).toHaveBeenCalledOnce();
   });
 
   it("enables only the visible compare grid", async () => {
