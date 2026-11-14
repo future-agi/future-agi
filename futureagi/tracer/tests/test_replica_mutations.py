@@ -89,35 +89,19 @@ def tag_targets(monkeypatch):
     from tracer.services.clickhouse.v2.entity_tag_targets import TagTarget
 
     def resolve(*, authorized_project_id, reference, trace_id, **_):
-        if trace_id is not None:
-            # A trace's assignment is keyed by the trace alone
-            # (entity_tag_assignment_shape).
-            key = (
-                str(authorized_project_id),
-                "trace",
-                str(trace_id),
-                "",
-                EPOCH,
-                "",
-                "",
-            )
-        else:
-            key = (
-                str(authorized_project_id),
-                "span",
-                str(reference["trace_id"]),
-                str(reference["span_id"]),
-                reference["start_hour"],
-                reference["observation_type"],
-                reference["service_name"],
-            )
+        # Every span this suite creates is parentless, i.e. its trace's root,
+        # and the real resolver keys a root span's tags on its trace (the
+        # entity_tag_assignment_shape trace key): the span-root POST and the
+        # trace PATCH address one assignment.
+        root_trace = trace_id if trace_id is not None else reference["trace_id"]
+        key = (str(authorized_project_id), "trace", str(root_trace), "", EPOCH, "", "")
         return TagTarget(key=key, row={})
 
     monkeypatch.setattr(assignments, "V2AnalyticsQueryService", lambda: None)
     monkeypatch.setattr(assignments, "resolve_tag_target", resolve)
 
 
-def _tag(client, entity, project, trace_id, span_id, tags):
+def _tag(client, entity, project, trace_id, span_id, tags, revision=0):
     """The tag editor's request: the complete target, then the tags."""
     started = timezone.now().replace(microsecond=0)
     body = {
@@ -130,18 +114,17 @@ def _tag(client, entity, project, trace_id, span_id, tags):
         "expected_start_time": started.isoformat(),
         "expected_version": "1",
         "tags": [{"name": name} for name in tags],
-        "expected_tag_revision": 0,
+        "expected_tag_revision": revision,
     }
     if entity == "span":
         return client.post(SPAN_URL + "update-tags/", body, format="json")
     return client.patch(TRACE_URL + f"{trace_id}/tags/", body, format="json")
 
 
-def _assignment(entity, trace_id, span_id):
+def _assignment(trace_id):
+    """The one assignment a root span's and its trace's tag writes share."""
     return EntityTagAssignment.objects.using("default").get(
-        entity_kind=entity,
-        trace_id=trace_id,
-        span_id=span_id if entity == "span" else "",
+        entity_kind="trace", trace_id=trace_id, span_id=""
     )
 
 
@@ -267,7 +250,7 @@ def test_c65_c71_name_edit_preserves_acknowledged_tags(
     current = model.objects.using("default").get(pk=target_id)
     assert current.name == "renamed"
     assert current.tags == column_before
-    saved = _assignment(entity, trace_id, span_id)
+    saved = _assignment(trace_id)
     assert saved.manual_tags == [{"name": "acknowledged"}]
     assert saved.revision == 1
 
@@ -316,7 +299,15 @@ def test_c67_c72_tag_just_returned_target_id(
     assert not model.objects.filter(pk=target_id).exists()
     response = _tag(auth_client, entity, project, trace_id, span_id, ["immediate"])
     assert response.status_code == 200, response.data
-    assert _assignment(entity, trace_id, span_id).manual_tags == [{"name": "immediate"}]
+    assert _assignment(trace_id).manual_tags == [{"name": "immediate"}]
+    # The root span's POST and its trace's PATCH address one assignment.
+    again = _tag(auth_client, "trace", project, trace_id, "root", ["again"], revision=1)
+    assert again.status_code == 200, again.data
+    assert again.data["result"]["tag_revision"] == 2
+    assert (
+        EntityTagAssignment.objects.using("default").filter(trace_id=trace_id).count()
+        == 1
+    )
 
 
 @pytest.fixture
@@ -610,6 +601,11 @@ def test_mutations_preserve_tenant_denial(
                 format="json",
             )
         )
+    # The tag writes are complete requests: each is refused by the project
+    # scope (404), not by request validation.
+    for tagged in responses[2:4]:
+        assert tagged.status_code == 404, tagged.data
+        assert tagged.data["code"] == "tag_target_not_found", tagged.data
     assert all(r.status_code in (400, 404) for r in responses), [
         (r.status_code, r.data) for r in responses
     ]
