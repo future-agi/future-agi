@@ -62,7 +62,10 @@ def configure(monkeypatch, settings):
 
 
 PART_COLUMNS = {"database", "table", "name", "rows", "active"}
-VERIFIED_COLUMNS = {**dict.fromkeys(CDC_TABLES, CDC_COLUMNS), "system.parts": PART_COLUMNS}
+VERIFIED_COLUMNS = {
+    **dict.fromkeys(CDC_TABLES, CDC_COLUMNS),
+    "system.parts": PART_COLUMNS,
+}
 
 
 def sampled_tables(params):
@@ -104,7 +107,7 @@ def fake_client(columns, *, sample=None, parts=None, table_rows=None):
             return [
                 row
                 for table in params["tables"]
-                for row in sorted(r for r in rows if r[0] == table)[:params["parts"]]
+                for row in sorted(r for r in rows if r[0] == table)[: params["parts"]]
             ]
         if "FROM system.tables" in sql:
             return [(table, table_rows.get(table, 1)) for table in params["tables"]]
@@ -569,11 +572,17 @@ def test_health_openapi_verification_is_optional_and_old_contract_stable():
     definitions = contract["definitions"]
     response_schema = definitions["ClickHouseHealthResponse"]
     assert response_schema["required"] == [
-        "status", "clickhouse_connected", "cdc_lag", "routing"
+        "status",
+        "clickhouse_connected",
+        "cdc_lag",
+        "routing",
     ]
     old_properties = response_schema["properties"]
     assert old_properties["status"]["enum"] == [
-        "healthy", "degraded", "unhealthy", "disabled"
+        "healthy",
+        "degraded",
+        "unhealthy",
+        "disabled",
     ]
     assert old_properties["clickhouse_connected"]["type"] == "boolean"
     assert old_properties["cdc_lag"]["additionalProperties"] == {"type": "number"}
@@ -585,22 +594,39 @@ def test_health_openapi_verification_is_optional_and_old_contract_stable():
         assert schema["properties"]["cdc_lag_verified"]["additionalProperties"] == {
             "type": "boolean"
         }
-    assert ClickHouseHealthErrorResponseSerializer().fields["cdc_lag_verified"].required is False
+    assert (
+        ClickHouseHealthErrorResponseSerializer().fields["cdc_lag_verified"].required
+        is False
+    )
     operation = contract["paths"]["/api/health/clickhouse/"]["get"]
-    assert operation["responses"]["200"]["schema"]["$ref"] == "#/definitions/ClickHouseHealthResponse"
-    assert operation["responses"]["503"]["schema"]["$ref"] == "#/definitions/ClickHouseHealthErrorResponse"
+    assert (
+        operation["responses"]["200"]["schema"]["$ref"]
+        == "#/definitions/ClickHouseHealthResponse"
+    )
+    assert (
+        operation["responses"]["503"]["schema"]["$ref"]
+        == "#/definitions/ClickHouseHealthErrorResponse"
+    )
 
 
 @pytest.mark.unit
 @pytest.mark.parametrize("mode", ["fresh", "empty", "disabled", "error"])
-def test_health_api_verification_matches_lag_in_all_response_modes(configure, monkeypatch, mode):
+def test_health_api_verification_matches_lag_in_all_response_modes(
+    configure, monkeypatch, mode
+):
     from tracer.views import clickhouse_health
 
-    checker = configure(fake_client(VERIFIED_COLUMNS, parts=[] if mode == "empty" else None))
+    checker = configure(
+        fake_client(VERIFIED_COLUMNS, parts=[] if mode == "empty" else None)
+    )
     if mode == "disabled":
         monkeypatch.setattr(consistency, "is_clickhouse_enabled", lambda: False)
     if mode == "error":
-        monkeypatch.setattr(clickhouse_health, "ConsistencyChecker", Mock(side_effect=RuntimeError("synthetic")))
+        monkeypatch.setattr(
+            clickhouse_health,
+            "ConsistencyChecker",
+            Mock(side_effect=RuntimeError("synthetic")),
+        )
     result = response()
     assert result.status_code == (503 if mode == "error" else 200)
     assert {"clickhouse_connected", "cdc_lag", "routing"} <= result.data.keys()
@@ -614,4 +640,6 @@ def test_health_api_verification_matches_lag_in_all_response_modes(configure, mo
         assert result.data["cdc_lag_verified"] == dict.fromkeys(CDC_TABLES, False)
         assert result.data["cdc_lag"] == dict.fromkeys(CDC_TABLES, -1)
     else:
-        assert checker.get_health_status().cdc_lag_verified == dict.fromkeys(CDC_TABLES, True)
+        assert checker.get_health_status().cdc_lag_verified == dict.fromkeys(
+            CDC_TABLES, True
+        )

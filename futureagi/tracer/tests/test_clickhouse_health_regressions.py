@@ -482,7 +482,9 @@ def test_lag_selects_immutable_names_and_rechecks_complete_inventory(configure):
     health = configure(client).get_health_status()
     assert health.status == "healthy"
     assert health.cdc_lag_verified == {
-        "tracer_trace": True, "trace_session": True, "tracer_eval_logger": False
+        "tracer_trace": True,
+        "trace_session": True,
+        "tracer_eval_logger": False,
     }
     ((sql, params),) = _lag_statements(client)
     assert params["parts0"] == ("202611_1_1_0", "202611_2_3_1")
@@ -499,7 +501,9 @@ def test_lag_selects_immutable_names_and_rechecks_complete_inventory(configure):
 
 @pytest.mark.unit
 @pytest.mark.parametrize("visible", [set(), {"name", "rows"}])
-def test_lag_needs_every_part_column_visible_without_unsafe_small_scan(configure, visible):
+def test_lag_needs_every_part_column_visible_without_unsafe_small_scan(
+    configure, visible
+):
     inventory = dict.fromkeys(health_tests.CDC_TABLES, health_tests.CDC_COLUMNS)
     if visible:
         inventory["system.parts"] = visible
@@ -510,7 +514,9 @@ def test_lag_needs_every_part_column_visible_without_unsafe_small_scan(configure
     assert health.cdc_lag_verified == dict.fromkeys(health_tests.CDC_TABLES, False)
     assert set(health.details["checks"].values()) == {"unverified"}
     assert not _lag_statements(client)
-    assert not any("FROM system.parts" in c.args[0] for c in client.execute_read.call_args_list)
+    assert not any(
+        "FROM system.parts" in c.args[0] for c in client.execute_read.call_args_list
+    )
 
 
 @pytest.mark.unit
@@ -526,7 +532,10 @@ def test_masked_or_partial_read_is_unverified_and_never_retried(configure, count
     assert health.cdc_lag_verified["tracer_trace"] is (count == 100)
     assert (health.cdc_lag["tracer_trace"] >= 0) is (count == 100)
     assert len(_lag_statements(client)) == 1
-    assert all("FROM system.tables" not in c.args[0] for c in client.execute_read.call_args_list)
+    assert all(
+        "FROM system.tables" not in c.args[0]
+        for c in client.execute_read.call_args_list
+    )
 
 
 @pytest.mark.unit
@@ -592,12 +601,20 @@ def test_role_without_part_metadata_never_aggregates_a_large_table(
     health = consistency.ConsistencyChecker().get_health_status()
 
     assert result.status_code == 200
-    assert set(result.data) == {"status", "clickhouse_connected", "cdc_lag", "cdc_lag_verified", "routing"}
+    assert set(result.data) == {
+        "status",
+        "clickhouse_connected",
+        "cdc_lag",
+        "cdc_lag_verified",
+        "routing",
+    }
     assert result.data["status"] == "degraded", result.data
     assert result.data["clickhouse_connected"] is True
     assert result.data["cdc_lag"]["tracer_trace"] == -1
     assert result.data["cdc_lag"] == dict.fromkeys(health_tests.CDC_TABLES, -1)
-    assert result.data["cdc_lag_verified"] == dict.fromkeys(health_tests.CDC_TABLES, False)
+    assert result.data["cdc_lag_verified"] == dict.fromkeys(
+        health_tests.CDC_TABLES, False
+    )
     assert health.details["checks"] == {
         "legacy.tracer_trace": "unsampled",
         "legacy.trace_session": "unverified",
@@ -630,7 +647,9 @@ def test_unknown_lag_never_hides_a_missing_table(configure, monkeypatch):
 @pytest.mark.unit
 @pytest.mark.parametrize("size", [None, 10_000_001])
 @pytest.mark.parametrize("denied", [False, True])
-def test_denied_or_unknown_sizing_preserves_actionable_degradation(configure, size, denied):
+def test_denied_or_unknown_sizing_preserves_actionable_degradation(
+    configure, size, denied
+):
     client = health_tests.fake_client(
         dict.fromkeys(health_tests.CDC_TABLES, health_tests.CDC_COLUMNS),
         table_rows=dict.fromkeys(health_tests.CDC_TABLES, size),
@@ -753,7 +772,9 @@ def test_reachable_but_slow_is_degraded_not_disconnected(configure, stage, error
     assert result.data["clickhouse_connected"] is True, result.data
     assert result.data["status"] == "degraded", result.data
     assert result.data["cdc_lag"] == dict.fromkeys(health_tests.CDC_TABLES, -1)
-    assert result.data["cdc_lag_verified"] == dict.fromkeys(health_tests.CDC_TABLES, False)
+    assert result.data["cdc_lag_verified"] == dict.fromkeys(
+        health_tests.CDC_TABLES, False
+    )
 
 
 @pytest.mark.unit
@@ -924,12 +945,18 @@ def test_slow_reachable_clickhouse_is_connected_and_costs_few_round_trips(
 @pytest.mark.unit
 @pytest.mark.parametrize("native", [False, True])
 @pytest.mark.parametrize("fresh", [False, True])
-def test_repair_and_fresh_samples_never_verify_oversized_coverage(configure, native, fresh):
+def test_repair_and_fresh_samples_never_verify_oversized_coverage(
+    configure, native, fresh
+):
     """Part age and even a fresh prefix cannot prove the global maximum."""
     inventory = (
-        {**health_tests.NATIVE_COLUMNS, "tracer_eval_logger": health_tests.CDC_COLUMNS,
-         "system.parts": PART_COLUMNS}
-        if native else SAMPLED_INVENTORY
+        {
+            **health_tests.NATIVE_COLUMNS,
+            "tracer_eval_logger": health_tests.CDC_COLUMNS,
+            "system.parts": PART_COLUMNS,
+        }
+        if native
+        else SAMPLED_INVENTORY
     )
     tables = ("tracer_eval_logger",) if native else health_tests.CDC_TABLES
     client = health_tests.fake_client(
@@ -937,24 +964,33 @@ def test_repair_and_fresh_samples_never_verify_oversized_coverage(configure, nat
         sample=(100, datetime.now(UTC) - timedelta(seconds=5 if fresh else 600)),
         parts=[(table, "202611_1_9_2", 12_000_000) for table in tables],
     )
-    checker = (configure(health_tests.fake_client({}), client, retired=True)
-               if native else configure(client))
+    checker = (
+        configure(health_tests.fake_client({}), client, retired=True)
+        if native
+        else configure(client)
+    )
     health = checker.get_health_status()
     assert health.status == "healthy"
     assert health.cdc_lag == dict.fromkeys(tables, -1)
     assert health.cdc_lag_verified == dict.fromkeys(tables, False)
     assert set(health.details["checks"].values()) <= {"ready", "unverified"}
     assert not _lag_statements(client)
-    assert not any("modification_time" in c.args[0] for c in client.execute_read.call_args_list)
+    assert not any(
+        "modification_time" in c.args[0] for c in client.execute_read.call_args_list
+    )
     assert checker.get_cdc_lag() == dict.fromkeys(tables, -1)
 
 
 @pytest.mark.unit
-def test_small_stale_partition_before_oversized_fresh_partition_is_unverified(configure):
+def test_small_stale_partition_before_oversized_fresh_partition_is_unverified(
+    configure,
+):
     client = health_tests.fake_client(
         SAMPLED_INVENTORY,
-        parts=[("tracer_trace", "202610_1_2_1", 100),
-               ("tracer_trace", "202611_3_4_1", 12_000_000)],
+        parts=[
+            ("tracer_trace", "202610_1_2_1", 100),
+            ("tracer_trace", "202611_3_4_1", 12_000_000),
+        ],
         sample=(100, datetime.now(UTC) - timedelta(minutes=10)),
     )
     health = configure(client).get_health_status()
@@ -988,7 +1024,9 @@ def test_complete_coverage_verifies_source_lag_not_part_age(configure, part, fre
 
 @pytest.mark.unit
 @pytest.mark.parametrize("fresh", [False, True])
-def test_truncated_inventory_cannot_verify_even_fresh_samples(configure, monkeypatch, fresh):
+def test_truncated_inventory_cannot_verify_even_fresh_samples(
+    configure, monkeypatch, fresh
+):
     from tracer.services.clickhouse import consistency
 
     monkeypatch.setattr(consistency.ConsistencyChecker, "LAG_SAMPLE_MAX_PARTS", 2)
@@ -1005,12 +1043,15 @@ def test_truncated_inventory_cannot_verify_even_fresh_samples(configure, monkeyp
 
 
 @pytest.mark.unit
-@pytest.mark.parametrize("change", ["insert", "merge", "mutation", "truncate", "timeout", "denied"])
+@pytest.mark.parametrize(
+    "change", ["insert", "merge", "mutation", "truncate", "timeout", "denied"]
+)
 def test_coverage_recheck_rejects_changed_inventory(configure, change):
     from clickhouse_driver.errors import ServerException
 
     client = health_tests.fake_client(
-        SAMPLED_INVENTORY, parts=[("tracer_trace", "all_1_1_0", 100)],
+        SAMPLED_INVENTORY,
+        parts=[("tracer_trace", "all_1_1_0", 100)],
     )
     read = client.execute_read.side_effect
     inventories = 0
@@ -1038,7 +1079,9 @@ def test_coverage_recheck_rejects_changed_inventory(configure, change):
     assert inventories == 2
     assert health.cdc_lag["tracer_trace"] == -1
     assert health.cdc_lag_verified["tracer_trace"] is False
-    assert health.status == ("degraded" if change in ("timeout", "denied") else "healthy")
+    assert health.status == (
+        "degraded" if change in ("timeout", "denied") else "healthy"
+    )
     ((sql, params),) = _lag_statements(client)
     assert params["parts0"] == ("all_1_1_0",)
     assert "LIMIT" not in sql
@@ -1047,16 +1090,23 @@ def test_coverage_recheck_rejects_changed_inventory(configure, change):
 @pytest.mark.unit
 @pytest.mark.parametrize("unknown_role", ["legacy", "native"])
 @pytest.mark.parametrize("unknown", ["oversized", "empty", "timeout"])
-def test_any_unverified_destination_wins_over_verified_lag(configure, settings, unknown_role, unknown):
+def test_any_unverified_destination_wins_over_verified_lag(
+    configure, settings, unknown_role, unknown
+):
     settings.CLICKHOUSE_V2 = {"QUERY_TYPES_V2_ONLY": "TRACE_LIST"}
     legacy = health_tests.fake_client(SAMPLED_INVENTORY)
-    native_columns = {**health_tests.NATIVE_COLUMNS, "tracer_eval_logger": health_tests.CDC_COLUMNS,
-                      "system.parts": PART_COLUMNS}
+    native_columns = {
+        **health_tests.NATIVE_COLUMNS,
+        "tracer_eval_logger": health_tests.CDC_COLUMNS,
+        "system.parts": PART_COLUMNS,
+    }
     native = health_tests.fake_client(native_columns)
     columns = SAMPLED_INVENTORY if unknown_role == "legacy" else native_columns
     altered = health_tests.fake_client(
         columns,
-        parts=[] if unknown == "empty" else [("tracer_eval_logger", "all_1_9_2", 12_000_000)],
+        parts=[]
+        if unknown == "empty"
+        else [("tracer_eval_logger", "all_1_9_2", 12_000_000)],
     )
     if unknown == "timeout":
         altered = health_tests.fake_client(columns)
@@ -1083,8 +1133,11 @@ def test_verified_mixed_destinations_report_worst_complete_lag(configure, settin
     settings.CLICKHOUSE_V2 = {"QUERY_TYPES_V2_ONLY": "TRACE_LIST"}
     legacy = health_tests.fake_client(SAMPLED_INVENTORY)
     native = health_tests.fake_client(
-        {**health_tests.NATIVE_COLUMNS, "tracer_eval_logger": health_tests.CDC_COLUMNS,
-         "system.parts": PART_COLUMNS},
+        {
+            **health_tests.NATIVE_COLUMNS,
+            "tracer_eval_logger": health_tests.CDC_COLUMNS,
+            "system.parts": PART_COLUMNS,
+        },
         sample=(1, datetime.now(UTC) - timedelta(minutes=10)),
     )
     health = configure(legacy, native).get_health_status()
