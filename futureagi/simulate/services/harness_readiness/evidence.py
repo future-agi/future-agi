@@ -7,9 +7,10 @@ version's build certificate, measured with the agent it was built with.
 from __future__ import annotations
 
 import hashlib
+import json
 import time
 from collections.abc import Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 import structlog
@@ -392,7 +393,10 @@ def _tool_discovery(evidence: Evidence) -> Reading:
     return Reading("not_run", evidence=seen)
 
 
-def _tool_routing(evidence: Evidence) -> Reading:
+def _tool_routing(evidence: Evidence, in_run: RoutedInRun | None = None) -> Reading:
+    """``in_run`` are the tools the pairing's newest finished run recorded reaching
+    the test world, read only when the certificate keeps no routing record (a voice
+    check places no call)."""
     seen = _check_list(evidence.checks, "action_behavior")
     ratio = _ratio(evidence.checks.get("action_behavior"))
     failed = _actions(evidence, "failed")
@@ -408,6 +412,18 @@ def _tool_routing(evidence: Evidence) -> Reading:
             targets("action", failed, "failed"),
             seen,
         )
+    if in_run is not None and in_run.tools:
+        evidence = replace(
+            evidence,
+            routed=[{"tool": name, "routed": True} for name in in_run.tools],
+        )
+        seen = [
+            *seen,
+            {
+                "check": "tools_routed_in_run",
+                "result": f"{in_run.ordinal}: " + ", ".join(in_run.tools),
+            },
+        ]
     # Routing is read only from what the test world itself received in qualification. A
     # probe that passed is the harness calling the tool, not the agent's call reaching it.
     routed = _routed(evidence, True)
@@ -607,16 +623,115 @@ def _cancel(pairing: Pairing) -> Reading:
     )
 
 
+@dataclass(frozen=True)
+class RoutedInRun:
+    """The tools one finished run of the pairing recorded reaching the test world, and
+    that run's number among the environment's runs."""
+
+    tools: list[str]
+    ordinal: int
+
+
+# A run's tool trace is read up to this size, and kept by its content digest.
+_MAX_TRACE_BYTES = 2 * 1024 * 1024
+_TRACE_TTL_SECONDS = 7 * 24 * 3600
+
+
+def routed_from_runs(pairing: Pairing) -> RoutedInRun | None:
+    """The tools the newest finished run of this exact pairing (its agent, environment
+    and suite versions) recorded with an outcome in its tool calls, any outcome;
+    ``None`` without such a run or call."""
+    if pairing.agent_version is None:
+        return None
+    runs = HostedHarnessJob.no_workspace_objects.filter(
+        environment_id=pairing.environment.id,
+        test_execution_id__isnull=False,
+        # A validation job never ran the agent's cases; its key is set only on them.
+        payload__metadata__certify_only__isnull=True,
+    )
+    run = (
+        runs.filter(
+            agent_version_id=pairing.agent_version.id,
+            environment_version_id=pairing.environment_version.id,
+            suite_version_id=pairing.suite_version.id,
+            state=HostedHarnessJob.State.COMPLETED,
+        )
+        .order_by("-created_at")
+        .first()
+    )
+    if run is None:
+        return None
+    tools: set[str] = set()
+    for artifact in HostedHarnessArtifact.no_workspace_objects.filter(
+        job=run, kind="tool_trace"
+    ):
+        tools.update(_traced_tools(artifact.sha256, artifact.object_key))
+    if not tools:
+        return None
+    ordinal = runs.filter(created_at__lte=run.created_at).count()
+    return RoutedInRun(sorted(tools), ordinal)
+
+
+def _traced_tools(sha256: str, object_key: str) -> list[str]:
+    """The tools a run's tool trace (one JSON call per line) recorded an outcome for;
+    a trace that cannot be read records none."""
+    cache_key = f"harness-readiness-trace:{sha256}"
+    cached: list[str] | None = cache.get(cache_key)
+    if cached is not None:
+        return cached
+    try:
+        body = _read_trace(object_key)
+    except Exception as exc:  # noqa: BLE001 - storage or network: nothing is shown
+        logger.warning(
+            "harness_readiness_trace_unreadable",
+            object_key=object_key,
+            error=type(exc).__name__,
+        )
+        return []
+    found: set[str] = set()
+    for line in body[:_MAX_TRACE_BYTES].decode("utf-8", "replace").splitlines():
+        try:
+            call = json.loads(line)
+        except ValueError:
+            continue
+        if not isinstance(call, Mapping):
+            continue
+        name = str(call.get("name") or call.get("tool") or "")
+        if name and ("output" in call or call.get("is_error") is not None):
+            found.add(name)
+    tools = sorted(found)
+    cache.set(cache_key, tools, timeout=_TRACE_TTL_SECONDS)
+    return tools
+
+
+def _read_trace(object_key: str) -> bytes:
+    from tfc.settings.settings import UPLOAD_BUCKET_NAME
+    from tfc.utils.storage_client import get_storage_client
+
+    response = get_storage_client().get_object(UPLOAD_BUCKET_NAME, object_key)
+    try:
+        return response.read(_MAX_TRACE_BYTES)
+    finally:
+        response.close()
+        response.release_conn()
+
+
 def readings(pairing: Pairing, evidence: Evidence) -> dict[str, Reading]:
     """What the certificate says about each measured row; ``cancel`` reads the agent
-    version's last Stop instead."""
+    version's last Stop instead, and tool routing the pairing's runs when the
+    certificate keeps no routing record."""
     checks = evidence.checks
+    in_run = (
+        routed_from_runs(pairing)
+        if not evidence.routed and not evidence.unobserved
+        else None
+    )
     return {
         "cancel": _cancel(pairing),
         "start": _start(evidence),
         "message": _single(checks, "chat_ingress", "message_failed"),
         "tool_discovery": _tool_discovery(evidence),
-        "tool_routing": _tool_routing(evidence),
+        "tool_routing": _tool_routing(evidence, in_run),
         "state": _single(checks, "schema_and_seed", "state_failed"),
         "reset": _reset(evidence, pairing.runtime),
     }
