@@ -17,6 +17,7 @@ from datetime import UTC, datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
+import jwt
 import pytest
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
@@ -24,13 +25,12 @@ from cryptography.hazmat.primitives.asymmetric import padding, rsa
 from django.core.cache import cache
 from django.urls import reverse
 from django.utils.http import urlsafe_base64_decode
-from jose import jwt
 from rest_framework.test import APIClient
 
 from accounts.models.auth_token import AuthToken
 from accounts.models.organization import Organization
 from accounts.models.user import User
-from saml2_auth import views
+from saml2_auth import google_oauth, views
 
 CLIENT_ID = "synthetic-google-client"
 CODE = "synthetic-authorization-code-marker"
@@ -541,6 +541,55 @@ def test_google_callback_refuses_other_signing_algorithms(
     client, response = _callback()
     _assert_denied(client, response, before)
     assert User.objects.count() == users
+
+
+def _unit_claims():
+    now = int(time.time())
+    return {
+        "iss": "https://accounts.google.com",
+        "aud": CLIENT_ID,
+        "sub": CLAIM_MARKER,
+        "iat": now,
+        "exp": now + 300,
+    }
+
+
+@pytest.mark.parametrize("algorithm", OTHER_ALGORITHMS)
+def test_google_decode_accepts_only_rs256_whatever_the_header_says(
+    signing_keys, algorithm
+):
+    # The decode step alone, without the callback's header pre-check: the
+    # algorithm comes from the verifier, never from the token.
+    private, public = signing_keys[0]
+    token = _other_algorithm_token(private, _unit_claims(), algorithm)
+    with pytest.raises(jwt.InvalidTokenError):
+        google_oauth._decode_claims(token, public, CLIENT_ID)
+
+
+def test_google_decode_verifies_rs256_with_the_published_key(signing_keys):
+    private, public = signing_keys[0]
+    claims = _unit_claims()
+    token = jwt.encode(claims, private, algorithm="RS256", headers={"kid": "current"})
+    assert google_oauth._decode_claims(token, public, CLIENT_ID) == claims
+    with pytest.raises(jwt.InvalidTokenError):
+        google_oauth._decode_claims(token, signing_keys[1][1], CLIENT_ID)
+
+
+@pytest.mark.parametrize(
+    "key",
+    [
+        {"kty": "RSA", "kid": "current"},
+        {"kty": "oct", "kid": "current", "k": "c3ludGhldGlj"},
+    ],
+    ids=["rsa-without-modulus", "symmetric"],
+)
+def test_google_decode_refuses_unusable_signing_key(signing_keys, key):
+    private, _ = signing_keys[0]
+    token = jwt.encode(
+        _unit_claims(), private, algorithm="RS256", headers={"kid": "current"}
+    )
+    with pytest.raises(jwt.InvalidTokenError):
+        google_oauth._decode_claims(token, key, CLIENT_ID)
 
 
 @pytest.mark.django_db
