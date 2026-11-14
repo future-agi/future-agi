@@ -390,11 +390,8 @@ class GraphDataConsumer(DataConsumer):
                         FROM tracer_custom_eval_config tcec
                         WHERE tcec.id = %s;"""
             name = await self.fetch_raw_data(name_q, [self.eval_id])
-            evaluations = {
-                self.eval_id: {"name": "", "data": [{"name": name[0], "value": []}]}
-            }
-        else:
-            evaluations = {}
+
+        evaluations = {}
 
         primary_traffic = None
         if hasattr(self, "graph") and self.graph in ["trace", "span"]:
@@ -407,11 +404,8 @@ class GraphDataConsumer(DataConsumer):
                 timestamp, config_id, metrics, name = row
             config_id_str = str(config_id)
 
-            if self.eval_id:
-                if config_id_str != self.eval_id:
-                    continue
-                else:
-                    evaluations[config_id_str] = {"name": name, "data": []}
+            if self.eval_id and config_id_str != self.eval_id:
+                continue
 
             if config_id_str not in evaluations:
                 evaluations[config_id_str] = {"name": name, "data": []}
@@ -454,6 +448,12 @@ class GraphDataConsumer(DataConsumer):
                         )
                     else:
                         choice_entry["value"].append(value_entry)
+
+        if self.eval_id and self.eval_id not in evaluations:
+            evaluations[self.eval_id] = {
+                "name": "",
+                "data": [{"name": name[0], "value": []}],
+            }
 
         if self.property:
             for _config_id, eval_data in evaluations.items():
