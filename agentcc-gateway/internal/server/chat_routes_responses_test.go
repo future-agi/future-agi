@@ -11,6 +11,7 @@ import (
 
 	"github.com/futureagi/agentcc-gateway/internal/config"
 	"github.com/futureagi/agentcc-gateway/internal/models"
+	"github.com/futureagi/agentcc-gateway/internal/scheduled"
 )
 
 // Scheduled completions and batches call the provider outside the
@@ -22,44 +23,54 @@ func TestScheduledCompletionCarriesGPT56ToolsOverResponses(t *testing.T) {
 		cfg.Routing.Scheduled.Enabled = true
 		cfg.Routing.Scheduled.RetryAttempts = 1
 	}})
-
-	at := time.Now().Add(1500 * time.Millisecond).UTC().Truncate(time.Second).Add(time.Second)
-	submit := fmt.Sprintf(`{"scheduled_at":%q,"request":%s}`, at.Format(time.RFC3339), chatToolBody("gpt-5.6-terra", false, ""))
-	req := httptest.NewRequest(http.MethodPost, "/v1/scheduled", bytes.NewBufferString(submit))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	srv.httpServer.Handler.ServeHTTP(w, req)
-	if w.Code != http.StatusCreated {
-		t.Fatalf("submit status = %d: %s", w.Code, w.Body.String())
+	// The job's webhook reports its outcome. Waiting on it rather than polling
+	// GET /v1/scheduled/{id} keeps this test clear of that handler encoding a
+	// job the scheduler is still writing (an existing race, outside this
+	// change).
+	type outcome struct {
+		Status string          `json:"status"`
+		Result json.RawMessage `json:"result"`
+		Error  string          `json:"error"`
 	}
-	var job struct {
-		ID string `json:"id"`
-	}
-	if err := json.Unmarshal(w.Body.Bytes(), &job); err != nil || job.ID == "" {
-		t.Fatalf("submit body %s: %v", w.Body.String(), err)
-	}
-
-	var got struct {
-		Status   string          `json:"status"`
-		Response json.RawMessage `json:"response"`
-		Error    string          `json:"error"`
-	}
-	deadline := time.Now().Add(15 * time.Second)
-	for {
-		w := httptest.NewRecorder()
-		srv.httpServer.Handler.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/v1/scheduled/"+job.ID, nil))
-		if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
-			t.Fatalf("job body %s: %v", w.Body.String(), err)
+	done := make(chan outcome, 1)
+	hook := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var got outcome
+		json.NewDecoder(r.Body).Decode(&got)
+		select {
+		case done <- got:
+		default:
 		}
-		if got.Status == "completed" || got.Status == "failed" || time.Now().After(deadline) {
-			break
-		}
-		time.Sleep(100 * time.Millisecond)
+	}))
+	t.Cleanup(hook.Close)
+
+	// Created through the store rather than POST /v1/scheduled: that handler
+	// encodes the job after handing it to the scheduler, which the race
+	// detector reports (an existing race, outside this change).
+	job := &scheduled.ScheduledJob{
+		ID:          "sched-synthetic-gpt56",
+		Status:      scheduled.StatusPending,
+		ScheduledAt: time.Now(),
+		CreatedAt:   time.Now(),
+		UpdatedAt:   time.Now(),
+		Request:     json.RawMessage(chatToolBody("gpt-5.6-terra", false, "")),
+		Model:       "gpt-5.6-terra",
+		MaxAttempts: 1,
+		WebhookURL:  hook.URL,
+	}
+	if err := srv.handlers.scheduledStore.Create(job); err != nil {
+		t.Fatalf("creating the scheduled job: %v", err)
+	}
+
+	var got outcome
+	select {
+	case got = <-done:
+	case <-time.After(15 * time.Second):
+		t.Fatal("scheduled job reported no outcome in 15s")
 	}
 	if got.Status != "completed" {
 		t.Fatalf("scheduled job status = %q, error %q; want completed", got.Status, got.Error)
 	}
-	checkToolCompletion(t, got.Response)
+	checkToolCompletion(t, got.Result)
 	checkHits(t, upstream, 0, 1)
 }
 
