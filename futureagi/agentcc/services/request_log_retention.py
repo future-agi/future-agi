@@ -10,6 +10,14 @@ retention is never shorter than the longest budget period in use, and every
 run also keeps the current period of every budget, whatever the retention
 says. A ``total`` budget needs every row, so its organization keeps them all.
 
+Budgets are read as the gateway gets them: config push's transform, the
+contract's camelCase aliases (``orgLimit``, ``perModel``, ...) and the
+gateway's period rules (an empty period takes ``default_period``, then
+monthly; a period the gateway does not know counts as monthly). Budgets in
+the gateway's own YAML are invisible here, and the gateway seeds them from
+the current month by default, so every run also keeps the current UTC month
+unless AGENTCC_GATEWAY_YAML_HAS_NO_BUDGETS says there are none.
+
 The purge deletes in short batches, each its own transaction with a lock
 timeout. A batch locks only the rows it deletes and skips rows another
 transaction holds, so it never blocks the inserts of log ingest. Soft-deleted
@@ -20,7 +28,9 @@ import time
 from datetime import UTC, datetime, timedelta
 
 import structlog
+from django.conf import settings
 from django.db import DatabaseError, connections, transaction
+from django.db.models import F
 from django.utils import timezone
 
 from agentcc.models import AgentccOrgConfig, AgentccRequestLogRetention
@@ -84,18 +94,56 @@ _PURGE_SQL = {
 }
 
 
+# The contract's camelCase aliases (agentcc/contracts/gateway_admin.py).
+_BUDGET_ALIASES = {
+    "orgLimit": "org_limit",
+    "orgPeriod": "org_period",
+    "defaultPeriod": "default_period",
+    "hardLimit": "hard_limit",
+    "perModel": "per_model",
+}
+
+
+def _snake_case(entry):
+    """``entry`` with the contract's camelCase keys under their snake_case
+    names; a snake_case key already present wins, as in the contract."""
+    if not isinstance(entry, dict):
+        return entry
+    result = dict(entry)
+    for alias, name in _BUDGET_ALIASES.items():
+        if alias in result:
+            value = result.pop(alias)
+            result.setdefault(name, value)
+    return result
+
+
+def _gateway_budgets(budgets):
+    """The budgets as config push sends them to the gateway."""
+    from agentcc.services.config_push import _transform_budgets
+
+    budgets = _snake_case(budgets)
+    for level in ("organization", "org", "teams", "users", "keys", "tags"):
+        entries = budgets.get(level)
+        if level in ("organization", "org"):
+            budgets[level] = _snake_case(entries)
+        elif isinstance(entries, dict):
+            budgets[level] = {name: _snake_case(e) for name, e in entries.items()}
+    return _transform_budgets(budgets)
+
+
 def budget_periods(budgets):
     """The periods of every budget with a positive limit in ``budgets``.
 
     A budget without a period of its own takes ``default_period``, then the
-    gateway's default, monthly. ``enabled: false`` turns them all off.
+    gateway's default, monthly; a period string the gateway does not know
+    counts as monthly, as the gateway's PeriodStart does. ``enabled: false``
+    turns them all off.
     """
     if not isinstance(budgets, dict) or budgets.get("enabled") is False:
         return set()
-    default = budgets.get("default_period") or budgets.get("defaultPeriod")
-    if default not in BUDGET_PERIODS:
-        default = DEFAULT_BUDGET_PERIOD
-    org_period = budgets.get("org_period") or budgets.get("orgPeriod")
+    budgets = _gateway_budgets(budgets)
+    default = budgets.get("default_period") or DEFAULT_BUDGET_PERIOD
+    org_period = budgets.get("org_period")
     periods = set()
 
     def add(limit, period):
@@ -104,7 +152,8 @@ def budget_periods(budgets):
                 return
         except (TypeError, ValueError):
             return
-        periods.add(period if period in BUDGET_PERIODS else default)
+        period = period or default
+        periods.add(period if period in BUDGET_PERIODS else DEFAULT_BUDGET_PERIOD)
 
     org_limit = budgets.get("org_limit")
     if isinstance(org_limit, dict):
@@ -171,13 +220,17 @@ def effective_cutoff(retention_days, budgets, now=None):
     """The time before which rows are deleted, or None to delete nothing.
 
     The retention's own cutoff, moved back to the start of the current period
-    of every budget in use, so no budget loses a row it counts.
+    of every budget in use, so no budget loses a row it counts; and to the
+    start of the current UTC month, for the budgets of the gateway's own YAML,
+    unless AGENTCC_GATEWAY_YAML_HAS_NO_BUDGETS says it has none.
     """
     if not retention_days:
         return None
     periods = budget_periods(budgets)
     if "total" in periods:
         return None
+    if not settings.AGENTCC_GATEWAY_YAML_HAS_NO_BUDGETS:
+        periods = periods | {DEFAULT_BUDGET_PERIOD}
     now = now or timezone.now()
     cutoff = now - timedelta(days=retention_days)
     for period in periods:
@@ -292,7 +345,11 @@ def run_retention(organization_id=None, *, dry_run=False, now=None):
     run_ends = time.monotonic() + RUN_TIME_BUDGET_SECONDS
     rows = AgentccRequestLogRetention.no_workspace_objects.filter(
         retention_days__isnull=False
-    ).order_by("last_run_finished_at", "created_at")
+    ).order_by(
+        # Never-run organizations first: PostgreSQL sorts NULL last otherwise.
+        F("last_run_finished_at").asc(nulls_first=True),
+        "created_at",
+    )
     if organization_id:
         rows = rows.filter(organization_id=organization_id)
 

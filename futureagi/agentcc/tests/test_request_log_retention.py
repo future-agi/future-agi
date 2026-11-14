@@ -25,6 +25,16 @@ from tfc.constants.roles import OrganizationRoles
 
 URL = "/agentcc/request-log-retention/"
 LOGS = AgentccRequestLog.all_objects
+NOW = datetime(2026, 11, 14, 5, 0, tzinfo=UTC)
+MONTH_START = datetime(2026, 11, 1, tzinfo=UTC)
+
+
+@pytest.fixture(autouse=True)
+def _gateway_yaml_without_budgets(settings):
+    """Most tests are about org-config budgets: the operator states the
+    gateway YAML has none, so the default current-month clamp is off. The
+    tests of that clamp turn it back on."""
+    settings.AGENTCC_GATEWAY_YAML_HAS_NO_BUDGETS = True
 
 
 @pytest.mark.parametrize(
@@ -64,6 +74,17 @@ LOGS = AgentccRequestLog.all_objects
         ),
         ({"org_limit": 10, "org_period": "total"}, "forever"),
         ({"hard_limit": True, "org_limit": 10, "org_period": "daily"}, 1),
+        # the contract's camelCase aliases, which the gateway enforces
+        ({"enabled": True, "orgLimit": 500, "orgPeriod": "monthly"}, 31),
+        ({"orgLimit": 10, "orgPeriod": "daily"}, 1),
+        ({"orgLimit": 10, "defaultPeriod": "weekly"}, 7),
+        ({"orgLimit": 10, "hardLimit": True, "orgPeriod": "weekly"}, 7),
+        ({"keys": {"k": {"perModel": {"gpt-4o": 2}, "period": "weekly"}}}, 7),
+        ({"teams": {"t": {"perModel": {"gpt-4o": 0}, "period": "weekly"}}}, None),
+        # a period the gateway does not know counts as monthly, as in Go
+        ({"org_limit": 100, "org_period": "month", "default_period": "daily"}, 31),
+        ({"org_limit": 1, "default_period": "fortnightly"}, 31),
+        ({"users": {"u": {"limit": 1, "period": "yearly"}}}, 31),
     ],
 )
 def test_budget_retention_floor(budgets, floor):
@@ -86,6 +107,40 @@ def test_the_cutoff_keeps_the_current_month_under_a_monthly_budget():
     )
 
 
+def test_a_camel_case_budget_keeps_its_period():
+    budgets = {"enabled": True, "orgLimit": 500, "orgPeriod": "monthly"}
+
+    assert retention.effective_cutoff(1, budgets, now=NOW) == MONTH_START
+
+
+def test_by_default_the_gateways_own_month_is_kept(settings):
+    # Budgets in the gateway YAML are seeded from the current month.
+    settings.AGENTCC_GATEWAY_YAML_HAS_NO_BUDGETS = False
+
+    assert retention.effective_cutoff(1, {}, now=NOW) == MONTH_START
+    daily = {"org_limit": 1, "org_period": "daily"}
+    assert retention.effective_cutoff(1, daily, now=NOW) == MONTH_START
+    # A longer retention is untouched.
+    assert retention.effective_cutoff(60, {}, now=NOW) == NOW - timedelta(days=60)
+
+    settings.AGENTCC_GATEWAY_YAML_HAS_NO_BUDGETS = True
+    assert retention.effective_cutoff(1, {}, now=NOW) == NOW - timedelta(days=1)
+
+
+def test_the_gateway_yaml_setting_is_read_from_the_environment(monkeypatch):
+    from django.core.exceptions import ImproperlyConfigured
+
+    from tfc.settings import agentcc_request_logs
+
+    monkeypatch.delenv("AGENTCC_GATEWAY_YAML_HAS_NO_BUDGETS", raising=False)
+    assert agentcc_request_logs._boolean("AGENTCC_GATEWAY_YAML_HAS_NO_BUDGETS") is False
+    monkeypatch.setenv("AGENTCC_GATEWAY_YAML_HAS_NO_BUDGETS", "true")
+    assert agentcc_request_logs._boolean("AGENTCC_GATEWAY_YAML_HAS_NO_BUDGETS") is True
+    monkeypatch.setenv("AGENTCC_GATEWAY_YAML_HAS_NO_BUDGETS", "maybe")
+    with pytest.raises(ImproperlyConfigured):
+        agentcc_request_logs._boolean("AGENTCC_GATEWAY_YAML_HAS_NO_BUDGETS")
+
+
 def test_next_run_is_the_next_three_oclock_utc():
     assert retention.next_run_at(datetime(2026, 11, 14, 2, 59, tzinfo=UTC)) == datetime(
         2026, 11, 14, 3, tzinfo=UTC
@@ -95,14 +150,15 @@ def test_next_run_is_the_next_three_oclock_utc():
     )
 
 
-def _log(org, age, *, deleted=False, started=True):
+def _log(org, age, *, deleted=False, started=True, now=None):
+    now = now or timezone.now()
     row = AgentccRequestLog.no_workspace_objects.create(
         organization=org,
         request_id=f"r-{uuid.uuid4().hex[:10]}",
         model="gpt-4o",
-        started_at=timezone.now() - age if started else None,
+        started_at=now - age if started else None,
     )
-    LOGS.filter(pk=row.pk).update(created_at=timezone.now() - age, deleted=deleted)
+    LOGS.filter(pk=row.pk).update(created_at=now - age, deleted=deleted)
     return row
 
 
@@ -227,27 +283,60 @@ class TestPurge:
         assert result["skipped"] == "total budget"
         assert _ids(organization) == {old.pk}
 
+    @pytest.mark.parametrize(
+        "budgets",
+        [
+            {"org_limit": 100, "org_period": "monthly"},
+            {"enabled": True, "orgLimit": 500, "orgPeriod": "monthly"},
+        ],
+    )
     def test_a_monthly_budget_keeps_this_months_rows_with_one_day_retention(
-        self, organization
+        self, organization, budgets
     ):
+        # A fixed mid-month "now": on the 1st, now - 1 day is already last
+        # month, and the test could not tell the clamp from no clamp.
         AgentccOrgConfig.no_workspace_objects.create(
-            organization=organization,
-            version=1,
-            is_active=True,
-            budgets={"org_limit": 100, "org_period": "monthly"},
+            organization=organization, version=1, is_active=True, budgets=budgets
         )
         _keep(organization, 1)
-        now = timezone.now()
-        month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
         this_month = _log(
-            organization, max(now - month_start - timedelta(seconds=30), timedelta(0))
+            organization, NOW - datetime(2026, 11, 10, tzinfo=UTC), now=NOW
         )
-        last_month = _log(organization, now - month_start + timedelta(days=1))
+        last_month = _log(
+            organization, NOW - datetime(2026, 10, 30, tzinfo=UTC), now=NOW
+        )
 
-        retention.run_retention()
+        retention.run_retention(now=NOW)
 
         assert _ids(organization) == {this_month.pk}
         assert last_month.pk not in _ids(organization)
+
+    def test_by_default_a_run_keeps_the_current_month(self, organization, settings):
+        settings.AGENTCC_GATEWAY_YAML_HAS_NO_BUDGETS = False
+        _keep(organization, 1)
+        this_month = _log(
+            organization, NOW - datetime(2026, 11, 3, tzinfo=UTC), now=NOW
+        )
+        _log(organization, NOW - datetime(2026, 10, 20, tzinfo=UTC), now=NOW)
+
+        (result,) = retention.run_retention(now=NOW)
+
+        assert result["cutoff"] == MONTH_START.isoformat()
+        assert _ids(organization) == {this_month.pk}
+
+    def test_organizations_never_run_go_first(self, organization, other_org):
+        ran = _keep(other_org, 30)
+        AgentccRequestLogRetention.all_objects.filter(pk=ran.pk).update(
+            last_run_finished_at=NOW - timedelta(days=1)
+        )
+        _keep(organization, 30)
+
+        results = retention.run_retention(dry_run=True, now=NOW)
+
+        assert [r["organization_id"] for r in results] == [
+            str(organization.id),
+            str(other_org.id),
+        ]
 
     def test_without_any_retention_row_nothing_is_deleted(
         self, organization, other_org

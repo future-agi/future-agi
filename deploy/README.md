@@ -452,6 +452,22 @@ server {
 }
 ```
 
+## Gateway Request Logs retention
+
+An organization admin sets how many days of gateway Request Logs to keep in
+Gateway → Settings; a daily run at 03:00 UTC deletes older rows. The gateway
+seeds its budget counters from these rows when it starts, so every run keeps:
+
+- the current period of each budget in the organization's gateway config (a
+  `total` budget keeps every row), and
+- the whole current UTC calendar month, for budgets defined in the gateway's
+  own YAML config, whose default period is monthly and which the app cannot
+  read. Set `AGENTCC_GATEWAY_YAML_HAS_NO_BUDGETS=true` on the backend and
+  worker only when the gateway YAML has no `budgets` section.
+
+A gateway YAML budget with a `weekly` or `daily` period is covered by the
+current month; one with period `total` needs Request Logs kept forever.
+
 ## Gateway webhook events: housekeeping
 
 The `agentcc_webhook_event` table retains gateway outbound webhook history.
