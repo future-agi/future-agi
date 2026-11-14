@@ -536,7 +536,9 @@ test('workflow opt-in is dispatch-only, validates before builds, follows the unc
   assert.deepEqual(inputs.stack.options, ['distributed', 'standalone']);
   assert.equal(inputs.host_update_fallibility.type, 'boolean');
   assert.equal(inputs.host_update_fallibility.default, false);
-  assert.deepEqual(workflow.on.pull_request.branches, ['dev', 'main']);
+  // PRs into any base branch, stacked feature-branch PRs included.
+  assert.ok('pull_request' in workflow.on);
+  assert.equal(workflow.on.pull_request?.branches, undefined);
   assert.deepEqual(workflow.on.push.branches, ['dev', 'main']);
   assert.deepEqual(workflow.on.schedule, [{ cron: '37 2 * * *' }]);
   const validation = workflow.jobs.changes.steps[0];
@@ -582,11 +584,11 @@ test('workflow opt-in is dispatch-only, validates before builds, follows the unc
   assert.deepEqual(workflow.jobs.e2e.permissions, { contents: 'read', packages: 'write' });
   assert.equal(Object.values(workflow.jobs).filter(job => job.permissions).length, 2);
   const builds = steps.filter(step => step.uses === 'docker/build-push-action@v5');
-  assert.equal(builds.length, 4);
+  assert.equal(builds.length, 5);
   for (const step of builds) {
     assert.equal(step.with.push, undefined);
     assert.equal(step.with.load, true);
-    assert.match(step.with['cache-to'], /^\$\{\{ github.event_name == 'push' && format\('type=registry,ref=\{0\}:(backend|fi-collector|frontend|gateway),mode=max', env.CACHE_REPO\) \|\| '' \}\}$/);
+    assert.match(step.with['cache-to'], /^\$\{\{ github.event_name == 'push' && format\('type=registry,ref=\{0\}:(backend|fi-collector|frontend|gateway|code-executor),mode=max', env.CACHE_REPO\) \|\| '' \}\}$/);
   }
   assert.equal(steps.find(step => step.name === 'Save Playwright browser cache').if,
     "github.event_name == 'push' && steps.pw-cache.outputs.cache-hit != 'true'");

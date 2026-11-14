@@ -4612,9 +4612,7 @@ class GetCellDataView(APIView):
             column_ids = request.validated_data.get("column_ids", [])
 
             if not row_ids or not column_ids:
-                return self._gm.bad_request_response(
-                    "Both row_ids and column_ids are required"
-                )
+                return self._gm.bad_request("Both row_ids and column_ids are required")
 
             # Get dataset
             # dataset = get_object_or_404(Dataset, id=dataset_id, deleted=False)
@@ -6061,6 +6059,10 @@ class UpdateCellValueView(APIView):
                 cell.value = None
                 cell.value_infos = json.dumps({})
                 cell.status = CellStatus.PASS.value
+                if column_data_type == DataTypeChoices.AUDIO.value:
+                    cleared_metadata = dict(cell.column_metadata or {})
+                    cleared_metadata.pop("audio_duration_seconds", None)
+                    cell.column_metadata = cleared_metadata
             elif column_data_type == DataTypeChoices.TEXT.value:
                 cell.value = str(new_value)
                 cell.value_infos = json.dumps({})
@@ -6200,14 +6202,20 @@ class UpdateCellValueView(APIView):
                         cell.value = None
                         cell.value_infos = json.dumps({})
                         cell.status = CellStatus.PASS.value
+                        cleared_metadata = dict(cell.column_metadata or {})
+                        cleared_metadata.pop("audio_duration_seconds", None)
+                        cell.column_metadata = cleared_metadata
                     else:
                         audio_key = f"audio/{dataset_id}/{uuid.uuid4()}"
+                        existing_metadata = dict(cell.column_metadata or {})
                         audio_url, duration = upload_audio_to_s3_duration(
                             new_value,
                             bucket_name="fi-customer-data-dev",
                             object_key=audio_key,
-                            duration_seconds=cell.column_metadata.get(
-                                "audio_duration_seconds"
+                            duration_seconds=(
+                                existing_metadata.get("audio_duration_seconds")
+                                if new_value == cell.value
+                                else None
                             ),
                         )
                         value_infos = (
@@ -6219,6 +6227,13 @@ class UpdateCellValueView(APIView):
                         cell.value_infos = json.dumps(value_infos)
                         cell.status = CellStatus.PASS.value
                         cell.value = audio_url
+                        if duration:
+                            existing_metadata["audio_duration_seconds"] = float(
+                                duration
+                            )
+                        else:
+                            existing_metadata.pop("audio_duration_seconds", None)
+                        cell.column_metadata = existing_metadata
 
                 except Exception as e:
                     logger.error(f"ERROR: {e}")
@@ -15292,7 +15307,7 @@ class CompareDatasetsStartEvalsProcess(APIView):
                     metric.dataset.save()
 
                     # Create reason column
-                    reason_column, _ = Column.objects.create(
+                    reason_column = Column.objects.create(
                         name=f"{metric.name}-reason",
                         data_type=DataTypeChoices.TEXT.value,
                         source=SourceChoices.EVALUATION_REASON.value,

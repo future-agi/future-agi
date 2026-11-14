@@ -103,8 +103,6 @@ export default function ContextSelector() {
               maxHeight: 380,
               mt: -0.5,
               borderRadius: "12px",
-              border: 1,
-              borderColor: "divider",
             },
           },
         }}
@@ -133,7 +131,7 @@ export default function ContextSelector() {
             </ListItemIcon>
             <ListItemText
               primary={option.label}
-              primaryTypographyProps={{ fontSize: 13 }}
+              primaryTypographyProps={{ fontSize: 12 }}
             />
             {selectedContext === option.value && (
               <Iconify

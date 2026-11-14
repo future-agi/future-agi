@@ -1,6 +1,7 @@
 import React, { useMemo } from "react";
 import { Box, Typography, useTheme, alpha } from "@mui/material";
 import { AgGridReact } from "ag-grid-react";
+import "src/utils/ag-grid-setup";
 import { useAgThemeWith } from "src/hooks/use-ag-theme";
 import { AG_THEME_OVERRIDES } from "src/theme/ag-theme";
 import Iconify from "src/components/iconify";

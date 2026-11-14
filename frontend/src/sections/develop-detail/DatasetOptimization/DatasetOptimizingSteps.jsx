@@ -174,7 +174,7 @@ const DatasetOptimizingSteps = ({ status, optimizationId }) => {
             sx={{ width: 16 }}
             src="/assets/icons/navbar/ic_optimize.svg"
           />
-          <Typography variant="body1" fontWeight={500} fontSize="13px">
+          <Typography variant="body1" fontWeight={500} fontSize="12px">
             Optimization Steps
           </Typography>
         </Box>
@@ -284,7 +284,7 @@ const DatasetOptimizingSteps = ({ status, optimizationId }) => {
                       <Typography
                         variant="body2"
                         color="text.secondary"
-                        fontSize="13px"
+                        fontSize="12px"
                       >
                         {step.description}
                       </Typography>
@@ -303,7 +303,7 @@ const DatasetOptimizingSteps = ({ status, optimizationId }) => {
                       <Typography
                         variant="caption"
                         color="text.secondary"
-                        fontSize="13px"
+                        fontSize="12px"
                       >
                         {step.updated_at && isValid(new Date(step.updated_at))
                           ? format(
