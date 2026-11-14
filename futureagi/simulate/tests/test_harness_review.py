@@ -950,3 +950,62 @@ def test_the_older_scenario_folder_is_read_only_when_the_suite_has_no_scenarios_
     assert [key for key in item_index(files) if key.startswith("scenario:")] == [
         "scenario:s1"
     ]
+
+
+def test_a_file_import_cites_file_and_row():
+    from simulate.services.harness_versioning.review_saved import record_sources
+
+    default = _tree({"tools": TOOLS})
+    edited = _tree(
+        {"tools": [TOOLS[0], {**TOOLS[1], "description": "Refund up to $50"}]}
+    )
+    [source] = record_sources(
+        None,
+        default,
+        edited,
+        origin="import",
+        user=None,
+        revision=2,
+        at="t",
+        used_files=[
+            {"file_id": "f-1", "row": 7},
+            {"file_id": "f-2", "row": None},
+            {"file_id": "", "row": 3},
+        ],
+    )["tool:issue_refund"]
+    assert source["used"] == [
+        {"kind": "file", "id": "f-1", "row": 7},
+        {"kind": "file", "id": "f-2", "row": None},
+    ]
+
+
+def test_a_retry_adds_no_second_file_source():
+    from simulate.services.harness_versioning.review_saved import record_sources
+
+    default = _tree({"tools": TOOLS})
+    edited = _tree(
+        {"tools": [TOOLS[0], {**TOOLS[1], "description": "Refund up to $50"}]}
+    )
+    files = [{"file_id": "f-1", "row": 7}]
+    first = record_sources(
+        None,
+        default,
+        edited,
+        origin="import",
+        user=None,
+        revision=2,
+        at="t1",
+        used_files=files,
+    )
+    again = record_sources(
+        first,
+        default,
+        edited,
+        origin="import",
+        user=None,
+        revision=2,
+        at="t2",
+        used_files=files,
+    )
+    assert again == first
+    assert len(again["tool:issue_refund"]) == 1
