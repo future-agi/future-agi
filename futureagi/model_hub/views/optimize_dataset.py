@@ -310,29 +310,6 @@ class OptimizeDetailView(APIView):
         )
 
 
-class KOptimizedPromptTemplateView(APIView):
-    permission_classes = [IsAuthenticated]
-
-    def get(self, request, *args, **kwarg):
-        try:
-            optimization_id = request.query_params.get("optim_id")
-            k_optimized_prompts = OptimizeDataset.objects.filter(
-                id=optimization_id
-            ).values("optimizedKPrompts")
-
-            return Response(
-                {
-                    "status": "Success",
-                    "message": "Fetched prompts successfully",
-                    "data": k_optimized_prompts,
-                },
-                status=200,
-            )
-
-        except Exception as e:
-            return GeneralMethods().internal_server_error_response(str(e))
-
-
 class RightAnswerResultsView(APIView):
     permission_classes = [IsAuthenticated]
 

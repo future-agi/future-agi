@@ -506,6 +506,11 @@ export const toRecord = (actor, fields, context) => {
   return record;
 };
 
+// The environment as the scenarios list and drawer read it: with versioning, every actor in the draft's cast, so a
+// scenario's actor who never speaks (an approver) shows by name with its own activation and fallback.
+export const withCast = (env, cast) =>
+  cast?.actors ? { ...env, callActors: cast.actors } : env;
+
 // The tab shows what it can edit (versioning keeps a draft) or list (actors read-only).
 export const showActorsTab = (env) =>
   Boolean(env?.versioning?.enabled && env?.id) || env?.callActors?.length > 0;
