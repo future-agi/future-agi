@@ -56,8 +56,54 @@ from tfc.temporal.eval_tasks.types import (
     WorkflowLabelsInput,
 )
 
-# Control activities are quick PG reads/writes; run_entry runs the eval engine.
+# Control activities are quick PG reads/writes. One exhausted control activity
+# fails the whole workflow, so their retries (~7 min of backoff) outlast a
+# connection-pooler restart or a database failover. Changing retry options is
+# replay-safe: Temporal matches activity commands by type and id.
+#
+# How these policies combine with the outage classification in
+# ``db_errors.database_control_errors`` (one rule set for every control step):
+# * A transient PostgreSQL error (refused or dropped connection, read-only
+#   writer, start-up or shutdown refusal, PgBouncer outage) is first retried
+#   in place by the activity's own policy below. Only once that window is
+#   spent does a continuous workflow see ``EvalTaskDatabaseUnavailable``; it
+#   then waits durably (``waiting_for_database``) and retries from its
+#   unchanged cursor instead of failing. A historical workflow has no poll
+#   boundary to wait at, so for it this window is the whole tolerance.
+# * Any other error (bad credentials, configuration, a deterministic statement
+#   error) is never deferred: it uses the same bounded retries and then takes
+#   the terminal fail path.
+# * A claim whose reply was lost after its SQL was submitted is raised as
+#   non-retryable ``EvalTaskClaimOutcomeUnknown``, which Temporal never retries
+#   whatever ``maximum_attempts`` says, so the claim is never re-run in place
+#   and no entry is evaluated or billed twice. Neither workflow type fails on it
+#   (the historical drain within the cap of
+#   ``_MAX_CLAIM_OUTCOME_UNKNOWN_WAITS`` lost replies in a row; histories
+#   recorded before ``_HISTORICAL_CLAIM_OUTCOME_UNKNOWN_PATCH`` keep failing
+#   on replay, see its comment), and neither dispatches an evaluation for the
+#   lost batch, whose IDs it never learned:
+#   - the continuous workflow parks (``waiting_for_database``) for one poll,
+#     reaps before its next claim and goes on from its unchanged cursor;
+#   - the historical workflow treats it as an empty claim: it asks finalize,
+#     waits ``_FINALIZE_WAIT``, reaps and claims again (see
+#     ``_HISTORICAL_CLAIM_OUTCOME_UNKNOWN_PATCH``).
+#   In both, a batch that did commit stays RUNNING until the stale-claim
+#   reaper requeues it, and only then is it claimed again and evaluated once;
+#   a batch that rolled back is still pending and the next claim takes it.
+#   While a committed batch waits for the reaper, other pending work may be
+#   claimed and evaluated.
 CONTROL_RETRY_POLICY = RetryPolicy(
+    initial_interval=timedelta(seconds=2),
+    maximum_interval=timedelta(seconds=60),
+    maximum_attempts=12,
+    backoff_coefficient=2.0,
+)
+# Reconcile is a ClickHouse read; retrying it longer adds read pressure, and a
+# continuous task already defers exhausted read-budget failures to its next poll.
+# Its PostgreSQL writes use the same classification as the control steps: once
+# this shorter window is spent, a continuous task waits for the database at its
+# poll boundary, exactly as for an exhausted control step.
+RECONCILE_RETRY_POLICY = RetryPolicy(
     initial_interval=timedelta(seconds=2),
     maximum_interval=timedelta(seconds=30),
     maximum_attempts=5,
@@ -136,6 +182,58 @@ _HISTORICAL_FINALIZE_WAIT_PATCH = "historical-eval-finalize-wait-v1"
 # a live workflow, left it alone. An idle poll that still finds undrained work
 # now reaps again before its next claim.
 _CONTINUOUS_IDLE_REAP_PATCH = "continuous-eval-idle-reap-v1"
+_CONTINUOUS_DATABASE_BACKOFF_PATCH = "continuous-eval-database-backoff-v1"
+_CONTINUOUS_DATABASE_ADOPTION_PATCH = "continuous-eval-live-database-backoff-v1"
+# A historical claim whose reply was lost after its SQL was submitted
+# (``EvalTaskClaimOutcomeUnknown``) used to fail the task, and FAILED is
+# outside the sweep's default scope, so the task sat there until someone
+# pressed Resume. The drain now treats that claim as an empty one: finalize
+# (which only succeeds if nothing is pending or running), else wait
+# ``_FINALIZE_WAIT``, reap, and claim again. The claim is never retried in
+# place, and no entry is evaluated or billed twice: if the lost claim
+# committed, its entries stay RUNNING with no activity dispatched for them
+# until the reaper requeues them, and they are then claimed again and
+# evaluated once; if it rolled back, the next claim takes them as ordinary
+# pending work.
+# While a committed batch is still too young for the reaper, the drain goes on
+# claiming and evaluating the task's other pending entries.
+#
+# These waits are counted apart from ``idle_waits``, so a lost reply never
+# eats into the budget that lets a blind-floor reap reclaim stranded rows
+# before the drain gives up. They have their own cap: after
+# ``_MAX_CLAIM_OUTCOME_UNKNOWN_WAITS`` lost replies in a row (no claim reply
+# seen in between, two hours of waits) the drain fails as it did before.
+# Histories recorded before this marker keep failing on replay. A literal for
+# the same reason as ``_MAX_IDLE_FINALIZE_WAITS``.
+_HISTORICAL_CLAIM_OUTCOME_UNKNOWN_PATCH = "historical-eval-claim-outcome-unknown-v1"
+_MAX_CLAIM_OUTCOME_UNKNOWN_WAITS = 12
+# Explicit bound even when no batch can finish and the server has not suggested
+# CAN yet. All deferred paths, including pause cleanup, pass this checkpoint.
+_MAX_CONTINUOUS_POLLS = 100
+
+
+def _is_database_deferred_error(exc: Exception) -> bool:
+    if not isinstance(exc, ActivityError) or not isinstance(
+        exc.cause, ApplicationError
+    ):
+        return False
+    cause = exc.cause
+    return (
+        cause.type == "EvalTaskDatabaseUnavailable" and not cause.non_retryable
+    ) or (
+        # This attempt must NOT be retried: its transaction may have committed.
+        # Park the workflow, leaving unknown IDs to the stale-claim reaper.
+        _is_claim_outcome_unknown(exc)
+    )
+
+
+def _is_claim_outcome_unknown(exc: BaseException) -> bool:
+    """The claim's SQL was submitted and its reply lost (it may have committed)."""
+    if not isinstance(exc, ActivityError) or not isinstance(
+        exc.cause, ApplicationError
+    ):
+        return False
+    return exc.cause.type == "EvalTaskClaimOutcomeUnknown" and exc.cause.non_retryable
 
 
 async def _apply_labels(task_id: str) -> None:
@@ -215,7 +313,7 @@ async def _reconcile(task_id: str) -> None:
         # ordinary 30-minute control activity ceiling.
         start_to_close_timeout=_RECONCILE_TIMEOUT,
         heartbeat_timeout=_HEARTBEAT,
-        retry_policy=CONTROL_RETRY_POLICY,
+        retry_policy=RECONCILE_RETRY_POLICY,
     )
 
 
@@ -235,11 +333,13 @@ def _is_retryable_reconcile_budget_error(exc: Exception) -> bool:
 async def _reconcile_continuous(task_id: str) -> bool:
     """Reconcile once, deferring only exhausted transient CH read failures.
 
-    The activity already used the bounded five-attempt control policy.  A
+    The activity already used the bounded five-attempt reconcile policy.  A
     continuous task has a durable cursor and another poll boundary, so killing
     it after momentary ClickHouse pressure loses future work. Returning False
     parks before any claim/drain, then retries from the unchanged cursor. Every
-    other exception still reaches the workflow's terminal fail path.
+    other exception propagates: ``_run_with_database_backoff`` still defers an
+    exhausted ``EvalTaskDatabaseUnavailable``, and anything else reaches the
+    workflow's terminal fail path.
     """
 
     try:
@@ -501,6 +601,7 @@ class HistoricalEvalTaskWorkflow(_ObservableEvalWorkflow):
         processed = input.processed
         batches = 0
         idle_waits = 0
+        unknown_claims = 0
         reap_before_claim = False
         while True:
             state = await _task_state(input.task_id)
@@ -526,16 +627,36 @@ class HistoricalEvalTaskWorkflow(_ObservableEvalWorkflow):
                 if reaped.get("requeued") or reaped.get("failed"):
                     idle_waits = 0
 
-            batch = await _claim(input.task_id, input.batch_size)
-            entry_ids = batch["entry_ids"]
+            claim_lost = False
+            try:
+                batch = await _claim(input.task_id, input.batch_size)
+            except ActivityError as exc:
+                # A lost claim reply: handle it as an empty claim, never as a
+                # retry (see _HISTORICAL_CLAIM_OUTCOME_UNKNOWN_PATCH). The
+                # marker is only consulted on this failure, so histories that
+                # never lost a reply replay unchanged, and ones recorded
+                # before the marker existed keep failing here.
+                if (
+                    not _is_claim_outcome_unknown(exc)
+                    or unknown_claims >= _MAX_CLAIM_OUTCOME_UNKNOWN_WAITS
+                    or not workflow.patched(_HISTORICAL_CLAIM_OUTCOME_UNKNOWN_PATCH)
+                ):
+                    raise
+                unknown_claims += 1
+                claim_lost = True
+                entry_ids = []
+            else:
+                unknown_claims = 0
+                entry_ids = batch["entry_ids"]
             if not entry_ids:
                 if await _finalize(input.task_id):
                     break
                 # The drain loop only ends on an empty *pending* claim, so a
                 # task that still won't finalize has entries RUNNING. Histories
                 # recorded before the wait existed failed here, and replay must
-                # keep doing so.
-                if (
+                # keep doing so. A lost claim reply has its own cap above and
+                # does not count as an idle wait.
+                if not claim_lost and (
                     not workflow.patched(_HISTORICAL_FINALIZE_WAIT_PATCH)
                     or idle_waits >= _MAX_IDLE_FINALIZE_WAITS
                 ):
@@ -548,7 +669,8 @@ class HistoricalEvalTaskWorkflow(_ObservableEvalWorkflow):
                 # Wait for the claims to become reclaimable rather than fail:
                 # FAILED is outside the sweep's scope by default, so failing
                 # here strands the rows for good.
-                idle_waits += 1
+                if not claim_lost:
+                    idle_waits += 1
                 self._phase = PHASE_SLEEPING
                 await self._sleep_or_recheck(_FINALIZE_WAIT.total_seconds())
                 self._phase = PHASE_DRAINING
@@ -603,11 +725,117 @@ class ContinuousEvalTaskWorkflow(_ObservableEvalWorkflow):
     @workflow.run
     async def run(self, state: ContinuousDrainState) -> None:
         try:
-            await self._run(state)
+            if workflow.patched(_CONTINUOUS_DATABASE_BACKOFF_PATCH):
+                await self._run_with_database_backoff(state)
+            else:
+                # Keep the original command order for pre-patch histories.
+                try:
+                    await self._run(state)
+                except ActivityError as exc:
+                    # A patch checked at run start is memoized False during
+                    # replay. Existing executions must still adopt backoff at
+                    # their first *new* outage, rather than wait for CAN (or
+                    # fail before it). Recorded terminal failures keep failing.
+                    if not _is_database_deferred_error(exc) or not workflow.patched(
+                        _CONTINUOUS_DATABASE_ADOPTION_PATCH
+                    ):
+                        raise
+                    self._phase = "waiting_for_database"
+                    await self._sleep_or_recheck(max(1, state.poll_interval_seconds))
+                    await self._run_with_database_backoff(state)
         except Exception:
             # Same fail-then-reraise as HistoricalEvalTaskWorkflow.run.
             await _fail_task(state.task_id)
             raise
+
+    async def _run_with_database_backoff(self, state: ContinuousDrainState) -> None:
+        """Retry control outages, never restart a provider call or an old claim.
+
+        Cursor/config/results remain in the DB. A failed control pass invalidates
+        the in-memory reconcile proof before any further claims. Known skipped
+        entries are checkpointed separately, so even a pause cleanup outage can
+        roll history over without dropping work or forgetting the pause.
+        """
+        self._lost.update(state.lost_entry_ids or ())
+        self._paused = self._paused or state.pause_requested
+        labelled = marked_running = reconciled = reaped = False
+        polls = 0
+        while True:
+            wait = False
+            try:
+                if state.pending_requeue_ids:
+                    await _requeue(state.task_id, state.pending_requeue_ids)
+                    state.pending_requeue_ids = []
+                tstate = await _task_state(state.task_id)
+                if not tstate["active"]:
+                    _set_status(tstate["status"])
+                    self._phase = PHASE_DONE
+                    return
+                if not labelled:
+                    await _apply_labels(state.task_id)
+                    labelled = True
+                if not marked_running:
+                    await _mark_running(state.task_id)
+                    _set_status(STATUS_RUNNING)
+                    marked_running = True
+                if self._paused:
+                    # Signal can precede visibility of the durable pause. Never
+                    # claim while waiting for the DB to confirm it.
+                    wait = True
+                else:
+                    if not reconciled:
+                        self._phase = PHASE_MATERIALIZING
+                        reconciled = await _reconcile_continuous(state.task_id)
+                    if not reconciled:
+                        wait = True
+                    else:
+                        if not reaped:
+                            await _reap(
+                                state.task_id,
+                                workflow_confirmed_stopped=state.workflow_confirmed_stopped,
+                            )
+                            reaped = True
+                        batch = await _claim(state.task_id, state.batch_size)
+                        entry_ids = batch["entry_ids"]
+                        if entry_ids:
+                            self._phase = PHASE_DRAINING
+                            skipped = await _drain_batch(
+                                entry_ids,
+                                state.max_concurrent,
+                                lambda: self._paused,
+                                lost=self._lost,
+                            )
+                            state.processed += len(entry_ids) - len(skipped)
+                            state.batches += 1
+                            state.pending_requeue_ids = skipped
+                        else:
+                            wait = True
+                            reconciled = False
+                            if tstate["has_undrained_work"]:
+                                reaped = False
+                if wait:
+                    self._phase = PHASE_SLEEPING
+            except Exception as exc:
+                if not _is_database_deferred_error(exc):
+                    raise
+                # No _fail_task here (it needs the same unavailable DB).
+                # Activity warnings identify the failing step without exposing
+                # connection strings; phase exposes the durable wait to ops.
+                self._phase = "waiting_for_database"
+                reconciled = reaped = False
+                wait = True
+            if wait:
+                # A zero/short poll override must not create a hot outage loop.
+                await self._sleep_or_recheck(max(1, state.poll_interval_seconds))
+            polls += 1
+            if polls >= _MAX_CONTINUOUS_POLLS or _should_continue_as_new(
+                state.batches, state.continue_as_new_after_batches
+            ):
+                state.batches = 0
+                state.workflow_confirmed_stopped = False
+                state.lost_entry_ids = _carried_lost(self._lost)
+                state.pause_requested = self._paused
+                workflow.continue_as_new(state)
 
     async def _run(self, state: ContinuousDrainState) -> None:
         self._lost.update(state.lost_entry_ids or ())
@@ -673,10 +901,15 @@ class ContinuousEvalTaskWorkflow(_ObservableEvalWorkflow):
                     lambda: self._paused,
                     lost=self._lost,
                 )
-                if skipped:
-                    await _requeue(state.task_id, skipped)
                 state.processed += len(entry_ids) - len(skipped)
                 state.batches += 1
+                if skipped:
+                    # In-memory bookkeeping only: preserve the exact legacy
+                    # commands, but retain cleanup if a new outage adopts the
+                    # patched loop after this activity fails.
+                    state.pending_requeue_ids = skipped
+                    await _requeue(state.task_id, skipped)
+                    state.pending_requeue_ids = []
             else:
                 self._phase = PHASE_SLEEPING
                 await self._sleep_or_recheck(state.poll_interval_seconds)

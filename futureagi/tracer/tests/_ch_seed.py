@@ -319,6 +319,26 @@ def truncate_ch_spans() -> None:
         client.close()
 
 
+def delete_ch_spans(spans: Iterable[Any]) -> None:
+    """Delete only these spans (instances or ids) from the CH ``spans`` table.
+
+    Use it to clean up a test's own seeded rows: unlike ``truncate_ch_spans``
+    it leaves rows other tests rely on later in the same session. Returns once
+    the mutation has finished.
+    """
+    ids = [s if isinstance(s, str) else str(s.id) for s in spans]
+    if not ids:
+        return
+    client = _get_ch_client()
+    try:
+        client.command(
+            "ALTER TABLE spans DELETE WHERE id IN %(ids)s SETTINGS mutations_sync = 2",
+            parameters={"ids": ids},
+        )
+    finally:
+        client.close()
+
+
 # ---------------------------------------------------------------------------
 # model_hub_score  (CDC mirror of PG model_hub.models.score.Score)
 # ---------------------------------------------------------------------------

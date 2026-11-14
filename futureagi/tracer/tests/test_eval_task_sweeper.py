@@ -282,6 +282,84 @@ class TestFindStrandedTasks:
         assert [str(t.id) for t in found] == [str(sweepable.id)]
 
 
+def _continuous(task, *, cursor_age):
+    """Make ``task`` continuous with a cursor last advanced ``cursor_age`` ago."""
+    EvalTask.objects.filter(id=task.id).update(
+        run_type=RunType.CONTINUOUS, continuous_cursor=timezone.now() - cursor_age
+    )
+    task.refresh_from_db()
+    return task
+
+
+@pytest.mark.django_db
+class TestStaleContinuousCursor:
+    """A continuous task whose workflow died between polls holds no undrained
+    entries, so the entry read never sees it; only its frozen cursor shows it."""
+
+    def test_a_continuous_task_with_a_frozen_cursor_and_no_entries_is_a_candidate(
+        self, make_task
+    ):
+        task = _continuous(make_task(), cursor_age=timedelta(hours=2))
+
+        assert [str(t.id) for t in sweeper.find_stranded_tasks()] == [str(task.id)]
+
+    def test_a_continuous_task_that_is_still_polling_is_not_a_candidate(
+        self, make_task
+    ):
+        _continuous(make_task(), cursor_age=timedelta(minutes=6))
+
+        assert sweeper.find_stranded_tasks() == []
+
+    @pytest.mark.parametrize(
+        "status", [EvalTaskStatus.PAUSED, EvalTaskStatus.DELETED, EvalTaskStatus.FAILED]
+    )
+    def test_a_frozen_cursor_does_not_override_the_status_rules(
+        self, make_task, status
+    ):
+        _continuous(make_task(status=status), cursor_age=timedelta(hours=2))
+
+        assert sweeper.find_stranded_tasks() == []
+
+    def test_a_task_found_both_ways_is_counted_once(self, make_task, make_entry):
+        task = _continuous(make_task(), cursor_age=timedelta(hours=2))
+        make_entry(task, age_seconds=86_400)
+
+        assert [str(t.id) for t in sweeper.find_stranded_tasks()] == [str(task.id)]
+
+    def test_both_kinds_share_one_cap_stillest_first(self, make_task, make_entry):
+        frozen = _continuous(make_task(), cursor_age=timedelta(days=2))
+        recent = make_task()
+        make_entry(recent, age_seconds=60)
+
+        found = sweeper.find_stranded_tasks(limit=1)
+
+        assert [str(t.id) for t in found] == [str(frozen.id)]
+
+    def test_the_sweep_restarts_a_continuous_task_whose_workflow_died(
+        self, make_task, temporal
+    ):
+        task = _continuous(make_task(), cursor_age=timedelta(hours=2))
+
+        result = sweeper.sweep_stranded_eval_tasks._original_func()
+
+        assert result["candidates"] == 1
+        assert result["restarted"] == 1
+        assert temporal["started"] == [(str(task.id), _SWEEP_RESTART)]
+
+    def test_a_frozen_cursor_with_a_live_workflow_is_left_alone(
+        self, make_task, temporal
+    ):
+        """A cursor also stalls while a live workflow parks on read-budget
+        deferrals or drains a long backlog; the describe keeps the sweep off it."""
+        _continuous(make_task(), cursor_age=timedelta(hours=2))
+        temporal["verdict"] = client_progressing()
+
+        result = sweeper.sweep_stranded_eval_tasks._original_func()
+
+        assert result["progressing"] == 1
+        assert temporal["started"] == []
+
+
 @pytest.mark.django_db
 class TestRecoverTask:
     def test_a_task_with_no_live_workflow_is_restarted(

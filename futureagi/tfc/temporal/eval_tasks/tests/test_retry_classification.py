@@ -173,3 +173,86 @@ async def test_eventual_reconcile_success_reaps_before_first_claim(monkeypatch) 
         "reap",
         "claim",
     ]
+
+
+def _backoff_seconds(policy) -> float:
+    """Total wait across every retry the policy allows."""
+    total, delay = 0.0, policy.initial_interval.total_seconds()
+    for _ in range(policy.maximum_attempts - 1):
+        total += min(delay, policy.maximum_interval.total_seconds())
+        delay *= policy.backoff_coefficient
+    return total
+
+
+def test_control_retries_outlast_a_database_outage() -> None:
+    """One exhausted control activity fails the whole workflow, so the retry
+    window must cover a connection-pooler restart or a database failover."""
+    from tfc.temporal.eval_tasks.workflows import CONTROL_RETRY_POLICY
+
+    assert _backoff_seconds(CONTROL_RETRY_POLICY) >= 5 * 60
+
+
+def test_reconcile_keeps_its_short_retry_window() -> None:
+    """Reconcile reads ClickHouse; longer retries there only add read pressure."""
+    from tfc.temporal.eval_tasks.workflows import RECONCILE_RETRY_POLICY
+
+    assert _backoff_seconds(RECONCILE_RETRY_POLICY) <= 60
+
+
+def test_production_attempt_counts_are_pinned() -> None:
+    """The outage tests shorten only the timers and read these counts from the
+    policies, so a changed count would pass them silently. Pin them here."""
+    from tfc.temporal.eval_tasks.workflows import (
+        CONTROL_RETRY_POLICY,
+        RECONCILE_RETRY_POLICY,
+    )
+
+    assert CONTROL_RETRY_POLICY.maximum_attempts == 12
+    assert RECONCILE_RETRY_POLICY.maximum_attempts == 5
+
+
+def _claim_error(error_type: str, non_retryable: bool) -> ActivityError:
+    error = ActivityError(
+        "claim failed",
+        scheduled_event_id=1,
+        started_event_id=2,
+        identity="worker",
+        activity_type="claim_eval_batch_activity",
+        activity_id="activity-id",
+        retry_state=None,
+    )
+    error.__cause__ = ApplicationError(
+        "synthetic", type=error_type, non_retryable=non_retryable
+    )
+    return error
+
+
+def test_only_a_non_retryable_lost_claim_reply_is_an_unknown_outcome() -> None:
+    from tfc.temporal.eval_tasks.workflows import _is_claim_outcome_unknown
+
+    assert _is_claim_outcome_unknown(_claim_error("EvalTaskClaimOutcomeUnknown", True))
+    assert not _is_claim_outcome_unknown(
+        _claim_error("EvalTaskClaimOutcomeUnknown", False)
+    )
+    assert not _is_claim_outcome_unknown(
+        _claim_error("EvalTaskDatabaseUnavailable", False)
+    )
+    assert not _is_claim_outcome_unknown(ApplicationError("x", non_retryable=True))
+
+
+def test_lost_claim_reply_waits_are_bounded_and_kept_apart_from_idle_waits() -> None:
+    """Twelve lost replies in a row, ten-minute waits each, then the drain fails.
+
+    The marker and the cap decide between sleeping and raising, so changing
+    either needs a new ``workflow.patched`` marker.
+    """
+    from tfc.temporal.eval_tasks.workflows import (
+        _HISTORICAL_CLAIM_OUTCOME_UNKNOWN_PATCH,
+        _MAX_CLAIM_OUTCOME_UNKNOWN_WAITS,
+    )
+
+    assert _MAX_CLAIM_OUTCOME_UNKNOWN_WAITS == 12
+    assert (
+        _HISTORICAL_CLAIM_OUTCOME_UNKNOWN_PATCH
+        == "historical-eval-claim-outcome-unknown-v1"
+    )

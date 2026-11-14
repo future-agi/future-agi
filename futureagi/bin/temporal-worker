@@ -1,7 +1,14 @@
 #!/bin/bash
 # Temporal worker wrapper script with graceful shutdown handling.
+#
+# The wrapper exits with the worker's own status, so a supervisor (container
+# restart policy, Kubernetes, crash alerts) sees a fatal worker failure, a
+# crash or an OOM kill as a failure. A shutdown relayed from SIGTERM/SIGINT
+# exits 0 when the worker finishes it cleanly or stops on that signal.
 
 set -e
+
+shutdown_requested=false
 
 cleanup() {
     if kill -0 "$worker_pid" >/dev/null 2>&1; then
@@ -13,7 +20,13 @@ cleanup() {
     fi
 }
 
-trap cleanup SIGINT SIGTERM EXIT
+relay_shutdown() {
+    shutdown_requested=true
+    cleanup
+}
+
+trap relay_shutdown SIGINT SIGTERM
+trap cleanup EXIT
 
 echo "Initializing Temporal Worker"
 
@@ -21,29 +34,35 @@ python manage.py start_temporal_worker "$@" &
 worker_pid=$!
 
 while true; do
-    if wait $worker_pid; then
-        echo "Worker exited normally, exiting"
-        break
-    else
-        status=$?
+    status=0
+    wait "$worker_pid" || status=$?
 
-        # Worker process could finish before the trap handler yields control back to us.
-        # So, we first re-check if we are still running.
-        if ! kill -0 "$worker_pid" >/dev/null 2>&1; then
-            echo "Worker process no longer exists, exiting"
-            break
-        fi
-
-        # If we exit with SIGTERM, status will be 128 + 15.
-        # If we exit with SIGINT, status will be 128 + 2.
-        if [ $status -eq 143 ] || [ $status -eq 130 ]; then
-            echo "Received signal $(($status - 128)), waiting for worker to finish"
-        elif [ $status -eq 0 ]; then
-            echo "Worker exited normally, exiting"
-            break
-        else
-            echo "Worker exited with unexpected exit status $status, exiting"
-            break
-        fi
+    # A trapped signal interrupts wait with status 128 + signal while the
+    # worker may still be shutting down. Keep waiting for its own status.
+    if [ "$status" -gt 128 ] && kill -0 "$worker_pid" >/dev/null 2>&1; then
+        echo "Received signal $((status - 128)), waiting for worker to finish"
+        continue
     fi
+    break
 done
+
+if [ "$shutdown_requested" = true ] && [ "$status" -gt 128 ]; then
+    # The signal may have interrupted wait just as the worker exited, so the
+    # status above can be the interruption's. Collect the worker's own.
+    real_status=0
+    wait "$worker_pid" 2>/dev/null || real_status=$?
+    if [ "$real_status" -ne 127 ]; then
+        status=$real_status
+    fi
+    if [ "$status" -eq 143 ] || [ "$status" -eq 130 ]; then
+        # Stopped by the shutdown signal it was asked to honour.
+        status=0
+    fi
+fi
+
+if [ "$status" -eq 0 ]; then
+    echo "Worker exited normally, exiting"
+else
+    echo "Worker exited with status $status, exiting"
+fi
+exit "$status"
