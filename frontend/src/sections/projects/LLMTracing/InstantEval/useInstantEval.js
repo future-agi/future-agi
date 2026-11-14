@@ -83,10 +83,29 @@ export const matchesSavedQuestion = (
   sameLabels(item.labels, labels) &&
   sameDefinitions(item.definitions, definitions);
 
+// A backend released before `fresh` existed refuses it as an unknown query
+// field: 400 with `details: { fresh: ["Unknown field."] }`.
+const refusedFresh = (error) =>
+  error?.statusCode === 400 &&
+  !!error?.details &&
+  Object.hasOwn(error.details, "fresh");
+
+// `fresh`: read from the primary database. What to create next is decided
+// from this list (reuse an evaluator, pick a unique name), so a question saved
+// a moment ago must be in it even when list reads go to a lagging replica.
+// The frontend can ship before the backend that knows `fresh`. Such a backend
+// is asked once more without it and answers as it always has.
 async function listProjectConfigs(projectId) {
-  const response = await axios.get(endpoints.project.getEvalTaskConfig(), {
-    params: { project_id: projectId },
-  });
+  const url = endpoints.project.getEvalTaskConfig();
+  let response;
+  try {
+    response = await axios.get(url, {
+      params: { project_id: projectId, fresh: true },
+    });
+  } catch (error) {
+    if (!refusedFresh(error)) throw error;
+    response = await axios.get(url, { params: { project_id: projectId } });
+  }
   return result(response) || [];
 }
 

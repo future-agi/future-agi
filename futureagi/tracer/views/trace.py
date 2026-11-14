@@ -2108,6 +2108,10 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
         if organization:
             query_Set = query_Set.filter(project__organization=organization)
 
+        # Keep browse reads routed, but load mutation targets from the writer.
+        if getattr(self, "action", None) in {"update", "partial_update", "destroy"}:
+            query_Set = query_Set.using("default")
+
         if trace_id:
             return query_Set.filter(id=trace_id)
 

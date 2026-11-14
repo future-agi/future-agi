@@ -45,6 +45,8 @@ LATEST = (
     ('accounts','0026_orgapikey_expires_at'),
     ('accounts','0031_merge_api_key_expiry'),
     ('accounts','0032_merge_expiry_and_coding_agent'),
+    ('tracer','0133_eval_recalculation'),
+    ('tracer','0134_merge_eval_recalculation_and_sampling'),
 )
 # Eight SQL additions shared with the SQL-only candidate. These identities
 # account for the graph; they are not safety declarations for opaque operations.
