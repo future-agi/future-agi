@@ -1435,6 +1435,13 @@ def _scenario_edits(
 # these and the job's counters treat every other receipt as still current.
 RERUN_EXECUTION_KEYS = "rerun_execution_keys"
 
+# The failure domains of the platform's own infrastructure, connectivity or sync. A call
+# one of them ended was interrupted, not failed by the agent: it is never charged, and a
+# retry runs it again.
+PLATFORM_FAILURE_DOMAINS = frozenset(
+    {"infrastructure", "connectivity", "platform_sync"}
+)
+
 
 def rerun_calls_in_run(
     test_execution: TestExecution, call_execution_ids: list[uuid.UUID]
@@ -1653,6 +1660,36 @@ def resume_run(test_execution: TestExecution, *, user: Any) -> list[uuid.UUID]:
         locked.save(update_fields=["execution_metadata"])
     logger.info("hosted_run_resumed", job=str(resumed.id), calls=len(calls))
     return calls
+
+
+def executions_without_result(
+    job: HostedHarnessJob, attempt_number: int
+) -> list[str] | None:
+    """The keys of the executions an attempt was sent and delivered no result for.
+
+    None when it was sent none: a build's product is its bundle, not call results. A
+    result an earlier attempt delivered is not this attempt's. A receipt the platform's
+    own failure ended is no result either: the call was interrupted, and its receipt
+    is not charged, so running it again charges it once.
+    """
+    if job.environment_id is None:
+        return None
+    executions = HostedHarnessExecution.no_workspace_objects.filter(job=job)
+    rerun_keys = (job.payload.get("metadata") or {}).get(RERUN_EXECUTION_KEYS)
+    if rerun_keys:
+        executions = executions.filter(execution_key__in=rerun_keys)
+    if not executions.exists():
+        return None
+    receipts = HostedHarnessReceipt.no_workspace_objects.filter(
+        job=job, attempt_number=attempt_number, execution__isnull=False
+    )
+    interrupted = receipts.filter(
+        body__failure__domain__in=sorted(PLATFORM_FAILURE_DOMAINS)
+    ).values("id")
+    received = receipts.exclude(id__in=interrupted).values("execution_id")
+    return sorted(
+        executions.exclude(id__in=received).values_list("execution_key", flat=True)
+    )
 
 
 def scope_dispatch_to_rerun(dispatch_payload: dict[str, Any]) -> dict[str, Any]:
@@ -2840,9 +2877,32 @@ def record_cleanup(
         )
         if attempt.attempt_number < job.current_attempt_number:
             return job
-        if retry_pending:
+        missing = (
+            executions_without_result(job, attempt.attempt_number)
+            if retry_pending
+            else None
+        )
+        # With every call's result in, a relaunch would only run them and charge them
+        # again: the attempt ends here instead.
+        if retry_pending and missing != []:
+            # Whatever ended the attempt, the retry runs only the calls it left without
+            # a result, as an in-run re-run runs only its chosen calls. With no result
+            # in, it runs the same calls again. A build retries whole.
+            scope = (job.payload.get("metadata") or {}).get(
+                RERUN_EXECUTION_KEYS
+            ) or HostedHarnessExecution.no_workspace_objects.filter(
+                job=job
+            ).values_list("execution_key", flat=True)
+            if missing and len(missing) < len(scope):
+                job.payload = {
+                    **job.payload,
+                    "metadata": {
+                        **(job.payload.get("metadata") or {}),
+                        RERUN_EXECUTION_KEYS: missing,
+                    },
+                }
             job.state = HostedHarnessJob.State.RETRY_WAIT
-            job.save(update_fields=["state", "updated_at"])
+            job.save(update_fields=["state", "payload", "updated_at"])
             return job
         snapshot_missing = (
             job.environment_id is None
@@ -3033,14 +3093,13 @@ def update_execution_counts(job: HostedHarnessJob) -> None:
         # failed call.
         scenario_completed = receipts.filter(status="passed").count()
         scenario_failed = receipts.filter(status__in=("failed", "errored")).count()
-        # A run's calls hang off its executions, a build's off its scenarios.
+        # A run's calls hang off its executions, a build's off its scenarios. The calls
+        # counted are those of the receipts counted above: a narrowed retry keeps the
+        # results of the calls it did not run again.
+        counted = receipts.values("id")
         calls = CallExecution.no_workspace_objects.filter(
-            Q(hosted_registration__receipts__attempt_number=current_attempt_number)
-            | Q(
-                hosted_harness_execution__receipt__attempt_number=(
-                    current_attempt_number
-                )
-            ),
+            Q(hosted_registration__receipts__in=counted)
+            | Q(hosted_harness_execution__receipt__in=counted),
             test_execution_id=locked_job.test_execution_id,
         ).distinct()
         calls_completed = calls.filter(

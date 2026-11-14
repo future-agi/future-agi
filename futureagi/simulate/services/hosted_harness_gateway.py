@@ -39,16 +39,14 @@ from simulate.models import (
     HostedHarnessConversation,
     HostedHarnessConversationLease,
     HostedHarnessConversationMessage,
-    HostedHarnessExecution,
     HostedHarnessJob,
-    HostedHarnessReceipt,
     HostedHarnessSecret,
 )
 from simulate.models.hosted_harness import MAX_SCENARIOS_PER_JOB
 from simulate.services.hosted_harness import (
-    RERUN_EXECUTION_KEYS,
     HostedHarnessError,
     activate_attempt_capability,
+    executions_without_result,
     finish_deferred_delete,
     record_cleanup,
     register_attempt,
@@ -4386,47 +4384,51 @@ class HostedHarnessGateway:
             "retryable_domains", []
         ) and attempts_in_cycle < retry.get("max_infrastructure_attempts", 1)
 
-    def _results_missing(self, attempt: HostedHarnessAttempt) -> list[str] | None:
-        """The keys of the executions this attempt was sent and delivered no result for.
+    def _keep_delivered_results(self, attempt: HostedHarnessAttempt) -> bool:
+        """Keep the Run of an attempt whose every call delivered its result, whatever
+        ended the guest, and say whether it did. The results are what the run page and a
+        check run read.
 
-        None when it was sent none: a build's product is its bundle, not call results. A
-        result an earlier attempt delivered is not this attempt's.
+        When the guest's terminal event was lost, the platform records its own ending, as
+        it does for a cancel: a reason no guest sends, and terminal_event_received stays
+        False. A completed ending the guest sent stands, and manifest_acked stays False as
+        the record of a manifest that never arrived. An ending the guest reported as
+        failed or canceled is its own.
+
+        A failure an earlier poll recorded (an unreachable sandbox whose delete was still
+        in progress, before a late result landed) does not describe the Run kept here, so
+        it is cleared.
         """
-        job = attempt.job
-        if job.environment_id is None:
-            return None
-        executions = HostedHarnessExecution.no_workspace_objects.filter(job=job)
-        rerun_keys = (job.payload.get("metadata") or {}).get(RERUN_EXECUTION_KEYS)
-        if rerun_keys:
-            executions = executions.filter(execution_key__in=rerun_keys)
-        if not executions.exists():
-            return None
-        received = HostedHarnessReceipt.no_workspace_objects.filter(
-            job=job, attempt_number=attempt.attempt_number, execution__isnull=False
-        ).values("execution_id")
-        return sorted(
-            executions.exclude(id__in=received).values_list("execution_key", flat=True)
-        )
-
-    def _relaunch_only_missing_results(self, attempt: HostedHarnessAttempt) -> None:
-        """Scope the relaunch to the calls this attempt left without a result, as an in-run
-        re-run is scoped to its chosen calls. The results that arrived stay the Run's.
-
-        With no result in, that scope is every call. A build relaunches whole.
-        """
-        missing = self._results_missing(attempt)
-        if not missing:
-            return
-        with transaction.atomic():
-            job = HostedHarnessJob.no_workspace_objects.select_for_update().get(
-                id=attempt.job_id
+        if executions_without_result(attempt.job, attempt.attempt_number) != []:
+            return False
+        if attempt.terminal_event_received:
+            if attempt.terminal_stage != "completed":
+                return False
+            logger.warning(
+                "hosted run kept with every result in attempt=%s provider_ref=%s",
+                attempt.id,
+                attempt.provider_ref,
             )
-            metadata = {
-                **(job.payload.get("metadata") or {}),
-                RERUN_EXECUTION_KEYS: missing,
-            }
-            job.payload = {**job.payload, "metadata": metadata}
-            job.save(update_fields=["payload", "updated_at"])
+        elif attempt.terminal_reason != "terminal_event_lost":
+            # An earlier poll that recorded this ending already logged it.
+            attempt.terminal_stage = "completed"
+            attempt.terminal_reason = "terminal_event_lost"
+            structlog_logger.warning(
+                "hosted_run_completed_by_platform",
+                job_id=str(attempt.job_id),
+                attempt_id=str(attempt.id),
+                reason="terminal_event_lost",
+            )
+        attempt.terminal_failure = None
+        attempt.save(
+            update_fields=[
+                "terminal_stage",
+                "terminal_reason",
+                "terminal_failure",
+                "updated_at",
+            ]
+        )
+        return True
 
     def reconcile_completed(
         self, attempt: HostedHarnessAttempt
@@ -4453,7 +4455,9 @@ class HostedHarnessGateway:
             observation = self.inspect(attempt)
         except SandboxNotFoundError:
             retry_pending = False
-            if not attempt.terminal_event_received:
+            if not attempt.terminal_event_received and not self._keep_delivered_results(
+                attempt
+            ):
                 attempt.terminal_stage = "failed"
                 attempt.terminal_failure = {
                     "domain": "infrastructure",
@@ -4501,34 +4505,37 @@ class HostedHarnessGateway:
                     attempt.provider_ref,
                 )
                 return None
-            attempt.terminal_stage = "failed"
-            attempt.terminal_failure = {
-                "domain": "infrastructure",
-                "stage": "running",
-                "code": "sandbox_unreachable",
-                "message": (
-                    "provider sandbox toolbox remained unreachable after the recovery "
-                    "grace period"
-                ),
-                "details": {
-                    "provider": self.client.name,
-                    "exception_type": type(exc).__name__,
-                    "grace_seconds": grace_seconds,
-                },
-            }
-            attempt.state = HostedHarnessAttempt.State.FAILED
-            attempt.save(
-                update_fields=[
-                    "terminal_stage",
-                    "terminal_failure",
-                    "state",
-                    "updated_at",
-                ]
-            )
+            kept = self._keep_delivered_results(attempt)
+            if not kept:
+                attempt.terminal_stage = "failed"
+                attempt.terminal_failure = {
+                    "domain": "infrastructure",
+                    "stage": "running",
+                    "code": "sandbox_unreachable",
+                    "message": (
+                        "provider sandbox toolbox remained unreachable after the "
+                        "recovery grace period"
+                    ),
+                    "details": {
+                        "provider": self.client.name,
+                        "exception_type": type(exc).__name__,
+                        "grace_seconds": grace_seconds,
+                    },
+                }
+                attempt.state = HostedHarnessAttempt.State.FAILED
+                attempt.save(
+                    update_fields=[
+                        "terminal_stage",
+                        "terminal_failure",
+                        "state",
+                        "updated_at",
+                    ]
+                )
             try:
                 return self._delete_and_record(
                     attempt,
-                    retry_pending=self._should_retry(attempt, "infrastructure"),
+                    retry_pending=not kept
+                    and self._should_retry(attempt, "infrastructure"),
                 )
             except SandboxConflictError:
                 # The first delete request can be accepted even when its wait call ends in a
@@ -4587,6 +4594,12 @@ class HostedHarnessGateway:
         if exit_code == 3:
             attempt.state = HostedHarnessAttempt.State.SUPERSEDED
             attempt.save(update_fields=["state", "updated_at"])
+        elif (
+            not attempt.terminal_event_received or not attempt.manifest_acked
+        ) and self._keep_delivered_results(attempt):
+            # Every call's result is in, and the results are what a Run is: however the
+            # guest ended, only its ending or its manifest was lost.
+            pass
         elif exit_code == 4 and (
             not attempt.terminal_event_received or not attempt.manifest_acked
         ):
@@ -4682,40 +4695,6 @@ class HostedHarnessGateway:
                     logger.exception(
                         "could not mark the bundle cache failed attempt=%s", attempt.id
                     )
-        elif (
-            exit_code == 0
-            and attempt.terminal_event_received
-            and not attempt.manifest_acked
-            and attempt.terminal_stage == "completed"
-            and self._results_missing(attempt) == []
-        ):
-            # Every call's result is in, and the results are what the run page and a check
-            # run read; only the manifest listing the artifacts was lost. Keep the scored
-            # Run: manifest_acked stays False as the record of what never arrived.
-            logger.warning(
-                "hosted run kept without its manifest attempt=%s provider_ref=%s",
-                attempt.id,
-                attempt.provider_ref,
-            )
-        elif (
-            exit_code == 0
-            and not attempt.terminal_event_received
-            and self._results_missing(attempt) == []
-        ):
-            # Every call's result is in and only the guest's terminal event was lost. The
-            # platform records its own ending, as it does for a cancel: a reason no guest
-            # sends, and terminal_event_received stays False.
-            attempt.terminal_stage = "completed"
-            attempt.terminal_reason = "terminal_event_lost"
-            attempt.save(
-                update_fields=["terminal_stage", "terminal_reason", "updated_at"]
-            )
-            structlog_logger.warning(
-                "hosted_run_completed_by_platform",
-                job_id=str(attempt.job_id),
-                attempt_id=str(attempt.id),
-                reason="terminal_event_lost",
-            )
         elif exit_code == 0 and (
             not attempt.terminal_event_received or not attempt.manifest_acked
         ):
@@ -4725,8 +4704,6 @@ class HostedHarnessGateway:
                 not attempt.terminal_event_received
                 or attempt.terminal_stage == "completed"
             ) and self._should_retry(attempt, "infrastructure")
-            if retry_pending:
-                self._relaunch_only_missing_results(attempt)
             attempt.terminal_stage = "failed"
             attempt.terminal_failure = {
                 "domain": "platform_sync",
