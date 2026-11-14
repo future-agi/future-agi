@@ -7515,7 +7515,9 @@ class EvalPlayGroundAPIView(APIView):
                         if not Project.objects.filter(
                             id=loop_trace.project_id, organization=org
                         ).exists():
-                            return self._gm.bad_request("The selected trace is unavailable.")
+                            return self._gm.bad_request(
+                                "The selected trace is unavailable."
+                            )
                         mapping = trace_tool_call_input(
                             loop_trace, eval_template, runtime_config
                         )

@@ -1038,7 +1038,11 @@ class CHSpanReader:
             "WHERE trace_id = %(trace_id)s AND project_id = %(pid)s "
             "AND lower(observation_type) = 'tool' "
             "ORDER BY start_time DESC, id DESC LIMIT %(limit)s",
-            parameters={"trace_id": str(trace_id), "pid": str(project_id), "limit": limit},
+            parameters={
+                "trace_id": str(trace_id),
+                "pid": str(project_id),
+                "limit": limit,
+            },
             settings=_FINAL_SKIP_INDEX_SETTINGS,
         ).result_rows
         return [_row_to_chspan(r) for r in reversed(rows)]

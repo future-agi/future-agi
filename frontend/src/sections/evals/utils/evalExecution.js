@@ -92,7 +92,7 @@ export const executeEvalForRow = async ({
   spanDetail,
   mapping,
   rowFields,
-  codeParams,
+  codeParams = evalItem?.config?.params ?? evalItem?.params,
   errorLocalizerEnabled = false,
   compositeAdhocConfig = null,
   singleEvalConfigExtras = {},

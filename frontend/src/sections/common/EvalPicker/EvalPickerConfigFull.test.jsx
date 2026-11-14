@@ -230,15 +230,14 @@ const renderConfigFull = (options = {}) => render(configFullTree(options));
 it("attaches a registered function without requiring or editing sandbox code", async () => {
   const previous = stableEvalDetail.data;
   stableEvalDetail.data = {
-    id: "tpl-loop", templateId: "tpl-loop", name: "tool_call_loop_repetition", owner: "system",
+    id: "tpl-1", templateId: "tpl-1", name: "tool_call_loop_repetition", owner: "system",
     eval_type: "code", output_type: "pass_fail", required_keys: [],
-    function_params_schema: { window_size: { type: "integer", default: 100 } },
     config: { eval_type_id: "ToolCallLoopRepetition", required_keys: [],
-      config: { window_size: { type: "integer", default: 100 } } },
+      function_params_schema: { window_size: { type: "integer", default: 100 } } },
   };
   try {
     const onSave = vi.fn();
-    renderConfigFull({ evalData: stableEvalDetail.data, onSave });
+    renderConfigFull({ onSave });
     await act(async () => capturedProps.tracing.onReadyChange(true, {}));
     await waitFor(() => expect(screen.getByRole("button", { name: "Add Evaluation" })).toBeEnabled());
     expect(screen.queryByTestId("custom-code-editor")).not.toBeInTheDocument();
@@ -247,7 +246,7 @@ it("attaches a registered function without requiring or editing sandbox code", a
     await userEvent.type(screen.getByLabelText("window_size"), "8");
     await userEvent.click(screen.getByRole("button", { name: "Add Evaluation" }));
     expect(onSave).toHaveBeenCalledWith(expect.objectContaining({
-      templateId: "tpl-loop", params: { window_size: 8 },
+      templateId: "tpl-1", params: { window_size: 8 },
     }));
   } finally {
     stableEvalDetail.data = previous;

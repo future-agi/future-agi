@@ -1,5 +1,6 @@
 import { request } from '@playwright/test';
 import { randomBytes } from 'node:crypto';
+import { writeFile } from 'node:fs/promises';
 import { test, expect } from '../../lib/fixtures';
 import { E2E } from '../../lib/env';
 import { sendTrace } from '../../lib/otlp';
@@ -38,9 +39,11 @@ test('EVAL-E2E-021: pick the tool loop evaluator and compare repeated calls with
   const taskName = `e2e-tool-loop-task-${suffix}`;
   const jobId = `job-${suffix}`;
   const fixtures: { traceId: string; toolIds: string[]; score: number; progress: boolean }[] = [];
-  const attach = async (name: string, value: unknown) => testInfo.attach(name, {
-    body: JSON.stringify(value, null, 2), contentType: 'application/json',
-  });
+  const attach = async (name: string, value: unknown) => {
+    const path = testInfo.outputPath(name);
+    await writeFile(path, JSON.stringify(value, null, 2));
+    await testInfo.attach(name, { path, contentType: 'application/json' });
+  };
   try {
     for (const progress of [false, true]) {
       const rootId = randomBytes(8).toString('hex');
@@ -99,6 +102,7 @@ test('EVAL-E2E-021: pick the tool loop evaluator and compare repeated calls with
     const configBody = await configResponse.json();
     await attach('configured-evaluator.json', { request: configResponse.request().postDataJSON(), response: configBody });
     const seen: string[] = [];
+    const previewReasons = new Map<string, string>();
     for (let i = 0; i < 2; i++) {
       const preview = page.waitForResponse(r => r.url().endsWith(PREVIEW_PATH), { timeout: UI_READY });
       await page.getByRole('button', { name: 'Test on this row', exact: true }).click();
@@ -110,6 +114,7 @@ test('EVAL-E2E-021: pick the tool loop evaluator and compare repeated calls with
       const fixture = fixtures.find(f => f.traceId === payload.trace_id);
       expect(fixture).toBeTruthy();
       seen.push(payload.trace_id);
+      previewReasons.set(payload.trace_id, body.result.reason);
       expect(payload.config.params).toMatchObject({ min_repeats: 3, window_size: 8 });
       expect(body.result.output).toBe(fixture!.score);
       expect(body.result.reason).toContain('window_size=8');
@@ -120,8 +125,13 @@ test('EVAL-E2E-021: pick the tool loop evaluator and compare repeated calls with
         expect(body.result.reason).toContain('No repetitive');
       }
       await expect(page.getByText(body.result.reason, { exact: true })).toBeVisible({ timeout: UI_READY });
+      await page.getByText(body.result.reason, { exact: true }).scrollIntoViewIfNeeded();
       await page.screenshot({ path: testInfo.outputPath(fixture!.progress ? 'progress-result.png' : 'loop-result.png') });
-      if (i === 0) await page.getByRole('button', { name: 'Next row', exact: true }).click();
+      if (i === 0) {
+        await page.getByRole('button', { name: 'Next row', exact: true }).click();
+        const nextTrace = fixtures.find(f => f.traceId !== fixture!.traceId)!;
+        await expect(page.getByText(`"${nextTrace.traceId}"`, { exact: true })).toBeVisible({ timeout: UI_READY });
+      }
     }
     expect(seen.sort()).toEqual(fixtures.map(f => f.traceId).sort());
     const submitted = page.waitForResponse(r => r.url().endsWith(TASK_PATH)
@@ -136,13 +146,14 @@ test('EVAL-E2E-021: pick the tool loop evaluator and compare repeated calls with
     await expect(page).toHaveURL(new RegExp(`/dashboard/tasks/${taskId}`), { timeout: UI_READY });
     await expect.poll(async () => (await actor.api.get<{ status: string }>(`${TASK_PATH}${taskId}/`)).status,
       POLL.EVAL_RESULT).toBe('completed');
-    const expected = fixtures.map(f => ({ trace_id: f.traceId, output_float: f.score, target_type: 'trace', status: 'completed' }))
+    const expected = fixtures.map(f => ({ trace_id: f.traceId, output_float: f.score,
+      eval_explanation: previewReasons.get(f.traceId), target_type: 'trace', status: 'completed' }))
       .sort((a, b) => a.trace_id.localeCompare(b.trace_id));
     const pgRows = await probe.pg<{ trace_id: string; output_float: number; target_type: string; status: string }>(
-      'SELECT trace_id,output_float,target_type,status FROM tracer_eval_logger WHERE eval_task_id=$1 AND deleted=false ORDER BY trace_id', [taskId]);
+      'SELECT trace_id,output_float,eval_explanation,target_type,status FROM tracer_eval_logger WHERE eval_task_id=$1 AND deleted=false ORDER BY trace_id', [taskId]);
     expect(pgRows).toEqual(expected);
     await expect.poll(async () => probe.ch(
-      'SELECT trace_id,output_float,target_type,status FROM tracer_eval_logger FINAL WHERE eval_task_id={task:String} AND is_deleted=0 ORDER BY trace_id',
+      'SELECT trace_id,output_float,eval_explanation,target_type,status FROM tracer_eval_logger FINAL WHERE eval_task_id={task:String} AND deleted=false ORDER BY toString(trace_id)',
       { task: taskId }), POLL.CDC_VISIBLE).toEqual(expected);
     await attach('persisted-results.json', pgRows);
   } finally {
