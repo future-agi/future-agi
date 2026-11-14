@@ -300,8 +300,8 @@ def archive_scenario(
                 .first()
             )
             content = dict(member or {})
-        else:
-            _write(locked, [one for one in suite if one is not content], user=user)
+        # No draft change: selection holds an archived case back at once, and the next Save
+        # leaves it out of the suite version it makes.
         row.archived_at = timezone.now()
         row.archived_by = user if getattr(user, "is_authenticated", False) else None
         row.archive_reason = (reason or "")[:255]
@@ -329,7 +329,8 @@ def archive_scenario(
 def restore_scenario(
     environment: HostedHarnessJob, key: str, *, user: Any
 ) -> dict[str, Any]:
-    """Put an archived case back into the suite draft under its own key; it reads Draft until saved."""
+    """Bring an archived case back. One still in the saved suite runs again at once with its own
+    lifecycle; one a Save already left out goes back into the suite draft and reads Draft until saved."""
     from simulate.services.harness_scenario_lifecycle import in_draft_view
     from simulate.services.harness_versioning import read as version_reads
     from simulate.services.harness_versioning.drafts import archived_folder_files
@@ -361,18 +362,29 @@ def restore_scenario(
                 "updated_at",
             ]
         )
-        _write(
-            locked,
-            [*_suite_now(locked), content],
-            user=user,
-            restored_files=archived_folder_files(locked, row.scenario_key),
-        )
+        live = HarnessSuiteMember.no_workspace_objects.filter(
+            suite_version_id=locked.suite_version_id, scenario_key=row.scenario_key
+        ).exists()
+        if not live:
+            _write(
+                locked,
+                [*_suite_now(locked), content],
+                user=user,
+                restored_files=archived_folder_files(locked, row.scenario_key),
+            )
     logger.info(
         "harness_scenario_restored",
         environment_id=str(environment.id),
         scenario_key=row.scenario_key,
+        live=live,
     )
-    return {"scenario_key": row.scenario_key, "lifecycle": in_draft_view()}
+    return {
+        "scenario_key": row.scenario_key,
+        "live": live,
+        "lifecycle": _lifecycle_of(environment, row.scenario_key)
+        if live
+        else in_draft_view(),
+    }
 
 
 def scenario_revisions(environment: HostedHarnessJob, key: str) -> dict[str, Any]:

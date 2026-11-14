@@ -54,6 +54,25 @@ logger = structlog.get_logger(__name__)
 UNAVAILABLE = {"validation": {"state": "unavailable"}, "candidates": None}
 
 
+def live_archived_tokens(locked: HostedHarnessJob) -> set[str]:
+    """Tokens of archived cases the saved suite still holds: archiving changes no draft."""
+    from simulate.models import HarnessSuiteMember, HostedHarnessScenario
+    from simulate.services.hosted_harness_gateway import _scenario_token
+
+    live = {
+        _scenario_token(key)
+        for key in HarnessSuiteMember.no_workspace_objects.filter(
+            suite_version_id=locked.suite_version_id
+        ).values_list("scenario_key", flat=True)
+    }
+    return {
+        _scenario_token(key)
+        for key in HostedHarnessScenario.no_workspace_objects.filter(
+            job=locked, deleted=False, archived_at__isnull=False
+        ).values_list("scenario_key", flat=True)
+    } & live
+
+
 def open_drafts(locked: HostedHarnessJob) -> dict[str, Any]:
     """The locked environment's open drafts by piece; refuses `draft_not_found` when there are none."""
     opened = {piece: open_draft(locked, piece, lock=True) for piece in DRAFT_PIECES}
@@ -74,11 +93,12 @@ def _require_fresh(locked: HostedHarnessJob, opened: Mapping[str, Any]) -> None:
                 piece=piece,
             )
         if piece == "suite":
+            # A case archived after the draft opened is held back by the run, not refused here.
             refuse_scenario_keys(
                 locked,
                 (draft.documents or {}).get("scenarios") or [],
                 origin="manual",
-                exempt=exempted_keys(draft),
+                exempt=exempted_keys(draft) | live_archived_tokens(locked),
             )
 
 
