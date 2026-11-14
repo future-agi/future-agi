@@ -12,6 +12,7 @@ import {
   PORT_DIRECTION,
 } from "../utils/constants";
 import { parseVersionResponse } from "../utils/versionPayloadUtils";
+import { resolveResponsePortSchema } from "../AgentBuilder/NodeDrawer/nodeFormUtils";
 import _ from "lodash";
 import { useWorkflowRunStore } from "./workflow-run-store";
 
@@ -357,7 +358,7 @@ export const useAgentPlaygroundStore = create(
                 key: PORT_KEYS.RESPONSE,
                 display_name: generateOutputLabel(nodes),
                 direction: PORT_DIRECTION.OUTPUT,
-                data_schema: { type: "string" },
+                data_schema: resolveResponsePortSchema(config?.modelConfig),
                 required: true,
               },
             ];
