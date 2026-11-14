@@ -296,6 +296,13 @@ it('folds the run setup under a current result and opens it on request', () => {
 it('draws verification rules with the divider colour at every width', () => {
   h.detail.cells = [{ caseId: 'refund', variant: 'candidate', repeatIndex: 0, status: 'completed', attemptId: 'a', answer: 'pass', selection: 'pass', delivery: 'pass', tools: 'pass' }];
   renderPanel();
-  const cell = screen.getByRole('table', { name: 'Verification cells' }).querySelector('tbody td');
-  expect(getComputedStyle(cell).borderBottomColor).not.toMatch(/^(currentcolor|rgb\(0, 0, 0\))$/i);
+  // jsdom ignores media queries, so read the emitted rules: a border shorthand inside a breakpoint
+  // ("1px solid" with no colour) falls back to currentColor and drew near-black rules in light mode.
+  const table = screen.getByRole('table', { name: 'Verification cells' });
+  const classes = table.className.split(' ').filter((name) => name.startsWith('css-'));
+  const css = [...document.querySelectorAll('style')].map((style) => style.textContent).join('\n');
+  const rules = css.split('}').filter((rule) => classes.some((name) => rule.includes(name)));
+  expect(rules.length).toBeGreaterThan(0);
+  expect(rules.some((rule) => /border-bottom:\s*1px solid\s*(;|$)/.test(rule))).toBe(false);
+  expect(rules.some((rule) => /border-bottom-color:\s*rgba\(0,\s*0,\s*0,\s*0\.12\)/.test(rule))).toBe(true);
 });
