@@ -2072,8 +2072,15 @@ def test_source_version_ids_are_scoped_even_with_raw_replacement_keys(
 
     provider, client = vapi_setup
     agent, version, credentials = seed_version(provider, "assistant-A")
+    # Each agent needs its own OneToOne observability provider.
+    foreign_provider = ObservabilityProvider.objects.create(
+        project=provider.project,
+        organization=provider.organization,
+        workspace=provider.workspace,
+        provider="vapi",
+    )
     foreign_agent, foreign_version, foreign_credentials = seed_version(
-        provider, "assistant-foreign"
+        foreign_provider, "assistant-foreign"
     )
     if scope == "other-org":
         foreign_org = Organization.objects.create(name="Synthetic other organization")

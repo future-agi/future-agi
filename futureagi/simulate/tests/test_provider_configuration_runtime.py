@@ -24,6 +24,7 @@ def voice_call_factory(organization, workspace):
             agent_name="Synthetic runtime agent",
             agent_type=AgentDefinition.AgentTypeChoices.VOICE,
             provider=provider,
+            inbound=direction == "inbound",
             api_key="synthetic-definition-key",
             assistant_id="definition-assistant",
             organization=organization,

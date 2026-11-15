@@ -115,9 +115,10 @@ class CredentialSourceRequestSerializer(serializers.Serializer):
             AgentVersion.DoesNotExist,
             DjangoValidationError,
         ):
+            # Hide internal lookup/UUID errors behind the public validation error.
             raise serializers.ValidationError(
                 {"source_version_id": "Source version not found for this agent."}
-            )
+            ) from None
         return attrs
 
 

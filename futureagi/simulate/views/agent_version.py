@@ -1,5 +1,6 @@
 from django.conf import settings
 from django.db import transaction
+from django.db.models import Q
 from drf_yasg.utils import swagger_auto_schema
 from rest_framework import status
 from rest_framework.exceptions import NotFound, ValidationError
@@ -182,11 +183,29 @@ class CreateAgentVersionView(APIView):
             requested_provider = validated.get("provider") or agent.provider or ""
             provider_changed = requested_provider != source_provider
             definition_provider_changed = requested_provider != agent.provider
-            validate_provider_change(
-                source_provider=source_provider,
-                provider=requested_provider,
-                api_key=incoming_api_key,
+            # A source agent's first settings save selects a provider without
+            # crossing an existing credential authority. A blank provider alone
+            # is not enough: definition, version and legacy credentials close
+            # this exception, including rows whose secrets cannot be decrypted.
+            initial_source_configuration = (
+                provider_changed
+                and not source_provider
+                and not agent.provider
+                and not agent.api_key
+                and agent_is_source(agent)
+                and not ProviderCredentials.objects.filter(
+                    Q(agent_definition=agent)
+                    | Q(agent_version__agent_definition=agent)
+                ).exists()
             )
+            if not (
+                initial_source_configuration and not (incoming_api_key or "").strip()
+            ):
+                validate_provider_change(
+                    source_provider=source_provider,
+                    provider=requested_provider,
+                    api_key=incoming_api_key,
+                )
             carry_api_key = not provider_changed and (
                 preserve_existing_api_key
                 or (source_version_id is not None and not incoming_api_key)
@@ -335,17 +354,6 @@ class CreateAgentVersionView(APIView):
                     status=AgentVersion.StatusChoices.ACTIVE,
                 )
                 version.activate()
-                if preserve_empty_vapi_row or provider_changed:
-                    if requested_provider in ("livekit", "livekit_bridge"):
-                        storage_provider = ProviderCredentials.ProviderType.LIVEKIT
-                    elif requested_provider == "retell":
-                        storage_provider = ProviderCredentials.ProviderType.RETELL
-                    else:
-                        storage_provider = ProviderCredentials.ProviderType.VAPI
-                    ProviderCredentials.objects.create(
-                        agent_version=version,
-                        provider_type=storage_provider,
-                    )
 
                 assistant_input = (
                     {"assistant_id": validated["assistant_id"]}
@@ -430,12 +438,32 @@ class CreateAgentVersionView(APIView):
                     and creds_input.livekit_max_concurrency
                     != settings.DEFAULT_LIVEKIT_MAX_CONCURRENCY
                 )
-                if not (
+                skip_blank_source_credentials = (
                     sent_fields
                     and not has_credential_value
                     and not has_setting_value
                     and agent_is_source(agent)
+                )
+                # Do not pre-create the row the blank-source guard would skip.
+                # Existing provider transitions and raw-empty Vapi markers must
+                # still prevent sync/read paths from adopting legacy credentials.
+                if preserve_empty_vapi_row or (
+                    provider_changed
+                    and not (
+                        initial_source_configuration and skip_blank_source_credentials
+                    )
                 ):
+                    if requested_provider in ("livekit", "livekit_bridge"):
+                        storage_provider = ProviderCredentials.ProviderType.LIVEKIT
+                    elif requested_provider == "retell":
+                        storage_provider = ProviderCredentials.ProviderType.RETELL
+                    else:
+                        storage_provider = ProviderCredentials.ProviderType.VAPI
+                    ProviderCredentials.objects.create(
+                        agent_version=version,
+                        provider_type=storage_provider,
+                    )
+                if not skip_blank_source_credentials:
                     sync_provider_credentials(version, creds_input)
 
                 if observability_enabled is None:
