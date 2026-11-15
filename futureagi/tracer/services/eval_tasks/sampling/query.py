@@ -45,12 +45,14 @@ class SamplingParams(dict):
 
     ``policy`` lets typed errors name the policy's attribute keys, ``proof``
     marks a live first-admission proof and ``read_settings`` may only tighten
-    the sampling read budget.
+    the sampling read budget. ``tag_window`` keeps membership independent of
+    the event-day bounds used to discover candidate rows.
     """
 
     policy: dict | None = None
     proof: bool = False
     read_settings: dict | None = None
+    tag_window: tuple[datetime, datetime] | None = None
 
 
 class SamplingQuery:
@@ -87,6 +89,11 @@ class SamplingQuery:
             sp_snapshot=snapshot,
         )
         self.params.policy = policy
+        end = policy["window"]["end"]
+        self.params.tag_window = (
+            parse_time(policy["window"]["start"]),
+            min(parse_time(end), snapshot) if end else snapshot,
+        )
         self._counter = 0
         self.live_floor: datetime | None = None
         self.proof_row_ids: tuple[str, ...] | None = None
@@ -935,13 +942,30 @@ def stream_query(
                 if not analytics.supports_per_query_read_settings:
                     raise TagReadUnavailable("tag_source_unavailable")
                 deadline = ReadDeadline.start(timeout_ms, enforce_on_server=True)
-                params = prepare_effective_tag_params(
+                tag_window = getattr(params, "tag_window", None)
+                tag_params = params
+                if tag_window is not None:
+                    # Tag witnesses can cross the candidate root's event day.
+                    # Only relation preparation gets the full eligibility scope.
+                    tag_params = {
+                        **params,
+                        "candidate_start_date": tag_window[0],
+                        "candidate_end_date": tag_window[1],
+                    }
+                prepared = prepare_effective_tag_params(
                     analytics.execute_ch_query,
-                    params,
+                    tag_params,
                     deadline=deadline,
                     allow_window_scan=True,
                     window_overlay=True,
                 )
+                if tag_window is not None:
+                    for key in ("candidate_start_date", "candidate_end_date"):
+                        if key in params:
+                            prepared[key] = params[key]
+                        else:
+                            prepared.pop(key, None)
+                params = prepared
                 timeout_ms = deadline.remaining_ms()
             # Account for the exact wire values, including native timestamp
             # microseconds, under this stream's existing finite parser setting.
