@@ -323,7 +323,7 @@ test('GW-E2E-007: an admin applies a guardrail policy to one gateway key, first 
       page.on('request', observeWrite);
       try {
         await page.getByRole('button', { name: 'Save policy', exact: true }).click();
-        await expect(dialog.getByText('Keyword Blocklist: Enter words as a nonempty array of strings, with no blank entries. Open Configure to correct it, or disable the check.', { exact: true })).toBeVisible({ timeout: UI_READY });
+        await expect(dialog.getByText('Keyword Blocklist: Enter words as a nonempty array of strings. Open Configure to correct it, or disable the check.', { exact: true })).toBeVisible({ timeout: UI_READY });
         await expect(dialog.getByRole('textbox', { name: 'Name', exact: true })).toHaveValue(keywordName, { timeout: UI_READY });
         expect(writes).toEqual([]);
         await screenshot('keyword-empty-validation');
@@ -400,7 +400,18 @@ test('GW-E2E-007: an admin applies a guardrail policy to one gateway key, first 
       } finally {
         await page.unroute(policyURL);
       }
-      expect(await savePolicy(page)).toMatchObject({ id: keywordPolicy.id, gateway_synced: true, applied_keys: [keywordKey.id] });
+      // The real validation toast can cover this footer and pause on hover.
+      // Use normal keyboard activation, never force-click through the overlay.
+      const retrySave = page.getByRole('button', { name: 'Save policy', exact: true });
+      await expect(retrySave).toBeVisible({ timeout: UI_READY });
+      await expect(retrySave).toBeEnabled({ timeout: UI_READY });
+      await retrySave.focus();
+      await expect(retrySave).toBeFocused({ timeout: UI_READY });
+      const correctedResponse = page.waitForResponse(res => res.url() === policyURL && res.request().method() === 'PATCH', { timeout: UI_READY });
+      await retrySave.press('Enter');
+      const corrected = await correctedResponse;
+      expect(corrected.status()).toBe(200);
+      expect((await corrected.json() as Envelope<Policy>).result).toMatchObject({ id: keywordPolicy.id, gateway_synced: true, applied_keys: [keywordKey.id] });
       expect(await storedKeyword()).toEqual([{ ...expectedKeyword, description: draftDescription }]);
       await expect(dialog).toBeHidden({ timeout: UI_READY });
       await expect(page.getByTestId(`guardrail-policy-row-${keywordPolicy.id}`)).toBeVisible({ timeout: UI_READY });
