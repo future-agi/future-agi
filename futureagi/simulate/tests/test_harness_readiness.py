@@ -1027,6 +1027,9 @@ class TestApi:
             "dropped",
             "grading",
             "requirements_recorded",
+            "running",
+            "held_back",
+            "reasons",
         }
         assert set(body["selection"]["lists"]) == {
             "eligible",

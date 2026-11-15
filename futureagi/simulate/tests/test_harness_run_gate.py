@@ -176,3 +176,40 @@ def test_kept_as_written_still_runs():
     assert runnable(_lifecycle("kept_as_written"), default_pair=True) is True
     assert runnable(_lifecycle("kept_as_written"), default_pair=False) is True
     assert runnable(_lifecycle("archived"), default_pair=False) is False
+
+
+def test_the_dialog_preview_holds_back_what_the_run_holds_back(
+    user, workspace, storage
+):
+    from simulate.services.harness_readiness import selection
+    from simulate.services.harness_readiness.report import resolve_pairing
+
+    environment = _environment(user, workspace, storage, "gate-preview")
+    _suite(environment, _ten())
+    HarnessSuiteValidation.no_workspace_objects.filter(
+        suite_version=environment.suite_version
+    ).update(proofs=dict.fromkeys(LOOKUP_KEYS, PROVED))
+    HostedHarnessScenario.no_workspace_objects.filter(
+        job=environment, scenario_key=LOOKUP_KEYS[0]
+    ).update(archived_at=timezone.now())
+
+    preview = selection.selection_report(
+        resolve_pairing(environment), keys=KEYS, trials=1
+    )["selection"]
+    run = _run(environment, KEYS, key="preview")
+    sent = run.payload["metadata"]["readiness_selection"]
+
+    assert (
+        preview["held_back"]["by"]
+        == sent["held_back"]["by"]
+        == {
+            "not_validated": 4,
+            selection.ARCHIVED_ROW: 1,
+        }
+    )
+    assert sorted(preview["held_back"]["keys"]) == sorted(sent["held_back"]["keys"])
+    assert preview["running"] == sent["running"] == 5
+    assert (
+        preview["reasons"][selection.ARCHIVED_ROW]
+        == sent["reasons"][selection.ARCHIVED_ROW]
+    )

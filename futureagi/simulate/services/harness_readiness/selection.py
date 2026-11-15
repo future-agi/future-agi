@@ -198,6 +198,7 @@ def selection_report(
     placement = _place_all(pairing, report["rows"], keys=keys, trials=trials)
     placed = placement.placed
     requested = len(placed)
+    held_back, held_by, held_reasons = _held_back(placement, report["rows"])
     by_bucket: dict[Bucket, list[str]] = {bucket: [] for bucket in BUCKETS}
     for one in placed:
         by_bucket[one.bucket].append(one.case.key)
@@ -231,6 +232,13 @@ def selection_report(
                 "truncated": len(not_gradable) > LIST_LIMIT,
             },
             "requirements_recorded": placement.recorded,
+            "running": requested - len(by_bucket["blocked"]),
+            "held_back": {
+                "count": len(held_back),
+                **_capped(held_back),
+                "by": dict(held_by),
+            },
+            "reasons": held_reasons,
         },
     }
 
@@ -291,6 +299,39 @@ class RunPlan:
     revision: str
 
 
+def _held_back(
+    placement: Any, rows: list[Any]
+) -> tuple[list[str], Counter[str], dict[str, str]]:
+    """The cases a run of the placed selection holds back, per holding row, with each row's reason."""
+    dropped = [
+        one["key"] for one in placement.dropped if one["code"] == "scenario_dropped"
+    ]
+    placed = placement.placed
+    held = [one.case.key for one in placed if one.bucket == "blocked"] + dropped
+    by = Counter(row for one in placed if one.bucket == "blocked" for row in one.by)
+    reasons = {
+        row["id"]: row["reason"] or row["label"] for row in rows if row["id"] in by
+    }
+    for row in (NOT_VALIDATED_ROW, ARCHIVED_ROW):
+        texts = [
+            one.lifecycle_reason
+            for one in placed
+            if one.bucket == "blocked" and row in one.by and one.lifecycle_reason
+        ]
+        if len(texts) == 1:
+            reasons[row] = texts[0]
+        elif texts:
+            reasons[row] = (
+                f"{len(texts)} cases are not validated on these versions"
+                if row == NOT_VALIDATED_ROW
+                else f"{len(texts)} cases are archived"
+            )
+    if dropped:
+        by[DROPPED_ROW] = len(dropped)
+        reasons[DROPPED_ROW] = DROPPED_REASON
+    return held, by, reasons
+
+
 def select_for_run(pairing: Pairing, *, keys: list[str], trials: int) -> RunPlan:
     """The requested cases a run holds back, placed as ``selection_report`` places
     them: a case in the blocked bucket is held back and named, never sent.
@@ -312,34 +353,7 @@ def select_for_run(pairing: Pairing, *, keys: list[str], trials: int) -> RunPlan
         )
     report = readiness_report(pairing, bundle=bundle)
     placement = _place_all(pairing, report["rows"], keys=keys, trials=trials)
-    dropped = [
-        one["key"] for one in placement.dropped if one["code"] == "scenario_dropped"
-    ]
-    placed = placement.placed
-    held = [one.case.key for one in placed if one.bucket == "blocked"] + dropped
-    by = Counter(row for one in placed if one.bucket == "blocked" for row in one.by)
-    reasons = {
-        row["id"]: row["reason"] or row["label"]
-        for row in report["rows"]
-        if row["id"] in by
-    }
-    for row in (NOT_VALIDATED_ROW, ARCHIVED_ROW):
-        texts = [
-            one.lifecycle_reason
-            for one in placed
-            if one.bucket == "blocked" and row in one.by and one.lifecycle_reason
-        ]
-        if len(texts) == 1:
-            reasons[row] = texts[0]
-        elif texts:
-            reasons[row] = (
-                f"{len(texts)} cases are not validated on these versions"
-                if row == NOT_VALIDATED_ROW
-                else f"{len(texts)} cases are archived"
-            )
-    if dropped:
-        by[DROPPED_ROW] = len(dropped)
-        reasons[DROPPED_ROW] = DROPPED_REASON
+    held, by, reasons = _held_back(placement, report["rows"])
     return RunPlan(
         view={
             **_scope(pairing, placement, keys),
