@@ -12,7 +12,7 @@ import TechnicalDetails from '../components/TechnicalDetails';
 // Hierarchy: what is exported, one action, then the exact exported identities.
 // Palette/depth/surfaces: section on the page, neutral text, error only on failure.
 // Typography/spacing: s1/s3 and 12px groups.
-export default function ContextMigrationExport({ contextName, links, version }) {
+export default function ContextMigrationExport({ contextName, links }) {
   const request = useMigrationCollectionExport();
   const [items, setItems] = useState(null);
   const [error, setError] = useState('');
@@ -28,12 +28,11 @@ export default function ContextMigrationExport({ contextName, links, version }) 
   };
   // Grouped under a foldable heading below the install command, but shown open: the export button is
   // a frozen, measured step (UX-R7 §4.3, §4.6), so reaching it never costs an extra gesture.
-  return <TechnicalDetails title="More ways to install" defaultOpen><Section title={`Download the ${skillIds.length} linked skills (latest versions)`}>
+  return <TechnicalDetails title="More ways to install" defaultOpen><Section title="Download newer skill versions (not what this context locks)">
     <Stack spacing={1.5}>
-      <Typography variant="s3" color="text.secondary">Downloads the newest published version of each of the {skillIds.length} linked skills in one ZIP, with its source mapping receipt. These are not the versions this context locks. Downloading does not modify the source, remove local files or revoke keys.</Typography>
+      <Typography variant="s3" color="text.secondary">These are the newest published versions, which may differ from the versions this context installs. One ZIP holds each of the {skillIds.length} linked skills with its source mapping receipt. Downloading does not modify the source, remove local files or revoke keys.</Typography>
       <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.5} alignItems={{ xs: 'flex-start', sm: 'center' }} useFlexGap>
         <Button variant="outlined" disabled={!skillIds.length || request.isPending} onClick={run}>{request.isPending ? 'Preparing export…' : `Download ${skillIds.length} linked skills`}</Button>
-        <Typography variant="s3" color="text.secondary">{version != null ? `Use this only if you want newer skill versions than v${version} locks.` : 'Use this only if you want newer skill versions than this context locks.'}</Typography>
       </Stack>
       {error && <Alert severity="error">{error}</Alert>}
       {items && <Stack spacing={0.5}>
@@ -42,4 +41,4 @@ export default function ContextMigrationExport({ contextName, links, version }) 
     </Stack>
   </Section></TechnicalDetails>;
 }
-ContextMigrationExport.propTypes = { contextName: PropTypes.string.isRequired, links: PropTypes.array.isRequired, version: PropTypes.number };
+ContextMigrationExport.propTypes = { contextName: PropTypes.string.isRequired, links: PropTypes.array.isRequired };

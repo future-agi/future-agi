@@ -2,8 +2,10 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { afterEach, expect, it, vi } from "vitest";
 import ContextLinksPanel from "./ContextLinksPanel";
 import ContextImportDialog from "./ContextImportDialog";
+import ContextMigrationExport from "./ContextMigrationExport";
 
 vi.mock('src/api/skills/context-skill-inventory', () => ({ useLinkedSkillUpstream: () => ({}) }));
+vi.mock('src/api/skills/j1-migration-export', () => ({ useMigrationCollectionExport: () => ({ mutateAsync: vi.fn(), isPending: false }) }));
 const digest = `sha256:${"a".repeat(64)}`;
 const session = (links = []) => {
   const value = { revision: 1, dirty: false, editSequence: 0, contextSpec: { links }, resolvedLock: { links: [] } };
@@ -42,4 +44,12 @@ it("never replaces already accepted links with proposals", async () => {
 it("tells the author which migration skills will be proposed before creating the draft", () => {
   render(<ContextImportDialog scopeKey="scope" open onClose={vi.fn()} onCreate={vi.fn()} proposedLinkCount={14} />);
   expect(screen.getByText(/14 published skills from your migration will be proposed/)).toBeVisible();
+});
+
+it("says the download is not what the context installs, and keeps the measured button name", () => {
+  render(<ContextMigrationExport contextName="support-agent" links={[{ skillId: "one" }, { skillId: "two" }, { skillId: "one" }]} />);
+  expect(screen.getByText("Download newer skill versions (not what this context locks)")).toBeVisible();
+  expect(screen.getByText(/These are the newest published versions, which may differ from the versions this context installs\./)).toBeVisible();
+  expect(screen.getByRole("button", { name: "Download 2 linked skills" })).toBeEnabled();
+  expect(screen.queryByText(/latest versions/)).not.toBeInTheDocument();
 });
