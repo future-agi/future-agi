@@ -23,6 +23,7 @@ from rest_framework.test import APIClient
 
 from accounts.models import Organization, User
 from accounts.models.workspace import Workspace
+from agentic_eval.core_evals.run_prompt.available_models import AVAILABLE_MODELS
 from model_hub.models.api_key import ApiKey
 from model_hub.models.choices import (
     CellStatus,
@@ -1434,6 +1435,64 @@ class TestRetrieveRunPromptOptionsView:
         )
 
         assert response.status_code == status.HTTP_200_OK
+
+    def test_retrieve_run_prompt_options_keeps_model_status_per_request(
+        self, auth_client, organization
+    ):
+        """Test that each options response has its own model availability."""
+        catalog_before = [model.copy() for model in AVAILABLE_MODELS]
+        model_name = next(
+            model["model_name"]
+            for model in AVAILABLE_MODELS
+            if model.get("providers") == "openai" and model.get("mode") == "chat"
+        )
+        ApiKey.objects.create(
+            provider="openai", organization=organization, key="test-api-key"
+        )
+        other_organization = Organization.objects.create(
+            name="Other Model Organization"
+        )
+        other_user = User.objects.create_user(
+            email="othermodel@example.com",
+            password="testpassword123",
+            name="Other Model User",
+            organization=other_organization,
+        )
+        other_workspace = Workspace.objects.create(
+            name="Other Model Workspace",
+            organization=other_organization,
+            is_default=True,
+            created_by=other_user,
+        )
+        other_client = APIClient()
+        other_client.force_authenticate(user=other_user)
+
+        first_response = auth_client.get(
+            "/model-hub/develops/retrieve_run_prompt_options/"
+        )
+        set_workspace_context(
+            workspace=other_workspace, organization=other_organization
+        )
+        second_response = other_client.get(
+            "/model-hub/develops/retrieve_run_prompt_options/"
+        )
+
+        assert first_response.status_code == status.HTTP_200_OK
+        assert second_response.status_code == status.HTTP_200_OK
+        first_model = next(
+            model
+            for model in first_response.data["result"]["models"]
+            if model["model_name"] == model_name
+        )
+        second_model = next(
+            model
+            for model in second_response.data["result"]["models"]
+            if model["model_name"] == model_name
+        )
+        assert first_model["is_available"] is True
+        assert second_model["is_available"] is False
+        assert AVAILABLE_MODELS == catalog_before
+        assert all("is_available" not in model for model in AVAILABLE_MODELS)
 
     def test_retrieve_run_prompt_options_unauthenticated(self):
         """Test that unauthenticated users cannot retrieve options."""
