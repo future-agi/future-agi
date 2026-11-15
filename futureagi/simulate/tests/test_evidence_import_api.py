@@ -38,6 +38,7 @@ from simulate.selectors.evidence_import import (
     SOURCE_NOT_FOUND,
     SOURCE_UNAVAILABLE,
     _clip,
+    _cut_turns,
     evidence_digest,
     evidence_document,
     import_evidence,
@@ -417,6 +418,21 @@ class TestBudget:
         assert kept == "x" * 10
         assert left == 5
 
+    def test_an_over_budget_last_turn_is_cut_clear_of_a_personal_value(self):
+        trace = str(uuid.uuid4())
+        words = ("word " * 20)[:45]
+        turns = (
+            Turn("user", "word " * 20, False, trace, T0),
+            # Longer than the tail's half of the room, with an address across its cut.
+            Turn("agent", words + " bob@example.com and more", False, trace, T0),
+        )
+
+        kept, cut, _omitted = _cut_turns(turns, 100)
+
+        assert cut is True
+        assert kept[-1].text == words.rstrip()
+        assert kept[-1].truncated is True
+
     def test_an_over_budget_import_is_cut_and_says_so(
         self, client, environment, project
     ):
@@ -503,11 +519,13 @@ class TestBudget:
         worst = _evidence(
             turns=tuple(Turn("user", full, False, trace, T0) for _ in range(MAX_TURNS)),
             tool_calls=tuple(
-                _call("t", input=field, output=field, error="e" * 300)
+                _call("t" * 300, input=field, output=field, error="e" * 300)
                 for _ in range(MAX_TOOL_CALLS)
             ),
+            # Names and structured values are read by redaction too.
             labels=tuple(
-                Label("L", "text", "v" * 500, "n" * 500, "trace") for _ in range(50)
+                Label("L" * 300, "json", {"answer": "v" * 500}, "n" * 500, "trace")
+                for _ in range(50)
             ),
         )
         ids = [str(uuid.uuid4()) for _ in range(MAX_SOURCES)]
@@ -517,12 +535,19 @@ class TestBudget:
         ):
             evidence = import_evidence(project, "session", ids)
 
+        def text(value):
+            return value if isinstance(value, str) else json.dumps(value)
+
         read = sum(
             sum(len(t.text) for t in source.turns)
             + sum(
-                len(c.input) + len(c.output) + len(c.error) for c in source.tool_calls
+                len(c.name) + len(c.input) + len(c.output) + len(c.error)
+                for c in source.tool_calls
             )
-            + sum(len(label.notes) + len(label.value) for label in source.labels)
+            + sum(
+                len(label.name) + len(text(label.value)) + len(label.notes)
+                for label in source.labels
+            )
             for source in evidence.values()
         )
         assert read <= MAX_IMPORT_CHARS
@@ -735,6 +760,19 @@ class TestEvidenceDocument:
         assert sum(line.count("<EMAIL_ADDRESS>") for line in body) == 2
         assert "[call 1] lookup at " in text
         assert "starting state" in text.lower()
+
+    def test_a_tool_call_name_is_redacted(self, client, environment, project):
+        # Span names are set by whoever instruments the agent, so one can hold data.
+        found = {SESSION: _evidence(tool_calls=(_call("lookup:sam@example.com"),))}
+        evidence_import, made = self._import(client, environment, project, found)
+
+        with _observe(found):
+            text = evidence_document(evidence_import, [c["id"] for c in made["cases"]])
+
+        assert "sam@example.com" not in text
+        assert "[call 1] lookup:<EMAIL_ADDRESS> at " in text
+        fields = {(f["part"], f["field"]) for f in made["redaction"]["findings"]}
+        assert ("tool_calls", "name") in fields
 
     def test_label_names_and_structured_label_values_are_redacted(
         self, client, environment, project

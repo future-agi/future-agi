@@ -301,6 +301,24 @@ describe("evidence request bodies match the published contract", () => {
     });
   });
 
+  it("types a piece with no open draft as a null id in the generated client", async () => {
+    const {
+      SimulateApiHarnessEnvironmentsEvidenceImportsAddEvidenceCasesBody,
+    } = await import("src/generated/api-contracts/api.zod");
+    const parsed =
+      SimulateApiHarnessEnvironmentsEvidenceImportsAddEvidenceCasesBody.safeParse(
+        {
+          case_ids: [CASE],
+          expected_drafts: {
+            environment: { id: null, revision: 0 },
+            suite: { id: SUITE, revision: 1 },
+          },
+          idempotency_key: "add-1",
+        },
+      );
+    expect(parsed.success).toBe(true);
+  });
+
   it("refuses a record the contract does not name", () => {
     const result = validateContractedRequestConfig({
       url: `${BASE}${IMPORT}/draft/`,
