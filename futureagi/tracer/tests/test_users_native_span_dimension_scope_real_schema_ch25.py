@@ -210,6 +210,7 @@ def test_old_and_new_native_rows_across_authorized_scopes(
     builder = UserListQueryBuilderV2(
         organization_id=str(organization),
         filters=[*leaves, _date_filter()],
+        empty_scope=scope == "empty",
         **scope_kwargs,
     )
     candidates = [str(user) for user in users.values()]
