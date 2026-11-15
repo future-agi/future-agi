@@ -673,7 +673,8 @@ def _close_failed_attempts(function):
         if function.__name__ == "retirement_plan":
             # This PG-only draft belongs to this invocation too; closing only
             # the successor leaves the failed original PREPARED indefinitely.
-            prior.discard(args[0].id)
+            draft = args[0] if args else kwargs["draft"]
+            prior.discard(draft.id)
         try:
             return function(writer, *args, **kwargs)
         except Exception:

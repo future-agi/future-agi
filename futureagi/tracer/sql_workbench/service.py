@@ -567,7 +567,7 @@ def execution(actor, project_id, job_id):
 def snapshot(job: SQLExecution, *, include_result: bool = True) -> ExecutionSnapshot:
     from .metric_retention import guard_result
 
-    allowed = guard_result(job)
+    allowed = guard_result(job) if include_result else True
     expired = not allowed or job.expires_at <= timezone.now()
     stale = job.deadline <= timezone.now() and job.state in {"queued", "running"}
     return {

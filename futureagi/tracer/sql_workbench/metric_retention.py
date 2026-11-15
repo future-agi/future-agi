@@ -73,6 +73,8 @@ def result_allowed(job):
 
 
 def guard_result(job):
+    if not uses_metrics(job.sql):
+        return job.expires_at > timezone.now()
     if not result_allowed(job):
         invalidate(SQLExecution.objects.filter(pk=job.pk))
         job.refresh_from_db()

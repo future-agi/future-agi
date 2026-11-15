@@ -218,7 +218,7 @@ def request_snapshot(metric, data, user):
                 "definition_hash": pin.definition_version.definition_hash,
                 "captured_at": pin.captured_at.isoformat(),
                 "sampling_scope": "",
-                "semantics": "Committed request-time inputs; retained until explicit deletion or erasure.",
+                "semantics": "Committed request-time inputs; retained only while source policy permits, or until deletion or erasure.",
             },
         )
         transaction.on_commit(lambda: enqueue_capture(run.id))

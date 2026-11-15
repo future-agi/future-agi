@@ -366,7 +366,7 @@ def execute_run(run_id: UUID | str) -> None:
             )
             .get(pk=run_id)
         )
-        if run.status != DerivedMetricRun.Status.QUEUED:
+        if run.deleted_at or run.status != DerivedMetricRun.Status.QUEUED:
             return
         if not _authorized_metric(run.definition.metric) or not _requester_can_run(run):
             run.status, run.error = (
@@ -498,10 +498,14 @@ def _compute(run: DerivedMetricRun) -> None:
         params,
         settings=QUERY_SETTINGS,
     )
+    from tracer.services.derived_metrics.source_retention import require_run
+
+    require_run(run)
     with transaction.atomic():
         current = DerivedMetricRun.objects.select_for_update().get(pk=run.id)
         if (
-            current.attempt_id != run.attempt_id
+            current.deleted_at is not None
+            or current.attempt_id != run.attempt_id
             or current.lease_expires_at <= timezone.now()
         ):
             raise RuntimeError("Metric execution lease expired before publication.")
@@ -534,6 +538,12 @@ def queue_recompute(run: DerivedMetricRun, user) -> DerivedMetricRun:
         raise MetricInputError(
             "Saved snapshots cannot be rerun. Save a new snapshot instead."
         )
+    from tracer.services.derived_metrics.source_retention import window_retained
+
+    if run.deleted_at or not window_retained(
+        run.definition.metric.organization_id, run.window_start
+    ):
+        raise MetricInputError("This result is no longer available under source retention.")
     require_computable(run.definition)
     if (
         run.status in {DerivedMetricRun.Status.RUNNING, DerivedMetricRun.Status.QUEUED}

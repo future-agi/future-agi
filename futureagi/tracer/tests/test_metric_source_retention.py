@@ -24,7 +24,10 @@ from tracer.services.derived_metrics.service import (
 )
 from tracer.sql_workbench import service as sql_service
 from tracer.sql_workbench import tasks
-from tracer.sql_workbench.tests.test_permissions import create_job, tenants  # noqa: F401
+from tracer.sql_workbench.tests.test_permissions import (  # noqa: F401
+    create_job,
+    tenants,
+)
 from tracer.tests.test_derived_metric_lifecycle_safety import (
     _commit,
     _metric,
@@ -152,3 +155,22 @@ def test_saved_sql_expiry_stays_erased_after_policy_extension(tenants, policy):
     assert sql_service.snapshot(job)["result"] == {}
     policy["cutoff"] = None
     assert sql_service.snapshot(job)["result"] == {}
+
+
+def test_policy_outage_does_not_disable_existing_erasure_cleanup(settings, monkeypatch):
+    from django.core.exceptions import ImproperlyConfigured
+
+    from tracer.services.derived_metrics import erasure, history_gc
+    from tracer.sql_workbench import metric_retention
+    from tracer.tasks.derived_metric import cleanup_derived_metric_snapshots
+
+    settings.METRICS_ENABLED = 0
+    def unavailable(**kwargs):
+        raise ImproperlyConfigured("synthetic policy outage")
+    monkeypatch.setattr(source_retention, "expire_runs", unavailable)
+    monkeypatch.setattr(metric_retention, "expire_results", unavailable)
+    sweep = Mock(return_value=1)
+    monkeypatch.setattr(erasure, "sweep", sweep)
+    monkeypatch.setattr(history_gc, "run_scheduled", Mock(return_value=[]))
+    assert cleanup_derived_metric_snapshots() == 1
+    sweep.assert_called_once_with(limit=10)

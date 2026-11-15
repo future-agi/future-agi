@@ -839,7 +839,8 @@ def run_project_pass(lease: ProjectLease, purpose: str) -> None:
         if purpose == "expiry" or state.paused_reason:
             # Paused as too large: privacy work only, never new calculation.
             run_expiry_pass(writer)
-            writer.collect_garbage()
+            if MetricProjectRefresh.for_project(lease.project_id).head_manifest_id:
+                writer.collect_garbage()
             return
         if state.head_manifest_id is not None and run_due_expiry(
             writer, state.head_manifest

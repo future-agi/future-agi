@@ -371,6 +371,15 @@ class DerivedMetricManifestSerializer(serializers.Serializer):
     captured_at = serializers.DateTimeField()
     semantics = serializers.CharField()
 
+    def to_representation(self, instance):
+        result = super().to_representation(instance)
+        # Older records described an exemption that no longer applies.
+        result["semantics"] = result["semantics"].replace(
+            "retained until explicit deletion or erasure",
+            "retained only while source policy permits, or until deletion or erasure",
+        )
+        return result
+
     class Meta:
         # Only referenced by the nullable DerivedMetricRun.source_manifest.
         swagger_schema_fields = {"x-nullable": True}
@@ -838,11 +847,16 @@ class MetricReadProvenanceSerializer(serializers.Serializer):
         help_text="forward: started with no history; values exist from coverage_start",
     )
     coverage_start = serializers.DateTimeField(allow_null=True, required=False)
+    retention_floor = serializers.DateTimeField(
+        allow_null=True, required=False,
+        help_text="Permanent floor of the published retained-only state; current source policy can be stricter.",
+    )
+    retention_policy = serializers.ChoiceField(choices=["follow_source"], required=False)
     calculated_through = serializers.DateTimeField(
         allow_null=True,
         required=False,
         help_text=(
-            "forward: nothing starting at or after this 15-minute boundary is "
+            "Nothing starting at or after this 15-minute boundary is "
             "calculated yet (the consumed source cut, or a pending burst sweep's "
             "floor)"
         ),
@@ -896,7 +910,7 @@ class MetricKpiPreviousPointSerializer(MetricPointSerializer):
 
 
 _COMPLETE_THROUGH_HELP = (
-    "forward: end of the window's contiguous final prefix. Values are computed "
+    "End of the window's contiguous final prefix in both history and forward modes. Values are computed "
     "over the window's final buckets only (calculated, past the settle "
     "interval, holding no open unit)"
 )
@@ -940,6 +954,11 @@ class MetricTrendPointSerializer(MetricPointSerializer):
 class MetricTrendSerializer(serializers.Serializer):
     provenance = MetricReadProvenanceSerializer()
     effective_window = MetricEffectiveWindowSerializer()
+    complete_through = serializers.DateTimeField(
+        allow_null=True, required=False, help_text=_COMPLETE_THROUGH_HELP
+    )
+    nonfinal_buckets = serializers.IntegerField(min_value=0, required=False)
+    open_units = serializers.IntegerField(min_value=0, required=False)
     partial = serializers.BooleanField(
         required=False, help_text="true when any point is not_calculated or settling"
     )

@@ -82,3 +82,48 @@ def test_failed_expiry_closes_prepared_attempt_and_retry_keeps_progress(live_wri
     assert not MetricRefreshAttempt.objects.filter(project_id=writer.lease.project_id, state__in=MetricRefreshAttempt.OPEN_STATES).exists()
     monkeypatch.setattr(writer, "freeze_current", native)
     assert retention.expire_project(writer, [definition], retention_days=lambda: 1, now=now)["purged"]
+
+
+
+def test_history_kpi_and_trend_have_honest_native_finality_and_policy_guard(
+    live_writer, workspace, observe_project, settings, monkeypatch,
+):
+    from tracer.models.derived_metric import DerivedMetric, DerivedMetricVersion
+    from tracer.services.derived_metrics import reads, source_retention
+    from tracer.services.derived_metrics.service import MetricUnavailableError
+
+    settings.METRICS_ENABLED = 1
+    now = timezone.now().replace(minute=0, second=0, microsecond=0)
+    floor = {"at": now - timedelta(days=30)}
+    monkeypatch.setattr(source_retention, "current_cutoff", lambda *a, **k: floor["at"])
+    metric = DerivedMetric.objects.create(
+        organization=workspace.organization, workspace=workspace,
+        project=observe_project, name="Retained history read",
+    )
+    definition = DerivedMetricVersion.objects.create(
+        metric=metric, version=1, kind="custom", level="conversation",
+        formula="mean(y)", inputs=numeric_definition(metric.pk).inputs,
+        selection_unit="session", weighting="none", cohort_key="region",
+        backfill_status="complete", history_mode="history",
+    )
+    writer = live_writer
+    seed_fields_and_buckets(writer, definition, [
+        ("final-unit", now - timedelta(hours=2), 7, "retained-user"),
+    ])
+    attempt = writer.begin(versions=[{"id": definition.pk, "metric_id": metric.pk}])
+    writer.seal(attempt, cursors={"watermark_ns": int((now - timedelta(hours=1)).timestamp()) * 10**9})
+    writer.stage_and_publish(attempt)
+    DerivedMetric.activate_version(metric.pk, definition.pk, expected_active_id=None)
+    metric.refresh_from_db()
+    window = {"window_start": now - timedelta(hours=2), "window_end": now}
+    kpi = reads.read_kpi(metric, window, store=writer.store)
+    assert kpi["partial"] and kpi["current"]["value"] == 7
+    assert kpi["current"]["eligible_count"] == 1
+    trend = reads.read_trend(metric, {**window, "points": 8}, store=writer.store)
+    assert trend["partial"] and trend["complete_through"] < now
+    assert any(row["point_status"] == "not_calculated" for row in trend["results"])
+    assert sum(row["eligible_count"] for row in trend["results"]) == 1
+    floor["at"] = window["window_start"] + timedelta(microseconds=1)
+    for reader in (reads.read_kpi, reads.read_trend):
+        with pytest.raises(MetricUnavailableError, match="outside current retention"):
+            reader(metric, window, store=writer.store)
