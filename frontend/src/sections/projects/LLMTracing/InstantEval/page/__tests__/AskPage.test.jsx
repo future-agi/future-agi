@@ -2655,6 +2655,47 @@ describe("a sample size typed in", () => {
       ).toBeNull();
     });
 
+    // The block the size choices take: the skeleton while counting, the same
+    // space after a failed or empty count.
+    const reserved = () =>
+      screen.queryByTestId("scope-choices-loading") ||
+      screen.queryByTestId("scope-choices-space");
+    const footprint = (block) => ({
+      marginTop: getComputedStyle(block).marginTop,
+      heights: [...block.children].map(
+        (child) => getComputedStyle(child).height,
+      ),
+    });
+
+    it("keeps the size choices' place when the count fails or is zero", async () => {
+      fakes.estimate.mockImplementation(() => new Promise(() => {}));
+      const loading = renderAt(askLink(PROJECT, { unit: "sessions" }));
+      await screen.findByTestId("scope-choices-loading");
+      const counting = footprint(reserved());
+      expect(counting.heights).toEqual(["64px", "64px"]);
+      loading.unmount();
+
+      // The count is retried once before it fails.
+      fakes.estimate.mockRejectedValue(new Error("count failed"));
+      const failed = renderAt(askLink(PROJECT, { unit: "sessions" }));
+      expect(
+        await screen.findByText(/couldn't be counted/, {}, { timeout: 4000 }),
+      ).toBeInTheDocument();
+      expect(screen.getByTestId("scope-choices-space")).toBeInTheDocument();
+      expect(footprint(reserved())).toEqual(counting);
+      failed.unmount();
+
+      fakes.estimate.mockImplementation(costed(smallEstimate(0)));
+      renderAt(askLink(PROJECT, { unit: "sessions" }));
+      await waitFor(() =>
+        expect(screen.getByTestId("scope-choices-space")).toBeInTheDocument(),
+      );
+      expect(
+        screen.queryByRole("radiogroup", { name: "How many to read" }),
+      ).toBeNull();
+      expect(footprint(reserved())).toEqual(counting);
+    });
+
     it("offers a sample from inside the every-row card, adding no row", async () => {
       fakes.estimate.mockImplementation(costed(smallEstimate(42)));
       renderAt(askLink(PROJECT, { unit: "sessions" }));

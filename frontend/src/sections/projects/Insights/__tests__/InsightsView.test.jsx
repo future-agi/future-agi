@@ -1633,6 +1633,44 @@ describe("InsightsView", () => {
     );
   });
 
+  it("counts the unit the user picks while the sessions check is still out", async () => {
+    // The check for sessions never answers.
+    mocks.collect.mockImplementation(({ unit, limit }) =>
+      unit === "sessions" && limit === 1
+        ? new Promise(() => {})
+        : Promise.resolve({
+            items: population.slice(0, limit),
+            total: 108,
+            totalIsLowerBound: false,
+            truncated: false,
+          }),
+    );
+    renderAt("?new=1&lens=failures");
+    await screen.findByRole("radio", { name: /Failures/ });
+    await waitFor(() =>
+      expect(mocks.collect).toHaveBeenCalledWith(
+        expect.objectContaining({ unit: "sessions", limit: 1 }),
+      ),
+    );
+    expect(postsTo("/tracer/insights/estimate/")).toHaveLength(0);
+    expect(screen.getByRole("button", { name: "Run report" })).toBeDisabled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Traces" }));
+    await waitFor(() =>
+      expect(postsTo("/tracer/insights/estimate/")).toHaveLength(1),
+    );
+    const [[, counted]] = postsTo("/tracer/insights/estimate/");
+    expect(counted.unit).toBe("traces");
+    expect(
+      (await screen.findAllByText(/Analysing all 108 traces/)).length,
+    ).toBeGreaterThan(0);
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Run report" }),
+      ).not.toBeDisabled(),
+    );
+  });
+
   it("runs a handed-over population as a fixed scope", async () => {
     const key = "seedkey1";
     sessionStorage.setItem(

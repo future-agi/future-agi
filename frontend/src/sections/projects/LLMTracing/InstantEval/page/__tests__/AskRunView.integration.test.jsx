@@ -352,6 +352,33 @@ describe("the run's recovery and confidence headline", () => {
     await waitFor(() => expect(http.get).toHaveBeenCalled());
   });
 
+  it("clears the answer filter when the question already shown is chosen again", async () => {
+    http.get.mockResolvedValue(response([], 0));
+    const run = runOf({
+      status: "done",
+      questions: [
+        QUESTION,
+        { ...QUESTION, configId: "q2", question: "Satisfied?" },
+      ],
+    });
+    run.summary.counts = { [CONFIG]: { Yes: 50, No: 3 }, q2: { Yes: 53 } };
+    renderRun(run);
+    const table = screen.getByRole("region", { name: "Sessions asked about" });
+    fireEvent.click(screen.getByRole("button", { name: /^No 6% · 3$/ }));
+    expect(
+      within(table).getByText("No · Was the issue resolved?"),
+    ).toBeInTheDocument();
+    const shown = screen.getByRole("tab", {
+      name: "1 · Was the issue resolved?",
+    });
+    expect(shown).toHaveAttribute("aria-selected", "true");
+    fireEvent.click(shown);
+    expect(
+      within(table).queryByText("No · Was the issue resolved?"),
+    ).toBeNull();
+    await waitFor(() => expect(http.get).toHaveBeenCalled());
+  });
+
   it("reads more from the low-data heatmap using the run's control", async () => {
     http.get.mockResolvedValue(response([], 0));
     const run = runOf({

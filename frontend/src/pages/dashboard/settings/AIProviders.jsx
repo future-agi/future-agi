@@ -66,11 +66,16 @@ const ConfigureProviders = () => {
   const theme = useTheme();
   const [showCreateModal, setShowCreateModal] = useState(false);
   // `?provider=typesafe` (a link from a feature that needs that key) opens
-  // the list already searched to that provider.
+  // the list already searched to that provider. A new or removed provider
+  // in the URL searches again; what the user types stands until then.
   const [searchParams] = useSearchParams();
-  const [searchQuery, setSearchQuery] = useState(
-    () => searchParams.get("provider") || "",
-  );
+  const provider = searchParams.get("provider") || "";
+  const [searchQuery, setSearchQuery] = useState(provider);
+  const [searchedProvider, setSearchedProvider] = useState(provider);
+  if (provider !== searchedProvider) {
+    setSearchedProvider(provider);
+    setSearchQuery(provider);
+  }
   const { data, isLoading, isFetching } = useQuery({
     queryKey: ["api-key-status"],
     queryFn: () => axios.get(endpoints.develop.apiKey.status),

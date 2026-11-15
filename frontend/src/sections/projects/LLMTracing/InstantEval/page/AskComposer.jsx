@@ -461,24 +461,36 @@ function ScopeCard({
           )}
         </Box>
       </Stack>
-      {population.isLoading && !estimate && (
-        // Holds the size choices' place while the view is counted, so the
-        // question box and suggestions below don't jump when they land.
+      {!(estimate && count > 0) && (
+        // Holds the size choices' place while the view is counted, and keeps
+        // it when the count fails or comes back empty, so the question box
+        // and suggestions below never jump.
         <Stack
           direction={{ xs: "column", sm: "row" }}
           spacing={1.25}
           aria-hidden
-          data-testid="scope-choices-loading"
+          data-testid={
+            population.isLoading && !estimate
+              ? "scope-choices-loading"
+              : "scope-choices-space"
+          }
           sx={{ mt: 1.75 }}
         >
-          {[0, 1].map((key) => (
-            <Skeleton
-              key={key}
-              variant="rounded"
-              height={CHOICE_CARD_HEIGHT}
-              sx={{ flex: 1, minWidth: 240, borderRadius: "8px" }}
-            />
-          ))}
+          {[0, 1].map((key) =>
+            population.isLoading && !estimate ? (
+              <Skeleton
+                key={key}
+                variant="rounded"
+                height={CHOICE_CARD_HEIGHT}
+                sx={{ flex: 1, minWidth: 240, borderRadius: "8px" }}
+              />
+            ) : (
+              <Box
+                key={key}
+                sx={{ flex: 1, minWidth: 240, height: CHOICE_CARD_HEIGHT }}
+              />
+            ),
+          )}
         </Stack>
       )}
       {estimate && count > 0 && (

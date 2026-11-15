@@ -311,20 +311,18 @@ export default function NewReport({
   const update = (patch) => setDraft((current) => ({ ...current, ...patch }));
 
   // Default unit: sessions when the project has them, else traces.
-  const hasSessions = useHasSessions(
-    projectId,
-    !touched.unit && !lensFor(draft.lens).unit,
-  );
+  const probing = !touched.unit && !lensFor(draft.lens).unit;
+  const hasSessions = useHasSessions(projectId, probing);
   const defaultUnit = hasSessions.data === false ? "traces" : "sessions";
-  // Until then, and until the effect above has moved the unit, the unit may
+  // Until then, and until the effect below has moved the unit, the unit may
   // still change: counting sessions first would cost an estimate that is
-  // thrown away.
+  // thrown away. A unit the user chose is final, so a probe still in flight
+  // holds nothing up.
   const unitSettling =
     !fixed &&
-    (hasSessions.isLoading ||
-      (!touched.unit &&
-        hasSessions.data === false &&
-        draft.unit === "sessions"));
+    !touched.unit &&
+    ((probing && hasSessions.isLoading) ||
+      (hasSessions.data === false && draft.unit === "sessions"));
   useEffect(() => {
     if (touched.unit || fixed || hasSessions.data !== false) return;
     setDraft((current) =>

@@ -1233,10 +1233,6 @@ export default function AskRunView({
                     ? question.configId
                     : false
                 }
-                onChange={(_, configId) => {
-                  setFocus({ configId, answer: null });
-                  setSelection(null);
-                }}
                 variant="scrollable"
                 scrollButtons={false}
                 aria-label="Questions"
@@ -1245,6 +1241,12 @@ export default function AskRunView({
                   <Tab
                     key={item.configId || index}
                     value={item.configId}
+                    // On click, not Tabs' onChange: choosing the question
+                    // already shown still clears its filter.
+                    onClick={() => {
+                      setFocus({ configId: item.configId, answer: null });
+                      setSelection(null);
+                    }}
                     title={item.fullQuestion || item.question}
                     label={
                       <QuestionTabLabel
