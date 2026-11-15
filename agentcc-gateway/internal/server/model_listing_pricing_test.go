@@ -5,9 +5,11 @@ import (
 	"math"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 
 	"github.com/futureagi/agentcc-gateway/internal/config"
+	"github.com/futureagi/agentcc-gateway/internal/modeldb"
 	"github.com/futureagi/agentcc-gateway/internal/models"
 	"github.com/futureagi/agentcc-gateway/internal/pipeline"
 	"github.com/futureagi/agentcc-gateway/internal/providers"
@@ -153,5 +155,72 @@ func TestListModels_OrgProviderPriceStableAcrossFirstRequest(t *testing.T) {
 	a, _ := json.Marshal(after)
 	if string(b) != string(a) {
 		t.Errorf("listing changed after the first request:\nbefore %s\nafter  %s", b, a)
+	}
+}
+
+// Two enabled org providers list the same model under different price-table
+// names. The listing quotes the one inference would route to, which is the
+// lowest-sorted provider with credentials, on every call.
+func TestListModels_DuplicateOrgModelQuotesTheRoutedProvider(t *testing.T) {
+	const orgKey = "sk-agentcc-org-dup"
+	for _, tc := range []struct {
+		name         string
+		alphaKey     string
+		wantOwner    string
+		wantPriceMTk float64
+	}{
+		{"both with credentials", "org-key", "alpha", 1},
+		{"the first without credentials", "", "zeta", 5},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := config.DefaultConfig()
+			cfg.Auth.Enabled = true
+			cfg.Auth.Keys = []config.AuthKeyConfig{{Name: "org-user", Key: orgKey, Owner: "user", KeyType: "byok", Metadata: map[string]string{"org_id": "org-1"}}}
+			registry, err := providers.NewRegistry(cfg)
+			if err != nil {
+				t.Fatalf("creating registry: %v", err)
+			}
+			// IP literals pass the base URL check without a lookup; nothing is sent.
+			store := tenant.NewStore()
+			store.Set("org-1", &tenant.OrgConfig{Providers: map[string]*tenant.ProviderConfig{
+				"alpha": {APIKey: tc.alphaKey, Enabled: true, BaseURL: "https://8.8.8.8", APIFormat: "gemini", Models: []string{"dup-model"}},
+				"zeta":  {APIKey: "org-key", Enabled: true, BaseURL: "https://us-central1-aiplatform.googleapis.com", APIFormat: "gemini", Models: []string{"dup-model"}},
+			}})
+			table := map[string]*modeldb.ModelInfo{
+				"gemini/dup-model":    {Provider: "gemini", Mode: modeldb.ModeChat, Pricing: modeldb.PricingInfo{InputPerToken: 1e-6, OutputPerToken: 1e-6}},
+				"vertex_ai/dup-model": {Provider: "vertex_ai", Mode: modeldb.ModeChat, Pricing: modeldb.PricingInfo{InputPerToken: 5e-6, OutputPerToken: 5e-6}},
+			}
+			var db atomic.Pointer[modeldb.ModelDB]
+			db.Store(modeldb.New(table, nil))
+			srv := New(cfg, "", registry, pipeline.NewEngine(), nil, nil, nil, nil, &db, store, nil)
+			srv.ready.Store(true)
+
+			for i := range 100 {
+				req := httptest.NewRequest(http.MethodGet, "/v1/models", nil)
+				req.Header.Set("Authorization", "Bearer "+orgKey)
+				w := httptest.NewRecorder()
+				srv.httpServer.Handler.ServeHTTP(w, req)
+				if w.Code != http.StatusOK {
+					t.Fatalf("call %d: status %d: %s", i, w.Code, w.Body.String())
+				}
+				var resp models.EnrichedModelListResponse
+				if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+					t.Fatalf("call %d: parsing response: %v", i, err)
+				}
+				var listed []models.EnrichedModelObject
+				for _, m := range resp.Data {
+					if m.ID == "dup-model" {
+						listed = append(listed, m)
+					}
+				}
+				if len(listed) != 1 {
+					t.Fatalf("call %d: dup-model listed %d times, want once", i, len(listed))
+				}
+				got := listed[0]
+				if got.OwnedBy != tc.wantOwner || got.Pricing == nil || math.Abs(got.Pricing.InputPerMTokens-tc.wantPriceMTk) > 1e-9 {
+					t.Fatalf("call %d: owned_by %q pricing %+v, want %q at $%v per M in", i, got.OwnedBy, got.Pricing, tc.wantOwner, tc.wantPriceMTk)
+				}
+			}
+		})
 	}
 }
