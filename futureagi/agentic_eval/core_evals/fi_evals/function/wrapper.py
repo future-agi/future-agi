@@ -1098,6 +1098,47 @@ class NonLlmContextRecall(FunctionEvaluator):
         )
 
 
+class ContextPrecisionScore(FunctionEvaluator):
+    def __init__(
+        self,
+        k: int | None = None,
+        min_token_overlap: float = 0.6,
+        display_name: str | None = None,
+    ):
+        super().__init__(
+            function_name=FunctionEvalTypeId.CONTEXT_PRECISION_SCORE.value,
+            function_arguments={"k": k, "min_token_overlap": min_token_overlap},
+            display_name=display_name,
+        )
+
+
+class ContextRecallScore(FunctionEvaluator):
+    def __init__(self, min_token_overlap: float = 0.7, display_name: str | None = None):
+        super().__init__(
+            function_name=FunctionEvalTypeId.CONTEXT_RECALL_SCORE.value,
+            function_arguments={"min_token_overlap": min_token_overlap},
+            display_name=display_name,
+        )
+
+
+class FaithfulnessScore(FunctionEvaluator):
+    def __init__(self, display_name: str | None = None):
+        super().__init__(
+            function_name=FunctionEvalTypeId.FAITHFULNESS_SCORE.value,
+            function_arguments={},
+            display_name=display_name,
+        )
+
+
+class NoiseSensitivity(FunctionEvaluator):
+    def __init__(self, display_name: str | None = None):
+        super().__init__(
+            function_name=FunctionEvalTypeId.NOISE_SENSITIVITY.value,
+            function_arguments={},
+            display_name=display_name,
+        )
+
+
 class DistinctN(FunctionEvaluator):
     def __init__(self, n: int = 1, display_name: str | None = None):
         super().__init__(
