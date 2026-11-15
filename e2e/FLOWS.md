@@ -1654,7 +1654,7 @@
 
 ### GW-E2E-007 — an admin applies a guardrail policy to one gateway key, first monitoring and then enforcing it
 
-**Goal:** An admin monitors and enforces a guardrail on one API key, corrects invalid keyword and six built-in configurations without losing edits, and preserves cache isolation, org-wide protections and safe refusal of uninspectable selected content
+**Goal:** An admin monitors and enforces a guardrail on one API key, corrects invalid keyword and built-in configurations without losing edits, and preserves cache isolation, org-wide protections and safe refusal of uninspectable selected content
 
 **Spec:** `flows/gateway/key-guardrail-policy.spec.ts:53`
 
@@ -1674,6 +1674,9 @@
 10. save each corrected policy for its own key, verify exact persisted and pushed configuration, then reload and reopen Configure
 11. send safe text with each corrected selected key and read its unique uncached mock echo
 12. refuse a selected native Responses request with previous_response_id without releasing content, verify its blocked log, and confirm ordinary chat still works
+13. correct malformed Prompt Injection JSON through Configure to instruction_override and HIGH with unknown metadata, save the intended key, reopen and send safe text
+14. reopen the existing Content Moderation policy, retain an unreachable count of 50 without writing, correct it to 3 and reopen the same metadata
+15. reject an active API alias collision including a disabled row, save it inactive, refuse activation through Save policy and save inactive without losing either raw check
 
 **Backend state verified:**
 
@@ -1689,6 +1692,9 @@
 - all six corrected built-in policies reach the gateway with exact enabled checks, thresholds, configurations and selected gateway key IDs
 - safe text on every corrected selected key returns the unique mock echo without a guardrail trigger or cache reuse
 - a native Responses request with uninspectable selected input returns input_guardrail_unsupported without content and records the exact blocked selected-policy request
+- Prompt Injection invalid drafts make no policy write; correction preserves exact HIGH sensitivity, supported category, unknown metadata and intended key in API, PostgreSQL, pushed config and reopened JSON, with a safe uncached echo
+- an unreachable Content Moderation count retains the draft without writing; correcting it to 3 preserves the existing policy, key and metadata in API, PostgreSQL, pushed config and reopened JSON
+- an active alias collision including a disabled duplicate returns 400 without a row; inactive API save and UI activation refusal preserve both raw checks, and inactive UI save retains their exact options in API and PostgreSQL
 
 ## knowledge-base
 

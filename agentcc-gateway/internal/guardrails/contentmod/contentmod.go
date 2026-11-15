@@ -94,8 +94,12 @@ func New(cfg map[string]interface{}) *ContentModerationGuardrail {
 	}
 
 	if g.configErr == nil {
+		// This error gates selected readiness before the resolver takes its copy.
+		// Accumulate in that copy's canonical order, not the legacy map order:
+		// finite weights near MaxFloat64 can overflow in only some orders.
+		selected := g.SelectedPolicyGuardrail().(*ContentModerationGuardrail)
 		var totalWeight float64
-		for _, cat := range g.categories {
+		for _, cat := range selected.categories {
 			totalWeight += cat.weight
 		}
 		if math.IsInf(totalWeight, 0) || math.IsNaN(totalWeight) {

@@ -55,7 +55,7 @@ test('GW-E2E-007: an admin applies a guardrail policy to one gateway key, first 
   annotation: flowAnnotation({
     id: 'GW-E2E-007',
     area: 'gateway',
-    userGoal: 'An admin monitors and enforces a guardrail on one API key, corrects invalid keyword and six built-in configurations without losing edits, and preserves cache isolation, org-wide protections and safe refusal of uninspectable selected content',
+    userGoal: 'An admin monitors and enforces a guardrail on one API key, corrects invalid keyword and built-in configurations without losing edits, and preserves cache isolation, org-wide protections and safe refusal of uninspectable selected content',
     steps: [
       'seed a local mock provider, two gateway keys and enabled organization caching with a minted cache namespace',
       'open Guardrails Policies, create a Secret Detection block policy for key A in Monitor mode, picking the key by name; the dialog offers no Org-wide scope',
@@ -69,6 +69,9 @@ test('GW-E2E-007: an admin applies a guardrail policy to one gateway key, first 
       'save each corrected policy for its own key, verify exact persisted and pushed configuration, then reload and reopen Configure',
       'send safe text with each corrected selected key and read its unique uncached mock echo',
       'refuse a selected native Responses request with previous_response_id without releasing content, verify its blocked log, and confirm ordinary chat still works',
+      'correct malformed Prompt Injection JSON through Configure to instruction_override and HIGH with unknown metadata, save the intended key, reopen and send safe text',
+      'reopen the existing Content Moderation policy, retain an unreachable count of 50 without writing, correct it to 3 and reopen the same metadata',
+      'reject an active API alias collision including a disabled row, save it inactive, refuse activation through Save policy and save inactive without losing either raw check',
     ],
     backendChecks: [
       'the gateway admin config carries enabled caching and the UI-saved key policy mode, block action and key A gateway key ID during the cache phase',
@@ -83,12 +86,17 @@ test('GW-E2E-007: an admin applies a guardrail policy to one gateway key, first 
       'all six corrected built-in policies reach the gateway with exact enabled checks, thresholds, configurations and selected gateway key IDs',
       'safe text on every corrected selected key returns the unique mock echo without a guardrail trigger or cache reuse',
       'a native Responses request with uninspectable selected input returns input_guardrail_unsupported without content and records the exact blocked selected-policy request',
+      'Prompt Injection invalid drafts make no policy write; correction preserves exact HIGH sensitivity, supported category, unknown metadata and intended key in API, PostgreSQL, pushed config and reopened JSON, with a safe uncached echo',
+      'an unreachable Content Moderation count retains the draft without writing; correcting it to 3 preserves the existing policy, key and metadata in API, PostgreSQL, pushed config and reopened JSON',
+      'an active alias collision including a disabled duplicate returns 400 without a row; inactive API save and UI activation refusal preserve both raw checks, and inactive UI save retains their exact options in API and PostgreSQL',
     ],
   }),
 }, async ({ browser, probe }, testInfo) => {
-  test.setTimeout(2_880_000);
-  // Existing phases 1260s + six families x four UI_READY groups 1440s
-  // + batched config push 60s + refusal log flush 60s + headroom 60s.
+  test.setTimeout(3_780_000);
+  // Original12: 1260s + six families x four UI_READY groups 1440s
+  // + batched config push 60s + refusal log flush 60s + headroom 60s = 2880s.
+  // Checks13–15: eleven UI_READY groups 660s + two config pushes 120s
+  // + API/navigation headroom 120s = 900s more; finite whole-flow ceiling 3780s.
   // An organization of this test's own, so its policies and org-wide block never reach
   // other specs on the worker's shared actor (as GW-E2E-004 does).
   const accounts = await request.newContext({ baseURL: E2E.apiUrl });
@@ -606,6 +614,237 @@ test('GW-E2E-007: an admin applies a guardrail policy to one gateway key, first 
       expect((await after.json()).choices[0].message.content).toBe(`echo: ${afterContent}`);
       expect(after.headers()[TRIGGERED_HEADER]).toBeUndefined();
       expect(after.headers()[CACHE_HEADER]).toBe('skip_key_policy');
+
+      // Checks13–15 extend, rather than replace, the original twelve anchors above.
+      // Wire fields: AgentccGuardrailPolicySerializer; SQL: AgentccGuardrailPolicy.
+      const storedR4 = (id: string) => probe.pg<StoredPolicy>(
+        'SELECT id, organization_id AS organization, name, description, scope, mode, applied_keys, checks, is_active, runs_on_gateway FROM agentcc_guardrail_policy WHERE id=$1 AND organization_id=$2 AND deleted=false',
+        [id, actor.organizationId],
+      );
+      const expectStoredR4 = async (expected: StoredPolicy, check: number) => {
+        const detail = (await actor.api.get<Envelope<StoredPolicy>>(`${POLICIES}${expected.id}/`)).result;
+        const actual = { id: detail.id, organization: detail.organization, name: detail.name, description: detail.description, scope: detail.scope, mode: detail.mode, applied_keys: detail.applied_keys, checks: detail.checks, is_active: detail.is_active, runs_on_gateway: detail.runs_on_gateway };
+        expect(actual, `check ${check}: exact persisted API configuration`).toEqual(expected);
+        expect(await storedR4(expected.id), `check ${check}: exact persisted PostgreSQL configuration`).toEqual([expected]);
+      };
+      // config_push._project_key_check preserves config and maps the outer threshold.
+      const expectPushedR4 = async (stored: StoredPolicy, key: CreatedKey, check: number) => {
+        await expect.poll(async () => {
+          const res = await gateway.get('/-/orgs/configs', { headers: { Authorization: `Bearer ${ADMIN_TOKEN}` } });
+          expect(res.status()).toBe(200);
+          const wire = await res.json() as GatewayConfigs;
+          const policy = wire.data[actor.organizationId]?.guardrails?.key_policies?.find(item => item.id === stored.id);
+          return policy ? { id: policy.id, name: policy.name, mode: policy.mode, key_ids: policy.key_ids, checks: policy.checks } : null;
+        }, { ...POLL.ASYNC_JOB, message: `check ${check}: exact pushed configuration and assignment` }).toEqual({
+          id: stored.id, name: stored.name, mode: 'enforce', key_ids: [key.gateway_key_id],
+          checks: Object.fromEntries(stored.checks.map(item => [item.name, { enabled: item.enabled, action: item.action, confidence_threshold: item.threshold, config: item.config }])),
+        });
+      };
+      const parentR4 = page.getByRole('dialog').filter({ has: page.getByRole('textbox', { name: 'Name', exact: true }) });
+      const r4Writes: string[] = [];
+      const observeR4Write = (req: import('@playwright/test').Request) => {
+        if (new URL(req.url()).pathname.startsWith(POLICIES) && ['POST', 'PATCH', 'PUT', 'DELETE'].includes(req.method())) r4Writes.push(req.method());
+      };
+      page.on('request', observeR4Write);
+      try {
+        // 13. injection.New/defaultDetectors and guardrailChecks.js SELECTORS:
+        // instruction_override is supported; sensitivity is case-insensitive, not coerced on save.
+        const injectionName = `e2e-gw7-r4-injection-${suffix}`;
+        const injectionDescription = `e2e-r4-injection-description-${suffix}`;
+        const injectionMarker = `e2e-config-r4-injection-${suffix}`;
+        const injectionKey = (await actor.api.post<Envelope<CreatedKey>>('/agentcc/api-keys/', { name: `e2e-r4-injection-key-${suffix}` })).result;
+        await testInfo.attach('r4-injection-seeded-key', { contentType: 'application/json', body: JSON.stringify({ organization: actor.organizationId, key: injectionKey.id, gatewayKey: injectionKey.gateway_key_id, name: injectionName, marker: injectionMarker }) });
+        const injectionMetadata = { marker: injectionMarker, keep: [1, 'plain'] };
+        const injectionConfig = { categories: ['instruction_override'], sensitivity: 'HIGH', synthetic_note: injectionMetadata };
+        const injectionEditor = page.getByRole('dialog').filter({ has: page.getByRole('textbox', { name: 'Prompt Injection configuration (JSON)', exact: true }) });
+        const injectionJson = injectionEditor.getByRole('textbox', { name: 'Prompt Injection configuration (JSON)', exact: true });
+        await test.step('check 13: open Prompt Injection and retain malformed JSON', async () => {
+          await page.goto(POLICIES_ROUTE);
+          await page.getByRole('button', { name: 'New policy', exact: true }).first().click({ timeout: UI_READY });
+          await expect(parentR4).toBeVisible({ timeout: UI_READY });
+          await parentR4.getByRole('textbox', { name: 'Name', exact: true }).fill(injectionName);
+          await parentR4.getByRole('textbox', { name: 'Description', exact: true }).fill(injectionDescription);
+          await parentR4.getByRole('combobox', { name: 'API keys', exact: true }).fill(injectionKey.name);
+          await page.getByRole('option', { name: new RegExp(`^${injectionKey.name} \\(`) }).click({ timeout: UI_READY });
+          await parentR4.getByRole('radio', { name: 'Enforce', exact: true }).check();
+          await parentR4.getByRole('checkbox', { name: 'Prompt Injection', exact: true }).check();
+          await parentR4.getByRole('button', { name: 'Configure Prompt Injection', exact: true }).click();
+          await expect(injectionJson).toHaveValue('{}', { timeout: UI_READY });
+          const syntaxDraft = '{\n  "categories": [\n  "sensitivity":\n}';
+          await injectionJson.fill(syntaxDraft);
+          await injectionEditor.getByRole('button', { name: 'Save', exact: true }).click();
+          await expect(injectionJson).toHaveValue(syntaxDraft, { timeout: UI_READY });
+          await expect(injectionJson).toHaveAttribute('aria-invalid', 'true', { timeout: UI_READY });
+          await expect(injectionEditor.getByText('Enter valid JSON. Original edits are kept for correction.', { exact: true })).toBeVisible({ timeout: UI_READY });
+          expect(r4Writes).toEqual([]);
+        }, { timeout: UI_READY });
+        await test.step('check 13: retain invalid categories and sensitivity without writing', async () => {
+          const rawDraft = `\n  ${JSON.stringify({ categories: [42], sensitivity: 42, synthetic_note: injectionMetadata }, null, 2)}  \n`;
+          await injectionJson.fill(rawDraft);
+          await injectionEditor.getByRole('button', { name: 'Save', exact: true }).click();
+          await expect(injectionJson).toHaveValue(rawDraft, { timeout: UI_READY });
+          await expect(injectionJson).toHaveAttribute('aria-invalid', 'true', { timeout: UI_READY });
+          // GuardrailCheckDialog joins selectedConfigErrors values in field order.
+          await expect(injectionEditor.getByText('categories must be an array of supported detector names. Sensitivity must be high, medium or low (case-insensitive).', { exact: true })).toBeVisible({ timeout: UI_READY });
+          expect(r4Writes).toEqual([]);
+          expect(await probe.pg('SELECT id FROM agentcc_guardrail_policy WHERE organization_id=$1 AND name=$2', [actor.organizationId, injectionName])).toEqual([]);
+          await screenshot('r4-injection-invalid-draft');
+        }, { timeout: UI_READY });
+        const injectionStored = await test.step('check 13: correct and persist Prompt Injection', async () => {
+          await injectionJson.fill(JSON.stringify(injectionConfig, null, 2));
+          await injectionEditor.getByRole('button', { name: 'Save', exact: true }).click();
+          await expect(injectionEditor).toBeHidden({ timeout: UI_READY });
+          const saved = await savePolicy(page);
+          expect(saved).toMatchObject({ name: injectionName, scope: 'key', mode: 'enforce', applied_keys: [injectionKey.id], gateway_synced: true });
+          expect(r4Writes).toEqual(['POST']);
+          await testInfo.attach('r4-injection-policy-id', { contentType: 'application/json', body: JSON.stringify({ policy: saved.id, key: injectionKey.id, gatewayKey: injectionKey.gateway_key_id, name: injectionName, marker: injectionMarker }) });
+          // FALLIBILITY-13: change only this expected literal HIGH -> low, never injectionConfig.
+          const expectedSensitivity13 = 'HIGH';
+          const expected: StoredPolicy = {
+            id: saved.id, organization: actor.organizationId, name: injectionName, description: injectionDescription,
+            scope: 'key', mode: 'enforce', applied_keys: [injectionKey.id], is_active: true, runs_on_gateway: true,
+            checks: [{ name: 'prompt-injection', enabled: true, action: 'block', threshold: 0.8, config: { ...injectionConfig, sensitivity: expectedSensitivity13 } }],
+          };
+          await expectStoredR4(expected, 13);
+          return expected;
+        }, { timeout: UI_READY });
+        await expectPushedR4(injectionStored, injectionKey, 13);
+        await test.step('check 13: reload and reopen the exact Prompt Injection JSON', async () => {
+          await page.reload();
+          await page.getByRole('button', { name: `Actions for ${injectionName}`, exact: true }).click({ timeout: UI_READY });
+          await page.getByRole('menuitem', { name: 'Edit', exact: true }).click();
+          await expect(parentR4.getByRole('textbox', { name: 'Description', exact: true })).toHaveValue(injectionDescription, { timeout: UI_READY });
+          await expect(parentR4.getByText(new RegExp(`^${injectionKey.name} \\(`))).toBeVisible({ timeout: UI_READY });
+          await parentR4.getByRole('button', { name: 'Configure Prompt Injection', exact: true }).click();
+          await expect.poll(async () => JSON.parse(await injectionJson.inputValue()), { timeout: UI_READY }).toEqual(injectionConfig);
+          await expect(injectionJson).not.toHaveAttribute('aria-invalid', 'true', { timeout: UI_READY });
+          expect(r4Writes).toEqual(['POST']);
+          await screenshot('r4-injection-saved-reopened');
+        }, { timeout: UI_READY });
+        const injectionContent = `plain calm message r4 injection ${suffix}`;
+        const injectionEcho = await keywordRequest(injectionKey, injectionContent);
+        expect(injectionEcho.status(), await injectionEcho.text()).toBe(200);
+        expect((await injectionEcho.json()).choices[0].message.content, 'check 13: exact safe selected-key echo').toBe(`echo: ${injectionContent}`);
+        expect(injectionEcho.headers()[TRIGGERED_HEADER]).toBeUndefined();
+        expect(injectionEcho.headers()[CACHE_HEADER]).toBe('skip_key_policy');
+        const injectionRequestId = injectionEcho.headers()[REQUEST_ID_HEADER];
+        expect(injectionRequestId).toBeTruthy();
+        expect(Object.values(requestIds)).not.toContain(injectionRequestId);
+        requestIds.r4InjectionSafe = injectionRequestId;
+
+        // 14. Reuse the original Content Moderation policy and its unknown metadata.
+        // guardrailChecks.js moderationErrors: toxicity has15 phrases; 15/50 < outer .8.
+        const moderation = correctedFamilies.find(family => family.item.name === 'content-moderation')!;
+        const moderationConfig = { ...moderation.stored.checks[0].config, categories: ['toxicity'], category_threshold: 3 };
+        const moderationEditor = page.getByRole('dialog').filter({ has: page.getByRole('textbox', { name: 'Content Moderation configuration (JSON)', exact: true }) });
+        const moderationJson = moderationEditor.getByRole('textbox', { name: 'Content Moderation configuration (JSON)', exact: true });
+        r4Writes.length = 0;
+        await test.step('check 14: reopen the existing Content Moderation configuration', async () => {
+          await page.goto(POLICIES_ROUTE);
+          await page.getByRole('button', { name: `Actions for ${moderation.stored.name}`, exact: true }).click({ timeout: UI_READY });
+          await page.getByRole('menuitem', { name: 'Edit', exact: true }).click();
+          await expect(parentR4.getByRole('textbox', { name: 'Description', exact: true })).toHaveValue(moderation.stored.description, { timeout: UI_READY });
+          await expect(parentR4.getByText(new RegExp(`^${moderation.key.name} \\(`))).toBeVisible({ timeout: UI_READY });
+          await parentR4.getByRole('button', { name: 'Configure Content Moderation', exact: true }).click();
+          await expect.poll(async () => JSON.parse(await moderationJson.inputValue()), { timeout: UI_READY }).toEqual(moderation.stored.checks[0].config);
+          await expect(moderationEditor.getByText('Confidence Threshold: 0.80', { exact: true })).toBeVisible({ timeout: UI_READY });
+        }, { timeout: UI_READY });
+        await test.step('check 14: retain an unreachable count without writing', async () => {
+          const rawDraft = `\n  ${JSON.stringify({ ...moderationConfig, category_threshold: 50 }, null, 2)}  \n`;
+          await moderationJson.fill(rawDraft);
+          await moderationEditor.getByRole('button', { name: 'Save', exact: true }).click();
+          await expect(moderationJson).toHaveValue(rawDraft, { timeout: UI_READY });
+          await expect(moderationJson).toHaveAttribute('aria-invalid', 'true', { timeout: UI_READY });
+          await expect(moderationEditor.getByText('category_threshold and weights cannot exceed the confidence threshold.', { exact: true })).toBeVisible({ timeout: UI_READY });
+          expect(r4Writes).toEqual([]);
+          await expectStoredR4(moderation.stored, 14);
+          await screenshot('r4-moderation-unreachable-draft');
+        }, { timeout: UI_READY });
+        const moderationStored = await test.step('check 14: correct count to 3 and preserve the original policy', async () => {
+          await moderationJson.fill(JSON.stringify(moderationConfig, null, 2));
+          await moderationEditor.getByRole('button', { name: 'Save', exact: true }).click();
+          await expect(moderationEditor).toBeHidden({ timeout: UI_READY });
+          const saved = await savePolicy(page);
+          expect(saved).toMatchObject({ id: moderation.stored.id, name: moderation.stored.name, scope: 'key', mode: 'enforce', applied_keys: [moderation.key.id], gateway_synced: true });
+          expect(r4Writes).toEqual(['PATCH']);
+          await testInfo.attach('r4-moderation-preserved-ids', { contentType: 'application/json', body: JSON.stringify({ policy: saved.id, key: moderation.key.id, gatewayKey: moderation.key.gateway_key_id, metadata: moderation.stored.checks[0].config.synthetic_note }) });
+          // FALLIBILITY-14: change only this expected literal 3 -> 4, never moderationConfig.
+          const expectedCount14 = 3;
+          const expected: StoredPolicy = { ...moderation.stored, checks: [{ ...moderation.stored.checks[0], config: { ...moderationConfig, category_threshold: expectedCount14 } }] };
+          await expectStoredR4(expected, 14);
+          return expected;
+        }, { timeout: UI_READY });
+        await expectPushedR4(moderationStored, moderation.key, 14);
+        await test.step('check 14: reload and reopen count 3 with the previous metadata', async () => {
+          await page.reload();
+          await page.getByRole('button', { name: `Actions for ${moderation.stored.name}`, exact: true }).click({ timeout: UI_READY });
+          await page.getByRole('menuitem', { name: 'Edit', exact: true }).click();
+          await expect(parentR4.getByRole('textbox', { name: 'Description', exact: true })).toHaveValue(moderation.stored.description, { timeout: UI_READY });
+          await expect(parentR4.getByText(new RegExp(`^${moderation.key.name} \\(`))).toBeVisible({ timeout: UI_READY });
+          await parentR4.getByRole('button', { name: 'Configure Content Moderation', exact: true }).click();
+          await expect.poll(async () => JSON.parse(await moderationJson.inputValue()), { timeout: UI_READY }).toEqual(moderationConfig);
+          await expect(moderationJson).not.toHaveAttribute('aria-invalid', 'true', { timeout: UI_READY });
+          await expect(moderationEditor.getByText('Confidence Threshold: 0.80', { exact: true })).toBeVisible({ timeout: UI_READY });
+          expect(r4Writes).toEqual(['PATCH']);
+          await screenshot('r4-moderation-saved-reopened');
+        }, { timeout: UI_READY });
+
+        // 15. Serializer duplicate_check_identity includes disabled aliases. The
+        // PolicyDialog rejects at Save, not toggle time; inactive saves keep raw rows.
+        const collisionName = `e2e-gw7-r4-collision-${suffix}`;
+        const collisionKey = (await actor.api.post<Envelope<CreatedKey>>('/agentcc/api-keys/', { name: `e2e-r4-collision-key-${suffix}` })).result;
+        const collisionChecks: Check[] = [
+          { name: 'pii-detector', enabled: true, action: 'block', threshold: 0.8, config: { entities: ['email'], remediation: 'redact', synthetic_note: { marker: `e2e-r4-alias-${suffix}`, keep: [1, 'plain'] } } },
+          { name: 'pii-detection', enabled: false, action: 'log', threshold: 0.6, config: { entities: ['phone'], remediation: 'mask', synthetic_note: { marker: `e2e-r4-canonical-${suffix}`, keep: [2, 'plain'] } } },
+        ];
+        const collisionBody = { name: collisionName, description: `e2e-r4-collision-description-${suffix}`, scope: 'key', mode: 'enforce', applied_keys: [collisionKey.id], checks: collisionChecks, is_active: true };
+        await testInfo.attach('r4-collision-seeded-key', { contentType: 'application/json', body: JSON.stringify({ organization: actor.organizationId, key: collisionKey.id, gatewayKey: collisionKey.gateway_key_id, name: collisionName }) });
+        const beforeCollision = await count();
+        const collisionRejected = await docsApi.post(POLICIES, { data: collisionBody });
+        // FALLIBILITY-15: change only this expected status 400 -> 200; request stays active.
+        expect(collisionRejected.status(), 'check 15: active alias collision rejection').toBe(400);
+        // GeneralMethods.bad_request retains serializer field errors under details.
+        expect((await collisionRejected.json()).details).toEqual({ checks: ['Duplicate canonical check identities cannot run on the gateway. Remove duplicates or deactivate the policy.'] });
+        expect(await count()).toBe(beforeCollision);
+        expect(await probe.pg('SELECT id FROM agentcc_guardrail_policy WHERE organization_id=$1 AND name=$2', [actor.organizationId, collisionName])).toEqual([]);
+        const inactiveResponse = await docsApi.post(POLICIES, { data: { ...collisionBody, is_active: false } });
+        expect(inactiveResponse.status(), await inactiveResponse.text()).toBe(200);
+        const inactivePolicy = (await inactiveResponse.json() as Envelope<Policy>).result;
+        const collisionStored: StoredPolicy = { ...collisionBody, id: inactivePolicy.id, organization: actor.organizationId, is_active: false, runs_on_gateway: true };
+        await testInfo.attach('r4-collision-policy-id', { contentType: 'application/json', body: JSON.stringify({ policy: inactivePolicy.id, key: collisionKey.id, gatewayKey: collisionKey.gateway_key_id, name: collisionName }) });
+        await expectStoredR4(collisionStored, 15);
+        r4Writes.length = 0;
+        await test.step('check 15: open the inactive policy with both raw alias rows', async () => {
+          await page.goto(POLICIES_ROUTE);
+          await page.getByRole('button', { name: `Actions for ${collisionName}`, exact: true }).click({ timeout: UI_READY });
+          await page.getByRole('menuitem', { name: 'Edit', exact: true }).click();
+          await expect(parentR4.getByRole('checkbox', { name: 'Active', exact: true })).not.toBeChecked({ timeout: UI_READY });
+          await expect(parentR4.getByRole('textbox', { name: 'Name', exact: true })).toHaveValue(collisionName, { timeout: UI_READY });
+          await expect(parentR4.getByRole('textbox', { name: 'Description', exact: true })).toHaveValue(collisionStored.description, { timeout: UI_READY });
+          await expect(parentR4.getByText(new RegExp(`^${collisionKey.name} \\(`))).toBeVisible({ timeout: UI_READY });
+        }, { timeout: UI_READY });
+        await test.step('check 15: activation Save refuses duplicate canonical identities without PATCH', async () => {
+          await parentR4.getByRole('checkbox', { name: 'Active', exact: true }).check();
+          await parentR4.getByRole('button', { name: 'Save policy', exact: true }).click();
+          await expect(parentR4.getByText('Duplicate canonical check identities cannot run. Remove duplicates using the policy API, or deactivate this policy to preserve its original checks.', { exact: true })).toBeVisible({ timeout: UI_READY });
+          await expect(parentR4.getByRole('checkbox', { name: 'Active', exact: true })).toBeChecked({ timeout: UI_READY });
+          expect(r4Writes).toEqual([]);
+          await expectStoredR4(collisionStored, 15);
+          await screenshot('r4-collision-activation-refused');
+        }, { timeout: UI_READY });
+        await test.step('check 15: inactive Save preserves both original checks and options', async () => {
+          await parentR4.getByRole('checkbox', { name: 'Active', exact: true }).uncheck();
+          const saved = await savePolicy(page);
+          expect(saved).toMatchObject({ id: inactivePolicy.id, name: collisionName, scope: 'key', mode: 'enforce', applied_keys: [collisionKey.id] });
+          await expect(parentR4).toBeHidden({ timeout: UI_READY });
+          expect(r4Writes).toEqual(['PATCH']);
+          await expectStoredR4(collisionStored, 15);
+          await expect(page.getByTestId(`guardrail-policy-row-${inactivePolicy.id}`)).toBeVisible({ timeout: UI_READY });
+          await screenshot('r4-collision-inactive-preserved');
+        }, { timeout: UI_READY });
+      } finally {
+        page.off('request', observeR4Write);
+      }
     } finally {
       await docsApi.dispose();
     }
