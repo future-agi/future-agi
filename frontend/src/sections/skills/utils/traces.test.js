@@ -190,10 +190,10 @@ describe("observed adoption", () => {
     "shows mixed exact versions without an outdated/fleet claim in %s",
     (mode) => {
       show(AdoptionPanel, { skill }, { mode });
-      expect(
-        screen.getByText("Fetches since production moved to v1"),
-      ).toBeInTheDocument();
-      expect(screen.getByText("Both fetched")).toBeInTheDocument();
+      expect(screen.getByText("Who is using v1")).toBeInTheDocument();
+      // The first line answers the question; the row names the versions the consumer received.
+      expect(screen.getByText("1 consumer still received v3 after production moved.")).toBeInTheDocument();
+      expect(screen.getByText("v1 and v3")).toBeInTheDocument();
       // The limits of fetch evidence sit in a labelled disclosure; open it to read them.
       fireEvent.click(screen.getByRole("button", { name: "About this data" }));
       expect(
@@ -215,10 +215,19 @@ describe("observed adoption", () => {
       { ...row, consumerId: "c", consumerLabel: "Synthetic integration", channel: "mcp" },
     ] }));
     show(AdoptionPanel, { skill });
-    expect(screen.getByText("Maya Chen · API key")).toBeInTheDocument();
+    expect(screen.getByText("Maya Chen's API key")).toBeInTheDocument();
     expect(screen.getByText("ci-release-key")).toBeInTheDocument();
     expect(screen.getByText("Synthetic integration · MCP")).toBeInTheDocument();
     expect(screen.queryByText(/@acme-support\.example/)).not.toBeInTheDocument();
+  });
+  it.each([
+    ["everyone is on production", { currentOnly: 2, otherOnly: 0, mixed: 0, notSeen: 0, ambiguous: 0 }, "Everyone who fetched support-policy in the last 7 days got v1."],
+    ["nobody has fetched since the move", { currentOnly: 0, otherOnly: 0, mixed: 0, notSeen: 0, ambiguous: 0 }, "No fetches since production moved to v1."],
+    ["some consumers have not fetched since", { currentOnly: 1, otherOnly: 0, mixed: 0, notSeen: 2, ambiguous: 0 }, "1 consumer got v1 in the last 7 days. 2 consumers haven't fetched since."],
+  ])("leads with the answer when %s", (_name, summary, sentence) => {
+    mocks.adoption.mockReturnValue(success({ ...observations, summary, count: 1, results: [{ ...observations.results[0], state: "current_only", versions: [{ version: 1, versionId, lastAt: end }] }] }));
+    show(AdoptionPanel, { skill, days: 7 });
+    expect(screen.getByText(sentence)).toBeInTheDocument();
   });
   it("keeps every explanatory note in one About this data disclosure and every count in one Counts and details", () => {
     show(AdoptionPanel, { skill });
@@ -230,7 +239,7 @@ describe("observed adoption", () => {
     fireEvent.click(screen.getByRole("button", { name: "About this data" }));
     expect(screen.getByText(/Window:/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Counts and details" }));
-    expect(screen.getByText(/current only/)).toBeInTheDocument();
+    expect(screen.getByText(/on v1 only/)).toBeInTheDocument();
   });
   it("distinguishes absent production from no observations", () => {
     mocks.adoption.mockReturnValue(

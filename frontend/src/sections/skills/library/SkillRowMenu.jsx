@@ -1,4 +1,6 @@
 import ActionReason from "../components/ActionReason";
+import ArchiveConfirmContent from "./archiveCopy";
+import { useContextAuthoring } from "../contexts/ContextLibraryView";
 import { useSkillsAccess } from "../utils/access";
 import { useState } from "react";
 import PropTypes from "prop-types";
@@ -17,6 +19,7 @@ export default function SkillRowMenu({ skill }) {
   const navigate = useNavigate();
   const { isViewer, canWrite } = useSkillsAccess();
   const archive = useArchiveSkill();
+  const canRestore = Boolean(useContextAuthoring()?.bindings?.archived);
   const [anchor, setAnchor] = useState(null);
   const [confirm, setConfirm] = useState(false);
   const [downloading, setDownloading] = useState(false);
@@ -62,7 +65,7 @@ export default function SkillRowMenu({ skill }) {
         {!canArchive && <ActionReason id={`archive-${skill.id}-reason`} reason={detail.isPending ? "Checking archive permission…" : "You can't archive this skill. Ask a workspace admin."} />}
       </Menu>
       <ConfirmDialog open={confirm} onClose={() => { if (!archive.isPending) setConfirm(false); }} closeDisabled={archive.isPending}
-        title={`Archive ${skill.name}?`} content="This hides the skill from your workspace. Agents will no longer be able to fetch it, including by a label."
+        title={`Archive ${skill.name}?`} content={<ArchiveConfirmContent labels={skill.labels} canRestore={canRestore} />}
         action={<Button variant="contained" color="error" disabled={archive.isPending || !canArchive} onClick={(event) => { event.stopPropagation(); archiveSkill(); }}>Archive</Button>} />
     </Box>
   );

@@ -8,8 +8,10 @@ import ImportSkillsDialog from "./ImportSkillsDialog";
 
 const api = vi.hoisted(() => ({
   isViewer: false, canArchive: true, list: vi.fn(), templates: vi.fn(), create: vi.fn(), archive: vi.fn(),
-  assistEnabled: true, canMove: true, preview: vi.fn(), importSkills: vi.fn(), download: vi.fn(), refetch: vi.fn(),
+  assistEnabled: true, canMove: true, preview: vi.fn(), importSkills: vi.fn(), download: vi.fn(), refetch: vi.fn(), archived: null,
 }));
+// The Archived skills binding decides whether the archive confirm promises a way back.
+vi.mock("../contexts/ContextLibraryView", () => ({ useContextAuthoring: () => (api.archived ? { bindings: { archived: api.archived } } : null) }));
 vi.mock("src/api/skills", () => ({
   useSkillsList: api.list,
   useSkill: () => ({ data: { ...skill, labels: skill.labels.map((label) => ({ ...label, canMove: api.canMove })), protectedLabelNames: ["production"], permissions: { canArchive: api.canArchive, canManageLabelProtection: api.canMove }, releaseRevision: 3 } }),
@@ -46,7 +48,7 @@ const bundle = (key, status = "new", warnings = 0, errors = 0) => ({
 
 beforeEach(() => {
   vi.clearAllMocks();
-  api.isViewer = false; api.canArchive = true;
+  api.isViewer = false; api.canArchive = true; api.archived = null;
   api.canMove = true; api.assistEnabled = true;
   api.list.mockReturnValue(listResult());
   api.templates.mockReturnValue({ data: templates, isPending: false, isError: false, refetch: vi.fn() });
@@ -243,6 +245,37 @@ describe("Skills library", () => {
     fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Archive" }));
     await waitFor(() => expect(api.archive).toHaveBeenCalledWith({ id: "skill-1", expectedReleaseRevision: 3 }));
     expect(window.location.pathname).toBe("/dashboard/skills");
+  });
+
+  it("says what archiving does here: no restore path, and which labels stop resolving", () => {
+    renderLibrary();
+    fireEvent.click(screen.getByRole("button", { name: "Actions for support-policy" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Archive" }));
+    const dialog = within(screen.getByRole("dialog"));
+    expect(dialog.getByText("Archive support-policy?")).toBeInTheDocument();
+    expect(dialog.getByText("Agents can no longer fetch it, including through labels.")).toBeInTheDocument();
+    expect(dialog.getByText("production points at v2. Agents following production will stop receiving this skill.")).toBeInTheDocument();
+    expect(dialog.getByText("Restoring an archived skill isn't available in this workspace; contact support to restore it.")).toBeInTheDocument();
+    expect(dialog.queryByText(/More → Archived skills/)).not.toBeInTheDocument();
+    expect(dialog.getByRole("button", { name: "Archive" })).toHaveClass("MuiButton-contained");
+  });
+
+  it("points to Archived skills only when this workspace can restore, and omits the label line without labels", () => {
+    api.archived = { list: vi.fn() };
+    api.list.mockReturnValue(listResult({ results: [{ ...skill, labels: [] }] }));
+    renderLibrary();
+    fireEvent.click(screen.getByRole("button", { name: "Actions for support-policy" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Archive" }));
+    const dialog = within(screen.getByRole("dialog"));
+    expect(dialog.getByText("You can restore it from More → Archived skills.")).toBeInTheDocument();
+    expect(dialog.queryByText(/isn't available in this workspace/)).not.toBeInTheDocument();
+    expect(dialog.queryByText(/points at/)).not.toBeInTheDocument();
+  });
+
+  it("names the usage column by what it counts", () => {
+    renderLibrary();
+    expect(screen.getAllByText("Used (7 days)").length).toBeGreaterThan(0);
+    expect(screen.queryByText("Fetches (7 days)")).not.toBeInTheDocument();
   });
 
   it("keeps inapplicable row actions visible but disabled", () => {
@@ -450,13 +483,23 @@ it('does not block ordinary uploads when the selected production move is forbidd
   expect(screen.getByRole('button', { name: 'Import', exact: true })).toBeEnabled();
 });
 
-it('keeps the new-skill paid entry disabled when assistance is unavailable', async () => {
+it('hides the new-skill AI entry, and its explanation, when AI drafting is off for the workspace', async () => {
   api.assistEnabled = false;
   renderCreate();
   fillCreate();
   fireEvent.click(screen.getByRole('button', { name: 'Create skill' }));
+  expect(await screen.findByRole('button', { name: 'Open editor' })).toBeEnabled();
+  expect(screen.queryByRole('button', { name: 'Draft with AI' })).not.toBeInTheDocument();
+  expect(screen.queryByText('AI drafting is off for this workspace')).not.toBeInTheDocument();
+});
+
+it('keeps the new-skill AI entry disabled, with its reason, when only permission is missing', async () => {
+  api.create.mockResolvedValue({ id: 'created-1', permissions: { canRunTests: false } });
+  renderCreate();
+  fillCreate();
+  fireEvent.click(screen.getByRole('button', { name: 'Create skill' }));
   expect(await screen.findByRole('button', { name: 'Draft with AI' })).toBeDisabled();
-  expect(screen.getByRole('button', { name: 'Open editor' })).toBeEnabled();
+  expect(screen.getByText('You need test permissions to use AI assistance.')).toBeInTheDocument();
 });
 
 it('supports the filtered-empty state preview without presenting a first-run library', () => {

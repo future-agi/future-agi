@@ -44,7 +44,7 @@ function EditorSession({ skill, initialDraft, refetchDraft, kind = 'skill', reso
   const [params, setParams] = useSearchParams();
   const [mobilePanel, setMobilePanel] = useState(params.get('tab') === 'tests' ? 'review' : 'editor');
   const [panel, setPanel] = useState(params.get('tab') === 'tests' ? 'tests' : 'checks');
-  const assistKind = !isContext && ['draft', 'description'].includes(params.get('assist')) ? params.get('assist') : null;
+  const assistParam = !isContext && ['draft', 'description'].includes(params.get('assist')) ? params.get('assist') : null;
   const sourceRunId = params.get('run');
   const openAssist = (value, selection = {}) => setParams((previous) => {
     const next = new URLSearchParams(previous);
@@ -64,6 +64,9 @@ function EditorSession({ skill, initialDraft, refetchDraft, kind = 'skill', reso
   const [serverDraft, setServerDraft] = useState(null);
   const legacyDiscard = useDiscardSkillDraft(skill.id);
   const options = useSkillTestingOptions();
+  // When AI drafting is off for the workspace nothing about it is shown; a missing permission keeps the disabled button and its tooltip.
+  const assistOn = Boolean(options.data?.assistEnabled);
+  const assistKind = assistOn ? assistParam : null;
   // The recovery view has no editor/autosave competing with suspension. Its
   // explicit flush binds the checkpoint to the current saved recovery digest.
   const migrationRecovery = !isContext && params.get('preserve') === 'migration';
@@ -176,6 +179,10 @@ function EditorSession({ skill, initialDraft, refetchDraft, kind = 'skill', reso
   else if (session.dirty || saving) saveLabel = 'Saving…';
   else if (session.revision === 0) saveLabel = 'Not saved yet';
 
+  // One status slot at the left of the actions: the save state, or why Publish waits. It keeps its width so the buttons never move.
+  const showLabel = hasEdited || session.status === 'error' || session.status === 'conflict';
+  const waitingForChecks = !isContext && !validation.current && !validation.error && !(showLabel && saveLabel !== 'Saved');
+
   if (migrationRecovery) return <J1MigrationDraftRecovery skill={skill} session={session}
     onPreserved={() => guard.allow(() => navigate(paths.dashboard.skills.root, location.state?.reopenMigration ? { state: { reopenMigration: location.state.reopenMigration } } : undefined))} />;
 
@@ -184,20 +191,22 @@ function EditorSession({ skill, initialDraft, refetchDraft, kind = 'skill', reso
       crumbs={[{ label: isContext ? 'Agent contexts' : 'Skills', to: isContext ? paths.dashboard.skills.contexts : paths.dashboard.skills.root }, { label: skill.name, to: detailPath }, { label: 'Draft' }]}
       purpose={isContext ? `${session.baseVersion == null ? 'New context' : `Based on v${session.baseVersion}`} · ${session.resolvedLock?.links?.length || 0} linked skill${session.resolvedLock?.links?.length === 1 ? '' : 's'}` : session.baseVersion === null ? 'New skill' : `Draft based on v${session.baseVersion}`}
       actions={<Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', justifyContent: 'flex-end', alignItems: 'center' }}>
-        {(hasEdited || session.status === 'error' || session.status === 'conflict') && <Typography role="status" variant="s3" color="text.secondary">{saveLabel}</Typography>}
+        <Box data-slot="editor-status" sx={{ minWidth: 120, flexShrink: 0, textAlign: 'right' }}>
+          {showLabel && saveLabel !== 'Saved' ? <Typography role="status" variant="s3" color="text.secondary">{saveLabel}</Typography>
+            : waitingForChecks ? <ActionReason id="editor-publish-reason" reason="Waiting for checks…" sx={{ flexBasis: 'auto' }} />
+            : showLabel ? <Typography role="status" variant="s3" color="text.secondary">{saveLabel}</Typography> : null}
+        </Box>
         {session.status === 'error' && <Button size="small" disabled={Boolean(session.mutationError)} onClick={() => session.save()}>Retry</Button>}
         {session.status === 'conflict' && <Button size="small" onClick={() => setConflictOpen(true)}>Resolve conflict</Button>}
-        {!isContext && <Box sx={{ display: { xs: 'none', sm: 'block' } }}><Tooltip title={!skill.permissions?.canRunTests ? 'You need test permissions to use AI assistance.' : !options.data?.assistEnabled ? 'AI assistance is not enabled for this workspace.' : locked ? 'Finish the current review first.' : ''}><span><Button variant="outlined" disabled={locked || !skill.permissions?.canRunTests || !options.data?.assistEnabled} onClick={() => openAssist('draft')}>Draft with AI</Button></span></Tooltip></Box>}
+        {!isContext && assistOn && <Box sx={{ display: { xs: 'none', sm: 'block' } }}><Tooltip title={!skill.permissions?.canRunTests ? 'You need test permissions to use AI assistance.' : locked ? 'Finish the current review first.' : ''}><span><Button variant="outlined" disabled={locked || !skill.permissions?.canRunTests} onClick={() => openAssist('draft')}>Draft with AI</Button></span></Tooltip></Box>}
         <Button sx={{ display: { xs: "none", sm: "inline-flex" } }} variant="outlined" disabled={locked || saving} onClick={() => setDiscardOpen(true)}>Discard draft</Button>
-        {!isContext && !validation.current && !validation.error && <ActionReason id="editor-publish-reason" reason="Waiting for checks…" />}
-        <Button aria-describedby={!isContext && !validation.current && !validation.error ? "editor-publish-reason" : undefined} variant="contained" color="primary" disabled={locked || publishPending || session.status === 'conflict' || session.status === 'error' || (isContext && !onReview)} sx={{ order: { xs: -1, sm: 0 } }} onClick={startPublish}>{isContext ? 'Review changes' : 'Publish'}</Button>
+        <Button aria-describedby={waitingForChecks ? "editor-publish-reason" : undefined} variant="contained" color="primary" disabled={locked || publishPending || session.status === 'conflict' || session.status === 'error' || (isContext && !onReview)} sx={{ order: { xs: -1, sm: 0 } }} onClick={startPublish}>{isContext ? 'Review changes' : 'Publish'}</Button>
         <IconButton aria-label="Draft actions" sx={{ display: { xs: 'inline-flex', sm: 'none' } }} onClick={(event) => setActionAnchor(event.currentTarget)}><Iconify icon="solar:menu-dots-bold" /></IconButton>
         <Menu anchorEl={actionAnchor} open={Boolean(actionAnchor)} onClose={() => setActionAnchor(null)}>
-          {!isContext && <MenuItem disabled={locked || !skill.permissions?.canRunTests || !options.data?.assistEnabled} onClick={() => { setActionAnchor(null); openAssist('draft'); }}>Draft with AI</MenuItem>}
+          {!isContext && assistOn && <MenuItem disabled={locked || !skill.permissions?.canRunTests} onClick={() => { setActionAnchor(null); openAssist('draft'); }}>Draft with AI</MenuItem>}
           <MenuItem disabled={locked || saving} onClick={() => { setActionAnchor(null); setDiscardOpen(true); }}>Discard draft</MenuItem>
         </Menu>
       </Box>} sx={{ flexWrap: 'wrap', rowGap: 1.5, flexShrink: 0 }} />
-    {!isContext && !assistKind && !options.data?.assistEnabled && <ActionReason sx={{ flexBasis: "auto", flexShrink: 0 }} id="editor-action-reason-1" reason="AI drafting is off for this workspace" />}
     {operationError && <Alert severity="error">{operationError}</Alert>}
     {stale && <Alert severity="warning" sx={{ flexShrink: 0 }} action={!isContext && <Button color="inherit" disabled={locked || saving || session.status === 'conflict'} onClick={compareLatest}>Compare</Button>}>
       {isContext ? `The content origin remains v${session.baseVersion}. Latest is v${skill.latestVersion}; review it separately without copying its files.` : `v${skill.latestVersion} was published after you started. Compare your saved draft with the latest version before publishing.`}

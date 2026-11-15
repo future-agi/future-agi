@@ -66,6 +66,13 @@ describe("VersionsTab", () => {
     fireEvent.click(screen.getByRole("menuitem", { name: "History", exact: true }));
     expect(LabelHistoryDrawer).toHaveBeenLastCalledWith(expect.objectContaining({ open: true, label: "", skill }), expect.anything());
   });
+  it("explains Protected in a tooltip and keeps its accessible name", async () => {
+    renderWithRouter(<VersionsTab skill={{ ...skill, protectedLabelNames: ["production"] }} />);
+    const badge = screen.getByText("Protected");
+    await userEvent.hover(badge);
+    expect(await screen.findByRole("tooltip")).toHaveTextContent("Moves need a reviewed release");
+    expect(screen.getByText("Protected").closest("[tabindex]")).not.toHaveAttribute("aria-label");
+  });
   it("reads each version as one card: label, note, one facts line, badges, with no field prefixes or raw digest", async () => {
     mocks.versions.mockReturnValue(result([{ ...row(3), labels: ["production"] }, row(2)]));
     renderWithRouter(<VersionsTab skill={skill} />);
@@ -73,7 +80,7 @@ describe("VersionsTab", () => {
     expect(card.querySelectorAll("[data-label]")).toHaveLength(0);
     expect(within(card).getByRole("button", { name: /^v3, show full/ })).toBeInTheDocument();
     expect(within(card).getByText(/^Test author · .+ · 2 files$/)).toBeInTheDocument();
-    expect(within(card).getByText("production")).toBeInTheDocument();
+    expect(within(card).getByText("Production")).toBeInTheDocument();
     expect(within(card).getByRole("button", { name: "Actions for v3" })).toBeInTheDocument();
     expect(screen.queryByText(/aaaaaaaaaaaa/)).not.toBeInTheDocument();
     // The label opens the full digest; it never navigates the row.

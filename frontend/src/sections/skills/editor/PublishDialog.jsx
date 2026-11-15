@@ -235,8 +235,11 @@ function PublishReview({ onClose, onDraftChange, skill, draft: initialDraft }) {
           {checks?.summary.errors > 0 && <Alert severity="error">Fix the errors in the editor before publishing.</Alert>}
         </ReviewSection>
         <TestEvidence skillId={skill.id} candidate={{ kind: 'draft', revision: draft.revision, ...(digest ? { digest } : {}) }} onSelectRun={setEvidenceRunId} selectedRunId={evidenceRunId} />
-        <ActionReason id="publish-action-reason-1" reason={noFileChanges ? "Make a change to summarise" : !options.data?.assistEnabled ? "AI drafting is off for this workspace" : !skill.permissions?.canRunTests ? "You need test permissions to use AI assistance." : ""} />
-        {!noFileChanges && <Box><Tooltip title={!skill.permissions?.canRunTests ? "You need test permissions to use AI assistance." : !options.data?.assistEnabled ? "AI assistance is not enabled for this workspace." : ""}><span><Button variant="outlined" size="small" disabled={!skill.permissions?.canRunTests || !options.data?.assistEnabled} onClick={() => setSummaryOpen((value) => !value)}>{summaryOpen ? 'Close summary assistance' : 'Summarize changes'}</Button></span></Tooltip></Box>}
+        {/* With AI drafting off for the workspace nothing about it is shown; a missing permission keeps the disabled button and its reason. */}
+        {options.data?.assistEnabled && <>
+          <ActionReason id="publish-action-reason-1" reason={noFileChanges ? "Make a change to summarise" : !skill.permissions?.canRunTests ? "You need test permissions to use AI assistance." : ""} />
+          {!noFileChanges && <Box><Tooltip title={!skill.permissions?.canRunTests ? "You need test permissions to use AI assistance." : ""}><span><Button variant="outlined" size="small" disabled={!skill.permissions?.canRunTests} onClick={() => setSummaryOpen((value) => !value)}>{summaryOpen ? 'Close summary assistance' : 'Summarize changes'}</Button></span></Tooltip></Box>}
+        </>}
         {summaryOpen && !noFileChanges && <AssistPanel skill={skill} draft={draft} kind="summary" isDirty={Boolean(currentDraft.data && currentDraft.data.revision !== draft.revision)} onUseSummary={(summary) => setNote(summary)} />}
         <ReviewSection title="Release labels (optional)" description="Apps that follow a selected label get this version the next time they fetch it. Pinned versions do not change.">
           <Stack>

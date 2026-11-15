@@ -38,6 +38,8 @@ import RestoreVersionDialog from "./RestoreVersionDialog";
 // Below sm each version is a stacked card on the 16px gutter: a 32px checkbox column runs the
 // card's full height; line 1 is the version and its menu, line 2 the note, line 3
 // "author · time · files", line 4 the label badges. Desktop keeps the table untouched.
+// Labels read as names, like the header ("Production v2") and the dependents table (the same capitalisation, kept local).
+const labelTitle = (name) => `${name.charAt(0).toUpperCase()}${name.slice(1)}`;
 const cell = (column, extra) => [`& tbody td[data-column="${column}"]`, extra];
 const versionsTableSx = (theme) => ({
   "& tbody td": { overflowWrap: "normal", wordBreak: "normal" },
@@ -157,7 +159,7 @@ export default function VersionsTab({ skill }) {
       accessorKey: "labels",
       header: "Labels",
       size: 170,
-      cell: ({ getValue }) => <Stack direction="row" spacing={0.5}>{(getValue() || []).length ? getValue().map((name) => <StatusBadge key={name} status={name === "production" ? "released" : "unset"} label={name} />) : '—' }</Stack>,
+      cell: ({ getValue }) => <Stack direction="row" spacing={0.5}>{(getValue() || []).length ? getValue().map((name) => <StatusBadge key={name} status={name === "production" ? "released" : "unset"} label={labelTitle(name)} />) : '—' }</Stack>,
     },
     { accessorKey: "fileCount", header: "Files", size: 70, desktopOnly: true },
     // Below sm the author, time and file count read as one quiet line (author · time · files).
@@ -241,7 +243,7 @@ export default function VersionsTab({ skill }) {
             >
               <Stack direction="row" spacing={1} alignItems="center" sx={{ flex: 1, minWidth: 0 }}>
                 <Typography variant="s1">{label.name.charAt(0).toUpperCase()}{label.name.slice(1)} → v{label.version}</Typography>
-                {(label.isProtected || skill.protectedLabelNames?.includes(label.name)) && <Tooltip title={`Only reviewers can move ${label.name}.`}><span tabIndex={0}><StatusBadge status="protected" label="Protected" /></span></Tooltip>}
+                {(label.isProtected || skill.protectedLabelNames?.includes(label.name)) && <Tooltip describeChild title="Moves need a reviewed release"><span tabIndex={0}><StatusBadge status="protected" label="Protected" /></span></Tooltip>}
               </Stack>
               <Stack direction="row" spacing={1} alignItems="center">
               <Button size="small" disabled={label.canMove !== true} onClick={() => setMove({ label: label.name })}>Move {label.name}</Button>

@@ -29,6 +29,13 @@ it('treats choosing a private folder as the folder format and asks for inventory
   expect(screen.getByText('1 source files selected')).toBeVisible();
 });
 
+it('names the import options in plain words', () => {
+  view();
+  expect(screen.getByRole('button', { name: 'Supported formats' })).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'List made with the command line' })).toBeInTheDocument();
+  expect(screen.queryByText(/CLI inventory|source identity|inventory packet/i)).not.toBeInTheDocument();
+});
+
 it('carries the retained plans through draft preservation and reloads the same plan without a new upload', async () => {
   api.reload.mockResolvedValueOnce([plan]);
   view({ initialPlanIds: ['plan-1'] });
@@ -56,6 +63,7 @@ it('previews every source of one inventory packet into one reviewed set', async 
   const table = await screen.findByRole('table', { name: 'Retained migration items' });
   await waitFor(() => expect(table).toHaveTextContent('folder-skill'));
   expect(table).toHaveTextContent('exchange-skill');
+  expect(screen.getByText(/2 sources · list of skills to import/)).toBeInTheDocument();
   expect(api.preview).toHaveBeenCalledTimes(2);
   expect(api.preview.mock.calls[0][0]).toEqual({ exportData: { format: 'langfuse-skills-v1' } });
   const form = api.preview.mock.calls[1][0].form;

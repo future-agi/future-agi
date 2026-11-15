@@ -30,6 +30,7 @@ import {
   useSkillVersion,
 } from "src/api/skills";
 import { useSkillV11Scope } from 'src/api/skills/testing';
+import { useContextDependents } from "src/api/skills/context-dependents";
 import { HOST_API } from "src/config-global";
 import { paths } from "src/routes/paths";
 import ContentSkeleton from "src/components/content-skeleton";
@@ -38,6 +39,8 @@ import ErrorState from "src/components/error-state";
 import Iconify from "src/components/iconify";
 import ActionReason from "../components/ActionReason";
 import { useSkillsAccess } from "../utils/access";
+import ArchiveConfirmContent from "../library/archiveCopy";
+import { useContextAuthoring } from "../contexts/ContextLibraryView";
 import ObjectHeader from "../components/ObjectHeader";
 import VersionSelect from "../components/VersionSelect";
 import { ClosableDialog } from "src/components/custom-dialog";
@@ -64,8 +67,18 @@ const TAB_LABELS = {
   dependents: "Used by",
   versions: "Versions",
   usage: "Activity",
-  use: "Use",
+  use: "Install",
 };
+
+// Mirrors ContextDependentsPanel: one reference per context (production first, else the newest), eligible when it follows a label with an update.
+function hasEligibleDependent(rows = []) {
+  const ids = [...new Set(rows.map((row) => row.context_id))];
+  return ids.some((id) => {
+    const references = rows.filter((row) => row.context_id === id);
+    const chosen = references.find((row) => row.labels?.includes("production")) || references.reduce((latest, row) => (row.context_version > latest.context_version ? row : latest));
+    return !chosen.requested?.version && chosen.update_state === "update_available";
+  });
+}
 
 function DetailContent({ skill, preview }) {
   const navigate = useNavigate();
@@ -73,6 +86,7 @@ function DetailContent({ skill, preview }) {
   const [sourceOpen, setSourceOpen] = useState(false);
   const [params, setParams] = useSearchParams();
   const archive = useArchiveSkill();
+  const canRestore = Boolean(useContextAuthoring()?.bindings?.archived);
   const [menuAnchor, setMenuAnchor] = useState(null);
   const [exportOpen, setExportOpen] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
@@ -87,6 +101,10 @@ function DetailContent({ skill, preview }) {
     params.get("version"),
   );
   const viewedVersion = useSkillVersion(skill.id, downloadNumber);
+  // The Used by panel draws its own contained "Prepare draft updates" when one context can follow an update.
+  // Read the same cached query (and the same one-row-per-context reduction) so the header and panel never both lead.
+  const dependents = useContextDependents(tab === "dependents" ? skill.id : undefined, { view: "active", page: 1 });
+  const panelHasAction = hasEligibleDependent(dependents.data?.results);
   const changeTab = (value) =>
     setParams((previous) => {
       const next = new URLSearchParams(previous);
@@ -153,7 +171,7 @@ function DetailContent({ skill, preview }) {
             <Button
               aria-describedby={isViewer ? "detail-action-reason-1" : undefined}
               disabled={!canWrite}
-              variant={isViewer || ['tests', 'dependents', 'use'].includes(tab) ? 'outlined' : 'contained'}
+              variant={isViewer || tab === 'tests' || (tab === 'dependents' && panelHasAction) ? 'outlined' : 'contained'}
               color="primary"
               component={!canWrite ? "button" : RouterLink}
               to={!canWrite ? undefined : paths.dashboard.skills.edit(skill.id)}
@@ -282,8 +300,8 @@ function DetailContent({ skill, preview }) {
           if (!archive.isPending) setConfirmOpen(false);
         }}
         closeDisabled={archive.isPending}
-        title="Archive skill?"
-        content={`Archive ${skill.name}? It will be hidden from the library and agents will no longer be able to fetch it. Published versions and label history are retained.`}
+        title={`Archive ${skill.name}?`}
+        content={<ArchiveConfirmContent labels={skill.labels} canRestore={canRestore} />}
         action={
           <Button
             variant="contained"

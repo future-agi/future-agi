@@ -340,10 +340,12 @@ vi.mock("src/sections/skills/assist/AssistPanel", () => ({ default: ({ onUseSumm
    expect(api.save).not.toHaveBeenCalled();
  });
 
-it('keeps summary generation disabled independently of text testing permission', async () => {
+it('shows no summary assistance, and no explanation of it, when AI drafting is off for the workspace', async () => {
   api.assistEnabled = false;
   renderDialog();
-  expect(await screen.findByRole('button', { name: 'Summarize changes' })).toBeDisabled();
+  await screen.findByRole('button', { name: 'Publish', exact: true });
+  expect(screen.queryByRole('button', { name: 'Summarize changes' })).not.toBeInTheDocument();
+  expect(screen.queryByText('AI drafting is off for this workspace')).not.toBeInTheDocument();
   expect(screen.queryByRole('button', { name: 'Use summary suggestion' })).not.toBeInTheDocument();
 });
 
