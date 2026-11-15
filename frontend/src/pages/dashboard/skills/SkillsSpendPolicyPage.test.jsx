@@ -106,6 +106,7 @@ it('leads back to the blocked test after a save, only for a Skills return path',
   fireEvent.click(screen.getByRole('button', { name: 'Save allowance' }));
   const back = await screen.findByRole('link', { name: 'Back to tests' });
   expect(screen.getByText(/^Allowance saved\./)).toBeVisible();
+
   expect(back).toHaveAttribute('href', '/dashboard/skills/contexts/c1?tab=tests');
   expect(back).toHaveClass('MuiButton-outlined');
   fireEvent.click(back);

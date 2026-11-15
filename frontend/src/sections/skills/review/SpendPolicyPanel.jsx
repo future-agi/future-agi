@@ -182,7 +182,13 @@ function PolicyForm({ policy, canManage, onSave, onRefresh, savedAction }) {
                 enabled,
                 periodLimitUsd: amount,
               });
-              if (result) setConfirm(false);
+              if (result) {
+                // Our own write produced this revision: adopt it, so the refetch
+                // that follows is not mistaken for someone else's change. A later
+                // change by anyone else still differs and still blocks saving.
+                if (Number.isInteger(result.revision)) setRevision(result.revision);
+                setConfirm(false);
+              }
             }}
           >
             Save allowance

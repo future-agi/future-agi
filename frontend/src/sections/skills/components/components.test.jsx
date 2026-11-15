@@ -286,7 +286,7 @@ describe('Skills workspace navigation', () => {
     mountNavigation('/dashboard/skills', <MuiLink href="/guide">Read the rollout setup guide</MuiLink>);
     expect(screen.getByRole('link', { name: 'Read the rollout setup guide' })).toHaveStyle({ textDecoration: 'underline' });
     const rule = frameRules().match(/[^{}]*\.MuiLink-root:not\(\.MuiLink-underlineNone\)[^{}]*\{[^}]*\}/)?.[0] ?? '';
-    for (const excluded of ['.MuiBreadcrumbs-root .MuiLink-root', '.MuiTableRow-root .MuiLink-root', '.MuiButtonBase-root .MuiLink-root']) expect(rule).toContain(`:not(${excluded})`);
+    for (const excluded of ['.MuiBreadcrumbs-root .MuiLink-root', '.MuiTableRow-root .MuiLink-root', '[role="row"] .MuiLink-root', 'li .MuiLink-root', '.MuiButtonBase-root .MuiLink-root']) expect(rule).toContain(`:not(${excluded})`);
     expect(rule).toMatch(/text-decoration:\s*underline/);
     expect(rule).toMatch(/font-weight:\s*400/);
     expect(rule).toMatch(/text-decoration-color:\s*rgba\(/);

@@ -673,7 +673,7 @@ describe("publication and explicit spending", () => {
   });
   it("starts with no spending default and submits exact decimal text only after confirmation", async () => {
     const save = vi.fn().mockResolvedValue({ revision: 3 });
-    render(
+    const { rerender } = render(
       <SpendPolicyPanel
         scopeKey="scope"
         state="ready"
@@ -709,6 +709,14 @@ describe("publication and explicit spending", () => {
       periodLimitUsd: "12.00000001",
       enabled: false,
     });
+    // The refetch after our own save carries the revision it produced: no false
+    // "changed while you were editing" beside "Allowance saved."
+    expect(await screen.findByText(/^Allowance saved\./)).toBeVisible();
+    rerender(<SpendPolicyPanel scopeKey="scope" state="ready" policy={{ ...policy, revision: 3, periodLimitUsd: "12.00000001" }} canManage onSave={save} />);
+    expect(screen.queryByText(/changed while you were editing/)).not.toBeInTheDocument();
+    // Someone else's later change still blocks.
+    rerender(<SpendPolicyPanel scopeKey="scope" state="ready" policy={{ ...policy, revision: 4, periodLimitUsd: "12.00000001" }} canManage onSave={save} />);
+    expect(screen.getByText(/changed while you were editing/)).toBeVisible();
   });
   it("keeps uncertain prior-period reservations visible and blocks stale budget updates", () => {
     const { rerender } = render(

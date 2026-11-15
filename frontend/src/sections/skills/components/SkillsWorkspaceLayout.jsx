@@ -34,15 +34,17 @@ function AssistantButton() {
 //   app theme's MuiLink default is underline="hover", so in dark mode an inline
 //   Link read as plain white text. Inside Skills an inline link always shows the
 //   DS link colour (text.link) at normal weight with a soft underline. Links that
-//   opted out (underline="none"), breadcrumbs, table-row links and links inside
-//   buttons keep their own look.
+//   opted out (underline="none"), breadcrumbs, record-row links (tables, grids,
+//   lists) and links inside buttons keep their own look.
 // - Multiline fields: the root kept MUI's 14px side padding and the textarea added
 //   the theme's 12px, so their text sat ~24px in while single-line text sat 12px.
 //   The root now carries the single-line padding and the textarea none.
 // Dialogs and temporary drawers render outside the frame (portals), so while a
 // Skills route is mounted the same rules also apply inside them.
 const OVERLAYS = '.MuiDialog-root, .MuiDrawer-modal';
-const INLINE_LINK = '& .MuiLink-root:not(.MuiLink-underlineNone):not(.MuiBreadcrumbs-root .MuiLink-root):not(.MuiTableRow-root .MuiLink-root):not(.MuiButtonBase-root .MuiLink-root)';
+// Record rows keep their own object-name links: MUI table rows, data-grid rows
+// (role="row") and list rows (li: library cards, breadcrumbs, phone lists).
+const INLINE_LINK = '& .MuiLink-root:not(.MuiLink-underlineNone):not(.MuiBreadcrumbs-root .MuiLink-root):not(.MuiTableRow-root .MuiLink-root):not([role="row"] .MuiLink-root):not(li .MuiLink-root):not(.MuiButtonBase-root .MuiLink-root)';
 const workspaceSx = (theme) => {
   const link = theme.palette.text.link ?? theme.palette.primary.main;
   return {
