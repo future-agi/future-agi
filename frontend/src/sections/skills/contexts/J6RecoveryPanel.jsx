@@ -292,8 +292,10 @@ function ClosureReview({ candidate, production, closure }) {
   const links = descriptor?.links ?? [];
   // Changed files first, so a collapsed table never hides a difference under the acknowledgment.
   const ordered = [...rows].sort((a, b) => Number(a.status === 'unchanged') - Number(b.status === 'unchanged'));
-  const hidden = showAll ? 0 : Math.max(0, ordered.length - CLOSURE_ROWS_SHOWN);
-  const shown = showAll ? ordered : ordered.slice(0, CLOSURE_ROWS_SHOWN);
+  // Every file that differs is always shown; only unchanged files collapse.
+  const visibleCount = Math.max(CLOSURE_ROWS_SHOWN, rows.length - (counts.unchanged ?? 0));
+  const hidden = showAll ? 0 : Math.max(0, ordered.length - visibleCount);
+  const shown = showAll ? ordered : ordered.slice(0, visibleCount);
   const differing = rows.filter((row) => row.status !== 'unchanged' && row.path !== DESCRIPTOR_PATH).map((row) => row.path);
   const settingsChanged = rows.some((row) => row.path === DESCRIPTOR_PATH && row.status !== 'unchanged');
   const differs = differing.length ? `Only ${differing.length > 3 ? `${differing.length} files` : differing.join(', ')} ${differing.length === 1 ? 'differs' : 'differ'}.` : settingsChanged ? 'Only the generated settings file differs.' : 'Nothing differs from production.';
@@ -329,7 +331,7 @@ function ClosureReview({ candidate, production, closure }) {
             </TableBody>
           </Table>
         </TableContainer>
-        {ordered.length > CLOSURE_ROWS_SHOWN && <Button size="small" color="inherit" sx={{ alignSelf: 'flex-start' }} aria-expanded={showAll} onClick={() => setShowAll((open) => !open)}>{showAll ? 'Show fewer files' : `Show ${hidden} more file${hidden === 1 ? '' : 's'}`}</Button>}
+        {ordered.length > visibleCount && <Button size="small" color="inherit" sx={{ alignSelf: 'flex-start' }} aria-expanded={showAll} onClick={() => setShowAll((open) => !open)}>{showAll ? 'Show fewer files' : `Show ${hidden} more file${hidden === 1 ? '' : 's'}`}</Button>}
         <Typography variant="s3" color="text.secondary">
           {differs}{settingsChanged && differing.length > 0 && ' The generated settings file changes with it.'}
           {candidate.children.length > 0 && ` Linked skills stay at the versions locked in v${candidate.number}.`}

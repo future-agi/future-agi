@@ -544,3 +544,19 @@ it('names evidence in plain words and keeps the revision the review is bound to 
   expect(screen.queryByText(/Text comparison|Application verification/)).toBeNull();
   expect(screen.getByText('Reviewed against the current production release (revision 7). If production changes, review and acknowledge the rollback again.')).toBeVisible();
 });
+
+it('never collapses a changed file, even when more than six files differ', () => {
+  recovery = { cohort: [], releaseRevision: 7, canPromote: true, candidates: [rollbackCandidate] };
+  const changed = Array.from({ length: 8 }, (_, index) => ({ path: `skills/c-${index}/SKILL.md`, status: 'changed', sizeBytes: 10, sha256: `c${index}` }));
+  const same = Array.from({ length: 3 }, (_, index) => ({ path: `skills/s-${index}/SKILL.md`, status: 'unchanged', sizeBytes: 10, sha256: `s${index}` }));
+  closureData = { rows: [...same, ...changed], changes: changed.map((row) => ({ path: row.path, status: 'changed', lines: [{ kind: 'removed', text: 'a' }, { kind: 'added', text: 'b' }] })) };
+  render(<J6RecoveryPanel contextId="ctx" contextName="Support policy" />);
+  fireEvent.click(screen.getByRole('button', { name: 'Choose v1' }));
+  const files = screen.getByRole('table', { name: 'Recovery closure files' });
+  // 8 changed rows plus the header; the three unchanged files wait behind the button.
+  expect(within(files).getAllByRole('row')).toHaveLength(9);
+  changed.forEach((row) => expect(within(files).getByRole('cell', { name: row.path, exact: true })).toBeVisible());
+  expect(within(files).queryByRole('cell', { name: 'skills/s-0/SKILL.md', exact: true })).toBeNull();
+  fireEvent.click(screen.getByRole('button', { name: 'Show 3 more files' }));
+  expect(within(files).getAllByRole('row')).toHaveLength(12);
+});
