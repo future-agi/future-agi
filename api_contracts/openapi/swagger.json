@@ -51814,6 +51814,49 @@
                 }
             ]
         },
+        "/simulate/api/harness-environments/{id}/actor-unresolved/accept/": {
+            "post": {
+                "operationId": "simulate_api_harness-environments_accept_unresolved",
+                "description": "Accept the cast as written for one policy point the builder could not model.",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/HarnessActorUnresolvedAccept"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/HarnessActorList"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
         "/simulate/api/harness-environments/{id}/actors/": {
             "get": {
                 "operationId": "simulate_api_harness-environments_actors",
@@ -141189,6 +141232,14 @@
                         "$ref": "#/definitions/HarnessEnvironmentCallActor"
                     }
                 },
+                "door_reach": {
+                    "title": "Door reach",
+                    "description": "Per tool: whether the world's door stands in front of it, so actors can take it and faults apply.",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "boolean"
+                    }
+                },
                 "end_conditions": {
                     "$ref": "#/definitions/HarnessEnvironmentEndConditions"
                 },
@@ -142032,6 +142083,27 @@
                 }
             }
         },
+        "HarnessActorUnresolved": {
+            "required": [
+                "policy"
+            ],
+            "type": "object",
+            "properties": {
+                "policy": {
+                    "title": "Policy",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "why": {
+                    "title": "Why",
+                    "type": "string"
+                },
+                "actor": {
+                    "title": "Actor",
+                    "type": "string"
+                }
+            }
+        },
         "HarnessActorList": {
             "required": [
                 "actors",
@@ -142109,6 +142181,31 @@
                         "type": "string",
                         "minLength": 1
                     }
+                },
+                "unresolved": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/HarnessActorUnresolved"
+                    }
+                }
+            }
+        },
+        "HarnessActorUnresolvedAccept": {
+            "required": [
+                "policy"
+            ],
+            "type": "object",
+            "properties": {
+                "policy": {
+                    "title": "Policy",
+                    "type": "string",
+                    "maxLength": 500,
+                    "minLength": 1
+                },
+                "expected_revision": {
+                    "title": "Expected revision",
+                    "type": "integer",
+                    "minimum": 0
                 }
             }
         },
@@ -155481,6 +155578,39 @@
                 }
             }
         },
+        "DuplicateCommit": {
+            "description": "Writes the world committed twice after the agent's answer was lost; the trial fails on them.",
+            "required": [
+                "action"
+            ],
+            "type": "object",
+            "properties": {
+                "action": {
+                    "title": "Action",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "name": {
+                    "title": "Name",
+                    "type": "string"
+                },
+                "arguments": {
+                    "title": "Arguments",
+                    "type": "object",
+                    "x-nullable": true
+                },
+                "first_action_id": {
+                    "title": "First action id",
+                    "type": "string",
+                    "x-nullable": true
+                },
+                "repeat_action_id": {
+                    "title": "Repeat action id",
+                    "type": "string",
+                    "x-nullable": true
+                }
+            }
+        },
         "ActorDecision": {
             "required": [
                 "actor",
@@ -155709,6 +155839,13 @@
                     "type": "array",
                     "items": {
                         "$ref": "#/definitions/TrialStateChange"
+                    }
+                },
+                "duplicates": {
+                    "description": "Writes the world committed twice after the agent's answer was lost; the trial fails on them.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/DuplicateCommit"
                     }
                 },
                 "decisions": {

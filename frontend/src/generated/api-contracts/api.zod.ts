@@ -38511,6 +38511,12 @@ export const SimulateApiHarnessEnvironmentsReadResponse = zod.object({
         scenarios_count: zod.number(),
       }),
     ),
+    door_reach: zod
+      .record(zod.string(), zod.boolean())
+      .optional()
+      .describe(
+        "Per tool: whether the world's door stands in front of it, so actors can take it and faults apply.",
+      ),
     end_conditions: zod.object({
       max_turns: zod.number(),
       max_duration_seconds: zod.number(),
@@ -38796,6 +38802,12 @@ export const SimulateApiHarnessEnvironmentsPartialUpdateResponse = zod.object({
         scenarios_count: zod.number(),
       }),
     ),
+    door_reach: zod
+      .record(zod.string(), zod.boolean())
+      .optional()
+      .describe(
+        "Per tool: whether the world's door stands in front of it, so actors can take it and faults apply.",
+      ),
     end_conditions: zod.object({
       max_turns: zod.number(),
       max_duration_seconds: zod.number(),
@@ -39045,7 +39057,76 @@ export const SimulateApiHarnessEnvironmentsActorLimitsResponse = zod.object({
   }),
   limits: zod.record(zod.string(), zod.unknown()).optional(),
   actor_models: zod.array(zod.string().min(1)).optional(),
+  unresolved: zod
+    .array(
+      zod.object({
+        policy: zod.string().min(1),
+        why: zod.string().optional(),
+        actor: zod.string().optional(),
+      }),
+    )
+    .optional(),
 });
+
+/**
+ * Accept the cast as written for one policy point the builder could not model.
+ */
+export const SimulateApiHarnessEnvironmentsAcceptUnresolvedParams = zod.object({
+  id: zod.string(),
+});
+
+export const simulateApiHarnessEnvironmentsAcceptUnresolvedBodyPolicyMax = 500;
+
+export const simulateApiHarnessEnvironmentsAcceptUnresolvedBodyExpectedRevisionMin = 0;
+
+export const SimulateApiHarnessEnvironmentsAcceptUnresolvedBody = zod.object({
+  policy: zod
+    .string()
+    .min(1)
+    .max(simulateApiHarnessEnvironmentsAcceptUnresolvedBodyPolicyMax),
+  expected_revision: zod
+    .number()
+    .min(simulateApiHarnessEnvironmentsAcceptUnresolvedBodyExpectedRevisionMin)
+    .optional(),
+});
+
+export const SimulateApiHarnessEnvironmentsAcceptUnresolvedResponse =
+  zod.object({
+    actors: zod.array(zod.record(zod.string(), zod.unknown())),
+    source: zod.enum(["draft", "saved"]),
+    revision: zod.number(),
+    record_schemas: zod.record(zod.string(), zod.unknown()),
+    actions: zod.array(
+      zod.object({
+        action: zod.string().min(1),
+        tool: zod.string(),
+        description: zod.string(),
+      }),
+    ),
+    channels: zod.record(zod.string(), zod.string()),
+    loudness: zod.record(zod.string(), zod.unknown()),
+    reserved_ids: zod.array(zod.string().min(1)),
+    knowledge_sources: zod.object({
+      files: zod.array(zod.string().min(1)),
+      records: zod.array(
+        zod.object({
+          store: zod.string(),
+          collection: zod.string().min(1),
+        }),
+      ),
+    }),
+    limits: zod.record(zod.string(), zod.unknown()).optional(),
+    actor_models: zod.array(zod.string().min(1)).optional(),
+    unresolved: zod
+      .array(
+        zod.object({
+          policy: zod.string().min(1),
+          why: zod.string().optional(),
+          actor: zod.string().optional(),
+        }),
+      )
+      .optional(),
+  });
 
 /**
  * The environment's cast as the next run would use it: the draft's when there is one.
@@ -39080,6 +39161,15 @@ export const SimulateApiHarnessEnvironmentsActorsResponse = zod.object({
   }),
   limits: zod.record(zod.string(), zod.unknown()).optional(),
   actor_models: zod.array(zod.string().min(1)).optional(),
+  unresolved: zod
+    .array(
+      zod.object({
+        policy: zod.string().min(1),
+        why: zod.string().optional(),
+        actor: zod.string().optional(),
+      }),
+    )
+    .optional(),
 });
 
 /**
@@ -39141,6 +39231,15 @@ export const SimulateApiHarnessEnvironmentsCreateActorResponse = zod.object({
   }),
   limits: zod.record(zod.string(), zod.unknown()).optional(),
   actor_models: zod.array(zod.string().min(1)).optional(),
+  unresolved: zod
+    .array(
+      zod.object({
+        policy: zod.string().min(1),
+        why: zod.string().optional(),
+        actor: zod.string().optional(),
+      }),
+    )
+    .optional(),
 });
 
 /**
@@ -39240,6 +39339,15 @@ export const SimulateApiHarnessEnvironmentsReplaceActorResponse = zod.object({
   }),
   limits: zod.record(zod.string(), zod.unknown()).optional(),
   actor_models: zod.array(zod.string().min(1)).optional(),
+  unresolved: zod
+    .array(
+      zod.object({
+        policy: zod.string().min(1),
+        why: zod.string().optional(),
+        actor: zod.string().optional(),
+      }),
+    )
+    .optional(),
 });
 
 /**
@@ -39285,6 +39393,15 @@ export const SimulateApiHarnessEnvironmentsDeleteActorResponse = zod.object({
   }),
   limits: zod.record(zod.string(), zod.unknown()).optional(),
   actor_models: zod.array(zod.string().min(1)).optional(),
+  unresolved: zod
+    .array(
+      zod.object({
+        policy: zod.string().min(1),
+        why: zod.string().optional(),
+        actor: zod.string().optional(),
+      }),
+    )
+    .optional(),
 });
 
 /**
@@ -40277,6 +40394,12 @@ export const SimulateApiHarnessEnvironmentsEvaluationsSetToolCallEvaluationRespo
           scenarios_count: zod.number(),
         }),
       ),
+      door_reach: zod
+        .record(zod.string(), zod.boolean())
+        .optional()
+        .describe(
+          "Per tool: whether the world's door stands in front of it, so actors can take it and faults apply.",
+        ),
       end_conditions: zod.object({
         max_turns: zod.number(),
         max_duration_seconds: zod.number(),
@@ -40706,6 +40829,15 @@ export const SimulateApiHarnessEnvironmentsUploadFileResponse = zod.object({
   }),
   limits: zod.record(zod.string(), zod.unknown()).optional(),
   actor_models: zod.array(zod.string().min(1)).optional(),
+  unresolved: zod
+    .array(
+      zod.object({
+        policy: zod.string().min(1),
+        why: zod.string().optional(),
+        actor: zod.string().optional(),
+      }),
+    )
+    .optional(),
 });
 
 /**
@@ -53667,6 +53799,24 @@ export const SimulateV3CallExecutionDetailResponse = zod.object({
         }),
       )
       .optional(),
+    duplicates: zod
+      .array(
+        zod
+          .object({
+            action: zod.string().min(1),
+            name: zod.string().optional(),
+            arguments: zod.object({}).passthrough().optional(),
+            first_action_id: zod.string().optional(),
+            repeat_action_id: zod.string().optional(),
+          })
+          .describe(
+            "Writes the world committed twice after the agent's answer was lost; the trial fails on them.",
+          ),
+      )
+      .optional()
+      .describe(
+        "Writes the world committed twice after the agent's answer was lost; the trial fails on them.",
+      ),
     decisions: zod
       .array(
         zod.object({

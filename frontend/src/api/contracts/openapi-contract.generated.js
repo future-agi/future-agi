@@ -5,7 +5,7 @@
 export const OPENAPI_CONTRACT = Object.freeze({
   generatedFrom: "api_contracts/openapi/swagger.json",
   swaggerVersion: "2.0",
-  endpointCount: 1146,
+  endpointCount: 1147,
   endpoints: {
     "/accounts/2fa/recovery-codes/": {
       get: {
@@ -28708,6 +28708,25 @@ export const OPENAPI_CONTRACT = Object.freeze({
         runtimeResponseValidation: true,
         requestBody: {
           $ref: "#/definitions/HarnessActorLimitsWrite",
+        },
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/HarnessActorList",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/api/harness-environments/{id}/actor-unresolved/accept/": {
+      post: {
+        operationId: "simulate_api_harness-environments_accept_unresolved",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/HarnessActorUnresolvedAccept",
         },
         queryParameters: {},
         responses: {
@@ -67021,6 +67040,29 @@ export const OPENAPI_CONTRACT = Object.freeze({
             minLength: 1,
           },
         },
+        unresolved: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/HarnessActorUnresolved",
+          },
+        },
+      },
+    },
+    HarnessActorUnresolvedAccept: {
+      required: ["policy"],
+      type: "object",
+      properties: {
+        policy: {
+          title: "Policy",
+          type: "string",
+          maxLength: 500,
+          minLength: 1,
+        },
+        expected_revision: {
+          title: "Expected revision",
+          type: "integer",
+          minimum: 0,
+        },
       },
     },
     HarnessActorView: {
@@ -96946,6 +96988,14 @@ export const OPENAPI_CONTRACT = Object.freeze({
             $ref: "#/definitions/TrialStateChange",
           },
         },
+        duplicates: {
+          description:
+            "Writes the world committed twice after the agent's answer was lost; the trial fails on them.",
+          type: "array",
+          items: {
+            $ref: "#/definitions/DuplicateCommit",
+          },
+        },
         decisions: {
           type: "array",
           items: {
@@ -103399,6 +103449,25 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    HarnessActorUnresolved: {
+      required: ["policy"],
+      type: "object",
+      properties: {
+        policy: {
+          title: "Policy",
+          type: "string",
+          minLength: 1,
+        },
+        why: {
+          title: "Why",
+          type: "string",
+        },
+        actor: {
+          title: "Actor",
+          type: "string",
+        },
+      },
+    },
     HarnessWorldAction: {
       required: ["action", "tool", "description"],
       type: "object",
@@ -104497,6 +104566,15 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "array",
           items: {
             $ref: "#/definitions/HarnessEnvironmentCallActor",
+          },
+        },
+        door_reach: {
+          title: "Door reach",
+          description:
+            "Per tool: whether the world's door stands in front of it, so actors can take it and faults apply.",
+          type: "object",
+          additionalProperties: {
+            type: "boolean",
           },
         },
         end_conditions: {
@@ -120269,6 +120347,38 @@ export const OPENAPI_CONTRACT = Object.freeze({
         acted_before_decision: {
           title: "Acted before decision",
           type: "boolean",
+        },
+      },
+    },
+    DuplicateCommit: {
+      description:
+        "Writes the world committed twice after the agent's answer was lost; the trial fails on them.",
+      required: ["action"],
+      type: "object",
+      properties: {
+        action: {
+          title: "Action",
+          type: "string",
+          minLength: 1,
+        },
+        name: {
+          title: "Name",
+          type: "string",
+        },
+        arguments: {
+          title: "Arguments",
+          type: "object",
+          "x-nullable": true,
+        },
+        first_action_id: {
+          title: "First action id",
+          type: "string",
+          "x-nullable": true,
+        },
+        repeat_action_id: {
+          title: "Repeat action id",
+          type: "string",
+          "x-nullable": true,
         },
       },
     },
