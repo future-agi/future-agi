@@ -1370,8 +1370,9 @@ def _buckets(
             before, documents.get("contract") or {}, documents
         )
     else:
+        # The drops the rebuild recorded give a removed case its reason and a restored one its bucket.
         update, _summary = suite_change(
-            before, documents.get("scenarios") or [], "nudge"
+            before, documents.get("scenarios") or [], "nudge", documents.get("dropped")
         )
     edits = ((nudge.draft_snapshot or {}).get("piece") or {}).get("diff")
     return (
