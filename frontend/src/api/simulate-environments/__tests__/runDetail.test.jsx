@@ -834,6 +834,48 @@ describe("useRunDetail", () => {
     );
   });
 
+  it("maps the readiness the run started under and the cases it held back", async () => {
+    const snapshot = { answer: { kind: "blocked" }, rows: [] };
+    const selection = {
+      requested: 10,
+      running: 8,
+      held_back: { count: 2, keys: ["a", "b"], truncated: false, by: {} },
+      reasons: {},
+    };
+    axios.get.mockResolvedValueOnce({
+      data: {
+        execution: {
+          id: "ex-ready",
+          status: "completed",
+          capability_snapshot: snapshot,
+          readiness_selection: selection,
+        },
+      },
+    });
+    const { result } = renderHook(() => useRunDetail("rt1", "ex-ready"), {
+      wrapper: makeWrapper(),
+    });
+
+    await waitFor(() => expect(result.current.identity).not.toBeNull());
+
+    expect(result.current.identity.capabilitySnapshot).toEqual(snapshot);
+    expect(result.current.identity.readinessSelection).toEqual(selection);
+  });
+
+  it("reads no readiness for a run that kept none", async () => {
+    axios.get.mockResolvedValueOnce({
+      data: { execution: { id: "ex-none", status: "completed" } },
+    });
+    const { result } = renderHook(() => useRunDetail("rt1", "ex-none"), {
+      wrapper: makeWrapper(),
+    });
+
+    await waitFor(() => expect(result.current.identity).not.toBeNull());
+
+    expect(result.current.identity.capabilitySnapshot).toBeNull();
+    expect(result.current.identity.readinessSelection).toBeNull();
+  });
+
   it.each([
     ["Pending", "queued"],
     ["Running", "running"],
