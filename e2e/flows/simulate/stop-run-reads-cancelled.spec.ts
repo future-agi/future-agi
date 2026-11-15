@@ -15,7 +15,7 @@ const ANALYTICS_TAB = 'Analytics';
 const GOAL_OUTCOME = 'Goal outcome breakdown';
 
 interface CallsPage {
-  results: { id: string; status: string }[];
+  results: { id: string; outcome: string }[];
   status_counts: Record<string, number>;
 }
 
@@ -61,7 +61,7 @@ test('SIM-E2E-020: a user stops a running Run, and its call reads Cancelled in t
   await test.step('api: the stopped call is cancelled and the skipped case an error', async () => {
     await expect.poll(async () => {
       const served = await actor.api.get<CallsPage>(`/simulate/v3/test-executions/${seed.testExecutionId}/calls/`);
-      const byId = Object.fromEntries(served.results.map((row) => [row.id, row.status]));
+      const byId = Object.fromEntries(served.results.map((row) => [row.id, row.outcome]));
       return [byId[seed.ongoingCallExecutionId], byId[seed.skippedCallExecutionId], served.status_counts.cancelled, served.status_counts.error];
     }, { timeout: UI_READY }).toEqual(['cancelled', 'error', 1, 1]);
   });
