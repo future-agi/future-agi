@@ -335,6 +335,35 @@ func TestCatalogue_ConcurrentOverlayAndSetOverrides(t *testing.T) {
 	}
 }
 
+// entries is the size of the live catalogue, models only a config override adds
+// included, however the catalogue last changed.
+func TestCatalogue_EntriesCountOverrideOnlyModels(t *testing.T) {
+	var ptr atomic.Pointer[ModelDB]
+	c := NewCatalogue(&ptr, nil)
+	bundled := c.Info().Entries
+	price := 3e-6
+	overrides := map[string]ModelOverride{"override-only": {Provider: "custom", Mode: "chat", Pricing: &PricingOverride{InputPerToken: &price}}}
+	check := func(when string, want int) {
+		t.Helper()
+		if got := c.Info().Entries; got != want || got != ptr.Load().Count() {
+			t.Errorf("%s: entries = %d, live catalogue holds %d, want %d", when, got, ptr.Load().Count(), want)
+		}
+	}
+
+	c.SetOverrides(overrides)
+	check("bundled plus an override-only model", bundled+1)
+
+	fetched, err := parseLiteLLM([]byte(catalogueJSON(60, 1e-6)), true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.Overlay(fetched, "http://catalogue.test")
+	check("fetched plus an override-only model", bundled+len(fetched)+1)
+
+	c.SetOverrides(nil)
+	check("fetched alone", bundled+len(fetched))
+}
+
 func TestNewSyncer_Interval(t *testing.T) {
 	var ptr atomic.Pointer[ModelDB]
 	c := NewCatalogue(&ptr, nil)
