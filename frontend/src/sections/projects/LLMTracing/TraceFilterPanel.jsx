@@ -138,8 +138,11 @@ const filterValueAdapterMetricName = (source, propertyId, metricType) => {
   );
 };
 
-const filterValueTransportSource = (source, metricType) =>
-  source === "sessions" && metricType === "custom_attribute"
+const filterValueTransportSource = (source, metricType, registryId) =>
+  source === "sessions" &&
+  (metricType === "custom_attribute" ||
+    (metricType === "system_metric" &&
+      registryId === "system_attribute:traces:tag"))
     ? "traces"
     : source;
 
@@ -3130,7 +3133,11 @@ function ValuePicker({
 
   const isSessionFreeTextField =
     !hasStaticChoices && SESSION_FREE_TEXT_FIELDS.has(propertyId);
-  const filterValueSource = filterValueTransportSource(source, metricType);
+  const filterValueSource = filterValueTransportSource(
+    source,
+    metricType,
+    property?.registryId,
+  );
   const filterValueMetricName = filterValueAdapterMetricName(
     filterValueSource,
     propertyId,
@@ -4994,6 +5001,7 @@ const TraceFilterPanel = ({
   const queryValueSource = filterValueTransportSource(
     source === "dataset" ? "dataset_column" : source,
     queryMetricType,
+    queryFieldProp?.registryId,
   );
   const queryValueMetricName = filterValueAdapterMetricName(
     queryValueSource,

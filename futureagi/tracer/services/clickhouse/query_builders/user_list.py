@@ -15,6 +15,9 @@ from tracer.services.clickhouse.query_builders.filters import (
     ClickHouseFilterBuilder,
     EvalFilterMetadata,
 )
+from tracer.services.clickhouse.query_builders.latest_filter_predicates import (
+    UnsupportedFilterShapeError,
+)
 from tracer.services.clickhouse.query_builders.trace_usage import (
     SUMMARY_NAME,
     usage_aggregate_sql,
@@ -619,6 +622,11 @@ class UserListQueryBuilder(BaseQueryBuilder):
             limit=limit,
             offset=0,
             filters=[
+                *[
+                    item
+                    for item in self.datetime_filters(self.filters)
+                    if BaseQueryBuilder.is_datetime_complement_filter(item)
+                ],
                 {
                     "column_id": "created_at",
                     "filter_config": {
@@ -629,7 +637,7 @@ class UserListQueryBuilder(BaseQueryBuilder):
                             window_end.isoformat(),
                         ],
                     },
-                }
+                },
             ],
         )
         witness, witness_params = self._positive_scalar_user_witness()
@@ -1532,6 +1540,11 @@ class UserListQueryBuilder(BaseQueryBuilder):
           )
         """
         )
+        datetime_sql, datetime_params = self.bounded_datetime_exclusion_sql(
+            self.filters
+        )
+        self.params.update(datetime_params)
+        datetime_having = f"HAVING {datetime_sql}" if datetime_sql else ""
         usage_ctes = f"""
     {identity_acquisition_cte}
     latest_candidate_spans AS (
@@ -1554,6 +1567,7 @@ class UserListQueryBuilder(BaseQueryBuilder):
             identity_hour,
             trace_id,
             id
+        {datetime_having}
     ),
     user_trace_usage AS (
         SELECT project_id, trace_id, end_user_id, last_active,
@@ -1913,6 +1927,11 @@ class UserListQueryBuilder(BaseQueryBuilder):
                 required=True,
             )
 
+        datetime_sql, datetime_params = self.bounded_datetime_exclusion_sql(
+            self.filters
+        )
+        params.update(datetime_params)
+        datetime_having = f"HAVING {datetime_sql}" if datetime_sql else ""
         requirement_select_sql = ",\n                ".join(requirement_selects)
         requirement_where_sql = "\n          AND ".join(requirement_checks)
 
@@ -1975,6 +1994,7 @@ class UserListQueryBuilder(BaseQueryBuilder):
                 identity_hour,
                 trace_id,
                 id
+            {datetime_having}
         ),
         relation_candidate_spans AS (
             SELECT
@@ -2335,6 +2355,11 @@ class UserListQueryBuilder(BaseQueryBuilder):
             candidate_param="candidate_end_user_ids"
         )
         base_params.update(finite_map_params)
+        datetime_sql, datetime_params = self.bounded_datetime_exclusion_sql(
+            self.filters
+        )
+        base_params.update(datetime_params)
+        datetime_having = f"HAVING {datetime_sql}" if datetime_sql else ""
 
         def common_prefix(
             state_selects: list[str],
@@ -2455,6 +2480,7 @@ class UserListQueryBuilder(BaseQueryBuilder):
                 identity_hour,
                 trace_id,
                 id
+            {datetime_having}
         )
         {session_remap_ctes}
             """
@@ -3172,12 +3198,38 @@ class UserListQueryBuilder(BaseQueryBuilder):
             else "ORDER BY last_active DESC NULLS LAST, end_user_id DESC"
         )
 
-    @staticmethod
-    def _is_date_filter(item: dict[str, Any]) -> bool:
-        config = item.get("filter_config") or {}
-        return item.get("column_id") in ("created_at", "start_time") and config.get(
-            "filter_type"
-        ) in ("datetime", "date")
+    @classmethod
+    def _is_date_filter(cls, item: dict[str, Any]) -> bool:
+        property_id = str(item.get("property_id") or item.get("propertyId") or "")
+        return (
+            (not property_id or property_id.startswith("system_attribute:"))
+            and cls._filter_col_type(item)
+            not in {"SPAN_ATTRIBUTE", "EVAL_METRIC", "ANNOTATION"}
+            and BaseQueryBuilder.is_datetime_filter(item)
+        )
+
+    @classmethod
+    def datetime_filters(cls, filters: list[dict]) -> list[dict]:
+        """Select native time leaves without consuming explicit property namesakes."""
+        return [item for item in filters if cls._is_date_filter(item)]
+
+    @classmethod
+    def parse_time_range(cls, filters: list[dict], *, strict: bool = True):
+        try:
+            return BaseQueryBuilder.parse_time_range(
+                cls.datetime_filters(filters), strict=strict
+            )
+        except ValueError as exc:
+            # Preserve the Users route's sanitized invalid-filter 400 boundary.
+            raise UnsupportedFilterShapeError(str(exc)) from exc
+
+    @classmethod
+    def bounded_datetime_exclusion_sql(
+        cls, filters: list[dict], *, column: str = "latest_start_time"
+    ) -> tuple[str, dict[str, Any]]:
+        return BaseQueryBuilder.bounded_datetime_exclusion_sql(
+            cls.datetime_filters(filters), column=column, param_prefix="users_datetime"
+        )
 
     @classmethod
     def is_native_tag_filter(cls, item: dict[str, Any]) -> bool:

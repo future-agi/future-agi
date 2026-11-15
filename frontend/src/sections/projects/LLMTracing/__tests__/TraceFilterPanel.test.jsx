@@ -7683,6 +7683,55 @@ describe("filter-value picker bounded-read UX", () => {
     },
   );
 
+  it.each([
+    ["system", "system_attribute:traces:tag", "system_metric"],
+    ["attribute", "custom_attribute:tag", "custom_attribute"],
+    ["attribute", "custom_attribute:tags", "custom_attribute"],
+  ])(
+    "keeps Users Query-tab %s %s values on traces",
+    async (category, registryId, metricType) => {
+      const id = registryId.split(":").at(-1);
+      const property = {
+        id,
+        name: "Tag",
+        category,
+        type: "string",
+        registryId,
+        apiColType: category === "system" ? "SYSTEM_METRIC" : "SPAN_ATTRIBUTE",
+      };
+      if (category === "attribute") {
+        exactAttributePropertiesMock.mockReturnValue({
+          ...defaultExactAttributeProperties(),
+          data: [property],
+          exactSearchMatched: true,
+        });
+      }
+      const { anchorEl } = renderPanel({
+        properties: [property],
+        projectId: "project-users-tag-query",
+        source: "sessions",
+        propertyNamespace: "users",
+        attributeSource: "traces",
+        showQueryTab: true,
+      });
+      fireEvent.click(screen.getByRole("tab", { name: "Query" }));
+      await selectQueryPhaseOption("Tag", "pick operator...");
+      await waitFor(() =>
+        expect(dashboardFilterValuesMock).toHaveBeenCalledWith(
+          expect.objectContaining({
+            propertyId: registryId,
+            metricName: id,
+            metricType,
+            source: "traces",
+            projectIds: ["project-users-tag-query"],
+            enabled: true,
+          }),
+        ),
+      );
+      document.body.removeChild(anchorEl);
+    },
+  );
+
   it("uses the Sessions adapter identity for Query-tab Session ID values", async () => {
     const { anchorEl } = renderPanel({
       properties: [

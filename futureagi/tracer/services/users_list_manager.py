@@ -23,7 +23,10 @@ from tracer.services.clickhouse.list_cursor import (
     ListCursorError,
     canonical_filter_leaf,
 )
-from tracer.services.clickhouse.query_builders.base import _unix_microseconds
+from tracer.services.clickhouse.query_builders.base import (
+    BaseQueryBuilder,
+    _unix_microseconds,
+)
 from tracer.services.clickhouse.query_builders.filters import (
     EvalFilterMetadata,
     resolve_eval_filter_metadata,
@@ -266,6 +269,7 @@ def _users_attr_enrichment_query(
     candidate_end_user_id_map: dict[str, str] | None = None,
     candidate_text_values_by_key: dict[str, tuple[str, ...]] | None = None,
     walked_typed_filter: WalkedTypedFilter | None = None,
+    filters: list[dict] | None = None,
 ):
     """Project only requested keys for a finite Observe-Users page.
 
@@ -338,6 +342,12 @@ def _users_attr_enrichment_query(
           AND latest_start_time >= fromUnixTimestamp64Micro(%(attr_start_us)s, 'UTC')
           AND latest_start_time < fromUnixTimestamp64Micro(%(attr_end_us)s, 'UTC')
         """
+    datetime_sql, datetime_params = (
+        UserListQueryBuilderV2.bounded_datetime_exclusion_sql(filters or [])
+    )
+    params.update(datetime_params)
+    if datetime_sql:
+        latest_time_filter += f" AND ({datetime_sql})"
     candidate_value_params: dict[str, tuple[str, ...] | str] = {}
     candidate_value_clauses: list[str] = []
     for index, (attribute_key, raw_values) in enumerate(
@@ -1010,6 +1020,7 @@ class UsersListManager:
                 candidate_end_user_id_map=candidate_end_user_id_map,
                 candidate_text_values_by_key=candidate_text_values_by_key,
                 walked_typed_filter=walked_typed_filter,
+                filters=self.filters,
             )
             attr_params["eu_ids"] = tuple(str(e) for e in end_user_ids)
             attr_params["eu_scan_ids"] = tuple(
@@ -1402,6 +1413,7 @@ class UsersListManager:
                 item
                 for item in filters
                 if not UserListQueryBuilderV2._is_date_filter(item)
+                or BaseQueryBuilder.is_datetime_complement_filter(item)
             ],
             {
                 "column_id": "created_at",
@@ -2294,8 +2306,36 @@ class UsersListManager:
             filters=self.filters,
             empty_scope=self.empty_scope,
         )
+        window_start, window_end = (
+            (cursor.window_start, cursor.window_end)
+            if cursor is not None
+            else base_builder.parse_time_range(self.filters)
+        )
+        if window_start >= window_end:
+            # Prove the empty population before a native Tag compiler binds its
+            # (necessarily nonempty) window or a matching-activity walk starts.
+            return UserCursorRead(
+                payload={
+                    "table": [],
+                    "total_count": 0,
+                    "total_pages": 0,
+                    "count_is_lower_bound": False,
+                    "has_more": False,
+                    "query_complete": True,
+                    "query_status": "complete",
+                    "query_exact": True,
+                    "query_provenance": "physical_latest_users",
+                    "ordering_exact": True,
+                    "approximate_fields": [],
+                },
+                window_start=window_start,
+                window_end=window_end,
+                checkpoint_order=None,
+                seen_rows=0,
+                has_more=False,
+                unseen_row_proven=False,
+            )
         if cursor is None:
-            window_start, window_end = base_builder.parse_time_range(self.filters)
             frozen_filters = self._frozen_filters(
                 self.filters,
                 window_start=window_start,

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { hashKey, useQuery } from "@tanstack/react-query";
 import { readQuery, endpoints } from "src/utils/axios";
 import {
   AGGREGATION_REQUEST_TIMEOUT_MS,
@@ -68,18 +68,24 @@ export const useAgentGraph = (
   const [aggregationPollingPaused, setAggregationPollingPaused] =
     useState(false);
 
+  const queryKey = ["agent-graph", projectId, filters];
+  const queryIdentity = hashKey(queryKey);
+  // A deduplicated observer may never run its queryFn. Fence its retained data
+  // on render, before the new key can publish loading or an error.
+  if (requestScopeRef.current?.identity !== queryIdentity) {
+    requestScopeRef.current = { identity: queryIdentity };
+    pollingControllerRef.current.reset();
+    serverPendingRef.current = false;
+    forceRefreshRef.current = false;
+    lastExactSnapshotRef.current = null;
+    if (aggregationTransportFailed) setAggregationTransportFailed(false);
+    if (aggregationPollingPaused) setAggregationPollingPaused(false);
+  }
+  const requestScope = requestScopeRef.current;
+
   const query = useQuery({
-    queryKey: ["agent-graph", projectId, filters],
-    queryFn: async ({ queryKey, signal }) => {
-      const requestScope = JSON.stringify(queryKey);
-      if (requestScopeRef.current !== requestScope) {
-        requestScopeRef.current = requestScope;
-        pollingControllerRef.current.reset();
-        serverPendingRef.current = false;
-        lastExactSnapshotRef.current = null;
-        setAggregationTransportFailed(false);
-        setAggregationPollingPaused(false);
-      }
+    queryKey,
+    queryFn: async ({ signal }) => {
       pollingControllerRef.current.recordAttempt();
       const refresh = forceRefreshRef.current;
       forceRefreshRef.current = false;
@@ -98,7 +104,11 @@ export const useAgentGraph = (
           { timeoutMs: AGGREGATION_REQUEST_TIMEOUT_MS, signal },
         );
       } catch (error) {
-        if (!signal.aborted && serverPendingRef.current) {
+        if (
+          requestScopeRef.current === requestScope &&
+          !signal.aborted &&
+          serverPendingRef.current
+        ) {
           if (!pollingControllerRef.current.recordFailure()) {
             serverPendingRef.current = false;
             setAggregationTransportFailed(true);
@@ -115,17 +125,25 @@ export const useAgentGraph = (
         // A 2xx body that violates the generated contract cannot become valid
         // by polling the same snapshot. Stop immediately and leave any prior
         // exact graph visible until an explicit refresh starts a new budget.
-        pollingControllerRef.current.terminate();
-        serverPendingRef.current = false;
-        setAggregationTransportFailed(true);
-        setAggregationPollingPaused(false);
+        if (requestScopeRef.current === requestScope) {
+          pollingControllerRef.current.terminate();
+          serverPendingRef.current = false;
+          setAggregationTransportFailed(true);
+          setAggregationPollingPaused(false);
+        }
         throw error;
       }
+
+      // An old query can still finish for another mounted observer. Let React
+      // Query cache it, without changing this observer's new scope or budget.
+      if (requestScopeRef.current !== requestScope) return result;
 
       const { isRefreshing, refreshFailed } =
         getAggregationRefreshState(result);
       const readState = getExactAggregationReadState(result);
-      if (readState === "complete") lastExactSnapshotRef.current = result;
+      if (readState === "complete") {
+        lastExactSnapshotRef.current = { scope: requestScope, data: result };
+      }
       serverPendingRef.current =
         isRefreshing &&
         !refreshFailed &&
@@ -146,6 +164,7 @@ export const useAgentGraph = (
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,
     refetchInterval: (activeQuery) => {
+      if (requestScopeRef.current !== requestScope) return false;
       const payload = activeQuery.state.data;
       const { isRefreshing, refreshFailed } =
         getAggregationRefreshState(payload);
@@ -204,13 +223,21 @@ export const useAgentGraph = (
     return () => window.removeEventListener("observe-refresh", handleRefresh);
   }, [enabled, projectId, refresh]);
 
+  // Cache hits and deduplicated reads must retain the same exact snapshot as
+  // the fetching observer when a subsequent same-key refresh becomes pending.
+  if (getExactAggregationReadState(query.data) === "complete") {
+    lastExactSnapshotRef.current = { scope: requestScope, data: query.data };
+  }
   const pollingTransportError =
     query.isError &&
     serverPendingRef.current &&
     pollingControllerRef.current.isActive();
   const presentationState = getAgentGraphPresentationState({
     ...query,
-    previousExactData: lastExactSnapshotRef.current,
+    previousExactData:
+      lastExactSnapshotRef.current?.scope === requestScope
+        ? lastExactSnapshotRef.current.data
+        : null,
     refreshUnavailable: aggregationTransportFailed,
     pollingPaused: aggregationPollingPaused,
     isError:

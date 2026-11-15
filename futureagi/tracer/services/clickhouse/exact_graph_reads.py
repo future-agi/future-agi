@@ -2345,7 +2345,11 @@ def read_exact_eval_graph(
             project_id=project_id,
             deleted=False,
         )
-    start_date, end_date, empty = _snapshot_window(filters)
+    start_date, end_date, empty = _snapshot_window(
+        UserListQueryBuilder.datetime_filters(filters)
+        if aggregation_context == "user"
+        else filters
+    )
     interval = _effective_graph_interval(interval, start_date, end_date)
     output_type = req_data_config.get("eval_output_type") or req_data_config.get(
         "output_type"
@@ -2665,7 +2669,11 @@ def read_exact_annotation_graph(
         }.get(annotation_type, "float")
     output_type = str(output_type).lower()
     selected = req_data_config.get("value")
-    start_date, end_date, empty = _snapshot_window(filters)
+    start_date, end_date, empty = _snapshot_window(
+        UserListQueryBuilder.datetime_filters(filters)
+        if aggregation_context == "user"
+        else filters
+    )
     interval = _effective_graph_interval(interval, start_date, end_date)
     if empty:
         return _finalize_exact_graph_payload(
@@ -3902,20 +3910,7 @@ _USER_EVAL_FILTER_COLUMNS = frozenset(
 
 
 def _is_user_date_filter(item: dict[str, Any]) -> bool:
-    config = item.get("filter_config") or item.get("filterConfig") or {}
-    return (
-        not _is_raw_attribute_filter(item)
-        and (item.get("column_id") or item.get("columnId"))
-        in {
-            "created_at",
-            "start_time",
-        }
-        and (config.get("filter_type") or config.get("filterType"))
-        in {
-            "datetime",
-            "date",
-        }
-    )
+    return UserListQueryBuilder._is_date_filter(item)
 
 
 def _user_filter_clauses(
@@ -4401,6 +4396,10 @@ def _user_aggregate_source_sql(
         user_membership_start_us=_unix_microseconds(start_date),
         user_membership_end_us=_unix_microseconds(end_date),
     )
+    datetime_sql, datetime_params = UserListQueryBuilder.bounded_datetime_exclusion_sql(
+        filters, column="start_time"
+    )
+    params.update(datetime_params)
     snapshot_rows = f"""
         SELECT *
         FROM ({
@@ -4420,6 +4419,7 @@ def _user_aggregate_source_sql(
           AND isNotNull(end_user_id)
           AND start_time >= fromUnixTimestamp64Micro(%(user_membership_start_us)s, 'UTC')
           AND start_time < fromUnixTimestamp64Micro(%(user_membership_end_us)s, 'UTC')
+          {f"AND ({datetime_sql})" if datetime_sql else ""}
     """
     if reuse_outer_snapshot:
         # Do not redeclare either shared CTE: a same-name wrapper would shadow
@@ -4808,7 +4808,9 @@ def read_exact_user_system_graph(
     )
 
     started = monotonic()
-    start_date, end_date, empty = _snapshot_window(filters)
+    start_date, end_date, empty = _snapshot_window(
+        UserListQueryBuilder.datetime_filters(filters)
+    )
     interval = _effective_graph_interval(interval, start_date, end_date)
     if empty:
         builder = UserTimeSeriesQueryBuilderV2(

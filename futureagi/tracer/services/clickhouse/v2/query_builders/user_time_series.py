@@ -17,6 +17,7 @@ from tracer.services.clickhouse.query_builders.time_series import (
     graph_cost_coverage_series,
     graph_cost_flags_sql,
 )
+from tracer.services.clickhouse.query_builders.user_list import UserListQueryBuilder
 from tracer.services.clickhouse.query_builders.user_time_series import (
     UserTimeSeriesQueryBuilder,
 )
@@ -105,6 +106,7 @@ def _latest_spans_argmax_cte(
     project_predicate: str,
     cte_name: str = "latest_spans",
     member_predicates: tuple[str, ...] = (),
+    datetime_predicate: str = "",
 ) -> str:
     """Reduce each physical span identity to its winning version in one pass.
 
@@ -172,6 +174,7 @@ def _latest_spans_argmax_cte(
                AND {_LATEST_STATE}.{start_position} <
                    fromUnixTimestamp64Micro(%(user_snapshot_end_us)s, 'UTC')
         ) AS replayed_spans
+        {f"WHERE {datetime_predicate}" if datetime_predicate else ""}
     )
     """
 
@@ -199,7 +202,11 @@ def _entity_safe_latest_spans_ctes(*, snapshot_cte: str) -> str:
 
 
 def _full_snapshot_latest_spans_cte(
-    *, table: str, project_predicate: str, cte_name: str = "latest_spans"
+    *,
+    table: str,
+    project_predicate: str,
+    cte_name: str = "latest_spans",
+    datetime_predicate: str = "",
 ) -> str:
     """Read a whole output snapshot without recursive trace partitioning.
 
@@ -230,6 +237,7 @@ def _full_snapshot_latest_spans_cte(
               fromUnixTimestamp64Micro(%(user_snapshot_start_us)s, 'UTC')
           AND snapshot_spans.start_time <
               fromUnixTimestamp64Micro(%(user_snapshot_end_us)s, 'UTC')
+          {f"AND ({datetime_predicate})" if datetime_predicate else ""}
     )
     """
 
@@ -343,7 +351,15 @@ class UserTimeSeriesQueryBuilderV2(V2RewriteMixin, UserTimeSeriesQueryBuilder):
         super().__init__(*args, **kwargs)
 
     def build(self) -> tuple[str, dict[str, Any]]:
-        self.start_date, self.end_date = self.parse_time_range(self.filters)
+        self.start_date, self.end_date = UserListQueryBuilder.parse_time_range(
+            self.filters
+        )
+        datetime_sql, datetime_params = (
+            UserListQueryBuilder.bounded_datetime_exclusion_sql(
+                self.filters, column="start_time"
+            )
+        )
+        self.params.update(datetime_params)
         self.params["start_date"] = self.start_date
         self.params["end_date"] = self.end_date
         if (
@@ -435,11 +451,13 @@ class UserTimeSeriesQueryBuilderV2(V2RewriteMixin, UserTimeSeriesQueryBuilder):
                     project_predicate=self.project_filter_sql(),
                     cte_name=cte_name,
                     member_predicates=member_predicates,
+                    datetime_predicate=datetime_sql,
                 )
             return _full_snapshot_latest_spans_cte(
                 table=self.TABLE,
                 project_predicate=self.project_filter_sql(),
                 cte_name=cte_name,
+                datetime_predicate=datetime_sql,
             )
 
         if full_snapshot or self.exact_snapshot_start is None:
