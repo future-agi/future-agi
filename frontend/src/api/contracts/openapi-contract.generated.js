@@ -57542,6 +57542,10 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Parallel",
           type: "integer",
         },
+        asynchronous: {
+          title: "Asynchronous",
+          type: "integer",
+        },
         overlap_unknown: {
           title: "Overlap unknown",
           type: "boolean",
@@ -97105,6 +97109,14 @@ export const OPENAPI_CONTRACT = Object.freeze({
             $ref: "#/definitions/SharedRecord",
           },
         },
+        stopped_workers: {
+          description:
+            "Workers whose own process the harness ended when their deadline passed.",
+          type: "array",
+          items: {
+            $ref: "#/definitions/StoppedWorker",
+          },
+        },
       },
       "x-nullable": true,
     },
@@ -97251,6 +97263,15 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "not_observed",
           ],
         },
+        seen: {
+          title: "Seen",
+          type: "string",
+          enum: ["tool_calls_only"],
+        },
+        stopped_at: {
+          title: "Stopped at",
+          type: "number",
+        },
         cleanup: {
           $ref: "#/definitions/Cleanup",
         },
@@ -97361,6 +97382,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Relationship",
           type: "string",
           enum: ["observed", "unknown"],
+        },
+        launch: {
+          title: "Launch",
+          type: "string",
+          enum: ["async"],
         },
         at: {
           title: "At",
@@ -104875,6 +104901,15 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "array",
           items: {
             type: "object",
+          },
+          "x-nullable": true,
+        },
+        workers: {
+          description:
+            "The workers the app's source declares; a run shows which of them took part.",
+          type: "array",
+          items: {
+            $ref: "#/definitions/HarnessEnvironmentWorker",
           },
           "x-nullable": true,
         },
@@ -120757,6 +120792,34 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    StoppedWorker: {
+      description:
+        "Workers whose own process the harness ended when their deadline passed.",
+      required: ["worker", "process", "at", "reason"],
+      type: "object",
+      properties: {
+        worker: {
+          title: "Worker",
+          type: "string",
+          minLength: 1,
+        },
+        process: {
+          title: "Process",
+          type: "string",
+          minLength: 1,
+        },
+        at: {
+          title: "At",
+          description: "When the harness ended it, seconds since the epoch.",
+          type: "number",
+        },
+        reason: {
+          title: "Reason",
+          type: "string",
+          minLength: 1,
+        },
+      },
+    },
     TrialNotice: {
       description:
         "How the trial ran that the person should know, e.g. a scenario fault that did not take effect.",
@@ -120884,7 +120947,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         status: {
           title: "Status",
           type: "string",
-          enum: ["stopped_with_sandbox", "still_running", "unknown"],
+          enum: ["stopped", "stopped_with_sandbox", "still_running", "unknown"],
         },
         at: {
           title: "At",
@@ -121006,6 +121069,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Relationship",
           type: "string",
           enum: ["observed", "unknown"],
+        },
+        launch: {
+          title: "Launch",
+          type: "string",
+          enum: ["async"],
         },
         at: {
           title: "At",
@@ -125700,6 +125768,51 @@ export const OPENAPI_CONTRACT = Object.freeze({
           },
         },
       },
+    },
+    HarnessEnvironmentWorker: {
+      description:
+        "The workers the app's source declares; a run shows which of them took part.",
+      required: ["id"],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          minLength: 1,
+        },
+        name: {
+          title: "Name",
+          type: "string",
+        },
+        tools: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        allowed_tools: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        binding: {
+          title: "Binding",
+          type: "string",
+          enum: ["separate", "shared"],
+        },
+        address_env: {
+          title: "Address env",
+          type: "string",
+        },
+        process: {
+          title: "Process",
+          type: "string",
+        },
+      },
+      "x-nullable": true,
     },
     HarnessEnvironmentResult: {
       required: [

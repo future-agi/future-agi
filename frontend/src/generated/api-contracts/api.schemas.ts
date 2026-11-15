@@ -19210,6 +19210,28 @@ export interface HarnessEnvironmentOverviewApi {
   agent: HarnessEnvironmentAgentApi;
 }
 
+export type HarnessEnvironmentWorkerApiBinding =
+  (typeof HarnessEnvironmentWorkerApiBinding)[keyof typeof HarnessEnvironmentWorkerApiBinding];
+
+export const HarnessEnvironmentWorkerApiBinding = {
+  separate: "separate",
+  shared: "shared",
+} as const;
+
+/**
+ * The workers the app's source declares; a run shows which of them took part.
+ */
+export interface HarnessEnvironmentWorkerApi {
+  /** @minLength 1 */
+  id: string;
+  name?: string;
+  tools?: string[];
+  allowed_tools?: string[];
+  binding?: HarnessEnvironmentWorkerApiBinding;
+  address_env?: string;
+  process?: string;
+}
+
 export interface HarnessEnvironmentAmendmentApi {
   subject: string;
   /** @minLength 1 */
@@ -19321,6 +19343,8 @@ export interface HarnessEnvironmentContractApi {
   runtime_dependencies?: HarnessEnvironmentContractApiRuntimeDependenciesItem[];
   implementation?: string;
   tool_entrypoints?: HarnessEnvironmentContractApiToolEntrypointsItem[];
+  /** The workers the app's source declares; a run shows which of them took part. */
+  workers?: HarnessEnvironmentWorkerApi[];
   data_store?: HarnessEnvironmentContractApiDataStore;
   open_questions?: string[];
   amendments: HarnessEnvironmentAmendmentApi[];
@@ -25664,6 +25688,20 @@ export interface SharedRecordApi {
 }
 
 /**
+ * Workers whose own process the harness ended when their deadline passed.
+ */
+export interface StoppedWorkerApi {
+  /** @minLength 1 */
+  worker: string;
+  /** @minLength 1 */
+  process: string;
+  /** When the harness ended it, seconds since the epoch. */
+  at: number;
+  /** @minLength 1 */
+  reason: string;
+}
+
+/**
  * The actor limits this trial ran with; null is no limit.
  */
 export type TrialStateApiLimits = { [key: string]: string };
@@ -25679,6 +25717,8 @@ export interface TrialStateApi {
   notices?: TrialNoticeApi[];
   /** Records two or more participants named in this trial, and what the world made of each call. */
   shared_records?: SharedRecordApi[];
+  /** Workers whose own process the harness ended when their deadline passed. */
+  stopped_workers?: StoppedWorkerApi[];
 }
 
 export interface CallExecutionV3DetailResponseApi {
@@ -25864,10 +25904,18 @@ export const CallWorkerApiState = {
   not_observed: "not_observed",
 } as const;
 
+export type CallWorkerApiSeen =
+  (typeof CallWorkerApiSeen)[keyof typeof CallWorkerApiSeen];
+
+export const CallWorkerApiSeen = {
+  tool_calls_only: "tool_calls_only",
+} as const;
+
 export type CleanupApiStatus =
   (typeof CleanupApiStatus)[keyof typeof CleanupApiStatus];
 
 export const CleanupApiStatus = {
+  stopped: "stopped",
   stopped_with_sandbox: "stopped_with_sandbox",
   still_running: "still_running",
   unknown: "unknown",
@@ -25893,6 +25941,8 @@ export interface CallWorkerApi {
   model?: string;
   tokens?: number;
   state?: CallWorkerApiState;
+  seen?: CallWorkerApiSeen;
+  stopped_at?: number;
   cleanup?: CleanupApi;
 }
 
@@ -25920,6 +25970,13 @@ export type CallWorkerEventApiRelationship =
 export const CallWorkerEventApiRelationship = {
   observed: "observed",
   unknown: "unknown",
+} as const;
+
+export type CallWorkerEventApiLaunch =
+  (typeof CallWorkerEventApiLaunch)[keyof typeof CallWorkerEventApiLaunch];
+
+export const CallWorkerEventApiLaunch = {
+  async: "async",
 } as const;
 
 export type CallWorkerEventApiAttribution =
@@ -25969,6 +26026,7 @@ export interface CallWorkerEventApi {
   /** @minLength 1 */
   refusal_code?: string;
   relationship?: CallWorkerEventApiRelationship;
+  launch?: CallWorkerEventApiLaunch;
   /** @minLength 1 */
   at: string;
   attribution: CallWorkerEventApiAttribution;
@@ -26011,6 +26069,13 @@ export type CallWorkerEventOrNullApiRelationship =
 export const CallWorkerEventOrNullApiRelationship = {
   observed: "observed",
   unknown: "unknown",
+} as const;
+
+export type CallWorkerEventOrNullApiLaunch =
+  (typeof CallWorkerEventOrNullApiLaunch)[keyof typeof CallWorkerEventOrNullApiLaunch];
+
+export const CallWorkerEventOrNullApiLaunch = {
+  async: "async",
 } as const;
 
 export type CallWorkerEventOrNullApiAttribution =
@@ -26060,6 +26125,7 @@ export interface CallWorkerEventOrNullApi {
   /** @minLength 1 */
   refusal_code?: string;
   relationship?: CallWorkerEventOrNullApiRelationship;
+  launch?: CallWorkerEventOrNullApiLaunch;
   /** @minLength 1 */
   at: string;
   attribution: CallWorkerEventOrNullApiAttribution;
@@ -26122,6 +26188,7 @@ export interface CallWorkersResponseApi {
   turns: CallWorkerRoundApi[];
   depth: number;
   parallel: number;
+  asynchronous?: number;
   overlap_unknown: boolean;
   worker_depths: CallWorkersResponseApiWorkerDepths;
 }

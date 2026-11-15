@@ -38485,6 +38485,26 @@ export const SimulateApiHarnessEnvironmentsReadResponse = zod.object({
     runtime_dependencies: zod.array(zod.object({}).passthrough()).optional(),
     implementation: zod.string().optional(),
     tool_entrypoints: zod.array(zod.object({}).passthrough()).optional(),
+    workers: zod
+      .array(
+        zod
+          .object({
+            id: zod.string().min(1),
+            name: zod.string().optional(),
+            tools: zod.array(zod.string().min(1)).optional(),
+            allowed_tools: zod.array(zod.string().min(1)).optional(),
+            binding: zod.enum(["separate", "shared"]).optional(),
+            address_env: zod.string().optional(),
+            process: zod.string().optional(),
+          })
+          .describe(
+            "The workers the app's source declares; a run shows which of them took part.",
+          ),
+      )
+      .optional()
+      .describe(
+        "The workers the app's source declares; a run shows which of them took part.",
+      ),
     data_store: zod.object({}).passthrough().optional(),
     open_questions: zod.array(zod.string().min(1)).optional(),
     amendments: zod.array(
@@ -38770,6 +38790,26 @@ export const SimulateApiHarnessEnvironmentsPartialUpdateResponse = zod.object({
     runtime_dependencies: zod.array(zod.object({}).passthrough()).optional(),
     implementation: zod.string().optional(),
     tool_entrypoints: zod.array(zod.object({}).passthrough()).optional(),
+    workers: zod
+      .array(
+        zod
+          .object({
+            id: zod.string().min(1),
+            name: zod.string().optional(),
+            tools: zod.array(zod.string().min(1)).optional(),
+            allowed_tools: zod.array(zod.string().min(1)).optional(),
+            binding: zod.enum(["separate", "shared"]).optional(),
+            address_env: zod.string().optional(),
+            process: zod.string().optional(),
+          })
+          .describe(
+            "The workers the app's source declares; a run shows which of them took part.",
+          ),
+      )
+      .optional()
+      .describe(
+        "The workers the app's source declares; a run shows which of them took part.",
+      ),
     data_store: zod.object({}).passthrough().optional(),
     open_questions: zod.array(zod.string().min(1)).optional(),
     amendments: zod.array(
@@ -40251,6 +40291,26 @@ export const SimulateApiHarnessEnvironmentsEvaluationsSetToolCallEvaluationRespo
       runtime_dependencies: zod.array(zod.object({}).passthrough()).optional(),
       implementation: zod.string().optional(),
       tool_entrypoints: zod.array(zod.object({}).passthrough()).optional(),
+      workers: zod
+        .array(
+          zod
+            .object({
+              id: zod.string().min(1),
+              name: zod.string().optional(),
+              tools: zod.array(zod.string().min(1)).optional(),
+              allowed_tools: zod.array(zod.string().min(1)).optional(),
+              binding: zod.enum(["separate", "shared"]).optional(),
+              address_env: zod.string().optional(),
+              process: zod.string().optional(),
+            })
+            .describe(
+              "The workers the app's source declares; a run shows which of them took part.",
+            ),
+        )
+        .optional()
+        .describe(
+          "The workers the app's source declares; a run shows which of them took part.",
+        ),
       data_store: zod.object({}).passthrough().optional(),
       open_questions: zod.array(zod.string().min(1)).optional(),
       amendments: zod.array(
@@ -53844,6 +53904,25 @@ export const SimulateV3CallExecutionDetailResponse = zod.object({
       .describe(
         "Records two or more participants named in this trial, and what the world made of each call.",
       ),
+    stopped_workers: zod
+      .array(
+        zod
+          .object({
+            worker: zod.string().min(1),
+            process: zod.string().min(1),
+            at: zod
+              .number()
+              .describe("When the harness ended it, seconds since the epoch."),
+            reason: zod.string().min(1),
+          })
+          .describe(
+            "Workers whose own process the harness ended when their deadline passed.",
+          ),
+      )
+      .optional()
+      .describe(
+        "Workers whose own process the harness ended when their deadline passed.",
+      ),
   }),
   scoring_status: zod.enum([
     "not_applicable",
@@ -53893,9 +53972,12 @@ export const SimulateV3CallExecutionWorkersResponse = zod.object({
           "not_observed",
         ])
         .optional(),
+      seen: zod.enum(["tool_calls_only"]).optional(),
+      stopped_at: zod.number().optional(),
       cleanup: zod
         .object({
           status: zod.enum([
+            "stopped",
             "stopped_with_sandbox",
             "still_running",
             "unknown",
@@ -53932,6 +54014,7 @@ export const SimulateV3CallExecutionWorkersResponse = zod.object({
       output_omitted: zod.boolean().optional(),
       refusal_code: zod.string().min(1).optional(),
       relationship: zod.enum(["observed", "unknown"]).optional(),
+      launch: zod.enum(["async"]).optional(),
       at: zod.string().min(1),
       attribution: zod.enum(["reported", "unattributed"]),
     }),
@@ -53983,6 +54066,7 @@ export const SimulateV3CallExecutionWorkersResponse = zod.object({
           output_omitted: zod.boolean().optional(),
           refusal_code: zod.string().min(1).optional(),
           relationship: zod.enum(["observed", "unknown"]).optional(),
+          launch: zod.enum(["async"]).optional(),
           at: zod.string().min(1),
           attribution: zod.enum(["reported", "unattributed"]),
         })
@@ -54014,6 +54098,7 @@ export const SimulateV3CallExecutionWorkersResponse = zod.object({
           output_omitted: zod.boolean().optional(),
           refusal_code: zod.string().min(1).optional(),
           relationship: zod.enum(["observed", "unknown"]).optional(),
+          launch: zod.enum(["async"]).optional(),
           at: zod.string().min(1),
           attribution: zod.enum(["reported", "unattributed"]),
         })
@@ -54048,6 +54133,7 @@ export const SimulateV3CallExecutionWorkersResponse = zod.object({
           output_omitted: zod.boolean().optional(),
           refusal_code: zod.string().min(1).optional(),
           relationship: zod.enum(["observed", "unknown"]).optional(),
+          launch: zod.enum(["async"]).optional(),
           at: zod.string().min(1),
           attribution: zod.enum(["reported", "unattributed"]),
         })
@@ -54072,6 +54158,7 @@ export const SimulateV3CallExecutionWorkersResponse = zod.object({
   ),
   depth: zod.number(),
   parallel: zod.number(),
+  asynchronous: zod.number().optional(),
   overlap_unknown: zod.boolean(),
   worker_depths: zod.record(zod.string(), zod.number()),
 });
