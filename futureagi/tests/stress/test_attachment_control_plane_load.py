@@ -26,7 +26,7 @@ Cells run in a random order (``ATTACHMENT_LOAD_SEED``, recorded in ``meta``)
 after one discarded warm-up cell, so no measured cell runs cold.
 ``ATTACHMENT_LOAD_SHAPES`` selects shapes (default ``raw,service,tenants``).
 
-Each shape runs with the 0133 fences on and off (disabled by trigger name, so
+Each shape runs with the 0137 fences on and off (disabled by trigger name, so
 the FK triggers stay on), and ``raw`` also with the capture_session FKs
 dropped. A sampler records pg_stat_activity wait events and ungranted
 pg_locks; MultiXact use comes from pg_control_checkpoint() and pg_stat_slru.
@@ -844,7 +844,7 @@ def test_backlog_query_plans(user, settings):
     for scope in cold:
         seed_backlog(world, scope, BACKLOG // 50, hot=False)
     seeded_s = time.perf_counter() - t0
-    # #3941 0133_attachment_binding_claims (becomes 0134): column + partial index.
+    # #3941 0138_attachment_binding_claims: column + partial index.
     sql(
         "ALTER TABLE tracer_attachmentoccurrence ADD COLUMN bind_checked_at timestamptz NULL",
         fetch=False,
