@@ -60,6 +60,9 @@ func inspectionPayload(rc *models.RequestContext, stage Stage) any {
 		}
 		return rc.Response
 	}
+	if rc.SelectedGuardrailRequest != nil {
+		return rc.SelectedGuardrailRequest
+	}
 	if rc.GuardrailRequest != nil {
 		return rc.GuardrailRequest
 	}

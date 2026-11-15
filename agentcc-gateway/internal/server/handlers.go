@@ -2443,8 +2443,8 @@ func (h *Handlers) lookupHeaderKey(r *http.Request) *authpkg.APIKey {
 		return nil
 	}
 	rawKey := ""
-	if authHeader := r.Header.Get("Authorization"); strings.HasPrefix(authHeader, "Bearer ") {
-		rawKey = strings.TrimPrefix(authHeader, "Bearer ")
+	if key, ok := middleware.AuthorizationAPIKey(r.Header.Get("Authorization")); ok {
+		rawKey = key
 	} else if apiKey := r.Header.Get("x-api-key"); apiKey != "" {
 		rawKey = apiKey
 	}

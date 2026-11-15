@@ -73,6 +73,11 @@ type RequestContext struct {
 	GuardrailRequest  *ChatCompletionRequest
 	GuardrailResponse *ChatCompletionResponse
 
+	// SelectedGuardrailRequest is a complete, inspection-only view for selected
+	// key policies. It must not replace legacy org/static inspection views or the
+	// typed request forwarded to the provider (completions, embeddings, speech).
+	SelectedGuardrailRequest *ChatCompletionRequest `json:"-"`
+
 	// Inspection is typed, request-local policy evidence, never caller metadata.
 	Inspection *InspectionState `json:"-"`
 
@@ -195,6 +200,7 @@ func (rc *RequestContext) Release() {
 	rc.Response = nil
 	rc.GuardrailRequest = nil
 	rc.GuardrailResponse = nil
+	rc.SelectedGuardrailRequest = nil
 	rc.Inspection = nil
 	rc.GuardrailInspectionOnly = false
 	rc.GuardrailInputUnsupported = ""

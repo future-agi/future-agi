@@ -29,7 +29,7 @@ func (p *GuardrailPlugin) runKeyPolicies(ctx context.Context, rc *models.Request
 	}
 	resolved := p.keyPoliciesForInvocation(ctx, orgID, keyID, cfg)
 	cfg = resolved.config
-	rc.Inspection.SetPolicyRevision(inspectionStage(stage), selectedPolicyRevision(resolved))
+	rc.Inspection.SetPolicyRevision(inspectionStage(stage), selectedTextPolicyRevision(resolved, rc, stage))
 	if rc.Inspection.IsDecided(inspectionStage(stage), inspectionPayload(rc, stage)) {
 		return pipeline.ResultContinue()
 	}
@@ -57,13 +57,16 @@ func (p *GuardrailPlugin) runKeyPolicies(ctx context.Context, rc *models.Request
 			if unsupported, ok := c.g.(unsupportedRouteCheck); ok && !monitor && parseAction(c.check.Action) == ActionBlock {
 				return p.refuseKeyPolicyRoute(rc, pol, c, unsupported)
 			}
+			if usesSelectedTextView(c.g) {
+				c.g = selectedTextCheck{Guardrail: c.g}
+			}
 			checks = append(checks, c)
 		}
 		if len(checks) == 0 {
 			continue
 		}
 		ranChecks = true
-		input := checkInput(rc, stage == StagePost)
+		input := selectedCheckInput(rc, stage == StagePost)
 		var outcomes []*CheckResult
 		blockIdx := -1
 		sequential := strings.EqualFold(strings.TrimSpace(cfg.PipelineMode), "sequential")
@@ -113,6 +116,7 @@ func (p *GuardrailPlugin) runKeyPolicies(ctx context.Context, rc *models.Request
 		refreshInspection(rc, stage, wasComplete)
 	}
 	if ranChecks && wasComplete {
+		rc.Inspection.SetPolicyRevision(inspectionStage(stage), selectedTextPolicyRevision(resolved, rc, stage))
 		rc.Inspection.Decide(inspectionStage(stage), inspectionPayload(rc, stage))
 	}
 	return pipeline.ResultContinue()

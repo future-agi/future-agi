@@ -46,6 +46,9 @@ func (h *Handlers) processInspection(ctx context.Context, rc *models.RequestCont
 	if rc.GuardrailRequest != nil {
 		request = rc.GuardrailRequest
 	}
+	if rc.SelectedGuardrailRequest != nil {
+		request = rc.SelectedGuardrailRequest
+	}
 	if rc.GuardrailInputUnsupported == "" && completeTextRequest(request) {
 		rc.Inspection.Complete(models.InspectionInput, request)
 	}
@@ -71,6 +74,9 @@ func (h *Handlers) reAdmitChangedInspection(ctx context.Context, rc *models.Requ
 	request := rc.Request
 	if rc.GuardrailRequest != nil {
 		request = rc.GuardrailRequest
+	}
+	if rc.SelectedGuardrailRequest != nil {
+		request = rc.SelectedGuardrailRequest
 	}
 	if rc.Inspection.IsComplete(models.InspectionInput, request) {
 		return nil

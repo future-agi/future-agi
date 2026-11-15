@@ -21,6 +21,7 @@ const (
 	inspectionAuthRealtime = "bearer-then-query-api-key"
 	inspectionAuthMCP      = "case-insensitive-bearer"
 	inspectionAuthStored   = "bearer-else-x-api-key"
+	inspectionAuthCatalog  = "middleware-authorization-else-x-api-key"
 	inspectionAuthPublic   = "public"
 	inspectionAuthAdmin    = "separate-admin-auth"
 )
@@ -99,6 +100,14 @@ func inspectionAuthorization(r *http.Request, mode string) string {
 		header := r.Header.Get("Authorization")
 		if len(header) > 7 && strings.EqualFold(header[:7], "Bearer ") {
 			return "Bearer " + strings.TrimSpace(header[7:])
+		}
+		return ""
+	case inspectionAuthCatalog:
+		if key, ok := middleware.AuthorizationAPIKey(r.Header.Get("Authorization")); ok {
+			return "Bearer " + key
+		}
+		if key := r.Header.Get("x-api-key"); key != "" {
+			return "Bearer " + key
 		}
 		return ""
 	case inspectionAuthStored:

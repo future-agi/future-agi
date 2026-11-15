@@ -66,6 +66,18 @@ func anyKeyAuthenticates(keyStore *auth.KeyStore, candidates []string) bool {
 	return false
 }
 
+// AuthorizationAPIKey parses the schemes accepted by KeyAuth. The boolean
+// reports a recognized scheme, even with an empty key, so callers preserving
+// credential precedence cannot silently fall through to a different identity.
+func AuthorizationAPIKey(header string) (string, bool) {
+	for _, scheme := range []string{"Bearer ", "Token "} {
+		if len(header) >= len(scheme) && strings.EqualFold(header[:len(scheme)], scheme) {
+			return strings.TrimSpace(header[len(scheme):]), true
+		}
+	}
+	return "", false
+}
+
 // extractRequestAPIKeys returns every gateway key the request carries, in
 // each form a supported client sends it: an Authorization Bearer or Token
 // scheme (matched case-insensitively, like the MCP handler), x-api-key,
@@ -81,13 +93,8 @@ func extractRequestAPIKeys(r *http.Request) []string {
 			keys = append(keys, key)
 		}
 	}
-	if authHeader := r.Header.Get("Authorization"); authHeader != "" {
-		for _, scheme := range []string{"Bearer ", "Token "} {
-			if len(authHeader) > len(scheme) && strings.EqualFold(authHeader[:len(scheme)], scheme) {
-				add(strings.TrimSpace(authHeader[len(scheme):]))
-				break
-			}
-		}
+	if key, ok := AuthorizationAPIKey(r.Header.Get("Authorization")); ok {
+		add(key)
 	}
 	add(r.Header.Get("x-api-key"))
 	add(r.Header.Get("x-goog-api-key"))

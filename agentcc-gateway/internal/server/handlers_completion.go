@@ -187,10 +187,15 @@ func (h *Handlers) TextCompletion(w http.ResponseWriter, r *http.Request) {
 		// and non-native completions above/below still forward the mutable chat body.
 		rc.GuardrailInspectionOnly = true
 		if messages, inspectable := textInputMessages(req.Prompt); inspectable {
-			rc.Request.Messages = messages
+			// Keep ToChatRequest's joined prompt for legacy org/static checks.
+			// Selected checks additionally inspect every prompt and the native suffix,
+			// without changing either that legacy view or the forwarded request.
+			selected := *rc.Request
+			selected.Messages = messages
 			if req.Suffix != "" {
-				rc.Request.Messages = append(rc.Request.Messages, textMessage("user", req.Suffix))
+				selected.Messages = append(selected.Messages, textMessage("user", req.Suffix))
 			}
+			rc.SelectedGuardrailRequest = &selected
 		} else {
 			rc.GuardrailInputUnsupported = "native completion prompt is not text; token IDs and unsupported input forms cannot be inspected"
 		}

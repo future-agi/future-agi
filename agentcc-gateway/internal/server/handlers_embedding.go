@@ -101,7 +101,7 @@ func (h *Handlers) CreateEmbedding(w http.ResponseWriter, r *http.Request) {
 
 	// The provider forwards the typed request, not this inspection projection.
 	var inspectable bool
-	rc.GuardrailRequest, inspectable = embeddingGuardrailRequest(&req)
+	rc.SelectedGuardrailRequest, inspectable = embeddingGuardrailRequest(&req)
 	if !inspectable {
 		rc.GuardrailInputUnsupported = "embedding input is not text; token IDs and unsupported input forms cannot be inspected"
 	}

@@ -465,7 +465,7 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 	router.HandleInspected("POST", "/v1/messages", handlers.AnthropicMessages, textInspection("messages.create"))
 
 	router.Handle("POST", "/v1/count_tokens", handlers.CountTokens)
-	modelCatalogInspection := RouteInspection{Auth: inspectionAuthStored, Contract: models.InspectionContract{
+	modelCatalogInspection := RouteInspection{Auth: inspectionAuthCatalog, Contract: models.InspectionContract{
 		Input: models.InspectionNotApplicable, Output: models.InspectionNotApplicable,
 		Reason: "exact model catalog operation emits only configured model identifiers, owner, numeric limits/pricing and capability flags; it neither reads nor returns inference content",
 	}}

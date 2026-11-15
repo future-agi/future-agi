@@ -114,7 +114,7 @@ func (h *Handlers) CreateSpeech(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	rc.GuardrailRequest = speechGuardrailRequest(&req)
+	rc.SelectedGuardrailRequest = speechGuardrailRequest(&req)
 	rc.GuardrailOutputUnsupported = "HTTP speech output is binary audio, not inspectable text"
 
 	var audioData []byte
@@ -616,7 +616,7 @@ func (h *Handlers) StreamSpeech(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	rc.GuardrailRequest = speechGuardrailRequest(&req)
+	rc.SelectedGuardrailRequest = speechGuardrailRequest(&req)
 	rc.GuardrailOutputUnsupported = "HTTP speech output is binary audio, not inspectable text"
 
 	// Post-plugins run once the stream has ended, when the audio size is known.
