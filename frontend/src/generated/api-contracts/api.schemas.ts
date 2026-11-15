@@ -20091,7 +20091,7 @@ export interface EvidenceTurnApi {
   truncated: boolean;
   /** Blank for a turn no trace recorded. */
   trace_id: string;
-  at: string;
+  at: string | null;
 }
 
 export interface EvidenceTranscriptApi {
@@ -20172,16 +20172,16 @@ export const EvidenceLabelApiTarget = {
 } as const;
 
 /**
- * As the annotator recorded it: input evidence, not a verdict.
+ * Any valid JSON value.
  */
-export type EvidenceLabelApiValue = { [key: string]: unknown };
+export type EvidenceLabelApiValue = JsonValueApi;
 
 export interface EvidenceLabelApi {
   /** @minLength 1 */
   name: string;
   /** @minLength 1 */
   kind: string;
-  /** As the annotator recorded it: input evidence, not a verdict. */
+  /** Any valid JSON value. */
   value: EvidenceLabelApiValue;
   notes: string;
   target: EvidenceLabelApiTarget;
@@ -20208,10 +20208,10 @@ export interface EvidenceImportCaseApi {
   /** Checks this case adds to the environment when it is added: each one is new, never a change to an existing check. */
   new_checks: EvidenceNewCheckApi[];
   /** Null when unknown: the source is gone, or part of it could not be read now or when the import was made. */
-  changed_since_import: boolean;
+  changed_since_import: boolean | null;
   trace_ids: string[];
-  started_at: string;
-  ended_at: string;
+  started_at: string | null;
+  ended_at: string | null;
   transcript: EvidenceTranscriptApi;
   tool_calls: EvidenceToolCallsApi;
   tool_inputs: EvidencePartApi;
@@ -20286,8 +20286,8 @@ export interface EvidenceImportApi {
   id: string;
   environment_id: string;
   /** The Observe project; null for evidence from outside Observe. */
-  project_id: string;
-  agent_version_id: string;
+  project_id: string | null;
+  agent_version_id: string | null;
   source_kind: EvidenceImportApiSourceKind;
   created_at: string;
   /** True when the sources come from a Simulator project: simulated conversations, not production evidence. */
@@ -20299,7 +20299,7 @@ export interface EvidenceImportApi {
 }
 
 export interface EvidenceDraftRefApi {
-  id: string;
+  id: string | null;
   /** @minimum 0 */
   revision: number;
 }

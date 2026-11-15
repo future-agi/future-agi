@@ -40188,8 +40188,9 @@ export const SimulateApiHarnessEnvironmentsEvidenceImportResponse = zod.object({
   project_id: zod
     .string()
     .uuid()
+    .nullable()
     .describe("The Observe project; null for evidence from outside Observe."),
-  agent_version_id: zod.string().uuid(),
+  agent_version_id: zod.string().uuid().nullable(),
   source_kind: zod.enum(["session", "call"]),
   created_at: zod.string().datetime({ offset: true }),
   simulated: zod
@@ -40241,12 +40242,13 @@ export const SimulateApiHarnessEnvironmentsEvidenceImportResponse = zod.object({
         ),
       changed_since_import: zod
         .boolean()
+        .nullable()
         .describe(
           "Null when unknown: the source is gone, or part of it could not be read now or when the import was made.",
         ),
       trace_ids: zod.array(zod.string().min(1)),
-      started_at: zod.string().datetime({ offset: true }),
-      ended_at: zod.string().datetime({ offset: true }),
+      started_at: zod.string().datetime({ offset: true }).nullable(),
+      ended_at: zod.string().datetime({ offset: true }).nullable(),
       transcript: zod.object({
         status: zod.enum([
           "present",
@@ -40264,7 +40266,7 @@ export const SimulateApiHarnessEnvironmentsEvidenceImportResponse = zod.object({
             trace_id: zod
               .string()
               .describe("Blank for a turn no trace recorded."),
-            at: zod.string().datetime({ offset: true }),
+            at: zod.string().datetime({ offset: true }).nullable(),
           }),
         ),
       }),
@@ -40341,12 +40343,7 @@ export const SimulateApiHarnessEnvironmentsEvidenceImportResponse = zod.object({
           zod.object({
             name: zod.string().min(1),
             kind: zod.string().min(1),
-            value: zod
-              .object({})
-              .passthrough()
-              .describe(
-                "As the annotator recorded it: input evidence, not a verdict.",
-              ),
+            value: jsonValueSchema.describe("Any valid JSON value."),
             notes: zod.string(),
             target: zod.enum(["session", "trace", "span"]),
           }),
@@ -40472,10 +40469,11 @@ export const SimulateApiHarnessEnvironmentsEvidenceImportsAddEvidenceCasesRespon
       project_id: zod
         .string()
         .uuid()
+        .nullable()
         .describe(
           "The Observe project; null for evidence from outside Observe.",
         ),
-      agent_version_id: zod.string().uuid(),
+      agent_version_id: zod.string().uuid().nullable(),
       source_kind: zod.enum(["session", "call"]),
       created_at: zod.string().datetime({ offset: true }),
       simulated: zod
@@ -40527,12 +40525,13 @@ export const SimulateApiHarnessEnvironmentsEvidenceImportsAddEvidenceCasesRespon
             ),
           changed_since_import: zod
             .boolean()
+            .nullable()
             .describe(
               "Null when unknown: the source is gone, or part of it could not be read now or when the import was made.",
             ),
           trace_ids: zod.array(zod.string().min(1)),
-          started_at: zod.string().datetime({ offset: true }),
-          ended_at: zod.string().datetime({ offset: true }),
+          started_at: zod.string().datetime({ offset: true }).nullable(),
+          ended_at: zod.string().datetime({ offset: true }).nullable(),
           transcript: zod.object({
             status: zod.enum([
               "present",
@@ -40550,7 +40549,7 @@ export const SimulateApiHarnessEnvironmentsEvidenceImportsAddEvidenceCasesRespon
                 trace_id: zod
                   .string()
                   .describe("Blank for a turn no trace recorded."),
-                at: zod.string().datetime({ offset: true }),
+                at: zod.string().datetime({ offset: true }).nullable(),
               }),
             ),
           }),
@@ -40627,12 +40626,7 @@ export const SimulateApiHarnessEnvironmentsEvidenceImportsAddEvidenceCasesRespon
               zod.object({
                 name: zod.string().min(1),
                 kind: zod.string().min(1),
-                value: zod
-                  .object({})
-                  .passthrough()
-                  .describe(
-                    "As the annotator recorded it: input evidence, not a verdict.",
-                  ),
+                value: jsonValueSchema.describe("Any valid JSON value."),
                 notes: zod.string(),
                 target: zod.enum(["session", "trace", "span"]),
               }),

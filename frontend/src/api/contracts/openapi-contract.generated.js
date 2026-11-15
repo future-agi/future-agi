@@ -133449,9 +133449,10 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         value: {
           title: "Value",
-          description:
-            "As the annotator recorded it: input evidence, not a verdict.",
           type: "object",
+          "x-nullable": true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
         },
         notes: {
           title: "Notes",

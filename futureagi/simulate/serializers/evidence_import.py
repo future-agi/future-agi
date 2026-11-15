@@ -5,6 +5,7 @@ from rest_framework import serializers
 
 from simulate.models import EvidenceImport, EvidenceImportCase
 from simulate.selectors.evidence_import import MAX_SOURCES
+from tfc.utils.serializer_fields import JsonValueField
 
 # unreadable: recorded, but could not be read; missing: not recorded.
 PART_STATUSES = ("present", "partial", "truncated", "missing", "unreadable")
@@ -65,9 +66,9 @@ class EvidenceToolCallsSerializer(EvidencePartSerializer):
 class EvidenceLabelSerializer(serializers.Serializer):
     name = serializers.CharField()
     kind = serializers.CharField()
-    value = serializers.JSONField(
-        help_text="As the annotator recorded it: input evidence, not a verdict."
-    )
+    # As the annotator recorded it (a score, a text, a choice list): input
+    # evidence, not a verdict.
+    value = JsonValueField(allow_null=True)
     notes = serializers.CharField(allow_blank=True)
     target = serializers.ChoiceField(choices=("session", "trace", "span"))
 
