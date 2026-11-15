@@ -478,7 +478,8 @@ def test_compare_ids_are_scoped_to_the_requesting_workspace(
         assert all("own-" in str(row) for row in rebuilt["table"])
         # With no client rows, download treats an unavailable selection as a cache miss.
         download = _download(client, own_left.id, [own_right.id], compare_id)
-        assert download.status_code == status.HTTP_400_BAD_REQUEST, download.content
+        assert download.status_code == status.HTTP_404_NOT_FOUND, download.content
+        assert download.json() == unknown.json()
 
     assert worker == []
     assert _stored(page_store, compare_id) == built
@@ -512,7 +513,17 @@ def test_unknown_compare_id_is_not_found_without_server_details(
     assert rebuilt["metadata"]["compare_id"] != compare_id
     assert rebuilt["table"] == []
     download = _download(auth_client, left.id, [right.id], compare_id)
-    assert download.status_code == status.HTTP_400_BAD_REQUEST, download.content
+    assert download.status_code == status.HTTP_404_NOT_FOUND, download.content
+    message = "This comparison was not found or has expired. Open the comparison again."
+    assert download.json() == {
+        "status": False,
+        "type": "not_found",
+        "code": "compare_not_found",
+        "detail": message,
+        "message": message,
+        "error": message,
+        "result": message,
+    }
 
     # A dataset that is not found keeps the generic code.
     missing_dataset = _download(auth_client, uuid.uuid4(), [right.id], compare_id)
@@ -557,7 +568,16 @@ def test_a_storage_error_is_unavailable_not_an_unknown_comparison(
         assert response.status_code == status.HTTP_503_SERVICE_UNAVAILABLE, (
             response.content[:500]
         )
-        assert response.json()["code"] == "compare_storage_unavailable"
+        message = "Comparison data is temporarily unavailable. Please try again."
+        assert response.json() == {
+            "status": False,
+            "type": "service_unavailable",
+            "code": "compare_storage_unavailable",
+            "detail": message,
+            "message": message,
+            "error": message,
+            "result": message,
+        }
         body = response.content.decode()
         for detail in ("metadata.json", "CompareStorageUnavailable", compare_id):
             assert detail not in body
@@ -687,7 +707,8 @@ def test_a_comparison_expires_two_hours_after_it_was_created(
     rebuilt = _result(_post(auth_client, left.id, [right.id], 0, old_id))
     assert rebuilt["metadata"]["compare_id"] not in (old_id, fresh_id)
     download = _download(auth_client, left.id, [right.id], old_id)
-    assert download.status_code == status.HTTP_400_BAD_REQUEST, download.content
+    assert download.status_code == status.HTTP_404_NOT_FOUND, download.content
+    assert download.json() == unknown.json()
     assert _stored(page_store, old_id) == old_objects
 
     kept = auth_client.get(

@@ -25,7 +25,7 @@ import ExperimentStatusBar from "src/sections/experiment-detail/ExperimentData/E
 import { getEachCompareColumnDef } from "./compareTableConfig";
 import CompareDatasetDetailDrawer from "./CompareDatasetDetailDrawer/CompareDatasetDetailDrawer";
 import {
-  COMPARE_NOT_FOUND_CODE,
+  isCompareNotFound,
   COMPARE_STORAGE_UNAVAILABLE_MESSAGE,
   isCompareStorageUnavailable,
   useDeleteCompare,
@@ -33,7 +33,7 @@ import {
 import { enqueueSnackbar } from "src/components/snackbar";
 import { useDevelopDetailContext } from "src/pages/dashboard/Develop/Context/DevelopDetailContext";
 import { AudioPlaybackProvider } from "src/components/custom-audio/context-provider/AudioPlaybackContext";
-import { APP_CONSTANTS, RESPONSE_CODES } from "src/utils/constants";
+import { APP_CONSTANTS } from "src/utils/constants";
 import CompositeEvalDialog from "src/sections/common/DevelopCellRenderer/EvaluateCellRenderer/CompositeEvalDialog";
 
 // Define status types that require refreshing
@@ -44,6 +44,9 @@ const RefreshStatus = [
   "ExperimentEvaluation",
   "PartialRun",
 ];
+
+const getCompareRowId = ({ data, rowPinned }) =>
+  rowPinned ? `compare-${rowPinned}-summary` : data.row_id;
 
 const CompareData = ({
   gridApiRef,
@@ -105,10 +108,18 @@ const CompareData = ({
   );
   const activeSelectionRef = useRef(selection);
   const compareIdSelectionRef = useRef(null);
+  // A selection can have several server-minted comparison IDs. Blocks and
+  // detail row IDs may only be used within the generation that returned them.
+  const generationRef = useRef(0);
+  const rowGenerationsRef = useRef(new WeakMap());
   // The selection whose expired comparison was already rebuilt once.
   const restartedSelectionRef = useRef(null);
   useLayoutEffect(() => {
     activeSelectionRef.current = selection;
+    return () => {
+      activeSelectionRef.current = null;
+      generationRef.current += 1;
+    };
   }, [selection]);
 
   React.useEffect(() => {
@@ -148,19 +159,6 @@ const CompareData = ({
       }
     };
   }, [isRefreshingColumns, refreshGrid]); // Dependency on pending items
-
-  // Drop the previous selection's comparison and reload when the selection changes
-  React.useEffect(() => {
-    if (compareId?.current && compareIdSelectionRef.current !== selection) {
-      deleteCompare(compareId.current);
-      compareId.current = null;
-      compareIdSelectionRef.current = null;
-    }
-    if (gridApiRef.current && gridApiRef.current.api) {
-      gridApiRef.current.api.refreshServerSide({ route: [] });
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selection]);
 
   function filterColumnDef(columnDefs, selectedColumns) {
     if (columnDefs?.length < 1) return;
@@ -209,7 +207,7 @@ const CompareData = ({
     const column = params.column.colDef.col;
     const extraMenuItems = [];
     if (
-      column.originType === "evaluation" &&
+      column.origin_type === "evaluation" &&
       !column.name.includes("-reason")
     ) {
       const isSummaryShown = showSummary.vals.find((v) => {
@@ -284,6 +282,35 @@ const CompareData = ({
   const [pinnedBottomRowData, setPinnedBottomRowData] = useState([]);
   const [columnAvgs, setColumnAvgs] = useState([]);
 
+  const clearComparisonRows = useCallback(() => {
+    rowGenerationsRef.current = new WeakMap();
+    setExpandRow(null);
+    gridApiRef.current?.api?.deselectAll?.();
+    setColumnConfig([]);
+    setPinnedBottomRowData([]);
+    setColumnAvgs([]);
+    isRefreshingColumns.current = null;
+    // These are not returned in the public comparison metadata. Never retain
+    // a previous comparison's client-row fallback inputs across a rebuild.
+    setCommonColumn([]);
+    setDatasetInfo({});
+  }, [gridApiRef, setCommonColumn, setDatasetInfo]);
+
+  // Dataset/base-column changes still delete the previous comparison. Purge
+  // rather than refresh in place: row IDs belong to the previous selection.
+  useEffect(() => {
+    if (compareIdSelectionRef.current !== selection) {
+      if (compareId?.current) {
+        deleteCompare(compareId.current);
+        compareId.current = null;
+      }
+      if (compareIdSelectionRef.current) clearComparisonRows();
+      compareIdSelectionRef.current = null;
+    }
+    gridApiRef.current?.api?.refreshServerSide({ purge: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selection]);
+
   const addHeaderAndIndexToColumnMap = (mapping) => {
     return mapping.map((col) => {
       if (col?.children?.length > 0) {
@@ -306,8 +333,19 @@ const CompareData = ({
 
   const dataSource = useMemo(
     () => ({
-      getRows: async (params) => {
+      getRows: async function getRows(params) {
         const { request } = params;
+        if (activeSelectionRef.current !== selection) {
+          params.fail?.();
+          return;
+        }
+        // The download recovery callback clears the shared ref and purges the
+        // grid. Invalidate the old requests/detail state before its reload.
+        if (compareIdSelectionRef.current === selection && !compareId?.current) {
+          generationRef.current += 1;
+          compareIdSelectionRef.current = null;
+          clearComparisonRows();
+        }
 
         // Check if selected datasets is valid
         if (!selectedDatasetsValues || selectedDatasetsValues.length <= 1) {
@@ -327,7 +365,14 @@ const CompareData = ({
           compareIdSelectionRef.current === selection
             ? compareId?.current ?? null
             : null;
-        const isStale = () => activeSelectionRef.current !== selection;
+        const requestGeneration = generationRef.current;
+        const isStale = () =>
+          activeSelectionRef.current !== selection ||
+          generationRef.current !== requestGeneration ||
+          requestCompareId !==
+            (compareIdSelectionRef.current === selection
+              ? compareId?.current ?? null
+              : null);
 
         try {
           const { data } = await axios.post(
@@ -343,18 +388,46 @@ const CompareData = ({
 
           const responseCompareId = data?.result?.metadata?.compare_id;
           if (isStale()) {
-            // The selection changed while this request was in flight. A fresh
-            // comparison it created is orphaned, so remove it; a reused id
-            // was already removed by the selection-change effect.
-            if (!requestCompareId && responseCompareId) {
+            // Concurrent cache misses can create different fresh IDs. Remove
+            // only an orphan created by this request, never the active ID or
+            // an ID this request merely reused.
+            if (
+              responseCompareId &&
+              responseCompareId !== requestCompareId &&
+              responseCompareId !== compareId?.current
+            ) {
               deleteCompare(responseCompareId);
+            }
+            if (
+              !requestCompareId &&
+              activeSelectionRef.current === selection &&
+              compareIdSelectionRef.current === selection &&
+              compareId?.current
+            ) {
+              // Two initial blocks can both build without an ID. The winner
+              // did not purge, so re-read the losing block using its ID rather
+              // than leave that block failed. This retry has a non-null ID;
+              // subsequent rollovers use the normal purge path, not recursion.
+              return getRows(params);
             }
             params.fail?.();
             return;
           }
 
-          compareId.current = responseCompareId;
-          compareIdSelectionRef.current = selection;
+          if (responseCompareId !== requestCompareId) {
+            // Adopt the new ID BEFORE purging, so even a synchronous reload
+            // uses it. Initial null -> first ID invalidates competing builds
+            // but must not purge/reload the first successful block in a loop.
+            generationRef.current += 1;
+            compareId.current = responseCompareId;
+            compareIdSelectionRef.current = selection;
+            if (requestCompareId) {
+              clearComparisonRows();
+              params.fail?.();
+              gridApiRef.current?.api?.refreshServerSide({ purge: true });
+              return;
+            }
+          }
 
           // Check if data is empty or doesn't have required structure
           if (!data?.result?.table || data.result.table.length === 0) {
@@ -368,8 +441,8 @@ const CompareData = ({
 
           resetDLabels();
           setHasData(true);
-          setCommonColumn(data?.result?.metadata?.common_column_names);
-          setDatasetInfo(data?.result?.metadata?.dataset_info);
+          // Public metadata contains only compare_id and pagination; the
+          // server keeps dataset_info/common_column_names in its private store.
           const columns = data?.result?.column_config;
 
           setColumnConfig(columns);
@@ -416,7 +489,7 @@ const CompareData = ({
               for (const eachCol of value) {
                 const headerName = eachCol?.headerName || eachCol?.col?.name;
                 const isChildColumn = true;
-                if (eachCol?.col?.originType === "evaluation") {
+                if (eachCol?.col?.origin_type === "evaluation") {
                   const findInShowSummary = showSummary?.vals?.find(
                     (v) =>
                       v.group.id === eachCol?.col?.group?.id &&
@@ -489,6 +562,9 @@ const CompareData = ({
           setColumnDefs(columnWithHeadAndIndex);
           setCompareColumnDefs(columnMap);
           const rows = data?.result?.table;
+          rows.forEach((row) => {
+            rowGenerationsRef.current.set(row, generationRef.current);
+          });
 
           params.success({
             rowData: rows,
@@ -518,12 +594,9 @@ const CompareData = ({
 
           setPinnedBottomRowData([pinnedRow]);
 
-          const averages = Object.entries(
-            data?.result?.metadata?.average_score || {},
-          ).map(([id, value]) => ({
-            id,
-            value,
-          }));
+          const averages = columns
+            .filter((col) => typeof col.average_score === "number")
+            .map((col) => ({ id: col.id, value: col.average_score }));
 
           setColumnAvgs(averages);
         } catch (error) {
@@ -543,21 +616,15 @@ const CompareData = ({
           }
           // Only a comparison the server reports unknown or expired is
           // rebuilt; any other 404 (e.g. a deleted dataset) is a failure.
-          const comparisonGone =
-            requestCompareId &&
-            error?.statusCode === RESPONSE_CODES.NOT_FOUND &&
-            error?.code === COMPARE_NOT_FOUND_CODE;
-          if (comparisonGone && requestCompareId !== compareId.current) {
-            // Another block already started over with a fresh comparison.
-            params.fail?.();
-            return;
-          }
+          const comparisonGone = requestCompareId && isCompareNotFound(error);
           if (comparisonGone && restartedSelectionRef.current !== selection) {
             // The comparison expired. Start over once with a fresh one, from
             // the first block, so every block comes from the same comparison.
             restartedSelectionRef.current = selection;
+            generationRef.current += 1;
             compareId.current = null;
             compareIdSelectionRef.current = null;
+            clearComparisonRows();
             params.fail?.();
             gridApiRef.current?.api?.refreshServerSide({ purge: true });
             return;
@@ -570,7 +637,6 @@ const CompareData = ({
           });
         }
       },
-      getRowId: (data) => data.rowId,
     }),
     [
       selection,
@@ -579,8 +645,7 @@ const CompareData = ({
       compareId,
       gridApiRef,
       deleteCompare,
-      setCommonColumn,
-      setDatasetInfo,
+      clearComparisonRows,
       setColumns,
       setCompareColumnDefs,
       showSummary?.vals,
@@ -691,6 +756,7 @@ const CompareData = ({
             paginationPageSizeSelector={false}
             rowModelType="serverSide"
             serverSideDatasource={dataSource}
+            getRowId={getCompareRowId}
             pagination={false}
             cacheBlockSize={10}
             statusBar={statusBar}
@@ -705,6 +771,16 @@ const CompareData = ({
               params.node.rowPinned === "bottom" ? 40 : 120
             }
             onRowClicked={(params) => {
+              // Ignore events queued for a row purged during ID rollover or
+              // selection change. Do not put generation markers in user data.
+              if (
+                activeSelectionRef.current !== selection ||
+                compareIdSelectionRef.current !== selection ||
+                !compareId?.current ||
+                rowGenerationsRef.current.get(params?.data) !== generationRef.current
+              ) {
+                return;
+              }
               if (window.__audioClick) {
                 window.__audioClick = false;
                 return;
@@ -737,13 +813,16 @@ const CompareData = ({
           />
         </Box>
       </Box>
-      <CompareDatasetDetailDrawer
-        open={Boolean(expandRow)}
-        onClose={() => setExpandRow(null)}
-        row={expandRow}
-        columnConfig={columnConfig}
-        compareId={compareId?.current}
-      />
+      {expandRow && (
+        <CompareDatasetDetailDrawer
+          key={compareId?.current}
+          open
+          onClose={() => setExpandRow(null)}
+          row={expandRow}
+          columnConfig={columnConfig}
+          compareId={compareId?.current}
+        />
+      )}
     </AudioPlaybackProvider>
   );
 };

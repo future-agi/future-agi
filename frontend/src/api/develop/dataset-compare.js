@@ -6,6 +6,12 @@ import { RESPONSE_CODES } from "src/utils/constants";
 // The backend's error code for a comparison that is unknown or expired. Other
 // 404s (e.g. a compared dataset that was deleted) are reported as errors.
 export const COMPARE_NOT_FOUND_CODE = "compare_not_found";
+
+// build_error_envelope puts the semantic code at the top level; the shared
+// Axios interceptor preserves that body and adds the HTTP statusCode.
+export const isCompareNotFound = (error) =>
+  error?.statusCode === RESPONSE_CODES.NOT_FOUND &&
+  error?.code === COMPARE_NOT_FOUND_CODE;
 // The backend's error code (503) when the comparison's storage could not be
 // read. The comparison may still exist, so it is not rebuilt; the error is
 // shown and the user tries again.
@@ -67,11 +73,7 @@ export const useDownloadCompare = ({
         );
         return { response };
       } catch (error) {
-        if (
-          requestCompareId &&
-          error?.statusCode === RESPONSE_CODES.NOT_FOUND &&
-          error?.code === COMPARE_NOT_FOUND_CODE
-        ) {
+        if (requestCompareId && isCompareNotFound(error)) {
           return { expiredCompareId: requestCompareId };
         }
         if (isCompareStorageUnavailable(error)) {

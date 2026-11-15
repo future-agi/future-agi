@@ -966,7 +966,8 @@ def test_a_deleted_comparison_is_not_served_before_its_cleanup_runs(
     rebuilt = _result(_post(auth_client, left.id, [right.id], 1, compare_id))
     assert rebuilt["metadata"]["compare_id"] != compare_id
     download = _download(auth_client, left.id, [right.id], compare_id)
-    assert download.status_code == status.HTTP_400_BAD_REQUEST, download.content
+    assert download.status_code == status.HTTP_404_NOT_FOUND, download.content
+    assert download.json() == unknown.json()
     # The pages are left to the cleanup activity.
     found = _compare_objects(minio_storage, compare_id)
     assert sorted(found[minio_storage.compare_bucket]) == [

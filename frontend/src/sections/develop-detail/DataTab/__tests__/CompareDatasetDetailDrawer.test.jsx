@@ -43,7 +43,8 @@ vi.mock("src/utils/axios", () => ({
     },
   },
 }));
-vi.mock("src/api/develop/dataset-compare", () => ({
+vi.mock("src/api/develop/dataset-compare", async (importOriginal) => ({
+  ...(await importOriginal()),
   useDeleteCompare: () => ({ mutate: deleteCompare }),
 }));
 vi.mock("src/hooks/use-ag-theme", () => ({ useAgThemeWith: () => undefined }));
@@ -229,10 +230,11 @@ describe("Compare row detail", () => {
         />,
       ),
     );
+    const success = vi.fn();
     await act(async () => {
       await grid.props.serverSideDatasource.getRows({
         request: { startRow: 0, endRow: 10 },
-        success: vi.fn(),
+        success,
         fail: vi.fn(),
       });
     });
@@ -249,7 +251,7 @@ describe("Compare row detail", () => {
 
     act(() => {
       grid.props.onRowClicked({
-        data: tableRow("joined-2"),
+        data: success.mock.calls[0][0].rowData[2],
         rowIndex: 2,
         event: { target: cell },
         node,
@@ -266,5 +268,88 @@ describe("Compare row detail", () => {
       nextRowId: null,
     });
     rowElement.remove();
+  });
+
+  it("reloads earlier-row detail under the new ID after a nonempty later-block 200 rollover", async () => {
+    const freshId = "00000000-0000-4000-8000-000000000002";
+    const oldRows = Array.from({ length: 10 }, (_, index) => tableRow(`old-joined-${index}`));
+    const freshRows = Array.from({ length: 10 }, (_, index) => tableRow(`fresh-joined-${index}`));
+    const oldRow = oldRows[0];
+    const freshRow = freshRows[0];
+    const tableResponse = (compareId, table) => ({ data: {
+      status: true,
+      result: {
+        column_config: columnConfig, table,
+        metadata: { compare_id: compareId, total_rows: 12, total_pages: 2 },
+      },
+    } });
+    post.mockReset();
+    post.mockResolvedValueOnce(tableResponse(COMPARE_ID, oldRows))
+      .mockResolvedValueOnce(tableResponse(freshId, [tableRow("fresh-joined-10"), tableRow("fresh-joined-11")]))
+      .mockResolvedValueOnce(tableResponse(freshId, freshRows));
+    let finishOldDetail;
+    const oldDetail = new Promise((resolve) => { finishOldDetail = resolve; });
+    get.mockImplementation((url) => {
+      if (url === rowUrl(COMPARE_ID, oldRow.row_id)) return oldDetail;
+      return Promise.resolve({ data: { status: true, result: {
+        table: [freshRow], prev_row_id: null, next_row_id: null,
+      } } });
+    });
+    const api = {
+      refreshCells: vi.fn(), refreshServerSide: vi.fn(),
+      showNoRowsOverlay: vi.fn(), deselectAll: vi.fn(),
+    };
+    const compareId = { current: null };
+    render(withQuery(<CompareData
+      gridApiRef={{ current: { api } }} compareId={compareId}
+      baseColumn="input" selectedDatasetsValues={["dataset-a", "dataset-b"]}
+      columns={[]} selectedColumns={["input-a"]} setColumns={vi.fn()}
+      setCommonColumn={vi.fn()} setDatasetInfo={vi.fn()} setCompareColumnDefs={vi.fn()}
+    />));
+    const load = async (startRow) => {
+      const handlers = { success: vi.fn(), fail: vi.fn() };
+      await act(async () => {
+        await grid.props.serverSideDatasource.getRows({
+          request: { startRow, endRow: startRow + 10 }, ...handlers,
+        });
+      });
+      return handlers;
+    };
+    const clickRow = (row) => act(() => {
+      grid.props.onRowClicked({ data: row, rowIndex: 0 });
+    });
+
+    const first = await load(0);
+    clickRow(first.success.mock.calls[0][0].rowData[0]);
+    await waitFor(() => expect(get).toHaveBeenCalledWith(rowUrl(COMPARE_ID, oldRow.row_id)));
+    api.refreshServerSide.mockClear();
+    const later = await load(10);
+    expect(compareId.current).toBe(freshId);
+    expect(later.success).not.toHaveBeenCalled();
+    expect(later.fail).toHaveBeenCalledTimes(1);
+    expect(api.refreshServerSide).toHaveBeenCalledExactlyOnceWith({ purge: true });
+    expect(api.deselectAll).toHaveBeenCalledTimes(1);
+    expect(screen.queryByTestId("detail-row")).not.toBeInTheDocument();
+    expect(get).not.toHaveBeenCalledWith(rowUrl(freshId, oldRow.row_id));
+
+    const reloaded = await load(0);
+    expect(post.mock.lastCall[1]).toMatchObject({ compare_id: freshId, current_page_index: 0 });
+    // Even a click queued for a purged row cannot open the old ID under the
+    // new comparison. Selection/detail navigation is reset, not dataset picks.
+    clickRow(oldRow);
+    expect(screen.queryByTestId("detail-row")).not.toBeInTheDocument();
+    clickRow(reloaded.success.mock.calls[0][0].rowData[0]);
+    await waitFor(() => expect(screen.getByTestId("detail-row")).toHaveTextContent(freshRow.row_id));
+    expect(get).toHaveBeenCalledWith(rowUrl(freshId, freshRow.row_id));
+
+    await act(async () => {
+      finishOldDetail({ data: { status: true, result: {
+        table: [oldRow], prev_row_id: null, next_row_id: null,
+      } } });
+      await oldDetail;
+    });
+    expect(screen.getByTestId("detail-row")).toHaveTextContent(freshRow.row_id);
+    expect(get).not.toHaveBeenCalledWith(rowUrl(freshId, oldRow.row_id));
+    expect(deleteCompare).not.toHaveBeenCalled();
   });
 });

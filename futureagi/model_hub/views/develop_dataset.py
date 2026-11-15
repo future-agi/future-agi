@@ -673,6 +673,20 @@ def _compare_dataset_ids(metadata):
         return set()
 
 
+def _request_can_access_comparisons(request):
+    """Use current memberships, not a bound org/workspace identity alone."""
+    organization = getattr(request, "organization", None)
+    if organization is None or not request.user.can_access_organization(organization):
+        return False
+    workspace = getattr(request, "workspace", None)
+    if workspace is None:
+        return request.user.has_global_workspace_access(organization)
+    return (
+        workspace.organization_id == organization.id
+        and request.user.can_access_workspace(workspace)
+    )
+
+
 def _resolve_request_compare(request, compare_id):
     """Metadata of a comparison the request may use, or None.
 
@@ -680,6 +694,8 @@ def _resolve_request_compare(request, compare_id):
     dataset it joins. Unknown, cleaned-up and out-of-scope comparisons all
     resolve to None so that callers answer them identically.
     """
+    if not _request_can_access_comparisons(request):
+        return None
     metadata = _load_compare_metadata(compare_id)
     if metadata is None:
         return None
@@ -14376,11 +14392,7 @@ class CompareDatasetsView(APIView):
         },
     )
     def post(self, request, dataset_id, *args, **kwargs):
-        organization = getattr(request, "organization", None)
-        if organization is None or (
-            getattr(request, "workspace", None) is None
-            and not request.user.has_global_workspace_access(organization)
-        ):
+        if not _request_can_access_comparisons(request):
             return self._gm.not_found(get_error_message("DATASET_NOT_FOUND"))
         try:
             start_time = time.time()
@@ -14399,11 +14411,14 @@ class CompareDatasetsView(APIView):
             # differently selected metadata is a cache miss, never a write key.
             cached_metadata = None
             if requested_compare_id:
-                metadata = _resolve_request_compare(request, requested_compare_id)
-                if metadata is not None and _compare_metadata_matches_request(
-                    metadata, dataset_id, validated_data["dataset_ids"], base_column_name
+                stored_metadata = _resolve_request_compare(request, requested_compare_id)
+                if stored_metadata is not None and _compare_metadata_matches_request(
+                    stored_metadata,
+                    dataset_id,
+                    validated_data["dataset_ids"],
+                    base_column_name,
                 ):
-                    cached_metadata = metadata
+                    cached_metadata = stored_metadata
             compare_id = requested_compare_id if cached_metadata is not None else None
             start = current_page * page_size
             end = start + page_size
@@ -14725,6 +14740,9 @@ class CompareDatasetsView(APIView):
                 f"Time taken to prepare column config: {time.time() - start_time} seconds"
             )
             compare_json = {}
+            # An empty join skips the writer; its counts never come from a
+            # rejected cache candidate (which may be absent or non-empty).
+            total_rows = 0
 
             if len(common_base_values) > 0:
                 # Use ThreadPoolExecutor directly for complex objects that can't be serialized
@@ -14759,6 +14777,7 @@ class CompareDatasetsView(APIView):
                     return self._gm.bad_request(
                         get_error_message("FAILED_TO_COMPARE_DATASETS")
                     )
+                total_rows = int(metadata.get("total_rows", 0))
 
                 logger.info(
                     f"Time taken to get actual data: {time.time() - start_time} seconds"
@@ -14787,17 +14806,8 @@ class CompareDatasetsView(APIView):
                 {
                     "metadata": {
                         "compare_id": compare_id,
-                        "total_rows": (
-                            int(metadata.get("total_rows", 0))
-                            if "metadata" in locals()
-                            else 0
-                        ),
-                        "total_pages": (
-                            (int(metadata.get("total_rows", 0)) + page_size - 1)
-                            // page_size
-                            if "metadata" in locals()
-                            else 0
-                        ),
+                        "total_rows": total_rows,
+                        "total_pages": (total_rows + page_size - 1) // page_size,
                     }
                 }
             )
@@ -14827,11 +14837,7 @@ class DownloadComparisonDatasetView(APIView):
         },
     )
     def post(self, request, dataset_id, *args, **kwargs):
-        organization = getattr(request, "organization", None)
-        if organization is None or (
-            getattr(request, "workspace", None) is None
-            and not request.user.has_global_workspace_access(organization)
-        ):
+        if not _request_can_access_comparisons(request):
             return self._gm.not_found(get_error_message("DATASET_NOT_FOUND"))
         try:
             # Validate request data before resolving the comparison datasets
@@ -14878,6 +14884,11 @@ class DownloadComparisonDatasetView(APIView):
                     dataset_info = metadata.get("dataset_info")
                     common_column_names = metadata.get("common_column_names")
 
+            if compare_id and cached_metadata is None and not dataset_info:
+                # The selection was resolved above. Only an unavailable cached
+                # comparison without client rows tells the client to rebuild;
+                # dataset/access failures and storage outages keep their codes.
+                return _compare_not_found_response(self._gm)
             if not dataset_info or not common_column_names:
                 return self._gm.bad_request(
                     get_error_message("FAILED_TO_DOWNLOAD_DATASET")

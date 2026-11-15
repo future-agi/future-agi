@@ -3,6 +3,7 @@ import json
 import shutil
 import time
 import uuid
+from datetime import datetime, timedelta
 from pathlib import Path
 from unittest import mock
 from unittest.mock import Mock
@@ -1338,6 +1339,22 @@ def _body(response):
     return body.decode()
 
 
+def _assert_compare_not_found(response):
+    # Pin the actual HTTP JSON envelope consumed by the frontend, not a body
+    # generated with the same helper as the implementation under test.
+    message = "This comparison was not found or has expired. Open the comparison again."
+    assert response.status_code == status.HTTP_404_NOT_FOUND, response.content
+    assert response.json() == {
+        "status": False,
+        "type": "not_found",
+        "code": "compare_not_found",
+        "detail": message,
+        "message": message,
+        "error": message,
+        "result": message,
+    }
+
+
 def _member_client(organization, workspace):
     """An active organization member, not an admin, bound to ``workspace``."""
     from accounts.models.organization_membership import OrganizationMembership
@@ -1626,8 +1643,7 @@ def test_compare_unknown_compare_id_is_a_cache_miss(
         assert "Fresh pair-1" in _body(response)
     else:
         response = _download(auth_client, base, [compared], compare_id=compare_id)
-        assert response.status_code == status.HTTP_400_BAD_REQUEST, _body(response)
-        assert "Unable to download dataset" in _body(response)
+        _assert_compare_not_found(response)
 
 
 def _page_of_another_selection(label):
@@ -1998,12 +2014,12 @@ def test_compare_cached_id_with_another_base_column_is_not_served(
     body = _body(response)
     assert "Joined pair" not in body
     if download:
-        assert response.status_code == status.HTTP_400_BAD_REQUEST, body
-        assert "Unable to download dataset" in body
+        _assert_compare_not_found(response)
     else:
         assert response.status_code == status.HTTP_200_OK, body
         assert not response.data["result"].get("table")
         assert response.data["result"]["metadata"]["total_rows"] == 0
+        assert response.data["result"]["metadata"]["total_pages"] == 0
         assert response.data["result"]["metadata"]["compare_id"] != compare_id
 
 
@@ -2105,6 +2121,505 @@ def test_compare_owner_without_workspace_keeps_organization_scope(
         )
     assert response.status_code == status.HTTP_200_OK, _body(response)
     assert "fail" in _body(response)
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.parametrize(
+    "candidate_state",
+    ["unknown", "expired", "another_selection", "another_workspace", "another_org"],
+)
+@pytest.mark.parametrize("current_page_index", [0, 1])
+def test_compare_empty_cache_miss_has_fresh_id_and_zero_counts(
+    user,
+    compare_member_client,
+    comparison_page_store,
+    comparison_cell_reads,
+    organization,
+    workspace,
+    candidate_state,
+    current_page_index,
+):
+    from accounts.models.workspace import Workspace
+
+    compare_id = str(uuid.uuid4())
+    if candidate_state != "unknown":
+        stored_org, stored_owner, stored_workspace = organization, user, workspace
+        if candidate_state == "another_org":
+            stored_org, stored_owner, stored_workspace = _another_organization()
+        elif candidate_state == "another_workspace":
+            stored_workspace = Workspace.objects.create(
+                name="Empty comparison sibling",
+                organization=organization,
+                created_by=user,
+                is_default=False,
+                is_active=True,
+            )
+        stored_base, stored_peer = _new_compare_pair(
+            stored_org, stored_workspace, "Nonempty cached pair"
+        )
+        compare_id = _store_comparison(stored_owner, stored_base, stored_peer)
+        if candidate_state == "expired":
+            metadata = comparison_page_store[f"compare/{compare_id}/metadata.json"]
+            created = datetime.fromisoformat(metadata["created_at"])
+            metadata["created_at"] = (created - timedelta(hours=3)).isoformat()
+
+    base = _compare_dataset(organization, workspace, "Empty base", [("left", "a")])
+    peer = _compare_dataset(organization, workspace, "Empty peer", [("right", "b")])
+    before = json.loads(json.dumps(comparison_page_store))
+    comparison_page_store.reads.clear()
+    comparison_page_store.writes.clear()
+    comparison_cell_reads.clear()
+
+    response = _compare_request(
+        compare_member_client,
+        base,
+        peer,
+        compare_id=compare_id,
+        current_page_index=current_page_index,
+    )
+    assert response.status_code == status.HTTP_200_OK, response.content
+    result = response.json()["result"]
+    fresh_id = result["metadata"]["compare_id"]
+    assert fresh_id != compare_id
+    assert str(uuid.UUID(fresh_id)) == fresh_id
+    assert result["metadata"] == {
+        "compare_id": fresh_id,
+        "total_rows": 0,
+        "total_pages": 0,
+    }
+    assert not result.get("table")
+    assert "Nonempty cached pair" not in _body(response)
+    assert "prepare" not in comparison_cell_reads
+    assert comparison_page_store == before
+    assert comparison_page_store.keys_used_under(compare_id) == [
+        f"compare/{compare_id}/metadata.json"
+    ]
+
+
+@pytest.mark.django_db(transaction=True)
+def test_compare_ordered_peer_swap_mints_fresh_id_and_preserves_download_order(
+    auth_client, comparison_page_store, comparison_cell_reads, organization, workspace
+):
+    base, peer_b, peer_c = [
+        _compare_dataset(organization, workspace, name, [("alpha", name)])
+        for name in ("Ordered base", "Ordered B", "Ordered C")
+    ]
+
+    def compare(peers, compare_id=None):
+        return auth_client.post(
+            f"/model-hub/datasets/{base.id}/compare-datasets/",
+            {
+                "dataset_ids": [str(peer.id) for peer in peers],
+                "base_column_name": "input",
+                "compare_id": compare_id,
+                "page_size": 10,
+            },
+            format="json",
+        )
+
+    first = compare([peer_b, peer_c])
+    assert first.status_code == status.HTTP_200_OK, first.content
+    old_id = first.json()["result"]["metadata"]["compare_id"]
+    old_objects = json.loads(json.dumps(comparison_page_store))
+    comparison_page_store.reads.clear()
+    comparison_page_store.writes.clear()
+    comparison_cell_reads.clear()
+
+    swapped = compare([peer_c, peer_b], old_id)
+    assert swapped.status_code == status.HTTP_200_OK, swapped.content
+    result = swapped.json()["result"]
+    new_id = result["metadata"]["compare_id"]
+    assert new_id != old_id
+    assert comparison_cell_reads.count("prepare") == 1
+    assert [col["dataset_id"] for col in result["column_config"][1:]] == [
+        str(ds.id) for ds in (base, peer_c, peer_b)
+    ]
+    assert result["table"]
+    for ds in (base, peer_c, peer_b):
+        col_id = str(Column.objects.get(dataset=ds, name="judge").id)
+        assert result["table"][0][col_id]["cell_value"] == ds.name
+    assert comparison_page_store[f"compare/{new_id}/metadata.json"][
+        "comparison_datasets"
+    ] == [str(ds.id) for ds in (base, peer_c, peer_b)]
+    assert comparison_page_store.keys_used_under(old_id) == [
+        f"compare/{old_id}/metadata.json"
+    ]
+    assert all(comparison_page_store[key] == value for key, value in old_objects.items())
+
+    # The old peer ordering is not an accepted download cache candidate.
+    _assert_compare_not_found(
+        _download(auth_client, base, [peer_c, peer_b], compare_id=old_id)
+    )
+    for compare_id, with_rows in ((new_id, False), (old_id, True)):
+        exported = _download(
+            auth_client,
+            base,
+            [peer_c, peer_b],
+            compare_id=compare_id,
+            with_rows=with_rows,
+        )
+        assert exported.status_code == status.HTTP_200_OK, _body(exported)
+        assert _body(exported).splitlines()[0].split(",") == [
+            "input",
+            *(f"judge-{ds.name}" for ds in (base, peer_c, peer_b)),
+        ]
+    reused = compare([peer_c, peer_b], new_id)
+    assert reused.status_code == status.HTTP_200_OK, reused.content
+    assert reused.json()["result"]["metadata"]["compare_id"] == new_id
+    assert comparison_cell_reads.count("prepare") == 1
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.parametrize("cache_state", ["unknown", "expired"])
+@pytest.mark.parametrize("with_rows", [False, True])
+def test_compare_download_cache_miss_envelope_and_validated_fallback(
+    auth_client,
+    comparison_page_store,
+    organization,
+    workspace,
+    cache_state,
+    with_rows,
+):
+    base, peer = _new_compare_pair(organization, workspace, "Download fallback")
+    compare_id = str(uuid.uuid4())
+    if cache_state == "expired":
+        built = _compare_request(auth_client, base, peer)
+        assert built.status_code == status.HTTP_200_OK, built.content
+        compare_id = built.json()["result"]["metadata"]["compare_id"]
+        metadata = comparison_page_store[f"compare/{compare_id}/metadata.json"]
+        created = datetime.fromisoformat(metadata["created_at"])
+        metadata["created_at"] = (created - timedelta(hours=3)).isoformat()
+    before = json.loads(json.dumps(comparison_page_store))
+    comparison_page_store.reads.clear()
+    comparison_page_store.writes.clear()
+
+    response = _download(
+        auth_client, base, [peer], compare_id=compare_id, with_rows=with_rows
+    )
+    if with_rows:
+        assert response.status_code == status.HTTP_200_OK, _body(response)
+        assert _body(response).splitlines()[0].split(",") == [
+            "input",
+            f"judge-{base.name}",
+            f"judge-{peer.name}",
+        ]
+        assert "Download fallback-1" in _body(response)
+    else:
+        _assert_compare_not_found(response)
+    assert comparison_page_store == before
+    assert comparison_page_store.keys_used_under(compare_id) == [
+        f"compare/{compare_id}/metadata.json"
+    ]
+    if with_rows:
+        # A cache miss never makes misattributed client row IDs acceptable,
+        # including when the same ID had a valid comparison before expiry.
+        peer_row_id = str(Row.objects.get(dataset=peer).id)
+        invalid = auth_client.post(
+            f"/model-hub/datasets/{base.id}/compare-datasets/download/",
+            {
+                "dataset_ids": [str(peer.id)],
+                "base_column_name": "input",
+                "compare_id": compare_id,
+                "dataset_info": {
+                    "alpha": {str(base.id): peer_row_id, str(peer.id): peer_row_id}
+                },
+                "common_column_names": ["judge"],
+            },
+            format="json",
+        )
+        assert invalid.status_code == status.HTTP_404_NOT_FOUND, invalid.content
+        assert invalid.json()["code"] == "not_found"
+        assert comparison_page_store == before
+        assert comparison_page_store.writes == []
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.parametrize("selection_failure", ["missing_base", "deleted_peer"])
+@pytest.mark.parametrize("storage_state", ["missing", "unavailable"])
+def test_compare_download_dataset_failure_precedes_cache_lookup(
+    auth_client,
+    comparison_page_store,
+    organization,
+    workspace,
+    monkeypatch,
+    selection_failure,
+    storage_state,
+):
+    from model_hub.utils.compare_storage import CompareStorageUnavailable
+
+    base, peer = _new_compare_pair(organization, workspace, "Invalid selection")
+    if selection_failure == "missing_base":
+        base.id = uuid.uuid4()
+    else:
+        Dataset.no_workspace_objects.filter(id=peer.id).update(deleted=True)
+    unavailable = Mock(
+        side_effect=(
+            CompareObjectUnavailable("metadata.json")
+            if storage_state == "missing"
+            else CompareStorageUnavailable("metadata.json")
+        )
+    )
+    monkeypatch.setattr("model_hub.views.develop_dataset.read_compare_json", unavailable)
+    response = _download(auth_client, base, [peer], compare_id=str(uuid.uuid4()))
+    assert response.status_code == status.HTTP_404_NOT_FOUND, response.content
+    assert response.json()["code"] == "not_found"
+    unavailable.assert_not_called()
+    assert comparison_page_store.writes == []
+
+
+@pytest.mark.django_db(transaction=True)
+def test_compare_download_without_id_or_rows_is_still_bad_request(
+    auth_client, compare_datasets
+):
+    response = _download(
+        auth_client, compare_datasets["base_dataset"], [compare_datasets["other_dataset"]]
+    )
+    assert response.status_code == status.HTTP_400_BAD_REQUEST, response.content
+    assert response.json()["code"] == "invalid"
+
+
+@pytest.fixture
+def comparison_cleanup_calls(monkeypatch, comparison_page_store):
+    cleanup = Mock()
+    monkeypatch.setattr("tfc.temporal.drop_in.start_activity", cleanup)
+    monkeypatch.setattr(
+        "model_hub.views.develop_dataset.delete_compare_metadata",
+        lambda compare_id: comparison_page_store.pop(
+            f"compare/{compare_id}/metadata.json", None
+        ),
+    )
+    return cleanup
+
+
+def _comparison_endpoint(client, endpoint, base, peer, compare_id, row_id):
+    if endpoint == "compare":
+        return _compare_request(client, base, peer, compare_id=compare_id)
+    if endpoint == "download":
+        return _download(client, base, [peer], compare_id=compare_id)
+    if endpoint == "row":
+        return client.get(f"/model-hub/datasets/get-compare-row/{compare_id}/{row_id}/")
+    assert endpoint == "delete"
+    return client.delete(f"/model-hub/datasets/delete-compare/{compare_id}/")
+
+
+def _stored_first_row_id(store, compare_id):
+    return store[f"compare/{compare_id}/page_1.json"]["table"][0]["row_id"]
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.parametrize("endpoint", ["compare", "download", "row", "delete"])
+@pytest.mark.parametrize(
+    "access_path",
+    [
+        "default_member",
+        "workspace_member",
+        "bound_owner",
+        "unbound_owner",
+        "bound_admin",
+        "unbound_admin",
+        "legacy_default_member",
+    ],
+)
+def test_compare_endpoints_allow_current_workspace_access(
+    user,
+    organization,
+    workspace,
+    comparison_page_store,
+    comparison_cleanup_calls,
+    endpoint,
+    access_path,
+):
+    from accounts.models.organization_membership import OrganizationMembership
+    from accounts.models.workspace import Workspace
+    from tfc.constants.levels import Level
+
+    target = workspace
+    if access_path == "workspace_member":
+        target = Workspace.objects.create(
+            name="Accessible team",
+            organization=organization,
+            created_by=user,
+            is_default=False,
+            is_active=True,
+        )
+    base, peer = _new_compare_pair(organization, target, "Accessible pair")
+    if access_path == "legacy_default_member":
+        Dataset.no_workspace_objects.filter(id__in=[base.id, peer.id]).update(
+            workspace=None
+        )
+    compare_id = _store_comparison(user, base, peer)
+    row_id = _stored_first_row_id(comparison_page_store, compare_id)
+    if "owner" in access_path:
+        caller = user
+    else:
+        member_client = _member_client(organization, target)
+        caller = member_client.handler._force_user
+        member_client.stop_workspace_injection()
+        if "admin" in access_path:
+            OrganizationMembership.no_workspace_objects.filter(
+                user=caller, organization=organization
+            ).update(level=Level.ADMIN)
+    client = _client_without_workspace(caller)
+    bound = None if access_path.startswith("unbound") else target
+    with _request_binding(organization, bound):
+        response = _comparison_endpoint(client, endpoint, base, peer, compare_id, row_id)
+    assert response.status_code == status.HTTP_200_OK, _body(response)
+    if endpoint == "delete":
+        comparison_cleanup_calls.assert_called_once()
+        assert f"compare/{compare_id}/metadata.json" not in comparison_page_store
+    else:
+        assert "Accessible pair-1" in _body(response)
+        comparison_cleanup_calls.assert_not_called()
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.parametrize("endpoint", ["compare", "download", "row", "delete"])
+@pytest.mark.parametrize(
+    "scope",
+    [
+        "sibling_workspace",
+        "other_organization",
+        "unbound_member",
+        "unbound_owner_other_org",
+        "bound_unjoined_workspace",
+        "mismatched_workspace_org",
+    ],
+)
+def test_compare_endpoints_refuse_inaccessible_scope(
+    user,
+    organization,
+    workspace,
+    comparison_page_store,
+    comparison_cleanup_calls,
+    comparison_cell_reads,
+    endpoint,
+    scope,
+):
+    from django.db import connection
+    from django.test.utils import CaptureQueriesContext
+
+    from accounts.models.workspace import Workspace
+
+    member_client = _member_client(organization, workspace)
+    caller = member_client.handler._force_user
+    member_client.stop_workspace_injection()
+    stored_org, stored_owner, target = organization, user, workspace
+    bound = workspace
+    if scope in (
+        "other_organization", "unbound_owner_other_org", "mismatched_workspace_org"
+    ):
+        stored_org, stored_owner, target = _another_organization()
+    elif scope in ("sibling_workspace", "bound_unjoined_workspace"):
+        target = Workspace.objects.create(
+            name="Inaccessible sibling",
+            organization=organization,
+            created_by=user,
+            is_default=False,
+            is_active=True,
+        )
+    if scope in ("bound_unjoined_workspace", "mismatched_workspace_org"):
+        bound = target
+    elif scope.startswith("unbound"):
+        bound = None
+    if scope == "unbound_owner_other_org":
+        caller = user
+    base, peer = _new_compare_pair(stored_org, target, "Inaccessible pair")
+    compare_id = _store_comparison(stored_owner, base, peer)
+    row_id = _stored_first_row_id(comparison_page_store, compare_id)
+    before = json.loads(json.dumps(comparison_page_store))
+    comparison_cell_reads.clear()
+    comparison_page_store.writes.clear()
+    client = _client_without_workspace(caller)
+    with (
+        _request_binding(organization, bound),
+        CaptureQueriesContext(connection) as captured,
+    ):
+        response = _comparison_endpoint(client, endpoint, base, peer, compare_id, row_id)
+    _assert_no_comparison_cells(response, comparison_cell_reads, captured)
+    if endpoint in ("compare", "download"):
+        # Selection/access failures must not trigger the download rebuild flow.
+        assert response.json()["code"] == "not_found"
+    else:
+        _assert_compare_not_found(response)
+    assert comparison_page_store == before
+    assert comparison_page_store.writes == []
+    comparison_cleanup_calls.assert_not_called()
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.parametrize("endpoint", ["compare", "download", "row", "delete"])
+@pytest.mark.parametrize(
+    "removed_membership", ["workspace", "organization", "unbound_owner", "unbound_admin"]
+)
+@pytest.mark.parametrize("removal", ["deactivate", "delete"])
+def test_compare_endpoints_recheck_membership_after_comparison_build(
+    user,
+    organization,
+    workspace,
+    comparison_page_store,
+    comparison_cleanup_calls,
+    comparison_cell_reads,
+    endpoint,
+    removed_membership,
+    removal,
+):
+    from django.db import connection
+    from django.test.utils import CaptureQueriesContext
+
+    from accounts.models.organization_membership import OrganizationMembership
+    from accounts.models.workspace import WorkspaceMembership
+    from tfc.constants.levels import Level
+
+    base, peer = _new_compare_pair(organization, workspace, "Previously accessible")
+    if removed_membership == "unbound_owner":
+        caller = user
+    else:
+        member_client = _member_client(organization, workspace)
+        caller = member_client.handler._force_user
+        member_client.stop_workspace_injection()
+        if removed_membership == "unbound_admin":
+            OrganizationMembership.no_workspace_objects.filter(
+                user=caller, organization=organization
+            ).update(level=Level.ADMIN)
+    client = _client_without_workspace(caller)
+    bound = None if removed_membership.startswith("unbound") else workspace
+    with _request_binding(organization, bound):
+        built = _compare_request(client, base, peer)
+        assert built.status_code == status.HTTP_200_OK, built.content
+        compare_id = built.json()["result"]["metadata"]["compare_id"]
+        row_id = _stored_first_row_id(comparison_page_store, compare_id)
+        detail = _comparison_endpoint(client, "row", base, peer, compare_id, row_id)
+        assert detail.status_code == status.HTTP_200_OK, detail.content
+    before = json.loads(json.dumps(comparison_page_store))
+    memberships = (
+        WorkspaceMembership.no_workspace_objects.filter(user=caller, workspace=workspace)
+        if removed_membership == "workspace"
+        else OrganizationMembership.no_workspace_objects.filter(
+            user=caller, organization=organization
+        )
+    )
+    if removal == "delete":
+        memberships.delete()
+    else:
+        assert memberships.update(is_active=False) == 1
+    assert caller.organization_id == organization.id
+    comparison_cell_reads.clear()
+    comparison_page_store.reads.clear()
+    comparison_page_store.writes.clear()
+    # Same user object and stale bound workspace: current membership still wins.
+    with (
+        _request_binding(organization, bound),
+        CaptureQueriesContext(connection) as captured,
+    ):
+        response = _comparison_endpoint(client, endpoint, base, peer, compare_id, row_id)
+    _assert_no_comparison_cells(response, comparison_cell_reads, captured)
+    assert response.json()["code"] == (
+        "not_found" if endpoint in ("compare", "download") else "compare_not_found"
+    )
+    assert comparison_page_store == before
+    assert comparison_page_store.reads == []
+    assert comparison_page_store.writes == []
+    comparison_cleanup_calls.assert_not_called()
 
 
 @pytest.mark.django_db(transaction=True)
