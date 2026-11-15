@@ -412,10 +412,13 @@ def test_failure_code_is_allowlisted_and_fenced(monkeypatch, settings, error_cod
 
 @pytest.mark.unit
 @pytest.mark.parametrize("surface", ["agent", "users"])
-def test_explicit_refresh_can_retry_a_previous_typed_failure(monkeypatch, surface):
+@pytest.mark.parametrize("cached", [False, True])
+def test_explicit_refresh_can_retry_a_previous_typed_failure(
+    monkeypatch, surface, cached
+):
     from tracer.services import exact_aggregation_cache as snapshots
 
-    scheduled = _cache_transport(monkeypatch, surface, cached=True)
+    scheduled = _cache_transport(monkeypatch, surface, cached=cached)
     namespace = (
         "observe-agent-graph" if surface == "agent" else "observe-user-system-graph"
     )
@@ -435,5 +438,20 @@ def test_explicit_refresh_can_retry_a_previous_typed_failure(monkeypatch, surfac
     response = _endpoint(monkeypatch, surface, refresh=True)
     assert response.status_code == 200, response.data
     assert "query_error_code" not in response.data["result"]
+    assert len(scheduled) == 1
+    preflight.assert_called_once()
+    new_token = scheduled[0][2]
+    assert new_token != token
+    # A late completion from the failed worker cannot poison its replacement.
+    snapshots.finish_exact_refresh(
+        namespace, identity, token, succeeded=False, error_code="tag_filter_too_broad"
+    )
+    assert snapshots.exact_refresh_state(namespace, identity) == "running"
+    snapshots.publish_exact_snapshot(namespace, identity, _complete(surface))
+    snapshots.finish_exact_refresh(namespace, identity, new_token, succeeded=True)
+    polled = _endpoint(monkeypatch, surface)
+    assert polled.status_code == 200, polled.data
+    assert "query_error_code" not in polled.data["result"]
+    assert polled.data["result"]["query_status"] == "complete"
     assert len(scheduled) == 1
     preflight.assert_called_once()

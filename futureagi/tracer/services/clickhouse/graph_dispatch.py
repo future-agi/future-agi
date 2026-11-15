@@ -2408,9 +2408,13 @@ def fetch_agent_graph_ch(
         revalidate_open_window=not refresh,
         raise_cached_tag_error=not refresh,
     )
-    if isinstance(cached, dict) and not refresh and (
-        cached.get("query_status") == "complete"
-        or cached.get("query_refresh_failed") is True
+    if (
+        isinstance(cached, dict)
+        and not refresh
+        and (
+            cached.get("query_status") == "complete"
+            or cached.get("query_refresh_failed") is True
+        )
     ):
         return cached
     if not (isinstance(cached, dict) and cached.get("query_refreshing") is True):
@@ -2655,12 +2659,19 @@ def fetch_user_system_metric_graph_ch(
             revalidate_open_window=not refresh,
             raise_cached_tag_error=not refresh,
         )
-        if (
-            isinstance(cached, dict)
-            and cached.get("query_status") == "complete"
-            and graph_payload_is_publishable(cached, allow_sampled=False)
+        if isinstance(cached, dict) and (
+            (
+                cached.get("query_status") == "complete"
+                and graph_payload_is_publishable(cached, allow_sampled=False)
+            )
+            or (
+                refresh
+                and cached.get("query_error_code") == GraphTagFilterTooBroadError.code
+            )
         ):
             if refresh:
+                # Recover a failed cold identity through the fenced lifecycle too:
+                # a direct success would leave its old failure poisoning polls.
                 _preflight_user_graph_tags(identity, analytics)
                 return _read_or_refresh_exact_graph(
                     namespace="observe-user-system-graph",
