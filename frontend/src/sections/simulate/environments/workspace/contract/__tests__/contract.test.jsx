@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { render, screen } from "src/utils/test-utils";
+import { render, screen, within } from "src/utils/test-utils";
 import RlContractPanel from "../RlContractPanel";
 
 // A voice environment with two tools, two hard rules and a seeded table —
@@ -183,7 +183,8 @@ describe("Workers card", () => {
     expect(rows).toHaveLength(2);
     expect(rows[0]).toHaveTextContent("Order-lookup worker");
     expect(rows[0]).toHaveTextContent("Own channel");
-    expect(rows[0]).toHaveTextContent("May use: get_order, list_refunds");
+    // Exactly the allowed tools, never everything the worker's code holds.
+    expect(within(rows[0]).getByText("May use: get_order, list_refunds")).toBeTruthy();
     expect(rows[1]).toHaveTextContent("Shared channel");
     // A worker that may use everything its code holds shows no narrower list.
     expect(rows[1]).not.toHaveTextContent("May use:");
