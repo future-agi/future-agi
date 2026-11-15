@@ -544,7 +544,12 @@ def test_media_cutover_needs_no_new_migration_and_graph_has_no_conflicts():
 
     loader = MigrationLoader(connection)
     assert not loader.detect_conflicts()
-    assert loader.graph.leaf_nodes("tracer") == [("tracer", "0137_attachment_fences")]
+    # Downstream ingest/recordings branches extend the existing fence migration.
+    # The protocol cutover adds no column or competing leaf; do not pin the
+    # backend-only leaf in a test that also runs on those integrated branches.
+    leaves = loader.graph.leaf_nodes("tracer")
+    assert len(leaves) == 1
+    assert ("tracer", "0137_attachment_fences") in loader.graph.forwards_plan(leaves[0])
     assert "wire_version" not in {
         field.name for field in AttachmentMediaSession._meta.fields
     }
