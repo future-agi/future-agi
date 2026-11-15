@@ -34,11 +34,17 @@ from tracer.tests.test_derived_metric_refresh_clickhouse import (
     [("move", False), ("move_delete", False), ("update", False), ("move", True)],
 )
 def test_partial_repair_then_overflow_matches_latest_source(
-    history_writer, workspace, observe_project, monkeypatch, revision_kind,
+    history_writer,
+    workspace,
+    observe_project,
+    monkeypatch,
+    revision_kind,
     fail_owner_read,
 ):
     writer = history_writer
-    scope, runner = context(writer, workspace, observe_project, retention=0, page_size=1)
+    scope, runner = context(
+        writer, workspace, observe_project, retention=0, page_size=1
+    )
     now = datetime.now(UTC).replace(microsecond=0)
     writer.lease.clock = lambda: now
     at = now - timedelta(hours=2)
@@ -99,7 +105,13 @@ def test_partial_repair_then_overflow_matches_latest_source(
         deleted=int(revision_kind == "move_delete"),
     )
     seed_span_revision(
-        writer, scope, trace, "s3", c, at, 7,
+        writer,
+        scope,
+        trace,
+        "s3",
+        c,
+        at,
+        7,
         revision=changes.ns(now - timedelta(minutes=1)),
     )
     # Exercise the real overflow catch/queue with a tiny discovery fixture;
@@ -115,7 +127,9 @@ def test_partial_repair_then_overflow_matches_latest_source(
 
         with monkeypatch.context() as failing:
             failing.setattr(changes, "read", fail_preimages)
-            with pytest.raises(changes.MetricChangeReadError, match="owner-read fixture"):
+            with pytest.raises(
+                changes.MetricChangeReadError, match="owner-read fixture"
+            ):
                 runner.run_repair_page()
         unchanged = MetricProjectRefresh.for_project(observe_project.id)
         assert unchanged.head_manifest_id == head.id
@@ -143,13 +157,15 @@ def test_partial_repair_then_overflow_matches_latest_source(
 
     # Independent oracle: collapse raw source identities BEFORE filtering live
     # membership, then sum by session. No metric compiler or metric fields.
-    truth = dict(writer.store.execute(
-        "SELECT toString(trace_session_id), sum(attrs_number['resolved']) "
-        "FROM (SELECT * FROM spans WHERE project_id = toUUID(%(project)s) "
-        "ORDER BY _version DESC LIMIT 1 BY project_id, trace_id, id) "
-        "WHERE is_deleted = 0 GROUP BY trace_session_id",
-        {"project": str(observe_project.id)},
-    ))
+    truth = dict(
+        writer.store.execute(
+            "SELECT toString(trace_session_id), sum(attrs_number['resolved']) "
+            "FROM (SELECT * FROM spans WHERE project_id = toUUID(%(project)s) "
+            "ORDER BY _version DESC LIMIT 1 BY project_id, trace_id, id) "
+            "WHERE is_deleted = 0 GROUP BY trace_session_id",
+            {"project": str(observe_project.id)},
+        )
+    )
     actual = {row[0]: row[2] for row in fields(writer, head, definition)}
     assert actual == truth
     buckets = metric_bucket_rows(writer, head, definition)
