@@ -286,6 +286,7 @@ const DevelopDetailView = () => {
     if (isCompareDataset && currentTab === "data") {
       return (
         <CompareDataRightSection
+          hideScenarioFeatures={hideScenarioFeatures}
           compareId={compareId}
           refreshGrid={refreshGrid}
           onComparisonExpired={() => {

@@ -1,6 +1,7 @@
 import {
   Box,
   Button,
+  CircularProgress,
   Divider,
   IconButton,
   Typography,
@@ -20,12 +21,13 @@ const CompareDataRightSection = ({
   columns = [],
   setSelectedColumn,
   baseColumn,
-  selectedDatasetsValues,
+  selectedDatasetsValues = [],
   onRunEvaluation,
   compareId,
   setColumns,
   selectedColumns,
   onComparisonExpired,
+  hideScenarioFeatures = false,
 }) => {
   const [columnPopoverOpen, setColumnPopoverOpen] = useState(false);
   // const [selectedColumns, setSelectedColumns] = useState([]);
@@ -62,12 +64,16 @@ const CompareDataRightSection = ({
     setColumnPopoverOpen(false);
   };
 
-  const { mutate: handleDownloadCompareDataset } = useDownloadCompare({
-    compareId,
-    selectedDatasetsValues,
-    baseColumn,
-    onComparisonExpired,
-  });
+  const { mutate: handleDownloadCompareDataset, isPending: isDownloading } =
+    useDownloadCompare({
+      compareId,
+      selectedDatasetsValues,
+      baseColumn,
+      onComparisonExpired,
+    });
+  // Empty joins still need download's typed-expiration recovery. Neither rows,
+  // columns nor a cached comparison ID determines whether a download is valid.
+  const canDownload = Boolean(baseColumn) && selectedDatasetsValues.length > 1;
 
   const handleColumnSelect = (column, parentId) => {
     let copy = [...selectedColumns];
@@ -155,6 +161,11 @@ const CompareDataRightSection = ({
     >
       <IconButton
         size="small"
+        ref={columnButtonRef}
+        onClick={handleColumnClick}
+        aria-label="Columns"
+        aria-expanded={columnPopoverOpen}
+        disabled={columns.length === 0}
         sx={{
           color: "text.secondary",
         }}
@@ -163,11 +174,8 @@ const CompareDataRightSection = ({
           style={{
             height: "20px",
             width: "20px",
-            cursor: "pointer",
           }}
-          ref={columnButtonRef}
-          onClick={handleColumnClick}
-          alt="?"
+          alt=""
           src="/icons/datasets/flowbite_column-outline .svg"
         />
       </IconButton>
@@ -211,9 +219,6 @@ const CompareDataRightSection = ({
         variant="contained"
         color="primary"
         size="small"
-        sx={{
-          color: "common.white",
-        }}
         startIcon={<Iconify width={16} icon="solar:check-circle-linear" />}
         onClick={() =>
           onRunEvaluation({
@@ -221,7 +226,11 @@ const CompareDataRightSection = ({
             unselectedColumns,
           })
         }
-        disabled={!RolePermission.DATASETS[PERMISSIONS.UPDATE][role]}
+        disabled={
+          hideScenarioFeatures ||
+          columns.length === 0 ||
+          !RolePermission.DATASETS[PERMISSIONS.UPDATE][role]
+        }
       >
         Evaluate
       </Button>
@@ -237,10 +246,16 @@ const CompareDataRightSection = ({
         sx={{
           color: "text.secondary",
         }}
-        onClick={handleDownloadCompareDataset}
+        onClick={() => handleDownloadCompareDataset()}
+        disabled={!canDownload || isDownloading}
         aria-label="Download comparison CSV"
+        aria-busy={isDownloading}
       >
-        <Iconify icon="solar:download-minimalistic-linear" />
+        {isDownloading ? (
+          <CircularProgress size={16} color="inherit" />
+        ) : (
+          <Iconify icon="solar:download-minimalistic-linear" />
+        )}
       </IconButton>
 
       {/* Column Selector Popover */}
@@ -267,9 +282,10 @@ CompareDataRightSection.propTypes = {
   onRunEvaluation: PropTypes.func,
   selectedDatasetsValues: PropTypes.array,
   baseColumn: PropTypes.string,
-  columns: PropTypes.arrayOf(PropTypes.string),
+  columns: PropTypes.arrayOf(PropTypes.object),
   compareId: PropTypes.any,
   onComparisonExpired: PropTypes.func,
+  hideScenarioFeatures: PropTypes.bool,
   setColumns: PropTypes.func,
   selectedColumns: PropTypes.array,
 };

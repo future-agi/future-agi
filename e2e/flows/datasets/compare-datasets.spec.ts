@@ -582,10 +582,14 @@ test(
 );
 
 // Lifecycle regressions use the same authenticated actor, native CSV importer,
-// PG probe and real endpoints as DATA-E2E-005. Routes only delay real responses
+// PG probe and real endpoints as DATA-E2E-005. Routes delay/reuse real responses
 // or change a request to a real missing resource; no response body is invented.
 type LifecycleFixtures = { page: Page; actor: TestActor; probe: StateProbe };
+// urls.py / GetCompareDatasetRow.delete: metadata invalidation precedes cleanup.
 const deletePath = (id: string) => `/model-hub/datasets/delete-compare/${id}/`;
+// DatasetUpdateCellValueRequestSerializer and DATA-E2E-002's captured edit body.
+const updateCellPath = (id: string) =>
+  `/model-hub/develops/${id}/update_cell_value/`;
 const downloadPath = (id: string) => `${comparePath(id)}download/`;
 const expiredMessage =
   "This comparison expired and is being rebuilt. Download it again once the table has loaded.";
@@ -802,7 +806,7 @@ test(
         "Keep comparison rows and detail on the adopted snapshot when concurrent later blocks rebuild an expired comparison",
       steps: [
         "upload two matching datasets, compare by input and open the first row detail",
-        "expire the stored comparison and scroll the real grid to pages two and three while delaying both real responses",
+        "retain real earlier-page reads before deleting the comparison through its API, then hold both old-ID page two and page three rebuild responses while scrolling the real grid",
         "release page two first, confirm the old drawer closes, then release the competing page three response",
         "revisit rows thirty and thirty-one and open row thirty detail from the adopted snapshot",
         "return to row zero and open its rebuilt detail",
@@ -820,40 +824,90 @@ test(
     const { left, first, grid, drawer, responses } = state;
     const oldId = first.result.metadata.compare_id;
     await openEarlierDrawer(page, state);
-    await actor.api.delete(deletePath(oldId)); // A real server cache miss, not a fabricated 200 payload.
     const held = new Map<
       number,
-      {
-        route: Route;
-        response: APIResponse;
-        body: ComparePage;
-        released: boolean;
-      }
+      { route: Route; response: APIResponse; body: ComparePage }
     >();
+    const pendingRoutes = new Set<Route>();
+    const earlierReads: { request: unknown; body: ComparePage }[] = [];
+    let prepared: Promise<Map<number, APIResponse>> | undefined;
+    let winningId: string | undefined;
+    let cleaningUp = false;
     await page.route(`**${comparePath(left.id)}`, async (route) => {
+      if (route.request().method() !== "POST") {
+        await route.continue();
+        return;
+      }
+      if (cleaningUp) {
+        await route.abort();
+        return;
+      }
       const sent = route.request().postDataJSON();
-      if (
-        sent.compare_id === oldId &&
-        [2, 3].includes(sent.current_page_index)
-      ) {
-        const response = await route.fetch();
-        expect(response.status()).toBe(200);
-        const body: ComparePage = await response.json();
-        expect(body.result.table).toHaveLength(
-          sent.current_page_index === 2 ? 10 : 2,
-        );
-        expect(body.result.metadata.compare_id).not.toBe(oldId);
-        held.set(sent.current_page_index, {
-          route,
-          response,
-          body,
-          released: false,
-        });
-      } else await route.continue();
+      if (winningId && sent.compare_id === winningId) {
+        await route.continue();
+        return;
+      }
+      pendingRoutes.add(route);
+      expect(sent).toEqual({
+        dataset_ids: [state.right.id],
+        base_column_name: "input",
+        page_size: PAGE_SIZE,
+        current_page_index: expect.any(Number),
+        compare_id: oldId,
+      });
+      expect([0, 1, 2, 3]).toContain(sent.current_page_index);
+      // AG Grid can request page one alongside page two. Holding both would
+      // consume its two load slots, preventing page three; allowing page one to
+      // rebuild would instead steal the generation. Retain real reads of pages
+      // zero/one BEFORE deletion, then deliver those exact responses unchanged.
+      // This models earlier-page reads already in flight at expiry, not fixture
+      // payloads. Only pages two/three hit the missing ID and mint generations.
+      prepared ??= (async () => {
+        const cached = new Map<number, APIResponse>();
+        for (const index of [0, 1]) {
+          if (cleaningUp) break;
+          const request = { ...sent, current_page_index: index };
+          const response = await route.fetch({
+            postData: request,
+            timeout: UI_READY,
+          });
+          const body: ComparePage = await response.json();
+          expect(response.status()).toBe(200);
+          expect(body.result.metadata).toEqual({
+            compare_id: oldId,
+            total_rows: 32,
+            total_pages: 4,
+          });
+          expect(body.result.table).toHaveLength(PAGE_SIZE);
+          cached.set(index, response);
+          earlierReads.push({ request, body });
+        }
+        // GetCompareDatasetRow.delete invalidates metadata synchronously. No
+        // bucket manipulation, clock control or write through StateProbe.
+        if (!cleaningUp) await actor.api.delete(deletePath(oldId));
+        return cached;
+      })();
+      const cached = await prepared;
+      if (cleaningUp) return;
+      if (sent.current_page_index < 2) {
+        pendingRoutes.delete(route);
+        await route.fulfill({ response: cached.get(sent.current_page_index)! });
+        return;
+      }
+      const response = await route.fetch({ timeout: UI_READY });
+      if (cleaningUp) return;
+      expect(response.status()).toBe(200);
+      const body: ComparePage = await response.json();
+      expect(body.result.table).toHaveLength(
+        sent.current_page_index === 2 ? PAGE_SIZE : 2,
+      );
+      expect(body.result.metadata.compare_id).not.toBe(oldId);
+      expect(held.has(sent.current_page_index)).toBe(false);
+      held.set(sent.current_page_index, { route, response, body });
     });
     try {
-      // Scroll the real grid even while its modal drawer is open. Both native
-      // SSRM loads remain in flight; only their real HTTP fulfilment is delayed.
+      // Both actual old-ID browser requests must reach the backend and finish
+      // rebuilding before either response is delivered to the datasource.
       await scrollComparison(page, 20);
       await expect.poll(() => held.has(2), { timeout: UI_READY }).toBe(true);
       await scrollComparison(page, 30);
@@ -863,13 +917,24 @@ test(
       const newId = winner.body.result.metadata.compare_id;
       const orphanId = loser.body.result.metadata.compare_id;
       expect(orphanId).not.toBe(newId);
+      for (const [index, entry] of held) {
+        expect(entry.route.request().postDataJSON()).toEqual({
+          dataset_ids: [state.right.id],
+          base_column_name: "input",
+          page_size: PAGE_SIZE,
+          current_page_index: index,
+          compare_id: oldId,
+        });
+      }
       const nextRequest = page.waitForRequest(
         (request) =>
           new URL(request.url()).pathname === comparePath(left.id) &&
           request.method() === "POST",
+        { timeout: UI_READY },
       );
+      winningId = newId;
+      pendingRoutes.delete(winner.route);
       await winner.route.fulfill({ response: winner.response });
-      winner.released = true;
       expect((await nextRequest).postDataJSON().compare_id).toBe(newId);
       await expect(drawer).toHaveCount(0);
       await scrollComparison(page, 0);
@@ -895,8 +960,8 @@ test(
           new URL(response.url()).pathname === deletePath(orphanId) &&
           response.request().method() === "DELETE",
       );
+      pendingRoutes.delete(loser.route);
       await loser.route.fulfill({ response: loser.response });
-      loser.released = true;
       expect((await orphanDeleted).status()).toBe(200);
       // Revisit the competing block, not only row zero: its visible row IDs
       // must come from the adopted server snapshot, never the delayed orphan.
@@ -995,6 +1060,9 @@ test(
         contentType: "application/json",
         body: JSON.stringify({
           oldId,
+          earlierReads,
+          winnerRequest: winner.route.request().postDataJSON(),
+          loserRequest: loser.route.request().postDataJSON(),
           winner: winner.body,
           loser: loser.body,
           rebuilt,
@@ -1003,10 +1071,14 @@ test(
         }),
       });
     } finally {
-      for (const entry of held.values())
-        if (!entry.released)
-          await entry.route.fulfill({ response: entry.response });
-      await page.unrouteAll({ behavior: "wait" });
+      // Track routes before fetch, not just successful replies: an assertion or
+      // fetch failure must not strand an SSRM slot or make unrouteAll wait forever.
+      cleaningUp = true;
+      try {
+        await Promise.all([...pendingRoutes].map((route) => route.abort()));
+      } finally {
+        await page.unrouteAll({ behavior: "wait" });
+      }
     }
   },
 );
@@ -1109,7 +1181,7 @@ for (const initiallyEmpty of [false, true]) {
         steps: [
           initiallyEmpty
             ? "upload disjoint datasets and compare by input"
-            : "upload matching datasets, compare by input, open detail, then make only the synthetic peer inputs disjoint and expire the comparison",
+            : "upload matching datasets, compare by input, open detail, update only the synthetic peer inputs through the public cell-edit API to remove all overlap, then invalidate metadata through the comparison DELETE API",
           "observe a real zero-row comparison with no old detail or summary rows",
           "call the existing real grid API for non-purge and purge refresh without clearing the comparison ID",
           initiallyEmpty
@@ -1117,6 +1189,11 @@ for (const initiallyEmpty of [false, true]) {
             : "sort the empty result and observe that it remains empty without another POST",
         ],
         backendChecks: [
+          ...(initiallyEmpty
+            ? []
+            : [
+                "public cell edits preserve the synthetic peer row IDs and outputs and leave zero shared input values in Postgres",
+              ]),
           "the real comparison endpoint returns a server-minted ID and zero row/page counts",
           "each same-ID refresh completes locally with no additional comparison POSTs during a bounded observation window",
           initiallyEmpty
@@ -1140,15 +1217,72 @@ for (const initiallyEmpty of [false, true]) {
       let requestsBeforeRollover = requests.length;
       let terminalId = first.result.metadata.compare_id;
       if (!initiallyEmpty) {
+        // Lifecycle budget plus UI_READY for cell edits and ASYNC_JOB for their
+        // PG readback. Comparison reads PG directly, so no CDC budget applies.
+        test.setTimeout(720_000);
         await openEarlierDrawer(page, state);
-        // Mutate only this synthetic actor's input cells. The endpoint itself
-        // computes the now-empty join and emits its real metadata-only result.
-        const changed = await probe.pg<{ id: string }>(
-          `UPDATE model_hub_cell SET value = 'disjoint-' || value
-           WHERE dataset_id = $1 AND column_id = $2 AND NOT deleted RETURNING id`,
-          [right.id, right.columns[0].id],
-        );
+        const changed = right.rows.map((row) => ({
+          ...row,
+          input: `disjoint-${row.input}`,
+        }));
         expect(changed).toHaveLength(32);
+        await test.step(
+          "make only the synthetic peer join values disjoint through the cell-edit API",
+          async () => {
+            for (const row of changed) {
+              // Same public write as DATA-E2E-002, pinned from
+              // DatasetUpdateCellValueRequestSerializer; not a SQL mutation.
+              const updated = await actor.api.post<{
+                status: boolean;
+                result: string;
+              }>(updateCellPath(right.id), {
+                column_id: right.columns[0].id,
+                row_id: row.row_id,
+                new_value: row.input,
+              });
+              // UpdateCellValueView / DevelopDatasetMessageResponseSerializer.
+              expect(updated).toEqual({
+                status: true,
+                result: "Cell value updated successfully",
+              });
+            }
+          },
+          { timeout: UI_READY },
+        );
+        await expect
+          .poll(
+            () =>
+              probe.pg<SourceRow>(
+                `SELECT i.row_id, i.value AS input, o.value AS output FROM model_hub_cell i
+                 JOIN model_hub_cell o ON o.dataset_id = i.dataset_id AND o.row_id = i.row_id
+                 WHERE i.dataset_id = $1 AND i.column_id = $2 AND o.column_id = $3
+                 AND NOT i.deleted AND NOT o.deleted ORDER BY i.value`,
+                [right.id, right.columns[0].id, right.columns[1].id],
+              ),
+            POLL.ASYNC_JOB,
+          )
+          .toEqual(changed);
+        const overlap = await probe.pg<{ n: string }>(
+          `SELECT count(*) AS n FROM model_hub_cell l
+           JOIN model_hub_cell r ON r.value = l.value
+           WHERE l.dataset_id = $1 AND l.column_id = $2
+             AND r.dataset_id = $3 AND r.column_id = $4
+             AND NOT l.deleted AND NOT r.deleted`,
+          [left.id, left.columns[0].id, right.id, right.columns[0].id],
+        );
+        expect(overlap).toEqual([{ n: "0" }]);
+        await info.attach("public-cell-edits-zero-overlap", {
+          contentType: "application/json",
+          body: JSON.stringify({
+            datasetId: right.id,
+            inputColumnId: right.columns[0].id,
+            before: right.rows,
+            after: changed,
+            overlap,
+          }),
+        });
+        // No narrow public expiry hook exists. The supported DELETE removes
+        // metadata synchronously, exercising a real nonempty -> empty rebuild.
         await actor.api.delete(deletePath(first.result.metadata.compare_id));
         requestsBeforeRollover = requests.length;
         const emptyResponse = page.waitForResponse(
