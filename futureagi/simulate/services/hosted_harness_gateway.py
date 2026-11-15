@@ -48,6 +48,7 @@ from simulate.services.hosted_harness import (
     activate_attempt_capability,
     executions_without_result,
     finish_deferred_delete,
+    keep_delivered_attempt,
     record_cleanup,
     register_attempt,
     request_cancellation,
@@ -4386,49 +4387,11 @@ class HostedHarnessGateway:
 
     def _keep_delivered_results(self, attempt: HostedHarnessAttempt) -> bool:
         """Keep the Run of an attempt whose every call delivered its result, whatever
-        ended the guest, and say whether it did. The results are what the run page and a
-        check run read.
-
-        When the guest's terminal event was lost, the platform records its own ending, as
-        it does for a cancel: a reason no guest sends, and terminal_event_received stays
-        False. A completed ending the guest sent stands, and manifest_acked stays False as
-        the record of a manifest that never arrived. An ending the guest reported as
-        failed or canceled is its own.
-
-        A failure an earlier poll recorded (an unreachable sandbox whose delete was still
-        in progress, before a late result landed) does not describe the Run kept here, so
-        it is cleared.
-        """
+        ended the guest, and say whether it did (`keep_delivered_attempt`). The results are
+        what the run page and a check run read."""
         if executions_without_result(attempt.job, attempt.attempt_number) != []:
             return False
-        if attempt.terminal_event_received:
-            if attempt.terminal_stage != "completed":
-                return False
-            logger.warning(
-                "hosted run kept with every result in attempt=%s provider_ref=%s",
-                attempt.id,
-                attempt.provider_ref,
-            )
-        elif attempt.terminal_reason != "terminal_event_lost":
-            # An earlier poll that recorded this ending already logged it.
-            attempt.terminal_stage = "completed"
-            attempt.terminal_reason = "terminal_event_lost"
-            structlog_logger.warning(
-                "hosted_run_completed_by_platform",
-                job_id=str(attempt.job_id),
-                attempt_id=str(attempt.id),
-                reason="terminal_event_lost",
-            )
-        attempt.terminal_failure = None
-        attempt.save(
-            update_fields=[
-                "terminal_stage",
-                "terminal_reason",
-                "terminal_failure",
-                "updated_at",
-            ]
-        )
-        return True
+        return keep_delivered_attempt(attempt)
 
     def reconcile_completed(
         self, attempt: HostedHarnessAttempt

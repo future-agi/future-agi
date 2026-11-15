@@ -1692,6 +1692,52 @@ def executions_without_result(
     )
 
 
+def keep_delivered_attempt(attempt: HostedHarnessAttempt) -> bool:
+    """Keep the Run of an attempt whose every call delivered its result, whatever ended the
+    guest, and say whether it did. The caller has checked that no result is missing.
+
+    When the guest's terminal event was lost, the platform records its own ending, as it does
+    for a cancel: a reason no guest sends, and terminal_event_received stays False. A completed
+    ending the guest sent stands, and manifest_acked stays False as the record of a manifest
+    that never arrived. An ending the guest reported as failed or canceled is its own, and a
+    cancellation stays one.
+
+    A failure the platform recorded earlier (an unreachable sandbox whose delete was still in
+    progress, before the last result landed) does not describe the Run kept here, so it is
+    cleared.
+    """
+    if attempt.terminal_stage == "canceled":
+        return False
+    if attempt.terminal_event_received:
+        if attempt.terminal_stage != "completed":
+            return False
+        logger.warning(
+            "hosted_run_kept_with_every_result_in",
+            attempt_id=str(attempt.id),
+            provider_ref=str(attempt.provider_ref),
+        )
+    elif attempt.terminal_reason != "terminal_event_lost":
+        # An earlier poll that recorded this ending already logged it.
+        attempt.terminal_stage = "completed"
+        attempt.terminal_reason = "terminal_event_lost"
+        logger.warning(
+            "hosted_run_completed_by_platform",
+            job_id=str(attempt.job_id),
+            attempt_id=str(attempt.id),
+            reason="terminal_event_lost",
+        )
+    attempt.terminal_failure = None
+    attempt.save(
+        update_fields=[
+            "terminal_stage",
+            "terminal_reason",
+            "terminal_failure",
+            "updated_at",
+        ]
+    )
+    return True
+
+
 def scope_dispatch_to_rerun(dispatch_payload: dict[str, Any]) -> dict[str, Any]:
     """Narrow a Run's dispatch document to the executions an in-run re-run chose."""
 
@@ -2883,7 +2929,17 @@ def record_cleanup(
             else None
         )
         # With every call's result in, a relaunch would only run them and charge them
-        # again: the attempt ends here instead.
+        # again: the attempt ends here instead. A last result can land while the sandbox is
+        # deleted, after the platform recorded its own failure; the Run is then kept as the
+        # gateway keeps one, under this lock, so it does not end failed.
+        if (
+            retry_pending
+            and missing == []
+            and keep_delivered_attempt(attempt)
+            and attempt.state != HostedHarnessAttempt.State.SUPERSEDED
+        ):
+            attempt.state = _attempt_terminal_state(attempt)
+            attempt.save(update_fields=["state", "updated_at"])
         if retry_pending and missing != []:
             # Whatever ended the attempt, the retry runs only the calls it left without
             # a result, as an in-run re-run runs only its chosen calls. With no result
