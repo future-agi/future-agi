@@ -942,6 +942,7 @@ const AgentGraphInner = ({
   data,
   isLoading,
   isError,
+  errorMessage,
   pollingPaused,
   direction = "LR",
   onNodeClick,
@@ -1002,7 +1003,8 @@ const AgentGraphInner = ({
         }}
       >
         <Typography variant="body2" sx={{ fontSize: 12 }}>
-          We couldn&apos;t load the agent graph. Please retry in a moment.
+          {errorMessage ||
+            "We couldn't load the agent graph. Please retry in a moment."}
         </Typography>
       </Box>
     );
@@ -1115,6 +1117,7 @@ AgentGraphInner.propTypes = {
   data: PropTypes.object,
   isLoading: PropTypes.bool,
   isError: PropTypes.bool,
+  errorMessage: PropTypes.string,
   pollingPaused: PropTypes.bool,
   direction: PropTypes.oneOf(["LR", "TB"]),
   onNodeClick: PropTypes.func,
@@ -1142,6 +1145,7 @@ AgentGraph.propTypes = {
   data: PropTypes.object,
   isLoading: PropTypes.bool,
   isError: PropTypes.bool,
+  errorMessage: PropTypes.string,
   pollingPaused: PropTypes.bool,
   direction: PropTypes.oneOf(["LR", "TB"]),
   onNodeClick: PropTypes.func,

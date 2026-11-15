@@ -2139,6 +2139,7 @@ describe.each(["trace", "span"])("%s grid after a drawer tag save", (kind) => {
       project_id: "project-1",
       tags: [{ name: "sdk" }],
       manual_tags: [],
+      tag_assignment_exists: false,
       source_tag_names: ["sdk"],
       tag_revision: 0,
       tag_target: {
@@ -2146,6 +2147,10 @@ describe.each(["trace", "span"])("%s grid after a drawer tag save", (kind) => {
         trace_id: traceId,
         span_id: spanId,
         start_hour: "2026-08-08T00:00:00+00:00",
+        observation_type: "span",
+        service_name: "svc",
+        expected_start_time: `2026-08-08T00:00:${String(index).padStart(2, "0")}.000000+00:00`,
+        expected_version: "1",
       },
     };
   };
@@ -2198,6 +2203,7 @@ describe.each(["trace", "span"])("%s grid after a drawer tag save", (kind) => {
       manual_tags: [{ name: "reviewed", color: "#123456" }],
       source_tag_names: ["sdk"],
       tag_revision: 3,
+      tag_assignment_exists: true,
     };
     act(() =>
       // The drawer's entity is the trace, or the root span with its parent.

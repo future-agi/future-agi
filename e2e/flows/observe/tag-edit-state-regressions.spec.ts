@@ -30,6 +30,7 @@ interface Target {
 }
 interface Tagged {
   tags: Tag[]; source_tag_names: string[]; manual_tags: Tag[]; tag_revision: number; tag_target: Target;
+  tag_assignment_exists: boolean;
 }
 interface Span extends Tagged { id: string }
 interface Entry { observation_span: Span; children: Entry[] }
@@ -152,6 +153,7 @@ async function seedScenario(page: Page, actor: TestActor, probe: StateProbe, inf
     expect([...value.source_tag_names].sort(), 'C: selected physical source tags').toEqual([...entity.sdk].sort());
     expect(sortedTags(value.manual_tags), 'C: exact manual names and rich colors').toEqual(sortedTags(entity.manual));
     expect(value.tag_revision, 'C: exact acknowledged revision').toBe(entity.revision);
+    expect(value.tag_assignment_exists, 'C: explicit assignment presence, never inferred from the display preview').toBe(entity.revision > 0);
     expect(names(value.tags), 'C: exact effective union').toEqual([...entity.sdk, ...entity.manual.map(t => t.name)].sort());
     for (const manual of entity.manual) expect(value.tags.find(t => t.name === manual.name)).toEqual(manual);
     expect(value.tag_target).toEqual(entity.target);
@@ -219,6 +221,7 @@ async function seedScenario(page: Page, actor: TestActor, probe: StateProbe, inf
     });
     expect(result.result.manual_tags).toEqual(manual);
     expect(result.result.tag_revision).toBe(oldRevision + 1);
+    expect(result.result.tag_assignment_exists).toBe(true);
     expect([...result.result.source_tag_names].sort()).toEqual([...entity.sdk].sort());
     expect(names(result.result.tags)).toEqual([...entity.sdk, ...manual.map(t => t.name)].sort());
   };
@@ -233,7 +236,7 @@ async function seedScenario(page: Page, actor: TestActor, probe: StateProbe, inf
     expect(usage).toEqual([{ tokens: '29', cost: 0.5 }]);
   };
   await readback('seed');
-  return { prefix, projectId, traceIds, entities, detail, readback, acknowledge, checkSave, waitSave, conserve };
+  return { prefix, projectId, traceIds, entities, detail, readback, acknowledge, checkSave, waitSave, conserve, sources };
 }
 
 // DisplayPanel / ColumnVisibilityDropdown. Actual controls, not AG Grid API injection.
@@ -289,17 +292,19 @@ for (const kind of ['trace', 'span'] as const) {
         `open alpha’s ${kind === 'trace' ? 'root' : 'child'} in the drawer and add another label`,
         'reload to traverse row bounding again, select exactly alpha and beta, and use Actions > Add tags',
         'reload and reopen both targets to verify each retained its own original labels plus the intended additions',
+        ...(kind === 'span' ? ['hold a real child save acknowledgment, ingest a newer version of the same source, reload the grid, then release the old acknowledgment and save again without losing the newer SDK tag or target'] : []),
       ],
       backendChecks: [
         'A: exact physical source identities belong to the actor project and expose the independently seeded SDK sets',
         'B: each browser save sends the intended physical target, current revision and complete manual replacement, including each bulk target’s distinct labels',
         'C: fresh trace/span lists, replayed browser queries and detail reads return exact source/manual/effective tags, rich colors and revisions',
         'D: only intended PostgreSQL assignments change and each bulk target preserves its own manual tags',
-        'E: ClickHouse source rows, versions, tags, attributes and nonzero usage remain unchanged',
+        'E: ClickHouse source rows, versions, tags, attributes and nonzero usage remain unchanged through grid, drawer and bulk additions',
+        ...(kind === 'span' ? ['F: after deliberate source replay, a delayed older-source acknowledgment preserves the loaded SDK tag and subsequent write target; unrelated rows and the refreshed sources remain unchanged'] : []),
       ],
     }),
   }, async ({ page, actor, probe }, info) => {
-    test.setTimeout(540_000); // 30s setup + 15s ingestion + 8 × 60s UI + 15s headroom.
+    test.setTimeout(kind === 'span' ? 780_000 : 540_000); // Span adds 15s replay + 3 × 60s UI + 45s readback/cleanup.
     page.setDefaultTimeout(UI_READY);
     const s = await seedScenario(page, actor, probe, info, 'large');
     const [alpha, beta] = s.entities.filter(e => e.root === (kind === 'trace'));
@@ -397,6 +402,9 @@ for (const kind of ['trace', 'span'] as const) {
       await s.readback(`final-${i}`); await s.conserve();
       await info.attach(`final-${kind}-${i}`, { body: await page.screenshot(), contentType: 'image/png' });
     }, { timeout: UI_READY });
+    if (kind === 'span') await test.step('9: retain a refreshed source across a delayed older-source acknowledgment', async () => {
+      await refreshedSourceAcknowledgment(page, actor, info, s, alpha);
+    }, { timeout: 240_000 });
   });
 }
 
@@ -429,6 +437,104 @@ async function holdResponses(page: Page, path: string, method: string) {
     // held real responses first so unroute cannot race a second handling.
     close: async () => { gate.resolve(); await Promise.all(running); await page.unroute(pattern, handler); },
   };
+}
+
+/** Real OTLP replay and unmodified responses: no injected source or assignment metadata. */
+async function refreshedSourceAcknowledgment(
+  page: Page, actor: TestActor, info: TestInfo,
+  s: Awaited<ReturnType<typeof seedScenario>>, entity: Oracle,
+) {
+  const root = s.entities.find(e => e.root && e.traceId === entity.traceId)!;
+  const beforeReplay = await s.sources();
+  await page.goto(`/dashboard/observe/${s.projectId}/llm-tracing?selectedTab=spans`, { waitUntil: 'domcontentloaded' });
+  await showTagColumns(page, 'span');
+  const row = page.locator('.clean-data-table:visible .ag-row').filter({ has: page.locator('[col-id="span_name"]', { hasText: entity.name }) });
+  await expect(row).toHaveCount(1, { timeout: UI_READY });
+  const cell = row.locator('[col-id="tags"]');
+  const originalTarget = { ...entity.target }, originalRevision = entity.revision;
+  const first = tag(`${s.prefix}-version-held`), second = tag(`${s.prefix}-version-current`);
+  const nextManual = [...entity.manual, first], sdkNext = `${s.prefix}-sdk-v2`;
+  const ackGate = barrier(), ackFetched = barrier();
+  const active: Promise<void>[] = [];
+  let ackBody: { result: Tagged } | undefined;
+  let ackRequest: unknown;
+  const writePattern = (url: URL) => url.pathname === SPAN_TAGS;
+  const writeHandler = async (route: Route) => {
+    if (route.request().method() !== 'POST') { await route.continue(); return; }
+    const work = (async () => {
+      const response = await route.fetch();
+      ackRequest = route.request().postDataJSON();
+      ackBody = await response.json();
+      expect(response.status()).toBe(200);
+      ackFetched.resolve();
+      await ackGate.promise; await route.fulfill({ response });
+    })();
+    active.push(work); await work;
+  };
+  await page.route(writePattern, writeHandler);
+  let readHold: Awaited<ReturnType<typeof holdResponses>> | undefined;
+  const req = await request.newContext();
+  try {
+    await cell.getByRole('button', { name: /^(Add|Edit) tags$/ }).click();
+    const input = page.getByPlaceholder('Add tag...', { exact: true });
+    await input.fill(first.name); await input.press('Enter'); await ackFetched.promise;
+    expect(ackRequest).toEqual({ ...originalTarget, expected_tag_revision: originalRevision, tags: nextManual });
+    expect(ackBody!.result.manual_tags).toEqual(nextManual);
+    expect(ackBody!.result.tag_revision).toBe(originalRevision + 1);
+    s.acknowledge(entity, nextManual);
+    await page.keyboard.press('Escape');
+    // sendTrace root/child timestamps are identical. The original fixture uses millisecond-aligned times.
+    const start = BigInt(Date.parse(originalTarget.expected_start_time)) * 1_000_000n;
+    await sendTrace(req, {
+      collectorUrl: E2E.collectorUrl, apiKey: actor.apiKey, secretKey: actor.secretKey,
+      projectName: s.prefix, traceId: entity.traceId, rootSpanId: root.spanId, childSpanId: entity.spanId,
+      rootName: root.name, childName: entity.name, startTimeUnixNano: start, endTimeUnixNano: start + 50_000_000n,
+      rootAttributes: { 'fi.span.kind': 'chain', 'tag.tags': root.sdk },
+      childAttributes: { 'tag.tags': [sdkNext], 'gen_ai.usage.input_tokens': 11,
+        'gen_ai.usage.output_tokens': 3, 'gen_ai.cost.total': 0.25 },
+    });
+    await expect.poll(async () => flatten((await s.detail(entity.traceId)).result.observation_spans)
+      .find(span => span.id === entity.spanId)?.source_tag_names, POLL.SPAN_VISIBLE).toEqual([sdkNext]);
+    entity.sdk = [sdkNext];
+    const detail = await s.detail(entity.traceId);
+    for (const changed of [root, entity]) changed.target = flatten(detail.result.observation_spans)
+      .find(span => span.id === changed.spanId)!.tag_target;
+    const refreshed = page.waitForResponse(r => new URL(r.url()).pathname === SPAN_LIST && r.status() === 200, { timeout: UI_READY });
+    // ObserveHeader.jsx: native refresh keeps the mounted grid and in-flight save handler alive.
+    await page.getByRole('button', { name: /^Reload/ }).click();
+    const response = await refreshed;
+    const fresh = ((await response.json()) as ListResult).result.table.find(r => r.span_id === entity.spanId)!;
+    expect(fresh.source_tag_names).toEqual([sdkNext]);
+    expect(fresh.tag_revision).toBe(originalRevision + 1);
+    expect(fresh.tag_target).toEqual(entity.target);
+    expect(fresh.tag_target.expected_version).not.toBe(originalTarget.expected_version);
+    await expect(cell.getByText(sdkNext, { exact: true })).toBeVisible({ timeout: UI_READY });
+    const identities = () => page.locator('.clean-data-table:visible .ag-row').evaluateAll(rows => rows.map(r => r.getAttribute('row-id')).sort());
+    const scroll = () => page.locator('.clean-data-table:visible .ag-body-viewport').evaluate(e => e.scrollTop);
+    const beforeDelivery = { identities: await identities(), scroll: await scroll(), sources: await s.sources() };
+    expect(beforeDelivery.sources.spans.filter(r => r.trace_id !== entity.traceId)).toEqual(beforeReplay.spans.filter(r => r.trace_id !== entity.traceId));
+    // Hold actual post-save list responses so a refetch cannot conceal bad acknowledgment reconciliation.
+    readHold = await holdResponses(page, SPAN_LIST, response.request().method());
+    const delivered = s.waitSave(entity); ackGate.resolve(); await delivered;
+    await Promise.all(active); await page.unroute(writePattern, writeHandler);
+    await attach(info, 'delayed-source-acknowledgment', { ackRequest, ackBody, fresh, beforeDelivery });
+    await expect(cell.getByText(sdkNext, { exact: true }), 'F: newer SDK tag survives older-source acknowledgment')
+      .toBeVisible({ timeout: UI_READY });
+    expect(await identities(), 'F: physical row identities remain stable').toEqual(beforeDelivery.identities);
+    expect(await scroll(), 'F: grid scroll remains stable').toBe(beforeDelivery.scroll);
+    await info.attach('refreshed-source-after-delayed-ack', { body: await page.screenshot(), contentType: 'image/png' });
+    // A second actual save proves retained target metadata, not just a correctly painted chip.
+    await cell.getByRole('button', { name: /^(Add|Edit) tags$/ }).click();
+    const nextInput = page.getByPlaceholder('Add tag...', { exact: true });
+    await nextInput.fill(second.name); const saved = s.waitSave(entity); await nextInput.press('Enter');
+    const replacement = [...entity.manual, second];
+    await s.checkSave(await saved, entity, replacement); s.acknowledge(entity, replacement);
+    expect(await s.sources(), 'F: acknowledgment and subsequent save do not mutate refreshed sources').toEqual(beforeDelivery.sources);
+    await readHold.close(); await s.readback('refreshed-source-final');
+  } finally {
+    ackGate.resolve(); await Promise.all(active); await page.unroute(writePattern, writeHandler);
+    await readHold?.close(); await req.dispose();
+  }
 }
 
 test('OBS-E2E-068: rapid sibling-root edits share manual labels without sharing SDK tags', {

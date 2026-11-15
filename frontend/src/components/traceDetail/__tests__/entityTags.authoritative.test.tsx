@@ -619,7 +619,7 @@ describe("explicit legacy editing contract", () => {
     render(view(entity));
     expect(screen.getByText("Add test tag")).toBeDisabled();
     const { result } = renderHook(() => useSaveEntityTags());
-    await expect(result.current({ entity, tags: [{ name: "C" }] }))
+    await expect(result.current({ entity, tags: [{ name: "C" }], base: undefined }))
       .rejects.toMatchObject({ code: "tag_scope_required" });
     expect(patch).not.toHaveBeenCalled();
   });

@@ -27,6 +27,7 @@ const row = (span, { parent = "", sdk = [], revision = 0, ...rest } = {}) => ({
   source_tag_names: sdk,
   manual_tags: [],
   tag_revision: revision,
+  tag_assignment_exists: revision > 0,
   tag_target: target(span),
   ...rest,
 });
@@ -44,9 +45,213 @@ const result = (sdk, revision = 1) => ({
   manual_tags: [reviewed],
   source_tag_names: sdk,
   tag_revision: revision,
+  tag_assignment_exists: revision > 0,
 });
 
 describe("applySavedEntityTags", () => {
+  it.each([
+    ["equal manual revision", { expected_version: "2" }, 1],
+    ["advancing manual revision", { expected_version: "2" }, 0],
+    [
+      "changed start time",
+      { expected_start_time: "2026-11-08T10:15:21.123456+00:00" },
+      1,
+    ],
+    ["missing loaded version", { expected_version: undefined }, 1],
+  ])(
+    "preserves refreshed source metadata with %s",
+    (_, reference, revision) => {
+      const savedEntity = row("child", { parent: "root", sdk: ["sdk-old"] });
+      const loaded = row("child", {
+        parent: "root",
+        sdk: ["sdk-new"],
+        revision,
+        tags: [{ name: "sdk-new", color: "blue", payload: { owner: "sdk" } }],
+        tag_target: target("child", reference),
+      });
+      const unrelated = row("unrelated", { parent: "root", sdk: ["other"] });
+      const cachedPage = [loaded, unrelated];
+      const previousUnrelated = structuredClone(unrelated);
+      const loadedTarget = loaded.tag_target;
+      const api = gridApi(cachedPage);
+
+      expect(
+        applySavedEntityTags(api, {
+          result: result(["sdk-old"]),
+          entity: savedEntity,
+          type: "span",
+          gridKind: "span",
+        }),
+      ).toBe(1);
+      expect(loaded.source_tag_names).toEqual(["sdk-new"]);
+      expect(loaded.tags).toEqual([
+        { name: "sdk-new", color: "blue", payload: { owner: "sdk" } },
+        reviewed,
+      ]);
+      expect(loaded.manual_tags).toEqual([reviewed]);
+      expect(loaded.tag_revision).toBe(1);
+      expect(loaded.tag_assignment_exists).toBe(true);
+      expect(loaded.tag_target).toBe(loadedTarget);
+      expect(cachedPage[0]).toBe(loaded);
+      expect(cachedPage[1]).toBe(unrelated);
+      expect(unrelated).toEqual(previousUnrelated);
+      expect(api.refreshCells).toHaveBeenCalledExactlyOnceWith({
+        rowNodes: [api.nodes[0]],
+        force: true,
+      });
+    },
+  );
+
+  it.each(["expected_start_time", "expected_version"])(
+    "does not equate missing saved %s with a loaded reference",
+    (field) => {
+      const loaded = row("child", { parent: "root", sdk: ["sdk-new"] });
+      const entity = row("child", {
+        parent: "root",
+        tag_target: target("child", { [field]: undefined }),
+      });
+      expect(
+        applySavedEntityTags(gridApi([loaded]), {
+          result: result(["sdk-old"]),
+          entity,
+          type: "span",
+          gridKind: "span",
+        }),
+      ).toBe(1);
+      expect(loaded.tags).toEqual([{ name: "sdk-new" }, reviewed]);
+    },
+  );
+
+  it.each([
+    "project_id",
+    "trace_id",
+    "span_id",
+    "start_hour",
+    "observation_type",
+    "service_name",
+    "expected_start_time",
+    "expected_version",
+  ])("never treats two references missing %s as complete equality", (field) => {
+    const loaded = row("root", {
+      sdk: ["sdk-new"],
+      tag_target: target("root", { [field]: undefined }),
+    });
+    const entity = { ...loaded, tag_target: { ...loaded.tag_target } };
+    applySavedEntityTags(gridApi([loaded]), {
+      result: result(["sdk-old"]),
+      entity,
+      type: "trace",
+      gridKind: "trace",
+    });
+    expect(loaded.source_tag_names).toEqual(["sdk-new"]);
+    expect(loaded.tags.some((tag) => tag.name === "sdk-old")).toBe(false);
+  });
+
+  it.each([
+    "project_id",
+    "trace_id",
+    "span_id",
+    "start_hour",
+    "observation_type",
+    "service_name",
+    "expected_start_time",
+    "expected_version",
+  ])("preserves source metadata when saved %s differs", (field) => {
+    const loaded = row("root", { sdk: ["sdk-new"] });
+    const entity = row("root", {
+      tag_target: target("root", { [field]: "different" }),
+    });
+    const loadedTarget = loaded.tag_target;
+    const updated = applySavedEntityTags(gridApi([loaded]), {
+      result: result(["sdk-old"]),
+      entity,
+      type: "trace",
+      gridKind: "trace",
+    });
+    expect(updated).toBe(["project_id", "trace_id"].includes(field) ? 0 : 1);
+    expect(loaded.source_tag_names).toEqual(["sdk-new"]);
+    expect(loaded.tag_target).toBe(loadedTarget);
+  });
+
+  it.each([
+    "project_id",
+    "trace_id",
+    "span_id",
+    "start_hour",
+    "expected_start_time",
+    "expected_version",
+  ])(
+    "does not treat a blank required %s as a complete source reference",
+    (field) => {
+      const loaded = row("root", {
+        sdk: ["sdk-new"],
+        tag_target: target("root", { [field]: "" }),
+      });
+      applySavedEntityTags(gridApi([loaded]), {
+        result: result(["sdk-old"]),
+        entity: { ...loaded },
+        type: "trace",
+        gridKind: "trace",
+      });
+      expect(loaded.source_tag_names).toEqual(["sdk-new"]);
+    },
+  );
+
+  it.each(["observation_type", "service_name"])(
+    "accepts a complete matching reference with valid blank %s",
+    (field) => {
+      // These two coordinates explicitly allow blanks in EntityTagsUpdateSerializer.
+      const loaded = row("child", {
+        parent: "root",
+        tag_target: target("child", { [field]: "" }),
+      });
+      expect(
+        applySavedEntityTags(gridApi([loaded]), {
+          result: result(["sdk-confirmed"]),
+          entity: { ...loaded },
+          type: "span",
+          gridKind: "span",
+        }),
+      ).toBe(1);
+      expect(loaded.source_tag_names).toEqual(["sdk-confirmed"]);
+    },
+  );
+
+  it("does not unlock incomplete refreshed source metadata with an old source acknowledgement", () => {
+    const loaded = row("child", {
+      parent: "root",
+      source_tag_names: '["sdk-new",…',
+      tag_target: target("child", { expected_version: "2" }),
+    });
+    const api = gridApi([loaded]);
+    expect(
+      applySavedEntityTags(api, {
+        result: result(["sdk-old"]),
+        entity: row("child", { parent: "root" }),
+        type: "span",
+        gridKind: "span",
+      }),
+    ).toBe(0);
+    expect(loaded.tag_revision).toBe(0);
+    expect(canEditEntityTags(loaded)).toBe(false);
+    expect(api.refreshCells).not.toHaveBeenCalled();
+  });
+
+  it("accepts source names only when the full source reference genuinely matches", () => {
+    const loaded = row("child", { parent: "root", sdk: ["sdk-before"] });
+    const loadedTarget = loaded.tag_target;
+    expect(
+      applySavedEntityTags(gridApi([loaded]), {
+        result: result(["sdk-confirmed"]),
+        entity: { ...loaded, tag_target: { ...loadedTarget } },
+        type: "span",
+        gridKind: "span",
+      }),
+    ).toBe(1);
+    expect(loaded.tags).toEqual([{ name: "sdk-confirmed" }, reviewed]);
+    expect(loaded.tag_target).toBe(loadedTarget);
+  });
+
   it("updates the trace row from a save on its root span", () => {
     const traceRow = row("root", { sdk: ["sdk-a"] });
     delete traceRow.parent_span_id;

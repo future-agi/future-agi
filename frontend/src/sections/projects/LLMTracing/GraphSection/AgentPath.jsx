@@ -198,6 +198,7 @@ const AgentPathInner = ({
   data,
   isLoading,
   isError,
+  errorMessage,
   onNodeClick,
   isFullscreen = false,
   onToggleFullscreen,
@@ -293,7 +294,8 @@ const AgentPathInner = ({
         }}
       >
         <Typography color="text.secondary" variant="body2">
-          We couldn&apos;t load the agent path. Please retry in a moment.
+          {errorMessage ||
+            "We couldn't load the agent path. Please retry in a moment."}
         </Typography>
       </Box>
     );
@@ -453,6 +455,7 @@ AgentPathInner.propTypes = {
   data: PropTypes.object,
   isLoading: PropTypes.bool,
   isError: PropTypes.bool,
+  errorMessage: PropTypes.string,
   onNodeClick: PropTypes.func,
   isFullscreen: PropTypes.bool,
   onToggleFullscreen: PropTypes.func,
@@ -476,6 +479,7 @@ AgentPath.propTypes = {
   data: PropTypes.object,
   isLoading: PropTypes.bool,
   isError: PropTypes.bool,
+  errorMessage: PropTypes.string,
   onNodeClick: PropTypes.func,
 };
 

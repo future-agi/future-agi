@@ -492,6 +492,11 @@ describe("LLMTracingView header select-all annotation queue contract", () => {
       project_id: "project-1",
       trace_id: "trace-1",
       span_id: "root",
+      start_hour: "2026-11-08T10:00:00+00:00",
+      observation_type: "span",
+      service_name: "svc",
+      expected_start_time: "2026-11-08T10:15:20.123456+00:00",
+      expected_version: "1",
     };
     const savedEntity = { tag_target: target, tag_revision: 0 };
     const result = {
@@ -499,6 +504,7 @@ describe("LLMTracingView header select-all annotation queue contract", () => {
       manual_tags: [{ name: "updated" }],
       source_tag_names: [],
       tag_revision: 1,
+      tag_assignment_exists: true,
     };
     const spanTarget = { ...target, span_id: "child" };
     const rows = [

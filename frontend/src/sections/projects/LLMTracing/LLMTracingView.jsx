@@ -249,6 +249,7 @@ import {
   tabTypeForSelectedTab,
 } from "src/api/project/saved-views";
 import { getRequestErrorMessage } from "src/utils/errorUtils";
+import { nonRetryableQueryErrorMessage } from "src/utils/queryReadState";
 import { getDefaultDateRangeForMode } from "../dateRangeDefaults";
 import { useCursorAttributeInventory } from "./useCursorAttributeInventory";
 import { useWorkspace } from "src/contexts/WorkspaceContext";
@@ -303,7 +304,7 @@ const AgentVisualizationProjectScopePrompt = () => (
  */
 export const CompareAgentGraph = ({ projectId, filters, onNodeClick }) => {
   const hasProjectScope = Boolean(projectId);
-  const { data, isLoading, isError, pollingPaused } = useAgentGraph(
+  const { data, isLoading, isError, error, pollingPaused } = useAgentGraph(
     projectId,
     filters,
     {
@@ -325,6 +326,7 @@ export const CompareAgentGraph = ({ projectId, filters, onNodeClick }) => {
         data={data}
         isLoading={isLoading}
         isError={isError}
+        errorMessage={nonRetryableQueryErrorMessage(error)}
         pollingPaused={pollingPaused}
         onNodeClick={onNodeClick}
       />
@@ -1464,6 +1466,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
     data: agentGraphData,
     isLoading: isAgentGraphLoading,
     isError: isAgentGraphError,
+    error: agentGraphError,
     pollingPaused: isAgentGraphPollingPaused,
   } = useAgentGraph(primaryAgentGraphProjectId, primaryAgentGraphFilters, {
     enabled:
@@ -1477,6 +1480,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
     data: compareAgentPathData,
     isLoading: isCompareAgentPathLoading,
     isError: isCompareAgentPathError,
+    error: compareAgentPathError,
   } = useAgentGraph(compareAgentGraphProjectId, compareAgentGraphFilters, {
     enabled:
       Boolean(compareAgentGraphProjectId) &&
@@ -3964,6 +3968,9 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                     data={agentGraphData}
                     isLoading={isAgentGraphLoading}
                     isError={isAgentGraphError}
+                    errorMessage={nonRetryableQueryErrorMessage(
+                      agentGraphError,
+                    )}
                     pollingPaused={isAgentGraphPollingPaused}
                     onNodeClick={handleAgentNodeClick}
                   />
@@ -4043,6 +4050,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                   data={agentGraphData}
                   isLoading={isAgentGraphLoading}
                   isError={isAgentGraphError}
+                  errorMessage={nonRetryableQueryErrorMessage(agentGraphError)}
                   onNodeClick={handleAgentNodeClick}
                 />
               </Box>
@@ -4079,6 +4087,9 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                     data={compareAgentPathData}
                     isLoading={isCompareAgentPathLoading}
                     isError={isCompareAgentPathError}
+                    errorMessage={nonRetryableQueryErrorMessage(
+                      compareAgentPathError,
+                    )}
                     onNodeClick={handleAgentNodeClick}
                   />
                 </Box>
