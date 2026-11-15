@@ -217,15 +217,16 @@ def _run_eval(eval_template, inputs, model, user, workspace, eval_config=None):
 
         logger.exception(f"Standalone Eval | Failed: user: {user.id}, error: {e}")
 
-        api_call_log_row.status = APICallStatusChoices.ERROR.value
-        config_dict = json.loads(api_call_log_row.config)
-        config_dict.update(
-            {
-                "output": {"output": None, "reason": jev_error_message(e) or str(e)},
-            }
-        )
-        api_call_log_row.config = json.dumps(config_dict)
-        api_call_log_row.save()
+        if api_call_log_row is not None:
+            api_call_log_row.status = APICallStatusChoices.ERROR.value
+            config_dict = json.loads(api_call_log_row.config)
+            config_dict.update(
+                {
+                    "output": {"output": None, "reason": jev_error_message(e) or str(e)},
+                }
+            )
+            api_call_log_row.config = json.dumps(config_dict)
+            api_call_log_row.save()
 
         raise StandaloneEvaluationError(e)  # noqa: B904
 
