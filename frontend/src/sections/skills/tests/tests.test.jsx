@@ -1345,13 +1345,64 @@ it("shows a missing allowance before consent and disables the paid run with its 
   try {
     mount(setup());
     expect(screen.getByText("Paid runs need a workspace allowance")).toBeVisible();
-    expect(screen.getByText("Ask a workspace admin to set one.")).toBeVisible();
+    expect(screen.getByText("Ask a workspace admin to set an allowance.")).toBeVisible();
+    expect(screen.queryByRole("link", { name: "Set allowance" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Copy request for admin" })).toHaveClass("MuiButton-outlined");
     await configure();
     await reviewPlan();
+    // The provider acknowledgment covers this run's spend, so it is held back (and was not ticked by reviewPlan).
+    const consent = screen.getByLabelText("Send the reviewed files and example inputs to these model providers within this spend stop");
+    expect(consent).toBeDisabled();
+    expect(consent).not.toBeChecked();
+    expect(consent).toHaveAccessibleDescription("Set an allowance first");
     const run = screen.getByRole("button", { name: "Run quick check" });
     expect(run).toBeDisabled();
     expect(run).toHaveAccessibleDescription("Paid runs are off for this workspace.");
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  } finally {
+    api.spend = undefined;
+  }
+});
+
+it("hands a member a request for an admin that names the test and links back to it", async () => {
+  api.spend = { data: { enabled: false, periodLimitUsd: null } };
+  const writeText = vi.fn().mockResolvedValue(undefined);
+  Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
+  window.history.pushState({}, "", "/dashboard/skills/skill?tab=tests");
+  try {
+    mount(setup());
+    await configure();
+    fireEvent.click(screen.getByRole("button", { name: "Copy request for admin" }));
+    expect(await screen.findByText("Copied the request for an admin.")).toHaveAttribute("role", "status");
+    const text = writeText.mock.calls[0][0];
+    expect(text).toMatch(new RegExp(`^Please set a Skills workspace allowance so I can run a test of ${api.skill.name} \\(up to \\$1\\.00\\): http`));
+    const url = new URL(text.slice(text.indexOf("http")));
+    expect(url.pathname).toBe("/dashboard/skills/allowance");
+    expect(url.searchParams.get("returnTo")).toBe("/dashboard/skills/skill?tab=tests");
+  } finally {
+    api.spend = undefined;
+    delete navigator.clipboard;
+    window.history.pushState({}, "", "/");
+  }
+});
+
+it("brings the provider acknowledgment back unticked once an allowance exists", async () => {
+  api.spend = { data: { enabled: false, periodLimitUsd: null } };
+  try {
+    const view = mount(setup());
+    await configure();
+    await reviewPlan();
+    const label = "Send the reviewed files and example inputs to these model providers within this spend stop";
+    expect(screen.getByLabelText(label)).toBeDisabled();
+    api.spend = { data: { enabled: true, periodLimitUsd: "20.00" } };
+    view.rerender(<MemoryRouter initialEntries={["/dashboard/skills/skill?tab=tests"]}>{setup()}</MemoryRouter>);
+    const consent = screen.getByLabelText(label);
+    expect(consent).toBeEnabled();
+    expect(consent).not.toBeChecked();
+    expect(screen.queryByText("Set an allowance first")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Run quick check" })).toBeDisabled();
+    fireEvent.click(consent);
+    expect(consent).toBeChecked();
   } finally {
     api.spend = undefined;
   }

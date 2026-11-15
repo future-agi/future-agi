@@ -222,7 +222,7 @@ test('SKILLS-E2E-022: verify a context repair on the real application and hold f
     await page.getByRole('row', { name: /Original refund failure.*Was failing on v/ }).first().click();
     await page.getByRole('radio', { name: /Disagree/ }).check();
     await page.getByLabel('Why').fill('The answer claims success but the business ledger shows the refund was declined.');
-    await page.getByRole('button', { name: 'Record review' }).click();
+    await page.getByRole('button', { name: 'Record assessment' }).click();
     await expect(page.getByText('Disagrees', { exact: true }).first()).toBeVisible();
     await expect(page.getByText('The answer claims success but the business ledger shows the refund was declined.', { exact: true })).toBeVisible();
     await shot('J2-native-annotation');

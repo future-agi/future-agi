@@ -522,7 +522,7 @@ test('skills walkthrough', async ({ browser, request }) => {
       await scrollTo(packet, 300);
       await chapter(7, 'Review and release', 'Moving production on a context needs a second person. Maya requests it.');
       await click(page.getByRole('button', { name: 'Share run and attach CI result', exact: true }), 1000);
-      const proceed = page.getByRole('link', { name: 'Continue to release review', exact: true }).or(page.getByRole('button', { name: 'Continue to release review', exact: true })).first();
+      const proceed = page.getByRole('link', { name: 'Request release review', exact: true }).or(page.getByRole('button', { name: 'Request release review', exact: true })).first();
       await expect(proceed).toBeVisible();
       await glide(proceed);
       await settle();

@@ -103,11 +103,11 @@ it('opens an attempt with the keyboard, shows disagreement scope and returns foc
   inspect.focus();
   await user.keyboard('{Enter}');
   expect(screen.getByRole('heading', { name: 'Refund', level: 2 })).toBeVisible();
-  // A review is recorded against this one attempt, and says so.
-  expect(screen.getByText('Applies to this attempt: version tested v6 · Refund · run 1')).toBeVisible();
+  // An assessment is recorded against this one run of the case, and says so.
+  expect(screen.getByText('Applies to this run only: version tested v6 · Refund · run 1')).toBeVisible();
   expect(screen.queryByText(/whole run/)).not.toBeInTheDocument();
   expect(screen.getByText('Version tested v6 · Run 1 of 1')).toBeVisible();
-  expect(screen.getByText("Your review is added next to the automatic result; it doesn't change it.")).toBeVisible();
+  expect(screen.getByText("Your assessment is added next to the automatic result; it doesn't change it.")).toBeVisible();
   expect(screen.getByText('Disagrees')).toBeVisible();
   expect(screen.getByText('Wrong business action')).toBeVisible();
   expect(screen.getByText('Case reviewer')).toBeVisible();
@@ -120,7 +120,7 @@ it('continues to the composer with the complete candidate, target and shared run
   h.detail.arms[0] = { variant: 'candidate', version: 7, versionId: 'candidate-id', digest: 'sha256:full-digest' };
   h.prepared = { fingerprint: 'sha256:packet', targetDigest: 'sha256:target' };
   renderPanel();
-  const url = new URL(screen.getByRole('link', { name: 'Continue to release review' }).href);
+  const url = new URL(screen.getByRole('link', { name: 'Request release review' }).href);
   expect(Object.fromEntries(url.searchParams)).toMatchObject({ kind: 'agent_context', subject: 'context', name: 'Support context', candidate: 'candidate-id', number: '7', digest: 'sha256:full-digest', evidence: 'simulation_native:previous', target: 'binding', label: 'production' });
   expect(url.searchParams.has('annotation_revision')).toBe(false);
   expect(screen.getByText(/Packet ready/)).toBeVisible();
@@ -142,10 +142,11 @@ it('explains disabled packet prerequisites and marks the earlier-run scope', () 
   expect(screen.getByText('Fill in the three CI fields to attach your CI run.')).toBeVisible();
   expect(screen.getByRole('button', { name: 'Share run and attach CI result' })).toBeDisabled();
   expect(screen.getByText('This applies to the earlier run, not your current selection.')).toBeVisible();
-  // The earlier result passed for a releasable version, so its release review stays the primary and the
-  // paid rerun steps back.
-  expect(screen.getByRole('link', { name: 'Continue to release review' })).toHaveClass('MuiButton-contained');
-  expect(screen.getByRole('button', { name: 'Run on current selection' })).toHaveClass('MuiButton-outlined');
+  // An earlier result leads with the rerun on the current selection, even though it passed: its release
+  // request steps back and says how much of the context it left untested.
+  expect(screen.getByRole('button', { name: 'Run on current selection' })).toHaveClass('MuiButton-contained');
+  expect(screen.getByRole('link', { name: 'Request release review' })).toHaveClass('MuiButton-outlined');
+  expect(screen.getByText('1 of 3 cases not tested')).toBeVisible();
   expect(screen.getByRole('button', { name: 'Run application test' })).toHaveClass('MuiButton-outlined');
 });
 it('reconciles preparing plus returned work without announcing the result grid', () => {
@@ -165,7 +166,7 @@ it('continues to release review without CI and keeps the CI run an optional, fol
   h.detail.arms[0] = { variant: 'candidate', version: 7, versionId: 'v7-id', digest: 'sha256:v7' };
   h.detail.decision = { state: 'release_ready', reasons: [] };
   renderPanel();
-  const proceed = screen.getByRole('link', { name: 'Continue to release review' });
+  const proceed = screen.getByRole('link', { name: 'Request release review' });
   expect(proceed).toHaveClass('MuiButton-contained');
   expect(new URL(proceed.href).searchParams.get('evidence')).toBe('simulation_native:previous');
   expect(screen.getByText('Ready for release review')).toBeVisible();
@@ -241,7 +242,7 @@ it('hands the primary to the chosen answer form when the packet belongs to an ea
   fireEvent.click(screen.getByRole('radio', { name: /^Check answers with this context/ }));
   expect(renderForm).toHaveBeenLastCalledWith(true, expect.any(Function));
   expect(screen.getByRole('button', { name: 'Run on current selection' })).toHaveClass('MuiButton-outlined');
-  expect(screen.getByRole('link', { name: 'Continue to release review' })).toHaveClass('MuiButton-outlined');
+  expect(screen.getByRole('link', { name: 'Request release review' })).toHaveClass('MuiButton-outlined');
 });
 
 it('reads human reviews only once the run has finished, so the first finished render has no error', () => {
@@ -283,18 +284,51 @@ it('shows a missing allowance as a calm prerequisite before consent, with the ad
   const run = await screen.findByRole('button', { name: 'Run application test' });
   expect(screen.getByText('Paid runs need a workspace allowance')).toBeVisible();
   expect(screen.getByRole('link', { name: 'Set allowance' })).toHaveAttribute('href', expect.stringContaining('/skills/allowance'));
-  fireEvent.click(screen.getByRole('checkbox', { name: /I accept up to/ }));
+  // The spend acceptance can't be used yet, so it is held back with its reason, never ticked.
+  const accept = screen.getByRole('checkbox', { name: /I accept up to/ });
+  expect(accept).toBeDisabled();
+  expect(accept).not.toBeChecked();
+  expect(accept).toHaveAccessibleDescription('Set an allowance first');
+  fireEvent.click(accept);
+  expect(accept).not.toBeChecked();
   expect(run).toBeDisabled();
   expect(run).toHaveAccessibleDescription('Paid runs are off for this workspace.');
   expect(screen.queryByRole('alert')).not.toBeInTheDocument();
 });
-it('tells a member who can set the allowance instead of sending them to a page they cannot change', async () => {
+it('gives a member a request to copy for an admin instead of a page they cannot change', async () => {
   h.spend = { data: { enabled: false, periodLimitUsd: null } };
   h.access = { canAdmin: false };
-  renderPanel();
-  await screen.findByRole('button', { name: 'Run application test' });
-  expect(screen.getByText('Ask a workspace admin to set one.')).toBeVisible();
-  expect(screen.queryByRole('link', { name: 'Set allowance' })).not.toBeInTheDocument();
+  const writeText = vi.fn().mockResolvedValue(undefined);
+  Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } });
+  try {
+    render(<MemoryRouter initialEntries={['/dashboard/skills/contexts/context?tab=tests&version=7']}><ContextNativePanel contextId="context" versions={versions} viewed={{ number: 7 }} cases={cases} canWrite productionVersion={6} /></MemoryRouter>);
+    await screen.findByRole('button', { name: 'Run application test' });
+    expect(screen.getByText('Ask a workspace admin to set an allowance.')).toBeVisible();
+    expect(screen.queryByRole('link', { name: 'Set allowance' })).not.toBeInTheDocument();
+    expect(screen.getByRole('checkbox', { name: /I accept up to/ })).toBeDisabled();
+    const copy = screen.getByRole('button', { name: 'Copy request for admin' });
+    expect(copy).toHaveClass('MuiButton-outlined');
+    fireEvent.click(copy);
+    expect(await screen.findByText('Copied the request for an admin.')).toHaveAttribute('role', 'status');
+    const text = writeText.mock.calls[0][0];
+    expect(text).toMatch(/^Please set a Skills workspace allowance so I can run an application test \(up to \$1\.5\): http/);
+    const url = new URL(text.slice(text.indexOf('http')));
+    expect(url.pathname).toBe('/dashboard/skills/allowance');
+    expect(url.searchParams.get('returnTo')).toBe('/dashboard/skills/contexts/context?tab=tests&version=7');
+  } finally { delete navigator.clipboard; }
+});
+it('brings the spend acceptance back unticked once an admin sets an allowance', async () => {
+  h.spend = { data: { enabled: false, periodLimitUsd: null } };
+  const view = renderPanel({ viewed: { number: 7 } });
+  const accept = await screen.findByRole('checkbox', { name: /I accept up to/ });
+  expect(accept).toBeDisabled();
+  h.spend = { data: { enabled: true, periodLimitUsd: '20.00' } };
+  view.rerender(<MemoryRouter><ContextNativePanel contextId="context" versions={versions} viewed={{ number: 7 }} cases={cases} canWrite productionVersion={6} /></MemoryRouter>);
+  expect(accept).toBeEnabled();
+  expect(accept).not.toBeChecked();
+  expect(accept).not.toHaveAccessibleDescription('Set an allowance first');
+  expect(screen.queryByText('Set an allowance first')).not.toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Run application test' })).toBeDisabled();
 });
 it('defaults to the answer check when no application is registered', () => {
   h.runs = []; h.targets = [];
@@ -339,15 +373,15 @@ it('keeps exactly one contained primary as the reviewer moves between result and
   h.detail.decision = { state: 'release_ready', reasons: [] };
   renderPanel();
   // A ready result with the setup folded: the release review is the one primary.
-  expect(containedNames()).toEqual(['Continue to release review']);
+  expect(containedNames()).toEqual(['Request release review']);
   // Opening the setup alone does not move the primary: the ready result keeps it.
   fireEvent.click(screen.getByRole('button', { name: 'Show setup' }));
   const run = await screen.findByRole('button', { name: 'Run application test' });
-  expect(containedNames()).toEqual(['Continue to release review']);
+  expect(containedNames()).toEqual(['Request release review']);
   // Accepting the spend is working in the plan: its run button leads and the release review steps back.
   fireEvent.click(screen.getByRole('checkbox', { name: /I accept up to/ }));
   expect(run).toHaveClass('MuiButton-contained');
-  expect(screen.getByRole('link', { name: 'Continue to release review' })).toHaveClass('MuiButton-outlined');
+  expect(screen.getByRole('link', { name: 'Request release review' })).toHaveClass('MuiButton-outlined');
   expect(containedNames()).toEqual(['Run application test']);
 });
 it('keeps one primary with no runs at all', async () => {
@@ -458,7 +492,7 @@ it('confirms a passing result for the version production already serves, with no
   expect(screen.getByText('Already in production')).toBeVisible();
   expect(screen.getByText('v6 is already in production. This result confirms the release.')).toBeVisible();
   expect(screen.queryByText('Ready for release review')).not.toBeInTheDocument();
-  expect(screen.queryByRole('link', { name: 'Continue to release review' })).not.toBeInTheDocument();
+  expect(screen.queryByRole('link', { name: 'Request release review' })).not.toBeInTheDocument();
   expect(document.querySelector('a[href*="/review"]')).toBeNull();
   // v7 is newer than the tested v6, so the next step is testing it.
   expect(screen.getByRole('link', { name: 'Test a newer draft' })).toHaveAttribute('href', '/dashboard/skills/contexts/context/edit');
@@ -529,29 +563,31 @@ describe('exactly one contained button', () => {
     fireEvent.click(screen.getByRole('checkbox', { name: 'Working chargeback case' }));
     expect(containedNames()).toEqual(['Run application test']);
   });
-  it('ready result, setup open but untouched: Continue to release review', async () => {
+  it('ready result, setup open but untouched: Request release review', async () => {
     ready();
     renderPanel();
     fireEvent.click(screen.getByRole('button', { name: 'Show setup' }));
     await screen.findByRole('button', { name: 'Run application test' });
-    expect(containedNames()).toEqual(['Continue to release review']);
+    expect(containedNames()).toEqual(['Request release review']);
   });
-  it('earlier result with a different selection: the result leads and the banner says what differs and costs', () => {
+  it('earlier partial result: the rerun leads, the banner says what differs and costs, and the release request says what was not tested', () => {
     ready();
     h.detail.cases = [{ id: 'refund', title: 'Original refund failure', historical: true }];
     renderPanel();
     expect(screen.getByText('Earlier result')).toBeVisible();
     expect(screen.getByText('This result is for v7 with 1 case. Your selection adds Working chargeback case (1 more case) · up to $1.5.')).toBeVisible();
-    expect(containedNames()).toEqual(['Continue to release review']);
-    expect(screen.getByRole('button', { name: 'Run on current selection' })).toHaveClass('MuiButton-outlined');
+    expect(containedNames()).toEqual(['Run on current selection']);
+    expect(screen.getByRole('link', { name: 'Request release review' })).toHaveClass('MuiButton-outlined');
+    expect(screen.getByText('2 of 3 cases not tested')).toBeVisible();
+    expect(screen.queryByRole('link', { name: 'Continue to release review' })).not.toBeInTheDocument();
   });
-  it('reproduction handoff whose result is ready: Continue to release review, not a paid rerun', () => {
+  it('reproduction handoff whose result is ready: Request release review, not a paid rerun', () => {
     h.runs = [{ id: 'repro', arms: [{ variant: 'candidate', version: 7 }, { variant: 'reference', version: 4 }] }];
     h.detail = { id: 'repro', status: 'completed', received: 2, planned: 2, arms: [{ variant: 'candidate', version: 7, versionId: 'v7-id', digest: 'sha256:v7' }, { variant: 'reference', version: 4 }],
       cases: [{ id: 'refund', title: 'Original refund failure', historical: true }], decision: { state: 'release_ready', reasons: [] } };
     renderPanel({ seed: { caseId: 'refund', reference: 4 } });
     expect(screen.queryByText('Earlier result')).not.toBeInTheDocument();
-    expect(containedNames()).toEqual(['Continue to release review']);
+    expect(containedNames()).toEqual(['Request release review']);
   });
   it('reproduction handoff over an earlier, different result: the run button', async () => {
     ready();
@@ -575,5 +611,64 @@ describe('exactly one contained button', () => {
     expect(screen.queryByRole('button', { name: 'Run on current selection' })).not.toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'View release history' })).toBeVisible();
     expect(containedNames()).toEqual(['Run application test']);
+  });
+});
+
+// UX iteration 5 (TST1, TST2, TST5).
+describe('iteration 5: one release label, verdicts and plain words', () => {
+  const pass = { status: 'completed', answer: 'pass', selection: 'pass', delivery: 'pass', tools: 'pass' };
+  const twoArms = () => {
+    h.detail.result = { repair_verified: true, reproduction: 'reproduced', regressed_cases: 0 };
+    h.detail.decision = { state: 'release_ready', reasons: [] };
+    h.detail.cases[0].title = 'Refund';
+    h.detail.cells = [{ caseId: 'refund', variant: 'candidate', repeatIndex: 0, attemptId: 'tested', ...pass }, { caseId: 'refund', variant: 'reference', repeatIndex: 0, attemptId: 'baseline', ...pass, tools: 'fail' }];
+  };
+  const disagree = (attemptId) => ({ id: `annotation-${attemptId}`, attemptId, actorId: 'reviewer', verdict: 'disagree', comment: 'Check the ledger', createdAt: '2026-11-12T12:00:00Z' });
+  it('heads the version column "Version", with the cells unchanged', () => {
+    twoArms();
+    renderPanel();
+    const table = screen.getByRole('table', { name: 'Verification cells' });
+    // The header row is hidden below sm (each cell carries its own label there), so read it with hidden: true.
+    const headers = within(table).getAllByRole('columnheader', { hidden: true }).map((cell) => cell.textContent);
+    expect(headers.slice(0, 3)).toEqual(['Test case', 'Version', 'Run']);
+    expect(headers).not.toContain('Context');
+    expect(within(table).getByRole('row', { name: /Refund.*Was failing on v4/ })).toBeVisible();
+  });
+  it('says a disagreement on the baseline does not block the tested version', () => {
+    twoArms();
+    h.annotations = [disagree('baseline')];
+    renderPanel();
+    expect(screen.getByRole('button', { name: '1 disagreement to inspect' })).toBeVisible();
+    expect(screen.getByText("On the v4 baseline; it doesn't block v6.")).toBeVisible();
+    expect(screen.queryByText(/before requesting release/)).not.toBeInTheDocument();
+  });
+  it('asks for a look at a disagreement on the tested version before the release request', () => {
+    twoArms();
+    h.annotations = [disagree('baseline'), disagree('tested')];
+    renderPanel();
+    expect(screen.getByRole('button', { name: '2 disagreements to inspect' })).toBeVisible();
+    expect(screen.getByText('On v6; check them before requesting release.')).toBeVisible();
+    expect(screen.queryByText(/doesn't block/)).not.toBeInTheDocument();
+  });
+  it('names the release request once, the same as everywhere else', () => {
+    twoArms();
+    h.detail.arms[0] = { variant: 'candidate', version: 7, versionId: 'v7-id', digest: 'sha256:v7' };
+    renderPanel();
+    expect(screen.getByRole('link', { name: 'Request release review' })).toHaveClass('MuiButton-contained');
+    expect(screen.queryByRole('link', { name: 'Continue to release review' })).not.toBeInTheDocument();
+    expect(screen.queryByText(/cases? not tested$/)).not.toBeInTheDocument();
+  });
+  it('records an assessment for one run, and repairs from the failing version', async () => {
+    twoArms();
+    renderPanel();
+    expect(screen.getByRole('button', { name: 'Repair from the failing v4' })).toBeVisible();
+    expect(screen.queryByRole('button', { name: /Repair from recorded/ })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Inspect Refund Version tested repeat 1' }));
+    expect(screen.getByText('No assessments for this run.')).toBeVisible();
+    expect(screen.queryByText(/No human reviews for this attempt/)).not.toBeInTheDocument();
+    const record = screen.getByRole('button', { name: 'Record assessment' });
+    expect(record).toBeDisabled();
+    expect(record).toHaveAccessibleDescription('Waiting for the current evidence revision.');
+    expect(screen.queryByRole('button', { name: 'Record review' })).not.toBeInTheDocument();
   });
 });

@@ -22,6 +22,24 @@ import {
 } from "../review/ReleaseRequestPanel";
 
 const segmentLabel = (item) => item.kind === 'request' ? 'Customer request' : `Tool result${item.name ? ` · ${item.name}` : ''}`;
+const humanizeKey = (key) => { const text = String(key).replace(/[_-]+/g, ' ').trim(); return text ? text.charAt(0).toUpperCase() + text.slice(1) : 'Value'; };
+// A structured tool result reads as named values, the same rule as step 2 (review/CaseImportDialog):
+// "support-order · Age days: 6 · Amount: 24 · Disputed: false". Every value is listed, so the summary
+// hides nothing the selection would share; the raw JSON is one toggle away. Plain text stays as it is.
+function toolSummary(text) {
+  let value;
+  try { value = JSON.parse(text); } catch { return null; }
+  if (!value || typeof value !== 'object') return null;
+  const keys = Array.isArray(value) ? [] : Object.keys(value);
+  const named = keys.length === 1 && value[keys[0]] && typeof value[keys[0]] === 'object';
+  const leaves = [];
+  const walk = (node, path) => {
+    if (node && typeof node === 'object') Object.entries(node).forEach(([key, child]) => walk(child, path ? `${path} ${key}` : key));
+    else leaves.push(`${humanizeKey(path)}: ${node === null ? 'empty' : String(node)}`);
+  };
+  walk(named ? value[keys[0]] : value, '');
+  return [named ? keys[0] : null, leaves.length ? leaves.join(' · ') : 'No values'].filter(Boolean).join(' · ');
+}
 
 function Capture({
   open,
@@ -119,9 +137,7 @@ function Capture({
           ) : (
             <>
               <Typography variant="s3" color="text.secondary">
-                Step 1 of 2 · All request and tool-result text is selected. Untick anything you
-                don&apos;t need. Next you&apos;ll remove private details and set the expected
-                answer. Nothing runs yet.
+                Step 1 of 2 · Untick anything you don&apos;t need to save. Nothing runs.
               </Typography>
               <TechnicalDetails title="Trace details">
               <IdentityValue
@@ -140,7 +156,9 @@ function Capture({
                   answers are not imported as expected truth.
                 </Typography>
               )}
-              {segments.map((item) => (
+              {segments.map((item) => {
+                const summary = item.kind === "tool_result" ? toolSummary(item.text) : null;
+                return (
                 <Stack key={item.id} spacing={0.5}>
                   <FormControlLabel
                     control={
@@ -158,14 +176,31 @@ function Capture({
                     }
                     label={segmentLabel(item)}
                   />
-                  <Typography
-                    variant="s1"
-                    sx={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}
-                  >
-                    {item.text}
-                  </Typography>
+                  {summary ? (
+                    <>
+                      <Typography variant="s1" sx={{ overflowWrap: "anywhere" }}>
+                        {summary}
+                      </Typography>
+                      <TechnicalDetails title="Show raw data">
+                        <Typography
+                          variant="s1"
+                          sx={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere", fontFamily: "monospace" }}
+                        >
+                          {item.text}
+                        </Typography>
+                      </TechnicalDetails>
+                    </>
+                  ) : (
+                    <Typography
+                      variant="s1"
+                      sx={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}
+                    >
+                      {item.text}
+                    </Typography>
+                  )}
                 </Stack>
-              ))}
+                );
+              })}
               <OperationFeedback operation={operation} />
             </>
           )}

@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import PropTypes from "prop-types";
 import {
   Alert,
@@ -31,6 +31,7 @@ import TestInventoryReview from "./TestInventoryReview";
 import CapabilityNotice from "../components/CapabilityNotice";
 import ActionReason, { reasonProps } from "../components/ActionReason";
 import { useSkillsAccess } from "../utils/access";
+import AdminAllowanceRequest, { allowanceRequestText } from "./AdminAllowanceRequest";
 
 // "Set allowance" carries the way back to this test: the allowance page reads ?returnTo= and offers
 // "Back to tests" after saving (SH7). Read from the window so this works with or without a router.
@@ -277,6 +278,13 @@ export default function TestRunSetup({
   // A refusal while the policy is unknown also disables the run; once the re-read policy says an
   // allowance exists, the reviewer may retry and the server checks again.
   const allowanceOff = policyOff || (spendRefused && !spend?.data);
+  // The provider acknowledgment covers this run's spend, so it waits for an allowance: while paid runs
+  // are off it is disabled and cleared, and it comes back unticked once an admin sets one. A submission
+  // already sent (an uncertain outcome) keeps its acknowledgment, so "Retry same submission" is unchanged.
+  const consentHeld = allowanceOff && !submitted;
+  useEffect(() => {
+    if (consentHeld) setAcknowledged(false);
+  }, [consentHeld]);
   const valid =
     permitted &&
     model?.canRun &&
@@ -489,7 +497,7 @@ export default function TestRunSetup({
           description={
             access.canAdmin
               ? "Set a limit for paid test runs in this workspace, then run this test."
-              : "Ask a workspace admin to set one."
+              : "Ask a workspace admin to set an allowance."
           }
           actions={
             access.canAdmin ? (
@@ -500,7 +508,15 @@ export default function TestRunSetup({
               >
                 Set allowance
               </Button>
-            ) : undefined
+            ) : (
+              <AdminAllowanceRequest
+                request={allowanceRequestText({
+                  purpose: `a test of ${skill.name}`,
+                  ceilingUsd: /^\d+(?:\.\d{1,8})?$/.test(settings.cost) ? settings.cost : null,
+                  href: allowanceHref(),
+                })}
+              />
+            )
           }
         />
       )}
@@ -849,16 +865,31 @@ export default function TestRunSetup({
                 preview again.
               </Alert>
             )}
-            <FormControlLabel
-              control={
-                <Checkbox
-                  disabled={locked}
-                  checked={acknowledged}
-                  onChange={(event) => setAcknowledged(event.target.checked)}
-                />
-              }
-              label="Send the reviewed files and example inputs to these model providers within this spend stop"
-            />
+            <Stack
+              direction={{ xs: "column", sm: "row" }}
+              spacing={{ xs: 0, sm: 1.5 }}
+              alignItems={{ xs: "flex-start", sm: "center" }}
+            >
+              <FormControlLabel
+                control={
+                  <Checkbox
+                    disabled={locked || consentHeld}
+                    checked={acknowledged && !consentHeld}
+                    inputProps={
+                      consentHeld
+                        ? { "aria-describedby": "skill-consent-reason" }
+                        : undefined
+                    }
+                    onChange={(event) => setAcknowledged(event.target.checked)}
+                  />
+                }
+                label="Send the reviewed files and example inputs to these model providers within this spend stop"
+              />
+              <ActionReason
+                id="skill-consent-reason"
+                reason={consentHeld ? "Set an allowance first" : null}
+              />
+            </Stack>
             {submitted && error && (
               <Alert severity="warning">
                 The request may already have been accepted. Retry this exact

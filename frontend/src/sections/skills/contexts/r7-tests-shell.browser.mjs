@@ -63,7 +63,7 @@ try {
     await page.getByRole('radio', { name: 'Disagree with the automatic outcome', exact: true }).check();
     await page.getByLabel('Why', { exact: true }).fill(reviewComment);
     const savedReview = page.waitForResponse((response) => response.url().includes('/annotations/') && response.request().method() === 'POST');
-    await page.getByRole('button', { name: 'Record review', exact: true }).click();
+    await page.getByRole('button', { name: 'Record assessment', exact: true }).click();
     if (!(await savedReview).ok()) throw new Error('Synthetic review was not saved');
     await expect(page.getByText('Disagrees', { exact: true }).first()).toBeVisible();
     await expect(page.getByText(reviewComment, { exact: true })).toBeVisible();
