@@ -217,4 +217,3 @@ export function runSimulationTarget(env) {
   }
   return paths.dashboard.simulate.test;
 }
-
