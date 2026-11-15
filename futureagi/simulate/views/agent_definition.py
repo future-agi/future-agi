@@ -41,6 +41,7 @@ from simulate.serializers.response.agent_version import (
 )
 from simulate.services.agent_definition import (
     is_masked,
+    provider_family,
     provider_for_version,
     resolve_provider_configuration_for_version,
     resolve_stored_api_key,
@@ -794,7 +795,8 @@ class EditAgentDefinitionView(APIView):
                 changed_fields.append("knowledge_base")
             if (
                 "provider" in validated
-                and agent.provider != previous_provider
+                and provider_family(agent.provider)
+                != provider_family(previous_provider)
                 and (not incoming_api_key or preserve_existing_api_key)
             ):
                 agent.api_key = ""
@@ -819,9 +821,9 @@ class EditAgentDefinitionView(APIView):
                     source_provider = (version.configuration_snapshot or {}).get(
                         "provider"
                     ) or previous_provider
-                provider_changed = (
-                    "provider" in validated and agent.provider != source_provider
-                )
+                provider_changed = "provider" in validated and provider_family(
+                    agent.provider
+                ) != provider_family(source_provider)
                 if "provider" in validated:
                     validate_provider_change(
                         source_provider=source_provider,

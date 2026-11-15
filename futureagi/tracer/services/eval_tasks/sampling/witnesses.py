@@ -53,7 +53,9 @@ class TraceWitnessReader:
         metadata = _eval_filter_metadata_for_filters(self.project_id, self.filters)
         if metadata is not None:
             options["eval_filter_metadata"] = metadata
-        self.builder = get_v2_class("TRACE_LIST")(**options)
+        builder_class = get_v2_class("TRACE_LIST")
+        assert builder_class is not None  # TRACE_LIST is registered.
+        self.builder = builder_class(**options)
         if not self.builder.supports_bounded_filter_scan():
             raise EvalTaskSelectionRejected(
                 "Trace sampling requires bounded, supported row filters."
@@ -83,7 +85,7 @@ class TraceWitnessReader:
         query = self.build_query(identities)
         if query is None:
             return ()
-        rows = []
+        rows: list[dict[str, object]] = []
         for block in stream_query(*query):
             rows.extend(dict(zip(self.columns, row, strict=True)) for row in block)
             if len(rows) > len(identities):

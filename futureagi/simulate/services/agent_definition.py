@@ -6,7 +6,12 @@ from rest_framework.exceptions import ValidationError
 
 from simulate.models import AgentDefinition, AgentVersion
 from simulate.models.agent_definition import ProviderCredentials
+from simulate.services.agent_setup import LEGACY_TYPE
 from simulate.services.types.agent_definition import ProviderCredentialsInput
+from tfc.middleware.workspace_context import (
+    get_current_workspace,
+    set_workspace_context,
+)
 
 MASKED_VALUE = "********"
 
@@ -23,6 +28,15 @@ def is_masked(value: str) -> bool:
     return False
 
 
+def provider_family(provider):
+    """Normalize supported aliases for comparisons, never for authored routing.
+
+    Do not use the credential enum's VAPI default: Bland shares that storage
+    encoding but remains a different provider authority.
+    """
+    return LEGACY_TYPE.get(provider, provider)
+
+
 def validate_provider_change(*, source_provider, provider, api_key):
     """Require a fresh key before changing a key-based provider's authority.
 
@@ -33,7 +47,7 @@ def validate_provider_change(*, source_provider, provider, api_key):
     """
     key = (api_key or "").strip()
     if (
-        provider != source_provider
+        provider_family(provider) != provider_family(source_provider)
         and provider in ("vapi", "bland", "retell")
         and (not key or is_masked(key))
     ):
@@ -154,9 +168,9 @@ def sync_provider_credentials(version, data: ProviderCredentialsInput):
     # Bland and Vapi share the row's VAPI encoding. Only an explicit authored
     # provider change (not that encoding, nor a mutable definition alone) can
     # change the selected version's provider authority.
-    authored_provider_changed = (
-        data.provider_was_provided and provider != previous_provider
-    )
+    authored_provider_changed = data.provider_was_provided and provider_family(
+        provider
+    ) != provider_family(previous_provider)
     if authored_provider_changed:
         validate_provider_change(
             source_provider=previous_provider, provider=provider, api_key=data.api_key
@@ -359,9 +373,9 @@ def resolve_provider_configuration_for_version(version, *, for_save=False):
         # Its owner's authored provider, not 0071's shared VAPI encoding, must
         # match. An in-place Vapi -> Bland switch must not resurrect Vapi's key.
         legacy_version = legacy.agent_version
-        if legacy_version is not None and provider_for_version(
-            legacy_version
-        ) != provider_for_version(version):
+        if legacy_version is not None and provider_family(
+            provider_for_version(legacy_version)
+        ) != provider_family(provider_for_version(version)):
             return ProviderConfiguration(None, assistant_id)
         key = legacy.get_api_key() if legacy else None
         if key:
@@ -408,20 +422,46 @@ def resolve_api_secret_for_version(version):
     return None
 
 
-def source_version_for_agent(agent, source_version_id=None):
-    """Select a credential source only within an already authorized agent.
+def _credential_source_queryset(model, *, organization, workspace=None):
+    """Reuse the manager's default-workspace visibility, including legacy NULLs.
 
-    Explicit IDs never fall back to active/latest, including a version whose
-    denormalized organization/workspace does not match its parent.
+    Construct the queryset under the supplied, already authorized workspace so
+    non-request callers get the same rules. Restore the caller's context before
+    returning; the manager's scope is already part of the queryset.
     """
-    if source_version_id is None:
-        return agent.active_version or agent.latest_version
-    return AgentVersion.objects.get(
-        pk=source_version_id,
-        agent_definition=agent,
-        organization_id=agent.organization_id,
-        workspace_id=agent.workspace_id,
+    previous_workspace = get_current_workspace()
+    try:
+        if workspace is not None:
+            set_workspace_context(workspace=workspace)
+        return model.objects.filter(organization=organization, deleted=False)
+    finally:
+        set_workspace_context(workspace=previous_workspace)
+
+
+def accessible_credential_agents(*, organization, workspace=None):
+    return _credential_source_queryset(
+        AgentDefinition, organization=organization, workspace=workspace
     )
+
+
+def source_version_for_agent(agent, source_version_id=None, *, workspace=None):
+    """Select a visible version within an already authorized agent and org.
+
+    Explicit IDs never fall back to active/latest. Workspace visibility uses
+    the same manager as the parent lookup: default workspaces include legacy
+    NULLs, while a nondefault workspace cannot borrow them or another workspace.
+    """
+    workspace = workspace or get_current_workspace() or agent.workspace
+    versions = _credential_source_queryset(
+        AgentVersion, organization=agent.organization_id, workspace=workspace
+    ).filter(agent_definition=agent)
+    if workspace is None:
+        versions = versions.filter(workspace__isnull=True)
+    if source_version_id is None:
+        return versions.filter(status="active").order_by("-version_number").first() or (
+            versions.order_by("-version_number").first()
+        )
+    return versions.get(pk=source_version_id)
 
 
 def resolve_stored_api_key(
@@ -448,9 +488,9 @@ def resolve_stored_api_key(
     if organization is None:
         return None
 
-    agents = AgentDefinition.objects.filter(organization=organization, deleted=False)
-    if workspace is not None:
-        agents = agents.filter(workspace=workspace)
+    agents = accessible_credential_agents(
+        organization=organization, workspace=workspace
+    )
 
     if agent_id:
         try:
@@ -461,7 +501,9 @@ def resolve_stored_api_key(
         return None
 
     try:
-        version = source_version_for_agent(agent, source_version_id)
+        version = source_version_for_agent(
+            agent, source_version_id, workspace=workspace
+        )
     except AgentVersion.DoesNotExist:
         return None
     if provider is not None and (

@@ -31,10 +31,11 @@ from simulate.serializers.response.run_test_evals import (
 )
 from simulate.serializers.test_execution import CallExecutionSerializer
 from simulate.services.agent_definition import (
+    accessible_credential_agents,
     is_masked,
+    provider_family,
     provider_for_version,
     resolve_api_key_for_version,
-    resolve_api_secret_for_version,
     resolve_provider_configuration_for_version,
     source_version_for_agent,
     sync_provider_credentials,
@@ -141,15 +142,12 @@ class CreateAgentVersionView(APIView):
         Create a new version of an agent definition.
         """
         try:
-            agents = AgentDefinition.objects.filter(
+            workspace = getattr(request, "workspace", None)
+            agent = accessible_credential_agents(
                 organization=getattr(request, "organization", None)
                 or request.user.organization,
-                deleted=False,
-            )
-            workspace = getattr(request, "workspace", None)
-            if workspace is not None:
-                agents = agents.filter(workspace=workspace)
-            agent = agents.get(id=agent_id)
+                workspace=workspace,
+            ).get(id=agent_id)
 
             validated = request.validated_data
             commit_message = validated.get("commit_message", "")
@@ -159,17 +157,6 @@ class CreateAgentVersionView(APIView):
             preserve_existing_api_key = incoming_api_key is not None and is_masked(
                 incoming_api_key
             )
-            incoming_livekit_api_key = validated.get("livekit_api_key")
-            preserve_livekit_api_key = (
-                incoming_livekit_api_key is not None
-                and is_masked(incoming_livekit_api_key)
-            )
-            incoming_livekit_api_secret = validated.get("livekit_api_secret")
-            preserve_livekit_api_secret = (
-                incoming_livekit_api_secret is not None
-                and is_masked(incoming_livekit_api_secret)
-            )
-
             # Select and authorize the source before mutating the definition.
             # In particular, a legacy snapshot without provider must still see
             # the pre-write definition, and Bland's VAPI row encoding is not Vapi.
@@ -181,8 +168,12 @@ class CreateAgentVersionView(APIView):
                 else agent.provider
             )
             requested_provider = validated.get("provider") or agent.provider or ""
-            provider_changed = requested_provider != source_provider
-            definition_provider_changed = requested_provider != agent.provider
+            provider_changed = provider_family(requested_provider) != provider_family(
+                source_provider
+            )
+            definition_provider_changed = provider_family(
+                requested_provider
+            ) != provider_family(agent.provider)
             # A source agent's first settings save selects a provider without
             # crossing an existing credential authority. A blank provider alone
             # is not enough: definition, version and legacy credentials close
@@ -205,15 +196,32 @@ class CreateAgentVersionView(APIView):
                     provider=requested_provider,
                     api_key=incoming_api_key,
                 )
-            carry_api_key = not provider_changed and (
-                preserve_existing_api_key
-                or (source_version_id is not None and not incoming_api_key)
+            # Omission keeps the selected source even when it was selected by
+            # active/latest rather than an explicit ID. Otherwise sync could
+            # adopt an unrelated, unversioned legacy key on the next save.
+            # LiveKit uses its own fields below; a fresh replacement must not
+            # decrypt the old key merely because generic api_key was omitted.
+            carry_api_key = (
+                provider_family(requested_provider) != "livekit"
+                and not provider_changed
+                and (preserve_existing_api_key or not incoming_api_key)
             )
             existing_configuration = None
             existing_api_key = None
-            existing_livekit_api_key = None
-            existing_livekit_api_secret = None
+            source_credentials = None
+            livekit_fields = {
+                "livekit_url": "server_url",
+                "livekit_api_key": "api_key",
+                "livekit_api_secret": "api_secret",
+                "livekit_agent_name": "agent_name",
+                "livekit_config_json": "config_json",
+                "livekit_max_concurrency": "max_concurrency",
+            }
+            livekit_input = {name: validated.get(name) for name in livekit_fields}
             if source_version is not None and not provider_changed:
+                source_credentials = ProviderCredentials.objects.filter(
+                    agent_version=source_version
+                ).first()
                 if carry_api_key:
                     # A displayed mask is not authority: compare it with the
                     # resolved, authorized source, even when preflight is bypassed.
@@ -254,14 +262,44 @@ class CreateAgentVersionView(APIView):
                                 )
                             }
                         )
-                if preserve_livekit_api_key:
-                    existing_livekit_api_key = resolve_api_key_for_version(
-                        source_version
-                    )
-                if preserve_livekit_api_secret:
-                    existing_livekit_api_secret = resolve_api_secret_for_version(
-                        source_version
-                    )
+                if provider_family(requested_provider) == "livekit":
+                    livekit_credentials = source_credentials
+                    if livekit_credentials is None:
+                        livekit_credentials = ProviderCredentials.objects.filter(
+                            agent_definition=agent
+                        ).first()
+                    if (
+                        livekit_credentials is not None
+                        and livekit_credentials.provider_type == "livekit"
+                        and (
+                            livekit_credentials.agent_version_id is None
+                            or provider_family(
+                                provider_for_version(livekit_credentials.agent_version)
+                            )
+                            == "livekit"
+                        )
+                    ):
+                        for name, column in livekit_fields.items():
+                            value = livekit_input[name]
+                            keep_secret = name in (
+                                "livekit_api_key",
+                                "livekit_api_secret",
+                            ) and (not value or is_masked(value))
+                            if name not in validated or keep_secret:
+                                # Copy encrypted values, not decrypted plaintext:
+                                # alias saves retain ciphertext as well as settings.
+                                livekit_input[name] = getattr(
+                                    livekit_credentials, column
+                                )
+
+            preserve_selected_row = source_credentials is not None and (
+                provider_family(requested_provider) == "livekit"
+                or (
+                    carry_api_key
+                    and bool(source_credentials.api_key)
+                    and bool(existing_api_key)
+                )
+            )
 
             # Keep the raw-empty Vapi source marker instead of adopting a legacy
             # row. Also prevent adoption of the old provider's row on a switch.
@@ -309,8 +347,9 @@ class CreateAgentVersionView(APIView):
                     agent.assistant_id = ""
                     changed_fields.append("assistant_id")
             elif (
-                source_version_id is not None
-                and existing_configuration is not None
+                existing_configuration is not None
+                and (source_version_id is not None or existing_api_key)
+                and requested_provider in ("vapi", "bland", "retell")
                 and "assistant_id" not in validated
             ):
                 agent.assistant_id = existing_configuration.assistant_id or ""
@@ -362,10 +401,10 @@ class CreateAgentVersionView(APIView):
                 if (
                     not assistant_input
                     and existing_api_key
-                    and (requested_provider == "vapi" or source_version_id is not None)
+                    and requested_provider in ("vapi", "bland", "retell")
                 ):
                     # Carry the selected key's identity, not the mutable
-                    # definition's assistant, into a masked-key version save.
+                    # definition's assistant, into a retained-key version save.
                     assistant_input["assistant_id"] = (
                         existing_configuration.assistant_id
                     )
@@ -375,20 +414,7 @@ class CreateAgentVersionView(APIView):
                     if carry_api_key or preserve_existing_api_key
                     else validated.get("api_key"),
                     **assistant_input,
-                    livekit_url=validated.get("livekit_url"),
-                    livekit_api_key=(
-                        existing_livekit_api_key
-                        if preserve_livekit_api_key
-                        else validated.get("livekit_api_key")
-                    ),
-                    livekit_api_secret=(
-                        existing_livekit_api_secret
-                        if preserve_livekit_api_secret
-                        else validated.get("livekit_api_secret")
-                    ),
-                    livekit_agent_name=validated.get("livekit_agent_name"),
-                    livekit_config_json=validated.get("livekit_config_json"),
-                    livekit_max_concurrency=validated.get("livekit_max_concurrency"),
+                    **livekit_input,
                     provider_was_provided="provider" in request.data,
                 )
                 # The page always sends the provider and LiveKit settings, so a code
@@ -444,12 +470,17 @@ class CreateAgentVersionView(APIView):
                     and agent_is_source(agent)
                 )
                 # Do not pre-create the row the blank-source guard would skip.
-                # Existing provider transitions and raw-empty Vapi markers must
-                # still prevent sync/read paths from adopting legacy credentials.
-                if preserve_empty_vapi_row or (
-                    provider_changed
-                    and not (
-                        initial_source_configuration and skip_blank_source_credentials
+                # Selected keyed rows, provider transitions and raw-empty Vapi
+                # markers must prevent adoption of unrelated legacy credentials.
+                if (
+                    preserve_selected_row
+                    or preserve_empty_vapi_row
+                    or (
+                        provider_changed
+                        and not (
+                            initial_source_configuration
+                            and skip_blank_source_credentials
+                        )
                     )
                 ):
                     if requested_provider in ("livekit", "livekit_bridge"):
@@ -479,11 +510,10 @@ class CreateAgentVersionView(APIView):
                     workspace=agent.workspace,
                 )
 
-                # Sync updates a separately queried credential instance. Clear
-                # any pre-created empty row cached by the reverse relation before
-                # snapshotting or serializing the replacement credential.
-                if preserve_empty_vapi_row or provider_changed:
-                    version.refresh_from_db()
+                # Sync updates a separately queried credential instance. Both
+                # precreation and legacy adoption can cache an older relation on
+                # this object, so always reload before snapshotting/serialization.
+                version.refresh_from_db()
                 # Re-snapshot now that ProviderCredentials exist (LiveKit fields)
                 version.configuration_snapshot = version.create_snapshot(
                     commit_message=version.commit_message or ""

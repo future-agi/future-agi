@@ -19058,7 +19058,10 @@ export const getApiHealthClickhouseListUrl = () => {
  * Returns JSON with:
 - status: healthy | degraded | unhealthy | disabled
 - clickhouse_connected: bool
-- cdc_lag: per-table replication lag in seconds
+- cdc_lag: per-table replication lag in seconds; -1 is unverified, even if empty
+- cdc_lag_verified: optional per-table boolean; true only for complete coverage
+  with an observed sync timestamp on every relevant destination. Incomplete
+  coverage alone does not degrade health; metadata-denial failures still do.
 - routing: per-query-type routing configuration
 
 No authentication required (intended for infrastructure monitoring).
@@ -20058,9 +20061,14 @@ export type falconAiFilesUploadCreateResponse403 = {
   status: 403;
 };
 
+export type falconAiFilesUploadCreateResponse503 = {
+  data: FalconErrorResponseApi;
+  status: 503;
+};
+
 export type falconAiFilesUploadCreateResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 201 | 400 | 403>;
+  status: Exclude<HTTPStatusCodes, 201 | 400 | 403 | 503>;
 };
 
 export type falconAiFilesUploadCreateResponseSuccess =
@@ -20070,6 +20078,7 @@ export type falconAiFilesUploadCreateResponseSuccess =
 export type falconAiFilesUploadCreateResponseError = (
   | falconAiFilesUploadCreateResponse400
   | falconAiFilesUploadCreateResponse403
+  | falconAiFilesUploadCreateResponse503
   | falconAiFilesUploadCreateResponseDefault
 ) & {
   headers: ApiResponseHeaders;

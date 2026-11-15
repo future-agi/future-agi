@@ -848,7 +848,12 @@ def test_migrated_bland_omitted_then_masked_saves_keep_legacy_key(
     agent.refresh_from_db()
     selected = agent.active_version
     assert selected.credentials.provider_type == "vapi"
-    assert selected.credentials.api_key == ""
+    if route == "save-version":
+        # Default-source omission now carries the effective legacy key into the
+        # new version, just like an explicit source or masked-key save.
+        assert selected.credentials.get_api_key() == "synthetic-key-A"
+    else:
+        assert selected.credentials.api_key == ""
     assert resolve_api_key_for_version(selected) == "synthetic-key-A"
     assert resolve_api_key_for_version(selected, for_save=True) == "synthetic-key-A"
 

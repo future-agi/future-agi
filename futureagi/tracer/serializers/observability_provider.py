@@ -3,7 +3,10 @@ from rest_framework import serializers
 
 from accounts.utils import get_request_organization
 from simulate.models import AgentDefinition, AgentVersion
-from simulate.services.agent_definition import source_version_for_agent
+from simulate.services.agent_definition import (
+    accessible_credential_agents,
+    source_version_for_agent,
+)
 from tracer.models.observability_provider import ObservabilityProvider, ProviderChoices
 
 # Providers whose api-key / assistant verification is actually implemented.
@@ -101,15 +104,14 @@ class CredentialSourceRequestSerializer(serializers.Serializer):
             raise serializers.ValidationError(
                 {"source_version_id": "An authorized agent_id is required."}
             )
-        agents = AgentDefinition.objects.filter(
-            organization=organization, deleted=False
-        )
         workspace = getattr(request, "workspace", None)
-        if workspace is not None:
-            agents = agents.filter(workspace=workspace)
         try:
-            agent = agents.get(pk=attrs["agent_id"])
-            source_version_for_agent(agent, attrs["source_version_id"])
+            agent = accessible_credential_agents(
+                organization=organization, workspace=workspace
+            ).get(pk=attrs["agent_id"])
+            source_version_for_agent(
+                agent, attrs["source_version_id"], workspace=workspace
+            )
         except (
             AgentDefinition.DoesNotExist,
             AgentVersion.DoesNotExist,
