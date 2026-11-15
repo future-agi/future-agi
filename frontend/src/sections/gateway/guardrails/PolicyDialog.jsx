@@ -3,6 +3,7 @@ import PropTypes from "prop-types";
 import {
   Autocomplete,
   Box,
+  Button,
   FormControl,
   FormControlLabel,
   FormLabel,
@@ -19,7 +20,10 @@ import ModalWrapper from "src/components/ModalWrapper/ModalWrapper";
 import { useApiKeys } from "../keys/hooks/useApiKeys";
 import {
   GUARDRAIL_CHECKS,
-  keywordConfigErrors,
+  hasBuiltinConfigEditor,
+  hasNoRestriction,
+  isConfigObject,
+  selectedConfigErrors,
 } from "../settings/guardrailChecks";
 import GuardrailCheckDialog from "../settings/GuardrailCheckDialog";
 import {
@@ -141,18 +145,21 @@ export default function PolicyDialog({ open, onClose, policy, gatewayId }) {
       return;
     }
     if (form.is_active) {
-      const invalidKeyword = form.checks
-        .filter(
-          (check) =>
-            check.name === "keyword-blocklist" && check.enabled !== false,
-        )
-        .map((check) =>
-          Object.values(keywordConfigErrors(check.config)).join(" "),
-        )
+      const invalidCheck = form.checks
+        .filter((check) => check.enabled !== false)
+        .map((check) => {
+          const reason = Object.values(
+            selectedConfigErrors(check.name, check.config),
+          ).join(" ");
+          const label = GUARDRAIL_CHECKS.find(
+            (item) => item.name === check.name,
+          )?.label;
+          return reason ? `${label}: ${reason}` : null;
+        })
         .find(Boolean);
-      if (invalidKeyword) {
+      if (invalidCheck) {
         setErrors({
-          checks: `Keyword Blocklist: ${invalidKeyword} Open Configure to correct it, or disable the check.`,
+          checks: `${invalidCheck} Open Configure to correct it, or disable the check.`,
         });
         return;
       }
@@ -322,7 +329,8 @@ export default function PolicyDialog({ open, onClose, policy, gatewayId }) {
                     (entry) => entry.name === item.name,
                   );
                   const enabled =
-                    item.name === "keyword-blocklist"
+                    item.name === "keyword-blocklist" ||
+                    hasBuiltinConfigEditor(item.name)
                       ? check && check.enabled !== false
                       : check?.enabled;
                   return (
@@ -374,6 +382,10 @@ export default function PolicyDialog({ open, onClose, policy, gatewayId }) {
                               select
                               size="small"
                               value={check.config?.remediation || "none"}
+                              disabled={
+                                check.config !== undefined &&
+                                !isConfigObject(check.config)
+                              }
                               onChange={(event) => {
                                 const config = { ...check.config };
                                 if (event.target.value === "none")
@@ -392,13 +404,23 @@ export default function PolicyDialog({ open, onClose, policy, gatewayId }) {
                               )}
                             </TextField>
                           )}
-                          {item.fields && (
-                            <Typography
-                              component="button"
-                              variant="s1"
+                          {(item.fields ||
+                            hasBuiltinConfigEditor(item.name)) && (
+                            <Button
+                              size="small"
+                              aria-label={
+                                hasBuiltinConfigEditor(item.name)
+                                  ? `Configure ${item.label}`
+                                  : undefined
+                              }
                               onClick={() => setEditingCheck(item)}
                             >
                               Configure
+                            </Button>
+                          )}
+                          {hasNoRestriction(item.name, check.config) && (
+                            <Typography variant="s3" color="text.secondary">
+                              No restriction configured
                             </Typography>
                           )}
                         </>
@@ -420,8 +442,8 @@ export default function PolicyDialog({ open, onClose, policy, gatewayId }) {
             form.checks.find((check) => check.name === editingCheck.name),
           )}
           providerMeta={editingCheck}
-          keywordPolicyEditor
-          keywordPolicyActive={form.is_active}
+          selectedPolicyEditor
+          selectedPolicyActive={form.is_active}
           onSave={(_, { confidence_threshold: threshold, ...data }) =>
             setCheck(editingCheck.name, {
               ...data,

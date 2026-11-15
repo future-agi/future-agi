@@ -4,6 +4,7 @@ Called when org configs are created, activated, or deleted.
 """
 
 import copy
+import math
 import uuid
 
 import structlog
@@ -19,6 +20,10 @@ from agentcc.contracts.gateway_admin import (
 )
 from agentcc.contracts.gateway_admin import OrgConfig as GatewayOrgConfig
 from agentcc.contracts.gateway_admin import ProviderConfig as GatewayProviderConfig
+from agentcc.guardrail_config_validation import (
+    BUILTIN_CONFIG_ALIASES,
+    BUILTIN_CONFIG_NAMES,
+)
 from agentcc.guardrail_settings import normalize_saved_guardrail_settings
 from agentcc.models import AgentccOrgConfig
 from agentcc.org_config_defaults import normalize_cache_config
@@ -29,9 +34,8 @@ logger = structlog.get_logger(__name__)
 
 # Map org-config rule names → gateway registry names
 _RULE_TO_REGISTRY = {
-    "pii-detector": "pii-detection",
+    **BUILTIN_CONFIG_ALIASES,
     "injection-detector": "prompt-injection",
-    "secrets-detector": "secret-detection",
     # These are the same in both:
     "content-moderation": "content-moderation",
     "keyword-blocklist": "keyword-blocklist",
@@ -713,70 +717,129 @@ def _build_key_policies(org_id, policies):
                 gateway_ids.append(gateway_id)
         if not gateway_ids:
             continue
-        # Rows saved before the serializer validated checks may hold anything.
-        # Skip such a policy rather than fail the whole org's payload, which
-        # would stop the org's config sync (push and bulk pull).
+        # Malformed legacy checks must remain selected and unavailable, not
+        # disappear and silently remove protection. Conversion handles bad
+        # checks individually; the fallback protects the outer policy envelope.
         try:
             entry = _build_key_policy(org_id, policy, gateway_ids)
-        except (TypeError, ValueError, AttributeError) as e:
+        except (TypeError, ValueError, AttributeError):
             logger.warning(
-                "guardrail_key_policy_skipped",
+                "guardrail_key_policy_invalid_config",
                 org_id=str(org_id),
                 policy_id=str(policy.id),
-                error=str(e),
             )
-            continue
+            entry = _key_policy_entry(
+                policy, gateway_ids, {"__invalid_config__": _failed_key_check()}
+            )
         result.append(entry)
     return result
 
 
-def _build_key_policy(org_id, policy, gateway_ids):
-    if not isinstance(policy.checks, list):
-        raise ValueError("checks must be a list")
-    checks = copy.deepcopy(policy.checks)
-    for check in checks:
-        if not isinstance(check, dict):
-            raise ValueError("each check must be an object")
-        check["_policy"] = str(policy.id)
-    _inject_guardrail_credentials(checks, org_id, policies=[policy])
-    mapped = {}
-    for check in checks:
-        name = check.get("name", "")
-        registry_name = _RULE_TO_REGISTRY.get(name, name)
-        raw_cfg = check.get("config") or {}
-        if name == "keyword-blocklist" and not isinstance(raw_cfg, dict):
-            # Preserve this selected policy, including its other checks. An
-            # empty keyword config remains invalid at the gateway and produces
-            # an unavailable result rather than silently dropping the policy.
-            # The stored malformed value stays intact for explicit correction.
-            raw_cfg = {}
-        if not isinstance(raw_cfg, dict):
-            raise ValueError(f"config of {name!r} must be an object")
-        cfg = dict(raw_cfg)
-        if name in _RULE_PROVIDER_DEFAULTS:
-            cfg.setdefault("provider", _RULE_PROVIDER_DEFAULTS[name])
-        _normalize_eval_ids(cfg)
-        mapped[registry_name] = {
-            "enabled": check.get("enabled", True),
-            "action": check.get("action", "block"),
-            "confidence_threshold": check.get(
-                "threshold", check.get("confidence_threshold", 0.8)
-            ),
-            "config": cfg,
-        }
-    _inject_fi_credentials(mapped, org_id)
-    entry = {
+def _failed_key_check():
+    # Only used when an envelope has no usable check identity. The fixed code,
+    # not any raw config/error text, crosses the selected-only wire boundary.
+    return {
+        "enabled": True,
+        "action": "block",
+        "confidence_threshold": 0.8,
+        "config": {},
+        "configuration_error": "invalid_config",
+    }
+
+
+def _key_policy_entry(policy, gateway_ids, checks):
+    return {
         "id": str(policy.id),
         "name": policy.name,
         "mode": policy.mode,
         "priority": policy.priority,
         "key_ids": gateway_ids,
-        "checks": mapped,
+        "checks": checks,
     }
+
+
+def _wire_number(value):
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return False
+    try:
+        return math.isfinite(value)
+    except OverflowError:
+        return False
+
+
+def _project_key_check(check):
+    """Preserve raw objects; mark only values the typed envelope cannot carry."""
+    invalid = False
+    enabled = check.get("enabled", True)
+    if not isinstance(enabled, bool):
+        enabled, invalid = True, True
+    action = check.get("action", "block")
+    if not isinstance(action, str):
+        action, invalid = "block", True
+    threshold = check.get("threshold", check.get("confidence_threshold", 0.8))
+    if not _wire_number(threshold):
+        threshold, invalid = 0.8, True
+    cfg = check.get("config", {})
+    if not isinstance(cfg, dict):
+        cfg, invalid = {}, True
+    result = {
+        "enabled": enabled,
+        "action": action,
+        "confidence_threshold": threshold,
+        "config": cfg,
+    }
+    if invalid:
+        result["configuration_error"] = "invalid_config"
+    return result
+
+
+def _build_key_policy(org_id, policy, gateway_ids):
+    # Copy before credential injection and normalization. Saved malformed values
+    # stay intact for explicit repair, including falsey nonobjects such as null.
+    checks = copy.deepcopy(policy.checks) if isinstance(policy.checks, list) else [None]
+    objects = [check for check in checks if isinstance(check, dict)]
+    for check in objects:
+        check["_policy"] = str(policy.id)
+    # Invalid names cannot be used as credential-map keys.
+    named = [
+        check
+        for check in objects
+        if isinstance(check.get("name"), str) and check["name"].strip()
+    ]
+    _inject_guardrail_credentials(named, org_id, policies=[policy])
+    mapped = {}
+    unusable = 0
+    for check in checks:
+        if (
+            not isinstance(check, dict)
+            or not isinstance(check.get("name"), str)
+            or not check["name"].strip()
+        ):
+            unusable += 1
+            continue
+        name = check["name"]
+        registry_name = _RULE_TO_REGISTRY.get(name, name)
+        projected = _project_key_check(check)
+        cfg = projected["config"]
+        if name in _RULE_PROVIDER_DEFAULTS:
+            cfg.setdefault("provider", _RULE_PROVIDER_DEFAULTS[name])
+        if registry_name not in BUILTIN_CONFIG_NAMES:
+            _normalize_eval_ids(cfg)
+        mapped[registry_name] = projected
+    # An unnameable check cannot overwrite a valid sibling (including a custom
+    # check whose name happens to resemble our placeholder).
+    for index in range(unusable):
+        name = f"__invalid_config_{index}__"
+        while name in mapped:
+            name += "_"
+        mapped[name] = _failed_key_check()
+    _inject_fi_credentials(mapped, org_id)
+    entry = _key_policy_entry(policy, gateway_ids, mapped)
     try:
         GatewayKeyGuardrailPolicy.model_validate(entry)
-    except ValidationError as e:
-        raise ValueError(str(e)) from e
+    except ValidationError:
+        # Pydantic error strings can include raw parameters or credentials.
+        raise ValueError("invalid selected policy envelope") from None
     return entry
 
 

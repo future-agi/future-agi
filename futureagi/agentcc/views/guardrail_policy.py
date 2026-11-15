@@ -155,6 +155,13 @@ class AgentccGuardrailPolicyViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewS
             org = getattr(request, "organization", None)
             if org is None:
                 return self._gm.bad_request("Organization context is required")
+            if (
+                instance.name.startswith("__")
+                and instance.scope != AgentccGuardrailPolicy.SCOPE_KEY
+            ):
+                # Apply's project branch does not use the serializer. Refuse all
+                # reassignment here too, so a project hop cannot hide an org row.
+                return self._gm.bad_request("Reserved policies cannot be reassigned")
             key_ids = request.data.get("key_ids")
             project_ids = request.data.get("project_ids")
             if (key_ids is None) == (project_ids is None):

@@ -7,7 +7,10 @@ import pytest
 
 from agentcc.models import AgentccAPIKey, AgentccOrgConfig
 from agentcc.models.guardrail_policy import AgentccGuardrailPolicy
-from agentcc.serializers.guardrail_policy import AgentccGuardrailPolicySerializer
+from agentcc.serializers.guardrail_policy import (
+    _ORG_CONFIG_EDITOR_CONTEXT,
+    AgentccGuardrailPolicySerializer,
+)
 from agentcc.services import org_config_service
 from agentcc.services.config_push import _build_payload
 
@@ -28,6 +31,7 @@ def test_org_config_editor_keeps_saving_mask_actions(organization):
         hidden,
         data={"checks": [{"name": "pii-detection", "action": "mask"}]},
         partial=True,
+        context={"org_config_editor": _ORG_CONFIG_EDITOR_CONTEXT},
     )
     assert serializer.is_valid(), serializer.errors
 
@@ -58,7 +62,7 @@ def test_public_policies_still_refuse_mask(organization):
 def test_malformed_legacy_key_policy_does_not_break_the_org_payload(
     organization, bad_checks
 ):
-    """Rows saved before validation existed are skipped, never fail the org."""
+    """Malformed rows remain unavailable without breaking valid sibling policies."""
     api_key = _key(organization)
     AgentccGuardrailPolicy.no_workspace_objects.create(
         organization=organization,
@@ -81,6 +85,14 @@ def test_malformed_legacy_key_policy_does_not_break_the_org_payload(
     )
     names = [p["name"] for p in payload["guardrails"]["key_policies"]]
     assert "good" in names
+    assert "legacy" in names
+    legacy_checks = payload["guardrails"]["key_policies"][names.index("legacy")][
+        "checks"
+    ]
+    assert any(
+        check.get("configuration_error") == "invalid_config"
+        for check in legacy_checks.values()
+    )
     assert (
         payload["guardrails"]["key_policies"][names.index("good")]["checks"][
             "secret-detection"
