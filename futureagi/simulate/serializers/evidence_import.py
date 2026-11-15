@@ -131,7 +131,7 @@ class EvidenceRedactionFindingSerializer(serializers.Serializer):
     part = serializers.ChoiceField(choices=("transcript", "tool_calls", "labels"))
     index = serializers.IntegerField(min_value=0)
     field = serializers.ChoiceField(
-        choices=("text", "input", "output", "error", "notes", "value")
+        choices=("text", "input", "output", "error", "notes", "value", "name")
     )
     entity = serializers.CharField()
     start = serializers.IntegerField(min_value=0)

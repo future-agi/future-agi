@@ -35,10 +35,12 @@ from simulate.selectors.evidence_import import (
     MAX_SOURCES,
     SOURCE_NOT_FOUND,
     SOURCE_UNAVAILABLE,
+    _clip,
     evidence_digest,
     evidence_document,
     import_evidence,
 )
+from simulate.serializers.evidence_import import EvidenceRedactionFindingSerializer
 from simulate.services.hosted_harness import create_hosted_job
 from tracer.models.project import Project
 from tracer.selectors.observe_evidence import (
@@ -190,6 +192,97 @@ class TestCreate:
         ]
         assert len(stored.cases.get(source_id=SESSION).digest) == 64
 
+    def test_the_bundle_keeps_its_wire_shape(self, client, environment, project):
+        call = _call("lookup", error="no customer bob@example.com")
+        label = Label("Quality", "text", "good", "", "session")
+        found = {SESSION: _evidence(tool_calls=(call,), labels=(label,))}
+
+        body = _start(client, environment, project, found).json()
+
+        assert set(body) == {
+            "id",
+            "environment_id",
+            "project_id",
+            "agent_version_id",
+            "source_kind",
+            "created_at",
+            "drafting",
+            "simulated",
+            "cases",
+            "redaction",
+        }
+        case, missing = body["cases"]
+        assert (
+            set(case)
+            == set(missing)
+            == {
+                "id",
+                "source_id",
+                "status",
+                "reason",
+                "source_available",
+                "scenario_key",
+                "scenario_name",
+                "new_checks",
+                "changed_since_import",
+                "trace_ids",
+                "started_at",
+                "ended_at",
+                "transcript",
+                "tool_calls",
+                "tool_inputs",
+                "tool_outputs",
+                "starting_state",
+                "labels",
+            }
+        )
+        for part in ("tool_inputs", "tool_outputs", "starting_state"):
+            assert set(case[part]) == set(missing[part]) == {"status", "reason"}
+        assert set(case["transcript"]) == {"status", "reason", "turns"}
+        assert set(case["transcript"]["turns"][0]) == {
+            "role",
+            "text",
+            "truncated",
+            "trace_id",
+            "at",
+        }
+        assert set(case["tool_calls"]) == {"status", "reason", "calls"}
+        assert set(case["tool_calls"]["calls"][0]) == {
+            "span_id",
+            "trace_id",
+            "name",
+            "at",
+            "failed",
+            "error",
+            "input",
+            "output",
+            "input_truncated",
+            "output_truncated",
+        }
+        assert set(case["labels"]) == {"status", "reason", "labels"}
+        assert set(case["labels"]["labels"][0]) == {
+            "name",
+            "kind",
+            "value",
+            "notes",
+            "target",
+        }
+        assert missing["transcript"]["turns"] == []
+        assert missing["tool_calls"]["calls"] == []
+        assert missing["labels"]["labels"] == []
+        assert set(body["redaction"]) == {"method", "reason", "findings", "total"}
+        assert set(body["redaction"]["findings"][0]) == {
+            "case_id",
+            "part",
+            "index",
+            "field",
+            "entity",
+            "start",
+            "end",
+            "value",
+            "replacement",
+        }
+
     def test_redaction_previews_what_would_be_replaced(
         self, client, environment, project
     ):
@@ -303,6 +396,12 @@ class TestCreate:
 
 
 class TestBudget:
+    def test_a_budget_cut_never_keeps_part_of_a_personal_value(self):
+        kept, left = _clip("x" * 10 + " bob@example.com and more", 15)
+
+        assert kept == "x" * 10
+        assert left == 5
+
     def test_an_over_budget_import_is_cut_and_says_so(
         self, client, environment, project
     ):
@@ -624,6 +723,9 @@ class TestEvidenceDocument:
         assert '{"reason": "called back on <EMAIL_ADDRESS>"}' in text
         fields = {(f["part"], f["field"]) for f in made["redaction"]["findings"]}
         assert {("labels", "name"), ("labels", "value")} <= fields
+        # The contract names every field a finding can be in.
+        declared = set(EvidenceRedactionFindingSerializer().fields["field"].choices)
+        assert {field for _, field in fields} <= declared
 
     def test_findings_past_the_listed_ones_are_redacted_too(
         self, client, environment, project, monkeypatch

@@ -122991,7 +122991,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         field: {
           title: "Field",
           type: "string",
-          enum: ["text", "input", "output", "error", "notes", "value"],
+          enum: ["text", "input", "output", "error", "notes", "value", "name"],
         },
         entity: {
           title: "Entity",

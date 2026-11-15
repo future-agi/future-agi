@@ -583,16 +583,16 @@ def test_a_simulator_projects_calls_are_never_called_production(
         simulated = import_bundle(evidence_import)
         simulated_text = evidence_document(evidence_import, case_ids)
 
-    assert provider["simulated"] is False
+    assert provider.simulated is False
     assert "These are production calls: each case is regression evidence." in (
         provider_text
     )
-    assert production["simulated"] is False
+    assert production.simulated is False
     assert "These are production sessions: each case is regression evidence." in (
         production_text
     )
     assert "Simulator project" not in production_text
-    assert simulated["simulated"] is True
+    assert simulated.simulated is True
     assert (
         "These calls come from a Simulator project: simulated, not production."
         in simulated_text
@@ -625,10 +625,10 @@ def test_the_bundle_says_while_drafting_runs(cases, user, scheduled):
     with patch(
         "simulate.selectors.evidence_import.observe_evidence", return_value=found
     ):
-        assert import_bundle(evidence_import)["drafting"] is False
+        assert import_bundle(evidence_import).drafting is False
         _start(cases, user)
         evidence_import.refresh_from_db()
-        assert import_bundle(evidence_import)["drafting"] is True
+        assert import_bundle(evidence_import).drafting is True
 
 
 def test_the_draft_answer_says_drafting_has_started(

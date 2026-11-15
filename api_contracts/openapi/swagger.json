@@ -143357,7 +143357,8 @@
                         "output",
                         "error",
                         "notes",
-                        "value"
+                        "value",
+                        "name"
                     ]
                 },
                 "entity": {

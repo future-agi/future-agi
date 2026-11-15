@@ -40367,7 +40367,15 @@ export const SimulateApiHarnessEnvironmentsEvidenceImportResponse = zod.object({
           .min(
             simulateApiHarnessEnvironmentsEvidenceImportResponseRedactionFindingsItemIndexMin,
           ),
-        field: zod.enum(["text", "input", "output", "error", "notes", "value"]),
+        field: zod.enum([
+          "text",
+          "input",
+          "output",
+          "error",
+          "notes",
+          "value",
+          "name",
+        ]),
         entity: zod.string().min(1),
         start: zod
           .number()
@@ -40657,6 +40665,7 @@ export const SimulateApiHarnessEnvironmentsEvidenceImportsAddEvidenceCasesRespon
               "error",
               "notes",
               "value",
+              "name",
             ]),
             entity: zod.string().min(1),
             start: zod

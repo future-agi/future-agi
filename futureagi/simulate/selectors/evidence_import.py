@@ -11,8 +11,10 @@ from __future__ import annotations
 import hashlib
 import json
 from collections.abc import Mapping
-from dataclasses import asdict, replace
+from dataclasses import asdict, dataclass, replace
+from datetime import datetime
 from typing import cast
+from uuid import UUID
 
 from django.db.models import Q, QuerySet
 
@@ -26,7 +28,13 @@ from tracer.selectors.observe_evidence import (
     Turn,
     observe_evidence,
 )
-from tracer.utils.pii_scrubber import PiiFinding, find_pii, find_pii_basic, redact
+from tracer.utils.pii_scrubber import (
+    PiiFinding,
+    cut_clear,
+    find_pii,
+    find_pii_basic,
+    redact,
+)
 
 # Sources one import may hold.
 MAX_SOURCES = 20
@@ -52,6 +60,103 @@ BASIC_REDACTION = (
 SOURCE_UNAVAILABLE = "The source was deleted or is no longer kept by Observe."
 SOURCE_NOT_FOUND = "No retained session or call with this id in the project."
 CUT_TO_FIT = "Cut to fit the import's size; the start is kept."
+
+
+# The bundle a person reviews, as EvidenceImportSerializer writes it.
+
+
+@dataclass(frozen=True, kw_only=True)
+class EvidencePart:
+    """What one part of a source holds (present, partial, truncated, missing or
+    unreadable), and why when it is not all there."""
+
+    status: str
+    reason: str = ""
+
+
+@dataclass(frozen=True, kw_only=True)
+class TranscriptPart(EvidencePart):
+    turns: tuple[Turn, ...] = ()
+
+
+@dataclass(frozen=True, kw_only=True)
+class ToolCallsPart(EvidencePart):
+    calls: tuple[ToolCall, ...] = ()
+
+
+@dataclass(frozen=True, kw_only=True)
+class LabelsPart(EvidencePart):
+    labels: tuple[Label, ...] = ()
+
+
+@dataclass(frozen=True)
+class ToolParts:
+    tool_calls: ToolCallsPart
+    tool_inputs: EvidencePart
+    tool_outputs: EvidencePart
+
+
+@dataclass(frozen=True)
+class NewCheck:
+    name: str
+    what: str
+
+
+@dataclass(frozen=True)
+class CaseBundle:
+    id: UUID
+    source_id: str
+    status: str
+    reason: str
+    source_available: bool
+    scenario_key: str | None
+    scenario_name: str
+    new_checks: tuple[NewCheck, ...]
+    changed_since_import: bool | None
+    trace_ids: tuple[str, ...]
+    started_at: datetime | None
+    ended_at: datetime | None
+    transcript: TranscriptPart
+    tool_calls: ToolCallsPart
+    tool_inputs: EvidencePart
+    tool_outputs: EvidencePart
+    starting_state: EvidencePart
+    labels: LabelsPart
+
+
+@dataclass(frozen=True)
+class RedactionFinding:
+    case_id: UUID
+    part: str
+    index: int
+    field: str
+    entity: str
+    start: int
+    end: int
+    value: str
+    replacement: str
+
+
+@dataclass(frozen=True)
+class Redaction:
+    method: str
+    reason: str
+    findings: tuple[RedactionFinding, ...]
+    total: int
+
+
+@dataclass(frozen=True)
+class ImportBundle:
+    id: UUID
+    environment_id: UUID
+    project_id: UUID | None
+    agent_version_id: UUID | None
+    source_kind: str
+    created_at: datetime
+    drafting: bool
+    simulated: bool
+    cases: tuple[CaseBundle, ...]
+    redaction: Redaction
 
 
 def evidence_project(
@@ -125,7 +230,7 @@ def evidence_digest(evidence: SourceEvidence) -> str:
 def import_bundle(
     evidence_import: EvidenceImport,
     evidence: dict[str, SourceEvidence] | None = None,
-) -> dict:
+) -> ImportBundle:
     """The import as the review shows it. ``evidence`` is what Observe holds
     now for its sources (``import_evidence``); it is read when not given."""
     cases = list(evidence_import.cases.all())
@@ -141,18 +246,18 @@ def import_bundle(
         for case in cases
         if case.status != EvidenceImportCase.Status.UNAVAILABLE
     }
-    return {
-        "id": evidence_import.id,
-        "environment_id": evidence_import.environment_id,
-        "project_id": evidence_import.project_id,
-        "agent_version_id": evidence_import.agent_version_id,
-        "source_kind": evidence_import.source_kind,
-        "created_at": evidence_import.created_at,
-        "drafting": evidence_import.drafting_job_id is not None,
-        "simulated": is_simulated(evidence_import),
-        "cases": [_case(case, current.get(case.source_id)) for case in cases],
-        "redaction": _redaction(cases, current),
-    }
+    return ImportBundle(
+        id=evidence_import.id,
+        environment_id=evidence_import.environment_id,
+        project_id=evidence_import.project_id,
+        agent_version_id=evidence_import.agent_version_id,
+        source_kind=evidence_import.source_kind,
+        created_at=evidence_import.created_at,
+        drafting=evidence_import.drafting_job_id is not None,
+        simulated=is_simulated(evidence_import),
+        cases=tuple(_case(case, current.get(case.source_id)) for case in cases),
+        redaction=_redaction(cases, current),
+    )
 
 
 def _within(evidence: SourceEvidence, chars: int) -> SourceEvidence:
@@ -202,8 +307,9 @@ def _shares(sizes: tuple[int, ...], total: int) -> list[int]:
 
 
 def _clip(text: str, room: int) -> tuple[str, int]:
-    """``text`` cut to ``room``, and the room left after it."""
-    kept = text[: max(0, room)]
+    """``text`` cut to ``room``, never through a value redaction replaces, and
+    the room left after it."""
+    kept = cut_clear(text, max(0, room))
     return kept, room - len(kept)
 
 
@@ -285,7 +391,7 @@ def _cut_labels(labels: tuple[Label, ...], room: int) -> tuple[tuple[Label, ...]
     return tuple(kept), cut
 
 
-def _case(case: EvidenceImportCase, evidence: SourceEvidence | None) -> dict:
+def _case(case: EvidenceImportCase, evidence: SourceEvidence | None) -> CaseBundle:
     if evidence is None:
         # A drafted, blocked or added case keeps what became of it; only one
         # still waiting reads as unavailable. Its evidence is gone either way.
@@ -295,140 +401,144 @@ def _case(case: EvidenceImportCase, evidence: SourceEvidence | None) -> dict:
             if case.status == EvidenceImportCase.Status.UNAVAILABLE
             else SOURCE_UNAVAILABLE
         )
-        return {
-            "id": case.id,
-            "source_id": case.source_id,
-            "status": EvidenceImportCase.Status.UNAVAILABLE if pending else case.status,
-            "reason": reason if pending or not case.reason else case.reason,
-            "source_available": False,
-            "scenario_key": case.scenario_key,
-            "scenario_name": case.scenario_name,
-            "new_checks": _new_checks(case),
-            "changed_since_import": None,
-            "trace_ids": [],
-            "started_at": None,
-            "ended_at": None,
-            "transcript": _part("missing", reason, turns=[]),
-            "tool_calls": _part("missing", reason, calls=[]),
-            "tool_inputs": _part("missing", reason),
-            "tool_outputs": _part("missing", reason),
-            "starting_state": _part("missing", STATE_MISSING),
-            "labels": _part("missing", reason, labels=[]),
-        }
+        return CaseBundle(
+            id=case.id,
+            source_id=case.source_id,
+            status=EvidenceImportCase.Status.UNAVAILABLE if pending else case.status,
+            reason=reason if pending or not case.reason else case.reason,
+            source_available=False,
+            scenario_key=case.scenario_key,
+            scenario_name=case.scenario_name,
+            new_checks=_new_checks(case),
+            changed_since_import=None,
+            trace_ids=(),
+            started_at=None,
+            ended_at=None,
+            transcript=TranscriptPart(status="missing", reason=reason),
+            tool_calls=ToolCallsPart(status="missing", reason=reason),
+            tool_inputs=EvidencePart(status="missing", reason=reason),
+            tool_outputs=EvidencePart(status="missing", reason=reason),
+            starting_state=EvidencePart(status="missing", reason=STATE_MISSING),
+            labels=LabelsPart(status="missing", reason=reason),
+        )
     digest = evidence_digest(evidence)
-    return {
-        "id": case.id,
-        "source_id": case.source_id,
-        "status": case.status,
-        "reason": case.reason,
-        "source_available": True,
-        "scenario_key": case.scenario_key,
-        "scenario_name": case.scenario_name,
-        "new_checks": _new_checks(case),
+    tools = _tools(evidence)
+    return CaseBundle(
+        id=case.id,
+        source_id=case.source_id,
+        status=case.status,
+        reason=case.reason,
+        source_available=True,
+        scenario_key=case.scenario_key,
+        scenario_name=case.scenario_name,
+        new_checks=_new_checks(case),
         # Unknown when either side could not be read in full.
-        "changed_since_import": (
+        changed_since_import=(
             digest != case.digest if digest and case.digest else None
         ),
-        "trace_ids": list(evidence.trace_ids),
-        "started_at": evidence.started_at,
-        "ended_at": evidence.ended_at,
-        "transcript": _transcript(evidence),
-        **_tools(evidence),
-        "starting_state": _part("missing", STATE_MISSING),
-        "labels": _labels(evidence),
-    }
+        trace_ids=tuple(evidence.trace_ids),
+        started_at=evidence.started_at,
+        ended_at=evidence.ended_at,
+        transcript=_transcript(evidence),
+        tool_calls=tools.tool_calls,
+        tool_inputs=tools.tool_inputs,
+        tool_outputs=tools.tool_outputs,
+        starting_state=EvidencePart(status="missing", reason=STATE_MISSING),
+        labels=_labels(evidence),
+    )
 
 
-def _new_checks(case: EvidenceImportCase) -> list[dict]:
-    return [
-        {"name": str(one.get("name") or ""), "what": str(one.get("what") or "")}
+def _new_checks(case: EvidenceImportCase) -> tuple[NewCheck, ...]:
+    return tuple(
+        NewCheck(name=str(one.get("name") or ""), what=str(one.get("what") or ""))
         for one in case.new_sub_goals or []
-    ]
+    )
 
 
-def _part(status: str, reason: str = "", **items) -> dict:
-    return {"status": status, "reason": reason, **items}
-
-
-def _transcript(evidence: SourceEvidence) -> dict:
-    turns = [asdict(turn) for turn in evidence.turns]
+def _transcript(evidence: SourceEvidence) -> TranscriptPart:
+    turns = evidence.turns
     if evidence.transcript_unreadable and not turns:
-        return _part(
-            "unreadable", "The recorded transcript could not be read.", turns=[]
+        return TranscriptPart(
+            status="unreadable", reason="The recorded transcript could not be read."
         )
     if not turns:
-        return _part("missing", "No conversation text was recorded.", turns=[])
+        return TranscriptPart(
+            status="missing", reason="No conversation text was recorded."
+        )
     if evidence.turns_omitted:
         count = evidence.turns_omitted
-        return _part(
-            "truncated",
-            f"{count} middle turn{'s' if count != 1 else ''} left out to fit; "
+        return TranscriptPart(
+            status="truncated",
+            reason=f"{count} middle turn{'s' if count != 1 else ''} left out to fit; "
             "the first and last are kept.",
             turns=turns,
         )
-    if evidence.turns_truncated or any(t["truncated"] for t in turns):
-        return _part("truncated", CUT_TO_FIT, turns=turns)
-    return _part("present", turns=turns)
+    if evidence.turns_truncated or any(turn.truncated for turn in turns):
+        return TranscriptPart(status="truncated", reason=CUT_TO_FIT, turns=turns)
+    return TranscriptPart(status="present", turns=turns)
 
 
-def _tools(evidence: SourceEvidence) -> dict:
+def _tools(evidence: SourceEvidence) -> ToolParts:
     if evidence.tool_calls is None:
-        unreadable = _part("unreadable", "The tool calls could not be read.")
-        return {
-            "tool_calls": {**unreadable, "calls": []},
-            "tool_inputs": unreadable,
-            "tool_outputs": unreadable,
-        }
-    calls = [asdict(call) for call in evidence.tool_calls]
+        return _tools_as("unreadable", "The tool calls could not be read.")
+    calls = evidence.tool_calls
     if not calls and evidence.tool_calls_truncated:
-        cut = _part("truncated", "More steps were recorded than could be shown.")
-        return {
-            "tool_calls": {**cut, "calls": []},
-            "tool_inputs": cut,
-            "tool_outputs": cut,
-        }
+        return _tools_as("truncated", "More steps were recorded than could be shown.")
     if not calls:
         # Observe cannot tell an agent that called no tool from one whose
         # tools are not traced.
-        missing = _part(
+        return _tools_as(
             "missing",
             "No tool calls were recorded, or the agent's tools are not traced.",
         )
-        return {
-            "tool_calls": {**missing, "calls": []},
-            "tool_inputs": missing,
-            "tool_outputs": missing,
-        }
     listed = (
-        _part("truncated", "More tool calls were recorded than are shown.", calls=calls)
+        ToolCallsPart(
+            status="truncated",
+            reason="More tool calls were recorded than are shown.",
+            calls=calls,
+        )
         if evidence.tool_calls_truncated
-        else _part("present", calls=calls)
+        else ToolCallsPart(status="present", calls=calls)
     )
-    return {
-        "tool_calls": listed,
-        "tool_inputs": _values(calls, "input", "inputs"),
-        "tool_outputs": _values(calls, "output", "outputs"),
-    }
+    return ToolParts(
+        tool_calls=listed,
+        tool_inputs=_values(calls, "input", "inputs"),
+        tool_outputs=_values(calls, "output", "outputs"),
+    )
 
 
-def _values(calls: list[dict], field: str, plural: str) -> dict:
-    recorded = [call for call in calls if call[field]]
+def _tools_as(status: str, reason: str) -> ToolParts:
+    """Every tool part the same: nothing listed, for the one ``reason``."""
+    part = EvidencePart(status=status, reason=reason)
+    return ToolParts(
+        tool_calls=ToolCallsPart(status=status, reason=reason),
+        tool_inputs=part,
+        tool_outputs=part,
+    )
+
+
+def _values(calls: tuple[ToolCall, ...], field: str, plural: str) -> EvidencePart:
+    recorded = [call for call in calls if getattr(call, field)]
     if not recorded:
-        return _part("missing", f"The tool calls recorded no {plural}.")
+        return EvidencePart(
+            status="missing", reason=f"The tool calls recorded no {plural}."
+        )
     if len(recorded) < len(calls):
-        return _part("partial", f"Some tool calls recorded no {plural}.")
-    if any(call[f"{field}_truncated"] for call in calls):
-        return _part("truncated", CUT_TO_FIT)
-    return _part("present")
+        return EvidencePart(
+            status="partial", reason=f"Some tool calls recorded no {plural}."
+        )
+    if any(getattr(call, f"{field}_truncated") for call in calls):
+        return EvidencePart(status="truncated", reason=CUT_TO_FIT)
+    return EvidencePart(status="present")
 
 
-def _labels(evidence: SourceEvidence) -> dict:
-    labels = [asdict(label) for label in evidence.labels]
+def _labels(evidence: SourceEvidence) -> LabelsPart:
+    labels = evidence.labels
     if not labels:
-        return _part("missing", "Nobody labelled this source.", labels=[])
+        return LabelsPart(status="missing", reason="Nobody labelled this source.")
     if evidence.labels_truncated:
-        return _part("truncated", CUT_TO_FIT, labels=labels)
-    return _part("present", labels=labels)
+        return LabelsPart(status="truncated", reason=CUT_TO_FIT, labels=labels)
+    return LabelsPart(status="present", labels=labels)
 
 
 def _observe_kind(evidence_import: EvidenceImport) -> SourceKind:
@@ -483,27 +593,31 @@ def _analysed(texts: list[str]) -> tuple[list[list[PiiFinding]], str, str]:
 
 def _redaction(
     cases: list[EvidenceImportCase], evidence: dict[str, SourceEvidence | None]
-) -> dict:
+) -> Redaction:
     """What redaction would replace in every text the bundle carries."""
     values = _texts(cases, evidence)
     found, method, reason = _analysed([text for *_, text in values])
     findings = [
-        {
-            "case_id": case.id,
-            "part": part,
-            "index": index,
-            "field": field,
-            **asdict(finding),
-        }
+        RedactionFinding(
+            case_id=case.id,
+            part=part,
+            index=index,
+            field=field,
+            entity=finding.entity,
+            start=finding.start,
+            end=finding.end,
+            value=finding.value,
+            replacement=finding.replacement,
+        )
         for (case, part, index, field, _), hits in zip(values, found, strict=True)
         for finding in hits
     ]
-    return {
-        "method": method,
-        "reason": reason,
-        "findings": findings[:MAX_FINDINGS],
-        "total": len(findings),
-    }
+    return Redaction(
+        method=method,
+        reason=reason,
+        findings=tuple(findings[:MAX_FINDINGS]),
+        total=len(findings),
+    )
 
 
 def evidence_document(
@@ -559,14 +673,14 @@ def evidence_document(
             f"== case {case.id} ({evidence_import.source_kind} {case.source_id}, "
             f"traces {', '.join(source.trace_ids)}, "
             f"{source.started_at.isoformat()} to {source.ended_at.isoformat()})",
-            f"-- transcript: {_transcript(source)['status']}",
+            f"-- transcript: {_transcript(source).status}",
         ]
         for i, turn in enumerate(source.turns):
             lines += _wrapped(
                 f"[turn {i + 1}] {turn.role}",
                 redacted[(case.id, "transcript", i, "text")],
             )
-        lines.append(f"-- tool calls: {_tools(source)['tool_calls']['status']}")
+        lines.append(f"-- tool calls: {_tools(source).tool_calls.status}")
         for i, call in enumerate(source.tool_calls or ()):
             lines.append(
                 f"[call {i + 1}] {call.name} at {call.at.isoformat()}"
@@ -576,7 +690,7 @@ def evidence_document(
                 text = redacted[(case.id, "tool_calls", i, field)]
                 if text:
                     lines += _wrapped(f"[call {i + 1}] {field}", text)
-        lines.append(f"-- labels: {_labels(source)['status']}")
+        lines.append(f"-- labels: {_labels(source).status}")
         for i, label in enumerate(source.labels):
             name = redacted[(case.id, "labels", i, "name")]
             lines += _wrapped(

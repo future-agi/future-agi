@@ -20250,6 +20250,7 @@ export const EvidenceRedactionFindingApiField = {
   error: "error",
   notes: "notes",
   value: "value",
+  name: "name",
 } as const;
 
 export interface EvidenceRedactionFindingApi {
