@@ -10,6 +10,7 @@ import ContentSkeleton from 'src/components/content-skeleton';
 import Iconify from 'src/components/iconify';
 import { paths } from 'src/routes/paths';
 import { spendPolicyReady } from 'src/api/skills/r3-spend';
+import { isContractedApiPath } from 'src/api/contracts/api-surface';
 import { useSkillV11Scope } from 'src/api/skills/testing';
 import { campaignsContractReady, useContextCampaignAvailability } from 'src/api/skills/context-campaigns';
 import { useSkillsAccess } from '../utils/access';
@@ -85,7 +86,9 @@ function SkillsNavigation() {
     // Viewers can't act on reviews, so the tab would only lead to "You don't have access".
     // The direct URL still renders that explanation; only the tab is hidden.
     [paths.dashboard.skills.reviews]: Boolean(bindings?.reviews) && !(role.ready && role.isViewer),
-    [paths.dashboard.skills.archived]: Boolean(bindings?.archived),
+    // Archived skills (A8): workspace admins only, and only once the archived-skills API is in
+    // the generated contract. Until then nothing new renders; the direct route keeps its own states.
+    [paths.dashboard.skills.archived]: access.enabled && isContractedApiPath('/model-hub/skills/archived/') && role.ready && role.canAdmin,
   };
   const tabs = [
     [paths.dashboard.skills.root, 'Skills'],

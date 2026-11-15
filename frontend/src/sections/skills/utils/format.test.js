@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { paths } from 'src/routes/paths';
-import { allowanceInput, formatBytes, formatExpiry, formatTokens, formatUtcFull, formatWhen, shortDigest } from './format';
-import { answerConclusion, publishSentence } from './conclusions';
+import { allowanceInput, formatBytes, formatExpiry, formatExpiryShort, formatTokens, formatUtcFull, formatWhen, shortDigest } from './format';
+import { answerConclusion, impactSentence, publishSentence } from './conclusions';
 
 it.each([[0, '0 B'], [1023, '1023 B'], [1024, '1 KiB'], [1536, '1.5 KiB'], [2097152, '2 MiB']])('formats %s UTF-8 bytes', (bytes, expected) => expect(formatBytes(bytes)).toBe(expected));
 it('marks token counts as estimates and abbreviates only the digest prefix', () => {
@@ -42,11 +42,22 @@ describe('dates', () => {
   ])('describes expiry %s as %s', (value, expected) => {
     expect(formatExpiry(value, { now })).toBe(expected);
   });
+  it.each([
+    ['2026-12-13T00:48:30Z', 'in 29 days'],
+    ['2026-11-15T00:48:30Z', 'in 1 day'],
+    ['2026-11-14T03:48:30Z', 'in 3 hours'],
+    ['2026-11-14T00:48:40Z', 'in less than a minute'],
+    ['2026-11-12T00:48:30Z', 'expired 2 days ago'],
+    ['2026-11-14T00:48:20Z', 'expired just now'],
+  ])('describes expiry %s under an Expires header as %s', (value, expected) => {
+    expect(formatExpiryShort(value, { now })).toBe(expected);
+  });
   it('gives the full UTC time for tooltips and returns nothing for missing values', () => {
     expect(formatUtcFull('2026-11-14T00:48:46.123Z')).toBe('14 Nov 2026, 00:48 UTC');
     expect(formatUtcFull(undefined)).toBe('');
     expect(formatWhen('not a date', utc)).toBe('');
     expect(formatExpiry(null, { now })).toBe('');
+    expect(formatExpiryShort('not a date', { now })).toBe('');
   });
 });
 
@@ -82,5 +93,18 @@ describe('conclusion sentences follow the job state and name what changes', () =
     expect(sentence).toBe('Publishing creates this context v3: privacy changes; AGENTS.md is unchanged.');
     expect(sentence).not.toMatch(/no instruction changes/);
     expect(publishSentence('support-agent', { expectedHeadVersion: 1, changes: [] })).toBe('Publishing creates support-agent v2: no linked-skill changes; AGENTS.md is unchanged.');
+  });
+});
+
+describe('release impact', () => {
+  it.each([
+    [{}, 'No connected apps move with this release.'],
+    [{ following: 1 }, '1 connected app moves with this release.'],
+    [{ following: 2, pinned: 1 }, '2 connected apps move with this release. 1 is pinned and stays put.'],
+    [{ following: 0, pinned: 3, unobserved: 1 }, "No connected apps move with this release. 3 are pinned and stay put. 1 app hasn't reported a version yet."],
+    [{ following: 4, unobserved: 2 }, "4 connected apps move with this release. 2 apps haven't reported a version yet."],
+  ])('states %j in short sentences, in app words', (impact, expected) => {
+    expect(impactSentence(impact)).toBe(expected);
+    expect(impactSentence(impact)).not.toMatch(/consumer|label/);
   });
 });

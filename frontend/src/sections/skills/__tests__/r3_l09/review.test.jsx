@@ -685,7 +685,7 @@ describe("publication and explicit spending", () => {
       />,
     );
     expect(
-      screen.getByRole("textbox", { name: "Period allowance (USD)" }),
+      screen.getByRole("textbox", { name: "Monthly allowance (USD)" }),
     ).toHaveValue("");
     expect(
       screen.getByRole("button", { name: "Save" }),
@@ -699,7 +699,7 @@ describe("publication and explicit spending", () => {
     expect(screen.queryByText(/Leave empty/)).not.toBeInTheDocument();
     expect(screen.getByRole("checkbox", { name: "Allow paid test runs up to this amount" })).not.toBeChecked();
     fireEvent.change(
-      screen.getByRole("textbox", { name: "Period allowance (USD)" }),
+      screen.getByRole("textbox", { name: "Monthly allowance (USD)" }),
       { target: { value: "12.00000001" } },
     );
     click("Save");
@@ -731,7 +731,7 @@ describe("publication and explicit spending", () => {
       />,
     );
     fireEvent.change(
-      screen.getByRole("textbox", { name: "Period allowance (USD)" }),
+      screen.getByRole("textbox", { name: "Monthly allowance (USD)" }),
       { target: { value: "5.25" } },
     );
     rerender(
@@ -751,7 +751,7 @@ describe("publication and explicit spending", () => {
       screen.getByRole("button", { name: "Save" }),
     ).toBeDisabled();
     expect(
-      screen.getByRole("textbox", { name: "Period allowance (USD)" }),
+      screen.getByRole("textbox", { name: "Monthly allowance (USD)" }),
     ).toHaveValue("5.25");
   });
 });

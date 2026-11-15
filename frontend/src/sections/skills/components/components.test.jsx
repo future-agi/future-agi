@@ -174,12 +174,17 @@ it('registers shared controls and tree arrows locally for offline use', () => {
   for (const icon of [SKILLS_NAV_ICON, 'solar:alt-arrow-right-linear', 'solar:alt-arrow-down-linear', 'solar:copy-linear', 'solar:menu-dots-bold', 'solar:info-circle-linear', 'solar:wallet-linear', 'solar:archive-linear']) expect(iconExists(icon)).toBe(true);
 });
 
-const navigation = vi.hoisted(() => ({ bindings: {}, enabled: true, campaigns: false, contract: true, allowance: true, role: { ready: false, isViewer: false } }));
+const navigation = vi.hoisted(() => ({ bindings: {}, enabled: true, campaigns: false, contract: true, allowance: true, archived: true, role: { ready: false, isViewer: false } }));
 vi.mock('src/api/skills/testing', () => ({ useSkillV11Scope: () => ({ enabled: navigation.enabled, identity: 'workspace-a' }) }));
 vi.mock('src/api/skills/r3-spend', () => ({ spendPolicyReady: () => navigation.allowance }));
 vi.mock('src/api/skills/context-campaigns', () => ({ campaignsContractReady: () => navigation.contract, useContextCampaignAvailability: () => ({ data: { enabled: navigation.campaigns } }) }));
 vi.mock('../contexts/ContextLibraryView', () => ({ useContextAuthoring: () => ({ bindings: navigation.bindings }) }));
 vi.mock('../utils/access', () => ({ useSkillsAccess: () => navigation.role }));
+// Archived skills (A8) appear once their API is in the generated contract; every other path keeps the real answer.
+vi.mock('src/api/contracts/api-surface', async (importOriginal) => {
+  const actual = await importOriginal();
+  return { ...actual, isContractedApiPath: (template) => (template === '/model-hub/skills/archived/' ? navigation.archived : actual.isContractedApiPath(template)) };
+});
 // The assistant's open action needs the app's capability query; its own behaviour is covered in production-routes.test.jsx.
 const assistant = vi.hoisted(() => ({ open: vi.fn() }));
 vi.mock('src/sections/falcon-ai/components/FalconAIFab', () => ({ useOpenFalconAI: () => assistant.open, FalconIcon: () => null }));
@@ -204,7 +209,7 @@ function mountNavigation(path = '/dashboard/skills', child = <p>Skills content</
 
 describe('Skills workspace navigation', () => {
   beforeEach(() => {
-    Object.assign(navigation, { bindings: { library: true, detail: true, editor: true, reviews: true, archived: true }, enabled: true, campaigns: false, contract: true, allowance: true, role: { ready: true, isViewer: false } });
+    Object.assign(navigation, { bindings: { library: true, detail: true, editor: true, reviews: true }, enabled: true, campaigns: false, contract: true, allowance: true, archived: true, role: { ready: true, isViewer: false, canAdmin: true } });
   });
   it('shows only primary enabled destinations and keeps secondary pages in More', async () => {
     const user = userEvent.setup();
@@ -238,9 +243,33 @@ describe('Skills workspace navigation', () => {
     expect(trigger).toHaveFocus();
   });
   it('omits More when neither secondary destination is available', () => {
-    navigation.allowance = false; navigation.bindings.archived = false;
+    navigation.allowance = false; navigation.archived = false;
     mountNavigation();
     expect(screen.queryByRole('button', { name: 'More Skills pages' })).not.toBeInTheDocument();
+  });
+  it('lists Archived skills in More for workspace admins once the archived-skills API is contracted', async () => {
+    const user = userEvent.setup();
+    mountNavigation();
+    await user.click(screen.getByRole('button', { name: 'More Skills pages' }));
+    expect(screen.getByRole('menuitem', { name: 'Archived skills' })).toHaveAttribute('href', '/dashboard/skills/archived');
+  });
+  it.each([
+    ['a member', { role: { ready: true, isViewer: false, canAdmin: false } }],
+    ['a viewer', { role: { ready: true, isViewer: true, canAdmin: false } }],
+    ['an admin whose role has not loaded yet', { role: { ready: false, isViewer: false, canAdmin: false } }],
+    ['an admin before the archived-skills API is contracted', { archived: false }],
+  ])('hides Archived skills from %s; the allowance stays', async (_, change) => {
+    const user = userEvent.setup();
+    Object.assign(navigation, change);
+    mountNavigation();
+    await user.click(screen.getByRole('button', { name: 'More Skills pages' }));
+    expect(screen.getAllByRole('menuitem').map((item) => item.textContent)).toEqual(['Workspace allowance']);
+    expect(screen.queryByRole('menuitem', { name: 'Archived skills' })).not.toBeInTheDocument();
+  });
+  it('keeps the direct archived route rendering when the menu item is hidden', () => {
+    navigation.role = { ready: true, isViewer: false, canAdmin: false };
+    mountNavigation('/dashboard/skills/archived');
+    expect(screen.getByText('Archive content')).toBeVisible();
   });
   it('requires every context capability and a review capability', () => {
     navigation.bindings = { library: true, detail: true };

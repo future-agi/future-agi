@@ -10,7 +10,9 @@ import {
   TextField,
   Typography,
 } from "@mui/material";
+import { enqueueSnackbar } from "notistack";
 import Section from "src/components/section";
+import { paths } from "src/routes/paths";
 import ContentSkeleton from "src/components/content-skeleton";
 import EmptyState from "src/components/empty-state";
 import ErrorState from "src/components/error-state";
@@ -26,6 +28,48 @@ import { allowanceInput } from "../utils/format";
 
 const DECIMAL = /^(?:0|[1-9]\d{0,9})(?:\.\d{1,8})?$/;
 const SAVE_REASON_ID = "allowance-save-reason";
+
+// Allowance periods are UTC calendar months (spend_policy.py); the field says
+// "Monthly" only when the period the server reports is one.
+function isCalendarMonth(startsAt, endsAt) {
+  const start = new Date(startsAt);
+  const end = new Date(endsAt);
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return false;
+  const next = Date.UTC(start.getUTCFullYear(), start.getUTCMonth() + 1, 1);
+  return start.getTime() === Date.UTC(start.getUTCFullYear(), start.getUTCMonth(), 1) && end.getTime() === next;
+}
+
+// A member can't set the allowance, but can hand a workspace admin a
+// ready-to-send request with a link back to this page (the viewer pattern of
+// ContextUsePanel's "Copy request for admin"). Nothing is changed or sent.
+function AdminRequestNotice({ inForce, onRefresh, busy }) {
+  const [copying, setCopying] = useState(false);
+  const copy = async () => {
+    const url = typeof window === "undefined" ? paths.dashboard.skills.allowance : new URL(paths.dashboard.skills.allowance, window.location.origin).href;
+    const request = `Please set a Skills workspace allowance so paid application tests can run: ${url}`;
+    setCopying(true);
+    try {
+      if (!navigator.clipboard?.writeText) throw new Error("Unavailable");
+      await navigator.clipboard.writeText(request);
+      enqueueSnackbar("Copied the request for an admin.");
+    } catch {
+      enqueueSnackbar("Couldn't copy the request. Ask a workspace admin to set the allowance.", { variant: "error" });
+    } finally {
+      setCopying(false);
+    }
+  };
+  return (
+    <CapabilityNotice
+      title="Only workspace admins can set the allowance"
+      description={inForce ? "Copy a request and send it to a workspace admin if paid tests need more." : "Paid application tests can run once an admin sets one. Copy a request and send it to a workspace admin."}
+      actions={<>
+        <Button variant="outlined" size="small" disabled={copying} onClick={copy}>Copy request for admin</Button>
+        {onRefresh && <Button size="small" disabled={busy} onClick={onRefresh}>Refresh</Button>}
+      </>}
+    />
+  );
+}
+AdminRequestNotice.propTypes = { inForce: PropTypes.bool, onRefresh: PropTypes.func, busy: PropTypes.bool };
 
 function PolicyForm({ policy, canManage, onSave, onRefresh, savedAction }) {
   const [revision, setRevision] = useState(policy.revision);
@@ -50,7 +94,8 @@ function PolicyForm({ policy, canManage, onSave, onRefresh, savedAction }) {
   const uncertain = Number(policy.unknownReservedUsd) > 0 ? usd(policy.unknownReservedUsd) : null;
   const amountError = amount === "" ? null : !wellFormed ? "Enter an amount such as 25 or 25.50." : !valid ? "Enter an amount above $0.00 to allow paid runs." : null;
   // The box below is the only "off" control; the field only takes the amount.
-  const emptyHint = "Monthly limit in USD.";
+  const monthly = isCalendarMonth(policy.startsAt, policy.endsAt);
+  const emptyHint = monthly ? "Monthly limit in USD." : "Limit for each period, in USD.";
   const left = limit ? usd(policy.remainingUsd) : null;
   // One summary line: limit, use, what's left and the period, then the caveat once.
   const facts = limit
@@ -80,10 +125,10 @@ function PolicyForm({ policy, canManage, onSave, onRefresh, savedAction }) {
           </Stack>
         )}
         {uncertain && <Typography variant="s1">{uncertain} is held by runs whose final cost isn&apos;t settled yet.</Typography>}
-        {!canManage && <Typography variant="s1">Only workspace admins can change this.</Typography>}
+        {!canManage && <AdminRequestNotice inForce={inForce} onRefresh={onRefresh} busy={operation.busy} />}
         {canManage && <>
           <TextField
-            label="Period allowance (USD)"
+            label={monthly ? "Monthly allowance (USD)" : "Allowance per period (USD)"}
             size="small"
             sx={{ maxWidth: 320 }}
             value={amount}
@@ -125,26 +170,23 @@ function PolicyForm({ policy, canManage, onSave, onRefresh, savedAction }) {
             </SavedFeedback>
           )}
         </>}
-        <Stack direction="row" spacing={1} useFlexGap alignItems="center" sx={{ flexWrap: "wrap" }}>
-          {canManage && (
-            <Button
-              variant="contained"
-              color="primary"
-              disabled={!onSave || !valid || stale || locked || unchanged}
-              onClick={() => setConfirm(true)}
-              {...reasonProps(SAVE_REASON_ID, saveReason)}
-            >
-              Save
-            </Button>
-          )}
+        {canManage && <Stack direction="row" spacing={1} useFlexGap alignItems="center" sx={{ flexWrap: "wrap" }}>
+          <Button
+            variant="contained"
+            color="primary"
+            disabled={!onSave || !valid || stale || locked || unchanged}
+            onClick={() => setConfirm(true)}
+            {...reasonProps(SAVE_REASON_ID, saveReason)}
+          >
+            Save
+          </Button>
           {onRefresh && (
-            // Alone at the start of the row (members), the text button aligns with the content edge.
-            <Button disabled={operation.busy} onClick={onRefresh} sx={canManage ? undefined : { ml: -1 }}>
+            <Button disabled={operation.busy} onClick={onRefresh}>
               Refresh
             </Button>
           )}
-          {canManage && <ActionReason id={SAVE_REASON_ID} reason={saveReason} />}
-        </Stack>
+          <ActionReason id={SAVE_REASON_ID} reason={saveReason} />
+        </Stack>}
         <TechnicalDetails title="How usage is counted">
           <Stack spacing={1}>
             <IdentityValue label="Period (UTC)" value={`${policy.startsAt} → ${policy.endsAt}`} />

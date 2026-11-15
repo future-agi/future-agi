@@ -14,6 +14,10 @@ import { useEffect } from 'react';
 //   exactly at the strip's left edge, so a cut label can only appear on the
 //   right, under the fade. Measured at 390 before this: the mask was applied,
 //   but centring left 25-30px of a neighbour's label crisp on both sides.
+// - Arrows only when the strip overflows (UX iteration 5, SH4): MUI could leave
+//   an arrow showing at 1440 although every tab fit. useActiveTabInView marks
+//   the Tabs root data-tab-overflow from a measurement (on resize, after the
+//   fonts load, and on scroll) and the arrows are hidden while it is "false".
 const FADE = 24;
 // Ramp between a fully shown tab and a fully hidden cut fragment.
 export const TAB_FADE_RAMP = 8;
@@ -24,6 +28,7 @@ export const scrollTabsSx = {
   '& .MuiTabs-scrollButtons': { width: BUTTON, flexShrink: 0 },
   '& .MuiTabs-scroller .MuiTab-root': { scrollSnapAlign: 'start' },
   '& .MuiTabs-scrollButtons.Mui-disabled': { display: 'none' },
+  '&[data-tab-overflow="false"] > .MuiTabs-scrollButtons': { display: 'none' },
   '& .MuiTabs-scroller[data-fade-start="true"], & .MuiTabs-scroller[data-fade-end="true"]': {
     WebkitMaskImage: 'var(--tab-fade)',
     maskImage: 'var(--tab-fade)',
@@ -43,6 +48,23 @@ export const scrollTabsSx = {
 export const scrollTabsProps = { variant: 'scrollable', scrollButtons: 'auto', allowScrollButtonsMobile: true };
 
 /**
+ * Whether the tabs overflow the strip. Measured against the width the tabs
+ * would have with no arrows (the scroller plus any arrow on screen), so an
+ * arrow that is showing can't keep itself showing by taking space.
+ */
+export function tabsOverflow(scroller) {
+  const root = scroller.parentElement;
+  const arrows = root ? [...root.children].filter((node) => node !== scroller && node.classList?.contains('MuiTabs-scrollButtons')) : [];
+  const arrowWidth = arrows.reduce((sum, node) => sum + (node.getBoundingClientRect?.().width || 0), 0);
+  return scroller.scrollWidth > scroller.clientWidth + arrowWidth + 1;
+}
+
+/** Sets data-tab-overflow on the Tabs root; scrollTabsSx hides the arrows while it is "false". */
+export function markTabOverflow(scroller) {
+  scroller.parentElement?.setAttribute('data-tab-overflow', String(tabsOverflow(scroller)));
+}
+
+/**
  * Marks which edges of an overflowing scroller have hidden tabs, and hides
  * the label cut at that edge: the whole fragment is transparent (never a
  * readable half word) after an 8px ramp, and an edge that falls exactly on a
@@ -50,6 +72,7 @@ export const scrollTabsProps = { variant: 'scrollable', scrollButtons: 'auto', a
  * The stylesheet's FADE px gradient is only the fallback before this runs.
  */
 export function markTabFade(scroller) {
+  markTabOverflow(scroller);
   const overflow = scroller.scrollWidth - scroller.clientWidth > 1;
   const start = overflow && scroller.scrollLeft > 1;
   const end = overflow && scroller.scrollLeft + scroller.clientWidth < scroller.scrollWidth - 1;
@@ -180,8 +203,23 @@ export function useActiveTabInView(ref, value) {
       // The tab row itself (its width changes when the app font arrives).
       const strip = scroller.querySelector('.MuiTabs-flexContainer') || scroller.firstElementChild;
       if (strip) observer.observe(strip);
+      // Each tab: a label that widens (the app font) changes the content
+      // width without resizing the row, and so does a tab added later.
+      scroller.querySelectorAll('[role="tab"]').forEach((tab) => observer.observe(tab));
+    }
+    // A tab that appears or goes away after mount (a destination whose
+    // availability loads later) changes whether the strip overflows.
+    let mutations;
+    const row = scroller?.querySelector('.MuiTabs-flexContainer') || scroller?.firstElementChild;
+    if (row && typeof MutationObserver !== 'undefined') {
+      mutations = new MutationObserver(() => {
+        row.querySelectorAll('[role="tab"]').forEach((tab) => observer?.observe(tab));
+        run();
+      });
+      mutations.observe(row, { childList: true });
     }
     return () => {
+      mutations?.disconnect();
       alive = false;
       window.cancelAnimationFrame(frame);
       window.clearTimeout(settle);

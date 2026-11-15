@@ -118,7 +118,7 @@ try {
       await page.getByText('No assigned reviews').waitFor();
       await page.screenshot({ path: path.join(output, `reviews-${theme}-${width}.png`) });
       await page.getByRole('tab', { name: 'Workspace allowance', exact: true }).click();
-      await page.getByLabel('Period allowance (USD)').waitFor();
+      await page.getByLabel('Monthly allowance (USD)').waitFor();
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
       await page.screenshot({ path: path.join(output, `allowance-${theme}-${width}.png`) });
       for (const kind of ['agent_context', 'skill']) {

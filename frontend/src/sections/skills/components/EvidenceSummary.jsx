@@ -46,6 +46,8 @@ function useStacked() {
 
 // Display and controlled selection only. Sharing always belongs to the caller,
 // which must explicitly confirm it; neither selection nor Inspect shares data.
+// A private row carries the Private badge only; the caller states once, above
+// the list, that private results must be shared before they can be attached.
 export default function EvidenceSummary({ items = [], selectable = false, selected = [], onToggle, onInspect, renderAction, emptyText = 'No matching test evidence. Not tested is not a pass.' }) {
   const [stacked, boxRef] = useStacked();
   const selections = selected instanceof Set ? selected : new Set(selected);
@@ -63,13 +65,13 @@ export default function EvidenceSummary({ items = [], selectable = false, select
         ? <Typography variant="s3" color="text.secondary">Rechecked when you renew.</Typography>
         : !result && !item.results?.length && <Typography variant="s3" color="text.secondary">Result not recorded; inspect before relying on it.</Typography>}
       {item.targetMatch !== undefined && <Typography variant="s3" color="text.secondary">{item.targetMatch ? 'Matches target' : 'Different target'}</Typography>}
-      {item.visibility === 'private' && <Typography variant="s3" color="text.secondary">Only you can see this result. Share it with the workspace to attach it.</Typography>}
       {renderAction?.(item)}
     </>;
     const perCheck = !notLoaded && item.results?.length > 0;
     const badge = notLoaded ? <StatusBadge {...NOT_LOADED} /> : perCheck ? <Stack spacing={0.5}>{item.results.map((outcome) => <Stack key={outcome.label} direction="row" gap={0.5} alignItems="center"><Typography variant="s3">{outcome.label}</Typography><StatusBadge {...resultBadge(item.source, outcome.status)} /></Stack>)}</Stack> : <StatusBadge {...resultBadge(item.source, result)} />;
     const coverage = evidenceCoverage(item.counts, item.cases);
-    const inspect = <Button size="small" variant="outlined" disabled={!onInspect} onClick={() => onInspect(item)} sx={{ flexShrink: 0 }}>Inspect</Button>;
+    // A row action: a small text button (the design system's table-row style).
+    const inspect = <Button size="small" variant="text" disabled={!onInspect} onClick={() => onInspect(item)} sx={{ flexShrink: 0 }}>Inspect</Button>;
     return { item, key, checked, checkbox, titleLine, notes, perCheck, badge, coverage, inspect };
   });
 
@@ -108,7 +110,9 @@ export default function EvidenceSummary({ items = [], selectable = false, select
     <Table size="small" aria-label="Test evidence" sx={stackedTableSx}>
       <TableHead><TableRow sx={{ height: TABLE_HEADER_HEIGHT.default }}>
         {selectable && <TableCell padding="checkbox">Attach</TableCell>}
-        {['Evidence', 'Result', 'Coverage', 'Visibility', 'Expires', 'Inspect'].map((label) => <TableCell key={label} sx={{ whiteSpace: 'nowrap' }}>{label}</TableCell>)}
+        {['Evidence', 'Result', 'Coverage', 'Visibility', 'Expires'].map((label) => <TableCell key={label} sx={{ whiteSpace: 'nowrap' }}>{label}</TableCell>)}
+        {/* The Inspect buttons name themselves; the column header only needs a name for assistive technology. */}
+        <TableCell aria-label="Actions" />
       </TableRow></TableHead>
       <TableBody>{rows.map(({ item, key, checked, checkbox, titleLine, notes, badge, coverage, inspect }) => <TableRow key={key} hover selected={selectable && checked} sx={{ height: ROW_HEIGHT.default }}>
         {selectable && <TableCell padding="checkbox">{checkbox}</TableCell>}
@@ -117,7 +121,8 @@ export default function EvidenceSummary({ items = [], selectable = false, select
         <TableCell sx={nowrap(140)}>{badge}</TableCell>
         <TableCell sx={{ minWidth: { sm: 160 } }}><Typography variant="s3">{coverage}</Typography></TableCell>
         <TableCell sx={nowrap(110)}>{item.visibility === 'private' ? <StatusBadge status="private" /> : item.visibility === 'workspace' ? <StatusBadge status="workspace" role="neutral" label="Workspace" /> : <Typography component="span" variant="s3">Not reported</Typography>}</TableCell>
-        <TableCell sx={nowrap(120)}><Typography component="span" variant="s3"><When value={item.expiresAt} kind="expiry" /></Typography></TableCell>
+        {/* Under the "Expires" header the cell reads "in 29 days" (the stacked row keeps "Expires in 29 days"). */}
+        <TableCell sx={nowrap(120)}><Typography component="span" variant="s3"><When value={item.expiresAt} kind="expiry-short" /></Typography></TableCell>
         <TableCell data-cell="actions" sx={nowrap()}>{inspect}</TableCell>
       </TableRow>)}</TableBody>
     </Table>

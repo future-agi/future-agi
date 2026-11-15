@@ -94,7 +94,7 @@ try {
         await page.goto(`${origin}/dashboard/skills?${new URLSearchParams({ theme, screen })}`);
         if (screen === 'allowance') {
           await page.getByRole('tab', { name: 'Workspace allowance', exact: true }).click();
-          await page.getByLabel('Period allowance (USD)').fill('12.3400');
+          await page.getByLabel('Monthly allowance (USD)').fill('12.3400');
           await page.getByLabel('Allow paid test runs up to this amount').check();
           await page.getByRole('button', { name: 'Save', exact: true }).click();
           await page.getByRole('button', { name: 'Save allowance' }).waitFor();
