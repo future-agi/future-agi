@@ -89,12 +89,13 @@ func TestKeyPolicyNotSkippedByAnotherKeysCacheEntry(t *testing.T) {
 		t.Fatalf("upstream calls = %d; want 1 (key A is blocked before the provider)", up.served())
 	}
 
-	// Key A still uses the cache for requests its policy lets through.
+	// Selected policies require fresh admission even for a clean repeat. Until
+	// cache hits can run arbitrary admission checks, selected keys bypass cache.
 	send("sk-agentcc-cache-a", "say hello")
-	if w := send("sk-agentcc-cache-a", "say hello"); w.Code != http.StatusOK || !strings.HasPrefix(w.Header().Get("x-agentcc-cache"), "hit") {
-		t.Fatalf("key A clean repeat: status %d, cache %q; want a cache hit", w.Code, w.Header().Get("x-agentcc-cache"))
+	if w := send("sk-agentcc-cache-a", "say hello"); w.Code != http.StatusOK || w.Header().Get("x-agentcc-cache") != "skip_key_policy" || up.served() != 3 {
+		t.Fatalf("key A clean repeat: status %d, cache %q, calls %d; want bypass and 3 calls", w.Code, w.Header().Get("x-agentcc-cache"), up.served())
 	}
-	// ...and those entries are its own: key B does not get key A's entry.
+	// Bypassed responses are never stored for an unselected key either.
 	before := up.served()
 	if w := send("sk-agentcc-cache-b", "say hello"); strings.HasPrefix(w.Header().Get("x-agentcc-cache"), "hit") || up.served() != before+1 {
 		t.Fatalf("key B after key A: cache %q, calls %d; want a miss", w.Header().Get("x-agentcc-cache"), up.served()-before)
@@ -110,8 +111,8 @@ func TestKeyPolicyEnforceAfterMonitorIgnoresMonitorEntry(t *testing.T) {
 	if w := send("sk-agentcc-cache-a", prompt); w.Code != http.StatusOK {
 		t.Fatalf("monitor: status %d; want 200: %s", w.Code, w.Body.String())
 	}
-	if w := send("sk-agentcc-cache-a", prompt); !strings.HasPrefix(w.Header().Get("x-agentcc-cache"), "hit") {
-		t.Fatalf("monitor control: want a cache hit, got cache %q", w.Header().Get("x-agentcc-cache"))
+	if w := send("sk-agentcc-cache-a", prompt); w.Code != http.StatusOK || w.Header().Get("x-agentcc-cache") != "skip_key_policy" {
+		t.Fatalf("monitor repeat must run admission: status %d, cache %q", w.Code, w.Header().Get("x-agentcc-cache"))
 	}
 
 	policy.Mode = "enforce"
@@ -119,8 +120,8 @@ func TestKeyPolicyEnforceAfterMonitorIgnoresMonitorEntry(t *testing.T) {
 	if w.Code != http.StatusForbidden {
 		t.Fatalf("enforce: status %d, cache %q; want 403: %s", w.Code, w.Header().Get("x-agentcc-cache"), w.Body.String())
 	}
-	if up.served() != 1 {
-		t.Fatalf("upstream calls = %d; want 1", up.served())
+	if up.served() != 2 {
+		t.Fatalf("upstream calls = %d; want 2 admitted monitor calls, no enforced call", up.served())
 	}
 }
 
