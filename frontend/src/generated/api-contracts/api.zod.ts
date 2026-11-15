@@ -39352,6 +39352,12 @@ export const simulateApiHarnessEnvironmentsCapabilitiesResponseSelectionUntested
 
 export const simulateApiHarnessEnvironmentsCapabilitiesResponseSelectionGradingGradableMin = 0;
 
+export const simulateApiHarnessEnvironmentsCapabilitiesResponseSelectionRunningMin = 0;
+
+export const simulateApiHarnessEnvironmentsCapabilitiesResponseSelectionHeldBackCountMin = 0;
+
+export const simulateApiHarnessEnvironmentsCapabilitiesResponseSelectionHeldBackByMinOne = 0;
+
 export const SimulateApiHarnessEnvironmentsCapabilitiesResponse = zod.object({
   pairing: zod.object({
     agent_version: zod.object({
@@ -39675,6 +39681,34 @@ export const SimulateApiHarnessEnvironmentsCapabilitiesResponse = zod.object({
       .describe(
         "Every selected case's needs were read from its stored documents.",
       ),
+    running: zod
+      .number()
+      .min(
+        simulateApiHarnessEnvironmentsCapabilitiesResponseSelectionRunningMin,
+      )
+      .describe("Selected cases a run of this selection would send."),
+    held_back: zod.object({
+      count: zod
+        .number()
+        .min(
+          simulateApiHarnessEnvironmentsCapabilitiesResponseSelectionHeldBackCountMin,
+        ),
+      keys: zod.array(zod.string().min(1)),
+      truncated: zod.boolean(),
+      by: zod
+        .record(
+          zod.string(),
+          zod
+            .number()
+            .min(
+              simulateApiHarnessEnvironmentsCapabilitiesResponseSelectionHeldBackByMinOne,
+            ),
+        )
+        .describe("Held-back cases per readiness row that held them."),
+    }),
+    reasons: zod
+      .record(zod.string(), zod.string().min(1))
+      .describe("Each holding row's reason, in plain words."),
   }),
 });
 
@@ -39737,6 +39771,12 @@ export const simulateApiHarnessEnvironmentsSelectCapabilitiesResponseSelectionSt
 export const simulateApiHarnessEnvironmentsSelectCapabilitiesResponseSelectionUntestedMin = 0;
 
 export const simulateApiHarnessEnvironmentsSelectCapabilitiesResponseSelectionGradingGradableMin = 0;
+
+export const simulateApiHarnessEnvironmentsSelectCapabilitiesResponseSelectionRunningMin = 0;
+
+export const simulateApiHarnessEnvironmentsSelectCapabilitiesResponseSelectionHeldBackCountMin = 0;
+
+export const simulateApiHarnessEnvironmentsSelectCapabilitiesResponseSelectionHeldBackByMinOne = 0;
 
 export const SimulateApiHarnessEnvironmentsSelectCapabilitiesResponse =
   zod.object({
@@ -40064,6 +40104,34 @@ export const SimulateApiHarnessEnvironmentsSelectCapabilitiesResponse =
         .describe(
           "Every selected case's needs were read from its stored documents.",
         ),
+      running: zod
+        .number()
+        .min(
+          simulateApiHarnessEnvironmentsSelectCapabilitiesResponseSelectionRunningMin,
+        )
+        .describe("Selected cases a run of this selection would send."),
+      held_back: zod.object({
+        count: zod
+          .number()
+          .min(
+            simulateApiHarnessEnvironmentsSelectCapabilitiesResponseSelectionHeldBackCountMin,
+          ),
+        keys: zod.array(zod.string().min(1)),
+        truncated: zod.boolean(),
+        by: zod
+          .record(
+            zod.string(),
+            zod
+              .number()
+              .min(
+                simulateApiHarnessEnvironmentsSelectCapabilitiesResponseSelectionHeldBackByMinOne,
+              ),
+          )
+          .describe("Held-back cases per readiness row that held them."),
+      }),
+      reasons: zod
+        .record(zod.string(), zod.string().min(1))
+        .describe("Each holding row's reason, in plain words."),
     }),
   });
 

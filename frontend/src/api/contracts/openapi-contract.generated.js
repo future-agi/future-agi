@@ -104872,6 +104872,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "dropped",
         "grading",
         "requirements_recorded",
+        "running",
+        "held_back",
+        "reasons",
       ],
       type: "object",
       properties: {
@@ -104929,6 +104932,24 @@ export const OPENAPI_CONTRACT = Object.freeze({
           description:
             "Every selected case's needs were read from its stored documents.",
           type: "boolean",
+        },
+        running: {
+          title: "Running",
+          description: "Selected cases a run of this selection would send.",
+          type: "integer",
+          minimum: 0,
+        },
+        held_back: {
+          $ref: "#/definitions/HarnessRunHeldBack",
+        },
+        reasons: {
+          title: "Reasons",
+          description: "Each holding row's reason, in plain words.",
+          type: "object",
+          additionalProperties: {
+            type: "string",
+            minLength: 1,
+          },
         },
       },
     },
@@ -126902,6 +126923,37 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    HarnessRunHeldBack: {
+      required: ["count", "keys", "truncated", "by"],
+      type: "object",
+      properties: {
+        count: {
+          title: "Count",
+          type: "integer",
+          minimum: 0,
+        },
+        keys: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        truncated: {
+          title: "Truncated",
+          type: "boolean",
+        },
+        by: {
+          title: "By",
+          description: "Held-back cases per readiness row that held them.",
+          type: "object",
+          additionalProperties: {
+            type: "integer",
+            minimum: 0,
+          },
+        },
+      },
+    },
     HarnessCapabilityAffected: {
       description:
         "Selected cases that need this row while it is not Supported. A run holds back only the cases under a Blocked row (selection.held_back); cases under a Partial, Unavailable, Stale or Untested row still run.",
@@ -127799,37 +127851,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
       "x-nullable": true,
-    },
-    HarnessRunHeldBack: {
-      required: ["count", "keys", "truncated", "by"],
-      type: "object",
-      properties: {
-        count: {
-          title: "Count",
-          type: "integer",
-          minimum: 0,
-        },
-        keys: {
-          type: "array",
-          items: {
-            type: "string",
-            minLength: 1,
-          },
-        },
-        truncated: {
-          title: "Truncated",
-          type: "boolean",
-        },
-        by: {
-          title: "By",
-          description: "Held-back cases per readiness row that held them.",
-          type: "object",
-          additionalProperties: {
-            type: "integer",
-            minimum: 0,
-          },
-        },
-      },
     },
     HarnessScenarioRegistrationResponse: {
       required: ["scenario_key", "scenario_id"],
