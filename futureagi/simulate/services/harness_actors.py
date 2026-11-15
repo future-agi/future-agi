@@ -174,7 +174,9 @@ def door_reach(contract: Any) -> dict[str, bool]:
     """Whether the world's door can stand in front of each contract tool, by tool name: a tool served by a tools
     service is behind the tool proxy; a Python agent's module-level callable or method (`import`, `construct`) is
     behind the door in its own process. Anything else (a closure, a tool of an agent in another language, an
-    unreachable entrypoint) runs where no door stands, so actors cannot take it and faults cannot be set on it."""
+    unreachable entrypoint) runs where no door stands, so actors cannot take it and faults cannot be set on it. A
+    build that found the door bound to a tool but out of reach (the agent started as a script) says so on the entry
+    (`door_unreached`); an older build's contract has no such word and reads by mode alone."""
     contract = contract if isinstance(contract, dict) else {}
     runtime = (
         contract.get("runtime") if isinstance(contract.get("runtime"), dict) else {}
@@ -196,6 +198,7 @@ def door_reach(contract: Any) -> dict[str, bool]:
                 and mode in ("import", "construct")
                 and entry.get("module")
                 and entry.get("callable")
+                and not entry.get("door_unreached")
             )
         )
     return reach
