@@ -1394,6 +1394,9 @@ STARTED_BY_KEY = "harness_started_by"
 STARTED_BY_TASK = "task"
 # The most entries one list from the sandbox may add to a call's metadata; the rest is dropped, not stored.
 MAX_RECORDED_ENTRIES = 500
+# Longest text one field of a record change keeps, as the harness cuts it: a document column from an older harness or
+# another producer would otherwise ride whole into the call's metadata.
+MAX_CHANGE_VALUE_CHARS = 2000
 
 
 def _entries(raw: object) -> list[dict[str, Any]]:
@@ -1421,6 +1424,36 @@ def _call_actor_record(raw: object) -> CallCallActors | None:
 _START_STATES = ("seeded", "differs", "unknown")
 
 
+def _shown_record(row: object) -> object:
+    """A record in a change with each field's text cut at MAX_CHANGE_VALUE_CHARS, saying how much was cut."""
+    if not isinstance(row, dict):
+        return row
+    shown: dict[str, Any] = {}
+    for name, value in row.items():
+        text = (
+            value
+            if isinstance(value, str)
+            else json.dumps(value, default=str)
+            if isinstance(value, (dict, list))
+            else None
+        )
+        if text is not None and len(text) > MAX_CHANGE_VALUE_CHARS:
+            value = f"{text[:MAX_CHANGE_VALUE_CHARS]}... ({len(text) - MAX_CHANGE_VALUE_CHARS} more characters)"
+        shown[str(name)] = value
+    return shown
+
+
+def _shown_change(change: dict[str, Any]) -> dict[str, Any]:
+    return {
+        **change,
+        **{
+            side: _shown_record(change[side])
+            for side in ("before", "after")
+            if side in change
+        },
+    }
+
+
 def _world_change_fields(world: dict[str, Any]) -> dict[str, Any]:
     """World changes beyond each participant's attempts: why they were not recorded (an agent whose tools run
     inside it), whether they could be read, the records before and after, and whether the trial started from the
@@ -1441,7 +1474,7 @@ def _world_change_fields(world: dict[str, Any]) -> dict[str, Any]:
         except (TypeError, ValueError):
             truncated = 0
         kept["records"] = {
-            "changes": changes[:MAX_RECORDED_ENTRIES],
+            "changes": [_shown_change(one) for one in changes[:MAX_RECORDED_ENTRIES]],
             "skipped": _entries(records.get("skipped")),
             "truncated": truncated + max(len(changes) - MAX_RECORDED_ENTRIES, 0),
         }
