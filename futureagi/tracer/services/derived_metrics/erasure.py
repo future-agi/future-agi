@@ -106,13 +106,17 @@ def erase_metric_data(
             pk=project_id, organization_id=organization_id
         ).exists():
             raise ValueError("project is not in the organization")
-    return MetricErasureRequest.record(
+    request = MetricErasureRequest.record(
         organization_id=organization_id,
         project_id=project_id,
         scope_kind=scope_kind,
         subject_ids=subject_ids,
         requested_by_id=requested_by_id,
     )
+    from tracer.sql_workbench.metric_retention import invalidate_scope
+
+    invalidate_scope(organization_id, project_id)
+    return request
 
 
 def _runs(request):
@@ -609,6 +613,9 @@ def _process_erasure(request_id, *, store=None, writer=None):
     with nullcontext(store) if store else snapshot_store() as connection:
         try:
             request.refresh_from_db()
+            from tracer.sql_workbench.metric_retention import invalidate_scope
+
+            invalidate_scope(request.organization_key, request.project_key)
             if request.store_payload.get("protocol") == "metric_snapshot_redaction":
                 _redact(connection, request, token)
                 request.refresh_from_db()

@@ -88,18 +88,23 @@ def cleanup_derived_metric_snapshots() -> int:
     )
 
     # Privacy cleanup is mandatory even after the rollout flag is turned off.
+    from tracer.services.derived_metrics.source_retention import expire_runs
+    from tracer.sql_workbench.metric_retention import expire_results
+
+    expire_runs(limit=100)
+    expire_results(limit=1000)
     completed = sweep(limit=10)
     if metrics_enabled():
         # Never a completed namespace a (possibly failed) redaction reopened.
         for run_id in recoverable_captures(limit=10):
             enqueue_capture(run_id)
-        # Reclaim superseded copies that history GC deleted lightweight: a
-        # few partitions per run, outside every refresh pass. A failure keeps
-        # the rows masked (unreadable) for the next run.
-        from tracer.services.derived_metrics.history_gc import run_scheduled
+    # Reclaim superseded copies that history GC deleted lightweight: a
+    # few partitions per run, outside every refresh pass. A failure keeps
+    # the rows masked (unreadable) for the next run.
+    from tracer.services.derived_metrics.history_gc import run_scheduled
 
-        try:
-            run_scheduled()
-        except Exception:
-            logger.exception("metric_history_gc_mask_failed")
+    try:
+        run_scheduled()
+    except Exception:
+        logger.exception("metric_history_gc_mask_failed")
     return completed

@@ -668,6 +668,9 @@ class RefreshWriter:
                 ).update(
                     pending_expiry=True, last_error_code=MetricRetentionChanged.code
                 )
+                MetricRefreshAttempt.abort(
+                    attempt.id, reason=PASS_YIELD, **self.lease.check()
+                )
             raise
 
     def _stage_and_publish(self, attempt, *, source_cut=None):
@@ -1276,8 +1279,16 @@ class RefreshWriter:
         if self.retention_days is None:
             return False
         cutoff = physical_cutoff(self, now=self.lease.clock(), head=head)
+        floor = head.published_by.source_ceilings.get("retention_floor")
+        if floor:
+            floor = datetime.fromisoformat(str(floor))
+            cutoff = max(cutoff, floor) if cutoff else floor
         if cutoff is None:
             return False
+        from tracer.services.derived_metrics.retention import _expired_aggregates
+
+        if _expired_aggregates(self, head, cutoff):
+            return True
         attempts = tuple(UUID(str(a)) for _, a in head.allowed_attempts())
         for table in (
             FIELD_VALUES,
@@ -2628,6 +2639,10 @@ class RefreshWriter:
             )
         if _dirty_starts is not None:
             dirty = set(_dirty_starts)
+        floor = attempt.source_ceilings.get("retention_floor")
+        if floor:
+            floor = datetime.fromisoformat(str(floor))
+            dirty = {value for value in dirty if datetime.fromisoformat(str(value)) >= floor}
         # The exhaustive physical-key scan and frozen/digest ceremony are per
         # bounded SET of dirty quarters, not per quarter. The same pre-fold
         # statistics keep bucket_start in their key, so folding remains exact.

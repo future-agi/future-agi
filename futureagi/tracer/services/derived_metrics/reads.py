@@ -236,22 +236,16 @@ def _floor15(value):
 
 
 def cut_terms(manifest, definition):
-    """(calculated, settled) 15-minute bounds of a forward version's pinned head.
+    """(calculated, settled) 15-minute bounds of every supported version's pinned head.
 
     calculated: the lesser of the consumed watermark and a pending burst
     sweep's floor (a head pinned before the current one also bounds by its own
     frozen watermark), floored to its bucket. Nothing starting at or after it
     is in these values. settled: the same less the settle interval (a span,
     once ended, settles at once): a unit first arriving within it may not have
-    arrived yet, so its bucket cannot be final either. None for history.
+    arrived yet, so its bucket cannot be final either.
     """
     if manifest is None:
-        return None
-    if getattr(
-        definition, "history_mode", None
-    ) != DerivedMetricVersion.HistoryMode.FORWARD and not _paused(manifest):
-        # A paused project (size_cap) calculates nothing past its frozen cut,
-        # whatever its history mode, so every metric reads final buckets only.
         return None
     from tracer.services.derived_metrics.changes import from_ns
 
@@ -299,7 +293,7 @@ def _paused(manifest):
 
 
 def calculated_through(manifest, definition):
-    """The calculated 15-minute bound (cut_terms), or None for history."""
+    """The calculated 15-minute bound of this pinned publication."""
     terms = cut_terms(manifest, definition)
     return None if terms is None else terms[0]
 
@@ -402,7 +396,7 @@ class Finality:
 
 
 def read_finality(store, metric, definition, manifest, window):
-    """Finality of a forward window, or None for history (no bound).
+    """Finality of a pinned window, including history-mode windows.
 
     Without ``store`` only the calculated and settle bounds apply.
     """
@@ -432,6 +426,8 @@ def provenance(manifest, definition, through=None):
         "history_mode": definition.history_mode,
         "coverage_start": definition.coverage_start,
         "calculated_through": through,
+        "retention_floor": manifest.published_by.source_ceilings.get("retention_floor"),
+        "retention_policy": "follow_source",
     }
 
 
@@ -669,6 +665,10 @@ def require_calculated_window(
     the rest. ``whole`` (a durable snapshot) needs every bucket final: it never
     freezes a partial window.
     """
+    if metric is not None:
+        from tracer.services.derived_metrics.source_retention import require_window
+
+        require_window(metric.organization_id, window["window_start"], manifest=manifest)
     if not window_is_calculated(definition, window):
         raise MetricUnavailableError(
             "window_not_calculated",
@@ -722,7 +722,11 @@ def read_kpi(metric, data, *, store=None):
         # long-open session must not freeze the rest of the window).
         exclude = finality.nonfinal(window) if finality else ()
         # The previous period is compared only if it is wholly final.
-        previous_final = window_is_calculated(definition, previous) and (
+        from tracer.services.derived_metrics.source_retention import window_retained
+
+        previous_final = window_retained(
+            metric.organization_id, previous["window_start"], manifest=manifest
+        ) and window_is_calculated(definition, previous) and (
             finality is None
             or not open_buckets(
                 store,
@@ -759,6 +763,11 @@ def read_kpi(metric, data, *, store=None):
         )
         if delta is not None and not math.isfinite(delta):
             delta = None
+        from tracer.services.derived_metrics.source_retention import require_window
+
+        require_window(metric.organization_id, window["window_start"], manifest=manifest)
+        if previous_final:
+            require_window(metric.organization_id, previous["window_start"], manifest=manifest)
         return {
             "provenance": provenance(
                 manifest, definition, calculated_through(manifest, definition)
@@ -880,11 +889,14 @@ def read_trend(metric, data, *, store=None):
                 for row in result
             ]
         result.sort(key=lambda row: (row["window_start"], row["group_key"]))
+        from tracer.services.derived_metrics.source_retention import require_window
+
+        require_window(metric.organization_id, window["window_start"], manifest=manifest)
         return {
             "provenance": provenance(
                 manifest, definition, calculated_through(manifest, definition)
             ),
-            "partial": bool(finality and finality.nonfinal(window)),
+            **_disclosure(finality, window),
             "effective_window": window,
             "results": result,
         }

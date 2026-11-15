@@ -1,14 +1,13 @@
-"""Live-store retirement and physical purge. Completed snapshots are untouched.
+"""Source-retained live-store checkpoints and physical purge.
 
 Every retention and erasure checkpoint rewrites the whole retained head, so
 its bulk copies use checkpoint-sized pages (MAX_COMPACTION_ROWS, 4 MiB), as
 compaction does: 500-row pages re-ran the head's collapse once per page
 (364 us a row at 20k rows a table, 528 at 100k; 71-76 with checkpoint pages).
 
-Retention is based on unit_start, not the list window. Anonymous PRE-FOLD
-statistics survive expiry, but user-level metrics have no such history. Erasure
-is different: without unit lineage in retired parts we conservatively discard
-project aggregate history. This is the design's safe fallback, not subtraction.
+Retention is based on unit_start. Expired statistics and identifying group labels
+are discarded, never converted into indefinitely surviving retired history.
+Frozen results use the same source policy (source_retention.py).
 
 Callers schedule expiry independently of arrivals and retry failed mutations.
 Purge planning uses the same short serialization as publication/pin capture;
@@ -18,7 +17,8 @@ never rewritten; terminal private replay/preimage chunks can be deleted whole.
 """
 
 import json
-from contextlib import ExitStack, nullcontext
+from contextlib import ExitStack
+from functools import wraps
 from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
@@ -34,12 +34,6 @@ from tracer.models.derived_metric import (
     MetricReadManifest,
     MetricRefreshAttempt,
     MetricStateConflict,
-)
-from tracer.services.derived_metrics.buckets import (
-    KEYS,
-    STATS,
-    live_parts_select,
-    merge_parts_select,
 )
 from tracer.services.derived_metrics.deletion_protocol import (
     revoke_generations,
@@ -77,11 +71,10 @@ _CURRENT_HEAD = object()
 
 
 def expiry_interval():
-    """How far physical expiry may trail the policy (METRICS_EXPIRY_INTERVAL_SECONDS).
+    """Batch scheduling cadence, NOT a physical-deletion completion SLA.
 
-    Default one day: like raw spans (dropped by daily parts after their TTL),
-    expired metric evidence is physically retired at most one interval late.
-    Reads always apply the exact cutoff (retention_cutoff); erasure is prompt.
+    Reads enforce the exact cutoff. Failed/outstanding cleanup remains durable
+    and incomplete until its write barrier and final scrub have been verified.
     """
     from django.conf import settings
     from django.core.exceptions import ImproperlyConfigured
@@ -667,6 +660,44 @@ def _span_proposal_cleanup_required(
     return blocked or _owner_entries(classified) != _owner_entries(ledger)
 
 
+def _close_failed_attempts(function):
+    @wraps(function)
+    def guarded(writer, *args, **kwargs):
+        prior = set(MetricRefreshAttempt.objects.filter(
+            project_id=writer.lease.project_id,
+            state__in=MetricRefreshAttempt.OPEN_STATES,
+        ).values_list("id", flat=True))
+        try:
+            return function(writer, *args, **kwargs)
+        except Exception:
+            from tracer.services.derived_metrics.refresh import PASS_YIELD
+
+            # The next fenced writer carries this ledger, but no failed PREPARED
+            # attempt remains eligible for publication or pins private state.
+            for attempt_id in MetricRefreshAttempt.objects.filter(
+                project_id=writer.lease.project_id,
+                fencing_epoch=writer.lease.grant.fencing_epoch,
+                state__in=MetricRefreshAttempt.OPEN_STATES,
+            ).exclude(id__in=prior).values_list("id", flat=True):
+                MetricRefreshAttempt.abort(attempt_id, reason=PASS_YIELD, **writer.lease.check())
+            raise
+    return guarded
+
+
+def _expired_aggregates(writer, head, cutoff):
+    if head is None:
+        return False
+    for table in (RETIRED_PARTS, BUCKET_TOTALS):
+        sql, params = committed_rows_select(
+            table, head, org_id=writer.org_id, project_id=writer.lease.project_id
+        )
+        where = "1" if table == RETIRED_PARTS else "bucket_start < toDateTime64(%(aggregate_cutoff)s, 6, 'UTC')"
+        if writer.store.execute(f"SELECT count() FROM ({sql}) WHERE {where}", {**params, "aggregate_cutoff": cutoff})[0][0]:
+            return True
+    return False
+
+
+@_close_failed_attempts
 def retirement_plan(writer, draft, head, definitions, cutoff, *, captures=None):
     """Convert proposed anchor changes to one complete privacy checkpoint.
 
@@ -762,7 +793,6 @@ def _retirement_plan(writer, draft, head, definitions, cutoff, captures):
     from tracer.services.derived_metrics.span_evidence import (
         require_retirement_evidence,
     )
-    from tracer.services.derived_metrics.unit_reads import field_recipe
 
     fields, params = captures.fields()
     params = dict(params)
@@ -793,7 +823,8 @@ def _retirement_plan(writer, draft, head, definitions, cutoff, captures):
         captures=captures,
     )
     logical_expiry = bool(
-        span_dirty
+        _expired_aggregates(writer, head, cutoff)
+        or span_dirty
         or _current_expiry_required(
             writer,
             head,
@@ -911,62 +942,8 @@ def _retirement_plan(writer, draft, head, definitions, cutoff, captures):
         collect_payloads=False,
         row_limit=MAX_COMPACTION_ROWS,
     )
-    retired, rp = committed_rows_select(
-        RETIRED_PARTS, head, org_id=writer.org_id, project_id=writer.lease.project_id
-    )
-    params.update(rp)
-    supplied = {(str(d.metric_id), d.version) for d in definitions}
-    missing = writer.store.execute(
-        f"SELECT DISTINCT field_id, field_version FROM ({fields}) "
-        f"WHERE is_deleted = 0 AND (level, unit_id) IN ({expired})",
-        params,
-    )
-    if any((str(m), v) not in supplied for m, v in missing):
-        raise MetricStateConflict("retirement requires every stored field definition")
-    for definition in definitions:
-        if definition.level == "user":
-            continue
-        p = {
-            **params,
-            "retire_metric": str(definition.metric_id),
-            "retire_version": definition.version,
-        }
-        expiring = (
-            f"SELECT * FROM ({fields}) WHERE field_id = toUUID(%(retire_metric)s) "
-            f"AND field_version = %(retire_version)s AND (level, unit_id) IN ({expired})"
-        )
-        formula = field_recipe(definition).formula
-        if formula is not None:
-            p.update(formula.parameters)
-        previous = (
-            f"SELECT {', '.join(KEYS + STATS)} FROM ({retired}) "
-            "WHERE metric_id = toUUID(%(retire_metric)s) AND metric_version = %(retire_version)s AND is_deleted = 0"
-        )
-        parts = merge_parts_select(
-            f"({live_parts_select(definition, expiring)}) UNION ALL ({previous})"
-        )
-        writer.freeze(
-            attempt,
-            RETIRED_PARTS,
-            f"SELECT *, toUInt8(0) AS is_deleted FROM ({parts})",
-            p,
-            extra={
-                "metric_id": "toUUID(%(retire_metric)s)",
-                "metric_version": "toUInt32(%(retire_version)s)",
-            },
-        )
-    untouched = f"SELECT * FROM ({retired})"
-    if supplied:
-        untouched += " WHERE (metric_id, metric_version) NOT IN %(retire_handled)s"
-        params["retire_handled"] = tuple((UUID(m), v) for m, v in sorted(supplied))
-    writer.freeze(
-        attempt,
-        RETIRED_PARTS,
-        untouched,
-        params,
-        collect_payloads=False,
-        row_limit=MAX_COMPACTION_ROWS,
-    )
+    # A checkpoint replaces the complete retired namespace with an empty one.
+    # Do not carry legacy retired labels or manufacture new expired statistics.
     for table in (UNIT_STATE, SOURCE_DEPENDENCIES):
         sql, bound = captures.proposal(table)
         # Retained conversation rows are exactly the captured owner set: a
@@ -1000,8 +977,10 @@ def _retirement_plan(writer, draft, head, definitions, cutoff, captures):
             collect_payloads=False,
             row_limit=MAX_COMPACTION_ROWS,
         )
-    # Carry anonymous history plus this pass's direct span replacements.
+    # Copy only whole retained buckets; the boundary bucket is unavailable.
     buckets, bp = captures.proposal(BUCKET_TOTALS)
+    buckets = f"SELECT * FROM ({buckets}) WHERE bucket_start >= toDateTime64(%(aggregate_cutoff)s, 6, 'UTC')"
+    bp = {**bp, "aggregate_cutoff": cutoff}
     recomputed = tuple(
         (UUID(str(d.metric_id)), d.version) for d in definitions if d.level != "user"
     )
@@ -1219,7 +1198,7 @@ def finish_pending_expiry(writer, *, now=None, expiry_id=None):
         # Preserve the existing core receipt shape; current-list stores get
         # their own verification count under the same quiescence barrier.
         core_table_count = len(tables)
-        tables = (*tables, *LIST_CURRENT_TABLES)
+        tables = (*tables, RETIRED_PARTS, BUCKET_TOTALS, TABLES["metric_bucket_totals_checkpoint"], *LIST_CURRENT_TABLES)
         # Prompt scrub, even while an old submission may still land.
         for table in tables:
             _delete(writer.store, table, predicate, params)
@@ -1252,6 +1231,7 @@ def finish_pending_expiry(writer, *, now=None, expiry_id=None):
                     "remaining": 0,
                     "private_payloads_remaining": 0,
                 },
+                "aggregate_scrub": {"verified_tables": 3, "remaining": 0},
                 "current_facts_scrub": {
                     "verified_tables": len(LIST_CURRENT_TABLES),
                     "remaining": 0,
@@ -1417,6 +1397,7 @@ def _expired_physical_payload(writer, head, cutoff):
     return False
 
 
+@_close_failed_attempts
 def expire_project(writer, definitions, *, retention_days, now=None, as_of=None):
     """Freeze retirement, publish a complete replacement, revoke, then purge.
 
@@ -1428,11 +1409,18 @@ def expire_project(writer, definitions, *, retention_days, now=None, as_of=None)
         raise MetricStateConflict("physical purge requires an outer commit boundary")
     definitions = list(definitions)
     now = now or writer.lease.clock()
-    if retention_cutoff(retention_days(), now=now) is None:
-        return {"unlimited": True, "purged": False}
-    # Physical expiry is batched (expiry_interval); reads stay exact.
-    cutoff = physical_cutoff(_PolicyWriter(writer, retention_days), now=now)
+    unlimited = retention_cutoff(retention_days(), now=now) is None
+    # An extension cannot restore old retired values. Migrate legacy checkpoints
+    # at their permanent floor even if the current source policy is unlimited.
     project_id = writer.lease.project_id
+    head = MetricProjectRefresh.for_project(project_id).head_manifest
+    inherited = head.published_by.source_ceilings.get("retention_floor") if head else None
+    cutoff = physical_cutoff(_PolicyWriter(writer, retention_days), now=now)
+    if inherited:
+        inherited = datetime.fromisoformat(str(inherited))
+        cutoff = max(cutoff, inherited) if cutoff else inherited
+    if cutoff is None:
+        return {"unlimited": unlimited, "purged": False}
     with serialized_project(project_id):
         writer.lease.check()
         from tracer.services.derived_metrics.backfill import scrub_expired_progress
@@ -1440,7 +1428,7 @@ def expire_project(writer, definitions, *, retention_days, now=None, as_of=None)
         scrub_expired_progress(project_id, cutoff=cutoff, now=now)
         head = MetricProjectRefresh.for_project(project_id).head_manifest
         if head is None:
-            return {"unlimited": False, "purged": False}
+            return {"unlimited": unlimited, "purged": False}
         if head.revoked_at:
             raise MetricStateConflict("expired base requires source rebuild")
         # Classification below performs ClickHouse reads without a PG
@@ -1469,10 +1457,6 @@ def expire_project(writer, definitions, *, retention_days, now=None, as_of=None)
         FIELD_VALUES, head, org_id=writer.org_id, project_id=project_id
     )
     params.update(p)
-    retired, rp = committed_rows_select(
-        RETIRED_PARTS, head, org_id=writer.org_id, project_id=project_id
-    )
-    params.update(rp)
     # Expiry belongs to the logical conversation, not a physical revision
     # or one member span. A stored earlier anchor expires every field version
     # and every dependency of that unit, even if another version/member has
@@ -1491,6 +1475,7 @@ def expire_project(writer, definitions, *, retention_days, now=None, as_of=None)
     )
     if (
         not any(recovery.values())
+        and not _expired_aggregates(writer, head, cutoff)
         and not span_dirty
         and not (
             span_definitions
@@ -1512,7 +1497,7 @@ def expire_project(writer, definitions, *, retention_days, now=None, as_of=None)
             .exists()
         )
         return {
-            "unlimited": False,
+            "unlimited": unlimited,
             "purged": finish_pending_expiry(writer, now=now) if pending else False,
         }
     recovery, recovery_blocked = _classify_recovery(
@@ -1594,96 +1579,7 @@ def expire_project(writer, definitions, *, retention_days, now=None, as_of=None)
             params=params,
             large_pages=True,
         )
-    for definition in definitions:
-        if definition.level == "user":
-            continue
-        p = {
-            **params,
-            "expiry_metric": str(definition.metric_id),
-            "expiry_version": definition.version,
-        }
-        predicate = "field_id = toUUID(%(expiry_metric)s) AND field_version = %(expiry_version)s"
-        expiring = f"SELECT * FROM ({fields}) WHERE {predicate} AND (level, unit_id) IN ({expired_units})"
-        from tracer.services.derived_metrics.unit_reads import field_recipe
-
-        formula = field_recipe(definition).formula
-        if formula is not None:
-            p.update(formula.parameters)
-        if definition.level == "span":
-            span_dirty.update(
-                row[0]
-                for row in writer.store.execute(
-                    f"SELECT DISTINCT bucket_start FROM ({expiring})", p
-                )
-            )
-            writer.append(
-                attempt,
-                "dirty_before",
-                [
-                    {"level": "span", "bucket_start": value}
-                    for value in sorted(span_dirty)
-                ],
-            )
-        from tracer.services.derived_metrics.span_evidence import (
-            retiring_span_parts,
-        )
-
-        capture = (
-            retiring_span_parts(
-                writer,
-                attempt,
-                head,
-                definition,
-                expiring,
-                p,
-                cutoff=cutoff,
-                as_of=as_of or now,
-            )
-            if definition.level == "span"
-            else nullcontext((live_parts_select(definition, expiring), p))
-        )
-        with capture as (live, p):
-            if definition.level == "span":
-                span_dirty.update(
-                    row[0]
-                    for row in writer.store.execute(
-                        f"SELECT DISTINCT bucket_start FROM ({live})", p
-                    )
-                )
-            previous = f"SELECT {', '.join(KEYS + STATS)} FROM ({retired}) WHERE metric_id = toUUID(%(expiry_metric)s) AND metric_version = %(expiry_version)s AND is_deleted = 0"
-            merged = merge_parts_select(f"({live}) UNION ALL ({previous})")
-            writer.freeze(
-                attempt,
-                RETIRED_PARTS,
-                f"SELECT *, toUInt8(0) AS is_deleted FROM ({merged})",
-                p,
-                extra={
-                    "metric_id": "toUUID(%(expiry_metric)s)",
-                    "metric_version": "toUInt32(%(expiry_version)s)",
-                },
-            )
-    # Versions outside the supplied backfill/active set keep already anonymous
-    # history; no fresh stats may be manufactured without their definition.
-    missing = writer.store.execute(
-        f"SELECT DISTINCT field_id, field_version FROM ({fields}) WHERE is_deleted = 0 "
-        f"AND (level, unit_id) IN ({expired_units})",
-        params,
-    )
-    supplied = {(str(d.metric_id), d.version) for d in definitions}
-    if any((str(m), v) not in supplied for m, v in missing):
-        raise MetricStateConflict("retirement requires every stored field definition")
-    untouched = f"SELECT * FROM ({retired})"
-    if supplied:
-        untouched += " WHERE (metric_id, metric_version) NOT IN %(expiry_handled)s"
-        params["expiry_handled"] = tuple((UUID(m), v) for m, v in sorted(supplied))
-    writer.freeze(
-        attempt,
-        RETIRED_PARTS,
-        untouched,
-        params,
-        collect_payloads=False,
-        row_limit=MAX_COMPACTION_ROWS,
-    )
+    # No retired contributions survive this replacement checkpoint.
     writer.append(
         attempt,
         "dirty_before",
@@ -1702,6 +1598,8 @@ def expire_project(writer, definitions, *, retention_days, now=None, as_of=None)
                 ),
                 expiry_span_buckets=tuple(sorted(span_dirty)),
             )
+        if table == BUCKET_TOTALS:
+            where = f"({where}) AND bucket_start >= toDateTime64(%(expiry_cutoff)s, 6, 'UTC')"
         if table == SOURCE_DEPENDENCIES:
             # B04's unit_start is the SPAN start. A recent member does not
             # make an expired conversation's private membership retainable.
@@ -1759,7 +1657,7 @@ def expire_project(writer, definitions, *, retention_days, now=None, as_of=None)
     complete = purge_checkpoint(
         writer, attempt, manifest, recovery_pending=recovery_pending, now=now
     )
-    return {"unlimited": False, "purged": complete, "manifest": str(manifest.id)}
+    return {"unlimited": unlimited, "purged": complete, "manifest": str(manifest.id)}
 
 
 def purge_by_scope(store, request, *, writer=None):

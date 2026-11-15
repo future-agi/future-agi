@@ -3,7 +3,7 @@
 Each native write has a parent-independent submission receipt before dispatch.
 Unknown outcomes require a terminal query record or a proven sealed-socket restart.
 The project lock fences dispatch against erasure, publication and parent deletion.
-Completed captures have no TTL. Only explicit erasure changes their frozen inputs.
+Completed captures follow source retention and explicit erasure.
 """
 
 import hashlib
@@ -248,6 +248,9 @@ def _current(run):
 @contextmanager
 def snapshot_read(run):
     """Reject an assembled response if deletion/redaction changed its namespace."""
+    from tracer.services.derived_metrics.source_retention import require_run
+
+    require_run(run)
     project_id = run.definition.metric.project_id
     with serialized_project(project_id):
         current = (
@@ -276,6 +279,7 @@ def snapshot_read(run):
         )
         if final is None or not _authorized_metric(final.definition.metric):
             raise MetricInputError("This snapshot changed while it was being read.")
+    require_run(final)
 
 
 def _submission_done(submission, proof):
@@ -715,6 +719,9 @@ def _rollup_ranges(store, run, rollup, *, unit_range=False):
 
 
 def commit_results(store, run, *, capturing=False):
+    from tracer.services.derived_metrics.source_retention import require_run
+
+    require_run(run)
     # Allocated durably BEFORE native IO. Setup/failure cleanup can therefore
     # target this attempt even if its result pointer was never published.
     result_id = run.attempt_id
@@ -769,6 +776,7 @@ def commit_results(store, run, *, capturing=False):
         params,
         capturing=capturing,
     )
+    require_run(run)
     with serialized_project(run.definition.metric.project_id):
         current = _current(run)
         if capturing and (not current.pin or not current.pin.is_usable()):

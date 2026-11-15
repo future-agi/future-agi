@@ -595,8 +595,6 @@ def shape_result(row: dict, *, include_uncertainty: bool) -> dict:
 
 
 def read_results(run, rollup="overall", after="", limit=50, include_uncertainty=False):
-    if getattr(run, "kind", "run") != "snapshot":
-        return _read_results(run, rollup, after, limit, include_uncertainty)
     from tracer.services.derived_metrics.snapshots import snapshot_read
 
     with snapshot_read(run) as current:
