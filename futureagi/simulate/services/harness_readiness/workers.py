@@ -156,6 +156,9 @@ def worker_boundaries(
             ]
 
         held_on_channel = binding == "separate" and isinstance(sealed, Mapping)
+        # A worker held to its own tools, or wired apart so a case can give it a deadline: the harness leaves a case
+        # that checks such a worker ungraded where nothing holds its limits, so that case is held back here.
+        limited = bool(worker.get("allowed_tools")) or binding == "separate"
         status, code, reason, fix, held = (
             "blocked",
             "worker_not_sealed",
@@ -178,25 +181,37 @@ def worker_boundaries(
                 "recheck": None,
             }
         elif not routes:
-            status, code = "unavailable", "in_process_tools"
+            status = "blocked" if limited else "unavailable"
+            code = "in_process_tools"
             reason = (
                 "This agent's tools run inside its own process, not through the world's door, so no worker's limits "
                 "are held."
             )
+            fix = (
+                _rebuild(
+                    name,
+                    "Serve the agent's tools as a service behind the world's door, then rebuild",
+                )
+                if status == "blocked"
+                else None
+            )
         elif door is None and not _behind_door_service(contract):
-            status = "blocked" if worker.get("allowed_tools") else "unavailable"
+            status = "blocked" if limited else "unavailable"
             code = "no_world_door"
             reason = (
                 "This build has no world door: its tools reach their service directly, so no worker's limits are "
                 "held. Rebuild with the tool service behind the door to hold them."
             )
             fix = (
-                _rebuild(name, "Rebuild the environment with its tool service behind the world's door")
+                _rebuild(
+                    name,
+                    "Rebuild the environment with its tool service behind the world's door",
+                )
                 if status == "blocked"
                 else None
             )
         elif door is None or door.get("worker_deadlines") != "per_worker":
-            status = "blocked" if worker.get("allowed_tools") else "unavailable"
+            status = "blocked" if limited else "unavailable"
             code = "sealed_before_worker_limits"
             reason = "This environment was sealed before worker limits, so none are held. Rebuild the environment to hold them."
             fix = _rebuild(name) if status == "blocked" else None

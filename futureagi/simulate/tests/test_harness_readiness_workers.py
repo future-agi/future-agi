@@ -18,7 +18,12 @@ _SERVICE = {"mode": "service", "service": "tools-api"}
 CONTRACT = {
     "tool_entrypoints": [
         {"tool": "get_order", "endpoint": "/orders/get", "method": "POST", **_SERVICE},
-        {"tool": "list_refunds", "endpoint": "/refunds/list", "method": "POST", **_SERVICE},
+        {
+            "tool": "list_refunds",
+            "endpoint": "/refunds/list",
+            "method": "POST",
+            **_SERVICE,
+        },
         {
             "tool": "update_order_status",
             "endpoint": "/orders/update_status",
@@ -145,7 +150,9 @@ def test_a_build_without_a_world_door_says_so_not_that_it_is_old(entry):
         **CONTRACT,
         "tool_entrypoints": [{**one, **entry} for one in CONTRACT["tool_entrypoints"]],
     }
-    row = _rows(_pairing(contract), _evidence(door=None, worker_permissions=None))["order_lookup"]
+    row = _rows(_pairing(contract), _evidence(door=None, worker_permissions=None))[
+        "order_lookup"
+    ]
     assert (row["status"], row["reason_code"]) == ("blocked", "no_world_door")
     assert "sealed before" not in row["reason"]
     assert "door" in row["reason"]
@@ -153,13 +160,40 @@ def test_a_build_without_a_world_door_says_so_not_that_it_is_old(entry):
     assert set(_boundaries(row).values()) == {"not_enforced"}
 
 
-def test_in_process_tools_read_unavailable():
+def test_in_process_tools_block_a_limited_worker_and_leave_an_unlimited_one_unavailable():
+    unlimited = {
+        "id": "notes",
+        "name": "Notes worker",
+        "tools": ["get_order"],
+        "binding": "shared",
+    }
     in_process = {
         **CONTRACT,
         "tool_entrypoints": [{"tool": "get_order", "endpoint": ""}],
+        "workers": [*CONTRACT["workers"], unlimited],
     }
-    row = _rows(_pairing(in_process))["order_lookup"]
-    assert (row["status"], row["reason_code"]) == ("unavailable", "in_process_tools")
+    rows = _rows(_pairing(in_process))
+    # Nothing holds the limits a case about this worker relies on, so such a case is held back, not run ungraded.
+    assert (rows["order_lookup"]["status"], rows["order_lookup"]["reason_code"]) == (
+        "blocked",
+        "in_process_tools",
+    )
+    assert rows["order_lookup"]["fix"]["type"] == "rebuild_environment"
+    assert (rows["notes"]["status"], rows["notes"]["fix"]) == ("unavailable", None)
+
+
+def test_a_separate_worker_without_an_allow_list_is_blocked_when_no_door_holds_its_deadline():
+    contract = {
+        **CONTRACT,
+        "tool_entrypoints": [
+            {**one, "service": "ledger"} for one in CONTRACT["tool_entrypoints"]
+        ],
+        "workers": [{**one, "allowed_tools": []} for one in CONTRACT["workers"]],
+    }
+    row = _rows(_pairing(contract), _evidence(door=None, worker_permissions=None))[
+        "refund"
+    ]
+    assert (row["status"], row["reason_code"]) == ("blocked", "no_world_door")
 
 
 def test_a_bypass_in_a_run_blocks_that_worker_with_a_fix(monkeypatch):
