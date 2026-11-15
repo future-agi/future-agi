@@ -204,6 +204,7 @@ def test_size_limit_boundary_exact_limit_backfills_and_one_more_starts_forward(
 
 def test_default_limit_is_150000_and_invalid_setting_fails_closed(settings):
     from django.core.exceptions import ImproperlyConfigured
+
     from tfc.settings.runtime_setting_specs import (
         RUNTIME_NUMERIC_SETTING_SPECS,
         load_numeric_settings,
@@ -236,11 +237,11 @@ def test_compaction_and_burst_settings_load_bounded_from_the_environment(
     settings, name, accessor, default, maximum
 ):
     from django.core.exceptions import ImproperlyConfigured
+
     from tfc.settings.runtime_setting_specs import (
         RUNTIME_NUMERIC_SETTING_SPECS,
         load_numeric_settings,
     )
-
     from tracer.services.derived_metrics import refresh
 
     module = refresh if accessor == "deltas_before_compaction" else backfill
@@ -324,6 +325,7 @@ def test_pass_and_expiry_settings_load_bounded(
     from importlib import import_module
 
     from django.core.exceptions import ImproperlyConfigured
+
     from tfc.settings.runtime_setting_specs import (
         RUNTIME_NUMERIC_SETTING_SPECS,
         load_numeric_settings,
@@ -354,11 +356,11 @@ def test_pass_and_expiry_settings_load_bounded(
 
 def test_server_side_compaction_switch_fails_closed(settings):
     from django.core.exceptions import ImproperlyConfigured
+
     from tfc.settings.runtime_setting_specs import (
         RUNTIME_NUMERIC_SETTING_SPECS,
         load_numeric_settings,
     )
-
     from tracer.services.derived_metrics import refresh
 
     name = "METRICS_SERVER_SIDE_COMPACTION"
