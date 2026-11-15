@@ -110,6 +110,15 @@ def _behind_door_service(contract: Mapping[str, Any]) -> bool:
     )
 
 
+def _compose_build(contract: Mapping[str, Any]) -> bool:
+    """Whether the agent runs from a Docker Compose file: ALK seals no world door for such a build yet."""
+    agent = contract.get("agent")
+    runtime = contract.get("runtime")
+    return (isinstance(agent, Mapping) and agent.get("execution") == "compose") or bool(
+        isinstance(runtime, Mapping) and runtime.get("compose_file")
+    )
+
+
 def worker_boundaries(
     pairing: Pairing, evidence: Evidence, runs: list[Any]
 ) -> list[WorkerBoundaryView]:
@@ -209,6 +218,13 @@ def worker_boundaries(
                 )
                 if status == "blocked"
                 else None
+            )
+        elif door is None and _compose_build(contract):
+            status = "blocked" if limited else "unavailable"
+            code = "compose_no_door"
+            reason = (
+                f"{name}'s limits need the world's door, which a build from a Docker Compose file does not have "
+                "yet, so none are held."
             )
         elif door is None or door.get("worker_deadlines") != "per_worker":
             status = "blocked" if limited else "unavailable"

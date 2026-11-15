@@ -428,3 +428,15 @@ def test_children_not_applicable_for_a_single_agent_and_not_run_without_runs(
     assert (single.finding, single.reason_code) == ("not_applicable", "single_agent")
     waiting = _children(monkeypatch, [], runs=())
     assert (waiting.finding, waiting.reason_code) == ("not_run", "no_run")
+
+
+def test_a_compose_build_says_its_workers_need_the_door_it_does_not_have():
+    compose = {**CONTRACT, "agent": {"execution": "compose", "service": "agent"}}
+    row = _rows(_pairing(compose), _evidence(door=None, worker_permissions=None))[
+        "refund"
+    ]
+    assert (row["status"], row["reason_code"]) == ("blocked", "compose_no_door")
+    assert "sealed before" not in row["reason"]
+    assert "Docker Compose" in row["reason"]
+    # Rebuilding the same compose app would not add a door, so no rebuild is offered.
+    assert row["fix"] is None
