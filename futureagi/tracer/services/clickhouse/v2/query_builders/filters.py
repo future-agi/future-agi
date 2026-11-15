@@ -510,7 +510,7 @@ class ClickHouseFilterBuilderV2(ClickHouseFilterBuilder):
             )
             names = tuple(dict.fromkeys(values))
             parameter = self._next_param("effective_tag_names")
-            self._params[parameter] = values
+            self._params[parameter] = list(names)
             predicate = "hasAny({names}, %(" + parameter + ")s)"
         # Source and curated trace tags are evaluated here, in ClickHouse,
         # over the projected tag columns of the bound candidate/window scope.

@@ -472,17 +472,29 @@ def test_unavailable_tag_overlay_is_a_retryable_graph_error(stores, monkeypatch)
 
 def test_tag_overlay_byte_budget_spans_every_graph_leaf(stores, monkeypatch):
     manual("alpha", ["wanted"])
-    _, one_leaf = effective_tags.graph_tag_overlay_params(
-        "probe",
+    manual("beta", ["second"])
+    first, first_size = effective_tags.graph_tag_overlay_params(
+        "first",
         project_ids=(PROJECT,),
         values=("wanted",),
         deadline=ReadDeadline.start(10000),
     )
-    monkeypatch.setattr(
-        effective_tags, "MAX_TAG_OVERLAY_BYTES", one_leaf + one_leaf // 2
+    second, second_size = effective_tags.graph_tag_overlay_params(
+        "second",
+        project_ids=(PROJECT,),
+        values=("second",),
+        deadline=ReadDeadline.start(10000),
     )
+    combined_size = effective_tags.shared_tag_parameter_bytes({**first, **second})
+    one_leaf_size = max(first_size, second_size)
+    cap = one_leaf_size + (combined_size - one_leaf_size) // 2
+    assert one_leaf_size <= cap < combined_size
+    monkeypatch.setattr(effective_tags, "MAX_TAG_OVERLAY_BYTES", cap)
+    # Equal leaves share the same driver-rendered constants, not two overlays.
     compile_exact_graph_row_predicates(
-        [leaf("tag", "wanted")], project_id=PROJECT, observe_type="trace"
+        [leaf("tag", "wanted"), leaf("tag", "wanted")],
+        project_id=PROJECT,
+        observe_type="trace",
     )
     from tracer.services.clickhouse.query_builders.exact_graph_predicates import (
         GraphTagFilterTooBroadError,
@@ -492,7 +504,7 @@ def test_tag_overlay_byte_budget_spans_every_graph_leaf(stores, monkeypatch):
     # its own copy, never a retryable 503.
     with pytest.raises(GraphTagFilterTooBroadError) as raised:
         compile_exact_graph_row_predicates(
-            [leaf("tag", "wanted"), leaf("tag", "wanted")],
+            [leaf("tag", "wanted"), leaf("tag", "second")],
             project_id=PROJECT,
             observe_type="trace",
         )

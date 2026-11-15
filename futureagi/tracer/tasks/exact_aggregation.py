@@ -346,6 +346,7 @@ def refresh_exact_aggregation_snapshot(
     """Compute then atomically publish one exact snapshot."""
 
     succeeded = False
+    failure_metadata: dict[str, str] = {}
     renewal_stop: Event | None = None
     renewal_thread: Thread | None = None
     renewal_started = False
@@ -389,8 +390,19 @@ def refresh_exact_aggregation_snapshot(
         )
         succeeded = published is not None
     except Exception as exc:
+        from tracer.services.clickhouse.query_builders.exact_graph_predicates import (
+            GraphTagFilterTooBroadError,
+        )
+        from tracer.services.entity_tags import TagReadUnavailable
+
+        if isinstance(exc, GraphTagFilterTooBroadError) or (
+            namespace.startswith("observe-")
+            and isinstance(exc, TagReadUnavailable)
+            and exc.code == "tag_overlay_budget_exceeded"
+        ):
+            failure_metadata["error_code"] = GraphTagFilterTooBroadError.code
         # Never log identity values, SQL, or database diagnostics at this
-        # boundary. The refresh state is intentionally only running/failed.
+        # boundary. Only an allowlisted public error code survives in state.
         logger.warning(
             "exact_aggregation_background_refresh_failed",
             namespace=namespace,
@@ -398,6 +410,8 @@ def refresh_exact_aggregation_snapshot(
         )
         # Mark the Temporal workflow failed without copying ClickHouse/tenant
         # diagnostics into the workflow error or activity wrapper logs.
+        if failure_metadata:
+            raise GraphTagFilterTooBroadError() from None
         raise RuntimeError("exact aggregation refresh failed") from None
     finally:
         if renewal_stop is not None:
@@ -419,6 +433,7 @@ def refresh_exact_aggregation_snapshot(
             identity,
             refresh_token,
             succeeded=succeeded,
+            **failure_metadata,
         )
 
 

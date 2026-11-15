@@ -1464,6 +1464,29 @@ class ProjectView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
                 )
             except Project.DoesNotExist:
                 return self._gm.bad_request("Project not found.")
+            except GraphTagFilterTooBroadError as exc:
+                return finish(
+                    self._gm.custom_error_response(
+                        status.HTTP_400_BAD_REQUEST, exc.message, code=exc.code
+                    )
+                )
+            except TagReadUnavailable as exc:
+                if exc.code == "tag_overlay_budget_exceeded":
+                    too_broad = GraphTagFilterTooBroadError()
+                    return finish(
+                        self._gm.custom_error_response(
+                            status.HTTP_400_BAD_REQUEST,
+                            too_broad.message,
+                            code=too_broad.code,
+                        )
+                    )
+                return finish(
+                    self._gm.custom_error_response(
+                        status.HTTP_503_SERVICE_UNAVAILABLE,
+                        "User graph data is temporarily unavailable. Please retry.",
+                        code="service_unavailable",
+                    )
+                )
             except GraphActionUnavailable:
                 raise
             except Exception as exc:

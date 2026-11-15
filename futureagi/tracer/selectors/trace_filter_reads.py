@@ -24,9 +24,12 @@ from tracer.services.clickhouse.read_budget import (
     is_read_budget_error,
 )
 from tracer.services.clickhouse.v2.effective_tags import (
+    MAX_TAG_QUERY_BYTES,
     EffectiveTagRelation,
+    bind_effective_tag_query,
     prepare_effective_tag_params,
 )
+from tracer.services.entity_tags import TagReadUnavailable
 
 _INITIAL_SLICE = timedelta(minutes=5)
 _MAX_SLICE = timedelta(days=2)
@@ -2266,6 +2269,11 @@ def read_bounded_filter_page(
                     read_tag_source,
                     params,
                     deadline=tag_deadline,
+                )
+                query, params = bind_effective_tag_query(
+                    query,
+                    params,
+                    max_query_size=settings.get("max_query_size", MAX_TAG_QUERY_BYTES),
                 )
                 statement_timeout_ms = tag_deadline.remaining_ms(statement_timeout_ms)
                 if budgeted_query_count() >= active_query_limit:
@@ -4624,6 +4632,11 @@ def read_bounded_filter_neighbors(
                 params = prepare_effective_tag_params(
                     read_tag_source, params, deadline=tag_deadline
                 )
+                query, params = bind_effective_tag_query(
+                    query,
+                    params,
+                    max_query_size=settings.get("max_query_size", MAX_TAG_QUERY_BYTES),
+                )
                 remaining_ms = tag_deadline.remaining_ms()
             return analytics.execute_ch_query(
                 query,
@@ -4636,6 +4649,9 @@ def read_bounded_filter_neighbors(
                     else {}
                 ),
             )
+        except TagReadUnavailable:
+            # Keep deterministic tag limits actionable at the HTTP boundary.
+            raise
         except Exception as exc:
             code = (
                 "read_budget_exceeded" if is_read_budget_error(exc) else "query_failed"

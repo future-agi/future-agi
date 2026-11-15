@@ -236,7 +236,7 @@ from tracer.utils.otel import (
 )
 from tracer.utils.property_registry import validate_property_graph_namespace
 from tracer.utils.sql_queries import SQL_query_handler
-from tracer.views.entity_tags import tag_update_response
+from tracer.views.entity_tags import tag_read_error_response, tag_update_response
 
 logger = structlog.get_logger(__name__)
 
@@ -1823,16 +1823,18 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
 
         except ProjectVersion.DoesNotExist:
             return self._gm.bad_request("Project version not found")
+        except TagReadUnavailable as exc:
+            return tag_read_error_response(
+                self._gm,
+                exc,
+                unavailable_message="Span data is temporarily unavailable. Please retry.",
+            )
         except UnsupportedFilterShapeError:
             return self._gm.bad_request("Span filter configuration is invalid")
         except FilterPrincipalContextError as exc:
             return self._gm.bad_request(str(exc))
         except Exception as exc:
-            if (
-                isinstance(exc, TagReadUnavailable)
-                or is_read_budget_error(exc)
-                or is_clickhouse_query_error(exc)
-            ):
+            if is_read_budget_error(exc) or is_clickhouse_query_error(exc):
                 logger.warning(
                     "span_list_query_unavailable",
                     project_version_id=str(project_version_id),
@@ -2240,14 +2242,18 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
             return self._gm.custom_error_response(
                 status.HTTP_400_BAD_REQUEST, str(exc), code=exc.code
             )
+        except TagReadUnavailable as exc:
+            return tag_read_error_response(
+                self._gm,
+                exc,
+                unavailable_message="Span data is temporarily unavailable. Please retry.",
+            )
         except UnsupportedFilterShapeError:
             return self._gm.bad_request("Span filter configuration is invalid")
         except FilterPrincipalContextError as exc:
             return self._gm.bad_request(str(exc))
         except Exception as exc:
-            if isinstance(
-                exc, TagReadUnavailable
-            ) or is_clickhouse_api_read_unavailable_error(exc):
+            if is_clickhouse_api_read_unavailable_error(exc):
                 logger.warning(
                     "observe_span_list_query_unavailable",
                     project_id=str(
@@ -5001,6 +5007,12 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
 
             return self._gm.success_response(response)
 
+        except TagReadUnavailable as exc:
+            return tag_read_error_response(
+                self._gm,
+                exc,
+                unavailable_message="Span navigation is temporarily unavailable. Please retry.",
+            )
         except SpanNavigationReadUnavailable as exc:
             logger.warning(
                 "span_navigation_bounded_read_incomplete", error_code=exc.code
@@ -5342,6 +5354,12 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
 
             return self._gm.success_response(response)
 
+        except TagReadUnavailable as exc:
+            return tag_read_error_response(
+                self._gm,
+                exc,
+                unavailable_message="Span navigation is temporarily unavailable. Please retry.",
+            )
         except SpanNavigationReadUnavailable as exc:
             logger.warning(
                 "span_navigation_bounded_read_incomplete", error_code=exc.code
