@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import PropTypes from "prop-types";
+import { enqueueSnackbar } from "notistack";
 import {
   Alert,
   Box,
@@ -162,6 +163,14 @@ Cohort.propTypes = {
   active: PropTypes.bool,
 };
 
+// Below sm each release is one stacked card made from the same cells: line 1 is the version with
+// its status badge at the right, line 2 is the linked-skill count and one short note with the
+// Choose button at the right. Labels repeat only in the header the desktop table shows.
+const quarantined = (row) => row.reasons.includes('quarantined');
+// A reason kept on a release that is no longer quarantined belongs to the review that lifted it.
+const approvalNote = (row) => Boolean(row.quarantineReason) && !quarantined(row);
+const cardNote = (row) => (approvalNote(row) ? 'Approval complete' : row.quarantineReason ? row.quarantineReason : row.lowerThanProduction && row.eligible ? 'Earlier version' : '');
+
 function Candidates({ candidates, chosen, onChoose, bare = false }) {
   const table = (
       <TableContainer sx={{ maxWidth: 1 }}>
@@ -183,15 +192,21 @@ function Candidates({ candidates, chosen, onChoose, bare = false }) {
                 aria-current={chosen === row.id ? "true" : undefined}
                 sx={(theme) => ({
                   height: { xs: 'auto', sm: ROW_HEIGHT.default },
-                  // Below sm each release is a labelled card: version, then labelled values, then its action.
-                  [theme.breakpoints.down('sm')]: { display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', rowGap: 1, py: 1.5, px: 1, borderBottom: `1px solid ${theme.palette.divider}`, '& > td': { p: 0, border: 0 } },
+                  [theme.breakpoints.down('sm')]: {
+                    display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) auto', columnGap: 1, rowGap: 0.5, alignItems: 'center', py: 1.5, px: 1, borderBottom: `1px solid ${theme.palette.divider}`,
+                    '& > td': { p: 0, border: 0, minWidth: 0 },
+                    '& > td:nth-of-type(1)': { gridColumn: 1, gridRow: 1 },
+                    '& > td:nth-of-type(2)': { gridColumn: 2, gridRow: 1, justifySelf: 'end' },
+                    '& > td:nth-of-type(3)': { gridColumn: 1, gridRow: 2 },
+                    '& > td:nth-of-type(4)': { gridColumn: 2, gridRow: 2, justifySelf: 'end' },
+                  },
                 })}
               >
                 <TableCell>
                   <Typography variant="s1">v{row.number}</Typography>
                 </TableCell>
-                <TableCell sx={mobileLabel('Eligibility')}>
-                  <Stack spacing={0.5} alignItems="flex-start">
+                <TableCell>
+                  <Stack spacing={0.5} alignItems={{ xs: 'flex-end', sm: 'flex-start' }}>
                     {row.eligible ? (
                       <StatusBadge status="completed" label="Eligible" />
                     ) : (
@@ -207,19 +222,23 @@ function Candidates({ candidates, chosen, onChoose, bare = false }) {
                         />
                       ))
                     )}
-                    {row.lowerThanProduction && row.eligible && (
-                      <Typography variant="s3">
-                        Earlier version
-                      </Typography>
-                    )}
-                    {row.quarantineReason && (
-                      <Typography variant="s3">{row.quarantineReason}</Typography>
-                    )}
+                    <Box sx={{ display: { xs: 'none', sm: 'block' } }}>
+                      {row.lowerThanProduction && row.eligible && (
+                        <Typography variant="s3">
+                          Earlier version
+                        </Typography>
+                      )}
+                      {approvalNote(row) && <Typography variant="s3">{`Approval for v${row.number} is complete.`}</Typography>}
+                      {row.quarantineReason && quarantined(row) && (
+                        <Typography variant="s3">{row.quarantineReason}</Typography>
+                      )}
+                    </Box>
                   </Stack>
                 </TableCell>
-                <TableCell sx={mobileLabel('Linked skills')}>
-                  <Typography variant="s1">
+                <TableCell>
+                  <Typography variant="s1" sx={{ typography: { xs: 's3', sm: 's1' }, color: { xs: 'text.secondary', sm: 'text.primary' } }}>
                     {row.children.length} linked skill{row.children.length === 1 ? "" : "s"}
+                    {cardNote(row) && <Box component="span" sx={{ display: { xs: 'inline', sm: 'none' } }}>{` · ${cardNote(row)}`}</Box>}
                   </Typography>
                   {row.unavailableChildren.map((child) => (
                     <Typography
@@ -258,6 +277,13 @@ Candidates.propTypes = {
   onChoose: PropTypes.func.isRequired,
   bare: PropTypes.bool,
 };
+
+// The server keeps the note of the last safety review on a release. Once a quarantine is lifted the
+// table says "Approval complete"; the note itself stays readable here.
+function ReleaseNotes({ candidates }) {
+  return candidates.filter(approvalNote).map((row) => <Typography key={row.id} variant="s3" sx={{ overflowWrap: 'anywhere' }}>{`Safety review note for v${row.number}: ${row.quarantineReason}`}</Typography>);
+}
+ReleaseNotes.propTypes = { candidates: PropTypes.array.isRequired };
 
 const changeNames = {
   added: "Added",
@@ -429,8 +455,8 @@ function RollbackRequest({
           <Button variant="outlined" sx={{ alignSelf: 'flex-start' }} href={`?tab=tests&version=${candidate.number}`}>Run tests</Button>
         </Stack></Section>}
         {/* The revision this review is bound to stays in view: it is what tells the author a restart happened. */}
-        <Typography variant="s3" color="text.secondary">Reviewed against the current production release (revision {releaseRevision}). If production changes, review and acknowledge the rollback again.</Typography>
-        {packet && <TechnicalDetails title="Request details" keepMounted><IdentityChip label="Packet fingerprint" value={packet.fingerprint} /></TechnicalDetails>}
+        <Typography variant="s3" color="text.secondary" data-release-revision={releaseRevision}>Reviewed against the release that made v{production?.number ?? "?"} production. If production changes, review and acknowledge the rollback again.</Typography>
+        <TechnicalDetails title="Request details" keepMounted><Stack spacing={0.5}><Typography variant="s3">Release revision {releaseRevision}</Typography>{packet && <IdentityChip label="Packet fingerprint" value={packet.fingerprint} />}</Stack></TechnicalDetails>
         {submit.data ? <FormControlLabel control={<Checkbox checked inputProps={{ readOnly: true }} />} label={`I reviewed everything v${candidate.number} contains, including linked skill versions and files left out.`} /> : <FormControlLabel
           control={
             <Checkbox
@@ -645,8 +671,12 @@ LocalRecovery.propTypes = {
 // Same numbered stepper as the release request composer (RequestSteps): the current step is bold,
 // filled and marked for assistive technology. Copied rather than imported so the lanes stay independent.
 const RECOVERY_STEPS = ['Request', 'Approve', 'Confirm apps updated'];
+// Below sm the three steps collapse to one line ("Step 1 of 3 · Request"): three labels and their
+// connectors cannot sit on one 390px row without one wrapping alone.
 function RecoverySteps({ step }) {
-  return <Stack component="ol" direction="row" alignItems="center" flexWrap="wrap" columnGap={1.5} rowGap={1} aria-label="Recovery progress" sx={{ m: 0, p: 0, listStyle: 'none' }}>
+  return <>
+    <Typography variant="s3" color="text.secondary" sx={{ display: { xs: 'block', sm: 'none' } }}>{`Step ${step + 1} of ${RECOVERY_STEPS.length} · ${RECOVERY_STEPS[step]}`}</Typography>
+    <Stack component="ol" direction="row" alignItems="center" flexWrap="wrap" columnGap={1.5} rowGap={1} aria-label="Recovery progress" sx={{ m: 0, p: 0, listStyle: 'none', display: { xs: 'none', sm: 'flex' } }}>
     {RECOVERY_STEPS.map((name, index) => {
       const current = index === step;
       return <Stack component="li" key={name} direction="row" alignItems="center" gap={1} aria-current={current ? 'step' : undefined}>
@@ -655,9 +685,30 @@ function RecoverySteps({ step }) {
         <Typography component="span" variant="s3" sx={{ fontWeight: current ? 600 : 400, color: current ? 'text.primary' : 'text.secondary' }}>{name}</Typography>
       </Stack>;
     })}
-  </Stack>;
+    </Stack>
+  </>;
 }
 RecoverySteps.propTypes = { step: PropTypes.number.isRequired };
+
+// The notice ends in an action: the request an admin needs to act on, ready to paste.
+function RollbackDenied({ contextName, version }) {
+  const [copying, setCopying] = useState(false);
+  const request = `Please start a rollback of ${contextName}${version ? ` to v${version}` : ''}, or give me reviewer access: ${window.location.href}`;
+  const copy = async () => {
+    setCopying(true);
+    try {
+      if (!navigator.clipboard?.writeText) throw new Error('Unavailable');
+      await navigator.clipboard.writeText(request);
+      enqueueSnackbar('Copied the request for an admin', { variant: 'success' });
+    } catch {
+      enqueueSnackbar("Couldn't copy the request. Ask an admin to start the rollback.", { variant: 'error' });
+    } finally {
+      setCopying(false);
+    }
+  };
+  return <CapabilityNotice title="Rollback access" description="Only admins and reviewers can start a rollback." actions={<Button variant="outlined" size="small" disabled={copying} onClick={copy}>Copy request for admin</Button>} />;
+}
+RollbackDenied.propTypes = { contextName: PropTypes.string.isRequired, version: PropTypes.number };
 
 const RECOVERY_FACTS_REFRESH_MS = 5000;
 
@@ -731,15 +782,15 @@ export default function J6RecoveryPanel({ contextId, contextName }) {
     <ContentSkeleton variant="panel" rows={2} sx={{ '& .MuiSkeleton-root': { bgcolor: 'action.selected' } }} />
   </Stack>;
   if (previewState === 'inventory-limit' || query.error?.code === 'recovery_inventory_limit') return <CapabilityNotice title="This context is too large to review here. Use the CLI restore." description="Rollback reviews every version and every connected app, and this context has more than 100 of them." actions={<Button href="?tab=use" variant="outlined">Open CLI restore instructions</Button>} details={query.error?.message} />;
-  if (previewState === 'denied' || query.error?.statusCode === 403) return <CapabilityNotice title="Rollback access" description="Only admins and reviewers can start a rollback. Ask a workspace admin." />;
+  if (previewState === 'denied' || query.error?.statusCode === 403) return <RollbackDenied contextName={contextName} />;
   if (previewState === 'off') return <CapabilityNotice title="Recovery is not available" description="Ask a workspace administrator to check recovery access." />;
   // The preview names the version the header shows, not a fixed one.
   if (previewState === 'empty') return <EmptyState title="Nothing to roll back to yet" description={`${liveProduction ? `v${liveProduction.number}` : 'This version'} is the only released version, so there's nothing to roll back to yet.`} />;
   if (previewState === 'error' || query.error || !data)
     return (
       <ErrorState
-        title="Couldn't load recovery"
-        detail="The release, safety or consumer facts could not be read completely. No partial recovery choice is shown."
+        title="Couldn't load recovery details."
+        detail="Nothing was changed."
         onRetry={query.refetch}
       />
     );
@@ -762,7 +813,7 @@ export default function J6RecoveryPanel({ contextId, contextName }) {
         <Typography variant="m3" role="status">{candidate?.isProduction ? `${from ? `Production moved from v${from} to v${candidate.number}` : `Production is v${candidate.number}`} · ${confirmed} of ${data.cohort.length} consumers confirmed` : awaiting ? `Rollback to v${candidate?.number} requested from ${submitted.reviewer}. Production has not moved.` : `Production is ${production ? `v${production.number}` : 'not set'}.${candidate ? ` Roll back to v${candidate.number}?` : ' Choose an eligible version to request a rollback.'}`}</Typography>
         <RecoverySteps step={step} />
       </Stack>
-      {data.canPromote === false && <CapabilityNotice title="Rollback access" description="Only admins and reviewers can start a rollback. Ask a workspace admin." />}
+      {data.canPromote === false && <RollbackDenied contextName={contextName} version={candidate && !candidate.isProduction ? candidate.number : undefined} />}
       {query.isFetching && <StatusBadge status="checking" label="Updating…" sx={{ alignSelf: 'flex-start' }} />}
       {!data.candidates.some((row) => row.eligible) && !candidate?.isProduction && <EmptyState title="No eligible recovery release" description="Excluded releases cannot be requested. Review their restrictions below." />}
       {!candidate?.isProduction && <Box sx={{ display: 'grid', gridTemplateColumns: { xs: 'minmax(0, 1fr)', lg: awaiting ? 'minmax(0, 1fr)' : 'minmax(0, 3fr) minmax(300px, 2fr)' }, gap: 3, alignItems: 'start' }}>
@@ -776,6 +827,7 @@ export default function J6RecoveryPanel({ contextId, contextName }) {
         <TechnicalDetails title="Technical details">
           <Stack spacing={1}>
             {data.candidates.map((release) => <IdentityChip key={release.id} label={`Release v${release.number}`} value={release.digest} />)}
+            <ReleaseNotes candidates={data.candidates} />
             {(closure.data?.rows ?? []).map((row) => <Stack key={`${row.status}:${row.path}`} spacing={0.5}><Typography variant="s3" sx={{ overflowWrap: 'anywhere' }}>{row.path} · {row.sizeBytes} B</Typography><IdentityChip label="File digest" value={row.sha256} /></Stack>)}
           </Stack>
         </TechnicalDetails>
@@ -797,15 +849,15 @@ export default function J6RecoveryPanel({ contextId, contextName }) {
         />
       )}
       </Box>}
-      {candidate?.isProduction && <TechnicalDetails title="Choose another recovery release"><Candidates candidates={data.candidates} chosen={chosen} onChoose={setChosen} /><TechnicalDetails title="Technical details">{data.candidates.map((release) => <IdentityChip key={release.id} label={`Release v${release.number}`} value={release.digest} />)}</TechnicalDetails></TechnicalDetails>}
+      {candidate?.isProduction && <TechnicalDetails title="Choose another recovery release"><Candidates candidates={data.candidates} chosen={chosen} onChoose={setChosen} /><TechnicalDetails title="Technical details">{data.candidates.map((release) => <IdentityChip key={release.id} label={`Release v${release.number}`} value={release.digest} />)}<ReleaseNotes candidates={data.candidates} /></TechnicalDetails></TechnicalDetails>}
       {step < 1 && <Typography variant="s1" color="text.secondary" sx={{ py: 1, borderTop: 1, borderColor: 'divider' }}>2 · Await approval — submit the rollback for independent review.</Typography>}
       {step < 2 && <Typography variant="s1" color="text.secondary" sx={{ py: 1, borderTop: 1, borderColor: 'divider' }}>3 · Confirm apps updated — available after production moves.</Typography>}
       {/* J6 inspects the incident cohort before requesting a rollback. Keep its facts visible,
           but defer the delivery warning and local tasks until verification is active. */}
       {(step === 2 || data.cohort.some((row) => row.latestFailure)) && <Cohort cohort={data.cohort} numbers={numbers} asOf={data.asOf} active={step === 2} />}
-      {candidate && (candidate.isProduction ? <LocalRecovery key={`local-${candidate.id}`} contextId={contextId} contextName={contextName} candidate={candidate} canIssue={data.canIssueCredentials} /> : <TechnicalDetails title="Prepare local recovery in advance"><LocalRecovery key={`local-${candidate.id}`} contextId={contextId} contextName={contextName} candidate={candidate} canIssue={data.canIssueCredentials} /></TechnicalDetails>)}
+      {candidate && (candidate.isProduction ? <LocalRecovery key={`local-${candidate.id}`} contextId={contextId} contextName={contextName} candidate={candidate} canIssue={data.canIssueCredentials} /> : <TechnicalDetails title="Prepare recovery on your machine"><LocalRecovery key={`local-${candidate.id}`} contextId={contextId} contextName={contextName} candidate={candidate} canIssue={data.canIssueCredentials} /></TechnicalDetails>)}
       <Button variant="outlined" sx={{ alignSelf: 'flex-start' }} onClick={() => refreshFacts()}>
-        Refresh recovery facts
+        Check again
       </Button>
     </Stack>
   );

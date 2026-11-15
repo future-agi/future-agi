@@ -19,6 +19,9 @@ const SUMMARY = [
   ["side_effect_policy", "Side-effect policy"],
 ];
 
+// Pixel strings on purpose: in sx a bare `1` means 100%.
+const visuallyHidden = { position: "absolute", width: "1px", height: "1px", p: 0, m: "-1px", overflow: "hidden", clip: "rect(0 0 0 0)", whiteSpace: "nowrap", border: 0, flexBasis: "auto" };
+
 export default function ContextTargetRegistration({ contextId, canRegister, variant = "outlined" }) {
   const create = useCreateContextBinding(contextId);
   const reasonId = useId();
@@ -73,6 +76,7 @@ export default function ContextTargetRegistration({ contextId, canRegister, vari
     /^[a-z0-9][a-z0-9-]{0,39}$/.test(label) &&
     manifest !== null &&
     !create.isPending && canRegister;
+  const noFile = canRegister && !manifest;
   const actionReason = !canRegister ? 'Ask a workspace admin for permission to connect an app.'
     : !manifest ? 'Choose your app\'s config file.'
       : !name.trim() ? 'Enter a target name.'
@@ -134,7 +138,7 @@ export default function ContextTargetRegistration({ contextId, canRegister, vari
           if (!create.isPending) setOpen(false);
         }}
         title="Connect an app"
-        subTitle="Upload your app's config file (JSON)."
+        subTitle="Upload your app's config file."
         dialogActionSx={{ display: "none" }}
         onCancelBtn={() => setOpen(false)}
       >
@@ -181,7 +185,7 @@ export default function ContextTargetRegistration({ contextId, canRegister, vari
                 onChange={(event) => readManifest(event.target.files?.[0])}
               />
             </Stack>
-            <Typography variant="s3" color="text.secondary"><Link href="https://docs.futureagi.com/docs/skills/reviewed-releases" target="_blank" rel="noopener noreferrer">Runtime setup guide</Link></Typography>
+            <Typography variant="s3" color="text.secondary"><Link href="https://docs.futureagi.com/docs/skills/reviewed-releases" target="_blank" rel="noopener noreferrer">App setup guide</Link></Typography>
           </Stack>
           {manifest &&
             SUMMARY.map(([key, title]) => (
@@ -194,10 +198,10 @@ export default function ContextTargetRegistration({ contextId, canRegister, vari
           {error && <Alert severity="error">{error}</Alert>}
         </Stack>
         <DialogActions sx={{ p: 0, mt: 0, gap: 1, justifyContent: "space-between", alignItems: "center", flexWrap: "wrap" }}>
-          {/* The footer's left slot says why Connect app is off, or what connecting does. */}
-          {actionReason
-            ? <ActionReason id={`${reasonId}-submit`} reason={actionReason} sx={{ flex: 1, flexBasis: { xs: "100%", sm: 0 } }} />
-            : <Typography variant="s3" color="text.secondary" sx={{ flex: 1 }}>Connecting doesn&apos;t change production.</Typography>}
+          {/* The footer's left slot says why Connect app is off, or what connecting does. With no file the
+              subtitle and the file row already say what to do, so that reason is only read to assistive technology. */}
+          {actionReason && <ActionReason id={`${reasonId}-submit`} reason={actionReason} sx={noFile ? visuallyHidden : { flex: 1, flexBasis: { xs: "100%", sm: 0 } }} />}
+          {(!actionReason || noFile) && <Typography variant="s3" color="text.secondary" sx={{ flex: 1 }}>Connecting doesn&apos;t change production.</Typography>}
           <Stack direction="row" spacing={1}>
             <Button variant="outlined" disabled={create.isPending} onClick={() => setOpen(false)}>Cancel</Button>
             <LoadingButton variant="contained" color="primary" loading={create.isPending} disabled={!valid} {...reasonProps(`${reasonId}-submit`, actionReason)} onClick={submit}>Connect app</LoadingButton>

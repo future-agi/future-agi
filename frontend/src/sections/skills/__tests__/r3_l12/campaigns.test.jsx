@@ -96,7 +96,7 @@ describe('independent observations and availability', () => {
   it('does not turn merged into installed or delivered', () => {
     render(<ContextCampaignTargetDrawer target={{ ...target, prState: 'merged', mergeState: 'merged' }} open onClose={vi.fn()} onDecision={vi.fn()} observations={observations} />);
     // Observations stay visible without a disclosure: merged is never shown as delivered.
-    expect(screen.getByText('Independent delivery observations')).toBeVisible();
+    expect(screen.getByText('Delivery reports')).toBeVisible();
     expect(screen.getAllByText('Not observed')).toHaveLength(3);
     expect(screen.getByText(/A merged PR doesn't mean the app has the change/)).toBeInTheDocument();
   });
@@ -275,7 +275,7 @@ describe('rollouts off', () => {
     expect(within(drawer).queryByRole('button', { name: 'Copy plan command' })).toBeNull();
     expect(within(drawer).queryByText(/python -m fi.context plan/)).toBeNull();
     expect(within(drawer).queryByLabelText('Include this target')).toBeNull();
-    expect(within(drawer).getByText('Independent delivery observations')).toBeVisible();
+    expect(within(drawer).getByText('Delivery reports')).toBeVisible();
     expect(within(drawer).getByRole('button', { name: 'Technical details' })).toBeVisible();
   });
   it('keeps a recorded decision visible, but not editable, after rollouts are turned off', () => {

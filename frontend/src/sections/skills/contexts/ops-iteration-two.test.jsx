@@ -32,14 +32,14 @@ it('has one helper line, a setup link and a footer note, without manifest wordin
   expect(within(dialog).getAllByText(/config file/i).length).toBeGreaterThan(0);
   expect(within(dialog).queryByText(/manifest/i)).toBeNull();
   expect(within(dialog).queryByText(/Choose the JSON file your app build produces/)).toBeNull();
-  expect(within(dialog).getByRole('link', { name: 'Runtime setup guide' })).toHaveAttribute('href', 'https://docs.futureagi.com/docs/skills/reviewed-releases');
+  expect(within(dialog).getByRole('link', { name: 'App setup guide' })).toHaveAttribute('href', 'https://docs.futureagi.com/docs/skills/reviewed-releases');
   expect(within(dialog).getByRole('button', { name: 'Connect app' })).toBeDisabled();
 });
 
 it('requires a nonblank cancellation reason before opening confirmation', () => {
   const status = vi.fn();
   render(<MemoryRouter><ContextCampaignReview campaign={campaign} targets={[target]} onAuthorize={vi.fn()} onStatus={status} onRollback={vi.fn()} onSelectTarget={vi.fn()} /></MemoryRouter>);
-  const cancel = screen.getByRole('button', { name: 'Cancel unstarted work' });
+  const cancel = screen.getByRole('button', { name: 'Stop unstarted work' });
   expect(cancel).toBeDisabled();
   expect(cancel).toHaveAccessibleDescription('Enter a reason to cancel');
   fireEvent.change(screen.getByLabelText('Reason for rollout change'), { target: { value: '  ' } });

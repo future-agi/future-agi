@@ -112,8 +112,8 @@ export default function ContextCampaignReview({ campaign, targets, onAuthorize, 
     <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap">
       {['authorized', 'running'].includes(campaign.status) && <Button disabled={!campaign.canAuthorize || pending} onClick={() => setConfirm('pause')}>Pause new claims</Button>}
       {campaign.status === 'paused' && <Button disabled={!campaign.canAuthorize || !campaign.enabled || pending} onClick={() => setConfirm('resume')}>Resume unchanged plans</Button>}
-      {!['cancelled', 'settled'].includes(campaign.status) && <Button disabled={!campaign.canAuthorize || pending || !reason.trim()} {...reasonProps(cancelReasonId, !reason.trim() && 'Enter a reason to cancel')} onClick={() => setConfirm('cancel')}>Cancel unstarted work</Button>}
-      <Button disabled={pending || !campaign.manifestDigest} onClick={() => run(() => onRollback({ revision: campaign.revision }))}>Preview reverse changes</Button>
+      {!['cancelled', 'settled'].includes(campaign.status) && <Button disabled={!campaign.canAuthorize || pending || !reason.trim()} {...reasonProps(cancelReasonId, !reason.trim() && 'Enter a reason to cancel')} onClick={() => setConfirm('cancel')}>Stop unstarted work</Button>}
+      <Button disabled={pending || !campaign.manifestDigest} onClick={() => run(() => onRollback({ revision: campaign.revision }))}>Preview undo</Button>
     </Stack>
     {!['cancelled', 'settled'].includes(campaign.status) && <ActionReason id={cancelReasonId} reason={!reason.trim() && 'Enter a reason to cancel'} />}
     {rollback && <Section title="Reverse-plan review" description="This preview is not executable. Reinspect each repository, verify the retained previous lock and create a new rollout linked to this one.">

@@ -353,7 +353,7 @@ export async function createDriver({ jobId, runId, registration }) {
         // The view shows the release revision the review was made against; wait for it to match the moved release
         // (a change after the review restarts it), so no later poll can restart the new review.
         const movedRevision = (await read(`${context}release-state/`, signal)).release_revision;
-        await expect(authorPage.getByText(`Reviewed against the current production release (revision ${movedRevision}).`, { exact: false })).toBeVisible({ timeout: 60_000 });
+        await expect(authorPage.locator(`[data-release-revision="${movedRevision}"]`, { hasText: 'Reviewed against the release that made' })).toBeVisible({ timeout: 60_000 });
         const reack = authorPage.getByRole('checkbox', { name: /I reviewed everything v1 contains/ });
         await expect(reack).toBeEnabled({ timeout: 30_000 });
         await expect(reack).not.toBeChecked();
@@ -586,7 +586,7 @@ export async function createDriver({ jobId, runId, registration }) {
 
       if (stage.id === 'inspect-declared-cohort') {
         // The recovery view has been idle for minutes and the browser throttles an idle tab's timers; the operator refreshes the facts once.
-        await operator.click(authorPage.getByRole('button', { name: 'Refresh recovery facts', exact: true }), 'refresh-final-cohort');
+        await operator.click(authorPage.getByRole('button', { name: 'Check again', exact: true }), 'refresh-final-cohort');
         const cohort = await consumers(signal);
         const table = authorPage.getByRole('table', { name: 'Recovery cohort' });
         await expect(table).toBeVisible();
