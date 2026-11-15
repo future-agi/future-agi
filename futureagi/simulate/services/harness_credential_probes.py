@@ -266,6 +266,8 @@ def probe(provider: str, values: Mapping[str, str]) -> ProbeResult:
     named = " + ".join(spec.aliases)
     base_name, _ = configured_base(values, spec.base_aliases)
     at = f" at {base_name}" if base_name else ""
+    # A base that cannot be called or answers off the API is the base's fault, not the key's.
+    base_fault = (base_name,) if base_name else spec.aliases
     try:
         request = spec.build(values)
         response = requests.request(
@@ -281,7 +283,7 @@ def probe(provider: str, values: Mapping[str, str]) -> ProbeResult:
         return ProbeResult(
             provider,
             spec.label,
-            spec.aliases,
+            base_fault,
             False,
             f"{spec.label} check could not run: {exc}",
         )
@@ -290,7 +292,7 @@ def probe(provider: str, values: Mapping[str, str]) -> ProbeResult:
         return ProbeResult(
             provider,
             spec.label,
-            spec.aliases,
+            base_fault,
             False,
             f"{spec.label} is unreachable{at} ({type(exc).__name__}); "
             f"check {base_name or named}",
@@ -316,7 +318,7 @@ def probe(provider: str, values: Mapping[str, str]) -> ProbeResult:
         return ProbeResult(
             provider,
             spec.label,
-            spec.aliases,
+            base_fault,
             False,
             f"{spec.label}{at} returned HTTP {response.status_code} for {named}",
         )

@@ -523,3 +523,31 @@ def test_a_malformed_or_refused_base_is_not_called(provider_request, base, reaso
     assert result.ok is False
     assert result.message == f"OpenAI check could not run: OPENAI_BASE_URL {reason}"
     provider_request.assert_not_called()
+
+
+@pytest.mark.usefixtures("gateway_dns")
+@pytest.mark.parametrize(
+    ("base", "answer", "at_fault"),
+    [
+        ("https://gateway.example.com/v1", Mock(status_code=401), ("OPENAI_API_KEY",)),
+        ("https://gateway.example.com/v1", Mock(status_code=404), ("OPENAI_BASE_URL",)),
+        (
+            "https://gateway.example.com/v1",
+            requests.ConnectionError("refused"),
+            ("OPENAI_BASE_URL",),
+        ),
+        ("https://metadata.example.com/v1", None, ("OPENAI_BASE_URL",)),
+    ],
+)
+def test_a_failure_names_the_variable_at_fault(
+    provider_request, base, answer, at_fault
+):
+    if isinstance(answer, Exception):
+        provider_request.side_effect = answer
+    elif answer is not None:
+        provider_request.return_value = answer
+
+    result = probe("openai", {"OPENAI_API_KEY": "k", "OPENAI_BASE_URL": base})
+
+    assert result.ok is False
+    assert result.aliases == at_fault
