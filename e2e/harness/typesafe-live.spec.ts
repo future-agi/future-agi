@@ -6,15 +6,16 @@ import { fileURLToPath } from 'node:url';
 import { isDeepStrictEqual } from 'node:util';
 import { test as base, expect } from '../lib/scope-actors';
 import { typeSafeLifecycleFixture } from '../lib/typesafe-lifecycle';
+import { createTypeSafeCleanupIO } from '../lib/typesafe-cleanup';
 import type { ScopeActor } from '../lib/scope-actors';
 import { ApiError } from '../lib/api-client';
 import { E2E } from '../lib/env';
 import {
   MOCK_REFUSAL_TEXT, TICKET, answerShape, countUpstream, expectedCost, largeCallIssues, largeState, refusalVerdict, rowIssues,
   semanticVerdict, unknownModelVerdict, rotateOutcome, gatewayHoldsKey,
-  createTypeSafeResources, teardownTypeSafe, TypeSafeLifecycle, TYPE_SAFE_FIXTURE_TIMEOUT, gatewayProvidersAbsent, presetGap,
+  createTypeSafeResources, teardownTypeSafe, TypeSafeLifecycle, TYPE_SAFE_FIXTURE_TIMEOUT, presetGap,
 } from '../lib/typesafe-live';
-import type { CallRecord, Verdict, CleanupProvider, CleanupKey, TypeSafeResources, TypeSafeCleanupIO, LifecycleResult } from '../lib/typesafe-live';
+import type { CallRecord, Verdict, TypeSafeResources, LifecycleResult } from '../lib/typesafe-live';
 
 // Opt-in live run of TypeSafe's Jev decision models through the whole
 // product: a TypeSafe provider added in the dashboard, a gateway key,
@@ -51,17 +52,18 @@ import type { CallRecord, Verdict, CleanupProvider, CleanupKey, TypeSafeResource
 
 // Focused lifecycle dry run: reuse dashboard creation, rotate, gateway sync and
 // one mock decision, then stop before the known preset gap / full cost matrix.
-// pass => green; fail => throws the named error after resources exist, while
-// report.{json,md} must still show teardown PASS. No real upstream is permitted.
+// pass => green; fail => throws after resources exist; timeout-rate/budget =>
+// real runner timeout after a temporary limit reaches the gateway. Each must
+// still report teardown PASS independently. No real upstream is permitted.
 const LIFECYCLE = process.env.E2E_TYPESAFE_LIFECYCLE ?? '';
 const LIVE = process.env.E2E_TYPESAFE_LIVE === '1' || LIFECYCLE !== '';
 const TYPESAFE_KEY = process.env.TYPESAFE_API_KEY ?? '';
 const BASE_URL = process.env.TYPESAFE_BASE_URL ?? '';
 // Construct the mock-only sentinel so Playwright's source attachments do not
 // themselves contain the full value searched by the artefact scanner.
-if (LIFECYCLE && (!['pass', 'fail'].includes(LIFECYCLE)
+if (LIFECYCLE && (!['pass', 'fail', 'timeout-rate', 'timeout-budget'].includes(LIFECYCLE)
   || BASE_URL !== 'http://mock-llm:8080' || TYPESAFE_KEY !== ['e2e', 'decision', 'typesafe', 'key'].join('-'))) {
-  throw new Error('Lifecycle mode requires pass|fail, TYPESAFE_BASE_URL=http://mock-llm:8080 and the synthetic mock TypeSafe key');
+  throw new Error('Lifecycle mode requires pass|fail|timeout-rate|timeout-budget, TYPESAFE_BASE_URL=http://mock-llm:8080 and the synthetic mock TypeSafe key');
 }
 // A dry run is any override that is not TypeSafe's own host; an unparsable one
 // counts as a dry run rather than breaking test discovery while disabled.
@@ -167,7 +169,9 @@ test.describe('TypeSafe Jev live decision route (opt-in)', () => {
             if (providers.some(p => [PROVIDER, BAD_KEY_PROVIDER, 'typesafe-nokey'].includes(p.provider_name))) {
               throw new Error('TypeSafe harness requires absent test provider names; no existing provider was changed');
             }
-            resources = createTypeSafeResources(providers, keys);
+            resources = createTypeSafeResources(providers, keys, {
+              organizationId: owner.organizationId, gatewayKeys: await io.listGatewayKeys(),
+            });
             context = await scopeActors.openContext(browser, owner);
             typeSafeLifecycle.signal.throwIfAborted();
             const page = await context.newPage();
@@ -243,57 +247,12 @@ const admin = async (route: string) =>
   gateway('GET', route, { Authorization: `Bearer ${GATEWAY_ADMIN_TOKEN}` });
 const json = (res: HttpResponse) => { try { return JSON.parse(res.text); } catch { return {}; } };
 
-// Cleanup uses Node HTTP only, including inventories and admin verification.
-// Contracts: agentcc/views/{provider_credential,api_key}.py list => {result:[]},
-// DELETE credential => result.deleted; POST key/revoke => result.status.
-// Gateway admin_keys.go GET /-/keys/{id} => {status}, admin_orgs.go => {data}.
-function cleanupIO(owner: ScopeActor, signal = bodySignal): TypeSafeCleanupIO {
-  const deadline = Date.now() + 120_000;
-  const request = (base: string, method: string, route: string, headers: Record<string, string>) =>
-    http(base, method, route, { headers, signal, timeoutMs: Math.max(1, Math.min(10_000, deadline - Date.now())) });
-  const headers = { Authorization: `Bearer ${owner.tokens.access}`, 'X-Organization-Id': owner.organizationId,
-    'X-Workspace-Id': owner.workspaceId };
-  const list = async <T>(route: string, fields: string[]): Promise<T[]> => {
-    const response = await request(E2E.apiUrl, 'GET', route, headers);
-    const rows = json(response).result;
-    if (response.status !== 200 || !Array.isArray(rows)
-      || !rows.every(row => row && fields.every(field => typeof row[field] === 'string'))) {
-      throw new Error('Cleanup inventory unavailable or malformed');
-    }
-    return rows as T[];
-  };
-  return {
-    listProviders: () => list<CleanupProvider>('/agentcc/provider-credentials/', ['id', 'provider_name']),
-    listKeys: () => list<CleanupKey>('/agentcc/api-keys/', ['id', 'name', 'status', 'gateway_key_id']),
-    deleteProvider: async id => {
-      const response = await request(E2E.apiUrl, 'DELETE', `/agentcc/provider-credentials/${encodeURIComponent(id)}/`, headers);
-      if (response.status !== 200 || json(response).result?.deleted !== true) throw new Error('Provider deletion refused');
-    },
-    revokeKey: async id => {
-      const response = await request(E2E.apiUrl, 'POST', `/agentcc/api-keys/${encodeURIComponent(id)}/revoke/`, headers);
-      if (response.status !== 200 || json(response).result?.status !== 'revoked') throw new Error('Key revocation refused');
-    },
-    gatewayProvidersAbsent: async names => {
-      const response = await request(E2E.gatewayUrl, 'GET', '/-/orgs/configs', { Authorization: `Bearer ${GATEWAY_ADMIN_TOKEN}` });
-      return response.status === 200 && gatewayProvidersAbsent(json(response), owner.organizationId, names);
-    },
-    gatewayKeyRevoked: async key => {
-      const response = await request(E2E.gatewayUrl, 'GET', `/-/keys/${encodeURIComponent(key.gateway_key_id)}`,
-        { Authorization: `Bearer ${GATEWAY_ADMIN_TOKEN}` });
-      return (response.status === 200 && json(response).status === 'revoked')
-        || (response.status === 404 && json(response).error?.code === 'key_not_found');
-    },
-    waitUntil: async check => {
-      // Not expect.poll: cleanup must keep its own bounded budget after a test
-      // assertion fails, and must never attach admin responses to Playwright.
-      do {
-        if (await check()) return;
-        if (Date.now() >= deadline) break;
-        await new Promise(resolve => setTimeout(resolve, Math.min(500, deadline - Date.now())));
-      } while (Date.now() < deadline);
-      throw new Error('Cleanup verification timed out');
-    },
-  };
+// A new IO instance gives runner teardown its own deadline and signal. The
+// Node-only adapter is shared with HTTP/native provisioning regressions.
+function cleanupIO(owner: ScopeActor, signal = bodySignal) {
+  return createTypeSafeCleanupIO({ apiUrl: E2E.apiUrl, gatewayUrl: E2E.gatewayUrl,
+    accessToken: owner.tokens.access, organizationId: owner.organizationId, workspaceId: owner.workspaceId,
+    adminToken: GATEWAY_ADMIN_TOKEN, signal, drainWrites: signal === bodySignal });
 }
 
 function addCase(c: CaseRecord) {
@@ -405,6 +364,26 @@ async function run(page: Page, owner: ScopeActor, suffix: string, resources: Typ
       verdict: decision.status === 200 && answerShape([decision], { dryRun: true, provider: PROVIDER }).fails.length === 0 ? 'PASS' : 'FAIL',
       actual: `mock decision status ${decision.status}; lifecycle=${LIFECYCLE}; full preset/pricing matrix not run`, calls: [decision] });
     if (LIFECYCLE === 'fail') throw new Error('Injected TypeSafe lifecycle failure after provider/key creation');
+    if (LIFECYCLE.startsWith('timeout-')) {
+      const limitsIO = cleanupIO(owner);
+      resources.limits = await limitsIO.captureLimits();
+      const changes = LIFECYCLE === 'timeout-rate' ? { rate_limiting: { enabled: true, per_key_rpm: 1 } }
+        : { budgets: { enabled: true, default_period: 'total', keys: { [key.result.name]: { limit: 0.000001, hard: true } } } };
+      await limitsIO.changeLimits(changes);
+      await expect.poll(async () => {
+        const response = await admin('/-/orgs/configs');
+        const org = json(response).data?.[owner.organizationId];
+        return response.status === 200 && (LIFECYCLE === 'timeout-rate' ? org?.rate_limiting?.per_key_rpm === 1
+          : org?.budgets?.keys?.[key.result.name]?.limit === 0.000001);
+      }, CONFIG_VISIBLE).toBe(true);
+      // Deliberately exhaust ONLY the body slot after a confirmed write. This
+      // is the real runner, not an exception pretending to be a runner timeout.
+      test.setTimeout(1);
+      await new Promise<void>(resolve => {
+        if (bodySignal?.aborted) resolve();
+        else bodySignal?.addEventListener('abort', () => resolve(), { once: true });
+      });
+    }
     return;
   }
 
@@ -509,14 +488,19 @@ async function run(page: Page, owner: ScopeActor, suffix: string, resources: Typ
         .reduce((sum, l) => sum + Number(l.trim().split(/\s+/).pop()), 0);
     };
     const pushConfig = async (cfg: Record<string, unknown>, ready: (gatewayOrg: Record<string, unknown>) => boolean) => {
-      await owner.api.post('/agentcc/org-configs/', { ...cfg, change_description: `e2e typesafe ${suffix}` });
+      await cleanupIO(owner).changeLimits(cfg);
       await expect.poll(async () => {
         const org = json(await admin('/-/orgs/configs')).data?.[owner.organizationId] ?? {};
         return ready(org);
       }, { ...CONFIG_VISIBLE, message: 'org limits reach the gateway' }).toBe(true);
     };
 
-    try {
+    // Provider setup has established an active config version. Snapshot before
+    // any limits mutation, retaining exact backend JSON and gateway omissions.
+    // No restorable version means stop BEFORE changing limits (never coerce null
+    // or absent/inherited configuration into an empty reset).
+    resources.limits = await cleanupIO(owner).captureLimits();
+    {
       // (c) one request per minute per key.
       await pushConfig({ rate_limiting: { enabled: true, per_key_rpm: 1 } }, org => (org.rate_limiting as { per_key_rpm?: number })?.per_key_rpm === 1);
       resources.keyNames.add(`e2e-typesafe-rpm-${suffix}`);
@@ -561,12 +545,14 @@ async function run(page: Page, owner: ScopeActor, suffix: string, resources: Typ
           + 'leaves budgets.enabled unset: the budget plugin is only added to the pipeline then (cmd/agentcc/main.go), and '
           + 'applyOrgBudgetOverrides only sets request metadata. Intended for self-hosted gateways, or should org budgets load the plugin?');
       }
-    } finally {
-      // Always lift the org limits, even when a step above failed.
-      await pushConfig({ rate_limiting: {}, budgets: {} },
-        org => !(org.budgets as { enabled?: boolean })?.enabled && !(org.rate_limiting as { per_key_rpm?: number })?.per_key_rpm)
-        .catch(() => undefined);
     }
+    // Normal completion restores before later cases. A failure/runner timeout
+    // skips this body continuation: the fixture restores after provider pushes
+    // and reports reset/verification failure separately from the original error.
+    const reset = cleanupIO(owner);
+    await reset.restoreLimits(resources.limits);
+    await reset.waitUntil(() => reset.backendLimitsRestored(resources.limits!));
+    await reset.waitUntil(() => reset.gatewayLimitsRestored(resources.limits!));
   });
 
   // ---------------------------------------------------------------- Case 6

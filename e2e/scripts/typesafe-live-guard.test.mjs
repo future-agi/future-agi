@@ -47,10 +47,10 @@ test('comments, strings, other receivers and argument boundaries do not invent c
   assert.doesNotThrow(() => assertNoTypeSafeKey(source));
 });
 
-test('all 11 actual call sites are counted, and each rejects an injected secret', () => {
+test('all 10 actual call sites are counted, and each rejects an injected secret', () => {
   const calls = ownerApiCalls(spec);
-  assert.equal(calls.length, 11);
-  assert.deepEqual(calls.map(c => c.method), ['get', 'post', 'post', 'get', 'post', 'post', 'post', 'post', 'post', 'post', 'patch']);
+  assert.equal(calls.length, 10);
+  assert.deepEqual(calls.map(c => c.method), ['get', 'post', 'post', 'get', 'post', 'post', 'post', 'post', 'post', 'patch']);
   assert.doesNotThrow(() => assertNoTypeSafeKey(spec));
   for (const call of calls) {
     const original = spec.slice(call.start, call.end);

@@ -14,6 +14,10 @@ const lib = fileURLToPath(new URL('../lib/typesafe-live.ts', import.meta.url));
 const fixture = fileURLToPath(new URL('../lib/typesafe-lifecycle.ts', import.meta.url));
 
 for (const [mode, bodyVerdict, cleanupVerdict, error] of [
+  ['timeout-rate', 'FAIL', 'PASS', 'Test timeout'],
+  ['timeout-budget', 'FAIL', 'PASS', 'Test timeout'],
+  ['timeout-reset-failure', 'FAIL', 'FAIL', 'Test timeout'],
+  ['timeout-gateway-unreachable', 'FAIL', 'FAIL', 'Test timeout'],
   ['timeout-fetch', 'FAIL', 'PASS', 'Test timeout'],
   ['timeout-write', 'FAIL', 'PASS', 'Test timeout'],
   ['timeout-cleanup', 'FAIL', 'FAIL', 'Test timeout'],
@@ -53,7 +57,10 @@ for (const [mode, bodyVerdict, cleanupVerdict, error] of [
           let server: ReturnType<typeof createServer> | undefined;
           let providers = [{ id: 'baseline-provider', provider_name: 'unrelated' }];
           const keys = [{ id: 'baseline-key', name: 'existing', status: 'active', gateway_key_id: 'old' }];
-          const resources = createTypeSafeResources(providers, keys);
+          const resources = createTypeSafeResources(providers, keys, { organizationId: 'owned', gatewayKeys: [] });
+          const originalLimits = { backend: { id: 'baseline', rate_limiting: { per_key_rpm: null }, budgets: {} }, gateway: {} };
+          let backendLimits = structuredClone(originalLimits.backend), gatewayLimits = structuredClone(originalLimits.gateway);
+          resources.limits = structuredClone(originalLimits);
           resources.providerNames.add('run-provider');
           resources.providerNames.add('pending-provider');
           resources.keyNames.add('run-key');
@@ -71,6 +78,12 @@ for (const [mode, bodyVerdict, cleanupVerdict, error] of [
                 providers.push({ id: 'run', provider_name: 'run-provider' });
                 keys.push({ id: 'run', name: 'run-key', status: 'active', gateway_key_id: 'new' });
                 mark('resource-created');
+                if (['timeout-rate', 'timeout-budget', 'timeout-reset-failure', 'timeout-gateway-unreachable'].includes(mode)) {
+                  const temporary = mode === 'timeout-budget' ? { budgets: { enabled: true, org_limit: 0.000001 } }
+                    : { rate_limiting: { enabled: true, per_key_rpm: 1 } };
+                  backendLimits = { ...backendLimits, ...temporary }; gatewayLimits = structuredClone(temporary);
+                  mark('limits-mutated');
+                }
                 if (mode === 'timeout-write') await api.create();
                 else if (mode.startsWith('timeout')) {
                   server = createServer(() => {});
@@ -98,13 +111,25 @@ for (const [mode, bodyVerdict, cleanupVerdict, error] of [
               const result = await teardownTypeSafe(resources, {
                 listProviders: async () => providers,
                 listKeys: async () => keys,
-                deleteProvider: async id => { providers = providers.filter(p => p.id !== id); },
+                listGatewayKeys: async () => keys.map(k => ({ id: k.gateway_key_id, name: k.name, status: k.status, metadata: { org_id: 'owned' } })),
+                revokeGatewayKey: async id => { keys.find(k => k.gateway_key_id === id)!.status = 'revoked'; },
+                deleteProvider: async id => { providers = providers.filter(p => p.id !== id); gatewayLimits = structuredClone(backendLimits); mark('provider-push'); },
+                restoreLimits: async snapshot => {
+                  expect(lifecycle.signal.aborted).toBe(true); expect(signal.aborted).toBe(false);
+                  if (mode === 'timeout-reset-failure') throw new Error(['private', 'cleanup', 'sentinel'].join('-'));
+                  backendLimits = structuredClone(snapshot.backend); gatewayLimits = structuredClone(snapshot.gateway); mark('limits-restored');
+                },
+                backendLimitsRestored: async snapshot => JSON.stringify(backendLimits) === JSON.stringify(snapshot.backend),
+                gatewayLimitsRestored: async snapshot => {
+                  if (mode === 'timeout-gateway-unreachable') throw new Error(['private', 'cleanup', 'sentinel'].join('-'));
+                  return JSON.stringify(gatewayLimits) === JSON.stringify(snapshot.gateway);
+                },
                 revokeKey: async id => { keys.find(k => k.id === id)!.status = 'revoked'; },
                 gatewayProvidersAbsent: async names => !providers.some(p => names.includes(p.provider_name)),
                 gatewayKeyRevoked: async key => key.status === 'revoked',
                 waitUntil: async check => { if (!await check()) throw new Error('verification failed'); },
               });
-              writeFileSync(dir + '/remaining.json', JSON.stringify({ providers, keys }));
+              writeFileSync(dir + '/remaining.json', JSON.stringify({ providers, keys, backendLimits, gatewayLimits, originalLimits }));
               return result;
             },
             record: result => {
@@ -147,6 +172,9 @@ for (const [mode, bodyVerdict, cleanupVerdict, error] of [
         assert.deepEqual(remaining.providers, [{ id: 'baseline-provider', provider_name: 'unrelated' }]);
         assert.equal(remaining.keys[0].status, 'active');
         assert.equal(remaining.keys[1].status, 'revoked');
+        assert.deepEqual(remaining.backendLimits, remaining.originalLimits.backend);
+        assert.deepEqual(remaining.gatewayLimits, remaining.originalLimits.gateway);
+        assert.ok(events.lastIndexOf('provider-push') < events.indexOf('limits-restored'));
       }
     } finally {
       // Optional sanitized evidence for a local handoff; no stack credentials.

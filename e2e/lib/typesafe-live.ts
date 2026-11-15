@@ -5,9 +5,18 @@ export type Verdict = 'PASS' | 'FAIL' | 'NOTE';
 
 export interface CleanupProvider { id: string; provider_name: string }
 export interface CleanupKey { id: string; name: string; status: string; gateway_key_id: string }
+export interface GatewayCleanupKey { id: string; name: string; status: string; metadata: { org_id?: string } }
+export interface LimitSnapshot {
+  // Immutable backend version: activate, do not recreate/normalize its JSON.
+  backend: { id: string; rate_limiting?: unknown; budgets?: unknown };
+  // Read separately: Go's omitempty and config_push transformations differ from Django.
+  gateway: { rate_limiting?: unknown; budgets?: unknown };
+}
 export interface TypeSafeResources {
-  baselineProviderIds: Set<string>; baselineKeyIds: Set<string>;
+  organizationId: string;
+  baselineProviderIds: Set<string>; baselineKeyIds: Set<string>; baselineGatewayKeyIds: Set<string>;
   providerNames: Set<string>; keyNames: Set<string>;
+  limits?: LimitSnapshot;
 }
 export interface TeardownResult {
   verdict: Verdict;
@@ -17,8 +26,13 @@ export interface LifecycleResult { testVerdict: 'PASS' | 'FAIL'; teardown: Teard
 export interface TypeSafeCleanupIO {
   listProviders(): Promise<CleanupProvider[]>;
   listKeys(): Promise<CleanupKey[]>;
+  listGatewayKeys(): Promise<GatewayCleanupKey[]>;
   deleteProvider(id: string): Promise<void>;
   revokeKey(id: string): Promise<void>;
+  revokeGatewayKey(id: string): Promise<void>;
+  restoreLimits(snapshot: LimitSnapshot): Promise<void>;
+  backendLimitsRestored(snapshot: LimitSnapshot): Promise<boolean>;
+  gatewayLimitsRestored(snapshot: LimitSnapshot): Promise<boolean>;
   gatewayProvidersAbsent(names: string[]): Promise<boolean>;
   gatewayKeyRevoked(key: CleanupKey): Promise<boolean>;
   waitUntil(check: () => Promise<boolean>): Promise<void>;
@@ -26,9 +40,34 @@ export interface TypeSafeCleanupIO {
 
 // Snapshot before the first write. Exact intended names recover a create whose
 // response was lost; baseline IDs prevent cleanup from touching older resources.
-export function createTypeSafeResources(providers: CleanupProvider[], keys: CleanupKey[]): TypeSafeResources {
-  return { baselineProviderIds: new Set(providers.map(p => p.id)), baselineKeyIds: new Set(keys.map(k => k.id)),
+export function createTypeSafeResources(providers: CleanupProvider[], keys: CleanupKey[],
+  baseline: { organizationId: string; gatewayKeys: GatewayCleanupKey[] }): TypeSafeResources {
+  if (!baseline.organizationId) throw new Error('Cleanup requires an owned organization');
+  const gatewayKeys = gatewayKeyInventory({ data: baseline.gatewayKeys });
+  return { organizationId: baseline.organizationId,
+    baselineProviderIds: new Set(providers.map(p => p.id)), baselineKeyIds: new Set(keys.map(k => k.id)),
+    baselineGatewayKeyIds: new Set([...gatewayKeys.map(k => k.id), ...keys.map(k => k.gateway_key_id)]),
     providerNames: new Set(), keyNames: new Set() };
+}
+
+const object = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v);
+
+// auth_bridge.provision_key -> GatewayClient.create_key -> KeyStore.Create:
+// the org is metadata.org_id, NOT a top-level field. ListKeys is unpaginated.
+// Strip prefix/hash/other metadata immediately; never retain or report key material.
+export function gatewayKeyInventory(response: unknown): GatewayCleanupKey[] {
+  if (!object(response) || !Array.isArray(response.data)) throw new Error('Gateway key inventory malformed');
+  const ids = new Set<string>();
+  return response.data.map(row => {
+    if (!object(row) || !['id', 'name', 'status'].every(f => typeof row[f] === 'string' && row[f] !== '')
+      || !['active', 'revoked'].includes(row.status as string)
+      || ('metadata' in row && (!object(row.metadata) || Object.values(row.metadata).some(v => typeof v !== 'string')))
+      || ids.has(row.id as string)) throw new Error('Gateway key inventory malformed');
+    ids.add(row.id as string);
+    const org = (row.metadata as Record<string, string> | undefined)?.org_id;
+    return { id: row.id as string, name: row.name as string, status: row.status as string,
+      metadata: org === undefined ? {} : { org_id: org } };
+  });
 }
 
 // Require a valid admin listing, not an HTTP error/empty parse. An absent org in
@@ -59,32 +98,52 @@ export async function teardownTypeSafe(resources: TypeSafeResources | undefined,
       checks.push({ label, verdict: 'FAIL', detail: 'Operation or verification failed; response details withheld.' });
     }
   };
-  let providers: CleanupProvider[] = [], keys: CleanupKey[] = [];
+  let providers: CleanupProvider[] = [], keys: CleanupKey[] = [], gatewayKeys: GatewayCleanupKey[] = [];
+  const ownedGatewayKeys = (rows: GatewayCleanupKey[]) => rows.filter(k => {
+    if (resources.baselineGatewayKeyIds.has(k.id) || !resources.keyNames.has(k.name)) return false;
+    // An exact intended name with missing ownership is ambiguous, not absence.
+    if (!k.metadata.org_id) throw new Error('Gateway key ownership unavailable');
+    return k.metadata.org_id === resources.organizationId;
+  });
+  const ownedBackendKeys = (rows: CleanupKey[]) => rows.filter(k => resources.keyNames.has(k.name)
+    && !resources.baselineKeyIds.has(k.id) && !resources.baselineGatewayKeyIds.has(k.gateway_key_id));
   await attempt('provider inventory', async () => {
     providers = (await io.listProviders()).filter(p => resources.providerNames.has(p.provider_name) && !resources.baselineProviderIds.has(p.id));
   });
+  await attempt('backend key inventory', async () => { keys = ownedBackendKeys(await io.listKeys()); });
   await attempt('gateway key inventory', async () => {
-    keys = (await io.listKeys()).filter(k => resources.keyNames.has(k.name) && !resources.baselineKeyIds.has(k.id));
+    gatewayKeys = ownedGatewayKeys(gatewayKeyInventory({ data: await io.listGatewayKeys() }));
   });
   for (const [i, provider] of providers.entries()) {
     await attempt(`delete run provider ${i + 1}`, () => io.deleteProvider(provider.id));
   }
   for (const [i, key] of keys.entries()) {
-    await attempt(`revoke run gateway key ${i + 1}`, () => io.revokeKey(key.id));
+    if (key.status !== 'revoked') await attempt(`revoke run backend key ${i + 1}`, () => io.revokeKey(key.id));
   }
+  for (const [i, key] of gatewayKeys.entries()) {
+    if (key.status !== 'revoked') await attempt(`revoke run gateway key ${i + 1}`, () => io.revokeGatewayKey(key.id));
+  }
+  // Provider deletion pushes the current active org config. Restore only AFTER
+  // those pushes; use the runner-owned IO, never the aborted body API/finally.
+  if (resources.limits) await attempt('restore org limits', () => io.restoreLimits(resources.limits!));
   await attempt('backend provider removal', () => io.waitUntil(async () => {
     const remaining = await io.listProviders();
     return !remaining.some(p => resources.providerNames.has(p.provider_name) && !resources.baselineProviderIds.has(p.id));
   }));
   await attempt('backend key revocation', () => io.waitUntil(async () => {
     const remaining = await io.listKeys();
-    return keys.every(k => remaining.find(r => r.id === k.id)?.status === 'revoked');
+    return ownedBackendKeys(remaining).every(k => k.status === 'revoked');
   }));
   await attempt('gateway provider config removal', () => io.waitUntil(() => io.gatewayProvidersAbsent([...resources.providerNames])));
   await attempt('gateway key revocation', () => io.waitUntil(async () => {
+    const remaining = ownedGatewayKeys(gatewayKeyInventory({ data: await io.listGatewayKeys() }));
     const revoked = await Promise.all(keys.map(key => io.gatewayKeyRevoked(key)));
-    return revoked.every(Boolean);
+    return remaining.every(k => k.status === 'revoked') && revoked.every(Boolean);
   }));
+  if (resources.limits) {
+    await attempt('backend org limits restored', () => io.waitUntil(() => io.backendLimitsRestored(resources.limits!)));
+    await attempt('gateway org limits restored', () => io.waitUntil(() => io.gatewayLimitsRestored(resources.limits!)));
+  }
   return { verdict: checks.some(c => c.verdict === 'FAIL') ? 'FAIL' : 'PASS', checks };
 }
 

@@ -23,7 +23,7 @@ async function runLifecycle({ failed, ...options }, lifecycle = new lib.TypeSafe
 function fixture() {
   const existingProvider = { id: 'p-old', provider_name: 'unrelated' };
   const existingKey = { id: 'k-old', name: 'pre-existing', status: 'active', gateway_key_id: 'g-old' };
-  const resources = lib.createTypeSafeResources([existingProvider], [existingKey]);
+  const resources = lib.createTypeSafeResources([existingProvider], [existingKey], { organizationId: 'owned', gatewayKeys: [] });
   resources.providerNames.add('typesafe');
   resources.providerNames.add('typesafe-badkey');
   resources.keyNames.add('run-main');
@@ -33,6 +33,8 @@ function fixture() {
   const io = {
     listProviders: async () => providers,
     listKeys: async () => keys,
+    listGatewayKeys: async () => keys.map(k => ({ id: k.gateway_key_id, name: k.name, status: k.status, metadata: { org_id: 'owned' } })),
+    revokeGatewayKey: async id => { keys.find(k => k.gateway_key_id === id).status = 'revoked'; },
     deleteProvider: async id => { removed.push(id); providers = providers.filter(p => p.id !== id); },
     revokeKey: async id => { revoked.push(id); keys.find(k => k.id === id).status = 'revoked'; },
     gatewayProvidersAbsent: async names => names.every(name => !providers.some(p => p.provider_name === name)),
@@ -56,7 +58,7 @@ test('teardown deletes both run providers, revokes only run-created keys and ver
 test('response loss still discovers exact intended names; similar and baseline names are untouched', async () => {
   const f = fixture();
   f.resources.keyNames.add('pre-existing'); // Even an accidental name collision cannot revoke a baseline ID.
-  f.keys.push({ id: 'k-other', name: 'run-main-other', status: 'active' });
+  f.keys.push({ id: 'k-other', name: 'run-main-other', status: 'active', gateway_key_id: 'g-other' });
   const result = await lib.teardownTypeSafe(f.resources, f.io);
   assert.equal(result.verdict, 'PASS');
   assert.deepEqual(f.revoked, ['k1']);

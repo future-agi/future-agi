@@ -24,7 +24,7 @@ test("no step title or Playwright request carries the TypeSafe key", () => {
   }
   // The rotate call carrying the key goes through Node's fetch (http()), never
   // through the owner's Playwright request context.
-  assert.equal(ownerApiCalls(spec).length, 11, 'update the per-call-shape fixtures when adding request sites');
+  assert.equal(ownerApiCalls(spec).length, 10, 'update the per-call-shape fixtures when adding request sites');
   assertNoTypeSafeKey(spec);
   assert.match(code, /http\(E2E\.apiUrl, 'POST', `\/agentcc\/provider-credentials\/\$\{String\(typesafe\.id\)\}\/rotate\/`/);
 });
@@ -44,7 +44,10 @@ test('the browser spec wires cleanup, ownership tracking and independent reporti
   assert.match(code, /timeout: TYPE_SAFE_FIXTURE_TIMEOUT/);
   assert.match(code, /teardownTypeSafe\(resources, cleanupIO\(owner, signal\)\)/);
   assert.match(code, /report\.outcome = result; writeReport\(\)/);
-  assert.match(code, /resources = createTypeSafeResources\(providers, keys\)/);
+  assert.match(code, /resources = createTypeSafeResources\(providers, keys, \{/);
+  assert.match(code, /organizationId: owner\.organizationId, gatewayKeys: await io\.listGatewayKeys\(\)/);
+  assert.ok(code.indexOf('resources.limits = await cleanupIO(owner).captureLimits()') < code.indexOf('await pushConfig({ rate_limiting: { enabled: true'));
+  assert.doesNotMatch(code, /pushConfig\(\{ rate_limiting: \{\}, budgets: \{\} \}/);
   assert.equal([...code.matchAll(/resources\.providerNames\.add\(/g)].length, 3);
   assert.equal([...code.matchAll(/resources\.keyNames\.add\(/g)].length, 4);
   assert.match(code, /## Independent results/);
