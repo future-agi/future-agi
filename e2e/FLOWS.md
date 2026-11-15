@@ -975,6 +975,28 @@
 - the in-document link moves the preview to its page and the external link opens in a new tab
 - a section link scrolls its destination position to the top of the preview, on its own page or another
 
+### DATA-E2E-006 — mixed media imports keep blanks empty and expose only supplied-value failures
+
+**Goal:** Import mixed CSV and XLSX rows into a media dataset and distinguish empty media from rejected supplied values while viewing valid images and playing valid audio.
+
+**Spec:** `flows/datasets/media-row-import.spec.ts:49`
+
+**Tags:** —
+
+**User steps:**
+
+1. provision synthetic local PNG and WAV bytes; create the CSV native local-file dataset and remove only its schema-inference seed row through the public API
+2. import six CSV rows using Add Row and the real browser file chooser, which excludes XLSX
+3. verify the exact persisted matrix and reload the CSV grid, comparing browser and public table responses and the API-only extraction summary
+4. view the valid PNG and play the valid WAV through the native controls with external browser requests denied
+5. create a second native local-file dataset and remove its seed row; import the same six cases as a real XLSX workbook through authenticated multipart API upload, then repeat the persisted-state, browser readback and media checks
+
+**Backend state verified:**
+
+- Both scoped datasets persist the exact imported media matrix: blanks pass empty, owned media pass unchanged, and every supplied invalid or NA-like literal is error/null with its fixed reason
+- Both partial-success imports return HTTP 200 and their browser table responses agree with the public table API on exact row/cell identities, values, statuses and the eight-failure PartialDataExtracted summary
+- The valid imported image and audio retain the synthetic bytes and are rendered and fetched by the real browser using only local owned-storage URLs
+
 ## error-feed
 
 ### ERR-E2E-001 — connect Slack and notify only for matching Error Feed issues
