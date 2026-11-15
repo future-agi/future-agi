@@ -47,7 +47,7 @@ function ReferenceTable({ query, state, view, selected, onToggle, page, onPage, 
   const active = view === 'active';
   // One count line, in words: active rows count the contexts (a context can hold two releases that use the skill).
   const paged = query.data.total_pages > 1;
-  const contextCount = paged ? query.data.count : new Set(query.data.results.map((row) => row.context_id)).size;
+  const contextCount = new Set(query.data.results.map((row) => row.context_id)).size;
   const countLine = active
     ? `${contextCount} ${contextCount === 1 ? 'agent context uses' : 'agent contexts use'} this skill${paged ? ' (on this page)' : ''}`
     : `${query.data.count} earlier context ${query.data.count === 1 ? 'release' : 'releases'}`;

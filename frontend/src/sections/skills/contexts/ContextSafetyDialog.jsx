@@ -38,7 +38,7 @@ function Safety({ scopeKey, open, onClose, action, resource, review, canAct = fa
         : <Typography variant="m3" sx={{ overflowWrap: "anywhere" }}>{resource.name} · {resource.id}</Typography>}
       {restore
         ? <Alert severity="info">Restoring brings back {resource.name} with all its versions, labels and history. Agents can fetch it again, including through its labels.</Alert>
-        : <Alert severity="warning">{action === "archive" ? "Existing parent releases retain this content. New direct resolution and selection stop; offline copies are not deleted." : action === "quarantine" ? "Future managed loads will be blocked for this version and affected parents. Offline copies cannot be erased; requests already sent cannot be retracted." : "Clearing quarantine permits future managed loads again. It does not change immutable content or certify its behavior."}</Alert>
+        : <Alert severity="warning">{action === "archive" ? "Existing parent releases retain this content. New direct resolution and selection stop; offline copies are not deleted." : action === "quarantine" ? "Future managed loads will be blocked for this version and affected parents. Offline copies cannot be erased; requests already sent cannot be retracted." : "Clearing quarantine permits future managed loads again. It does not change immutable content or certify its behavior."}</Alert>}
       {review && <>
         {review.versionId && <Typography variant="s3" sx={{ overflowWrap: "anywhere" }}>Version {review.versionId}</Typography>}
         {(!restore || review.affectedContextCount != null) && <Typography variant="s1">Affected retained parents: {review.affectedContextCount ?? "Not available"}</Typography>}
