@@ -8,6 +8,8 @@ import tempfile
 from dataclasses import replace
 from typing import TYPE_CHECKING, Any
 
+import structlog
+
 from ee.evals.localizer.agentcc_transport import (
     MODEL,
     WIRE_MODEL,
@@ -28,6 +30,8 @@ from model_hub.services.localization_errors import (
     LocalizationFailureCode,
 )
 from tfc.utils.media_tools import MediaToolUnavailable
+
+logger = structlog.get_logger(__name__)
 
 if TYPE_CHECKING:
     from claude_agent_sdk import ResultMessage
@@ -413,8 +417,22 @@ class LocalizationCase:
                     # Names a missing binary and the image to use, never case
                     # contents, so the agent may see it.
                     self.media_tool_error = exc
-                    if isinstance(args, dict) and isinstance(args.get("key"), str):
-                        self.media_tool_failed_keys.add(args["key"])
+                    key = args.get("key") if isinstance(args, dict) else None
+                    if isinstance(key, str):
+                        self.media_tool_failed_keys.add(key)
+                    # Only a registered input name is logged: the agent
+                    # writes "key", so anything else could carry case text.
+                    registered = self.localizer.input_type or {}
+                    logger.warning(
+                        "localizer_media_tool_unavailable",
+                        tool=name,
+                        input_key=(
+                            key if isinstance(key, str) and key in registered else None
+                        ),
+                        missing_tool=exc.tool,
+                        feature=exc.feature,
+                        code=exc.code,
+                    )
                     return {"is_error": True, "content": [_text({"error": str(exc)})]}
                 except (ValueError, KeyError, TypeError, ValidationError):
                     # Validation errors may contain input/media values. Keep the

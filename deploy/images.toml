@@ -33,7 +33,7 @@ architectures = ["amd64", "arm64"]
 
 [[image]]
 name = "futureagi/future-agi"
-runs = "Backend, the default [variant](#backend-variants) (feature-complete): API (`SERVICE_TYPE=backend`), Temporal and Celery workers, bootstrap jobs. Base of the simulation runner and of the EE and cloud images"
+runs = "Backend, the default [variant](#backend-variants) (feature-complete, with the minimal ffmpeg build): API (`SERVICE_TYPE=backend`), Temporal and Celery workers, bootstrap jobs. Base of the simulation runner and of the EE and cloud images"
 setups = "Distributed, Helm"
 ports = "80 HTTP, 50051 gRPC, 5555 Flower"
 user = "root (runs as `1000:1000` on request)"

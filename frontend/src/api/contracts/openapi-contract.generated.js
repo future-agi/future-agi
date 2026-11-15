@@ -117668,6 +117668,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Error",
           type: "string",
         },
+        code: {
+          title: "Code",
+          description:
+            'Set with "error" when a missing ffmpeg caused it: "ffmpeg_unavailable".',
+          type: "string",
+          minLength: 1,
+        },
       },
     },
     UsageBillingOverviewResult: {

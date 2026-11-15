@@ -254,9 +254,9 @@ class FileProcessor:
 
     @staticmethod
     def _read_excel_file(file_obj: Any) -> pd.DataFrame:
-        """Read Excel file"""
+        """Read Excel, treating only empty cells as missing, not text like 'NA'."""
         try:
-            return pd.read_excel(file_obj)
+            return pd.read_excel(file_obj, keep_default_na=False, na_values=[""])
         except Exception as e:
             logger.exception(f"Error reading Excel file: {str(e)}")
             if "Excel file format cannot be determined" in str(e):

@@ -89,6 +89,35 @@ def _existing_rehosted_audio(
     return None
 
 
+def _log_rehost_failed(
+    exc: Exception, *, call_id: str, url_type: str, provider: str | None
+) -> None:
+    """Which recording failed, why, and what the call keeps instead.
+
+    Never the URL (provider URLs can be signed) or the error text, except a
+    missing ffmpeg's message, which names only the tool and the feature."""
+    from tfc.utils.media_tools import find_media_tool_unavailable
+
+    missing = find_media_tool_unavailable(exc)
+    logger.error(
+        "recording_rehost_failed",
+        call_id=str(call_id),
+        artifact_type=url_type,
+        provider=provider,
+        error_type=type(exc).__name__,
+        outcome="kept_original_url",
+        **(
+            {
+                "code": missing.code,
+                "missing_tool": missing.tool,
+                "error": str(missing),
+            }
+            if missing is not None
+            else {}
+        ),
+    )
+
+
 def _is_fagi_storage_url(url: Optional[str]) -> bool:
     """Use the canonical own-storage validation rather than hostname guesses."""
     from tracer.utils.vapi_recording import VapiRecordingService
@@ -284,14 +313,18 @@ async def _convert_audio_url_to_s3_async_with_size(
         # Run upload in thread pool (small operation compared to download)
         s3_url = await loop.run_in_executor(None, do_upload)
 
+        logger.info(
+            "recording_rehosted",
+            call_id=str(call_id),
+            artifact_type=url_type,
+            provider=provider,
+            size_bytes=len(audio_bytes),
+            outcome="rehosted",
+        )
         return s3_url, len(audio_bytes)
 
     except Exception as e:
-        logger.error(
-            "recording_rehost_failed",
-            artifact_type=url_type,
-            error_type=type(e).__name__,
-        )
+        _log_rehost_failed(e, call_id=call_id, url_type=url_type, provider=provider)
         # Return original URL on failure
         return audio_url, 0
 
@@ -435,12 +468,16 @@ def convert_audio_url_to_s3_sync(
 
         s3_url = upload_audio_to_s3({"bytes": audio_bytes}, object_key=object_key)
 
+        logger.info(
+            "recording_rehosted",
+            call_id=str(call_id),
+            artifact_type=url_type,
+            provider=provider,
+            size_bytes=len(audio_bytes),
+            outcome="rehosted",
+        )
         return s3_url, len(audio_bytes)
 
     except Exception as e:
-        logger.error(
-            "recording_rehost_failed",
-            artifact_type=url_type,
-            error_type=type(e).__name__,
-        )
+        _log_rehost_failed(e, call_id=call_id, url_type=url_type, provider=provider)
         return audio_url, 0

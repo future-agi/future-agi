@@ -664,9 +664,13 @@ class UploadFileView(APIView):
                             file_name = self._file_name_with_extension(file_name, url)
                             urls.append({"url": url, "file_name": file_name})
                         except Exception as e:
-                            urls.append(
-                                {"url": None, "error": str(e), "file_name": None}
-                            )
+                            failed = {"url": None, "error": str(e), "file_name": None}
+                            from tfc.utils.media_tools import media_tool_error_code
+
+                            code = media_tool_error_code(e)
+                            if code:
+                                failed["code"] = code
+                            urls.append(failed)
                     return self._gm.success_response(urls)
         except Exception as e:
             logger.error(f"Error uploading file: {str(e)}")

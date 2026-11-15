@@ -47,6 +47,10 @@ class ApiErrorCode(StrEnum):
     DATASET_LIMIT_CHECK_FAILED = "dataset_limit_check_failed"
     FILTER_VALUE_INVENTORY_TOO_BROAD = "filter_value_inventory_too_broad"
     API_KEY_EXPIRED = "api_key_expired"
+    # ffmpeg or ffprobe is not installed in this backend image. Its message
+    # names the tool and the feature, so it is built per call by
+    # tfc/utils/media_tools.py (MediaToolUnavailable), not stored here.
+    FFMPEG_UNAVAILABLE = "ffmpeg_unavailable"
 
 
 API_ERROR_TYPE_CHOICES = [(item.value, item.value) for item in ApiErrorType]

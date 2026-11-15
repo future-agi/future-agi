@@ -11,11 +11,18 @@ this script, and fails the image build if any of them regresses:
   * pydub's probe + decode commands work for every audio sample;
   * pydub's mp3 export, the LiveKit channel split and audioread's s16le
     output work;
-  * video thumbnails work for H.264, HEVC and VP9.
+  * video thumbnails work for H.264, HEVC and VP9, and for videos the CLI
+    rotates (display matrix) or crops (container cropping) on decode.
 
-The samples (samples/, ~100 KB, 0.4 s tones and 2 s test patterns) were made
+The samples (samples/, ~130 KB, 0.4 s tones and 2 s test patterns) were made
 with a full FFmpeg build; regenerate them with any FFmpeg that has the
-encoders named in the SAMPLES table.
+encoders named in the SAMPLES table. The rotated and cropped videos are
+stream copies of video-h264.mp4:
+  ffmpeg -display_rotation 90 -i video-h264.mp4 -c copy video-h264-rot90.mp4
+  (likewise 180 and 45), and
+  ffmpeg -i video-h264.mp4 -c copy video-h264-crop.mkv, then
+  mkvpropedit video-h264-crop.mkv --edit track:v1 \
+      --set pixel-crop-bottom=16 --set pixel-crop-right=16
 
 Usage: selftest.py [SAMPLES_DIR]   (ffmpeg and ffprobe must be on PATH)
 """
@@ -52,7 +59,18 @@ SAMPLES = {
     "audio.aiff": {"aiff"},  # pcm_s16be ("aiff", "aif")
     "audio.au": {"au"},  # Sun AU, pcm_mulaw ("au")
 }
-VIDEOS = ("video-h264.mp4", "video-hevc.mp4", "video-vp9.webm")
+# The rotated and cropped copies carry a display matrix (as phone recordings
+# do) or Matroska PixelCrop: the ffmpeg CLI then inserts transpose, hflip,
+# vflip, rotate or crop into the filter graph, and fails if one is missing.
+VIDEOS = (
+    "video-h264.mp4",
+    "video-hevc.mp4",
+    "video-vp9.webm",
+    "video-h264-rot90.mp4",  # transpose
+    "video-h264-rot180.mp4",  # hflip + vflip
+    "video-h264-rot45.mp4",  # rotate
+    "video-h264-crop.mkv",  # crop
+)
 
 
 def run(cmd, data=None, *, timeout=60):

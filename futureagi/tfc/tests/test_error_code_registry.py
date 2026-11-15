@@ -60,3 +60,19 @@ def test_registered_code_and_message(code, wire, message_key, message):
     assert code == wire
     assert str(code) == wire
     assert get_error_message(message_key) == message != UNKNOWN
+
+
+def test_ffmpeg_unavailable_is_the_code_media_tool_errors_carry():
+    from tfc.utils.media_tools import (
+        FFMPEG_UNAVAILABLE,
+        MediaToolUnavailable,
+        media_tool_error_code,
+    )
+
+    assert ApiErrorCode.FFMPEG_UNAVAILABLE == "ffmpeg_unavailable"
+    assert MediaToolUnavailable.code == FFMPEG_UNAVAILABLE == "ffmpeg_unavailable"
+    wrapped = ValueError("Failed to upload audio")
+    wrapped.__cause__ = MediaToolUnavailable("audio format detection")
+    assert media_tool_error_code(wrapped) == ApiErrorCode.FFMPEG_UNAVAILABLE
+    assert media_tool_error_code(ValueError("corrupt file")) is None
+    assert media_tool_error_code(None) is None

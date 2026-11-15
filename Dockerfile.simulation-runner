@@ -20,7 +20,8 @@
 #
 # The base must be the default (standard) backend variant, never -slim: the
 # simulation_runner queue runs the hosted-harness activities, which need the
-# Daytona/E2B SDKs (`sandbox` extra) and git for GitHub sources.
+# Daytona/E2B SDKs (`sandbox` extra) and git for GitHub sources. ffmpeg (the
+# minimal build of both variants) is inherited; this image adds none.
 ARG BACKEND_IMAGE=futureagi/future-agi:latest
 FROM ${BACKEND_IMAGE}
 ARG BACKEND_IMAGE

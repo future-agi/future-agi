@@ -1499,6 +1499,10 @@ class UploadedFileResultSerializer(serializers.Serializer):
     url = serializers.CharField(required=False, allow_null=True, allow_blank=True)
     file_name = serializers.CharField(required=False, allow_null=True, allow_blank=True)
     error = serializers.CharField(required=False, allow_blank=True)
+    code = serializers.CharField(
+        required=False,
+        help_text='Set with "error" when a missing ffmpeg caused it: "ffmpeg_unavailable".',
+    )
 
 
 class UploadFileResponseSerializer(serializers.Serializer):

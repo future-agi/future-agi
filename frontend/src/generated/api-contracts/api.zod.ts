@@ -32646,6 +32646,13 @@ export const ModelHubUploadFileCreateResponse = zod.object({
       url: zod.string().optional(),
       file_name: zod.string().optional(),
       error: zod.string().optional(),
+      code: zod
+        .string()
+        .min(1)
+        .optional()
+        .describe(
+          'Set with "error" when a missing ffmpeg caused it: "ffmpeg_unavailable".',
+        ),
     }),
   ),
 });

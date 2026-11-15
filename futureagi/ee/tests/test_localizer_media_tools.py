@@ -73,6 +73,26 @@ async def test_agent_tool_reports_the_named_error(no_ffmpeg):
     assert isinstance(case.media_tool_error, MediaToolUnavailable)
 
 
+async def test_agent_tool_logs_the_missing_tool_without_case_content(no_ffmpeg):
+    from structlog.testing import capture_logs
+
+    case = LocalizationCase(ClaudeAgentLocalizer(**_kwargs()), MediaRegistry())
+    inspect = next(t for t in case.tools() if t.name == "inspect_input")
+    with capture_logs() as logs:
+        await inspect.handler({"key": "output"})
+
+    events = [e for e in logs if e["event"] == "localizer_media_tool_unavailable"]
+    assert len(events) == 1
+    first = events[0]
+    assert first["input_key"] == "output"
+    assert first["log_level"] == "warning"
+    assert first["tool"] == "inspect_input"
+    assert first["missing_tool"] in {"ffmpeg", "ffprobe"}
+    assert first["feature"] == "splitting audio for error localization"
+    assert first["code"] == "ffmpeg_unavailable"
+    assert "upset" not in str(events)
+
+
 def test_no_utterances_is_reported_before_the_missing_tool(no_ffmpeg):
     """Rebuilding the image cannot fix a call with no stored utterances."""
     from ee.evals.localizer.conversation_audio import create_utterance_segments

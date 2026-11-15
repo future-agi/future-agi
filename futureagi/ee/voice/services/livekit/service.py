@@ -39,6 +39,7 @@ from ee.voice.services.types.voice import (
     TranscriptMessage,
 )
 from ee.voice.services.voice_engine import VoiceServiceBlueprint
+from tfc.utils.media_tools import find_media_tool_unavailable
 from tracer.models.observability_provider import ProviderChoices
 
 if TYPE_CHECKING:
@@ -53,6 +54,31 @@ _THREAD_POOL_TIMEOUT = 120  # seconds
 
 AGENT_NAME = "voice-simulator"
 PROVIDER_KEY = ProviderChoices.LIVEKIT.value  # "livekit"
+
+
+RECORDING_SPLIT_FAILED = "recording_split_failed"
+
+
+def _recording_error(failures: dict[str, Exception]) -> dict[str, Any]:
+    """What provider_call_data records when recording tracks failed.
+
+    A missing ffmpeg keeps its named message and code. Other errors (storage,
+    an ffmpeg exit) get a fixed message: their text can carry bucket paths
+    or ffmpeg output, which stay in the logs."""
+    for exc in failures.values():
+        missing = find_media_tool_unavailable(exc)
+        if missing is not None:
+            return {
+                "code": missing.code,
+                "message": str(missing),
+                "tracks": sorted(failures),
+            }
+    return {
+        "code": RECORDING_SPLIT_FAILED,
+        "message": "Some call recording tracks could not be created. The raw "
+        "recording is kept.",
+        "tracks": sorted(failures),
+    }
 
 
 def _room_name(call_id: str) -> str:
@@ -831,14 +857,28 @@ class LivekitService(VoiceServiceBlueprint):
             return_exceptions=True,
         )
 
+        failures: dict[str, Exception] = {}
         for (track_name, _, _), outcome in zip(track_specs, results):
             if isinstance(outcome, Exception):
-                logger.exception(
-                    "livekit_stream_failed",
-                    call_id=call_id_str,
-                    track=track_name,
-                    exc_info=outcome,
-                )
+                failures[track_name] = outcome
+                missing = find_media_tool_unavailable(outcome)
+                if missing is not None:
+                    # The named message is the whole story; no traceback.
+                    logger.error(
+                        "livekit_stream_failed",
+                        call_id=call_id_str,
+                        track=track_name,
+                        code=missing.code,
+                        missing_tool=missing.tool,
+                        error=str(missing),
+                    )
+                else:
+                    logger.exception(
+                        "livekit_stream_failed",
+                        call_id=call_id_str,
+                        track=track_name,
+                        exc_info=outcome,
+                    )
                 continue
             if track_name == "stereo":
                 result.stereo_recording_url = outcome
@@ -870,22 +910,43 @@ class LivekitService(VoiceServiceBlueprint):
         if result.recording_url:
             recording_dict["combined"] = result.recording_url
         lk_data["recording"] = recording_dict
+        recording_error = _recording_error(failures) if failures else None
+        if recording_error:
+            result.error = recording_error
+            lk_data["recording_error"] = recording_error
+        else:
+            lk_data.pop("recording_error", None)
 
         existing_data[PROVIDER_KEY] = lk_data
         call.provider_call_data = existing_data
         await call.asave(update_fields=["provider_call_data"])
+        # The activity saves provider_call_data again from its own copy of
+        # the call, read before this method ran; hand it this one so the
+        # tracks and any recording_error are what it writes.
+        result.provider_call_data = existing_data
 
-        # 7. Cleanup: delete raw egress file from S3
-        try:
-            await loop.run_in_executor(
-                None, delete_egress_recording, self.config, object_key
-            )
-        except Exception:
+        # 7. Cleanup: delete the raw egress file from S3, unless a track
+        # failed: then it is the only full recording left to cut the
+        # missing tracks from once the cause is fixed.
+        if recording_error:
             logger.warning(
-                "livekit_egress_cleanup_failed",
+                "livekit_egress_kept",
                 call_id=call_id_str,
                 object_key=object_key,
+                failed_tracks=recording_error["tracks"],
+                code=recording_error["code"],
             )
+        else:
+            try:
+                await loop.run_in_executor(
+                    None, delete_egress_recording, self.config, object_key
+                )
+            except Exception:
+                logger.warning(
+                    "livekit_egress_cleanup_failed",
+                    call_id=call_id_str,
+                    object_key=object_key,
+                )
 
         logger.info(
             "livekit_recordings_processed",
@@ -894,6 +955,7 @@ class LivekitService(VoiceServiceBlueprint):
             stereo_recording_url=bool(result.stereo_recording_url),
             assistant_recording_url=bool(result.assistant_recording_url),
             customer_recording_url=bool(result.customer_recording_url),
+            recording_error=result.error["code"] if result.error else None,
         )
 
         return result

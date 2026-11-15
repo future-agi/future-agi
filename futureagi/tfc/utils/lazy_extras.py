@@ -19,7 +19,8 @@ import importlib.util
 import types
 
 
-def _install_hint(module_name: str, extras_group: str) -> str:
+def extra_install_hint(module_name: str, extras_group: str) -> str:
+    """Canonical install guidance, also used to recognize safe client messages."""
     return (
         f"`{module_name}` is part of the optional `{extras_group}` "
         f"dependency group, which is not installed in this build. "
@@ -47,10 +48,10 @@ class _MissingExtra(types.ModuleType):
         # speculatively — those probes must not explode.
         if attr.startswith("__") and attr.endswith("__"):
             raise AttributeError(attr)
-        raise ImportError(_install_hint(self.__name__, self._extras_group))
+        raise ImportError(extra_install_hint(self.__name__, self._extras_group))
 
     def __call__(self, *args, **kwargs):
-        raise ImportError(_install_hint(self.__name__, self._extras_group))
+        raise ImportError(extra_install_hint(self.__name__, self._extras_group))
 
     # Explicit __repr__ so log processors and debuggers dumping locals
     # (e.g. structlog rendering a frame) print a marker instead of
@@ -81,7 +82,7 @@ def load_extra(module_path: str, extras_group: str) -> types.ModuleType:
     try:
         return importlib.import_module(module_path)
     except ImportError as exc:
-        raise ImportError(_install_hint(module_path, extras_group)) from exc
+        raise ImportError(extra_install_hint(module_path, extras_group)) from exc
 
 
 def extra_available(module_path: str) -> bool:
