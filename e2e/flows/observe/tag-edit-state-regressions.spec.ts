@@ -307,15 +307,42 @@ for (const kind of ['trace', 'span'] as const) {
     const url = `/dashboard/observe/${s.projectId}/llm-tracing?selectedTab=${kind === 'trace' ? 'trace' : 'spans'}`;
     const gridNames = page.locator(`.clean-data-table:visible .ag-row [col-id="${column}"]`);
     // spanPhysicalIdentity.js: the real row key includes project, trace, id, time.
-    const rowId = (e: Oracle, rows: ListRow[]) => kind === 'trace' ? e.traceId : (() => {
-      const row = rows.find(r => r.span_id === e.spanId)!;
-      return JSON.stringify([row.project_id, row.trace_id, row.span_id, row.start_time]);
-    })();
-    const rows = (await s.readback('before-browser'))[kind === 'trace' ? TRACE_LIST : SPAN_LIST];
-    const row = (e: Oracle) => page.locator(`.clean-data-table:visible .ag-row[row-id=${JSON.stringify(rowId(e, rows))}]`);
+    const tuple = (r: ListRow) => JSON.stringify([r.project_id, r.trace_id, r.span_id, r.start_time]);
+    const rowId = (e: Oracle, rows: ListRow[]) => kind === 'trace' ? e.traceId : tuple(
+      rows.find(r => r.project_id === s.projectId && r.trace_id === e.traceId && r.span_id === e.spanId)!,
+    );
+    let rows = (await s.readback('before-browser'))[kind === 'trace' ? TRACE_LIST : SPAN_LIST];
+    const browserSpanResponses: Response[] = [];
+    page.on('response', response => {
+      if (new URL(response.url()).pathname === SPAN_LIST
+        && ['GET', 'POST'].includes(response.request().method())) browserSpanResponses.push(response);
+    });
+    // AG Grid 35 RowCtrl uses _escapeString before setting the DOM attribute:
+    // getAttribute('row-id') contains literal &quot;, not JSON quote characters.
+    const row = (e: Oracle) => page.locator(`.clean-data-table:visible .ag-row[row-id=${JSON.stringify(rowId(e, rows).replaceAll('"', '&quot;'))}]`);
     const gridReady = async () => {
       const expected = s.entities.filter(e => kind === 'span' || e.root).map(e => e.name).sort();
       await expect.poll(async () => (await gridNames.allTextContents()).sort(), { timeout: UI_READY }).toEqual(expected);
+      if (kind === 'span') {
+        const response = browserSpanResponses.at(-1)!;
+        expect(response, 'the rendered grid has a real browser list response').toBeDefined();
+        expect(response.status()).toBe(200);
+        rows = ((await response.json()) as ListResult).result.table;
+        // Keep independent seeded IDs and exact microsecond timestamps; never
+        // derive expected identity from the DOM or reduce it to a bare span ID.
+        const expectedTuples = s.entities.map(e => JSON.stringify([
+          s.projectId, e.traceId, e.spanId, e.target.expected_start_time.replace(/\+00:00$/, 'Z'),
+        ])).sort();
+        expect(rows.map(tuple).sort(), 'browser wire has the exact seeded physical tuples').toEqual(expectedTuples);
+        const rendered = await page.locator('.clean-data-table:visible .ag-row').evaluateAll(elements =>
+          elements.map(element => element.getAttribute('row-id')!).sort());
+        expect(rendered, 'every DOM row retains its full wire identity').toEqual(
+          expectedTuples.map(id => id.replaceAll('"', '&quot;')).sort(),
+        );
+        await attach(info, `span-grid-identities-${browserSpanResponses.length}`, {
+          query: paramsOf(response.request()), wire: rows.map(tuple).sort(), rendered,
+        });
+      }
     };
     await test.step('1: navigate through the real bounded grid', async () => {
       await page.goto(url, { waitUntil: 'domcontentloaded' }); await gridReady(); await showTagColumns(page, kind);
