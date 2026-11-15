@@ -76,10 +76,14 @@ type KeyGuardrailPolicy struct {
 }
 
 // GuardrailCheck configures a single guardrail check for an org.
+// ConfigurationError preserves malformed selected-key checks through the typed
+// admin transport. Any nonempty marker makes the selected check unavailable;
+// legacy org/static checks do not opt into this validation.
 type GuardrailCheck struct {
 	Enabled             bool                   `json:"enabled"`
 	Action              string                 `json:"action,omitempty"` // "block", "warn", "mask", "log"
 	ConfidenceThreshold float64                `json:"confidence_threshold,omitempty"`
+	ConfigurationError  string                 `json:"configuration_error,omitempty"`
 	Config              map[string]interface{} `json:"config,omitempty"` // check-specific settings
 }
 

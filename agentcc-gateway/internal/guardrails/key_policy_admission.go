@@ -68,7 +68,12 @@ func (p *GuardrailPlugin) resolveKeyPolicies(orgID, keyID string, cfg *tenant.Gu
 			if check == nil || !check.Enabled {
 				continue
 			}
-			g := p.getKeyPolicyGuardrail(orgID, name, keyPolicyCacheKey(name, pol.ID, check), check)
+			// A transport placeholder must never construct valid defaults or fall
+			// back to a static instance. Preserve it as a normal execution failure.
+			var g Guardrail
+			if check.ConfigurationError == "" {
+				g = p.getKeyPolicyGuardrail(orgID, name, keyPolicyCacheKey(name, pol.ID, check), check)
+			}
 			if g == nil || (g.Stage() != StagePre && g.Stage() != StagePost) {
 				g = unavailableKeyPolicyCheck{name: name}
 			}
@@ -90,12 +95,14 @@ func (unavailableKeyPolicyCheck) Check(context.Context, *CheckInput) *CheckResul
 	return &CheckResult{Err: errors.New("configured guardrail implementation is unavailable")}
 }
 
-// validateKeyPolicyCheck is deliberately scoped to this built-in and selected
+// validateKeyPolicyCheck is deliberately scoped to known built-ins and selected
 // keys. Legacy static/org behavior and arbitrary custom names are unchanged.
 // The leaf owns parameter validation; invalid configuration uses the existing
 // unavailable-check execution envelope (503 only for fail-closed Enforce Block).
 func validateKeyPolicyCheck(name string, g Guardrail) Guardrail {
-	if name == "keyword-blocklist" {
+	switch name {
+	case "keyword-blocklist", "pii-detection", "content-moderation", "secret-detection",
+		"language-detection", "topic-restriction", "input-validation":
 		if validator, ok := g.(interface{ ValidateConfig() error }); ok && validator.ValidateConfig() != nil {
 			return unavailableKeyPolicyCheck{name: name}
 		}

@@ -36,6 +36,11 @@
         "enabled": { "type": "boolean" },
         "action": { "type": "string" },
         "confidence_threshold": { "type": "number" },
+        "configuration_error": {
+          "type": "string",
+          "enum": ["invalid_config"],
+          "description": "Preserves a selected-key check whose malformed legacy configuration cannot fit this wire shape. It remains an unavailable check, not a valid empty default; omit after correction. No raw configuration or error details."
+        },
         "config": { "type": "object", "additionalProperties": true }
       }
     },

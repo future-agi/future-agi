@@ -24,6 +24,7 @@ type GuardrailCheck struct {
 	Enabled             *bool                  `json:"enabled,omitempty"`
 	Action              *string                `json:"action,omitempty"`
 	ConfidenceThreshold *float64               `json:"confidence_threshold,omitempty"`
+	ConfigurationError  *string                `json:"configuration_error,omitempty"`
 	Config              map[string]interface{} `json:"config,omitempty"`
 }
 

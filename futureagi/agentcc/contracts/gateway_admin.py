@@ -55,6 +55,7 @@ class GuardrailCheck(GatewayAdminContractModel):
     enabled: bool | None = None
     action: str | None = None
     confidence_threshold: float | None = Field(None, validation_alias=AliasChoices('confidence_threshold', 'confidenceThreshold'))
+    configuration_error: str | None = Field(None, validation_alias=AliasChoices('configuration_error', 'configurationError'))
     config: dict[str, Any] | None = None
 
 
