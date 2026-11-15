@@ -49,16 +49,16 @@ it('uses one full-width narrow diff with markers and no filler columns', () => {
   expect(region).toHaveTextContent('Origin v4 / + Candidate r12');
 });
 
-it('requires the retained-label review fingerprint and preserves the reason across refreshed review', async () => {
+it('requires the retained-label review fingerprint and preserves the note across refreshed review', async () => {
   const apply = vi.fn(async () => ({ id: 'resource' }));
   const props = { open: true, scopeKey: 'scope', onClose: vi.fn(), canAct: true, action: 'unarchive', resource: { id: 'resource', name: 'policy' }, review: { subjectId: 'resource', releaseRevision: 2 }, onApply: apply };
   const view = show(<ContextSafetyDialog {...props} />);
-  expect(screen.getByRole('button', { name: 'Recover original identity' })).toBeDisabled();
-  fireEvent.change(screen.getByLabelText('Reason'), { target: { value: 'Reviewed original identity' } });
+  expect(screen.getByRole('button', { name: 'Restore skill' })).toBeDisabled();
+  fireEvent.change(screen.getByLabelText('Note (optional)'), { target: { value: 'Reviewed original identity' } });
   view.rerender(<ThemeProvider theme={theme}><ContextSafetyDialog {...props} review={{ ...props.review, reviewFingerprint: digest }} /></ThemeProvider>);
-  expect(screen.getByLabelText('Reason')).toHaveValue('Reviewed original identity');
+  expect(screen.getByLabelText('Note (optional)')).toHaveValue('Reviewed original identity');
   fireEvent.click(screen.getByRole('checkbox'));
-  fireEvent.click(screen.getByRole('button', { name: 'Recover original identity' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Restore skill' }));
   await waitFor(() => expect(apply).toHaveBeenCalledOnce());
   expect(apply.mock.calls[0][0]).toEqual({ expectedReleaseRevision: 2, expectedReviewFingerprint: digest, note: 'Reviewed original identity' });
 });
