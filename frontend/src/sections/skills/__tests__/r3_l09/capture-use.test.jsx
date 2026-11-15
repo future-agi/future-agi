@@ -96,6 +96,10 @@ describe("reviewed source capture", () => {
     );
     expect(screen.queryByText("hidden-chain")).not.toBeInTheDocument();
     expect(screen.queryByText("incorrect answer")).not.toBeInTheDocument();
+    // Step 1 is one short line; plain-text segments are shown as they are, with no raw-data toggle.
+    expect(screen.getByText("Step 1 of 2 · Untick anything you don't need to save. Nothing runs.")).toBeVisible();
+    expect(screen.getByText(capture.segments[1].text)).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Show raw data" })).not.toBeInTheDocument();
     // Every supported segment starts selected; the reviewer deselects exceptions.
     expect(
       screen.getByRole("checkbox", { name: "Customer request" }),

@@ -1,6 +1,7 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import CaseImportDialog from "../../review/CaseImportDialog";
+import ContextCaptureDialog from "../../contexts/ContextCaptureDialog";
 import { capture } from "./fixtures";
 
 afterEach(cleanup);
@@ -146,5 +147,38 @@ describe("captured tool results and footer (UX iteration 4)", () => {
     review();
     click("Back");
     expect(onBack).toHaveBeenCalledWith(expect.objectContaining({ snapshot: capture.captureId, title: "Refund failure", expectation: "receipt" }));
+  });
+});
+
+describe("trace capture step 1 (UX iteration 5)", () => {
+  const traceRef = { projectId: "project", traceId: "trace-a", spanId: "span-a", startTime: "2026-11-08T00:00:00Z" };
+  const raw = JSON.stringify({ "support-order": { age_days: 6, amount: 24, disputed: false } });
+  const source = { traceRef, authorized: true, readOnly: false, segments: [capture.segments[0], { id: "tool-json", kind: "tool_result", text: raw }, { id: "tool-text", kind: "tool_result", text: "Purchased fourteen days ago." }] };
+  const open = () => render(<ContextCaptureDialog open onClose={vi.fn()} scopeKey="scope" state="ready" source={source} canCapture onPreview={vi.fn()} contextName="support-agent" />);
+  it("opens with one short line that says what to do and that nothing runs", () => {
+    open();
+    expect(screen.getByText("Step 1 of 2 · Untick anything you don't need to save. Nothing runs.")).toBeVisible();
+    expect(screen.queryByText(/All request and tool-result text is selected/)).not.toBeInTheDocument();
+  });
+  it("reads a structured tool result as the same named values as step 2, with the raw data one toggle away", () => {
+    open();
+    expect(screen.getByText("support-order · Age days: 6 · Amount: 24 · Disputed: false")).toBeVisible();
+    // The raw JSON is not body text; it opens on request and is exactly what will be shared.
+    expect(screen.queryByText(raw)).not.toBeInTheDocument();
+    const toggle = screen.getByRole("button", { name: "Show raw data" });
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    fireEvent.click(toggle);
+    expect(screen.getByText(raw)).toBeVisible();
+    // A plain-text result stays as it is, with no toggle of its own.
+    expect(screen.getByText("Purchased fourteen days ago.")).toBeVisible();
+    expect(screen.getAllByRole("button", { name: "Show raw data" })).toHaveLength(1);
+  });
+  it("keeps one checkbox per segment, named as before and all selected", () => {
+    open();
+    const dialog = screen.getByRole("dialog");
+    const boxes = within(dialog).getAllByRole("checkbox");
+    expect(boxes).toHaveLength(3);
+    for (const box of boxes) expect(box).toBeChecked();
+    expect(within(dialog).getAllByRole("checkbox", { name: "Tool result" })).toHaveLength(2);
   });
 });

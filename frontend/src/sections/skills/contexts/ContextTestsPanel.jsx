@@ -116,7 +116,8 @@ SavedDraftHandoff.propTypes = { onOpen: PropTypes.func.isRequired, disabled: Pro
 // on screen the result's heading carries it instead ("Answer check · v2 vs v1"). The payload is unchanged.
 const AD_HOC_TITLE = 'Reviewed context regression';
 // Every grade goes through the shared status vocabulary; a raw server value never reaches the page.
-// Only the version under test is coloured: the comparison row is the baseline, so its grade is neutral.
+// A failed answer is red on every row, the baseline included, so "Answer failed" reads the same everywhere;
+// a baseline failure that the tested version fixes says "expected" beside it. A baseline pass stays quiet.
 const ANSWER_STATUS = { pass: ['passed', 'Answer passed'], fail: ['failed', 'Answer failed'], not_graded: ['not_graded', 'Not graded'] };
 const WAITING = ['queued', 'pending', 'not_started'];
 // One mark per attempt. While the run is live, an attempt with no grade yet reads as its own state
@@ -163,7 +164,7 @@ function Results({ contextId, runId, contextName, versions = [], canWrite, onRun
   // the release review stays one click away. Without one, the release review leads.
   const verifyFirst = hasTarget && Boolean(onRunApplication);
   const lead = secondary ? 'outlined' : 'contained';
-  const request = <Button key="request" color="primary" variant={verifyFirst ? 'outlined' : lead} disabled={!canWrite} href={composer}>Request release review for v{candidate.version}</Button>;
+  const request = <Button key="request" color="primary" variant={verifyFirst ? 'outlined' : lead} disabled={!canWrite} href={composer}>Request release review</Button>;
   const verify = verifyFirst && <Button key="verify" color="primary" variant={lead} onClick={onRunApplication}>Test v{candidate.version} on the application</Button>;
   const setUp = !hasTarget && applicationAvailable && onRunApplication && <Button key="setup" variant="outlined" onClick={onRunApplication}>Set up application test</Button>;
   const hint = canWrite ? 'This run stays private until you share it in the release review. An answer check alone doesn\u2019t prove an application repair.' : 'Only a workspace author can request a release review.';
@@ -191,8 +192,8 @@ function Results({ contextId, runId, contextName, versions = [], canWrite, onRun
         {row.variants.map((variant) => { const baseline = variant.variant !== 'candidate'; return <Stack key={variant.variant} direction={{ xs: 'column', sm: 'row' }} spacing={1.5} alignItems={{ xs: 'flex-start', sm: 'center' }}>
           <Typography variant="s1" sx={{ minWidth: 200 }}>{armLabel(variant.variant)}</Typography>
           {variant.attempts.map((item) => { const [status, label] = attemptBadge(item, running); return <Stack key={item.id} direction="row" spacing={1} alignItems="center" flexWrap="wrap">
-            <StatusBadge status={status} label={label} role={baseline && ['pass', 'fail'].includes(item.answer_verdict) ? 'neutral' : undefined} />
-            {baseline && fixing && item.answer_verdict === 'fail' && <Typography variant="s3" color="text.secondary">· the failure you’re fixing</Typography>}
+            <StatusBadge status={status} label={label} role={baseline && item.answer_verdict === 'pass' ? 'neutral' : undefined} />
+            {baseline && fixing && item.answer_verdict === 'fail' && <Typography variant="s3" color="text.secondary">expected</Typography>}
             <Button size="small" variant="outlined" aria-label={`Inspect ${armLabel(variant.variant)} attempt ${item.repeat_index + 1}`} onClick={() => setAttemptId(item.id)}>Inspect</Button>
           </Stack>; })}
         </Stack>; })}

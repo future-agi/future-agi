@@ -1,6 +1,7 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
+import StatusBadge from 'src/components/status-badge';
 import ContextTestsPanel from './ContextTestsPanel';
 
 // One Tests panel carries regression cases, the application test and the answer check.
@@ -162,7 +163,7 @@ it('reads answer grades in plain words and offers the release review for a passi
   // The payload's ad hoc case title is shown as the result heading, never as a "regression".
   expect(screen.getByRole('heading', { name: 'Answer check · v4 vs v3', level: 2 })).toBeVisible();
   expect(screen.queryByText('Reviewed context regression')).not.toBeInTheDocument();
-  const request = screen.getByRole('link', { name: 'Request release review for v4' });
+  const request = screen.getByRole('link', { name: 'Request release review' });
   expect(request).toHaveClass('MuiButton-contained');
   const params = new URL(request.href).searchParams;
   expect(params.get('evidence')).toBe('skills_text:answer-run');
@@ -172,7 +173,7 @@ it('reads answer grades in plain words and offers the release review for a passi
   expect(screen.getByRole('button', { name: 'Set up application test' })).toHaveClass('MuiButton-outlined');
   expect(screen.queryByRole('button', { name: 'Set up application verification' })).not.toBeInTheDocument();
   // The result carries the one primary until the reviewer works in the setup; opening it is not enough.
-  expect([...document.querySelectorAll('.MuiButton-contained')].map((el) => el.textContent)).toEqual(['Request release review for v4']);
+  expect([...document.querySelectorAll('.MuiButton-contained')].map((el) => el.textContent)).toEqual(['Request release review']);
   fireEvent.click(screen.getByRole('button', { name: 'Show setup' }));
   expect(screen.getByRole('button', { name: 'Preview answer check' })).toHaveClass('MuiButton-outlined');
   expect(request).toHaveClass('MuiButton-contained');
@@ -221,23 +222,36 @@ it('offers a newer draft to test when production already serves the tested versi
   expect(screen.getByRole('link', { name: 'Test a newer draft' })).toHaveAttribute('href', '/dashboard/skills/contexts/context/edit');
   expect(screen.queryByRole('link', { name: 'View release history' })).not.toBeInTheDocument();
 });
-it('names the comparison row as the production baseline, in a neutral tone, and the failure being fixed', () => {
+it('names the comparison row as the production baseline and marks its failure red, as expected', () => {
   answerResult();
   render(<MemoryRouter><ContextTestsPanel contextId="context" version={version} versions={[version, { id: 'v3', number: 3, digest }]} productionVersion={3} canWrite /></MemoryRouter>);
   const result = screen.getByRole('region', { name: 'Latest result' });
   expect(within(result).getByText('v4 (testing)')).toBeVisible();
   expect(within(result).getByText('v3 (production)')).toBeVisible();
-  expect(within(result).getByText('· the failure you’re fixing')).toBeVisible();
-  // The badge label stays exactly "Answer failed"; only the version under test is coloured.
-  expect(within(result).getByText('Answer failed', { exact: true })).toBeVisible();
+  expect(within(result).getByText('expected', { exact: true })).toBeVisible();
+  expect(within(result).queryByText(/the failure you’re fixing/)).not.toBeInTheDocument();
+  // "Answer failed" is the same red failed badge on the baseline as anywhere else, never a grey dot.
+  const failed = within(result).getByText('Answer failed', { exact: true });
+  expect(failed).toBeVisible();
+  const { container } = render(<StatusBadge status="failed" label="Answer failed" />);
+  const reference = container.querySelector('span');
+  expect(getComputedStyle(failed.parentElement).backgroundColor).toBe(getComputedStyle(reference).backgroundColor);
+  expect(getComputedStyle(failed).fontWeight).toBe(getComputedStyle(reference.lastElementChild).fontWeight);
   expect(screen.queryByText(/^Compared with/)).not.toBeInTheDocument();
+});
+it('says nothing is expected when the tested version fails too', () => {
+  answerResult({ candidate: 'fail', baseline: 'fail' });
+  mount();
+  const result = screen.getByRole('region', { name: 'Latest result' });
+  expect(within(result).getAllByText('Answer failed', { exact: true })).toHaveLength(2);
+  expect(within(result).queryByText('expected', { exact: true })).not.toBeInTheDocument();
 });
 it('leads with the application test when an application is registered', () => {
   h.targets = [{ ...registered[0], qualified: true, configurationDigest: digest }];
   answerResult();
   mount();
   expect(screen.getByRole('button', { name: 'Test v4 on the application' })).toHaveClass('MuiButton-contained');
-  expect(screen.getByRole('link', { name: 'Request release review for v4' })).toHaveClass('MuiButton-outlined');
+  expect(screen.getByRole('link', { name: 'Request release review' })).toHaveClass('MuiButton-outlined');
   expect([...document.querySelectorAll('.MuiButton-contained')].filter((el) => !el.closest('[hidden]')).map((el) => el.textContent)).toEqual(['Test v4 on the application']);
 });
 it('marks ungraded attempts as not started while the run is live, never "Not graded"', () => {

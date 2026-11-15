@@ -214,7 +214,7 @@ export async function createDriver({ jobId, runId, registration }) {
         }
         if (stage.id === 'preserve-and-start-hotfix') {
           // A reproduced failure offers the repair from its recorded version; the preservation review follows.
-          await op.transition('historical-context', () => op.click(page.getByRole('button', { name: `Repair from recorded v${input.versions.recorded}`, exact: true }), 'repair-from-recorded'));
+          await op.transition('historical-context', () => op.click(page.getByRole('button', { name: `Repair from the failing v${input.versions.recorded}`, exact: true }), 'repair-from-recorded'));
           await op.click(page.getByRole('checkbox', { name: 'Save a recovery checkpoint and suspend my current draft.', exact: true }), 'confirm-preservation');
           await op.click(page.getByRole('button', { name: 'Preserve and suspend draft', exact: true }), 'preserve-and-suspend');
           // The exact-origin start follows the explicit preservation by itself.
@@ -320,7 +320,7 @@ export async function createDriver({ jobId, runId, registration }) {
           await op.click(page.getByRole('radio', { name: /Disagree/ }), 'choose-disagree');
           await edit('annotation-why', () => page.getByLabel('Why').fill('The answer claims success but the business ledger shows the refund was declined.'));
           const appended = page.waitForResponse((res) => res.url().includes('/annotations/') && res.request().method() === 'POST');
-          await op.review('record-human-disagreement', [`cell-${cells[0].attempt_id}`], [], async () => { await page.getByRole('button', { name: 'Record review' }).click(); }, decision);
+          await op.review('record-human-disagreement', [`cell-${cells[0].attempt_id}`], [], async () => { await page.getByRole('button', { name: 'Record assessment' }).click(); }, decision);
           requireValue((await appended).ok(), 'Annotation was not accepted');
           const list = await api('GET', `evidence/simulation_native/${run.id}/annotations/`);
           requireValue(list.results.length === 1 && list.results[0].verdict === 'disagree' && list.results[0].attempt_id === cells[0].attempt_id, 'Independent annotation observation differs');
