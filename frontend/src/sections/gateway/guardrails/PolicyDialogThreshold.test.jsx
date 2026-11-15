@@ -52,6 +52,7 @@ describe("PolicyDialog thresholds", () => {
           enabled: true,
           action: "block",
           threshold: 0.2,
+          config: { words: ["restricted"] },
         },
       ],
     };

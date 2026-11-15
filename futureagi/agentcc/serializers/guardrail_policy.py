@@ -124,6 +124,8 @@ class AgentccGuardrailPolicySerializer(serializers.ModelSerializer):
 
     def validate(self, attrs):
         self._validate_stored_checks_before_running(attrs)
+        if "checks" in attrs:
+            self._validate_keyword_checks_before_running(attrs, attrs["checks"])
         if self.instance is not None and not ({"scope", "applied_keys"} & attrs.keys()):
             # A change that leaves scope and keys alone (Active, mode, checks)
             # is not refused for a pairing an older version saved.
@@ -157,8 +159,14 @@ class AgentccGuardrailPolicySerializer(serializers.ModelSerializer):
             return
         try:
             self.validate_checks(instance.checks)
+            self._validate_keyword_checks_before_running(attrs, instance.checks)
         except serializers.ValidationError as e:
-            reasons = "; ".join(str(d) for d in e.detail)
+            details = (
+                e.detail.get("checks", []) if isinstance(e.detail, dict) else e.detail
+            )
+            if not isinstance(details, list):
+                details = [details]
+            reasons = "; ".join(str(d) for d in details)
             # Apply only accepts assignments, so checks must be saved separately.
             guidance = (
                 "PATCH the policy with corrected checks, scope='key', "
@@ -174,6 +182,56 @@ class AgentccGuardrailPolicySerializer(serializers.ModelSerializer):
                     )
                 }
             ) from e
+
+    def _validate_keyword_checks_before_running(self, attrs, checks):
+        # Validate effective state, not just the submitted field: operators must
+        # still be able to deactivate a legacy row or disable its broken check.
+        instance = self.instance
+        scope = attrs.get("scope", instance.scope if instance else "global")
+        active = attrs.get("is_active", instance.is_active if instance else True)
+        if (
+            self._is_org_config_row()
+            or scope != AgentccGuardrailPolicy.SCOPE_KEY
+            or not active
+        ):
+            return
+        for i, check in enumerate(checks):
+            if check["name"] != "keyword-blocklist" or not check.get("enabled", True):
+                continue
+            config = check.get("config")
+            reason = None
+            if not isinstance(config, dict):
+                reason = "config must be a JSON object with words"
+            else:
+                words = config.get("words")
+                if (
+                    not isinstance(words, list)
+                    or not words
+                    or any(
+                        not isinstance(word, str) or not word.strip() for word in words
+                    )
+                ):
+                    reason = "words must be a non-empty array of non-blank strings"
+                elif "whole_word" in config and not isinstance(
+                    config["whole_word"], bool
+                ):
+                    reason = "whole_word must be a boolean"
+                elif "max_matches" in config:
+                    maximum = config["max_matches"]
+                    # Gateway JSON numbers become float64 before conversion to
+                    # a 64-bit int. Reject values that round beyond that range.
+                    if (
+                        isinstance(maximum, bool)
+                        or not isinstance(maximum, (int, float))
+                        or not 0 < maximum < 2**63
+                        or maximum != int(maximum)
+                        or float(maximum) >= 2**63
+                    ):
+                        reason = "max_matches must be a positive integer below 2^63"
+            if reason:
+                raise serializers.ValidationError(
+                    {"checks": f"Check at index {i} (keyword-blocklist): {reason}"}
+                )
 
     def _is_org_config_row(self):
         # The org config editor (views/org_config.py) stores org-wide checks in
@@ -220,7 +278,13 @@ class AgentccGuardrailPolicySerializer(serializers.ModelSerializer):
                 raise serializers.ValidationError(
                     f"Check at index {i} has invalid enabled"
                 )
-            if "config" in check and not isinstance(check["config"], dict):
+            # Keyword config is validated against effective policy state in
+            # validate(), so resubmitting malformed config cannot block recovery.
+            if (
+                check["name"] != "keyword-blocklist"
+                and "config" in check
+                and not isinstance(check["config"], dict)
+            ):
                 raise serializers.ValidationError(
                     f"Check at index {i} has invalid config"
                 )

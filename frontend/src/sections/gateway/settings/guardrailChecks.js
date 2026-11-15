@@ -1,3 +1,51 @@
+// Opt-in validation for effective selected-key policies. The shared org editor
+// keeps its existing contract; do not normalize strings used by the matcher.
+export const keywordConfigErrors = (config) => {
+  const errors = {};
+  if (!config || typeof config !== "object" || Array.isArray(config)) {
+    return { words: "Enter words as a nonempty array of strings." };
+  }
+  if (
+    !Array.isArray(config.words) ||
+    config.words.length === 0 ||
+    config.words.some((word) => typeof word !== "string" || !word.trim())
+  ) {
+    errors.words =
+      "Enter words as a nonempty array of strings, with no blank entries.";
+  }
+  if ("whole_word" in config && typeof config.whole_word !== "boolean") {
+    errors.whole_word = "Whole word must be a boolean.";
+  }
+  if (
+    "max_matches" in config &&
+    (!Number.isInteger(config.max_matches) ||
+      config.max_matches <= 0 ||
+      config.max_matches >= 2 ** 63)
+  ) {
+    errors.max_matches = "Max matches must be a positive integer below 2^63.";
+  }
+  return errors;
+};
+
+// A line editor cannot losslessly represent malformed types or embedded
+// newlines. Show the original JSON for explicit correction instead of coercing
+// mixed entries to strings or silently dropping them.
+export const keywordConfigNeedsJson = (config) => {
+  if (config === undefined) return false;
+  if (!config || typeof config !== "object" || Array.isArray(config))
+    return true;
+  const errors = keywordConfigErrors(config);
+  return Boolean(
+    errors.whole_word ||
+      errors.max_matches ||
+      ("words" in config &&
+        (!Array.isArray(config.words) ||
+          config.words.some(
+            (word) => typeof word !== "string" || /[\r\n]/.test(word),
+          ))),
+  );
+};
+
 export const GUARDRAIL_CHECKS = [
   {
     name: "pii-detection",

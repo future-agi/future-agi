@@ -17,7 +17,10 @@ import {
 import { enqueueSnackbar } from "notistack";
 import ModalWrapper from "src/components/ModalWrapper/ModalWrapper";
 import { useApiKeys } from "../keys/hooks/useApiKeys";
-import { GUARDRAIL_CHECKS } from "../settings/guardrailChecks";
+import {
+  GUARDRAIL_CHECKS,
+  keywordConfigErrors,
+} from "../settings/guardrailChecks";
 import GuardrailCheckDialog from "../settings/GuardrailCheckDialog";
 import {
   useCreateGuardrailPolicy,
@@ -136,6 +139,23 @@ export default function PolicyDialog({ open, onClose, policy, gatewayId }) {
     if (form.name.startsWith("__")) {
       setErrors({ name: "Names starting with __ are reserved." });
       return;
+    }
+    if (form.is_active) {
+      const invalidKeyword = form.checks
+        .filter(
+          (check) =>
+            check.name === "keyword-blocklist" && check.enabled !== false,
+        )
+        .map((check) =>
+          Object.values(keywordConfigErrors(check.config)).join(" "),
+        )
+        .find(Boolean);
+      if (invalidKeyword) {
+        setErrors({
+          checks: `Keyword Blocklist: ${invalidKeyword} Open Configure to correct it, or disable the check.`,
+        });
+        return;
+      }
     }
     const payload = {
       name: form.name.trim(),
@@ -279,6 +299,16 @@ export default function PolicyDialog({ open, onClose, policy, gatewayId }) {
                 </Typography>
               )}
             </FormControl>
+            <FormControlLabel
+              control={
+                <Switch
+                  size="small"
+                  checked={form.is_active}
+                  onChange={(_, active) => change("is_active", active)}
+                />
+              }
+              label={<Typography variant="s1">Active</Typography>}
+            />
             <Box>
               <Typography variant="m3">Checks</Typography>
               {errors.checks && (
@@ -291,6 +321,10 @@ export default function PolicyDialog({ open, onClose, policy, gatewayId }) {
                   const check = form.checks.find(
                     (entry) => entry.name === item.name,
                   );
+                  const enabled =
+                    item.name === "keyword-blocklist"
+                      ? check && check.enabled !== false
+                      : check?.enabled;
                   return (
                     <Stack
                       key={item.name}
@@ -304,7 +338,7 @@ export default function PolicyDialog({ open, onClose, policy, gatewayId }) {
                         control={
                           <Switch
                             size="small"
-                            checked={Boolean(check?.enabled)}
+                            checked={Boolean(enabled)}
                             onChange={(_, enabled) =>
                               setCheck(item.name, { enabled })
                             }
@@ -314,7 +348,7 @@ export default function PolicyDialog({ open, onClose, policy, gatewayId }) {
                           <Typography variant="s1">{item.label}</Typography>
                         }
                       />
-                      {check?.enabled && (
+                      {enabled && (
                         <>
                           <TextField
                             label={`${item.label} action`}
@@ -386,6 +420,8 @@ export default function PolicyDialog({ open, onClose, policy, gatewayId }) {
             form.checks.find((check) => check.name === editingCheck.name),
           )}
           providerMeta={editingCheck}
+          keywordPolicyEditor
+          keywordPolicyActive={form.is_active}
           onSave={(_, { confidence_threshold: threshold, ...data }) =>
             setCheck(editingCheck.name, {
               ...data,

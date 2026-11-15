@@ -744,6 +744,12 @@ def _build_key_policy(org_id, policy, gateway_ids):
         name = check.get("name", "")
         registry_name = _RULE_TO_REGISTRY.get(name, name)
         raw_cfg = check.get("config") or {}
+        if name == "keyword-blocklist" and not isinstance(raw_cfg, dict):
+            # Preserve this selected policy, including its other checks. An
+            # empty keyword config remains invalid at the gateway and produces
+            # an unavailable result rather than silently dropping the policy.
+            # The stored malformed value stays intact for explicit correction.
+            raw_cfg = {}
         if not isinstance(raw_cfg, dict):
             raise ValueError(f"config of {name!r} must be an object")
         cfg = dict(raw_cfg)
