@@ -635,10 +635,12 @@ E2B answer `501 sandbox_sdk_missing`. Standalone's slim backend has neither
 
 **PII redaction and where it applies:** a project's PII redaction runs on the
 spans the backend ingests itself, through its gRPC trace service. For a
-project with redaction enabled, that ingestion never stores a raw value:
-without the `pii` extra, or when the engines fail, the batch is rejected and
-retried; a value that can never be scanned (too long, undecodable) is stored as
-`[REDACTED: could not be scanned]`. Spans sent to `fi-collector`, the default
+project with redaction enabled, that ingestion never stores a raw value. A
+value that can never be scanned (too long, undecodable) is stored as
+`[REDACTED: could not be scanned]`. When the engines fail, the batch is
+rejected and retried after 1, 5 and 15 minutes, then dropped with a
+`pii_scrub_batch_dropped` warning. Without the `pii` extra the engines always
+fail, so every batch of that project is dropped. Spans sent to `fi-collector`, the default
 OTLP ingestion path, are not redacted: the collector does not apply a
 project's PII setting.
 
