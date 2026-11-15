@@ -116,6 +116,9 @@ class ExactGraphRowPredicatePlan:
     # than max(match) across roots/buckets. Other leaves remain any-span.
     selected_root_predicates: tuple[int, ...] = ()
     root_order_expression: str = ""
+    # Effective tag membership belongs to the current physical span, including
+    # singular any-span leaves and span-mode tags (not only selected roots).
+    requires_span_version_resolution: bool = False
 
 
 def selected_root_order_sql(
@@ -902,6 +905,7 @@ def compile_exact_graph_row_predicates(
     output_window_only: list[bool] = []
     event_window_only: list[bool] = []
     selected_root_predicates: list[int] = []
+    requires_span_version_resolution = False
     required_matches: list[bool] = []
     match_condition_groups: list[tuple[tuple[int, bool], ...]] = []
     contribution_predicates: list[str] = []
@@ -973,6 +977,7 @@ def compile_exact_graph_row_predicates(
             relation_requirements = [(relation_predicate, required, relation_params)]
         elif is_effective_tag_leaf(column_id, normalized_col_type):
             effective_tag_leaf = True
+            requires_span_version_resolution = True
             relation_requirements = [
                 tag_compiler.requirement(
                     column_id=column_id, config=config, filter_index=filter_index
@@ -1186,6 +1191,7 @@ def compile_exact_graph_row_predicates(
         event_window_only=tuple(event_window_only),
         selected_root_predicates=tuple(selected_root_predicates),
         root_order_expression=root_order_expression,
+        requires_span_version_resolution=requires_span_version_resolution,
     )
 
 

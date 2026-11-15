@@ -188,6 +188,7 @@ class TimeSeriesQueryBuilder(BaseQueryBuilder):
         self.filters = filters or []
         self.project_version_id = project_version_id
         self._selected_root_predicates: tuple[int, ...] = ()
+        self._filter_requires_span_versions = False
         self._root_order_expression = ""
         self.interval = interval
         self.system_metric_filters = system_metric_filters or {}
@@ -255,6 +256,9 @@ class TimeSeriesQueryBuilder(BaseQueryBuilder):
                 project_version_id=self.project_version_id,
             )
             self._selected_root_predicates = exact_filter_plan.selected_root_predicates
+            self._filter_requires_span_versions = (
+                exact_filter_plan.requires_span_version_resolution
+            )
             self._root_order_expression = exact_filter_plan.root_order_expression
             extra_params = exact_filter_plan.params
         else:
@@ -820,10 +824,10 @@ class TimeSeriesQueryBuilder(BaseQueryBuilder):
         scan_end_param: str,
         with_version: bool = False,
     ) -> str:
-        if self.resolve_span_versions or self._selected_root_predicates:
+        if self.resolve_span_versions or self._filter_requires_span_versions:
             # Direct non-cost graph callers normally request append-only
-            # scalars. Native tags still needs the classifier's physical winner:
-            # an old live poll must not outrank its correction/tombstone. Reuse
+            # scalars. Effective tag leaves still need the physical winner:
+            # an old live poll must not witness a corrected/deleted SDK tag. Reuse
             # the bounded latest-state source rather than another spans scan.
             # Replay the complete replacement-key hours before applying mutable
             # output timestamps. Cost and coverage must not select an old poll.
