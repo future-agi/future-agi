@@ -20100,6 +20100,27 @@ export interface HarnessCapabilityGradingApi {
   truncated: boolean;
 }
 
+/**
+ * Held-back cases per readiness row that held them.
+ */
+export type HarnessRunHeldBackApiBy = { [key: string]: number };
+
+export interface HarnessRunHeldBackApi {
+  /** @minimum 0 */
+  count: number;
+  keys: string[];
+  truncated: boolean;
+  /** Held-back cases per readiness row that held them. */
+  by: HarnessRunHeldBackApiBy;
+}
+
+/**
+ * Each holding row's reason, in plain words.
+ */
+export type HarnessCapabilitySelectionCountsApiReasons = {
+  [key: string]: string;
+};
+
 export interface HarnessCapabilitySelectionCountsApi {
   /**
    * Every case of the suite version.
@@ -20123,6 +20144,14 @@ export interface HarnessCapabilitySelectionCountsApi {
   grading: HarnessCapabilityGradingApi;
   /** Every selected case's needs were read from its stored documents. */
   requirements_recorded: boolean;
+  /**
+   * Selected cases a run of this selection would send.
+   * @minimum 0
+   */
+  running: number;
+  held_back: HarnessRunHeldBackApi;
+  /** Each holding row's reason, in plain words. */
+  reasons: HarnessCapabilitySelectionCountsApiReasons;
 }
 
 export interface HarnessCapabilitySelectionReportApi {
@@ -21245,20 +21274,6 @@ export interface HarnessRunCreateApi {
   agent_version_id?: string | null;
   environment_version_id?: string | null;
   suite_version_id?: string | null;
-}
-
-/**
- * Held-back cases per readiness row that held them.
- */
-export type HarnessRunHeldBackApiBy = { [key: string]: number };
-
-export interface HarnessRunHeldBackApi {
-  /** @minimum 0 */
-  count: number;
-  keys: string[];
-  truncated: boolean;
-  /** Held-back cases per readiness row that held them. */
-  by: HarnessRunHeldBackApiBy;
 }
 
 /**
