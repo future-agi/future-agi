@@ -9,7 +9,8 @@ import useLabelHistoryPage from 'src/sections/skills/versions/useLabelHistoryPag
 
 vi.mock('src/utils/axios', () => ({ default: { get: vi.fn(), post: vi.fn(), put: vi.fn(), patch: vi.fn(), delete: vi.fn() } }));
 vi.mock('file-saver', () => ({ saveAs: vi.fn() }));
-vi.mock('src/api/contracts/api-surface', () => ({ apiPath: (path, params = {}) => path.replace(/\{([^}]+)\}/g, (_, key) => encodeURIComponent(params[key])) }));
+const contract = vi.hoisted(() => ({ archived: true }));
+vi.mock('src/api/contracts/api-surface', () => ({ apiPath: (path, params = {}) => path.replace(/\{([^}]+)\}/g, (_, key) => encodeURIComponent(params[key])), isContractedApiPath: (path) => path !== '/model-hub/skills/archived/' || contract.archived }));
 const context = vi.hoisted(() => ({ organizationId: 'org-a', workspaceId: 'ws-a', userId: 'user-a' }));
 vi.mock('src/auth/hooks', () => ({ useAuthContext: () => ({ authenticated: true, user: { id: context.userId } }) }));
 vi.mock('src/contexts/OrganizationContext', () => ({ useOrganization: () => ({ currentOrganizationId: context.organizationId, isReady: true }) }));
@@ -305,5 +306,88 @@ describe('v1.1 release and scope integration', () => {
     await act(async () => { finish(envelope({ revision: 2, files: [] })); });
     expect((await promise).message).toContain('scope changed');
     expect(client.getQueryData(scoped('id', 'draft'))).toBeUndefined();
+  });
+});
+
+describe('archived skills (A8)', () => {
+  const summary = { id: 'sk', kind: 'skill', name: 'refund-policy', description: 'd', tags: [], latest_version: 2, release_revision: 6, security_revision: 1, protected_label_names: ['production'], archived: false };
+  const key = '11111111-2222-4333-8444-555555555555';
+  beforeEach(() => { contract.archived = true; });
+
+  it('is ready only while the generated contract has the archived path', () => {
+    expect(api.archivedSkillsReady()).toBe(true);
+    contract.archived = false;
+    expect(api.archivedSkillsReady()).toBe(false);
+  });
+
+  it('lists a page, 25 by default, and maps it to camel case', async () => {
+    axios.get.mockResolvedValue(envelope({ results: [{ ...summary, archived: true, archived_at: '2026-11-10T09:30:00Z', labels: [{ name: 'production', version: 1 }] }, { ...summary, id: 'sk2', archived_at: null }], count: 2, page: 1, page_size: 25, total_pages: 1 }));
+    const { result } = renderHook(() => api.useArchivedSkills({ page: 1 }), { wrapper });
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(axios.get).toHaveBeenCalledWith('/model-hub/skills/archived/', expect.objectContaining({ params: { page: 1, page_size: 25 }, headers }));
+    const [first, second] = result.current.data.results;
+    expect(first).toMatchObject({ id: 'sk', name: 'refund-policy', latestVersion: 2, releaseRevision: 6, archivedAt: '2026-11-10T09:30:00Z', labels: [{ name: 'production', version: 1 }] });
+    expect(second).toMatchObject({ archivedAt: null, labels: [] });
+    expect(result.current.data).toMatchObject({ count: 2, page: 1, pageSize: 25, totalPages: 1 });
+  });
+
+  it('does not call the endpoint while the contract lacks it', () => {
+    contract.archived = false;
+    renderHook(() => api.useArchivedSkills({ page: 1 }), { wrapper });
+    expect(axios.get).not.toHaveBeenCalled();
+  });
+
+  it('reads a fresh restore review and maps it to the dialog review', async () => {
+    axios.get.mockResolvedValue(envelope({ resource: summary, retained_labels: [{ name: 'production', version: 1, version_id: 'v1', digest: `sha256:${'a'.repeat(64)}`, is_protected: true }], review_fingerprint: `sha256:${'b'.repeat(64)}`, name_collision: false }));
+    const { result } = renderHook(() => api.useRestoreReviewLoader(), { wrapper });
+    expect(await result.current('sk')).toEqual({ subjectId: 'sk', releaseRevision: 6, reviewFingerprint: `sha256:${'b'.repeat(64)}`, labels: [{ name: 'production', version: 1, isProtected: true }], blocked: false, blockers: [] });
+    expect(axios.get).toHaveBeenCalledWith('/model-hub/skills/archived/sk/restore-review/', { headers });
+  });
+
+  it('blocks the review while a live skill uses the name', async () => {
+    axios.get.mockResolvedValue(envelope({ resource: summary, retained_labels: [], review_fingerprint: `sha256:${'b'.repeat(64)}`, name_collision: true }));
+    const { result } = renderHook(() => api.useRestoreReviewLoader(), { wrapper });
+    expect(await result.current('sk')).toMatchObject({ blocked: true, blockers: ['A live skill already uses this name. Rename or archive that skill first.'] });
+  });
+
+  it('drops a review that arrives after the workspace changed', async () => {
+    let finish;
+    axios.get.mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+    const { result, rerender } = renderHook(() => api.useRestoreReviewLoader(), { wrapper });
+    const pending = result.current('sk');
+    context.workspaceId = 'ws-b';
+    rerender();
+    finish(envelope({ resource: summary, retained_labels: [], review_fingerprint: `sha256:${'b'.repeat(64)}`, name_collision: false }));
+    await expect(pending).rejects.toThrow('scope changed');
+  });
+
+  it('restores with the reviewed revision and fingerprint, under the key it is given, and refreshes the lists', async () => {
+    axios.post.mockResolvedValue(envelope(summary));
+    const invalidate = vi.spyOn(client, 'invalidateQueries');
+    const { result } = renderHook(() => api.useRestoreArchivedSkill(), { wrapper });
+    const input = { id: 'sk', expectedReleaseRevision: 5, expectedReviewFingerprint: `sha256:${'b'.repeat(64)}`, note: 'back', idempotencyKey: key };
+    await act(() => result.current.mutateAsync(input));
+    expect(axios.post).toHaveBeenCalledWith('/model-hub/skills/archived/sk/restore/', { expected_release_revision: 5, expected_review_fingerprint: `sha256:${'b'.repeat(64)}`, note: 'back' }, { headers: { ...headers, 'Idempotency-Key': key } });
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: api.skillsKeys.v11(context, 'legacy', 'archived') });
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: api.skillsKeys.v11(context, 'legacy', 'list') });
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: api.skillsKeys.v11(context, 'legacy', 'sk', 'detail') });
+  });
+
+  it('sends the same key again on a retry, and never invents one', async () => {
+    axios.post.mockRejectedValueOnce(new Error('Network Error')).mockResolvedValueOnce(envelope(summary));
+    const { result } = renderHook(() => api.useRestoreArchivedSkill(), { wrapper });
+    const input = { id: 'sk', expectedReleaseRevision: 5, expectedReviewFingerprint: `sha256:${'b'.repeat(64)}`, idempotencyKey: key };
+    await act(async () => { await result.current.mutateAsync(input).catch(() => {}); });
+    await act(() => result.current.mutateAsync(input));
+    expect(axios.post.mock.calls.map((call) => call[2].headers['Idempotency-Key'])).toEqual([key, key]);
+    expect(axios.post.mock.calls[0][1].note).toBe('');
+    await act(async () => { await expect(result.current.mutateAsync({ ...input, idempotencyKey: undefined })).rejects.toThrow('idempotencyKey'); });
+  });
+
+  it('lets a server rejection through untouched', async () => {
+    const conflict = Object.assign(new Error('conflict'), { code: 'impact_changed', statusCode: 409 });
+    axios.post.mockRejectedValue(conflict);
+    const { result } = renderHook(() => api.useRestoreArchivedSkill(), { wrapper });
+    await act(async () => { await expect(result.current.mutateAsync({ id: 'sk', expectedReleaseRevision: 5, expectedReviewFingerprint: 'x', idempotencyKey: key })).rejects.toBe(conflict); });
   });
 });

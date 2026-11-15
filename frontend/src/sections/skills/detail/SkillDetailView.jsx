@@ -23,6 +23,7 @@ import {
 } from "@mui/material";
 
 import {
+  archivedSkillsReady,
   downloadVersionZip,
   getSkillErrorCode,
   useArchiveSkill,
@@ -30,7 +31,6 @@ import {
   useSkillVersion,
 } from "src/api/skills";
 import { useSkillV11Scope } from 'src/api/skills/testing';
-import { useContextDependents } from "src/api/skills/context-dependents";
 import { HOST_API } from "src/config-global";
 import { paths } from "src/routes/paths";
 import ContentSkeleton from "src/components/content-skeleton";
@@ -40,7 +40,6 @@ import Iconify from "src/components/iconify";
 import ActionReason from "../components/ActionReason";
 import { useSkillsAccess } from "../utils/access";
 import ArchiveConfirmContent from "../library/archiveCopy";
-import { useContextAuthoring } from "../contexts/ContextLibraryView";
 import ObjectHeader from "../components/ObjectHeader";
 import VersionSelect from "../components/VersionSelect";
 import { ClosableDialog } from "src/components/custom-dialog";
@@ -70,23 +69,14 @@ const TAB_LABELS = {
   use: "Install",
 };
 
-// Mirrors ContextDependentsPanel: one reference per context (production first, else the newest), eligible when it follows a label with an update.
-function hasEligibleDependent(rows = []) {
-  const ids = [...new Set(rows.map((row) => row.context_id))];
-  return ids.some((id) => {
-    const references = rows.filter((row) => row.context_id === id);
-    const chosen = references.find((row) => row.labels?.includes("production")) || references.reduce((latest, row) => (row.context_version > latest.context_version ? row : latest));
-    return !chosen.requested?.version && chosen.update_state === "update_available";
-  });
-}
-
 function DetailContent({ skill, preview }) {
   const navigate = useNavigate();
-  const { isViewer, canWrite } = useSkillsAccess();
+  const { isViewer, canWrite, canAdmin } = useSkillsAccess();
   const [sourceOpen, setSourceOpen] = useState(false);
   const [params, setParams] = useSearchParams();
   const archive = useArchiveSkill();
-  const canRestore = Boolean(useContextAuthoring()?.bindings?.archived);
+  const restoreGate = archivedSkillsReady();
+  const canRestore = restoreGate && canAdmin;
   const [menuAnchor, setMenuAnchor] = useState(null);
   const [exportOpen, setExportOpen] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
@@ -101,10 +91,6 @@ function DetailContent({ skill, preview }) {
     params.get("version"),
   );
   const viewedVersion = useSkillVersion(skill.id, downloadNumber);
-  // The Used by panel draws its own contained "Prepare draft updates" when one context can follow an update.
-  // Read the same cached query (and the same one-row-per-context reduction) so the header and panel never both lead.
-  const dependents = useContextDependents(tab === "dependents" ? skill.id : undefined, { view: "active", page: 1 });
-  const panelHasAction = hasEligibleDependent(dependents.data?.results);
   const changeTab = (value) =>
     setParams((previous) => {
       const next = new URLSearchParams(previous);
@@ -165,13 +151,13 @@ function DetailContent({ skill, preview }) {
         actions={
           <>
 
-            {isViewer && <Button variant="contained" color="primary" onClick={() => changeTab("use")}>
+            {isViewer && <Button variant="outlined" color="primary" onClick={() => changeTab("use")}>
               Use skill
             </Button>}
             <Button
               aria-describedby={isViewer ? "detail-action-reason-1" : undefined}
               disabled={!canWrite}
-              variant={isViewer || tab === 'tests' || (tab === 'dependents' && panelHasAction) ? 'outlined' : 'contained'}
+              variant="outlined"
               color="primary"
               component={!canWrite ? "button" : RouterLink}
               to={!canWrite ? undefined : paths.dashboard.skills.edit(skill.id)}
@@ -245,7 +231,7 @@ function DetailContent({ skill, preview }) {
         open={Boolean(menuAnchor)}
         onClose={() => setMenuAnchor(null)}
       >
-        <MenuItem disabled={!downloadNumber} onClick={() => { setMenuAnchor(null); setExportOpen(true); }}><ListItemIcon><Iconify icon="solar:download-linear" width={16} /></ListItemIcon>Export with source paths</MenuItem>
+        <MenuItem disabled={!downloadNumber} onClick={() => { setMenuAnchor(null); setExportOpen(true); }}><ListItemIcon><Iconify icon="solar:download-linear" width={16} /></ListItemIcon>Export with folder structure</MenuItem>
         <MenuItem disabled={!downloadNumber || downloading} onClick={download}>
           <ListItemIcon>
             <Iconify icon="solar:download-linear" width={16} />
@@ -293,7 +279,7 @@ function DetailContent({ skill, preview }) {
         <GitHubSourceStatus skill={skill} onOpen={() => { setMenuAnchor(null); setSourceOpen(true); }} />
       </Menu>
       <ClosableDialog open={sourceOpen} onClose={() => setSourceOpen(false)} aria-label="GitHub source"><Box sx={{ p: 2, pr: 6 }}><GitHubSourcePanel skill={skill} /></Box></ClosableDialog>
-      <ClosableDialog open={exportOpen} onClose={() => setExportOpen(false)} aria-label="Export with source paths"><Box sx={{ p: 2, pr: 6 }}><J1MigrationExport resourceId={skill.id} number={downloadNumber} /></Box></ClosableDialog>
+      <ClosableDialog open={exportOpen} onClose={() => setExportOpen(false)} aria-label="Export with folder structure"><Box sx={{ p: 2, pr: 6 }}><J1MigrationExport resourceId={skill.id} number={downloadNumber} /></Box></ClosableDialog>
       <ConfirmDialog
         open={confirmOpen}
         onClose={() => {
@@ -301,7 +287,7 @@ function DetailContent({ skill, preview }) {
         }}
         closeDisabled={archive.isPending}
         title={`Archive ${skill.name}?`}
-        content={<ArchiveConfirmContent labels={skill.labels} canRestore={canRestore} />}
+        content={<ArchiveConfirmContent labels={skill.labels} restoreGate={restoreGate} canRestore={canRestore} />}
         action={
           <Button
             variant="contained"
@@ -349,7 +335,8 @@ export default function SkillDetailView() {
   const location = useLocation();
   // The library hands over the name so the breadcrumb and title survive a failed load.
   const knownName = typeof location.state?.skillName === "string" ? location.state.skillName : "";
-  const missingHeader = <ObjectHeader crumbs={[{ label: "Skills", to: paths.dashboard.skills.root }, { label: knownName || "Skill" }]} title={knownName || "Skill"} />;
+  // With no known name the header says so, instead of the placeholder "Skill".
+  const missingHeader = <ObjectHeader crumbs={[{ label: "Skills", to: paths.dashboard.skills.root }, { label: knownName || "Not found" }]} title={knownName || "Skill not found"} />;
   const { identity } = useSkillV11Scope();
   const [params, setParams] = useSearchParams();
   const preview = usePreviewState();
@@ -384,7 +371,7 @@ export default function SkillDetailView() {
           /></Stack>
         ) : (
           <Stack spacing={3} sx={{ minWidth: 0 }}>{missingHeader}<ErrorState
-            title="Could not load this skill"
+            title="Couldn't load this skill"
             detail="Check your connection and try again."
             onRetry={retry}
           /></Stack>

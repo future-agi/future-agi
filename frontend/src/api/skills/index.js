@@ -1,9 +1,10 @@
 import { useQuery } from '@tanstack/react-query';
 import { saveAs } from 'file-saver';
 import axios from 'src/utils/axios';
+import { apiPath, isContractedApiPath } from 'src/api/contracts/api-surface';
 import { endpoints } from './endpoints';
 import { skillsKeys } from './keys';
-import { useSkillV11Scope, useSkillV11Query, useSkillV11Mutation } from './testing';
+import { useSkillV11Scope, useSkillV11Query, useSkillV11Mutation, idempotencyHeaders } from './testing';
 import {
   mapSkill, mapPage, mapTemplate, mapVersion, mapCompare, mapLabel,
   mapLabelEvent, mapDraft, mapUsage, mapPublish, mapChecks,
@@ -214,4 +215,54 @@ export function downloadSkillsZip({ names = [], tag, label, version }) {
 }
 export function downloadVersionZip(id, number) {
   return download(endpoints.versionDownload(id, number));
+}
+
+// Archived skills (A8). Admin-only list, a fresh consequence review per restore, and an idempotent restore.
+// Every call sits behind archivedSkillsReady(): until the backend contract exists, nothing here renders or runs.
+export const archivedSkillsReady = () => isContractedApiPath('/model-hub/skills/archived/');
+const archivedList = () => apiPath('/model-hub/skills/archived/');
+const restoreReviewPath = (resource_id) => apiPath('/model-hub/skills/archived/{resource_id}/restore-review/', { resource_id });
+const restorePath = (resource_id) => apiPath('/model-hub/skills/archived/{resource_id}/restore/', { resource_id });
+export const RESTORE_NAME_TAKEN = 'A live skill already uses this name. Rename or archive that skill first.';
+const mapArchivedSkill = (value) => ({
+  ...mapSkill(value),
+  archivedAt: value.archived_at ?? null,
+  labels: (value.labels || []).map((label) => ({ name: label.name, version: label.version })),
+});
+export function useArchivedSkills({ page = 1, pageSize = 25 } = {}) {
+  return useSkillV11Query({
+    parts: ['legacy', 'archived', page, pageSize], url: archivedList, params: { page, page_size: pageSize },
+    mapper: (data) => mapPage(data, mapArchivedSkill), enabled: archivedSkillsReady(),
+  });
+}
+// The review is read fresh on every Restore click and mapped to the shape ContextSafetyDialog reviews.
+export async function loadRestoreReview(id, config) {
+  const data = result(await axios.get(restoreReviewPath(id), config));
+  const taken = data.name_collision === true;
+  return {
+    subjectId: data.resource.id, releaseRevision: data.resource.release_revision, reviewFingerprint: data.review_fingerprint,
+    labels: (data.retained_labels || []).map((label) => ({ name: label.name, version: label.version, isProtected: label.is_protected })),
+    blocked: taken, blockers: taken ? [RESTORE_NAME_TAKEN] : [],
+  };
+}
+// Reads under the scope that was current when Restore was clicked, and drops the answer if the workspace changed meanwhile.
+export function useRestoreReviewLoader() {
+  const access = useSkillV11Scope();
+  return async (id) => {
+    const review = await loadRestoreReview(id, { headers: access.headers });
+    if (access.current.current !== access.identity) throw new Error('The Skills scope changed.');
+    return review;
+  };
+}
+// The key comes from useAuthoringOperation().run options and is reused by its retry, so an uncertain send replays one operation.
+export function useRestoreArchivedSkill() {
+  return useSkillV11Mutation({
+    send: async ({ id, expectedReleaseRevision, expectedReviewFingerprint, note = '', idempotencyKey }, config) => mapSkill(result(await axios.post(
+      restorePath(id),
+      { expected_release_revision: expectedReleaseRevision, expected_review_fingerprint: expectedReviewFingerprint, note },
+      { ...config, headers: { ...config.headers, ...idempotencyHeaders(idempotencyKey) } },
+    ))),
+    invalidate: (skill) => [[skill.id]],
+    invalidateLegacy: (skill) => [['skills', 'archived'], ['skills', 'list'], skillsKeys.detail(skill.id)],
+  });
 }

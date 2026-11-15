@@ -288,7 +288,7 @@ export async function createDriver({ jobId, runId, registration }) {
             await expect(page.getByText(`Compiled candidate ${preview.candidate_digest} · 14 pinned links · private draft of ${input.contextName}`, { exact: true })).toBeVisible();
           }, decision);
           await operator.click(page.getByRole('checkbox', { name: 'Accept these 14 exact pinned versions and this compiled candidate.', exact: true }), 'accept-pinned-candidate');
-          const warning = page.getByRole('checkbox', { name: 'I acknowledge the static warnings for this exact candidate.', exact: true });
+          const warning = page.getByRole('checkbox', { name: "I've read the check warnings for this version.", exact: true });
           if (await warning.count()) await operator.click(warning, 'acknowledge-context-warnings');
           const published = page.waitForResponse(res => res.url().endsWith(`/contexts/${contextId}/draft/publish/`) && res.request().method() === 'POST');
           await ledger.measure({ dimension: 'A', primitive: 'approve', actor: 'owner', step: stage.id, phase: stage.phase, target: 'publish-agent-context',

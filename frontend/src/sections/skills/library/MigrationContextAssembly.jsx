@@ -65,7 +65,7 @@ export default function MigrationContextAssembly({ published, proposal, onBusyCh
       {checks && <ChecksList checks={checks} dense />}
       {!result && <>
         <FormControlLabel control={<Checkbox checked={accepted} disabled={busy} onChange={(event) => setAccepted(event.target.checked)} />} label={`Accept these ${lock.length} exact pinned versions and this compiled candidate.`} />
-        {warnings && <FormControlLabel control={<Checkbox checked={warningsAcknowledged} disabled={busy || !accepted} onChange={(event) => setWarningsAcknowledged(event.target.checked)} />} label="I acknowledge the static warnings for this exact candidate." />}
+        {warnings && <FormControlLabel control={<Checkbox checked={warningsAcknowledged} disabled={busy || !accepted} onChange={(event) => setWarningsAcknowledged(event.target.checked)} />} label="I've read the check warnings for this version." />}
         <Box><Button variant="contained" color="primary" disabled={!ready} onClick={() => run(publish, { prepared, acknowledgeWarnings: warningsAcknowledged, keys: keys.current }, setResult)}>Publish agent context</Button></Box>
       </>}
     </>}

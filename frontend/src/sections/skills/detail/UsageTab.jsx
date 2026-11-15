@@ -137,7 +137,7 @@ export default function UsageTab({ skill }) {
       ) : empty ? (
         <EmptyState
           title="No fetches in this period"
-          description="Fetches appear when someone resolves, downloads, or reads this skill through the API or MCP."
+          description="Uses appear when someone resolves, downloads or reads this skill through the API or MCP."
         />
       ) : (
         usage && (

@@ -87,10 +87,10 @@ describe("immutable detail and recovery", () => {
     expect(screen.getByText(/201\/200 files/)).toBeVisible();
     expect(screen.getByRole("checkbox")).toBeDisabled();
   });
-  it("does not present recovery on an unauthorized archive list error", () => {
+  it("does not present restore on an unauthorized archive list error", () => {
     render(<ArchivedSkillsView scopeKey={scopeKey} query={{ scopeKey, error: { status: 403 } }} />);
-    expect(screen.getByText("Couldn't load archived skills.")).toBeVisible();
-    expect(screen.queryByRole("button", { name: "Review recovery" })).not.toBeInTheDocument();
+    expect(screen.getByText("Only workspace admins can see archived skills.")).toBeVisible();
+    expect(screen.queryByRole("button", { name: /^Restore/ })).not.toBeInTheDocument();
   });
 });
 

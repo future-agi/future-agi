@@ -333,9 +333,9 @@ test('skills walkthrough', async ({ browser, request }) => {
       await quick(async () => {
         await glide(openDraft);
         await openDraft.click();
-        await page.getByRole('button', { name: 'Review changes', exact: true }).waitFor({ timeout: 90_000 });
+        await page.getByRole('button', { name: 'Continue to publish', exact: true }).waitFor({ timeout: 90_000 });
         await expect(page.getByText(/Loading linked and generated files/)).toHaveCount(0, { timeout: 60_000 });
-        await page.getByRole('button', { name: 'Review changes', exact: true }).click();
+        await page.getByRole('button', { name: 'Continue to publish', exact: true }).click();
         await deps.waitFor({ timeout: 90_000 });
         await noPlaceholders();
         await deps.evaluate((el) => el.scrollIntoView({ behavior: 'instant', block: 'end' }));

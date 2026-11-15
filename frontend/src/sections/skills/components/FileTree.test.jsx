@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import userEvent from "@testing-library/user-event";
-import { render, screen, within } from "@testing-library/react";
+import { cleanup, render, screen, within } from "@testing-library/react";
 import { iconExists } from "@iconify/react";
 import { LIMITS } from "../constants";
 import FileTree from "./FileTree";
@@ -105,5 +105,37 @@ describe("FileTree groups", () => {
     expect(group).toHaveAccessibleDescription("Added by Future AGI so apps load the right versions.");
     await user.click(group);
     expect(screen.getByRole("treeitem", { name: ".futureagi" })).toBeInTheDocument();
+  });
+});
+
+describe("FileTree generated context settings (UX iteration 5, LIB3)", () => {
+  const files = [
+    { path: "AGENTS.md" },
+    { path: ".futureagi/context.json", readOnly: true },
+    { path: "skills/refunds/SKILL.md", readOnly: true },
+    { path: "references/policy.md" },
+  ];
+  it("shows the generated descriptor as Context settings, keeps its path and its file name for assistive tech", () => {
+    render(<FileTree files={files} selectedPath="AGENTS.md" onSelect={vi.fn()} generatedFolders={[".futureagi"]} collapsedFolders={["skills"]} />);
+    const item = screen.getByRole("treeitem", { name: "context.json" });
+    expect(item).toHaveTextContent("Context settings (generated)");
+    expect(item).toHaveAttribute("title", ".futureagi/context.json");
+    expect(item).toHaveAttribute("aria-description", ".futureagi/context.json");
+    expect(screen.getByText("Generated")).toBeVisible();
+  });
+  it("closes only the folders it is told to, so the generated settings stay visible", () => {
+    render(<FileTree files={files} selectedPath="AGENTS.md" onSelect={vi.fn()} generatedFolders={[".futureagi"]} collapsedFolders={["skills"]} />);
+    expect(screen.getByRole("treeitem", { name: "skills" })).toHaveAttribute("aria-expanded", "false");
+    expect(screen.getByRole("treeitem", { name: ".futureagi" })).toHaveAttribute("aria-expanded", "true");
+    expect(screen.queryByRole("treeitem", { name: "SKILL.md" })).not.toBeInTheDocument();
+    expect(screen.getByRole("treeitem", { name: "policy.md" })).toBeVisible();
+  });
+  it("keeps generated folders closed by default for other callers, and leaves a context.json elsewhere alone", () => {
+    render(<FileTree files={files} selectedPath="AGENTS.md" onSelect={vi.fn()} generatedFolders={[".futureagi"]} />);
+    expect(screen.getByRole("treeitem", { name: ".futureagi" })).toHaveAttribute("aria-expanded", "false");
+    cleanup();
+    render(<FileTree files={[{ path: "config/context.json" }]} selectedPath="config/context.json" onSelect={vi.fn()} generatedFolders={[".futureagi"]} />);
+    expect(screen.getByRole("treeitem", { name: "context.json" })).toHaveTextContent("context.json");
+    expect(screen.getByRole("treeitem", { name: "context.json" })).not.toHaveAttribute("title");
   });
 });

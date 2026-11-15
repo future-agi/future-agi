@@ -226,7 +226,7 @@ test('SKILLS-E2E-030: retain accepted child versions while upstream advances dur
       await page.getByRole('region', { name: 'Latest result' }).scrollIntoViewIfNeeded();
       await shot(`whole-context-result-${parent.name}`);
       await page.goto(`${UI}/${parent.id}/edit`);
-      await page.getByRole('button', { name: 'Review changes', exact: true }).click();
+      await page.getByRole('button', { name: 'Continue to publish', exact: true }).click();
       const reviewed = page.getByRole('checkbox', { name: 'I reviewed these changes against the current published version.', exact: true });
       await reviewed.check();
       const warning = page.getByRole('checkbox', { name: 'I acknowledge the static warnings for this exact candidate.', exact: true });

@@ -133,6 +133,8 @@ describe("Usage tab", () => {
     );
     show();
     expect(screen.getByText("No fetches in this period")).toBeInTheDocument();
+    expect(screen.getByText("Uses appear when someone resolves, downloads or reads this skill through the API or MCP.")).toBeInTheDocument();
+    expect(screen.queryByText(/Fetches appear/)).not.toBeInTheDocument();
     expect(screen.getAllByRole("button", { name: "About this data" })).toHaveLength(1);
     fireEvent.click(screen.getByRole("button", { name: "About this data" }));
     expect(screen.getByText(/A fetch doesn't prove/)).toBeInTheDocument();

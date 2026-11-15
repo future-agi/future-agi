@@ -15,6 +15,18 @@ import { retainPlan } from './migration-batch';
 import { packetSources } from './migration-packet';
 
 
+const kindOfSource = (input) => (input.exportData ? 'langfuse' : 'folder');
+const countOf = (count, one, many) => (count === 1 ? one : `${count} ${many}`);
+// "2 sources: a folder and a Langfuse file". When a source came back from an earlier session its kind is unknown, so only the count is said.
+function sourcesSummary(plans, planKinds) {
+  const kinds = plans.map((plan) => planKinds[plan.id]);
+  const total = `${plans.length} ${plans.length === 1 ? 'source' : 'sources'}`;
+  if (kinds.some((kind) => !kind)) return total;
+  const folders = kinds.filter((kind) => kind === 'folder').length;
+  const files = kinds.length - folders;
+  return `${total}: ${[folders && countOf(folders, 'a folder', 'folders'), files && countOf(files, 'a Langfuse file', 'Langfuse files')].filter(Boolean).join(' and ')}`;
+}
+
 // Intent: trial a private library as retained drafts, never move production labels.
 // Hierarchy: bounded source/identity input, exact review, explicit publication handoff.
 export default function RetainedMigrationPanel({ onBusyChange, onClose, initialPlanIds, footerTarget, onConsequenceChange }) {
@@ -33,6 +45,8 @@ export default function RetainedMigrationPanel({ onBusyChange, onClose, initialP
   const [files, setFiles] = useState([]);
   const [identities, setIdentities] = useState('');
   const [plans, setPlans] = useState([]);
+  // Which kind of source each retained plan came from, so the summary can name them ("a folder and a Langfuse file").
+  const [planKinds, setPlanKinds] = useState({});
   const [sourceSetupOpen, setSourceSetupOpen] = useState(false);
   const plan = plans.at(-1) || null;
   const [error, setError] = useState('');
@@ -67,6 +81,7 @@ export default function RetainedMigrationPanel({ onBusyChange, onClose, initialP
         input = { form };
       }
       const next = await preview.mutateAsync(input);
+      setPlanKinds((current) => ({ ...current, [next.id]: kindOfSource(input) }));
       setPlans((current) => retainPlan(current, next));
       setReceipts([]);
       setSourceSetupOpen(false);
@@ -82,7 +97,13 @@ export default function RetainedMigrationPanel({ onBusyChange, onClose, initialP
     try {
       const { sources, proposal: next } = await packetSources(file);
       let retained = [];
-      for (const source of sources) retained = retainPlan(retained, await preview.mutateAsync(source));
+      const kinds = {};
+      for (const source of sources) {
+        const next = await preview.mutateAsync(source);
+        kinds[next.id] = kindOfSource(source);
+        retained = retainPlan(retained, next);
+      }
+      setPlanKinds((current) => ({ ...current, ...kinds }));
       setPlans((current) => retained.reduce(retainPlan, current));
       setProposal(next);
       setReceipts([]);
@@ -101,22 +122,28 @@ export default function RetainedMigrationPanel({ onBusyChange, onClose, initialP
   return <>
   <Stack spacing={1.5} sx={{ minWidth: 0, minHeight: 0, overflowY: 'auto', pb: 2, flexShrink: 1 }}>
     <Stack direction={{ xs: "column", sm: "row" }} alignItems={{ sm: "center" }} justifyContent="space-between" spacing={1}>
-    {plans.length > 0 && !sourceSetupOpen && <Stack direction="row" alignItems="center" spacing={1}><Typography variant="s1">{plans.length} {plans.length === 1 ? "source" : "sources"} · {proposal ? "list of skills to import" : "reviewed files"} · {kind === "folder" ? "folder" : "exchange JSON"}</Typography><Button size="small" disabled={busy} onClick={() => setSourceSetupOpen(true)}>Change sources</Button>
+    {plans.length > 0 && !sourceSetupOpen && <Stack direction="row" alignItems="center" spacing={1}><Typography variant="s1">{sourcesSummary(plans, planKinds)}</Typography><Button size="small" disabled={busy} onClick={() => setSourceSetupOpen(true)}>Change sources</Button>
     </Stack>}
     {plans.length > 0 && sourceSetupOpen && <Button size="small" disabled={busy} onClick={() => setSourceSetupOpen(false)} sx={{ alignSelf: 'flex-start', ml: -1 }}>Back to review</Button>}
     {(!plans.length || sourceSetupOpen) && <TextField id={formatId} SelectProps={{ SelectDisplayProps: { 'aria-labelledby': `${formatId}-label` } }} select size="small" label="Source" sx={{ minWidth: { sm: 300 } }} value={kind} disabled={busy} onChange={(event) => { setKind(event.target.value); selectFiles([]); }}>
-      <MenuItem value="langfuse">Langfuse exchange file (JSON)</MenuItem><MenuItem value="folder">Folder</MenuItem>
+      <MenuItem value="langfuse">Langfuse export file (JSON)</MenuItem><MenuItem value="folder">Folder</MenuItem>
     </TextField>}
     </Stack>
     <Box hidden={plans.length > 0 && !sourceSetupOpen}><Stack spacing={1.5}>
     <Typography variant="s1">Bring skills from Langfuse or a local folder. Nothing is published until you review each one.</Typography>
-    <TechnicalDetails title="Supported formats"><Typography variant="s3">Langfuse intake supports the explicit langfuse-skills-v1 exchange schema, not arbitrary native exports or remote URLs. A local folder needs the list made with the command line; without it, a later import can&apos;t be matched to the same source.</Typography></TechnicalDetails>
-    {kind === 'langfuse' && <Typography variant="s3" color="text.secondary">Use a compatible Langfuse exchange file (langfuse-skills-v1). Native Langfuse exports need converting first.{' '}<Link href="https://docs.futureagi.com/docs/skills/migration#before-migration" target="_blank" rel="noopener noreferrer">How to prepare the file</Link></Typography>}
+    {kind === 'langfuse' && <Typography variant="s3" color="text.secondary">Use a Langfuse skills export file.{' '}<Link href="https://docs.futureagi.com/docs/skills/migration#before-migration" target="_blank" rel="noopener noreferrer">How to prepare the file</Link></Typography>}
     <Stack direction="row" spacing={1} sx={{ flexWrap: 'wrap', gap: 1 }}>
       <Button variant="outlined" disabled={busy} onClick={() => upload.current?.click()}>Choose export file</Button>
       <Button variant="outlined" disabled={busy} onClick={() => folder.current?.click()}>Choose folder</Button>
     </Stack>
-    <TechnicalDetails title="List made with the command line"><Typography variant="s3">A list made with the skills-inventory command (--packet) holds every source it found, where each came from, and the proposed context. Choosing it previews them all.</Typography><Button variant="outlined" disabled={busy} onClick={() => packetInput.current?.click()}>Choose list file</Button></TechnicalDetails>
+    <TechnicalDetails title="Supported formats">
+      <Stack spacing={1}>
+        <Typography variant="s3">Langfuse files use the langfuse-skills-v1 format. Native Langfuse exports need converting first, and remote URLs aren&apos;t read.</Typography>
+        <Typography variant="s3">A local folder needs the list made with the command line; without it, a later import can&apos;t be matched to the same source.</Typography>
+        <Typography variant="s3">A list made with the skills-inventory command (--packet) holds every source it found, where each came from, and the proposed context. Choosing it previews them all.</Typography>
+        <Box><Button variant="outlined" disabled={busy} onClick={() => packetInput.current?.click()}>Choose list file</Button></Box>
+      </Stack>
+    </TechnicalDetails>
     <input ref={packetInput} type="file" hidden accept="application/json,.json" aria-label="Inventory migration packet" disabled={busy} onChange={(event) => { const [file] = event.target.files; event.target.value = ''; if (file) previewPacket(file); }} />
     <input ref={upload} type="file" hidden multiple={kind === 'folder'} aria-label="Retained source files" disabled={busy} onChange={(event) => { selectFiles(event.target.files); event.target.value = ''; }} />
     {/* Choosing a folder is itself the format choice; no separate selection is needed. */}
