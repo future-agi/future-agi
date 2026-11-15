@@ -34,11 +34,12 @@ SourceKind = Literal["session", "call"]
 # "row": a dataset row's label column.
 LabelTarget = Literal["session", "trace", "span", "row"]
 
-# A turn's text and a tool call's input and output are each cut to these
-# characters. A source keeps MAX_TURNS turns, its first and last half, and
+# A turn's text, a tool call's input and output, and its error are each cut to
+# these characters. A source keeps MAX_TURNS turns, its first and last half, and
 # MAX_TOOL_CALLS calls, failed ones first: a failure often comes at the end.
 TURN_CHARS = 2000
 TOOL_FIELD_CHARS = 2000
+TOOL_ERROR_CHARS = 300
 MAX_TURNS = 100
 MAX_TOOL_CALLS = 100
 
@@ -180,6 +181,7 @@ def _activity(reader, project_id: str, roots) -> dict[str, list[dict]] | None:
             media_patterns=_NO_MEDIA,
             # Read past the cut, so a value the cut would split is seen whole.
             field_chars=TOOL_FIELD_CHARS + STRADDLE_CHARS,
+            error_chars=TOOL_ERROR_CHARS + STRADDLE_CHARS,
             per_trace=MAX_TOOL_CALLS,
         )
     except Exception:
@@ -342,7 +344,7 @@ def _tool_calls(
                 name=str(row["name"] or ""),
                 at=row["start_time"],
                 failed=str(row["status"] or "").upper() == "ERROR",
-                error=str(row["status_message"] or ""),
+                error=cut_clear(str(row["status_message"] or ""), TOOL_ERROR_CHARS),
                 input=cut_clear(str(row["input"] or ""), TOOL_FIELD_CHARS),
                 output=cut_clear(str(row["output"] or ""), TOOL_FIELD_CHARS),
                 input_truncated=int(row["input_chars"] or 0) > TOOL_FIELD_CHARS,
