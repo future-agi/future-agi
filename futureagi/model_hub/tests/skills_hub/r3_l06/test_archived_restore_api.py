@@ -232,7 +232,10 @@ def test_context_credential_cannot_list_review_or_restore(
         response = consumer.get(f"{BASE}{archived.pk}/restore-review/")
     else:
         response = restore(consumer, archived, restore_body(reviewed))
-    assert response.status_code == 403, response.data
+    # Human endpoints refuse Context credentials at authentication (accounts/authentication.py), before any
+    # permission or restore logic runs: the platform-wide answer is 401 credential_operation_forbidden.
+    assert response.status_code == 401, response.data
+    assert response.data["code"] == "credential_operation_forbidden"
     archived.refresh_from_db()
     assert archived.deleted
     assert not HubSkillContextOperation.objects.filter(operation="unarchive").exists()
@@ -291,9 +294,10 @@ def test_review_restore_and_replay_keep_versions_labels_and_history(admin, archi
     assert archived.release_revision == restored["release_revision"]
     assert list(archived.versions.order_by("number").values()) == versions
     assert list(archived.labels.order_by("name").values()) == labels
-    assert list(
-        HubSkillLabelEvent.objects.filter(skill=archived).order_by("pk").values()
-    ) == history
+    assert (
+        list(HubSkillLabelEvent.objects.filter(skill=archived).order_by("pk").values())
+        == history
+    )
     retained = archived.labels.select_related("version").get(name="production")
     assert retained.version_id == production.version_id
     assert retained.version.digest == production.version.digest

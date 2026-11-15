@@ -880,7 +880,8 @@ export default function TestRunSetup({
                         ? { "aria-describedby": "skill-consent-reason" }
                         : undefined
                     }
-                    onChange={(event) => setAcknowledged(event.target.checked)}
+                    // A held acknowledgment never records a tick, so it cannot reappear checked once an allowance exists.
+                    onChange={(event) => { if (!consentHeld && !locked) setAcknowledged(event.target.checked); }}
                   />
                 }
                 label="Send the reviewed files and example inputs to these model providers within this spend stop"

@@ -442,7 +442,16 @@ const NATIVE_CHECKS = ['selection', 'delivery', 'tools', 'answer'];
 function nativeBadge(summary) {
   const cases = summary?.cases || [];
   const ids = [...new Set(cases.map((cell) => cell.caseId))];
-  if (!ids.length) return undefined;
+  if (!ids.length) {
+    // No per-case cells: read the recorded check outcomes instead, so a recorded failure is never shown as
+    // "not recorded". Only all four checks passing reads as passed; anything unreported stays incomplete.
+    const outcomes = NATIVE_CHECKS.map((key) => summary?.[key]);
+    const failed = outcomes.some((value) => value === 'fail' || value === 'failed');
+    const passed = outcomes.filter((value) => value === 'pass' || value === 'passed').length;
+    if (failed) return { status: 'failed', label: 'Failed' };
+    if (passed === NATIVE_CHECKS.length) return { status: 'passed', label: 'Passed' };
+    return passed ? { status: 'incomplete', label: 'Incomplete' } : undefined;
+  }
   const candidate = cases.filter((cell) => cell.variant === 'candidate');
   const passed = ids.filter((id) => {
     const attempts = candidate.filter((cell) => cell.caseId === id);

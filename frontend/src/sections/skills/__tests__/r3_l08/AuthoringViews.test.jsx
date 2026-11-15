@@ -2,6 +2,7 @@ import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { MemoryRouter } from "react-router-dom";
 import { HelmetProvider } from "react-helmet-async";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import ContextLibraryView, { ContextAuthoringProvider } from "../../contexts/ContextLibraryView";
 import ContextDetailView from "../../contexts/ContextDetailView";
 import ArchivedSkillsView from "../../library/ArchivedSkillsView";
@@ -13,6 +14,9 @@ import ArchivedSkillsPage from "src/pages/dashboard/skills/ArchivedSkillsPage";
 
 // Presentation-only role signal: an author in the Skills scope (the server stays the authority).
 vi.mock("../../utils/access", () => ({ useSkillsAccess: () => ({ ready: true, sameScope: true, isViewer: false, canWrite: true, canAdmin: false }) }));
+// The Archived skills page reads through the shared Skills query scope. A scope that is not ready yet keeps
+// every read disabled, so the page wrapper is exercised without a signed-in session.
+vi.mock("src/api/skills/testing", async (load) => ({ ...(await load()), useSkillV11Scope: () => ({ scope: {}, identity: "not-ready", current: { current: "not-ready" }, queryIdentity: { current: "not-ready" }, enabled: false, headers: {} }) }));
 
 const scopeKey = "org:workspace:author:context";
 const query = { scopeKey, data: { results: [{ id: "context", name: "support-agent", description: "Policy", latestVersion: 6, labels: [{ name: "production", version: 3 }], hasDraft: true }], count: 1, page: 1, pageSize: 25 } };
@@ -97,7 +101,7 @@ describe("immutable detail and recovery", () => {
 
 describe("page wrappers require scoped integration", () => {
   it.each([ContextLibraryPage, ContextDetailPage, ContextEditorPage, ArchivedSkillsPage])("never falls back to skill-only operations without bindings", (Page) => {
-    render(<HelmetProvider><MemoryRouter><Page /></MemoryRouter></HelmetProvider>);
+    render(<QueryClientProvider client={new QueryClient()}><HelmetProvider><MemoryRouter><Page /></MemoryRouter></HelmetProvider></QueryClientProvider>);
     expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Publish" })).not.toBeInTheDocument();
   });

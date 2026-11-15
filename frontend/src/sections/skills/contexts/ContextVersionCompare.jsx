@@ -49,7 +49,7 @@ function Group({ title, files, selected, onSelect }) {
   if (!files.length) return null;
   return <Stack spacing={0.5} role="group" aria-label={`${title} files`}>
     <Typography variant="s3" color="text.secondary">{title} ({files.length})</Typography>
-    {files.map((file) => <Button key={file.path} variant="text" color="inherit" size="small" aria-pressed={selected === file.path} title={file.path} onClick={() => onSelect(selected === file.path ? null : file.path)} sx={{ justifyContent: 'flex-start', textAlign: 'left', overflowWrap: 'anywhere', fontWeight: selected === file.path ? 600 : 400 }}>{fileLabel(file.path)}</Button>)}
+    {files.map((file) => <Button key={file.path} variant="text" color="inherit" size="small" aria-pressed={selected === file.path} title={file.path} onClick={() => onSelect(selected === file.path ? null : file.path)} sx={{ justifyContent: 'flex-start', textAlign: 'left', overflowWrap: 'anywhere', ...(selected === file.path ? { bgcolor: 'action.selected' } : {}) }}>{fileLabel(file.path)}</Button>)}
   </Stack>;
 }
 Group.propTypes = { title: PropTypes.string.isRequired, files: PropTypes.array.isRequired, selected: PropTypes.string, onSelect: PropTypes.func.isRequired };

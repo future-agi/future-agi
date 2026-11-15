@@ -322,7 +322,11 @@ it('does not adopt a newly acknowledged same-bytes draft after an intervening re
     : read(url, config));
   const diff = { from: 4, files: [], total_pages: 1 };
   axios.post.mockImplementation(async (url) => {
-    if (url.endsWith('/release/review/')) return envelope({ candidate: { kind: 'draft', revision: 3, digest }, base_version: 4, latest_version: 4, release_state: releaseState, changes: diff, head_changes: diff, checks: draft.checks, impact: {}, review_fingerprint: digest, head_review: { subject_id: id, kind: 'agent_context', draft_revision: 3, candidate_digest: digest, base_version: 4, expected_head_version: 4, head_digest: digest, review_fingerprint: digest } });
+    // The server reviews whichever draft revision is current, so the reload after the conflict sees revision 6.
+    if (url.endsWith('/release/review/')) {
+      const revision = moved ? 6 : 3;
+      return envelope({ candidate: { kind: 'draft', revision, digest }, base_version: 4, latest_version: 4, release_state: releaseState, changes: diff, head_changes: diff, checks: draft.checks, impact: {}, review_fingerprint: digest, head_review: { subject_id: id, kind: 'agent_context', draft_revision: revision, candidate_digest: digest, base_version: 4, expected_head_version: 4, head_digest: digest, review_fingerprint: digest } });
+    }
     if (url.endsWith('/acknowledge-head/')) throw { statusCode: 409, code: 'draft_conflict' };
     throw new Error(`Unexpected write ${url}`);
   });

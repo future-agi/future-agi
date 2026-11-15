@@ -237,8 +237,18 @@ def test_skills_openapi_has_all_routes_and_errors():
         | workflow_paths
         | native_paths
     }
-    assert len(legacy_paths) == 46
-    assert len(paths) == 144
+    # A8 adds the admin-only archived list, restore review and restore to the human (legacy) surface.
+    archived_operations = {
+        "/model-hub/skills/archived/": {"get"},
+        "/model-hub/skills/archived/{resource_id}/restore-review/": {"get"},
+        "/model-hub/skills/archived/{resource_id}/restore/": {"post"},
+    }
+    for path, allowed in archived_operations.items():
+        assert {"get", "post", "put", "patch", "delete"}.intersection(
+            legacy_paths[path]
+        ) == allowed, path
+    assert len(legacy_paths) == 49
+    assert len(paths) == 147
     methods = {"get", "post", "put", "patch", "delete"}
     for path, allowed in (
         authoring_operations | workflow_operations | native_operations
@@ -247,7 +257,7 @@ def test_skills_openapi_has_all_routes_and_errors():
     assert sum(map(len, authoring_operations.values())) == 39
     assert sum(map(len, workflow_operations.values())) == 24
     assert sum(map(len, native_operations.values())) == 19
-    assert sum(len(methods.intersection(item)) for item in legacy_paths.values()) == 58
+    assert sum(len(methods.intersection(item)) for item in legacy_paths.values()) == 61
     assert (
         sum(len(methods.intersection(paths[path])) for path in foundation_paths) == 11
     )

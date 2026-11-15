@@ -3,7 +3,8 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { enqueueSnackbar } from "notistack";
 import J6RecoveryPanel from "./J6RecoveryPanel";
 
-vi.mock("notistack", () => ({ enqueueSnackbar: vi.fn() }));
+// Keep the real module (the snackbar provider styles import from it) and spy only on enqueueSnackbar.
+vi.mock("notistack", async (importOriginal) => ({ ...(await importOriginal()), enqueueSnackbar: vi.fn() }));
 
 const refresh = vi.fn();
 const previewMutate = vi.fn();

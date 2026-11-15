@@ -177,7 +177,10 @@ it('does not enable navigation before the spend contract is ready', () => {
   api.ready = false;
   mount();
   expect(screen.queryByRole('tab', { name: /Workspace allowance/ })).not.toBeInTheDocument();
-  expect(screen.queryByRole('button', { name: 'More Skills pages' })).not.toBeInTheDocument();
+  // More can still hold Archived skills for an admin (A8); it never offers the allowance before its contract.
+  fireEvent.click(screen.getByRole('button', { name: 'More Skills pages' }));
+  expect(screen.getByRole('menuitem', { name: 'Archived skills' })).toBeVisible();
+  expect(screen.queryByRole('menuitem', { name: 'Workspace allowance' })).not.toBeInTheDocument();
 });
 it('fails closed when the selected role belongs to another workspace', () => {
   api.workspace.currentWorkspaceId = 'old-workspace';
