@@ -308,6 +308,7 @@ def windowed_rows_select(
         required = {*table.logical_key, "generation", table.version_column}
         if (
             not columns
+            or any(not isinstance(column, str) for column in columns)
             or len(set(columns)) != len(columns)
             or set(columns) - set(table.columns)
             or not required.issubset(columns)
