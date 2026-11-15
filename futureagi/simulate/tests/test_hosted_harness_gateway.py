@@ -1159,6 +1159,9 @@ def _chat_state_payload():
                 "conv-1": {"digest": "d", "draft_basis": {"token": "abc123"}}
             },
             "draft_saves": {"key-1": {"pieces": {}, "at": "2026-10-18"}},
+            "evidence_adds": {
+                "key-2": {"import": "i", "cases": ["c"], "saved": True, "at": "t"}
+            },
         },
     }
 
@@ -1172,6 +1175,7 @@ def test_guest_job_document_drops_server_only_chat_state():
     assert list(_alk_secret_paths(document)) == []
     assert "conversation_checkpoints" in payload["metadata"]
     assert "draft_saves" in payload["metadata"]
+    assert "evidence_adds" in payload["metadata"]
 
 
 def test_dispatch_and_certify_jobs_pass_alk_secret_check_with_chat_state():

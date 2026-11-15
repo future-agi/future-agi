@@ -603,6 +603,28 @@ class TestEvidenceDocument:
         assert "[call 1] lookup at " in text
         assert "starting state" in text.lower()
 
+    def test_label_names_and_structured_label_values_are_redacted(
+        self, client, environment, project
+    ):
+        label = Label(
+            "Escalate to sam@example.com",
+            "json",
+            {"reason": "called back on bob@example.com"},
+            "",
+            "session",
+        )
+        found = {SESSION: _evidence(labels=(label,))}
+        evidence_import, made = self._import(client, environment, project, found)
+
+        with _observe(found):
+            text = evidence_document(evidence_import, [c["id"] for c in made["cases"]])
+
+        assert "sam@example.com" not in text
+        assert "bob@example.com" not in text
+        assert '{"reason": "called back on <EMAIL_ADDRESS>"}' in text
+        fields = {(f["part"], f["field"]) for f in made["redaction"]["findings"]}
+        assert {("labels", "name"), ("labels", "value")} <= fields
+
     def test_findings_past_the_listed_ones_are_redacted_too(
         self, client, environment, project, monkeypatch
     ):

@@ -17,6 +17,7 @@ from django.utils import timezone
 from rest_framework.test import APIClient
 
 from simulate.models import (
+    AgentDefinition,
     EvidenceImport,
     EvidenceImportCase,
     HostedHarnessConversation,
@@ -546,27 +547,46 @@ def test_the_turn_says_what_each_case_records(cases, user, scheduled):
     assert "Simulator project" not in content
 
 
-def test_a_simulator_projects_calls_are_never_called_production(cases, user, scheduled):
+def test_a_simulator_projects_calls_are_never_called_production(
+    cases, user, scheduled, organization, workspace
+):
     from simulate.selectors.evidence_import import evidence_document, import_bundle
 
     evidence_import = cases[0].evidence_import
     case_ids = [str(case.id) for case in cases]
     found = {case.source_id: _evidence(case.source_id) for case in cases}
+    project = evidence_import.project
     with patch(
         "simulate.selectors.evidence_import.observe_evidence", return_value=found
     ):
         # A production project's session.
         production = import_bundle(evidence_import)
         production_text = evidence_document(evidence_import, case_ids)
-        # A Simulator project's call.
-        project = evidence_import.project
+        # A provider-backed project (Vapi, Retell) carries the Simulator source
+        # but holds the agent's real calls: production evidence still.
         project.source = "simulator"
         project.save(update_fields=["source"])
         evidence_import.source_kind = "call"
         evidence_import.save(update_fields=["source_kind"])
+        provider = import_bundle(evidence_import)
+        provider_text = evidence_document(evidence_import, case_ids)
+        # A simulation agent's own project: our simulated calls.
+        project.simulation_agent = AgentDefinition.objects.create(
+            agent_name="Simulated caller target",
+            agent_type="voice",
+            inbound=True,
+            organization=organization,
+            workspace=workspace,
+        )
+        project.save(update_fields=["simulation_agent"])
+        evidence_import.refresh_from_db()
         simulated = import_bundle(evidence_import)
         simulated_text = evidence_document(evidence_import, case_ids)
 
+    assert provider["simulated"] is False
+    assert "These are production calls: each case is regression evidence." in (
+        provider_text
+    )
     assert production["simulated"] is False
     assert "These are production sessions: each case is regression evidence." in (
         production_text

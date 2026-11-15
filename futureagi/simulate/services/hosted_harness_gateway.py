@@ -5158,7 +5158,7 @@ def _provider_import_authoring_material(
 
 
 # Builder-chat state the server keeps on the job; ALK rejects its basis ``token``.
-_SERVER_ONLY_METADATA = ("conversation_checkpoints", "draft_saves")
+_SERVER_ONLY_METADATA = ("conversation_checkpoints", "draft_saves", "evidence_adds")
 
 
 def guest_job_document(payload: dict[str, Any]) -> dict[str, Any]:

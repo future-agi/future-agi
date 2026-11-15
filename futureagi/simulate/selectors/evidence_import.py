@@ -17,7 +17,7 @@ from typing import cast
 from django.db.models import Q, QuerySet
 
 from simulate.models import EvidenceImport, EvidenceImportCase, HostedHarnessJob
-from tracer.models.project import Project, ProjectSourceChoices
+from tracer.models.project import Project
 from tracer.selectors.observe_evidence import (
     Label,
     SourceEvidence,
@@ -77,9 +77,11 @@ def evidence_project(
 
 
 def is_simulated(evidence_import: EvidenceImport) -> bool:
-    """Whether the import's sources come from a Simulator project: our own
-    simulated conversations, never production evidence."""
-    return evidence_import.project.source == ProjectSourceChoices.SIMULATOR.value
+    """Whether the import's sources come from a simulation agent's own project:
+    our simulated conversations, never production evidence. The Simulator source
+    alone does not say so: a voice provider's project (Vapi, Retell) carries it
+    and holds the agent's real calls."""
+    return evidence_import.project.simulation_agent_id is not None
 
 
 def environment_evidence_import(
@@ -456,10 +458,18 @@ def _texts(
                 )
             ]
         for i, label in enumerate(source.labels):
-            values.append((case, "labels", i, "notes", label.notes))
-            if isinstance(label.value, str):
-                values.append((case, "labels", i, "value", label.value))
+            values += [
+                (case, "labels", i, "name", label.name),
+                (case, "labels", i, "value", _label_text(label.value)),
+                (case, "labels", i, "notes", label.notes),
+            ]
     return values
+
+
+def _label_text(value: object) -> str:
+    """A label's value as the document shows it: text as written, anything
+    else (a score, a choice list, a structured answer) as its JSON."""
+    return value if isinstance(value, str) else json.dumps(value)
 
 
 def _analysed(texts: list[str]) -> tuple[list[list[PiiFinding]], str, str]:
@@ -568,13 +578,10 @@ def evidence_document(
                     lines += _wrapped(f"[call {i + 1}] {field}", text)
         lines.append(f"-- labels: {_labels(source)['status']}")
         for i, label in enumerate(source.labels):
-            value = (
-                redacted[(case.id, "labels", i, "value")]
-                if isinstance(label.value, str)
-                else json.dumps(label.value)
-            )
+            name = redacted[(case.id, "labels", i, "name")]
             lines += _wrapped(
-                f"[label {i + 1}] {label.name} on the {label.target}", value
+                f"[label {i + 1}] {name} on the {label.target}",
+                redacted[(case.id, "labels", i, "value")],
             )
             notes = redacted[(case.id, "labels", i, "notes")]
             if notes:

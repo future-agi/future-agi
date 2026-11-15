@@ -408,6 +408,75 @@ class TestAddToSuite:
             for one in draft.documents["scenarios"]
         )
 
+    def test_a_retried_add_returns_what_the_first_one_did(
+        self, environment, cases, storage, user
+    ):
+        drafted, _blocked = _landed(environment, cases, storage)
+
+        def add():
+            return add_to_suite(
+                drafted.evidence_import,
+                [str(drafted.id)],
+                expected={},
+                idempotency_key="add-retry",
+                user=user,
+            )
+
+        with _certifies():
+            assert add() is True
+            environment.refresh_from_db()
+            saved_version = environment.suite_version_id
+            # The first answer was lost on the way back; the client sends it again.
+            assert add() is True
+
+        environment.refresh_from_db()
+        assert environment.suite_version_id == saved_version
+        assert EvidenceImportCase.objects.get(id=drafted.id).status == "added"
+
+    def test_a_retried_add_beside_other_edits_returns_what_the_first_one_did(
+        self, environment, cases, storage, user
+    ):
+        drafted, _blocked = _landed(environment, cases, storage)
+        seen = _other_edit(environment, user)
+
+        def add():
+            return add_to_suite(
+                drafted.evidence_import,
+                [str(drafted.id)],
+                expected=seen,
+                idempotency_key="add-retry-draft",
+                user=user,
+            )
+
+        assert add() is False
+        revision = drafts.open_draft(environment, "suite").revision
+        assert add() is False
+        assert drafts.open_draft(environment, "suite").revision == revision
+
+    def test_a_key_reused_for_other_cases_refuses(
+        self, environment, cases, storage, user
+    ):
+        drafted, blocked = _landed(environment, cases, storage)
+        with _certifies():
+            add_to_suite(
+                drafted.evidence_import,
+                [str(drafted.id)],
+                expected={},
+                idempotency_key="add-once",
+                user=user,
+            )
+
+        with pytest.raises(HostedHarnessError) as refused:
+            add_to_suite(
+                drafted.evidence_import,
+                [str(blocked.id)],
+                expected={},
+                idempotency_key="add-once",
+                user=user,
+            )
+
+        assert refused.value.code == "idempotency_key_reused"
+
     def test_an_edit_since_the_review_opened_refuses(
         self, environment, cases, storage, user
     ):
