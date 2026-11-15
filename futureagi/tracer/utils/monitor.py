@@ -346,6 +346,8 @@ def _get_metric_value(
         timeout_ms=MONITOR_QUERY_TIMEOUT_MS,
         settings=MONITOR_CH_SETTINGS,
     )
+    if hasattr(builder, "validate_result"):
+        builder.validate_result()
     if result.data:
         return result.data[0].get("value")
     return None

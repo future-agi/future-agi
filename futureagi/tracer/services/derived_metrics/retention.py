@@ -1617,7 +1617,12 @@ def expire_project(writer, definitions, *, retention_days, now=None, as_of=None)
         _expired_span_buckets(writer, head, cutoff) if span_definitions else set()
     )
     if (
-        not any(recovery.values())
+        not MetricErasureRequest.objects.filter(
+            project_key=project_id, store_payload__protocol="metric_policy_replan"
+        )
+        .exclude(status="done")
+        .exists()
+        and not any(recovery.values())
         and not _expired_aggregates(writer, head, cutoff)
         and not span_dirty
         and not (
@@ -1804,6 +1809,17 @@ def expire_project(writer, definitions, *, retention_days, now=None, as_of=None)
 
 
 def purge_by_scope(store, request, *, writer=None):
+    if writer is not None:
+        return _purge_with_writer(writer, store, request)
+    return _purge_by_scope(store, request)
+
+
+@_close_failed_attempts
+def _purge_with_writer(writer, store, request):
+    return _purge_by_scope(store, request, writer=writer)
+
+
+def _purge_by_scope(store, request, *, writer=None):
     """B18 live-row entry point; the caller owns snapshot cleanup and receipts.
 
     Durable request keys work after PG parent deletion. User/session erasure

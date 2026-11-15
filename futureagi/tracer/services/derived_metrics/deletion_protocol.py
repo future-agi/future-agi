@@ -656,6 +656,9 @@ def _before_delete(sender, instance, using, **kwargs):
                 "source_manifest": instance.source_manifest,
                 "kind": instance.kind,
                 "status": instance.status,
+                "write_protocol": (instance.source_manifest or {}).get(
+                    "write_protocol"
+                ),
             },
         }
     elif sender is DerivedMetricVersion:
