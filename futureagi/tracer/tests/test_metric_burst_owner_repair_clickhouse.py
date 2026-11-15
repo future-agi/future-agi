@@ -96,7 +96,9 @@ def test_partial_repair_then_overflow_matches_latest_source(
     ) == [("s1",)]
     before = MetricProjectRefresh.for_project(observe_project.id)
     assert before.pending_repair and before.reconciliation_cursor["phase"] == "sources"
-    assert before.watermark_ns == watermark
+    assert {
+        getattr(before, field) for field in MetricProjectRefresh.MONOTONE_FIELDS
+    } == {watermark}
     seed_span_revision(
         writer,
         scope,
@@ -137,7 +139,9 @@ def test_partial_repair_then_overflow_matches_latest_source(
                 runner.run_repair_page()
         unchanged = MetricProjectRefresh.for_project(observe_project.id)
         assert unchanged.head_manifest_id == head.id
-        assert unchanged.watermark_ns == watermark
+        assert {
+            getattr(unchanged, field) for field in MetricProjectRefresh.MONOTONE_FIELDS
+        } == {watermark}
         assert unchanged.reconciliation_cursor["after"] is None
         assert unchanged.reconciliation_cursor["scanned"] == 0
     head = runner.run_repair_page(skip_incremental=fail_owner_read)
@@ -147,16 +151,22 @@ def test_partial_repair_then_overflow_matches_latest_source(
     burst_ceiling = changes.ns(
         datetime.fromisoformat(state.reconciliation_cursor["started_at"])
     )
-    assert state.watermark_ns == watermark
+    assert {
+        getattr(state, field) for field in MetricProjectRefresh.MONOTONE_FIELDS
+    } == {watermark}
     for _ in range(6):
         head = runner.run_repair_page(skip_incremental=True)
         state = MetricProjectRefresh.for_project(observe_project.id)
         if not state.pending_repair:
             break
-        assert state.watermark_ns == watermark
+        assert {
+            getattr(state, field) for field in MetricProjectRefresh.MONOTONE_FIELDS
+        } == {watermark}
     else:
         pytest.fail("bounded arrival sweep did not complete")
-    assert state.watermark_ns == burst_ceiling
+    assert {
+        getattr(state, field) for field in MetricProjectRefresh.MONOTONE_FIELDS
+    } == {burst_ceiling}
     assert state.reconciliation_cursor["completed_passes"] == 0
 
     # Independent oracle: collapse raw source identities BEFORE filtering live
