@@ -141,9 +141,9 @@ func TestAdaptiveOperatorBreakerWithTenantProviders(t *testing.T) {
 					t.Cleanup(orgCache.EvictAll)
 					srv.handlers.tenantStore, srv.handlers.orgProviderCache = store, orgCache
 					srv.handlers.keyStore = auth.NewKeyStore(cfg.Auth)
-					// Open slow through its own explicit lock. A lock to fast must
-					// never authorize a cross-provider attempt merely to prime health.
-					status, body := adaptiveHTTP(t, gateway, "slow/adaptive-sample", "synthetic-breaker-probe", stream, http.Header{"X-Agentcc-Provider-Lock": {"slow"}})
+					// Prime slow on the routed model with its own lock so operator
+					// admission and credential selection still run through failover.
+					status, body := adaptiveHTTP(t, gateway, "adaptive-sample", "synthetic-breaker-probe", stream, http.Header{"X-Agentcc-Provider-Lock": {"slow"}})
 					if status != http.StatusBadGateway || !strings.Contains(body, "synthetic upstream unavailable") {
 						t.Fatalf("operator slow priming: status=%d body=%s", status, body)
 					}
@@ -199,7 +199,7 @@ func TestAdaptiveMixedOperatorOrgBreakers(t *testing.T) {
 				srv.handlers.keyStore = auth.NewKeyStore(cfg.Auth)
 				// Establish the operator failure independently; the following
 				// accepted fast lock exercises only the org's fast credential.
-				status, body := adaptiveHTTP(t, gateway, "slow/adaptive-sample", "synthetic-mixed-probe", stream, http.Header{"X-Agentcc-Provider-Lock": {"slow"}})
+				status, body := adaptiveHTTP(t, gateway, "adaptive-sample", "synthetic-mixed-probe", stream, http.Header{"X-Agentcc-Provider-Lock": {"slow"}})
 				if status != http.StatusBadGateway || !strings.Contains(body, "synthetic upstream unavailable") {
 					t.Fatalf("mixed operator priming: status=%d body=%s", status, body)
 				}
