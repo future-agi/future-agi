@@ -279,8 +279,8 @@ function PacketActions({
                 onChange={setRecipientId} disabled={locked || !permissions.canSubmit}
                 helperText="An independent reviewer must approve before production can move." />}
             {/* One footer layout: the acknowledgment on the left; secondary actions, then the reason, then the primary on the right, all centred. */}
-            <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.5} alignItems={{ xs: 'stretch', sm: 'center' }}>
-            <FormControlLabel componentsProps={{ typography: { variant: 's3' } }} sx={{ flex: 1, minWidth: { md: 240 }, mr: 0 }}
+            <Stack direction={{ xs: 'column', sm: 'row' }} useFlexGap gap={1.5} flexWrap={{ sm: 'wrap' }} alignItems={{ xs: 'stretch', sm: 'center' }}>
+            <FormControlLabel componentsProps={{ typography: { variant: 's3' } }} sx={{ flex: { sm: '1 1 280px' }, minWidth: 0, mr: 0 }}
               control={
                 <Checkbox
                   checked={reviewed}
@@ -290,7 +290,7 @@ function PacketActions({
               }
               label="I reviewed this exact candidate, target, evidence and release consequence."
             />
-            <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} alignItems={{ xs: 'stretch', sm: 'center' }} sx={{ minWidth: 0, flexShrink: 0 }}>
+            <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} alignItems={{ xs: 'stretch', sm: 'center' }} sx={{ minWidth: 0, ml: { sm: 'auto' } }}>
               {!request && onEdit && <><Button variant="outlined" disabled={locked} onClick={onEdit}>Edit request</Button><Button disabled={locked} onClick={onCancel}>Cancel</Button></>}
               {request && <>
                 {request.status !== 'approved' && !commentFocused && !comment && <Button size="small" sx={{ ml: { sm: -1 } }} disabled={locked || !canRequestChanges} onClick={() => setCommentFocused(true)}>Add comment</Button>}
@@ -309,7 +309,7 @@ function PacketActions({
                   Request changes
                 </Button>}
               </>}
-              <ActionReason id="decision-reason" reason={decisionReason} sx={{ textAlign: { sm: 'right' }, flexShrink: { sm: 0 } }} />
+              <ActionReason id="decision-reason" reason={decisionReason} sx={{ textAlign: { sm: 'right' } }} />
               {!request && (
                 <Button
                   variant="contained" color="primary" {...reasonProps('decision-reason', decisionReason)}

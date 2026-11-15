@@ -304,7 +304,7 @@ function DraftPublication({
             </Alert>
           )}
           {/* One footer row: Reload draft on the left; on the right the reason sits on the same baseline as the two publish actions. */}
-          <Stack direction={{ xs: "column", sm: "row" }} spacing={1} alignItems={{ xs: 'stretch', sm: 'center' }} justifyContent="space-between">
+          <Stack direction={{ xs: "column", sm: "row" }} useFlexGap gap={1} flexWrap={{ sm: 'wrap' }} alignItems={{ xs: 'stretch', sm: 'center' }} justifyContent="space-between">
             {onRefresh && <Button disabled={operation.busy || operation.uncertain} onClick={onRefresh} sx={{ ml: { sm: -1 }, alignSelf: { xs: 'flex-start', sm: 'center' } }}>Reload draft</Button>}
             <Stack direction={{ xs: "column", sm: "row" }} spacing={1} alignItems={{ xs: 'stretch', sm: 'center' }} sx={{ ml: { sm: 'auto' }, minWidth: 0 }}>
               <ActionReason id="publish-review-reason" reason={publishReason} sx={{ textAlign: { sm: 'right' } }} />
@@ -378,7 +378,7 @@ export default function ContextReleaseReview({
           ? [{ label: "Agent contexts", to: paths.dashboard.skills.contexts }, { label: name || "Agent context", to: paths.dashboard.skills.contextDetail(draftReview.subjectId) }, { label: "Publish" }]
           : [{ label: "Reviews", to: paths.dashboard.skills.reviews }, { label: name || "Agent context" }]}
         title={draftReview ? `Publish ${name || "agent context"} v${(draftReview.expectedHeadVersion ?? 0) + 1}` : name ? `Review ${name}` : "Review agent context"}
-        purpose={draftReview ? "Review the saved changes and linked skills before publishing a version. Production stays unchanged until a separate release review." : "Inspect the changes before making a release decision. Production stays unchanged until released."}
+        purpose={draftReview ? "Review the saved changes and linked skills before publishing a version." : "Inspect the changes before making a release decision. Production stays unchanged until released."}
       />
       {!scopeKey || state !== "ready" ? (
         <ReviewState

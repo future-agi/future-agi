@@ -136,3 +136,14 @@ it('shows one footer row with the reason beside the publish actions, and Confirm
   expect(screen.getByText('Confirm the review above to publish only.')).toHaveAttribute('id', 'publish-review-reason');
   expect(screen.getByRole('button', { name: 'Publish version' })).toHaveAccessibleDescription('Confirm the review above to publish only.');
 });
+
+it('leads with one line (the version it creates, what changes, where production stays) and renames the engineer sections', () => {
+  const props = { scopeKey: 'scope', state: 'ready', canPublish: true, onAcknowledgeHead: vi.fn(), onPublish: vi.fn(), onPublishAndRequest: vi.fn(), onRefresh: vi.fn() };
+  render(<MemoryRouter><ContextReleaseReview {...props} name="support-agent" draftReview={{ ...draftReview, headAcknowledged: false }} /></MemoryRouter>);
+  const lead = screen.getByRole('status');
+  expect(lead).toHaveTextContent(/^v7 (changes|has) .*AGENTS\.md.*\. Production stays on v4 until it is reviewed and released\.$/);
+  expect(lead).not.toHaveTextContent(/Publishing creates/);
+  expect(screen.getByText('What publishing creates')).toBeVisible();
+  ['Technical details', 'Linked skill versions', 'Permission changes'].forEach((name) => expect(screen.getByRole('button', { name })).toBeVisible());
+  ['Exact identities', 'Locked versions', 'Permissions comparison', /^Raw /].forEach((name) => expect(screen.queryByRole('button', { name })).not.toBeInTheDocument());
+});
