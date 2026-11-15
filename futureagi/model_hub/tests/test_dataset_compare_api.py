@@ -1507,8 +1507,7 @@ def test_compare_cached_id_for_same_base_and_another_compared_dataset_is_not_ser
     body = _body(response)
     assert "stored-" not in body
     if download:
-        assert response.status_code == status.HTTP_400_BAD_REQUEST, body
-        assert "Unable to download dataset" in body
+        _assert_compare_not_found(response)
     else:
         assert response.status_code == status.HTTP_200_OK, body
         assert "requested-compared-alpha" in body

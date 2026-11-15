@@ -238,6 +238,7 @@ const CompareDataRightSection = ({
           color: "text.secondary",
         }}
         onClick={handleDownloadCompareDataset}
+        aria-label="Download comparison CSV"
       >
         <Iconify icon="solar:download-minimalistic-linear" />
       </IconButton>

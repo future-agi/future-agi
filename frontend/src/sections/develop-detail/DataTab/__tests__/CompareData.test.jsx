@@ -72,7 +72,7 @@ vi.mock(
   () => ({ default: Null }),
 );
 vi.mock("../CompareDatasetDetailDrawer/CompareDatasetDetailDrawer", () => ({
-  default: Null,
+  default: () => <div data-testid="compare-detail-drawer" />,
 }));
 vi.mock(
   "src/sections/common/DevelopCellRenderer/EvaluateCellRenderer/CompositeEvalDialog",
@@ -723,6 +723,154 @@ describe("CompareData successful ID rollover", () => {
     expect(obsolete.success).not.toHaveBeenCalled();
     expect(deleteCompare).toHaveBeenCalledExactlyOnceWith(OTHER_ID);
   });
+});
+
+describe("CompareData terminal zero snapshot", () => {
+  const EMPTY_ID = "00000000-0000-4000-8000-000000000021";
+  const OTHER_EMPTY_ID = "00000000-0000-4000-8000-000000000022";
+  const empty = (id = EMPTY_ID) => ({
+    data: { status: true, result: {
+      metadata: { compare_id: id, total_rows: 0, total_pages: 0 },
+    } },
+  });
+  const setup = () => {
+    const api = {
+      refreshServerSide: vi.fn(), refreshCells: vi.fn(),
+      showNoRowsOverlay: vi.fn(), deselectAll: vi.fn(),
+    };
+    const props = renderCompare({ gridApiRef: { current: { api } } });
+    api.refreshServerSide.mockClear();
+    return { api, props };
+  };
+  const openFirstRow = () => act(() => grid.props.onRowClicked({
+    data: rows[0], rowIndex: 0,
+    event: { target: { closest: () => null } },
+  }));
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    post.mockReset();
+  });
+
+  it("retires nonempty rows, selection, detail and summary once on a later-block zero rollover", async () => {
+    const { api, props } = setup();
+    post.mockResolvedValueOnce(response()).mockResolvedValue(empty());
+    await getPage();
+    openFirstRow();
+    expect(document.querySelector('[data-testid="compare-detail-drawer"]')).not.toBeNull();
+    expect(grid.props.pinnedBottomRowData).not.toEqual([]);
+    // Model a synchronous new-store load as well as later refreshes. The
+    // browser regression separately checks real AG Grid destroys its old rows.
+    const replacementSuccess = vi.fn();
+    api.refreshServerSide.mockImplementation(() => {
+      grid.props.serverSideDatasource.getRows({
+        request: { startRow: 0, endRow: 10 }, success: replacementSuccess,
+      });
+    });
+    const later = startPage(10);
+    await act(async () => { await later.pending; });
+    expect(props.compareId.current).toBe(EMPTY_ID);
+    expect(later.fail).toHaveBeenCalledTimes(1);
+    expect(later.success).not.toHaveBeenCalled();
+    expect(api.refreshServerSide).toHaveBeenCalledExactlyOnceWith({ purge: true });
+    expect(replacementSuccess).toHaveBeenCalledExactlyOnceWith({ rowData: [], rowCount: 0 });
+    expect(api.deselectAll).toHaveBeenCalledTimes(1);
+    expect(document.querySelector('[data-testid="compare-detail-drawer"]')).toBeNull();
+    expect(grid.props.pinnedBottomRowData).toEqual([]);
+    expect(grid.props.statusBar.statusPanels[0].statusPanelParams.columnAvgs).toEqual([]);
+    expect(props.setCommonColumn).toHaveBeenLastCalledWith([]);
+    expect(props.setDatasetInfo).toHaveBeenLastCalledWith({});
+    openFirstRow();
+    expect(document.querySelector('[data-testid="compare-detail-drawer"]')).toBeNull();
+    for (const start of [0, 10, 0]) {
+      expect(await getPage(start)).toHaveBeenCalledExactlyOnceWith({ rowData: [], rowCount: 0 });
+    }
+    expect(post).toHaveBeenCalledTimes(2);
+    expect(api.refreshServerSide).toHaveBeenCalledTimes(1);
+  });
+
+  it("ignores competing fresh zero IDs and never rerequests uncached empty metadata", async () => {
+    const { api, props } = setup();
+    post.mockResolvedValueOnce(response());
+    await getPage();
+    const late = deferred();
+    post.mockImplementationOnce(() => late.promise).mockResolvedValueOnce(empty());
+    // Were another POST made, this backend would mint yet another empty ID.
+    post.mockResolvedValue(empty(OTHER_EMPTY_ID));
+    const obsolete = startPage(20);
+    await getPage(10);
+    await act(async () => {
+      late.resolve(empty(OTHER_EMPTY_ID));
+      await obsolete.pending;
+    });
+    for (let index = 0; index < 5; index += 1) await getPage();
+    expect(props.compareId.current).toBe(EMPTY_ID);
+    expect(post).toHaveBeenCalledTimes(3);
+    expect(api.refreshServerSide).toHaveBeenCalledTimes(1);
+    expect(obsolete.success).not.toHaveBeenCalled();
+    expect(obsolete.fail).toHaveBeenCalledTimes(1);
+    expect(deleteCompare).toHaveBeenCalledExactlyOnceWith(OTHER_EMPTY_ID);
+  });
+
+  it("refreshes an initially empty comparison locally and permits an explicit ID reset to rebuild", async () => {
+    const { api, props } = setup();
+    post.mockResolvedValueOnce(empty()).mockResolvedValue(empty(OTHER_EMPTY_ID));
+    await getPage();
+    for (let index = 0; index < 5; index += 1) {
+      expect(await getPage()).toHaveBeenCalledExactlyOnceWith({ rowData: [], rowCount: 0 });
+    }
+    expect(props.compareId.current).toBe(EMPTY_ID);
+    expect(post).toHaveBeenCalledTimes(1);
+    expect(api.refreshServerSide).not.toHaveBeenCalled();
+    props.compareId.current = null; // The real download-expiry recovery callback.
+    await getPage();
+    expect(post).toHaveBeenCalledTimes(2);
+    expect(post.mock.lastCall[1].compare_id).toBeNull();
+    expect(props.compareId.current).toBe(OTHER_EMPTY_ID);
+    expect(api.refreshServerSide).not.toHaveBeenCalled();
+  });
+
+  it("completes a losing initial block locally after another block establishes zero", async () => {
+    const { api, props } = setup();
+    const late = deferred();
+    post.mockImplementationOnce(() => late.promise).mockResolvedValueOnce(empty());
+    const obsolete = startPage();
+    await getPage(10);
+    await act(async () => {
+      late.resolve(empty(OTHER_EMPTY_ID));
+      await obsolete.pending;
+    });
+    expect(obsolete.success).toHaveBeenCalledExactlyOnceWith({ rowData: [], rowCount: 0 });
+    expect(props.compareId.current).toBe(EMPTY_ID);
+    expect(post).toHaveBeenCalledTimes(2);
+    expect(api.refreshServerSide).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([COMPARE_ID, OTHER_EMPTY_ID])(
+    "does not make an empty out-of-range block terminal when total_rows is positive (ID %s)",
+    async (id) => {
+      const { api, props } = setup();
+      post.mockResolvedValueOnce(response());
+      await getPage();
+      const outOfRange = withCompareId(id, 2);
+      expect(outOfRange.data.result.table).toEqual([]);
+      post.mockResolvedValueOnce(outOfRange);
+      const result = await getPage(20);
+      if (id === COMPARE_ID) {
+        expect(result).toHaveBeenCalledExactlyOnceWith({ rowData: [], rowCount: 12 });
+        expect(api.refreshServerSide).not.toHaveBeenCalled();
+      } else {
+        expect(result).not.toHaveBeenCalled();
+        expect(api.refreshServerSide).toHaveBeenCalledExactlyOnceWith({ purge: true });
+      }
+      post.mockResolvedValueOnce(withCompareId(id));
+      const first = await getPage();
+      expect(first).toHaveBeenCalledExactlyOnceWith({ rowData: rows.slice(0, 10), rowCount: 12 });
+      expect(post).toHaveBeenCalledTimes(3);
+      expect(props.compareId.current).toBe(id);
+      expect(api.showNoRowsOverlay).not.toHaveBeenCalled();
+    },
+  );
 });
 
 describe("CompareData expired comparison", () => {

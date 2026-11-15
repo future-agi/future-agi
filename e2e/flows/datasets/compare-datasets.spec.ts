@@ -1,6 +1,8 @@
-import type { Response } from '@playwright/test';
+import type { APIResponse, Page, Request, Response, Route, TestInfo } from '@playwright/test';
+import { randomUUID } from 'node:crypto';
 import { test, expect } from '../../lib/fixtures';
-import { POLL } from '../../lib/state-probe';
+import type { TestActor } from '../../lib/provisioning';
+import { POLL, type StateProbe } from '../../lib/state-probe';
 import { flowAnnotation } from '../../lib/flow-meta';
 
 // UploadFileModal.jsx / CreateDatasetFromLocalFileRequestSerializer.
@@ -312,3 +314,331 @@ test('DATA-E2E-005: compared datasets show joined rows across both result blocks
   }, { timeout: UI_READY });
   // actor, browser context and StateProbe are disposed by lib/fixtures.ts.
 });
+
+// Lifecycle regressions use the same authenticated actor, native CSV importer,
+// PG probe and real endpoints as DATA-E2E-005. Routes only delay real responses
+// or change a request to a real missing resource; no response body is invented.
+type LifecycleFixtures = { page: Page; actor: TestActor; probe: StateProbe };
+const deletePath = (id: string) => `/model-hub/datasets/delete-compare/${id}/`;
+const downloadPath = (id: string) => `${comparePath(id)}download/`;
+const expiredMessage = 'This comparison expired and is being rebuilt. Download it again once the table has loaded.';
+
+async function openLifecycleComparison(
+  { page, actor, probe }: LifecycleFixtures, info: TestInfo, initiallyEmpty = false,
+) {
+  test.setTimeout(600_000); // Two imports, comparison build and delayed block/detail checks.
+  page.setDefaultTimeout(UI_READY);
+  // Keep the initial viewport (including AG Grid's row buffer) within blocks
+  // 0/1; blocks 2/3 below must not already be cached when invalidation starts.
+  await page.setViewportSize({ width: 1280, height: 720 });
+  const suffix = randomUUID();
+  const datasets: Dataset[] = [];
+  for (const side of ['left', 'right'] as const) {
+    const name = `e2e-compare-${side}-${suffix}`;
+    const seeded = Array.from({ length: 32 }, (_, index) => ({
+      input: `${initiallyEmpty && side === 'right' ? 'disjoint' : 'join'}-${suffix}-${index}`,
+      output: `${side}-${suffix}-${index}`,
+    }));
+    await page.goto('/dashboard/develop', { waitUntil: 'domcontentloaded' });
+    await page.getByRole('button', { name: /^add dataset$/i }).first().click();
+    await page.getByText('Upload a file (JSON, CSV)', { exact: true }).click();
+    const dialog = page.getByRole('dialog').filter({ has: page.getByText('Upload a File', { exact: true }) });
+    await dialog.locator('input[type="file"]').setInputFiles({
+      name: `compare-${side}.csv`, mimeType: 'text/csv',
+      buffer: Buffer.from(['input,output', ...seeded.map(row => `${row.input},${row.output}`), ''].join('\n')),
+    });
+    await dialog.getByPlaceholder('Dataset Name').fill(name);
+    const uploaded = page.waitForResponse(response => new URL(response.url()).pathname === UPLOAD
+      && response.request().method() === 'POST');
+    await dialog.getByRole('button', { name: 'Upload', exact: true }).click();
+    const response = await uploaded;
+    expect(response.status()).toBe(200);
+    const id: string = (await response.json()).result.dataset_id;
+    await expect.poll(async () => (await probe.pg<{ n: string }>(
+      'SELECT count(*) AS n FROM model_hub_cell WHERE dataset_id = $1 AND NOT deleted', [id]))[0].n,
+    POLL.ASYNC_JOB).toBe('64');
+    expect(await probe.pg('SELECT organization_id, workspace_id FROM model_hub_dataset WHERE id = $1', [id]))
+      .toEqual([{ organization_id: actor.organizationId, workspace_id: actor.workspaceId }]);
+    const columns = await probe.pg<Column>(
+      'SELECT id, name FROM model_hub_column WHERE dataset_id = $1 AND NOT deleted ORDER BY name', [id]);
+    expect(columns.map(column => column.name)).toEqual(['input', 'output']);
+    const rows = await probe.pg<SourceRow>(
+      `SELECT i.row_id, i.value AS input, o.value AS output FROM model_hub_cell i
+       JOIN model_hub_cell o ON o.dataset_id = i.dataset_id AND o.row_id = i.row_id
+       WHERE i.dataset_id = $1 AND i.column_id = $2 AND o.column_id = $3
+       AND NOT i.deleted AND NOT o.deleted ORDER BY i.value`, [id, columns[0].id, columns[1].id]);
+    expect(rows.map(({ input, output }) => ({ input, output })))
+      .toEqual([...seeded].sort((a, b) => a.input.localeCompare(b.input)));
+    datasets.push({ id, name, columns, rows });
+    await expect(page).toHaveURL(new RegExp(`/dashboard/develop/${id}`));
+    await expect(page.locator(`.ag-row [col-id="${columns[1].id}"]`).filter({ hasText: seeded[0].output }))
+      .toHaveText(seeded[0].output);
+  }
+  const [left, right] = datasets;
+  const requests: Request[] = [];
+  const responses: Response[] = [];
+  page.on('request', request => {
+    if (new URL(request.url()).pathname === comparePath(left.id) && request.method() === 'POST') requests.push(request);
+  });
+  page.on('response', response => {
+    if (new URL(response.url()).pathname === comparePath(left.id)
+      && response.request().method() === 'POST') responses.push(response);
+  });
+  await page.goto(`/dashboard/develop/${left.id}`, { waitUntil: 'domcontentloaded' });
+  await page.getByRole('button', { name: 'Compare with another dataset', exact: true }).click();
+  await page.getByText(right.name, { exact: true }).click();
+  await page.getByRole('button', { name: 'Open', exact: true }).click();
+  await page.locator('input[type="radio"][value="input"]').check();
+  await page.getByRole('button', { name: 'Compare', exact: true }).last().click();
+  const loaded = page.waitForResponse(response => new URL(response.url()).pathname === comparePath(left.id)
+    && response.request().method() === 'POST');
+  await page.getByRole('tab', { name: 'Data', exact: true }).click();
+  const response = await loaded;
+  expect(response.status()).toBe(200);
+  const first: ComparePage = await response.json();
+  expect(first.result.metadata).toEqual({ compare_id: expect.any(String),
+    total_rows: initiallyEmpty ? 0 : 32, total_pages: initiallyEmpty ? 0 : 4 });
+  const grid = page.locator('.experiment-view-grid');
+  const drawer = page.locator('.MuiDrawer-paper').filter({ has: page.getByText('Datapoint-compare', { exact: true }) });
+  if (initiallyEmpty) await expect(page.getByText('No Common rows', { exact: true })).toBeVisible();
+  else {
+    const firstInput = cellValue(first.result.table[0], left.columns[0].id);
+    const planted = left.rows.find(row => row.input === firstInput)!;
+    await expect(grid.locator(`.ag-center-cols-container .ag-row[row-index="0"] [col-id="${left.columns[1].id}"]`))
+      .toHaveText(planted.output);
+  }
+  await info.attach('lifecycle-source-and-first-block', {
+    contentType: 'application/json', body: JSON.stringify({ datasets, first }),
+  });
+  return { left, right, grid, drawer, first, requests, responses };
+}
+
+async function scrollComparison(page: Page, index: number) {
+  await page.locator('.experiment-view-grid .ag-body-viewport').evaluate((element, top) => {
+    element.scrollTop = top;
+  }, index * ROW_HEIGHT);
+}
+
+async function openEarlierDrawer(page: Page, state: Awaited<ReturnType<typeof openLifecycleComparison>>) {
+  const { first, left, drawer, grid } = state;
+  const id = first.result.metadata.compare_id;
+  const detail = page.waitForResponse(response => new URL(response.url()).pathname === rowPath(id, first.result.table[0].row_id as string));
+  const neighbour = page.waitForResponse(response => new URL(response.url()).pathname === rowPath(id, first.result.table[1].row_id as string));
+  await grid.locator(`.ag-center-cols-container .ag-row[row-index="0"] [col-id="${left.columns[1].id}"]`).click();
+  expect((await detail).status()).toBe(200);
+  expect((await neighbour).status()).toBe(200); // Finish actual detail prefetch before invalidating the ID.
+  await expect(drawer).toBeVisible();
+  await expect(drawer.getByText(cellValue(first.result.table[0], left.columns[1].id), { exact: true })).toBeVisible();
+}
+
+test('Compare lifecycle: later-block fresh ID retires the earlier drawer and delayed competing generation',
+  async ({ page, actor, probe }, info) => {
+    const state = await openLifecycleComparison({ page, actor, probe }, info);
+    const { left, first, grid, drawer, responses } = state;
+    const oldId = first.result.metadata.compare_id;
+    await openEarlierDrawer(page, state);
+    await actor.api.delete(deletePath(oldId)); // A real server cache miss, not a fabricated 200 payload.
+    const held = new Map<number, { route: Route; response: APIResponse; body: ComparePage; released: boolean }>();
+    await page.route(`**${comparePath(left.id)}`, async route => {
+      const sent = route.request().postDataJSON();
+      if (sent.compare_id === oldId && [2, 3].includes(sent.current_page_index)) {
+        const response = await route.fetch();
+        expect(response.status()).toBe(200);
+        const body: ComparePage = await response.json();
+        expect(body.result.table).toHaveLength(sent.current_page_index === 2 ? 10 : 2);
+        expect(body.result.metadata.compare_id).not.toBe(oldId);
+        held.set(sent.current_page_index, { route, response, body, released: false });
+      } else await route.continue();
+    });
+    try {
+      // Scroll the real grid even while its modal drawer is open. Both native
+      // SSRM loads remain in flight; only their real HTTP fulfilment is delayed.
+      await scrollComparison(page, 20);
+      await expect.poll(() => held.has(2), { timeout: UI_READY }).toBe(true);
+      await scrollComparison(page, 30);
+      await expect.poll(() => held.has(3), { timeout: UI_READY }).toBe(true);
+      const winner = held.get(2)!;
+      const loser = held.get(3)!;
+      const newId = winner.body.result.metadata.compare_id;
+      const orphanId = loser.body.result.metadata.compare_id;
+      expect(orphanId).not.toBe(newId);
+      const nextRequest = page.waitForRequest(request => new URL(request.url()).pathname === comparePath(left.id)
+        && request.method() === 'POST');
+      await winner.route.fulfill({ response: winner.response });
+      winner.released = true;
+      expect((await nextRequest).postDataJSON().compare_id).toBe(newId);
+      await expect(drawer).toHaveCount(0);
+      await scrollComparison(page, 0);
+      await expect.poll(() => responses.some(response => {
+        const sent = response.request().postDataJSON();
+        return sent.compare_id === newId && sent.current_page_index === 0;
+      }), { timeout: UI_READY }).toBe(true);
+      const reloaded = responses.find(response => {
+        const sent = response.request().postDataJSON();
+        return sent.compare_id === newId && sent.current_page_index === 0;
+      })!;
+      expect(reloaded.status()).toBe(200);
+      const rebuilt: ComparePage = await reloaded.json();
+      expect(rebuilt.result.metadata.compare_id).toBe(newId);
+      const orphanDeleted = page.waitForResponse(response => new URL(response.url()).pathname === deletePath(orphanId)
+        && response.request().method() === 'DELETE');
+      await loser.route.fulfill({ response: loser.response });
+      loser.released = true;
+      expect((await orphanDeleted).status()).toBe(200);
+      // Revisit the competing block, not only row zero: its visible row IDs
+      // must come from the adopted server snapshot, never the delayed orphan.
+      const adoptedBlock = await actor.api.post<ComparePage>(comparePath(left.id), {
+        dataset_ids: [state.right.id], base_column_name: 'input', page_size: PAGE_SIZE,
+        current_page_index: 2, compare_id: newId,
+      });
+      expect(adoptedBlock.result.metadata.compare_id).toBe(newId);
+      await scrollComparison(page, 20);
+      await expect(grid.locator('.ag-center-cols-container .ag-row[row-index="20"]'))
+        .toHaveAttribute('row-id', adoptedBlock.result.table[0].row_id as string);
+      await scrollComparison(page, 0);
+      const row = rebuilt.result.table[0];
+      await expect(grid.locator(`.ag-center-cols-container .ag-row[row-index="0"]`)).toHaveAttribute('row-id', row.row_id as string);
+      const detail = page.waitForResponse(response => new URL(response.url()).pathname === rowPath(newId, row.row_id as string));
+      await grid.locator(`.ag-center-cols-container .ag-row[row-index="0"] [col-id="${left.columns[1].id}"]`).click();
+      expect((await detail).status()).toBe(200);
+      await expect(drawer.getByText(cellValue(row, left.columns[1].id), { exact: true })).toBeVisible();
+      await info.attach('real-rollover-and-competing-blocks', { contentType: 'application/json',
+        body: JSON.stringify({ oldId, winner: winner.body, loser: loser.body, rebuilt }) });
+    } finally {
+      for (const entry of held.values()) if (!entry.released) await entry.route.fulfill({ response: entry.response });
+      await page.unrouteAll({ behavior: 'wait' });
+    }
+  });
+
+for (const initiallyEmpty of [false, true]) {
+  test(`Compare lifecycle: ${initiallyEmpty ? 'initial empty refresh' : 'nonempty to zero rollover'} is terminal in real AG Grid`,
+    async ({ page, actor, probe }, info) => {
+      const state = await openLifecycleComparison({ page, actor, probe }, info, initiallyEmpty);
+      const { left, right, first, grid, drawer, requests } = state;
+      let requestsBeforeRollover = requests.length;
+      if (!initiallyEmpty) {
+        await openEarlierDrawer(page, state);
+        // Mutate only this synthetic actor's input cells. The endpoint itself
+        // computes the now-empty join and emits its real metadata-only result.
+        const changed = await probe.pg<{ id: string }>(
+          `UPDATE model_hub_cell SET value = 'disjoint-' || value
+           WHERE dataset_id = $1 AND column_id = $2 AND NOT deleted RETURNING id`,
+          [right.id, right.columns[0].id]);
+        expect(changed).toHaveLength(32);
+        await actor.api.delete(deletePath(first.result.metadata.compare_id));
+        requestsBeforeRollover = requests.length;
+        const emptyResponse = page.waitForResponse(response => new URL(response.url()).pathname === comparePath(left.id)
+          && response.request().postDataJSON().current_page_index >= 2);
+        await scrollComparison(page, 30);
+        const response = await emptyResponse;
+        expect(response.status()).toBe(200);
+        const empty: ComparePage = await response.json();
+        expect(empty.result.metadata).toEqual({ compare_id: expect.any(String), total_rows: 0, total_pages: 0 });
+        expect(empty.result.metadata.compare_id).not.toBe(first.result.metadata.compare_id);
+        await info.attach('real-zero-rollover', { contentType: 'application/json', body: JSON.stringify(empty) });
+      }
+      await expect(drawer).toHaveCount(0);
+      await expect(page.getByText('No Common rows', { exact: true })).toBeVisible();
+      await expect(grid.locator('.ag-center-cols-container .ag-row')).toHaveCount(0);
+      await expect(grid.locator('.ag-floating-bottom .ag-row')).toHaveCount(0);
+      if (initiallyEmpty) {
+        // No column_config is returned for an initially empty join, hence no
+        // sortable header. Exercise the real caller's explicit purge/reset via
+        // download instead: this uncached ID gets the actual typed 404.
+        const missed = page.waitForResponse(response => new URL(response.url()).pathname === downloadPath(left.id));
+        const rebuilt = page.waitForResponse(response => new URL(response.url()).pathname === comparePath(left.id));
+        await page.getByRole('button', { name: 'Download comparison CSV', exact: true }).click();
+        const missing = await missed;
+        expect(missing.status()).toBe(404);
+        expect((await missing.json()).code).toBe('compare_not_found');
+        const response = await rebuilt;
+        expect(response.status()).toBe(200);
+        expect(response.request().postDataJSON().compare_id).toBeNull();
+        const empty: ComparePage = await response.json();
+        expect(empty.result.metadata.total_rows).toBe(0);
+        expect(empty.result.metadata.compare_id).not.toBe(first.result.metadata.compare_id);
+      } else {
+        // AG Grid's supported header keyboard sorting invalidates its SSRM
+        // store. This is a real refresh, not a manually called datasource mock.
+        const header = grid.locator('.ag-header-cell').first();
+        await header.focus();
+        await header.press('Enter');
+        await expect(header).toHaveAttribute('aria-sort', 'ascending');
+      }
+      const count = requests.length;
+      await expect(page.getByText('No Common rows', { exact: true })).toBeVisible();
+      await expect(grid.locator('.ag-center-cols-container .ag-row')).toHaveCount(0);
+      // Observe a bounded quiet window so an asynchronous purge/POST loop cannot
+      // pass just because the first empty overlay was briefly visible.
+      await page.waitForTimeout(1_000);
+      expect(requests).toHaveLength(count);
+      if (initiallyEmpty) expect(count).toBe(2);
+      else {
+        expect(count).toBeGreaterThan(requestsBeforeRollover);
+        expect(count).toBeLessThanOrEqual(requestsBeforeRollover + 2);
+      }
+    });
+}
+
+test('Compare lifecycle: real typed download miss rebuilds once and only the next explicit download uses the new ID',
+  async ({ page, actor, probe }, info) => {
+    const state = await openLifecycleComparison({ page, actor, probe }, info);
+    const { left, right, first, grid, requests } = state;
+    const oldId = first.result.metadata.compare_id;
+    const downloads: Request[] = [];
+    page.on('request', request => {
+      if (new URL(request.url()).pathname === downloadPath(left.id) && request.method() === 'POST') downloads.push(request);
+    });
+    const button = page.getByRole('button', { name: 'Download comparison CSV', exact: true });
+    // Dataset/access 404 is a different real backend response, and must not run
+    // the recovery callback. Substitute only the requested peer, never the body.
+    await page.route(`**${downloadPath(left.id)}`, async route => {
+      const response = await route.fetch({ postData: { ...route.request().postDataJSON(), dataset_ids: [randomUUID()] } });
+      expect(response.status()).toBe(404);
+      expect((await response.json()).code).toBe('not_found');
+      await route.fulfill({ response });
+    }, { times: 1 });
+    const denied = page.waitForResponse(response => new URL(response.url()).pathname === downloadPath(left.id));
+    const beforeDenied = requests.length;
+    await button.click();
+    expect((await denied).status()).toBe(404);
+    await page.waitForTimeout(500);
+    expect(requests).toHaveLength(beforeDenied);
+    await expect(page.getByText(expiredMessage, { exact: true })).toHaveCount(0);
+
+    await actor.api.delete(deletePath(oldId));
+    const missed = page.waitForResponse(response => new URL(response.url()).pathname === downloadPath(left.id));
+    const rebuilding = page.waitForResponse(response => new URL(response.url()).pathname === comparePath(left.id)
+      && response.request().method() === 'POST');
+    await button.click();
+    const missing = await missed;
+    expect(missing.status()).toBe(404);
+    const message = 'This comparison was not found or has expired. Open the comparison again.';
+    expect(await missing.json()).toEqual({ status: false, type: 'not_found', code: 'compare_not_found',
+      detail: message, message, error: message, result: message });
+    expect(missing.request().postDataJSON()).toEqual({ dataset_ids: [right.id], base_column_name: 'input', compare_id: oldId });
+    await expect(page.getByText(expiredMessage, { exact: true })).toBeVisible();
+    const response = await rebuilding;
+    expect(response.status()).toBe(200);
+    expect(response.request().postDataJSON().compare_id).toBeNull();
+    const rebuilt: ComparePage = await response.json();
+    const newId = rebuilt.result.metadata.compare_id;
+    expect(newId).not.toBe(oldId);
+    expect(rebuilt.result.metadata.total_rows).toBe(32);
+    await expect(grid.locator(`.ag-center-cols-container .ag-row[row-index="0"]`))
+      .toHaveAttribute('row-id', rebuilt.result.table[0].row_id as string);
+    expect(downloads).toHaveLength(2); // Generic failure + typed miss; never an automatic CSV retry.
+    const csvResponse = page.waitForResponse(response => new URL(response.url()).pathname === downloadPath(left.id));
+    const downloaded = page.waitForEvent('download');
+    await button.click();
+    const csv = await csvResponse;
+    expect(csv.status()).toBe(200);
+    expect(csv.request().postDataJSON().compare_id).toBe(newId);
+    expect((await downloaded).suggestedFilename()).toBe(`dataset-${left.id}.csv`);
+    const text = await csv.text();
+    for (const row of left.rows) expect(text).toContain(row.output);
+    for (const row of right.rows) expect(text).toContain(row.output);
+    expect(downloads).toHaveLength(3);
+    await info.attach('download-rebuilt-comparison', { contentType: 'application/json',
+      body: JSON.stringify({ oldId, newId, rebuilt, downloadCount: downloads.length }) });
+  });

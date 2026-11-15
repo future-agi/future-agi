@@ -112,6 +112,10 @@ const CompareData = ({
   // detail row IDs may only be used within the generation that returned them.
   const generationRef = useRef(0);
   const rowGenerationsRef = useRef(new WeakMap());
+  // Empty joins have a server-minted ID but no stored pages/metadata. Keep that
+  // snapshot locally until selection/download recovery resets it; asking the
+  // server to reuse its ID would build another empty comparison indefinitely.
+  const emptyComparisonRef = useRef(null);
   // The selection whose expired comparison was already rebuilt once.
   const restartedSelectionRef = useRef(null);
   useLayoutEffect(() => {
@@ -283,6 +287,7 @@ const CompareData = ({
   const [columnAvgs, setColumnAvgs] = useState([]);
 
   const clearComparisonRows = useCallback(() => {
+    emptyComparisonRef.current = null;
     rowGenerationsRef.current = new WeakMap();
     setExpandRow(null);
     gridApiRef.current?.api?.deselectAll?.();
@@ -345,6 +350,16 @@ const CompareData = ({
           generationRef.current += 1;
           compareIdSelectionRef.current = null;
           clearComparisonRows();
+        }
+
+        if (
+          emptyComparisonRef.current?.selection === selection &&
+          emptyComparisonRef.current.id === compareId?.current
+        ) {
+          // Complete the NEW AG Grid store after the single terminal purge (and
+          // any subsequent refresh) without another POST or another purge.
+          params.success({ rowData: [], rowCount: 0 });
+          return;
         }
 
         // Check if selected datasets is valid
@@ -414,6 +429,25 @@ const CompareData = ({
             return;
           }
 
+          if (data?.result?.metadata?.total_rows === 0) {
+            generationRef.current += 1;
+            compareId.current = responseCompareId;
+            compareIdSelectionRef.current = selection;
+            clearComparisonRows();
+            emptyComparisonRef.current = { selection, id: responseCompareId };
+            setHasData(false);
+            if (requestCompareId || request.startRow > 0) {
+              // A later block's success([], 0) alone cannot retire all old SSRM
+              // blocks. Destroy that store once; its replacement reads the
+              // terminal snapshot above, including when reload is synchronous.
+              params.fail?.();
+              gridApiRef.current?.api?.refreshServerSide({ purge: true });
+            } else {
+              params.success({ rowData: [], rowCount: 0 });
+            }
+            return;
+          }
+
           if (responseCompareId !== requestCompareId) {
             // Adopt the new ID BEFORE purging, so even a synchronous reload
             // uses it. Initial null -> first ID invalidates competing builds
@@ -429,13 +463,12 @@ const CompareData = ({
             }
           }
 
-          // Check if data is empty or doesn't have required structure
+          // An empty out-of-range block is not an empty comparison. Preserve
+          // its total and earlier blocks rather than installing a terminal zero.
           if (!data?.result?.table || data.result.table.length === 0) {
-            setHasData(false);
-            params.success({
-              rowData: [],
-              rowCount: 0,
-            });
+            const totalRows = data?.result?.metadata?.total_rows ?? 0;
+            setHasData(totalRows > 0);
+            params.success({ rowData: [], rowCount: totalRows });
             return;
           }
 
