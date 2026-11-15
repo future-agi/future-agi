@@ -1,3 +1,4 @@
+# ruff: noqa: F811 -- shared real PostgreSQL fixture
 """Source-retention regressions on real PostgreSQL control state."""
 
 from datetime import timedelta
@@ -9,16 +10,26 @@ import pytest
 from django.utils import timezone
 
 from tracer.models.derived_metric import (
-    DerivedMetricRun, MetricErasureRequest, MetricProjectRefresh,
+    DerivedMetricRun,
+    MetricErasureRequest,
+    MetricProjectRefresh,
 )
 from tracer.services.derived_metrics import admission, reads, source_retention
 from tracer.services.derived_metrics.contributors import read_contributors
 from tracer.services.derived_metrics.erasure import erase_metric_data
 from tracer.services.derived_metrics.errors import MetricInputError
-from tracer.services.derived_metrics.service import MetricUnavailableError, read_results
-from tracer.sql_workbench import service as sql_service, tasks
+from tracer.services.derived_metrics.service import (
+    MetricUnavailableError,
+    read_results,
+)
+from tracer.sql_workbench import service as sql_service
+from tracer.sql_workbench import tasks
 from tracer.sql_workbench.tests.test_permissions import create_job, tenants  # noqa: F401
-from tracer.tests.test_derived_metric_lifecycle_safety import _commit, _metric, _version
+from tracer.tests.test_derived_metric_lifecycle_safety import (
+    _commit,
+    _metric,
+    _version,
+)
 
 pytestmark = pytest.mark.django_db(transaction=True)
 
@@ -87,11 +98,13 @@ def test_disabled_rollout_dispatches_only_enrolled_privacy_work(
     settings.METRICS_ENABLED = 0
     settings.METRICS_MAX_CONCURRENT_PROJECTS = 1
     state = MetricProjectRefresh.objects.create(project=observe_project, pending_expiry=True)
-    reservation, = admission.reserve_projects()
-    assert reservation.purpose == "expiry"
-    assert reservation.grant.project_id == state.project_id
+    payloads = []
+    assert admission.dispatch(payloads.append) == 1
+    payload, = payloads
+    assert payload["purpose"] == "expiry"
+    assert payload["project_id"] == str(state.project_id)
     runner = Mock()
-    assert admission.execute_reservation(reservation.payload(), runner=runner)
+    assert admission.execute_reservation(payload, runner=runner)
     assert runner.call_args.args[1] == "expiry"
 
 

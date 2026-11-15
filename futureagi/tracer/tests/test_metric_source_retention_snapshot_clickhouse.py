@@ -11,7 +11,8 @@ from tracer.models.derived_metric import DerivedMetricRun, MetricErasureRequest
 from tracer.services.derived_metrics import erasure, source_retention
 from tracer.tests.test_derived_metric_lifecycle_safety import _metric, _version
 from tracer.tests.test_derived_metric_publication_clickhouse import (  # noqa: F401
-    metric_ch, publication_store,
+    metric_ch,
+    publication_store,
 )
 
 pytestmark = pytest.mark.django_db(transaction=True)

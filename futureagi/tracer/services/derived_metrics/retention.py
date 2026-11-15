@@ -18,8 +18,8 @@ never rewritten; terminal private replay/preimage chunks can be deleted whole.
 
 import json
 from contextlib import ExitStack
-from functools import wraps
 from datetime import UTC, datetime, timedelta
+from functools import wraps
 from uuid import UUID
 
 from django.db import connection
@@ -472,7 +472,10 @@ def _classify_recovery(
                         "level",
                         "is_deleted",
                     }:
-                        result[part].append(entry)
+                        result[part].append({
+                            key: value for key, value in entry.items()
+                            if key in {"bucket_start", "level"}
+                        })
                 elif anchor is None and strict:
                     # Unknown is not retained. Persist only the blocked-work bit.
                     blocked = True
@@ -482,7 +485,7 @@ def _classify_recovery(
                             k: v
                             for k, v in entry.items()
                             if k
-                            in {"bucket_start", "group_key", "scope_key", "stratum_key"}
+                            in {"bucket_start", "level"}
                         }
                     )
     return result, blocked
@@ -667,6 +670,10 @@ def _close_failed_attempts(function):
             project_id=writer.lease.project_id,
             state__in=MetricRefreshAttempt.OPEN_STATES,
         ).values_list("id", flat=True))
+        if function.__name__ == "retirement_plan":
+            # This PG-only draft belongs to this invocation too; closing only
+            # the successor leaves the failed original PREPARED indefinitely.
+            prior.discard(args[0].id)
         try:
             return function(writer, *args, **kwargs)
         except Exception:
@@ -979,7 +986,7 @@ def _retirement_plan(writer, draft, head, definitions, cutoff, captures):
         )
     # Copy only whole retained buckets; the boundary bucket is unavailable.
     buckets, bp = captures.proposal(BUCKET_TOTALS)
-    buckets = f"SELECT * FROM ({buckets}) WHERE bucket_start >= toDateTime64(%(aggregate_cutoff)s, 6, 'UTC')"
+    buckets = f"SELECT * FROM ({buckets}) WHERE is_deleted = 0 AND bucket_start >= toDateTime64(%(aggregate_cutoff)s, 6, 'UTC')"
     bp = {**bp, "aggregate_cutoff": cutoff}
     recomputed = tuple(
         (UUID(str(d.metric_id)), d.version) for d in definitions if d.level != "user"
@@ -1599,7 +1606,7 @@ def expire_project(writer, definitions, *, retention_days, now=None, as_of=None)
                 expiry_span_buckets=tuple(sorted(span_dirty)),
             )
         if table == BUCKET_TOTALS:
-            where = f"({where}) AND bucket_start >= toDateTime64(%(expiry_cutoff)s, 6, 'UTC')"
+            where = f"({where}) AND is_deleted = 0 AND bucket_start >= toDateTime64(%(expiry_cutoff)s, 6, 'UTC')"
         if table == SOURCE_DEPENDENCIES:
             # B04's unit_start is the SPAN start. A recent member does not
             # make an expired conversation's private membership retainable.

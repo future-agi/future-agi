@@ -47,7 +47,10 @@ def require_window(organization_id, start, *, manifest=None):
 def expire_run(run, *, now=None):
     """Permanently revoke a frozen namespace before any physical deletion."""
     from tracer.models.derived_metric import DerivedMetricRun, MetricGenerationPin
-    from tracer.services.derived_metrics.deletion_protocol import _intent, serialized_project
+    from tracer.services.derived_metrics.deletion_protocol import (
+        _intent,
+        serialized_project,
+    )
 
     now = now or timezone.now()
     metric = run.definition.metric

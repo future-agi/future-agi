@@ -91,7 +91,7 @@ def execute_sql(job_id):
                 != cache_key
             ):
                 cache_key = ""
-        from .metric_retention import result_allowed, require_source
+        from .metric_retention import require_source, result_allowed
 
         require_source(job.organization_id, job.project_id, job.start, job.sql)
         if not result_allowed(job):
@@ -149,9 +149,8 @@ def execute_sql(job_id):
     max_retries=0,
 )
 def purge_expired_sql_results():
-    from .service import purge_expired_results
-
     from .metric_retention import expire_results
+    from .service import purge_expired_results
 
     try:
         expire_results(limit=1000)

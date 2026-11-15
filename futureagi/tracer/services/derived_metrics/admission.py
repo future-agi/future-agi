@@ -490,7 +490,8 @@ def dispatch(enqueue: Callable[[dict], None], *, clock: Callable = timezone.now)
     count = 0
     for reservation in reserve_projects(clock=clock):
         with _project_admission(
-            reservation.grant.project_id, reservation.expiry_id
+            reservation.grant.project_id, reservation.expiry_id,
+            privacy_only=reservation.purpose == "expiry",
         ) as admitted:
             if not admitted:
                 _release_queued(reservation)

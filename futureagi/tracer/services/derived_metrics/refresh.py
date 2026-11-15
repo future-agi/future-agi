@@ -1653,7 +1653,7 @@ class RefreshWriter:
             # forward, so obsolete/abandoned payload needs its own trigger. Omit
             # BEFORE this pass's expiry: that checkpoint then needs fewer stored
             # recipes, and a version whose pin this expiry invalidates keeps the
-            # anonymous history the expiry produces until a later pass omits it.
+            # retained-only history until a later pass omits it.
             self.compact()
         if (
             cutoff is not None
@@ -2722,7 +2722,11 @@ class RefreshWriter:
                 ) as parts:
                     captured = True
                     replacement = replacement_select(parts, old)
-                    vanished = self.store.execute(
+                    if complete_fields and attempt.purpose == "compaction":
+                        # A complete checkpoint has no older keys to mask. Drop
+                        # departed group labels instead of preserving tombstones.
+                        replacement = f"SELECT * FROM ({replacement}) WHERE is_deleted = 0"
+                    vanished = [] if complete_fields and attempt.purpose == "compaction" else self.store.execute(
                         f"SELECT {', '.join(KEYS)} FROM ({old}) WHERE ({', '.join(KEYS)}) NOT IN (SELECT {', '.join(KEYS)} FROM ({parts}))",
                         p,
                     )

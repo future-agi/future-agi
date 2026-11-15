@@ -10,7 +10,6 @@ from tracer.services.derived_metrics.source_retention import window_retained
 from .compiler import validate
 from .runner import QueryUnavailable
 
-
 MESSAGE = "Metric source data changed or expired. Run the query again."
 
 

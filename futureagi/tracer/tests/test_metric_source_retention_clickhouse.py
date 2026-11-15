@@ -12,9 +12,16 @@ from tracer.services.derived_metrics import retention
 from tracer.services.derived_metrics.publication import committed_rows_select
 from tracer.services.derived_metrics.storage import BUCKET_TOTALS, RETIRED_PARTS
 from tracer.tests.test_derived_metric_publication_clickhouse import (  # noqa: F401
-    current_fields, default_row_select, live_writer, metric_ch, publication_store,
+    current_fields,
+    default_row_select,
+    live_writer,
+    metric_ch,
+    publication_store,
 )
-from tracer.tests.test_derived_metric_retention_clickhouse import numeric_definition, seed_fields_and_buckets
+from tracer.tests.test_derived_metric_retention_clickhouse import (
+    numeric_definition,
+    seed_fields_and_buckets,
+)
 
 pytestmark = pytest.mark.django_db(transaction=True)
 
