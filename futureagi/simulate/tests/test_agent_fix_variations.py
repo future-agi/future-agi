@@ -778,6 +778,32 @@ class TestSettle:
         assert variations.advance(str(retried.id)) == VariationsStep.WRITING
         assert _command(retried).payload["_fix_run_id"] == str(retried.id)
 
+    def test_a_retry_that_asks_the_builder_again_refuses_variations_that_do_not_fit(
+        self, fix_run, user
+    ):
+        close_fix_run(
+            fix_run.id,
+            AgentFixRun.State.FAILED,
+            failure={"code": "fix_variations_timeout", "message": "m"},
+        )
+
+        # The environment's suite grew since the launch: its variations no longer fit.
+        with (
+            patch("simulate.services.agent_fix_runs.CHAT_CHECKPOINT_MAX_SCENARIOS", 1),
+            pytest.raises(HostedHarnessError) as refused,
+        ):
+            retry_fix_run(
+                AgentFixRun.no_workspace_objects.get(id=fix_run.id), user=user
+            )
+
+        assert (refused.value.code, refused.value.status_code) == (
+            "scenario_limit_exceeded",
+            422,
+        )
+        assert not AgentFixRun.no_workspace_objects.filter(
+            retried_from=fix_run
+        ).exists()
+
 
 def _token(environment, fix_run):
     """The chat workspace's draft basis now: a save from a sandbox holding an older
