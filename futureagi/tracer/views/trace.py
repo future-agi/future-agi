@@ -217,7 +217,7 @@ from tracer.utils.helper import (
 )
 from tracer.utils.otel import CallAttributes, ConversationAttributes
 from tracer.utils.property_registry import validate_property_graph_namespace
-from tracer.views.entity_tags import tag_update_response
+from tracer.views.entity_tags import tag_read_error_response, tag_update_response
 from tracer.views.observation_span import get_observation_spans
 
 logger = structlog.get_logger(__name__)
@@ -2820,12 +2820,17 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                 read_deadline=kwargs.get("read_deadline"),
             )
 
+        except TagReadUnavailable as exc:
+            return tag_read_error_response(
+                self._gm,
+                exc,
+                unavailable_message="Trace data is temporarily unavailable. Please retry.",
+            )
         except UnsupportedFilterShapeError:
             return self._gm.bad_request("Trace filter configuration is invalid")
         except Exception as exc:
             if (
-                isinstance(exc, TagReadUnavailable)
-                or is_read_budget_error(exc)
+                is_read_budget_error(exc)
                 or is_clickhouse_query_error(exc)
                 or is_clickhouse_query_size_error(exc)
             ):
@@ -3798,16 +3803,20 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             return self._gm.custom_error_response(
                 status.HTTP_400_BAD_REQUEST, str(exc), code=exc.code
             )
+        except TagReadUnavailable as exc:
+            return tag_read_error_response(
+                self._gm,
+                exc,
+                unavailable_message="Trace data is temporarily unavailable. Please retry.",
+            )
         except UnsupportedFilterShapeError:
             return self._gm.bad_request("Trace filter configuration is invalid")
         except FilterPrincipalContextError as exc:
             return self._gm.bad_request(str(exc))
         except Exception as exc:
-            if (
-                isinstance(exc, TagReadUnavailable)
-                or is_clickhouse_api_read_unavailable_error(exc)
-                or is_clickhouse_query_size_error(exc)
-            ):
+            if is_clickhouse_api_read_unavailable_error(
+                exc
+            ) or is_clickhouse_query_size_error(exc):
                 logger.warning(
                     "observe_trace_list_query_unavailable",
                     project_id=str(
@@ -3934,6 +3943,12 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             return self._gm.bad_request("Project not found")
         except FilterPrincipalContextError as exc:
             return self._gm.bad_request(str(exc))
+        except TagReadUnavailable as exc:
+            return tag_read_error_response(
+                self._gm,
+                exc,
+                unavailable_message="Voice call data is temporarily unavailable. Please retry.",
+            )
         except Exception as exc:
             if is_read_budget_error(exc) or is_clickhouse_query_error(exc):
                 logger.warning(
@@ -4564,6 +4579,12 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                 request, trace_id, project_id, filters, analytics
             )
 
+        except TagReadUnavailable as exc:
+            return tag_read_error_response(
+                self._gm,
+                exc,
+                unavailable_message="Trace navigation is temporarily unavailable. Please retry.",
+            )
         except TraceNavigationReadUnavailable as exc:
             # A completed bounded read that does not contain the requested
             # trace is an exact not-found result, not an availability failure.
@@ -7368,6 +7389,16 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             )
             return self._gm.success_response(result)
 
+        except GraphTagFilterTooBroadError as exc:
+            return self._gm.custom_error_response(
+                status.HTTP_400_BAD_REQUEST, exc.message, code=exc.code
+            )
+        except TagReadUnavailable as exc:
+            return tag_read_error_response(
+                self._gm,
+                exc,
+                unavailable_message="Agent graph data is temporarily unavailable. Please retry.",
+            )
         except (UnsupportedFilterShapeError, FilterPrincipalContextError):
             return self._gm.bad_request("Agent graph filter configuration is invalid")
         except Exception as exc:

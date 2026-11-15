@@ -27,6 +27,7 @@ from tracer.services.clickhouse.v2.effective_tags import (
     EffectiveTagRelation,
     prepare_effective_tag_params,
 )
+from tracer.services.entity_tags import TagReadUnavailable
 
 _INITIAL_SLICE = timedelta(minutes=5)
 _MAX_SLICE = timedelta(days=2)
@@ -4636,6 +4637,9 @@ def read_bounded_filter_neighbors(
                     else {}
                 ),
             )
+        except TagReadUnavailable:
+            # Keep deterministic tag limits actionable at the HTTP boundary.
+            raise
         except Exception as exc:
             code = (
                 "read_budget_exceeded" if is_read_budget_error(exc) else "query_failed"

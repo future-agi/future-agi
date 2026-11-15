@@ -15,6 +15,20 @@ _MESSAGES = {
 }
 
 
+def tag_read_error_response(gm, error, *, unavailable_message):
+    """Keep deterministic query limits distinct from transient storage failures."""
+    if error.code in {"tag_overlay_budget_exceeded", "tag_candidate_budget_exceeded"}:
+        return gm.custom_error_response(
+            400,
+            "This Tag filter exceeds the supported query size. "
+            "Narrow the time range, projects, or tag conditions.",
+            code="tag_filter_too_broad",
+        )
+    return gm.custom_error_response(
+        503, unavailable_message, code="service_unavailable"
+    )
+
+
 def tag_update_response(request, *, trace_id=None):
     gm = GeneralMethods(request)
     try:
