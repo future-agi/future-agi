@@ -177,7 +177,7 @@ function EvidenceContent({ skillId, candidate, onSelectRun, selectedRunId }) {
                     <>
                       <Typography variant="s3" color="text.secondary">
                         {detail.data.counts.graded}/{detail.data.counts.planned}{" "}
-                        attempts graded · {detail.data.counts.incomplete}{" "}
+                        runs graded · {detail.data.counts.incomplete}{" "}
                         incomplete · {detail.data.counts.notStarted} not started
                       </Typography>
                       <TestExecutionConfiguration

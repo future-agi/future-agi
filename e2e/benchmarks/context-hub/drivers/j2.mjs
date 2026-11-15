@@ -84,7 +84,7 @@ export async function createDriver({ jobId, runId, registration }) {
       const go = (target, url) => op.transition(target, () => ledger.measure({ dimension: 'A', primitive: 'click', actor: 'incident-responder', step: stage.id, phase: stage.phase, target }, () => page.goto(url)));
       const edit = (target, effect) => ledger.measure({ dimension: 'A', primitive: 'field_edit', actor: 'incident-responder', step: stage.id, phase: stage.phase, target }, effect);
       const receipt = (source, hash, decision = null) => ledger.stage({ step: stage.id, phase: stage.phase, source, artifactHash: hash, actionSequences: [], ...(decision ? { decision } : {}) });
-      const RUN_BUTTON = { name: 'Run on the application', exact: true };
+      const RUN_BUTTON = { name: 'Run application test', exact: true };
       const CEILING = /I accept up to/;
       const group = () => page.getByRole('group', { name: 'Examples to run' });
       /** The plan is preselected from stored data. Each default is asserted visibly (never assumed) before the
@@ -127,7 +127,7 @@ export async function createDriver({ jobId, runId, registration }) {
           await go('inspect-context-tests', `/dashboard/skills/contexts/${input.contextId}?version=${input.versions.recorded}&tab=tests`);
           // The application's production binding already exists; a deployment without one registers it here.
           if (await page.getByRole('button', { name: 'Add application target', exact: true }).count()) await op.click(page.getByRole('button', { name: 'Add application target', exact: true }), 'add-application-target');
-          await op.click(page.getByRole('button', { name: 'Review runtime configuration', exact: true }), 'review-runtime-configuration');
+          await op.click(page.getByRole('button', { name: 'Show app configuration', exact: true }), 'review-runtime-configuration');
           await expect(page.getByText('Pin the application configuration')).toBeVisible();
           await expect(page.getByText('Source commit')).toBeVisible();
           await shot('01-pin-configuration');
@@ -182,7 +182,7 @@ export async function createDriver({ jobId, runId, registration }) {
           const saved = page.waitForResponse((res) => res.url().includes('/captures/') && res.url().endsWith('/accept/') && res.request().method() === 'POST');
           await op.click(dialog.getByRole('button', { name: 'Save test case', exact: true }), 'save-reviewed-case');
           requireValue((await saved).ok(), 'Capture acceptance failed');
-          await expect(dialog.getByRole('button', { name: 'Reproduce on the application', exact: true })).toBeVisible();
+          await expect(dialog.getByRole('button', { name: 'Set up application test', exact: true })).toBeVisible();
           const suite = await api('GET', `${root}tests/`);
           const captured = suite.cases.find((item) => item.title === TITLE.refund);
           requireValue(captured?.reviewed && captured.source_group_id === `trace:${state.source.source_fingerprint}` && captured.fixtures.some((f) => f.name === 'fi.application.expectations')
@@ -199,7 +199,7 @@ export async function createDriver({ jobId, runId, registration }) {
         if (stage.id === 'reproduce-historical') {
           // The saved example hands off to its reproduction: the recorded v4 reference, the head candidate and the
           // historical flag are carried from stored data, so the only decision here is the paid run.
-          await op.transition('reproduction-plan', () => op.click(page.getByRole('button', { name: 'Reproduce on the application', exact: true }), 'open-reproduction'));
+          await op.transition('reproduction-plan', () => op.click(page.getByRole('button', { name: 'Set up application test', exact: true }), 'open-reproduction'));
           await expect(page).toHaveURL(new RegExp(`reproduce=${state.capture.caseId}`));
           await expectPlan({ candidate: input.versions.head, reference: input.versions.recorded, titles: [TITLE.refund] });
           await shot('03a-reproduction-plan');
@@ -314,7 +314,7 @@ export async function createDriver({ jobId, runId, registration }) {
           const historical = run.cases.find((item) => item.historical);
           const cells = run.cells.filter((cell) => cell.case_id === historical.id && cell.variant === 'reference');
           const decision = { packet_sha256: digest({ run: run.id, cell: cells[0].attempt_id, outcomes: [cells[0].tools, cells[0].answer] }), preconditions_sha256: digest({ annotationRevision: run.annotation_revision, fingerprint: run.execution_fingerprint }) };
-          await op.click(page.getByRole('row', { name: new RegExp(`${TITLE.refund}.*Recorded v`) }).first(), 'open-original-failure-cell');
+          await op.click(page.getByRole('row', { name: new RegExp(`${TITLE.refund}.*Was failing on v`) }).first(), 'open-original-failure-cell');
           await expect(page.getByText('Observed by the application')).toBeVisible();
           await shot('06-cell-observation');
           await op.click(page.getByRole('radio', { name: /Disagree/ }), 'choose-disagree');
@@ -362,7 +362,7 @@ export async function createDriver({ jobId, runId, registration }) {
           // The pipeline's identity is carried from the CI result into the packet by the operator: a counted reconciliation.
           await op.reconcile('pipeline-identity-into-packet', async () => {
             await page.getByLabel('CI run link').fill(state.ci.summary.url);
-            await page.getByLabel('CI configuration ID').fill(state.ci.report.configuration_identity);
+            await page.getByLabel('CI pipeline name').fill(state.ci.report.configuration_identity);
             await page.getByLabel('CI result (pass or hold)').fill(state.ci.report.passed ? 'passed' : 'failed');
           });
           await op.click(page.getByRole('button', { name: 'Share run and attach CI result', exact: true }), 'prepare-release-packet');

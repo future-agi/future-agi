@@ -79,7 +79,7 @@ function Shell() {
    h(Box,{sx:{width:{xs:0,md:200},flexShrink:0,height:'100vh',position:'relative'}},h(Typography,{sx:{p:2}},'Sidebar')),
    h(Main,{sx:phone?{height:'calc(100vh - '+PHONE_BAR_HEIGHT+'px)'}:undefined},
     h(Box,{sx:{p:3}},
-     h(Button,{variant:'contained',onClick:run},'Run on the application'),
+     h(Button,{variant:'contained',onClick:run},'Run application test'),
      h(Button,{onClick:()=>setOpen(true),sx:{ml:1}},'Inspect'),
      h(Table,{size:'small','aria-label':'Cases to run'},h(TableHead,null,h(TableRow,null,h(TableCell,null,'Case'),h(TableCell,null,h(Box,{component:'span',sx:{position:'absolute',width:1,height:1,overflow:'hidden',clip:'rect(0 0 0 0)'}},'Was failing')))),h(TableBody,null,rows)),
      h(Box,{id:'result',tabIndex:-1,sx:{mt:4,p:2,border:1,borderColor:'divider',width:'calc(100% + 400px)'}},'Result')))),
@@ -149,7 +149,7 @@ try {
       await page.waitForFunction(() => [...document.querySelectorAll('[role="treeitem"]')].some((node) => node.textContent.includes('new.md')));
     }
   }
-  // SH1: the shell never scrolls. After "Run on the application" (scrollIntoView
+  // SH1: the shell never scrolls. After "Run application test" (scrollIntoView
   // plus focus on a wide result) and after Inspect opens and closes, the
   // document and the frame stay at scrollLeft 0, the document does not scroll
   // vertically, and nothing widens it past the viewport.
@@ -171,10 +171,10 @@ try {
     await page.goto(`http://127.0.0.1:${address.port}/__skills_shell__/`, { waitUntil: 'networkidle0' });
     await page.waitForSelector('main');
     assertShell(await shell(), `shell ${width} on load`);
-    await clickText('Run on the application');
+    await clickText('Run application test');
     await new Promise((resolve) => { setTimeout(resolve, 300); });
     const afterRun = await shell();
-    assertShell(afterRun, `shell ${width} after Run on the application`);
+    assertShell(afterRun, `shell ${width} after Run application test`);
     assert(afterRun.mainTop > 0, 'The result scrolls into view inside <main>.');
     await clickText('Inspect');
     await page.waitForSelector('.MuiDrawer-paper');

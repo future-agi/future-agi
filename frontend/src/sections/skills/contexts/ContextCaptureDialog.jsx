@@ -46,9 +46,30 @@ function Capture({
   // deselects exceptions instead of ticking each one; nothing is shared before the
   // separate redaction review and explicit workspace-sharing acknowledgement.
   const [selected, setSelected] = useState(() => segments.map((item) => item.id));
+  // Step 2 opens only for the snapshot of the selection it was made from, and never while a new
+  // preview is still in flight. Back returns here with every step-2 field kept (draft); the same
+  // selection reopens the same snapshot, a changed one makes a fresh snapshot.
+  const [step, setStep] = useState("select");
+  const [previewedFor, setPreviewedFor] = useState(null);
+  const [draft, setDraft] = useState(null);
+  const selectionKey = JSON.stringify([...selected].sort());
   const allowed =
     source.authorized === true && source.readOnly !== true && canCapture;
-  if (operation.result && allowed)
+  const next = async () => {
+    if (operation.result && previewedFor === selectionKey) {
+      setStep("review");
+      return;
+    }
+    const result = await operation.run(onPreview, {
+      traceRef: source.traceRef,
+      selectedSegmentIds: selected,
+    });
+    if (result) {
+      setPreviewedFor(selectionKey);
+      setStep("review");
+    }
+  };
+  if (operation.result && allowed && step === "review" && !operation.busy)
     return (
       <CaseImportDialog
         open={open}
@@ -63,6 +84,11 @@ function Capture({
         renderSaved={renderSaved}
         describeSource={describeSource}
         targetName={contextName}
+        initialDraft={draft}
+        onBack={(fields) => {
+          setDraft(fields);
+          setStep("select");
+        }}
       />
     );
   return (
@@ -164,12 +190,7 @@ function Capture({
             operation.uncertain ||
             selected.some((id) => !segments.some((item) => item.id === id))
           }
-          onClick={() =>
-            operation.run(onPreview, {
-              traceRef: source.traceRef,
-              selectedSegmentIds: selected,
-            })
-          }
+          onClick={next}
         >
           Preview selected text
         </Button>

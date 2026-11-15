@@ -21,7 +21,7 @@ vi.mock('src/api/skills/context-testing', () => ({
   useCreateContextTest: () => ({ mutateAsync: state.create }),
   useContextTestRuns: () => ({ data: { results: [] } }),
   useContextTestRun: () => ({}), useContextTestResults: () => ({}), useContextTestAttempt: () => ({}), useCancelContextTest: () => ({}),
-  // The unified Tests panel also mounts regression cases and application verification; no hosted runtime here.
+  // The unified Tests panel also mounts regression cases and the application test; no hosted runtime here.
   useContextTestSuite: () => ({ data: { revision: 1, cases: [] } }), useSaveContextTestSuite: () => ({ mutateAsync: vi.fn() }),
   useNativeTargets: () => ({ data: { runtime: { available: false, runtime: null, evidenceClass: null }, targets: [] } }),
   useNativeRuns: () => ({ data: [] }), useNativeRun: () => ({}), useRuntimeConfiguration: () => ({}),
@@ -46,8 +46,8 @@ async function prepare() {
   fireEvent.mouseDown(screen.getByRole('combobox', { name: 'Task model' }));
   fireEvent.click(await screen.findByRole('option', { name: 'gpt-4o-mini' }));
   fireEvent.change(screen.getByRole('textbox', { name: 'Maximum estimated cost (USD)' }), { target: { value: '1' } });
-  fireEvent.click(screen.getByRole('button', { name: 'Preview whole-context test' }));
-  await screen.findByRole('button', { name: 'Run whole-context test' });
+  fireEvent.click(screen.getByRole('button', { name: 'Preview answer check' }));
+  await screen.findByRole('button', { name: 'Run answer check' });
 }
 function reviewInventory() {
   fireEvent.click(screen.getByRole('checkbox', { name: 'The files sent to the model contain no answer keys or grading material.' }));
@@ -58,10 +58,10 @@ it('uses context semantics, a required without-context baseline, and explicit re
   mount(<ContextTestsPanel contextId="parent" draft={{ revision: 5, digest }} />);
   await prepare();
   expect(state.prepare.mock.calls[0][0]).toMatchObject({ harness: 'contexts-text-v1.2', candidate: { kind: 'draft', revision: 5, digest }, competitors: [], baselines: [{ kind: 'without_context' }], cases: { cases: [{ expected_trigger: null }] } });
-  expect(screen.getByRole('button', { name: 'Run whole-context test' })).toBeDisabled();
+  expect(screen.getByRole('button', { name: 'Run answer check' })).toBeDisabled();
   expect(state.create).not.toHaveBeenCalled();
   reviewInventory();
-  fireEvent.click(screen.getByRole('button', { name: 'Run whole-context test' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Run answer check' }));
   await waitFor(() => expect(state.create).toHaveBeenCalledOnce());
   expect(state.create.mock.calls[0][0].configuration.candidate.digest).toBe(digest);
 });
@@ -69,7 +69,7 @@ it('does not let a late preview authorize a changed candidate', async () => {
   const view = mount(<ContextTestsPanel contextId="parent" version={version} />);
   await prepare(); reviewInventory();
   view.rerender(<MemoryRouter><ContextTestsPanel contextId="parent" version={{ ...version, number: 3, digest: `sha256:${'b'.repeat(64)}` }} /></MemoryRouter>);
-  expect(screen.getByRole('button', { name: 'Run whole-context test' })).toBeDisabled();
+  expect(screen.getByRole('button', { name: 'Run answer check' })).toBeDisabled();
   expect(screen.getByText(/saved candidate changed/)).toBeVisible();
   expect(state.create).not.toHaveBeenCalled();
 });
@@ -77,7 +77,7 @@ it('recovers an uncertain admission using the identical body and key, without a 
   state.create.mockRejectedValueOnce(new Error('response lost')).mockResolvedValueOnce({ id: 'original-run' });
   mount(<ContextTestsPanel contextId="parent" version={version} />);
   await prepare(); reviewInventory();
-  fireEvent.click(screen.getByRole('button', { name: 'Run whole-context test' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Run answer check' }));
   fireEvent.click(await screen.findByRole('button', { name: 'Recover original context test' }));
   await waitFor(() => expect(state.create).toHaveBeenCalledTimes(2));
   expect(state.create.mock.calls[1][0]).toEqual(state.create.mock.calls[0][0]);

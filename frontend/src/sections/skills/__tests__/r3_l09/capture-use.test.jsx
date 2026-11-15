@@ -118,6 +118,40 @@ describe("reviewed source capture", () => {
       }),
     ).toHaveValue("");
   });
+  it("goes Back to the selection keeping every typed field, reuses the snapshot, and re-asks both acknowledgments", async () => {
+    const second = { ...capture, captureId: "capture-2", segments: [capture.segments[0]] };
+    const preview = vi.fn().mockResolvedValueOnce(capture).mockResolvedValueOnce(second);
+    render(<ContextCaptureDialog open onClose={() => {}} scopeKey="scope" state="ready" source={source} canCapture onPreview={preview} onAccept={vi.fn()} contextName="support-agent" />);
+    click("Preview selected text");
+    const name = await screen.findByRole("textbox", { name: "Case name" });
+    fireEvent.change(name, { target: { value: "Refund boundary" } });
+    fireEvent.change(screen.getByRole("textbox", { name: "Redacted request" }), { target: { value: "Customer asks for refund." } });
+    fireEvent.change(screen.getByRole("textbox", { name: "Expected answer must contain" }), { target: { value: "Eligible" } });
+    fireEvent.click(screen.getByRole("checkbox", { name: /confirmed the expected behavior independently/ }));
+    fireEvent.click(screen.getByRole("checkbox", { name: /Share this redacted request/ }));
+    click("Back");
+    // Step 1, with the selection as it was.
+    expect(screen.getByRole("checkbox", { name: "Customer request" })).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: "Tool result" })).toBeChecked();
+    // The same selection reopens the same snapshot without a second preview, every field kept, nothing pre-ticked.
+    click("Preview selected text");
+    expect(await screen.findByRole("textbox", { name: "Case name" })).toHaveValue("Refund boundary");
+    expect(preview).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole("textbox", { name: "Redacted request" })).toHaveValue("Customer asks for refund.");
+    expect(screen.getByRole("textbox", { name: "Expected answer must contain" })).toHaveValue("Eligible");
+    expect(screen.getByRole("checkbox", { name: /confirmed the expected behavior independently/ })).not.toBeChecked();
+    expect(screen.getByRole("checkbox", { name: /Share this redacted request/ })).not.toBeChecked();
+    // A changed selection makes a fresh snapshot: the request is re-read from it, the reviewer's own words stay.
+    click("Back");
+    fireEvent.click(screen.getByRole("checkbox", { name: "Tool result" }));
+    click("Preview selected text");
+    await waitFor(() => expect(preview).toHaveBeenCalledTimes(2));
+    expect(preview.mock.calls[1][0]).toMatchObject({ selectedSegmentIds: ["request-1"] });
+    expect(await screen.findByRole("textbox", { name: "Case name" })).toHaveValue("Refund boundary");
+    expect(screen.getByRole("textbox", { name: "Redacted request" })).toHaveValue(capture.segments[0].text);
+    expect(screen.queryByRole("textbox", { name: "Redacted tool result 1" })).not.toBeInTheDocument();
+    expect(screen.getByRole("checkbox", { name: /Share this redacted request/ })).not.toBeChecked();
+  });
   it("offers leaving the delivered context for another one without losing the span", () => {
     const change = vi.fn();
     render(

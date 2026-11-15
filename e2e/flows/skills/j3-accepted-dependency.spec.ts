@@ -181,7 +181,7 @@ test('SKILLS-E2E-030: retain accepted child versions while upstream advances dur
       expect(saved.resolved_lock.links.find((l: any) => l.skill_id === childId).version).toBe(wrong === 'autosave' ? 99 : 8);
       events.push({ stage: 'autosave', parent: parent.id, revision: saved.revision, digest: saved.digest });
       await page.getByRole('tab', { name: 'Tests', exact: true }).click();
-      await page.getByRole('button', { name: 'Save and open whole-context tests', exact: true }).click();
+      await page.getByRole('button', { name: 'Save and open answer check', exact: true }).click();
       await page.getByRole('textbox', { name: 'Test request', exact: true }).fill(prompt);
       await page.getByRole('textbox', { name: 'Expected answer contains', exact: true }).fill('approved-response');
       await page.getByRole('checkbox', { name: 'I reviewed this request and its expected answer.', exact: true }).check();
@@ -191,7 +191,7 @@ test('SKILLS-E2E-030: retain accepted child versions while upstream advances dur
       await page.getByRole('combobox', { name: /^Compare with/ }).click();
       await page.getByRole('option', { name: /^v1( \(production\))?$/ }).click();
       const previewResponse = page.waitForResponse(res => res.url().endsWith(`/contexts/${parent.id}/test-runs/preview/`) && res.request().method() === 'POST');
-      await page.getByRole('button', { name: 'Preview whole-context test', exact: true }).click();
+      await page.getByRole('button', { name: 'Preview answer check', exact: true }).click();
       const testPreview = (await (await previewResponse).json()).result;
       const handle = `s-${createHash('sha256').update(JSON.stringify([testPreview.fingerprint, childId])).digest('hex').slice(0, 16)}`;
       // Fixture-only transport configuration. The real worker chooses and reads
@@ -201,10 +201,10 @@ test('SKILLS-E2E-030: retain accepted child versions while upstream advances dur
       await page.getByRole('checkbox', { name: 'The files sent to the model contain no answer keys or grading material.', exact: true }).check();
       await page.getByRole('checkbox', { name: 'I reviewed every file and input that will be sent to the model.', exact: true }).check();
       await page.getByRole('checkbox', { name: 'I acknowledge provider processing of this reviewed context and test request.', exact: true }).check();
-      await expect(page.getByRole('button', { name: 'Run whole-context test', exact: true })).toBeEnabled();
+      await expect(page.getByRole('button', { name: 'Run answer check', exact: true })).toBeEnabled();
       await shot(`whole-context-preview-${parent.name}`);
       const started = page.waitForResponse(res => res.url().endsWith(`/contexts/${parent.id}/test-runs/`) && res.request().method() === 'POST');
-      await page.getByRole('button', { name: 'Run whole-context test', exact: true }).click();
+      await page.getByRole('button', { name: 'Run answer check', exact: true }).click();
       const startResponse = await started;
       expect(startResponse.status()).toBe(202);
       const runId = (await startResponse.json()).result.id;
