@@ -194,8 +194,7 @@ class CreateAgentVersionView(APIView):
                 and not agent.api_key
                 and agent_is_source(agent)
                 and not ProviderCredentials.objects.filter(
-                    Q(agent_definition=agent)
-                    | Q(agent_version__agent_definition=agent)
+                    Q(agent_definition=agent) | Q(agent_version__agent_definition=agent)
                 ).exists()
             )
             if not (
