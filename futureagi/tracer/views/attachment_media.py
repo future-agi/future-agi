@@ -82,15 +82,21 @@ def exchange_response(request, viewer, authority, *, origin):
     """
     try:
         same_origin(request, origin, issuance=True, csrf=False)
-        _, token = playback.exchange(viewer, authority)
-    except AttachmentError:
+        session, token = playback.exchange(viewer, authority)
+    except AttachmentError as error:
+        if error.code == "throttled":
+            response = private(HttpResponse(status=429))
+            response["Retry-After"] = "60"
+            return response
         return private(HttpResponse(status=404))
     response = private(HttpResponse(status=204))
+    response[playback.SESSION_HEADER] = str(session.id)
+    response[playback.EXPIRY_HEADER] = session.expires_at.isoformat()
     response.set_cookie(
         playback.COOKIE_NAME,
         token,
         max_age=playback.SESSION_SECONDS,
-        path=playback.MEDIA_PATH,
+        path=playback.session_path(session.id),
         secure=True,
         httponly=True,
         samesite="Strict",
@@ -188,13 +194,29 @@ class RevocableBody:
                 body.close()
 
 
-def media_response(request, *, occurrence_id, grant_token, authority, storage, origin):
+def media_response(
+    request, *, media_session_id, occurrence_id, grant_token, authority, storage, origin
+):
     if request.method not in {"GET", "HEAD"}:
         return private(HttpResponse(status=405))
+    # Cookie headers do not carry Path. Refuse duplicate v2 names rather than
+    # letting Django choose between a parent-path and session-path credential.
+    names = [
+        part.partition("=")[0].strip()
+        for part in request.headers.get("Cookie", "").split(";")
+    ]
+    if names.count(playback.COOKIE_NAME) > 1:
+        return private(HttpResponse(status=404))
     cookie = request.COOKIES.get(playback.COOKIE_NAME)
 
     def check():
-        return playback.authorize(cookie, grant_token, occurrence_id, authority)
+        return playback.authorize(
+            cookie,
+            grant_token,
+            occurrence_id,
+            authority,
+            media_session_id=media_session_id,
+        )
 
     try:
         same_origin(request, origin)

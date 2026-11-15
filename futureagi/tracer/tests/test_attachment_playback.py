@@ -119,6 +119,7 @@ def recording(setup, user, monkeypatch):
                 "representation": "original",
             }
         ],
+        media_session_id=str(session.id),
     )
     return SimpleNamespace(
         scope=scope,
@@ -143,6 +144,7 @@ def response(r, *, method="GET", cookie=True, grant=None, **headers):
         request.COOKIES[playback.COOKIE_NAME] = r.cookie if cookie is True else cookie
     return media_response(
         request,
+        media_session_id=str(r.session.id),
         occurrence_id=r.row.client_id,
         grant_token=grant or r.grant,
         authority=r.authority,
@@ -230,6 +232,7 @@ def test_mixed_batch_checks_parent_per_item(recording):
                 "representation": "peaks",
             },
         ],
+        media_session_id=str(r.session.id),
     )
     # A batch never inherits the first item's authorization, in either order.
     assert items[1]["status"] == "ready"
@@ -478,7 +481,10 @@ def test_exchange_requires_exact_origin_and_sets_narrow_cookie(recording, settin
     assert reply.status_code == 204
     cookie = reply.cookies[playback.COOKIE_NAME]
     assert cookie["secure"] and cookie["httponly"] and cookie["samesite"] == "Strict"
-    assert cookie["path"] == playback.MEDIA_PATH and cookie["domain"] == ""
+    assert (
+        cookie["path"] == playback.session_path(reply[playback.SESSION_HEADER])
+        and cookie["domain"] == ""
+    )
     assert "Access-Control-Allow-Origin" not in reply
 
 

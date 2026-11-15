@@ -366,7 +366,7 @@ urlpatterns = [
         name="attachment-media-sessions",
     ),
     path(
-        "v1/attachment-media/<str:occurrence_id>/<str:grant_id>",
+        "v1/attachment-media/<str:media_session_id>/<str:occurrence_id>/<str:grant_id>",
         attachments.AttachmentMediaView.as_view(),
         name="attachment-media",
     ),

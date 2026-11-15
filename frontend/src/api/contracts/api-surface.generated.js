@@ -1334,7 +1334,8 @@ export const API_SURFACE_CONTRACT = Object.freeze({
       "/tracer/users/": ["get", "post"],
       "/tracer/users/get_code_example/": ["get"],
       "/tracer/v1/attachment-media-sessions": ["post"],
-      "/tracer/v1/attachment-media/{occurrence_id}/{grant_id}": ["get"],
+      "/tracer/v1/attachment-media/{media_session_id}/{occurrence_id}/{grant_id}":
+        ["get"],
       "/tracer/v1/attachment-sessions": ["post"],
       "/tracer/v1/health": ["get"],
       "/tracer/v1/projects/{project_id}/attachments/imports": ["post"],
@@ -2722,7 +2723,9 @@ export const API_SURFACE_PATHS = Object.freeze({
   "/tracer/users/": ["get", "post"],
   "/tracer/users/get_code_example/": ["get"],
   "/tracer/v1/attachment-media-sessions": ["post"],
-  "/tracer/v1/attachment-media/{occurrence_id}/{grant_id}": ["get"],
+  "/tracer/v1/attachment-media/{media_session_id}/{occurrence_id}/{grant_id}": [
+    "get",
+  ],
   "/tracer/v1/attachment-sessions": ["post"],
   "/tracer/v1/health": ["get"],
   "/tracer/v1/projects/{project_id}/attachments/imports": ["post"],

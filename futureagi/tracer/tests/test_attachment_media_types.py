@@ -641,7 +641,7 @@ def _readable(setup, user, monkeypatch, payload, mime, modality, representation)
         scope.project_id,
     )
     authority = AuthorityDouble(viewer, state)
-    _, cookie = playback.exchange(viewer, authority)
+    session, cookie = playback.exchange(viewer, authority)
     (result,) = playback.resolve(
         viewer,
         authority,
@@ -652,11 +652,13 @@ def _readable(setup, user, monkeypatch, payload, mime, modality, representation)
                 "representation": representation,
             }
         ],
+        media_session_id=str(session.id),
     )
     return SimpleNamespace(
         row=row,
         blob=blob,
         result=result,
+        session=session,
         cookie=cookie,
         authority=authority,
         store=RangeStoreDouble(payload),
@@ -670,6 +672,7 @@ def _get(r, **headers):
     request.COOKIES[playback.COOKIE_NAME] = r.cookie
     return media_response(
         request,
+        media_session_id=str(r.session.id),
         occurrence_id=r.row.client_id,
         grant_token=r.result["gateway_path"].rsplit("/", 1)[1],
         authority=r.authority,

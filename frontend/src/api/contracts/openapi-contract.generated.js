@@ -43836,20 +43836,21 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
-    "/tracer/v1/attachment-media/{occurrence_id}/{grant_id}": {
-      get: {
-        operationId: "getAttachmentMedia",
-        runtimeRequestValidation: false,
-        runtimeResponseValidation: true,
-        requestBody: null,
-        queryParameters: {},
-        responses: {
-          default: {
-            $ref: "#/definitions/ManagementAPIErrorResponse",
+    "/tracer/v1/attachment-media/{media_session_id}/{occurrence_id}/{grant_id}":
+      {
+        get: {
+          operationId: "getAttachmentMedia",
+          runtimeRequestValidation: false,
+          runtimeResponseValidation: true,
+          requestBody: null,
+          queryParameters: {},
+          responses: {
+            default: {
+              $ref: "#/definitions/ManagementAPIErrorResponse",
+            },
           },
         },
       },
-    },
     "/tracer/v1/attachment-sessions": {
       post: {
         operationId: "bootstrapAttachmentSession",
@@ -97472,7 +97473,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         gateway_path: {
           title: "Gateway path",
           type: "string",
-          maxLength: 194,
+          maxLength: 230,
           minLength: 1,
         },
         expires_at: {

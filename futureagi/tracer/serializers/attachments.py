@@ -312,7 +312,7 @@ class AttachmentResolveResultSerializer(serializers.Serializer):
     status = serializers.ChoiceField(
         choices=("ready", "not_found", "pending", "failed", "expired", "deleted")
     )
-    gateway_path = serializers.CharField(max_length=194, required=False)
+    gateway_path = serializers.CharField(max_length=230, required=False)
     expires_at = serializers.DateTimeField(required=False)
 
 
