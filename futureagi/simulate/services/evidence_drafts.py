@@ -32,6 +32,7 @@ from simulate.models import (
 )
 from simulate.models.harness_versioning import HashKind
 from simulate.selectors.evidence_import import source_noun
+from simulate.services.harness_usage import require_harness_authoring
 from simulate.services.harness_versioning import archives, drafts
 from simulate.services.harness_versioning.versions import suite_documents
 from simulate.services.hosted_harness import HostedHarnessError
@@ -475,6 +476,8 @@ def start_drafting(
     )
 
     wanted = {str(case_id) for case_id in case_ids}
+    # The turn is a builder turn the organization pays for; a refusal leaves nothing.
+    require_harness_authoring(str(evidence_import.organization_id))
     with transaction.atomic():
         locked = (
             EvidenceImport.no_workspace_objects.select_for_update(of=("self",))

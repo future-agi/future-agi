@@ -646,24 +646,28 @@ def test_the_draft_answer_says_drafting_has_started(
     # The review keeps this answer and asks again only while it says drafting, so
     # an answer read before the drafting job was linked would leave it waiting.
     settings.HARNESS_PUBLIC_BASE_URL = BASE_URL
-    evidence_import = cases[0].evidence_import
+
+    response = _draft(environment, cases, user)
+
+    assert response.status_code == 202, response.content
+    assert response.json()["drafting"] is True
+
+
+def _draft(environment, cases, user):
+    """Press Draft on every case, as the review does."""
     api = APIClient()
     api.force_authenticate(user=user)
     api.credentials(HTTP_X_WORKSPACE_ID=str(environment.workspace_id))
     found = {case.source_id: _evidence(case.source_id) for case in cases}
-
     with patch(
         "simulate.selectors.evidence_import.observe_evidence", return_value=found
     ):
-        response = api.post(
+        return api.post(
             f"/simulate/api/harness-environments/{environment.id}"
-            f"/evidence-imports/{evidence_import.id}/draft/",
+            f"/evidence-imports/{cases[0].evidence_import_id}/draft/",
             {"case_ids": [str(case.id) for case in cases]},
             format="json",
         )
-
-    assert response.status_code == 202, response.content
-    assert response.json()["drafting"] is True
 
 
 @pytest.mark.parametrize(
@@ -818,3 +822,67 @@ class TestDeletedWhileDrafting:
 
         assert swept["forgotten"] == 1
         assert not any(_gone(conversation).values())
+
+
+@pytest.fixture
+def plan(monkeypatch):
+    """The organization's plan, as the metering service answers each check."""
+    from ee.usage.schemas.events import CheckResult
+    from ee.usage.services import metering
+    from simulate.services import harness_usage
+
+    plan = SimpleNamespace(asked=[], answer=CheckResult(allowed=True))
+
+    def check_usage(org_id, event_type, amount=0):
+        plan.asked.append((org_id, event_type))
+        return plan.answer
+
+    monkeypatch.setattr(harness_usage, "is_oss", lambda: False)
+    monkeypatch.setattr(metering, "check_usage", check_usage)
+    return plan
+
+
+@pytest.mark.requires_ee
+class TestAuthoringLimit:
+    """A drafting turn is a builder turn the organization pays for, so Draft asks
+    the plan first, as every other builder turn does."""
+
+    def test_an_organization_at_its_limit_is_refused_and_nothing_is_made(
+        self, environment, cases, user, scheduled, plan, settings
+    ):
+        from ee.usage.schemas.events import CheckResult
+
+        settings.HARNESS_PUBLIC_BASE_URL = BASE_URL
+        plan.answer = CheckResult(
+            allowed=False,
+            error_code="BUDGET_PAUSED",
+            dimension="ai_credits",
+            reason="Authoring is paused by your budget",
+            current_usage=12,
+            limit=12,
+        )
+        jobs = HostedHarnessJob._base_manager.count()
+
+        response = _draft(environment, cases, user)
+
+        assert response.status_code == 402, response.content
+        # The review shows the message as it came, so the person reads why.
+        assert response.json()["error_code"] == "BUDGET_PAUSED"
+        assert response.json()["message"] == "Authoring is paused by your budget"
+        evidence_import = EvidenceImport.objects.get(id=cases[0].evidence_import_id)
+        assert evidence_import.drafting_job_id is None
+        assert HostedHarnessJob._base_manager.count() == jobs
+        assert not HostedHarnessConversationMessage._base_manager.filter(
+            payload___origin=evidence_drafts.ORIGIN
+        ).exists()
+
+    def test_under_its_limit_it_drafts(
+        self, environment, cases, user, scheduled, plan, settings
+    ):
+        settings.HARNESS_PUBLIC_BASE_URL = BASE_URL
+
+        response = _draft(environment, cases, user)
+
+        assert response.status_code == 202, response.content
+        assert response.json()["drafting"] is True
+        assert (str(environment.organization_id), "harness_authoring") in plan.asked
