@@ -439,6 +439,7 @@ describe('evidence rows in a narrow container', () => {
       expect(within(second).getByText('Not checked yet')).toBeVisible();
       expect(within(second).getByText('Rechecked when you renew.')).toBeVisible();
       expect(second).toHaveTextContent(/Private · Expiry not reported/);
+      expect(within(second).getByText('Coverage not reported')).toBeVisible();
     });
   });
   it('keeps the table from 720px, with Inspect outlined there too', () => {

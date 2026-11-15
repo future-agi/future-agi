@@ -89,7 +89,8 @@ export default function EvidenceSummary({ items = [], selectable = false, select
             </Stack>
             {perCheck && badge}
             {notes}
-            <Typography variant="s3" color="text.secondary">{coverage}</Typography>
+            {/* Without the column header a bare "Not reported" reads as nothing; name what is missing. */}
+            <Typography variant="s3" color="text.secondary">{coverage === 'Not reported' ? 'Coverage not reported' : coverage}</Typography>
             <Stack direction="row" alignItems="center" justifyContent="space-between" gap={1}>
               <Typography component="span" variant="s3" color="text.secondary" sx={{ minWidth: 0 }}>
                 {/* " · " only between parts that exist, so no line starts with a separator. */}
