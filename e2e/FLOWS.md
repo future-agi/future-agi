@@ -979,7 +979,7 @@
 
 **Goal:** Compare two uploaded datasets and inspect every matching input with both outputs across result blocks and in row detail, including the word diff
 
-**Spec:** `flows/datasets/compare-datasets.spec.ts:45`
+**Spec:** `flows/datasets/compare-datasets.spec.ts:69`
 
 **Tags:** —
 
@@ -999,6 +999,104 @@
 - the browser comparison and API replay return exactly eleven joined pairs across ten-row blocks with one stable compare_id
 - row detail requests return the clicked joined row with previous and next row ids that cross the block boundary and stop at the first and last rows
 - the row detail cell of the second output carries the planted word diff against the first output, and the first output carries none
+
+### DATA-E2E-006 — Compare lifecycle: later-block fresh ID retires the earlier drawer and delayed competing generation
+
+**Goal:** Keep comparison rows and detail on the adopted snapshot when concurrent later blocks rebuild an expired comparison
+
+**Spec:** `flows/datasets/compare-datasets.spec.ts:794`
+
+**Tags:** —
+
+**User steps:**
+
+1. upload two matching datasets, compare by input and open the first row detail
+2. expire the stored comparison and scroll the real grid to pages two and three while delaying both real responses
+3. release page two first, confirm the old drawer closes, then release the competing page three response
+4. revisit rows thirty and thirty-one and open row thirty detail from the adopted snapshot
+5. return to row zero and open its rebuilt detail
+
+**Backend state verified:**
+
+- synthetic uploaded rows and dataset scope match the authenticated actor in Postgres
+- the next browser comparison POST after adoption uses the winning compare_id and orphan cleanup returns 200
+- page three replay and rendered row IDs equal the adopted snapshot and exclude every delayed orphan row ID
+- row thirty and row zero detail requests use the adopted compare_id and return the adopted rows
+
+### DATA-E2E-007 — Compare lifecycle: nonempty to zero rollover is terminal in real AG Grid
+
+**Goal:** Retire old comparison rows and detail when a later block rebuilds to zero, then keep same-ID refreshes settled
+
+**Spec:** `flows/datasets/compare-datasets.spec.ts:1099`
+
+**Tags:** —
+
+**User steps:**
+
+1. upload matching datasets, compare by input, open detail, then make only the synthetic peer inputs disjoint and expire the comparison
+2. observe a real zero-row comparison with no old detail or summary rows
+3. call the existing real grid API for non-purge and purge refresh without clearing the comparison ID
+4. sort the empty result and observe that it remains empty without another POST
+
+**Backend state verified:**
+
+- the real comparison endpoint returns a server-minted ID and zero row/page counts
+- each same-ID refresh completes locally with no additional comparison POSTs during a bounded observation window
+- the later-block rollover makes at most two comparison POSTs and adopts a new ID
+
+**Browser observations:**
+
+- real AG Grid store state transitions from known zero to unknown one, then back to known zero in both refresh modes
+- each refresh invokes the real datasource once and succeeds with zero rows, without another purge or ID change
+- no common rows, no rendered data or summary rows, and no stale detail drawer remain
+
+### DATA-E2E-008 — Compare lifecycle: initial empty refresh is terminal in real AG Grid
+
+**Goal:** Keep an initially empty comparison settled during same-ID grid refresh and explicit download recovery
+
+**Spec:** `flows/datasets/compare-datasets.spec.ts:1099`
+
+**Tags:** —
+
+**User steps:**
+
+1. upload disjoint datasets and compare by input
+2. observe a real zero-row comparison with no old detail or summary rows
+3. call the existing real grid API for non-purge and purge refresh without clearing the comparison ID
+4. download the uncached empty comparison and observe one explicit fresh comparison build
+
+**Backend state verified:**
+
+- the real comparison endpoint returns a server-minted ID and zero row/page counts
+- each same-ID refresh completes locally with no additional comparison POSTs during a bounded observation window
+- download returns the typed compare_not_found response and recovery builds once with a null request ID
+
+**Browser observations:**
+
+- real AG Grid store state transitions from known zero to unknown one, then back to known zero in both refresh modes
+- each refresh invokes the real datasource once and succeeds with zero rows, without another purge or ID change
+- no common rows, no rendered data or summary rows, and no stale detail drawer remain
+
+### DATA-E2E-009 — Compare lifecycle: real typed download miss rebuilds once and only the next explicit download uses the new ID
+
+**Goal:** Recover a genuinely expired comparison download without rebuilding on an unrelated dataset error or automatically retrying CSV
+
+**Spec:** `flows/datasets/compare-datasets.spec.ts:1243`
+
+**Tags:** —
+
+**User steps:**
+
+1. upload matching datasets and compare by input
+2. request a download against a real missing peer and observe no comparison rebuild
+3. expire the real comparison, download again and read the typed recovery message
+4. wait for the rebuilt table, then explicitly download again using the adopted ID
+
+**Backend state verified:**
+
+- a real generic dataset 404 is distinct from the exact typed compare_not_found envelope
+- typed download failure preserves the submitted old ID and starts a fresh comparison request with a null ID
+- no automatic CSV retry occurs and the next explicit download uses the rebuilt ID and contains both planted datasets
 
 ## error-feed
 

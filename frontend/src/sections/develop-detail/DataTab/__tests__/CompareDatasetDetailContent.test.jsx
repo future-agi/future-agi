@@ -9,10 +9,12 @@ const { Null, Passthrough, cards, probes } = vi.hoisted(() => ({
   probes: { grids: [], detail: null, feedback: null },
 }));
 
-vi.mock("ag-grid-react", () => ({ AgGridReact: (props) => {
-  probes.grids.push(props);
-  return null;
-} }));
+vi.mock("ag-grid-react", () => ({
+  AgGridReact: (props) => {
+    probes.grids.push(props);
+    return null;
+  },
+}));
 vi.mock("src/hooks/use-ag-theme", () => ({ useAgThemeWith: () => undefined }));
 vi.mock("src/components/iconify", () => ({
   default: ({ icon }) => <span data-testid="icon" data-icon={icon} />,
@@ -31,11 +33,21 @@ vi.mock(
 );
 vi.mock(
   "src/sections/experiment-detail/ExperimentData/ViewEvalDetailsModal",
-  () => ({ default: (props) => { probes.detail = props; return null; } }),
+  () => ({
+    default: (props) => {
+      probes.detail = props;
+      return null;
+    },
+  }),
 );
 vi.mock(
   "../CompareDatasetDetailDrawer/CompareDatasetEvalsAddFeedbackForm",
-  () => ({ default: (props) => { probes.feedback = props; return null; } }),
+  () => ({
+    default: (props) => {
+      probes.feedback = props;
+      return null;
+    },
+  }),
 );
 vi.mock("src/sections/common/DatapointCard", () => ({
   default: (props) => {
@@ -104,38 +116,72 @@ describe("Compare row detail content", () => {
   it("maps evaluation IDs and value_infos from their landed row and column locations without rewriting user keys", () => {
     probes.grids.length = 0;
     const evaluation = {
-      id: "eval-b", name: "Dataset B", dataset_id: "dataset-b",
-      data_type: "text", origin_type: "evaluation", source_id: "synthetic-sourceid-eval",
-      group: { id: "eval-a", name: "quality", data_type: "text", origin: "Evaluation" },
+      id: "eval-b",
+      name: "Dataset B",
+      dataset_id: "dataset-b",
+      data_type: "text",
+      origin_type: "evaluation",
+      source_id: "synthetic-sourceid-eval",
+      group: {
+        id: "eval-a",
+        name: "quality",
+        data_type: "text",
+        origin: "Evaluation",
+      },
     };
     const valueInfos = {
       reason: "Synthetic explanation",
-      metadata: { customer_key: { row_id: "user-owned-key" }, selectedInputKey: "answer" },
+      metadata: {
+        customer_key: { row_id: "user-owned-key" },
+        selectedInputKey: "answer",
+      },
     };
     const cell = {
-      cell_value: "pass", cell_row_id: "b-0", value_infos: valueInfos,
-      metadata: valueInfos.metadata, status: "success",
+      cell_value: "pass",
+      cell_row_id: "b-0",
+      value_infos: valueInfos,
+      metadata: valueInfos.metadata,
+      status: "success",
     };
-    render(<CompareDatasetDetailContent
-      onClose={vi.fn()} row={{ ...row, "eval-b": cell }}
-      columnConfig={[...columnConfig, evaluation]} showDiff={false}
-      setShowDiff={vi.fn()} handleToggleDiff={vi.fn()} isPending={false}
-      handleFetchNextRow={vi.fn()} handleFetchPrevRow={vi.fn()}
-    />);
-    const evaluationGrid = probes.grids.find((grid) => grid.rowData.includes(evaluation));
-    expect(evaluationGrid.columnDefs[1].valueGetter({ data: evaluation })).toBe(cell);
-    act(() => evaluationGrid.onCellClicked({
-      colDef: { headerName: "Description" }, data: evaluation,
-    }));
+    render(
+      <CompareDatasetDetailContent
+        onClose={vi.fn()}
+        row={{ ...row, "eval-b": cell }}
+        columnConfig={[...columnConfig, evaluation]}
+        showDiff={false}
+        setShowDiff={vi.fn()}
+        handleToggleDiff={vi.fn()}
+        isPending={false}
+        handleFetchNextRow={vi.fn()}
+        handleFetchPrevRow={vi.fn()}
+      />,
+    );
+    const evaluationGrid = probes.grids.find((grid) =>
+      grid.rowData.includes(evaluation),
+    );
+    expect(evaluationGrid.columnDefs[1].valueGetter({ data: evaluation })).toBe(
+      cell,
+    );
+    act(() =>
+      evaluationGrid.onCellClicked({
+        colDef: { headerName: "Description" },
+        data: evaluation,
+      }),
+    );
     expect(probes.detail.evalDetail).toMatchObject({
-      cellValue: "pass", cellRowId: "b-0", rowId: "b-0",
-      evalId: "eval-b", evalName: "quality", headerName: "Dataset B-quality",
+      cellValue: "pass",
+      cellRowId: "b-0",
+      rowId: "b-0",
+      evalId: "eval-b",
+      evalName: "quality",
+      headerName: "Dataset B-quality",
       sourceId: "synthetic-sourceid-eval",
     });
     expect(probes.detail.evalDetail.valueInfos).toBe(valueInfos);
     expect(probes.feedback.evalDetail).toBe(probes.detail.evalDetail);
     expect(valueInfos.metadata).toEqual({
-      customer_key: { row_id: "user-owned-key" }, selectedInputKey: "answer",
+      customer_key: { row_id: "user-owned-key" },
+      selectedInputKey: "answer",
     });
   });
 

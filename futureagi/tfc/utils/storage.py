@@ -13,14 +13,15 @@ from io import BytesIO
 from urllib.parse import urlparse
 
 import numpy as np
-from tfc.utils.lazy_extras import av
-from tfc.utils.lazy_extras import soundfile as sf
 import structlog
 from PIL import Image
-from tfc.utils.media_tools import MediaToolUnavailable, require_ffmpeg
 
 # from pydub import AudioSegment
 from requests.exceptions import ChunkedEncodingError, ConnectionError, RequestException
+
+from tfc.utils.lazy_extras import av
+from tfc.utils.lazy_extras import soundfile as sf
+from tfc.utils.media_tools import MediaToolUnavailable, require_ffmpeg
 
 logger = structlog.get_logger(__name__)
 from tfc.settings.settings import MINIO_URL, UPLOAD_BUCKET_NAME

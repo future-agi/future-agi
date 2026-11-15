@@ -2245,7 +2245,9 @@ def test_compare_ordered_peer_swap_mints_fresh_id_and_preserves_download_order(
     assert comparison_page_store.keys_used_under(old_id) == [
         f"compare/{old_id}/metadata.json"
     ]
-    assert all(comparison_page_store[key] == value for key, value in old_objects.items())
+    assert all(
+        comparison_page_store[key] == value for key, value in old_objects.items()
+    )
 
     # The old peer ordering is not an accepted download cache candidate.
     _assert_compare_not_found(
@@ -2257,9 +2259,7 @@ def test_compare_ordered_peer_swap_mints_fresh_id_and_preserves_download_order(
     assert set(
         comparison_page_store[f"compare/{new_id}/metadata.json"]["common_column_names"]
     ) == {"input", "judge"}
-    cached_export = _download(
-        auth_client, base, [peer_c, peer_b], compare_id=new_id
-    )
+    cached_export = _download(auth_client, base, [peer_c, peer_b], compare_id=new_id)
     assert cached_export.status_code == status.HTTP_200_OK, _body(cached_export)
     assert list(csv.reader(StringIO(_body(cached_export)))) == [
         [
@@ -2271,9 +2271,7 @@ def test_compare_ordered_peer_swap_mints_fresh_id_and_preserves_download_order(
             "judge-Ordered B",
             "input-Ordered B",
         ],
-        [
-            "alpha", "Ordered base", "alpha", "Ordered C", "alpha", "Ordered B", "alpha"
-        ],
+        ["alpha", "Ordered base", "alpha", "Ordered C", "alpha", "Ordered B", "alpha"],
     ]
 
     # The rejected old ordering can only fall back to validated client rows.
@@ -2383,7 +2381,9 @@ def test_compare_download_dataset_failure_precedes_cache_lookup(
             else CompareStorageUnavailable("metadata.json")
         )
     )
-    monkeypatch.setattr("model_hub.views.develop_dataset.read_compare_json", unavailable)
+    monkeypatch.setattr(
+        "model_hub.views.develop_dataset.read_compare_json", unavailable
+    )
     response = _download(auth_client, base, [peer], compare_id=str(uuid.uuid4()))
     assert response.status_code == status.HTTP_404_NOT_FOUND, response.content
     assert response.json()["code"] == "not_found"
@@ -2396,7 +2396,9 @@ def test_compare_download_without_id_or_rows_is_still_bad_request(
     auth_client, compare_datasets
 ):
     response = _download(
-        auth_client, compare_datasets["base_dataset"], [compare_datasets["other_dataset"]]
+        auth_client,
+        compare_datasets["base_dataset"],
+        [compare_datasets["other_dataset"]],
     )
     assert response.status_code == status.HTTP_400_BAD_REQUEST, response.content
     assert response.json()["code"] == "invalid"
@@ -2486,7 +2488,9 @@ def test_compare_endpoints_allow_current_workspace_access(
     client = _client_without_workspace(caller)
     bound = None if access_path.startswith("unbound") else target
     with _request_binding(organization, bound):
-        response = _comparison_endpoint(client, endpoint, base, peer, compare_id, row_id)
+        response = _comparison_endpoint(
+            client, endpoint, base, peer, compare_id, row_id
+        )
     assert response.status_code == status.HTTP_200_OK, _body(response)
     if endpoint == "delete":
         comparison_cleanup_calls.assert_called_once()
@@ -2530,7 +2534,9 @@ def test_compare_endpoints_refuse_inaccessible_scope(
     stored_org, stored_owner, target = organization, user, workspace
     bound = workspace
     if scope in (
-        "other_organization", "unbound_owner_other_org", "mismatched_workspace_org"
+        "other_organization",
+        "unbound_owner_other_org",
+        "mismatched_workspace_org",
     ):
         stored_org, stored_owner, target = _another_organization()
     elif scope in ("sibling_workspace", "bound_unjoined_workspace"):
@@ -2558,7 +2564,9 @@ def test_compare_endpoints_refuse_inaccessible_scope(
         _request_binding(organization, bound),
         CaptureQueriesContext(connection) as captured,
     ):
-        response = _comparison_endpoint(client, endpoint, base, peer, compare_id, row_id)
+        response = _comparison_endpoint(
+            client, endpoint, base, peer, compare_id, row_id
+        )
     _assert_no_comparison_cells(response, comparison_cell_reads, captured)
     if endpoint in ("compare", "download"):
         # Selection/access failures must not trigger the download rebuild flow.
@@ -2573,7 +2581,8 @@ def test_compare_endpoints_refuse_inaccessible_scope(
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.parametrize("endpoint", ["compare", "download", "row", "delete"])
 @pytest.mark.parametrize(
-    "removed_membership", ["workspace", "organization", "unbound_owner", "unbound_admin"]
+    "removed_membership",
+    ["workspace", "organization", "unbound_owner", "unbound_admin"],
 )
 @pytest.mark.parametrize("removal", ["deactivate", "delete"])
 def test_compare_endpoints_recheck_membership_after_comparison_build(
@@ -2616,7 +2625,9 @@ def test_compare_endpoints_recheck_membership_after_comparison_build(
         assert detail.status_code == status.HTTP_200_OK, detail.content
     before = json.loads(json.dumps(comparison_page_store))
     memberships = (
-        WorkspaceMembership.no_workspace_objects.filter(user=caller, workspace=workspace)
+        WorkspaceMembership.no_workspace_objects.filter(
+            user=caller, workspace=workspace
+        )
         if removed_membership == "workspace"
         else OrganizationMembership.no_workspace_objects.filter(
             user=caller, organization=organization
@@ -2635,7 +2646,9 @@ def test_compare_endpoints_recheck_membership_after_comparison_build(
         _request_binding(organization, bound),
         CaptureQueriesContext(connection) as captured,
     ):
-        response = _comparison_endpoint(client, endpoint, base, peer, compare_id, row_id)
+        response = _comparison_endpoint(
+            client, endpoint, base, peer, compare_id, row_id
+        )
     _assert_no_comparison_cells(response, comparison_cell_reads, captured)
     assert response.json()["code"] == (
         "not_found" if endpoint in ("compare", "download") else "compare_not_found"

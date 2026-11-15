@@ -346,7 +346,10 @@ const CompareData = ({
         }
         // The download recovery callback clears the shared ref and purges the
         // grid. Invalidate the old requests/detail state before its reload.
-        if (compareIdSelectionRef.current === selection && !compareId?.current) {
+        if (
+          compareIdSelectionRef.current === selection &&
+          !compareId?.current
+        ) {
           generationRef.current += 1;
           compareIdSelectionRef.current = null;
           clearComparisonRows();
@@ -810,7 +813,8 @@ const CompareData = ({
                 activeSelectionRef.current !== selection ||
                 compareIdSelectionRef.current !== selection ||
                 !compareId?.current ||
-                rowGenerationsRef.current.get(params?.data) !== generationRef.current
+                rowGenerationsRef.current.get(params?.data) !==
+                  generationRef.current
               ) {
                 return;
               }

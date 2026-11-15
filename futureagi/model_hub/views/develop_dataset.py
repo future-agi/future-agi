@@ -14411,7 +14411,9 @@ class CompareDatasetsView(APIView):
             # differently selected metadata is a cache miss, never a write key.
             cached_metadata = None
             if requested_compare_id:
-                stored_metadata = _resolve_request_compare(request, requested_compare_id)
+                stored_metadata = _resolve_request_compare(
+                    request, requested_compare_id
+                )
                 if stored_metadata is not None and _compare_metadata_matches_request(
                     stored_metadata,
                     dataset_id,

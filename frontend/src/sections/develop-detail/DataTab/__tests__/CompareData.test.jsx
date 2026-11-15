@@ -228,36 +228,60 @@ describe("CompareData API response", () => {
       alreadyCamel: "unchanged",
     };
     const body = response();
-    const row = { ...rows[0], "input-a": {
-      ...rows[0]["input-a"],
-      cell_value: payload,
-      value_infos: { reason: "synthetic", metadata: { selected_input_key: "customer_key" } },
-    } };
+    const row = {
+      ...rows[0],
+      "input-a": {
+        ...rows[0]["input-a"],
+        cell_value: payload,
+        value_infos: {
+          reason: "synthetic",
+          metadata: { selected_input_key: "customer_key" },
+        },
+      },
+    };
     body.data.result.table = [row];
     post.mockResolvedValueOnce(body);
     renderCompare();
     const success = await getPage();
     expect(success.mock.calls[0][0].rowData[0]).toBe(row);
     expect(row["input-a"].cell_value).toBe(payload);
-    expect(row["input-a"].value_infos.metadata).toEqual({ selected_input_key: "customer_key" });
-    expect(Object.keys(row)).toEqual(["row_id", "input-a", "output-a", "output-b"]);
+    expect(row["input-a"].value_infos.metadata).toEqual({
+      selected_input_key: "customer_key",
+    });
+    expect(Object.keys(row)).toEqual([
+      "row_id",
+      "input-a",
+      "output-a",
+      "output-b",
+    ]);
   });
 
   it("uses origin_type on nested raw evaluation columns rather than the grid definition alias", async () => {
     const body = response();
-    body.data.result.column_config = columnConfig.map((col) => col.id === "input-a" ? col : {
-      ...col, origin_type: "evaluation", group: { ...col.group, origin: "Evaluation" },
-    });
+    body.data.result.column_config = columnConfig.map((col) =>
+      col.id === "input-a"
+        ? col
+        : {
+            ...col,
+            origin_type: "evaluation",
+            group: { ...col.group, origin: "Evaluation" },
+          },
+    );
     post.mockResolvedValueOnce(body);
     const props = renderCompare();
     await getPage();
     const [, evaluation] = props.setCompareColumnDefs.mock.lastCall[0];
     expect(evaluation.children[0]).toMatchObject({
-      originType: "evaluation", minWidth: 300,
+      originType: "evaluation",
+      minWidth: 300,
       col: { origin_type: "evaluation" },
     });
-    const menu = grid.props.getMainMenuItems({ column: { colDef: evaluation.children[0] } });
-    expect(menu).toContainEqual(expect.objectContaining({ name: "Show Summary" }));
+    const menu = grid.props.getMainMenuItems({
+      column: { colDef: evaluation.children[0] },
+    });
+    expect(menu).toContainEqual(
+      expect.objectContaining({ name: "Show Summary" }),
+    );
   });
 
   it("reuses the server compare_id when fetching the next ten-row block", async () => {
@@ -288,7 +312,9 @@ describe("CompareData API response", () => {
     expect(grid.props.pinnedBottomRowData).toEqual([
       { "output-a": "Average: 75.00%", "output-b": "Average: 0.00%" },
     ]);
-    expect(grid.props.statusBar.statusPanels[0].statusPanelParams.columnAvgs).toEqual([
+    expect(
+      grid.props.statusBar.statusPanels[0].statusPanelParams.columnAvgs,
+    ).toEqual([
       { id: "output-a", value: 75 },
       { id: "output-b", value: 0 },
     ]);
@@ -549,17 +575,22 @@ describe("CompareData successful ID rollover", () => {
     expect(laterResponse.data.result.table).toHaveLength(10);
     post.mockResolvedValueOnce(laterResponse);
     const later = startPage(10);
-    await act(async () => { await later.pending; });
+    await act(async () => {
+      await later.pending;
+    });
 
     expect(post.mock.lastCall[1]).toMatchObject({
-      compare_id: OLD_ID, current_page_index: 1,
+      compare_id: OLD_ID,
+      current_page_index: 1,
     });
     expect(props.compareId.current).toBe(NEW_ID);
     // The response belongs to the old grid store; only the purged store may
     // install rows, all fetched using the ID that won the rollover.
     expect(later.success).not.toHaveBeenCalled();
     expect(later.fail).toHaveBeenCalledTimes(1);
-    expect(api.refreshServerSide).toHaveBeenCalledExactlyOnceWith({ purge: true });
+    expect(api.refreshServerSide).toHaveBeenCalledExactlyOnceWith({
+      purge: true,
+    });
     expect(api.deselectAll).toHaveBeenCalledTimes(1);
     expect(grid.props.pinnedBottomRowData).toEqual([]);
     expect(props.selectedDatasetsValues).toEqual(["dataset-a", "dataset-b"]);
@@ -570,7 +601,8 @@ describe("CompareData successful ID rollover", () => {
     );
     const reloaded = await getPage();
     expect(post.mock.lastCall[1]).toMatchObject({
-      compare_id: NEW_ID, current_page_index: 0,
+      compare_id: NEW_ID,
+      current_page_index: 0,
     });
     expect(reloaded.mock.calls[0][0].rowData[0].row_id).toBe(`${NEW_ID}-row-0`);
     await getPage(10);
@@ -579,7 +611,10 @@ describe("CompareData successful ID rollover", () => {
     expect(deleteCompare).not.toHaveBeenCalled();
   });
 
-  it.each([[0, 1], [1, 0]])(
+  it.each([
+    [0, 1],
+    [1, 0],
+  ])(
     "keeps one generation when concurrent rollovers resolve in order %i then %i",
     async (winner, loser) => {
       const { api, props } = setup();
@@ -587,11 +622,13 @@ describe("CompareData successful ID rollover", () => {
       await getPage();
       const requests = [deferred(), deferred()];
       const ids = [NEW_ID, OTHER_ID];
-      post.mockImplementationOnce(() => requests[0].promise)
+      post
+        .mockImplementationOnce(() => requests[0].promise)
         .mockImplementationOnce(() => requests[1].promise);
       const blocks = [startPage(10), startPage(20)];
-      expect(post.mock.calls.slice(-2).map(([, body]) => body.compare_id))
-        .toEqual([OLD_ID, OLD_ID]);
+      expect(
+        post.mock.calls.slice(-2).map(([, body]) => body.compare_id),
+      ).toEqual([OLD_ID, OLD_ID]);
       await act(async () => {
         requests[winner].resolve(generationResponse(ids[winner], winner + 1));
         await blocks[winner].pending;
@@ -604,8 +641,12 @@ describe("CompareData successful ID rollover", () => {
         await blocks[loser].pending;
       });
       expect(props.compareId.current).toBe(ids[winner]);
-      expect(api.refreshServerSide).toHaveBeenCalledExactlyOnceWith({ purge: true });
-      expect(reload.mock.calls[0][0].rowData[0].row_id).toBe(`${ids[winner]}-row-0`);
+      expect(api.refreshServerSide).toHaveBeenCalledExactlyOnceWith({
+        purge: true,
+      });
+      expect(reload.mock.calls[0][0].rowData[0].row_id).toBe(
+        `${ids[winner]}-row-0`,
+      );
       for (const block of blocks) {
         expect(block.success).not.toHaveBeenCalled();
         expect(block.fail).toHaveBeenCalledTimes(1);
@@ -625,7 +666,8 @@ describe("CompareData successful ID rollover", () => {
       post.mockResolvedValueOnce(generationResponse(OLD_ID));
       await getPage();
       const late = deferred();
-      post.mockImplementationOnce(() => late.promise)
+      post
+        .mockImplementationOnce(() => late.promise)
         .mockResolvedValueOnce(generationResponse(NEW_ID, 2));
       const obsolete = startPage(10);
       await getPage(20);
@@ -633,10 +675,14 @@ describe("CompareData successful ID rollover", () => {
       await getPage();
       await act(async () => {
         if (outcome === "success") late.resolve(generationResponse(OLD_ID, 1));
-        else late.reject({
-          statusCode: outcome === "not-found" ? 404 : 503,
-          code: outcome === "not-found" ? "compare_not_found" : "compare_storage_unavailable",
-        });
+        else
+          late.reject({
+            statusCode: outcome === "not-found" ? 404 : 503,
+            code:
+              outcome === "not-found"
+                ? "compare_not_found"
+                : "compare_storage_unavailable",
+          });
         await obsolete.pending;
       });
       expect(obsolete.success).not.toHaveBeenCalled();
@@ -654,7 +700,8 @@ describe("CompareData successful ID rollover", () => {
     async (lateId) => {
       const { props, api } = setup();
       const late = deferred();
-      post.mockImplementationOnce(() => late.promise)
+      post
+        .mockImplementationOnce(() => late.promise)
         .mockResolvedValueOnce(generationResponse(NEW_ID, 1))
         .mockResolvedValueOnce(generationResponse(NEW_ID));
       const initialBlock = startPage();
@@ -665,9 +712,14 @@ describe("CompareData successful ID rollover", () => {
       });
       expect(props.compareId.current).toBe(NEW_ID);
       expect(post).toHaveBeenCalledTimes(3);
-      expect(post.mock.lastCall[1]).toMatchObject({ compare_id: NEW_ID, current_page_index: 0 });
+      expect(post.mock.lastCall[1]).toMatchObject({
+        compare_id: NEW_ID,
+        current_page_index: 0,
+      });
       expect(initialBlock.success).toHaveBeenCalledTimes(1);
-      expect(initialBlock.success.mock.calls[0][0].rowData[0].row_id).toBe(`${NEW_ID}-row-0`);
+      expect(initialBlock.success.mock.calls[0][0].rowData[0].row_id).toBe(
+        `${NEW_ID}-row-0`,
+      );
       expect(initialBlock.fail).not.toHaveBeenCalled();
       if (lateId === NEW_ID) expect(deleteCompare).not.toHaveBeenCalled();
       else expect(deleteCompare).toHaveBeenCalledExactlyOnceWith(OTHER_ID);
@@ -677,10 +729,16 @@ describe("CompareData successful ID rollover", () => {
 
   it("rejects a pending rollover after peer order changes and starts the new selection without an ID", async () => {
     const props = {
-      gridApiRef: { current: null }, compareId: { current: null },
-      baseColumn: "input", selectedDatasetsValues: ["dataset-a", "dataset-b", "dataset-c"],
-      columns: [], selectedColumns: ["input-a"], setColumns: vi.fn(),
-      setCommonColumn: vi.fn(), setDatasetInfo: vi.fn(), setCompareColumnDefs: vi.fn(),
+      gridApiRef: { current: null },
+      compareId: { current: null },
+      baseColumn: "input",
+      selectedDatasetsValues: ["dataset-a", "dataset-b", "dataset-c"],
+      columns: [],
+      selectedColumns: ["input-a"],
+      setColumns: vi.fn(),
+      setCommonColumn: vi.fn(),
+      setDatasetInfo: vi.fn(),
+      setCompareColumnDefs: vi.fn(),
     };
     const { rerender } = render(<CompareData {...props} />);
     post.mockResolvedValueOnce(generationResponse(OLD_ID));
@@ -689,11 +747,19 @@ describe("CompareData successful ID rollover", () => {
     post.mockImplementationOnce(() => late.promise);
     const obsolete = startPage(10);
     await act(async () => {
-      rerender(<CompareData {...props} selectedDatasetsValues={["dataset-a", "dataset-c", "dataset-b"]} />);
+      rerender(
+        <CompareData
+          {...props}
+          selectedDatasetsValues={["dataset-a", "dataset-c", "dataset-b"]}
+        />,
+      );
     });
     post.mockResolvedValueOnce(generationResponse(NEW_ID));
     await getPage();
-    expect(post.mock.lastCall[1]).toMatchObject({ dataset_ids: ["dataset-c", "dataset-b"], compare_id: null });
+    expect(post.mock.lastCall[1]).toMatchObject({
+      dataset_ids: ["dataset-c", "dataset-b"],
+      compare_id: null,
+    });
     await act(async () => {
       late.resolve(generationResponse(OTHER_ID, 1));
       await obsolete.pending;
@@ -729,23 +795,32 @@ describe("CompareData terminal zero snapshot", () => {
   const EMPTY_ID = "00000000-0000-4000-8000-000000000021";
   const OTHER_EMPTY_ID = "00000000-0000-4000-8000-000000000022";
   const empty = (id = EMPTY_ID) => ({
-    data: { status: true, result: {
-      metadata: { compare_id: id, total_rows: 0, total_pages: 0 },
-    } },
+    data: {
+      status: true,
+      result: {
+        metadata: { compare_id: id, total_rows: 0, total_pages: 0 },
+      },
+    },
   });
   const setup = () => {
     const api = {
-      refreshServerSide: vi.fn(), refreshCells: vi.fn(),
-      showNoRowsOverlay: vi.fn(), deselectAll: vi.fn(),
+      refreshServerSide: vi.fn(),
+      refreshCells: vi.fn(),
+      showNoRowsOverlay: vi.fn(),
+      deselectAll: vi.fn(),
     };
     const props = renderCompare({ gridApiRef: { current: { api } } });
     api.refreshServerSide.mockClear();
     return { api, props };
   };
-  const openFirstRow = () => act(() => grid.props.onRowClicked({
-    data: rows[0], rowIndex: 0,
-    event: { target: { closest: () => null } },
-  }));
+  const openFirstRow = () =>
+    act(() =>
+      grid.props.onRowClicked({
+        data: rows[0],
+        rowIndex: 0,
+        event: { target: { closest: () => null } },
+      }),
+    );
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -757,33 +832,52 @@ describe("CompareData terminal zero snapshot", () => {
     post.mockResolvedValueOnce(response()).mockResolvedValue(empty());
     await getPage();
     openFirstRow();
-    expect(document.querySelector('[data-testid="compare-detail-drawer"]')).not.toBeNull();
+    expect(
+      document.querySelector('[data-testid="compare-detail-drawer"]'),
+    ).not.toBeNull();
     expect(grid.props.pinnedBottomRowData).not.toEqual([]);
     // Model a synchronous new-store load as well as later refreshes. The
     // browser regression separately checks real AG Grid destroys its old rows.
     const replacementSuccess = vi.fn();
     api.refreshServerSide.mockImplementation(() => {
       grid.props.serverSideDatasource.getRows({
-        request: { startRow: 0, endRow: 10 }, success: replacementSuccess,
+        request: { startRow: 0, endRow: 10 },
+        success: replacementSuccess,
       });
     });
     const later = startPage(10);
-    await act(async () => { await later.pending; });
+    await act(async () => {
+      await later.pending;
+    });
     expect(props.compareId.current).toBe(EMPTY_ID);
     expect(later.fail).toHaveBeenCalledTimes(1);
     expect(later.success).not.toHaveBeenCalled();
-    expect(api.refreshServerSide).toHaveBeenCalledExactlyOnceWith({ purge: true });
-    expect(replacementSuccess).toHaveBeenCalledExactlyOnceWith({ rowData: [], rowCount: 0 });
+    expect(api.refreshServerSide).toHaveBeenCalledExactlyOnceWith({
+      purge: true,
+    });
+    expect(replacementSuccess).toHaveBeenCalledExactlyOnceWith({
+      rowData: [],
+      rowCount: 0,
+    });
     expect(api.deselectAll).toHaveBeenCalledTimes(1);
-    expect(document.querySelector('[data-testid="compare-detail-drawer"]')).toBeNull();
+    expect(
+      document.querySelector('[data-testid="compare-detail-drawer"]'),
+    ).toBeNull();
     expect(grid.props.pinnedBottomRowData).toEqual([]);
-    expect(grid.props.statusBar.statusPanels[0].statusPanelParams.columnAvgs).toEqual([]);
+    expect(
+      grid.props.statusBar.statusPanels[0].statusPanelParams.columnAvgs,
+    ).toEqual([]);
     expect(props.setCommonColumn).toHaveBeenLastCalledWith([]);
     expect(props.setDatasetInfo).toHaveBeenLastCalledWith({});
     openFirstRow();
-    expect(document.querySelector('[data-testid="compare-detail-drawer"]')).toBeNull();
+    expect(
+      document.querySelector('[data-testid="compare-detail-drawer"]'),
+    ).toBeNull();
     for (const start of [0, 10, 0]) {
-      expect(await getPage(start)).toHaveBeenCalledExactlyOnceWith({ rowData: [], rowCount: 0 });
+      expect(await getPage(start)).toHaveBeenCalledExactlyOnceWith({
+        rowData: [],
+        rowCount: 0,
+      });
     }
     expect(post).toHaveBeenCalledTimes(2);
     expect(api.refreshServerSide).toHaveBeenCalledTimes(1);
@@ -794,7 +888,9 @@ describe("CompareData terminal zero snapshot", () => {
     post.mockResolvedValueOnce(response());
     await getPage();
     const late = deferred();
-    post.mockImplementationOnce(() => late.promise).mockResolvedValueOnce(empty());
+    post
+      .mockImplementationOnce(() => late.promise)
+      .mockResolvedValueOnce(empty());
     // Were another POST made, this backend would mint yet another empty ID.
     post.mockResolvedValue(empty(OTHER_EMPTY_ID));
     const obsolete = startPage(20);
@@ -814,10 +910,15 @@ describe("CompareData terminal zero snapshot", () => {
 
   it("refreshes an initially empty comparison locally and permits an explicit ID reset to rebuild", async () => {
     const { api, props } = setup();
-    post.mockResolvedValueOnce(empty()).mockResolvedValue(empty(OTHER_EMPTY_ID));
+    post
+      .mockResolvedValueOnce(empty())
+      .mockResolvedValue(empty(OTHER_EMPTY_ID));
     await getPage();
     for (let index = 0; index < 5; index += 1) {
-      expect(await getPage()).toHaveBeenCalledExactlyOnceWith({ rowData: [], rowCount: 0 });
+      expect(await getPage()).toHaveBeenCalledExactlyOnceWith({
+        rowData: [],
+        rowCount: 0,
+      });
     }
     expect(props.compareId.current).toBe(EMPTY_ID);
     expect(post).toHaveBeenCalledTimes(1);
@@ -833,14 +934,19 @@ describe("CompareData terminal zero snapshot", () => {
   it("completes a losing initial block locally after another block establishes zero", async () => {
     const { api, props } = setup();
     const late = deferred();
-    post.mockImplementationOnce(() => late.promise).mockResolvedValueOnce(empty());
+    post
+      .mockImplementationOnce(() => late.promise)
+      .mockResolvedValueOnce(empty());
     const obsolete = startPage();
     await getPage(10);
     await act(async () => {
       late.resolve(empty(OTHER_EMPTY_ID));
       await obsolete.pending;
     });
-    expect(obsolete.success).toHaveBeenCalledExactlyOnceWith({ rowData: [], rowCount: 0 });
+    expect(obsolete.success).toHaveBeenCalledExactlyOnceWith({
+      rowData: [],
+      rowCount: 0,
+    });
     expect(props.compareId.current).toBe(EMPTY_ID);
     expect(post).toHaveBeenCalledTimes(2);
     expect(api.refreshServerSide).toHaveBeenCalledTimes(1);
@@ -857,15 +963,23 @@ describe("CompareData terminal zero snapshot", () => {
       post.mockResolvedValueOnce(outOfRange);
       const result = await getPage(20);
       if (id === COMPARE_ID) {
-        expect(result).toHaveBeenCalledExactlyOnceWith({ rowData: [], rowCount: 12 });
+        expect(result).toHaveBeenCalledExactlyOnceWith({
+          rowData: [],
+          rowCount: 12,
+        });
         expect(api.refreshServerSide).not.toHaveBeenCalled();
       } else {
         expect(result).not.toHaveBeenCalled();
-        expect(api.refreshServerSide).toHaveBeenCalledExactlyOnceWith({ purge: true });
+        expect(api.refreshServerSide).toHaveBeenCalledExactlyOnceWith({
+          purge: true,
+        });
       }
       post.mockResolvedValueOnce(withCompareId(id));
       const first = await getPage();
-      expect(first).toHaveBeenCalledExactlyOnceWith({ rowData: rows.slice(0, 10), rowCount: 12 });
+      expect(first).toHaveBeenCalledExactlyOnceWith({
+        rowData: rows.slice(0, 10),
+        rowCount: 12,
+      });
       expect(post).toHaveBeenCalledTimes(3);
       expect(props.compareId.current).toBe(id);
       expect(api.showNoRowsOverlay).not.toHaveBeenCalled();
