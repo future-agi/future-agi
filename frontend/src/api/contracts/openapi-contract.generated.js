@@ -57637,6 +57637,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
             type: "number",
           },
         },
+        cdc_lag_verified: {
+          title: "Cdc lag verified",
+          type: "object",
+          additionalProperties: {
+            type: "boolean",
+          },
+        },
         routing: {
           title: "Routing",
           type: "object",
@@ -57661,9 +57668,20 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         cdc_lag: {
           title: "Cdc lag",
+          description:
+            "Per-table lag in seconds; -1 means unverified, including empty tables.",
           type: "object",
           additionalProperties: {
             type: "number",
+          },
+        },
+        cdc_lag_verified: {
+          title: "Cdc lag verified",
+          description:
+            "True only for complete relevant coverage on every destination with an observed sync timestamp. Incomplete coverage alone does not degrade health.",
+          type: "object",
+          additionalProperties: {
+            type: "boolean",
           },
         },
         routing: {
