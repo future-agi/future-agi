@@ -1601,6 +1601,7 @@ class HostedHarnessProvider:
                 scenario_keys=list(request.validated_data["scenario_ids"]),
                 trials=request.validated_data["trials"],
                 idempotency_key=idempotency_key,
+                seed=request.validated_data.get("seed"),
                 picks=VersionPicks(
                     agent_version_id=request.validated_data.get("agent_version_id"),
                     environment_version_id=request.validated_data.get(

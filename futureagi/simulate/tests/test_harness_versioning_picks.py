@@ -1298,3 +1298,60 @@ class TestRunLabels:
             assert payload["agent_version"] == "v1"
         assert old_header["pinned_agent_version"] is None
         assert old_header["agent_differs"] is False
+
+
+class TestSeed:
+    def test_a_given_seed_is_stored_on_the_run_and_shown_with_it(
+        self, auth_client, user, workspace, storage
+    ):
+        from simulate.models import HostedHarnessJob
+
+        environment = _environment(user, workspace, "pk-seed", storage)
+
+        seeded = _post_run(
+            auth_client,
+            environment,
+            {"scenario_ids": [_key(NAMES[0])], "trials": 1, "seed": 4242},
+            key="seed-a",
+        )
+        plain = _post_run(
+            auth_client,
+            environment,
+            {"scenario_ids": [_key(NAMES[0])], "trials": 1},
+            key="seed-b",
+        )
+        refused = _post_run(
+            auth_client,
+            environment,
+            {"scenario_ids": [_key(NAMES[0])], "trials": 1, "seed": -1},
+            key="seed-c",
+        )
+
+        assert seeded.status_code == 202, seeded.content
+        run = HostedHarnessJob.no_workspace_objects.get(id=seeded.json()["job_id"])
+        assert run.seed == 4242
+        again = HostedHarnessJob.no_workspace_objects.get(id=plain.json()["job_id"])
+        assert again.seed == environment.seed
+        assert refused.status_code == 400
+        from simulate.models import TestExecution
+        from simulate.views.run_results_v3 import _execution_payload
+
+        execution = TestExecution.objects.get(id=seeded.json()["test_execution_id"])
+        assert _execution_payload(execution, {})["seed"] == 4242
+
+    def test_a_request_key_reused_with_another_seed_is_refused(
+        self, auth_client, user, workspace, storage
+    ):
+        environment = _environment(user, workspace, "pk-seed-key", storage)
+        body = {"scenario_ids": [_key(NAMES[0])], "trials": 1, "seed": 7}
+
+        first = _post_run(auth_client, environment, body, key="seed-k")
+        again = _post_run(auth_client, environment, body, key="seed-k")
+        other = _post_run(auth_client, environment, {**body, "seed": 8}, key="seed-k")
+
+        assert first.status_code == 202, first.content
+        assert again.json()["job_id"] == first.json()["job_id"]
+        assert (other.status_code, other.json()["error"]) == (
+            409,
+            "idempotency_conflict",
+        )

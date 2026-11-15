@@ -789,6 +789,15 @@ class HarnessRunCreateSerializer(serializers.Serializer):
         max_length=1000,
     )
     trials = serializers.IntegerField(min_value=1, max_value=20, default=1)
+    # The run's seed: the same seed draws the same personas and variations again. Absent or null keeps the
+    # environment's own.
+    seed = serializers.IntegerField(
+        required=False,
+        allow_null=True,
+        min_value=0,
+        max_value=2**53 - 1,
+        help_text="The same seed draws the same personas and variations again; absent keeps the environment's.",
+    )
     # Absent or null runs the environment's default for that piece.
     agent_version_id = serializers.UUIDField(required=False, allow_null=True)
     environment_version_id = serializers.UUIDField(required=False, allow_null=True)

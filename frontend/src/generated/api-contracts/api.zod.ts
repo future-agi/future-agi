@@ -41447,6 +41447,9 @@ export const simulateApiHarnessEnvironmentsRunBodyScenarioIdsMax = 1000;
 export const simulateApiHarnessEnvironmentsRunBodyTrialsDefault = 1;
 export const simulateApiHarnessEnvironmentsRunBodyTrialsMax = 20;
 
+export const simulateApiHarnessEnvironmentsRunBodySeedMin = 0;
+export const simulateApiHarnessEnvironmentsRunBodySeedMax = 9007199254740991;
+
 export const SimulateApiHarnessEnvironmentsRunBody = zod.object({
   scenario_ids: zod
     .array(
@@ -41461,6 +41464,14 @@ export const SimulateApiHarnessEnvironmentsRunBody = zod.object({
     .min(1)
     .max(simulateApiHarnessEnvironmentsRunBodyTrialsMax)
     .default(simulateApiHarnessEnvironmentsRunBodyTrialsDefault),
+  seed: zod
+    .number()
+    .min(simulateApiHarnessEnvironmentsRunBodySeedMin)
+    .max(simulateApiHarnessEnvironmentsRunBodySeedMax)
+    .optional()
+    .describe(
+      "The same seed draws the same personas and variations again; absent keeps the environment's.",
+    ),
   agent_version_id: zod.string().uuid().nullish(),
   environment_version_id: zod.string().uuid().nullish(),
   suite_version_id: zod.string().uuid().nullish(),
@@ -43998,6 +44009,9 @@ export const simulateApiHarnessJobsRunsBodyScenarioIdsMax = 1000;
 export const simulateApiHarnessJobsRunsBodyTrialsDefault = 1;
 export const simulateApiHarnessJobsRunsBodyTrialsMax = 20;
 
+export const simulateApiHarnessJobsRunsBodySeedMin = 0;
+export const simulateApiHarnessJobsRunsBodySeedMax = 9007199254740991;
+
 export const SimulateApiHarnessJobsRunsBody = zod.object({
   scenario_ids: zod
     .array(
@@ -44009,6 +44023,14 @@ export const SimulateApiHarnessJobsRunsBody = zod.object({
     .min(1)
     .max(simulateApiHarnessJobsRunsBodyTrialsMax)
     .default(simulateApiHarnessJobsRunsBodyTrialsDefault),
+  seed: zod
+    .number()
+    .min(simulateApiHarnessJobsRunsBodySeedMin)
+    .max(simulateApiHarnessJobsRunsBodySeedMax)
+    .optional()
+    .describe(
+      "The same seed draws the same personas and variations again; absent keeps the environment's.",
+    ),
   agent_version_id: zod.string().uuid().nullish(),
   environment_version_id: zod.string().uuid().nullish(),
   suite_version_id: zod.string().uuid().nullish(),
@@ -54793,6 +54815,7 @@ export const SimulateV3TestExecutionCallsResponse = zod.object({
       .number()
       .min(1)
       .default(simulateV3TestExecutionCallsResponseExecutionTrialsDefault),
+    seed: zod.number().optional(),
     agent_type: zod.string().min(1),
     resume: zod.object({
       resumable: zod.boolean(),
