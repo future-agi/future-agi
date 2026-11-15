@@ -877,12 +877,11 @@ def test_expired_active_conversation_is_not_reanchored_after_source_retention(
         as_of=now,
     )
     # The same old-start conversation is still expired. Treating its remaining
-    # member as a new anchor restores unit evidence and duplicates its retired
-    # contribution in a newer bucket.
+    # member as a new anchor would restore expired evidence in a newer bucket.
     assert (
         len(current_fields(writer, head)),
         sum(r[2] for r in bucket_rows(writer, head) if not r[-1]),
-    ) == (0, 1)
+    ) == (0, 0)
 
 
 @pytest.mark.django_db(transaction=True)
@@ -1137,9 +1136,9 @@ def test_shrink_then_expansion_never_reactivates_expiry_revoked_pins(
     )
     with pytest.raises(RuntimeError, match="before physical purge"):
         expire_project(writer, [definition], retention_days=lambda: 1, now=now)
-    assert expire_project(writer, [definition], retention_days=lambda: 0, now=now)[
-        "unlimited"
-    ]
+    # Extending the policy cannot bypass an already-durable physical debt.
+    with pytest.raises(RuntimeError, match="before physical purge"):
+        expire_project(writer, [definition], retention_days=lambda: 0, now=now)
     original.refresh_from_db()
     assert original.revoked_at is not None
     for pin in pins:
@@ -1148,6 +1147,7 @@ def test_shrink_then_expansion_never_reactivates_expiry_revoked_pins(
             with pinned_read(writer.store, writer.lease.project_id, pin=pin, now=now):
                 pytest.fail("horizon expansion restored an old capture")
     monkeypatch.setattr(retention, "_delete", deletion)
+    assert expire_project(writer, [definition], retention_days=lambda: 0, now=now)["unlimited"]
     writer.compact()
     writer.collect_garbage()
     assert all(not pin.is_usable(now) for pin in pins)
@@ -1592,7 +1592,7 @@ def test_retired_and_new_spans_with_identical_surviving_rows_require_admission_p
         scope,
         **kwargs,
     )
-    assert sum(r[2] for r in metric_bucket_rows(writer, head, definition)) == 2
+    assert sum(r[2] for r in metric_bucket_rows(writer, head, definition)) == (1 if prior_retirement else 2)
     # This assertion requires genuinely NEW S live in one history, but not the
     # corrected/reused previously retired S in the indistinguishable other one.
     deps, p = committed_rows_select(

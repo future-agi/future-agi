@@ -55,6 +55,12 @@ def expire_run(run, *, now=None):
     now = now or timezone.now()
     metric = run.definition.metric
     with serialized_project(metric.project_id):
+        # A capture takeover may rotate snapshot_id after the caller's scan.
+        # Freeze the CURRENT namespace under the same lock that fences takeover.
+        current = DerivedMetricRun.objects.select_for_update().filter(pk=run.pk).first()
+        if current is None:
+            return
+        run = current
         DerivedMetricRun.objects.filter(pk=run.pk, deleted_at__isnull=True).update(
             deleted_at=now, cleanup_status="pending"
         )

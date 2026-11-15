@@ -174,3 +174,22 @@ def test_policy_outage_does_not_disable_existing_erasure_cleanup(settings, monke
     monkeypatch.setattr(history_gc, "run_scheduled", Mock(return_value=[]))
     assert cleanup_derived_metric_snapshots() == 1
     sweep.assert_called_once_with(limit=10)
+
+
+def test_expiry_uses_current_snapshot_namespace_under_project_lock(
+    workspace, observe_project, policy,
+):
+    now = timezone.now()
+    run = DerivedMetricRun.objects.create(
+        definition=_version(_metric(workspace, observe_project), now),
+        window_start=now - timedelta(days=60), window_end=now - timedelta(days=59),
+        as_of=now, fingerprint=uuid4().hex, status="running", kind="snapshot",
+        supported_grain="conversation", snapshot_id=uuid4(), attempt_id=uuid4(),
+    )
+    new_snapshot = uuid4()
+    # The scheduler read the old row before a capture takeover allocated this
+    # namespace. expire_run must never write an outbox with the stale key.
+    DerivedMetricRun.objects.filter(pk=run.pk).update(snapshot_id=new_snapshot, attempt_id=uuid4())
+    source_retention.expire_run(run)
+    request = MetricErasureRequest.objects.get(deletion_key=f"run:{run.pk}")
+    assert request.snapshot_key == new_snapshot
