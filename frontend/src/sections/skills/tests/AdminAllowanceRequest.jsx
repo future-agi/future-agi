@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import PropTypes from 'prop-types';
-import { Button, Stack, Typography } from '@mui/material';
+import { Alert, Button, Stack, Typography } from '@mui/material';
 
 // A member can't set the workspace allowance, so the blocked test hands them a ready-to-send request
 // for a workspace admin instead of a page they can't change (the viewer pattern of ContextUsePanel's
@@ -21,7 +21,7 @@ export default function AdminAllowanceRequest({ request }) {
   return <Stack spacing={0.5} alignItems="flex-start" sx={{ minWidth: 0 }}>
     <Button variant="outlined" size="small" disabled={busy} onClick={copy}>Copy request for admin</Button>
     {copied && <Typography variant="s3" color="text.secondary" role="status">Copied the request for an admin.</Typography>}
-    {failed && <Typography variant="s3" color="error.main" role="alert" sx={{ overflowWrap: 'anywhere' }}>Couldn&apos;t copy. Send a workspace admin this request: {request}</Typography>}
+    {failed && <Alert severity="error" sx={{ overflowWrap: 'anywhere' }}>Couldn&apos;t copy. Send a workspace admin this request: {request}</Alert>}
   </Stack>;
 }
 AdminAllowanceRequest.propTypes = { request: PropTypes.string.isRequired };
