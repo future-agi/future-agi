@@ -7402,7 +7402,9 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
         except (UnsupportedFilterShapeError, FilterPrincipalContextError):
             return self._gm.bad_request("Agent graph filter configuration is invalid")
         except Exception as exc:
-            if is_clickhouse_api_read_unavailable_error(exc):
+            if (
+                isinstance(exc, BoundedGraphReadError) and exc.retryable
+            ) or is_clickhouse_api_read_unavailable_error(exc):
                 logger.warning(
                     "agent_graph_query_unavailable",
                     project_id=str(project_id or ""),
@@ -7609,6 +7611,14 @@ class UsersView(APIView):
                 "This user sort is not available for the selected filters. Clear the sort and retry.",
                 code="user_sort_unsupported",
             )
+        except TagReadUnavailable as exc:
+            return tag_read_error_response(
+                self._gm,
+                exc,
+                unavailable_message="User data is temporarily unavailable. Please retry.",
+            )
+        except UnsupportedFilterShapeError:
+            return self._gm.bad_request("User filter configuration is invalid")
         except Exception as exc:
             if is_clickhouse_api_read_unavailable_error(exc):
                 logger.warning(
