@@ -506,6 +506,9 @@ def _run_protect(
                     inputs=protect_inputs,
                     config_overrides=config or {},
                     model="protect_flash" if protect_flash else None,
+                    # SDK v1 is also the gateway's runtime guardrail API.
+                    # Preserve its verdict defaults, not evaluation errors.
+                    protect_runtime=True,
                     organization_id=str(user.organization.id),
                     workspace_id=str(workspace.id) if workspace else None,
                 )
