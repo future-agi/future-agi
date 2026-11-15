@@ -341,6 +341,14 @@ def select_for_run(pairing: Pairing, *, keys: list[str], trials: int) -> RunPlan
         for row in report["rows"]
         if row["id"] in by
     }
+    # A worker is not a row: a case it holds back reads its boundary's reason.
+    reasons.update(
+        {
+            f"worker:{one['worker_id']}": one["reason"]
+            for one in report.get("workers") or []
+            if f"worker:{one['worker_id']}" in by
+        }
+    )
     if dropped:
         by[DROPPED_ROW] = len(dropped)
         reasons[DROPPED_ROW] = DROPPED_REASON
