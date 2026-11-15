@@ -74,7 +74,12 @@ test('SKILLS-E2E-014: an admin archives a skill and restores it with its version
   await page.getByRole('menuitem', { name: 'Archive', exact: true }).click();
   const confirm = page.getByRole('dialog');
   await expect(confirm.getByText('You can restore it from More → Archived skills.')).toBeVisible();
+  // The open dialog hides the library from the accessibility tree, so wait for the archive itself and the
+  // dialog to close before reading the list; otherwise the API read can race the delete.
+  const archivedResponse = page.waitForResponse((response) => response.url().endsWith(`${SKILLS}${id}/`) && response.request().method() === 'DELETE');
   await confirm.getByRole('button', { name: 'Archive', exact: true }).click();
+  expect((await archivedResponse).ok()).toBe(true);
+  await expect(confirm).toBeHidden();
   await expect(page.getByRole('link', { name, exact: true })).toHaveCount(0);
   const live = await api<Page<{ id: string }>>(admin, 'GET', '', undefined);
   expect(live.results.some((skill) => skill.id === id)).toBe(false);
