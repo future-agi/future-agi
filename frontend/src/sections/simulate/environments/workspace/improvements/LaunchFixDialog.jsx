@@ -529,6 +529,7 @@ export default function LaunchFixDialog({ open, onClose, envId, sourceRunId }) {
         {draftBlocks && (
           <Button
             size="small"
+            variant="outlined"
             onClick={() => {
               onClose();
               // The Scenarios tab's draft bar saves or discards the changes.

@@ -297,9 +297,13 @@ def retry_fix_run(failed: AgentFixRun, *, user: Any) -> AgentFixRun:
         FixRequest.model_validate(failed.request).variations_pending
         and failed.suite_version_id is None
     ):
+        # Imported here: the variations step imports this module.
+        from simulate.services.agent_fix_variations import failing_targets
+
         # The retry asks the builder again, so the launch's checks for that hold again.
         if blocked := variations_blocker(source_run):
             raise blocked
+        _require_variation_room(source_run, len(failing_targets(failed)))
         require_harness_authoring(str(failed.organization_id))
     # The models the failed fix lost recently, with when: the retry's first launch starts
     # without them. Its last error stays with it.
@@ -627,7 +631,8 @@ def make_candidate_default(
         current = HostedHarnessJob.no_workspace_objects.select_related(
             "agent_version"
         ).get(id=fix_run.environment_id)
-        # Read again under the activation's lock: the default may be gone by now.
+        # A fresh read, outside the refused activation's lock: the message names the
+        # default as it is now, which may have moved again.
         raise base_moved(
             base,
             (
