@@ -2,6 +2,7 @@ package server
 
 import (
 	"bytes"
+	"encoding/json"
 	"math"
 	"net/http"
 	"net/http/httptest"
@@ -10,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/futureagi/agentcc-gateway/internal/config"
+	"github.com/futureagi/agentcc-gateway/internal/models"
 	"github.com/futureagi/agentcc-gateway/internal/pipeline"
 	costplugin "github.com/futureagi/agentcc-gateway/internal/plugins/cost"
 	"github.com/futureagi/agentcc-gateway/internal/providers"
@@ -84,5 +86,30 @@ func TestChatCostFollowsTheServingProvider(t *testing.T) {
 				t.Fatalf("x-agentcc-cost = %q, want %.6f (the serving provider's gemini price)", w.Header().Get("x-agentcc-cost"), want)
 			}
 		})
+	}
+}
+
+// A caller's metadata cannot choose the price table its request is billed
+// from: a non-chat request, which pins nothing, is priced from the table of
+// the provider that serves it, whatever the header or body metadata says.
+func TestCallerMetadataCannotChooseThePriceTable(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.Providers["google"] = config.ProviderConfig{BaseURL: "https://generativelanguage.googleapis.com", APIFormat: "gemini"}
+	registry, err := providers.NewRegistry(cfg)
+	if err != nil {
+		t.Fatalf("creating registry: %v", err)
+	}
+	srv := New(cfg, "", registry, pipeline.NewEngine(), nil, nil, nil, nil, testModelDBPtr(), tenant.NewStore(), nil)
+
+	rc := models.AcquireRequestContext()
+	defer rc.Release()
+	rc.EndpointType = "embedding"
+	rc.Provider = "google"
+	r := httptest.NewRequest(http.MethodPost, "/v1/embeddings", nil)
+	r.Header.Set("x-agentcc-metadata", `{"price_table":"vertex_ai"}`)
+	applyCallerMetadata(rc, r, json.RawMessage(`{"price_table":"vertex_ai"}`))
+
+	if got := srv.ServedPriceTableName(rc); got != "gemini" {
+		t.Fatalf("ServedPriceTableName = %q, want the serving provider's %q", got, "gemini")
 	}
 }

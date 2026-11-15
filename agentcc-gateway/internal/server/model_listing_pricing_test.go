@@ -224,3 +224,56 @@ func TestListModels_DuplicateOrgModelQuotesTheRoutedProvider(t *testing.T) {
 		})
 	}
 }
+
+// A provider-prefixed model name goes to the provider it names when that
+// provider lists the bare model, whoever else lists the whole name (Perplexity
+// lists "anthropic/claude-sonnet-5-5"). The listing gives the entry to that
+// same provider, so it quotes the price a request for it is billed.
+func TestListModels_PrefixedModelQuotesTheProviderItNames(t *testing.T) {
+	const orgKey = "sk-agentcc-org-prefixed"
+	cfg := config.DefaultConfig()
+	cfg.Auth.Enabled = true
+	cfg.Auth.Keys = []config.AuthKeyConfig{{Name: "org-user", Key: orgKey, Owner: "user", KeyType: "byok", Metadata: map[string]string{"org_id": "org-1"}}}
+	registry, err := providers.NewRegistry(cfg)
+	if err != nil {
+		t.Fatalf("creating registry: %v", err)
+	}
+	// IP literals pass the base URL check without a lookup; nothing is sent to them.
+	store := tenant.NewStore()
+	store.Set("org-1", &tenant.OrgConfig{Providers: map[string]*tenant.ProviderConfig{
+		"anthropic":  {APIKey: "org-key", Enabled: true, BaseURL: "https://8.8.8.8", APIFormat: "anthropic", Models: []string{"claude-sonnet-5-5"}},
+		"perplexity": {APIKey: "org-key", Enabled: true, BaseURL: "https://8.8.4.4", APIFormat: "openai", Models: []string{"anthropic/claude-sonnet-5-5"}},
+	}})
+	db := testModelDBPtr()
+	srv := New(cfg, "", registry, pipeline.NewEngine(), nil, nil, nil, nil, db, store, nil)
+	srv.ready.Store(true)
+	entry, ok := db.Load().Get("claude-sonnet-5-5")
+	if !ok {
+		t.Fatal("the table no longer lists claude-sonnet-5-5")
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/models", nil)
+	req.Header.Set("Authorization", "Bearer "+orgKey)
+	w := httptest.NewRecorder()
+	srv.httpServer.Handler.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status %d: %s", w.Code, w.Body.String())
+	}
+	var resp models.EnrichedModelListResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("parsing response: %v", err)
+	}
+	for _, m := range resp.Data {
+		if m.ID != "anthropic/claude-sonnet-5-5" {
+			continue
+		}
+		if m.OwnedBy != "anthropic" {
+			t.Errorf("owned_by = %q, want %q, the provider a request for it goes to", m.OwnedBy, "anthropic")
+		}
+		if p := m.Pricing; p == nil || math.Abs(p.InputPerMTokens-entry.Pricing.InputPerMTok()) > 1e-9 {
+			t.Errorf("pricing = %+v, want claude-sonnet-5-5's %v per M in", p, entry.Pricing.InputPerMTok())
+		}
+		return
+	}
+	t.Fatalf("anthropic/claude-sonnet-5-5 not listed: %s", w.Body.String())
+}

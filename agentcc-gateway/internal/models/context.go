@@ -85,6 +85,12 @@ type RequestContext struct {
 	// "speech", "transcription", "rerank", or "decision". Defaults to "chat".
 	EndpointType string
 
+	// ServedPriceTable is the price-table name of the provider instance that
+	// served the request, set by the server where retries and failover can
+	// switch instances; nil when not set. A field, not Metadata, because a
+	// caller can write Metadata.
+	ServedPriceTable *string
+
 	// Guardrail results — populated by the guardrails plugin with triggered checks.
 	GuardrailResults []GuardrailResult
 
@@ -178,6 +184,7 @@ func (rc *RequestContext) Release() {
 	rc.UserID = ""
 	rc.Flags = RequestFlags{}
 	rc.EndpointType = ""
+	rc.ServedPriceTable = nil
 	rc.EmbeddingRequest = nil
 	rc.EmbeddingResponse = nil
 	rc.ImageRequest = nil

@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 )
 
@@ -96,7 +97,10 @@ func (s *Syncer) syncOnce(ctx context.Context, timeout time.Duration) {
 	defer cancel()
 	table, err := s.fetch(ctx)
 	if err != nil {
-		s.log.Warn("pricing catalogue sync failed; keeping the table in use", "url", s.logURL, "err", err)
+		// This is the one place the error is logged: any copy of the URL in it
+		// becomes the masked one.
+		msg := strings.ReplaceAll(err.Error(), s.url, s.logURL)
+		s.log.Warn("pricing catalogue sync failed; keeping the table in use", "url", s.logURL, "err", msg)
 		return
 	}
 	merged := s.base.overlay(table)
@@ -108,7 +112,9 @@ func (s *Syncer) syncOnce(ctx context.Context, timeout time.Duration) {
 func (s *Syncer) fetch(ctx context.Context) (*Table, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, s.url, nil)
 	if err != nil {
-		return nil, fmt.Errorf("build request: %w", err)
+		// A parse error quotes the URL and the bad part of it, which can be the
+		// password; it is not wrapped.
+		return nil, errors.New("build request: the catalogue URL is not a valid URL")
 	}
 	resp, err := s.client.Do(req)
 	if err != nil {

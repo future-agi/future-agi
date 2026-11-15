@@ -498,6 +498,26 @@ func TestSync_CredentialsNeverReachLogs(t *testing.T) {
 	}
 }
 
+// A URL that does not parse fails before any request is built. Go's parse
+// error quotes the URL and the bad escape in it, both of which can be the
+// password; neither may reach the log.
+func TestSync_AnUnparseableURLKeepsItsPasswordOutOfTheLog(t *testing.T) {
+	var logs bytes.Buffer
+	base := startingTable(t, 100)
+	s := NewSyncer(New(base, nil), base, "https://user:p%zz@h/x", time.Hour, slog.New(slog.NewTextHandler(&logs, nil)))
+
+	s.syncOnce(context.Background(), time.Second)
+
+	if !strings.Contains(logs.String(), "pricing catalogue sync failed") {
+		t.Fatalf("precondition: the failed sync was not logged: %s", logs.String())
+	}
+	for _, secret := range []string{"p%zz", "%zz"} {
+		if strings.Contains(logs.String(), secret) {
+			t.Errorf("log carries the password or part of it, %q: %s", secret, logs.String())
+		}
+	}
+}
+
 // "At least half" of an odd count rounds up: 61 of 121 usable, not 60.
 func TestSync_HalfOfStartingRoundsUp(t *testing.T) {
 	f := newFakeCatalogue(t, tableJSON(60, 1e-6))

@@ -488,25 +488,9 @@ func (h *Handlers) orgProviderFor(orgID string, orgCfg *tenant.OrgConfig, model 
 	}
 	ids, _ := orgProviderIDs(orgCfg)
 
-	type match struct{ providerID, upstreamModel string }
-	var matches []match
-	if prefix, bare, ok := strings.Cut(model, "/"); ok {
-		for _, providerID := range ids {
-			if strings.EqualFold(prefix, providerID) && slices.Contains(orgCfg.Providers[providerID].Models, bare) {
-				matches = append(matches, match{providerID, bare})
-			}
-		}
-	}
-	for _, providerID := range ids {
-		named := slices.ContainsFunc(matches, func(m match) bool { return m.providerID == providerID })
-		if !named && slices.Contains(orgCfg.Providers[providerID].Models, model) {
-			matches = append(matches, match{providerID, model})
-		}
-	}
-
 	var failedID string
 	var firstErr error
-	for _, m := range matches {
+	for _, m := range orgModelMatches(orgCfg, ids, model) {
 		pcfg := orgCfg.Providers[m.providerID]
 		p, err := h.orgProviderCache.GetOrCreateWithTenantConfig(orgID, m.providerID, pcfg.APIKey, pcfg)
 		if err != nil {
@@ -520,6 +504,33 @@ func (h *Handlers) orgProviderFor(orgID string, orgCfg *tenant.OrgConfig, model 
 		return p, m.providerID, m.upstreamModel, nil
 	}
 	return nil, failedID, "", firstErr
+}
+
+// orgModelMatch is one of the org's providers that can serve a model, and the
+// model name to send it.
+type orgModelMatch struct{ providerID, upstreamModel string }
+
+// orgModelMatches lists, in the order inference tries them, the providers
+// among ids that serve model: the provider a "<provider>/<model>" name
+// names, then the providers that list the whole name, each in ID order. Model
+// discovery uses the same list, so a model is shown with the price of the
+// provider a request for it goes to.
+func orgModelMatches(orgCfg *tenant.OrgConfig, ids []string, model string) []orgModelMatch {
+	var matches []orgModelMatch
+	if prefix, bare, ok := strings.Cut(model, "/"); ok {
+		for _, providerID := range ids {
+			if strings.EqualFold(prefix, providerID) && slices.Contains(orgCfg.Providers[providerID].Models, bare) {
+				matches = append(matches, orgModelMatch{providerID, bare})
+			}
+		}
+	}
+	for _, providerID := range ids {
+		named := slices.ContainsFunc(matches, func(m orgModelMatch) bool { return m.providerID == providerID })
+		if !named && slices.Contains(orgCfg.Providers[providerID].Models, model) {
+			matches = append(matches, orgModelMatch{providerID, model})
+		}
+	}
+	return matches
 }
 
 func (h *Handlers) effectiveFailover(orgCfg *tenant.OrgConfig) *routing.Failover {
@@ -984,15 +995,13 @@ func (h *Handlers) servingProvider(rc *models.RequestContext) (providers.Provide
 	return h.registry.GetProvider(rc.Provider)
 }
 
-// metadataPriceTable carries the price-table name of the provider that served
-// the request. Chat sets it where the successful instance is known, since
-// retries and failover can switch instances. Other handlers leave it unset and
-// servedPriceTableName derives it.
-const metadataPriceTable = "price_table"
-
 // pinPriceTable records the price-table name of p, the instance that served rc.
+// Chat pins it where the successful instance is known, since retries and
+// failover can switch instances. Other handlers leave it unset and
+// servedPriceTableName derives it.
 func pinPriceTable(rc *models.RequestContext, p providers.Provider) {
-	rc.Metadata[metadataPriceTable] = providers.PriceTableName(p)
+	name := providers.PriceTableName(p)
+	rc.ServedPriceTable = &name
 }
 
 // servedPriceTableName is the name the price table keys the models of the
@@ -1000,8 +1009,8 @@ func pinPriceTable(rc *models.RequestContext, p providers.Provider) {
 // the org's config, which can differ from it (an internal key keeps the base
 // provider) and can change while the request runs.
 func (h *Handlers) servedPriceTableName(rc *models.RequestContext) string {
-	if name, ok := rc.Metadata[metadataPriceTable]; ok {
-		return name
+	if rc.ServedPriceTable != nil {
+		return *rc.ServedPriceTable
 	}
 	p, _ := h.servingProvider(rc)
 	return providers.PriceTableName(p)
@@ -2530,8 +2539,10 @@ func (h *Handlers) orgScopedModels(r *http.Request) ([]models.ModelObject, bool)
 		return nil, false
 	}
 
-	// A model several providers list is owned by the one inference routes to,
-	// so its price is the same on every call and matches what a request costs.
+	// A model several providers list is owned by the one inference routes to
+	// (orgModelMatches), so its price is the same on every call and matches
+	// what a request costs. A model only providers that cannot serve list keeps
+	// the first of those.
 	servable, unservable := orgProviderIDs(orgCfg)
 	seen := make(map[string]bool)
 	result := make([]models.ModelObject, 0)
@@ -2541,10 +2552,14 @@ func (h *Handlers) orgScopedModels(r *http.Request) ([]models.ModelObject, bool)
 				continue
 			}
 			seen[modelID] = true
+			owner := providerName
+			if matches := orgModelMatches(orgCfg, servable, modelID); len(matches) > 0 {
+				owner = matches[0].providerID
+			}
 			result = append(result, models.ModelObject{
 				ID:      modelID,
 				Object:  "model",
-				OwnedBy: providerName,
+				OwnedBy: owner,
 			})
 		}
 	}
