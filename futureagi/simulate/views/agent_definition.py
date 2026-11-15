@@ -816,10 +816,9 @@ class EditAgentDefinitionView(APIView):
                     version = versions.first()
                 source_provider = previous_provider
                 if version:
-                    source_provider = (
-                        (version.configuration_snapshot or {}).get("provider")
-                        or previous_provider
-                    )
+                    source_provider = (version.configuration_snapshot or {}).get(
+                        "provider"
+                    ) or previous_provider
                 provider_changed = (
                     "provider" in validated and agent.provider != source_provider
                 )
@@ -851,7 +850,9 @@ class EditAgentDefinitionView(APIView):
                     and agent.provider == "vapi"
                     and provider_for_version(version) == "vapi"
                 ):
-                    assistant_input["assistant_id"] = existing_configuration.assistant_id
+                    assistant_input["assistant_id"] = (
+                        existing_configuration.assistant_id
+                    )
 
                 creds_input = ProviderCredentialsInput(
                     provider=validated.get("provider") or agent.provider or "",

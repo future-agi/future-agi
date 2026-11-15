@@ -322,7 +322,9 @@ class RunTestSerializer(serializers.ModelSerializer):
             "id": version.id,
             "name": version.version_name,
             "configuration_snapshot": snapshot_as_shown(snapshot, agent),
-            "api_key": mask_key(configuration.api_key) if configuration.api_key else None,
+            "api_key": mask_key(configuration.api_key)
+            if configuration.api_key
+            else None,
         }
 
     def to_representation(self, instance):

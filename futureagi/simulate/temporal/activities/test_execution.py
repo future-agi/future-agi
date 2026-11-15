@@ -18,7 +18,9 @@ from asgiref.sync import sync_to_async
 from django.db import close_old_connections
 from temporalio import activity
 
-from simulate.services.agent_definition import resolve_provider_configuration_for_version
+from simulate.services.agent_definition import (
+    resolve_provider_configuration_for_version,
+)
 from simulate.temporal.types.activities import (
     CancelPendingCallsInput,
     CancelPendingCallsOutput,

@@ -133,9 +133,14 @@ describe("selected-version form provenance", () => {
     id,
     api_key: `synt...ey-${suffix}`,
     configuration_snapshot: {
-      agent_name: "Synthetic form", agent_type: "voice", provider: "vapi",
-      assistant_id: `assistant-${suffix}`, authentication_method: "api_key",
-      inbound: true, description: "Synthetic description", commit_message: "Synthetic save",
+      agent_name: "Synthetic form",
+      agent_type: "voice",
+      provider: "vapi",
+      assistant_id: `assistant-${suffix}`,
+      authentication_method: "api_key",
+      inbound: true,
+      description: "Synthetic description",
+      commit_message: "Synthetic save",
       contact_number: "",
     },
   });
@@ -151,11 +156,15 @@ describe("selected-version form provenance", () => {
       { initialProps: { details: version(sourceA, "A") } },
     );
     expect(result.current.getValues()).toMatchObject({
-      sourceVersionId: sourceA, apiKey: "synt...ey-A", assistantId: "assistant-A",
+      sourceVersionId: sourceA,
+      apiKey: "synt...ey-A",
+      assistantId: "assistant-A",
     });
     rerender({ details: version(sourceB, "B") });
     expect(result.current.getValues()).toMatchObject({
-      sourceVersionId: sourceB, apiKey: "synt...ey-B", assistantId: "assistant-B",
+      sourceVersionId: sourceB,
+      apiKey: "synt...ey-B",
+      assistantId: "assistant-B",
     });
   });
 
@@ -170,8 +179,11 @@ describe("selected-version form provenance", () => {
     expect(axiosMocks.post).toHaveBeenCalledTimes(1);
     const [, payload] = axiosMocks.post.mock.calls[0];
     expect(payload).toMatchObject({
-      source_version_id: sourceA, api_key: "synt...ey-A", assistant_id: "assistant-A",
-      provider: "vapi", contact_number: "",
+      source_version_id: sourceA,
+      api_key: "synt...ey-A",
+      assistant_id: "assistant-A",
+      provider: "vapi",
+      contact_number: "",
     });
     expect(payload).not.toHaveProperty("sourceVersionId");
   });
@@ -179,7 +191,9 @@ describe("selected-version form provenance", () => {
   it("does not invent a source for callers without version details", async () => {
     const submit = renderSubmit();
     await submit.result.current.onSubmit({ ...voiceAgent, contactNumber: "" });
-    expect(axiosMocks.post.mock.calls[0][1]).not.toHaveProperty("source_version_id");
+    expect(axiosMocks.post.mock.calls[0][1]).not.toHaveProperty(
+      "source_version_id",
+    );
   });
 });
 

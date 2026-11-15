@@ -225,9 +225,7 @@ def sync_provider_credentials(version, data: ProviderCredentialsInput):
                 agent_version=version,
                 provider_type=provider_type,
             )
-    provider_changed = (
-        creds.provider_type != provider_type or authored_provider_changed
-    )
+    provider_changed = creds.provider_type != provider_type or authored_provider_changed
     creds.provider_type = provider_type
 
     _apply_secrets(
@@ -361,10 +359,9 @@ def resolve_provider_configuration_for_version(version, *, for_save=False):
         # Its owner's authored provider, not 0071's shared VAPI encoding, must
         # match. An in-place Vapi -> Bland switch must not resurrect Vapi's key.
         legacy_version = legacy.agent_version
-        if (
-            legacy_version is not None
-            and provider_for_version(legacy_version) != provider_for_version(version)
-        ):
+        if legacy_version is not None and provider_for_version(
+            legacy_version
+        ) != provider_for_version(version):
             return ProviderConfiguration(None, assistant_id)
         key = legacy.get_api_key() if legacy else None
         if key:

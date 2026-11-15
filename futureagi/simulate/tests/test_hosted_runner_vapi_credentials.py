@@ -136,9 +136,7 @@ def _assert_target(job, credentials, assistant_id):
         "api_key_env": "VAPI_API_KEY",
     }
     refs = [
-        ref
-        for ref in job["metadata"]["secret_env"]
-        if ref["key"] == "VAPI_API_KEY"
+        ref for ref in job["metadata"]["secret_env"] if ref["key"] == "VAPI_API_KEY"
     ]
     assert refs == [
         {
@@ -162,9 +160,7 @@ def test_build_hosted_vapi_uses_migration_linked_credential_owner(
 ):
     context = hosted_vapi
     credentials = _legacy(context, assistant_id=row_assistant)
-    assert not ProviderCredentials.objects.filter(
-        agent_version=context.pinned
-    ).exists()
+    assert not ProviderCredentials.objects.filter(agent_version=context.pinned).exists()
     assert credentials.get_api_key() == "synthetic-legacy-key-b"
     before = {
         version.id: version.configuration_snapshot.copy()
@@ -210,9 +206,7 @@ def test_build_hosted_vapi_unversioned_legacy_uses_definition_identity(
 
 
 @pytest.mark.parametrize("wrong_provider", ["retell", "livekit"])
-def test_build_hosted_vapi_rejects_wrong_provider_own_row(
-    hosted_vapi, wrong_provider
-):
+def test_build_hosted_vapi_rejects_wrong_provider_own_row(hosted_vapi, wrong_provider):
     _legacy(hosted_vapi, assistant_id="valid-but-not-selected")
     ProviderCredentials.objects.create(
         agent_version=hosted_vapi.pinned,

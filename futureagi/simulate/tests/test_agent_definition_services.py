@@ -295,7 +295,9 @@ def test_sync_explicit_provider_change_distinguishes_bland_encoding(
     before = {"assistant_id": "assistant-A", "description": "preserved"}
     if snapshot_provider:
         before["provider"] = "bland"
-    AgentVersion.objects.filter(pk=agent_version.pk).update(configuration_snapshot=before)
+    AgentVersion.objects.filter(pk=agent_version.pk).update(
+        configuration_snapshot=before
+    )
     credentials = ProviderCredentials.objects.create(
         agent_version=agent_version,
         provider_type="vapi",  # Bland's migration-0071 storage encoding
@@ -330,7 +332,9 @@ def test_sync_explicit_provider_change_distinguishes_bland_encoding(
         assert credentials.get_api_key() == key
         assert credentials.assistant_id == ""
         assert agent_version.configuration_snapshot == {
-            **before, "provider": "vapi", "assistant_id": ""
+            **before,
+            "provider": "vapi",
+            "assistant_id": "",
         }
 
 
@@ -340,7 +344,9 @@ def test_sync_omitted_provider_keeps_authored_bland_identity(agent_version):
         "assistant_id": "assistant-A",
         "description": "preserved",
     }
-    AgentVersion.objects.filter(pk=agent_version.pk).update(configuration_snapshot=before)
+    AgentVersion.objects.filter(pk=agent_version.pk).update(
+        configuration_snapshot=before
+    )
     credentials = ProviderCredentials.objects.create(
         agent_version=agent_version,
         provider_type="vapi",
@@ -633,7 +639,9 @@ def test_vapi_save_resolution_distinguishes_fallback_from_closed_source(
     agent_version, location, source
 ):
     from integrations.services.credentials import CredentialManager
-    from simulate.services.agent_definition import resolve_provider_configuration_for_version
+    from simulate.services.agent_definition import (
+        resolve_provider_configuration_for_version,
+    )
 
     agent = agent_version.agent_definition
     agent.api_key = "synthetic-key-B"
@@ -641,10 +649,15 @@ def test_vapi_save_resolution_distinguishes_fallback_from_closed_source(
     agent.save(update_fields=["api_key", "assistant_id"])
     key = (
         "enc::" + CredentialManager.encrypt({"v": ""}).decode("utf-8")
-        if source == "empty-ciphertext" else ""
+        if source == "empty-ciphertext"
+        else ""
     )
     credentials = ProviderCredentials.objects.create(
-        **({"agent_version": agent_version} if location == "version" else {"agent_definition": agent}),
+        **(
+            {"agent_version": agent_version}
+            if location == "version"
+            else {"agent_definition": agent}
+        ),
         provider_type="retell" if source == "wrong-provider" else "vapi",
         api_key=key,
         assistant_id="assistant-A",
@@ -655,12 +668,19 @@ def test_vapi_save_resolution_distinguishes_fallback_from_closed_source(
     assert for_save.uses_definition_fallback is (source == "raw-empty")
     effective = resolve_provider_configuration_for_version(agent_version)
     assert effective.api_key == ("synthetic-key-B" if source == "raw-empty" else None)
-    assert effective.assistant_id == {
-        "raw-empty": "assistant-B", "empty-ciphertext": "assistant-A", "wrong-provider": None,
-    }[source]
+    assert (
+        effective.assistant_id
+        == {
+            "raw-empty": "assistant-B",
+            "empty-ciphertext": "assistant-A",
+            "wrong-provider": None,
+        }[source]
+    )
     credentials.refresh_from_db()
     assert credentials.api_key == ciphertext
-    assert credentials.agent_version_id == (agent_version.pk if location == "version" else None)
+    assert credentials.agent_version_id == (
+        agent_version.pk if location == "version" else None
+    )
 
 
 @pytest.mark.parametrize("legacy_provider", ["vapi", "bland"])
@@ -671,18 +691,27 @@ def test_bland_legacy_fallback_checks_migrated_owners_authored_provider(
     agent = agent_version.agent_definition
     agent.provider = "bland"
     agent.save(update_fields=["provider"])
-    agent_version.configuration_snapshot.update(provider="bland", assistant_id="pathway-A")
+    agent_version.configuration_snapshot.update(
+        provider="bland", assistant_id="pathway-A"
+    )
     agent_version.save(update_fields=["configuration_snapshot"])
     ProviderCredentials.objects.create(
         agent_version=agent_version, provider_type="vapi", api_key=""
     )
-    owner = agent.create_version(description="Synthetic legacy owner", commit_message="owner")
-    owner.configuration_snapshot.update(provider=legacy_provider, assistant_id="legacy-owner")
+    owner = agent.create_version(
+        description="Synthetic legacy owner", commit_message="owner"
+    )
+    owner.configuration_snapshot.update(
+        provider=legacy_provider, assistant_id="legacy-owner"
+    )
     owner.save(update_fields=["configuration_snapshot"])
     owner_snapshot = owner.configuration_snapshot.copy()
     legacy = ProviderCredentials.objects.create(
-        agent_definition=agent, agent_version=owner, provider_type="vapi",
-        api_key="synthetic-legacy-key", assistant_id="legacy-owner",
+        agent_definition=agent,
+        agent_version=owner,
+        provider_type="vapi",
+        api_key="synthetic-legacy-key",
+        assistant_id="legacy-owner",
     )
     ciphertext = legacy.api_key
     assert resolve_api_key_for_version(agent_version, for_save=for_save) == (

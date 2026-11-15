@@ -1025,12 +1025,15 @@ def _voice_agent_definition(
             assistant_id = (
                 _vapi_credential_assistant(agent_definition, credentials, agent_version)
                 if provider == "vapi"
-                else (getattr(credentials, "assistant_id", None) or field("assistant_id"))
+                else (
+                    getattr(credentials, "assistant_id", None) or field("assistant_id")
+                )
             )
             agent_def["target"] = {
                 "provider": provider,
                 profile["target_id_field"]: _require(
-                    assistant_id, f"{provider} {profile['target_id_field']}",
+                    assistant_id,
+                    f"{provider} {profile['target_id_field']}",
                 ),
                 "api_key_env": env_var,
             }

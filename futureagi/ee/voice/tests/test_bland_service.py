@@ -212,10 +212,9 @@ class _NoopHeartbeater:
 
 
 async def test_monitor_outbound_bland_polls_bland_engine_not_vapi():
-    from simulate.temporal.types.activities import MonitorCallInput
-
     from ee.voice.services.vapi_service import VapiService
     from ee.voice.temporal.activities import voice_large
+    from simulate.temporal.types.activities import MonitorCallInput
 
     monitor_input = MonitorCallInput(
         call_id="exec-1",
@@ -255,10 +254,9 @@ async def test_monitor_inbound_bland_uses_vapi_engine(monkeypatch):
     lives in our VAPI account, so the monitor must poll VAPI — NOT Bland."""
     monkeypatch.setenv("VAPI_API_KEY", "test-vapi-key")
 
-    from simulate.temporal.types.activities import MonitorCallInput
-
     from ee.voice.services.vapi_service import VapiService
     from ee.voice.temporal.activities import voice_large
+    from simulate.temporal.types.activities import MonitorCallInput
 
     monitor_input = MonitorCallInput(
         call_id="exec-2",
@@ -576,9 +574,8 @@ async def test_metrics_populated_for_bland_outbound(call_execution):
     """With client_provider="bland" the metrics activity dispatches to the Bland
     engine, reads its transcript, and populates conversation_metrics — instead
     of reading an absent provider_call_data["vapi"] and silently bailing."""
-    from simulate.temporal.types.activities import CalculateConversationMetricsInput
-
     from ee.voice.temporal.activities import voice_large
+    from simulate.temporal.types.activities import CalculateConversationMetricsInput
 
     @sync_to_async
     def _seed():
@@ -624,9 +621,8 @@ async def test_metrics_skipped_when_client_provider_absent(call_execution, monke
     data through the wrong engine."""
     monkeypatch.setenv("VAPI_API_KEY", "test-vapi-key")
 
-    from simulate.temporal.types.activities import CalculateConversationMetricsInput
-
     from ee.voice.temporal.activities import voice_large
+    from simulate.temporal.types.activities import CalculateConversationMetricsInput
 
     @sync_to_async
     def _seed():
@@ -1049,7 +1045,9 @@ async def test_prepare_call_rejects_bland_without_web_connector(
         patch("temporalio.activity.info"),
         patch(
             "simulate.services.agent_definition.resolve_provider_configuration_for_version",
-            return_value=SimpleNamespace(api_key="org_bland_key", assistant_id="pathway-1"),
+            return_value=SimpleNamespace(
+                api_key="org_bland_key", assistant_id="pathway-1"
+            ),
         ),
     ):
         result = await prepare_call(
@@ -1236,7 +1234,8 @@ async def test_prepare_call_uses_effective_version_pair(
         assert result.error is None
         assert result.client_provider == provider
         assert (result.client_api_key, result.client_assistant_id) == (
-            expected_key, expected_assistant
+            expected_key,
+            expected_assistant,
         )
         assert result.client_uses_own_provider is bool(expected_key)
         assert result.client_phone_number == "+16505550100"

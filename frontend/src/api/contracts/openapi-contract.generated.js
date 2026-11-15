@@ -52316,6 +52316,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
           maximum: 25,
           minimum: 1,
         },
+        source_version_id: {
+          title: "Source version id",
+          description:
+            "Credential source within this agent; omitted selects active/latest.",
+          type: "string",
+          format: "uuid",
+        },
         commit_message: {
           title: "Commit message",
           type: "string",
@@ -92381,6 +92388,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
       required: ["provider"],
       type: "object",
       properties: {
+        source_version_id: {
+          title: "Source version id",
+          description:
+            "Credential source within agent_id; omitted selects active/latest.",
+          type: "string",
+          format: "uuid",
+        },
         provider: {
           title: "Provider",
           type: "string",
@@ -92402,6 +92416,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
       required: ["provider"],
       type: "object",
       properties: {
+        source_version_id: {
+          title: "Source version id",
+          description:
+            "Credential source within agent_id; omitted selects active/latest.",
+          type: "string",
+          format: "uuid",
+        },
         provider: {
           title: "Provider",
           type: "string",

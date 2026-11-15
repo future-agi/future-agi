@@ -17219,6 +17219,8 @@ export interface AgentVersionCreateRequestApi {
    * @maximum 25
    */
   livekit_max_concurrency?: number;
+  /** Credential source within this agent; omitted selects active/latest. */
+  source_version_id?: string;
   commit_message?: string;
   observability_enabled?: boolean;
 }
@@ -32122,6 +32124,8 @@ export const VerifyApiKeyRequestApiProvider = {
 } as const;
 
 export interface VerifyApiKeyRequestApi {
+  /** Credential source within agent_id; omitted selects active/latest. */
+  source_version_id?: string;
   provider: VerifyApiKeyRequestApiProvider;
   api_key?: string;
   agent_id?: string;
@@ -32143,6 +32147,8 @@ export const VerifyAssistantIdRequestApiProvider = {
 } as const;
 
 export interface VerifyAssistantIdRequestApi {
+  /** Credential source within agent_id; omitted selects active/latest. */
+  source_version_id?: string;
   provider: VerifyAssistantIdRequestApiProvider;
   assistant_id?: string;
   api_key?: string;

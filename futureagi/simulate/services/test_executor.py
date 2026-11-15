@@ -5812,15 +5812,13 @@ class TestExecutor:
                                 FindClientCallInput,
                             )
 
-                            customer_call_id = (
-                                self.voice_service_manager.find_client_call(
-                                    FindClientCallInput(
-                                        customer_api_key=customer_api_key,
-                                        customer_assistant_id=customer_assistant_id,
-                                        our_call_data=our_call_data,
-                                        customer_voice_service_provider=customer_provider,
-                                        time_window_seconds=10,
-                                    )
+                            customer_call_id = self.voice_service_manager.find_client_call(
+                                FindClientCallInput(
+                                    customer_api_key=customer_api_key,
+                                    customer_assistant_id=customer_assistant_id,
+                                    our_call_data=our_call_data,
+                                    customer_voice_service_provider=customer_provider,
+                                    time_window_seconds=10,
                                 )
                             )
 

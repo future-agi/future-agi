@@ -4759,7 +4759,9 @@ class RunTestComponentsUpdateView(APIView):
                                 try:
                                     creds = agent_version_to_check.credentials
                                     assistant_id = creds.assistant_id or assistant_id
-                                except AgentVersion.credentials.RelatedObjectDoesNotExist:
+                                except (
+                                    AgentVersion.credentials.RelatedObjectDoesNotExist
+                                ):
                                     pass
 
                             missing_fields = []

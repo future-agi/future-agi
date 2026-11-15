@@ -12,12 +12,12 @@ import httpx
 import pytest
 
 from tracer.utils.vapi_recording import (
+    _URL_TYPE_TO_ARTIFACT,
     VapiArtifactNotReadyError,
     VapiArtifactType,
     VapiAuthError,
     VapiRateLimitError,
     VapiRecordingService,
-    _URL_TYPE_TO_ARTIFACT,
 )
 
 

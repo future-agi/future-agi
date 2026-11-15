@@ -232,24 +232,42 @@ describe("selected-version credential preflight", () => {
   });
 
   it("sends the selected source and displayed pair through both checks", async () => {
-    const schema = createAgentDefinitionSchema({ agentDefinitionId: "agent-1" });
+    const schema = createAgentDefinitionSchema({
+      agentDefinitionId: "agent-1",
+    });
     const parsed = await schema.parseAsync(historicalForm);
     expect(parsed.sourceVersionId).toBe(sourceVersionId);
     expect(axiosMocks.post.mock.calls).toEqual([
-      [axiosMocks.verifyApiKey, {
-        provider: "vapi", api_key: "synt...ey-A", agent_id: "agent-1",
-        source_version_id: sourceVersionId,
-      }],
-      [axiosMocks.verifyAssistantId, {
-        provider: "vapi", api_key: "synt...ey-A", assistant_id: "assistant-A",
-        agent_id: "agent-1", source_version_id: sourceVersionId,
-      }],
+      [
+        axiosMocks.verifyApiKey,
+        {
+          provider: "vapi",
+          api_key: "synt...ey-A",
+          agent_id: "agent-1",
+          source_version_id: sourceVersionId,
+        },
+      ],
+      [
+        axiosMocks.verifyAssistantId,
+        {
+          provider: "vapi",
+          api_key: "synt...ey-A",
+          assistant_id: "assistant-A",
+          agent_id: "agent-1",
+          source_version_id: sourceVersionId,
+        },
+      ],
     ]);
   });
 
   it("retains source provenance when inbound validation skips remote checks", async () => {
-    const schema = createAgentDefinitionSchema({ agentDefinitionId: "agent-1" });
-    const parsed = await schema.parseAsync({ ...historicalForm, inbound: true });
+    const schema = createAgentDefinitionSchema({
+      agentDefinitionId: "agent-1",
+    });
+    const parsed = await schema.parseAsync({
+      ...historicalForm,
+      inbound: true,
+    });
     expect(parsed.sourceVersionId).toBe(sourceVersionId);
     expect(parsed.apiKey).toBe("synt...ey-A");
     expect(axiosMocks.post).not.toHaveBeenCalled();

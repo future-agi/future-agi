@@ -101,7 +101,9 @@ class CredentialSourceRequestSerializer(serializers.Serializer):
             raise serializers.ValidationError(
                 {"source_version_id": "An authorized agent_id is required."}
             )
-        agents = AgentDefinition.objects.filter(organization=organization, deleted=False)
+        agents = AgentDefinition.objects.filter(
+            organization=organization, deleted=False
+        )
         workspace = getattr(request, "workspace", None)
         if workspace is not None:
             agents = agents.filter(workspace=workspace)

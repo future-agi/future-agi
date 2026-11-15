@@ -175,7 +175,9 @@ class CreateAgentVersionView(APIView):
             source_version_id = validated.get("source_version_id")
             source_version = source_version_for_agent(agent, source_version_id)
             source_provider = (
-                provider_for_version(source_version) if source_version else agent.provider
+                provider_for_version(source_version)
+                if source_version
+                else agent.provider
             )
             requested_provider = validated.get("provider") or agent.provider or ""
             provider_changed = requested_provider != source_provider
@@ -235,7 +237,9 @@ class CreateAgentVersionView(APIView):
                             }
                         )
                 if preserve_livekit_api_key:
-                    existing_livekit_api_key = resolve_api_key_for_version(source_version)
+                    existing_livekit_api_key = resolve_api_key_for_version(
+                        source_version
+                    )
                 if preserve_livekit_api_secret:
                     existing_livekit_api_secret = resolve_api_secret_for_version(
                         source_version
@@ -276,9 +280,8 @@ class CreateAgentVersionView(APIView):
                 if field in validated:
                     setattr(agent, field, validated[field])
                     changed_fields.append(field)
-            if (
-                (provider_changed or definition_provider_changed)
-                and (not incoming_api_key or preserve_existing_api_key)
+            if (provider_changed or definition_provider_changed) and (
+                not incoming_api_key or preserve_existing_api_key
             ):
                 agent.api_key = ""
                 if "api_key" not in changed_fields:
@@ -356,7 +359,9 @@ class CreateAgentVersionView(APIView):
                 ):
                     # Carry the selected key's identity, not the mutable
                     # definition's assistant, into a masked-key version save.
-                    assistant_input["assistant_id"] = existing_configuration.assistant_id
+                    assistant_input["assistant_id"] = (
+                        existing_configuration.assistant_id
+                    )
                 creds_input = ProviderCredentialsInput(
                     provider=validated.get("provider") or agent.provider or "",
                     api_key=existing_api_key

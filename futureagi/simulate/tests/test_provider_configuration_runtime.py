@@ -119,9 +119,7 @@ def test_prepare_call_routes_with_effective_provider(
     # Only Temporal context is mocked; prepare_call, ORM, and resolver run.
     with patch("temporalio.activity.info"):
         result = async_to_sync(prepare_call)(
-            PrepareCallInput(
-                call_id=str(data.call.id), workspace_id=str(workspace.id)
-            )
+            PrepareCallInput(call_id=str(data.call.id), workspace_id=str(workspace.id))
         )
 
     assert result.error is None
@@ -338,7 +336,9 @@ def test_evaluation_task_skips_without_initializing_voice_transport(
     assert data.call.call_metadata["eval_completed"] is True
 
 
-def test_evaluation_task_keeps_text_tool_evaluation_provider_neutral(voice_call_factory):
+def test_evaluation_task_keeps_text_tool_evaluation_provider_neutral(
+    voice_call_factory,
+):
     from simulate.services import test_executor
 
     data = voice_call_factory()
