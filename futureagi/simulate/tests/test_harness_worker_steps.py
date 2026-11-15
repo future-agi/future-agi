@@ -366,6 +366,7 @@ class TestWorkerSteps:
             "parallel": 0,
             "overlap_unknown": False,
             "worker_depths": {},
+            "asynchronous": 0,
         }
 
     def test_a_return_without_an_id_is_never_given_to_the_hand_off_still_open(

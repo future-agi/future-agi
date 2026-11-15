@@ -580,6 +580,7 @@ def test_the_trial_view_reads_the_kept_timeline_and_says_when_there_is_none(
         "parallel",
         "overlap_unknown",
         "worker_depths",
+        "asynchronous",
     }
     first = found.json()["steps"][0]
     assert (first["kind"], first["parent"], first["depth"]) == ("handoff", None, 1)
