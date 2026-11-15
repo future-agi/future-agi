@@ -468,8 +468,9 @@ def _openai_media_block(url_type: str, content_type: str, b64_data: str) -> dict
 
 _EVAL_INPUT_PLACEHOLDER_RE = re.compile(r"\{\{\s*([A-Za-z_][A-Za-z0-9_]*)\s*\}\}")
 
+# Video extensions must fall through to content sniffing, not image attachment.
 _EVAL_INPUT_IMAGE_EXT_RE = re.compile(
-    r"https?://\S+\.(png|jpg|jpeg|gif|webp|svg|mp4)(\?|$)",
+    r"https?://\S+\.(png|jpg|jpeg|gif|webp|svg)(\?|$)",
     re.IGNORECASE,
 )
 _EVAL_INPUT_AUDIO_EXT_RE = re.compile(
@@ -485,7 +486,7 @@ _RENDER_AUDIO_URL_RE = re.compile(
     re.IGNORECASE,
 )
 _RENDER_IMAGE_URL_RE = re.compile(
-    r"^https?://\S+\.(png|jpg|jpeg|gif|webp|svg|mp4)(\?\S*)?$",
+    r"^https?://\S+\.(png|jpg|jpeg|gif|webp|svg)(\?\S*)?$",
     re.IGNORECASE,
 )
 _RENDER_PDF_URL_RE = re.compile(
