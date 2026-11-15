@@ -491,6 +491,42 @@ def test_a_post_build_turn_is_billed_once_priced_as_a_build_stage(
 @pytest.mark.django_db
 @pytest.mark.requires_ee
 @requires_cloud_billing
+def test_a_turn_on_a_selected_run_counts_in_its_consumption(
+    organization, monkeypatch, django_capture_on_commit_callbacks
+):
+    """A selected run is simulation-only, yet its chat turn is billed: so it is consumed."""
+    from ee.usage.services import emitter
+
+    billed = []
+    monkeypatch.setattr(emitter, "emit", billed.append)
+    job, conversation, command, capability = _post_build_turn(
+        organization, "selected-run-turn"
+    )
+    payload = dict(job.payload)
+    payload["metadata"] = {**(payload.get("metadata") or {}), "simulation_only": True}
+    job.payload = payload
+    job.save(update_fields=["payload"])
+    with django_capture_on_commit_callbacks(execute=True):
+        _deliver(conversation, capability, 1, "turn_started", {})
+        _deliver(
+            conversation,
+            capability,
+            2,
+            "turn_completed",
+            {"command_message_id": str(command.id), "usage": _TURN_USAGE},
+        )
+
+    [event] = billed
+    assert event.amount > 0
+    job.refresh_from_db()
+    assert harness_usage.harness_consumption(job)["ai_credits"] == pytest.approx(
+        event.amount
+    )
+
+
+@pytest.mark.django_db
+@pytest.mark.requires_ee
+@requires_cloud_billing
 def test_a_post_build_turn_that_cannot_be_priced_keeps_its_usage_and_bills_nothing(
     organization, monkeypatch, django_capture_on_commit_callbacks, caplog
 ):
