@@ -26,10 +26,12 @@ function readinessLimits(snapshot) {
 function readinessTagLabel(snapshot, selection) {
   const limits = readinessLimits(snapshot);
   const held = selection?.held_back?.count ?? 0;
-  if (snapshot?.answer?.kind === "ready" && held === 0) {
+  const count = limits.length;
+  // A Partial or Unavailable row holds no case back, so the answer can read ready
+  // with one: the tag still counts it, as the popover lists it.
+  if (snapshot?.answer?.kind === "ready" && held === 0 && count === 0) {
     return "Ready when started";
   }
-  const count = limits.length;
   if (count === 0 && held > 0) {
     // Held back for a reason no measured row names, such as a dropped case.
     return `Started with ${held} ${held === 1 ? "case" : "cases"} held back`;
