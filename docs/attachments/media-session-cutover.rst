@@ -16,8 +16,12 @@ below is an operator action; deploying or restarting code does not run it.
    restarts. New v2 issuance must start strictly after this cutoff.
 3. With the feature still disabled, run a dry run, review the count, then apply::
 
-       python manage.py cutover_attachment_media_sessions --quiesced --issued-through "$RECORDED_CUTOFF"
-       python manage.py cutover_attachment_media_sessions --quiesced --issued-through "$RECORDED_CUTOFF" --apply
+       SERVICE_TYPE=bootstrap STARTUP_DB_MUTATION_MODE=operator python manage.py cutover_attachment_media_sessions --quiesced --issued-through "$RECORDED_CUTOFF"
+       SERVICE_TYPE=bootstrap STARTUP_DB_MUTATION_MODE=operator python manage.py cutover_attachment_media_sessions --quiesced --issued-through "$RECORDED_CUTOFF" --apply
+
+   Use the existing dedicated operator/bootstrap execution mode; ordinary API
+   and worker processes must continue to refuse this command. Do not disable
+   the mutation-free startup guard or enable arbitrary shell execution.
 
    The command updates only ``AttachmentMediaSession.revoked_at`` for rows
    created at or before the recorded cutoff. Existing grant foreign keys make

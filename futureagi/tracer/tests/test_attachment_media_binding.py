@@ -375,7 +375,8 @@ def test_headers_and_persistence_expose_only_nonsecret_handle_and_expiry(api):
         cookie["samesite"] == "Strict" and cookie["max-age"] == playback.SESSION_SECONDS
     )
     assert reply.content == b"" and reply["Cache-Control"] == "private, no-store"
-    assert "Access-Control-Allow-Origin" not in reply
+    # Middleware may echo the exact approved origin, never a wildcard.
+    assert reply.get("Access-Control-Allow-Origin") in (None, http.ORIGIN)
     assert row.token_digest == playback.digest(cookie.value)
     public = repr(dict(reply.items())) + str(
         resolved(api, body["occurrence_id"], reply)
@@ -517,3 +518,62 @@ def test_original_access_revocation_inside_storage_read_discards_chunk(api):
     assert b"".join(stream.streaming_content) == b""
     assert body.closed
     denied(read(item["gateway_path"], first))
+
+
+def test_wire_response_matches_occurrence_not_session_segment():
+    from tracer.services.attachments import wire
+    from tracer.services.attachments.contract import AttachmentError
+
+    session, occurrence = str(uuid.uuid4()), str(uuid.uuid4())
+    item = {
+        "occurrence_id": occurrence,
+        "status": "ready",
+        "gateway_path": f"/tracer/v1/attachment-media/{session}/{occurrence}/{'a' * 43}",
+        "expires_at": "2030-01-01T00:00:00+00:00",
+    }
+    wire.validate("ResolveResponse", {"items": [item]})
+    with pytest.raises(AttachmentError, match="invalid_request"):
+        wire.validate(
+            "ResolveResponse", {"items": [{**item, "occurrence_id": session}]}
+        )
+
+
+def test_media_cutover_needs_no_new_migration_and_graph_has_no_conflicts():
+    from django.db import connection
+    from django.db.migrations.loader import MigrationLoader
+
+    loader = MigrationLoader(connection)
+    assert not loader.detect_conflicts()
+    assert loader.graph.leaf_nodes("tracer") == [("tracer", "0137_attachment_fences")]
+    assert "wire_version" not in {
+        field.name for field in AttachmentMediaSession._meta.fields
+    }
+
+
+def test_cutover_is_only_registered_as_an_explicit_operator_command(monkeypatch):
+    from model_hub.apps import (
+        STARTUP_SAFE_MANAGEMENT_COMMANDS,
+        explicit_management_mutation_authorized,
+        guarded_management_command,
+    )
+
+    command = "cutover_attachment_media_sessions"
+    argv = [
+        "manage.py",
+        command,
+        "--quiesced",
+        "--issued-through",
+        "2030-01-01T00:00:00Z",
+    ]
+    assert command not in STARTUP_SAFE_MANAGEMENT_COMMANDS
+    assert guarded_management_command(argv) == command
+    monkeypatch.setenv("NO_STARTUP_DB_MUTATIONS", "true")
+    monkeypatch.setenv("ENV_TYPE", "staging")
+    monkeypatch.setenv("STARTUP_DB_MUTATION_MODE", "disabled")
+    monkeypatch.setenv("SERVICE_TYPE", "backend")
+    assert not explicit_management_mutation_authorized(argv)
+    monkeypatch.setenv("STARTUP_DB_MUTATION_MODE", "operator")
+    assert not explicit_management_mutation_authorized(argv)
+    monkeypatch.setenv("SERVICE_TYPE", "bootstrap")
+    assert explicit_management_mutation_authorized(argv)
+    assert not explicit_management_mutation_authorized(["manage.py", "shell"])
