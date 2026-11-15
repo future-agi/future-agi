@@ -1,7 +1,8 @@
 import { useState } from 'react';
 import PropTypes from 'prop-types';
 import { Link as RouterLink } from 'react-router-dom';
-import { Checkbox, Link, IconButton, Pagination, Stack, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, Tooltip, Typography } from '@mui/material';
+import { useTheme } from '@mui/material/styles';
+import { Button, Checkbox, Link, IconButton, useMediaQuery, Pagination, Stack, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, Tooltip, Typography } from '@mui/material';
 import { useContextDependents } from 'src/api/skills/context-dependents';
 import { useSkill } from 'src/api/skills';
 import { useSkillV11Scope } from 'src/api/skills/testing';
@@ -38,6 +39,8 @@ function LabelChips({ labels }) {
 LabelChips.propTypes = { labels: PropTypes.array };
 // One reference table per view. Active references carry the follower selection; history is read-only.
 function ReferenceTable({ query, state, view, selected, onToggle, page, onPage, empty, done = [], selectable = [] }) {
+  const theme = useTheme();
+  const phone = useMediaQuery(theme.breakpoints.down('sm'));
   if (query.isLoading || state === 'loading') return <ContentSkeleton />;
   if (query.isError || state === 'error') return <ErrorState title="Dependents unavailable" detail="Couldn't load the contexts that use this skill. Check your connection and try again." onRetry={query.refetch} />;
   if (!query.data || !query.data.results.length || state === 'empty') return <EmptyState title={empty.title} description={empty.description} />;
@@ -64,7 +67,9 @@ function ReferenceTable({ query, state, view, selected, onToggle, page, onPage, 
           <TableCell sx={at(1, 2)}><Typography variant="s3" color="text.secondary">{pinned ? `Pinned v${row.locked_version}` : `Follows ${row.requested.label} · v${row.locked_version}`}</Typography></TableCell>
           <TableCell sx={{ ...at(2, 1), justifySelf: { xs: 'end' } }}><StatusBadge status={done.includes(row.context_id) ? 'draft' : states[row.update_state]?.[0] || 'unknown'} label={done.includes(row.context_id) ? 'Draft ready' : states[row.update_state]?.[1] || 'Unknown'} /></TableCell>
           <TableCell sx={{ gridColumn: { xs: active ? '2 / -1' : '1 / -1' }, gridRow: { xs: '3' } }}><Stack component="span" direction="row" useFlexGap spacing={1.5} alignItems="center" sx={{ flexWrap: 'wrap' }}>
-            <Link component={RouterLink} variant="s3" underline="always" to={`${paths.dashboard.skills.contextDetail(row.context_id)}?version=${row.context_version}`} aria-label={`Inspect ${row.name} v${row.context_version}`}>Open context</Link>
+            {phone
+              ? <Link component={RouterLink} variant="s3" underline="always" to={`${paths.dashboard.skills.contextDetail(row.context_id)}?version=${row.context_version}`} aria-label={`Inspect ${row.name} v${row.context_version}`}>Open context</Link>
+              : <Button variant="outlined" size="small" component={RouterLink} to={`${paths.dashboard.skills.contextDetail(row.context_id)}?version=${row.context_version}`} aria-label={`Inspect ${row.name} v${row.context_version}`}>Open context</Button>}
             {active && pinned && <Link component={RouterLink} variant="s3" underline="always" to={`${paths.dashboard.skills.contextDetail(row.context_id)}?tab=links`} aria-label={`Change pin for ${row.name}`}>Change pin</Link>}
           </Stack></TableCell>
         </TableRow>;

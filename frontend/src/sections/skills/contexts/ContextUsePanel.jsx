@@ -120,9 +120,10 @@ function UseContent({ snapshot, origin, originError, organizationId, workspaceId
         {preview && <Typography variant="s3" color="text.secondary">Requires an environment with the Context SDK CLI installed (python -m fi.context). This plan opts in to a preview host profile. No released package or verified model delivery is claimed.</Typography>}
         {profileId === 'claude-code' && <Typography variant="s3" color="text.secondary">Existing CLAUDE.md or local instructions may affect AGENTS.md discovery. Settings, imports and permissions are not changed.</Typography>}
         {workspaceName && <Typography variant="s1">Workspace: {workspaceName}</Typography>}
+        <Typography variant="s1">This plan installs {snapshot.name} v{snapshot.version}. Check that the version number matches before you apply it.</Typography>
         <IdentityChip value={workspaceId} kind="id" label="Workspace" />
         <IdentityChip value={organizationId} kind="id" label="Organization" />
-        <IdentityChip value={snapshot.versionId} kind="id" label="Version ID" />
+        <IdentityChip value={snapshot.versionId} kind="id" label="Version" />
         <IdentityChip value={snapshot.digest} label="Digest" />
         <Typography variant="s3">Pinned version. A later release requires a new reviewed plan. Installed files are not proof of model delivery.</Typography>
       </Stack>

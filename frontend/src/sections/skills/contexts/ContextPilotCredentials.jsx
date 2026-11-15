@@ -136,7 +136,7 @@ function CredentialRow({ credential, versionLabel, onRevoke }) {
           <Tooltip title={`Key ${credential.id}`} describeChild>
             <span tabIndex={0}>Read-only key</span>
           </Tooltip>
-          {credential.createdAt && <Typography component="span" variant="s3" color="text.secondary">{" · created "}<When value={credential.createdAt} /></Typography>}
+          {credential.createdAt && <Typography component="span" variant="s3" color="text.secondary">{" · created "}<When value={credential.createdAt} sx={{ display: 'inline-block', '&::first-letter': { textTransform: 'lowercase' } }} /></Typography>}
         </Typography>
       </TableCell>
       <TableCell>
@@ -180,7 +180,7 @@ function CredentialStackRow({ credential, versionLabel, onRevoke }) {
         <Tooltip title={`Key ${credential.id}`} describeChild>
           <span tabIndex={0}>Read-only key</span>
         </Tooltip>
-        {credential.createdAt && <>{" · created "}<When value={credential.createdAt} /></>}
+        {credential.createdAt && <>{" · created "}<When value={credential.createdAt} sx={{ display: 'inline-block', '&::first-letter': { textTransform: 'lowercase' } }} /></>}
         {" · "}
         {versionLabel(credential)}
         {status !== "revoked" && (
