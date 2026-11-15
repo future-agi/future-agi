@@ -92,6 +92,13 @@ func (p *GuardrailPlugin) ProcessRequest(ctx context.Context, rc *models.Request
 
 // ProcessResponse runs post-stage guardrails.
 func (p *GuardrailPlugin) ProcessResponse(ctx context.Context, rc *models.RequestContext) pipeline.PluginResult {
+	// Declaration-only dispatch refusals already recorded their selected outcome.
+	// There is no response to inspect; the post seam is invoked only to finalize
+	// observers/accounting. Re-running checks here duplicates the refusal and can
+	// run unrelated legacy rules against a request that never reached a handler.
+	if rc.EndpointType == "inspection_admission" && rc.Flags.ShortCircuited && rc.Request == nil && rc.Response == nil {
+		return pipeline.ResultContinue()
+	}
 	if rc.EndpointType == "speech_relay" || rc.EndpointType == "transcription_relay" {
 		return pipeline.ResultContinue()
 	}
